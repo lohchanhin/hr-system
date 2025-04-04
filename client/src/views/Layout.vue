@@ -46,6 +46,24 @@
           <i class="el-icon-document-copy"></i>
           <span>報表管理設定</span>
         </el-menu-item>
+
+        <!-- ★ 第七模組: 薪資管理設定 -->
+        <el-menu-item index="SalaryManagementSetting" @click="gotoPage('SalaryManagementSetting')">
+          <i class="el-icon-coin"></i>
+          <span>薪資管理設定</span>
+        </el-menu-item>
+
+        <!-- ★ 第8模組: 勞健保、勞退管理設定 -->
+        <el-menu-item index="SocialInsuranceRetirementSetting" @click="gotoPage('SocialInsuranceRetirementSetting')">
+          <i class="el-icon-s-check"></i>
+          <span>勞健保 / 勞退設定</span>
+        </el-menu-item>
+
+        <!-- ★ 第9模組: 人事管理與系統設定 -->
+        <el-menu-item index="HRManagementSystemSetting" @click="gotoPage('HRManagementSystemSetting')">
+          <i class="el-icon-user-solid"></i>
+          <span>人事管理與系統設定</span>
+        </el-menu-item>
       </el-menu>
     </el-aside>
     <el-main>

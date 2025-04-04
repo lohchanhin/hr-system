@@ -4,15 +4,21 @@ import Login from '@/views/Login.vue'
 import Layout from '@/views/Layout.vue'
 import Settings from '@/views/Settings.vue'
 
-// 已有前四個模組
+// 1~6 模組
 import AttendanceSetting from '@/Components/backComponents/AttendanceSetting.vue'
 import AttendanceManagementSetting from '@/Components/backComponents/AttendanceManagementSetting.vue'
 import LeaveOvertimeSetting from '@/Components/backComponents/LeaveOvertimeSetting.vue'
 import ShiftScheduleSetting from '@/Components/backComponents/ShiftScheduleSetting.vue'
-
-// ★ 第五個模組: 簽核流程設定
 import ApprovalFlowSetting from '@/Components/backComponents/ApprovalFlowSetting.vue'
-import ReportManagementSetting from '@/components/backComponents/ReportManagementSetting.vue'
+import ReportManagementSetting from '@/Components/backComponents/ReportManagementSetting.vue'
+
+// ★ 第七模組: 薪資管理設定
+import SalaryManagementSetting from '@/Components/backComponents/SalaryManagementSetting.vue'
+// ★ 第8模組: 勞健保、勞退管理設定
+import SocialInsuranceRetirementSetting from '@/Components/backComponents/SocialInsuranceRetirementSetting.vue'
+
+import HRManagementSystemSetting from '@/Components/backComponents/HRManagementSystemSetting.vue'
+
 
 const routes = [
   {
@@ -30,24 +36,34 @@ const routes = [
     component: Layout,
     meta: { requiresAuth: true },
     children: [
-      // Settings
       { path: 'settings', name: 'Settings', component: Settings },
-      // 1) 出勤設定
       { path: 'attendance-setting', name: 'AttendanceSetting', component: AttendanceSetting },
-      // 2) 考勤管理設定
       { path: 'attendance-management', name: 'AttendanceManagementSetting', component: AttendanceManagementSetting },
-      // 3) 請假與加班設定
       { path: 'leave-overtime-setting', name: 'LeaveOvertimeSetting', component: LeaveOvertimeSetting },
-      // 4) 排班與班別管理設定
       { path: 'shift-schedule-setting', name: 'ShiftScheduleSetting', component: ShiftScheduleSetting },
-      // 5) 簽核流程設定
       { path: 'approval-flow-setting', name: 'ApprovalFlowSetting', component: ApprovalFlowSetting },
-      // ★ 第六模組: 報表管理設定
+      { path: 'report-management-setting', name: 'ReportManagementSetting', component: ReportManagementSetting },
+
+      // ★ 第七模組: 薪資管理設定
       {
-        path: 'report-management-setting',
-        name: 'ReportManagementSetting',
-        component: ReportManagementSetting
+        path: 'salary-management-setting',
+        name: 'SalaryManagementSetting',
+        component: SalaryManagementSetting
+      },
+
+      {
+        path: 'social-insurance-retirement-setting',
+        name: 'SocialInsuranceRetirementSetting',
+        component: SocialInsuranceRetirementSetting
+      },
+
+      // ★ 第9模組: 人事管理與系統設定
+      {
+        path: 'hr-management-system-setting',
+        name: 'HRManagementSystemSetting',
+        component: HRManagementSystemSetting
       }
+
 
     ]
   }
@@ -58,6 +74,7 @@ const router = createRouter({
   routes
 })
 
+// 路由守衛 (若需檢查登入)
 router.beforeEach((to, from, next) => {
   const isAuthenticated = localStorage.getItem('isAuthenticated') === 'true'
   if (to.meta.requiresAuth && !isAuthenticated) {
