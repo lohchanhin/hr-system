@@ -14,3 +14,33 @@ export async function createLeave(req, res) {
     res.status(400).json({ error: err.message });
   }
 }
+
+export async function getLeave(req, res) {
+  try {
+    const leave = await LeaveRequest.findById(req.params.id).populate('employee');
+    if (!leave) return res.status(404).json({ error: 'Not found' });
+    res.json(leave);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+}
+
+export async function updateLeave(req, res) {
+  try {
+    const leave = await LeaveRequest.findByIdAndUpdate(req.params.id, req.body, { new: true });
+    if (!leave) return res.status(404).json({ error: 'Not found' });
+    res.json(leave);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+}
+
+export async function deleteLeave(req, res) {
+  try {
+    const leave = await LeaveRequest.findByIdAndDelete(req.params.id);
+    if (!leave) return res.status(404).json({ error: 'Not found' });
+    res.json({ success: true });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+}

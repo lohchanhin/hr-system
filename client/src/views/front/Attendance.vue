@@ -31,33 +31,56 @@
     </div>
   </template>
   
-  <script setup>
-  import { ref } from 'vue'
-  import dayjs from 'dayjs'
-  
-  const records = ref([])
-  
-  // 模擬按鈕事件
-  function onClockIn() {
-    addRecord('上班簽到')
+<script setup>
+import { ref, onMounted } from 'vue'
+import dayjs from 'dayjs'
+
+const records = ref([])
+const token = localStorage.getItem('token') || ''
+
+async function fetchRecords() {
+  const res = await fetch('/api/attendance', {
+    headers: { Authorization: `Bearer ${token}` }
+  })
+  if (res.ok) {
+    records.value = await res.json()
   }
-  function onClockOut() {
-    addRecord('下班簽退')
-  }
-  function onOuting() {
-    addRecord('外出登記')
-  }
-  function onBreakIn() {
-    addRecord('中午休息')
-  }
-  
-  function addRecord(action) {
+}
+
+function onClockIn() {
+  addRecord('上班簽到')
+}
+function onClockOut() {
+  addRecord('下班簽退')
+}
+function onOuting() {
+  addRecord('外出登記')
+}
+function onBreakIn() {
+  addRecord('中午休息')
+}
+
+async function addRecord(action) {
+  const payload = { action, time: new Date(), remark: '' }
+  const res = await fetch('/api/attendance', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`
+    },
+    body: JSON.stringify(payload)
+  })
+  if (res.ok) {
+    const saved = await res.json()
     records.value.push({
-      action,
-      time: dayjs().format('YYYY-MM-DD HH:mm:ss'),
-      remark: '示範紀錄'
+      action: saved.action,
+      time: dayjs(saved.time).format('YYYY-MM-DD HH:mm:ss'),
+      remark: saved.remark || ''
     })
   }
+}
+
+onMounted(fetchRecords)
   </script>
   
   <style scoped>

@@ -71,8 +71,12 @@ import dayjs from 'dayjs'
   
 const leaveRecords = ref([])
 
+const token = localStorage.getItem('token') || ''
+
 async function fetchLeaves() {
-  const res = await fetch('/api/leaves')
+  const res = await fetch('/api/leaves', {
+    headers: { Authorization: `Bearer ${token}` }
+  })
   if (res.ok) {
     leaveRecords.value = await res.json()
   }
@@ -88,7 +92,10 @@ async function onSubmitLeave() {
   }
   const res = await fetch('/api/leaves', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`
+    },
     body: JSON.stringify(payload)
   })
   if (res.ok) {

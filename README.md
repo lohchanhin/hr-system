@@ -18,7 +18,7 @@ Each part has its own README with full instructions. Below is a quick overview.
    ```bash
    npm install
    ```
-2. Copy `.env.example` to `.env` and adjust the `PORT` and `MONGODB_URI` values.
+2. Copy `.env.example` to `.env` and set `PORT`, `MONGODB_URI` and optionally `JWT_SECRET`.
 3. Start the development server with nodemon:
    ```bash
    npm run dev
