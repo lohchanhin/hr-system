@@ -1,5 +1,6 @@
 # HR System
 
+
 This repository contains a simple HR management system split into two main packages:
 
 - **`client/`** – a Vue 3 application powered by Vite.
@@ -51,3 +52,4 @@ See [`client/README.md`](client/README.md) for additional notes.
 ```
 
 Both directories are independent Node.js projects. Run the above setup commands in each before development. Once both are running, the Vue app will make requests to the API server to fetch and manipulate HR data.
+

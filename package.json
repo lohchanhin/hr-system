@@ -1,0 +1,7 @@
+{
+  "name": "hr-system-root",
+  "private": true,
+  "scripts": {
+    "test": "npm --prefix server test && npm --prefix client test"
+  }
+}
