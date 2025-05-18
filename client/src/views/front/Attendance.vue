@@ -32,31 +32,59 @@
   </template>
   
   <script setup>
-  import { ref } from 'vue'
+  import { ref, onMounted } from 'vue'
   import dayjs from 'dayjs'
-  
+  import { ElMessage } from 'element-plus'
+  import { getAttendanceRecords, createAttendanceRecord } from '@/api.js'
+
   const records = ref([])
-  
-  // 模擬按鈕事件
+
+  const ACTION_TEXT = {
+    clockIn: '上班簽到',
+    clockOut: '下班簽退',
+    outing: '外出登記',
+    breakIn: '中午休息'
+  }
+
+  function formatRecord(record) {
+    return {
+      action: ACTION_TEXT[record.action] || record.action,
+      time: dayjs(record.timestamp).format('YYYY-MM-DD HH:mm:ss'),
+      remark: record.remark || ''
+    }
+  }
+
+  async function loadRecords () {
+    try {
+      const data = await getAttendanceRecords()
+      records.value = data.map(formatRecord)
+    } catch (err) {
+      ElMessage.error('載入出勤紀錄失敗')
+    }
+  }
+
+  onMounted(loadRecords)
+
+  async function addAction (actionKey) {
+    try {
+      const record = await createAttendanceRecord({ action: actionKey })
+      records.value.push(formatRecord(record))
+    } catch (err) {
+      ElMessage.error('操作失敗')
+    }
+  }
+
   function onClockIn() {
-    addRecord('上班簽到')
+    addAction('clockIn')
   }
   function onClockOut() {
-    addRecord('下班簽退')
+    addAction('clockOut')
   }
   function onOuting() {
-    addRecord('外出登記')
+    addAction('outing')
   }
   function onBreakIn() {
-    addRecord('中午休息')
-  }
-  
-  function addRecord(action) {
-    records.value.push({
-      action,
-      time: dayjs().format('YYYY-MM-DD HH:mm:ss'),
-      remark: '示範紀錄'
-    })
+    addAction('breakIn')
   }
   </script>
   

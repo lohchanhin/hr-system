@@ -59,8 +59,12 @@
   </template>
   
   <script setup>
-import { ref, onMounted } from 'vue'
-import dayjs from 'dayjs'
+
+  import { ref, onMounted } from 'vue'
+  import dayjs from 'dayjs'
+  import { ElMessage } from 'element-plus'
+  import { getLeaveRequests, createLeaveRequest } from '@/api.js'
+
   
   const leaveForm = ref({
     leaveType: '',
@@ -69,35 +73,46 @@ import dayjs from 'dayjs'
     reason: ''
   })
   
-const leaveRecords = ref([])
 
-async function fetchLeaves() {
-  const res = await fetch('/api/leaves')
-  if (res.ok) {
-    leaveRecords.value = await res.json()
-  }
-}
+  const leaveRecords = ref([])
 
-async function onSubmitLeave() {
-  const payload = {
-    employee: localStorage.getItem('employeeId') || '000000000000000000000000',
-    leaveType: leaveForm.value.leaveType,
-    startDate: leaveForm.value.startDate,
-    endDate: leaveForm.value.endDate,
-    reason: leaveForm.value.reason
+  function formatRecord(rec) {
+    return {
+      leaveType: rec.leaveType,
+      dateRange: `${dayjs(rec.startDate).format('YYYY-MM-DD')}~ ${dayjs(rec.endDate).format('YYYY-MM-DD')}`,
+      reason: rec.reason
+    }
   }
-  const res = await fetch('/api/leaves', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload)
-  })
-  if (res.ok) {
-    const saved = await res.json()
-    leaveRecords.value.push(saved)
-    leaveForm.value.leaveType = ''
-    leaveForm.value.startDate = ''
-    leaveForm.value.endDate = ''
-    leaveForm.value.reason = ''
+
+  async function loadRecords() {
+    try {
+      const data = await getLeaveRequests()
+      leaveRecords.value = data.map(formatRecord)
+    } catch (err) {
+      ElMessage.error('\u8f09\u5165\u8acb\u5047\u7d00\u9304\u5931\u6557')
+    }
+  }
+
+  onMounted(loadRecords)
+
+  async function onSubmitLeave() {
+    try {
+      const record = await createLeaveRequest({
+        leaveType: leaveForm.value.leaveType,
+        startDate: leaveForm.value.startDate,
+        endDate: leaveForm.value.endDate,
+        reason: leaveForm.value.reason
+      })
+      leaveRecords.value.push(formatRecord(record))
+
+      leaveForm.value.leaveType = ''
+      leaveForm.value.startDate = ''
+      leaveForm.value.endDate = ''
+      leaveForm.value.reason = ''
+    } catch (err) {
+      ElMessage.error('\u63d0\u4ea4\u5931\u6557')
+    }
+
   }
 }
 

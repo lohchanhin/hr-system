@@ -4,10 +4,13 @@ import cors from 'cors';
 import { connectDB } from './config/db.js';
 import employeeRoutes from './routes/employeeRoutes.js';
 import attendanceRoutes from './routes/attendanceRoutes.js';
+
+
 import authRoutes from './routes/authRoutes.js';
 import { authenticate, authorizeRoles } from './middleware/auth.js';
 import leaveRoutes from './routes/leaveRoutes.js';
 import scheduleRoutes from './routes/scheduleRoutes.js';
+
 
 dotenv.config();
 
@@ -27,6 +30,7 @@ app.use(cors());
 app.get('/api/health', (req, res) => {
   res.json({ status: 'OK' });
 });
+
 
 
 app.use('/api', authRoutes);

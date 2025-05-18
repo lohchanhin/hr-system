@@ -1,9 +1,11 @@
-import { Router } from 'express';
-import { listLeaves, createLeave } from '../controllers/leaveController.js';
 
-const router = Router();
+import { Router } from 'express'
+import { listLeaveRequests, createLeaveRequest } from '../controllers/leaveController.js'
 
-router.get('/', listLeaves);
-router.post('/', createLeave);
+const router = Router()
 
-export default router;
+router.get('/', listLeaveRequests)
+router.post('/', createLeaveRequest)
+
+export default router
+
