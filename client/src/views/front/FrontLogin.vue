@@ -46,14 +46,18 @@
   })
   const loginFormRef = ref(null)
   
-  function onLogin () {
-    // 1. 將角色與登入狀態儲存
-    localStorage.setItem('role', loginForm.value.role)
-    localStorage.setItem('isAuthenticated', 'true')
-    localStorage.setItem('username', loginForm.value.username)
-  
-    // 2. 依角色跳不同頁面
-    switch (loginForm.value.role) {
+async function onLogin () {
+  const res = await fetch('/api/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username: loginForm.value.username, password: loginForm.value.password })
+  })
+  if (res.ok) {
+    const data = await res.json()
+    localStorage.setItem('token', data.token)
+    localStorage.setItem('role', data.user.role)
+
+    switch (data.user.role) {
       case 'employee':
         router.push('/front/attendance')
         break
@@ -61,23 +65,19 @@
         router.push('/front/schedule')
         break
       case 'hr':
-        // 你可以讓 HR 也去 /front/schedule 或 /front/attendance
         router.push('/front/attendance')
         break
       case 'admin':
-        // 若要讓 admin 走後台，可 push('/layout')
-        // 或若要讓 admin 測試前台某頁，也可:
         router.push('/front/attendance')
         break
       default:
-        // 若角色莫名無法對應，就導回 /front/attendance
         router.push('/front/attendance')
         break
     }
-  
-    // 3. 可選: alert 提示
-    alert(`以【${loginForm.value.role}】身份登入成功！(示範)`)
+  } else {
+    alert('登入失敗')
   }
+}
   </script>
   
   <style scoped>
