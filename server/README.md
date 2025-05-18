@@ -2,6 +2,8 @@
 
 This directory contains the Express backend for the HR system.
 
+Requires Node.js 18+.
+
 ## Setup
 
 ```bash
