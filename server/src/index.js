@@ -11,6 +11,23 @@ import scheduleRoutes from './routes/scheduleRoutes.js';
 import payrollRoutes from './routes/payrollRoutes.js';
 import reportRoutes from './routes/reportRoutes.js';
 import insuranceRoutes from './routes/insuranceRoutes.js';
+import User from './models/User.js';
+
+async function seedTestUsers() {
+  const defaults = [
+    { username: 'employee', password: 'password', role: 'employee' },
+    { username: 'supervisor', password: 'password', role: 'supervisor' },
+    { username: 'admin', password: 'password', role: 'admin' }
+  ];
+  for (const data of defaults) {
+    const existing = await User.findOne({ username: data.username });
+    if (!existing) {
+      const user = new User(data);
+      await user.save();
+      console.log(`Created test user ${data.username}`);
+    }
+  }
+}
 
 dotenv.config();
 
@@ -44,8 +61,12 @@ app.use('/api/reports', authenticate, authorizeRoles('hr', 'admin'), reportRoute
 app.use('/api/insurance', authenticate, authorizeRoles('hr', 'admin'), insuranceRoutes);
 
 
-connectDB(process.env.MONGODB_URI);
+async function start() {
+  await connectDB(process.env.MONGODB_URI);
+  await seedTestUsers();
+  app.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+  });
+}
 
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-});
+start();
