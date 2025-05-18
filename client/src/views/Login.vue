@@ -37,11 +37,20 @@
   
   const loginFormRef = ref(null)
   
-  const onLogin = () => {
-    // 這邊可以加上帳密判斷邏輯
-    // 如果帳號密碼正確，則紀錄登入狀態
-    localStorage.setItem('isAuthenticated', 'true')
-    router.push({ name: 'Settings' }) // 登入後直接導向設定頁
+  const onLogin = async () => {
+    const res = await fetch('/api/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(loginForm.value)
+    })
+    if (res.ok) {
+      const data = await res.json()
+      localStorage.setItem('token', data.token)
+      localStorage.setItem('role', data.user.role)
+      router.push({ name: 'Settings' })
+    } else {
+      alert('登入失敗')
+    }
   }
   </script>
   

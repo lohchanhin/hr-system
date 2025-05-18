@@ -1,3 +1,4 @@
+
 import LeaveRequest from '../models/LeaveRequest.js'
 
 export async function listLeaveRequests (req, res) {

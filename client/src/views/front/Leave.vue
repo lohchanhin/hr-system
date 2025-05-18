@@ -47,17 +47,24 @@
       <!-- 請假紀錄範例表 -->
       <el-table :data="leaveRecords" style="margin-top: 20px;">
         <el-table-column prop="leaveType" label="假別" width="100" />
-        <el-table-column prop="dateRange" label="日期區間" width="200" />
+        <el-table-column label="開始日期" width="120">
+          <template #default="{ row }">{{ dayjs(row.startDate).format('YYYY-MM-DD') }}</template>
+        </el-table-column>
+        <el-table-column label="結束日期" width="120">
+          <template #default="{ row }">{{ dayjs(row.endDate).format('YYYY-MM-DD') }}</template>
+        </el-table-column>
         <el-table-column prop="reason" label="事由" />
       </el-table>
     </div>
   </template>
   
   <script setup>
+
   import { ref, onMounted } from 'vue'
   import dayjs from 'dayjs'
   import { ElMessage } from 'element-plus'
   import { getLeaveRequests, createLeaveRequest } from '@/api.js'
+
   
   const leaveForm = ref({
     leaveType: '',
@@ -66,6 +73,7 @@
     reason: ''
   })
   
+
   const leaveRecords = ref([])
 
   function formatRecord(rec) {
@@ -104,7 +112,11 @@
     } catch (err) {
       ElMessage.error('\u63d0\u4ea4\u5931\u6557')
     }
+
   }
+}
+
+onMounted(fetchLeaves)
   </script>
   
   <style scoped>
