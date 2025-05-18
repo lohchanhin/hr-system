@@ -13,7 +13,6 @@
   const router = useRouter()
   
   const logout = () => {
-    localStorage.removeItem('isAuthenticated')
     router.push({ name: 'Login' })
   }
   </script>
