@@ -1,57 +1,83 @@
-# HR System
+# HR 系統
 
+本專案是一套簡易的人力資源管理系統，分成前端與後端兩個獨立的 Node.js 專案：
 
-This repository contains a simple HR management system split into two main packages:
+- **`client/`** – 基於 Vite 與 Vue 3 的前端程式碼，採用 Element Plus UI 元件庫。
+- **`server/`** – 使用 Express 建立的 REST API，資料存放於 MongoDB。
 
-- **`client/`** – a Vue 3 application powered by Vite.
-- **`server/`** – an Express backend that exposes a REST API.
+前端透過 `/api` 路徑向後端發送請求，後端提供 JSON 格式的回應並處理資料庫存取。
 
-The client communicates with the server through the API endpoints under `/api`. The server persists data to MongoDB and serves JSON responses consumed by the front end.
+## 功能概述
 
-## Getting Started
+後端提供多個模組以處理常見 HR 流程，包括：
 
-Each part has its own README with full instructions. Below is a quick overview.
+- **員工管理** – 建立與查詢員工資料。
+- **出勤紀錄** – 記錄上下班、外出及休息時間。
+- **請假申請** – 申請與審核各類假別。
+- **排班管理** – 儲存與查詢班表。
+- **薪資紀錄** – 追蹤每月薪資發放。
+- **保險管理** – 管理員工保險相關資料。
+- **報表產生** – 匯出各式統計或管理報表。
+- **審核流程** – 提供申請單的審核與簽核機制。
 
-### Server
+## 專案結構
 
-1. Navigate to `server/` and install dependencies:
+```
+/
+├── client/  # Vue 3 前端
+└── server/  # Express REST API
+```
+
+兩個目錄皆為獨立的 Node.js 專案，開發前需分別安裝相依套件並啟動。
+
+## 伺服器端 (`server/`)
+
+1. 進入 `server/` 目錄安裝套件：
    ```bash
    npm install
    ```
-2. Copy `.env.example` to `.env` and set `PORT`, `MONGODB_URI` and optionally `JWT_SECRET`.
-3. Start the development server with nodemon:
-   ```bash
-  npm run dev
-  ```
-
-For more details see [`server/README.md`](server/README.md).
-
-The server seeds some default accounts on first run. See the **Server** README for the list of usernames and roles.
-
-### Client
-
-1. Navigate to `client/` and install dependencies:
-   ```bash
-   npm install
-   ```
-2. Run the Vite development server:
+2. 依照 `.env.example` 建立 `.env`，設定以下變數：
+   - `PORT` – 伺服器埠號
+   - `MONGODB_URI` – MongoDB 連線字串
+   - `JWT_SECRET` – (選填) JWT 簽章密鑰
+3. 啟動開發伺服器（使用 nodemon）：
    ```bash
    npm run dev
    ```
-3. Build for production when needed:
+4. 執行單元測試：
+   ```bash
+   npm test
+   ```
+
+首次啟動時會自動建立幾個測試帳號，預設密碼均為 `password`：
+
+| 帳號          | 角色         |
+|---------------|-------------|
+| `user`        | employee    |
+| `supervisor`  | supervisor  |
+| `hr`          | hr          |
+| `admin`       | admin       |
+
+更詳細說明請參閱 [`server/README.md`](server/README.md)。
+
+## 前端 (`client/`)
+
+1. 進入 `client/` 目錄安裝套件：
+   ```bash
+   npm install
+   ```
+2. 啟動 Vite 開發伺服器：
+   ```bash
+   npm run dev
+   ```
+3. 需要時可建立正式版：
    ```bash
    npm run build
    ```
 
-See [`client/README.md`](client/README.md) for additional notes.
+更多注意事項請見 [`client/README.md`](client/README.md)。
 
-## Project Structure
+## 開始使用
 
-```
-/
-├── client/  # Vue 3 front‑end
-└── server/  # Express REST API
-```
-
-Both directories are independent Node.js projects. Run the above setup commands in each before development. Once both are running, the Vue app will make requests to the API server to fetch and manipulate HR data.
+前後端皆啟動後，開啟瀏覽器造訪前端網址（預設 http://localhost:5173 ），即可使用提供的測試帳號登入並與後端 API 互動。
 
