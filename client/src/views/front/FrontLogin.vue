@@ -69,7 +69,7 @@ async function onLogin () {
         router.push('/front/attendance')
         break
       case 'admin':
-        router.push('/front/attendance')
+        router.push('/layout/settings')
         break
       default:
         router.push('/front/attendance')
