@@ -8,6 +8,9 @@ import authRoutes from './routes/authRoutes.js';
 import { authenticate, authorizeRoles } from './middleware/auth.js';
 import leaveRoutes from './routes/leaveRoutes.js';
 import scheduleRoutes from './routes/scheduleRoutes.js';
+import payrollRoutes from './routes/payrollRoutes.js';
+import reportRoutes from './routes/reportRoutes.js';
+import insuranceRoutes from './routes/insuranceRoutes.js';
 
 dotenv.config();
 
@@ -34,8 +37,11 @@ app.use('/api/employees', authenticate, authorizeRoles('admin', 'hr'), employeeR
 app.use('/api/attendance', authenticate, authorizeRoles('employee', 'supervisor', 'hr', 'admin'), attendanceRoutes);
 
 
-app.use('/api/leaves', leaveRoutes);
-app.use('/api/schedules', scheduleRoutes);
+app.use('/api/leaves', authenticate, authorizeRoles('employee', 'supervisor', 'hr', 'admin'), leaveRoutes);
+app.use('/api/schedules', authenticate, authorizeRoles('supervisor', 'hr', 'admin'), scheduleRoutes);
+app.use('/api/payroll', authenticate, authorizeRoles('hr', 'admin'), payrollRoutes);
+app.use('/api/reports', authenticate, authorizeRoles('hr', 'admin'), reportRoutes);
+app.use('/api/insurance', authenticate, authorizeRoles('hr', 'admin'), insuranceRoutes);
 
 
 connectDB(process.env.MONGODB_URI);

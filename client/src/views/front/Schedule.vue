@@ -33,9 +33,12 @@
 
   const schedules = ref([])
   const scheduleForm = ref({ date: '', shiftType: '' })
+  const token = localStorage.getItem('token') || ''
 
   async function fetchSchedules() {
-    const res = await fetch('/api/schedules')
+    const res = await fetch('/api/schedules', {
+      headers: { Authorization: `Bearer ${token}` }
+    })
     if (res.ok) {
       schedules.value = await res.json()
     }
@@ -49,7 +52,10 @@
     }
     const res = await fetch('/api/schedules', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`
+      },
       body: JSON.stringify(payload)
     })
     if (res.ok) {

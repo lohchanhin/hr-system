@@ -14,3 +14,33 @@ export async function createSchedule(req, res) {
     res.status(400).json({ error: err.message });
   }
 }
+
+export async function getSchedule(req, res) {
+  try {
+    const schedule = await ShiftSchedule.findById(req.params.id).populate('employee');
+    if (!schedule) return res.status(404).json({ error: 'Not found' });
+    res.json(schedule);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+}
+
+export async function updateSchedule(req, res) {
+  try {
+    const schedule = await ShiftSchedule.findByIdAndUpdate(req.params.id, req.body, { new: true });
+    if (!schedule) return res.status(404).json({ error: 'Not found' });
+    res.json(schedule);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+}
+
+export async function deleteSchedule(req, res) {
+  try {
+    const schedule = await ShiftSchedule.findByIdAndDelete(req.params.id);
+    if (!schedule) return res.status(404).json({ error: 'Not found' });
+    res.json({ success: true });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+}
