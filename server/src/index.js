@@ -3,6 +3,10 @@ import dotenv from 'dotenv';
 import { connectDB } from './config/db.js';
 import employeeRoutes from './routes/employeeRoutes.js';
 import attendanceRoutes from './routes/attendanceRoutes.js';
+import leaveRoutes from './routes/leaveRoutes.js';
+import scheduleRoutes from './routes/scheduleRoutes.js';
+import swaggerUi from 'swagger-ui-express';
+import swaggerDocument from './swagger.js';
 
 dotenv.config();
 
@@ -17,6 +21,9 @@ app.get('/api/health', (req, res) => {
 
 app.use('/api/employees', employeeRoutes);
 app.use('/api/attendance', attendanceRoutes);
+app.use('/api/leaves', leaveRoutes);
+app.use('/api/schedules', scheduleRoutes);
+app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerDocument));
 
 connectDB(process.env.MONGODB_URI || 'mongodb://localhost/hr');
 

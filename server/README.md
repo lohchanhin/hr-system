@@ -17,3 +17,11 @@ npm run dev
 ```
 
 This starts the server with nodemon enabled.
+
+## API Documentation
+
+After starting the server, Swagger UI is available at:
+
+```
+http://localhost:3000/api-docs
+```
