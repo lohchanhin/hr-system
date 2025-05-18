@@ -11,9 +11,10 @@ describe('FrontLogin.vue', () => {
     localStorage.clear()
   })
 
-  it('stores role on login', async () => {
+  it('stores role and employeeId on login', async () => {
     const wrapper = mount(FrontLogin)
     await wrapper.find('button').trigger('click')
     expect(localStorage.getItem('role')).toBe('employee')
+    expect(localStorage.getItem('employeeId')).toBeDefined()
   })
 })

@@ -47,6 +47,7 @@
       const data = await res.json()
       localStorage.setItem('token', data.token)
       localStorage.setItem('role', data.user.role)
+      localStorage.setItem('employeeId', data.user.id)
       router.push({ name: 'Settings' })
     } else {
       alert('登入失敗')
