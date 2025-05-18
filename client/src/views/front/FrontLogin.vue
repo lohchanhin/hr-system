@@ -56,6 +56,7 @@ async function onLogin () {
     const data = await res.json()
     localStorage.setItem('token', data.token)
     localStorage.setItem('role', data.user.role)
+    localStorage.setItem('employeeId', data.user.id)
 
     switch (data.user.role) {
       case 'employee':
