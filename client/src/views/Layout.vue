@@ -3,66 +3,14 @@
   <div class="layout-container">
     <el-aside width="200px" class="sidebar">
       <el-menu default-active="Settings" class="el-menu-vertical-demo">
-        <!-- 已有三個 -->
         <el-menu-item
-          index="AttendanceSetting"
-          @click="gotoPage('AttendanceSetting')"
+          v-for="item in menuItems"
+          :key="item.name"
+          :index="item.name"
+          @click="gotoPage(item.name)"
         >
-          <i class="el-icon-postcard"></i>
-          <span>出勤設定</span>
-        </el-menu-item>
-        <el-menu-item
-          index="AttendanceManagementSetting"
-          @click="gotoPage('AttendanceManagementSetting')"
-        >
-          <i class="el-icon-folder-opened"></i>
-          <span>考勤管理設定</span>
-        </el-menu-item>
-        <el-menu-item
-          index="LeaveOvertimeSetting"
-          @click="gotoPage('LeaveOvertimeSetting')"
-        >
-          <i class="el-icon-date"></i>
-          <span>請假與加班設定</span>
-        </el-menu-item>
-
-        <!-- ★ 第四模組: 排班管理設定 -->
-        <el-menu-item
-          index="ShiftScheduleSetting"
-          @click="gotoPage('ShiftScheduleSetting')"
-        >
-          <i class="el-icon-timer"></i>
-          <span>排班管理設定</span>
-        </el-menu-item>
-
-        <!-- ★ 第五模組: 簽核流程設定 -->
-        <el-menu-item index="ApprovalFlowSetting" @click="gotoPage('ApprovalFlowSetting')">
-          <i class="el-icon-s-operation"></i>
-          <span>簽核流程設定</span>
-        </el-menu-item>
-
-        <!-- ★ 第六模組: 報表管理設定 -->
-        <el-menu-item index="ReportManagementSetting" @click="gotoPage('ReportManagementSetting')">
-          <i class="el-icon-document-copy"></i>
-          <span>報表管理設定</span>
-        </el-menu-item>
-
-        <!-- ★ 第七模組: 薪資管理設定 -->
-        <el-menu-item index="SalaryManagementSetting" @click="gotoPage('SalaryManagementSetting')">
-          <i class="el-icon-coin"></i>
-          <span>薪資管理設定</span>
-        </el-menu-item>
-
-        <!-- ★ 第8模組: 勞健保、勞退管理設定 -->
-        <el-menu-item index="SocialInsuranceRetirementSetting" @click="gotoPage('SocialInsuranceRetirementSetting')">
-          <i class="el-icon-s-check"></i>
-          <span>勞健保 / 勞退設定</span>
-        </el-menu-item>
-
-        <!-- ★ 第9模組: 人事管理與系統設定 -->
-        <el-menu-item index="HRManagementSystemSetting" @click="gotoPage('HRManagementSystemSetting')">
-          <i class="el-icon-user-solid"></i>
-          <span>人事管理與系統設定</span>
+          <i :class="item.icon"></i>
+          <span>{{ item.label }}</span>
         </el-menu-item>
       </el-menu>
     </el-aside>
@@ -79,6 +27,18 @@ const router = useRouter();
 const gotoPage = (name) => {
   router.push({ name });
 };
+
+const menuItems = [
+  { name: 'AttendanceSetting', label: '出勤設定', icon: 'el-icon-postcard' },
+  { name: 'AttendanceManagementSetting', label: '考勤管理設定', icon: 'el-icon-folder-opened' },
+  { name: 'LeaveOvertimeSetting', label: '請假與加班設定', icon: 'el-icon-date' },
+  { name: 'ShiftScheduleSetting', label: '排班管理設定', icon: 'el-icon-timer' },
+  { name: 'ApprovalFlowSetting', label: '簽核流程設定', icon: 'el-icon-s-operation' },
+  { name: 'ReportManagementSetting', label: '報表管理設定', icon: 'el-icon-document-copy' },
+  { name: 'SalaryManagementSetting', label: '薪資管理設定', icon: 'el-icon-coin' },
+  { name: 'SocialInsuranceRetirementSetting', label: '勞健保 / 勞退設定', icon: 'el-icon-s-check' },
+  { name: 'HRManagementSystemSetting', label: '人事管理與系統設定', icon: 'el-icon-user-solid' },
+];
 </script>
 
 <style scoped>

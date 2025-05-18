@@ -1,26 +1,26 @@
 import { createRouter, createWebHistory } from 'vue-router'
 
 // ★ 既有的後台檔案
-import Login from '@/views/Login.vue'
-import Layout from '@/views/Layout.vue'
-import Settings from '@/views/Settings.vue'
-import AttendanceSetting from '@/components/backComponents/AttendanceSetting.vue'
-import AttendanceManagementSetting from '@/components/backComponents/AttendanceManagementSetting.vue'
-import LeaveOvertimeSetting from '@/components/backComponents/LeaveOvertimeSetting.vue'
-import ShiftScheduleSetting from '@/components/backComponents/ShiftScheduleSetting.vue'
-import ApprovalFlowSetting from '@/components/backComponents/ApprovalFlowSetting.vue'
-import ReportManagementSetting from '@/components/backComponents/ReportManagementSetting.vue'
-import SalaryManagementSetting from '@/components/backComponents/SalaryManagementSetting.vue'
-import SocialInsuranceRetirementSetting from '@/components/backComponents/SocialInsuranceRetirementSetting.vue'
-import HRManagementSystemSetting from '@/components/backComponents/HRManagementSystemSetting.vue'
+const Login = () => import('@/views/Login.vue')
+const Layout = () => import('@/views/Layout.vue')
+const Settings = () => import('@/views/Settings.vue')
+const AttendanceSetting = () => import('@/components/backComponents/AttendanceSetting.vue')
+const AttendanceManagementSetting = () => import('@/components/backComponents/AttendanceManagementSetting.vue')
+const LeaveOvertimeSetting = () => import('@/components/backComponents/LeaveOvertimeSetting.vue')
+const ShiftScheduleSetting = () => import('@/components/backComponents/ShiftScheduleSetting.vue')
+const ApprovalFlowSetting = () => import('@/components/backComponents/ApprovalFlowSetting.vue')
+const ReportManagementSetting = () => import('@/components/backComponents/ReportManagementSetting.vue')
+const SalaryManagementSetting = () => import('@/components/backComponents/SalaryManagementSetting.vue')
+const SocialInsuranceRetirementSetting = () => import('@/components/backComponents/SocialInsuranceRetirementSetting.vue')
+const HRManagementSystemSetting = () => import('@/components/backComponents/HRManagementSystemSetting.vue')
 
 // ★ 新增的前台檔案 (先確定檔案路徑無大小寫差異)
-import FrontLogin from '@/views/front/FrontLogin.vue'
-import FrontLayout from '@/views/front/FrontLayout.vue'
-import Schedule from '@/views/front/Schedule.vue'
-import Attendance from '@/views/front/Attendance.vue'
-import Leave from '@/views/front/Leave.vue'
-import Approval from '@/views/front/Approval.vue'
+const FrontLogin = () => import('@/views/front/FrontLogin.vue')
+const FrontLayout = () => import('@/views/front/FrontLayout.vue')
+const Schedule = () => import('@/views/front/Schedule.vue')
+const Attendance = () => import('@/views/front/Attendance.vue')
+const Leave = () => import('@/views/front/Leave.vue')
+const Approval = () => import('@/views/front/Approval.vue')
 
 const routes = [
   // ========== 後台路由區段 (既有) ==========
