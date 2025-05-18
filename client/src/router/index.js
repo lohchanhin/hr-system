@@ -14,6 +14,10 @@ const SalaryManagementSetting = () => import('@/components/backComponents/Salary
 const SocialInsuranceRetirementSetting = () => import('@/components/backComponents/SocialInsuranceRetirementSetting.vue')
 const HRManagementSystemSetting = () => import('@/components/backComponents/HRManagementSystemSetting.vue')
 
+// ★ 錯誤頁面
+const Forbidden = () => import('@/views/Forbidden.vue')
+const NotFound = () => import('@/views/NotFound.vue')
+
 // ★ 新增的前台檔案 (先確定檔案路徑無大小寫差異)
 const FrontLogin = () => import('@/views/front/FrontLogin.vue')
 const FrontLayout = () => import('@/views/front/FrontLayout.vue')
@@ -94,8 +98,9 @@ const routes = [
     ]
   },
 
-  // (可選) 404 頁面 or 其他
-  // { path: '/:pathMatch(.*)*', name: 'NotFound', component: NotFoundView }
+  // 錯誤頁面
+  { path: '/403', name: 'Forbidden', component: Forbidden },
+  { path: '/:pathMatch(.*)*', name: 'NotFound', component: NotFound }
 ]
 
 const router = createRouter({
@@ -125,7 +130,7 @@ router.beforeEach((to, from, next) => {
   if (to.meta.roles) {
     const userRole = localStorage.getItem('role') || 'employee'
     if (!to.meta.roles.includes(userRole)) {
-      return next('/403')
+      return next({ name: 'Forbidden' })
     }
   }
 
