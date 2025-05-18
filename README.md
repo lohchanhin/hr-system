@@ -6,6 +6,8 @@ This repository contains a simple HR management system split into two main packa
 - **`client/`** – a Vue 3 application powered by Vite.
 - **`server/`** – an Express backend that exposes a REST API.
 
+Requires Node.js 18+.
+
 The client communicates with the server through the API endpoints under `/api`. The server persists data to MongoDB and serves JSON responses consumed by the front end.
 
 ## Getting Started
