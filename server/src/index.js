@@ -4,6 +4,8 @@ import cors from 'cors';
 import { connectDB } from './config/db.js';
 import employeeRoutes from './routes/employeeRoutes.js';
 import attendanceRoutes from './routes/attendanceRoutes.js';
+import authRoutes from './routes/authRoutes.js';
+import { authenticate, authorizeRoles } from './middleware/auth.js';
 import leaveRoutes from './routes/leaveRoutes.js';
 import scheduleRoutes from './routes/scheduleRoutes.js';
 
@@ -26,10 +28,15 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'OK' });
 });
 
-app.use('/api/employees', employeeRoutes);
-app.use('/api/attendance', attendanceRoutes);
+
+app.use('/api', authRoutes);
+app.use('/api/employees', authenticate, authorizeRoles('admin', 'hr'), employeeRoutes);
+app.use('/api/attendance', authenticate, authorizeRoles('employee', 'supervisor', 'hr', 'admin'), attendanceRoutes);
+
+
 app.use('/api/leaves', leaveRoutes);
 app.use('/api/schedules', scheduleRoutes);
+
 
 connectDB(process.env.MONGODB_URI);
 

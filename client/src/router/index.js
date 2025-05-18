@@ -107,17 +107,16 @@ const router = createRouter({
 router.beforeEach((to, from, next) => {
   // 簡易示範: 後台 requiresAuth
   if (to.meta.requiresAuth) {
-    const isAuthenticated = localStorage.getItem('isAuthenticated') === 'true'
-    if (!isAuthenticated) {
+    const token = localStorage.getItem('token')
+    if (!token) {
       return next({ name: 'Login' })
     }
   }
 
   // 若要檢查前台也需登入
   if (to.meta.frontRequiresAuth) {
-    // 例如: 檢查 localStorage 是否有 role
-    const frontRole = localStorage.getItem('role')
-    if (!frontRole) {
+    const token = localStorage.getItem('token')
+    if (!token) {
       return next({ name: 'FrontLogin' })
     }
   }
@@ -125,9 +124,7 @@ router.beforeEach((to, from, next) => {
   // 若有角色限制 meta.roles
   if (to.meta.roles) {
     const userRole = localStorage.getItem('role') || 'employee'
-    // 若不包含於 roles array，就跳 403 or 其他處理
     if (!to.meta.roles.includes(userRole)) {
-      // 這裡可 next('/403') 或者 next('/front/attendance') etc.
       return next('/403')
     }
   }
