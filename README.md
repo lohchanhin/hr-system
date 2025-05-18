@@ -21,10 +21,12 @@ Each part has its own README with full instructions. Below is a quick overview.
 2. Copy `.env.example` to `.env` and set `PORT`, `MONGODB_URI` and optionally `JWT_SECRET`.
 3. Start the development server with nodemon:
    ```bash
-   npm run dev
-   ```
+  npm run dev
+  ```
 
 For more details see [`server/README.md`](server/README.md).
+
+The server seeds some default accounts on first run. See the **Server** README for the list of usernames and roles.
 
 ### Client
 

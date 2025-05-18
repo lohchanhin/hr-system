@@ -35,3 +35,14 @@ You can create a script under `scripts/seed.js` to insert initial users or refer
 ```bash
 node scripts/seed.js
 ```
+
+When running in development, the server automatically seeds a few test users if they do not already exist:
+
+| Username    | Role       |
+|-------------|-----------|
+| `user`      | employee  |
+| `supervisor`| supervisor|
+| `hr`        | hr        |
+| `admin`     | admin     |
+
+All test accounts use the password `password`.
