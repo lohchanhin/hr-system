@@ -1,21 +1,55 @@
 # HR System
 
-This repository contains a simple HR management application.
-It is split into two parts:
 
-- **client** – Vue.js front-end
-- **server** – Express back-end
+This repository contains a simple HR management system split into two main packages:
 
-## Server Overview
+- **`client/`** – a Vue 3 application powered by Vite.
+- **`server/`** – an Express backend that exposes a REST API.
 
-The server now requires two environment variables at startup:
-`PORT` and `MONGODB_URI`. If either is missing, the application
-prints an error and exits. Cross-Origin Resource Sharing (CORS)
-is enabled by default via the [`cors`](https://www.npmjs.com/package/cors) package.
+The client communicates with the server through the API endpoints under `/api`. The server persists data to MongoDB and serves JSON responses consumed by the front end.
 
-See [server/README.md](server/README.md) for detailed setup instructions.
+## Getting Started
 
-## Client Overview
+Each part has its own README with full instructions. Below is a quick overview.
 
-The client is a standard Vite project. See
-[client/README.md](client/README.md) for commands and usage.
+### Server
+
+1. Navigate to `server/` and install dependencies:
+   ```bash
+   npm install
+   ```
+2. Copy `.env.example` to `.env` and adjust the `PORT` and `MONGODB_URI` values.
+3. Start the development server with nodemon:
+   ```bash
+   npm run dev
+   ```
+
+For more details see [`server/README.md`](server/README.md).
+
+### Client
+
+1. Navigate to `client/` and install dependencies:
+   ```bash
+   npm install
+   ```
+2. Run the Vite development server:
+   ```bash
+   npm run dev
+   ```
+3. Build for production when needed:
+   ```bash
+   npm run build
+   ```
+
+See [`client/README.md`](client/README.md) for additional notes.
+
+## Project Structure
+
+```
+/
+├── client/  # Vue 3 front‑end
+└── server/  # Express REST API
+```
+
+Both directories are independent Node.js projects. Run the above setup commands in each before development. Once both are running, the Vue app will make requests to the API server to fetch and manipulate HR data.
+
