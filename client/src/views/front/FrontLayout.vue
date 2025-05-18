@@ -80,7 +80,6 @@ function gotoPage(pageName) {
 // 登出
 function onLogout() {
   localStorage.removeItem("role");
-  localStorage.removeItem("isAuthenticated");
   localStorage.removeItem("username");
   localStorage.removeItem("token");
   // 回到前台登入

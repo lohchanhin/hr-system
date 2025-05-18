@@ -16,6 +16,7 @@ describe('FrontLogin.vue', () => {
     vi.restoreAllMocks()
   })
 
+
   it('stores role on login', async () => {
     fetch.mockResolvedValueOnce({
       ok: true,
@@ -24,6 +25,7 @@ describe('FrontLogin.vue', () => {
     const wrapper = mount(FrontLogin)
     await wrapper.find('button').trigger('click')
     expect(localStorage.getItem('role')).toBe('employee')
+    expect(localStorage.getItem('employeeId')).toBeDefined()
   })
 
   it('stores HR role when API returns hr', async () => {
