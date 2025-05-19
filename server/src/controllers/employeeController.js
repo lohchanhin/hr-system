@@ -20,6 +20,7 @@ export async function createEmployee(req, res) {
   }
 }
 
+
 export async function getEmployee(req, res) {
   try {
     const employee = await Employee.findById(req.params.id);
@@ -35,6 +36,7 @@ export async function updateEmployee(req, res) {
     const employee = await Employee.findByIdAndUpdate(req.params.id, req.body, {
       new: true
     });
+
 
     if (!employee) return res.status(404).json({ error: 'Not found' });
     res.json(employee);

@@ -57,11 +57,13 @@ describe('Employee API', () => {
   });
 
   it('updates employee', async () => {
-    Employee.findByIdAndUpdate.mockResolvedValue({ _id: '1', name: 'Jane' });
-    const res = await request(app).put('/api/employees/1').send({ name: 'Jane' });
+    Employee.findByIdAndUpdate.mockResolvedValue({ _id: '1', name: 'Updated' });
+    const res = await request(app)
+      .put('/api/employees/1')
+      .send({ name: 'Updated' });
     expect(res.status).toBe(200);
-
     expect(Employee.findByIdAndUpdate).toHaveBeenCalled();
+    expect(res.body).toMatchObject({ _id: '1', name: 'Updated' });
 
   });
 
@@ -70,5 +72,6 @@ describe('Employee API', () => {
     const res = await request(app).delete('/api/employees/1');
     expect(res.status).toBe(200);
     expect(Employee.findByIdAndDelete).toHaveBeenCalledWith('1');
+    expect(res.body).toEqual({ success: true });
   });
 });
