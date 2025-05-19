@@ -22,9 +22,9 @@
           </el-table>
   
           <!-- 新增/編輯 假別 Dialog -->
-          <el-dialog 
-            title="假別資料" 
-            :visible.sync="leaveDialogVisible"
+          <el-dialog
+            title="假別資料"
+            v-model="leaveDialogVisible"
             width="500px"
           >
             <el-form :model="leaveForm" label-width="120px">
@@ -74,7 +74,7 @@
           <!-- 新增/編輯 加班類型 Dialog -->
           <el-dialog
             title="加班類型資料"
-            :visible.sync="overtimeDialogVisible"
+            v-model="overtimeDialogVisible"
             width="500px"
           >
             <el-form :model="overtimeForm" label-width="120px">

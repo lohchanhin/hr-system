@@ -22,7 +22,7 @@
             </el-table>
   
             <!-- 新增/編輯使用者帳號 Dialog -->
-            <el-dialog :visible.sync="userDialogVisible" title="帳號管理" width="500px">
+            <el-dialog v-model="userDialogVisible" title="帳號管理" width="500px">
               <el-form :model="userForm" label-width="100px">
                 <el-form-item label="帳號">
                   <el-input v-model="userForm.username" placeholder="輸入帳號" />
@@ -102,7 +102,7 @@
             </el-table>
   
             <!-- 新增/編輯員工 Dialog -->
-            <el-dialog :visible.sync="employeeDialogVisible" title="員工資料" width="500px">
+            <el-dialog v-model="employeeDialogVisible" title="員工資料" width="500px">
               <el-form :model="employeeForm" label-width="100px">
                 <el-form-item label="姓名">
                   <el-input v-model="employeeForm.name" />
@@ -152,7 +152,7 @@
             </el-table>
   
             <!-- 新增/編輯 部門/單位 Dialog -->
-            <el-dialog :visible.sync="deptDialogVisible" title="部門管理" width="400px">
+            <el-dialog v-model="deptDialogVisible" title="部門管理" width="400px">
               <el-form :model="deptForm" label-width="100px">
                 <el-form-item label="名稱">
                   <el-input v-model="deptForm.label" />
