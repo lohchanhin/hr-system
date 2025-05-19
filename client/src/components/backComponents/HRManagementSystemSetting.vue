@@ -173,7 +173,7 @@
   </template>
   
   <script setup>
-  import { ref } from 'vue'
+  import { ref, onMounted } from 'vue'
   
   const activeTab = ref('accountRole')
   
@@ -246,10 +246,16 @@
   }
   
   // ============== (3) 員工資料與異動管理 ==============
-  const employeeList = ref([
-    { name: '王小明', department: 'DEP003', title: '業務專員', status: '在職' },
-    { name: '林美麗', department: 'DEP001', title: '人事助理', status: '在職' }
-  ])
+  const employeeList = ref([])
+
+  async function loadEmployees() {
+    const res = await fetch('/api/employees')
+    if (res.ok) {
+      employeeList.value = await res.json()
+    }
+  }
+
+  onMounted(loadEmployees)
   
   const employeeDialogVisible = ref(false)
   let editEmployeeIndex = null
@@ -271,18 +277,33 @@
     }
     employeeDialogVisible.value = true
   }
-  
-  function saveEmployee() {
+
+  async function saveEmployee() {
+    const payload = { ...employeeForm.value }
     if (editEmployeeIndex === null) {
-      employeeList.value.push({ ...employeeForm.value })
+      await fetch('/api/employees', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      })
     } else {
-      employeeList.value[editEmployeeIndex] = { ...employeeForm.value }
+      const id = employeeList.value[editEmployeeIndex]._id
+      await fetch(`/api/employees/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      })
     }
     employeeDialogVisible.value = false
+    editEmployeeIndex = null
+    await loadEmployees()
   }
-  
-  function deleteEmployee(index) {
-    employeeList.value.splice(index, 1)
+
+  async function deleteEmployee(index) {
+    const id = employeeList.value[index]._id
+    await fetch(`/api/employees/${id}`, { method: 'DELETE' })
+    editEmployeeIndex = null
+    await loadEmployees()
   }
   
   // ============== (4) 組織單位/部門管理 ==============
