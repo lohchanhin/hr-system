@@ -2,6 +2,7 @@ import request from 'supertest';
 import express from 'express';
 import { jest } from '@jest/globals';
 
+
 const AttendanceSetting = {
   findOne: jest.fn(),
   findOneAndUpdate: jest.fn()
@@ -39,5 +40,6 @@ describe('AttendanceSetting API', () => {
     const res = await request(app).put('/api/attendance-settings').send(payload);
     expect(res.status).toBe(200);
     expect(AttendanceSetting.findOneAndUpdate).toHaveBeenCalledWith({}, payload, { new: true, upsert: true });
+
   });
 });

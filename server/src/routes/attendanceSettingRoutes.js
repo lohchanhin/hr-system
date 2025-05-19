@@ -1,9 +1,19 @@
 import { Router } from 'express';
-import { getSettings, updateSettings } from '../controllers/attendanceSettingController.js';
+
+import {
+  listSettings,
+  createSetting,
+  getSetting,
+  updateSetting,
+  deleteSetting
+} from '../controllers/attendanceSettingController.js';
 
 const router = Router();
 
-router.get('/', getSettings);
-router.put('/', updateSettings);
+router.get('/', listSettings);
+router.post('/', createSetting);
+router.get('/:id', getSetting);
+router.put('/:id', updateSetting);
+router.delete('/:id', deleteSetting);
 
 export default router;
