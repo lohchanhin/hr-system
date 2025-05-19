@@ -59,9 +59,6 @@ async function onLogin () {
     const data = await res.json()
     localStorage.setItem('token', data.token)
     localStorage.setItem('role', data.user.role)
-
-    // Store the employee ID provided by the API response
-
     localStorage.setItem('employeeId', data.user.employeeId)
     await menuStore.fetchMenu()
 
