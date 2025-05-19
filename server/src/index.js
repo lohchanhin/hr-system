@@ -42,7 +42,7 @@ async function seedTestUsers() {
 
 dotenv.config();
 
-const requiredEnv = ['PORT', 'MONGODB_URI'];
+const requiredEnv = ['PORT', 'MONGODB_URI', 'JWT_SECRET'];
 const missing = requiredEnv.filter((name) => !process.env[name]);
 if (missing.length) {
   console.error(`Missing required environment variables: ${missing.join(', ')}`);

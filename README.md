@@ -39,7 +39,7 @@
 2. 依照 `.env.example` 建立 `.env`，設定以下變數：
    - `PORT` – 伺服器埠號
    - `MONGODB_URI` – MongoDB 連線字串
-   - `JWT_SECRET` – (選填) JWT 簽章密鑰
+   - `JWT_SECRET` – (必填) JWT 簽章密鑰
 3. 啟動開發伺服器（使用 nodemon）：
    ```bash
    npm run dev
