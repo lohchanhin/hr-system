@@ -73,7 +73,6 @@ app.use('/api/insurance', authenticate, authorizeRoles('hr', 'admin'), insurance
 app.use('/api/approvals', authenticate, authorizeRoles('supervisor', 'hr', 'admin'), approvalRoutes);
 
 app.use('/api/salary-settings', authenticate, authorizeRoles('hr', 'admin'), salarySettingRoutes);
-app.use('/api/attendance-settings', authenticate, authorizeRoles('hr', 'admin'), attendanceSettingRoutes);
 
 
 
