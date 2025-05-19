@@ -9,7 +9,8 @@ const userSchema = new mongoose.Schema({
     enum: ['employee', 'supervisor', 'hr', 'admin'],
     default: 'employee'
   },
-  employee: { type: mongoose.Schema.Types.ObjectId, ref: 'Employee' }
+  employee: { type: mongoose.Schema.Types.ObjectId, ref: 'Employee' },
+  department: String
 }, { timestamps: true });
 
 userSchema.pre('save', async function(next) {

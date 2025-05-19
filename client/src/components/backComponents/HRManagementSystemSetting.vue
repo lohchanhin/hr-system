@@ -177,14 +177,10 @@
 
   import { apiFetch } from '../../api'
 
-  const activeTab = ref('accountRole')
-  
-  // ============== (1) 帳號與權限 ==============
-  const userList = ref([
-    { username: 'admin001', role: 'admin', department: 'DEP001' },
-    { username: 'hr01', role: 'hr', department: 'DEP002' },
-    { username: 'sup01', role: 'supervisor', department: 'DEP003' }
-  ])
+const activeTab = ref('accountRole')
+
+// ============== (1) 帳號與權限 ==============
+const userList = ref([])
   
   const userDialogVisible = ref(false)
   let editUserIndex = null
@@ -196,12 +192,27 @@
     department: ''
   })
   
-  // 假的部門下拉選單
-  const departmentList = ref([
-    { label: '人事部', value: 'DEP001' },
-    { label: '財務部', value: 'DEP002' },
-    { label: '業務部', value: 'DEP003' }
-  ])
+const departmentList = ref([])
+
+async function fetchUsers() {
+  const token = localStorage.getItem('token') || ''
+  const res = await apiFetch('/api/users', {
+    headers: { Authorization: `Bearer ${token}` }
+  })
+  if (res.ok) {
+    userList.value = await res.json()
+  }
+}
+
+async function fetchDepartments() {
+  const token = localStorage.getItem('token') || ''
+  const res = await apiFetch('/api/departments', {
+    headers: { Authorization: `Bearer ${token}` }
+  })
+  if (res.ok) {
+    departmentList.value = await res.json()
+  }
+}
   
   function openUserDialog(index = null) {
     if (index !== null) {
@@ -214,23 +225,41 @@
     userDialogVisible.value = true
   }
   
-  function saveUser() {
+  async function saveUser() {
+    const payload = { ...userForm.value }
+    const token = localStorage.getItem('token') || ''
+    let res
     if (editUserIndex === null) {
-      userList.value.push({ ...userForm.value })
+      res = await apiFetch('/api/users', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify(payload)
+      })
     } else {
-      // 若 password 為空就不更新原密碼 (示範)
-      const original = userList.value[editUserIndex]
-      userList.value[editUserIndex] = {
-        ...original,
-        ...userForm.value,
-        password: userForm.value.password ? userForm.value.password : original.password
-      }
+      const id = userList.value[editUserIndex]._id
+      res = await apiFetch(`/api/users/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify(payload)
+      })
     }
-    userDialogVisible.value = false
+    if (res && res.ok) {
+      await fetchUsers()
+      userDialogVisible.value = false
+    }
   }
-  
+
   function deleteUser(index) {
-    userList.value.splice(index, 1)
+    const token = localStorage.getItem('token') || ''
+    const id = userList.value[index]._id
+    apiFetch(`/api/users/${id}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${token}` }
+    }).then(res => {
+      if (res.ok) {
+        userList.value.splice(index, 1)
+      }
+    })
   }
   
   // ============== (2) 系統與機構基本資料 ==============
@@ -263,7 +292,11 @@
 
 
 
-  onMounted(fetchEmployees)
+  onMounted(() => {
+    fetchUsers()
+    fetchDepartments()
+    fetchEmployees()
+  })
 
   const employeeDialogVisible = ref(false)
   let editEmployeeIndex = null
@@ -351,17 +384,40 @@
     deptDialogVisible.value = true
   }
   
-  function saveDept() {
+  async function saveDept() {
+    const token = localStorage.getItem('token') || ''
+    let res
     if (editDeptIndex === null) {
-      departmentList.value.push({ ...deptForm.value })
+      res = await apiFetch('/api/departments', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify(deptForm.value)
+      })
     } else {
-      departmentList.value[editDeptIndex] = { ...deptForm.value }
+      const id = departmentList.value[editDeptIndex]._id
+      res = await apiFetch(`/api/departments/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify(deptForm.value)
+      })
     }
-    deptDialogVisible.value = false
+    if (res && res.ok) {
+      await fetchDepartments()
+      deptDialogVisible.value = false
+    }
   }
-  
+
   function deleteDept(index) {
-    departmentList.value.splice(index, 1)
+    const token = localStorage.getItem('token') || ''
+    const id = departmentList.value[index]._id
+    apiFetch(`/api/departments/${id}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${token}` }
+    }).then(res => {
+      if (res.ok) {
+        departmentList.value.splice(index, 1)
+      }
+    })
   }
   </script>
   
