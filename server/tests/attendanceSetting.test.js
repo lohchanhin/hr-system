@@ -2,42 +2,44 @@ import request from 'supertest';
 import express from 'express';
 import { jest } from '@jest/globals';
 
-const saveMock = jest.fn();
-const AttendanceManagementSetting = jest.fn().mockImplementation(() => ({ save: saveMock }));
-AttendanceManagementSetting.find = jest.fn();
 
-jest.mock('../src/models/AttendanceManagementSetting.js', () => ({ default: AttendanceManagementSetting }), { virtual: true });
+const AttendanceSetting = {
+  findOne: jest.fn(),
+  findOneAndUpdate: jest.fn()
+};
+
+jest.mock('../src/models/AttendanceSetting.js', () => ({ default: AttendanceSetting }), { virtual: true });
 
 let app;
-let routes;
+let settingRoutes;
 
 beforeAll(async () => {
-  routes = (await import('../src/routes/attendanceSettingRoutes.js')).default;
+  settingRoutes = (await import('../src/routes/attendanceSettingRoutes.js')).default;
   app = express();
   app.use(express.json());
-  app.use('/api/attendance-settings', routes);
+  app.use('/api/attendance-settings', settingRoutes);
 });
 
 beforeEach(() => {
-  saveMock.mockReset();
-  AttendanceManagementSetting.find.mockReset();
+  AttendanceSetting.findOne.mockReset();
+  AttendanceSetting.findOneAndUpdate.mockReset();
 });
 
-describe('AttendanceManagementSetting API', () => {
-  it('lists settings', async () => {
-    const fake = [{ enableImport: true }];
-    AttendanceManagementSetting.find.mockResolvedValue(fake);
+describe('AttendanceSetting API', () => {
+  it('gets settings', async () => {
+    const data = { shifts: [] };
+    AttendanceSetting.findOne.mockResolvedValue(data);
     const res = await request(app).get('/api/attendance-settings');
     expect(res.status).toBe(200);
-    expect(res.body).toEqual(fake);
+    expect(res.body).toEqual(data);
   });
 
-  it('creates setting', async () => {
-    const payload = { enableImport: true };
-    saveMock.mockResolvedValue();
-    const res = await request(app).post('/api/attendance-settings').send(payload);
-    expect(res.status).toBe(201);
-    expect(saveMock).toHaveBeenCalled();
-    expect(res.body).toMatchObject(payload);
+  it('updates settings', async () => {
+    const payload = { shifts: [] };
+    AttendanceSetting.findOneAndUpdate.mockResolvedValue(payload);
+    const res = await request(app).put('/api/attendance-settings').send(payload);
+    expect(res.status).toBe(200);
+    expect(AttendanceSetting.findOneAndUpdate).toHaveBeenCalledWith({}, payload, { new: true, upsert: true });
+
   });
 });

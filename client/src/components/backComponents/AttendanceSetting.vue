@@ -123,7 +123,39 @@
   </template>
   
   <script setup>
-  import { ref } from 'vue'
+  import { ref, onMounted } from 'vue'
+
+  const token = localStorage.getItem('token') || ''
+
+  async function loadSettings() {
+    const res = await fetch('/api/attendance-settings', {
+      headers: { Authorization: `Bearer ${token}` }
+    })
+    if (res.ok) {
+      const data = await res.json()
+      if (data.shifts) shiftList.value = data.shifts
+      if (data.abnormalRules) abnormalForm.value = { ...abnormalForm.value, ...data.abnormalRules }
+      if (data.breakOutRules) breakOutForm.value = { ...breakOutForm.value, ...data.breakOutRules }
+      if (data.overtimeRules) overtimeForm.value = { ...overtimeForm.value, ...data.overtimeRules }
+    }
+  }
+
+  async function saveSettings() {
+    const payload = {
+      shifts: shiftList.value,
+      abnormalRules: abnormalForm.value,
+      breakOutRules: breakOutForm.value,
+      overtimeRules: overtimeForm.value
+    }
+    await fetch('/api/attendance-settings', {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`
+      },
+      body: JSON.stringify(payload)
+    })
+  }
   
   const activeTab = ref('shift')
   
@@ -167,10 +199,12 @@
       shiftList.value[editIndex] = { ...shiftForm.value }
     }
     shiftDialogVisible.value = false
+    saveSettings()
   }
   
   const deleteShift = (index) => {
     shiftList.value.splice(index, 1)
+    saveSettings()
   }
   
   // ================ 異常判定規則 ================
@@ -181,9 +215,8 @@
     autoNotify: true         // 是否自動通知
   })
   
-  const saveAbnormalRules = () => {
-    // 這裡可以呼叫後端 API
-    console.log('儲存異常規則', abnormalForm.value)
+  const saveAbnormalRules = async () => {
+    await saveSettings()
     alert('已儲存「異常判定規則」設定')
   }
   
@@ -194,8 +227,8 @@
     outingNeedApprove: false  // 外出登記是否需要主管審核
   })
   
-  const saveBreakOutSetting = () => {
-    console.log('儲存分段打卡/外出設定', breakOutForm.value)
+  const saveBreakOutSetting = async () => {
+    await saveSettings()
     alert('已儲存「分段打卡/外出」設定')
   }
   
@@ -206,10 +239,12 @@
     toCompRate: 1.5       // 轉補休時的折算比率
   })
   
-  const saveOvertimeRules = () => {
-    console.log('儲存加班規則', overtimeForm.value)
+  const saveOvertimeRules = async () => {
+    await saveSettings()
     alert('已儲存「加班規則」設定')
   }
+
+  onMounted(loadSettings)
   </script>
   
   <style scoped>
