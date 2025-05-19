@@ -51,7 +51,8 @@ const menuStore = useMenuStore()
       const data = await res.json()
       localStorage.setItem('token', data.token)
       localStorage.setItem('role', data.user.role)
-      localStorage.setItem('employeeId', data.user.id)
+      // Store the employee ID provided by the API response
+      localStorage.setItem('employeeId', data.user.employeeId)
       await menuStore.fetchMenu()
       router.push({ name: 'Settings' })
     } else {
