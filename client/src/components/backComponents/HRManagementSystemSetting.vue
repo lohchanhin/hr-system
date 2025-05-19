@@ -261,13 +261,6 @@
     }
   }
 
-  async function loadEmployees() {
-    const res = await fetch('/api/employees')
-
-    if (res.ok) {
-      employeeList.value = await res.json()
-    }
-  }
 
 
   onMounted(fetchEmployees)
