@@ -8,13 +8,16 @@
   </template>
   
   <script setup>
-  import { useRouter } from 'vue-router'
+import { useRouter } from 'vue-router'
+import { useAuthStore } from '@/stores/auth'
   
-  const router = useRouter()
+const router = useRouter()
+const auth = useAuthStore()
   
-  const logout = () => {
-    router.push({ name: 'Login' })
-  }
+const logout = () => {
+  auth.clearAuth()
+  router.push({ name: 'Login' })
+}
   </script>
   
   <style scoped>

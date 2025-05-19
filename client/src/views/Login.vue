@@ -26,10 +26,12 @@
   </template>
   
   <script setup>
-  import { ref } from 'vue'
-  import { useRouter } from 'vue-router'
+import { ref } from 'vue'
+import { useRouter } from 'vue-router'
+import { useAuthStore } from '@/stores/auth'
   
-  const router = useRouter()
+const router = useRouter()
+const auth = useAuthStore()
   const loginForm = ref({
     username: '',
     password: ''
@@ -45,9 +47,7 @@
     })
     if (res.ok) {
       const data = await res.json()
-      localStorage.setItem('token', data.token)
-      localStorage.setItem('role', data.user.role)
-      localStorage.setItem('employeeId', data.user.id)
+      auth.setAuth({ token: data.token, role: data.user.role, employeeId: data.user.id })
       router.push({ name: 'Settings' })
     } else {
       alert('登入失敗')

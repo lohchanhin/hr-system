@@ -57,8 +57,10 @@
 <script setup>
 import { ref, onMounted } from "vue";
 import { useRouter } from "vue-router";
+import { useAuthStore } from "@/stores/auth";
 
 const router = useRouter();
+const auth = useAuthStore();
 
 // 暫存角色，從 localStorage 讀取
 const role = ref("employee");
@@ -79,9 +81,7 @@ function gotoPage(pageName) {
 
 // 登出
 function onLogout() {
-  localStorage.removeItem("role");
-  localStorage.removeItem("username");
-  localStorage.removeItem("token");
+  auth.clearAuth();
   // 回到前台登入
   router.push({ name: "FrontLogin" });
 }

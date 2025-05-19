@@ -1,4 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
+import { useAuthStore } from '@/stores/auth'
 
 // ★ 既有的後台檔案
 const Login = () => import('@/views/Login.vue')
@@ -110,25 +111,24 @@ const router = createRouter({
 
 // ★ 路由守衛
 router.beforeEach((to, from, next) => {
+  const auth = useAuthStore()
   // 簡易示範: 後台 requiresAuth
   if (to.meta.requiresAuth) {
-    const token = localStorage.getItem('token')
-    if (!token) {
+    if (!auth.token) {
       return next({ name: 'Login' })
     }
   }
 
   // 若要檢查前台也需登入
   if (to.meta.frontRequiresAuth) {
-    const token = localStorage.getItem('token')
-    if (!token) {
+    if (!auth.token) {
       return next({ name: 'FrontLogin' })
     }
   }
 
   // 若有角色限制 meta.roles
   if (to.meta.roles) {
-    const userRole = localStorage.getItem('role') || 'employee'
+    const userRole = auth.role || 'employee'
     if (!to.meta.roles.includes(userRole)) {
       return next({ name: 'Forbidden' })
     }
