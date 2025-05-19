@@ -27,7 +27,7 @@
             </el-table>
   
             <!-- 新增/編輯 報表模板 Dialog -->
-            <el-dialog :visible.sync="templateDialogVisible" title="報表模板設定" width="600px">
+            <el-dialog v-model="templateDialogVisible" title="報表模板設定" width="600px">
               <el-form :model="templateForm" label-width="120px">
                 <el-form-item label="報表名稱">
                   <el-input v-model="templateForm.name" placeholder="如：出勤統計報表 / 請假統計 / 薪資明細..."></el-input>

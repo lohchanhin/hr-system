@@ -47,7 +47,7 @@
             </el-table>
   
             <!-- 新增/編輯 申請類型 Dialog -->
-            <el-dialog :visible.sync="typeDialogVisible" title="申請類型簽核關卡設定" width="600px">
+            <el-dialog v-model="typeDialogVisible" title="申請類型簽核關卡設定" width="600px">
               <el-form :model="typeForm" label-width="120px">
                 <el-form-item label="類型名稱">
                   <el-input v-model="typeForm.name" placeholder="如：請假申請 / 加班申請 / 補卡申請" />

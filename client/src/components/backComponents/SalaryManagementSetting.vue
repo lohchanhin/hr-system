@@ -32,7 +32,7 @@
             </el-table>
   
             <!-- 新增/編輯 薪資項目 Dialog -->
-            <el-dialog :visible.sync="itemDialogVisible" title="薪資項目設定" width="500px">
+            <el-dialog v-model="itemDialogVisible" title="薪資項目設定" width="500px">
               <el-form :model="itemForm" label-width="100px">
                 <el-form-item label="項目名稱">
                   <el-input v-model="itemForm.itemName" placeholder="如：交通津貼、伙食補助、全勤獎金…" />
@@ -78,7 +78,7 @@
             </el-table>
   
             <!-- 新增/編輯 職等 Dialog -->
-            <el-dialog :visible.sync="gradeDialogVisible" title="職等設定" width="400px">
+            <el-dialog v-model="gradeDialogVisible" title="職等設定" width="400px">
               <el-form :model="gradeForm" label-width="100px">
                 <el-form-item label="名稱">
                   <el-input v-model="gradeForm.gradeName" placeholder="如：職等A / 初階 / 資深…" />
@@ -154,7 +154,7 @@
           </div>
   
           <!-- 帳戶管理Dialog (示例) -->
-          <el-dialog :visible.sync="accountDialogVisible" title="銀行帳戶維護" width="600px">
+          <el-dialog v-model="accountDialogVisible" title="銀行帳戶維護" width="600px">
             <el-table :data="accountList">
               <el-table-column prop="employeeName" label="員工姓名" width="120" />
               <el-table-column prop="bankCode" label="銀行代碼" width="100" />

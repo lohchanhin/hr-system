@@ -20,7 +20,7 @@
             </el-table>
   
             <!-- 新增/編輯 假日 Dialog -->
-            <el-dialog :visible.sync="calendarDialogVisible" title="假日資料" width="500px">
+            <el-dialog v-model="calendarDialogVisible" title="假日資料" width="500px">
               <el-form :model="calendarForm" label-width="120px">
                 <el-form-item label="日期">
                   <el-date-picker
@@ -70,7 +70,7 @@
             </el-table>
   
             <!-- 新增/編輯 班別 Dialog -->
-            <el-dialog :visible.sync="shiftDialogVisible" title="班別資料" width="500px">
+            <el-dialog v-model="shiftDialogVisible" title="班別資料" width="500px">
               <el-form :model="shiftForm" label-width="120px">
                 <el-form-item label="班別名稱">
                   <el-input v-model="shiftForm.name" placeholder="如：早班 / 夜班 / 彈性班" />

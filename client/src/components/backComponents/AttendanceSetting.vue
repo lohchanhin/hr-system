@@ -22,9 +22,9 @@
           </el-table>
           
           <!-- 班別新增/編輯 Dialog -->
-          <el-dialog 
+          <el-dialog
             title="班別資料"
-            :visible.sync="shiftDialogVisible"
+            v-model="shiftDialogVisible"
             width="500px"
           >
             <el-form :model="shiftForm" label-width="100px">
