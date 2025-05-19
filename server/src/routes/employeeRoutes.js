@@ -2,6 +2,7 @@ import { Router } from 'express';
 import {
   listEmployees,
   createEmployee,
+  getEmployee,
   updateEmployee,
   deleteEmployee
 } from '../controllers/employeeController.js';
