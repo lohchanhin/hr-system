@@ -20,12 +20,13 @@
   
 <script setup>
 import { ref, onMounted } from 'vue'
+import { apiFetch } from '../../api'
 
 const pendingList = ref([])
 const token = localStorage.getItem('token') || ''
 
 async function fetchApprovals() {
-  const res = await fetch('/api/approvals', {
+  const res = await apiFetch('/api/approvals', {
     headers: { Authorization: `Bearer ${token}` }
   })
   if (res.ok) {
@@ -35,7 +36,7 @@ async function fetchApprovals() {
 
 async function approve(index) {
   const item = pendingList.value[index]
-  const res = await fetch(`/api/approvals/${item._id}/approve`, {
+  const res = await apiFetch(`/api/approvals/${item._id}/approve`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}` }
   })
@@ -46,7 +47,7 @@ async function approve(index) {
 
 async function reject(index) {
   const item = pendingList.value[index]
-  const res = await fetch(`/api/approvals/${item._id}/reject`, {
+  const res = await apiFetch(`/api/approvals/${item._id}/reject`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}` }
   })

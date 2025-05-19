@@ -30,13 +30,14 @@
   <script setup>
   import { ref, onMounted } from 'vue'
   import dayjs from 'dayjs'
+  import { apiFetch } from '../../api'
 
   const schedules = ref([])
   const scheduleForm = ref({ date: '', shiftType: '' })
   const token = localStorage.getItem('token') || ''
 
   async function fetchSchedules() {
-    const res = await fetch('/api/schedules', {
+    const res = await apiFetch('/api/schedules', {
       headers: { Authorization: `Bearer ${token}` }
     })
     if (res.ok) {
@@ -50,7 +51,7 @@
       date: scheduleForm.value.date,
       shiftType: scheduleForm.value.shiftType
     }
-    const res = await fetch('/api/schedules', {
+    const res = await apiFetch('/api/schedules', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

@@ -30,6 +30,7 @@ import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useMenuStore } from '../stores/menu'
 import { storeToRefs } from 'pinia'
+import { apiFetch } from '../api'
   
 const router = useRouter()
 const menuStore = useMenuStore()
@@ -41,7 +42,7 @@ const menuStore = useMenuStore()
   const loginFormRef = ref(null)
   
   const onLogin = async () => {
-    const res = await fetch('/api/login', {
+    const res = await apiFetch('/api/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(loginForm.value)

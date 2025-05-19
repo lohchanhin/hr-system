@@ -77,7 +77,8 @@
   </template>
   
   <script setup>
-  import { ref, onMounted } from 'vue'
+import { ref, onMounted } from 'vue'
+import { apiFetch } from '../../api'
   
   const form = ref({
     // 1) 資料匯入設定
@@ -105,7 +106,7 @@
   const token = localStorage.getItem('token') || ''
 
   async function fetchSetting() {
-    const res = await fetch('/api/attendance-settings', {
+    const res = await apiFetch('/api/attendance-settings', {
       headers: { Authorization: `Bearer ${token}` }
     })
     if (res.ok) {
@@ -121,13 +122,13 @@
     const payload = { ...form.value }
     let res
     if (settingId.value) {
-      res = await fetch(`/api/attendance-settings/${settingId.value}`, {
+      res = await apiFetch(`/api/attendance-settings/${settingId.value}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify(payload)
       })
     } else {
-      res = await fetch('/api/attendance-settings', {
+      res = await apiFetch('/api/attendance-settings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify(payload)

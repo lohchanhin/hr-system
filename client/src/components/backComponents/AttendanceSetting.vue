@@ -124,11 +124,12 @@
   
   <script setup>
   import { ref, onMounted } from 'vue'
+  import { apiFetch } from '../../api'
 
   const token = localStorage.getItem('token') || ''
 
   async function loadSettings() {
-    const res = await fetch('/api/attendance-settings', {
+    const res = await apiFetch('/api/attendance-settings', {
       headers: { Authorization: `Bearer ${token}` }
     })
     if (res.ok) {
@@ -147,7 +148,7 @@
       breakOutRules: breakOutForm.value,
       overtimeRules: overtimeForm.value
     }
-    await fetch('/api/attendance-settings', {
+    await apiFetch('/api/attendance-settings', {
       method: 'PUT',
       headers: {
         'Content-Type': 'application/json',
