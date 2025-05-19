@@ -26,10 +26,13 @@
   </template>
   
   <script setup>
-  import { ref } from 'vue'
-  import { useRouter } from 'vue-router'
+import { ref } from 'vue'
+import { useRouter } from 'vue-router'
+import { useMenuStore } from '../stores/menu'
+import { storeToRefs } from 'pinia'
   
-  const router = useRouter()
+const router = useRouter()
+const menuStore = useMenuStore()
   const loginForm = ref({
     username: '',
     password: ''
@@ -48,6 +51,7 @@
       localStorage.setItem('token', data.token)
       localStorage.setItem('role', data.user.role)
       localStorage.setItem('employeeId', data.user.id)
+      await menuStore.fetchMenu()
       router.push({ name: 'Settings' })
     } else {
       alert('登入失敗')

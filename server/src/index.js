@@ -13,8 +13,10 @@ import payrollRoutes from './routes/payrollRoutes.js';
 import reportRoutes from './routes/reportRoutes.js';
 import insuranceRoutes from './routes/insuranceRoutes.js';
 import approvalRoutes from './routes/approvalRoutes.js';
+
 import salarySettingRoutes from './routes/salarySettingRoutes.js';
 
+import attendanceSettingRoutes from './routes/attendanceSettingRoutes.js';
 async function seedTestUsers() {
   const users = [
     { username: 'user', password: 'password', role: 'employee' },
@@ -54,6 +56,7 @@ app.get('/api/health', (req, res) => {
 app.use('/api', authRoutes);
 app.use('/api/employees', authenticate, authorizeRoles('admin', 'hr'), employeeRoutes);
 app.use('/api/attendance', authenticate, authorizeRoles('employee', 'supervisor', 'hr', 'admin'), attendanceRoutes);
+app.use('/api/attendance-settings', authenticate, authorizeRoles('hr', 'admin'), attendanceSettingRoutes);
 
 
 app.use('/api/leaves', authenticate, authorizeRoles('employee', 'supervisor', 'hr', 'admin'), leaveRoutes);
@@ -62,7 +65,11 @@ app.use('/api/payroll', authenticate, authorizeRoles('hr', 'admin'), payrollRout
 app.use('/api/reports', authenticate, authorizeRoles('hr', 'admin'), reportRoutes);
 app.use('/api/insurance', authenticate, authorizeRoles('hr', 'admin'), insuranceRoutes);
 app.use('/api/approvals', authenticate, authorizeRoles('supervisor', 'hr', 'admin'), approvalRoutes);
+
 app.use('/api/salary-settings', authenticate, authorizeRoles('hr', 'admin'), salarySettingRoutes);
+app.use('/api/attendance-settings', authenticate, authorizeRoles('hr', 'admin'), attendanceSettingRoutes);
+
+
 
 
 async function start() {
