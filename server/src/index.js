@@ -13,6 +13,7 @@ import payrollRoutes from './routes/payrollRoutes.js';
 import reportRoutes from './routes/reportRoutes.js';
 import insuranceRoutes from './routes/insuranceRoutes.js';
 import approvalRoutes from './routes/approvalRoutes.js';
+import attendanceSettingRoutes from './routes/attendanceSettingRoutes.js';
 
 async function seedTestUsers() {
   const users = [
@@ -53,6 +54,7 @@ app.get('/api/health', (req, res) => {
 app.use('/api', authRoutes);
 app.use('/api/employees', authenticate, authorizeRoles('admin', 'hr'), employeeRoutes);
 app.use('/api/attendance', authenticate, authorizeRoles('employee', 'supervisor', 'hr', 'admin'), attendanceRoutes);
+app.use('/api/attendance-settings', authenticate, authorizeRoles('hr', 'admin'), attendanceSettingRoutes);
 
 
 app.use('/api/leaves', authenticate, authorizeRoles('employee', 'supervisor', 'hr', 'admin'), leaveRoutes);
