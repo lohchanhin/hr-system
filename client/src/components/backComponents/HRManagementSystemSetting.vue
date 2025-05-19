@@ -256,7 +256,10 @@
     const res = await apiFetch('/api/employees', {
       headers: { Authorization: `Bearer ${token}` }
     })
-
+    if (res.ok) {
+      employeeList.value = await res.json()
+    }
+  }
 
   async function loadEmployees() {
     const res = await fetch('/api/employees')
