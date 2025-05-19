@@ -34,6 +34,13 @@ describe('AttendanceSetting API', () => {
     expect(res.body).toEqual(data);
   });
 
+  it('returns 500 if listing fails', async () => {
+    AttendanceSetting.findOne.mockRejectedValue(new Error('fail'));
+    const res = await request(app).get('/api/attendance-settings');
+    expect(res.status).toBe(500);
+    expect(res.body).toEqual({ error: 'fail' });
+  });
+
   it('updates settings', async () => {
     const payload = { shifts: [] };
     AttendanceSetting.findOneAndUpdate.mockResolvedValue(payload);

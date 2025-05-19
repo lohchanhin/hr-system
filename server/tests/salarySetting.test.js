@@ -34,6 +34,13 @@ describe('SalarySetting API', () => {
     expect(res.body).toEqual(fake);
   });
 
+  it('returns 500 if listing fails', async () => {
+    SalarySetting.find.mockRejectedValue(new Error('fail'));
+    const res = await request(app).get('/api/salary-settings');
+    expect(res.status).toBe(500);
+    expect(res.body).toEqual({ error: 'fail' });
+  });
+
   it('creates setting', async () => {
     const payload = { salaryItems: [] };
     saveMock.mockResolvedValue();

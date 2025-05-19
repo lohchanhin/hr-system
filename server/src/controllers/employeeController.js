@@ -1,8 +1,12 @@
 import Employee from '../models/Employee.js';
 
 export async function listEmployees(req, res) {
-  const employees = await Employee.find();
-  res.json(employees);
+  try {
+    const employees = await Employee.find();
+    res.json(employees);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 }
 
 export async function createEmployee(req, res) {

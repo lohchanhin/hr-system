@@ -1,8 +1,12 @@
 import PayrollRecord from '../models/PayrollRecord.js';
 
 export async function listPayrolls(req, res) {
-  const records = await PayrollRecord.find().populate('employee');
-  res.json(records);
+  try {
+    const records = await PayrollRecord.find().populate('employee');
+    res.json(records);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 }
 
 export async function createPayroll(req, res) {

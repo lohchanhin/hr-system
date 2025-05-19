@@ -1,8 +1,12 @@
 import ShiftSchedule from '../models/ShiftSchedule.js';
 
 export async function listSchedules(req, res) {
-  const schedules = await ShiftSchedule.find().populate('employee');
-  res.json(schedules);
+  try {
+    const schedules = await ShiftSchedule.find().populate('employee');
+    res.json(schedules);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 }
 
 export async function createSchedule(req, res) {

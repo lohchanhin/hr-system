@@ -32,6 +32,13 @@ describe('Employee API', () => {
     expect(res.body).toEqual(fakeEmployees);
   });
 
+  it('returns 500 if listing fails', async () => {
+    Employee.find.mockRejectedValue(new Error('fail'));
+    const res = await request(app).get('/api/employees');
+    expect(res.status).toBe(500);
+    expect(res.body).toEqual({ error: 'fail' });
+  });
+
   it('creates employee', async () => {
     const newEmp = { name: 'Jane' };
     saveMock.mockResolvedValue();

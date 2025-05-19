@@ -2,8 +2,12 @@
 import AttendanceManagementSetting from '../models/AttendanceManagementSetting.js';
 
 export async function listSettings(req, res) {
-  const settings = await AttendanceManagementSetting.find();
-  res.json(settings);
+  try {
+    const settings = await AttendanceManagementSetting.find();
+    res.json(settings);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 }
 
 export async function createSetting(req, res) {
