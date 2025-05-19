@@ -174,7 +174,9 @@
   
   <script setup>
   import { ref, onMounted } from 'vue'
-  
+
+  import { apiFetch } from '../../api'
+
   const activeTab = ref('accountRole')
   
   // ============== (1) 帳號與權限 ==============
@@ -248,17 +250,28 @@
   // ============== (3) 員工資料與異動管理 ==============
   const employeeList = ref([])
 
+  const token = localStorage.getItem('token') || ''
+
+  async function fetchEmployees() {
+    const res = await apiFetch('/api/employees', {
+      headers: { Authorization: `Bearer ${token}` }
+    })
+
+
   async function loadEmployees() {
     const res = await fetch('/api/employees')
+
     if (res.ok) {
       employeeList.value = await res.json()
     }
   }
 
-  onMounted(loadEmployees)
-  
+
+  onMounted(fetchEmployees)
+
   const employeeDialogVisible = ref(false)
   let editEmployeeIndex = null
+  let editEmployeeId = ''
   
   const employeeForm = ref({
     name: '',
@@ -270,9 +283,12 @@
   function openEmployeeDialog(index = null) {
     if (index !== null) {
       editEmployeeIndex = index
-      employeeForm.value = { ...employeeList.value[index] }
+      const emp = employeeList.value[index]
+      editEmployeeId = emp._id || ''
+      employeeForm.value = { ...emp }
     } else {
       editEmployeeIndex = null
+      editEmployeeId = ''
       employeeForm.value = { name: '', department: '', title: '', status: '在職' }
     }
     employeeDialogVisible.value = true
@@ -280,30 +296,43 @@
 
   async function saveEmployee() {
     const payload = { ...employeeForm.value }
+
+    let res
     if (editEmployeeIndex === null) {
-      await fetch('/api/employees', {
+      res = await apiFetch('/api/employees', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
         body: JSON.stringify(payload)
       })
     } else {
-      const id = employeeList.value[editEmployeeIndex]._id
-      await fetch(`/api/employees/${id}`, {
+      res = await apiFetch(`/api/employees/${editEmployeeId}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
         body: JSON.stringify(payload)
       })
     }
-    employeeDialogVisible.value = false
-    editEmployeeIndex = null
-    await loadEmployees()
+    if (res && res.ok) {
+      await fetchEmployees()
+      employeeDialogVisible.value = false
+    }
   }
 
   async function deleteEmployee(index) {
-    const id = employeeList.value[index]._id
-    await fetch(`/api/employees/${id}`, { method: 'DELETE' })
-    editEmployeeIndex = null
-    await loadEmployees()
+    const emp = employeeList.value[index]
+    const res = await apiFetch(`/api/employees/${emp._id}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${token}` }
+    })
+    if (res.ok) {
+      employeeList.value.splice(index, 1)
+    }
+
   }
   
   // ============== (4) 組織單位/部門管理 ==============

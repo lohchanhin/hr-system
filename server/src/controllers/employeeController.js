@@ -20,7 +20,6 @@ export async function createEmployee(req, res) {
   }
 }
 
-
 export async function getEmployee(req, res) {
   try {
     const employee = await Employee.findById(req.params.id);
