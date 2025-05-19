@@ -5,6 +5,8 @@ import { jest } from '@jest/globals';
 const saveMock = jest.fn();
 const Employee = jest.fn().mockImplementation(() => ({ save: saveMock }));
 Employee.find = jest.fn();
+Employee.findByIdAndUpdate = jest.fn();
+Employee.findByIdAndDelete = jest.fn();
 
 jest.mock('../src/models/Employee.js', () => ({ default: Employee }), { virtual: true });
 
@@ -21,6 +23,8 @@ beforeAll(async () => {
 beforeEach(() => {
   saveMock.mockReset();
   Employee.find.mockReset();
+  Employee.findByIdAndUpdate.mockReset();
+  Employee.findByIdAndDelete.mockReset();
 });
 
 describe('Employee API', () => {
@@ -46,5 +50,19 @@ describe('Employee API', () => {
     expect(res.status).toBe(201);
     expect(saveMock).toHaveBeenCalled();
     expect(res.body).toMatchObject(newEmp);
+  });
+
+  it('updates employee', async () => {
+    Employee.findByIdAndUpdate.mockResolvedValue({ _id: '1', name: 'Jane' });
+    const res = await request(app).put('/api/employees/1').send({ name: 'Jane' });
+    expect(res.status).toBe(200);
+    expect(Employee.findByIdAndUpdate).toHaveBeenCalled();
+  });
+
+  it('deletes employee', async () => {
+    Employee.findByIdAndDelete.mockResolvedValue({ _id: '1' });
+    const res = await request(app).delete('/api/employees/1');
+    expect(res.status).toBe(200);
+    expect(Employee.findByIdAndDelete).toHaveBeenCalledWith('1');
   });
 });
