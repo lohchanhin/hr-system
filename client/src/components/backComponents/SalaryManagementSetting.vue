@@ -196,11 +196,13 @@
     </div>
   </template>
   
-  <script setup>
-  import { ref } from 'vue'
+<script setup>
+import { ref, onMounted } from 'vue'
   
   // 目前所在的Tab
-  const activeTab = ref('salaryItem')
+const activeTab = ref('salaryItem')
+const token = localStorage.getItem('token') || ''
+const settingId = ref(null)
   
   // ============ (1) 薪資項目設定 ============
   const salaryItems = ref([
@@ -263,10 +265,12 @@
       salaryItems.value[editItemIndex] = { ...itemForm.value }
     }
     itemDialogVisible.value = false
+    persistSetting()
   }
   
   function deleteItem(index) {
     salaryItems.value.splice(index, 1)
+    persistSetting()
   }
   
   // ============ (2) 職等與底薪 ============
@@ -308,10 +312,12 @@
       gradeList.value[editGradeIndex] = { ...gradeForm.value }
     }
     gradeDialogVisible.value = false
+    persistSetting()
   }
   
   function deleteGrade(index) {
     gradeList.value.splice(index, 1)
+    persistSetting()
   }
   
   // ============ (3) 調薪與異動規則 ============
@@ -324,7 +330,7 @@
   
   function saveAdjustRules() {
     console.log('儲存調薪與異動規則:', adjustForm.value)
-    alert('已儲存「調薪與異動規則」')
+    persistSetting()
   }
   
   // ============ (4) 發放與銀行帳戶 ============
@@ -349,7 +355,7 @@
   
   function savePaymentSetting() {
     console.log('儲存發放設定:', paymentForm.value)
-    alert('已儲存「發放與帳戶」設定')
+    persistSetting()
   }
   
   // ============ (5) 其他設定 (扶養親屬、法院扣押...) ============
@@ -361,9 +367,55 @@
   
   function saveOtherSetting() {
     console.log('儲存其他薪資設定:', otherForm.value)
-    alert('已儲存「其他設定」')
+    persistSetting()
   }
-  </script>
+
+  async function fetchSetting() {
+    const res = await fetch('/api/salary-settings', {
+      headers: { Authorization: `Bearer ${token}` }
+    })
+    if (res.ok) {
+      const data = await res.json()
+      if (data.length) {
+        const s = data[0]
+        settingId.value = s._id
+        salaryItems.value = s.salaryItems || []
+        gradeList.value = s.grades || []
+        Object.assign(adjustForm.value, s.adjust || {})
+        Object.assign(paymentForm.value, s.payment || {})
+        Object.assign(otherForm.value, s.other || {})
+      }
+    }
+  }
+
+  async function persistSetting() {
+    const payload = {
+      salaryItems: salaryItems.value,
+      grades: gradeList.value,
+      adjust: adjustForm.value,
+      payment: paymentForm.value,
+      other: otherForm.value
+    }
+    const url = settingId.value
+      ? `/api/salary-settings/${settingId.value}`
+      : '/api/salary-settings'
+    const method = settingId.value ? 'PUT' : 'POST'
+    const res = await fetch(url, {
+      method,
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`
+      },
+      body: JSON.stringify(payload)
+    })
+    if (res.ok) {
+      const saved = await res.json()
+      settingId.value = saved._id
+    }
+  }
+
+  onMounted(fetchSetting)
+</script>
   
   <style scoped>
   .salary-management-setting {
