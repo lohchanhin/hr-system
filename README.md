@@ -81,3 +81,13 @@
 
 前後端皆啟動後，開啟瀏覽器造訪前端網址（預設 http://localhost:5173 ），即可使用提供的測試帳號登入並與後端 API 互動。
 
+
+## 自動合併腳本
+
+若要在提交 Pull Request 前自動合併最新的 `main` 分支，可執行 `scripts/auto_merge.sh`：
+
+```bash
+./scripts/auto_merge.sh
+```
+
+此腳本會抓取遠端 `main` 並以偏好遠端變更的策略嘗試合併。若仍有衝突無法解決，腳本會中止並提示需手動處理。
