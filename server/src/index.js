@@ -3,6 +3,7 @@ import dotenv from 'dotenv';
 import cors from 'cors';
 import { connectDB } from './config/db.js';
 import User from './models/User.js';
+import Employee from './models/Employee.js';
 import employeeRoutes from './routes/employeeRoutes.js';
 import attendanceRoutes from './routes/attendanceRoutes.js';
 import authRoutes from './routes/authRoutes.js';
@@ -27,7 +28,12 @@ async function seedTestUsers() {
   for (const data of users) {
     const existing = await User.findOne({ username: data.username });
     if (!existing) {
-      await User.create(data);
+      const employee = await Employee.create({
+        name: data.username,
+        email: `${data.username}@example.com`,
+        role: data.role
+      });
+      await User.create({ ...data, employee: employee._id });
       console.log(`Created test user ${data.username}`);
     }
   }

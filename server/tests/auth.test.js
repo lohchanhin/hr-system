@@ -4,7 +4,7 @@ import { jest } from '@jest/globals';
 import jwt from 'jsonwebtoken';
 
 const compareMock = jest.fn();
-const fakeUser = { _id: 'u1', role: 'employee', username: 'john', comparePassword: compareMock };
+const fakeUser = { _id: 'u1', role: 'employee', username: 'john', employee: 'e1', comparePassword: compareMock };
 const User = { findOne: jest.fn() };
 
 jest.mock('../src/models/User.js', () => ({ default: User }), { virtual: true });
@@ -32,7 +32,7 @@ describe('Auth API', () => {
     const res = await request(app).post('/api/login').send({ username: 'john', password: 'pass' });
     expect(res.status).toBe(200);
     expect(res.body.token).toBe('tok');
-    expect(res.body.user).toEqual({ id: 'u1', role: 'employee', username: 'john' });
+    expect(res.body.user).toEqual({ id: 'u1', role: 'employee', username: 'john', employeeId: 'e1' });
     signSpy.mockRestore();
   });
 
