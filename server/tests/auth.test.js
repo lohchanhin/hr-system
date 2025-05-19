@@ -1,7 +1,8 @@
-import request from 'supertest';
-import express from 'express';
-import { jest } from '@jest/globals';
-import jwt from 'jsonwebtoken';
+import request from 'supertest'
+import express from 'express'
+import { jest } from '@jest/globals'
+import jwt from 'jsonwebtoken'
+import { isTokenBlacklisted } from '../src/utils/tokenBlacklist.js'
 
 const compareMock = jest.fn();
 const fakeUser = { _id: 'u1', role: 'employee', username: 'john', employee: 'e1', comparePassword: compareMock };
@@ -42,4 +43,10 @@ describe('Auth API', () => {
     const res = await request(app).post('/api/login').send({ username: 'john', password: 'wrong' });
     expect(res.status).toBe(401);
   });
+
+  it('invalidates token on logout', async () => {
+    const res = await request(app).post('/api/logout').set('Authorization', 'Bearer tok')
+    expect(res.status).toBe(204)
+    expect(isTokenBlacklisted('tok')).toBe(true)
+  })
 });

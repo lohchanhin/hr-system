@@ -12,9 +12,12 @@
   
   const router = useRouter()
   
-  const logout = () => {
-    router.push({ name: 'Login' })
-  }
+const logout = () => {
+  localStorage.removeItem('token')
+  localStorage.removeItem('role')
+  localStorage.removeItem('employeeId')
+  router.push({ name: 'Login' })
+}
   </script>
   
   <style scoped>
