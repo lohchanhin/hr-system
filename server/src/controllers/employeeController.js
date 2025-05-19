@@ -20,9 +20,23 @@ export async function createEmployee(req, res) {
   }
 }
 
+
+export async function getEmployee(req, res) {
+  try {
+    const employee = await Employee.findById(req.params.id);
+    if (!employee) return res.status(404).json({ error: 'Not found' });
+    res.json(employee);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+}
+
 export async function updateEmployee(req, res) {
   try {
-    const employee = await Employee.findByIdAndUpdate(req.params.id, req.body, { new: true });
+    const employee = await Employee.findByIdAndUpdate(req.params.id, req.body, {
+      new: true
+    });
+
     if (!employee) return res.status(404).json({ error: 'Not found' });
     res.json(employee);
   } catch (err) {
