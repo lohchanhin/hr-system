@@ -77,7 +77,7 @@
   </template>
   
   <script setup>
-  import { ref } from 'vue'
+  import { ref, onMounted } from 'vue'
   
   const form = ref({
     // 1) 資料匯入設定
@@ -100,12 +100,47 @@
     overtimeNoClockNotify: true,
     notifyTargets: ['員工', '主管'] // 多選
   })
-  
-  const saveSettings = () => {
-    // 這裡可呼叫後端 API
-    console.log('儲存考勤管理設定:', form.value)
-    alert('已儲存「考勤管理設定」')
+
+  const settingId = ref('')
+  const token = localStorage.getItem('token') || ''
+
+  async function fetchSetting() {
+    const res = await fetch('/api/attendance-settings', {
+      headers: { Authorization: `Bearer ${token}` }
+    })
+    if (res.ok) {
+      const data = await res.json()
+      if (data.length) {
+        Object.assign(form.value, data[0])
+        settingId.value = data[0]._id || ''
+      }
+    }
   }
+  
+  async function saveSettings() {
+    const payload = { ...form.value }
+    let res
+    if (settingId.value) {
+      res = await fetch(`/api/attendance-settings/${settingId.value}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify(payload)
+      })
+    } else {
+      res = await fetch('/api/attendance-settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify(payload)
+      })
+    }
+    if (res.ok) {
+      const saved = await res.json()
+      settingId.value = saved._id || settingId.value
+      alert('已儲存「考勤管理設定」')
+    }
+  }
+
+  onMounted(fetchSetting)
   </script>
   
   <style scoped>
