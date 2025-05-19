@@ -35,6 +35,17 @@
 import { ref, onMounted } from 'vue'
 import dayjs from 'dayjs'
 
+// 將中文動作與後端定義的值互轉
+const actionMap = {
+  '上班簽到': 'clockIn',
+  '下班簽退': 'clockOut',
+  '外出登記': 'outing',
+  '中午休息': 'breakIn'
+}
+const reverseActionMap = Object.fromEntries(
+  Object.entries(actionMap).map(([k, v]) => [v, k])
+)
+
 const records = ref([])
 const token = localStorage.getItem('token') || ''
 
@@ -43,7 +54,12 @@ async function fetchRecords() {
     headers: { Authorization: `Bearer ${token}` }
   })
   if (res.ok) {
-    records.value = await res.json()
+    const data = await res.json()
+    records.value = data.map(r => ({
+      action: reverseActionMap[r.action] || r.action,
+      time: dayjs(r.timestamp).format('YYYY-MM-DD HH:mm:ss'),
+      remark: r.remark || ''
+    }))
   }
 }
 
@@ -61,7 +77,12 @@ function onBreakIn() {
 }
 
 async function addRecord(action) {
-  const payload = { action, time: new Date(), remark: '' }
+  const payload = {
+    action: actionMap[action] || action,
+    timestamp: new Date(),
+    remark: '',
+    employee: localStorage.getItem('employeeId') || ''
+  }
   const res = await fetch('/api/attendance', {
     method: 'POST',
     headers: {
@@ -73,8 +94,8 @@ async function addRecord(action) {
   if (res.ok) {
     const saved = await res.json()
     records.value.push({
-      action: saved.action,
-      time: dayjs(saved.time).format('YYYY-MM-DD HH:mm:ss'),
+      action: reverseActionMap[saved.action] || saved.action,
+      time: dayjs(saved.timestamp).format('YYYY-MM-DD HH:mm:ss'),
       remark: saved.remark || ''
     })
   }
