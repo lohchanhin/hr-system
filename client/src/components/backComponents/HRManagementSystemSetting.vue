@@ -174,8 +174,9 @@
   
   <script setup>
   import { ref, onMounted } from 'vue'
+
   import { apiFetch } from '../../api'
-  
+
   const activeTab = ref('accountRole')
   
   // ============== (1) 帳號與權限 ==============
@@ -248,19 +249,26 @@
   
   // ============== (3) 員工資料與異動管理 ==============
   const employeeList = ref([])
+
   const token = localStorage.getItem('token') || ''
 
   async function fetchEmployees() {
     const res = await apiFetch('/api/employees', {
       headers: { Authorization: `Bearer ${token}` }
     })
+
+
+  async function loadEmployees() {
+    const res = await fetch('/api/employees')
+
     if (res.ok) {
       employeeList.value = await res.json()
     }
   }
 
+
   onMounted(fetchEmployees)
-  
+
   const employeeDialogVisible = ref(false)
   let editEmployeeIndex = null
   let editEmployeeId = ''
@@ -288,6 +296,7 @@
 
   async function saveEmployee() {
     const payload = { ...employeeForm.value }
+
     let res
     if (editEmployeeIndex === null) {
       res = await apiFetch('/api/employees', {
@@ -323,6 +332,7 @@
     if (res.ok) {
       employeeList.value.splice(index, 1)
     }
+
   }
   
   // ============== (4) 組織單位/部門管理 ==============

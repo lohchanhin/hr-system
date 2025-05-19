@@ -29,7 +29,7 @@ beforeEach(() => {
 
 describe('Employee API', () => {
   it('lists employees', async () => {
-    const fakeEmployees = [{ name: 'John' }];
+    const fakeEmployees = [{ name: 'John', department: 'Sales', title: 'Staff', status: '在職' }];
     Employee.find.mockResolvedValue(fakeEmployees);
     const res = await request(app).get('/api/employees');
     expect(res.status).toBe(200);
@@ -44,7 +44,7 @@ describe('Employee API', () => {
   });
 
   it('creates employee', async () => {
-    const newEmp = { name: 'Jane' };
+    const newEmp = { name: 'Jane', department: 'HR', title: 'Manager', status: '在職' };
     saveMock.mockResolvedValue();
     const res = await request(app).post('/api/employees').send(newEmp);
     expect(res.status).toBe(201);
@@ -56,7 +56,9 @@ describe('Employee API', () => {
     Employee.findByIdAndUpdate.mockResolvedValue({ _id: '1', name: 'Jane' });
     const res = await request(app).put('/api/employees/1').send({ name: 'Jane' });
     expect(res.status).toBe(200);
+
     expect(Employee.findByIdAndUpdate).toHaveBeenCalled();
+
   });
 
   it('deletes employee', async () => {
