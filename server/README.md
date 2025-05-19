@@ -36,7 +36,7 @@ You can create a script under `scripts/seed.js` to insert initial users or refer
 node scripts/seed.js
 ```
 
-When running in development, the server automatically seeds a few test users if they do not already exist:
+When running in development, the server automatically seeds a few test users if they do not already exist.  Each user is also given a matching record in the `Employee` collection, and the employee id will be returned when logging in:
 
 | Username    | Role       |
 |-------------|-----------|

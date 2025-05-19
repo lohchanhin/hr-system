@@ -8,7 +8,8 @@ const userSchema = new mongoose.Schema({
     type: String,
     enum: ['employee', 'supervisor', 'hr', 'admin'],
     default: 'employee'
-  }
+  },
+  employee: { type: mongoose.Schema.Types.ObjectId, ref: 'Employee' }
 }, { timestamps: true });
 
 userSchema.pre('save', async function(next) {
