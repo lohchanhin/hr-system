@@ -32,6 +32,13 @@ describe('Attendance API', () => {
     expect(res.body).toEqual(fakeRecords);
   });
 
+  it('returns 500 if listing fails', async () => {
+    AttendanceRecord.find.mockReturnValue({ populate: jest.fn().mockRejectedValue(new Error('fail')) });
+    const res = await request(app).get('/api/attendance');
+    expect(res.status).toBe(500);
+    expect(res.body).toEqual({ error: 'fail' });
+  });
+
   it('creates record', async () => {
     const payload = { action: 'clockIn' };
     saveMock.mockResolvedValue();

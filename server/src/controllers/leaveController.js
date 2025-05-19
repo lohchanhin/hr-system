@@ -1,8 +1,12 @@
 import LeaveRequest from '../models/LeaveRequest.js';
 
 export async function listLeaves(req, res) {
-  const leaves = await LeaveRequest.find().populate('employee');
-  res.json(leaves);
+  try {
+    const leaves = await LeaveRequest.find().populate('employee');
+    res.json(leaves);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 }
 
 export async function createLeave(req, res) {

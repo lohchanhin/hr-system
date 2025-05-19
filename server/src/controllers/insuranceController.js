@@ -1,8 +1,12 @@
 import InsuranceRecord from '../models/InsuranceRecord.js';
 
 export async function listInsurance(req, res) {
-  const records = await InsuranceRecord.find().populate('employee');
-  res.json(records);
+  try {
+    const records = await InsuranceRecord.find().populate('employee');
+    res.json(records);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 }
 
 export async function createInsurance(req, res) {

@@ -1,8 +1,12 @@
 import Report from '../models/Report.js';
 
 export async function listReports(req, res) {
-  const reports = await Report.find();
-  res.json(reports);
+  try {
+    const reports = await Report.find();
+    res.json(reports);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 }
 
 export async function createReport(req, res) {

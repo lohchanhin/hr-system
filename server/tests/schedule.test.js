@@ -32,6 +32,13 @@ describe('Schedule API', () => {
     expect(res.body).toEqual(fakeSchedules);
   });
 
+  it('returns 500 if listing fails', async () => {
+    ShiftSchedule.find.mockReturnValue({ populate: jest.fn().mockRejectedValue(new Error('fail')) });
+    const res = await request(app).get('/api/schedules');
+    expect(res.status).toBe(500);
+    expect(res.body).toEqual({ error: 'fail' });
+  });
+
   it('creates schedule', async () => {
     const payload = { shiftType: 'morning' };
     saveMock.mockResolvedValue();

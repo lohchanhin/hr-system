@@ -32,6 +32,13 @@ describe('Report API', () => {
     expect(res.body).toEqual(fakeReports);
   });
 
+  it('returns 500 if listing fails', async () => {
+    Report.find.mockRejectedValue(new Error('fail'));
+    const res = await request(app).get('/api/reports');
+    expect(res.status).toBe(500);
+    expect(res.body).toEqual({ error: 'fail' });
+  });
+
   it('creates report', async () => {
     const payload = { name: 'Monthly' };
     saveMock.mockResolvedValue();

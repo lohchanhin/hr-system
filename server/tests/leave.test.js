@@ -32,6 +32,13 @@ describe('Leave API', () => {
     expect(res.body).toEqual(fakeLeaves);
   });
 
+  it('returns 500 if listing fails', async () => {
+    LeaveRequest.find.mockReturnValue({ populate: jest.fn().mockRejectedValue(new Error('fail')) });
+    const res = await request(app).get('/api/leaves');
+    expect(res.status).toBe(500);
+    expect(res.body).toEqual({ error: 'fail' });
+  });
+
   it('creates leave', async () => {
     const payload = { leaveType: 'vacation' };
     saveMock.mockResolvedValue();

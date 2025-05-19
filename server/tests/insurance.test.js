@@ -32,6 +32,13 @@ describe('Insurance API', () => {
     expect(res.body).toEqual(fakeRecords);
   });
 
+  it('returns 500 if listing fails', async () => {
+    InsuranceRecord.find.mockReturnValue({ populate: jest.fn().mockRejectedValue(new Error('fail')) });
+    const res = await request(app).get('/api/insurance');
+    expect(res.status).toBe(500);
+    expect(res.body).toEqual({ error: 'fail' });
+  });
+
   it('creates insurance record', async () => {
     const payload = { provider: 'InsureCo' };
     saveMock.mockResolvedValue();

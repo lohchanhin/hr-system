@@ -1,8 +1,12 @@
 import Approval from '../models/Approval.js';
 
 export async function listApprovals(req, res) {
-  const approvals = await Approval.find().populate('applicant');
-  res.json(approvals);
+  try {
+    const approvals = await Approval.find().populate('applicant');
+    res.json(approvals);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 }
 
 export async function approve(req, res) {
