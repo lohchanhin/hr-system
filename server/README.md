@@ -30,7 +30,7 @@ This starts the server with nodemon enabled.
 
 ### Seeding example data
 
-You can create a script under `scripts/seed.js` to insert initial users or reference data into MongoDB. Run it with:
+This repository provides a seeding script under `scripts/seed.js` to insert the default test users into MongoDB. Make sure your `.env` file includes a valid `MONGODB_URI` and run it with:
 
 ```bash
 node scripts/seed.js
