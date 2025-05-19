@@ -15,6 +15,8 @@ import reportRoutes from './routes/reportRoutes.js';
 import insuranceRoutes from './routes/insuranceRoutes.js';
 import approvalRoutes from './routes/approvalRoutes.js';
 import menuRoutes from './routes/menuRoutes.js';
+import userRoutes from './routes/userRoutes.js';
+import departmentRoutes from './routes/departmentRoutes.js';
 
 import salarySettingRoutes from './routes/salarySettingRoutes.js';
 
@@ -73,6 +75,8 @@ app.use('/api/reports', authenticate, authorizeRoles('hr', 'admin'), reportRoute
 app.use('/api/insurance', authenticate, authorizeRoles('hr', 'admin'), insuranceRoutes);
 app.use('/api/approvals', authenticate, authorizeRoles('supervisor', 'hr', 'admin'), approvalRoutes);
 app.use('/api/menu', authenticate, menuRoutes);
+app.use('/api/users', authenticate, authorizeRoles('admin'), userRoutes);
+app.use('/api/departments', authenticate, authorizeRoles('admin'), departmentRoutes);
 
 app.use('/api/salary-settings', authenticate, authorizeRoles('hr', 'admin'), salarySettingRoutes);
 
