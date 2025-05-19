@@ -66,11 +66,12 @@
    ```bash
    npm install
    ```
-2. 啟動 Vite 開發伺服器：
+2. (選擇性) 在 `client/.env` 設定 `VITE_API_BASE_URL` 以指定後端 API 位址，預設可使用 `http://localhost:3000`
+3. 啟動 Vite 開發伺服器：
    ```bash
    npm run dev
    ```
-3. 需要時可建立正式版：
+4. 需要時可建立正式版：
    ```bash
    npm run build
    ```
