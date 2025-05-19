@@ -11,7 +11,8 @@ export async function listEmployees(req, res) {
 
 export async function createEmployee(req, res) {
   try {
-    const employee = new Employee(req.body);
+    const { name, email, role, department, title, status } = req.body;
+    const employee = new Employee({ name, email, role, department, title, status });
     await employee.save();
     res.status(201).json(employee);
   } catch (err) {
