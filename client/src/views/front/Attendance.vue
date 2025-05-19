@@ -34,6 +34,7 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import dayjs from 'dayjs'
+import { apiFetch } from '../../api'
 
 // 將中文動作與後端定義的值互轉
 const actionMap = {
@@ -50,7 +51,7 @@ const records = ref([])
 const token = localStorage.getItem('token') || ''
 
 async function fetchRecords() {
-  const res = await fetch('/api/attendance', {
+  const res = await apiFetch('/api/attendance', {
     headers: { Authorization: `Bearer ${token}` }
   })
   if (res.ok) {
@@ -83,7 +84,7 @@ async function addRecord(action) {
     remark: '',
     employee: localStorage.getItem('employeeId') || ''
   }
-  const res = await fetch('/api/attendance', {
+  const res = await apiFetch('/api/attendance', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',

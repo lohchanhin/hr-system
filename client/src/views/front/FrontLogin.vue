@@ -37,6 +37,7 @@
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useMenuStore } from '../../stores/menu'
+import { apiFetch } from '../../api'
   
 const router = useRouter()
 const menuStore = useMenuStore()
@@ -49,7 +50,7 @@ const menuStore = useMenuStore()
   const loginFormRef = ref(null)
   
 async function onLogin () {
-  const res = await fetch('/api/login', {
+  const res = await apiFetch('/api/login', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ username: loginForm.value.username, password: loginForm.value.password })

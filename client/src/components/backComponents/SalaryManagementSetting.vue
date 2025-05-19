@@ -198,6 +198,7 @@
   
 <script setup>
 import { ref, onMounted } from 'vue'
+import { apiFetch } from '../../api'
   
   // 目前所在的Tab
 const activeTab = ref('salaryItem')
@@ -371,7 +372,7 @@ const settingId = ref(null)
   }
 
   async function fetchSetting() {
-    const res = await fetch('/api/salary-settings', {
+    const res = await apiFetch('/api/salary-settings', {
       headers: { Authorization: `Bearer ${token}` }
     })
     if (res.ok) {
@@ -400,7 +401,7 @@ const settingId = ref(null)
       ? `/api/salary-settings/${settingId.value}`
       : '/api/salary-settings'
     const method = settingId.value ? 'PUT' : 'POST'
-    const res = await fetch(url, {
+    const res = await apiFetch(url, {
       method,
       headers: {
         'Content-Type': 'application/json',
