@@ -82,6 +82,23 @@
 前後端皆啟動後，開啟瀏覽器造訪前端網址（預設 http://localhost:5173 ），即可使用提供的測試帳號登入並與後端 API 互動。
 
 
+## 執行測試
+
+在專案根目錄執行下列指令即可依序跑完 Server 與 Client 的測試：
+
+```bash
+npm test
+```
+
+此命令會依照 `package.json` 內的設定，先執行 `server` 目錄的測試，再執行 `client` 目錄的測試。範例輸出：
+
+```bash
+> hr-system-root@ test
+> npm --prefix server test && npm --prefix client test
+...
+```
+
+
 ## 自動合併腳本
 
 若要在提交 Pull Request 前自動合併最新的 `main` 分支，可執行 `scripts/auto_merge.sh`：
