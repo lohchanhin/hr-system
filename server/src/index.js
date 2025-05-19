@@ -15,6 +15,7 @@ import insuranceRoutes from './routes/insuranceRoutes.js';
 import approvalRoutes from './routes/approvalRoutes.js';
 import attendanceSettingRoutes from './routes/attendanceSettingRoutes.js';
 
+
 async function seedTestUsers() {
   const users = [
     { username: 'user', password: 'password', role: 'employee' },
@@ -63,6 +64,7 @@ app.use('/api/reports', authenticate, authorizeRoles('hr', 'admin'), reportRoute
 app.use('/api/insurance', authenticate, authorizeRoles('hr', 'admin'), insuranceRoutes);
 app.use('/api/approvals', authenticate, authorizeRoles('supervisor', 'hr', 'admin'), approvalRoutes);
 app.use('/api/attendance-settings', authenticate, authorizeRoles('hr', 'admin'), attendanceSettingRoutes);
+
 
 
 async function start() {
