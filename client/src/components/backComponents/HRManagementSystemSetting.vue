@@ -102,32 +102,96 @@
             </el-table>
   
             <!-- 新增/編輯員工 Dialog -->
-            <el-dialog v-model="employeeDialogVisible" title="員工資料" width="500px">
-              <el-form :model="employeeForm" label-width="100px">
-                <el-form-item label="姓名">
-                  <el-input v-model="employeeForm.name" />
-                </el-form-item>
-                <el-form-item label="部門">
-                  <el-select v-model="employeeForm.department">
-                    <el-option
-                      v-for="dept in departmentList"
-                      :key="dept.value"
-                      :label="dept.label"
-                      :value="dept.value"
-                    />
-                  </el-select>
-                </el-form-item>
-                <el-form-item label="職稱">
-                  <el-input v-model="employeeForm.title" />
-                </el-form-item>
-                <el-form-item label="在職狀態">
-                  <el-select v-model="employeeForm.status">
-                    <el-option label="在職" value="在職" />
-                    <el-option label="離職" value="離職" />
-                    <el-option label="休假中" value="休假中" />
-                  </el-select>
-                </el-form-item>
-              </el-form>
+            <el-dialog v-model="employeeDialogVisible" title="員工資料" width="600px">
+              <el-tabs v-model="employeeDialogTab" type="border-card">
+                <el-tab-pane label="帳號/權限" name="account">
+                  <el-form :model="employeeForm" label-width="100px">
+                    <el-form-item label="帳號">
+                      <el-input v-model="employeeForm.username" />
+                    </el-form-item>
+                    <el-form-item label="密碼">
+                      <el-input v-model="employeeForm.password" type="password" />
+                    </el-form-item>
+                    <el-form-item label="權限">
+                      <el-checkbox-group v-model="employeeForm.permissions">
+                        <el-checkbox label="admin">管理員</el-checkbox>
+                        <el-checkbox label="hr">HR</el-checkbox>
+                        <el-checkbox label="supervisor">主管</el-checkbox>
+                        <el-checkbox label="employee">員工</el-checkbox>
+                      </el-checkbox-group>
+                    </el-form-item>
+                  </el-form>
+                </el-tab-pane>
+                <el-tab-pane label="個人資訊" name="personal">
+                  <el-form :model="employeeForm" label-width="100px">
+                    <el-form-item label="姓名">
+                      <el-input v-model="employeeForm.name" />
+                    </el-form-item>
+                    <el-form-item label="性別">
+                      <el-select v-model="employeeForm.gender" placeholder="選擇性別">
+                        <el-option label="男" value="M" />
+                        <el-option label="女" value="F" />
+                      </el-select>
+                    </el-form-item>
+                    <el-form-item label="生日">
+                      <el-date-picker v-model="employeeForm.birthday" type="date" />
+                    </el-form-item>
+                    <el-form-item label="Email">
+                      <el-input v-model="employeeForm.email" />
+                    </el-form-item>
+                    <el-form-item label="電話">
+                      <el-input v-model="employeeForm.phone" />
+                    </el-form-item>
+                    <el-form-item label="照片">
+                      <el-upload
+                        class="avatar-uploader"
+                        action=""
+                        :auto-upload="false"
+                        list-type="picture"
+                        v-model:file-list="employeeForm.photoList"
+                      >
+                        <el-button type="primary">選擇檔案</el-button>
+                      </el-upload>
+                    </el-form-item>
+                  </el-form>
+                </el-tab-pane>
+                <el-tab-pane label="任職資訊" name="employment">
+                  <el-form :model="employeeForm" label-width="100px">
+                    <el-form-item label="機構">
+                      <el-input v-model="employeeForm.institution" />
+                    </el-form-item>
+                    <el-form-item label="部門">
+                      <el-select v-model="employeeForm.department">
+                        <el-option
+                          v-for="dept in departmentList"
+                          :key="dept.value"
+                          :label="dept.label"
+                          :value="dept.value"
+                        />
+                      </el-select>
+                    </el-form-item>
+                    <el-form-item label="子單位">
+                      <el-input v-model="employeeForm.subunit" />
+                    </el-form-item>
+                    <el-form-item label="職稱">
+                      <el-input v-model="employeeForm.title" />
+                    </el-form-item>
+                    <el-form-item label="入職日">
+                      <el-date-picker v-model="employeeForm.hireDate" type="date" />
+                    </el-form-item>
+                    <el-form-item label="離職日">
+                      <el-date-picker v-model="employeeForm.resignDate" type="date" />
+                    </el-form-item>
+                    <el-form-item label="在職狀態">
+                      <el-select v-model="employeeForm.status">
+                        <el-option label="在職" value="在職" />
+                        <el-option label="離職" value="離職" />
+                        <el-option label="休假中" value="休假中" />
+                      </el-select>
+                    </el-form-item>
+                  </el-form>
+                </el-tab-pane>
+              </el-tabs>
               <span slot="footer" class="dialog-footer">
                 <el-button @click="employeeDialogVisible = false">取消</el-button>
                 <el-button type="primary" @click="saveEmployee">儲存</el-button>
@@ -173,11 +237,12 @@
   </template>
   
   <script setup>
-  import { ref, onMounted } from 'vue'
+import { ref, onMounted } from 'vue'
 
   import { apiFetch } from '../../api'
 
 const activeTab = ref('accountRole')
+const employeeDialogTab = ref('account')
 
 // ============== (1) 帳號與權限 ==============
 const userList = ref([])
@@ -303,9 +368,21 @@ async function fetchDepartments() {
   let editEmployeeId = ''
   
   const employeeForm = ref({
+    username: '',
+    password: '',
+    permissions: [],
     name: '',
+    gender: '',
+    birthday: '',
+    email: '',
+    phone: '',
+    photoList: [],
+    institution: '',
     department: '',
+    subunit: '',
     title: '',
+    hireDate: '',
+    resignDate: '',
     status: '在職'
   })
   
@@ -314,16 +391,55 @@ async function fetchDepartments() {
       editEmployeeIndex = index
       const emp = employeeList.value[index]
       editEmployeeId = emp._id || ''
-      employeeForm.value = { ...emp }
+      employeeForm.value = {
+        username: emp.username || '',
+        password: '',
+        permissions: emp.permissions || [],
+        name: emp.name || '',
+        gender: emp.gender || '',
+        birthday: emp.birthday || '',
+        email: emp.email || '',
+        phone: emp.phone || '',
+        photoList: [],
+        institution: emp.institution || '',
+        department: emp.department || '',
+        subunit: emp.subunit || '',
+        title: emp.title || '',
+        hireDate: emp.hireDate || '',
+        resignDate: emp.resignDate || '',
+        status: emp.status || '在職'
+      }
     } else {
       editEmployeeIndex = null
       editEmployeeId = ''
-      employeeForm.value = { name: '', department: '', title: '', status: '在職' }
+      employeeDialogTab.value = 'account'
+      employeeForm.value = {
+        username: '',
+        password: '',
+        permissions: [],
+        name: '',
+        gender: '',
+        birthday: '',
+        email: '',
+        phone: '',
+        photoList: [],
+        institution: '',
+        department: '',
+        subunit: '',
+        title: '',
+        hireDate: '',
+        resignDate: '',
+        status: '在職'
+      }
     }
     employeeDialogVisible.value = true
   }
 
   async function saveEmployee() {
+    if (!employeeForm.value.name || !employeeForm.value.username) {
+      alert('請填寫姓名與帳號')
+      return
+    }
     const payload = { ...employeeForm.value }
 
     let res
