@@ -27,7 +27,10 @@ async function seed() {
       const employee = await Employee.create({
         name: data.username,
         email: `${data.username}@example.com`,
-        role: data.role
+        role: data.role,
+        department: 'General',
+        title: 'Staff',
+        status: '在職'
       });
       await User.create({ ...data, employee: employee._id });
       console.log(`Created user ${data.username}`);
