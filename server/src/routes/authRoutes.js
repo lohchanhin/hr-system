@@ -17,11 +17,11 @@ router.post('/login', async (req, res) => {
   res.json({ token, user: { id: user._id, role: user.role, username: user.username, employeeId: user.employee } });
 });
 
-router.post('/logout', (req, res) => {
+router.post('/logout', async (req, res) => {
   const auth = req.headers.authorization
   if (auth) {
     const token = auth.split(' ')[1]
-    blacklistToken(token)
+    await blacklistToken(token)
   }
   res.status(204).end()
 })
