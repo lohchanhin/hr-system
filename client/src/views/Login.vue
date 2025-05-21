@@ -53,7 +53,12 @@ const menuStore = useMenuStore()
       localStorage.setItem('role', data.user.role)
       localStorage.setItem('employeeId', data.user.employeeId)
       await menuStore.fetchMenu()
-      router.push({ name: 'Settings' })
+      const first = menuStore.items[0]
+      if (first) {
+        router.push({ name: first.name })
+      } else {
+        router.push({ name: 'Login' })
+      }
     } else {
       alert('登入失敗')
     }

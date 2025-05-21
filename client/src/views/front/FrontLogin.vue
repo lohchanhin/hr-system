@@ -73,7 +73,12 @@ async function onLogin () {
         router.push('/front/attendance')
         break
       case 'admin':
-        router.push('/layout/settings')
+        const first = menuStore.items[0]
+        if (first) {
+          router.push({ name: first.name })
+        } else {
+          router.push('/layout')
+        }
         break
       default:
         router.push('/front/attendance')
