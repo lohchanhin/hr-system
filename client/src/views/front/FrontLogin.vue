@@ -37,7 +37,7 @@
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useMenuStore } from '../../stores/menu'
-import { apiFetch } from '../../api'
+import { apiFetch } from '../../api.js'
   
 const router = useRouter()
 const menuStore = useMenuStore()
