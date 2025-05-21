@@ -61,7 +61,7 @@
   <script setup>
 import { ref, onMounted } from 'vue'
 import dayjs from 'dayjs'
-import { apiFetch } from '../../api'
+import { apiFetch } from '../../api.js'
   
   const leaveForm = ref({
     leaveType: '',

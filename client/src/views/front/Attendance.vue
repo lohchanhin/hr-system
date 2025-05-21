@@ -34,7 +34,7 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import dayjs from 'dayjs'
-import { apiFetch } from '../../api'
+import { apiFetch } from '../../api.js'
 
 // 將中文動作與後端定義的值互轉
 const actionMap = {
