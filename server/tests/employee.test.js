@@ -47,7 +47,17 @@ describe('Employee API', () => {
 
   it('creates employee', async () => {
 
-    const newEmp = { name: 'Jane', department: 'HR', title: 'Manager', status: '在職' };
+    const newEmp = {
+      name: 'Jane',
+      department: 'HR',
+      title: 'Manager',
+      status: '在職',
+      idNumber: 'A123456789',
+      birthDate: '1990-01-01',
+      contact: '0912',
+      licenses: ['CPA'],
+      trainings: ['Onboard']
+    };
 
     saveMock.mockResolvedValue();
     const res = await request(app).post('/api/employees').send(newEmp);
@@ -57,10 +67,15 @@ describe('Employee API', () => {
   });
 
   it('updates employee', async () => {
-    Employee.findByIdAndUpdate.mockResolvedValue({ _id: '1', name: 'Updated' });
+    Employee.findByIdAndUpdate.mockResolvedValue({
+      _id: '1',
+      name: 'Updated',
+      licenses: ['A'],
+      trainings: []
+    });
     const res = await request(app)
       .put('/api/employees/1')
-      .send({ name: 'Updated' });
+      .send({ name: 'Updated', licenses: ['A'], trainings: [] });
     expect(res.status).toBe(200);
     expect(Employee.findByIdAndUpdate).toHaveBeenCalled();
     expect(res.body).toMatchObject({ _id: '1', name: 'Updated' });

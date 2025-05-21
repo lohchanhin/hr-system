@@ -40,6 +40,8 @@
    - `PORT` – 伺服器埠號
    - `MONGODB_URI` – MongoDB 連線字串
    - `JWT_SECRET` – (必填) JWT 簽章密鑰
+   - `ADMIN_USERNAME` – (選擇性) 初始管理員帳號
+   - `ADMIN_PASSWORD` – (選擇性) 初始管理員密碼
 3. 啟動開發伺服器（使用 nodemon）：
    ```bash
    npm run dev
@@ -49,16 +51,7 @@
    npm test
    ```
 
-首次啟動時會自動建立幾個測試帳號並同步產生對應的員工紀錄，預設密碼均為 `password`：
-
-| 帳號          | 角色         |
-|---------------|-------------|
-| `user`        | employee    |
-| `supervisor`  | supervisor  |
-| `hr`          | hr          |
-| `admin`       | admin       |
-
-更詳細說明請參閱 [`server/README.md`](server/README.md)。
+啟動時若 `.env` 檔案提供 `ADMIN_USERNAME` 與 `ADMIN_PASSWORD`，伺服器會自動建立一個管理員帳號。詳細說明請參閱 [`server/README.md`](server/README.md)。
 
 ## 前端 (`client/`)
 
@@ -80,7 +73,7 @@
 
 ## 開始使用
 
-前後端皆啟動後，開啟瀏覽器造訪前端網址（預設 http://localhost:5173 ），即可使用提供的測試帳號登入並與後端 API 互動。
+前後端皆啟動後，開啟瀏覽器造訪前端網址（預設 http://localhost:5173 ），即可使用管理員帳號登入並與後端 API 互動。
 
 
 ## 執行測試

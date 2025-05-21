@@ -14,11 +14,14 @@ if (!process.env.MONGODB_URI) {
 async function seed() {
   await connectDB(process.env.MONGODB_URI);
 
+  const { ADMIN_USERNAME, ADMIN_PASSWORD } = process.env;
+  if (!ADMIN_USERNAME || !ADMIN_PASSWORD) {
+    console.error('ADMIN_USERNAME and ADMIN_PASSWORD must be provided');
+    process.exit(1);
+  }
+
   const users = [
-    { username: 'user', password: 'password', role: 'employee' },
-    { username: 'supervisor', password: 'password', role: 'supervisor' },
-    { username: 'hr', password: 'password', role: 'hr' },
-    { username: 'admin', password: 'password', role: 'admin' }
+    { username: ADMIN_USERNAME, password: ADMIN_PASSWORD, role: 'admin' }
   ];
 
   for (const data of users) {
@@ -27,7 +30,12 @@ async function seed() {
       const employee = await Employee.create({
         name: data.username,
         email: `${data.username}@example.com`,
-        role: data.role
+        role: data.role,
+        idNumber: '',
+        birthDate: new Date('1990-01-01'),
+        contact: '',
+        licenses: [],
+        trainings: []
       });
       await User.create({ ...data, employee: employee._id });
       console.log(`Created user ${data.username}`);

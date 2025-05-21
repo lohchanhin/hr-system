@@ -27,3 +27,21 @@ npm run dev
 ```sh
 npm run build
 ```
+
+## Employee form fields
+
+The HR Management screen creates employees using the following fields:
+
+- `name` (string)
+- `email` (string)
+- `role` (string)
+- `department` (string)
+- `title` (string)
+- `idNumber` (string)
+- `birthDate` (date)
+- `contact` (string)
+- `licenses` (array of strings)
+- `trainings` (array of strings)
+- `status` (string)
+
+There are no additional backend dependencies for these fields.

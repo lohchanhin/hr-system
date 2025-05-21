@@ -21,24 +21,27 @@ import departmentRoutes from './routes/departmentRoutes.js';
 import salarySettingRoutes from './routes/salarySettingRoutes.js';
 
 import attendanceSettingRoutes from './routes/attendanceSettingRoutes.js';
-async function seedTestUsers() {
-  const users = [
-    { username: 'user', password: 'password', role: 'employee' },
-    { username: 'supervisor', password: 'password', role: 'supervisor' },
-    { username: 'hr', password: 'password', role: 'hr' },
-    { username: 'admin', password: 'password', role: 'admin' }
-  ];
-  for (const data of users) {
-    const existing = await User.findOne({ username: data.username });
-    if (!existing) {
-      const employee = await Employee.create({
-        name: data.username,
-        email: `${data.username}@example.com`,
-        role: data.role
-      });
-      await User.create({ ...data, employee: employee._id });
-      console.log(`Created test user ${data.username}`);
-    }
+async function seedInitialAdmin() {
+  const { ADMIN_USERNAME, ADMIN_PASSWORD } = process.env;
+  if (!ADMIN_USERNAME || !ADMIN_PASSWORD) {
+    console.log('ADMIN_USERNAME or ADMIN_PASSWORD not set; skipping admin seed');
+    return;
+  }
+
+  const existing = await User.findOne({ username: ADMIN_USERNAME });
+  if (!existing) {
+    const employee = await Employee.create({
+      name: ADMIN_USERNAME,
+      email: `${ADMIN_USERNAME}@example.com`,
+      role: 'admin'
+    });
+    await User.create({
+      username: ADMIN_USERNAME,
+      password: ADMIN_PASSWORD,
+      role: 'admin',
+      employee: employee._id
+    });
+    console.log(`Created admin user ${ADMIN_USERNAME}`);
   }
 }
 
@@ -86,7 +89,7 @@ app.use('/api/salary-settings', authenticate, authorizeRoles('hr', 'admin'), sal
 async function start() {
   try {
     await connectDB(process.env.MONGODB_URI);
-    await seedTestUsers();
+    await seedInitialAdmin();
     app.listen(PORT, () => {
       console.log(`Server running on port ${PORT}`);
     });
