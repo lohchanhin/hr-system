@@ -5,7 +5,7 @@ import { jest } from '@jest/globals';
 const saveMock = jest.fn();
 const Employee = jest.fn().mockImplementation(() => ({ save: saveMock }));
 Employee.find = jest.fn();
-Employee.findByIdAndUpdate = jest.fn();
+Employee.findById = jest.fn();
 Employee.findByIdAndDelete = jest.fn();
 
 jest.mock('../src/models/Employee.js', () => ({ default: Employee }), { virtual: true });
@@ -23,7 +23,7 @@ beforeAll(async () => {
 beforeEach(() => {
   saveMock.mockReset();
   Employee.find.mockReset();
-  Employee.findByIdAndUpdate.mockReset();
+  Employee.findById.mockReset();
   Employee.findByIdAndDelete.mockReset();
 });
 
@@ -56,13 +56,24 @@ describe('Employee API', () => {
     expect(res.body).toMatchObject(newEmp);
   });
 
+  it('gets employee', async () => {
+    const fake = { _id: '1', name: 'John' };
+    Employee.findById.mockResolvedValue(fake);
+    const res = await request(app).get('/api/employees/1');
+    expect(res.status).toBe(200);
+    expect(Employee.findById).toHaveBeenCalledWith('1');
+    expect(res.body).toEqual(fake);
+  });
+
   it('updates employee', async () => {
-    Employee.findByIdAndUpdate.mockResolvedValue({ _id: '1', name: 'Updated' });
+    Employee.findById.mockResolvedValue({ _id: '1', name: 'John', save: saveMock });
+    saveMock.mockResolvedValue();
     const res = await request(app)
       .put('/api/employees/1')
       .send({ name: 'Updated' });
     expect(res.status).toBe(200);
-    expect(Employee.findByIdAndUpdate).toHaveBeenCalled();
+    expect(Employee.findById).toHaveBeenCalledWith('1');
+    expect(saveMock).toHaveBeenCalled();
     expect(res.body).toMatchObject({ _id: '1', name: 'Updated' });
 
   });
