@@ -24,6 +24,11 @@
         </el-table-column>
         <el-table-column prop="shiftType" label="班別" width="100" />
       </el-table>
+
+      <div style="margin-top: 20px;">
+        <el-button type="success" @click="downloadSchedules('pdf')">下載 PDF</el-button>
+        <el-button type="success" @click="downloadSchedules('excel')" style="margin-left: 10px;">下載 Excel</el-button>
+      </div>
     </div>
   </template>
 
@@ -35,6 +40,21 @@
   const schedules = ref([])
   const scheduleForm = ref({ date: '', shiftType: '' })
   const token = localStorage.getItem('token') || ''
+
+  async function downloadSchedules(format) {
+    const res = await apiFetch(`/api/schedules/export?format=${format}`, {
+      headers: { Authorization: `Bearer ${token}` }
+    })
+    if (res.ok) {
+      const blob = await res.blob()
+      const url = window.URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = format === 'excel' ? 'schedules.xlsx' : 'schedules.pdf'
+      a.click()
+      window.URL.revokeObjectURL(url)
+    }
+  }
 
   async function fetchSchedules() {
     const res = await apiFetch('/api/schedules', {
