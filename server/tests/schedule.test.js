@@ -6,6 +6,26 @@ const saveMock = jest.fn();
 const ShiftSchedule = jest.fn().mockImplementation(() => ({ save: saveMock }));
 ShiftSchedule.find = jest.fn(() => ({ populate: jest.fn().mockResolvedValue([]) }));
 
+const pdfPipe = jest.fn();
+const pdfEnd = jest.fn();
+const PDFDocumentMock = jest.fn().mockImplementation(() => ({
+  pipe: pdfPipe,
+  end: pdfEnd,
+  fontSize: jest.fn().mockReturnThis(),
+  text: jest.fn().mockReturnThis(),
+  moveDown: jest.fn()
+}));
+
+const worksheetMock = { columns: [], addRow: jest.fn() };
+const workbookMock = {
+  addWorksheet: jest.fn(() => worksheetMock),
+  xlsx: { writeBuffer: jest.fn().mockResolvedValue(Buffer.from('test')) }
+};
+const ExcelJSMock = { Workbook: jest.fn(() => workbookMock) };
+
+jest.mock('pdfkit', () => ({ default: PDFDocumentMock }), { virtual: true });
+jest.mock('exceljs', () => ({ default: ExcelJSMock }), { virtual: true });
+
 jest.mock('../src/models/ShiftSchedule.js', () => ({ default: ShiftSchedule }), { virtual: true });
 
 let app;
@@ -46,5 +66,19 @@ describe('Schedule API', () => {
     expect(res.status).toBe(201);
     expect(saveMock).toHaveBeenCalled();
     expect(res.body).toMatchObject(payload);
+  });
+
+  it('exports schedules to pdf', async () => {
+    ShiftSchedule.find.mockReturnValue({ populate: jest.fn().mockResolvedValue([]) });
+    const res = await request(app).get('/api/schedules/export?format=pdf');
+    expect(res.status).toBe(200);
+    expect(pdfPipe).toHaveBeenCalled();
+  });
+
+  it('exports schedules to excel', async () => {
+    ShiftSchedule.find.mockReturnValue({ populate: jest.fn().mockResolvedValue([]) });
+    const res = await request(app).get('/api/schedules/export?format=excel');
+    expect(res.status).toBe(200);
+    expect(workbookMock.xlsx.writeBuffer).toHaveBeenCalled();
   });
 });
