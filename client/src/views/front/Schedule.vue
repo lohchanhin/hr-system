@@ -34,10 +34,12 @@
   </div>
 </template>
 
+
 <script setup>
 import { ref, onMounted, watch } from 'vue'
 import dayjs from 'dayjs'
 import { apiFetch } from '../../api.js'
+
 
 const schedules = ref([])
 const scheduleMap = ref({})
@@ -68,6 +70,7 @@ async function fetchEmployees() {
   }
 }
 
+
 async function fetchSchedules() {
   const res = await apiFetch('/api/schedules', {
     headers: { Authorization: `Bearer ${token}` }
@@ -77,6 +80,7 @@ async function fetchSchedules() {
     scheduleMap.value = Object.fromEntries(
       schedules.value.map(s => [dayjs(s.date).format('YYYY-MM-DD'), s.shiftType])
     )
+
   }
 }
 

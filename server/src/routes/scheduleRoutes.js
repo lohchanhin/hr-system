@@ -4,12 +4,14 @@ import {
   createSchedule,
   getSchedule,
   updateSchedule,
-  deleteSchedule
+  deleteSchedule,
+  exportSchedules
 } from '../controllers/scheduleController.js';
 
 const router = Router();
 
 router.get('/', listSchedules);
+router.get('/export', exportSchedules);
 router.post('/', createSchedule);
 router.get('/:id', getSchedule);
 router.put('/:id', updateSchedule);
