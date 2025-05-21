@@ -39,4 +39,16 @@ describe('HRManagementSystemSetting.vue', () => {
     await wrapper.vm.deleteDept(0)
     expect(fetch).toHaveBeenCalledWith('/api/departments/1', expect.objectContaining({ method: 'DELETE' }))
   })
+
+  it('sends new fields when saving employee', async () => {
+    const wrapper = mount(HRSetting)
+    fetch.mockClear()
+    fetch.mockResolvedValueOnce({ ok: true, json: async () => ({}) })
+    wrapper.vm.employeeForm = { ...wrapper.vm.employeeForm, name: 'n', username: 'u', experiences: [{ unit: 'a' }] }
+    wrapper.vm.editEmployeeIndex = null
+    await wrapper.vm.saveEmployee()
+    const body = JSON.parse(fetch.mock.calls[0][1].body)
+    expect(body.experiences).toBeDefined()
+    expect(fetch).toHaveBeenCalledWith('/api/employees', expect.objectContaining({ method: 'POST' }))
+  })
 })

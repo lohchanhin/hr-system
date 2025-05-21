@@ -173,22 +173,179 @@
                     <el-form-item label="子單位">
                       <el-input v-model="employeeForm.subunit" />
                     </el-form-item>
+                    <el-form-item label="權限/職等">
+                      <el-input v-model="employeeForm.permissionGrade" readonly />
+                    </el-form-item>
                     <el-form-item label="職稱">
                       <el-input v-model="employeeForm.title" />
+                    </el-form-item>
+                    <el-form-item label="執業職稱">
+                      <el-input v-model="employeeForm.practiceTitle" />
+                    </el-form-item>
+                    <el-form-item label="兼職">
+                      <el-switch v-model="employeeForm.isPartTime" />
+                    </el-form-item>
+                    <el-form-item label="打卡">
+                      <el-switch v-model="employeeForm.isClocking" />
                     </el-form-item>
                     <el-form-item label="入職日">
                       <el-date-picker v-model="employeeForm.hireDate" type="date" />
                     </el-form-item>
+                    <el-form-item label="起聘日">
+                      <el-date-picker v-model="employeeForm.appointDate" type="date" />
+                    </el-form-item>
                     <el-form-item label="離職日">
                       <el-date-picker v-model="employeeForm.resignDate" type="date" />
                     </el-form-item>
+                    <el-form-item label="解聘日">
+                      <el-date-picker v-model="employeeForm.dismissDate" type="date" />
+                    </el-form-item>
                     <el-form-item label="在職狀態">
-                      <el-select v-model="employeeForm.status">
+                      <el-select v-model="employeeForm.employmentStatus">
                         <el-option label="在職" value="在職" />
                         <el-option label="離職" value="離職" />
                         <el-option label="休假中" value="休假中" />
                       </el-select>
                     </el-form-item>
+                    <el-form-item label="試用期天數">
+                      <el-select v-model="employeeForm.probationDays">
+                        <el-option label="無" value="" />
+                        <el-option label="30" value="30" />
+                        <el-option label="60" value="60" />
+                        <el-option label="90" value="90" />
+                      </el-select>
+                    </el-form-item>
+                    <el-form-item label="再任起聘">
+                      <el-date-picker v-model="employeeForm.reAppointDate" type="date" />
+                    </el-form-item>
+                    <el-form-item label="再任解聘">
+                      <el-date-picker v-model="employeeForm.reDismissDate" type="date" />
+                    </el-form-item>
+                    <el-form-item label="備註">
+                      <el-input v-model="employeeForm.employmentNote" />
+                    </el-form-item>
+                  </el-form>
+                </el-tab-pane>
+                <el-tab-pane label="更多資訊" name="more">
+                  <el-form :model="employeeForm" label-width="110px">
+                    <el-divider content-position="left">身體檢查</el-divider>
+                    <el-form-item label="身高">
+                      <el-input v-model="employeeForm.height" />
+                    </el-form-item>
+                    <el-form-item label="體重">
+                      <el-input v-model="employeeForm.weight" />
+                    </el-form-item>
+                    <el-form-item label="血型">
+                      <el-input v-model="employeeForm.medicalBloodType" />
+                    </el-form-item>
+
+                    <el-divider content-position="left">學歷</el-divider>
+                    <el-form-item label="教育程度">
+                      <el-input v-model="employeeForm.educationLevel" />
+                    </el-form-item>
+                    <el-form-item label="學校">
+                      <el-input v-model="employeeForm.schoolName" />
+                    </el-form-item>
+                    <el-form-item label="科系">
+                      <el-input v-model="employeeForm.major" />
+                    </el-form-item>
+                    <el-form-item label="畢/肄業">
+                      <el-input v-model="employeeForm.graduationStatus" />
+                    </el-form-item>
+                    <el-form-item label="畢業年度">
+                      <el-input v-model="employeeForm.graduationYear" />
+                    </el-form-item>
+
+                    <el-divider content-position="left">緊急聯絡人1</el-divider>
+                    <el-form-item label="姓名">
+                      <el-input v-model="employeeForm.emergency1.name" />
+                    </el-form-item>
+                    <el-form-item label="稱謂">
+                      <el-input v-model="employeeForm.emergency1.relation" />
+                    </el-form-item>
+                    <el-form-item label="電話一">
+                      <el-input v-model="employeeForm.emergency1.phone1" />
+                    </el-form-item>
+                    <el-form-item label="電話二">
+                      <el-input v-model="employeeForm.emergency1.phone2" />
+                    </el-form-item>
+
+                    <el-divider content-position="left">緊急聯絡人2</el-divider>
+                    <el-form-item label="姓名">
+                      <el-input v-model="employeeForm.emergency2.name" />
+                    </el-form-item>
+                    <el-form-item label="稱謂">
+                      <el-input v-model="employeeForm.emergency2.relation" />
+                    </el-form-item>
+                    <el-form-item label="電話一">
+                      <el-input v-model="employeeForm.emergency2.phone1" />
+                    </el-form-item>
+                    <el-form-item label="電話二">
+                      <el-input v-model="employeeForm.emergency2.phone2" />
+                    </el-form-item>
+
+                    <el-divider content-position="left">經歷</el-divider>
+                    <div v-for="(exp, i) in employeeForm.experiences" :key="i" style="border:1px solid #ccc;margin-bottom:10px;padding:10px;">
+                      <el-form-item label="單位名稱">
+                        <el-input v-model="exp.unit" />
+                      </el-form-item>
+                      <el-form-item label="職稱">
+                        <el-input v-model="exp.title" />
+                      </el-form-item>
+                      <el-form-item label="到職年月">
+                        <el-date-picker v-model="exp.start" type="month" />
+                      </el-form-item>
+                      <el-form-item label="離職年月">
+                        <el-date-picker v-model="exp.end" type="month" />
+                      </el-form-item>
+                      <el-button type="danger" @click="removeExperience(i)">刪除</el-button>
+                    </div>
+                    <el-button type="primary" @click="addExperience">新增經歷</el-button>
+
+                    <el-divider content-position="left">證照</el-divider>
+                    <div v-for="(lic, i) in employeeForm.licenses" :key="'l'+i" style="border:1px solid #ccc;margin-bottom:10px;padding:10px;">
+                      <el-form-item label="證照名稱">
+                        <el-input v-model="lic.name" />
+                      </el-form-item>
+                      <el-form-item label="證照字號">
+                        <el-input v-model="lic.number" />
+                      </el-form-item>
+                      <el-form-item label="起始日期">
+                        <el-date-picker v-model="lic.startDate" type="date" />
+                      </el-form-item>
+                      <el-form-item label="截止日期">
+                        <el-date-picker v-model="lic.endDate" type="date" />
+                      </el-form-item>
+                      <el-form-item label="證書">
+                        <el-upload :auto-upload="false" v-model:file-list="lic.fileList" />
+                      </el-form-item>
+                      <el-button type="danger" @click="removeLicense(i)">刪除</el-button>
+                    </div>
+                    <el-button type="primary" @click="addLicense">新增證照</el-button>
+
+                    <el-divider content-position="left">教育訓練</el-divider>
+                    <div v-for="(tr, i) in employeeForm.trainings" :key="'t'+i" style="border:1px solid #ccc;margin-bottom:10px;padding:10px;">
+                      <el-form-item label="課程名稱">
+                        <el-input v-model="tr.course" />
+                      </el-form-item>
+                      <el-form-item label="課程字號">
+                        <el-input v-model="tr.courseNo" />
+                      </el-form-item>
+                      <el-form-item label="日期">
+                        <el-date-picker v-model="tr.date" type="date" />
+                      </el-form-item>
+                      <el-form-item label="證書">
+                        <el-upload :auto-upload="false" v-model:file-list="tr.fileList" />
+                      </el-form-item>
+                      <el-form-item label="積分類別">
+                        <el-input v-model="tr.category" />
+                      </el-form-item>
+                      <el-form-item label="分數">
+                        <el-input v-model="tr.score" />
+                      </el-form-item>
+                      <el-button type="danger" @click="removeTraining(i)">刪除</el-button>
+                    </div>
+                    <el-button type="primary" @click="addTraining">新增訓練</el-button>
                   </el-form>
                 </el-tab-pane>
               </el-tabs>
@@ -367,70 +524,90 @@ async function fetchDepartments() {
   let editEmployeeIndex = null
   let editEmployeeId = ''
   
-  const employeeForm = ref({
+  const emptyEmployee = {
     username: '',
     password: '',
     permissions: [],
+    // 基本資料
+    employeeNo: '',
     name: '',
     gender: '',
     birthday: '',
+    idNumber: '',
+    birthplace: '',
+    bloodType: '',
+    languages: [],
+    disabilityLevel: '',
+    identityCategory: '',
+    maritalStatus: '',
+    dependents: 0,
     email: '',
     phone: '',
+    landline: '',
+    householdAddress: '',
+    contactAddress: '',
+    lineId: '',
     photoList: [],
+    // 部門相關
     institution: '',
     department: '',
     subunit: '',
+    permissionGrade: '',
+    // 職業別
     title: '',
+    practiceTitle: '',
+    isPartTime: false,
+    isClocking: false,
+    // 人員狀態
+    employmentStatus: '',
+    probationDays: '',
+    // 體檢
+    height: '',
+    weight: '',
+    medicalBloodType: '',
+    // 學歷
+    educationLevel: '',
+    schoolName: '',
+    major: '',
+    graduationStatus: '',
+    graduationYear: '',
+    // 役別
+    serviceType: '',
+    militaryBranch: '',
+    militaryRank: '',
+    dischargeYear: '',
+    // 緊急聯絡人
+    emergency1: { name: '', relation: '', phone1: '', phone2: '' },
+    emergency2: { name: '', relation: '', phone1: '', phone2: '' },
+    // 關鍵字
+    keywords: '',
+    // 經歷/證照/訓練
+    experiences: [],
+    licenses: [],
+    trainings: [],
+    // 聘任日期
     hireDate: '',
+    appointDate: '',
     resignDate: '',
-    status: '在職'
-  })
+    dismissDate: '',
+    reAppointDate: '',
+    reDismissDate: '',
+    employmentNote: ''
+  }
+
+  const employeeForm = ref({ ...emptyEmployee })
   
   function openEmployeeDialog(index = null) {
     if (index !== null) {
       editEmployeeIndex = index
       const emp = employeeList.value[index]
       editEmployeeId = emp._id || ''
-      employeeForm.value = {
-        username: emp.username || '',
-        password: '',
-        permissions: emp.permissions || [],
-        name: emp.name || '',
-        gender: emp.gender || '',
-        birthday: emp.birthday || '',
-        email: emp.email || '',
-        phone: emp.phone || '',
-        photoList: [],
-        institution: emp.institution || '',
-        department: emp.department || '',
-        subunit: emp.subunit || '',
-        title: emp.title || '',
-        hireDate: emp.hireDate || '',
-        resignDate: emp.resignDate || '',
-        status: emp.status || '在職'
-      }
+      employeeForm.value = { ...emptyEmployee, ...emp, password: '', photoList: [] }
     } else {
       editEmployeeIndex = null
       editEmployeeId = ''
       employeeDialogTab.value = 'account'
-      employeeForm.value = {
-        username: '',
-        password: '',
-        permissions: [],
-        name: '',
-        gender: '',
-        birthday: '',
-        email: '',
-        phone: '',
-        photoList: [],
-        institution: '',
-        department: '',
-        subunit: '',
-        title: '',
-        hireDate: '',
-        resignDate: '',
-        status: '在職'
-      }
+      employeeForm.value = { ...emptyEmployee }
     }
     employeeDialogVisible.value = true
   }
@@ -478,6 +655,30 @@ async function fetchDepartments() {
       employeeList.value.splice(index, 1)
     }
 
+  }
+
+  function addExperience() {
+    employeeForm.value.experiences.push({ unit: '', title: '', start: '', end: '' })
+  }
+
+  function removeExperience(i) {
+    employeeForm.value.experiences.splice(i, 1)
+  }
+
+  function addLicense() {
+    employeeForm.value.licenses.push({ name: '', number: '', startDate: '', endDate: '', fileList: [] })
+  }
+
+  function removeLicense(i) {
+    employeeForm.value.licenses.splice(i, 1)
+  }
+
+  function addTraining() {
+    employeeForm.value.trainings.push({ course: '', courseNo: '', date: '', fileList: [], category: '', score: '' })
+  }
+
+  function removeTraining(i) {
+    employeeForm.value.trainings.splice(i, 1)
   }
   
   // ============== (4) 組織單位/部門管理 ==============
