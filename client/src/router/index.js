@@ -3,7 +3,7 @@ import { getToken } from '@/utils/tokenService'
 
 // ★ 既有的後台檔案
 const Login = () => import('@/views/Login.vue')
-const Layout = () => import('@/views/Layout.vue')
+const Layout = () => import('@/views/ModernLayout.vue')
 const Settings = () => import('@/views/Settings.vue')
 const AttendanceSetting = () => import('@/components/backComponents/AttendanceSetting.vue')
 const AttendanceManagementSetting = () => import('@/components/backComponents/AttendanceManagementSetting.vue')
