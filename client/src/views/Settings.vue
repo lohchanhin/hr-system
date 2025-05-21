@@ -8,12 +8,13 @@
   </template>
   
   <script setup>
-  import { useRouter } from 'vue-router'
+import { useRouter } from 'vue-router'
+import { clearToken } from '../utils/tokenService'
   
   const router = useRouter()
   
 const logout = () => {
-  localStorage.removeItem('token')
+  clearToken()
   localStorage.removeItem('role')
   localStorage.removeItem('employeeId')
   router.push({ name: 'Login' })

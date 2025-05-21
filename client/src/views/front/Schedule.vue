@@ -36,12 +36,13 @@
   import { ref, onMounted } from 'vue'
   import dayjs from 'dayjs'
   import { apiFetch } from '../../api'
+  import { getToken } from '../../utils/tokenService'
 
   const schedules = ref([])
   const scheduleForm = ref({ date: '', shiftType: '' })
-  const token = localStorage.getItem('token') || ''
 
   async function downloadSchedules(format) {
+    const token = getToken() || ''
     const res = await apiFetch(`/api/schedules/export?format=${format}`, {
       headers: { Authorization: `Bearer ${token}` }
     })
@@ -57,6 +58,7 @@
   }
 
   async function fetchSchedules() {
+    const token = getToken() || ''
     const res = await apiFetch('/api/schedules', {
       headers: { Authorization: `Bearer ${token}` }
     })
@@ -71,6 +73,7 @@
       date: scheduleForm.value.date,
       shiftType: scheduleForm.value.shiftType
     }
+    const token = getToken() || ''
     const res = await apiFetch('/api/schedules', {
       method: 'POST',
       headers: {
