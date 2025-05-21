@@ -4,7 +4,7 @@ import { jest } from '@jest/globals';
 
 const saveMock = jest.fn();
 const ShiftSchedule = jest.fn().mockImplementation(() => ({ save: saveMock }));
-ShiftSchedule.find = jest.fn(() => ({ populate: jest.fn().mockResolvedValue([]) }));
+ShiftSchedule.find = jest.fn();
 
 jest.mock('../src/models/ShiftSchedule.js', () => ({ default: ShiftSchedule }), { virtual: true });
 
@@ -25,22 +25,26 @@ beforeEach(() => {
 
 describe('Schedule API', () => {
   it('lists schedules', async () => {
-    const fakeSchedules = [{ shiftType: 'morning' }];
-    ShiftSchedule.find.mockReturnValue({ populate: jest.fn().mockResolvedValue(fakeSchedules) });
+    const fakeSchedules = [{ shiftType: 'morning', floor: '1F', startTime: '09:00', endTime: '17:00' }];
+    ShiftSchedule.find.mockReturnValue({
+      populate: jest.fn(() => ({ populate: jest.fn().mockResolvedValue(fakeSchedules) }))
+    });
     const res = await request(app).get('/api/schedules');
     expect(res.status).toBe(200);
     expect(res.body).toEqual(fakeSchedules);
   });
 
   it('returns 500 if listing fails', async () => {
-    ShiftSchedule.find.mockReturnValue({ populate: jest.fn().mockRejectedValue(new Error('fail')) });
+    ShiftSchedule.find.mockReturnValue({
+      populate: jest.fn(() => ({ populate: jest.fn().mockRejectedValue(new Error('fail')) }))
+    });
     const res = await request(app).get('/api/schedules');
     expect(res.status).toBe(500);
     expect(res.body).toEqual({ error: 'fail' });
   });
 
   it('creates schedule', async () => {
-    const payload = { shiftType: 'morning' };
+    const payload = { shiftType: 'morning', floor: '1F', startTime: '09:00', endTime: '17:00' };
     saveMock.mockResolvedValue();
     const res = await request(app).post('/api/schedules').send(payload);
     expect(res.status).toBe(201);
