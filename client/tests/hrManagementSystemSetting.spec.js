@@ -25,4 +25,14 @@ describe('HRManagementSystemSetting.vue', () => {
     await button.trigger('click')
     expect(wrapper.vm.employeeDialogVisible).toBe(true)
   })
+
+  it('adds and removes experience rows', async () => {
+    const wrapper = mount(HRManagementSystemSetting, {
+      global: { plugins: [ElementPlus] }
+    })
+    wrapper.vm.addExperience()
+    expect(wrapper.vm.employeeForm.experiences.length).toBe(1)
+    wrapper.vm.removeExperience(0)
+    expect(wrapper.vm.employeeForm.experiences.length).toBe(0)
+  })
 })
