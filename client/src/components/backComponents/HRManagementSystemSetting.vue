@@ -120,6 +120,21 @@
                 <el-form-item label="職稱">
                   <el-input v-model="employeeForm.title" />
                 </el-form-item>
+                <el-form-item label="身分證字號">
+                  <el-input v-model="employeeForm.idNumber" />
+                </el-form-item>
+                <el-form-item label="出生日期">
+                  <el-date-picker v-model="employeeForm.birthDate" type="date" format="YYYY-MM-DD" />
+                </el-form-item>
+                <el-form-item label="聯絡方式">
+                  <el-input v-model="employeeForm.contact" />
+                </el-form-item>
+                <el-form-item label="證照">
+                  <el-input v-model="employeeForm.licenses" placeholder="以逗號分隔" />
+                </el-form-item>
+                <el-form-item label="教育訓練">
+                  <el-input v-model="employeeForm.trainings" placeholder="以逗號分隔" />
+                </el-form-item>
                 <el-form-item label="在職狀態">
                   <el-select v-model="employeeForm.status">
                     <el-option label="在職" value="在職" />
@@ -306,6 +321,11 @@ async function fetchDepartments() {
     name: '',
     department: '',
     title: '',
+    idNumber: '',
+    birthDate: '',
+    contact: '',
+    licenses: '',
+    trainings: '',
     status: '在職'
   })
   
@@ -314,17 +334,39 @@ async function fetchDepartments() {
       editEmployeeIndex = index
       const emp = employeeList.value[index]
       editEmployeeId = emp._id || ''
-      employeeForm.value = { ...emp }
+      employeeForm.value = {
+        ...emp,
+        licenses: Array.isArray(emp.licenses) ? emp.licenses.join(',') : '',
+        trainings: Array.isArray(emp.trainings) ? emp.trainings.join(',') : ''
+      }
     } else {
       editEmployeeIndex = null
       editEmployeeId = ''
-      employeeForm.value = { name: '', department: '', title: '', status: '在職' }
+      employeeForm.value = {
+        name: '',
+        department: '',
+        title: '',
+        idNumber: '',
+        birthDate: '',
+        contact: '',
+        licenses: '',
+        trainings: '',
+        status: '在職'
+      }
     }
     employeeDialogVisible.value = true
   }
 
   async function saveEmployee() {
-    const payload = { ...employeeForm.value }
+    const payload = {
+      ...employeeForm.value,
+      licenses: employeeForm.value.licenses
+        ? employeeForm.value.licenses.split(',').map(s => s.trim()).filter(Boolean)
+        : [],
+      trainings: employeeForm.value.trainings
+        ? employeeForm.value.trainings.split(',').map(s => s.trim()).filter(Boolean)
+        : []
+    }
 
     let res
     if (editEmployeeIndex === null) {

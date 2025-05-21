@@ -46,3 +46,23 @@ When running in development, the server automatically seeds a few test users if 
 | `admin`     | admin     |
 
 All test accounts use the password `password`.
+
+## Employee form fields
+
+The `Employee` model stores the following fields:
+
+| Field       | Type    | Description        |
+|-------------|---------|--------------------|
+| `name`      | String  | Employee name      |
+| `email`     | String  | Email address      |
+| `role`      | String  | one of `employee`, `supervisor`, `hr`, `admin` |
+| `department`| String  | Department name    |
+| `title`     | String  | Job title          |
+| `idNumber`  | String  | National ID number |
+| `birthDate` | Date    | Date of birth      |
+| `contact`   | String  | Contact info       |
+| `licenses`  | [String]| Licenses list      |
+| `trainings` | [String]| Training records   |
+| `status`    | String  | Employment status  |
+
+No additional environment variables are required for these fields.
