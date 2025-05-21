@@ -32,6 +32,7 @@
 import { ref, onMounted } from "vue";
 import { useRouter } from "vue-router";
 import { useMenuStore } from "../../stores/menu";
+import { clearToken } from "../../utils/tokenService";
 import { storeToRefs } from "pinia";
 
 const router = useRouter();
@@ -59,7 +60,7 @@ function gotoPage(pageName) {
 function onLogout() {
   localStorage.removeItem("role");
   localStorage.removeItem("username");
-  localStorage.removeItem("token");
+  clearToken();
   // 回到前台登入
   router.push({ name: "FrontLogin" });
 }

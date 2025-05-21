@@ -35,6 +35,7 @@
 import { ref, onMounted } from 'vue'
 import dayjs from 'dayjs'
 import { apiFetch } from '../../api'
+import { getToken } from '../../utils/tokenService'
 
 // 將中文動作與後端定義的值互轉
 const actionMap = {
@@ -48,9 +49,9 @@ const reverseActionMap = Object.fromEntries(
 )
 
 const records = ref([])
-const token = localStorage.getItem('token') || ''
 
 async function fetchRecords() {
+  const token = getToken() || ''
   const res = await apiFetch('/api/attendance', {
     headers: { Authorization: `Bearer ${token}` }
   })
@@ -84,6 +85,7 @@ async function addRecord(action) {
     remark: '',
     employee: localStorage.getItem('employeeId') || ''
   }
+  const token = getToken() || ''
   const res = await apiFetch('/api/attendance', {
     method: 'POST',
     headers: {
