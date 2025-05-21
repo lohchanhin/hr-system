@@ -7,13 +7,16 @@ import { isTokenBlacklisted } from '../src/utils/tokenBlacklist.js'
 const compareMock = jest.fn();
 const fakeUser = { _id: 'u1', role: 'employee', username: 'john', employee: 'e1', comparePassword: compareMock };
 const User = { findOne: jest.fn() };
+const BlacklistedToken = { create: jest.fn(), findOne: jest.fn() };
 
 jest.mock('../src/models/User.js', () => ({ default: User }), { virtual: true });
+jest.mock('../src/models/BlacklistedToken.js', () => ({ default: BlacklistedToken }), { virtual: true });
 
 let app;
 let authRoutes;
 
 beforeAll(async () => {
+  process.env.JWT_SECRET = 'secret';
   authRoutes = (await import('../src/routes/authRoutes.js')).default;
   app = express();
   app.use(express.json());
@@ -23,6 +26,8 @@ beforeAll(async () => {
 beforeEach(() => {
   User.findOne.mockReset();
   compareMock.mockReset();
+  BlacklistedToken.create.mockReset();
+  BlacklistedToken.findOne.mockReset();
 });
 
 describe('Auth API', () => {
@@ -45,8 +50,11 @@ describe('Auth API', () => {
   });
 
   it('invalidates token on logout', async () => {
+    BlacklistedToken.create.mockResolvedValue();
+    BlacklistedToken.findOne.mockResolvedValue({ token: 'tok', expiresAt: new Date(Date.now() + 1000) });
     const res = await request(app).post('/api/logout').set('Authorization', 'Bearer tok')
     expect(res.status).toBe(204)
-    expect(isTokenBlacklisted('tok')).toBe(true)
+    const result = await isTokenBlacklisted('tok')
+    expect(result).toBe(true)
   })
 });
