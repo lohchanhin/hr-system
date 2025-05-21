@@ -1,6 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import HRSetting from '../src/components/backComponents/HRManagementSystemSetting.vue'
+import AccountRoleSetting from '../src/components/backComponents/AccountRoleSetting.vue'
+import DepartmentManagement from '../src/components/backComponents/DepartmentManagement.vue'
+import EmployeeManagement from '../src/components/backComponents/EmployeeManagement.vue'
 
 describe('HRManagementSystemSetting.vue', () => {
   beforeEach(() => {
@@ -25,18 +28,20 @@ describe('HRManagementSystemSetting.vue', () => {
     const wrapper = mount(HRSetting)
     fetch.mockClear()
     fetch.mockResolvedValueOnce({ ok: true, json: async () => ({}) })
-    wrapper.vm.userForm = { username: 'u', password: 'p', role: 'hr', department: 'd1' }
-    wrapper.vm.editUserIndex = null
-    await wrapper.vm.saveUser()
+    const acc = wrapper.findComponent(AccountRoleSetting)
+    acc.vm.userForm = { username: 'u', password: 'p', role: 'hr', department: 'd1' }
+    acc.vm.editUserIndex = null
+    await acc.vm.saveUser()
     expect(fetch).toHaveBeenCalledWith('/api/users', expect.objectContaining({ method: 'POST' }))
   })
 
   it('deletes department', async () => {
     const wrapper = mount(HRSetting)
     fetch.mockClear()
-    wrapper.vm.departmentList = [{ _id: '1', label: 'HR', value: 'D' }]
+    const dept = wrapper.findComponent(DepartmentManagement)
+    dept.vm.departmentList = [{ _id: '1', label: 'HR', value: 'D' }]
     fetch.mockResolvedValueOnce({ ok: true })
-    await wrapper.vm.deleteDept(0)
+    await dept.vm.deleteDept(0)
     expect(fetch).toHaveBeenCalledWith('/api/departments/1', expect.objectContaining({ method: 'DELETE' }))
   })
 
@@ -44,9 +49,10 @@ describe('HRManagementSystemSetting.vue', () => {
     const wrapper = mount(HRSetting)
     fetch.mockClear()
     fetch.mockResolvedValueOnce({ ok: true, json: async () => ({}) })
-    wrapper.vm.employeeForm = { ...wrapper.vm.employeeForm, name: 'n', username: 'u', experiences: [{ unit: 'a' }] }
-    wrapper.vm.editEmployeeIndex = null
-    await wrapper.vm.saveEmployee()
+    const emp = wrapper.findComponent(EmployeeManagement)
+    emp.vm.employeeForm = { ...emp.vm.employeeForm, name: 'n', username: 'u', experiences: [{ unit: 'a' }] }
+    emp.vm.editEmployeeIndex = null
+    await emp.vm.saveEmployee()
     const body = JSON.parse(fetch.mock.calls[0][1].body)
     expect(body.experiences).toBeDefined()
     expect(fetch).toHaveBeenCalledWith('/api/employees', expect.objectContaining({ method: 'POST' }))

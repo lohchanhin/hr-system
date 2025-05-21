@@ -62,6 +62,7 @@
 import { ref, onMounted } from 'vue'
 import dayjs from 'dayjs'
 import { apiFetch } from '../../api'
+import { getToken } from '../../utils/tokenService'
   
   const leaveForm = ref({
     leaveType: '',
@@ -72,9 +73,9 @@ import { apiFetch } from '../../api'
   
 const leaveRecords = ref([])
 
-const token = localStorage.getItem('token') || ''
 
 async function fetchLeaves() {
+  const token = getToken() || ''
   const res = await apiFetch('/api/leaves', {
     headers: { Authorization: `Bearer ${token}` }
   })
@@ -91,6 +92,7 @@ async function onSubmitLeave() {
     endDate: leaveForm.value.endDate,
     reason: leaveForm.value.reason
   }
+  const token = getToken() || ''
   const res = await apiFetch('/api/leaves', {
     method: 'POST',
     headers: {

@@ -31,6 +31,7 @@ import { useRouter } from 'vue-router'
 import { useMenuStore } from '../stores/menu'
 import { storeToRefs } from 'pinia'
 import { apiFetch } from '../api'
+import { setToken } from '../utils/tokenService'
   
 const router = useRouter()
 const menuStore = useMenuStore()
@@ -49,11 +50,16 @@ const menuStore = useMenuStore()
     })
     if (res.ok) {
       const data = await res.json()
-      localStorage.setItem('token', data.token)
+      setToken(data.token)
       localStorage.setItem('role', data.user.role)
       localStorage.setItem('employeeId', data.user.employeeId)
       await menuStore.fetchMenu()
-      router.push({ name: 'Settings' })
+      const first = menuStore.items[0]
+      if (first) {
+        router.push({ name: first.name })
+      } else {
+        router.push({ name: 'Login' })
+      }
     } else {
       alert('登入失敗')
     }

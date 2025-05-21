@@ -38,6 +38,7 @@ import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useMenuStore } from '../../stores/menu'
 import { apiFetch } from '../../api'
+import { setToken } from '../../utils/tokenService'
   
 const router = useRouter()
 const menuStore = useMenuStore()
@@ -57,7 +58,7 @@ async function onLogin () {
   })
   if (res.ok) {
     const data = await res.json()
-    localStorage.setItem('token', data.token)
+    setToken(data.token)
     localStorage.setItem('role', data.user.role)
     localStorage.setItem('employeeId', data.user.employeeId)
     await menuStore.fetchMenu()
@@ -73,7 +74,12 @@ async function onLogin () {
         router.push('/front/attendance')
         break
       case 'admin':
-        router.push('/layout/settings')
+        const first = menuStore.items[0]
+        if (first) {
+          router.push({ name: first.name })
+        } else {
+          router.push('/layout')
+        }
         break
       default:
         router.push('/front/attendance')
