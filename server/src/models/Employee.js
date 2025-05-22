@@ -61,6 +61,7 @@ const employeeSchema = new mongoose.Schema({
   subDepartment: String,
   title: String,
   practiceTitle: String,
+  supervisor: { type: mongoose.Schema.Types.ObjectId, ref: 'Employee' },
   role: {
     type: String,
     enum: ['employee', 'supervisor', 'hr', 'admin'],

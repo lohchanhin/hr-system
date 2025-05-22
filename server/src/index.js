@@ -28,6 +28,7 @@ async function seedTestUsers() {
     { username: 'hr', password: 'password', role: 'hr' },
     { username: 'admin', password: 'password', role: 'admin' }
   ];
+  let supervisorId = null;
   for (const data of users) {
     const existing = await User.findOne({ username: data.username });
     if (!existing) {
@@ -40,8 +41,12 @@ async function seedTestUsers() {
         status: '在職'
       });
       await User.create({ ...data, employee: employee._id });
+      if (data.role === 'supervisor') supervisorId = employee._id;
       console.log(`Created test user ${data.username}`);
     }
+  }
+  if (supervisorId) {
+    await Employee.updateMany({ role: 'employee' }, { supervisor: supervisorId });
   }
 }
 

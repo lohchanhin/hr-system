@@ -1,5 +1,34 @@
 import ShiftSchedule from '../models/ShiftSchedule.js';
 
+export async function listMonthlySchedules(req, res) {
+  try {
+    const { month, employee } = req.query;
+    if (!month) return res.status(400).json({ error: 'month required' });
+    const start = new Date(`${month}-01`);
+    const end = new Date(start);
+    end.setMonth(end.getMonth() + 1);
+    const query = { date: { $gte: start, $lt: end } };
+    if (employee) query.employee = employee;
+    const schedules = await ShiftSchedule.find(query).populate('employee');
+    res.json(schedules);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+}
+
+export async function createSchedulesBatch(req, res) {
+  try {
+    const { schedules } = req.body;
+    if (!Array.isArray(schedules)) {
+      return res.status(400).json({ error: 'schedules must be array' });
+    }
+    const inserted = await ShiftSchedule.insertMany(schedules, { ordered: false });
+    res.status(201).json(inserted);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+}
+
 export async function listSchedules(req, res) {
   try {
     const schedules = await ShiftSchedule.find().populate('employee');

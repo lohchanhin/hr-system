@@ -6,4 +6,6 @@ const shiftScheduleSchema = new mongoose.Schema({
   shiftType: { type: String, required: true }
 }, { timestamps: true });
 
+shiftScheduleSchema.index({ employee: 1, date: 1 }, { unique: true });
+
 export default mongoose.model('ShiftSchedule', shiftScheduleSchema);
