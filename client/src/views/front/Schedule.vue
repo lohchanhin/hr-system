@@ -1,105 +1,106 @@
-<!-- src/views/front/Schedule.vue -->
 <template>
-    <div class="schedule-page">
-      <h2>排班管理</h2>
-      <p>這裡是「排班管理」的基本範例頁面。未來可顯示月曆、表格或拖曳指派班別功能。</p>
-  
-      <el-card class="schedule-card">
-        <el-form :model="scheduleForm" label-width="80px">
-          <el-form-item label="日期">
-            <el-date-picker v-model="scheduleForm.date" type="date" />
-          </el-form-item>
-          <el-form-item label="班別">
-            <el-input v-model="scheduleForm.shiftType" placeholder="班別" />
-          </el-form-item>
-          <el-form-item>
-            <el-button type="primary" @click="onAddSchedule">新增排班</el-button>
-          </el-form-item>
-        </el-form>
-      </el-card>
+  <div class="schedule-page">
+    <h2>排班管理</h2>
+    <el-date-picker v-model="currentMonth" type="month" @change="fetchSchedules" />
+    <el-table :data="[scheduleRow]" style="margin-top: 20px;">
+      <el-table-column
+        v-for="d in days"
+        :key="d"
+        :label="d"
+      >
+        <template #default>
+          <el-select
+            v-if="canEdit"
+            v-model="scheduleMap[d].shiftType"
+            placeholder=""
+            @change="val => onSelect(d, val)"
+          >
+            <el-option
+              v-for="opt in shiftOptions"
+              :key="opt"
+              :label="opt"
+              :value="opt"
+            />
+          </el-select>
+          <span v-else>{{ scheduleMap[d]?.shiftType || '' }}</span>
+        </template>
+      </el-table-column>
+    </el-table>
+  </div>
+</template>
 
-      <el-table :data="schedules" style="margin-top: 20px;">
-        <el-table-column label="日期" width="120">
-          <template #default="{ row }">{{ dayjs(row.date).format('YYYY-MM-DD') }}</template>
-        </el-table-column>
-        <el-table-column prop="shiftType" label="班別" width="100" />
-      </el-table>
+<script setup>
+import { ref, computed, onMounted } from 'vue'
+import dayjs from 'dayjs'
+import { apiFetch } from '../../api'
+import { getToken } from '../../utils/tokenService'
 
-      <div style="margin-top: 20px;">
-        <el-button type="success" @click="downloadSchedules('pdf')">下載 PDF</el-button>
-        <el-button type="success" @click="downloadSchedules('excel')" style="margin-left: 10px;">下載 Excel</el-button>
-      </div>
-    </div>
-  </template>
+const currentMonth = ref(dayjs().format('YYYY-MM'))
+const scheduleMap = ref({})
+const shiftOptions = ['早班', '中班', '晚班']
+const scheduleRow = computed(() => ({ id: 1 }))
 
-  <script setup>
-  import { ref, onMounted } from 'vue'
-  import dayjs from 'dayjs'
-  import { apiFetch } from '../../api'
-  import { getToken } from '../../utils/tokenService'
+const canEdit = computed(() => {
+  const role = localStorage.getItem('role') || 'employee'
+  return ['supervisor', 'hr', 'admin'].includes(role)
+})
 
-  const schedules = ref([])
-  const scheduleForm = ref({ date: '', shiftType: '' })
+const days = computed(() => {
+  const dt = dayjs(currentMonth.value + '-01')
+  const end = dt.endOf('month').date()
+  const arr = Array.from({ length: end }, (_, i) => i + 1)
+  arr.forEach(d => {
+    if (!scheduleMap.value[d]) scheduleMap.value[d] = { shiftType: '' }
+  })
+  return arr
+})
 
-  async function downloadSchedules(format) {
-    const token = getToken() || ''
-    const res = await apiFetch(`/api/schedules/export?format=${format}`, {
-      headers: { Authorization: `Bearer ${token}` }
+async function fetchSchedules() {
+  const token = getToken() || ''
+  const employeeId = localStorage.getItem('employeeId') || ''
+  const res = await apiFetch(
+    `/api/schedules/monthly?month=${currentMonth.value}&employee=${employeeId}`,
+    { headers: { Authorization: `Bearer ${token}` } }
+  )
+  if (res.ok) {
+    const data = await res.json()
+    scheduleMap.value = {}
+    data.forEach((s) => {
+      const d = dayjs(s.date).date()
+      scheduleMap.value[d] = { id: s._id, shiftType: s.shiftType }
     })
-    if (res.ok) {
-      const blob = await res.blob()
-      const url = window.URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = format === 'excel' ? 'schedules.xlsx' : 'schedules.pdf'
-      a.click()
-      window.URL.revokeObjectURL(url)
-    }
   }
+}
 
-  async function fetchSchedules() {
-    const token = getToken() || ''
-    const res = await apiFetch('/api/schedules', {
-      headers: { Authorization: `Bearer ${token}` }
+async function onSelect(day, value) {
+  const token = getToken() || ''
+  const employeeId = localStorage.getItem('employeeId') || ''
+  const dateStr = `${currentMonth.value}-${String(day).padStart(2, '0')}`
+  const existing = scheduleMap.value[day]
+  if (existing && existing.id) {
+    await apiFetch(`/api/schedules/${existing.id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ shiftType: value })
     })
-    if (res.ok) {
-      schedules.value = await res.json()
-    }
-  }
-
-  async function onAddSchedule() {
-    const payload = {
-      employee: localStorage.getItem('employeeId') || '000000000000000000000000',
-      date: scheduleForm.value.date,
-      shiftType: scheduleForm.value.shiftType
-    }
-    const token = getToken() || ''
+  } else {
     const res = await apiFetch('/api/schedules', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`
-      },
-      body: JSON.stringify(payload)
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ employee: employeeId, date: dateStr, shiftType: value })
     })
     if (res.ok) {
       const saved = await res.json()
-      schedules.value.push(saved)
-      scheduleForm.value.date = ''
-      scheduleForm.value.shiftType = ''
+      scheduleMap.value[day] = { id: saved._id, shiftType: saved.shiftType }
     }
   }
+}
 
-  onMounted(fetchSchedules)
-  </script>
-  
-  <style scoped>
-  .schedule-page {
-    padding: 20px;
-  }
-  .schedule-card {
-    margin-top: 20px;
-    padding: 20px;
-  }
-  </style>
-  
+onMounted(fetchSchedules)
+</script>
+
+<style scoped>
+.schedule-page {
+  padding: 20px;
+}
+</style>

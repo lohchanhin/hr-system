@@ -27,6 +27,7 @@ jest.mock('pdfkit', () => ({ default: PDFDocumentMock }), { virtual: true });
 jest.mock('exceljs', () => ({ default: ExcelJSMock }), { virtual: true });
 
 jest.mock('../src/models/ShiftSchedule.js', () => ({ default: ShiftSchedule }), { virtual: true });
+jest.mock('../src/middleware/supervisor.js', () => ({ verifySupervisor: (req, res, next) => next() }), { virtual: true });
 
 let app;
 let scheduleRoutes;
@@ -80,5 +81,22 @@ describe('Schedule API', () => {
     const res = await request(app).get('/api/schedules/export?format=excel');
     expect(res.status).toBe(200);
     expect(workbookMock.xlsx.writeBuffer).toHaveBeenCalled();
+  });
+
+  it('lists schedules by month', async () => {
+    const fake = [{ shiftType: 'night' }];
+    ShiftSchedule.find.mockReturnValue({ populate: jest.fn().mockResolvedValue(fake) });
+    const res = await request(app).get('/api/schedules/monthly?month=2023-01&employee=e1');
+    expect(res.status).toBe(200);
+    expect(ShiftSchedule.find).toHaveBeenCalled();
+    expect(res.body).toEqual(fake);
+  });
+
+  it('creates schedules batch', async () => {
+    ShiftSchedule.insertMany = jest.fn().mockResolvedValue([{ _id: '1' }]);
+    const payload = { schedules: [{ employee: 'e1', date: '2023-01-01', shiftType: 'day' }] };
+    const res = await request(app).post('/api/schedules/batch').send(payload);
+    expect(res.status).toBe(201);
+    expect(ShiftSchedule.insertMany).toHaveBeenCalled();
   });
 });
