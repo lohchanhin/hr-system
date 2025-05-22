@@ -48,6 +48,9 @@ onMounted(() => {
   if (savedRole) {
     role.value = savedRole;
   }
+  if (menuItems.value.length === 0) {
+    menuStore.fetchMenu();
+  }
 });
 
 // 點擊 Menu 切換子路由

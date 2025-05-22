@@ -27,7 +27,7 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useMenuStore } from '../stores/menu'
 import { storeToRefs } from 'pinia'
@@ -35,6 +35,12 @@ import { storeToRefs } from 'pinia'
 const router = useRouter()
 const menuStore = useMenuStore()
 const { items: menuItems } = storeToRefs(menuStore)
+
+onMounted(async () => {
+  if (menuItems.value.length === 0) {
+    await menuStore.fetchMenu()
+  }
+})
 
 const active = ref('')
 const isCollapse = ref(false)
