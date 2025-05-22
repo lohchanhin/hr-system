@@ -308,7 +308,6 @@ const token = localStorage.getItem('token') || ''
 
 
   onMounted(() => {
-    fetchUsers()
     fetchDepartments()
     fetchEmployees()
   })
