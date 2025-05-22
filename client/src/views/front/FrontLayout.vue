@@ -48,6 +48,9 @@ onMounted(() => {
   if (savedRole) {
     role.value = savedRole;
   }
+  if (menuItems.value.length === 0) {
+    menuStore.fetchMenu();
+  }
 });
 
 // 點擊 Menu 切換子路由
@@ -70,10 +73,11 @@ function onLogout() {
 .front-layout {
   display: flex;
   height: 100vh; /* 讓畫面佔滿視窗 */
+  width: 100vw; /* 讓寬度也滿版 */
 }
 
 .sidebar {
-  width: 220px;
+  flex: 0 0 25%;
   border-right: 1px solid #ebeef5;
   padding: 10px;
 }
@@ -85,7 +89,7 @@ function onLogout() {
 }
 
 .main-view {
-  flex: 1;
+  flex: 0 0 75%;
   padding: 20px;
   overflow: auto;
 }

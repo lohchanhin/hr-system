@@ -22,11 +22,18 @@
 
 <script setup>
 import { useRouter } from "vue-router";
+import { onMounted } from "vue";
 import { useMenuStore } from "../stores/menu";
 import { storeToRefs } from "pinia";
 const router = useRouter();
 const menuStore = useMenuStore();
 const { items: menuItems } = storeToRefs(menuStore);
+
+onMounted(async () => {
+  if (menuItems.value.length === 0) {
+    await menuStore.fetchMenu();
+  }
+});
 
 const gotoPage = (name) => {
   router.push({ name });
