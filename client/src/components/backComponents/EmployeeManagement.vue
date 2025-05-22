@@ -313,10 +313,6 @@ const token = localStorage.getItem('token') || ''
     fetchEmployees()
   })
 
-  const employeeDialogVisible = ref(false)
-  let editEmployeeIndex = null
-  let editEmployeeId = ''
-  
   const emptyEmployee = {
     username: '',
     password: '',

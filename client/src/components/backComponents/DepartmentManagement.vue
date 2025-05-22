@@ -41,13 +41,13 @@ const departmentList = ref([])
 const deptDialogVisible = ref(false)
 let editDeptIndex = null
 const deptForm = ref({
-  label: \x27\x27,
-  value: \x27\x27
+  label: '',
+  value: ''
 })
 
 async function fetchDepartments() {
-  const token = localStorage.getItem(\x27token\x27) || \x27\x27
-  const res = await apiFetch(\x27/api/departments\x27, {
+  const token = localStorage.getItem('token') || ''
+  const res = await apiFetch('/api/departments', {
     headers: { Authorization: `Bearer ${token}` }
   })
   if (res.ok) {
