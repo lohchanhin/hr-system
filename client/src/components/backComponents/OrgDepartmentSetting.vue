@@ -22,8 +22,16 @@
       <!-- 部門 -->
       <el-tab-pane label="部門" name="dept">
         <div class="tab-content">
+          <el-select v-model="selectedOrg" placeholder="篩選機構" style="width: 200px; margin-bottom: 10px" @change="fetchList('dept', selectedOrg)">
+            <el-option
+              v-for="org in orgList"
+              :key="org._id"
+              :label="org.name"
+              :value="org._id"
+            />
+          </el-select>
           <el-button type="primary" @click="openDialog('dept')">新增部門</el-button>
-          <el-table :data="deptList" style="margin-top: 20px;">
+          <el-table :data="filteredDeptList" style="margin-top: 20px;">
             <el-table-column prop="name" label="名稱" width="150" />
             <el-table-column prop="code" label="部門代碼" width="120" />
             <el-table-column label="操作" width="180">
@@ -38,8 +46,16 @@
       <!-- 小單位 -->
       <el-tab-pane label="小單位" name="sub">
         <div class="tab-content">
+          <el-select v-model="selectedDept" placeholder="篩選部門" style="width: 200px; margin-bottom: 10px" @change="fetchList('sub', selectedDept)">
+            <el-option
+              v-for="dept in deptList"
+              :key="dept._id"
+              :label="dept.name"
+              :value="dept._id"
+            />
+          </el-select>
           <el-button type="primary" @click="openDialog('sub')">新增小單位</el-button>
-          <el-table :data="subList" style="margin-top: 20px;">
+          <el-table :data="filteredSubList" style="margin-top: 20px;">
             <el-table-column prop="name" label="名稱" width="150" />
             <el-table-column prop="code" label="代碼" width="120" />
             <el-table-column label="操作" width="180">
@@ -91,6 +107,11 @@
           </el-form-item>
         </template>
         <template v-else-if="currentType === 'dept'">
+          <el-form-item label="機構">
+            <el-select v-model="form.organization" placeholder="選擇機構">
+              <el-option v-for="org in orgList" :key="org._id" :label="org.name" :value="org._id" />
+            </el-select>
+          </el-form-item>
           <el-form-item label="部門名稱">
             <el-input v-model="form.name" />
           </el-form-item>
@@ -111,6 +132,11 @@
           </el-form-item>
         </template>
         <template v-else>
+          <el-form-item label="部門">
+            <el-select v-model="form.department" placeholder="選擇部門">
+              <el-option v-for="dept in deptList" :key="dept._id" :label="dept.name" :value="dept._id" />
+            </el-select>
+          </el-form-item>
           <el-form-item label="小單位名稱">
             <el-input v-model="form.name" />
           </el-form-item>
@@ -147,18 +173,32 @@
 </template>
 
 <script setup>
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, computed, watch } from 'vue'
 import { apiFetch } from '../../api'
 
 const activeTab = ref('org')
 const orgList = ref([])
 const deptList = ref([])
 const subList = ref([])
+const selectedOrg = ref('')
+const selectedDept = ref('')
 
 const dialogVisible = ref(false)
 const form = ref(defaultForm('org'))
 const currentType = ref('org')
 const editIndex = ref(null)
+
+const filteredDeptList = computed(() =>
+  selectedOrg.value
+    ? deptList.value.filter(d => d.organization === selectedOrg.value)
+    : deptList.value
+)
+
+const filteredSubList = computed(() =>
+  selectedDept.value
+    ? subList.value.filter(s => s.department === selectedDept.value)
+    : subList.value
+)
 
 const dialogTitle = computed(() => {
   const typeLabel = currentType.value === 'org'
@@ -177,9 +217,14 @@ function urlOf(type) {
       : '/api/sub-departments'
 }
 
-async function fetchList(type) {
+async function fetchList(type, parentId) {
   const token = localStorage.getItem('token') || ''
-  const res = await apiFetch(urlOf(type), {
+  let url = urlOf(type)
+  if (parentId) {
+    const key = type === 'dept' ? 'organization' : 'department'
+    url += `?${key}=${parentId}`
+  }
+  const res = await apiFetch(url, {
     headers: { Authorization: `Bearer ${token}` }
   })
   if (res.ok) {
@@ -193,8 +238,8 @@ async function fetchList(type) {
 async function fetchAll() {
   await Promise.all([
     fetchList('org'),
-    fetchList('dept'),
-    fetchList('sub')
+    fetchList('dept', selectedOrg.value),
+    fetchList('sub', selectedDept.value)
   ])
 }
 
@@ -220,7 +265,8 @@ function defaultForm(type) {
       unitName: '',
       location: '',
       phone: '',
-      manager: ''
+      manager: '',
+      organization: ''
     }
   } else {
     return {
@@ -231,7 +277,8 @@ function defaultForm(type) {
       phone: '',
       manager: '',
       headcount: 0,
-      scheduleSetting: ''
+      scheduleSetting: '',
+      department: ''
     }
   }
 }
@@ -250,6 +297,8 @@ function openDialog(type, index = null) {
   } else {
     editIndex.value = null
     form.value = defaultForm(type)
+    if (type === 'dept') form.value.organization = selectedOrg.value
+    if (type === 'sub') form.value.department = selectedDept.value
   }
   dialogVisible.value = true
 }
@@ -299,6 +348,14 @@ function deleteItem(type, index) {
 }
 
 onMounted(fetchAll)
+
+watch(selectedOrg, val => {
+  fetchList('dept', val)
+})
+
+watch(selectedDept, val => {
+  fetchList('sub', val)
+})
 </script>
 
 <style scoped>
