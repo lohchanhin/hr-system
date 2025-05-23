@@ -8,7 +8,6 @@
       <AccountRoleSetting />
       <SystemOrgSetting />
       <EmployeeManagement />
-      <DepartmentManagement />
     </el-tabs>
   </div>
 </template>
@@ -18,7 +17,6 @@ import { ref } from 'vue'
 import AccountRoleSetting from './AccountRoleSetting.vue'
 import SystemOrgSetting from './SystemOrgSetting.vue'
 import EmployeeManagement from './EmployeeManagement.vue'
-import DepartmentManagement from './DepartmentManagement.vue'
 
 const activeTab = ref('accountRole')
 </script>
