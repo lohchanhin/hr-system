@@ -50,3 +50,6 @@ All test accounts use the password `password`.
 The seeding process also creates an example organization named `示範機構` with a
 `人力資源部` department and a `招聘組` sub-department.  These records provide
 basic reference data when the application is started for the first time.
+
+透過 API 新增部門時，請在 payload 中加入 `organization` 欄位，以指定其所屬機構；
+新增小單位則需帶入 `department` 欄位對應上層部門。

@@ -36,14 +36,14 @@ describe('SubDepartment API', () => {
 
   it('creates sub-department', async () => {
     saveMock.mockResolvedValue();
-    const res = await request(app).post('/api/sub-departments').send({ name: 'Sub' });
+    const res = await request(app).post('/api/sub-departments').send({ name: 'Sub', department: 'dept1' });
     expect(res.status).toBe(201);
     expect(saveMock).toHaveBeenCalled();
   });
 
   it('updates sub-department', async () => {
     SubDepartment.findByIdAndUpdate.mockResolvedValue({ name: 'Sub' });
-    const res = await request(app).put('/api/sub-departments/1').send({ name: 'Sub' });
+    const res = await request(app).put('/api/sub-departments/1').send({ name: 'Sub', department: 'dept1' });
     expect(res.status).toBe(200);
     expect(SubDepartment.findByIdAndUpdate).toHaveBeenCalled();
   });
