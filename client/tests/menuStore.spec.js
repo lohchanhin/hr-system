@@ -17,13 +17,13 @@ describe('menu store', () => {
   it('fetchMenu stores items', async () => {
     fetch.mockResolvedValueOnce({
       ok: true,
-      json: async () => ([{ name: 'a' }])
+      json: async () => ([{ name: 'a' }, { name: 'OrgDepartmentSetting' }])
     })
     const store = useMenuStore()
     await store.fetchMenu()
     expect(fetch).toHaveBeenCalledWith('/api/menu', expect.objectContaining({
       headers: expect.objectContaining({ Authorization: 'Bearer tok' })
     }))
-    expect(store.items).toEqual([{ name: 'a' }])
+    expect(store.items).toEqual([{ name: 'a' }, { name: 'OrgDepartmentSetting' }])
   })
 })
