@@ -3,6 +3,9 @@ import mongoose from 'mongoose';
 import { connectDB } from '../src/config/db.js';
 import User from '../src/models/User.js';
 import Employee from '../src/models/Employee.js';
+import Organization from '../src/models/Organization.js';
+import Department from '../src/models/Department.js';
+import SubDepartment from '../src/models/SubDepartment.js';
 
 dotenv.config();
 
@@ -13,6 +16,48 @@ if (!process.env.MONGODB_URI) {
 
 async function seed() {
   await connectDB(process.env.MONGODB_URI);
+
+  let org = await Organization.findOne({ name: '示範機構' });
+  if (!org) {
+    org = await Organization.create({
+      name: '示範機構',
+      systemCode: 'ORG001',
+      unitName: '總院',
+      orgCode: '001',
+      taxIdNumber: '12345678',
+      phone: '02-12345678',
+      address: '台北市信義路1號',
+      principal: '示範負責人'
+    });
+    console.log('Created sample organization');
+  }
+
+  let dept = await Department.findOne({ code: 'HR' });
+  if (!dept) {
+    dept = await Department.create({
+      name: '人力資源部',
+      code: 'HR',
+      unitName: '人力資源',
+      location: '台北',
+      phone: '02-23456789',
+      manager: 'supervisor'
+    });
+    console.log('Created sample department');
+  }
+
+  const subDeptExists = await SubDepartment.findOne({ code: 'HR1' });
+  if (!subDeptExists) {
+    await SubDepartment.create({
+      department: dept._id,
+      code: 'HR1',
+      name: '招聘組',
+      unitName: '招聘組',
+      location: '台北',
+      phone: '02-23456789',
+      manager: 'supervisor'
+    });
+    console.log('Created sample sub-department');
+  }
 
   const users = [
     { username: 'user', password: 'password', role: 'employee' },
@@ -28,7 +73,9 @@ async function seed() {
         name: data.username,
         email: `${data.username}@example.com`,
         role: data.role,
-        department: 'General',
+        organization: '示範機構',
+        department: '人力資源部',
+        subDepartment: '招聘組',
         title: 'Staff',
         status: '在職'
       });

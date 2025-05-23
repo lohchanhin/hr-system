@@ -46,3 +46,7 @@ When running in development, the server automatically seeds a few test users if 
 | `admin`     | admin     |
 
 All test accounts use the password `password`.
+
+The seeding process also creates an example organization named `示範機構` with a
+`人力資源部` department and a `招聘組` sub-department.  These records provide
+basic reference data when the application is started for the first time.

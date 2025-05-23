@@ -58,6 +58,9 @@
 | `hr`          | hr          |
 | `admin`       | admin       |
 
+啟動時也會建立一個名為「示範機構」的機構，以及預設的「人力資源部」與「招聘組」區
+域，便於前端選單立即取得資料。
+
 更詳細說明請參閱 [`server/README.md`](server/README.md)。
 
 ## 前端 (`client/`)
