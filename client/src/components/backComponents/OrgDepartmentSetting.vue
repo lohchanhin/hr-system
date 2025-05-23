@@ -8,8 +8,8 @@
         <div class="tab-content">
           <el-button type="primary" @click="openDialog('org')">新增機構</el-button>
           <el-table :data="orgList" style="margin-top: 20px;">
-            <el-table-column prop="label" label="名稱" width="150" />
-            <el-table-column prop="value" label="代碼" width="120" />
+            <el-table-column prop="name" label="名稱" width="150" />
+            <el-table-column prop="systemCode" label="系統代碼" width="120" />
             <el-table-column label="操作" width="180">
               <template #default="{ $index }">
                 <el-button type="primary" @click="openDialog('org', $index)">編輯</el-button>
@@ -24,8 +24,8 @@
         <div class="tab-content">
           <el-button type="primary" @click="openDialog('dept')">新增部門</el-button>
           <el-table :data="deptList" style="margin-top: 20px;">
-            <el-table-column prop="label" label="名稱" width="150" />
-            <el-table-column prop="value" label="代碼" width="120" />
+            <el-table-column prop="name" label="名稱" width="150" />
+            <el-table-column prop="code" label="部門代碼" width="120" />
             <el-table-column label="操作" width="180">
               <template #default="{ $index }">
                 <el-button type="primary" @click="openDialog('dept', $index)">編輯</el-button>
@@ -40,8 +40,8 @@
         <div class="tab-content">
           <el-button type="primary" @click="openDialog('sub')">新增小單位</el-button>
           <el-table :data="subList" style="margin-top: 20px;">
-            <el-table-column prop="label" label="名稱" width="150" />
-            <el-table-column prop="value" label="代碼" width="120" />
+            <el-table-column prop="name" label="名稱" width="150" />
+            <el-table-column prop="code" label="代碼" width="120" />
             <el-table-column label="操作" width="180">
               <template #default="{ $index }">
                 <el-button type="primary" @click="openDialog('sub', $index)">編輯</el-button>
@@ -55,12 +55,87 @@
 
     <el-dialog v-model="dialogVisible" :title="dialogTitle" width="400px">
       <el-form :model="form" label-width="100px">
-        <el-form-item label="名稱">
-          <el-input v-model="form.label" />
-        </el-form-item>
-        <el-form-item label="代碼">
-          <el-input v-model="form.value" />
-        </el-form-item>
+        <template v-if="currentType === 'org'">
+          <el-form-item label="機構名稱">
+            <el-input v-model="form.name" />
+          </el-form-item>
+          <el-form-item label="系統代碼">
+            <el-input v-model="form.systemCode" />
+          </el-form-item>
+          <el-form-item label="單位名稱">
+            <el-input v-model="form.unitName" />
+          </el-form-item>
+          <el-form-item label="機構代碼">
+            <el-input v-model="form.orgCode" />
+          </el-form-item>
+          <el-form-item label="統一編號">
+            <el-input v-model="form.taxIdNumber" />
+          </el-form-item>
+          <el-form-item label="勞保編號">
+            <el-input v-model="form.laborInsuranceNo" />
+          </el-form-item>
+          <el-form-item label="健保編號">
+            <el-input v-model="form.healthInsuranceNo" />
+          </el-form-item>
+          <el-form-item label="稅籍編號">
+            <el-input v-model="form.taxCode" />
+          </el-form-item>
+          <el-form-item label="位置">
+            <el-input v-model="form.address" />
+          </el-form-item>
+          <el-form-item label="連絡電話">
+            <el-input v-model="form.phone" />
+          </el-form-item>
+          <el-form-item label="負責人">
+            <el-input v-model="form.principal" />
+          </el-form-item>
+        </template>
+        <template v-else-if="currentType === 'dept'">
+          <el-form-item label="部門名稱">
+            <el-input v-model="form.name" />
+          </el-form-item>
+          <el-form-item label="部門代碼">
+            <el-input v-model="form.code" />
+          </el-form-item>
+          <el-form-item label="單位名稱">
+            <el-input v-model="form.unitName" />
+          </el-form-item>
+          <el-form-item label="位置">
+            <el-input v-model="form.location" />
+          </el-form-item>
+          <el-form-item label="連絡電話">
+            <el-input v-model="form.phone" />
+          </el-form-item>
+          <el-form-item label="部門主管">
+            <el-input v-model="form.manager" />
+          </el-form-item>
+        </template>
+        <template v-else>
+          <el-form-item label="小單位名稱">
+            <el-input v-model="form.name" />
+          </el-form-item>
+          <el-form-item label="代碼">
+            <el-input v-model="form.code" />
+          </el-form-item>
+          <el-form-item label="單位名稱">
+            <el-input v-model="form.unitName" />
+          </el-form-item>
+          <el-form-item label="位置">
+            <el-input v-model="form.location" />
+          </el-form-item>
+          <el-form-item label="連絡電話">
+            <el-input v-model="form.phone" />
+          </el-form-item>
+          <el-form-item label="部門主管">
+            <el-input v-model="form.manager" />
+          </el-form-item>
+          <el-form-item label="人力需求數">
+            <el-input v-model="form.headcount" />
+          </el-form-item>
+          <el-form-item label="班表拉選">
+            <el-input v-model="form.scheduleSetting" />
+          </el-form-item>
+        </template>
       </el-form>
       <span slot="footer" class="dialog-footer">
         <el-button @click="dialogVisible = false">取消</el-button>
@@ -81,7 +156,7 @@ const deptList = ref([])
 const subList = ref([])
 
 const dialogVisible = ref(false)
-const form = ref({ label: '', value: '' })
+const form = ref(defaultForm('org'))
 const currentType = ref('org')
 const editIndex = ref(null)
 
@@ -123,6 +198,44 @@ async function fetchAll() {
   ])
 }
 
+function defaultForm(type) {
+  if (type === 'org') {
+    return {
+      name: '',
+      systemCode: '',
+      unitName: '',
+      orgCode: '',
+      taxIdNumber: '',
+      laborInsuranceNo: '',
+      healthInsuranceNo: '',
+      taxCode: '',
+      address: '',
+      phone: '',
+      principal: ''
+    }
+  } else if (type === 'dept') {
+    return {
+      name: '',
+      code: '',
+      unitName: '',
+      location: '',
+      phone: '',
+      manager: ''
+    }
+  } else {
+    return {
+      name: '',
+      code: '',
+      unitName: '',
+      location: '',
+      phone: '',
+      manager: '',
+      headcount: 0,
+      scheduleSetting: ''
+    }
+  }
+}
+
 function openDialog(type, index = null) {
   currentType.value = type
   if (index !== null) {
@@ -136,7 +249,7 @@ function openDialog(type, index = null) {
     form.value = { ...item }
   } else {
     editIndex.value = null
-    form.value = { label: '', value: '' }
+    form.value = defaultForm(type)
   }
   dialogVisible.value = true
 }

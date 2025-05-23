@@ -29,7 +29,7 @@ describe('OrgDepartmentSetting.vue', () => {
     const wrapper = mount(OrgDepartmentSetting, { global: { plugins: [ElementPlus] } })
     apiFetch.mockClear()
     wrapper.vm.openDialog('org')
-    wrapper.vm.form = { label: 'A', value: 'a' }
+    wrapper.vm.form = { name: 'A', systemCode: 'SC' }
     wrapper.vm.editIndex = null
     await wrapper.vm.saveItem()
     expect(apiFetch).toHaveBeenCalledWith('/api/organizations', expect.objectContaining({ method: 'POST' }))
