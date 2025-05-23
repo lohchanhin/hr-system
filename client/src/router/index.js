@@ -14,7 +14,9 @@ const ReportManagementSetting = () => import('@/components/backComponents/Report
 const SalaryManagementSetting = () => import('@/components/backComponents/SalaryManagementSetting.vue')
 const SocialInsuranceRetirementSetting = () => import('@/components/backComponents/SocialInsuranceRetirementSetting.vue')
 const HRManagementSystemSetting = () => import('@/components/backComponents/HRManagementSystemSetting.vue')
-const OrgDepartmentSetting = () => import('@/components/backComponents/OrgDepartmentSetting.vue')
+
+const OrgDepartmentSettingView = () => import('@/views/OrgDepartmentSettingView.vue')
+
 
 // ★ 錯誤頁面
 const Forbidden = () => import('@/views/Forbidden.vue')
@@ -55,7 +57,9 @@ const routes = [
       { path: 'salary-management-setting', name: 'SalaryManagementSetting', component: SalaryManagementSetting },
       { path: 'social-insurance-retirement-setting', name: 'SocialInsuranceRetirementSetting', component: SocialInsuranceRetirementSetting },
       { path: 'hr-management-system-setting', name: 'HRManagementSystemSetting', component: HRManagementSystemSetting },
-      { path: 'org-department-setting', name: 'OrgDepartmentSetting', component: OrgDepartmentSetting },
+
+      { path: 'org-department-setting', name: 'OrgDepartmentSetting', component: OrgDepartmentSettingView },
+
     ]
   },
 
