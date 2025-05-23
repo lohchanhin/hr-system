@@ -9,9 +9,9 @@
 - **權限／職等**：僅供顯示，無法手動更改
 
 以上三個選單皆取自後台「人事管理與系統設定」中的相關管理畫面：C01 對應
-`SystemOrgSetting.vue`（機構設定），而 C02 與 C02-1 來自
-`DepartmentManagement.vue`（部門組織管理）。使用員工表單前，請先在後台
-建立這些字典資料，否則選單將沒有可選項目。
+`SystemOrgSetting.vue`（機構設定），而 C02 與 C02-1 需在
+`OrgDepartmentSetting.vue`（機構&部門&單位設定）中維護。使用員工表單前，
+請先在後台建立這些字典資料，否則選單將沒有可選項目。
 
 建立部門資料時需於 API payload 中附上 `organization` 欄位；
 若要新增小單位，亦必須填入 `department` 欄位以對應其所屬部門。

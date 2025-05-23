@@ -2,7 +2,6 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import HRSetting from '../src/components/backComponents/HRManagementSystemSetting.vue'
 import AccountRoleSetting from '../src/components/backComponents/AccountRoleSetting.vue'
-import DepartmentManagement from '../src/components/backComponents/DepartmentManagement.vue'
 import EmployeeManagement from '../src/components/backComponents/EmployeeManagement.vue'
 
 describe('HRManagementSystemSetting.vue', () => {
@@ -33,16 +32,6 @@ describe('HRManagementSystemSetting.vue', () => {
     acc.vm.editUserIndex = null
     await acc.vm.saveUser()
     expect(fetch).toHaveBeenCalledWith('/api/users', expect.objectContaining({ method: 'POST' }))
-  })
-
-  it('deletes department', async () => {
-    const wrapper = mount(HRSetting)
-    fetch.mockClear()
-    const dept = wrapper.findComponent(DepartmentManagement)
-    dept.vm.departmentList = [{ _id: '1', label: 'HR', value: 'D' }]
-    fetch.mockResolvedValueOnce({ ok: true })
-    await dept.vm.deleteDept(0)
-    expect(fetch).toHaveBeenCalledWith('/api/departments/1', expect.objectContaining({ method: 'DELETE' }))
   })
 
   it('sends new fields when saving employee', async () => {
