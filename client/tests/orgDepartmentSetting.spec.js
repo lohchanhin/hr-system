@@ -34,4 +34,18 @@ describe('OrgDepartmentSetting.vue', () => {
     await wrapper.vm.saveItem()
     expect(apiFetch).toHaveBeenCalledWith('/api/organizations', expect.objectContaining({ method: 'POST' }))
   })
+
+  it('shows organization select in dept form', () => {
+    const wrapper = mount(OrgDepartmentSetting, { global: { plugins: [ElementPlus] } })
+    wrapper.vm.openDialog('dept')
+    expect(wrapper.findComponent({ name: 'ElSelect' }).exists()).toBe(true)
+    expect(wrapper.vm.form).toHaveProperty('organization')
+  })
+
+  it('fetchList adds parent id query', async () => {
+    const wrapper = mount(OrgDepartmentSetting, { global: { plugins: [ElementPlus] } })
+    apiFetch.mockClear()
+    await wrapper.vm.fetchList('dept', '123')
+    expect(apiFetch).toHaveBeenCalledWith('/api/departments?organization=123', expect.anything())
+  })
 })
