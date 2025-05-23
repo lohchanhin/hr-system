@@ -4,6 +4,7 @@
       <el-button link @click="toggleCollapse" class="collapse-btn">
         <el-icon><i :class="isCollapse ? 'el-icon-menu' : 'el-icon-close'" /></el-icon>
       </el-button>
+      <el-button type="danger" @click="logout" class="logout-btn">登出</el-button>
     </el-header>
     <el-container>
       <el-aside :width="isCollapse ? '64px' : '200px'" class="layout-aside">
@@ -30,6 +31,7 @@
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useMenuStore } from '../stores/menu'
+import { clearToken } from '../utils/tokenService'
 import { storeToRefs } from 'pinia'
 
 const router = useRouter()
@@ -52,6 +54,13 @@ function gotoPage(name) {
 function toggleCollapse() {
   isCollapse.value = !isCollapse.value
 }
+
+function logout() {
+  clearToken()
+  localStorage.removeItem('role')
+  localStorage.removeItem('employeeId')
+  router.push({ name: 'Login' })
+}
 </script>
 
 <style scoped>
@@ -67,6 +76,10 @@ function toggleCollapse() {
 }
 .collapse-btn {
   margin-left: 10px;
+}
+.logout-btn {
+  margin-left: auto;
+  margin-right: 10px;
 }
 .layout-aside {
   overflow: auto;
