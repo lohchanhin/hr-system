@@ -12,7 +12,9 @@ const departmentSchema = new mongoose.Schema({
   // 連絡電話
   phone: String,
   // 部門主管
-  manager: String
+  manager: String,
+  // 所屬機構
+  organization: { type: mongoose.Schema.Types.ObjectId, ref: 'Organization', required: true }
 }, { timestamps: true });
 
 export default mongoose.model('Department', departmentSchema);
