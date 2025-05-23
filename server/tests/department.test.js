@@ -34,18 +34,42 @@ describe('Department API', () => {
     expect(res.status).toBe(200);
   });
 
+  it('filters departments by organization', async () => {
+    Department.find.mockResolvedValue([{ name: 'HR' }]);
+    const res = await request(app).get('/api/departments?organization=1');
+    expect(res.status).toBe(200);
+    expect(Department.find).toHaveBeenCalledWith({ organization: '1' });
+  });
+
   it('creates department', async () => {
     saveMock.mockResolvedValue();
-    const res = await request(app).post('/api/departments').send({ name: 'HR', code: 'D1' });
+    const res = await request(app)
+      .post('/api/departments')
+      .send({ name: 'HR', code: 'D1', organization: '1' });
     expect(res.status).toBe(201);
     expect(saveMock).toHaveBeenCalled();
+    expect(Department).toHaveBeenCalledWith(
+      expect.objectContaining({ organization: '1' })
+    );
+  });
+
+  it('fails when organization missing', async () => {
+    saveMock.mockRejectedValue(new Error('Validation'));
+    const res = await request(app).post('/api/departments').send({ name: 'HR' });
+    expect(res.status).toBe(400);
   });
 
   it('updates department', async () => {
     Department.findByIdAndUpdate.mockResolvedValue({ name: 'HR' });
-    const res = await request(app).put('/api/departments/1').send({ name: 'HR' });
+    const res = await request(app)
+      .put('/api/departments/1')
+      .send({ name: 'HR', organization: '1' });
     expect(res.status).toBe(200);
-    expect(Department.findByIdAndUpdate).toHaveBeenCalled();
+    expect(Department.findByIdAndUpdate).toHaveBeenCalledWith(
+      '1',
+      expect.objectContaining({ organization: '1' }),
+      expect.any(Object)
+    );
   });
 
   it('deletes department', async () => {
