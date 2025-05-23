@@ -4,6 +4,9 @@ import cors from 'cors';
 import { connectDB } from './config/db.js';
 import User from './models/User.js';
 import Employee from './models/Employee.js';
+import Organization from './models/Organization.js';
+import Department from './models/Department.js';
+import SubDepartment from './models/SubDepartment.js';
 import employeeRoutes from './routes/employeeRoutes.js';
 import attendanceRoutes from './routes/attendanceRoutes.js';
 import authRoutes from './routes/authRoutes.js';
@@ -23,6 +26,50 @@ import subDepartmentRoutes from './routes/subDepartmentRoutes.js';
 import salarySettingRoutes from './routes/salarySettingRoutes.js';
 
 import attendanceSettingRoutes from './routes/attendanceSettingRoutes.js';
+
+async function seedSampleData() {
+  let org = await Organization.findOne({ name: '示範機構' });
+  if (!org) {
+    org = await Organization.create({
+      name: '示範機構',
+      systemCode: 'ORG001',
+      unitName: '總院',
+      orgCode: '001',
+      taxIdNumber: '12345678',
+      phone: '02-12345678',
+      address: '台北市信義路1號',
+      principal: '示範負責人'
+    });
+    console.log('Created sample organization');
+  }
+
+  let dept = await Department.findOne({ code: 'HR' });
+  if (!dept) {
+    dept = await Department.create({
+      name: '人力資源部',
+      code: 'HR',
+      unitName: '人力資源',
+      location: '台北',
+      phone: '02-23456789',
+      manager: 'supervisor'
+    });
+    console.log('Created sample department');
+  }
+
+  const subDeptExists = await SubDepartment.findOne({ code: 'HR1' });
+  if (!subDeptExists) {
+    await SubDepartment.create({
+      department: dept._id,
+      code: 'HR1',
+      name: '招聘組',
+      unitName: '招聘組',
+      location: '台北',
+      phone: '02-23456789',
+      manager: 'supervisor'
+    });
+    console.log('Created sample sub-department');
+  }
+}
 async function seedTestUsers() {
   const users = [
     { username: 'user', password: 'password', role: 'employee' },
@@ -38,7 +85,9 @@ async function seedTestUsers() {
         name: data.username,
         email: `${data.username}@example.com`,
         role: data.role,
-        department: 'General',
+        organization: '示範機構',
+        department: '人力資源部',
+        subDepartment: '招聘組',
         title: 'Staff',
         status: '在職'
       });
@@ -98,6 +147,7 @@ app.use('/api/salary-settings', authenticate, authorizeRoles('hr', 'admin'), sal
 async function start() {
   try {
     await connectDB(process.env.MONGODB_URI);
+    await seedSampleData();
     await seedTestUsers();
     app.listen(PORT, () => {
       console.log(`Server running on port ${PORT}`);
