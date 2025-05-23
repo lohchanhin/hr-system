@@ -29,21 +29,21 @@ beforeEach(() => {
 
 describe('Department API', () => {
   it('lists departments', async () => {
-    Department.find.mockResolvedValue([{ label: 'HR' }]);
+    Department.find.mockResolvedValue([{ name: 'HR' }]);
     const res = await request(app).get('/api/departments');
     expect(res.status).toBe(200);
   });
 
   it('creates department', async () => {
     saveMock.mockResolvedValue();
-    const res = await request(app).post('/api/departments').send({ label: 'HR' });
+    const res = await request(app).post('/api/departments').send({ name: 'HR', code: 'D1' });
     expect(res.status).toBe(201);
     expect(saveMock).toHaveBeenCalled();
   });
 
   it('updates department', async () => {
-    Department.findByIdAndUpdate.mockResolvedValue({ label: 'HR' });
-    const res = await request(app).put('/api/departments/1').send({ label: 'HR' });
+    Department.findByIdAndUpdate.mockResolvedValue({ name: 'HR' });
+    const res = await request(app).put('/api/departments/1').send({ name: 'HR' });
     expect(res.status).toBe(200);
     expect(Department.findByIdAndUpdate).toHaveBeenCalled();
   });
