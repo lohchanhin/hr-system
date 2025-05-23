@@ -17,6 +17,8 @@ import approvalRoutes from './routes/approvalRoutes.js';
 import menuRoutes from './routes/menuRoutes.js';
 import userRoutes from './routes/userRoutes.js';
 import departmentRoutes from './routes/departmentRoutes.js';
+import organizationRoutes from './routes/organizationRoutes.js';
+import subDepartmentRoutes from './routes/subDepartmentRoutes.js';
 
 import salarySettingRoutes from './routes/salarySettingRoutes.js';
 
@@ -85,6 +87,8 @@ app.use('/api/approvals', authenticate, authorizeRoles('supervisor', 'hr', 'admi
 app.use('/api/menu', authenticate, menuRoutes);
 app.use('/api/users', authenticate, authorizeRoles('admin'), userRoutes);
 app.use('/api/departments', authenticate, authorizeRoles('admin'), departmentRoutes);
+app.use('/api/organizations', authenticate, authorizeRoles('admin'), organizationRoutes);
+app.use('/api/sub-departments', authenticate, authorizeRoles('admin'), subDepartmentRoutes);
 
 app.use('/api/salary-settings', authenticate, authorizeRoles('hr', 'admin'), salarySettingRoutes);
 

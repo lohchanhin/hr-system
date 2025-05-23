@@ -67,6 +67,7 @@
         <el-button type="primary" @click="saveItem">儲存</el-button>
       </span>
     </el-dialog>
+
   </div>
 </template>
 
@@ -195,4 +196,5 @@ onMounted(fetchAll)
   margin-top: 20px;
 }
 </style>
+
 
