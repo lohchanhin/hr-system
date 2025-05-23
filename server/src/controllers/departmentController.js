@@ -2,7 +2,11 @@ import Department from '../models/Department.js';
 
 export async function listDepartments(req, res) {
   try {
-    const departments = await Department.find();
+    const filter = {};
+    if (req.query.organization) {
+      filter.organization = req.query.organization;
+    }
+    const departments = await Department.find(filter);
     res.json(departments);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -11,7 +15,24 @@ export async function listDepartments(req, res) {
 
 export async function createDepartment(req, res) {
   try {
-    const dept = new Department(req.body);
+    const {
+      name,
+      code,
+      unitName,
+      location,
+      phone,
+      manager,
+      organization
+    } = req.body;
+    const dept = new Department({
+      name,
+      code,
+      unitName,
+      location,
+      phone,
+      manager,
+      organization
+    });
     await dept.save();
     res.status(201).json(dept);
   } catch (err) {
@@ -21,7 +42,20 @@ export async function createDepartment(req, res) {
 
 export async function updateDepartment(req, res) {
   try {
-    const dept = await Department.findByIdAndUpdate(req.params.id, req.body, { new: true });
+    const {
+      name,
+      code,
+      unitName,
+      location,
+      phone,
+      manager,
+      organization
+    } = req.body;
+    const dept = await Department.findByIdAndUpdate(
+      req.params.id,
+      { name, code, unitName, location, phone, manager, organization },
+      { new: true }
+    );
     if (!dept) return res.status(404).json({ error: 'Not found' });
     res.json(dept);
   } catch (err) {

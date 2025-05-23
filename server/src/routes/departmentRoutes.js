@@ -7,7 +7,7 @@ import {
 } from '../controllers/departmentController.js';
 
 const router = Router();
-
+// 可以在查詢字串帶入 ?organization=<id> 以篩選指定機構的部門
 router.get('/', listDepartments);
 router.post('/', createDepartment);
 router.put('/:id', updateDepartment);
