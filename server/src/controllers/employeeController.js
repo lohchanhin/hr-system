@@ -15,6 +15,19 @@ export async function createEmployee(req, res) {
     if (!name) {
       return res.status(400).json({ error: 'Name is required' });
     }
+    if (!email) {
+      return res.status(400).json({ error: 'Email is required' });
+    }
+    const emailRegex = /^\S+@\S+\.\S+$/;
+    if (!emailRegex.test(email)) {
+      return res.status(400).json({ error: 'Invalid email' });
+    }
+    if (role !== undefined) {
+      const validRoles = ['employee', 'supervisor', 'hr', 'admin'];
+      if (!validRoles.includes(role)) {
+        return res.status(400).json({ error: 'Invalid role' });
+      }
+    }
     const employee = new Employee({ name, email, role, department, title, status });
     await employee.save();
     res.status(201).json(employee);
@@ -40,6 +53,21 @@ export async function updateEmployee(req, res) {
     if (!employee) return res.status(404).json({ error: 'Not found' });
 
     const { name, email, role, department, title, status } = req.body;
+    if (email !== undefined) {
+      if (!email) {
+        return res.status(400).json({ error: 'Email is required' });
+      }
+      const emailRegex = /^\S+@\S+\.\S+$/;
+      if (!emailRegex.test(email)) {
+        return res.status(400).json({ error: 'Invalid email' });
+      }
+    }
+    if (role !== undefined) {
+      const validRoles = ['employee', 'supervisor', 'hr', 'admin'];
+      if (!validRoles.includes(role)) {
+        return res.status(400).json({ error: 'Invalid role' });
+      }
+    }
     if (name !== undefined) employee.name = name;
     if (email !== undefined) employee.email = email;
     if (role !== undefined) employee.role = role;

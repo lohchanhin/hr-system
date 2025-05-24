@@ -47,13 +47,25 @@ describe('Employee API', () => {
 
   it('creates employee', async () => {
 
-    const newEmp = { name: 'Jane', department: 'HR', title: 'Manager', status: '在職' };
+    const newEmp = {
+      name: 'Jane',
+      email: 'jane@example.com',
+      department: 'HR',
+      title: 'Manager',
+      status: '在職',
+    };
 
     saveMock.mockResolvedValue();
     const res = await request(app).post('/api/employees').send(newEmp);
     expect(res.status).toBe(201);
     expect(saveMock).toHaveBeenCalled();
     expect(res.body).toMatchObject(newEmp);
+  });
+
+  it('fails on invalid email or role', async () => {
+    const payload = { name: 'A', email: 'bad', role: 'x' };
+    const res = await request(app).post('/api/employees').send(payload);
+    expect(res.status).toBe(400);
   });
 
   it('gets employee', async () => {
@@ -76,6 +88,14 @@ describe('Employee API', () => {
     expect(saveMock).toHaveBeenCalled();
     expect(res.body).toMatchObject({ _id: '1', name: 'Updated' });
 
+  });
+
+  it('fails updating with invalid email or role', async () => {
+    Employee.findById.mockResolvedValue({ _id: '1', name: 'John', save: saveMock });
+    const res = await request(app)
+      .put('/api/employees/1')
+      .send({ email: 'bad', role: 'x' });
+    expect(res.status).toBe(400);
   });
 
   it('deletes employee', async () => {
