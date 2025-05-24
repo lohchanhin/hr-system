@@ -21,6 +21,7 @@ describe('HRManagementSystemSetting.vue', () => {
       headers: expect.objectContaining({ Authorization: 'Bearer tok' })
     }))
     expect(fetch).toHaveBeenCalledWith('/api/departments', expect.any(Object))
+    expect(fetch).toHaveBeenCalledWith('/api/organizations', expect.any(Object))
   })
 
   it('creates user', async () => {
