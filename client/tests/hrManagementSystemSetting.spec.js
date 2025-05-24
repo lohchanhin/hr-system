@@ -38,4 +38,17 @@ describe('HRManagementSystemSetting.vue', () => {
     emp.vm.removeExperience(0)
     expect(emp.vm.employeeForm.experiences.length).toBe(0)
   })
+
+  it('shows organization select when dialog open', async () => {
+    const wrapper = mount(HRManagementSystemSetting, {
+      global: { plugins: [ElementPlus] }
+    })
+    const emp = wrapper.findComponent(EmployeeManagement)
+    emp.vm.orgList = [{ _id: '1', name: 'Org1' }]
+    const button = wrapper.findAll('button').find(b => b.text() === '新增員工')
+    await button.trigger('click')
+    emp.vm.employeeDialogTab = 'employment'
+    await emp.vm.$nextTick()
+    expect(wrapper.html()).toContain('Org1')
+  })
 })

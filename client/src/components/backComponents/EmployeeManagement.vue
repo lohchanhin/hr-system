@@ -73,7 +73,14 @@
                 <el-tab-pane label="任職資訊" name="employment">
                   <el-form :model="employeeForm" label-width="100px">
                     <el-form-item label="機構">
-                      <el-input v-model="employeeForm.institution" />
+                      <el-select v-model="employeeForm.institution">
+                        <el-option
+                          v-for="org in orgList"
+                          :key="org._id"
+                          :label="org.name"
+                          :value="org._id"
+                        />
+                      </el-select>
                     </el-form-item>
                     <el-form-item label="部門">
                       <el-select v-model="employeeForm.department">
@@ -282,6 +289,7 @@ import { apiFetch } from '../../api'
 const employeeDialogTab = ref('account')
 const employeeList = ref([])
 const departmentList = ref([])
+const orgList = ref([])
 const employeeDialogVisible = ref(false)
 let editEmployeeIndex = null
 let editEmployeeId = ''
@@ -294,6 +302,15 @@ const token = localStorage.getItem('token') || ''
     })
     if (res.ok) {
       departmentList.value = await res.json()
+    }
+  }
+  async function fetchOrganizations() {
+    const token = localStorage.getItem('token') || ''
+    const res = await apiFetch('/api/organizations', {
+      headers: { Authorization: `Bearer ${token}` }
+    })
+    if (res.ok) {
+      orgList.value = await res.json()
     }
   }
   async function fetchEmployees() {
@@ -310,6 +327,7 @@ const token = localStorage.getItem('token') || ''
   onMounted(() => {
     fetchDepartments()
     fetchEmployees()
+    fetchOrganizations()
   })
 
   const emptyEmployee = {
@@ -468,9 +486,4 @@ const token = localStorage.getItem('token') || ''
   function removeTraining(i) {
     employeeForm.value.trainings.splice(i, 1)
   }
-  
-onMounted(() => {
-  fetchDepartments()
-  fetchEmployees()
-})
 </script>
