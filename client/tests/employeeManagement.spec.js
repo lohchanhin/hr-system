@@ -1,0 +1,30 @@
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { mount } from '@vue/test-utils'
+import ElementPlus from 'element-plus'
+import EmployeeManagement from '../src/components/backComponents/EmployeeManagement.vue'
+
+vi.mock('../src/api', () => ({
+  apiFetch: vi.fn(() => Promise.resolve({ ok: true, json: async () => [] }))
+}))
+
+describe('EmployeeManagement.vue', () => {
+  beforeEach(() => {
+    vi.stubGlobal('fetch', vi.fn())
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('filters departments by organization', async () => {
+    const wrapper = mount(EmployeeManagement, { global: { plugins: [ElementPlus] } })
+    wrapper.vm.departmentList = [
+      { _id: 'd1', name: 'D1', organization: 'o1' },
+      { _id: 'd2', name: 'D2', organization: 'o2' }
+    ]
+    wrapper.vm.employeeForm.institution = 'o1'
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.filteredDepartments.length).toBe(1)
+    expect(wrapper.vm.filteredDepartments[0]._id).toBe('d1')
+  })
+})
