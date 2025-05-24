@@ -7,7 +7,7 @@
       <el-button type="danger" @click="logout" class="logout-btn">登出</el-button>
     </el-header>
     <el-container>
-      <el-aside :width="isCollapse ? '64px' : '200px'" class="layout-aside">
+      <el-aside class="layout-aside">
         <el-menu :default-active="active" :collapse="isCollapse">
           <el-menu-item
             v-for="item in menuItems"
@@ -84,10 +84,14 @@ function logout() {
 .layout-aside {
   overflow: auto;
   border-right: 1px solid #ebeef5;
+  flex: 0 0 25%;
+  width: 25%;
 }
 .layout-main {
   padding: 20px;
   overflow: auto;
+  flex: 0 0 75%;
+  width: 75%;
 }
 @media (max-width: 768px) {
   .layout-aside {
