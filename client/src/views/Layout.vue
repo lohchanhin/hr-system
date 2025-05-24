@@ -1,7 +1,7 @@
 <!-- src/views/Layout.vue (示例) -->
 <template>
   <div class="layout-container">
-    <el-aside width="200px" class="sidebar">
+    <el-aside class="layout-aside">
       <el-menu default-active="Settings" class="el-menu-vertical-demo">
         <el-menu-item
           v-for="item in menuItems"
@@ -14,7 +14,7 @@
         </el-menu-item>
       </el-menu>
     </el-aside>
-    <el-main>
+    <el-main class="layout-main">
       <router-view />
     </el-main>
   </div>
@@ -46,7 +46,13 @@ const gotoPage = (name) => {
   display: flex;
   height: 100vh;
 }
-.sidebar {
+.layout-aside {
   border-right: 1px solid #ebeef5;
+  flex: 0 0 25%;
+  width: 25%;
+}
+.layout-main {
+  flex: 0 0 75%;
+  width: 75%;
 }
 </style>
