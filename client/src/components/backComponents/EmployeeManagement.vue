@@ -95,9 +95,6 @@
                     <el-form-item label="子單位">
                       <el-input v-model="employeeForm.subunit" />
                     </el-form-item>
-                    <el-form-item label="權限/職等">
-                      <el-input v-model="employeeForm.permissionGrade" readonly />
-                    </el-form-item>
                     <el-form-item label="職稱">
                       <el-input v-model="employeeForm.title" />
                     </el-form-item>
