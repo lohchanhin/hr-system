@@ -82,25 +82,25 @@ const routes = [
         path: 'attendance',
         name: 'Attendance',
         component: Attendance,
-        // 若要做角色限制可加: meta: { roles: ['employee','supervisor','hr','admin'] }
+        meta: { roles: ['employee', 'supervisor', 'hr', 'admin'] }
       },
       {
         path: 'leave',
         name: 'Leave',
         component: Leave,
-        // meta: { roles: ['employee','supervisor','hr','admin'] }
+        meta: { roles: ['employee', 'supervisor', 'hr', 'admin'] }
       },
       {
         path: 'schedule',
         name: 'Schedule',
         component: Schedule,
-        // meta: { roles: ['supervisor','hr','admin'] }
+        meta: { roles: ['supervisor', 'hr', 'admin'] }
       },
       {
         path: 'approval',
         name: 'Approval',
         component: Approval,
-        // meta: { roles: ['supervisor','hr','admin'] }
+        meta: { roles: ['supervisor', 'hr', 'admin'] }
       }
     ]
   },
