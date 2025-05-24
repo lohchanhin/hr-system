@@ -85,10 +85,10 @@
                     <el-form-item label="部門">
                       <el-select v-model="employeeForm.department">
                         <el-option
-                          v-for="dept in departmentList"
-                          :key="dept.value"
-                          :label="dept.label"
-                          :value="dept.value"
+                          v-for="dept in filteredDepartments"
+                          :key="dept._id"
+                          :label="dept.name"
+                          :value="dept._id"
                         />
                       </el-select>
                     </el-form-item>
@@ -283,7 +283,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import { apiFetch } from '../../api'
 
 const employeeDialogTab = ref('account')
@@ -402,6 +402,14 @@ const token = localStorage.getItem('token') || ''
   }
 
   const employeeForm = ref({ ...emptyEmployee })
+
+  const filteredDepartments = computed(() =>
+    employeeForm.value.institution
+      ? departmentList.value.filter(
+          d => d.organization === employeeForm.value.institution
+        )
+      : []
+  )
   
   function openEmployeeDialog(index = null) {
     if (index !== null) {
@@ -415,6 +423,7 @@ const token = localStorage.getItem('token') || ''
       employeeDialogTab.value = 'account'
       employeeForm.value = { ...emptyEmployee }
     }
+    fetchDepartments()
     employeeDialogVisible.value = true
   }
 
