@@ -8,7 +8,10 @@ mockEmployee.find = jest.fn();
 mockEmployee.findById = jest.fn();
 mockEmployee.findByIdAndDelete = jest.fn();
 
+const mockUser = { create: jest.fn() };
+
 jest.mock('../src/models/Employee.js', () => ({ default: mockEmployee }), { virtual: true });
+jest.mock('../src/models/User.js', () => ({ default: mockUser }), { virtual: true });
 
 let app;
 let employeeRoutes;
@@ -25,6 +28,7 @@ beforeEach(() => {
   mockEmployee.find.mockReset();
   mockEmployee.findById.mockReset();
   mockEmployee.findByIdAndDelete.mockReset();
+  mockUser.create.mockReset();
 });
 
 describe('Employee API', () => {
@@ -53,13 +57,30 @@ describe('Employee API', () => {
       department: 'HR',
       title: 'Manager',
       status: '在職',
+      username: 'jane',
+      password: 'secret',
+      role: 'employee'
     };
 
     saveMock.mockResolvedValue();
     const res = await request(app).post('/api/employees').send(newEmp);
     expect(res.status).toBe(201);
     expect(saveMock).toHaveBeenCalled();
-    expect(res.body).toMatchObject(newEmp);
+    expect(mockUser.create).toHaveBeenCalledWith({
+      username: 'jane',
+      password: 'secret',
+      role: 'employee',
+      employee: undefined,
+      department: 'HR'
+    });
+    expect(res.body).toMatchObject({
+      name: 'Jane',
+      email: 'jane@example.com',
+      department: 'HR',
+      title: 'Manager',
+      status: '在職',
+      role: 'employee'
+    });
   });
 
   it('fails on invalid email or role', async () => {
