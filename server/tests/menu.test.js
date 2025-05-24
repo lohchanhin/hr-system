@@ -2,10 +2,12 @@ import request from 'supertest';
 import express from 'express';
 import { jest } from '@jest/globals';
 
-jest.mock('../src/middleware/auth.js', () => ({
+const mockAuth = {
   authenticate: (req, res, next) => { req.user = { role: 'employee' }; next(); },
   authorizeRoles: () => (req, res, next) => next()
-}), { virtual: true });
+};
+
+jest.mock('../src/middleware/auth.js', () => mockAuth, { virtual: true });
 
 let app;
 let menuRoutes;

@@ -3,10 +3,10 @@ import express from 'express';
 import { jest } from '@jest/globals';
 
 const saveMock = jest.fn();
-const PayrollRecord = jest.fn().mockImplementation(() => ({ save: saveMock }));
-PayrollRecord.find = jest.fn(() => ({ populate: jest.fn().mockResolvedValue([]) }));
+const mockPayrollRecord = jest.fn().mockImplementation(() => ({ save: saveMock }));
+mockPayrollRecord.find = jest.fn(() => ({ populate: jest.fn().mockResolvedValue([]) }));
 
-jest.mock('../src/models/PayrollRecord.js', () => ({ default: PayrollRecord }), { virtual: true });
+jest.mock('../src/models/PayrollRecord.js', () => ({ default: mockPayrollRecord }), { virtual: true });
 
 let app;
 let payrollRoutes;
@@ -20,20 +20,20 @@ beforeAll(async () => {
 
 beforeEach(() => {
   saveMock.mockReset();
-  PayrollRecord.find.mockReset();
+  mockPayrollRecord.find.mockReset();
 });
 
 describe('Payroll API', () => {
   it('lists payroll records', async () => {
     const fakeRecords = [{ amount: 100 }];
-    PayrollRecord.find.mockReturnValue({ populate: jest.fn().mockResolvedValue(fakeRecords) });
+    mockPayrollRecord.find.mockReturnValue({ populate: jest.fn().mockResolvedValue(fakeRecords) });
     const res = await request(app).get('/api/payroll');
     expect(res.status).toBe(200);
     expect(res.body).toEqual(fakeRecords);
   });
 
   it('returns 500 if listing fails', async () => {
-    PayrollRecord.find.mockReturnValue({ populate: jest.fn().mockRejectedValue(new Error('fail')) });
+    mockPayrollRecord.find.mockReturnValue({ populate: jest.fn().mockRejectedValue(new Error('fail')) });
     const res = await request(app).get('/api/payroll');
     expect(res.status).toBe(500);
     expect(res.body).toEqual({ error: 'fail' });

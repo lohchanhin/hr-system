@@ -3,10 +3,10 @@ import express from 'express';
 import { jest } from '@jest/globals';
 
 const saveMock = jest.fn();
-const LeaveRequest = jest.fn().mockImplementation(() => ({ save: saveMock }));
-LeaveRequest.find = jest.fn(() => ({ populate: jest.fn().mockResolvedValue([]) }));
+const mockLeaveRequest = jest.fn().mockImplementation(() => ({ save: saveMock }));
+mockLeaveRequest.find = jest.fn(() => ({ populate: jest.fn().mockResolvedValue([]) }));
 
-jest.mock('../src/models/LeaveRequest.js', () => ({ default: LeaveRequest }), { virtual: true });
+jest.mock('../src/models/LeaveRequest.js', () => ({ default: mockLeaveRequest }), { virtual: true });
 
 let app;
 let leaveRoutes;
@@ -20,20 +20,20 @@ beforeAll(async () => {
 
 beforeEach(() => {
   saveMock.mockReset();
-  LeaveRequest.find.mockReset();
+  mockLeaveRequest.find.mockReset();
 });
 
 describe('Leave API', () => {
   it('lists leaves', async () => {
     const fakeLeaves = [{ leaveType: 'vacation' }];
-    LeaveRequest.find.mockReturnValue({ populate: jest.fn().mockResolvedValue(fakeLeaves) });
+    mockLeaveRequest.find.mockReturnValue({ populate: jest.fn().mockResolvedValue(fakeLeaves) });
     const res = await request(app).get('/api/leaves');
     expect(res.status).toBe(200);
     expect(res.body).toEqual(fakeLeaves);
   });
 
   it('returns 500 if listing fails', async () => {
-    LeaveRequest.find.mockReturnValue({ populate: jest.fn().mockRejectedValue(new Error('fail')) });
+    mockLeaveRequest.find.mockReturnValue({ populate: jest.fn().mockRejectedValue(new Error('fail')) });
     const res = await request(app).get('/api/leaves');
     expect(res.status).toBe(500);
     expect(res.body).toEqual({ error: 'fail' });

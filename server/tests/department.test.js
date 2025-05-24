@@ -3,12 +3,12 @@ import express from 'express';
 import { jest } from '@jest/globals';
 
 const saveMock = jest.fn();
-const Department = jest.fn().mockImplementation(() => ({ save: saveMock }));
-Department.find = jest.fn();
-Department.findByIdAndUpdate = jest.fn();
-Department.findByIdAndDelete = jest.fn();
+const mockDepartment = jest.fn().mockImplementation(() => ({ save: saveMock }));
+mockDepartment.find = jest.fn();
+mockDepartment.findByIdAndUpdate = jest.fn();
+mockDepartment.findByIdAndDelete = jest.fn();
 
-jest.mock('../src/models/Department.js', () => ({ default: Department }), { virtual: true });
+jest.mock('../src/models/Department.js', () => ({ default: mockDepartment }), { virtual: true });
 
 let app;
 let departmentRoutes;
@@ -22,23 +22,23 @@ beforeAll(async () => {
 
 beforeEach(() => {
   saveMock.mockReset();
-  Department.find.mockReset();
-  Department.findByIdAndUpdate.mockReset();
-  Department.findByIdAndDelete.mockReset();
+  mockDepartment.find.mockReset();
+  mockDepartment.findByIdAndUpdate.mockReset();
+  mockDepartment.findByIdAndDelete.mockReset();
 });
 
 describe('Department API', () => {
   it('lists departments', async () => {
-    Department.find.mockResolvedValue([{ name: 'HR' }]);
+    mockDepartment.find.mockResolvedValue([{ name: 'HR' }]);
     const res = await request(app).get('/api/departments');
     expect(res.status).toBe(200);
   });
 
   it('filters departments by organization', async () => {
-    Department.find.mockResolvedValue([{ name: 'HR' }]);
+    mockDepartment.find.mockResolvedValue([{ name: 'HR' }]);
     const res = await request(app).get('/api/departments?organization=1');
     expect(res.status).toBe(200);
-    expect(Department.find).toHaveBeenCalledWith({ organization: '1' });
+    expect(mockDepartment.find).toHaveBeenCalledWith({ organization: '1' });
   });
 
   it('creates department', async () => {
@@ -48,7 +48,7 @@ describe('Department API', () => {
 
     expect(res.status).toBe(201);
     expect(saveMock).toHaveBeenCalled();
-    expect(Department).toHaveBeenCalledWith(
+    expect(mockDepartment).toHaveBeenCalledWith(
       expect.objectContaining({ organization: '1' })
     );
   });
@@ -60,12 +60,12 @@ describe('Department API', () => {
   });
 
   it('updates department', async () => {
-    Department.findByIdAndUpdate.mockResolvedValue({ name: 'HR' });
+    mockDepartment.findByIdAndUpdate.mockResolvedValue({ name: 'HR' });
 
     const res = await request(app).put('/api/departments/1').send({ name: 'HR', organization: 'org1' });
 
     expect(res.status).toBe(200);
-    expect(Department.findByIdAndUpdate).toHaveBeenCalledWith(
+    expect(mockDepartment.findByIdAndUpdate).toHaveBeenCalledWith(
       '1',
       expect.objectContaining({ organization: '1' }),
       expect.any(Object)
@@ -73,9 +73,9 @@ describe('Department API', () => {
   });
 
   it('deletes department', async () => {
-    Department.findByIdAndDelete.mockResolvedValue({});
+    mockDepartment.findByIdAndDelete.mockResolvedValue({});
     const res = await request(app).delete('/api/departments/1');
     expect(res.status).toBe(200);
-    expect(Department.findByIdAndDelete).toHaveBeenCalledWith('1');
+    expect(mockDepartment.findByIdAndDelete).toHaveBeenCalledWith('1');
   });
 });

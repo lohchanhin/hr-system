@@ -3,10 +3,10 @@ import express from 'express';
 import { jest } from '@jest/globals';
 
 const saveMock = jest.fn();
-const Report = jest.fn().mockImplementation(() => ({ save: saveMock }));
-Report.find = jest.fn();
+const mockReport = jest.fn().mockImplementation(() => ({ save: saveMock }));
+mockReport.find = jest.fn();
 
-jest.mock('../src/models/Report.js', () => ({ default: Report }), { virtual: true });
+jest.mock('../src/models/Report.js', () => ({ default: mockReport }), { virtual: true });
 
 let app;
 let reportRoutes;
@@ -20,20 +20,20 @@ beforeAll(async () => {
 
 beforeEach(() => {
   saveMock.mockReset();
-  Report.find.mockReset();
+  mockReport.find.mockReset();
 });
 
 describe('Report API', () => {
   it('lists reports', async () => {
     const fakeReports = [{ name: 'Monthly' }];
-    Report.find.mockResolvedValue(fakeReports);
+    mockReport.find.mockResolvedValue(fakeReports);
     const res = await request(app).get('/api/reports');
     expect(res.status).toBe(200);
     expect(res.body).toEqual(fakeReports);
   });
 
   it('returns 500 if listing fails', async () => {
-    Report.find.mockRejectedValue(new Error('fail'));
+    mockReport.find.mockRejectedValue(new Error('fail'));
     const res = await request(app).get('/api/reports');
     expect(res.status).toBe(500);
     expect(res.body).toEqual({ error: 'fail' });

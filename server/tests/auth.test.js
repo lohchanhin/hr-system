@@ -6,11 +6,11 @@ import { isTokenBlacklisted } from '../src/utils/tokenBlacklist.js'
 
 const compareMock = jest.fn();
 const fakeUser = { _id: 'u1', role: 'employee', username: 'john', employee: 'e1', comparePassword: compareMock };
-const User = { findOne: jest.fn() };
-const BlacklistedToken = { create: jest.fn(), findOne: jest.fn() };
+const mockUser = { findOne: jest.fn() };
+const mockBlacklistedToken = { create: jest.fn(), findOne: jest.fn() };
 
-jest.mock('../src/models/User.js', () => ({ default: User }), { virtual: true });
-jest.mock('../src/models/BlacklistedToken.js', () => ({ default: BlacklistedToken }), { virtual: true });
+jest.mock('../src/models/User.js', () => ({ default: mockUser }), { virtual: true });
+jest.mock('../src/models/BlacklistedToken.js', () => ({ default: mockBlacklistedToken }), { virtual: true });
 
 let app;
 let authRoutes;
@@ -24,15 +24,15 @@ beforeAll(async () => {
 });
 
 beforeEach(() => {
-  User.findOne.mockReset();
+  mockUser.findOne.mockReset();
   compareMock.mockReset();
-  BlacklistedToken.create.mockReset();
-  BlacklistedToken.findOne.mockReset();
+  mockBlacklistedToken.create.mockReset();
+  mockBlacklistedToken.findOne.mockReset();
 });
 
 describe('Auth API', () => {
   it('logs in with valid credentials', async () => {
-    User.findOne.mockResolvedValue(fakeUser);
+    mockUser.findOne.mockResolvedValue(fakeUser);
     compareMock.mockResolvedValue(true);
     const signSpy = jest.spyOn(jwt, 'sign').mockReturnValue('tok');
     const res = await request(app).post('/api/login').send({ username: 'john', password: 'pass' });
@@ -43,15 +43,15 @@ describe('Auth API', () => {
   });
 
   it('fails with invalid credentials', async () => {
-    User.findOne.mockResolvedValue(fakeUser);
+    mockUser.findOne.mockResolvedValue(fakeUser);
     compareMock.mockResolvedValue(false);
     const res = await request(app).post('/api/login').send({ username: 'john', password: 'wrong' });
     expect(res.status).toBe(401);
   });
 
   it('invalidates token on logout', async () => {
-    BlacklistedToken.create.mockResolvedValue();
-    BlacklistedToken.findOne.mockResolvedValue({ token: 'tok', expiresAt: new Date(Date.now() + 1000) });
+    mockBlacklistedToken.create.mockResolvedValue();
+    mockBlacklistedToken.findOne.mockResolvedValue({ token: 'tok', expiresAt: new Date(Date.now() + 1000) });
     const res = await request(app).post('/api/logout').set('Authorization', 'Bearer tok')
     expect(res.status).toBe(204)
     const result = await isTokenBlacklisted('tok')

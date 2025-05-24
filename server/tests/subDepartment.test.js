@@ -3,12 +3,12 @@ import express from 'express';
 import { jest } from '@jest/globals';
 
 const saveMock = jest.fn();
-const SubDepartment = jest.fn().mockImplementation(() => ({ save: saveMock }));
-SubDepartment.find = jest.fn();
-SubDepartment.findByIdAndUpdate = jest.fn();
-SubDepartment.findByIdAndDelete = jest.fn();
+const mockSubDepartment = jest.fn().mockImplementation(() => ({ save: saveMock }));
+mockSubDepartment.find = jest.fn();
+mockSubDepartment.findByIdAndUpdate = jest.fn();
+mockSubDepartment.findByIdAndDelete = jest.fn();
 
-jest.mock('../src/models/SubDepartment.js', () => ({ default: SubDepartment }), { virtual: true });
+jest.mock('../src/models/SubDepartment.js', () => ({ default: mockSubDepartment }), { virtual: true });
 
 let app;
 let subDepartmentRoutes;
@@ -22,14 +22,14 @@ beforeAll(async () => {
 
 beforeEach(() => {
   saveMock.mockReset();
-  SubDepartment.find.mockReset();
-  SubDepartment.findByIdAndUpdate.mockReset();
-  SubDepartment.findByIdAndDelete.mockReset();
+  mockSubDepartment.find.mockReset();
+  mockSubDepartment.findByIdAndUpdate.mockReset();
+  mockSubDepartment.findByIdAndDelete.mockReset();
 });
 
 describe('SubDepartment API', () => {
   it('lists sub-departments', async () => {
-    SubDepartment.find.mockResolvedValue([{ name: 'Sub' }]);
+    mockSubDepartment.find.mockResolvedValue([{ name: 'Sub' }]);
     const res = await request(app).get('/api/sub-departments');
     expect(res.status).toBe(200);
   });
@@ -42,16 +42,16 @@ describe('SubDepartment API', () => {
   });
 
   it('updates sub-department', async () => {
-    SubDepartment.findByIdAndUpdate.mockResolvedValue({ name: 'Sub' });
+    mockSubDepartment.findByIdAndUpdate.mockResolvedValue({ name: 'Sub' });
     const res = await request(app).put('/api/sub-departments/1').send({ name: 'Sub', department: 'dept1' });
     expect(res.status).toBe(200);
-    expect(SubDepartment.findByIdAndUpdate).toHaveBeenCalled();
+    expect(mockSubDepartment.findByIdAndUpdate).toHaveBeenCalled();
   });
 
   it('deletes sub-department', async () => {
-    SubDepartment.findByIdAndDelete.mockResolvedValue({});
+    mockSubDepartment.findByIdAndDelete.mockResolvedValue({});
     const res = await request(app).delete('/api/sub-departments/1');
     expect(res.status).toBe(200);
-    expect(SubDepartment.findByIdAndDelete).toHaveBeenCalledWith('1');
+    expect(mockSubDepartment.findByIdAndDelete).toHaveBeenCalledWith('1');
   });
 });
