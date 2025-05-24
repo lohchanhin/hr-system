@@ -2,6 +2,7 @@
   "name": "hr-system-root",
   "private": true,
   "scripts": {
+    "install": "npm --prefix server install && npm --prefix client install",
     "test": "npm --prefix server test && npm --prefix client test"
   }
 }

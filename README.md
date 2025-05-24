@@ -1,4 +1,5 @@
 # HR 系統
+[![CI Status](https://github.com/<OWNER>/<REPO>/actions/workflows/node.yml/badge.svg)](https://github.com/<OWNER>/<REPO>/actions/workflows/node.yml)
 
 本專案是一套簡易的人力資源管理系統，分成前端與後端兩個獨立的 Node.js 專案：
 
@@ -118,6 +119,10 @@ npm test
 ...
 ```
 
+## CI 狀態與啟用方式
+
+專案已設定 GitHub Actions，會在推送與 Pull Request 時自動執行 Server 與 Client 的測試。
+若 Fork 本專案，請至 GitHub 倉庫的 **Actions** 分頁啟用此流程。
 
 ## 自動合併腳本
 
