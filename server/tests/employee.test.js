@@ -3,12 +3,12 @@ import express from 'express';
 import { jest } from '@jest/globals';
 
 const saveMock = jest.fn();
-const Employee = jest.fn().mockImplementation(() => ({ save: saveMock }));
-Employee.find = jest.fn();
-Employee.findById = jest.fn();
-Employee.findByIdAndDelete = jest.fn();
+const mockEmployee = jest.fn().mockImplementation(() => ({ save: saveMock }));
+mockEmployee.find = jest.fn();
+mockEmployee.findById = jest.fn();
+mockEmployee.findByIdAndDelete = jest.fn();
 
-jest.mock('../src/models/Employee.js', () => ({ default: Employee }), { virtual: true });
+jest.mock('../src/models/Employee.js', () => ({ default: mockEmployee }), { virtual: true });
 
 let app;
 let employeeRoutes;
@@ -22,9 +22,9 @@ beforeAll(async () => {
 
 beforeEach(() => {
   saveMock.mockReset();
-  Employee.find.mockReset();
-  Employee.findById.mockReset();
-  Employee.findByIdAndDelete.mockReset();
+  mockEmployee.find.mockReset();
+  mockEmployee.findById.mockReset();
+  mockEmployee.findByIdAndDelete.mockReset();
 });
 
 describe('Employee API', () => {
@@ -32,14 +32,14 @@ describe('Employee API', () => {
 
     const fakeEmployees = [{ name: 'John', department: 'Sales', title: 'Staff', status: '在職' }];
 
-    Employee.find.mockResolvedValue(fakeEmployees);
+    mockEmployee.find.mockResolvedValue(fakeEmployees);
     const res = await request(app).get('/api/employees');
     expect(res.status).toBe(200);
     expect(res.body).toEqual(fakeEmployees);
   });
 
   it('returns 500 if listing fails', async () => {
-    Employee.find.mockRejectedValue(new Error('fail'));
+    mockEmployee.find.mockRejectedValue(new Error('fail'));
     const res = await request(app).get('/api/employees');
     expect(res.status).toBe(500);
     expect(res.body).toEqual({ error: 'fail' });
@@ -70,28 +70,28 @@ describe('Employee API', () => {
 
   it('gets employee', async () => {
     const fake = { _id: '1', name: 'John' };
-    Employee.findById.mockResolvedValue(fake);
+    mockEmployee.findById.mockResolvedValue(fake);
     const res = await request(app).get('/api/employees/1');
     expect(res.status).toBe(200);
-    expect(Employee.findById).toHaveBeenCalledWith('1');
+    expect(mockEmployee.findById).toHaveBeenCalledWith('1');
     expect(res.body).toEqual(fake);
   });
 
   it('updates employee', async () => {
-    Employee.findById.mockResolvedValue({ _id: '1', name: 'John', save: saveMock });
+    mockEmployee.findById.mockResolvedValue({ _id: '1', name: 'John', save: saveMock });
     saveMock.mockResolvedValue();
     const res = await request(app)
       .put('/api/employees/1')
       .send({ name: 'Updated' });
     expect(res.status).toBe(200);
-    expect(Employee.findById).toHaveBeenCalledWith('1');
+    expect(mockEmployee.findById).toHaveBeenCalledWith('1');
     expect(saveMock).toHaveBeenCalled();
     expect(res.body).toMatchObject({ _id: '1', name: 'Updated' });
 
   });
 
   it('fails updating with invalid email or role', async () => {
-    Employee.findById.mockResolvedValue({ _id: '1', name: 'John', save: saveMock });
+    mockEmployee.findById.mockResolvedValue({ _id: '1', name: 'John', save: saveMock });
     const res = await request(app)
       .put('/api/employees/1')
       .send({ email: 'bad', role: 'x' });
@@ -99,10 +99,10 @@ describe('Employee API', () => {
   });
 
   it('deletes employee', async () => {
-    Employee.findByIdAndDelete.mockResolvedValue({ _id: '1' });
+    mockEmployee.findByIdAndDelete.mockResolvedValue({ _id: '1' });
     const res = await request(app).delete('/api/employees/1');
     expect(res.status).toBe(200);
-    expect(Employee.findByIdAndDelete).toHaveBeenCalledWith('1');
+    expect(mockEmployee.findByIdAndDelete).toHaveBeenCalledWith('1');
     expect(res.body).toEqual({ success: true });
   });
 });

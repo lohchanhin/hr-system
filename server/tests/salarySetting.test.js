@@ -3,11 +3,11 @@ import express from 'express';
 import { jest } from '@jest/globals';
 
 const saveMock = jest.fn();
-const SalarySetting = jest.fn().mockImplementation(() => ({ save: saveMock }));
-SalarySetting.find = jest.fn();
-SalarySetting.findByIdAndUpdate = jest.fn();
+const mockSalarySetting = jest.fn().mockImplementation(() => ({ save: saveMock }));
+mockSalarySetting.find = jest.fn();
+mockSalarySetting.findByIdAndUpdate = jest.fn();
 
-jest.mock('../src/models/SalarySetting.js', () => ({ default: SalarySetting }), { virtual: true });
+jest.mock('../src/models/SalarySetting.js', () => ({ default: mockSalarySetting }), { virtual: true });
 
 let app;
 let salaryRoutes;
@@ -21,21 +21,21 @@ beforeAll(async () => {
 
 beforeEach(() => {
   saveMock.mockReset();
-  SalarySetting.find.mockReset();
-  SalarySetting.findByIdAndUpdate.mockReset();
+  mockSalarySetting.find.mockReset();
+  mockSalarySetting.findByIdAndUpdate.mockReset();
 });
 
 describe('SalarySetting API', () => {
   it('lists settings', async () => {
     const fake = [{ salaryItems: [] }];
-    SalarySetting.find.mockResolvedValue(fake);
+    mockSalarySetting.find.mockResolvedValue(fake);
     const res = await request(app).get('/api/salary-settings');
     expect(res.status).toBe(200);
     expect(res.body).toEqual(fake);
   });
 
   it('returns 500 if listing fails', async () => {
-    SalarySetting.find.mockRejectedValue(new Error('fail'));
+    mockSalarySetting.find.mockRejectedValue(new Error('fail'));
     const res = await request(app).get('/api/salary-settings');
     expect(res.status).toBe(500);
     expect(res.body).toEqual({ error: 'fail' });
@@ -51,9 +51,9 @@ describe('SalarySetting API', () => {
   });
 
   it('updates setting', async () => {
-    SalarySetting.findByIdAndUpdate.mockResolvedValue({ _id: '1', salaryItems: [] });
+    mockSalarySetting.findByIdAndUpdate.mockResolvedValue({ _id: '1', salaryItems: [] });
     const res = await request(app).put('/api/salary-settings/1').send({ salaryItems: [] });
     expect(res.status).toBe(200);
-    expect(SalarySetting.findByIdAndUpdate).toHaveBeenCalled();
+    expect(mockSalarySetting.findByIdAndUpdate).toHaveBeenCalled();
   });
 });

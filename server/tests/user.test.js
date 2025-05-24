@@ -3,12 +3,12 @@ import express from 'express';
 import { jest } from '@jest/globals';
 
 const saveMock = jest.fn();
-const User = jest.fn().mockImplementation(() => ({ save: saveMock }));
-User.find = jest.fn();
-User.findById = jest.fn();
-User.findByIdAndDelete = jest.fn();
+const mockUser = jest.fn().mockImplementation(() => ({ save: saveMock }));
+mockUser.find = jest.fn();
+mockUser.findById = jest.fn();
+mockUser.findByIdAndDelete = jest.fn();
 
-jest.mock('../src/models/User.js', () => ({ default: User }), { virtual: true });
+jest.mock('../src/models/User.js', () => ({ default: mockUser }), { virtual: true });
 
 let app;
 let userRoutes;
@@ -22,15 +22,15 @@ beforeAll(async () => {
 
 beforeEach(() => {
   saveMock.mockReset();
-  User.find.mockReset();
-  User.findById.mockReset();
-  User.findByIdAndDelete.mockReset();
+  mockUser.find.mockReset();
+  mockUser.findById.mockReset();
+  mockUser.findByIdAndDelete.mockReset();
 });
 
 describe('User API', () => {
   it('lists users', async () => {
     const fake = [{ username: 'a' }];
-    User.find.mockResolvedValue(fake);
+    mockUser.find.mockResolvedValue(fake);
     const res = await request(app).get('/api/users');
     expect(res.status).toBe(200);
     expect(res.body).toEqual(fake);
@@ -45,17 +45,17 @@ describe('User API', () => {
   });
 
   it('updates user', async () => {
-    User.findById.mockResolvedValue({ save: saveMock, username: 'u' });
+    mockUser.findById.mockResolvedValue({ save: saveMock, username: 'u' });
     saveMock.mockResolvedValue();
     const res = await request(app).put('/api/users/1').send({ username: 'b' });
     expect(res.status).toBe(200);
-    expect(User.findById).toHaveBeenCalledWith('1');
+    expect(mockUser.findById).toHaveBeenCalledWith('1');
   });
 
   it('deletes user', async () => {
-    User.findByIdAndDelete.mockResolvedValue({});
+    mockUser.findByIdAndDelete.mockResolvedValue({});
     const res = await request(app).delete('/api/users/1');
     expect(res.status).toBe(200);
-    expect(User.findByIdAndDelete).toHaveBeenCalledWith('1');
+    expect(mockUser.findByIdAndDelete).toHaveBeenCalledWith('1');
   });
 });

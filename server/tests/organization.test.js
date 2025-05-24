@@ -3,12 +3,12 @@ import express from 'express';
 import { jest } from '@jest/globals';
 
 const saveMock = jest.fn();
-const Organization = jest.fn().mockImplementation(() => ({ save: saveMock }));
-Organization.find = jest.fn();
-Organization.findByIdAndUpdate = jest.fn();
-Organization.findByIdAndDelete = jest.fn();
+const mockOrganization = jest.fn().mockImplementation(() => ({ save: saveMock }));
+mockOrganization.find = jest.fn();
+mockOrganization.findByIdAndUpdate = jest.fn();
+mockOrganization.findByIdAndDelete = jest.fn();
 
-jest.mock('../src/models/Organization.js', () => ({ default: Organization }), { virtual: true });
+jest.mock('../src/models/Organization.js', () => ({ default: mockOrganization }), { virtual: true });
 
 let app;
 let organizationRoutes;
@@ -22,14 +22,14 @@ beforeAll(async () => {
 
 beforeEach(() => {
   saveMock.mockReset();
-  Organization.find.mockReset();
-  Organization.findByIdAndUpdate.mockReset();
-  Organization.findByIdAndDelete.mockReset();
+  mockOrganization.find.mockReset();
+  mockOrganization.findByIdAndUpdate.mockReset();
+  mockOrganization.findByIdAndDelete.mockReset();
 });
 
 describe('Organization API', () => {
   it('lists organizations', async () => {
-    Organization.find.mockResolvedValue([{ name: 'Org' }]);
+    mockOrganization.find.mockResolvedValue([{ name: 'Org' }]);
     const res = await request(app).get('/api/organizations');
     expect(res.status).toBe(200);
   });
@@ -42,16 +42,16 @@ describe('Organization API', () => {
   });
 
   it('updates organization', async () => {
-    Organization.findByIdAndUpdate.mockResolvedValue({ name: 'Org' });
+    mockOrganization.findByIdAndUpdate.mockResolvedValue({ name: 'Org' });
     const res = await request(app).put('/api/organizations/1').send({ name: 'Org' });
     expect(res.status).toBe(200);
-    expect(Organization.findByIdAndUpdate).toHaveBeenCalled();
+    expect(mockOrganization.findByIdAndUpdate).toHaveBeenCalled();
   });
 
   it('deletes organization', async () => {
-    Organization.findByIdAndDelete.mockResolvedValue({});
+    mockOrganization.findByIdAndDelete.mockResolvedValue({});
     const res = await request(app).delete('/api/organizations/1');
     expect(res.status).toBe(200);
-    expect(Organization.findByIdAndDelete).toHaveBeenCalledWith('1');
+    expect(mockOrganization.findByIdAndDelete).toHaveBeenCalledWith('1');
   });
 });

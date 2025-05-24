@@ -3,10 +3,10 @@ import express from 'express';
 import { jest } from '@jest/globals';
 
 const saveMock = jest.fn();
-const AttendanceRecord = jest.fn().mockImplementation(() => ({ save: saveMock }));
-AttendanceRecord.find = jest.fn(() => ({ populate: jest.fn().mockResolvedValue([]) }));
+const mockAttendanceRecord = jest.fn().mockImplementation(() => ({ save: saveMock }));
+mockAttendanceRecord.find = jest.fn(() => ({ populate: jest.fn().mockResolvedValue([]) }));
 
-jest.mock('../src/models/AttendanceRecord.js', () => ({ default: AttendanceRecord }), { virtual: true });
+jest.mock('../src/models/AttendanceRecord.js', () => ({ default: mockAttendanceRecord }), { virtual: true });
 
 let app;
 let attendanceRoutes;
@@ -20,20 +20,20 @@ beforeAll(async () => {
 
 beforeEach(() => {
   saveMock.mockReset();
-  AttendanceRecord.find.mockReset();
+  mockAttendanceRecord.find.mockReset();
 });
 
 describe('Attendance API', () => {
   it('lists records', async () => {
     const fakeRecords = [{ action: 'clockIn' }];
-    AttendanceRecord.find.mockReturnValue({ populate: jest.fn().mockResolvedValue(fakeRecords) });
+    mockAttendanceRecord.find.mockReturnValue({ populate: jest.fn().mockResolvedValue(fakeRecords) });
     const res = await request(app).get('/api/attendance');
     expect(res.status).toBe(200);
     expect(res.body).toEqual(fakeRecords);
   });
 
   it('returns 500 if listing fails', async () => {
-    AttendanceRecord.find.mockReturnValue({ populate: jest.fn().mockRejectedValue(new Error('fail')) });
+    mockAttendanceRecord.find.mockReturnValue({ populate: jest.fn().mockRejectedValue(new Error('fail')) });
     const res = await request(app).get('/api/attendance');
     expect(res.status).toBe(500);
     expect(res.body).toEqual({ error: 'fail' });

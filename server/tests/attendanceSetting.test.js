@@ -3,12 +3,12 @@ import express from 'express';
 import { jest } from '@jest/globals';
 
 
-const AttendanceSetting = {
+const mockAttendanceSetting = {
   findOne: jest.fn(),
   findOneAndUpdate: jest.fn()
 };
 
-jest.mock('../src/models/AttendanceSetting.js', () => ({ default: AttendanceSetting }), { virtual: true });
+jest.mock('../src/models/AttendanceSetting.js', () => ({ default: mockAttendanceSetting }), { virtual: true });
 
 let app;
 let settingRoutes;
@@ -21,21 +21,21 @@ beforeAll(async () => {
 });
 
 beforeEach(() => {
-  AttendanceSetting.findOne.mockReset();
-  AttendanceSetting.findOneAndUpdate.mockReset();
+  mockAttendanceSetting.findOne.mockReset();
+  mockAttendanceSetting.findOneAndUpdate.mockReset();
 });
 
 describe('AttendanceSetting API', () => {
   it('gets settings', async () => {
     const data = { shifts: [] };
-    AttendanceSetting.findOne.mockResolvedValue(data);
+    mockAttendanceSetting.findOne.mockResolvedValue(data);
     const res = await request(app).get('/api/attendance-settings');
     expect(res.status).toBe(200);
     expect(res.body).toEqual(data);
   });
 
   it('returns 500 if listing fails', async () => {
-    AttendanceSetting.findOne.mockRejectedValue(new Error('fail'));
+    mockAttendanceSetting.findOne.mockRejectedValue(new Error('fail'));
     const res = await request(app).get('/api/attendance-settings');
     expect(res.status).toBe(500);
     expect(res.body).toEqual({ error: 'fail' });
@@ -43,10 +43,10 @@ describe('AttendanceSetting API', () => {
 
   it('updates settings', async () => {
     const payload = { shifts: [] };
-    AttendanceSetting.findOneAndUpdate.mockResolvedValue(payload);
+    mockAttendanceSetting.findOneAndUpdate.mockResolvedValue(payload);
     const res = await request(app).put('/api/attendance-settings').send(payload);
     expect(res.status).toBe(200);
-    expect(AttendanceSetting.findOneAndUpdate).toHaveBeenCalledWith({}, payload, { new: true, upsert: true });
+    expect(mockAttendanceSetting.findOneAndUpdate).toHaveBeenCalledWith({}, payload, { new: true, upsert: true });
 
   });
 });

@@ -3,9 +3,9 @@ import express from 'express'
 import { jest } from '@jest/globals'
 import jwt from 'jsonwebtoken'
 
-const BlacklistedToken = { create: jest.fn(), findOne: jest.fn() };
+const mockBlacklistedToken = { create: jest.fn(), findOne: jest.fn() };
 
-jest.mock('../src/models/BlacklistedToken.js', () => ({ default: BlacklistedToken }), { virtual: true });
+jest.mock('../src/models/BlacklistedToken.js', () => ({ default: mockBlacklistedToken }), { virtual: true });
 
 let blacklistUtils;
 let authenticate;
@@ -15,19 +15,19 @@ beforeEach(async () => {
   jest.resetModules();
   blacklistUtils = await import('../src/utils/tokenBlacklist.js');
   ({ authenticate } = await import('../src/middleware/auth.js'));
-  BlacklistedToken.create.mockReset();
-  BlacklistedToken.findOne.mockReset();
+  mockBlacklistedToken.create.mockReset();
+  mockBlacklistedToken.findOne.mockReset();
 });
 
 test('blacklisted token rejected after server restart', async () => {
   const token = jwt.sign({ id: 1 }, 'secret', { expiresIn: '1h' });
-  BlacklistedToken.create.mockResolvedValue();
+  mockBlacklistedToken.create.mockResolvedValue();
   await blacklistUtils.blacklistToken(token);
 
   jest.resetModules();
   blacklistUtils = await import('../src/utils/tokenBlacklist.js');
   ({ authenticate } = await import('../src/middleware/auth.js'));
-  BlacklistedToken.findOne.mockResolvedValue({ token, expiresAt: new Date(Date.now() + 3600000) });
+  mockBlacklistedToken.findOne.mockResolvedValue({ token, expiresAt: new Date(Date.now() + 3600000) });
 
   const app = express();
   app.get('/protected', authenticate, (req, res) => res.sendStatus(200));
