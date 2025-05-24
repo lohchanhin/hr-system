@@ -1,4 +1,5 @@
 import Employee from '../models/Employee.js';
+import User from '../models/User.js';
 
 export async function listEmployees(req, res) {
   try {
@@ -11,12 +12,18 @@ export async function listEmployees(req, res) {
 
 export async function createEmployee(req, res) {
   try {
-    const { name, email, role, department, title, status } = req.body;
+    const { name, email, role, department, title, status, username, password } = req.body;
     if (!name) {
       return res.status(400).json({ error: 'Name is required' });
     }
     if (!email) {
       return res.status(400).json({ error: 'Email is required' });
+    }
+    if (!username) {
+      return res.status(400).json({ error: 'Username is required' });
+    }
+    if (!password) {
+      return res.status(400).json({ error: 'Password is required' });
     }
     const emailRegex = /^\S+@\S+\.\S+$/;
     if (!emailRegex.test(email)) {
@@ -30,6 +37,7 @@ export async function createEmployee(req, res) {
     }
     const employee = new Employee({ name, email, role, department, title, status });
     await employee.save();
+    await User.create({ username, password, role, employee: employee._id, department });
     res.status(201).json(employee);
   } catch (err) {
     res.status(400).json({ error: err.message });
