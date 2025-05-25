@@ -25,6 +25,6 @@ describe('Settings.vue logout', () => {
     expect(localStorage.getItem('token')).toBeNull()
     expect(localStorage.getItem('role')).toBeNull()
     expect(localStorage.getItem('employeeId')).toBeNull()
-    expect(pushMock).toHaveBeenCalledWith({ name: 'Login' })
+    expect(pushMock).toHaveBeenCalledWith('/')
   })
 })
