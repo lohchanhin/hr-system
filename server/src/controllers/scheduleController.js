@@ -1,14 +1,23 @@
 import ShiftSchedule from '../models/ShiftSchedule.js';
+import Employee from '../models/Employee.js';
 
 export async function listMonthlySchedules(req, res) {
   try {
-    const { month, employee } = req.query;
+    const { month, employee, supervisor } = req.query;
     if (!month) return res.status(400).json({ error: 'month required' });
     const start = new Date(`${month}-01`);
     const end = new Date(start);
     end.setMonth(end.getMonth() + 1);
     const query = { date: { $gte: start, $lt: end } };
-    if (employee) query.employee = employee;
+
+    if (supervisor) {
+      const emps = await Employee.find({ supervisor }).select('_id');
+      const ids = emps.map((e) => e._id.toString());
+      query.employee = { $in: ids };
+    } else if (employee) {
+      query.employee = employee;
+    }
+
     const schedules = await ShiftSchedule.find(query).populate('employee');
     res.json(schedules);
   } catch (err) {

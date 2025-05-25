@@ -23,10 +23,13 @@ const workbookMock = {
 };
 const mockExcelJS = { Workbook: jest.fn(() => workbookMock) };
 
+const mockEmployee = { find: jest.fn() };
+
 jest.mock('pdfkit', () => ({ default: mockPDFDocument }), { virtual: true });
 jest.mock('exceljs', () => ({ default: mockExcelJS }), { virtual: true });
 
 jest.mock('../src/models/ShiftSchedule.js', () => ({ default: mockShiftSchedule }), { virtual: true });
+jest.mock('../src/models/Employee.js', () => ({ default: mockEmployee }), { virtual: true });
 jest.mock('../src/middleware/supervisor.js', () => ({ verifySupervisor: (req, res, next) => next() }), { virtual: true });
 
 let app;
@@ -42,6 +45,7 @@ beforeAll(async () => {
 beforeEach(() => {
   saveMock.mockReset();
   mockShiftSchedule.find.mockReset();
+  mockEmployee.find.mockReset();
 });
 
 describe('Schedule API', () => {
@@ -90,6 +94,19 @@ describe('Schedule API', () => {
     expect(res.status).toBe(200);
     expect(mockShiftSchedule.find).toHaveBeenCalled();
     expect(res.body).toEqual(fake);
+  });
+
+  it('lists schedules by supervisor', async () => {
+    const fakeEmployees = [{ _id: 'e1' }, { _id: 'e2' }];
+    mockEmployee.find.mockResolvedValue(fakeEmployees);
+    const fakeSchedules = [{ employee: 'e1' }, { employee: 'e2' }];
+    mockShiftSchedule.find.mockReturnValue({ populate: jest.fn().mockResolvedValue(fakeSchedules) });
+    const res = await request(app).get('/api/schedules/monthly?month=2023-01&supervisor=s1');
+    expect(res.status).toBe(200);
+    expect(mockEmployee.find).toHaveBeenCalledWith({ supervisor: 's1' });
+    const calledQuery = mockShiftSchedule.find.mock.calls[0][0];
+    expect(calledQuery.employee).toEqual({ $in: ['e1', 'e2'] });
+    expect(res.body).toEqual(fakeSchedules);
   });
 
   it('creates schedules batch', async () => {
