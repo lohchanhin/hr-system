@@ -11,8 +11,8 @@ export async function listUsers(req, res) {
 
 export async function createUser(req, res) {
   try {
-    const { username, password, role, department } = req.body;
-    const user = new User({ username, password, role, department });
+    const { username, password, role, organization, department, subDepartment } = req.body;
+    const user = new User({ username, password, role, organization, department, subDepartment });
     await user.save();
     const plain = user.toObject();
     delete plain.password;
@@ -29,7 +29,9 @@ export async function updateUser(req, res) {
     if (req.body.username !== undefined) user.username = req.body.username;
     if (req.body.password) user.password = req.body.password;
     if (req.body.role !== undefined) user.role = req.body.role;
+    if (req.body.organization !== undefined) user.organization = req.body.organization;
     if (req.body.department !== undefined) user.department = req.body.department;
+    if (req.body.subDepartment !== undefined) user.subDepartment = req.body.subDepartment;
     await user.save();
     const plain = user.toObject();
     delete plain.password;

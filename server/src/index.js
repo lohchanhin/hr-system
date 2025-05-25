@@ -90,7 +90,13 @@ async function seedTestUsers() {
         title: 'Staff',
         status: '在職'
       });
-      await User.create({ ...data, employee: employee._id });
+      await User.create({
+        ...data,
+        organization: employee.organization,
+        department: employee.department,
+        subDepartment: employee.subDepartment,
+        employee: employee._id
+      });
       if (data.role === 'supervisor') supervisorId = employee._id;
       console.log(`Created test user ${data.username}`);
     }

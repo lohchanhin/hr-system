@@ -10,7 +10,9 @@ const userSchema = new mongoose.Schema({
     default: 'employee'
   },
   employee: { type: mongoose.Schema.Types.ObjectId, ref: 'Employee' },
+  organization: String,
   department: String,
+  subDepartment: String,
   supervisor: { type: mongoose.Schema.Types.ObjectId, ref: 'Employee' }
 }, { timestamps: true });
 

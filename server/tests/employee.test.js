@@ -55,7 +55,9 @@ describe('Employee API', () => {
     const newEmp = {
       name: 'Jane',
       email: 'jane@example.com',
+      organization: 'Org',
       department: 'HR',
+      subDepartment: 'Sub',
       title: 'Manager',
       status: '在職',
       username: 'jane',
@@ -72,14 +74,18 @@ describe('Employee API', () => {
       username: 'jane',
       password: 'secret',
       role: 'employee',
-      employee: undefined,
+      organization: 'Org',
       department: 'HR',
+      subDepartment: 'Sub',
+      employee: undefined,
       supervisor: 's1'
     });
     expect(res.body).toMatchObject({
       name: 'Jane',
       email: 'jane@example.com',
+      organization: 'Org',
       department: 'HR',
+      subDepartment: 'Sub',
       title: 'Manager',
       status: '在職',
       role: 'employee',
