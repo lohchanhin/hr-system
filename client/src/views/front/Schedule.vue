@@ -10,20 +10,23 @@
         :label="d"
       >
         <template #default="{ row }">
-          <el-select
-            v-if="canEdit"
-            v-model="scheduleMap[row._id][d].shiftType"
-            placeholder=""
-            @change="val => onSelect(row._id, d, val)"
-          >
-            <el-option
-              v-for="opt in shiftOptions"
-              :key="opt"
-              :label="opt"
-              :value="opt"
-            />
-          </el-select>
-          <span v-else>{{ scheduleMap[row._id][d]?.shiftType || '' }}</span>
+          <template v-if="scheduleMap[row._id]">
+            <el-select
+              v-if="canEdit"
+              v-model="scheduleMap[row._id][d].shiftType"
+              placeholder=""
+              @change="val => onSelect(row._id, d, val)"
+            >
+              <el-option
+                v-for="opt in shiftOptions"
+                :key="opt"
+                :label="opt"
+                :value="opt"
+              />
+            </el-select>
+            <span v-else>{{ scheduleMap[row._id][d]?.shiftType || '' }}</span>
+          </template>
+          <span v-else>-</span>
         </template>
       </el-table-column>
     </el-table>
