@@ -28,11 +28,13 @@ describe('EmployeeManagement.vue', () => {
     expect(wrapper.vm.filteredDepartments[0]._id).toBe('d1')
   })
 
-  it('computes supervisor list', async () => {
+  it('filters supervisor list by selected institution and department', async () => {
     const wrapper = mount(EmployeeManagement, { global: { plugins: [ElementPlus] } })
+    wrapper.vm.employeeForm.institution = 'o1'
+    wrapper.vm.employeeForm.department = 'd1'
     wrapper.vm.employeeList = [
-      { _id: 'e1', name: 'Emp', role: 'employee' },
-      { _id: 's1', name: 'Sup', role: 'supervisor' }
+      { _id: 's1', name: 'SupA', role: 'supervisor', institution: 'o1', department: 'd1' },
+      { _id: 's2', name: 'SupB', role: 'supervisor', institution: 'o2', department: 'd2' }
     ]
     await wrapper.vm.$nextTick()
     expect(wrapper.vm.supervisorList.length).toBe(1)
