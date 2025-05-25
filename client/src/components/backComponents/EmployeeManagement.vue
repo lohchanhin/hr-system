@@ -428,7 +428,14 @@ function departmentLabel(id) {
   )
 
   const supervisorList = computed(() =>
-    employeeList.value.filter(e => e.role === 'supervisor')
+    employeeForm.value.institution && employeeForm.value.department
+      ? employeeList.value.filter(
+          e =>
+            e.role === 'supervisor' &&
+            e.institution === employeeForm.value.institution &&
+            e.department === employeeForm.value.department
+        )
+      : []
   )
   
   function openEmployeeDialog(index = null) {
