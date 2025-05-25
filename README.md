@@ -63,6 +63,16 @@
 
 更詳細說明請參閱 [`server/README.md`](server/README.md)。
 
+## 同時啟動前後端
+
+在專案根目錄執行下列指令，可一次啟動後端與 Vite 前端開發伺服器：
+
+```bash
+npm run dev
+```
+
+此指令透過 `concurrently` 同時執行 `server` 與 `client` 目錄內的 `npm run dev`。
+
 ## 前端 (`client/`)
 
 1. 進入 `client/` 目錄安裝套件：
@@ -83,7 +93,7 @@
 
 ## 開始使用
 
-前後端皆啟動後，開啟瀏覽器造訪前端網址（預設 http://localhost:5173 ），即可使用提供的測試帳號登入並與後端 API 互動。
+在根目錄執行 `npm run dev` 同時啟動前端與後端後，開啟瀏覽器造訪前端網址（預設 http://localhost:5173 ），即可使用提供的測試帳號登入並與後端 API 互動。
 
 ## 相關文件
 
