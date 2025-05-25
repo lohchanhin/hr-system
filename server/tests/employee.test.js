@@ -43,6 +43,15 @@ describe('Employee API', () => {
     expect(res.body).toEqual(fakeEmployees);
   });
 
+  it('lists employees filtered by supervisor', async () => {
+    const fakeEmployees = [{ name: 'Bob' }];
+    mockEmployee.find.mockResolvedValue(fakeEmployees);
+    const res = await request(app).get('/api/employees?supervisor=s1');
+    expect(res.status).toBe(200);
+    expect(mockEmployee.find).toHaveBeenCalledWith({ supervisor: 's1' });
+    expect(res.body).toEqual(fakeEmployees);
+  });
+
   it('returns 500 if listing fails', async () => {
     mockEmployee.find.mockRejectedValue(new Error('fail'));
     const res = await request(app).get('/api/employees');
