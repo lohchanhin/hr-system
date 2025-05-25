@@ -65,7 +65,7 @@ function onLogout() {
   localStorage.removeItem("username");
   clearToken();
   // 回到前台登入
-  router.push({ name: "/front/login" });
+  router.push({ name: "/" });
 }
 </script>
 
