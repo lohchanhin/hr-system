@@ -76,7 +76,7 @@
                 <el-tab-pane label="任職資訊" name="employment">
                   <el-form :model="employeeForm" label-width="100px">
                     <el-form-item label="機構">
-                      <el-select v-model="employeeForm.institution">
+                      <el-select v-model="employeeForm.organization">
                         <el-option
                           v-for="org in orgList"
                           :key="org._id"
@@ -96,7 +96,7 @@
                       </el-select>
                     </el-form-item>
                     <el-form-item label="子單位">
-                      <el-input v-model="employeeForm.subunit" />
+                      <el-input v-model="employeeForm.subDepartment" />
                     </el-form-item>
                     <el-form-item label="主管">
                       <el-select v-model="employeeForm.supervisor" placeholder="選擇主管">
@@ -370,10 +370,10 @@ function departmentLabel(id) {
     lineId: '',
     photoList: [],
     // 部門相關
-    institution: '',
+    organization: '',
     department: '',
     supervisor: null,
-    subunit: '',
+    subDepartment: '',
     permissionGrade: '',
     // 職業別
     title: '',
@@ -420,19 +420,19 @@ function departmentLabel(id) {
   const employeeForm = ref({ ...emptyEmployee })
 
   const filteredDepartments = computed(() =>
-    employeeForm.value.institution
+    employeeForm.value.organization
       ? departmentList.value.filter(
-          d => d.organization === employeeForm.value.institution
+          d => d.organization === employeeForm.value.organization
         )
       : []
   )
 
   const supervisorList = computed(() =>
-    employeeForm.value.institution && employeeForm.value.department
+    employeeForm.value.organization && employeeForm.value.department
       ? employeeList.value.filter(
           e =>
             e.role === 'supervisor' &&
-            e.institution === employeeForm.value.institution &&
+            e.organization === employeeForm.value.organization &&
             e.department === employeeForm.value.department
         )
       : []
