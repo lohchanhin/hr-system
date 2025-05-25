@@ -64,7 +64,7 @@ const employeeSchema = new mongoose.Schema({
   supervisor: { type: mongoose.Schema.Types.ObjectId, ref: 'Employee' },
   role: {
     type: String,
-    enum: ['employee', 'supervisor', 'hr', 'admin'],
+    enum: ['employee', 'supervisor', 'admin'],
     default: 'employee'
   },
   partTime: { type: Boolean, default: false },

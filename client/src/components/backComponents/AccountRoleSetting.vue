@@ -27,7 +27,6 @@
           <el-form-item label="角色">
             <el-select v-model="userForm.role" placeholder="選擇角色">
               <el-option label="管理員" value="admin" />
-              <el-option label="HR" value="hr" />
               <el-option label="主管" value="supervisor" />
               <el-option label="員工" value="employee" />
             </el-select>

@@ -82,25 +82,25 @@ const routes = [
         path: 'attendance',
         name: 'Attendance',
         component: Attendance,
-        meta: { roles: ['employee', 'supervisor', 'hr', 'admin'] }
+        meta: { roles: ['employee', 'supervisor', 'admin'] }
       },
       {
         path: 'leave',
         name: 'Leave',
         component: Leave,
-        meta: { roles: ['employee', 'supervisor', 'hr', 'admin'] }
+        meta: { roles: ['employee', 'supervisor', 'admin'] }
       },
       {
         path: 'schedule',
         name: 'Schedule',
         component: Schedule,
-        meta: { roles: ['supervisor', 'hr', 'admin'] }
+        meta: { roles: ['supervisor', 'admin'] }
       },
       {
         path: 'approval',
         name: 'Approval',
         component: Approval,
-        meta: { roles: ['supervisor', 'hr', 'admin'] }
+        meta: { roles: ['supervisor', 'admin'] }
       }
     ]
   },

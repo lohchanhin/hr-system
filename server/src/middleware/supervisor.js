@@ -6,7 +6,7 @@ export async function verifySupervisor(req, res, next) {
   try {
     const user = await User.findById(req.user.id).populate('employee');
     if (!user) return res.status(401).json({ error: 'Invalid user' });
-    if (['admin', 'hr'].includes(user.role)) return next();
+    if (['admin'].includes(user.role)) return next();
 
     let employeeId = req.body.employee;
     if (!employeeId && Array.isArray(req.body.schedules) && req.body.schedules.length) {

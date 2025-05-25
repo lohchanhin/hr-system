@@ -8,7 +8,6 @@
             <el-radio-group v-model="loginForm.role">
               <el-radio label="employee">員工</el-radio>
               <el-radio label="supervisor">主管</el-radio>
-              <el-radio label="hr">人資</el-radio>
               <el-radio label="admin">管理員</el-radio>
             </el-radio-group>
           </el-form-item>
@@ -69,9 +68,6 @@ async function onLogin () {
         break
       case 'supervisor':
         router.push('/front/schedule')
-        break
-      case 'hr':
-        router.push('/front/attendance')
         break
       case 'admin':
         const first = menuStore.items[0]

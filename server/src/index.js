@@ -74,7 +74,6 @@ async function seedTestUsers() {
   const users = [
     { username: 'user', password: 'password', role: 'employee' },
     { username: 'supervisor', password: 'password', role: 'supervisor' },
-    { username: 'hr', password: 'password', role: 'hr' },
     { username: 'admin', password: 'password', role: 'admin' }
   ];
   let supervisorId = null;
@@ -122,24 +121,24 @@ app.get('/api/health', (req, res) => {
 
 
 app.use('/api', authRoutes);
-app.use('/api/employees', authenticate, authorizeRoles('admin', 'hr'), employeeRoutes);
-app.use('/api/attendance', authenticate, authorizeRoles('employee', 'supervisor', 'hr', 'admin'), attendanceRoutes);
-app.use('/api/attendance-settings', authenticate, authorizeRoles('hr', 'admin'), attendanceSettingRoutes);
+app.use('/api/employees', authenticate, authorizeRoles('admin'), employeeRoutes);
+app.use('/api/attendance', authenticate, authorizeRoles('employee', 'supervisor', 'admin'), attendanceRoutes);
+app.use('/api/attendance-settings', authenticate, authorizeRoles('admin'), attendanceSettingRoutes);
 
 
-app.use('/api/leaves', authenticate, authorizeRoles('employee', 'supervisor', 'hr', 'admin'), leaveRoutes);
-app.use('/api/schedules', authenticate, authorizeRoles('supervisor', 'hr', 'admin'), scheduleRoutes);
-app.use('/api/payroll', authenticate, authorizeRoles('hr', 'admin'), payrollRoutes);
-app.use('/api/reports', authenticate, authorizeRoles('hr', 'admin'), reportRoutes);
-app.use('/api/insurance', authenticate, authorizeRoles('hr', 'admin'), insuranceRoutes);
-app.use('/api/approvals', authenticate, authorizeRoles('supervisor', 'hr', 'admin'), approvalRoutes);
+app.use('/api/leaves', authenticate, authorizeRoles('employee', 'supervisor', 'admin'), leaveRoutes);
+app.use('/api/schedules', authenticate, authorizeRoles('supervisor', 'admin'), scheduleRoutes);
+app.use('/api/payroll', authenticate, authorizeRoles('admin'), payrollRoutes);
+app.use('/api/reports', authenticate, authorizeRoles('admin'), reportRoutes);
+app.use('/api/insurance', authenticate, authorizeRoles('admin'), insuranceRoutes);
+app.use('/api/approvals', authenticate, authorizeRoles('supervisor', 'admin'), approvalRoutes);
 app.use('/api/menu', authenticate, menuRoutes);
 app.use('/api/users', authenticate, authorizeRoles('admin'), userRoutes);
 app.use('/api/departments', authenticate, authorizeRoles('admin'), departmentRoutes);
 app.use('/api/organizations', authenticate, authorizeRoles('admin'), organizationRoutes);
 app.use('/api/sub-departments', authenticate, authorizeRoles('admin'), subDepartmentRoutes);
 
-app.use('/api/salary-settings', authenticate, authorizeRoles('hr', 'admin'), salarySettingRoutes);
+app.use('/api/salary-settings', authenticate, authorizeRoles('admin'), salarySettingRoutes);
 
 
 

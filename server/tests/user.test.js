@@ -37,7 +37,7 @@ describe('User API', () => {
   });
 
   it('creates user', async () => {
-    const payload = { username: 'u', password: 'p', role: 'hr' };
+    const payload = { username: 'u', password: 'p', role: 'admin' };
     saveMock.mockResolvedValue();
     const res = await request(app).post('/api/users').send(payload);
     expect(res.status).toBe(201);

@@ -42,7 +42,6 @@ When running in development, the server automatically seeds a few test users if 
 |-------------|-----------|
 | `user`      | employee  |
 | `supervisor`| supervisor|
-| `hr`        | hr        |
 | `admin`     | admin     |
 
 All test accounts use the password `password`.
