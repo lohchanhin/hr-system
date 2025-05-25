@@ -2,18 +2,19 @@
   <div class="schedule-page">
     <h2>排班管理</h2>
     <el-date-picker v-model="currentMonth" type="month" @change="fetchSchedules" />
-    <el-table :data="[scheduleRow]" style="margin-top: 20px;">
+    <el-table :data="employees" style="margin-top: 20px;">
+      <el-table-column prop="name" label="員工" />
       <el-table-column
         v-for="d in days"
         :key="d"
         :label="d"
       >
-        <template #default>
+        <template #default="{ row }">
           <el-select
             v-if="canEdit"
-            v-model="scheduleMap[d].shiftType"
+            v-model="scheduleMap[row._id][d].shiftType"
             placeholder=""
-            @change="val => onSelect(d, val)"
+            @change="val => onSelect(row._id, d, val)"
           >
             <el-option
               v-for="opt in shiftOptions"
@@ -22,7 +23,7 @@
               :value="opt"
             />
           </el-select>
-          <span v-else>{{ scheduleMap[d]?.shiftType || '' }}</span>
+          <span v-else>{{ scheduleMap[row._id][d]?.shiftType || '' }}</span>
         </template>
       </el-table-column>
     </el-table>
@@ -38,7 +39,7 @@ import { getToken } from '../../utils/tokenService'
 const currentMonth = ref(dayjs().format('YYYY-MM'))
 const scheduleMap = ref({})
 const shiftOptions = ['早班', '中班', '晚班']
-const scheduleRow = computed(() => ({ id: 1 }))
+const employees = ref([])
 
 const canEdit = computed(() => {
   const role = localStorage.getItem('role') || 'employee'
@@ -48,35 +49,38 @@ const canEdit = computed(() => {
 const days = computed(() => {
   const dt = dayjs(currentMonth.value + '-01')
   const end = dt.endOf('month').date()
-  const arr = Array.from({ length: end }, (_, i) => i + 1)
-  arr.forEach(d => {
-    if (!scheduleMap.value[d]) scheduleMap.value[d] = { shiftType: '' }
-  })
-  return arr
+  return Array.from({ length: end }, (_, i) => i + 1)
 })
 
 async function fetchSchedules() {
   const token = getToken() || ''
-  const employeeId = localStorage.getItem('employeeId') || ''
+  const supervisorId = localStorage.getItem('employeeId') || ''
   const res = await apiFetch(
-    `/api/schedules/monthly?month=${currentMonth.value}&employee=${employeeId}`,
+    `/api/schedules/monthly?month=${currentMonth.value}&supervisor=${supervisorId}`,
     { headers: { Authorization: `Bearer ${token}` } }
   )
   if (res.ok) {
     const data = await res.json()
+    const ds = days.value
     scheduleMap.value = {}
+    employees.value.forEach(emp => {
+      scheduleMap.value[emp._id] = {}
+      ds.forEach(d => {
+        scheduleMap.value[emp._id][d] = { shiftType: '' }
+      })
+    })
     data.forEach((s) => {
+      const empId = s.employee?._id || s.employee
       const d = dayjs(s.date).date()
-      scheduleMap.value[d] = { id: s._id, shiftType: s.shiftType }
+      scheduleMap.value[empId][d] = { id: s._id, shiftType: s.shiftType }
     })
   }
 }
 
-async function onSelect(day, value) {
+async function onSelect(empId, day, value) {
   const token = getToken() || ''
-  const employeeId = localStorage.getItem('employeeId') || ''
   const dateStr = `${currentMonth.value}-${String(day).padStart(2, '0')}`
-  const existing = scheduleMap.value[day]
+  const existing = scheduleMap.value[empId][day]
   if (existing && existing.id) {
     await apiFetch(`/api/schedules/${existing.id}`, {
       method: 'PUT',
@@ -87,16 +91,30 @@ async function onSelect(day, value) {
     const res = await apiFetch('/api/schedules', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ employee: employeeId, date: dateStr, shiftType: value })
+      body: JSON.stringify({ employee: empId, date: dateStr, shiftType: value })
     })
     if (res.ok) {
       const saved = await res.json()
-      scheduleMap.value[day] = { id: saved._id, shiftType: saved.shiftType }
+      scheduleMap.value[empId][day] = { id: saved._id, shiftType: saved.shiftType }
     }
   }
 }
 
-onMounted(fetchSchedules)
+async function fetchEmployees() {
+  const token = getToken() || ''
+  const supervisorId = localStorage.getItem('employeeId') || ''
+  const res = await apiFetch(`/api/employees?supervisor=${supervisorId}`, {
+    headers: { Authorization: `Bearer ${token}` }
+  })
+  if (res.ok) {
+    employees.value = await res.json()
+  }
+}
+
+onMounted(async () => {
+  await fetchEmployees()
+  await fetchSchedules()
+})
 </script>
 
 <style scoped>
