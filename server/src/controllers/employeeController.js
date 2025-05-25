@@ -12,7 +12,7 @@ export async function listEmployees(req, res) {
 
 export async function createEmployee(req, res) {
   try {
-    const { name, email, role, department, title, status, username, password } = req.body;
+    const { name, email, role, department, title, status, username, password, supervisor } = req.body;
     if (!name) {
       return res.status(400).json({ error: 'Name is required' });
     }
@@ -35,9 +35,9 @@ export async function createEmployee(req, res) {
         return res.status(400).json({ error: 'Invalid role' });
       }
     }
-    const employee = new Employee({ name, email, role, department, title, status });
+    const employee = new Employee({ name, email, role, department, title, status, supervisor });
     await employee.save();
-    await User.create({ username, password, role, employee: employee._id, department });
+    await User.create({ username, password, role, employee: employee._id, department, supervisor });
     res.status(201).json(employee);
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -60,7 +60,7 @@ export async function updateEmployee(req, res) {
     const employee = await Employee.findById(req.params.id);
     if (!employee) return res.status(404).json({ error: 'Not found' });
 
-    const { name, email, role, department, title, status } = req.body;
+    const { name, email, role, department, title, status, supervisor } = req.body;
     if (email !== undefined) {
       if (!email) {
         return res.status(400).json({ error: 'Email is required' });
@@ -82,8 +82,12 @@ export async function updateEmployee(req, res) {
     if (department !== undefined) employee.department = department;
     if (title !== undefined) employee.title = title;
     if (status !== undefined) employee.status = status;
+    if (supervisor !== undefined) employee.supervisor = supervisor;
 
     await employee.save();
+    if (supervisor !== undefined) {
+      await User.findOneAndUpdate({ employee: employee._id }, { supervisor });
+    }
     res.json(employee);
   } catch (err) {
     res.status(400).json({ error: err.message });

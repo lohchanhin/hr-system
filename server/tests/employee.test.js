@@ -8,7 +8,7 @@ mockEmployee.find = jest.fn();
 mockEmployee.findById = jest.fn();
 mockEmployee.findByIdAndDelete = jest.fn();
 
-const mockUser = { create: jest.fn() };
+const mockUser = { create: jest.fn(), findOneAndUpdate: jest.fn() };
 
 jest.mock('../src/models/Employee.js', () => ({ default: mockEmployee }), { virtual: true });
 jest.mock('../src/models/User.js', () => ({ default: mockUser }), { virtual: true });
@@ -29,6 +29,7 @@ beforeEach(() => {
   mockEmployee.findById.mockReset();
   mockEmployee.findByIdAndDelete.mockReset();
   mockUser.create.mockReset();
+  mockUser.findOneAndUpdate.mockReset();
 });
 
 describe('Employee API', () => {
@@ -59,7 +60,8 @@ describe('Employee API', () => {
       status: '在職',
       username: 'jane',
       password: 'secret',
-      role: 'employee'
+      role: 'employee',
+      supervisor: 's1'
     };
 
     saveMock.mockResolvedValue();
@@ -71,7 +73,8 @@ describe('Employee API', () => {
       password: 'secret',
       role: 'employee',
       employee: undefined,
-      department: 'HR'
+      department: 'HR',
+      supervisor: 's1'
     });
     expect(res.body).toMatchObject({
       name: 'Jane',
@@ -79,7 +82,8 @@ describe('Employee API', () => {
       department: 'HR',
       title: 'Manager',
       status: '在職',
-      role: 'employee'
+      role: 'employee',
+      supervisor: 's1'
     });
   });
 
@@ -103,11 +107,12 @@ describe('Employee API', () => {
     saveMock.mockResolvedValue();
     const res = await request(app)
       .put('/api/employees/1')
-      .send({ name: 'Updated' });
+      .send({ name: 'Updated', supervisor: 's2' });
     expect(res.status).toBe(200);
     expect(mockEmployee.findById).toHaveBeenCalledWith('1');
     expect(saveMock).toHaveBeenCalled();
-    expect(res.body).toMatchObject({ _id: '1', name: 'Updated' });
+    expect(mockUser.findOneAndUpdate).toHaveBeenCalledWith({ employee: '1' }, { supervisor: 's2' });
+    expect(res.body).toMatchObject({ _id: '1', name: 'Updated', supervisor: 's2' });
 
   });
 
