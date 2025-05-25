@@ -31,12 +31,12 @@
                     <el-form-item label="密碼">
                       <el-input v-model="employeeForm.password" type="password" />
                     </el-form-item>
-                    <el-form-item label="權限">
-                      <el-checkbox-group v-model="employeeForm.permissions">
-                        <el-checkbox label="admin">管理員</el-checkbox>
-                        <el-checkbox label="supervisor">主管</el-checkbox>
-                        <el-checkbox label="employee">員工</el-checkbox>
-                      </el-checkbox-group>
+                    <el-form-item label="角色">
+                      <el-select v-model="employeeForm.role" placeholder="選擇角色">
+                        <el-option label="管理員" value="admin" />
+                        <el-option label="主管" value="supervisor" />
+                        <el-option label="員工" value="employee" />
+                      </el-select>
                     </el-form-item>
                   </el-form>
                 </el-tab-pane>
@@ -348,7 +348,7 @@ function departmentLabel(id) {
   const emptyEmployee = {
     username: '',
     password: '',
-    permissions: [],
+    role: '',
     // 基本資料
     employeeNo: '',
     name: '',
@@ -452,7 +452,7 @@ function departmentLabel(id) {
       alert('請填寫姓名與帳號')
       return
     }
-    const payload = { ...employeeForm.value }
+    const { permissions, ...payload } = employeeForm.value
     if (payload.supervisor === '' || payload.supervisor === null) {
       delete payload.supervisor
     }
