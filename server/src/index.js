@@ -127,7 +127,17 @@ app.get('/api/health', (req, res) => {
 
 
 app.use('/api', authRoutes);
-app.use('/api/employees', authenticate, authorizeRoles('admin'), employeeRoutes);
+app.use(
+  '/api/employees',
+  authenticate,
+  (req, res, next) => {
+    if (req.method === 'GET') {
+      return authorizeRoles('admin', 'supervisor')(req, res, next);
+    }
+    return authorizeRoles('admin')(req, res, next);
+  },
+  employeeRoutes
+);
 app.use('/api/attendance', authenticate, authorizeRoles('employee', 'supervisor', 'admin'), attendanceRoutes);
 app.use('/api/attendance-settings', authenticate, authorizeRoles('admin'), attendanceSettingRoutes);
 

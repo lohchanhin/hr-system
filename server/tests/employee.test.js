@@ -147,3 +147,52 @@ describe('Employee API', () => {
     expect(res.body).toEqual({ success: true });
   });
 });
+
+describe('Employee authorization middleware', () => {
+  it('allows supervisor to list employees', async () => {
+    const { authorizeRoles } = await import('../src/middleware/auth.js');
+    const authenticate = (req, res, next) => {
+      req.user = { role: 'supervisor' };
+      next();
+    };
+    const appAuth = express();
+    appAuth.use(express.json());
+    appAuth.use(
+      '/api/employees',
+      authenticate,
+      (req, res, next) => {
+        if (req.method === 'GET') {
+          return authorizeRoles('admin', 'supervisor')(req, res, next);
+        }
+        return authorizeRoles('admin')(req, res, next);
+      },
+      employeeRoutes
+    );
+    mockEmployee.find.mockResolvedValue([]);
+    const res = await request(appAuth).get('/api/employees');
+    expect(res.status).toBe(200);
+  });
+
+  it('blocks supervisor from creating employee', async () => {
+    const { authorizeRoles } = await import('../src/middleware/auth.js');
+    const authenticate = (req, res, next) => {
+      req.user = { role: 'supervisor' };
+      next();
+    };
+    const appAuth = express();
+    appAuth.use(express.json());
+    appAuth.use(
+      '/api/employees',
+      authenticate,
+      (req, res, next) => {
+        if (req.method === 'GET') {
+          return authorizeRoles('admin', 'supervisor')(req, res, next);
+        }
+        return authorizeRoles('admin')(req, res, next);
+      },
+      employeeRoutes
+    );
+    const res = await request(appAuth).post('/api/employees').send({});
+    expect(res.status).toBe(403);
+  });
+});
