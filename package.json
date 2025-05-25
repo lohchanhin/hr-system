@@ -4,6 +4,11 @@
   "scripts": {
     "start": "npm --prefix server start",
     "install": "npm --prefix server install && npm --prefix client install",
-    "test": "npm --prefix server test && npm --prefix client test"
+    "test": "npm --prefix server test && npm --prefix client test",
+    "dev": "concurrently \"npm run dev --prefix server\" \"npm run dev --prefix client\"",
+    "heroku-postbuild": "npm run build --prefix client"
+  },
+  "devDependencies": {
+    "concurrently": "^8.0.1"
   }
 }
