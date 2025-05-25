@@ -32,11 +32,11 @@
                       <el-input v-model="employeeForm.password" type="password" />
                     </el-form-item>
                     <el-form-item label="權限">
-                      <el-checkbox-group v-model="employeeForm.permissions">
-                        <el-checkbox label="admin">管理員</el-checkbox>
-                        <el-checkbox label="supervisor">主管</el-checkbox>
-                        <el-checkbox label="employee">員工</el-checkbox>
-                      </el-checkbox-group>
+                      <el-radio-group v-model="employeeForm.role">
+                        <el-radio label="admin">管理員</el-radio>
+                        <el-radio label="supervisor">主管</el-radio>
+                        <el-radio label="employee">員工</el-radio>
+                      </el-radio-group>
                     </el-form-item>
                   </el-form>
                 </el-tab-pane>
@@ -348,7 +348,7 @@ function departmentLabel(id) {
   const emptyEmployee = {
     username: '',
     password: '',
-    permissions: [],
+    role: 'employee',
     // 基本資料
     employeeNo: '',
     name: '',
