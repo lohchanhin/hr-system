@@ -63,6 +63,16 @@
 
 更詳細說明請參閱 [`server/README.md`](server/README.md)。
 
+## 同時啟動前後端
+
+在專案根目錄執行下列指令，可一次啟動後端與 Vite 前端開發伺服器：
+
+```bash
+npm run dev
+```
+
+此指令透過 `concurrently` 同時執行 `server` 與 `client` 目錄內的 `npm run dev`。
+
 ## 前端 (`client/`)
 
 1. 進入 `client/` 目錄安裝套件：
@@ -81,9 +91,19 @@
 
 更多注意事項請見 [`client/README.md`](client/README.md)。
 
+## 部署前端靜態檔
+
+執行下列指令會在 `client/dist` 產生正式版檔案，後端啟動時即會自動提供這些靜態資源：
+
+```bash
+npm run build --prefix client
+```
+
+若部署到 Heroku，可利用 `heroku-postbuild` 腳本在建置階段自動完成前端打包，推送程式碼後即可同時提供 API 與靜態頁面。
+
 ## 開始使用
 
-前後端皆啟動後，開啟瀏覽器造訪前端網址（預設 http://localhost:5173 ），即可使用提供的測試帳號登入並與後端 API 互動。
+在根目錄執行 `npm run dev` 同時啟動前端與後端後，開啟瀏覽器造訪前端網址（預設 http://localhost:5173 ），即可使用提供的測試帳號登入並與後端 API 互動。
 
 ## 相關文件
 

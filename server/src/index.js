@@ -1,6 +1,8 @@
 import express from 'express';
 import dotenv from 'dotenv';
 import cors from 'cors';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { connectDB } from './config/db.js';
 import User from './models/User.js';
 import Employee from './models/Employee.js';
@@ -118,6 +120,8 @@ if (missing.length) {
 
 const app = express();
 const PORT = process.env.PORT;
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const distPath = path.resolve(__dirname, '../../client/dist');
 
 app.use(express.json());
 app.use(cors());
@@ -156,6 +160,13 @@ app.use('/api/organizations', authenticate, authorizeRoles('admin'), organizatio
 app.use('/api/sub-departments', authenticate, authorizeRoles('admin'), subDepartmentRoutes);
 
 app.use('/api/salary-settings', authenticate, authorizeRoles('admin'), salarySettingRoutes);
+
+// Serve static front-end files if available
+app.use(express.static(distPath));
+app.get('*', (req, res, next) => {
+  if (req.path.startsWith('/api')) return next();
+  res.sendFile(path.join(distPath, 'index.html'));
+});
 
 
 
