@@ -37,6 +37,7 @@ async function seed() {
     dept = await Department.create({
       name: '人力資源部',
       code: 'HR',
+      organization: org._id,
       unitName: '人力資源',
       location: '台北',
       phone: '02-23456789',
