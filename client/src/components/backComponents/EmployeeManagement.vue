@@ -5,7 +5,11 @@
             <el-button type="primary" @click="openEmployeeDialog()">新增員工</el-button>
             <el-table :data="employeeList" style="margin-top: 20px;">
               <el-table-column prop="name" label="員工姓名" width="120" />
-              <el-table-column prop="department" label="部門" width="100" />
+              <el-table-column label="部門" width="100">
+                <template #default="{ row }">
+                  {{ departmentLabel(row.department) }}
+                </template>
+              </el-table-column>
               <el-table-column prop="title" label="職稱" width="100" />
               <el-table-column prop="status" label="在職狀態" width="100" />
               <el-table-column label="操作" width="200">
@@ -300,6 +304,11 @@ const employeeDialogVisible = ref(false)
 let editEmployeeIndex = null
 let editEmployeeId = ''
 const token = localStorage.getItem('token') || ''
+
+function departmentLabel(id) {
+  const dept = departmentList.value.find(d => d._id === id)
+  return dept ? `${dept.name}(${dept.code})` : id
+}
 
   async function fetchDepartments() {
     const token = localStorage.getItem('token') || ''
