@@ -30,7 +30,7 @@ export async function createEmployee(req, res) {
       return res.status(400).json({ error: 'Invalid email' });
     }
     if (role !== undefined) {
-      const validRoles = ['employee', 'supervisor', 'hr', 'admin'];
+      const validRoles = ['employee', 'supervisor', 'admin'];
       if (!validRoles.includes(role)) {
         return res.status(400).json({ error: 'Invalid role' });
       }
@@ -71,7 +71,7 @@ export async function updateEmployee(req, res) {
       }
     }
     if (role !== undefined) {
-      const validRoles = ['employee', 'supervisor', 'hr', 'admin'];
+      const validRoles = ['employee', 'supervisor', 'admin'];
       if (!validRoles.includes(role)) {
         return res.status(400).json({ error: 'Invalid role' });
       }

@@ -29,7 +29,7 @@ describe('HRManagementSystemSetting.vue', () => {
     fetch.mockClear()
     fetch.mockResolvedValueOnce({ ok: true, json: async () => ({}) })
     const acc = wrapper.findComponent(AccountRoleSetting)
-    acc.vm.userForm = { username: 'u', password: 'p', role: 'hr', department: 'd1' }
+    acc.vm.userForm = { username: 'u', password: 'p', role: 'admin', department: 'd1' }
     acc.vm.editUserIndex = null
     await acc.vm.saveUser()
     expect(fetch).toHaveBeenCalledWith('/api/users', expect.objectContaining({ method: 'POST' }))

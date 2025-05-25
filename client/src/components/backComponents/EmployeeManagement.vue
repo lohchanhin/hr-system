@@ -30,7 +30,6 @@
                     <el-form-item label="權限">
                       <el-checkbox-group v-model="employeeForm.permissions">
                         <el-checkbox label="admin">管理員</el-checkbox>
-                        <el-checkbox label="hr">HR</el-checkbox>
                         <el-checkbox label="supervisor">主管</el-checkbox>
                         <el-checkbox label="employee">員工</el-checkbox>
                       </el-checkbox-group>

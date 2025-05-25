@@ -39,15 +39,15 @@ describe('FrontLogin.vue', () => {
     expect(localStorage.getItem('employeeId')).toBe('e1')
   })
 
-  it('stores HR role when API returns hr', async () => {
+  it('stores admin role when API returns admin', async () => {
     fetch
       .mockResolvedValueOnce({
         ok: true,
-        json: async () => ({ token: createToken(), user: { role: 'hr' } })
+        json: async () => ({ token: createToken(), user: { role: 'admin' } })
       })
       .mockResolvedValueOnce({ ok: true, json: async () => [] })
     const wrapper = mount(FrontLogin)
     await wrapper.find('button').trigger('click')
-    expect(localStorage.getItem('role')).toBe('hr')
+    expect(localStorage.getItem('role')).toBe('admin')
   })
 })

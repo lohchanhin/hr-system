@@ -42,7 +42,7 @@ const scheduleRow = computed(() => ({ id: 1 }))
 
 const canEdit = computed(() => {
   const role = localStorage.getItem('role') || 'employee'
-  return ['supervisor', 'hr', 'admin'].includes(role)
+  return ['supervisor', 'admin'].includes(role)
 })
 
 const days = computed(() => {
