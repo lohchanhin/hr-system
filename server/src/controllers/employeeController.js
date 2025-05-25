@@ -13,6 +13,7 @@ export async function listEmployees(req, res) {
 export async function createEmployee(req, res) {
   try {
     const { name, email, role, department, title, status, username, password, supervisor } = req.body;
+    const sup = supervisor === '' ? undefined : supervisor;
     if (!name) {
       return res.status(400).json({ error: 'Name is required' });
     }
@@ -35,9 +36,9 @@ export async function createEmployee(req, res) {
         return res.status(400).json({ error: 'Invalid role' });
       }
     }
-    const employee = new Employee({ name, email, role, department, title, status, supervisor });
+    const employee = new Employee({ name, email, role, department, title, status, supervisor: sup });
     await employee.save();
-    await User.create({ username, password, role, employee: employee._id, department, supervisor });
+    await User.create({ username, password, role, employee: employee._id, department, supervisor: sup });
     res.status(201).json(employee);
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -61,6 +62,7 @@ export async function updateEmployee(req, res) {
     if (!employee) return res.status(404).json({ error: 'Not found' });
 
     const { name, email, role, department, title, status, supervisor } = req.body;
+    const sup = supervisor === '' ? undefined : supervisor;
     if (email !== undefined) {
       if (!email) {
         return res.status(400).json({ error: 'Email is required' });
@@ -82,11 +84,11 @@ export async function updateEmployee(req, res) {
     if (department !== undefined) employee.department = department;
     if (title !== undefined) employee.title = title;
     if (status !== undefined) employee.status = status;
-    if (supervisor !== undefined) employee.supervisor = supervisor;
+    if (sup !== undefined) employee.supervisor = sup;
 
     await employee.save();
-    if (supervisor !== undefined) {
-      await User.findOneAndUpdate({ employee: employee._id }, { supervisor });
+    if (sup !== undefined) {
+      await User.findOneAndUpdate({ employee: employee._id }, { supervisor: sup });
     }
     res.json(employee);
   } catch (err) {

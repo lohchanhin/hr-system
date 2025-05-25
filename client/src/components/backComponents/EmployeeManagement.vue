@@ -372,7 +372,7 @@ function departmentLabel(id) {
     // 部門相關
     institution: '',
     department: '',
-    supervisor: '',
+    supervisor: null,
     subunit: '',
     permissionGrade: '',
     // 職業別
@@ -453,6 +453,9 @@ function departmentLabel(id) {
       return
     }
     const payload = { ...employeeForm.value }
+    if (payload.supervisor === '' || payload.supervisor === null) {
+      delete payload.supervisor
+    }
 
     let res
     if (editEmployeeIndex === null) {
