@@ -95,6 +95,16 @@
                     <el-form-item label="子單位">
                       <el-input v-model="employeeForm.subunit" />
                     </el-form-item>
+                    <el-form-item label="主管">
+                      <el-select v-model="employeeForm.supervisor" placeholder="選擇主管">
+                        <el-option
+                          v-for="sup in supervisorList"
+                          :key="sup._id"
+                          :label="sup.name"
+                          :value="sup._id"
+                        />
+                      </el-select>
+                    </el-form-item>
                     <el-form-item label="職稱">
                       <el-input v-model="employeeForm.title" />
                     </el-form-item>
@@ -354,6 +364,7 @@ const token = localStorage.getItem('token') || ''
     // 部門相關
     institution: '',
     department: '',
+    supervisor: '',
     subunit: '',
     permissionGrade: '',
     // 職業別
@@ -406,6 +417,10 @@ const token = localStorage.getItem('token') || ''
           d => d.organization === employeeForm.value.institution
         )
       : []
+  )
+
+  const supervisorList = computed(() =>
+    employeeList.value.filter(e => e.role === 'supervisor')
   )
   
   function openEmployeeDialog(index = null) {

@@ -40,11 +40,12 @@ describe('HRManagementSystemSetting.vue', () => {
     fetch.mockClear()
     fetch.mockResolvedValueOnce({ ok: true, json: async () => ({}) })
     const emp = wrapper.findComponent(EmployeeManagement)
-    emp.vm.employeeForm = { ...emp.vm.employeeForm, name: 'n', username: 'u', experiences: [{ unit: 'a' }] }
+    emp.vm.employeeForm = { ...emp.vm.employeeForm, name: 'n', username: 'u', supervisor: 's1', experiences: [{ unit: 'a' }] }
     emp.vm.editEmployeeIndex = null
     await emp.vm.saveEmployee()
     const body = JSON.parse(fetch.mock.calls[0][1].body)
     expect(body.experiences).toBeDefined()
+    expect(body.supervisor).toBe('s1')
     expect(fetch).toHaveBeenCalledWith('/api/employees', expect.objectContaining({ method: 'POST' }))
   })
 })

@@ -27,4 +27,15 @@ describe('EmployeeManagement.vue', () => {
     expect(wrapper.vm.filteredDepartments.length).toBe(1)
     expect(wrapper.vm.filteredDepartments[0]._id).toBe('d1')
   })
+
+  it('computes supervisor list', async () => {
+    const wrapper = mount(EmployeeManagement, { global: { plugins: [ElementPlus] } })
+    wrapper.vm.employeeList = [
+      { _id: 'e1', name: 'Emp', role: 'employee' },
+      { _id: 's1', name: 'Sup', role: 'supervisor' }
+    ]
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.supervisorList.length).toBe(1)
+    expect(wrapper.vm.supervisorList[0]._id).toBe('s1')
+  })
 })
