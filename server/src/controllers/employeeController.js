@@ -3,7 +3,10 @@ import User from '../models/User.js';
 
 export async function listEmployees(req, res) {
   try {
-    const employees = await Employee.find();
+    const filter = req.query.supervisor
+      ? { supervisor: req.query.supervisor }
+      : {};
+    const employees = await Employee.find(filter);
     res.json(employees);
   } catch (err) {
     res.status(500).json({ error: err.message });
