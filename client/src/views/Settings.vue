@@ -17,7 +17,11 @@ const logout = () => {
   clearToken()
   localStorage.removeItem('role')
   localStorage.removeItem('employeeId')
+<<<<<<< HEAD
   router.push({ name: '/front/login' })
+=======
+  router.push('/')
+>>>>>>> 9cbf36ac95f936250e17a07b798a8c1a786c67b1
 }
   </script>
   

@@ -59,7 +59,7 @@ function logout() {
   clearToken()
   localStorage.removeItem('role')
   localStorage.removeItem('employeeId')
-  router.push({ name: '/' })
+  router.push('/')
 }
 </script>
 
