@@ -6,7 +6,11 @@
       <el-table :data="userList" style="margin-top: 20px;">
         <el-table-column prop="username" label="帳號" width="150" />
         <el-table-column prop="role" label="角色" width="120" />
-        <el-table-column prop="department" label="所屬部門" width="120" />
+        <el-table-column label="所屬部門" width="120">
+          <template #default="{ row }">
+            {{ departmentLabel(row.department) }}
+          </template>
+        </el-table-column>
         <el-table-column label="操作" width="180">
           <template #default="{ row, $index }">
             <el-button type="primary" @click="openUserDialog($index)">編輯</el-button>
@@ -65,6 +69,11 @@ const userForm = ref({
   department: ''
 })
 const departmentList = ref([])
+
+function departmentLabel(id) {
+  const dept = departmentList.value.find(d => d._id === id)
+  return dept ? `${dept.name}(${dept.code})` : id
+}
 
 async function fetchUsers() {
   const token = localStorage.getItem('token') || ''
