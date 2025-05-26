@@ -12,6 +12,7 @@
     "node": "20.x"
   },
   "devDependencies": {
-    "concurrently": "^8.0.1"
+    "concurrently": "^8.0.1",
+    "vite": "^6.3.5"
   }
 }
