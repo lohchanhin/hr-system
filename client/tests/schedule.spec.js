@@ -7,6 +7,7 @@ vi.mock('../src/api', () => {
   const apiFetch = vi.fn()
   apiFetch
     .mockResolvedValueOnce({ ok: true, json: async () => ([{ _id: 'e1', name: 'E1' }]) })
+    .mockResolvedValueOnce({ ok: true, json: async () => ({ shifts: [{ name: '早班' }] }) })
     .mockResolvedValueOnce({ ok: true, json: async () => ([] ) })
   return { apiFetch }
 })
@@ -18,7 +19,8 @@ describe('Schedule.vue', () => {
     localStorage.setItem('employeeId', 's1')
     mount(Schedule)
     const month = dayjs().format('YYYY-MM')
-    expect(apiFetch).toHaveBeenNthCalledWith(1, '/api/employees?supervisor=s1', expect.any(Object))
-    expect(apiFetch).toHaveBeenNthCalledWith(2, `/api/schedules/monthly?month=${month}&supervisor=s1`, expect.any(Object))
+    expect(apiFetch).toHaveBeenNthCalledWith(1, '/api/attendance-settings', expect.any(Object))
+    expect(apiFetch).toHaveBeenNthCalledWith(2, '/api/employees?supervisor=s1', expect.any(Object))
+    expect(apiFetch).toHaveBeenNthCalledWith(3, `/api/schedules/monthly?month=${month}&supervisor=s1`, expect.any(Object))
   })
 })

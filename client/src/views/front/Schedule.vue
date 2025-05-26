@@ -41,7 +41,7 @@ import { getToken } from '../../utils/tokenService'
 
 const currentMonth = ref(dayjs().format('YYYY-MM'))
 const scheduleMap = ref({})
-const shiftOptions = ['早班', '中班', '晚班']
+const shiftOptions = ref([])
 const employees = ref([])
 
 const canEdit = computed(() => {
@@ -54,6 +54,19 @@ const days = computed(() => {
   const end = dt.endOf('month').date()
   return Array.from({ length: end }, (_, i) => i + 1)
 })
+
+async function fetchShiftOptions() {
+  const token = getToken() || ''
+  const res = await apiFetch('/api/attendance-settings', {
+    headers: { Authorization: `Bearer ${token}` }
+  })
+  if (res.ok) {
+    const data = await res.json()
+    if (Array.isArray(data.shifts)) {
+      shiftOptions.value = data.shifts.map(s => s.name)
+    }
+  }
+}
 
 async function fetchSchedules() {
   const token = getToken() || ''
@@ -115,6 +128,7 @@ async function fetchEmployees() {
 }
 
 onMounted(async () => {
+  await fetchShiftOptions()
   await fetchEmployees()
   await fetchSchedules()
 })
