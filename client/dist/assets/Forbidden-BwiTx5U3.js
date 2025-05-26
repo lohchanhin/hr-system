@@ -1,0 +1,1 @@
+import{_ as d,c as n,d as o,o as s}from"./index-C0RAF7CU.js";const c={},r={class:"forbidden"};function t(a,e){return s(),n("div",r,e[0]||(e[0]=[o("h2",null,"403 Forbidden",-1),o("p",null,"您沒有權限瀏覽此頁面",-1)]))}const f=d(c,[["render",t],["__scopeId","data-v-fedaf8cc"]]);export{f as default};
