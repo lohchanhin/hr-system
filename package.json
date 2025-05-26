@@ -5,8 +5,7 @@
     "start": "npm --prefix server start",
     "install": "npm --prefix server install && npm --prefix client install --include=dev",
     "test": "npm --prefix server test && npm --prefix client test",
-    "dev": "concurrently \"npm run dev --prefix server\" \"npm run dev --prefix client\"",
-    "heroku-postbuild": "npm run build --prefix client"
+    "dev": "concurrently \"npm run dev --prefix server\" \"npm run dev --prefix client\""
   },
   "engines": {
     "node": "20.x"
