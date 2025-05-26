@@ -19,6 +19,7 @@
   "devDependencies": {
     "@vitejs/plugin-vue": "^5.2.3",
     "@vue/test-utils": "^2.4.3",
+    "esbuild": "^0.25.4",
     "jsdom": "^24.0.0",
     "unplugin-auto-import": "^19.1.2",
     "unplugin-vue-components": "^28.4.1",
