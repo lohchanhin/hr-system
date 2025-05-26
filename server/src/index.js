@@ -112,7 +112,7 @@ async function seedTestUsers() {
 dotenv.config();
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const distPath = path.join(__dirname, '..', 'client', 'dist');
+const distPath = path.join(__dirname, '..', '..', 'client', 'dist');
 
 const requiredEnv = ['PORT', 'MONGODB_URI', 'JWT_SECRET'];
 const missing = requiredEnv.filter((name) => !process.env[name]);
