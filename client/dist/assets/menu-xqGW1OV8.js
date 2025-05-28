@@ -1,1 +1,0 @@
-import{q as r,r as s}from"./index-BZkZtvsR.js";import{a as i}from"./api-ZZnZ46lj.js";const f=r("menu",()=>{const e=s([]);async function n(){const t=localStorage.getItem("token"),o=await i("/api/menu",{headers:{Authorization:`Bearer ${t}`}});o.ok&&(e.value=await o.json())}function a(t){e.value=t}return{items:e,fetchMenu:n,setMenu:a}});export{f as u};
