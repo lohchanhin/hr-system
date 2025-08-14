@@ -29,10 +29,10 @@ router.get('/forms/:formId/workflow', getWorkflow)
 router.put('/forms/:formId/workflow', setWorkflow)
 
 // Requests
-router.post('/approvals', createApprovalRequest)           // 建立送審單
-router.get('/approvals/:id', getApprovalRequest)           // 單筆
-router.get('/approvals', myApprovalRequests)               // 申請者列表 ?employee_id=
+router.post('/', createApprovalRequest)                    // 建立送審單
+router.get('/:id', getApprovalRequest)                     // 單筆
+router.get('/', myApprovalRequests)                        // 申請者列表 ?employee_id=
 router.get('/inbox', inboxApprovals)                       // 審核者待辦 ?employee_id=
-router.post('/approvals/:id/act', actOnApproval)           // { decision:'approve'|'reject'|'return', comment?, employee_id? }
+router.post('/:id/act', actOnApproval)                     // { decision:'approve'|'reject'|'return', comment?, employee_id? }
 
 export default router
