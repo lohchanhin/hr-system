@@ -1,186 +1,293 @@
 <!-- src/Components/backComponents/ApprovalFlowSetting.vue -->
 <template>
-    <div class="approval-flow-setting">
-      <h2>簽核流程設定</h2>
-  
-      <el-tabs v-model="activeTab" type="card">
-        <!-- 1) 通用流程規則 -->
-        <el-tab-pane label="通用流程規則" name="commonRule">
-          <el-form :model="commonForm" label-width="160px" class="rule-form">
-            <el-form-item label="最大簽核關卡數">
-              <el-input-number v-model="commonForm.maxApprovalLevel" :min="1" />
-            </el-form-item>
-            <el-form-item label="是否允許代理簽核">
-              <el-switch v-model="commonForm.allowDelegate" />
-            </el-form-item>
-            <el-form-item label="逾時提醒(天)">
-              <el-input-number v-model="commonForm.overdueDays" :min="1" />
-              <small>若簽核逾時超過此天數，系統自動發送提醒</small>
-            </el-form-item>
-            <el-form-item label="逾時處理方式">
-              <el-select v-model="commonForm.overdueAction" placeholder="選擇逾時行為">
-                <el-option label="不處理" value="none" />
-                <el-option label="自動通過" value="autoPass" />
-                <el-option label="自動退回" value="autoReject" />
-              </el-select>
-            </el-form-item>
-            <el-form-item>
-              <el-button type="primary" @click="saveCommonRules">儲存通用規則</el-button>
-            </el-form-item>
-          </el-form>
-        </el-tab-pane>
-  
-        <!-- 2) 申請類型簽核關卡設定 -->
-        <el-tab-pane label="申請類型設定" name="approvalLevels">
-          <div class="tab-content">
-            <el-button type="primary" @click="openTypeDialog()">新增申請類型</el-button>
-            <el-table :data="approvalTypes" style="margin-top: 20px;">
-              <el-table-column prop="name" label="申請類型" width="180" />
-              <el-table-column prop="levels" label="關卡數" width="80" />
-              <el-table-column label="詳細" />
-              <el-table-column label="操作" width="180">
-                <template #default="{ row, $index }">
-                  <el-button type="primary" @click="openTypeDialog($index)">編輯</el-button>
-                  <el-button type="danger" @click="deleteApprovalType($index)">刪除</el-button>
+  <div class="approval-flow-setting">
+    <h2>簽核流程設定</h2>
+
+    <el-tabs v-model="activeTab" type="card">
+      <!-- 1) 通用流程規則（針對選定的表單樣板） -->
+      <el-tab-pane label="通用流程規則" name="commonRule">
+        <div class="flex items-center gap-2 mb-2">
+          <el-select v-model="selectedFormId" placeholder="選擇表單樣板" style="width: 320px" @change="loadWorkflow">
+            <el-option v-for="f in forms" :key="f._id" :label="`${f.name}（${f.category}）`" :value="f._id" />
+          </el-select>
+          <el-button type="primary" @click="openFormDialog()">新增樣板</el-button>
+          <el-button :disabled="!selectedFormId" @click="openFormDialog('edit')">編輯樣板</el-button>
+          <el-button type="danger" :disabled="!selectedFormId" @click="removeForm">刪除樣板</el-button>
+        </div>
+
+        <el-form :model="policyForm" label-width="160px" class="rule-form" v-if="selectedFormId">
+          <el-form-item label="最大簽核關卡數">
+            <el-input-number v-model="policyForm.maxApprovalLevel" :min="1" />
+          </el-form-item>
+          <el-form-item label="是否允許代理簽核">
+            <el-switch v-model="policyForm.allowDelegate" />
+          </el-form-item>
+          <el-form-item label="逾時提醒(天)">
+            <el-input-number v-model="policyForm.overdueDays" :min="1" />
+          </el-form-item>
+          <el-form-item label="逾時處理方式">
+            <el-select v-model="policyForm.overdueAction" placeholder="選擇逾時行為">
+              <el-option label="不處理" value="none" />
+              <el-option label="自動通過" value="autoPass" />
+              <el-option label="自動退回" value="autoReject" />
+            </el-select>
+          </el-form-item>
+          <el-form-item>
+            <el-button type="primary" @click="savePolicy">儲存通用規則</el-button>
+          </el-form-item>
+        </el-form>
+        <div v-else class="text-gray-500">請先從上方下拉選擇一個表單樣板。</div>
+      </el-tab-pane>
+
+      <!-- 2) 申請類型（表單樣板）與流程關卡設定 -->
+      <el-tab-pane label="申請類型 / 關卡" name="approvalLevels">
+        <div class="tab-content">
+          <el-button type="primary" @click="openFormDialog()">新增表單樣板</el-button>
+          <el-table :data="forms" style="margin-top: 20px;">
+            <el-table-column prop="name" label="表單名稱" width="220" />
+            <el-table-column prop="category" label="分類" width="120" />
+            <el-table-column prop="is_active" label="啟用" width="100">
+              <template #default="{ row }">
+                <el-tag :type="row.is_active ? 'success' : 'info'">{{ row.is_active ? '啟用' : '停用' }}</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="流程關卡" min-width="300">
+              <template #default="{ row }">
+                <el-button size="small" @click="openWorkflowDialog(row)">設定關卡</el-button>
+              </template>
+            </el-table-column>
+            <el-table-column label="操作" width="220">
+              <template #default="{ row }">
+                <el-button size="small" type="primary" @click="openFormDialog('edit', row)">編輯</el-button>
+                <el-button size="small" type="danger" @click="removeForm(row)">刪除</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+
+          <!-- 新增/編輯 樣板 Dialog -->
+          <el-dialog v-model="formDialogVisible" :title="formDialogMode==='edit' ? '編輯表單樣板' : '新增表單樣板'" width="520px">
+            <el-form :model="formDialog" label-width="120px">
+              <el-form-item label="表單名稱"><el-input v-model="formDialog.name" /></el-form-item>
+              <el-form-item label="分類">
+                <el-select v-model="formDialog.category" placeholder="選擇分類">
+                  <el-option v-for="c in CATEGORIES" :key="c" :label="c" :value="c" />
+                </el-select>
+              </el-form-item>
+              <el-form-item label="啟用"><el-switch v-model="formDialog.is_active" /></el-form-item>
+              <el-form-item label="說明"><el-input v-model="formDialog.description" type="textarea" :rows="3"/></el-form-item>
+            </el-form>
+            <template #footer>
+              <el-button @click="formDialogVisible=false">取消</el-button>
+              <el-button type="primary" @click="saveFormTemplate">儲存</el-button>
+            </template>
+          </el-dialog>
+
+          <!-- 流程設定 Dialog -->
+          <el-dialog v-model="workflowDialogVisible" title="流程關卡設定" width="800px">
+            <div class="mb-2">
+              <el-button size="small" @click="addStep">新增關卡</el-button>
+            </div>
+            <el-table :data="workflowSteps" border>
+              <el-table-column label="#" width="60">
+                <template #default="{ $index }">{{ $index + 1 }}</template>
+              </el-table-column>
+              <el-table-column label="Approver Type" width="150">
+                <template #default="{ row }">
+                  <el-select v-model="row.approver_type" placeholder="選擇類型" style="width:140px">
+                    <el-option v-for="t in APPROVER_TYPES" :key="t" :label="t" :value="t" />
+                  </el-select>
+                </template>
+              </el-table-column>
+              <el-table-column label="Approver Value" width="200">
+                <template #default="{ row }">
+                  <el-input v-model="row.approver_value" placeholder="userId/標籤/角色..." />
+                </template>
+              </el-table-column>
+              <el-table-column label="Scope" width="120">
+                <template #default="{ row }">
+                  <el-select v-model="row.scope_type" style="width:110px">
+                    <el-option label="none" value="none" />
+                    <el-option label="dept" value="dept" />
+                    <el-option label="org" value="org" />
+                  </el-select>
+                </template>
+              </el-table-column>
+              <el-table-column label="必簽" width="90">
+                <template #default="{ row }"><el-switch v-model="row.is_required" /></template>
+              </el-table-column>
+              <el-table-column label="需全員同意" width="120">
+                <template #default="{ row }"><el-switch v-model="row.all_must_approve" /></template>
+              </el-table-column>
+              <el-table-column label="允許退簽" width="110">
+                <template #default="{ row }"><el-switch v-model="row.can_return" /></template>
+              </el-table-column>
+              <el-table-column label="操作" width="120">
+                <template #default="{ $index }">
+                  <el-button size="small" type="danger" @click="removeStep($index)">刪除</el-button>
                 </template>
               </el-table-column>
             </el-table>
-  
-            <!-- 新增/編輯 申請類型 Dialog -->
-            <el-dialog v-model="typeDialogVisible" title="申請類型簽核關卡設定" width="600px">
-              <el-form :model="typeForm" label-width="120px">
-                <el-form-item label="類型名稱">
-                  <el-input v-model="typeForm.name" placeholder="如：請假申請 / 加班申請 / 補卡申請" />
-                </el-form-item>
-                <el-form-item label="關卡數">
-                  <el-input-number v-model="typeForm.levels" :min="1" />
-                </el-form-item>
-                <!-- 簽核人設定 (簡易示範) -->
-                <div v-for="i in typeForm.levels" :key="i" class="approval-level">
-                  <el-form-item :label="`第${i}關審核人`">
-                    <el-select v-model="typeForm.approvers[i - 1]" placeholder="選擇審核人">
-                      <el-option v-for="opt in approverOptions" :key="opt.value" :label="opt.label" :value="opt.value" />
-                    </el-select>
-                  </el-form-item>
-                </div>
-              </el-form>
-              <span slot="footer" class="dialog-footer">
-                <el-button @click="typeDialogVisible = false">取消</el-button>
-                <el-button type="primary" @click="saveApprovalType">儲存</el-button>
-              </span>
-            </el-dialog>
-          </div>
-        </el-tab-pane>
-      </el-tabs>
-    </div>
-  </template>
-  
-  <script setup>
-  import { ref } from 'vue'
-  
-  // 預設活動的 Tab
-  const activeTab = ref('commonRule')
-  
-  // =================== (1) 通用流程規則 ===================
-  const commonForm = ref({
-    maxApprovalLevel: 5,   // 可設定最高幾層簽核
-    allowDelegate: true,   // 是否允許代理
-    overdueDays: 3,        // 簽核逾時天數
-    overdueAction: 'none'  // 逾時不處理 / autoPass / autoReject
+
+            <template #footer>
+              <el-button @click="workflowDialogVisible=false">取消</el-button>
+              <el-button type="primary" @click="saveWorkflow">儲存</el-button>
+            </template>
+          </el-dialog>
+        </div>
+      </el-tab-pane>
+    </el-tabs>
+  </div>
+</template>
+
+<script setup>
+import { ref, onMounted } from 'vue'
+import { apiFetch } from '../../api'  // 你專案現有封裝
+
+const API = {
+  forms: '/api/forms',
+  workflow: (formId) => `/api/forms/${formId}/workflow`,
+}
+
+const CATEGORIES = ['人事類','總務類','請假類','其他']
+const APPROVER_TYPES = ['manager','tag','user','role','department','org','group']
+
+/* Tabs / 基本狀態 */
+const activeTab = ref('commonRule')
+const forms = ref([])
+const selectedFormId = ref('')
+
+/* 通用規則 policy */
+const policyForm = ref({
+  maxApprovalLevel: 5,
+  allowDelegate: false,
+  overdueDays: 3,
+  overdueAction: 'none',
+})
+
+/* 樣板 Dialog */
+const formDialogVisible = ref(false)
+const formDialogMode = ref('create') // 'create'|'edit'
+const formDialog = ref({ _id: '', name: '', category: '其他', is_active: true, description: '' })
+
+/* 流程 Dialog */
+const workflowDialogVisible = ref(false)
+const workflowSteps = ref([])
+
+/* 讀取樣板列表 */
+async function loadForms() {
+  const res = await apiFetch(API.forms)
+  if (res.ok) forms.value = await res.json()
+}
+
+/* 切換樣板時，同步讀 workflow.policy */
+async function loadWorkflow() {
+  if (!selectedFormId.value) return
+  const res = await apiFetch(API.workflow(selectedFormId.value))
+  if (res.ok) {
+    const wf = await res.json()
+    policyForm.value = { ...policyForm.value, ...(wf?.policy || {}) }
+  }
+}
+
+async function savePolicy() {
+  if (!selectedFormId.value) return
+  await apiFetch(API.workflow(selectedFormId.value), {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ policy: policyForm.value })
   })
-  
-  function saveCommonRules() {
-    console.log('儲存通用規則:', commonForm.value)
-    alert('已儲存「通用流程規則」')
+  ElMessage.success('已儲存通用規則')
+}
+
+/* 新增/編輯樣板 */
+function openFormDialog(mode='create', row=null) {
+  formDialogMode.value = mode
+  if (mode === 'edit' && row) {
+    formDialog.value = { _id: row._id, name: row.name, category: row.category, is_active: row.is_active, description: row.description || '' }
+  } else {
+    formDialog.value = { _id: '', name: '', category: '其他', is_active: true, description: '' }
   }
-  
-  // =================== (2) 申請類型簽核關卡 ===================
-  const approvalTypes = ref([
-    // 每個類型都定義 [name, levels, approvers]
-    { name: '請假申請', levels: 2, approvers: ['user002', 'user003'] },
-    { name: '加班申請', levels: 3, approvers: ['user002', 'user004', 'user005'] },
-    { name: '補打卡申請', levels: 1, approvers: ['user002'] }
-  ])
-  
-  const typeDialogVisible = ref(false)
-  let editIndex = null
-  
-  // 新增/編輯類型
-  const typeForm = ref({
-    name: '',
-    levels: 1,
-    approvers: []
+  formDialogVisible.value = true
+}
+
+async function saveFormTemplate() {
+  const payload = { ...formDialog.value }
+  let res
+  if (formDialogMode.value === 'edit') {
+    res = await apiFetch(`${API.forms}/${payload._id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    })
+  } else {
+    res = await apiFetch(API.forms, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    })
+  }
+  if (res.ok) {
+    formDialogVisible.value = false
+    await loadForms()
+    if (!selectedFormId.value) selectedFormId.value = forms.value[0]?._id || ''
+    await loadWorkflow()
+  }
+}
+
+async function removeForm(row = null) {
+  const id = row?._id || selectedFormId.value
+  if (!id) return
+  await apiFetch(`${API.forms}/${id}`, { method: 'DELETE' })
+  if (selectedFormId.value === id) selectedFormId.value = ''
+  await loadForms()
+}
+
+/* 流程步驟 Dialog */
+function openWorkflowDialog(row) {
+  selectedFormId.value = row._id
+  loadWorkflow().then(async () => {
+    const res = await apiFetch(API.workflow(selectedFormId.value))
+    const wf = res.ok ? await res.json() : {}
+    workflowSteps.value = (wf?.steps || []).map(s => ({ ...s })) // 深拷貝
+    workflowDialogVisible.value = true
   })
-  
-  // 假的審核人選單 (實務上可從後端或「帳號管理」API 取得)
-  const approverOptions = [
-    { label: '王小明 (user001)', value: 'user001' },
-    { label: '李主管 (user002)', value: 'user002' },
-    { label: '陳會計 (user003)', value: 'user003' },
-    { label: 'HR-Alice (user004)', value: 'user004' },
-    { label: 'Manager-Bob (user005)', value: 'user005' }
-  ]
-  
-  function openTypeDialog(index = null) {
-    if (index !== null) {
-      // 編輯模式
-      editIndex = index
-      const item = approvalTypes.value[index]
-      typeForm.value = {
-        name: item.name,
-        levels: item.levels,
-        approvers: [...item.approvers]
-      }
-    } else {
-      // 新增模式
-      editIndex = null
-      typeForm.value = {
-        name: '',
-        levels: 1,
-        approvers: []
-      }
-    }
-    typeDialogVisible.value = true
+}
+function addStep() {
+  workflowSteps.value.push({
+    step_order: workflowSteps.value.length + 1,
+    approver_type: 'manager',
+    approver_value: '',
+    scope_type: 'none',
+    is_required: true,
+    all_must_approve: true,
+    can_return: true,
+  })
+}
+function removeStep(i) {
+  workflowSteps.value.splice(i, 1)
+  workflowSteps.value = workflowSteps.value.map((s, idx) => ({ ...s, step_order: idx + 1 }))
+}
+async function saveWorkflow() {
+  const payload = {
+    steps: workflowSteps.value.map((s, idx) => ({ ...s, step_order: idx + 1 })),
   }
-  
-  function saveApprovalType() {
-    if (!typeForm.value.approvers) {
-      typeForm.value.approvers = []
-    }
-    // 若 approvers 數量 < levels，要先填滿
-    while (typeForm.value.approvers.length < typeForm.value.levels) {
-      typeForm.value.approvers.push('')
-    }
-    // 若多於 levels，要裁剪
-    if (typeForm.value.approvers.length > typeForm.value.levels) {
-      typeForm.value.approvers.splice(typeForm.value.levels)
-    }
-  
-    if (editIndex === null) {
-      approvalTypes.value.push({ ...typeForm.value })
-    } else {
-      approvalTypes.value[editIndex] = { ...typeForm.value }
-    }
-    typeDialogVisible.value = false
-  }
-  
-  function deleteApprovalType(index) {
-    approvalTypes.value.splice(index, 1)
-  }
-  </script>
-  
-  <style scoped>
-  .approval-flow-setting {
-    padding: 20px;
-  }
-  
-  .rule-form {
-    max-width: 500px;
-    margin-top: 20px;
-  }
-  
-  .approval-level {
-    margin-left: 20px;
-  }
-  </style>
-  
+  await apiFetch(API.workflow(selectedFormId.value), {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  })
+  workflowDialogVisible.value = false
+  ElMessage.success('流程已儲存')
+}
+
+onMounted(async () => {
+  await loadForms()
+  selectedFormId.value = forms.value[0]?._id || ''
+  if (selectedFormId.value) await loadWorkflow()
+})
+</script>
+
+<style scoped>
+.approval-flow-setting { padding: 20px; }
+.rule-form { max-width: 520px; margin-top: 20px; }
+</style>
