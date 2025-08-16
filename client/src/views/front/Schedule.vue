@@ -65,6 +65,12 @@ async function fetchShiftOptions() {
     if (Array.isArray(data)) {
       shiftOptions.value = data.map(s => s.name)
     }
+  } else {
+    if (res.status === 403) {
+      alert('缺少權限，請重新登入或聯絡管理員')
+    } else {
+      console.error('取得班表設定失敗', res.status)
+    }
   }
 }
 
