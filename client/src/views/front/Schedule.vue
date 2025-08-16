@@ -62,8 +62,8 @@ async function fetchShiftOptions() {
   })
   if (res.ok) {
     const data = await res.json()
-    if (Array.isArray(data.shifts)) {
-      shiftOptions.value = data.shifts.map(s => s.name)
+    if (Array.isArray(data)) {
+      shiftOptions.value = data.map(s => s.name)
     }
   }
 }
