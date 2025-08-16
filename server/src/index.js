@@ -28,6 +28,7 @@ import subDepartmentRoutes from './routes/subDepartmentRoutes.js';
 import salarySettingRoutes from './routes/salarySettingRoutes.js';
 
 import attendanceShiftRoutes from './routes/attendanceShiftRoutes.js';
+import shiftRoutes from './routes/shiftRoutes.js';
 
 async function seedSampleData() {
   let org = await Organization.findOne({ name: '示範機構' });
@@ -156,6 +157,18 @@ app.use(
     return authorizeRoles('admin')(req, res, next);
   },
   attendanceShiftRoutes
+);
+
+app.use(
+  '/api/shifts',
+  authenticate,
+  (req, res, next) => {
+    if (req.method === 'GET') {
+      return authorizeRoles('supervisor', 'admin')(req, res, next);
+    }
+    return authorizeRoles('admin')(req, res, next);
+  },
+  shiftRoutes
 );
 
 
