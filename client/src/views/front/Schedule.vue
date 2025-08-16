@@ -116,21 +116,39 @@ async function onSelect(empId, day, value) {
   const token = getToken() || ''
   const dateStr = `${currentMonth.value}-${String(day).padStart(2, '0')}`
   const existing = scheduleMap.value[empId][day]
+  const prev = existing.shiftType
   if (existing && existing.id) {
-    await apiFetch(`/api/schedules/${existing.id}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ shiftType: value })
-    })
+    try {
+      const res = await apiFetch(`/api/schedules/${existing.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ shiftType: value })
+      })
+      if (!res.ok) {
+        scheduleMap.value[empId][day].shiftType = prev
+        ElMessage.error('更新排班失敗')
+      }
+    } catch (err) {
+      scheduleMap.value[empId][day].shiftType = prev
+      ElMessage.error('更新排班失敗')
+    }
   } else {
-    const res = await apiFetch('/api/schedules', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ employee: empId, date: dateStr, shiftType: value })
-    })
-    if (res.ok) {
-      const saved = await res.json()
-      scheduleMap.value[empId][day] = { id: saved._id, shiftType: saved.shiftType }
+    try {
+      const res = await apiFetch('/api/schedules', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ employee: empId, date: dateStr, shiftType: value })
+      })
+      if (res.ok) {
+        const saved = await res.json()
+        scheduleMap.value[empId][day] = { id: saved._id, shiftType: saved.shiftType }
+      } else {
+        scheduleMap.value[empId][day].shiftType = prev
+        ElMessage.error('新增排班失敗')
+      }
+    } catch (err) {
+      scheduleMap.value[empId][day].shiftType = prev
+      ElMessage.error('新增排班失敗')
     }
   }
 }
