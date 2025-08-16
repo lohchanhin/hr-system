@@ -172,26 +172,30 @@
   </template>
   
   <script setup>
-  import { ref } from 'vue'
-  
+  import { ref, onMounted } from 'vue'
+  import { apiFetch } from '../../api'
+
   const activeTab = ref('calendar')
   const dateFormat = 'YYYY-MM-DD'
   const timeFormat = 'HH:mm'
-  
+
   // =========== 1) 年度行事曆/休假日設定 ===========
-  const holidayList = ref([
-    { date: '2025-01-01', type: '國定假日', desc: '元旦' },
-    { date: '2025-02-28', type: '國定假日', desc: '和平紀念日' },
-    { date: '2025-04-05', type: '公司休息日', desc: '兒童節補休' }
-  ])
+  const holidayList = ref([])
   const calendarDialogVisible = ref(false)
   let calendarEditIndex = null
-  
+
   const calendarForm = ref({
     date: '',
     type: '',
     desc: ''
   })
+
+  async function fetchHolidays() {
+    const res = await apiFetch('/api/holidays')
+    if (res.ok) {
+      holidayList.value = await res.json()
+    }
+  }
   
   function openCalendarDialog(index = null) {
     if (index !== null) {
@@ -206,28 +210,33 @@
     calendarDialogVisible.value = true
   }
   
-  function saveHoliday() {
-    if (calendarEditIndex === null) {
-      holidayList.value.push({ ...calendarForm.value })
-    } else {
-      holidayList.value[calendarEditIndex] = { ...calendarForm.value }
+  async function saveHoliday() {
+    const method = calendarEditIndex === null ? 'POST' : 'PUT'
+    let url = '/api/holidays'
+    if (method === 'PUT') {
+      const id = holidayList.value[calendarEditIndex]._id
+      url += `/${id}`
     }
+    await apiFetch(url, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(calendarForm.value)
+    })
+    await fetchHolidays()
     calendarDialogVisible.value = false
   }
-  
-  function deleteHoliday(index) {
-    holidayList.value.splice(index, 1)
+
+  async function deleteHoliday(index) {
+    const id = holidayList.value[index]._id
+    await apiFetch(`/api/holidays/${id}`, { method: 'DELETE' })
+    await fetchHolidays()
   }
   
   // =========== 2) 班別管理 (排班用) ===========
-  const shiftList = ref([
-    { name: '早班', startTime: '08:00', endTime: '17:00', crossDay: false, remark: '普通日班' },
-    { name: '夜班', startTime: '22:00', endTime: '06:00', crossDay: true, remark: '跨日夜班' },
-    { name: '彈性班', startTime: '09:00', endTime: '18:00', crossDay: false, remark: '可前後彈性1小時' }
-  ])
+  const shiftList = ref([])
   const shiftDialogVisible = ref(false)
   let shiftEditIndex = null
-  
+
   const shiftForm = ref({
     name: '',
     startTime: '',
@@ -235,6 +244,13 @@
     crossDay: false,
     remark: ''
   })
+
+  async function fetchShifts() {
+    const res = await apiFetch('/api/shifts')
+    if (res.ok) {
+      shiftList.value = await res.json()
+    }
+  }
   
   function openShiftDialog(index = null) {
     if (index !== null) {
@@ -255,17 +271,26 @@
     shiftDialogVisible.value = true
   }
   
-  function saveShift() {
-    if (shiftEditIndex === null) {
-      shiftList.value.push({ ...shiftForm.value })
-    } else {
-      shiftList.value[shiftEditIndex] = { ...shiftForm.value }
+  async function saveShift() {
+    const method = shiftEditIndex === null ? 'POST' : 'PUT'
+    let url = '/api/shifts'
+    if (method === 'PUT') {
+      const id = shiftList.value[shiftEditIndex]._id
+      url += `/${id}`
     }
+    await apiFetch(url, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(shiftForm.value)
+    })
+    await fetchShifts()
     shiftDialogVisible.value = false
   }
-  
-  function deleteShift(index) {
-    shiftList.value.splice(index, 1)
+
+  async function deleteShift(index) {
+    const id = shiftList.value[index]._id
+    await apiFetch(`/api/shifts/${id}`, { method: 'DELETE' })
+    await fetchShifts()
   }
   
   // =========== 3) 部門排班規則 ===========
@@ -274,18 +299,36 @@
     tempChangeAllowed: false,
     deptManager: ''
   })
-  // 假資料: 管理者清單
-  const managerList = [
-    { label: '王小明', value: 'user001' },
-    { label: '李主管', value: 'user002' },
-    { label: 'HR-Alice', value: 'user003' }
-  ]
-  
-  function saveDeptSchedule() {
-    // 這裡可呼叫後端 API
-    console.log('儲存部門排班規則', deptScheduleForm.value)
-    alert('已儲存「部門排班規則」設定')
+  const managerList = ref([])
+
+  async function fetchManagers() {
+    const res = await apiFetch('/api/dept-managers')
+    if (res.ok) {
+      managerList.value = await res.json()
+    }
   }
+
+  async function saveDeptSchedule() {
+    const method = deptScheduleForm.value._id ? 'PUT' : 'POST'
+    let url = '/api/dept-schedules'
+    if (method === 'PUT') {
+      url += `/${deptScheduleForm.value._id}`
+    }
+    const res = await apiFetch(url, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(deptScheduleForm.value)
+    })
+    if (res.ok) {
+      alert('已儲存「部門排班規則」設定')
+    }
+  }
+
+  onMounted(() => {
+    fetchHolidays()
+    fetchShifts()
+    fetchManagers()
+  })
   
   // =========== 4) 中場休息時間 ===========
   const breakSettingForm = ref({
