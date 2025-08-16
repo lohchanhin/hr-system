@@ -2,9 +2,11 @@ import request from 'supertest';
 import express from 'express';
 import { jest } from '@jest/globals';
 
-const saveMock = jest.fn();
-const mockShiftSchedule = jest.fn().mockImplementation(() => ({ save: saveMock }));
-mockShiftSchedule.find = jest.fn(() => ({ populate: jest.fn().mockResolvedValue([]) }));
+const mockShiftSchedule = {
+  find: jest.fn(() => ({ populate: jest.fn().mockResolvedValue([]) })),
+  findOneAndUpdate: jest.fn(),
+  insertMany: jest.fn()
+};
 
 const pdfPipe = jest.fn();
 const pdfEnd = jest.fn();
@@ -43,8 +45,9 @@ beforeAll(async () => {
 });
 
 beforeEach(() => {
-  saveMock.mockReset();
   mockShiftSchedule.find.mockReset();
+  mockShiftSchedule.findOneAndUpdate.mockReset();
+  mockShiftSchedule.insertMany.mockReset();
   mockEmployee.find.mockReset();
 });
 
@@ -65,12 +68,41 @@ describe('Schedule API', () => {
   });
 
   it('creates schedule', async () => {
-    const payload = { shiftType: 'morning' };
-    saveMock.mockResolvedValue();
+    const payload = { employee: 'e1', date: '2023-01-01', shiftType: 'morning' };
+    const fake = { ...payload, _id: '1' };
+    mockShiftSchedule.findOneAndUpdate.mockResolvedValue(fake);
     const res = await request(app).post('/api/schedules').send(payload);
     expect(res.status).toBe(201);
-    expect(saveMock).toHaveBeenCalled();
-    expect(res.body).toMatchObject(payload);
+    expect(mockShiftSchedule.findOneAndUpdate).toHaveBeenCalledWith(
+      { employee: payload.employee, date: payload.date },
+      { shiftType: payload.shiftType },
+      { upsert: true, new: true, setDefaultsOnInsert: true }
+    );
+    expect(res.body).toEqual(fake);
+  });
+
+  it('updates schedule on same day', async () => {
+    const base = { employee: 'e1', date: '2023-01-01' };
+    mockShiftSchedule.findOneAndUpdate
+      .mockResolvedValueOnce({ ...base, shiftType: 'day', _id: '1' })
+      .mockResolvedValueOnce({ ...base, shiftType: 'night', _id: '1' });
+
+    let res = await request(app)
+      .post('/api/schedules')
+      .send({ ...base, shiftType: 'day' });
+    expect(res.status).toBe(201);
+
+    res = await request(app)
+      .post('/api/schedules')
+      .send({ ...base, shiftType: 'night' });
+    expect(res.status).toBe(201);
+    expect(res.body.shiftType).toBe('night');
+    expect(mockShiftSchedule.findOneAndUpdate).toHaveBeenNthCalledWith(
+      2,
+      { employee: base.employee, date: base.date },
+      { shiftType: 'night' },
+      { upsert: true, new: true, setDefaultsOnInsert: true }
+    );
   });
 
   it('exports schedules to pdf', async () => {
@@ -110,7 +142,7 @@ describe('Schedule API', () => {
   });
 
   it('creates schedules batch', async () => {
-    mockShiftSchedule.insertMany = jest.fn().mockResolvedValue([{ _id: '1' }]);
+    mockShiftSchedule.insertMany.mockResolvedValue([{ _id: '1' }]);
     const payload = { schedules: [{ employee: 'e1', date: '2023-01-01', shiftType: 'day' }] };
     const res = await request(app).post('/api/schedules/batch').send(payload);
     expect(res.status).toBe(201);
