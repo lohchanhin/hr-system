@@ -337,9 +337,20 @@
     allowMultiBreak: false
   })
   
-  function saveBreakSetting() {
-    console.log('儲存中場休息設定', breakSettingForm.value)
-    alert('已儲存「中場休息」設定')
+  async function saveBreakSetting() {
+    const method = breakSettingForm.value._id ? 'PUT' : 'POST'
+    let url = '/api/break-settings'
+    if (method === 'PUT') {
+      url += `/${breakSettingForm.value._id}`
+    }
+    const res = await apiFetch(url, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(breakSettingForm.value)
+    })
+    if (res.ok) {
+      alert('已儲存「中場休息」設定')
+    }
   }
   
   // =========== 5) 員工個人國定假日挪移設定 ===========
@@ -349,9 +360,20 @@
     needMakeup: false
   })
   
-  function saveHolidayMove() {
-    console.log('儲存國定假日挪移規則', holidayMoveForm.value)
-    alert('已儲存「國定假日挪移」設定')
+  async function saveHolidayMove() {
+    const method = holidayMoveForm.value._id ? 'PUT' : 'POST'
+    let url = '/api/holiday-move-settings'
+    if (method === 'PUT') {
+      url += `/${holidayMoveForm.value._id}`
+    }
+    const res = await apiFetch(url, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(holidayMoveForm.value)
+    })
+    if (res.ok) {
+      alert('已儲存「國定假日挪移」設定')
+    }
   }
   </script>
   
