@@ -33,6 +33,7 @@ import holidayMoveSettingRoutes from './routes/holidayMoveSettingRoutes.js';
 
 import attendanceShiftRoutes from './routes/attendanceShiftRoutes.js';
 import shiftRoutes from './routes/shiftRoutes.js';
+import deptManagerRoutes from './routes/deptManagerRoutes.js';
 
 async function seedSampleData() {
   let org = await Organization.findOne({ name: '示範機構' });
@@ -188,6 +189,8 @@ app.use('/api/departments', authenticate, authorizeRoles('admin'), departmentRou
 app.use('/api/organizations', authenticate, authorizeRoles('admin'), organizationRoutes);
 app.use('/api/sub-departments', authenticate, authorizeRoles('admin'), subDepartmentRoutes);
 app.use('/api/dept-schedules', authenticate, authorizeRoles('admin'), deptScheduleRoutes);
+
+app.use('/api/dept-managers', authenticate, authorizeRoles('admin'), deptManagerRoutes);
 
 app.use('/api/holidays', authenticate, authorizeRoles('admin'), holidayRoutes);
 
