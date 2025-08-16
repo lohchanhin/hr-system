@@ -25,6 +25,7 @@ import departmentRoutes from './routes/departmentRoutes.js';
 import organizationRoutes from './routes/organizationRoutes.js';
 import subDepartmentRoutes from './routes/subDepartmentRoutes.js';
 import holidayRoutes from './routes/holidayRoutes.js';
+import deptScheduleRoutes from './routes/deptScheduleRoutes.js';
 
 import salarySettingRoutes from './routes/salarySettingRoutes.js';
 
@@ -184,6 +185,7 @@ app.use('/api/users', authenticate, authorizeRoles('admin'), userRoutes);
 app.use('/api/departments', authenticate, authorizeRoles('admin'), departmentRoutes);
 app.use('/api/organizations', authenticate, authorizeRoles('admin'), organizationRoutes);
 app.use('/api/sub-departments', authenticate, authorizeRoles('admin'), subDepartmentRoutes);
+app.use('/api/dept-schedules', authenticate, authorizeRoles('admin'), deptScheduleRoutes);
 
 app.use('/api/holidays', authenticate, authorizeRoles('admin'), holidayRoutes);
 
