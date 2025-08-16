@@ -10,7 +10,7 @@
         :label="d"
       >
         <template #default="{ row }">
-          <template v-if="scheduleMap[row._id]">
+          <template v-if="scheduleMap[row._id]?.[d]">
             <el-select
               v-if="canEdit"
               v-model="scheduleMap[row._id][d].shiftType"
@@ -24,7 +24,7 @@
                 :value="opt"
               />
             </el-select>
-            <span v-else>{{ scheduleMap[row._id][d]?.shiftType || '' }}</span>
+            <span v-else>{{ scheduleMap[row._id]?.[d]?.shiftType || '' }}</span>
           </template>
           <span v-else>-</span>
         </template>
@@ -77,14 +77,18 @@ async function fetchShiftOptions() {
 async function fetchSchedules() {
   const token = getToken() || ''
   const supervisorId = localStorage.getItem('employeeId') || ''
-  const res = await apiFetch(
-    `/api/schedules/monthly?month=${currentMonth.value}&supervisor=${supervisorId}`,
-    { headers: { Authorization: `Bearer ${token}` } }
-  )
-  if (res.ok) {
+  try {
+    const res = await apiFetch(
+      `/api/schedules/monthly?month=${currentMonth.value}&supervisor=${supervisorId}`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    )
+    if (!res.ok) throw new Error('Failed to fetch schedules')
     const data = await res.json()
     const ds = days.value
     scheduleMap.value = {}
+    if (!employees.value.length) {
+      await fetchEmployees()
+    }
     employees.value.forEach(emp => {
       scheduleMap.value[emp._id] = {}
       ds.forEach(d => {
@@ -96,6 +100,9 @@ async function fetchSchedules() {
       const d = dayjs(s.date).date()
       scheduleMap.value[empId][d] = { id: s._id, shiftType: s.shiftType }
     })
+  } catch (err) {
+    console.error(err)
+    ElMessage.error('取得排班資料失敗')
   }
 }
 
@@ -125,11 +132,15 @@ async function onSelect(empId, day, value) {
 async function fetchEmployees() {
   const token = getToken() || ''
   const supervisorId = localStorage.getItem('employeeId') || ''
-  const res = await apiFetch(`/api/employees?supervisor=${supervisorId}`, {
-    headers: { Authorization: `Bearer ${token}` }
-  })
-  if (res.ok) {
+  try {
+    const res = await apiFetch(`/api/employees?supervisor=${supervisorId}`, {
+      headers: { Authorization: `Bearer ${token}` }
+    })
+    if (!res.ok) throw new Error('Failed to fetch employees')
     employees.value = await res.json()
+  } catch (err) {
+    console.error(err)
+    ElMessage.error('取得員工資料失敗')
   }
 }
 
