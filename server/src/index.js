@@ -28,6 +28,8 @@ import holidayRoutes from './routes/holidayRoutes.js';
 import deptScheduleRoutes from './routes/deptScheduleRoutes.js';
 
 import salarySettingRoutes from './routes/salarySettingRoutes.js';
+import breakSettingRoutes from './routes/breakSettingRoutes.js';
+import holidayMoveSettingRoutes from './routes/holidayMoveSettingRoutes.js';
 
 import attendanceShiftRoutes from './routes/attendanceShiftRoutes.js';
 import shiftRoutes from './routes/shiftRoutes.js';
@@ -190,6 +192,8 @@ app.use('/api/dept-schedules', authenticate, authorizeRoles('admin'), deptSchedu
 app.use('/api/holidays', authenticate, authorizeRoles('admin'), holidayRoutes);
 
 app.use('/api/salary-settings', authenticate, authorizeRoles('admin'), salarySettingRoutes);
+app.use('/api/break-settings', authenticate, authorizeRoles('admin'), breakSettingRoutes);
+app.use('/api/holiday-move-settings', authenticate, authorizeRoles('admin'), holidayMoveSettingRoutes);
 
 
 app.get('*', (req, res, next) => {
