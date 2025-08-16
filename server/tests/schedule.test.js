@@ -5,6 +5,7 @@ import { jest } from '@jest/globals';
 const saveMock = jest.fn();
 const mockShiftSchedule = jest.fn().mockImplementation(() => ({ save: saveMock }));
 mockShiftSchedule.find = jest.fn(() => ({ populate: jest.fn().mockResolvedValue([]) }));
+mockShiftSchedule.deleteMany = jest.fn();
 
 const pdfPipe = jest.fn();
 const pdfEnd = jest.fn();
@@ -45,6 +46,7 @@ beforeAll(async () => {
 beforeEach(() => {
   saveMock.mockReset();
   mockShiftSchedule.find.mockReset();
+  mockShiftSchedule.deleteMany.mockReset();
   mockEmployee.find.mockReset();
 });
 
@@ -115,5 +117,25 @@ describe('Schedule API', () => {
     const res = await request(app).post('/api/schedules/batch').send(payload);
     expect(res.status).toBe(201);
     expect(mockShiftSchedule.insertMany).toHaveBeenCalled();
+  });
+
+  it('deletes old schedules', async () => {
+    const data = [
+      { _id: '1', date: new Date('2020-01-01') },
+      { _id: '2', date: new Date('2030-01-01') }
+    ];
+    mockShiftSchedule.deleteMany.mockImplementation(({ date }) => {
+      const beforeDate = date.$lt;
+      const remaining = data.filter((s) => s.date >= beforeDate);
+      const deleted = data.length - remaining.length;
+      data.length = 0;
+      data.push(...remaining);
+      return { deletedCount: deleted };
+    });
+    const res = await request(app).delete('/api/schedules/older-than?before=2021-01-01');
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ deleted: 1 });
+    expect(data).toHaveLength(1);
+    expect(data[0]._id).toBe('2');
   });
 });

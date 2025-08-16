@@ -87,6 +87,18 @@ export async function deleteSchedule(req, res) {
   }
 }
 
+export async function deleteOldSchedules(req, res) {
+  try {
+    const { before } = req.query;
+    if (!before) return res.status(400).json({ error: 'before required' });
+    const cutoff = new Date(before);
+    const result = await ShiftSchedule.deleteMany({ date: { $lt: cutoff } });
+    res.json({ deleted: result.deletedCount ?? 0 });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+}
+
 export async function exportSchedules(req, res) {
   try {
     const schedules = await ShiftSchedule.find().populate('employee');
