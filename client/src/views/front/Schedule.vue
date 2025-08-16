@@ -38,15 +38,18 @@ import { ref, computed, onMounted } from 'vue'
 import dayjs from 'dayjs'
 import { apiFetch } from '../../api'
 import { getToken } from '../../utils/tokenService'
+import { useAuthStore } from '../../stores/auth'
 
 const currentMonth = ref(dayjs().format('YYYY-MM'))
 const scheduleMap = ref({})
 const shiftOptions = ref([])
 const employees = ref([])
 
+const authStore = useAuthStore()
+authStore.loadUser()
+
 const canEdit = computed(() => {
-  const role = localStorage.getItem('role') || 'employee'
-  return ['supervisor', 'admin'].includes(role)
+  return ['supervisor', 'admin'].includes(authStore.role)
 })
 
 const days = computed(() => {
