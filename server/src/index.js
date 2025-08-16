@@ -27,7 +27,7 @@ import subDepartmentRoutes from './routes/subDepartmentRoutes.js';
 
 import salarySettingRoutes from './routes/salarySettingRoutes.js';
 
-import attendanceSettingRoutes from './routes/attendanceSettingRoutes.js';
+import attendanceShiftRoutes from './routes/attendanceShiftRoutes.js';
 
 async function seedSampleData() {
   let org = await Organization.findOne({ name: '示範機構' });
@@ -146,7 +146,17 @@ app.use(
   employeeRoutes
 );
 app.use('/api/attendance', authenticate, authorizeRoles('employee', 'supervisor', 'admin'), attendanceRoutes);
-app.use('/api/attendance-settings', authenticate, authorizeRoles('admin'), attendanceSettingRoutes);
+app.use(
+  '/api/attendance-settings',
+  authenticate,
+  (req, res, next) => {
+    if (req.method === 'GET') {
+      return authorizeRoles('supervisor', 'admin')(req, res, next);
+    }
+    return authorizeRoles('admin')(req, res, next);
+  },
+  attendanceShiftRoutes
+);
 
 
 app.use('/api/leaves', authenticate, authorizeRoles('employee', 'supervisor', 'admin'), leaveRoutes);
