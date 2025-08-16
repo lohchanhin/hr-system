@@ -49,8 +49,12 @@ export async function listSchedules(req, res) {
 
 export async function createSchedule(req, res) {
   try {
-    const schedule = new ShiftSchedule(req.body);
-    await schedule.save();
+    const { employee, date, shiftType } = req.body;
+    const schedule = await ShiftSchedule.findOneAndUpdate(
+      { employee, date },
+      { shiftType },
+      { upsert: true, new: true, setDefaultsOnInsert: true }
+    );
     res.status(201).json(schedule);
   } catch (err) {
     res.status(400).json({ error: err.message });
