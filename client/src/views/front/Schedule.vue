@@ -65,6 +65,7 @@ async function fetchShiftOptions() {
   })
   if (res.ok) {
     const data = await res.json()
+    console.log("data:",data)
     if (Array.isArray(data)) {
       shiftOptions.value = data.map(s => s.name)
     }
@@ -87,6 +88,8 @@ async function fetchSchedules() {
     )
     if (!res.ok) throw new Error('Failed to fetch schedules')
     const data = await res.json()
+    console.log("Schedules:",data)
+
     const ds = days.value
     scheduleMap.value = {}
     if (!employees.value.length) {
@@ -140,6 +143,7 @@ async function fetchEmployees() {
       headers: { Authorization: `Bearer ${token}` }
     })
     if (!res.ok) throw new Error('Failed to fetch employees')
+    console.log("employee:",res)
     employees.value = await res.json()
   } catch (err) {
     console.error(err)
