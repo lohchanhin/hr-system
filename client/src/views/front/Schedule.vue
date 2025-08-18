@@ -37,7 +37,6 @@
 import { ref, computed, onMounted } from 'vue'
 import dayjs from 'dayjs'
 import { apiFetch } from '../../api'
-import { getToken } from '../../utils/tokenService'
 import { useAuthStore } from '../../stores/auth'
 
 const currentMonth = ref(dayjs().format('YYYY-MM'))
@@ -59,10 +58,7 @@ const days = computed(() => {
 })
 
 async function fetchShiftOptions() {
-  const token = getToken() || ''
-  const res = await apiFetch('/api/attendance-settings', {
-    headers: { Authorization: `Bearer ${token}` }
-  })
+  const res = await apiFetch('/api/attendance-settings')
   if (res.ok) {
     const data = await res.json()
     console.log("data:",data)
@@ -79,12 +75,10 @@ async function fetchShiftOptions() {
 }
 
 async function fetchSchedules() {
-  const token = getToken() || ''
   const supervisorId = localStorage.getItem('employeeId') || ''
   try {
     const res = await apiFetch(
-      `/api/schedules/monthly?month=${currentMonth.value}&supervisor=${supervisorId}`,
-      { headers: { Authorization: `Bearer ${token}` } }
+      `/api/schedules/monthly?month=${currentMonth.value}&supervisor=${supervisorId}`
     )
     if (!res.ok) throw new Error('Failed to fetch schedules')
     const data = await res.json()
@@ -113,7 +107,6 @@ async function fetchSchedules() {
 }
 
 async function onSelect(empId, day, value) {
-  const token = getToken() || ''
   const dateStr = `${currentMonth.value}-${String(day).padStart(2, '0')}`
   const existing = scheduleMap.value[empId][day]
   const prev = existing.shiftType
@@ -121,7 +114,7 @@ async function onSelect(empId, day, value) {
     try {
       const res = await apiFetch(`/api/schedules/${existing.id}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ shiftType: value })
       })
       if (!res.ok) {
@@ -136,7 +129,7 @@ async function onSelect(empId, day, value) {
     try {
       const res = await apiFetch('/api/schedules', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ employee: empId, date: dateStr, shiftType: value })
       })
       if (res.ok) {
@@ -154,12 +147,9 @@ async function onSelect(empId, day, value) {
 }
 
 async function fetchEmployees() {
-  const token = getToken() || ''
   const supervisorId = localStorage.getItem('employeeId') || ''
   try {
-    const res = await apiFetch(`/api/employees?supervisor=${supervisorId}`, {
-      headers: { Authorization: `Bearer ${token}` }
-    })
+    const res = await apiFetch(`/api/employees?supervisor=${supervisorId}`)
     if (!res.ok) throw new Error('Failed to fetch employees')
     console.log("employee:",res)
     employees.value = await res.json()

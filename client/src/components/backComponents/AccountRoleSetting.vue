@@ -76,20 +76,14 @@ function departmentLabel(id) {
 }
 
 async function fetchUsers() {
-  const token = localStorage.getItem('token') || ''
-  const res = await apiFetch('/api/users', {
-    headers: { Authorization: `Bearer ${token}` }
-  })
+  const res = await apiFetch('/api/users')
   if (res.ok) {
     userList.value = await res.json()
   }
 }
 
 async function fetchDepartments() {
-  const token = localStorage.getItem('token') || ''
-  const res = await apiFetch('/api/departments', {
-    headers: { Authorization: `Bearer ${token}` }
-  })
+  const res = await apiFetch('/api/departments')
   if (res.ok) {
     departmentList.value = await res.json()
   }
@@ -108,19 +102,18 @@ function openUserDialog(index = null) {
 
 async function saveUser() {
   const payload = { ...userForm.value }
-  const token = localStorage.getItem('token') || ''
   let res
   if (editUserIndex === null) {
     res = await apiFetch('/api/users', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
     })
   } else {
     const id = userList.value[editUserIndex]._id
     res = await apiFetch(`/api/users/${id}`, {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
     })
   }
@@ -131,11 +124,9 @@ async function saveUser() {
 }
 
 function deleteUser(index) {
-  const token = localStorage.getItem('token') || ''
   const id = userList.value[index]._id
   apiFetch(`/api/users/${id}`, {
-    method: 'DELETE',
-    headers: { Authorization: `Bearer ${token}` }
+    method: 'DELETE'
   }).then(res => {
     if (res.ok) {
       userList.value.splice(index, 1)

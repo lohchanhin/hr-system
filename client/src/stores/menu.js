@@ -6,10 +6,7 @@ export const useMenuStore = defineStore('menu', () => {
   const items = ref([])
 
   async function fetchMenu() {
-    const token = localStorage.getItem('token')
-    const res = await apiFetch('/api/menu', {
-      headers: { Authorization: `Bearer ${token}` }
-    })
+    const res = await apiFetch('/api/menu')
     if (res.ok) {
       items.value = await res.json()
     }

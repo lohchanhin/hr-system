@@ -126,12 +126,9 @@
   import { ref, onMounted } from 'vue'
   import { apiFetch } from '../../api'
 
-  const token = localStorage.getItem('token') || ''
 
 async function loadSettings() {
-  const res = await apiFetch('/api/attendance-settings', {
-    headers: { Authorization: `Bearer ${token}` }
-  })
+  const res = await apiFetch('/api/attendance-settings')
   if (res.ok) {
     const data = await res.json()
     if (data.abnormalRules) abnormalForm.value = { ...abnormalForm.value, ...data.abnormalRules }
@@ -141,9 +138,7 @@ async function loadSettings() {
 }
 
 async function loadShifts() {
-  const res = await apiFetch('/api/shifts', {
-    headers: { Authorization: `Bearer ${token}` }
-  })
+  const res = await apiFetch('/api/shifts')
   if (res.ok) {
     shiftList.value = await res.json()
   }
@@ -158,8 +153,7 @@ async function saveSettings() {
   await apiFetch('/api/attendance-settings', {
     method: 'PUT',
     headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${token}`
+      'Content-Type': 'application/json'
     },
     body: JSON.stringify(payload)
   })
@@ -201,8 +195,7 @@ const shiftList = ref([])
       const res = await apiFetch('/api/shifts', {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`
+          'Content-Type': 'application/json'
         },
         body: JSON.stringify(shiftForm.value)
       })
@@ -216,8 +209,7 @@ const shiftList = ref([])
       const res = await apiFetch(`/api/shifts/${id}`, {
         method: 'PUT',
         headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`
+          'Content-Type': 'application/json'
         },
         body: JSON.stringify(shiftForm.value)
       })
@@ -232,8 +224,7 @@ const shiftList = ref([])
   const deleteShift = async (index) => {
     const id = shiftList.value[index]._id
     const res = await apiFetch(`/api/shifts/${id}`, {
-      method: 'DELETE',
-      headers: { Authorization: `Bearer ${token}` }
+      method: 'DELETE'
     })
     if (res.ok) {
       shiftList.value.splice(index, 1)
