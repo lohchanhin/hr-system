@@ -21,6 +21,42 @@
 - **報表產生** – 匯出各式統計或管理報表。
 - **審核流程** – 提供申請單的審核與簽核機制。
 
+### 班別設定
+
+班別用於描述員工的工作時段，協助排班與出勤判定。常見欄位包括：
+
+- **名稱**：顯示用的班別名稱，例如「早班」。
+- **startTime**：上班時間（HH:mm）。
+- **endTime**：下班時間（HH:mm）。
+- **breakTime**：中場休息總時長。
+- **crossDay**：是否跨日。
+
+#### 操作範例
+
+API 範例：
+
+```bash
+# 建立班別
+curl -X POST http://localhost:3000/api/shifts \
+  -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer <token>" \
+  -d '{"name":"早班","startTime":"09:00","endTime":"18:00","crossDay":false}'
+
+# 編輯班別
+curl -X PUT http://localhost:3000/api/shifts/<id> \
+  -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer <token>" \
+  -d '{"name":"晚班"}'
+
+# 刪除班別
+curl -X DELETE http://localhost:3000/api/shifts/<id> \
+  -H "Authorization: Bearer <token>"
+```
+
+前端操作：於「排班與班別管理設定」>「班別設定」頁籤，使用「新增班別」建立，或在表格中點選「編輯」、「刪除」維護資料。
+
+（目前尚未提供其他班別設定文件）
+
 ## 專案結構
 
 ```
