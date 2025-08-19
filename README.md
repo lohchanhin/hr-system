@@ -130,6 +130,43 @@ web: npm start --prefix server
 在前端畫面中，可於「人事管理與系統設定」頁籤找到上述功能。具備管理權限的使用者才能透過這些介面新增或修改機構、部門及帳號資料，其他角色僅能讀取相關資訊。
 
 
+## 人員管理操作示例
+
+以下示範如何以 JWT 認證方式呼叫 `user` 管理相關 API。
+
+1. 使用系統預設帳號登入以取得 JWT：
+   ```bash
+   curl -X POST http://localhost:3000/api/login \\
+     -H 'Content-Type: application/json' \\
+     -d '{"username":"admin","password":"password"}'
+   ```
+   伺服器將回傳包含 `token` 欄位的 JSON。
+
+2. 將取得的 Token 置於 `Authorization: Bearer <token>` 標頭，即可進行後續操作：
+   ```bash
+   # 列出帳號
+   curl http://localhost:3000/api/users \\
+     -H "Authorization: Bearer <token>"
+
+   # 建立帳號
+   curl -X POST http://localhost:3000/api/users \\
+     -H "Authorization: Bearer <token>" \\
+     -H 'Content-Type: application/json' \\
+     -d '{"username":"newuser","password":"password","role":"employee"}'
+
+   # 更新帳號
+   curl -X PUT http://localhost:3000/api/users/<id> \\
+     -H "Authorization: Bearer <token>" \\
+     -H 'Content-Type: application/json' \\
+     -d '{"password":"newpass"}'
+
+   # 刪除帳號
+   curl -X DELETE http://localhost:3000/api/users/<id> \\
+     -H "Authorization: Bearer <token>"
+   ```
+
+   若 Token 逾時或角色非 `admin`，API 會回應 `401 Unauthorized` 或 `403 Forbidden`。
+
 ## 簽核流程
 
 ### 建立流程
