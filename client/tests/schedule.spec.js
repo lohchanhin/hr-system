@@ -32,6 +32,30 @@ describe('Schedule.vue', () => {
     })
   }
 
+  function flush() {
+    return new Promise(resolve => setTimeout(resolve))
+  }
+
+  it('loads shift options when API returns array directly', async () => {
+    apiFetch
+      .mockResolvedValueOnce({ ok: true, json: async () => [{ _id: 's1', name: 'S1' }] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+    const wrapper = mountSchedule()
+    await flush()
+    expect(wrapper.vm.shifts).toEqual([{ _id: 's1', name: 'S1' }])
+  })
+
+  it('loads shift options when API returns object with shifts', async () => {
+    apiFetch
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ shifts: [{ _id: 's1', name: 'S1' }] }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+    const wrapper = mountSchedule()
+    await flush()
+    expect(wrapper.vm.shifts).toEqual([{ _id: 's1', name: 'S1' }])
+  })
+
   it('reverts change when update fails', async () => {
     apiFetch
       .mockResolvedValueOnce({ ok: true, json: async () => [] })
@@ -41,6 +65,7 @@ describe('Schedule.vue', () => {
 
     localStorage.setItem('employeeId', 's1')
     const wrapper = mountSchedule()
+    await flush()
     wrapper.vm.scheduleMap = { e1: { 1: { id: 'sch1', shiftId: 's1' } } }
     await wrapper.vm.onSelect('e1', 1, 's2')
     expect(wrapper.vm.scheduleMap.e1[1].shiftId).toBe('s1')
@@ -56,6 +81,7 @@ describe('Schedule.vue', () => {
 
     localStorage.setItem('employeeId', 's1')
     const wrapper = mountSchedule()
+    await flush()
     wrapper.vm.scheduleMap = { e1: { 2: { shiftId: '' } } }
     await wrapper.vm.onSelect('e1', 2, 's1')
     expect(wrapper.vm.scheduleMap.e1[2].shiftId).toBe('')
