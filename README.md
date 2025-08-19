@@ -160,12 +160,40 @@ web: npm start --prefix server
      -H 'Content-Type: application/json' \\
      -d '{"password":"newpass"}'
 
-   # 刪除帳號
-   curl -X DELETE http://localhost:3000/api/users/<id> \\
+  # 刪除帳號
+  curl -X DELETE http://localhost:3000/api/users/<id> \\
+    -H "Authorization: Bearer <token>"
+  ```
+
+  若 Token 逾時或角色非 `admin`，API 會回應 `401 Unauthorized` 或 `403 Forbidden`。
+
+## 排班管理
+
+排班流程範例如下：
+
+1. 先建立班別設定，之後排班時可引用其 `id`：
+   ```bash
+   curl -X POST http://localhost:3000/api/shifts \\
+     -H "Authorization: Bearer <token>" \\
+     -H "Content-Type: application/json" \\
+     -d '{"name":"早班","start":"09:00","end":"17:00"}'
+   ```
+
+2. 指派員工與日期到排班表，並指定班別：
+   ```bash
+   curl -X POST http://localhost:3000/api/schedules \\
+     -H "Authorization: Bearer <token>" \\
+     -H "Content-Type: application/json" \\
+     -d '{"employee":"<員工ID>","date":"2023-05-01","shiftId":"<班別ID>"}'
+   ```
+
+3. 檢視某月班表：
+   ```bash
+   curl http://localhost:3000/api/schedules/monthly?month=2023-05 \\
      -H "Authorization: Bearer <token>"
    ```
 
-   若 Token 逾時或角色非 `admin`，API 會回應 `401 Unauthorized` 或 `403 Forbidden`。
+班別設定提供可用的班別清單；排班時需在 `shiftId` 欄位填入對應班別的 `id` 才能顯示正確班別。前端「排班管理」頁面可選擇員工、點擊日期並從下拉選單挑選班別完成指派。
 
 ## 簽核流程
 
