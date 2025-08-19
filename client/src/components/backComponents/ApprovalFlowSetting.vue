@@ -100,7 +100,13 @@
               </el-table-column>
               <el-table-column label="Approver Value" width="200">
                 <template #default="{ row }">
-                  <el-input v-model="row.approver_value" placeholder="userId/標籤/角色..." />
+                  <el-select v-if="row.approver_type==='user'" v-model="row.approver_value" placeholder="選擇員工">
+                    <el-option v-for="e in employeeOptions" :key="e._id" :label="`${e.name}（${e.title || '無職稱'}）`" :value="e._id" />
+                  </el-select>
+                  <el-select v-else-if="row.approver_type==='role'" v-model="row.approver_value" placeholder="選擇角色">
+                    <el-option v-for="r in roleOptions" :key="r.id" :label="r.name" :value="r.id" />
+                  </el-select>
+                  <el-input v-else v-model="row.approver_value" placeholder="userId/標籤/角色..." />
                 </template>
               </el-table-column>
               <el-table-column label="Scope" width="120">
@@ -146,6 +152,8 @@ import { apiFetch } from '../../api'  // 你專案現有封裝
 const API = {
   forms: '/api/forms',
   workflow: (formId) => `/api/forms/${formId}/workflow`,
+  employees: '/api/employees/options',
+  roles: '/api/roles',
 }
 
 const CATEGORIES = ['人事類','總務類','請假類','其他']
@@ -172,11 +180,23 @@ const formDialog = ref({ _id: '', name: '', category: '其他', is_active: true,
 /* 流程 Dialog */
 const workflowDialogVisible = ref(false)
 const workflowSteps = ref([])
+const employeeOptions = ref([])
+const roleOptions = ref([])
 
 /* 讀取樣板列表 */
 async function loadForms() {
   const res = await apiFetch(API.forms)
   if (res.ok) forms.value = await res.json()
+}
+
+async function loadEmployeeOptions() {
+  const res = await apiFetch(API.employees)
+  if (res.ok) employeeOptions.value = await res.json()
+}
+
+async function loadRoleOptions() {
+  const res = await apiFetch(API.roles)
+  if (res.ok) roleOptions.value = await res.json()
 }
 
 /* 切換樣板時，同步讀 workflow.policy */
@@ -284,6 +304,8 @@ onMounted(async () => {
   await loadForms()
   selectedFormId.value = forms.value[0]?._id || ''
   if (selectedFormId.value) await loadWorkflow()
+  await loadEmployeeOptions()
+  await loadRoleOptions()
 })
 </script>
 

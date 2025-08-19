@@ -379,6 +379,15 @@ export async function listEmployees(req, res) {
   }
 }
 
+export async function listEmployeeOptions(req, res) {
+  try {
+    const employees = await Employee.find({}, 'name title')
+    res.json(employees)
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+}
+
 /** POST /api/employees */
 export async function createEmployee(req, res) {
   try {
