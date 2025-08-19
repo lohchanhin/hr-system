@@ -137,9 +137,11 @@ export async function getWorkflow(req, res) {
 export async function setWorkflow(req, res) {
   try {
     const { steps, policy } = req.body
+    const setObj = { steps: Array.isArray(steps) ? steps : [] }
+    if (policy !== undefined) setObj.policy = policy
     const wf = await ApprovalWorkflow.findOneAndUpdate(
       { form: req.params.formId },
-      { $set: { steps: Array.isArray(steps) ? steps : [], policy } },
+      { $set: setObj },
       { new: true, upsert: true }
     )
     res.json(wf)
