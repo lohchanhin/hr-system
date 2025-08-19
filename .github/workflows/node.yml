@@ -16,5 +16,7 @@ jobs:
           node-version: 20
       - name: Install dependencies
         run: npm install
-      - name: Run tests
-        run: npm test
+      - name: Run server tests
+        run: npm --prefix server test
+      - name: Run client tests
+        run: npm --prefix client test
