@@ -100,7 +100,7 @@
               </el-table-column>
               <el-table-column label="Approver Value" width="200">
                 <template #default="{ row }">
-                  <el-select v-if="row.approver_type==='user'" v-model="row.approver_value" placeholder="選擇員工">
+                  <el-select v-if="row.approver_type==='user'" v-model="row.approver_value" placeholder="選擇員工" multiple>
                     <el-option v-for="e in employeeOptions" :key="e._id" :label="`${e.name}（${e.title || '無職稱'}）`" :value="e._id" />
                   </el-select>
                   <el-select v-else-if="row.approver_type==='role'" v-model="row.approver_value" placeholder="選擇角色">
@@ -275,8 +275,8 @@ function openWorkflowDialog(row) {
 function addStep() {
   workflowSteps.value.push({
     step_order: workflowSteps.value.length + 1,
-    approver_type: 'manager',
-    approver_value: '',
+    approver_type: 'user',
+    approver_value: [],
     scope_type: 'none',
     is_required: true,
     all_must_approve: true,
