@@ -26,6 +26,7 @@ import organizationRoutes from './routes/organizationRoutes.js';
 import subDepartmentRoutes from './routes/subDepartmentRoutes.js';
 import holidayRoutes from './routes/holidayRoutes.js';
 import deptScheduleRoutes from './routes/deptScheduleRoutes.js';
+import roleRoutes from './routes/roleRoutes.js';
 
 import salarySettingRoutes from './routes/salarySettingRoutes.js';
 import breakSettingRoutes from './routes/breakSettingRoutes.js';
@@ -152,6 +153,7 @@ app.use(
   employeeRoutes
 );
 app.use('/api/attendance', authenticate, authorizeRoles('employee', 'supervisor', 'admin'), attendanceRoutes);
+app.use('/api/roles', authenticate, authorizeRoles('admin', 'supervisor'), roleRoutes);
 app.use(
   '/api/attendance-settings',
   authenticate,
