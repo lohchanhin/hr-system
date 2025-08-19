@@ -171,9 +171,10 @@
     </div>
   </template>
   
-  <script setup>
-  import { ref, onMounted } from 'vue'
-  import { apiFetch } from '../../api'
+<script setup>
+import { ref, onMounted } from 'vue'
+import { apiFetch } from '../../api'
+import { getToken } from '../../utils/tokenService'
 
   const activeTab = ref('calendar')
   const dateFormat = 'YYYY-MM-DD'
@@ -190,12 +191,17 @@
     desc: ''
   })
 
-  async function fetchHolidays() {
-    const res = await apiFetch('/api/holidays')
-    if (res.ok) {
-      holidayList.value = await res.json()
+async function fetchHolidays() {
+  const res = await apiFetch('/api/holidays', {
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${getToken()}`
     }
+  })
+  if (res.ok) {
+    holidayList.value = await res.json()
   }
+}
   
   function openCalendarDialog(index = null) {
     if (index !== null) {
@@ -217,19 +223,28 @@
       const id = holidayList.value[calendarEditIndex]._id
       url += `/${id}`
     }
-    await apiFetch(url, {
-      method,
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(calendarForm.value)
-    })
+  await apiFetch(url, {
+    method,
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${getToken()}`
+    },
+    body: JSON.stringify(calendarForm.value)
+  })
     await fetchHolidays()
     calendarDialogVisible.value = false
   }
 
   async function deleteHoliday(index) {
-    const id = holidayList.value[index]._id
-    await apiFetch(`/api/holidays/${id}`, { method: 'DELETE' })
-    await fetchHolidays()
+  const id = holidayList.value[index]._id
+  await apiFetch(`/api/holidays/${id}`, {
+    method: 'DELETE',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${getToken()}`
+    }
+  })
+  await fetchHolidays()
   }
   
   // =========== 2) 班別管理 (排班用) ===========
@@ -245,12 +260,17 @@
     remark: ''
   })
 
-  async function fetchShifts() {
-    const res = await apiFetch('/api/shifts')
-    if (res.ok) {
-      shiftList.value = await res.json()
+async function fetchShifts() {
+  const res = await apiFetch('/api/shifts', {
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${getToken()}`
     }
+  })
+  if (res.ok) {
+    shiftList.value = await res.json()
   }
+}
   
   function openShiftDialog(index = null) {
     if (index !== null) {
@@ -278,19 +298,28 @@
       const id = shiftList.value[shiftEditIndex]._id
       url += `/${id}`
     }
-    await apiFetch(url, {
-      method,
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(shiftForm.value)
-    })
+  await apiFetch(url, {
+    method,
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${getToken()}`
+    },
+    body: JSON.stringify(shiftForm.value)
+  })
     await fetchShifts()
     shiftDialogVisible.value = false
   }
 
   async function deleteShift(index) {
-    const id = shiftList.value[index]._id
-    await apiFetch(`/api/shifts/${id}`, { method: 'DELETE' })
-    await fetchShifts()
+  const id = shiftList.value[index]._id
+  await apiFetch(`/api/shifts/${id}`, {
+    method: 'DELETE',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${getToken()}`
+    }
+  })
+  await fetchShifts()
   }
   
   // =========== 3) 部門排班規則 ===========
@@ -301,12 +330,17 @@
   })
   const managerList = ref([])
 
-  async function fetchManagers() {
-    const res = await apiFetch('/api/dept-managers')
-    if (res.ok) {
-      managerList.value = await res.json()
+async function fetchManagers() {
+  const res = await apiFetch('/api/dept-managers', {
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${getToken()}`
     }
+  })
+  if (res.ok) {
+    managerList.value = await res.json()
   }
+}
 
   async function saveDeptSchedule() {
     const method = deptScheduleForm.value._id ? 'PUT' : 'POST'
@@ -314,11 +348,14 @@
     if (method === 'PUT') {
       url += `/${deptScheduleForm.value._id}`
     }
-    const res = await apiFetch(url, {
-      method,
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(deptScheduleForm.value)
-    })
+  const res = await apiFetch(url, {
+    method,
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${getToken()}`
+    },
+    body: JSON.stringify(deptScheduleForm.value)
+  })
     if (res.ok) {
       alert('已儲存「部門排班規則」設定')
     }
@@ -343,11 +380,14 @@
     if (method === 'PUT') {
       url += `/${breakSettingForm.value._id}`
     }
-    const res = await apiFetch(url, {
-      method,
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(breakSettingForm.value)
-    })
+  const res = await apiFetch(url, {
+    method,
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${getToken()}`
+    },
+    body: JSON.stringify(breakSettingForm.value)
+  })
     if (res.ok) {
       alert('已儲存「中場休息」設定')
     }
@@ -366,11 +406,14 @@
     if (method === 'PUT') {
       url += `/${holidayMoveForm.value._id}`
     }
-    const res = await apiFetch(url, {
-      method,
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(holidayMoveForm.value)
-    })
+  const res = await apiFetch(url, {
+    method,
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${getToken()}`
+    },
+    body: JSON.stringify(holidayMoveForm.value)
+  })
     if (res.ok) {
       alert('已儲存「國定假日挪移」設定')
     }
