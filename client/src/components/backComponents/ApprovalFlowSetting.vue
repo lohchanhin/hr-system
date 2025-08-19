@@ -290,6 +290,7 @@ function removeStep(i) {
 async function saveWorkflow() {
   const payload = {
     steps: workflowSteps.value.map((s, idx) => ({ ...s, step_order: idx + 1 })),
+    policy: policyForm.value,
   }
   await apiFetch(API.workflow(selectedFormId.value), {
     method: 'PUT',
