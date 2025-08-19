@@ -13,18 +13,18 @@
           <template v-if="scheduleMap[row._id]?.[d]">
             <el-select
               v-if="canEdit"
-              v-model="scheduleMap[row._id][d].shiftType"
+              v-model="scheduleMap[row._id][d].shiftId"
               placeholder=""
               @change="val => onSelect(row._id, d, val)"
             >
               <el-option
-                v-for="opt in shiftOptions"
-                :key="opt"
-                :label="opt"
-                :value="opt"
+                v-for="opt in shifts"
+                :key="opt._id"
+                :label="opt.name"
+                :value="opt._id"
               />
             </el-select>
-            <span v-else>{{ scheduleMap[row._id]?.[d]?.shiftType || '' }}</span>
+            <span v-else>{{ shiftName(scheduleMap[row._id]?.[d]?.shiftId) || '' }}</span>
           </template>
           <span v-else>-</span>
         </template>
@@ -41,7 +41,7 @@ import { useAuthStore } from '../../stores/auth'
 
 const currentMonth = ref(dayjs().format('YYYY-MM'))
 const scheduleMap = ref({})
-const shiftOptions = ref([])
+const shifts = ref([])
 const employees = ref([])
 
 const authStore = useAuthStore()
@@ -61,9 +61,8 @@ async function fetchShiftOptions() {
   const res = await apiFetch('/api/attendance-settings')
   if (res.ok) {
     const data = await res.json()
-    console.log("data:",data)
-    if (Array.isArray(data)) {
-      shiftOptions.value = data.map(s => s.name)
+    if (Array.isArray(data?.shifts)) {
+      shifts.value = data.shifts.map(s => ({ _id: s._id, name: s.name }))
     }
   } else {
     if (res.status === 403) {
@@ -92,13 +91,13 @@ async function fetchSchedules() {
     employees.value.forEach(emp => {
       scheduleMap.value[emp._id] = {}
       ds.forEach(d => {
-        scheduleMap.value[emp._id][d] = { shiftType: '' }
+        scheduleMap.value[emp._id][d] = { shiftId: '' }
       })
     })
     data.forEach((s) => {
       const empId = s.employee?._id || s.employee
       const d = dayjs(s.date).date()
-      scheduleMap.value[empId][d] = { id: s._id, shiftType: s.shiftType }
+      scheduleMap.value[empId][d] = { id: s._id, shiftId: s.shiftId }
     })
   } catch (err) {
     console.error(err)
@@ -109,20 +108,20 @@ async function fetchSchedules() {
 async function onSelect(empId, day, value) {
   const dateStr = `${currentMonth.value}-${String(day).padStart(2, '0')}`
   const existing = scheduleMap.value[empId][day]
-  const prev = existing.shiftType
+  const prev = existing.shiftId
   if (existing && existing.id) {
     try {
       const res = await apiFetch(`/api/schedules/${existing.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ shiftType: value })
+        body: JSON.stringify({ shiftId: value })
       })
       if (!res.ok) {
-        scheduleMap.value[empId][day].shiftType = prev
+        scheduleMap.value[empId][day].shiftId = prev
         ElMessage.error('更新排班失敗')
       }
     } catch (err) {
-      scheduleMap.value[empId][day].shiftType = prev
+      scheduleMap.value[empId][day].shiftId = prev
       ElMessage.error('更新排班失敗')
     }
   } else {
@@ -130,20 +129,25 @@ async function onSelect(empId, day, value) {
       const res = await apiFetch('/api/schedules', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ employee: empId, date: dateStr, shiftType: value })
+        body: JSON.stringify({ employee: empId, date: dateStr, shiftId: value })
       })
       if (res.ok) {
         const saved = await res.json()
-        scheduleMap.value[empId][day] = { id: saved._id, shiftType: saved.shiftType }
+        scheduleMap.value[empId][day] = { id: saved._id, shiftId: saved.shiftId }
       } else {
-        scheduleMap.value[empId][day].shiftType = prev
+        scheduleMap.value[empId][day].shiftId = prev
         ElMessage.error('新增排班失敗')
       }
     } catch (err) {
-      scheduleMap.value[empId][day].shiftType = prev
+      scheduleMap.value[empId][day].shiftId = prev
       ElMessage.error('新增排班失敗')
     }
   }
+}
+
+function shiftName(id) {
+  const found = shifts.value.find(s => s._id === id)
+  return found?.name || ''
 }
 
 async function fetchEmployees() {

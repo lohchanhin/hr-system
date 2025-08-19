@@ -77,7 +77,7 @@ beforeEach(() => {
 /* --------------------------------- Tests -------------------------------- */
 describe('Schedule API', () => {
   it('lists schedules', async () => {
-    const fakeSchedules = [{ shiftType: 'morning' }];
+    const fakeSchedules = [{ shiftId: 's1' }];
     mockShiftSchedule.find.mockReturnValue({ populate: jest.fn().mockResolvedValue(fakeSchedules) });
 
     const res = await request(app).get('/api/schedules');
@@ -98,7 +98,7 @@ describe('Schedule API', () => {
   });
 
   it('creates schedule (upsert by employee+date)', async () => {
-    const payload = { employee: 'e1', date: '2023-01-01', shiftType: 'morning' };
+    const payload = { employee: 'e1', date: '2023-01-01', shiftId: 's1' };
     const fake = { ...payload, _id: '1' };
 
     mockShiftSchedule.findOneAndUpdate.mockResolvedValue(fake);
@@ -108,7 +108,7 @@ describe('Schedule API', () => {
     expect(res.status).toBe(201);
     expect(mockShiftSchedule.findOneAndUpdate).toHaveBeenCalledWith(
       { employee: payload.employee, date: payload.date },
-      { shiftType: payload.shiftType },
+      { shiftId: payload.shiftId },
       { upsert: true, new: true, setDefaultsOnInsert: true }
     );
     expect(res.body).toEqual(fake);
@@ -117,22 +117,22 @@ describe('Schedule API', () => {
   it('updates schedule on same day', async () => {
     const base = { employee: 'e1', date: '2023-01-01' };
     mockShiftSchedule.findOneAndUpdate
-      .mockResolvedValueOnce({ ...base, shiftType: 'day', _id: '1' })
-      .mockResolvedValueOnce({ ...base, shiftType: 'night', _id: '1' });
+      .mockResolvedValueOnce({ ...base, shiftId: 'day', _id: '1' })
+      .mockResolvedValueOnce({ ...base, shiftId: 'night', _id: '1' });
 
     // 第一次：day
-    let res = await request(app).post('/api/schedules').send({ ...base, shiftType: 'day' });
+    let res = await request(app).post('/api/schedules').send({ ...base, shiftId: 'day' });
     expect(res.status).toBe(201);
 
     // 第二次：night
-    res = await request(app).post('/api/schedules').send({ ...base, shiftType: 'night' });
+    res = await request(app).post('/api/schedules').send({ ...base, shiftId: 'night' });
     expect(res.status).toBe(201);
-    expect(res.body.shiftType).toBe('night');
+    expect(res.body.shiftId).toBe('night');
 
     expect(mockShiftSchedule.findOneAndUpdate).toHaveBeenNthCalledWith(
       2,
       { employee: base.employee, date: base.date },
-      { shiftType: 'night' },
+      { shiftId: 'night' },
       { upsert: true, new: true, setDefaultsOnInsert: true }
     );
   });
@@ -159,7 +159,7 @@ describe('Schedule API', () => {
   });
 
   it('lists schedules by month (with employee filter)', async () => {
-    const fake = [{ shiftType: 'night' }];
+    const fake = [{ shiftId: 'night' }];
     mockShiftSchedule.find.mockReturnValue({ populate: jest.fn().mockResolvedValue(fake) });
 
     const res = await request(app).get('/api/schedules/monthly?month=2023-01&employee=e1');
@@ -189,7 +189,7 @@ describe('Schedule API', () => {
   it('creates schedules batch', async () => {
     mockShiftSchedule.insertMany.mockResolvedValue([{ _id: '1' }]);
 
-    const payload = { schedules: [{ employee: 'e1', date: '2023-01-01', shiftType: 'day' }] };
+    const payload = { schedules: [{ employee: 'e1', date: '2023-01-01', shiftId: 'day' }] };
     const res = await request(app).post('/api/schedules/batch').send(payload);
 
     expect(res.status).toBe(201);
