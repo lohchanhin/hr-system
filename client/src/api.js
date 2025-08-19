@@ -1,6 +1,13 @@
+import { getToken } from './utils/tokenService'
+
 export const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:3000'
 
 export function apiFetch(path, options = {}) {
-  return fetch(`${API_BASE_URL}${path}`, options)
+  const token = getToken()
+  const headers = {
+    ...(options.headers || {}),
+    ...(token ? { Authorization: `Bearer ${token}` } : {})
+  }
+  return fetch(`${API_BASE_URL}${path}`, { ...options, headers })
 }

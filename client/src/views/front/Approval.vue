@@ -260,13 +260,11 @@
 <script setup>
 import { ref, reactive, onMounted, computed } from 'vue'
 import { apiFetch } from '../../api'
-import { getToken } from '../../utils/tokenService'
 
 /* -------------------- Tabs -------------------- */
 const activeTab = ref('inbox')
 
 /* -------------------- 共用小工具 -------------------- */
-const tokenHeader = () => ({ Authorization: `Bearer ${getToken() || ''}`, 'Content-Type': 'application/json' })
 const fmt = (d) => (d ? new Date(d).toLocaleString() : '-')
 const renderValue = (v) => Array.isArray(v) ? v.join(', ') : (v ?? '-')
 
@@ -298,7 +296,7 @@ const deptOptions = ref([])
 const orgOptions = ref([])
 
 async function fetchUsersLite() {
-  const res = await apiFetch('/api/employees', { headers: tokenHeader() })
+  const res = await apiFetch('/api/employees')
   if (res.ok) {
     const arr = await res.json()
     userOptions.value = arr.map(e => ({ value: e._id, label: `${e.name}${e.employeeId ? ' ('+e.employeeId+')' : ''}` }))
@@ -306,14 +304,14 @@ async function fetchUsersLite() {
   }
 }
 async function fetchDepts() {
-  const res = await apiFetch('/api/departments', { headers: tokenHeader() })
+  const res = await apiFetch('/api/departments')
   if (res.ok) {
     const arr = await res.json()
     deptOptions.value = arr.map(d => ({ value: d._id || d.code || d.name, label: d.name }))
   }
 }
 async function fetchOrgs() {
-  const res = await apiFetch('/api/organizations', { headers: tokenHeader() })
+  const res = await apiFetch('/api/organizations')
   if (res.ok) {
     const arr = await res.json()
     orgOptions.value = arr.map(o => ({ value: o._id || o.code || o.name, label: o.name }))
@@ -321,7 +319,7 @@ async function fetchOrgs() {
 }
 
 async function loadFormTemplates() {
-  const res = await apiFetch('/api/forms', { headers: tokenHeader() })
+  const res = await apiFetch('/api/forms')
   if (res.ok) formTemplates.value = await res.json()
 }
 
@@ -330,7 +328,7 @@ async function onSelectForm() {
   applyState.formData = {}
   fileBuffers.value = {}
   if (!applyState.formId) return
-  const res = await apiFetch(`/api/forms/${applyState.formId}`, { headers: tokenHeader() })
+  const res = await apiFetch(`/api/forms/${applyState.formId}`)
   if (res.ok) {
     const data = await res.json()
     fieldList.value = (data.fields || []).sort((a,b)=> (a.order||0)-(b.order||0))
@@ -371,7 +369,7 @@ async function submitApply() {
 
     const res = await apiFetch('/api/approvals', {
       method: 'POST',
-      headers: tokenHeader(),
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         form_id: applyState.formId,
         form_data: payloadData
@@ -394,7 +392,7 @@ async function submitApply() {
 const inboxList = ref([])
 
 async function fetchInbox() {
-  const res = await apiFetch('/api/inbox', { headers: tokenHeader() })
+  const res = await apiFetch('/api/inbox')
   if (res.ok) {
     const arr = await res.json()
     inboxList.value = arr
@@ -424,7 +422,7 @@ async function doAction() {
   try {
     const res = await apiFetch(`/api/approvals/${actionDlg.target._id}/act`, {
       method: 'POST',
-      headers: tokenHeader(),
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ decision: actionDlg.decision, comment: actionDlg.comment })
     })
     if (res.ok) {
@@ -445,14 +443,14 @@ const myList = ref([])
 const formNameCache = reactive({})
 
 async function fetchMyList() {
-  const res = await apiFetch('/api/approvals', { headers: tokenHeader() })
+  const res = await apiFetch('/api/approvals')
   if (res.ok) {
     myList.value = await res.json()
     // 取每筆的 form 名稱（明細才有 populate）
     await Promise.all(
       myList.value.map(async (row) => {
         if (!row.form || !row.form.name) {
-          const r = await apiFetch(`/api/approvals/${row._id}`, { headers: tokenHeader() })
+          const r = await apiFetch(`/api/approvals/${row._id}`)
           if (r.ok) {
             const full = await r.json()
             formNameCache[row._id] = full?.form?.name || ''
@@ -467,7 +465,7 @@ async function fetchMyList() {
 const detail = reactive({ visible: false, doc: null })
 
 async function openDetail(id) {
-  const res = await apiFetch(`/api/approvals/${id}`, { headers: tokenHeader() })
+  const res = await apiFetch(`/api/approvals/${id}`)
   if (res.ok) {
     detail.doc = await res.json()
     detail.visible = true

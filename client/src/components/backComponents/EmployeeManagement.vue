@@ -510,7 +510,6 @@ const orgList = ref([])
 const employeeDialogVisible = ref(false)
 let editEmployeeIndex = null
 let editEmployeeId = ''
-const token = localStorage.getItem('token') || ''
 
 function departmentLabel(id) {
   const dept = departmentList.value.find(d => d._id === id)
@@ -519,15 +518,15 @@ function departmentLabel(id) {
 
 /* 取資料 ------------------------------------------------------------------- */
 async function fetchDepartments() {
-  const res = await apiFetch('/api/departments', { headers: { Authorization: `Bearer ${token}` } })
+  const res = await apiFetch('/api/departments')
   if (res.ok) departmentList.value = await res.json()
 }
 async function fetchOrganizations() {
-  const res = await apiFetch('/api/organizations', { headers: { Authorization: `Bearer ${token}` } })
+  const res = await apiFetch('/api/organizations')
   if (res.ok) orgList.value = await res.json()
 }
 async function fetchEmployees() {
-  const res = await apiFetch('/api/employees', { headers: { Authorization: `Bearer ${token}` } })
+  const res = await apiFetch('/api/employees')
   if (res.ok) employeeList.value = await res.json()
 }
 onMounted(() => {
@@ -684,13 +683,13 @@ async function saveEmployee() {
   if (editEmployeeIndex === null) {
     res = await apiFetch('/api/employees', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
     })
   } else {
     res = await apiFetch(`/api/employees/${editEmployeeId}`, {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
     })
   }
@@ -703,8 +702,7 @@ async function saveEmployee() {
 async function deleteEmployee(index) {
   const emp = employeeList.value[index]
   const res = await apiFetch(`/api/employees/${emp._id}`, {
-    method: 'DELETE',
-    headers: { Authorization: `Bearer ${token}` }
+    method: 'DELETE'
   })
   if (res.ok) employeeList.value.splice(index, 1)
 }
