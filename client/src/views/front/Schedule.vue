@@ -61,8 +61,9 @@ async function fetchShiftOptions() {
   const res = await apiFetch('/api/attendance-settings')
   if (res.ok) {
     const data = await res.json()
-    if (Array.isArray(data?.shifts)) {
-      shifts.value = data.shifts.map(s => ({ _id: s._id, name: s.name }))
+    const list = Array.isArray(data?.shifts) ? data.shifts : data
+    if (Array.isArray(list)) {
+      shifts.value = list.map(s => ({ _id: s._id, name: s.name }))
     }
   } else {
     if (res.status === 403) {
