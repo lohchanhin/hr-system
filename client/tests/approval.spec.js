@@ -6,7 +6,7 @@ describe('Approval.vue', () => {
   it('fetches list on mount', async () => {
     vi.spyOn(window, 'fetch').mockResolvedValue({ ok: true, json: () => Promise.resolve([]) })
     mount(Approval)
-    expect(window.fetch).toHaveBeenCalledWith('/api/approvals', expect.any(Object))
+    expect(window.fetch).toHaveBeenCalledWith('/api/approvals/approvals', expect.any(Object))
     window.fetch.mockRestore()
   })
 })

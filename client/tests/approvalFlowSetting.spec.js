@@ -7,11 +7,11 @@ const employees = [{ _id: 'e1', name: 'Alice', title: 'Manager' }]
 const workflowData = { steps: [{ step_order: 1, approver_type: 'user', approver_value: 'e1' }] }
 
 const apiFetch = vi.fn((url, opts) => {
-  if (url === '/api/forms') return Promise.resolve({ ok: true, json: async () => [] })
+  if (url === '/api/approvals/forms') return Promise.resolve({ ok: true, json: async () => [] })
   if (url === '/api/employees/options') return Promise.resolve({ ok: true, json: async () => employees })
   if (url === '/api/roles') return Promise.resolve({ ok: true, json: async () => [] })
-  if (url === '/api/forms/f1/workflow' && !opts) return Promise.resolve({ ok: true, json: async () => workflowData })
-  if (url === '/api/forms/f1/workflow' && opts?.method === 'PUT') return Promise.resolve({ ok: true })
+  if (url === '/api/approvals/forms/f1/workflow' && !opts) return Promise.resolve({ ok: true, json: async () => workflowData })
+  if (url === '/api/approvals/forms/f1/workflow' && opts?.method === 'PUT') return Promise.resolve({ ok: true })
   return Promise.resolve({ ok: true, json: async () => ({}) })
 })
 
@@ -28,7 +28,7 @@ describe('ApprovalFlowSetting approver select', () => {
     wrapper.vm.workflowSteps[0].approver_value = 'e1'
     wrapper.vm.selectedFormId = 'f1'
     await wrapper.vm.saveWorkflow()
-    const call = apiFetch.mock.calls.find(c => c[0] === '/api/forms/f1/workflow' && c[1]?.method === 'PUT')
+    const call = apiFetch.mock.calls.find(c => c[0] === '/api/approvals/forms/f1/workflow' && c[1]?.method === 'PUT')
     const body = JSON.parse(call[1].body)
     expect(body.steps[0].approver_value).toBe('e1')
   })

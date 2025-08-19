@@ -150,8 +150,8 @@ import { ref, onMounted } from 'vue'
 import { apiFetch } from '../../api'  // 你專案現有封裝
 
 const API = {
-  forms: '/api/forms',
-  workflow: (formId) => `/api/forms/${formId}/workflow`,
+  forms: '/api/approvals/forms',
+  workflow: (formId) => `/api/approvals/forms/${formId}/workflow`,
   employees: '/api/employees/options',
   roles: '/api/roles',
 }
