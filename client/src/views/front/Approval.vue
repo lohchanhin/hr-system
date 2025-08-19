@@ -319,7 +319,7 @@ async function fetchOrgs() {
 }
 
 async function loadFormTemplates() {
-  const res = await apiFetch('/api/forms')
+  const res = await apiFetch('/api/approvals/forms')
   if (res.ok) formTemplates.value = await res.json()
 }
 
@@ -328,7 +328,7 @@ async function onSelectForm() {
   applyState.formData = {}
   fileBuffers.value = {}
   if (!applyState.formId) return
-  const res = await apiFetch(`/api/forms/${applyState.formId}`)
+  const res = await apiFetch(`/api/approvals/forms/${applyState.formId}`)
   if (res.ok) {
     const data = await res.json()
     fieldList.value = (data.fields || []).sort((a,b)=> (a.order||0)-(b.order||0))
@@ -367,7 +367,7 @@ async function submitApply() {
       payloadData[fid] = files.map(f => f.name)
     })
 
-    const res = await apiFetch('/api/approvals', {
+    const res = await apiFetch('/api/approvals/approvals', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -392,7 +392,7 @@ async function submitApply() {
 const inboxList = ref([])
 
 async function fetchInbox() {
-  const res = await apiFetch('/api/inbox')
+  const res = await apiFetch('/api/approvals/inbox')
   if (res.ok) {
     const arr = await res.json()
     inboxList.value = arr
@@ -420,7 +420,7 @@ async function doAction() {
   if (!actionDlg.target) return
   actionDlg.loading = true
   try {
-    const res = await apiFetch(`/api/approvals/${actionDlg.target._id}/act`, {
+    const res = await apiFetch(`/api/approvals/approvals/${actionDlg.target._id}/act`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ decision: actionDlg.decision, comment: actionDlg.comment })
@@ -443,14 +443,14 @@ const myList = ref([])
 const formNameCache = reactive({})
 
 async function fetchMyList() {
-  const res = await apiFetch('/api/approvals')
+  const res = await apiFetch('/api/approvals/approvals')
   if (res.ok) {
     myList.value = await res.json()
     // 取每筆的 form 名稱（明細才有 populate）
     await Promise.all(
       myList.value.map(async (row) => {
         if (!row.form || !row.form.name) {
-          const r = await apiFetch(`/api/approvals/${row._id}`)
+          const r = await apiFetch(`/api/approvals/approvals/${row._id}`)
           if (r.ok) {
             const full = await r.json()
             formNameCache[row._id] = full?.form?.name || ''
@@ -465,7 +465,7 @@ async function fetchMyList() {
 const detail = reactive({ visible: false, doc: null })
 
 async function openDetail(id) {
-  const res = await apiFetch(`/api/approvals/${id}`)
+  const res = await apiFetch(`/api/approvals/approvals/${id}`)
   if (res.ok) {
     detail.doc = await res.json()
     detail.visible = true
