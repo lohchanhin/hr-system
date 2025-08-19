@@ -12,6 +12,11 @@ export async function listUsers(req, res) {
 export async function createUser(req, res) {
   try {
     const { username, password, role, organization, department, subDepartment } = req.body;
+    if (!username) return res.status(400).json({ error: 'username is required' });
+    if (!password) return res.status(400).json({ error: 'password is required' });
+    if (!role) return res.status(400).json({ error: 'role is required' });
+    const allowed = ['employee', 'supervisor', 'admin'];
+    if (!allowed.includes(role)) return res.status(400).json({ error: 'invalid role' });
     const user = new User({ username, password, role, organization, department, subDepartment });
     await user.save();
     const plain = user.toObject();
@@ -24,14 +29,20 @@ export async function createUser(req, res) {
 
 export async function updateUser(req, res) {
   try {
+    const { username, password, role, organization, department, subDepartment } = req.body;
+    if (!username) return res.status(400).json({ error: 'username is required' });
+    if (!password) return res.status(400).json({ error: 'password is required' });
+    if (!role) return res.status(400).json({ error: 'role is required' });
+    const allowed = ['employee', 'supervisor', 'admin'];
+    if (!allowed.includes(role)) return res.status(400).json({ error: 'invalid role' });
     const user = await User.findById(req.params.id);
     if (!user) return res.status(404).json({ error: 'Not found' });
-    if (req.body.username !== undefined) user.username = req.body.username;
-    if (req.body.password) user.password = req.body.password;
-    if (req.body.role !== undefined) user.role = req.body.role;
-    if (req.body.organization !== undefined) user.organization = req.body.organization;
-    if (req.body.department !== undefined) user.department = req.body.department;
-    if (req.body.subDepartment !== undefined) user.subDepartment = req.body.subDepartment;
+    user.username = username;
+    user.password = password;
+    user.role = role;
+    if (organization !== undefined) user.organization = organization;
+    if (department !== undefined) user.department = department;
+    if (subDepartment !== undefined) user.subDepartment = subDepartment;
     await user.save();
     const plain = user.toObject();
     delete plain.password;
