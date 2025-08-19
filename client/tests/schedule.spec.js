@@ -41,10 +41,9 @@ describe('Schedule.vue', () => {
 
     localStorage.setItem('employeeId', 's1')
     const wrapper = mountSchedule()
-    wrapper.vm.scheduleMap = { e1: { 1: { id: 'sch1', shiftType: '早班' } } }
-    wrapper.vm.scheduleMap.e1[1].shiftType = '晚班'
-    await wrapper.vm.onSelect('e1', 1, '晚班')
-    expect(wrapper.vm.scheduleMap.e1[1].shiftType).toBe('早班')
+    wrapper.vm.scheduleMap = { e1: { 1: { id: 'sch1', shiftId: 's1' } } }
+    await wrapper.vm.onSelect('e1', 1, 's2')
+    expect(wrapper.vm.scheduleMap.e1[1].shiftId).toBe('s1')
     expect(ElMessage.error).toHaveBeenCalled()
   })
 
@@ -57,10 +56,9 @@ describe('Schedule.vue', () => {
 
     localStorage.setItem('employeeId', 's1')
     const wrapper = mountSchedule()
-    wrapper.vm.scheduleMap = { e1: { 2: { shiftType: '' } } }
-    wrapper.vm.scheduleMap.e1[2].shiftType = '早班'
-    await wrapper.vm.onSelect('e1', 2, '早班')
-    expect(wrapper.vm.scheduleMap.e1[2].shiftType).toBe('')
+    wrapper.vm.scheduleMap = { e1: { 2: { shiftId: '' } } }
+    await wrapper.vm.onSelect('e1', 2, 's1')
+    expect(wrapper.vm.scheduleMap.e1[2].shiftId).toBe('')
     expect(ElMessage.error).toHaveBeenCalled()
   })
 })
