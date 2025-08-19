@@ -4,7 +4,7 @@ import ElementPlus from 'element-plus'
 import ApprovalFlowSetting from '../src/components/backComponents/ApprovalFlowSetting.vue'
 
 const employees = [{ _id: 'e1', name: 'Alice', title: 'Manager' }]
-const workflowData = { steps: [{ step_order: 1, approver_type: 'user', approver_value: 'e1' }] }
+const workflowData = { steps: [{ step_order: 1, approver_type: 'user', approver_value: ['e1'] }] }
 
 const apiFetch = vi.fn((url, opts) => {
   if (url === '/api/approvals/forms') return Promise.resolve({ ok: true, json: async () => [] })
@@ -24,12 +24,27 @@ describe('ApprovalFlowSetting approver select', () => {
     expect(apiFetch).toHaveBeenCalledWith('/api/employees/options')
     await wrapper.vm.openWorkflowDialog({ _id: 'f1' })
     await flushPromises()
-    expect(wrapper.vm.workflowSteps[0].approver_value).toBe('e1')
-    wrapper.vm.workflowSteps[0].approver_value = 'e1'
+    expect(wrapper.vm.workflowSteps[0].approver_value).toEqual(['e1'])
+    wrapper.vm.workflowSteps[0].approver_value = ['e1']
     wrapper.vm.selectedFormId = 'f1'
     await wrapper.vm.saveWorkflow()
-    const call = apiFetch.mock.calls.find(c => c[0] === '/api/approvals/forms/f1/workflow' && c[1]?.method === 'PUT')
+    const call = apiFetch.mock.calls.filter(c => c[0] === '/api/approvals/forms/f1/workflow' && c[1]?.method === 'PUT').pop()
     const body = JSON.parse(call[1].body)
-    expect(body.steps[0].approver_value).toBe('e1')
+    expect(body.steps[0].approver_value).toEqual(['e1'])
+  })
+
+  it('adds step with default user type and saves array', async () => {
+    const wrapper = mount(ApprovalFlowSetting, { global: { plugins: [ElementPlus] } })
+    await flushPromises()
+    await wrapper.vm.openWorkflowDialog({ _id: 'f1' })
+    await flushPromises()
+    wrapper.vm.addStep()
+    expect(wrapper.vm.workflowSteps[1].approver_type).toBe('user')
+    wrapper.vm.workflowSteps[1].approver_value = ['e1']
+    wrapper.vm.selectedFormId = 'f1'
+    await wrapper.vm.saveWorkflow()
+    const call = apiFetch.mock.calls.filter(c => c[0] === '/api/approvals/forms/f1/workflow' && c[1]?.method === 'PUT').pop()
+    const body = JSON.parse(call[1].body)
+    expect(body.steps[1].approver_value).toEqual(['e1'])
   })
 })
