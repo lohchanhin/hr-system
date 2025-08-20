@@ -36,7 +36,7 @@ import attendanceShiftRoutes from './routes/attendanceShiftRoutes.js';
 import shiftRoutes from './routes/shiftRoutes.js';
 import deptManagerRoutes from './routes/deptManagerRoutes.js';
 
-async function seedSampleData() {
+export async function seedSampleData() {
   let org = await Organization.findOne({ name: '示範機構' });
   if (!org) {
     org = await Organization.create({
@@ -80,11 +80,16 @@ async function seedSampleData() {
     console.log('Created sample sub-department');
   }
 }
-async function seedTestUsers() {
+export async function seedTestUsers() {
   const users = [
     { username: 'user', password: 'password', role: 'employee' },
     { username: 'supervisor', password: 'password', role: 'supervisor' },
-    { username: 'admin', password: 'password', role: 'admin' }
+    { username: 'admin', password: 'password', role: 'admin' },
+    { username: 'scheduler', password: 'password', role: 'supervisor', signTags: ['排班負責人'] },
+    { username: 'supportHead', password: 'password', role: 'supervisor', signTags: ['支援單位主管'] },
+    { username: 'salesHead', password: 'password', role: 'supervisor', signTags: ['業務主管'] },
+    { username: 'salesManager', password: 'password', role: 'supervisor', signTags: ['業務負責人'] },
+    { username: 'hr', password: 'password', role: 'admin', signTags: ['人資'] }
   ];
   let supervisorId = null;
   for (const data of users) {
@@ -98,7 +103,8 @@ async function seedTestUsers() {
         department: '人力資源部',
         subDepartment: '招聘組',
         title: 'Staff',
-        status: '在職'
+        status: '在職',
+        signTags: data.signTags ?? []
       });
       await User.create({
         ...data,
@@ -223,4 +229,6 @@ async function start() {
   }
 }
 
-start();
+if (process.env.NODE_ENV !== 'test') {
+  start();
+}
