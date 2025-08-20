@@ -35,7 +35,7 @@ beforeEach(() => {
 describe('Employee API', () => {
   it('lists employees', async () => {
 
-    const fakeEmployees = [{ name: 'John', department: 'Sales', title: 'Staff', status: '在職' }];
+    const fakeEmployees = [{ name: 'John', department: 'Sales', title: 'Staff', status: '正職員工' }];
 
     mockEmployee.find.mockResolvedValue(fakeEmployees);
     const res = await request(app).get('/api/employees');
@@ -77,7 +77,7 @@ describe('Employee API', () => {
       department: 'HR',
       subDepartment: 'Sub',
       title: 'Manager',
-      status: '在職',
+      status: '正職員工',
       username: 'jane',
       password: 'secret',
       role: 'employee',
@@ -105,7 +105,7 @@ describe('Employee API', () => {
       department: 'HR',
       subDepartment: 'Sub',
       title: 'Manager',
-      status: '在職',
+      status: '正職員工',
       role: 'employee',
       supervisor: 's1'
     });
