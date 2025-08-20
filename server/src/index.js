@@ -106,7 +106,7 @@ export async function seedTestUsers() {
         department: '人力資源部',
         subDepartment: '招聘組',
         title: 'Staff',
-        status: '在職',
+        status: '正職員工',
         signTags: data.signTags ?? []
       });
       await User.create({
