@@ -381,8 +381,9 @@ export async function listEmployees(req, res) {
 
 export async function listEmployeeOptions(req, res) {
   try {
-    const employees = await Employee.find({}, 'name title')
-    res.json(employees)
+    const employees = await Employee.find({}, 'name')
+    const options = employees.map((e) => ({ id: e._id, name: e.name }))
+    res.json(options)
   } catch (err) {
     res.status(500).json({ error: err.message })
   }

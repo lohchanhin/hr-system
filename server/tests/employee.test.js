@@ -53,12 +53,12 @@ describe('Employee API', () => {
   });
 
   it('lists employee options', async () => {
-    const opts = [{ _id: '1', name: 'A', title: 'T' }];
+    const opts = [{ _id: '1', name: 'A' }];
     mockEmployee.find.mockResolvedValue(opts);
     const res = await request(app).get('/api/employees/options');
     expect(res.status).toBe(200);
-    expect(mockEmployee.find).toHaveBeenCalledWith({}, 'name title');
-    expect(res.body).toEqual(opts);
+    expect(mockEmployee.find).toHaveBeenCalledWith({}, 'name');
+    expect(res.body).toEqual([{ id: '1', name: 'A' }]);
   });
 
   it('returns 500 if listing fails', async () => {
