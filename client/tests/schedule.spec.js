@@ -24,7 +24,10 @@ describe('Schedule.vue', () => {
         stubs: {
           'el-date-picker': true,
           'el-table': { template: '<div><slot></slot></div>' },
-          'el-table-column': { template: '<div><slot :row="{}"></slot></div>' },
+          'el-table-column': {
+            props: ['label'],
+            template: '<div class="col" :data-label="label"><slot :row="{}"></slot></div>'
+          },
           'el-select': true,
           'el-option': true
         }
@@ -38,22 +41,22 @@ describe('Schedule.vue', () => {
 
   it('loads shift options when API returns array directly', async () => {
     apiFetch
-      .mockResolvedValueOnce({ ok: true, json: async () => [{ _id: 's1', name: 'S1' }] })
-      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [{ _id: 's1', code: 'S1', startTime: '08:00', endTime: '17:00', remark: 'R' }] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [{ _id: 'e1', name: 'E1', department: '1F', subDepartment: 'HR' }] })
       .mockResolvedValueOnce({ ok: true, json: async () => [] })
     const wrapper = mountSchedule()
     await flush()
-    expect(wrapper.vm.shifts).toEqual([{ _id: 's1', name: 'S1' }])
+    expect(wrapper.vm.shifts).toEqual([{ _id: 's1', code: 'S1', startTime: '08:00', endTime: '17:00', remark: 'R' }])
   })
 
   it('loads shift options when API returns object with shifts', async () => {
     apiFetch
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ shifts: [{ _id: 's1', name: 'S1' }] }) })
-      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ shifts: [{ _id: 's1', code: 'S1', startTime: '08:00', endTime: '17:00', remark: 'R' }] }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => [{ _id: 'e1', name: 'E1', department: '1F', subDepartment: 'HR' }] })
       .mockResolvedValueOnce({ ok: true, json: async () => [] })
     const wrapper = mountSchedule()
     await flush()
-    expect(wrapper.vm.shifts).toEqual([{ _id: 's1', name: 'S1' }])
+    expect(wrapper.vm.shifts).toEqual([{ _id: 's1', code: 'S1', startTime: '08:00', endTime: '17:00', remark: 'R' }])
   })
 
   it('reverts change when update fails', async () => {
@@ -86,5 +89,20 @@ describe('Schedule.vue', () => {
     await wrapper.vm.onSelect('e1', 2, 's1')
     expect(wrapper.vm.scheduleMap.e1[2].shiftId).toBe('')
     expect(ElMessage.error).toHaveBeenCalled()
+  })
+
+  it('shows floor column and weekday labels', async () => {
+    apiFetch
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [{ _id: 'e1', name: 'E1', department: '1F', subDepartment: 'HR' }] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+
+    const wrapper = mountSchedule()
+    await flush()
+    expect(wrapper.vm.days[0].label).toMatch(/^1\(.\)$/)
+    const cols = wrapper.findAll('.col')
+    expect(cols[0].attributes('data-label')).toBe('樓層／單位')
+    expect(cols[1].attributes('data-label')).toBe('員工')
+    expect(cols[2].attributes('data-label')).toMatch(/^1\(.\)$/)
   })
 })
