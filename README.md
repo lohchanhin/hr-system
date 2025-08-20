@@ -99,6 +99,16 @@ curl -X DELETE http://localhost:3000/api/shifts/<id> \
 
 更詳細說明請參閱 [`server/README.md`](server/README.md)。
 
+## 生成測試資料
+
+請先在 `server/.env` 設定 `MONGODB_URI`，再執行以下指令產生預設資料：
+
+```bash
+node server/scripts/seed.js
+```
+
+此腳本會建立預設帳號（`user`、`supervisor`、`admin`，密碼皆為 `password`）以及示範機構「示範機構」（含「人力資源部」與「招聘組」）。更多詳情請參閱 [server/README.md](server/README.md)。
+
 ## 同時啟動前後端
 
 在專案根目錄執行下列指令，可一次啟動後端與 Vite 前端開發伺服器：
