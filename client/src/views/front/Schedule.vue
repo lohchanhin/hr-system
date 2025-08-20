@@ -3,19 +3,24 @@
     <h2>排班管理</h2>
     <el-date-picker v-model="currentMonth" type="month" @change="fetchSchedules" />
     <el-table :data="employees" style="margin-top: 20px;">
+      <el-table-column label="樓層／單位">
+        <template #default="{ row }">
+          {{ row.department }}<span v-if="row.subDepartment">／{{ row.subDepartment }}</span>
+        </template>
+      </el-table-column>
       <el-table-column prop="name" label="員工" />
       <el-table-column
         v-for="d in days"
-        :key="d"
-        :label="d"
+        :key="d.date"
+        :label="d.label"
       >
         <template #default="{ row }">
-          <template v-if="scheduleMap[row._id]?.[d]">
+          <template v-if="scheduleMap[row._id]?.[d.date]">
             <el-select
               v-if="canEdit"
-              v-model="scheduleMap[row._id][d].shiftId"
+              v-model="scheduleMap[row._id][d.date].shiftId"
               placeholder=""
-              @change="val => onSelect(row._id, d, val)"
+              @change="val => onSelect(row._id, d.date, val)"
             >
               <el-option
                 v-for="opt in shifts"
@@ -26,17 +31,17 @@
             </el-select>
             <el-popover
               v-else
-              v-if="shiftInfo(scheduleMap[row._id][d].shiftId)"
+              v-if="shiftInfo(scheduleMap[row._id][d.date].shiftId)"
               placement="top"
               trigger="click"
             >
-              <p>上班：{{ shiftInfo(scheduleMap[row._id][d].shiftId).startTime }}</p>
-              <p>下班：{{ shiftInfo(scheduleMap[row._id][d].shiftId).endTime }}</p>
-              <p v-if="shiftInfo(scheduleMap[row._id][d].shiftId).remark">
-                備註：{{ shiftInfo(scheduleMap[row._id][d].shiftId).remark }}
+              <p>上班：{{ shiftInfo(scheduleMap[row._id][d.date].shiftId).startTime }}</p>
+              <p>下班：{{ shiftInfo(scheduleMap[row._id][d.date].shiftId).endTime }}</p>
+              <p v-if="shiftInfo(scheduleMap[row._id][d.date].shiftId).remark">
+                備註：{{ shiftInfo(scheduleMap[row._id][d.date].shiftId).remark }}
               </p>
               <template #reference>
-                <span>{{ shiftInfo(scheduleMap[row._id][d].shiftId).code }}</span>
+                <span>{{ shiftInfo(scheduleMap[row._id][d.date].shiftId).code }}</span>
               </template>
             </el-popover>
             <span v-else></span>
@@ -69,7 +74,12 @@ const canEdit = computed(() => {
 const days = computed(() => {
   const dt = dayjs(currentMonth.value + '-01')
   const end = dt.endOf('month').date()
-  return Array.from({ length: end }, (_, i) => i + 1)
+  const week = ['日', '一', '二', '三', '四', '五', '六']
+  return Array.from({ length: end }, (_, i) => {
+    const date = i + 1
+    const wd = week[dt.date(date).day()]
+    return { date, label: `${date}(${wd})` }
+  })
 })
 
 async function fetchShiftOptions() {
@@ -113,7 +123,7 @@ async function fetchSchedules() {
     employees.value.forEach(emp => {
       scheduleMap.value[emp._id] = {}
       ds.forEach(d => {
-        scheduleMap.value[emp._id][d] = { shiftId: '' }
+        scheduleMap.value[emp._id][d.date] = { shiftId: '' }
       })
     })
     data.forEach((s) => {
@@ -176,8 +186,16 @@ async function fetchEmployees() {
   try {
     const res = await apiFetch(`/api/employees?supervisor=${supervisorId}`)
     if (!res.ok) throw new Error('Failed to fetch employees')
-    console.log("employee:",res)
-    employees.value = await res.json()
+    const data = await res.json()
+    const sorted = data
+      .map(e => ({
+        _id: e._id,
+        name: e.name,
+        department: e.department || '',
+        subDepartment: e.subDepartment || ''
+      }))
+      .sort((a, b) => a.department.localeCompare(b.department))
+    employees.value = sorted
   } catch (err) {
     console.error(err)
     ElMessage.error('取得員工資料失敗')
