@@ -9,6 +9,9 @@ import Employee from './models/Employee.js';
 import Organization from './models/Organization.js';
 import Department from './models/Department.js';
 import SubDepartment from './models/SubDepartment.js';
+import FormTemplate from './models/form_template.js';
+import FormField from './models/form_field.js';
+import ApprovalWorkflow from './models/approval_workflow.js';
 import employeeRoutes from './routes/employeeRoutes.js';
 import attendanceRoutes from './routes/attendanceRoutes.js';
 import authRoutes from './routes/authRoutes.js';
@@ -122,6 +125,82 @@ export async function seedTestUsers() {
   }
 }
 
+export async function seedApprovalTemplates() {
+  const templates = [
+    {
+      name: '支援申請',
+      category: '人事',
+      fields: [
+        { label: '申請事由', type_1: 'textarea', required: true, order: 1 },
+        { label: '開始日期', type_1: 'date', required: true, order: 2 },
+        { label: '結束日期', type_1: 'date', required: true, order: 3 },
+        { label: '附件', type_1: 'file', order: 4 },
+      ],
+      steps: [
+        { step_order: 1, approver_type: 'manager' },
+        { step_order: 2, approver_type: 'tag', approver_value: '支援單位主管' },
+        { step_order: 3, approver_type: 'tag', approver_value: '人資' },
+      ],
+    },
+    {
+      name: '特休保留',
+      category: '人事',
+      fields: [
+        { label: '年度', type_1: 'text', required: true, order: 1 },
+        { label: '保留天數', type_1: 'number', required: true, order: 2 },
+        { label: '理由', type_1: 'textarea', order: 3 },
+      ],
+      steps: [
+        { step_order: 1, approver_type: 'manager' },
+        { step_order: 2, approver_type: 'tag', approver_value: '人資' },
+      ],
+    },
+    {
+      name: '在職證明',
+      category: '人事',
+      fields: [
+        { label: '用途', type_1: 'text', required: true, order: 1 },
+        { label: '開立日期', type_1: 'date', required: true, order: 2 },
+      ],
+      steps: [
+        { step_order: 1, approver_type: 'tag', approver_value: '人資' },
+      ],
+    },
+    {
+      name: '離職證明',
+      category: '人事',
+      fields: [
+        { label: '用途', type_1: 'text', order: 1 },
+        { label: '離職日期', type_1: 'date', required: true, order: 2 },
+      ],
+      steps: [
+        { step_order: 1, approver_type: 'manager' },
+        { step_order: 2, approver_type: 'tag', approver_value: '人資' },
+      ],
+    },
+  ];
+
+  for (const t of templates) {
+    let form = await FormTemplate.findOne({ name: t.name });
+    if (!form) {
+      form = await FormTemplate.create({ name: t.name, category: t.category, description: t.description });
+      console.log(`Created form template ${t.name}`);
+    }
+
+    for (const field of t.fields) {
+      const exists = await FormField.findOne({ form: form._id, label: field.label });
+      if (!exists) {
+        await FormField.create({ ...field, form: form._id });
+      }
+    }
+
+    let workflow = await ApprovalWorkflow.findOne({ form: form._id });
+    if (!workflow) {
+      await ApprovalWorkflow.create({ form: form._id, steps: t.steps });
+    }
+  }
+}
+
 dotenv.config();
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -220,6 +299,7 @@ async function start() {
     await connectDB(process.env.MONGODB_URI);
     await seedSampleData();
     await seedTestUsers();
+    await seedApprovalTemplates();
     app.listen(PORT, () => {
       console.log(`Server running on port ${PORT}`);
     });
