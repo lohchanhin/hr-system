@@ -184,7 +184,7 @@ app.use('/api/schedules', authenticate, authorizeRoles('supervisor', 'admin'), s
 app.use('/api/payroll', authenticate, authorizeRoles('admin'), payrollRoutes);
 app.use('/api/reports', authenticate, authorizeRoles('admin'), reportRoutes);
 app.use('/api/insurance', authenticate, authorizeRoles('admin'), insuranceRoutes);
-app.use('/api/approvals', authenticate, authorizeRoles('supervisor', 'admin'), approvalRoutes);
+app.use('/api/approvals', authenticate, approvalRoutes);
 app.use('/api/menu', authenticate, menuRoutes);
 app.use('/api/users', authenticate, authorizeRoles('admin'), userRoutes);
 app.use('/api/departments', authenticate, authorizeRoles('admin'), departmentRoutes);
