@@ -328,10 +328,10 @@ async function onSelectForm() {
   applyState.formData = {}
   fileBuffers.value = {}
   if (!applyState.formId) return
-  const res = await apiFetch(`/api/approvals/forms/${applyState.formId}`)
+  const res = await apiFetch(`/api/approvals/forms/${applyState.formId}/fields`)
   if (res.ok) {
-    const data = await res.json()
-    fieldList.value = (data.fields || []).sort((a,b)=> (a.order||0)-(b.order||0))
+    const arr = await res.json()
+    fieldList.value = (arr || []).sort((a,b)=> (a.order||0)-(b.order||0))
     // 初始化表單資料
     fieldList.value.forEach(f => {
       if (f.type_1 === 'checkbox') applyState.formData[f._id] = []
