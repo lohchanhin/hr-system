@@ -101,7 +101,7 @@
               <el-table-column label="Approver Value" width="200">
                 <template #default="{ row }">
                   <el-select v-if="row.approver_type==='user'" v-model="row.approver_value" placeholder="選擇員工" multiple>
-                    <el-option v-for="e in employeeOptions" :key="e._id" :label="`${e.name}（${e.title || '無職稱'}）`" :value="e._id" />
+                    <el-option v-for="e in employeeOptions" :key="e.id" :label="e.name" :value="e.id" />
                   </el-select>
                   <el-select v-else-if="row.approver_type==='role'" v-model="row.approver_value" placeholder="選擇角色">
                     <el-option v-for="r in roleOptions" :key="r.id" :label="r.name" :value="r.id" />
@@ -191,7 +191,10 @@ async function loadForms() {
 
 async function loadEmployeeOptions() {
   const res = await apiFetch(API.employees)
-  if (res.ok) employeeOptions.value = await res.json()
+  if (res.ok) {
+    const list = await res.json()
+    employeeOptions.value = Array.isArray(list) ? list.map((e) => ({ id: e.id, name: e.name })) : []
+  }
 }
 
 async function loadRoleOptions() {
