@@ -122,6 +122,15 @@
                 </el-form-item>
               </template>
 
+              <div v-if="workflowSteps.length">
+                <el-divider content-position="left">簽核流程</el-divider>
+                <ol class="wf-list">
+                  <li v-for="(s, idx) in workflowSteps" :key="idx">
+                    {{ s.label }}：{{ s.approvers }}
+                  </li>
+                </ol>
+              </div>
+
               <div class="mt-3">
                 <el-button type="primary" :loading="submitting" @click="submitApply">送出申請</el-button>
               </div>
@@ -287,6 +296,7 @@ const applyState = reactive({
   formData: {},
 })
 const fieldList = ref([])
+const workflowSteps = ref([])
 const fileBuffers = reactive({}) // { fieldId: [FileItem...] }
 const submitting = ref(false)
 
@@ -323,10 +333,22 @@ async function loadFormTemplates() {
   if (res.ok) formTemplates.value = await res.json()
 }
 
+async function ensureEmployeeCache(ids) {
+  const arr = Array.isArray(ids) ? ids : [ids]
+  const missing = arr.filter(id => !employeeNameCache[id])
+  if (!missing.length) return
+  const res = await apiFetch('/api/employees')
+  if (res.ok) {
+    const emps = await res.json()
+    emps.forEach(e => { employeeNameCache[e._id] = e.name })
+  }
+}
+
 async function onSelectForm() {
   fieldList.value = []
   applyState.formData = {}
   fileBuffers.value = {}
+  workflowSteps.value = []
   if (!applyState.formId) return
   const res = await apiFetch(`/api/approvals/forms/${applyState.formId}/fields`)
   if (res.ok) {
@@ -337,6 +359,24 @@ async function onSelectForm() {
       if (f.type_1 === 'checkbox') applyState.formData[f._id] = []
       else applyState.formData[f._id] = ''
     })
+  }
+  const wfRes = await apiFetch(`/api/approvals/forms/${applyState.formId}/workflow`)
+  if (wfRes.ok) {
+    const wf = await wfRes.json()
+    workflowSteps.value = await Promise.all(
+      (wf.steps || []).map(async (s, idx) => {
+        let approvers = ''
+        if (s.approver_type === 'user') {
+          await ensureEmployeeCache(s.approver_value)
+          const ids = Array.isArray(s.approver_value) ? s.approver_value : [s.approver_value]
+          approvers = ids.map(id => employeeNameCache[id] || id).join(', ')
+        } else {
+          const val = Array.isArray(s.approver_value) ? s.approver_value.join(', ') : s.approver_value
+          approvers = `${s.approver_type}${val ? '：' + val : ''}`
+        }
+        return { label: s.name || `第 ${idx + 1} 關`, approvers }
+      })
+    )
   }
 }
 function reloadSelectedForm() {
@@ -492,4 +532,6 @@ onMounted(async () => {
 .text-gray-500 { color: #6b7280; }
 .mb-2 { margin-bottom: 8px; }
 .mr-2 { margin-right: 8px; }
+.wf-list { padding-left: 20px; }
+.wf-list li { margin-bottom: 4px; }
 </style>
