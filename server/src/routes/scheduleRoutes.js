@@ -7,7 +7,8 @@ import {
   deleteSchedule,
   exportSchedules,
   listMonthlySchedules,
-  createSchedulesBatch
+  createSchedulesBatch,
+  deleteOldSchedules
 } from '../controllers/scheduleController.js';
 import { verifySupervisor } from '../middleware/supervisor.js';
 
@@ -20,6 +21,7 @@ router.post('/batch', verifySupervisor, createSchedulesBatch);
 router.post('/', verifySupervisor, createSchedule);
 router.get('/:id', getSchedule);
 router.put('/:id', verifySupervisor, updateSchedule);
+router.delete('/older-than', verifySupervisor, deleteOldSchedules);
 router.delete('/:id', deleteSchedule);
 
 export default router;

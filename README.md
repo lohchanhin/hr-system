@@ -21,6 +21,42 @@
 - **報表產生** – 匯出各式統計或管理報表。
 - **審核流程** – 提供申請單的審核與簽核機制。
 
+### 班別設定
+
+班別用於描述員工的工作時段，協助排班與出勤判定。常見欄位包括：
+
+- **名稱**：顯示用的班別名稱，例如「早班」。
+- **startTime**：上班時間（HH:mm）。
+- **endTime**：下班時間（HH:mm）。
+- **breakTime**：中場休息總時長。
+- **crossDay**：是否跨日。
+
+#### 操作範例
+
+API 範例：
+
+```bash
+# 建立班別
+curl -X POST http://localhost:3000/api/shifts \
+  -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer <token>" \
+  -d '{"name":"早班","startTime":"09:00","endTime":"18:00","crossDay":false}'
+
+# 編輯班別
+curl -X PUT http://localhost:3000/api/shifts/<id> \
+  -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer <token>" \
+  -d '{"name":"晚班"}'
+
+# 刪除班別
+curl -X DELETE http://localhost:3000/api/shifts/<id> \
+  -H "Authorization: Bearer <token>"
+```
+
+前端操作：於「排班與班別管理設定」>「班別設定」頁籤，使用「新增班別」建立，或在表格中點選「編輯」、「刪除」維護資料。
+
+（目前尚未提供其他班別設定文件）
+
 ## 專案結構
 
 ```
@@ -128,6 +164,101 @@ web: npm start --prefix server
 | 帳號與權限管理     | `/api/users`       | `admin`       |
 
 在前端畫面中，可於「人事管理與系統設定」頁籤找到上述功能。具備管理權限的使用者才能透過這些介面新增或修改機構、部門及帳號資料，其他角色僅能讀取相關資訊。
+
+
+## 人員管理操作示例
+
+以下示範如何以 JWT 認證方式呼叫 `user` 管理相關 API。
+
+1. 使用系統預設帳號登入以取得 JWT：
+   ```bash
+   curl -X POST http://localhost:3000/api/login \\
+     -H 'Content-Type: application/json' \\
+     -d '{"username":"admin","password":"password"}'
+   ```
+   伺服器將回傳包含 `token` 欄位的 JSON。
+
+2. 將取得的 Token 置於 `Authorization: Bearer <token>` 標頭，即可進行後續操作：
+   ```bash
+   # 列出帳號
+   curl http://localhost:3000/api/users \\
+     -H "Authorization: Bearer <token>"
+
+   # 建立帳號
+   curl -X POST http://localhost:3000/api/users \\
+     -H "Authorization: Bearer <token>" \\
+     -H 'Content-Type: application/json' \\
+     -d '{"username":"newuser","password":"password","role":"employee"}'
+
+   # 更新帳號
+   curl -X PUT http://localhost:3000/api/users/<id> \\
+     -H "Authorization: Bearer <token>" \\
+     -H 'Content-Type: application/json' \\
+     -d '{"password":"newpass"}'
+
+  # 刪除帳號
+  curl -X DELETE http://localhost:3000/api/users/<id> \\
+    -H "Authorization: Bearer <token>"
+  ```
+
+  若 Token 逾時或角色非 `admin`，API 會回應 `401 Unauthorized` 或 `403 Forbidden`。
+
+## 排班管理
+
+排班流程範例如下：
+
+1. 先建立班別設定，之後排班時可引用其 `id`：
+   ```bash
+   curl -X POST http://localhost:3000/api/shifts \\
+     -H "Authorization: Bearer <token>" \\
+     -H "Content-Type: application/json" \\
+     -d '{"name":"早班","start":"09:00","end":"17:00"}'
+   ```
+
+2. 指派員工與日期到排班表，並指定班別：
+   ```bash
+   curl -X POST http://localhost:3000/api/schedules \\
+     -H "Authorization: Bearer <token>" \\
+     -H "Content-Type: application/json" \\
+     -d '{"employee":"<員工ID>","date":"2023-05-01","shiftId":"<班別ID>"}'
+   ```
+
+3. 檢視某月班表：
+   ```bash
+   curl http://localhost:3000/api/schedules/monthly?month=2023-05 \\
+     -H "Authorization: Bearer <token>"
+   ```
+
+班別設定提供可用的班別清單；排班時需在 `shiftId` 欄位填入對應班別的 `id` 才能顯示正確班別。前端「排班管理」頁面可選擇員工、點擊日期並從下拉選單挑選班別完成指派。
+
+## 簽核流程
+
+### 建立流程
+
+1. 在「表單樣板」建立申請表格，定義欄位與驗證規則。
+2. 於「流程設定」新增關卡，依序指定簽核角色或特定人員，例如主管、人資。
+3. 儲存並發布後即可套用於請假、出差等申請。
+
+### 簽核與退簽
+
+- 送出申請後系統會依設定的關卡順序逐一通知簽核者。
+- 簽核者可核准或退回；退簽會將流程回到前一關並保留操作紀錄。
+- 每關可設定逾時天數，超過時系統會自動退回上一關或標記逾時。
+
+### 範例
+
+```json
+{
+  "template": "leave",
+  "steps": [
+    { "id": "submitter" },
+    { "id": "supervisor", "timeout": 3 },
+    { "id": "hr", "timeout": 2 }
+  ]
+}
+```
+
+> 流程依賴員工資料的 `supervisor` 欄位以取得第一層主管，未設定主管將無法送出申請。
 
 
 ## 執行測試

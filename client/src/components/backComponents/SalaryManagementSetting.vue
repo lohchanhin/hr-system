@@ -202,7 +202,6 @@ import { apiFetch } from '../../api'
   
   // 目前所在的Tab
 const activeTab = ref('salaryItem')
-const token = localStorage.getItem('token') || ''
 const settingId = ref(null)
   
   // ============ (1) 薪資項目設定 ============
@@ -372,9 +371,7 @@ const settingId = ref(null)
   }
 
   async function fetchSetting() {
-    const res = await apiFetch('/api/salary-settings', {
-      headers: { Authorization: `Bearer ${token}` }
-    })
+    const res = await apiFetch('/api/salary-settings')
     if (res.ok) {
       const data = await res.json()
       if (data.length) {
@@ -404,8 +401,7 @@ const settingId = ref(null)
     const res = await apiFetch(url, {
       method,
       headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`
+        'Content-Type': 'application/json'
       },
       body: JSON.stringify(payload)
     })

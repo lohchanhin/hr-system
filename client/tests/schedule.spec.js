@@ -1,26 +1,90 @@
-import { describe, it, expect, vi } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { shallowMount } from '@vue/test-utils'
 import dayjs from 'dayjs'
+import { createPinia, setActivePinia } from 'pinia'
 import Schedule from '../src/views/front/Schedule.vue'
 
-vi.mock('../src/api', () => {
-  const apiFetch = vi.fn()
-  apiFetch
-    .mockResolvedValueOnce({ ok: true, json: async () => ([{ _id: 'e1', name: 'E1' }]) })
-    .mockResolvedValueOnce({ ok: true, json: async () => ({ shifts: [{ name: '早班' }] }) })
-    .mockResolvedValueOnce({ ok: true, json: async () => ([] ) })
-  return { apiFetch }
-})
+global.ElMessage = { error: vi.fn() }
+
+vi.mock('../src/api', () => ({ apiFetch: vi.fn() }))
 vi.mock('../src/utils/tokenService', () => ({ getToken: () => 'tok' }))
 
+import { apiFetch } from '../src/api'
+
 describe('Schedule.vue', () => {
-  it('fetches employees and schedules on mount', () => {
-    const { apiFetch } = require('../src/api')
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    apiFetch.mockReset()
+    ElMessage.error.mockReset()
+  })
+
+  function mountSchedule() {
+    return shallowMount(Schedule, {
+      global: {
+        stubs: {
+          'el-date-picker': true,
+          'el-table': { template: '<div><slot></slot></div>' },
+          'el-table-column': { template: '<div><slot :row="{}"></slot></div>' },
+          'el-select': true,
+          'el-option': true
+        }
+      }
+    })
+  }
+
+  function flush() {
+    return new Promise(resolve => setTimeout(resolve))
+  }
+
+  it('loads shift options when API returns array directly', async () => {
+    apiFetch
+      .mockResolvedValueOnce({ ok: true, json: async () => [{ _id: 's1', name: 'S1' }] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+    const wrapper = mountSchedule()
+    await flush()
+    expect(wrapper.vm.shifts).toEqual([{ _id: 's1', name: 'S1' }])
+  })
+
+  it('loads shift options when API returns object with shifts', async () => {
+    apiFetch
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ shifts: [{ _id: 's1', name: 'S1' }] }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+    const wrapper = mountSchedule()
+    await flush()
+    expect(wrapper.vm.shifts).toEqual([{ _id: 's1', name: 'S1' }])
+  })
+
+  it('reverts change when update fails', async () => {
+    apiFetch
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [{ _id: 'e1', name: 'E1' }] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: false })
+
     localStorage.setItem('employeeId', 's1')
-    mount(Schedule)
-    const month = dayjs().format('YYYY-MM')
-    expect(apiFetch).toHaveBeenNthCalledWith(1, '/api/attendance-settings', expect.any(Object))
-    expect(apiFetch).toHaveBeenNthCalledWith(2, '/api/employees?supervisor=s1', expect.any(Object))
-    expect(apiFetch).toHaveBeenNthCalledWith(3, `/api/schedules/monthly?month=${month}&supervisor=s1`, expect.any(Object))
+    const wrapper = mountSchedule()
+    await flush()
+    wrapper.vm.scheduleMap = { e1: { 1: { id: 'sch1', shiftId: 's1' } } }
+    await wrapper.vm.onSelect('e1', 1, 's2')
+    expect(wrapper.vm.scheduleMap.e1[1].shiftId).toBe('s1')
+    expect(ElMessage.error).toHaveBeenCalled()
+  })
+
+  it('reverts change when creation fails', async () => {
+    apiFetch
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [{ _id: 'e1', name: 'E1' }] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: false })
+
+    localStorage.setItem('employeeId', 's1')
+    const wrapper = mountSchedule()
+    await flush()
+    wrapper.vm.scheduleMap = { e1: { 2: { shiftId: '' } } }
+    await wrapper.vm.onSelect('e1', 2, 's1')
+    expect(wrapper.vm.scheduleMap.e1[2].shiftId).toBe('')
+    expect(ElMessage.error).toHaveBeenCalled()
   })
 })

@@ -6,7 +6,9 @@ const attendanceSettingSchema = new mongoose.Schema({
       name: String,
       startTime: String,
       endTime: String,
-      breakTime: String
+      breakTime: String,
+      crossDay: Boolean,
+      remark: String
     }
   ],
   abnormalRules: {

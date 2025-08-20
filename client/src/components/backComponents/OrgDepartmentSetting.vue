@@ -218,15 +218,12 @@ function urlOf(type) {
 }
 
 async function fetchList(type, parentId) {
-  const token = localStorage.getItem('token') || ''
   let url = urlOf(type)
   if (parentId) {
     const key = type === 'dept' ? 'organization' : 'department'
     url += `?${key}=${parentId}`
   }
-  const res = await apiFetch(url, {
-    headers: { Authorization: `Bearer ${token}` }
-  })
+  const res = await apiFetch(url)
   if (res.ok) {
     const data = await res.json()
     if (type === 'org') orgList.value = data
@@ -304,7 +301,6 @@ function openDialog(type, index = null) {
 }
 
 async function saveItem() {
-  const token = localStorage.getItem('token') || ''
   const url = urlOf(currentType.value)
   const list =
     currentType.value === 'org'
@@ -316,14 +312,14 @@ async function saveItem() {
   if (editIndex.value === null) {
     res = await apiFetch(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(form.value)
     })
   } else {
     const id = list.value[editIndex.value]._id
     res = await apiFetch(`${url}/${id}`, {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(form.value)
     })
   }
@@ -334,12 +330,10 @@ async function saveItem() {
 }
 
 function deleteItem(type, index) {
-  const token = localStorage.getItem('token') || ''
   const list = type === 'org' ? orgList : type === 'dept' ? deptList : subList
   const id = list.value[index]._id
   apiFetch(`${urlOf(type)}/${id}`, {
-    method: 'DELETE',
-    headers: { Authorization: `Bearer ${token}` }
+    method: 'DELETE'
   }).then(res => {
     if (res.ok) {
       list.value.splice(index, 1)

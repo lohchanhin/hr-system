@@ -13,14 +13,14 @@
           </el-form-item>
   
           <el-form-item label="帳號">
-            <el-input v-model="loginForm.username" placeholder="隨意輸入" />
+            <el-input v-model="loginForm.username" placeholder="請輸入帳號" />
           </el-form-item>
-          
+
           <el-form-item label="密碼">
             <el-input
               v-model="loginForm.password"
               type="password"
-              placeholder="目前不做驗證"
+              placeholder="請輸入密碼"
             />
           </el-form-item>
   
@@ -43,46 +43,50 @@ const router = useRouter()
 const menuStore = useMenuStore()
   
   const loginForm = ref({
-    role: 'employee',   // 預設員工
+    role: 'employee',
     username: '',
     password: ''
   })
   const loginFormRef = ref(null)
   
 async function onLogin () {
-  const res = await apiFetch('/api/login', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username: loginForm.value.username, password: loginForm.value.password })
-  })
-  if (res.ok) {
+  try {
+    const res = await apiFetch('/api/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: loginForm.value.username, password: loginForm.value.password })
+    })
     const data = await res.json()
-    setToken(data.token)
-    localStorage.setItem('role', data.user.role)
-    localStorage.setItem('employeeId', data.user.employeeId)
-    await menuStore.fetchMenu()
+    if (res.ok) {
+      setToken(data.token)
+      localStorage.setItem('role', data.user.role)
+      localStorage.setItem('employeeId', data.user.employeeId)
+      await menuStore.fetchMenu()
 
-    switch (data.user.role) {
-      case 'employee':
-        router.push('/front/attendance')
-        break
-      case 'supervisor':
-        router.push('/front/schedule')
-        break
-      case 'admin':
-        const first = menuStore.items[0]
-        if (first) {
-          router.push({ name: first.name })
-        } else {
-          router.push('/layout')
-        }
-        break
-      default:
-        router.push('/front/attendance')
-        break
+      switch (data.user.role) {
+        case 'employee':
+          router.push('/front/attendance')
+          break
+        case 'supervisor':
+          router.push('/front/schedule')
+          break
+        case 'admin':
+          const first = menuStore.items[0]
+          if (first) {
+            router.push({ name: first.name })
+          } else {
+            router.push('/layout')
+          }
+          break
+        default:
+          router.push('/front/attendance')
+          break
+      }
+    } else {
+      alert(data.message || '登入失敗')
     }
-  } else {
-    alert('登入失敗')
+  } catch (err) {
+    alert(`登入失敗: ${err.message}`)
   }
 }
   </script>

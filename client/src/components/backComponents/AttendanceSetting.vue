@@ -126,45 +126,43 @@
   import { ref, onMounted } from 'vue'
   import { apiFetch } from '../../api'
 
-  const token = localStorage.getItem('token') || ''
 
-  async function loadSettings() {
-    const res = await apiFetch('/api/attendance-settings', {
-      headers: { Authorization: `Bearer ${token}` }
-    })
-    if (res.ok) {
-      const data = await res.json()
-      if (data.shifts) shiftList.value = data.shifts
-      if (data.abnormalRules) abnormalForm.value = { ...abnormalForm.value, ...data.abnormalRules }
-      if (data.breakOutRules) breakOutForm.value = { ...breakOutForm.value, ...data.breakOutRules }
-      if (data.overtimeRules) overtimeForm.value = { ...overtimeForm.value, ...data.overtimeRules }
-    }
+async function loadSettings() {
+  const res = await apiFetch('/api/attendance-settings')
+  if (res.ok) {
+    const data = await res.json()
+    if (data.abnormalRules) abnormalForm.value = { ...abnormalForm.value, ...data.abnormalRules }
+    if (data.breakOutRules) breakOutForm.value = { ...breakOutForm.value, ...data.breakOutRules }
+    if (data.overtimeRules) overtimeForm.value = { ...overtimeForm.value, ...data.overtimeRules }
   }
+}
 
-  async function saveSettings() {
-    const payload = {
-      shifts: shiftList.value,
-      abnormalRules: abnormalForm.value,
-      breakOutRules: breakOutForm.value,
-      overtimeRules: overtimeForm.value
-    }
-    await apiFetch('/api/attendance-settings', {
-      method: 'PUT',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`
-      },
-      body: JSON.stringify(payload)
-    })
+async function loadShifts() {
+  const res = await apiFetch('/api/shifts')
+  if (res.ok) {
+    shiftList.value = await res.json()
   }
+}
+
+async function saveSettings() {
+  const payload = {
+    abnormalRules: abnormalForm.value,
+    breakOutRules: breakOutForm.value,
+    overtimeRules: overtimeForm.value
+  }
+  await apiFetch('/api/attendance-settings', {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(payload)
+  })
+}
   
   const activeTab = ref('shift')
   
-  // ================ 班別設定 ================
-  const shiftList = ref([
-    { name: '早班', startTime: '08:00', endTime: '17:00', breakTime: '12:00~13:00' },
-    { name: '晚班', startTime: '16:00', endTime: '00:00', breakTime: '20:00~20:30' }
-  ])
+// ================ 班別設定 ================
+const shiftList = ref([])
   const shiftDialogVisible = ref(false)
   const timeFormat = 'HH:mm'
   
@@ -191,21 +189,46 @@
   }
   
   // 儲存 (新增或編輯)
-  const saveShift = () => {
+  const saveShift = async () => {
     if (editIndex === null) {
       // 新增
-      shiftList.value.push({ ...shiftForm.value })
+      const res = await apiFetch('/api/shifts', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(shiftForm.value)
+      })
+      if (res.ok) {
+        const newShift = await res.json()
+        shiftList.value.push(newShift)
+      }
     } else {
       // 編輯
-      shiftList.value[editIndex] = { ...shiftForm.value }
+      const id = shiftList.value[editIndex]._id
+      const res = await apiFetch(`/api/shifts/${id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(shiftForm.value)
+      })
+      if (res.ok) {
+        const updated = await res.json()
+        shiftList.value[editIndex] = updated
+      }
     }
     shiftDialogVisible.value = false
-    saveSettings()
   }
-  
-  const deleteShift = (index) => {
-    shiftList.value.splice(index, 1)
-    saveSettings()
+
+  const deleteShift = async (index) => {
+    const id = shiftList.value[index]._id
+    const res = await apiFetch(`/api/shifts/${id}`, {
+      method: 'DELETE'
+    })
+    if (res.ok) {
+      shiftList.value.splice(index, 1)
+    }
   }
   
   // ================ 異常判定規則 ================
@@ -245,8 +268,11 @@
     alert('已儲存「加班規則」設定')
   }
 
-  onMounted(loadSettings)
-  </script>
+  onMounted(() => {
+    loadSettings()
+    loadShifts()
+  })
+</script>
   
   <style scoped>
   .attendance-setting {

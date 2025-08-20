@@ -49,8 +49,12 @@ export async function listSchedules(req, res) {
 
 export async function createSchedule(req, res) {
   try {
-    const schedule = new ShiftSchedule(req.body);
-    await schedule.save();
+    const { employee, date, shiftId } = req.body;
+    const schedule = await ShiftSchedule.findOneAndUpdate(
+      { employee, date },
+      { shiftId },
+      { upsert: true, new: true, setDefaultsOnInsert: true }
+    );
     res.status(201).json(schedule);
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -87,6 +91,18 @@ export async function deleteSchedule(req, res) {
   }
 }
 
+export async function deleteOldSchedules(req, res) {
+  try {
+    const { before } = req.query;
+    if (!before) return res.status(400).json({ error: 'before required' });
+    const cutoff = new Date(before);
+    const result = await ShiftSchedule.deleteMany({ date: { $lt: cutoff } });
+    res.json({ deleted: result.deletedCount ?? 0 });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+}
+
 export async function exportSchedules(req, res) {
   try {
     const schedules = await ShiftSchedule.find().populate('employee');
@@ -104,13 +120,13 @@ export async function exportSchedules(req, res) {
       ws.columns = [
         { header: 'Employee', key: 'employee' },
         { header: 'Date', key: 'date' },
-        { header: 'Shift Type', key: 'shiftType' }
+        { header: 'Shift ID', key: 'shiftId' }
       ];
       schedules.forEach((s) => {
         ws.addRow({
           employee: s.employee?.name ?? '',
           date: new Date(s.date).toISOString().split('T')[0],
-          shiftType: s.shiftType
+          shiftId: s.shiftId
         });
       });
       res.setHeader(
@@ -138,7 +154,7 @@ export async function exportSchedules(req, res) {
           .text(
             `${s.employee?.name ?? ''}\t${new Date(s.date)
               .toISOString()
-              .split('T')[0]}\t${s.shiftType}`
+              .split('T')[0]}\t${s.shiftId}`
           );
       });
       doc.pipe(res);

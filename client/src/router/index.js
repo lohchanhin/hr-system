@@ -100,7 +100,7 @@ const routes = [
         path: 'approval',
         name: 'Approval',
         component: Approval,
-        meta: { roles: ['supervisor', 'admin'] }
+        meta: { roles: ['employee', 'supervisor', 'admin'] }
       }
     ]
   },

@@ -1,10 +1,40 @@
-import { Router } from 'express';
-import { listApprovals, approve, reject } from '../controllers/approvalController.js';
+import { Router } from 'express'
+import {
+  listFormTemplates, createFormTemplate, getFormTemplate, updateFormTemplate, deleteFormTemplate,
+  addField, updateField, deleteField, listFields,
+  getWorkflow, setWorkflow,
+} from '../controllers/approvalTemplateController.js'
 
-const router = Router();
+import {
+  createApprovalRequest, getApprovalRequest, myApprovalRequests, inboxApprovals, actOnApproval,
+} from '../controllers/approvalRequestController.js'
 
-router.get('/', listApprovals);
-router.post('/:id/approve', approve);
-router.post('/:id/reject', reject);
+import { authorizeRoles } from '../middleware/auth.js'
 
-export default router;
+const router = Router()
+
+// Form Template
+router.get('/forms', authorizeRoles('employee', 'supervisor', 'admin'), listFormTemplates)
+router.post('/forms', authorizeRoles('admin'), createFormTemplate)
+router.get('/forms/:id', authorizeRoles('employee', 'supervisor', 'admin'), getFormTemplate)
+router.put('/forms/:id', authorizeRoles('admin'), updateFormTemplate)
+router.delete('/forms/:id', authorizeRoles('admin'), deleteFormTemplate)
+
+// Fields
+router.get('/forms/:formId/fields', authorizeRoles('employee', 'supervisor', 'admin'), listFields)
+router.post('/forms/:formId/fields', authorizeRoles('admin'), addField)
+router.put('/forms/:formId/fields/:fieldId', authorizeRoles('admin'), updateField)
+router.delete('/forms/:formId/fields/:fieldId', authorizeRoles('admin'), deleteField)
+
+// Workflow
+router.get('/forms/:formId/workflow', authorizeRoles('employee', 'supervisor', 'admin'), getWorkflow)
+router.put('/forms/:formId/workflow', authorizeRoles('admin'), setWorkflow)
+
+// Requests
+router.post('/approvals', authorizeRoles('employee', 'supervisor', 'admin'), createApprovalRequest)
+router.get('/approvals/:id', authorizeRoles('employee', 'supervisor', 'admin'), getApprovalRequest)
+router.get('/approvals', authorizeRoles('employee', 'supervisor', 'admin'), myApprovalRequests)
+router.get('/inbox', authorizeRoles('employee', 'supervisor', 'admin'), inboxApprovals)
+router.post('/approvals/:id/act', authorizeRoles('employee', 'supervisor', 'admin'), actOnApproval)
+
+export default router

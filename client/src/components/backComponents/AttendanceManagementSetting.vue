@@ -103,12 +103,9 @@ import { apiFetch } from '../../api'
   })
 
   const settingId = ref('')
-  const token = localStorage.getItem('token') || ''
 
   async function fetchSetting() {
-    const res = await apiFetch('/api/attendance-settings', {
-      headers: { Authorization: `Bearer ${token}` }
-    })
+    const res = await apiFetch('/api/attendance-settings')
     if (res.ok) {
       const data = await res.json()
       if (data.length) {
@@ -124,13 +121,13 @@ import { apiFetch } from '../../api'
     if (settingId.value) {
       res = await apiFetch(`/api/attendance-settings/${settingId.value}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       })
     } else {
       res = await apiFetch('/api/attendance-settings', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       })
     }
