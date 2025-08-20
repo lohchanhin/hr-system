@@ -20,11 +20,26 @@
               <el-option
                 v-for="opt in shifts"
                 :key="opt._id"
-                :label="opt.name"
+                :label="opt.code"
                 :value="opt._id"
               />
             </el-select>
-            <span v-else>{{ shiftName(scheduleMap[row._id]?.[d]?.shiftId) || '' }}</span>
+            <el-popover
+              v-else
+              v-if="shiftInfo(scheduleMap[row._id][d].shiftId)"
+              placement="top"
+              trigger="click"
+            >
+              <p>上班：{{ shiftInfo(scheduleMap[row._id][d].shiftId).startTime }}</p>
+              <p>下班：{{ shiftInfo(scheduleMap[row._id][d].shiftId).endTime }}</p>
+              <p v-if="shiftInfo(scheduleMap[row._id][d].shiftId).remark">
+                備註：{{ shiftInfo(scheduleMap[row._id][d].shiftId).remark }}
+              </p>
+              <template #reference>
+                <span>{{ shiftInfo(scheduleMap[row._id][d].shiftId).code }}</span>
+              </template>
+            </el-popover>
+            <span v-else></span>
           </template>
           <span v-else>-</span>
         </template>
@@ -63,7 +78,13 @@ async function fetchShiftOptions() {
     const data = await res.json()
     const list = Array.isArray(data?.shifts) ? data.shifts : data
     if (Array.isArray(list)) {
-      shifts.value = list.map(s => ({ _id: s._id, name: s.name }))
+      shifts.value = list.map(s => ({
+        _id: s._id,
+        code: s.code,
+        startTime: s.startTime,
+        endTime: s.endTime,
+        remark: s.remark
+      }))
     }
   } else {
     if (res.status === 403) {
@@ -146,9 +167,8 @@ async function onSelect(empId, day, value) {
   }
 }
 
-function shiftName(id) {
-  const found = shifts.value.find(s => s._id === id)
-  return found?.name || ''
+function shiftInfo(id) {
+  return shifts.value.find(s => s._id === id)
 }
 
 async function fetchEmployees() {

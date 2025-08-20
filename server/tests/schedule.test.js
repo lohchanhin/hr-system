@@ -77,7 +77,7 @@ beforeEach(() => {
 /* --------------------------------- Tests -------------------------------- */
 describe('Schedule API', () => {
   it('lists schedules', async () => {
-    const fakeSchedules = [{ shiftId: 's1' }];
+    const fakeSchedules = [{ shiftId: 's1', code: 'A', startTime: '09:00', endTime: '18:00' }];
     mockShiftSchedule.find.mockReturnValue({ populate: jest.fn().mockResolvedValue(fakeSchedules) });
 
     const res = await request(app).get('/api/schedules');
@@ -159,7 +159,7 @@ describe('Schedule API', () => {
   });
 
   it('lists schedules by month (with employee filter)', async () => {
-    const fake = [{ shiftId: 'night' }];
+    const fake = [{ shiftId: 'night', code: 'N', startTime: '00:00', endTime: '08:00' }];
     mockShiftSchedule.find.mockReturnValue({ populate: jest.fn().mockResolvedValue(fake) });
 
     const res = await request(app).get('/api/schedules/monthly?month=2023-01&employee=e1');
@@ -173,7 +173,10 @@ describe('Schedule API', () => {
     const fakeEmployees = [{ _id: 'e1' }, { _id: 'e2' }];
     mockEmployee.find.mockResolvedValue(fakeEmployees);
 
-    const fakeSchedules = [{ employee: 'e1' }, { employee: 'e2' }];
+    const fakeSchedules = [
+      { employee: 'e1', shiftId: 's1', code: 'A' },
+      { employee: 'e2', shiftId: 's2', code: 'B' }
+    ];
     mockShiftSchedule.find.mockReturnValue({ populate: jest.fn().mockResolvedValue(fakeSchedules) });
 
     const res = await request(app).get('/api/schedules/monthly?month=2023-01&supervisor=s1');

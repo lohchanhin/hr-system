@@ -56,6 +56,7 @@
           <div class="tab-content">
             <el-button type="primary" @click="openShiftDialog()">新增班別</el-button>
             <el-table :data="shiftList" style="margin-top: 20px;">
+              <el-table-column prop="code" label="代碼" width="100" />
               <el-table-column prop="name" label="班別名稱" width="160" />
               <el-table-column prop="startTime" label="上班時間" width="120" />
               <el-table-column prop="endTime" label="下班時間" width="120" />
@@ -72,6 +73,9 @@
             <!-- 新增/編輯 班別 Dialog -->
             <el-dialog v-model="shiftDialogVisible" title="班別資料" width="500px">
               <el-form :model="shiftForm" label-width="120px">
+                <el-form-item label="班別代碼">
+                  <el-input v-model="shiftForm.code" placeholder="如：A1" />
+                </el-form-item>
                 <el-form-item label="班別名稱">
                   <el-input v-model="shiftForm.name" placeholder="如：早班 / 夜班 / 彈性班" />
                 </el-form-item>
@@ -254,6 +258,7 @@ async function fetchHolidays() {
 
   const shiftForm = ref({
     name: '',
+    code: '',
     startTime: '',
     endTime: '',
     crossDay: false,
@@ -282,6 +287,7 @@ async function fetchShifts() {
       shiftEditIndex = null
       shiftForm.value = {
         name: '',
+        code: '',
         startTime: '',
         endTime: '',
         crossDay: false,
