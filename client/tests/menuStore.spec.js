@@ -7,6 +7,7 @@ describe('menu store', () => {
     setActivePinia(createPinia())
     vi.stubGlobal('fetch', vi.fn())
     localStorage.setItem('token', 'tok')
+    localStorage.setItem('role', 'employee')
   })
 
   afterEach(() => {
@@ -17,13 +18,14 @@ describe('menu store', () => {
   it('fetchMenu stores items', async () => {
     fetch.mockResolvedValueOnce({
       ok: true,
-      json: async () => ([{ name: 'a' }, { name: 'OrgDepartmentSetting' }])
+      json: async () => ([{ name: 'Approval' }, { name: 'OrgDepartmentSetting' }])
     })
     const store = useMenuStore()
     await store.fetchMenu()
-    expect(fetch).toHaveBeenCalledWith('/api/menu', expect.objectContaining({
+    expect(fetch).toHaveBeenCalledWith('http://localhost:3000/api/menu', expect.objectContaining({
       headers: expect.objectContaining({ Authorization: 'Bearer tok' })
     }))
-    expect(store.items).toEqual([{ name: 'a' }, { name: 'OrgDepartmentSetting' }])
+    expect(store.items).toEqual([{ name: 'Approval' }, { name: 'OrgDepartmentSetting' }])
+    expect(store.items.find(i => i.name === 'Approval')).toBeDefined()
   })
 })
