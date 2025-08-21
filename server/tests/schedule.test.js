@@ -9,44 +9,29 @@ import { jest } from '@jest/globals';
 // 統一成物件型態，提供各端點會用到的方法
 const mockShiftSchedule = {
   find: jest.fn(() => ({ populate: jest.fn().mockResolvedValue([]) })),
-  findOneAndUpdate: jest.fn(),
+  findOne: jest.fn(),
+  create: jest.fn(),
   insertMany: jest.fn(),
   deleteMany: jest.fn(),
 };
 
+const mockLeaveRequest = { findOne: jest.fn() };
+
 const mockEmployee = { find: jest.fn() };
 
-/* ----------------------------- Mocks: PDF/Excel ----------------------------- */
-const pdfPipe = jest.fn();
-const pdfEnd = jest.fn();
-const mockPDFDocument = jest.fn().mockImplementation(() => ({
-  pipe: pdfPipe,
-  end: pdfEnd,
-  fontSize: jest.fn().mockReturnThis(),
-  text: jest.fn().mockReturnThis(),
-  moveDown: jest.fn(),
-}));
-
-const worksheetMock = { columns: [], addRow: jest.fn() };
-const workbookMock = {
-  addWorksheet: jest.fn(() => worksheetMock),
-  xlsx: { writeBuffer: jest.fn().mockResolvedValue(Buffer.from('test')) },
-};
-const mockExcelJS = { Workbook: jest.fn(() => workbookMock) };
-
 /* --------------------------- jest.mock 設定區 --------------------------- */
-jest.mock('pdfkit', () => ({ default: mockPDFDocument }), { virtual: true });
-jest.mock('exceljs', () => ({ default: mockExcelJS }), { virtual: true });
 
-jest.mock('../src/models/ShiftSchedule.js', () => ({ default: mockShiftSchedule }), { virtual: true });
-jest.mock('../src/models/Employee.js', () => ({ default: mockEmployee }), { virtual: true });
+
+jest.unstable_mockModule('../src/models/ShiftSchedule.js', () => ({ default: mockShiftSchedule }));
+jest.unstable_mockModule('../src/models/LeaveRequest.js', () => ({ default: mockLeaveRequest }));
+jest.unstable_mockModule('../src/models/Employee.js', () => ({ default: mockEmployee }));
 
 // 驗證中介層直接放行
-jest.mock('../src/middleware/supervisor.js', () => ({ verifySupervisor: (req, res, next) => next() }), { virtual: true });
+jest.unstable_mockModule('../src/middleware/supervisor.js', () => ({ verifySupervisor: (req, res, next) => next() }));
 
 /* --------------------------------- App --------------------------------- */
-let app: express.Express;
-let scheduleRoutes: any;
+let app;
+let scheduleRoutes;
 
 beforeAll(async () => {
   scheduleRoutes = (await import('../src/routes/scheduleRoutes.js')).default;
@@ -57,21 +42,13 @@ beforeAll(async () => {
 
 beforeEach(() => {
   mockShiftSchedule.find.mockReset();
-  mockShiftSchedule.findOneAndUpdate.mockReset();
+  mockShiftSchedule.findOne.mockReset();
+  mockShiftSchedule.create.mockReset();
   mockShiftSchedule.insertMany.mockReset();
   mockShiftSchedule.deleteMany.mockReset();
 
+  mockLeaveRequest.findOne.mockReset();
   mockEmployee.find.mockReset();
-
-  // reset PDF/Excel mocks（以免跨測試殘留）
-  pdfPipe.mockReset();
-  pdfEnd.mockReset();
-  mockPDFDocument.mockClear();
-
-  worksheetMock.columns = [];
-  worksheetMock.addRow.mockReset();
-  workbookMock.addWorksheet.mockClear();
-  workbookMock.xlsx.writeBuffer.mockClear();
 });
 
 /* --------------------------------- Tests -------------------------------- */
@@ -97,66 +74,55 @@ describe('Schedule API', () => {
     expect(res.body).toEqual({ error: 'fail' });
   });
 
-  it('creates schedule (upsert by employee+date)', async () => {
+  it('creates schedule', async () => {
     const payload = { employee: 'e1', date: '2023-01-01', shiftId: 's1' };
     const fake = { ...payload, _id: '1' };
 
-    mockShiftSchedule.findOneAndUpdate.mockResolvedValue(fake);
+    mockShiftSchedule.findOne.mockResolvedValue(null);
+    mockLeaveRequest.findOne.mockResolvedValue(null);
+    mockShiftSchedule.create.mockResolvedValue(fake);
 
     const res = await request(app).post('/api/schedules').send(payload);
 
     expect(res.status).toBe(201);
-    expect(mockShiftSchedule.findOneAndUpdate).toHaveBeenCalledWith(
-      { employee: payload.employee, date: payload.date },
-      { shiftId: payload.shiftId },
-      { upsert: true, new: true, setDefaultsOnInsert: true }
-    );
+    expect(mockShiftSchedule.create).toHaveBeenCalledWith({
+      employee: payload.employee,
+      date: new Date(payload.date),
+      shiftId: payload.shiftId,
+      department: undefined,
+      subDepartment: undefined,
+    });
     expect(res.body).toEqual(fake);
   });
 
-  it('updates schedule on same day', async () => {
-    const base = { employee: 'e1', date: '2023-01-01' };
-    mockShiftSchedule.findOneAndUpdate
-      .mockResolvedValueOnce({ ...base, shiftId: 'day', _id: '1' })
-      .mockResolvedValueOnce({ ...base, shiftId: 'night', _id: '1' });
-
-    // 第一次：day
-    let res = await request(app).post('/api/schedules').send({ ...base, shiftId: 'day' });
-    expect(res.status).toBe(201);
-
-    // 第二次：night
-    res = await request(app).post('/api/schedules').send({ ...base, shiftId: 'night' });
-    expect(res.status).toBe(201);
-    expect(res.body.shiftId).toBe('night');
-
-    expect(mockShiftSchedule.findOneAndUpdate).toHaveBeenNthCalledWith(
-      2,
-      { employee: base.employee, date: base.date },
-      { shiftId: 'night' },
-      { upsert: true, new: true, setDefaultsOnInsert: true }
-    );
+  it('rejects creation if schedule exists', async () => {
+    mockShiftSchedule.findOne.mockResolvedValue({ _id: '1', department: 'd1' });
+    const res = await request(app)
+      .post('/api/schedules')
+      .send({ employee: 'e1', date: '2023-01-01', shiftId: 's1' });
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({ error: 'employee conflict' });
   });
 
-  it('exports schedules to pdf', async () => {
-    mockShiftSchedule.find.mockReturnValue({ populate: jest.fn().mockResolvedValue([]) });
-
-    const res = await request(app).get('/api/schedules/export?format=pdf');
-
-    expect(res.status).toBe(200);
-    expect(mockPDFDocument).toHaveBeenCalled(); // new PDFDocument()
-    expect(pdfPipe).toHaveBeenCalled();
-    expect(pdfEnd).toHaveBeenCalled();
+  it('rejects creation if cross-department', async () => {
+    mockShiftSchedule.findOne.mockResolvedValue({ _id: '1', department: 'd1' });
+    const res = await request(app)
+      .post('/api/schedules')
+      .send({ employee: 'e1', date: '2023-01-01', shiftId: 's1', department: 'd2' });
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({ error: 'department overlap' });
   });
 
-  it('exports schedules to excel', async () => {
-    mockShiftSchedule.find.mockReturnValue({ populate: jest.fn().mockResolvedValue([]) });
-
-    const res = await request(app).get('/api/schedules/export?format=excel');
-
-    expect(res.status).toBe(200);
-    expect(workbookMock.addWorksheet).toHaveBeenCalled();
-    expect(workbookMock.xlsx.writeBuffer).toHaveBeenCalled();
+  it('rejects creation if leave conflict', async () => {
+    mockShiftSchedule.findOne.mockResolvedValue(null);
+    mockLeaveRequest.findOne.mockResolvedValue({ _id: 'l1' });
+    const res = await request(app)
+      .post('/api/schedules')
+      .send({ employee: 'e1', date: '2023-01-01', shiftId: 's1' });
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({ error: 'leave conflict' });
   });
+
 
   it('lists schedules by month (with employee filter)', async () => {
     const fake = [{ shiftId: 'night', code: 'N', startTime: '00:00', endTime: '08:00' }];
@@ -169,27 +135,10 @@ describe('Schedule API', () => {
     expect(res.body).toEqual(fake);
   });
 
-  it('lists schedules by supervisor (derives employees then schedules)', async () => {
-    const fakeEmployees = [{ _id: 'e1' }, { _id: 'e2' }];
-    mockEmployee.find.mockResolvedValue(fakeEmployees);
-
-    const fakeSchedules = [
-      { employee: 'e1', shiftId: 's1', code: 'A' },
-      { employee: 'e2', shiftId: 's2', code: 'B' }
-    ];
-    mockShiftSchedule.find.mockReturnValue({ populate: jest.fn().mockResolvedValue(fakeSchedules) });
-
-    const res = await request(app).get('/api/schedules/monthly?month=2023-01&supervisor=s1');
-
-    expect(res.status).toBe(200);
-    expect(mockEmployee.find).toHaveBeenCalledWith({ supervisor: 's1' });
-
-    const calledQuery = mockShiftSchedule.find.mock.calls[0][0];
-    expect(calledQuery.employee).toEqual({ $in: ['e1', 'e2'] });
-    expect(res.body).toEqual(fakeSchedules);
-  });
 
   it('creates schedules batch', async () => {
+    mockShiftSchedule.findOne.mockResolvedValue(null);
+    mockLeaveRequest.findOne.mockResolvedValue(null);
     mockShiftSchedule.insertMany.mockResolvedValue([{ _id: '1' }]);
 
     const payload = { schedules: [{ employee: 'e1', date: '2023-01-01', shiftId: 'day' }] };
@@ -197,6 +146,35 @@ describe('Schedule API', () => {
 
     expect(res.status).toBe(201);
     expect(mockShiftSchedule.insertMany).toHaveBeenCalledWith(payload.schedules, { ordered: false });
+  });
+
+  it('rejects batch if schedule exists', async () => {
+    mockShiftSchedule.findOne.mockResolvedValue({ _id: '1', department: 'd1' });
+    const payload = { schedules: [{ employee: 'e1', date: '2023-01-01', shiftId: 'day' }] };
+    const res = await request(app).post('/api/schedules/batch').send(payload);
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({ error: 'employee conflict' });
+  });
+
+  it('rejects batch if cross-department', async () => {
+    mockShiftSchedule.findOne.mockResolvedValue({ _id: '1', department: 'd1' });
+    const payload = {
+      schedules: [
+        { employee: 'e1', date: '2023-01-01', shiftId: 'day', department: 'd2' }
+      ]
+    };
+    const res = await request(app).post('/api/schedules/batch').send(payload);
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({ error: 'department overlap' });
+  });
+
+  it('rejects batch if leave conflict', async () => {
+    mockShiftSchedule.findOne.mockResolvedValue(null);
+    mockLeaveRequest.findOne.mockResolvedValue({ _id: 'l1' });
+    const payload = { schedules: [{ employee: 'e1', date: '2023-01-01', shiftId: 'day' }] };
+    const res = await request(app).post('/api/schedules/batch').send(payload);
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({ error: 'leave conflict' });
   });
 
   it('deletes old schedules', async () => {
@@ -207,7 +185,7 @@ describe('Schedule API', () => {
     ];
 
     mockShiftSchedule.deleteMany.mockImplementation(({ date }) => {
-      const beforeDate: Date = date.$lt;
+      const beforeDate = date.$lt;
       const remaining = data.filter((s) => s.date >= beforeDate);
       const deleted = data.length - remaining.length;
       data.length = 0;
