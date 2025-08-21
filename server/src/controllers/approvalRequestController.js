@@ -158,10 +158,10 @@ export async function inboxApprovals(req, res) {
     // 找出目前關卡包含我，且我的 decision 是 pending 的
     const list = await ApprovalRequest.find({
       status: 'pending',
-      $expr: { $eq: ['$current_step_index', { $indexOfArray: ['$steps.step_order', { $add: [ '$current_step_index', 1 ] }] }] } // 只是保險；也可不寫
-    })
-      .populate('form', 'name category')
-    // 因為上面 $expr 寫起來繁瑣，這裡用程式過濾較直觀：
+      'steps.approvers.approver': empId,
+      'steps.approvers.decision': 'pending',
+    }).populate('form', 'name category')
+    // 仍以程式邏輯判斷是否為當前關卡：
     const mine = list.filter(doc => {
       const step = doc.steps?.[doc.current_step_index]
       if (!step) return false
