@@ -2,6 +2,13 @@
   <div class="schedule-page">
     <h2>排班管理</h2>
     <el-date-picker v-model="currentMonth" type="month" @change="fetchSchedules" />
+    <div class="actions">
+      <el-button type="primary" @click="saveAll">儲存</el-button>
+      <el-button @click="preview('week')">預覽週表</el-button>
+      <el-button @click="preview('month')">預覽月表</el-button>
+      <el-button @click="() => exportSchedules('pdf')">匯出 PDF</el-button>
+      <el-button @click="() => exportSchedules('excel')">匯出 Excel</el-button>
+    </div>
     <el-table :data="employees" style="margin-top: 20px;">
       <el-table-column label="樓層／單位">
         <template #default="{ row }">
@@ -71,12 +78,15 @@ import dayjs from 'dayjs'
 import { apiFetch } from '../../api'
 import { useAuthStore } from '../../stores/auth'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { useRouter } from 'vue-router'
 
 const currentMonth = ref(dayjs().format('YYYY-MM'))
 const scheduleMap = ref({})
 const shifts = ref([])
 const employees = ref([])
 const approvalList = ref([])
+
+const router = useRouter()
 
 const authStore = useAuthStore()
 authStore.loadUser()
@@ -167,6 +177,74 @@ async function fetchSchedules() {
   } catch (err) {
     console.error(err)
     ElMessage.error('取得排班資料失敗')
+  }
+}
+
+async function saveAll() {
+  const schedules = []
+  Object.keys(scheduleMap.value).forEach(empId => {
+    Object.keys(scheduleMap.value[empId]).forEach(day => {
+      const item = scheduleMap.value[empId][day]
+      if (item.shiftId && !item.id) {
+        schedules.push({
+          employee: empId,
+          date: `${currentMonth.value}-${String(day).padStart(2, '0')}`,
+          shiftId: item.shiftId
+        })
+      }
+    })
+  })
+  if (!schedules.length) return
+  try {
+    const res = await apiFetch('/api/schedules/batch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ schedules })
+    })
+    if (!res.ok) throw new Error('save failed')
+    const inserted = await res.json()
+    inserted.forEach(it => {
+      const empId = it.employee?._id || it.employee
+      const d = dayjs(it.date).date()
+      if (!scheduleMap.value[empId]) scheduleMap.value[empId] = {}
+      scheduleMap.value[empId][d] = { id: it._id, shiftId: it.shiftId }
+    })
+    ElMessage.success('儲存完成')
+  } catch (err) {
+    ElMessage.error('儲存失敗')
+  }
+}
+
+function preview(type) {
+  sessionStorage.setItem(
+    'schedulePreview',
+    JSON.stringify({
+      scheduleMap: scheduleMap.value,
+      employees: employees.value,
+      days: days.value,
+      shifts: shifts.value
+    })
+  )
+  router.push({ name: type === 'week' ? 'PreviewWeek' : 'PreviewMonth' })
+}
+
+async function exportSchedules(format) {
+  try {
+    const res = await apiFetch(
+      `/api/schedules/export?month=${currentMonth.value}&format=${format}`
+    )
+    if (!res.ok) throw new Error()
+    const blob = await res.blob()
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `schedules-${currentMonth.value}.${
+      format === 'excel' ? 'xlsx' : 'pdf'
+    }`
+    a.click()
+    URL.revokeObjectURL(url)
+  } catch (err) {
+    ElMessage.error('匯出失敗')
   }
 }
 
@@ -261,6 +339,9 @@ onMounted(async () => {
 <style scoped>
 .schedule-page {
   padding: 20px;
+}
+.actions {
+  margin: 10px 0;
 }
 .is-leave {
   background-color: #fde2e2;
