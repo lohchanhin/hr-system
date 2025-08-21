@@ -6,15 +6,19 @@ const mockApprovalRequest = { find: jest.fn() }
 const mockUser = { findById: jest.fn() }
 
 let app
-let inboxApprovals
+let approvalRoutes
 
 beforeAll(async () => {
   await jest.unstable_mockModule('../src/models/approval_request.js', () => ({ default: mockApprovalRequest }))
   await jest.unstable_mockModule('../src/models/User.js', () => ({ default: mockUser }))
-  ;({ inboxApprovals } = await import('../src/controllers/approvalRequestController.js'))
+  await jest.unstable_mockModule('../src/middleware/auth.js', () => ({
+    authenticate: (req, res, next) => { req.user = { role: 'supervisor' }; next() },
+    authorizeRoles: () => (req, res, next) => next()
+  }))
+  approvalRoutes = (await import('../src/routes/approvalRoutes.js')).default
   app = express()
   app.use(express.json())
-  app.get('/api/approvals/inbox', inboxApprovals)
+  app.use('/api/approvals', approvalRoutes)
 })
 
 beforeEach(() => {
@@ -22,8 +26,8 @@ beforeEach(() => {
   mockUser.findById.mockReset()
 })
 
-describe('inboxApprovals', () => {
-  it('returns pending approvals for employee', async () => {
+describe('GET /api/approvals/inbox', () => {
+  it('returns pending approvals for supervisor', async () => {
     const docs = [{
       steps: [{ approvers: [{ approver: 'emp1', decision: 'pending' }] }],
       current_step_index: 0,
