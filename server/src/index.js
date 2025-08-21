@@ -244,7 +244,7 @@ app.use(
   authenticate,
   (req, res, next) => {
     if (req.method === 'GET') {
-      return authorizeRoles('admin', 'supervisor')(req, res, next);
+      return authorizeRoles('admin', 'supervisor', 'employee')(req, res, next);
     }
     return authorizeRoles('admin')(req, res, next);
   },
@@ -284,8 +284,28 @@ app.use('/api/insurance', authenticate, authorizeRoles('admin'), insuranceRoutes
 app.use('/api/approvals', authenticate, approvalRoutes);
 app.use('/api/menu', authenticate, menuRoutes);
 app.use('/api/users', authenticate, authorizeRoles('admin'), userRoutes);
-app.use('/api/departments', authenticate, authorizeRoles('admin'), departmentRoutes);
-app.use('/api/organizations', authenticate, authorizeRoles('admin'), organizationRoutes);
+app.use(
+  '/api/departments',
+  authenticate,
+  (req, res, next) => {
+    if (req.method === 'GET') {
+      return authorizeRoles('admin', 'supervisor', 'employee')(req, res, next);
+    }
+    return authorizeRoles('admin')(req, res, next);
+  },
+  departmentRoutes
+);
+app.use(
+  '/api/organizations',
+  authenticate,
+  (req, res, next) => {
+    if (req.method === 'GET') {
+      return authorizeRoles('admin', 'supervisor', 'employee')(req, res, next);
+    }
+    return authorizeRoles('admin')(req, res, next);
+  },
+  organizationRoutes
+);
 app.use('/api/sub-departments', authenticate, authorizeRoles('admin'), subDepartmentRoutes);
 app.use('/api/dept-schedules', authenticate, authorizeRoles('admin'), deptScheduleRoutes);
 

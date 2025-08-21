@@ -8,7 +8,7 @@ mockOrganization.find = jest.fn();
 mockOrganization.findByIdAndUpdate = jest.fn();
 mockOrganization.findByIdAndDelete = jest.fn();
 
-jest.mock('../src/models/Organization.js', () => ({ default: mockOrganization }), { virtual: true });
+jest.unstable_mockModule('../src/models/Organization.js', () => ({ default: mockOrganization }));
 
 let app;
 let organizationRoutes;
@@ -53,5 +53,35 @@ describe('Organization API', () => {
     const res = await request(app).delete('/api/organizations/1');
     expect(res.status).toBe(200);
     expect(mockOrganization.findByIdAndDelete).toHaveBeenCalledWith('1');
+  });
+});
+
+describe('Organization authorization middleware', () => {
+  it('allows employee to list but not create', async () => {
+    const { authorizeRoles } = await import('../src/middleware/auth.js');
+    const authenticate = (req, res, next) => {
+      req.user = { role: 'employee' };
+      next();
+    };
+    const appAuth = express();
+    appAuth.use(express.json());
+    appAuth.use(
+      '/api/organizations',
+      authenticate,
+      (req, res, next) => {
+        if (req.method === 'GET') {
+          return authorizeRoles('admin', 'supervisor', 'employee')(req, res, next);
+        }
+        return authorizeRoles('admin')(req, res, next);
+      },
+      organizationRoutes
+    );
+
+    mockOrganization.find.mockResolvedValue([]);
+    const resList = await request(appAuth).get('/api/organizations');
+    expect(resList.status).toBe(200);
+
+    const resCreate = await request(appAuth).post('/api/organizations').send({});
+    expect(resCreate.status).toBe(403);
   });
 });
