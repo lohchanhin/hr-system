@@ -1,5 +1,7 @@
 import ShiftSchedule from '../models/ShiftSchedule.js';
 import Employee from '../models/Employee.js';
+import LeaveRequest from '../models/LeaveRequest.js';
+import ApprovalRequest from '../models/approval_request.js';
 
 export async function listMonthlySchedules(req, res) {
   try {
@@ -20,6 +22,40 @@ export async function listMonthlySchedules(req, res) {
 
     const schedules = await ShiftSchedule.find(query).populate('employee');
     res.json(schedules);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+}
+
+export async function listLeaveApprovals(req, res) {
+  try {
+    const { month, employee, supervisor } = req.query;
+    if (!month) return res.status(400).json({ error: 'month required' });
+    const start = new Date(`${month}-01`);
+    const end = new Date(start);
+    end.setMonth(end.getMonth() + 1);
+
+    let ids = [];
+    if (supervisor) {
+      const emps = await Employee.find({ supervisor }).select('_id');
+      ids = emps.map((e) => e._id.toString());
+    } else if (employee) {
+      ids = [employee];
+    }
+
+    const empFilter = ids.length ? { $in: ids } : undefined;
+
+    const leaveQuery = { startDate: { $lte: end }, endDate: { $gte: start } };
+    if (empFilter) leaveQuery.employee = empFilter;
+    const leaves = await LeaveRequest.find(leaveQuery).populate('employee');
+
+    const approvalQuery = { createdAt: { $gte: start, $lt: end } };
+    if (empFilter) approvalQuery.applicant_employee = empFilter;
+    const approvals = await ApprovalRequest.find(approvalQuery).populate(
+      'applicant_employee'
+    );
+
+    res.json({ leaves, approvals });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }

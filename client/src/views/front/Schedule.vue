@@ -15,40 +15,52 @@
         :label="d.label"
       >
         <template #default="{ row }">
-          <template v-if="scheduleMap[row._id]?.[d.date]">
-            <el-select
-              v-if="canEdit"
-              v-model="scheduleMap[row._id][d.date].shiftId"
-              placeholder=""
-              @change="val => onSelect(row._id, d.date, val)"
-            >
-              <el-option
-                v-for="opt in shifts"
-                :key="opt._id"
-                :label="opt.code"
-                :value="opt._id"
-              />
-            </el-select>
-            <el-popover
-              v-else
-              v-if="shiftInfo(scheduleMap[row._id][d.date].shiftId)"
-              placement="top"
-              trigger="click"
-            >
-              <p>上班：{{ shiftInfo(scheduleMap[row._id][d.date].shiftId).startTime }}</p>
-              <p>下班：{{ shiftInfo(scheduleMap[row._id][d.date].shiftId).endTime }}</p>
-              <p v-if="shiftInfo(scheduleMap[row._id][d.date].shiftId).remark">
-                備註：{{ shiftInfo(scheduleMap[row._id][d.date].shiftId).remark }}
-              </p>
-              <template #reference>
-                <span>{{ shiftInfo(scheduleMap[row._id][d.date].shiftId).code }}</span>
-              </template>
-            </el-popover>
-            <span v-else></span>
-          </template>
-          <span v-else>-</span>
+          <div :class="{ 'is-leave': scheduleMap[row._id]?.[d.date]?.leave }">
+            <template v-if="scheduleMap[row._id]?.[d.date]">
+              <el-select
+                v-if="canEdit"
+                v-model="scheduleMap[row._id][d.date].shiftId"
+                placeholder=""
+                @change="val => onSelect(row._id, d.date, val)"
+              >
+                <el-option
+                  v-for="opt in shifts"
+                  :key="opt._id"
+                  :label="opt.code"
+                  :value="opt._id"
+                />
+              </el-select>
+              <el-popover
+                v-else
+                v-if="shiftInfo(scheduleMap[row._id][d.date].shiftId)"
+                placement="top"
+                trigger="click"
+              >
+                <p>上班：{{ shiftInfo(scheduleMap[row._id][d.date].shiftId).startTime }}</p>
+                <p>下班：{{ shiftInfo(scheduleMap[row._id][d.date].shiftId).endTime }}</p>
+                <p v-if="shiftInfo(scheduleMap[row._id][d.date].shiftId).remark">
+                  備註：{{ shiftInfo(scheduleMap[row._id][d.date].shiftId).remark }}
+                </p>
+                <template #reference>
+                  <span>{{ shiftInfo(scheduleMap[row._id][d.date].shiftId).code }}</span>
+                </template>
+              </el-popover>
+              <span v-else></span>
+              <span v-if="scheduleMap[row._id][d.date].leave" class="leave-icon">L</span>
+            </template>
+            <span v-else>-</span>
+          </div>
         </template>
       </el-table-column>
+    </el-table>
+    <el-table :data="approvalList" style="margin-top: 20px;">
+      <el-table-column label="申請人">
+        <template #default="{ row }">{{ row.applicant_employee?.name }}</template>
+      </el-table-column>
+      <el-table-column label="類型">
+        <template #default="{ row }">{{ row.form_data?.leaveType || row.form_data?.type || '' }}</template>
+      </el-table-column>
+      <el-table-column prop="status" label="狀態" />
     </el-table>
   </div>
 </template>
@@ -63,6 +75,7 @@ const currentMonth = ref(dayjs().format('YYYY-MM'))
 const scheduleMap = ref({})
 const shifts = ref([])
 const employees = ref([])
+const approvalList = ref([])
 
 const authStore = useAuthStore()
 authStore.loadUser()
@@ -131,6 +144,25 @@ async function fetchSchedules() {
       const d = dayjs(s.date).date()
       scheduleMap.value[empId][d] = { id: s._id, shiftId: s.shiftId }
     })
+
+    const res2 = await apiFetch(
+      `/api/schedules/leave-approvals?month=${currentMonth.value}&supervisor=${supervisorId}`
+    )
+    if (res2.ok) {
+      const extra = await res2.json()
+      approvalList.value = extra.approvals || []
+      ;(extra.leaves || []).forEach(l => {
+        if (l.status !== 'approved') return
+        const empId = l.employee?._id || l.employee
+        const start = dayjs(l.startDate).date()
+        const end = dayjs(l.endDate).date()
+        for (let d = start; d <= end; d++) {
+          if (scheduleMap.value[empId]?.[d]) {
+            scheduleMap.value[empId][d].leave = { type: l.leaveType }
+          }
+        }
+      })
+    }
   } catch (err) {
     console.error(err)
     ElMessage.error('取得排班資料失敗')
@@ -212,5 +244,12 @@ onMounted(async () => {
 <style scoped>
 .schedule-page {
   padding: 20px;
+}
+.is-leave {
+  background-color: #fde2e2;
+}
+.leave-icon {
+  margin-left: 4px;
+  color: #f56c6c;
 }
 </style>
