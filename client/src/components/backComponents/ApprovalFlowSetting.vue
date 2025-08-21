@@ -91,14 +91,14 @@
               <el-table-column label="#" width="60">
                 <template #default="{ $index }">{{ $index + 1 }}</template>
               </el-table-column>
-              <el-table-column label="Approver Type" width="150">
+              <el-table-column label="簽核類型" width="150">
                 <template #default="{ row }">
                   <el-select v-model="row.approver_type" placeholder="選擇類型" style="width:140px">
                     <el-option v-for="t in APPROVER_TYPES" :key="t" :label="t" :value="t" />
                   </el-select>
                 </template>
               </el-table-column>
-              <el-table-column label="Approver Value" width="200">
+              <el-table-column label="簽核對象" width="200">
                 <template #default="{ row }">
                   <el-select v-if="row.approver_type==='user'" v-model="row.approver_value" placeholder="選擇員工" multiple>
                     <el-option v-for="e in employeeOptions" :key="e.id" :label="e.name" :value="e.id" />
@@ -109,7 +109,7 @@
                   <el-input v-else v-model="row.approver_value" placeholder="userId/標籤/角色..." />
                 </template>
               </el-table-column>
-              <el-table-column label="Scope" width="120">
+              <el-table-column label="範圍" width="120">
                 <template #default="{ row }">
                   <el-select v-model="row.scope_type" style="width:110px">
                     <el-option label="none" value="none" />
