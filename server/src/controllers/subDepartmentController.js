@@ -2,7 +2,8 @@ import SubDepartment from '../models/SubDepartment.js';
 
 export async function listSubDepartments(req, res) {
   try {
-    const subDepts = await SubDepartment.find();
+    const filter = req.query.department ? { department: req.query.department } : {};
+    const subDepts = await SubDepartment.find(filter);
     res.json(subDepts);
   } catch (err) {
     res.status(500).json({ error: err.message });
