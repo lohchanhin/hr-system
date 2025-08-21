@@ -309,7 +309,7 @@ function selectLeave() {
 }
 const fieldList = ref([])
 const workflowSteps = ref([])
-const fileBuffers = reactive({}) // { fieldId: [FileItem...] }
+const fileBuffers = ref({}) // { fieldId: [FileItem...] }
 const submitting = ref(false)
 const applyError = ref('')
 
@@ -415,9 +415,9 @@ async function submitApply() {
   try {
     // 先把 fileBuffers 轉成檔名陣列（或在這裡改為實際上傳並回寫檔案 URL）
     const payloadData = { ...applyState.formData }
-    Object.keys(fileBuffers).forEach(fid => {
-      const files = fileBuffers[fid] || []
-      payloadData[fid] = files.map(f => f.name)
+    Object.keys(fileBuffers.value).forEach(fid => {
+      const files = fileBuffers.value[fid] || []
+      payloadData[fid] = Array.isArray(files) ? files.map(f => f.name) : []
     })
 
     applyError.value = ''
