@@ -3,12 +3,16 @@ import express from 'express';
 import { jest } from '@jest/globals';
 
 const mockShiftSchedule = { findOne: jest.fn(), create: jest.fn(), insertMany: jest.fn() };
-const mockLeaveRequest = { findOne: jest.fn() };
+const mockApprovalRequest = { findOne: jest.fn() };
+const mockFormTemplate = { findOne: jest.fn() };
+const mockFormField = { find: jest.fn() };
 const mockEmployee = { findById: jest.fn() };
 const mockUser = { findById: jest.fn() };
 
 jest.unstable_mockModule('../src/models/ShiftSchedule.js', () => ({ default: mockShiftSchedule }));
-jest.unstable_mockModule('../src/models/LeaveRequest.js', () => ({ default: mockLeaveRequest }));
+jest.unstable_mockModule('../src/models/approval_request.js', () => ({ default: mockApprovalRequest }));
+jest.unstable_mockModule('../src/models/form_template.js', () => ({ default: mockFormTemplate }));
+jest.unstable_mockModule('../src/models/form_field.js', () => ({ default: mockFormField }));
 jest.unstable_mockModule('../src/models/Employee.js', () => ({ default: mockEmployee }));
 jest.unstable_mockModule('../src/models/User.js', () => ({ default: mockUser }));
 
@@ -30,7 +34,12 @@ beforeEach(() => {
   mockShiftSchedule.findOne.mockReset();
   mockShiftSchedule.create.mockReset();
   mockShiftSchedule.insertMany.mockReset();
-  mockLeaveRequest.findOne.mockReset();
+  mockApprovalRequest.findOne.mockReset();
+  mockFormTemplate.findOne.mockResolvedValue({ _id: 'form1' });
+  mockFormField.find.mockResolvedValue([
+    { _id: 's', label: '開始日期' },
+    { _id: 'e', label: '結束日期' },
+  ]);
   mockEmployee.findById.mockReset();
   mockUser.findById.mockReset();
 });
@@ -42,7 +51,7 @@ describe('Supervisor schedule permissions', () => {
     });
     mockEmployee.findById.mockResolvedValue({ _id: 'emp1', supervisor: 'sup1' });
     mockShiftSchedule.findOne.mockResolvedValue(null);
-    mockLeaveRequest.findOne.mockResolvedValue(null);
+    mockApprovalRequest.findOne.mockResolvedValue(null);
     mockShiftSchedule.create.mockResolvedValue({ _id: 'sch1' });
 
     const res = await request(app)

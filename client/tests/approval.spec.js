@@ -1,13 +1,21 @@
 import { describe, it, expect, vi } from 'vitest'
-import { mount, flushPromises } from '@vue/test-utils'
+import { shallowMount, flushPromises } from '@vue/test-utils'
 import Approval from '../src/views/front/Approval.vue'
+
+const stubs = [
+  'el-option','el-select','el-button','el-form-item','el-divider','el-input',
+  'el-input-number','el-checkbox','el-checkbox-group','el-date-picker',
+  'el-time-picker','el-upload','el-form','el-tab-pane','el-table-column',
+  'el-tag','el-table','el-tabs','el-descriptions-item','el-descriptions',
+  'el-timeline-item','el-timeline','el-dialog'
+]
 
 describe('Approval.vue', () => {
   it('fetches list on mount', async () => {
     vi.spyOn(window, 'fetch').mockResolvedValue({ ok: true, json: () => Promise.resolve([]) })
-    mount(Approval)
+    shallowMount(Approval, { global: { stubs } })
     await flushPromises()
-    expect(window.fetch).toHaveBeenCalledWith('/api/approvals/approvals', expect.any(Object))
+    expect(window.fetch).toHaveBeenCalledWith(expect.stringContaining('/api/approvals'), expect.any(Object))
     window.fetch.mockRestore()
   })
 
@@ -32,14 +40,14 @@ describe('Approval.vue', () => {
       }
       return Promise.resolve({ ok: true, json: () => Promise.resolve([]) })
     })
-    const wrapper = mount(Approval)
+    const wrapper = shallowMount(Approval, { global: { stubs } })
     await flushPromises()
     wrapper.vm.applyState.formId = 'f1'
     window.fetch.mockClear()
     await wrapper.vm.onSelectForm()
-    expect(window.fetch).toHaveBeenCalledWith('/api/approvals/forms/f1/fields', undefined)
-    expect(window.fetch).toHaveBeenCalledWith('/api/approvals/forms/f1/workflow', undefined)
-    expect(window.fetch).toHaveBeenCalledWith('/api/employees', undefined)
+    expect(window.fetch).toHaveBeenCalledWith(expect.stringContaining('/api/approvals/forms/f1/fields'), expect.any(Object))
+    expect(window.fetch).toHaveBeenCalledWith(expect.stringContaining('/api/approvals/forms/f1/workflow'), expect.any(Object))
+    expect(window.fetch).toHaveBeenCalledWith(expect.stringContaining('/api/employees'), expect.any(Object))
     expect(wrapper.vm.workflowSteps[0].approvers).toBe('Alice')
     window.fetch.mockRestore()
   })

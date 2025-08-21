@@ -13,6 +13,7 @@
                 <el-option v-for="f in formTemplates" :key="f._id" :label="`${f.name}（${f.category}）`" :value="f._id" />
               </el-select>
               <el-button class="ml-2" :disabled="!applyState.formId" @click="reloadSelectedForm">重新載入</el-button>
+              <el-button class="ml-2" v-if="leaveFormId" @click="selectLeave">請假申請</el-button>
             </el-form-item>
 
             <div v-if="fieldList.length">
@@ -133,6 +134,7 @@
 
               <div class="mt-3">
                 <el-button type="primary" :loading="submitting" @click="submitApply">送出申請</el-button>
+                <div v-if="applyError" class="mt-2" style="color:red">{{ applyError }}</div>
               </div>
             </div>
 
@@ -295,10 +297,21 @@ const applyState = reactive({
   formId: '',
   formData: {},
 })
+const leaveFormId = computed(() => {
+  const f = formTemplates.value.find(t => t.name === '請假')
+  return f?._id || ''
+})
+function selectLeave() {
+  if (leaveFormId.value) {
+    applyState.formId = leaveFormId.value
+    onSelectForm(leaveFormId.value)
+  }
+}
 const fieldList = ref([])
 const workflowSteps = ref([])
 const fileBuffers = reactive({}) // { fieldId: [FileItem...] }
 const submitting = ref(false)
+const applyError = ref('')
 
 /* options 資料 */
 const userOptions = ref([])
@@ -407,7 +420,8 @@ async function submitApply() {
       payloadData[fid] = files.map(f => f.name)
     })
 
-    const res = await apiFetch('/api/approvals/approvals', {
+    applyError.value = ''
+    const res = await apiFetch('/api/approvals', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -421,7 +435,8 @@ async function submitApply() {
       await fetchMyList()
     } else {
       const e = await res.json().catch(()=> ({}))
-      alert(`送出失敗：${e.error || res.status}`)
+      applyError.value = e.error || `HTTP ${res.status}`
+      alert(`送出失敗：${applyError.value}`)
     }
   } finally {
     submitting.value = false
@@ -460,7 +475,7 @@ async function doAction() {
   if (!actionDlg.target) return
   actionDlg.loading = true
   try {
-    const res = await apiFetch(`/api/approvals/approvals/${actionDlg.target._id}/act`, {
+    const res = await apiFetch(`/api/approvals/${actionDlg.target._id}/act`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ decision: actionDlg.decision, comment: actionDlg.comment })
@@ -483,14 +498,14 @@ const myList = ref([])
 const formNameCache = reactive({})
 
 async function fetchMyList() {
-  const res = await apiFetch('/api/approvals/approvals')
+  const res = await apiFetch('/api/approvals')
   if (res.ok) {
     myList.value = await res.json()
     // 取每筆的 form 名稱（明細才有 populate）
     await Promise.all(
       myList.value.map(async (row) => {
         if (!row.form || !row.form.name) {
-          const r = await apiFetch(`/api/approvals/approvals/${row._id}`)
+          const r = await apiFetch(`/api/approvals/${row._id}`)
           if (r.ok) {
             const full = await r.json()
             formNameCache[row._id] = full?.form?.name || ''
@@ -505,7 +520,7 @@ async function fetchMyList() {
 const detail = reactive({ visible: false, doc: null })
 
 async function openDetail(id) {
-  const res = await apiFetch(`/api/approvals/approvals/${id}`)
+  const res = await apiFetch(`/api/approvals/${id}`)
   if (res.ok) {
     detail.doc = await res.json()
     detail.visible = true
