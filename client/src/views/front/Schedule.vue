@@ -70,6 +70,7 @@ import { ref, computed, onMounted } from 'vue'
 import dayjs from 'dayjs'
 import { apiFetch } from '../../api'
 import { useAuthStore } from '../../stores/auth'
+import { ElMessage, ElMessageBox } from 'element-plus'
 
 const currentMonth = ref(dayjs().format('YYYY-MM'))
 const scheduleMap = ref({})
@@ -181,12 +182,10 @@ async function onSelect(empId, day, value) {
         body: JSON.stringify({ shiftId: value })
       })
       if (!res.ok) {
-        scheduleMap.value[empId][day].shiftId = prev
-        ElMessage.error('更新排班失敗')
+        await handleScheduleError(res, '更新排班失敗', empId, day, prev)
       }
     } catch (err) {
-      scheduleMap.value[empId][day].shiftId = prev
-      ElMessage.error('更新排班失敗')
+      await handleScheduleError(null, '更新排班失敗', empId, day, prev)
     }
   } else {
     try {
@@ -199,13 +198,31 @@ async function onSelect(empId, day, value) {
         const saved = await res.json()
         scheduleMap.value[empId][day] = { id: saved._id, shiftId: saved.shiftId }
       } else {
-        scheduleMap.value[empId][day].shiftId = prev
-        ElMessage.error('新增排班失敗')
+        await handleScheduleError(res, '新增排班失敗', empId, day, prev)
       }
     } catch (err) {
-      scheduleMap.value[empId][day].shiftId = prev
-      ElMessage.error('新增排班失敗')
+      await handleScheduleError(null, '新增排班失敗', empId, day, prev)
     }
+  }
+}
+
+async function handleScheduleError(res, defaultMsg, empId, day, prev) {
+  scheduleMap.value[empId][day].shiftId = prev
+  let msg = ''
+  try {
+    if (res) {
+      const data = await res.json()
+      msg = data?.error || ''
+    }
+  } catch (e) {}
+  if (msg === 'employee conflict') {
+    ElMessageBox.alert('人員衝突')
+  } else if (msg === 'department overlap') {
+    ElMessageBox.alert('跨區重複')
+  } else if (msg === 'leave conflict') {
+    ElMessageBox.alert('請假衝突')
+  } else {
+    ElMessage.error(defaultMsg)
   }
 }
 

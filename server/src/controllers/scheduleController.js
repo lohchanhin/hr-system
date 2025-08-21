@@ -67,6 +67,27 @@ export async function createSchedulesBatch(req, res) {
     if (!Array.isArray(schedules)) {
       return res.status(400).json({ error: 'schedules must be array' });
     }
+    for (const s of schedules) {
+      const dt = new Date(s.date);
+      const existing = await ShiftSchedule.findOne({ employee: s.employee, date: dt });
+      if (existing) {
+        if (
+          (s.department || s.subDepartment) &&
+          (existing.department?.toString() !== s.department?.toString() ||
+            existing.subDepartment?.toString() !== s.subDepartment?.toString())
+        ) {
+          return res.status(400).json({ error: 'department overlap' });
+        }
+        return res.status(400).json({ error: 'employee conflict' });
+      }
+      const leave = await LeaveRequest.findOne({
+        employee: s.employee,
+        startDate: { $lte: dt },
+        endDate: { $gte: dt },
+        status: 'approved'
+      });
+      if (leave) return res.status(400).json({ error: 'leave conflict' });
+    }
     const inserted = await ShiftSchedule.insertMany(schedules, { ordered: false });
     res.status(201).json(inserted);
   } catch (err) {
@@ -85,12 +106,36 @@ export async function listSchedules(req, res) {
 
 export async function createSchedule(req, res) {
   try {
-    const { employee, date, shiftId } = req.body;
-    const schedule = await ShiftSchedule.findOneAndUpdate(
-      { employee, date },
-      { shiftId },
-      { upsert: true, new: true, setDefaultsOnInsert: true }
-    );
+    const { employee, date, shiftId, department, subDepartment } = req.body;
+    const dt = new Date(date);
+
+    const existing = await ShiftSchedule.findOne({ employee, date: dt });
+    if (existing) {
+      if (
+        (department || subDepartment) &&
+        (existing.department?.toString() !== department?.toString() ||
+          existing.subDepartment?.toString() !== subDepartment?.toString())
+      ) {
+        return res.status(400).json({ error: 'department overlap' });
+      }
+      return res.status(400).json({ error: 'employee conflict' });
+    }
+
+    const leave = await LeaveRequest.findOne({
+      employee,
+      startDate: { $lte: dt },
+      endDate: { $gte: dt },
+      status: 'approved'
+    });
+    if (leave) return res.status(400).json({ error: 'leave conflict' });
+
+    const schedule = await ShiftSchedule.create({
+      employee,
+      date: dt,
+      shiftId,
+      department,
+      subDepartment
+    });
     res.status(201).json(schedule);
   } catch (err) {
     res.status(400).json({ error: err.message });
