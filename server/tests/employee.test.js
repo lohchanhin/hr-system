@@ -196,7 +196,7 @@ describe('Employee authorization middleware', () => {
       authenticate,
       (req, res, next) => {
         if (req.method === 'GET') {
-          return authorizeRoles('admin', 'supervisor')(req, res, next);
+          return authorizeRoles('admin', 'supervisor', 'employee')(req, res, next);
         }
         return authorizeRoles('admin')(req, res, next);
       },
@@ -222,7 +222,7 @@ describe('Employee authorization middleware', () => {
       authenticate,
       (req, res, next) => {
         if (req.method === 'GET') {
-          return authorizeRoles('admin', 'supervisor')(req, res, next);
+          return authorizeRoles('admin', 'supervisor', 'employee')(req, res, next);
         }
         return authorizeRoles('admin')(req, res, next);
       },
@@ -230,6 +230,36 @@ describe('Employee authorization middleware', () => {
     );
     const res = await request(appAuth).post('/api/employees').send({});
     expect(res.status).toBe(403);
+  });
+
+  it('allows employee to list employees but not create', async () => {
+    const { authorizeRoles } = await import('../src/middleware/auth.js');
+    const authenticate = (req, res, next) => {
+      req.user = { role: 'employee' };
+      next();
+    };
+    const appAuth = express();
+    appAuth.use(express.json());
+    appAuth.use(
+      '/api/employees',
+      authenticate,
+      (req, res, next) => {
+        if (req.method === 'GET') {
+          return authorizeRoles('admin', 'supervisor', 'employee')(req, res, next);
+        }
+        return authorizeRoles('admin')(req, res, next);
+      },
+      employeeRoutes
+    );
+
+    mockEmployee.find.mockReturnValue({
+      populate: jest.fn().mockReturnValue({ sort: jest.fn().mockResolvedValue([]) }),
+    });
+    const resList = await request(appAuth).get('/api/employees');
+    expect(resList.status).toBe(200);
+
+    const resCreate = await request(appAuth).post('/api/employees').send({});
+    expect(resCreate.status).toBe(403);
   });
 });
 
