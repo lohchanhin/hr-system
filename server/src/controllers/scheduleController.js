@@ -1,7 +1,40 @@
 import ShiftSchedule from '../models/ShiftSchedule.js';
 import Employee from '../models/Employee.js';
-import LeaveRequest from '../models/LeaveRequest.js';
 import ApprovalRequest from '../models/approval_request.js';
+import FormTemplate from '../models/form_template.js';
+import FormField from '../models/form_field.js';
+
+let leaveFieldCache = null;
+async function getLeaveFieldIds() {
+  if (leaveFieldCache) return leaveFieldCache;
+  const form = await FormTemplate.findOne({ name: '請假' });
+  if (!form) return {};
+  const fields = await FormField.find({ form: form._id });
+  const startField = fields.find(f => f.label === '開始日期');
+  const endField = fields.find(f => f.label === '結束日期');
+  const typeField = fields.find(f => f.label === '假別');
+  leaveFieldCache = {
+    formId: form._id.toString(),
+    startId: startField?._id.toString(),
+    endId: endField?._id.toString(),
+    typeId: typeField?._id.toString(),
+  };
+  return leaveFieldCache;
+}
+
+async function hasLeaveConflict(employeeId, date) {
+  const { formId, startId, endId } = await getLeaveFieldIds();
+  if (!formId || !startId || !endId) return false;
+  const query = {
+    form: formId,
+    applicant_employee: employeeId,
+    status: 'approved',
+  };
+  query[`form_data.${startId}`] = { $lte: date };
+  query[`form_data.${endId}`] = { $gte: date };
+  const approval = await ApprovalRequest.findOne(query);
+  return !!approval;
+}
 
 export async function listMonthlySchedules(req, res) {
   try {
@@ -45,15 +78,22 @@ export async function listLeaveApprovals(req, res) {
 
     const empFilter = ids.length ? { $in: ids } : undefined;
 
-    const leaveQuery = { startDate: { $lte: end }, endDate: { $gte: start } };
-    if (empFilter) leaveQuery.employee = empFilter;
-    const leaves = await LeaveRequest.find(leaveQuery).populate('employee');
-
     const approvalQuery = { createdAt: { $gte: start, $lt: end } };
     if (empFilter) approvalQuery.applicant_employee = empFilter;
-    const approvals = await ApprovalRequest.find(approvalQuery).populate(
-      'applicant_employee'
-    );
+    const approvals = await ApprovalRequest.find(approvalQuery)
+      .populate('applicant_employee')
+      .populate('form');
+
+    const { formId, startId, endId, typeId } = await getLeaveFieldIds();
+    const leaves = approvals
+      .filter(a => a.form && String(a.form._id) === formId && a.status === 'approved')
+      .map(a => ({
+        employee: a.applicant_employee,
+        leaveType: a.form_data?.[typeId],
+        startDate: a.form_data?.[startId],
+        endDate: a.form_data?.[endId],
+        status: a.status,
+      }));
 
     res.json({ leaves, approvals });
   } catch (err) {
@@ -80,13 +120,9 @@ export async function createSchedulesBatch(req, res) {
         }
         return res.status(400).json({ error: 'employee conflict' });
       }
-      const leave = await LeaveRequest.findOne({
-        employee: s.employee,
-        startDate: { $lte: dt },
-        endDate: { $gte: dt },
-        status: 'approved'
-      });
-      if (leave) return res.status(400).json({ error: 'leave conflict' });
+      if (await hasLeaveConflict(s.employee, dt)) {
+        return res.status(400).json({ error: 'leave conflict' });
+      }
     }
     const inserted = await ShiftSchedule.insertMany(schedules, { ordered: false });
     res.status(201).json(inserted);
@@ -121,13 +157,9 @@ export async function createSchedule(req, res) {
       return res.status(400).json({ error: 'employee conflict' });
     }
 
-    const leave = await LeaveRequest.findOne({
-      employee,
-      startDate: { $lte: dt },
-      endDate: { $gte: dt },
-      status: 'approved'
-    });
-    if (leave) return res.status(400).json({ error: 'leave conflict' });
+    if (await hasLeaveConflict(employee, dt)) {
+      return res.status(400).json({ error: 'leave conflict' });
+    }
 
     const schedule = await ShiftSchedule.create({
       employee,

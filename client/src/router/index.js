@@ -27,7 +27,6 @@ const FrontLogin = () => import('@/views/front/FrontLogin.vue')
 const FrontLayout = () => import('@/views/front/FrontLayout.vue')
 const Schedule = () => import('@/views/front/Schedule.vue')
 const Attendance = () => import('@/views/front/Attendance.vue')
-const Leave = () => import('@/views/front/Leave.vue')
 const Approval = () => import('@/views/front/Approval.vue')
 const PreviewWeek = () => import('@/views/front/PreviewWeek.vue')
 const PreviewMonth = () => import('@/views/front/PreviewMonth.vue')
@@ -78,18 +77,12 @@ const routes = [
     // 若需要簡易的「前台登入判斷」，可加 meta
     meta: { frontRequiresAuth: true },
 
-    // 定義子路由: 排班 / 出勤 / 請假 / 簽核
+    // 定義子路由: 排班 / 出勤 / 簽核
     children: [
       {
         path: 'attendance',
         name: 'Attendance',
         component: Attendance,
-        meta: { roles: ['employee', 'supervisor', 'admin'] }
-      },
-      {
-        path: 'leave',
-        name: 'Leave',
-        component: Leave,
         meta: { roles: ['employee', 'supervisor', 'admin'] }
       },
       {

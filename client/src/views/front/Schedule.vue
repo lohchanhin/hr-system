@@ -65,7 +65,7 @@
         <template #default="{ row }">{{ row.applicant_employee?.name }}</template>
       </el-table-column>
       <el-table-column label="類型">
-        <template #default="{ row }">{{ row.form_data?.leaveType || row.form_data?.type || '' }}</template>
+        <template #default="{ row }">{{ row.form?.name || '' }}</template>
       </el-table-column>
       <el-table-column prop="status" label="狀態" />
     </el-table>

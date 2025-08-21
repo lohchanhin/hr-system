@@ -13,6 +13,7 @@
                 <el-option v-for="f in formTemplates" :key="f._id" :label="`${f.name}（${f.category}）`" :value="f._id" />
               </el-select>
               <el-button class="ml-2" :disabled="!applyState.formId" @click="reloadSelectedForm">重新載入</el-button>
+              <el-button class="ml-2" v-if="leaveFormId" @click="selectLeave">請假申請</el-button>
             </el-form-item>
 
             <div v-if="fieldList.length">
@@ -295,6 +296,16 @@ const applyState = reactive({
   formId: '',
   formData: {},
 })
+const leaveFormId = computed(() => {
+  const f = formTemplates.value.find(t => t.name === '請假')
+  return f?._id || ''
+})
+function selectLeave() {
+  if (leaveFormId.value) {
+    applyState.formId = leaveFormId.value
+    onSelectForm(leaveFormId.value)
+  }
+}
 const fieldList = ref([])
 const workflowSteps = ref([])
 const fileBuffers = reactive({}) // { fieldId: [FileItem...] }

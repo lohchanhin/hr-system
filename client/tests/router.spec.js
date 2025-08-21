@@ -34,7 +34,6 @@ describe('router', () => {
     const front = router.getRoutes().find(r => r.name === 'FrontLayout')
     const childRoles = front.children.map(r => ({ name: r.name, roles: r.meta && r.meta.roles }))
     expect(childRoles.find(c => c.name === 'Attendance').roles).toEqual(['employee', 'supervisor', 'admin'])
-    expect(childRoles.find(c => c.name === 'Leave').roles).toEqual(['employee', 'supervisor', 'admin'])
     expect(childRoles.find(c => c.name === 'Schedule').roles).toEqual(['supervisor', 'admin'])
     expect(childRoles.find(c => c.name === 'Approval').roles).toEqual(['employee', 'supervisor', 'admin'])
   })
