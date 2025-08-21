@@ -15,7 +15,10 @@ const mockShiftSchedule = {
   deleteMany: jest.fn(),
 };
 
-const mockLeaveRequest = { findOne: jest.fn() };
+const mockApprovalRequest = { findOne: jest.fn(), find: jest.fn() };
+
+const mockFormTemplate = { findOne: jest.fn() };
+const mockFormField = { find: jest.fn() };
 
 const mockEmployee = { find: jest.fn() };
 
@@ -23,7 +26,9 @@ const mockEmployee = { find: jest.fn() };
 
 
 jest.unstable_mockModule('../src/models/ShiftSchedule.js', () => ({ default: mockShiftSchedule }));
-jest.unstable_mockModule('../src/models/LeaveRequest.js', () => ({ default: mockLeaveRequest }));
+jest.unstable_mockModule('../src/models/approval_request.js', () => ({ default: mockApprovalRequest }));
+jest.unstable_mockModule('../src/models/form_template.js', () => ({ default: mockFormTemplate }));
+jest.unstable_mockModule('../src/models/form_field.js', () => ({ default: mockFormField }));
 jest.unstable_mockModule('../src/models/Employee.js', () => ({ default: mockEmployee }));
 
 // 驗證中介層直接放行
@@ -47,7 +52,14 @@ beforeEach(() => {
   mockShiftSchedule.insertMany.mockReset();
   mockShiftSchedule.deleteMany.mockReset();
 
-  mockLeaveRequest.findOne.mockReset();
+  mockApprovalRequest.findOne.mockReset();
+  mockApprovalRequest.find.mockReset();
+  mockFormTemplate.findOne.mockResolvedValue({ _id: 'form1' });
+  mockFormField.find.mockResolvedValue([
+    { _id: 's', label: '開始日期' },
+    { _id: 'e', label: '結束日期' },
+    { _id: 't', label: '假別' },
+  ]);
   mockEmployee.find.mockReset();
 });
 
@@ -79,7 +91,7 @@ describe('Schedule API', () => {
     const fake = { ...payload, _id: '1' };
 
     mockShiftSchedule.findOne.mockResolvedValue(null);
-    mockLeaveRequest.findOne.mockResolvedValue(null);
+    mockApprovalRequest.findOne.mockResolvedValue(null);
     mockShiftSchedule.create.mockResolvedValue(fake);
 
     const res = await request(app).post('/api/schedules').send(payload);
@@ -115,7 +127,7 @@ describe('Schedule API', () => {
 
   it('rejects creation if leave conflict', async () => {
     mockShiftSchedule.findOne.mockResolvedValue(null);
-    mockLeaveRequest.findOne.mockResolvedValue({ _id: 'l1' });
+    mockApprovalRequest.findOne.mockResolvedValue({ _id: 'a1' });
     const res = await request(app)
       .post('/api/schedules')
       .send({ employee: 'e1', date: '2023-01-01', shiftId: 's1' });
@@ -138,7 +150,7 @@ describe('Schedule API', () => {
 
   it('creates schedules batch', async () => {
     mockShiftSchedule.findOne.mockResolvedValue(null);
-    mockLeaveRequest.findOne.mockResolvedValue(null);
+    mockApprovalRequest.findOne.mockResolvedValue(null);
     mockShiftSchedule.insertMany.mockResolvedValue([{ _id: '1' }]);
 
     const payload = { schedules: [{ employee: 'e1', date: '2023-01-01', shiftId: 'day' }] };
@@ -170,11 +182,37 @@ describe('Schedule API', () => {
 
   it('rejects batch if leave conflict', async () => {
     mockShiftSchedule.findOne.mockResolvedValue(null);
-    mockLeaveRequest.findOne.mockResolvedValue({ _id: 'l1' });
+    mockApprovalRequest.findOne.mockResolvedValue({ _id: 'a1' });
     const payload = { schedules: [{ employee: 'e1', date: '2023-01-01', shiftId: 'day' }] };
     const res = await request(app).post('/api/schedules/batch').send(payload);
     expect(res.status).toBe(400);
     expect(res.body).toEqual({ error: 'leave conflict' });
+  });
+
+  it('lists leave approvals', async () => {
+    const approvals = [{
+      _id: 'a1',
+      applicant_employee: { _id: 'e1', name: 'E1' },
+      form: { _id: 'form1', name: '請假' },
+      form_data: { s: '2023-01-01', e: '2023-01-02', t: '病假' },
+      status: 'approved'
+    }];
+    mockApprovalRequest.find.mockReturnValue({
+      populate: jest.fn().mockReturnThis(),
+      then: (resolve) => resolve(approvals)
+    });
+    const res = await request(app).get('/api/schedules/leave-approvals?month=2023-01&employee=e1');
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      leaves: [{
+        employee: approvals[0].applicant_employee,
+        leaveType: '病假',
+        startDate: '2023-01-01',
+        endDate: '2023-01-02',
+        status: 'approved'
+      }],
+      approvals
+    });
   });
 
   it('deletes old schedules', async () => {

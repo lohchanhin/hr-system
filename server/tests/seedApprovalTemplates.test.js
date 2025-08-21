@@ -31,6 +31,7 @@ describe('seedApprovalTemplates', () => {
     await seedApprovalTemplates();
     expect(mockTemplateCreate).toHaveBeenCalledWith(expect.objectContaining({ name: '支援申請' }));
     expect(mockTemplateCreate).toHaveBeenCalledWith(expect.objectContaining({ name: '特休保留' }));
+    expect(mockTemplateCreate).toHaveBeenCalledWith(expect.objectContaining({ name: '請假' }));
     expect(mockFieldCreate).toHaveBeenCalledWith(expect.objectContaining({ label: '附件', type_1: 'file' }));
     expect(mockWorkflowCreate).toHaveBeenCalledWith(expect.objectContaining({
       steps: expect.arrayContaining([

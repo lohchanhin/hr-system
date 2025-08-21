@@ -16,7 +16,6 @@ import employeeRoutes from './routes/employeeRoutes.js';
 import attendanceRoutes from './routes/attendanceRoutes.js';
 import authRoutes from './routes/authRoutes.js';
 import { authenticate, authorizeRoles } from './middleware/auth.js';
-import leaveRoutes from './routes/leaveRoutes.js';
 import scheduleRoutes from './routes/scheduleRoutes.js';
 import payrollRoutes from './routes/payrollRoutes.js';
 import reportRoutes from './routes/reportRoutes.js';
@@ -127,6 +126,20 @@ export async function seedTestUsers() {
 
 export async function seedApprovalTemplates() {
   const templates = [
+    {
+      name: '請假',
+      category: '人事',
+      fields: [
+        { label: '假別', type_1: 'text', required: true, order: 1 },
+        { label: '開始日期', type_1: 'date', required: true, order: 2 },
+        { label: '結束日期', type_1: 'date', required: true, order: 3 },
+        { label: '事由', type_1: 'textarea', order: 4 },
+      ],
+      steps: [
+        { step_order: 1, approver_type: 'manager' },
+        { step_order: 2, approver_type: 'tag', approver_value: '人資' },
+      ],
+    },
     {
       name: '支援申請',
       category: '人事',
@@ -264,7 +277,6 @@ app.use(
 );
 
 
-app.use('/api/leaves', authenticate, authorizeRoles('employee', 'supervisor', 'admin'), leaveRoutes);
 app.use('/api/schedules', authenticate, authorizeRoles('supervisor', 'admin'), scheduleRoutes);
 app.use('/api/payroll', authenticate, authorizeRoles('admin'), payrollRoutes);
 app.use('/api/reports', authenticate, authorizeRoles('admin'), reportRoutes);
