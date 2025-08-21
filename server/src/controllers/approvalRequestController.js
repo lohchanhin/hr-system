@@ -77,7 +77,8 @@ export async function createApprovalRequest(req, res) {
     const { form_id, form_data, applicant_employee_id } = req.body
     if (!form_id) return res.status(400).json({ error: 'form_id required' })
     const form = await FormTemplate.findById(form_id)
-    if (!form || !form.is_active) return res.status(400).json({ error: 'form not available' })
+    if (!form) return res.status(400).json({ error: 'form not found' })
+    if (!form.is_active) return res.status(400).json({ error: 'form not available' })
 
     const wf = await ApprovalWorkflow.findOne({ form: form._id })
     if (!wf || !wf.steps?.length) return res.status(400).json({ error: 'workflow not configured' })

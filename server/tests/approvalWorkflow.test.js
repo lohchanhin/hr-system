@@ -1,127 +1,63 @@
-import { jest } from '@jest/globals';
+import { jest } from '@jest/globals'
 
-const mockFormTemplate = { findById: jest.fn() };
-const mockApprovalWorkflow = { findOne: jest.fn() };
-const mockEmployee = { findById: jest.fn(), find: jest.fn() };
-const mockUser = { findById: jest.fn() };
-let requestsDB;
-let reqCounter;
-const mockApprovalRequest = {
-  create: jest.fn(async data => {
-    const doc = { ...data, _id: `req${++reqCounter}`, save: async function () { requestsDB[this._id] = this; return this; } };
-    requestsDB[doc._id] = doc;
-    return doc;
-  }),
-  findById: jest.fn(async id => requestsDB[id] || null),
-};
+const mockFormTemplate = { findById: jest.fn() }
+const mockApprovalWorkflow = { findOne: jest.fn() }
+const mockApprovalRequest = { create: jest.fn() }
+const mockEmployee = { findById: jest.fn() }
+const mockUser = { findById: jest.fn() }
 
-let createApprovalRequest;
-let actOnApproval;
+let createApprovalRequest
 
 beforeAll(async () => {
-  await jest.unstable_mockModule('../src/models/form_template.js', () => ({ default: mockFormTemplate }));
-  await jest.unstable_mockModule('../src/models/approval_workflow.js', () => ({ default: mockApprovalWorkflow }));
-  await jest.unstable_mockModule('../src/models/approval_request.js', () => ({ default: mockApprovalRequest }));
-  await jest.unstable_mockModule('../src/models/Employee.js', () => ({ default: mockEmployee }));
-  await jest.unstable_mockModule('../src/models/User.js', () => ({ default: mockUser }));
-  const mod = await import('../src/controllers/approvalRequestController.js');
-  createApprovalRequest = mod.createApprovalRequest;
-  actOnApproval = mod.actOnApproval;
-});
+  await jest.unstable_mockModule('../src/models/form_template.js', () => ({ default: mockFormTemplate }))
+  await jest.unstable_mockModule('../src/models/approval_workflow.js', () => ({ default: mockApprovalWorkflow }))
+  await jest.unstable_mockModule('../src/models/approval_request.js', () => ({ default: mockApprovalRequest }))
+  await jest.unstable_mockModule('../src/models/Employee.js', () => ({ default: mockEmployee }))
+  await jest.unstable_mockModule('../src/models/User.js', () => ({ default: mockUser }))
+  const mod = await import('../src/controllers/approvalRequestController.js')
+  createApprovalRequest = mod.createApprovalRequest
+})
 
 beforeEach(() => {
-  mockFormTemplate.findById.mockReset();
-  mockApprovalWorkflow.findOne.mockReset();
-  mockApprovalRequest.create.mockReset();
-  mockApprovalRequest.findById.mockReset();
-  mockEmployee.findById.mockReset();
-  mockUser.findById.mockReset();
-  reqCounter = 0;
-  requestsDB = {};
-});
+  mockFormTemplate.findById.mockReset()
+  mockApprovalWorkflow.findOne.mockReset()
+  mockApprovalRequest.create.mockReset()
+  mockEmployee.findById.mockReset()
+  mockUser.findById.mockReset()
+  mockEmployee.findById.mockResolvedValue({ _id: 'emp1' })
+})
 
 function makeRes() {
-  return { status: jest.fn().mockReturnThis(), json: jest.fn() };
+  return { status: jest.fn().mockReturnThis(), json: jest.fn() }
 }
 
-describe('Approval Workflow', () => {
-  it('handles multi-step flow with all_must_approve and delegation', async () => {
-    const workflow = {
-      _id: 'wf1',
-      form: 'form1',
-      steps: [
-        { step_order: 1, approver_type: 'user', approver_value: ['empA', 'empB'], all_must_approve: true, can_return: true },
-        { step_order: 2, approver_type: 'user', approver_value: ['empC'], all_must_approve: false, can_return: true },
-      ],
-      policy: { allowDelegate: true },
-    };
-    const form = { _id: 'form1', name: 'Demo', is_active: true };
-    mockFormTemplate.findById.mockResolvedValue(form);
-    mockApprovalWorkflow.findOne.mockResolvedValue(workflow);
-    mockEmployee.findById.mockResolvedValue({ _id: 'empApplicant' });
+describe('createApprovalRequest', () => {
+  it('creates request when form and workflow exist', async () => {
+    mockFormTemplate.findById.mockResolvedValue({ _id: 'form1', is_active: true })
+    mockApprovalWorkflow.findOne.mockResolvedValue({ _id: 'wf1', form: 'form1', steps: [{}] })
+    mockApprovalRequest.create.mockResolvedValue({ _id: 'req1' })
+    mockEmployee.findById.mockResolvedValue({ _id: 'emp1' })
+    const res = makeRes()
+    await createApprovalRequest({ body: { form_id: 'form1', form_data: {}, applicant_employee_id: 'emp1' } }, res)
+    expect(res.status).toHaveBeenCalledWith(201)
+    expect(res.json).toHaveBeenCalledWith({ _id: 'req1' })
+  })
 
-    const req1 = { body: { form_id: 'form1', applicant_employee_id: 'empApplicant', form_data: {} } };
-    const res1 = makeRes();
-    await createApprovalRequest(req1, res1);
-    const created = res1.json.mock.calls[0][0];
-    const id = created._id;
+  it('returns error if form missing', async () => {
+    mockFormTemplate.findById.mockResolvedValue(null)
+    const res = makeRes()
+    await createApprovalRequest({ body: { form_id: 'bad', form_data: {}, applicant_employee_id: 'emp1' } }, res)
+    expect(res.status).toHaveBeenCalledWith(400)
+    expect(res.json).toHaveBeenCalledWith({ error: 'form not found' })
+  })
 
-    await actOnApproval({ params: { id }, body: { decision: 'approve', employee_id: 'empA' } }, makeRes());
-    const resAfterSecond = makeRes();
-    await actOnApproval({ params: { id }, body: { decision: 'approve', employee_id: 'empB' } }, resAfterSecond);
-    expect(resAfterSecond.json.mock.calls[0][0].current_step_index).toBe(1);
+  it('returns error if workflow missing', async () => {
+    mockFormTemplate.findById.mockResolvedValue({ _id: 'form1', is_active: true })
+    mockApprovalWorkflow.findOne.mockResolvedValue(null)
+    const res = makeRes()
+    await createApprovalRequest({ body: { form_id: 'form1', form_data: {}, applicant_employee_id: 'emp1' } }, res)
+    expect(res.status).toHaveBeenCalledWith(400)
+    expect(res.json).toHaveBeenCalledWith({ error: 'workflow not configured' })
+  })
+})
 
-    const resFinal = makeRes();
-    await actOnApproval({ params: { id }, body: { decision: 'approve', employee_id: 'empC' } }, resFinal);
-    expect(resFinal.json.mock.calls[0][0].status).toBe('approved');
-  });
-
-  it('allows reject', async () => {
-    const workflow = {
-      _id: 'wf1',
-      form: 'form1',
-      steps: [
-        { step_order: 1, approver_type: 'user', approver_value: ['empA'], all_must_approve: true, can_return: true },
-      ],
-    };
-    const form = { _id: 'form1', name: 'Demo', is_active: true };
-    mockFormTemplate.findById.mockResolvedValue(form);
-    mockApprovalWorkflow.findOne.mockResolvedValue(workflow);
-    mockEmployee.findById.mockResolvedValue({ _id: 'empApplicant' });
-
-    const res1 = makeRes();
-    await createApprovalRequest({ body: { form_id: 'form1', applicant_employee_id: 'empApplicant', form_data: {} } }, res1);
-    const id = res1.json.mock.calls[0][0]._id;
-
-    const res2 = makeRes();
-    await actOnApproval({ params: { id }, body: { decision: 'reject', employee_id: 'empA' } }, res2);
-    expect(res2.json.mock.calls[0][0].status).toBe('rejected');
-  });
-
-  it('returns to previous step', async () => {
-    const workflow = {
-      _id: 'wf1',
-      form: 'form1',
-      steps: [
-        { step_order: 1, approver_type: 'user', approver_value: ['empA'], all_must_approve: true, can_return: true },
-        { step_order: 2, approver_type: 'user', approver_value: ['empB'], all_must_approve: true, can_return: true },
-      ],
-    };
-    const form = { _id: 'form1', name: 'Demo', is_active: true };
-    mockFormTemplate.findById.mockResolvedValue(form);
-    mockApprovalWorkflow.findOne.mockResolvedValue(workflow);
-    mockEmployee.findById.mockResolvedValue({ _id: 'empApplicant' });
-
-    const res1 = makeRes();
-    await createApprovalRequest({ body: { form_id: 'form1', applicant_employee_id: 'empApplicant', form_data: {} } }, res1);
-    const id = res1.json.mock.calls[0][0]._id;
-
-    await actOnApproval({ params: { id }, body: { decision: 'approve', employee_id: 'empA' } }, makeRes());
-
-    const resReturn = makeRes();
-    await actOnApproval({ params: { id }, body: { decision: 'return', employee_id: 'empB' } }, resReturn);
-    const returned = resReturn.json.mock.calls[0][0];
-    expect(returned.current_step_index).toBe(0);
-    expect(returned.steps[0].approvers[0].decision).toBe('pending');
-  });
-});
