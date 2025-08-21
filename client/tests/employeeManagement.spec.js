@@ -40,4 +40,23 @@ describe('EmployeeManagement.vue', () => {
     expect(wrapper.vm.supervisorList.length).toBe(1)
     expect(wrapper.vm.supervisorList[0]._id).toBe('s1')
   })
+
+  it('filters subDepartments and renders select field', async () => {
+    const wrapper = mount(EmployeeManagement, { global: { plugins: [ElementPlus] } })
+    wrapper.vm.employeeForm.department = 'd1'
+    await wrapper.vm.$nextTick()
+    wrapper.vm.subDepartmentList = [
+      { _id: 'sd1', name: 'SD1', department: 'd1' },
+      { _id: 'sd2', name: 'SD2', department: 'd2' }
+    ]
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.filteredSubDepartments.length).toBe(1)
+    expect(wrapper.vm.filteredSubDepartments[0]._id).toBe('sd1')
+    wrapper.vm.openEmployeeDialog()
+    await wrapper.vm.$nextTick()
+    const subDeptItem = wrapper
+      .findAllComponents({ name: 'ElFormItem' })
+      .find(w => w.props('label') === '小單位/區域(C02-1)')
+    expect(subDeptItem.findComponent({ name: 'ElSelect' }).exists()).toBe(true)
+  })
 })

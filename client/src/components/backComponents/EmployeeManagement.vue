@@ -182,7 +182,14 @@
                 </el-select>
               </el-form-item>
               <el-form-item label="小單位/區域(C02-1)">
-                <el-input v-model="employeeForm.subDepartment" />
+                <el-select v-model="employeeForm.subDepartment" placeholder="選擇小單位">
+                  <el-option
+                    v-for="sd in filteredSubDepartments"
+                    :key="sd._id"
+                    :label="sd.name"
+                    :value="sd._id"
+                  />
+                </el-select>
               </el-form-item>
 
               <el-form-item label="直屬主管">
@@ -477,7 +484,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, computed, watch } from 'vue'
 import { apiFetch } from '../../api'
 
 /* 下拉選單選項：可改由後端「後臺控制 C0x」提供 ------------------------------ */
@@ -506,6 +513,7 @@ const ABO_TYPES = ['A', 'B', 'O', 'AB', 'HR']                                   
 const employeeDialogTab = ref('account')
 const employeeList = ref([])
 const departmentList = ref([])
+const subDepartmentList = ref([])
 const orgList = ref([])
 const employeeDialogVisible = ref(false)
 let editEmployeeIndex = null
@@ -516,10 +524,20 @@ function departmentLabel(id) {
   return dept ? `${dept.name}(${dept.code})` : id
 }
 
+function subDepartmentLabel(id) {
+  const sd = subDepartmentList.value.find(s => s._id === id)
+  return sd ? sd.name : id
+}
+
 /* 取資料 ------------------------------------------------------------------- */
 async function fetchDepartments() {
   const res = await apiFetch('/api/departments')
   if (res.ok) departmentList.value = await res.json()
+}
+async function fetchSubDepartments(dept = '') {
+  const url = dept ? `/api/sub-departments?department=${dept}` : '/api/sub-departments'
+  const res = await apiFetch(url)
+  if (res.ok) subDepartmentList.value = await res.json()
 }
 async function fetchOrganizations() {
   const res = await apiFetch('/api/organizations')
@@ -533,6 +551,7 @@ onMounted(() => {
   fetchDepartments()
   fetchEmployees()
   fetchOrganizations()
+  fetchSubDepartments()
 })
 
 /* 表單模型（完整補齊） ------------------------------------------------------ */
@@ -642,6 +661,11 @@ const filteredDepartments = computed(() =>
     ? departmentList.value.filter(d => d.organization === employeeForm.value.organization)
     : []
 )
+const filteredSubDepartments = computed(() =>
+  employeeForm.value.department
+    ? subDepartmentList.value.filter(sd => sd.department === employeeForm.value.department)
+    : []
+)
 const supervisorList = computed(() =>
   employeeForm.value.organization && employeeForm.value.department
     ? employeeList.value.filter(
@@ -651,6 +675,18 @@ const supervisorList = computed(() =>
           e.department === employeeForm.value.department
       )
     : []
+)
+
+watch(
+  () => employeeForm.value.department,
+  async dept => {
+    if (dept) {
+      await fetchSubDepartments(dept)
+    } else {
+      subDepartmentList.value = []
+    }
+    employeeForm.value.subDepartment = ''
+  }
 )
 
 /* 事件 --------------------------------------------------------------------- */
@@ -668,6 +704,7 @@ function openEmployeeDialog(index = null) {
     employeeForm.value = { ...structuredClone(emptyEmployee) }
   }
   fetchDepartments()
+  fetchSubDepartments(employeeForm.value.department)
   employeeDialogVisible.value = true
 }
 
