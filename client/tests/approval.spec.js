@@ -51,4 +51,25 @@ describe('Approval.vue', () => {
     expect(wrapper.vm.workflowSteps[0].approvers).toBe('Alice')
     window.fetch.mockRestore()
   })
+
+  it('submits form with file upload without error', async () => {
+    vi.spyOn(window, 'fetch').mockImplementation(() => Promise.resolve({ ok: true, json: () => Promise.resolve([]) }))
+    const alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => {})
+    const wrapper = shallowMount(Approval, { global: { stubs } })
+    await flushPromises()
+
+    wrapper.vm.applyState.formId = 'f1'
+    wrapper.vm.applyState.formData = { f2: 'text' }
+    wrapper.vm.fileBuffers = { f3: [{ name: 'a.txt' }] }
+
+    await wrapper.vm.submitApply()
+    await flushPromises()
+
+    const postCall = window.fetch.mock.calls.find(([url, opt]) => url.includes('/api/approvals') && opt?.method === 'POST')
+    expect(postCall).toBeTruthy()
+    expect(postCall[1].body).toContain('"f3":["a.txt"]')
+    expect(wrapper.vm.applyError).toBe('')
+    window.fetch.mockRestore()
+    alertSpy.mockRestore()
+  })
 })
