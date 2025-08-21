@@ -8,27 +8,30 @@ export async function verifySupervisor(req, res, next) {
     if (!user) return res.status(401).json({ error: 'Invalid user' });
     if (['admin'].includes(user.role)) return next();
 
-    let employeeId = req.body.employee;
-    if (!employeeId && Array.isArray(req.body.schedules) && req.body.schedules.length) {
-      employeeId = req.body.schedules[0].employee;
-    }
-    if (!employeeId && req.params.id) {
+    let employeeIds = [];
+    if (req.body.employee) employeeIds = [req.body.employee];
+    else if (Array.isArray(req.body.schedules) && req.body.schedules.length) {
+      employeeIds = req.body.schedules.map((s) => s.employee);
+    } else if (req.params.id) {
       const schedule = await ShiftSchedule.findById(req.params.id);
-      if (schedule) employeeId = schedule.employee.toString();
+      if (schedule) employeeIds = [schedule.employee.toString()];
     }
-    if (!employeeId) return res.status(400).json({ error: 'Missing employee' });
+    if (!employeeIds.length) return res.status(400).json({ error: 'Missing employee' });
 
-    const employee = await Employee.findById(employeeId);
-    if (!employee) return res.status(404).json({ error: 'Employee not found' });
+    const supervisorIds = [];
+    if (user.employee) supervisorIds.push(user.employee._id.toString());
+    if (user.supervisor) supervisorIds.push(user.supervisor.toString());
+    supervisorIds.push(user._id.toString());
 
-    if (
-      employee.supervisor &&
-      user.employee &&
-      employee.supervisor.toString() === user.employee._id.toString()
-    ) {
-      return next();
+    for (const id of employeeIds) {
+      const emp = await Employee.findById(id);
+      if (!emp) return res.status(404).json({ error: 'Employee not found' });
+      if (!(emp.supervisor && supervisorIds.includes(emp.supervisor.toString()))) {
+        return res.status(403).json({ error: 'Forbidden' });
+      }
     }
-    return res.status(403).json({ error: 'Forbidden' });
+
+    return next();
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
