@@ -31,10 +31,10 @@ router.get('/forms/:formId/workflow', authorizeRoles('employee', 'supervisor', '
 router.put('/forms/:formId/workflow', authorizeRoles('admin'), setWorkflow)
 
 // Requests
-router.post('/approvals', authorizeRoles('employee', 'supervisor', 'admin'), createApprovalRequest)
-router.get('/approvals/:id', authorizeRoles('employee', 'supervisor', 'admin'), getApprovalRequest)
-router.get('/approvals', authorizeRoles('employee', 'supervisor', 'admin'), myApprovalRequests)
+router.post('/', authorizeRoles('employee', 'supervisor', 'admin'), createApprovalRequest)
+router.get('/:id', authorizeRoles('employee', 'supervisor', 'admin'), getApprovalRequest)
+router.get('/', authorizeRoles('employee', 'supervisor', 'admin'), myApprovalRequests)
 router.get('/inbox', authorizeRoles('employee', 'supervisor', 'admin'), inboxApprovals)
-router.post('/approvals/:id/act', authorizeRoles('employee', 'supervisor', 'admin'), actOnApproval)
+router.post('/:id/act', authorizeRoles('employee', 'supervisor', 'admin'), actOnApproval)
 
 export default router
