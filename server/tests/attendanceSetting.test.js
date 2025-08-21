@@ -27,7 +27,7 @@ beforeEach(() => {
 
 describe('AttendanceSetting API', () => {
   it('gets settings', async () => {
-    const data = { shifts: [] };
+    const data = { shifts: [{ name: '早班', code: 'A', startTime: '09:00', endTime: '18:00' }] };
     mockAttendanceSetting.findOne.mockResolvedValue(data);
     const res = await request(app).get('/api/attendance-settings');
     expect(res.status).toBe(200);
@@ -42,7 +42,7 @@ describe('AttendanceSetting API', () => {
   });
 
   it('updates settings', async () => {
-    const payload = { shifts: [] };
+    const payload = { shifts: [{ name: '早班', code: 'A', startTime: '09:00', endTime: '18:00' }] };
     mockAttendanceSetting.findOneAndUpdate.mockResolvedValue(payload);
     const res = await request(app).put('/api/attendance-settings').send(payload);
     expect(res.status).toBe(200);

@@ -2,33 +2,72 @@
   <div class="schedule-page">
     <h2>排班管理</h2>
     <el-date-picker v-model="currentMonth" type="month" @change="fetchSchedules" />
+    <div class="actions">
+      <el-button type="primary" @click="saveAll">儲存</el-button>
+      <el-button @click="preview('week')">預覽週表</el-button>
+      <el-button @click="preview('month')">預覽月表</el-button>
+      <el-button @click="() => exportSchedules('pdf')">匯出 PDF</el-button>
+      <el-button @click="() => exportSchedules('excel')">匯出 Excel</el-button>
+    </div>
     <el-table :data="employees" style="margin-top: 20px;">
+      <el-table-column label="樓層／單位">
+        <template #default="{ row }">
+          {{ row.department }}<span v-if="row.subDepartment">／{{ row.subDepartment }}</span>
+        </template>
+      </el-table-column>
       <el-table-column prop="name" label="員工" />
       <el-table-column
         v-for="d in days"
-        :key="d"
-        :label="d"
+        :key="d.date"
+        :label="d.label"
       >
         <template #default="{ row }">
-          <template v-if="scheduleMap[row._id]?.[d]">
-            <el-select
-              v-if="canEdit"
-              v-model="scheduleMap[row._id][d].shiftId"
-              placeholder=""
-              @change="val => onSelect(row._id, d, val)"
-            >
-              <el-option
-                v-for="opt in shifts"
-                :key="opt._id"
-                :label="opt.name"
-                :value="opt._id"
-              />
-            </el-select>
-            <span v-else>{{ shiftName(scheduleMap[row._id]?.[d]?.shiftId) || '' }}</span>
-          </template>
-          <span v-else>-</span>
+          <div :class="{ 'is-leave': scheduleMap[row._id]?.[d.date]?.leave }">
+            <template v-if="scheduleMap[row._id]?.[d.date]">
+              <el-select
+                v-if="canEdit"
+                v-model="scheduleMap[row._id][d.date].shiftId"
+                placeholder=""
+                @change="val => onSelect(row._id, d.date, val)"
+              >
+                <el-option
+                  v-for="opt in shifts"
+                  :key="opt._id"
+                  :label="opt.code"
+                  :value="opt._id"
+                />
+              </el-select>
+              <el-popover
+                v-else
+                v-if="shiftInfo(scheduleMap[row._id][d.date].shiftId)"
+                placement="top"
+                trigger="click"
+              >
+                <p>上班：{{ shiftInfo(scheduleMap[row._id][d.date].shiftId).startTime }}</p>
+                <p>下班：{{ shiftInfo(scheduleMap[row._id][d.date].shiftId).endTime }}</p>
+                <p v-if="shiftInfo(scheduleMap[row._id][d.date].shiftId).remark">
+                  備註：{{ shiftInfo(scheduleMap[row._id][d.date].shiftId).remark }}
+                </p>
+                <template #reference>
+                  <span>{{ shiftInfo(scheduleMap[row._id][d.date].shiftId).code }}</span>
+                </template>
+              </el-popover>
+              <span v-else></span>
+              <span v-if="scheduleMap[row._id][d.date].leave" class="leave-icon">L</span>
+            </template>
+            <span v-else>-</span>
+          </div>
         </template>
       </el-table-column>
+    </el-table>
+    <el-table :data="approvalList" style="margin-top: 20px;">
+      <el-table-column label="申請人">
+        <template #default="{ row }">{{ row.applicant_employee?.name }}</template>
+      </el-table-column>
+      <el-table-column label="類型">
+        <template #default="{ row }">{{ row.form_data?.leaveType || row.form_data?.type || '' }}</template>
+      </el-table-column>
+      <el-table-column prop="status" label="狀態" />
     </el-table>
   </div>
 </template>
@@ -38,11 +77,16 @@ import { ref, computed, onMounted } from 'vue'
 import dayjs from 'dayjs'
 import { apiFetch } from '../../api'
 import { useAuthStore } from '../../stores/auth'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { useRouter } from 'vue-router'
 
 const currentMonth = ref(dayjs().format('YYYY-MM'))
 const scheduleMap = ref({})
 const shifts = ref([])
 const employees = ref([])
+const approvalList = ref([])
+
+const router = useRouter()
 
 const authStore = useAuthStore()
 authStore.loadUser()
@@ -54,7 +98,12 @@ const canEdit = computed(() => {
 const days = computed(() => {
   const dt = dayjs(currentMonth.value + '-01')
   const end = dt.endOf('month').date()
-  return Array.from({ length: end }, (_, i) => i + 1)
+  const week = ['日', '一', '二', '三', '四', '五', '六']
+  return Array.from({ length: end }, (_, i) => {
+    const date = i + 1
+    const wd = week[dt.date(date).day()]
+    return { date, label: `${date}(${wd})` }
+  })
 })
 
 async function fetchShiftOptions() {
@@ -63,7 +112,13 @@ async function fetchShiftOptions() {
     const data = await res.json()
     const list = Array.isArray(data?.shifts) ? data.shifts : data
     if (Array.isArray(list)) {
-      shifts.value = list.map(s => ({ _id: s._id, name: s.name }))
+      shifts.value = list.map(s => ({
+        _id: s._id,
+        code: s.code,
+        startTime: s.startTime,
+        endTime: s.endTime,
+        remark: s.remark
+      }))
     }
   } else {
     if (res.status === 403) {
@@ -92,7 +147,7 @@ async function fetchSchedules() {
     employees.value.forEach(emp => {
       scheduleMap.value[emp._id] = {}
       ds.forEach(d => {
-        scheduleMap.value[emp._id][d] = { shiftId: '' }
+        scheduleMap.value[emp._id][d.date] = { shiftId: '' }
       })
     })
     data.forEach((s) => {
@@ -100,9 +155,96 @@ async function fetchSchedules() {
       const d = dayjs(s.date).date()
       scheduleMap.value[empId][d] = { id: s._id, shiftId: s.shiftId }
     })
+
+    const res2 = await apiFetch(
+      `/api/schedules/leave-approvals?month=${currentMonth.value}&supervisor=${supervisorId}`
+    )
+    if (res2.ok) {
+      const extra = await res2.json()
+      approvalList.value = extra.approvals || []
+      ;(extra.leaves || []).forEach(l => {
+        if (l.status !== 'approved') return
+        const empId = l.employee?._id || l.employee
+        const start = dayjs(l.startDate).date()
+        const end = dayjs(l.endDate).date()
+        for (let d = start; d <= end; d++) {
+          if (scheduleMap.value[empId]?.[d]) {
+            scheduleMap.value[empId][d].leave = { type: l.leaveType }
+          }
+        }
+      })
+    }
   } catch (err) {
     console.error(err)
     ElMessage.error('取得排班資料失敗')
+  }
+}
+
+async function saveAll() {
+  const schedules = []
+  Object.keys(scheduleMap.value).forEach(empId => {
+    Object.keys(scheduleMap.value[empId]).forEach(day => {
+      const item = scheduleMap.value[empId][day]
+      if (item.shiftId && !item.id) {
+        schedules.push({
+          employee: empId,
+          date: `${currentMonth.value}-${String(day).padStart(2, '0')}`,
+          shiftId: item.shiftId
+        })
+      }
+    })
+  })
+  if (!schedules.length) return
+  try {
+    const res = await apiFetch('/api/schedules/batch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ schedules })
+    })
+    if (!res.ok) throw new Error('save failed')
+    const inserted = await res.json()
+    inserted.forEach(it => {
+      const empId = it.employee?._id || it.employee
+      const d = dayjs(it.date).date()
+      if (!scheduleMap.value[empId]) scheduleMap.value[empId] = {}
+      scheduleMap.value[empId][d] = { id: it._id, shiftId: it.shiftId }
+    })
+    ElMessage.success('儲存完成')
+  } catch (err) {
+    ElMessage.error('儲存失敗')
+  }
+}
+
+function preview(type) {
+  sessionStorage.setItem(
+    'schedulePreview',
+    JSON.stringify({
+      scheduleMap: scheduleMap.value,
+      employees: employees.value,
+      days: days.value,
+      shifts: shifts.value
+    })
+  )
+  router.push({ name: type === 'week' ? 'PreviewWeek' : 'PreviewMonth' })
+}
+
+async function exportSchedules(format) {
+  try {
+    const res = await apiFetch(
+      `/api/schedules/export?month=${currentMonth.value}&format=${format}`
+    )
+    if (!res.ok) throw new Error()
+    const blob = await res.blob()
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `schedules-${currentMonth.value}.${
+      format === 'excel' ? 'xlsx' : 'pdf'
+    }`
+    a.click()
+    URL.revokeObjectURL(url)
+  } catch (err) {
+    ElMessage.error('匯出失敗')
   }
 }
 
@@ -118,12 +260,10 @@ async function onSelect(empId, day, value) {
         body: JSON.stringify({ shiftId: value })
       })
       if (!res.ok) {
-        scheduleMap.value[empId][day].shiftId = prev
-        ElMessage.error('更新排班失敗')
+        await handleScheduleError(res, '更新排班失敗', empId, day, prev)
       }
     } catch (err) {
-      scheduleMap.value[empId][day].shiftId = prev
-      ElMessage.error('更新排班失敗')
+      await handleScheduleError(null, '更新排班失敗', empId, day, prev)
     }
   } else {
     try {
@@ -136,19 +276,36 @@ async function onSelect(empId, day, value) {
         const saved = await res.json()
         scheduleMap.value[empId][day] = { id: saved._id, shiftId: saved.shiftId }
       } else {
-        scheduleMap.value[empId][day].shiftId = prev
-        ElMessage.error('新增排班失敗')
+        await handleScheduleError(res, '新增排班失敗', empId, day, prev)
       }
     } catch (err) {
-      scheduleMap.value[empId][day].shiftId = prev
-      ElMessage.error('新增排班失敗')
+      await handleScheduleError(null, '新增排班失敗', empId, day, prev)
     }
   }
 }
 
-function shiftName(id) {
-  const found = shifts.value.find(s => s._id === id)
-  return found?.name || ''
+async function handleScheduleError(res, defaultMsg, empId, day, prev) {
+  scheduleMap.value[empId][day].shiftId = prev
+  let msg = ''
+  try {
+    if (res) {
+      const data = await res.json()
+      msg = data?.error || ''
+    }
+  } catch (e) {}
+  if (msg === 'employee conflict') {
+    ElMessageBox.alert('人員衝突')
+  } else if (msg === 'department overlap') {
+    ElMessageBox.alert('跨區重複')
+  } else if (msg === 'leave conflict') {
+    ElMessageBox.alert('請假衝突')
+  } else {
+    ElMessage.error(defaultMsg)
+  }
+}
+
+function shiftInfo(id) {
+  return shifts.value.find(s => s._id === id)
 }
 
 async function fetchEmployees() {
@@ -156,8 +313,16 @@ async function fetchEmployees() {
   try {
     const res = await apiFetch(`/api/employees?supervisor=${supervisorId}`)
     if (!res.ok) throw new Error('Failed to fetch employees')
-    console.log("employee:",res)
-    employees.value = await res.json()
+    const data = await res.json()
+    const sorted = data
+      .map(e => ({
+        _id: e._id,
+        name: e.name,
+        department: e.department || '',
+        subDepartment: e.subDepartment || ''
+      }))
+      .sort((a, b) => a.department.localeCompare(b.department))
+    employees.value = sorted
   } catch (err) {
     console.error(err)
     ElMessage.error('取得員工資料失敗')
@@ -174,5 +339,15 @@ onMounted(async () => {
 <style scoped>
 .schedule-page {
   padding: 20px;
+}
+.actions {
+  margin: 10px 0;
+}
+.is-leave {
+  background-color: #fde2e2;
+}
+.leave-icon {
+  margin-left: 4px;
+  color: #f56c6c;
 }
 </style>

@@ -3,7 +3,9 @@ import mongoose from 'mongoose';
 const shiftScheduleSchema = new mongoose.Schema({
   employee: { type: mongoose.Schema.Types.ObjectId, ref: 'Employee', required: true },
   date: { type: Date, required: true },
-  shiftId: { type: mongoose.Schema.Types.ObjectId, required: true }
+  shiftId: { type: mongoose.Schema.Types.ObjectId, required: true },
+  department: { type: mongoose.Schema.Types.ObjectId, ref: 'Department' },
+  subDepartment: { type: mongoose.Schema.Types.ObjectId, ref: 'SubDepartment' }
 }, { timestamps: true });
 
 shiftScheduleSchema.index({ employee: 1, date: 1 }, { unique: true });

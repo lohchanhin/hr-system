@@ -1,5 +1,7 @@
 import ShiftSchedule from '../models/ShiftSchedule.js';
 import Employee from '../models/Employee.js';
+import LeaveRequest from '../models/LeaveRequest.js';
+import ApprovalRequest from '../models/approval_request.js';
 
 export async function listMonthlySchedules(req, res) {
   try {
@@ -25,11 +27,66 @@ export async function listMonthlySchedules(req, res) {
   }
 }
 
+export async function listLeaveApprovals(req, res) {
+  try {
+    const { month, employee, supervisor } = req.query;
+    if (!month) return res.status(400).json({ error: 'month required' });
+    const start = new Date(`${month}-01`);
+    const end = new Date(start);
+    end.setMonth(end.getMonth() + 1);
+
+    let ids = [];
+    if (supervisor) {
+      const emps = await Employee.find({ supervisor }).select('_id');
+      ids = emps.map((e) => e._id.toString());
+    } else if (employee) {
+      ids = [employee];
+    }
+
+    const empFilter = ids.length ? { $in: ids } : undefined;
+
+    const leaveQuery = { startDate: { $lte: end }, endDate: { $gte: start } };
+    if (empFilter) leaveQuery.employee = empFilter;
+    const leaves = await LeaveRequest.find(leaveQuery).populate('employee');
+
+    const approvalQuery = { createdAt: { $gte: start, $lt: end } };
+    if (empFilter) approvalQuery.applicant_employee = empFilter;
+    const approvals = await ApprovalRequest.find(approvalQuery).populate(
+      'applicant_employee'
+    );
+
+    res.json({ leaves, approvals });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+}
+
 export async function createSchedulesBatch(req, res) {
   try {
     const { schedules } = req.body;
     if (!Array.isArray(schedules)) {
       return res.status(400).json({ error: 'schedules must be array' });
+    }
+    for (const s of schedules) {
+      const dt = new Date(s.date);
+      const existing = await ShiftSchedule.findOne({ employee: s.employee, date: dt });
+      if (existing) {
+        if (
+          (s.department || s.subDepartment) &&
+          (existing.department?.toString() !== s.department?.toString() ||
+            existing.subDepartment?.toString() !== s.subDepartment?.toString())
+        ) {
+          return res.status(400).json({ error: 'department overlap' });
+        }
+        return res.status(400).json({ error: 'employee conflict' });
+      }
+      const leave = await LeaveRequest.findOne({
+        employee: s.employee,
+        startDate: { $lte: dt },
+        endDate: { $gte: dt },
+        status: 'approved'
+      });
+      if (leave) return res.status(400).json({ error: 'leave conflict' });
     }
     const inserted = await ShiftSchedule.insertMany(schedules, { ordered: false });
     res.status(201).json(inserted);
@@ -49,12 +106,36 @@ export async function listSchedules(req, res) {
 
 export async function createSchedule(req, res) {
   try {
-    const { employee, date, shiftId } = req.body;
-    const schedule = await ShiftSchedule.findOneAndUpdate(
-      { employee, date },
-      { shiftId },
-      { upsert: true, new: true, setDefaultsOnInsert: true }
-    );
+    const { employee, date, shiftId, department, subDepartment } = req.body;
+    const dt = new Date(date);
+
+    const existing = await ShiftSchedule.findOne({ employee, date: dt });
+    if (existing) {
+      if (
+        (department || subDepartment) &&
+        (existing.department?.toString() !== department?.toString() ||
+          existing.subDepartment?.toString() !== subDepartment?.toString())
+      ) {
+        return res.status(400).json({ error: 'department overlap' });
+      }
+      return res.status(400).json({ error: 'employee conflict' });
+    }
+
+    const leave = await LeaveRequest.findOne({
+      employee,
+      startDate: { $lte: dt },
+      endDate: { $gte: dt },
+      status: 'approved'
+    });
+    if (leave) return res.status(400).json({ error: 'leave conflict' });
+
+    const schedule = await ShiftSchedule.create({
+      employee,
+      date: dt,
+      shiftId,
+      department,
+      subDepartment
+    });
     res.status(201).json(schedule);
   } catch (err) {
     res.status(400).json({ error: err.message });
