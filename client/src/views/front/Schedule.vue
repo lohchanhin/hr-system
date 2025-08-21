@@ -311,15 +311,33 @@ function shiftInfo(id) {
 async function fetchEmployees() {
   const supervisorId = localStorage.getItem('employeeId') || ''
   try {
-    const res = await apiFetch(`/api/employees?supervisor=${supervisorId}`)
-    if (!res.ok) throw new Error('Failed to fetch employees')
-    const data = await res.json()
-    const sorted = data
+    const empRes = await apiFetch(`/api/employees?supervisor=${supervisorId}`)
+    const deptRes = await apiFetch('/api/departments')
+    const subRes = await apiFetch('/api/sub-departments')
+    if (!empRes.ok) throw new Error('Failed to fetch employees')
+    const [empData, deptData, subData] = await Promise.all([
+      empRes.json(),
+      deptRes.ok ? deptRes.json() : [],
+      subRes.ok ? subRes.json() : []
+    ])
+    const deptMap = Array.isArray(deptData)
+      ? deptData.reduce((acc, d) => {
+          acc[d._id] = d.name
+          return acc
+        }, {})
+      : {}
+    const subMap = Array.isArray(subData)
+      ? subData.reduce((acc, s) => {
+          acc[s._id] = s.name
+          return acc
+        }, {})
+      : {}
+    const sorted = empData
       .map(e => ({
         _id: e._id,
         name: e.name,
-        department: e.department || '',
-        subDepartment: e.subDepartment || ''
+        department: deptMap[e.department] || '',
+        subDepartment: subMap[e.subDepartment] || ''
       }))
       .sort((a, b) => a.department.localeCompare(b.department))
     employees.value = sorted
