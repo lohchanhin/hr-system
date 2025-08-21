@@ -2,22 +2,23 @@ import request from 'supertest'
 import express from 'express'
 import { jest } from '@jest/globals'
 import jwt from 'jsonwebtoken'
-import { isTokenBlacklisted } from '../src/utils/tokenBlacklist.js'
 
 const compareMock = jest.fn();
 const fakeUser = { _id: 'u1', role: 'employee', username: 'john', employee: 'e1', comparePassword: compareMock };
 const mockUser = { findOne: jest.fn() };
 const mockBlacklistedToken = { create: jest.fn(), findOne: jest.fn() };
 
-jest.mock('../src/models/User.js', () => ({ default: mockUser }), { virtual: true });
-jest.mock('../src/models/BlacklistedToken.js', () => ({ default: mockBlacklistedToken }), { virtual: true });
+jest.unstable_mockModule('../src/models/User.js', () => ({ default: mockUser }));
+jest.unstable_mockModule('../src/models/BlacklistedToken.js', () => ({ default: mockBlacklistedToken }));
 
 let app;
 let authRoutes;
+let isTokenBlacklisted;
 
 beforeAll(async () => {
   process.env.JWT_SECRET = 'secret';
   authRoutes = (await import('../src/routes/authRoutes.js')).default;
+  ({ isTokenBlacklisted } = await import('../src/utils/tokenBlacklist.js'));
   app = express();
   app.use(express.json());
   app.use('/api', authRoutes);

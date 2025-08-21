@@ -13,8 +13,13 @@ router.post('/login', async (req, res) => {
   const match = await user.comparePassword(password);
   if (!match) return res.status(401).json({ error: 'Invalid credentials' });
 
-  const token = jwt.sign({ id: user._id, role: user.role }, process.env.JWT_SECRET || 'secret', { expiresIn: '1h' });
-  res.json({ token, user: { id: user._id, role: user.role, username: user.username, employeeId: user.employee } });
+  const employeeId = user.employee || user.supervisor;
+  const token = jwt.sign(
+    { id: user._id, role: user.role, employeeId },
+    process.env.JWT_SECRET || 'secret',
+    { expiresIn: '1h' }
+  );
+  res.json({ token, user: { id: user._id, role: user.role, username: user.username, employeeId } });
 });
 
 router.post('/logout', async (req, res) => {
