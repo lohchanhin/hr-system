@@ -50,19 +50,47 @@
         <template #default="{ row }">
           <div :class="{ 'is-leave': scheduleMap[row._id]?.[d.date]?.leave }">
             <template v-if="scheduleMap[row._id]?.[d.date]">
-              <el-select
-                v-if="canEdit"
-                v-model="scheduleMap[row._id][d.date].shiftId"
-                placeholder=""
-                @change="val => onSelect(row._id, d.date, val)"
-              >
-                <el-option
-                  v-for="opt in shifts"
-                  :key="opt._id"
-                  :label="opt.code"
-                  :value="opt._id"
-                />
-              </el-select>
+              <template v-if="canEdit">
+                <el-select
+                  v-model="scheduleMap[row._id][d.date].shiftId"
+                  placeholder=""
+                  @change="val => onSelect(row._id, d.date, val)"
+                >
+                  <el-option
+                    v-for="opt in shifts"
+                    :key="opt._id"
+                    :label="opt.code"
+                    :value="opt._id"
+                  />
+                </el-select>
+                <el-select
+                  v-model="scheduleMap[row._id][d.date].department"
+                  placeholder="部門"
+                  size="small"
+                  style="margin-top:4px"
+                  @change="() => (scheduleMap[row._id][d.date].subDepartment = '')"
+                >
+                  <el-option
+                    v-for="dept in departments"
+                    :key="dept._id"
+                    :label="dept.name"
+                    :value="dept._id"
+                  />
+                </el-select>
+                <el-select
+                  v-model="scheduleMap[row._id][d.date].subDepartment"
+                  placeholder="單位"
+                  size="small"
+                  style="margin-top:4px"
+                >
+                  <el-option
+                    v-for="sub in subDepsFor(scheduleMap[row._id][d.date].department)"
+                    :key="sub._id"
+                    :label="sub.name"
+                    :value="sub._id"
+                  />
+                </el-select>
+              </template>
               <el-popover
                 v-else
                 v-if="shiftInfo(scheduleMap[row._id][d.date].shiftId)"
@@ -203,13 +231,23 @@ async function fetchSchedules() {
     employees.value.forEach(emp => {
       scheduleMap.value[emp._id] = {}
       ds.forEach(d => {
-        scheduleMap.value[emp._id][d.date] = { shiftId: '' }
+        scheduleMap.value[emp._id][d.date] = {
+          shiftId: '',
+          department: emp.departmentId,
+          subDepartment: emp.subDepartmentId
+        }
       })
     })
     data.forEach((s) => {
       const empId = s.employee?._id || s.employee
       const d = dayjs(s.date).date()
-      scheduleMap.value[empId][d] = { id: s._id, shiftId: s.shiftId }
+      const emp = employees.value.find(e => e._id === empId) || {}
+      scheduleMap.value[empId][d] = {
+        id: s._id,
+        shiftId: s.shiftId,
+        department: s.department || emp.departmentId,
+        subDepartment: s.subDepartment || emp.subDepartmentId
+      }
     })
 
     const res2 = await apiFetch(
@@ -242,13 +280,12 @@ async function saveAll() {
     Object.keys(scheduleMap.value[empId]).forEach(day => {
       const item = scheduleMap.value[empId][day]
       if (item.shiftId && !item.id) {
-        const emp = employees.value.find(e => e._id === empId)
         schedules.push({
           employee: empId,
           date: `${currentMonth.value}-${String(day).padStart(2, '0')}`,
           shiftId: item.shiftId,
-          department: emp?.departmentId,
-          subDepartment: emp?.subDepartmentId
+          department: item.department,
+          subDepartment: item.subDepartment
         })
       }
     })
@@ -311,7 +348,6 @@ async function onSelect(empId, day, value) {
   const dateStr = `${currentMonth.value}-${String(day).padStart(2, '0')}`
   const existing = scheduleMap.value[empId][day]
   const prev = existing.shiftId
-  const emp = employees.value.find(e => e._id === empId)
   if (existing && existing.id) {
     try {
       const res = await apiFetch(`/api/schedules/${existing.id}`, {
@@ -319,8 +355,8 @@ async function onSelect(empId, day, value) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           shiftId: value,
-          department: emp?.departmentId,
-          subDepartment: emp?.subDepartmentId
+          department: existing.department,
+          subDepartment: existing.subDepartment
         })
       })
       if (!res.ok) {
@@ -338,13 +374,18 @@ async function onSelect(empId, day, value) {
           employee: empId,
           date: dateStr,
           shiftId: value,
-          department: emp?.departmentId,
-          subDepartment: emp?.subDepartmentId
+          department: existing.department,
+          subDepartment: existing.subDepartment
         })
       })
       if (res.ok) {
         const saved = await res.json()
-        scheduleMap.value[empId][day] = { id: saved._id, shiftId: saved.shiftId }
+        scheduleMap.value[empId][day] = {
+          id: saved._id,
+          shiftId: saved.shiftId,
+          department: existing.department,
+          subDepartment: existing.subDepartment
+        }
       } else {
         await handleScheduleError(res, '新增排班失敗', empId, day, prev)
       }
@@ -387,6 +428,10 @@ async function handleScheduleError(res, defaultMsg, empId, day, prev) {
 
 function shiftInfo(id) {
   return shifts.value.find(s => s._id === id)
+}
+
+function subDepsFor(deptId) {
+  return subDepartments.value.filter(s => s.department === deptId)
 }
 
 async function fetchEmployees(department = '', subDepartment = '') {
