@@ -2,6 +2,32 @@
   <div class="schedule-page">
     <h2>排班管理</h2>
     <el-date-picker v-model="currentMonth" type="month" @change="fetchSchedules" />
+    <el-select
+      v-model="selectedDepartment"
+      placeholder="部門"
+      @change="onDepartmentChange"
+      style="margin-left: 10px;"
+    >
+      <el-option
+        v-for="dept in departments"
+        :key="dept._id"
+        :label="dept.name"
+        :value="dept._id"
+      />
+    </el-select>
+    <el-select
+      v-model="selectedSubDepartment"
+      placeholder="單位"
+      @change="onSubDepartmentChange"
+      style="margin-left: 10px;"
+    >
+      <el-option
+        v-for="sub in filteredSubDepartments"
+        :key="sub._id"
+        :label="sub.name"
+        :value="sub._id"
+      />
+    </el-select>
     <div class="actions">
       <el-button type="primary" @click="saveAll">儲存</el-button>
       <el-button @click="preview('week')">預覽週表</el-button>
@@ -85,6 +111,14 @@ const scheduleMap = ref({})
 const shifts = ref([])
 const employees = ref([])
 const approvalList = ref([])
+const departments = ref([])
+const subDepartments = ref([])
+const selectedDepartment = ref('')
+const selectedSubDepartment = ref('')
+
+const filteredSubDepartments = computed(() =>
+  subDepartments.value.filter(s => s.department === selectedDepartment.value)
+)
 
 const router = useRouter()
 
@@ -129,6 +163,19 @@ async function fetchShiftOptions() {
   }
 }
 
+async function fetchOptions() {
+  try {
+    const [deptRes, subRes] = await Promise.all([
+      apiFetch('/api/departments'),
+      apiFetch('/api/sub-departments')
+    ])
+    departments.value = deptRes.ok ? await deptRes.json() : []
+    subDepartments.value = subRes.ok ? await subRes.json() : []
+  } catch (err) {
+    console.error(err)
+  }
+}
+
 async function fetchSchedules() {
   const supervisorId = localStorage.getItem('employeeId') || ''
   try {
@@ -142,7 +189,7 @@ async function fetchSchedules() {
     const ds = days.value
     scheduleMap.value = {}
     if (!employees.value.length) {
-      await fetchEmployees()
+      await fetchEmployees(selectedDepartment.value, selectedSubDepartment.value)
     }
     employees.value.forEach(emp => {
       scheduleMap.value[emp._id] = {}
@@ -186,10 +233,13 @@ async function saveAll() {
     Object.keys(scheduleMap.value[empId]).forEach(day => {
       const item = scheduleMap.value[empId][day]
       if (item.shiftId && !item.id) {
+        const emp = employees.value.find(e => e._id === empId)
         schedules.push({
           employee: empId,
           date: `${currentMonth.value}-${String(day).padStart(2, '0')}`,
-          shiftId: item.shiftId
+          shiftId: item.shiftId,
+          department: emp?.departmentId,
+          subDepartment: emp?.subDepartmentId
         })
       }
     })
@@ -252,12 +302,17 @@ async function onSelect(empId, day, value) {
   const dateStr = `${currentMonth.value}-${String(day).padStart(2, '0')}`
   const existing = scheduleMap.value[empId][day]
   const prev = existing.shiftId
+  const emp = employees.value.find(e => e._id === empId)
   if (existing && existing.id) {
     try {
       const res = await apiFetch(`/api/schedules/${existing.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ shiftId: value })
+        body: JSON.stringify({
+          shiftId: value,
+          department: emp?.departmentId,
+          subDepartment: emp?.subDepartmentId
+        })
       })
       if (!res.ok) {
         await handleScheduleError(res, '更新排班失敗', empId, day, prev)
@@ -270,7 +325,13 @@ async function onSelect(empId, day, value) {
       const res = await apiFetch('/api/schedules', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ employee: empId, date: dateStr, shiftId: value })
+        body: JSON.stringify({
+          employee: empId,
+          date: dateStr,
+          shiftId: value,
+          department: emp?.departmentId,
+          subDepartment: emp?.subDepartmentId
+        })
       })
       if (res.ok) {
         const saved = await res.json()
@@ -282,6 +343,17 @@ async function onSelect(empId, day, value) {
       await handleScheduleError(null, '新增排班失敗', empId, day, prev)
     }
   }
+}
+
+async function onDepartmentChange() {
+  selectedSubDepartment.value = ''
+  await fetchEmployees(selectedDepartment.value, '')
+  await fetchSchedules()
+}
+
+async function onSubDepartmentChange() {
+  await fetchEmployees(selectedDepartment.value, selectedSubDepartment.value)
+  await fetchSchedules()
 }
 
 async function handleScheduleError(res, defaultMsg, empId, day, prev) {
@@ -308,34 +380,29 @@ function shiftInfo(id) {
   return shifts.value.find(s => s._id === id)
 }
 
-async function fetchEmployees() {
+async function fetchEmployees(department = '', subDepartment = '') {
   const supervisorId = localStorage.getItem('employeeId') || ''
+  let url = `/api/employees?supervisor=${supervisorId}`
+  if (department) url += `&department=${department}`
+  if (subDepartment) url += `&subDepartment=${subDepartment}`
   try {
-    const empRes = await apiFetch(`/api/employees?supervisor=${supervisorId}`)
-    const deptRes = await apiFetch('/api/departments')
-    const subRes = await apiFetch('/api/sub-departments')
+    const empRes = await apiFetch(url)
     if (!empRes.ok) throw new Error('Failed to fetch employees')
-    const [empData, deptData, subData] = await Promise.all([
-      empRes.json(),
-      deptRes.ok ? deptRes.json() : [],
-      subRes.ok ? subRes.json() : []
-    ])
-    const deptMap = Array.isArray(deptData)
-      ? deptData.reduce((acc, d) => {
-          acc[d._id] = d.name
-          return acc
-        }, {})
-      : {}
-    const subMap = Array.isArray(subData)
-      ? subData.reduce((acc, s) => {
-          acc[s._id] = s.name
-          return acc
-        }, {})
-      : {}
+    const empData = await empRes.json()
+    const deptMap = departments.value.reduce((acc, d) => {
+      acc[d._id] = d.name
+      return acc
+    }, {})
+    const subMap = subDepartments.value.reduce((acc, s) => {
+      acc[s._id] = s.name
+      return acc
+    }, {})
     const sorted = empData
       .map(e => ({
         _id: e._id,
         name: e.name,
+        departmentId: e.department,
+        subDepartmentId: e.subDepartment,
         department: deptMap[e.department] || '',
         subDepartment: subMap[e.subDepartment] || ''
       }))
@@ -349,7 +416,8 @@ async function fetchEmployees() {
 
 onMounted(async () => {
   await fetchShiftOptions()
-  await fetchEmployees()
+  await fetchOptions()
+  await fetchEmployees(selectedDepartment.value, selectedSubDepartment.value)
   await fetchSchedules()
 })
 </script>
