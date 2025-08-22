@@ -56,6 +56,16 @@ describe('Employee API', () => {
     expect(res.body).toEqual(fakeEmployees);
   });
 
+  it('lists employees filtered by subDepartment', async () => {
+    const fakeEmployees = [{ name: 'Alice' }];
+    const populate = jest.fn().mockReturnValue({ sort: jest.fn().mockResolvedValue(fakeEmployees) });
+    mockEmployee.find.mockReturnValue({ populate });
+    const res = await request(app).get('/api/employees?subDepartment=sd1');
+    expect(res.status).toBe(200);
+    expect(mockEmployee.find).toHaveBeenCalledWith({ subDepartment: 'sd1' });
+    expect(res.body).toEqual(fakeEmployees);
+  });
+
   it('lists employee options', async () => {
     const opts = [{ _id: '1', name: 'A' }];
     mockEmployee.find.mockResolvedValue(opts);
