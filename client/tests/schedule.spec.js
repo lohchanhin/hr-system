@@ -72,14 +72,14 @@ describe('Schedule.vue', () => {
     expect(wrapper.vm.shifts).toEqual([{ _id: 's1', code: 'S1', startTime: '08:00', endTime: '17:00', remark: 'R' }])
   })
 
-  it('filters subDepartments by stringified department id', async () => {
+  it('filters subDepartments by department id', async () => {
     apiFetch
       .mockResolvedValueOnce({ ok: true, json: async () => [] })
       .mockResolvedValueOnce({ ok: true, json: async () => [{ _id: 'd1', name: 'Dept A' }] })
       .mockResolvedValueOnce({
         ok: true,
         json: async () => [
-          { _id: 'sd1', name: 'Sub A', department: { toString: () => 'd1' } }
+          { _id: 'sd1', name: 'Sub A', department: { _id: 'd1' } }
         ]
       })
       .mockResolvedValueOnce({
@@ -92,6 +92,34 @@ describe('Schedule.vue', () => {
     await flush()
     wrapper.vm.selectedDepartment = 'd1'
     expect(wrapper.vm.filteredSubDepartments).toEqual([
+      { _id: 'sd1', name: 'Sub A', department: 'd1' }
+    ])
+  })
+
+  it('fetches sub-departments when department changes', async () => {
+    apiFetch
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [{ _id: 'd1', name: 'Dept A' }] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [{ _id: 'e1', name: 'E1', department: '', subDepartment: '' }] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ approvals: [], leaves: [] }) })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => [
+          { _id: 'sd1', name: 'Sub A', department: { _id: 'd1' } }
+        ]
+      })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ approvals: [], leaves: [] }) })
+
+    const wrapper = mountSchedule()
+    await flush()
+    wrapper.vm.selectedDepartment = 'd1'
+    await wrapper.vm.onDepartmentChange()
+    expect(apiFetch).toHaveBeenCalledWith('/api/sub-departments?department=d1')
+    expect(wrapper.vm.subDepartments).toEqual([
       { _id: 'sd1', name: 'Sub A', department: 'd1' }
     ])
   })
@@ -181,6 +209,7 @@ describe('Schedule.vue', () => {
       .mockResolvedValueOnce({ ok: true, json: async () => [{ _id: 'e1', name: 'E1', department: 'd1', subDepartment: 'sd1' }] })
       .mockResolvedValueOnce({ ok: true, json: async () => [] })
       .mockResolvedValueOnce({ ok: true, json: async () => ({ approvals: [], leaves: [] }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => [{ _id: 'sd1', name: 'Sub A', department: { _id: 'd1' } }] })
       .mockResolvedValueOnce({ ok: true, json: async () => [{ _id: 'e1', name: 'E1', department: 'd1', subDepartment: 'sd1' }] })
       .mockResolvedValueOnce({ ok: true, json: async () => [] })
       .mockResolvedValueOnce({ ok: true, json: async () => ({ approvals: [], leaves: [] }) })
@@ -205,11 +234,11 @@ describe('Schedule.vue', () => {
 
     expect(apiFetch).toHaveBeenNthCalledWith(4, `/api/employees?supervisor=s1`)
     expect(apiFetch).toHaveBeenNthCalledWith(
-      7,
+      8,
       `/api/employees?supervisor=s1&department=d1`
     )
     expect(apiFetch).toHaveBeenNthCalledWith(
-      10,
+      11,
       `/api/employees?supervisor=s1&department=d1&subDepartment=sd1`
     )
     expect(apiFetch).toHaveBeenLastCalledWith(

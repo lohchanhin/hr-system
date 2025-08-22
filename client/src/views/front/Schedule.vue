@@ -1,33 +1,35 @@
 <template>
   <div class="schedule-page">
     <h2>排班管理</h2>
-    <el-date-picker v-model="currentMonth" type="month" @change="fetchSchedules" />
-    <el-select
-      v-model="selectedDepartment"
-      placeholder="部門"
-      @change="onDepartmentChange"
-      style="margin-left: 10px;"
-    >
-      <el-option
-        v-for="dept in departments"
-        :key="dept._id"
-        :label="dept.name"
-        :value="dept._id"
-      />
-    </el-select>
-    <el-select
-      v-model="selectedSubDepartment"
-      placeholder="單位"
-      @change="onSubDepartmentChange"
-      style="margin-left: 10px;"
-    >
-      <el-option
-        v-for="sub in filteredSubDepartments"
-        :key="sub._id"
-        :label="sub.name"
-        :value="sub._id"
-      />
-    </el-select>
+    <div class="filters">
+      <el-date-picker v-model="currentMonth" type="month" @change="fetchSchedules" />
+      <el-select
+        class="schedule-select"
+        v-model="selectedDepartment"
+        placeholder="部門"
+        @change="onDepartmentChange"
+      >
+        <el-option
+          v-for="dept in departments"
+          :key="dept._id"
+          :label="dept.name"
+          :value="dept._id"
+        />
+      </el-select>
+      <el-select
+        class="schedule-select"
+        v-model="selectedSubDepartment"
+        placeholder="單位"
+        @change="onSubDepartmentChange"
+      >
+        <el-option
+          v-for="sub in filteredSubDepartments"
+          :key="sub._id"
+          :label="sub.name"
+          :value="sub._id"
+        />
+      </el-select>
+    </div>
     <div class="actions">
       <el-button type="primary" @click="saveAll">儲存</el-button>
       <el-button @click="preview('week')">預覽週表</el-button>
@@ -35,7 +37,7 @@
       <el-button @click="() => exportSchedules('pdf')">匯出 PDF</el-button>
       <el-button @click="() => exportSchedules('excel')">匯出 Excel</el-button>
     </div>
-    <el-table :data="employees" style="margin-top: 20px;">
+    <el-table class="schedule-table" :data="employees" style="margin-top: 20px;">
       <el-table-column label="樓層／單位">
         <template #default="{ row }">
           {{ row.department }}<span v-if="row.subDepartment">／{{ row.subDepartment }}</span>
@@ -48,10 +50,17 @@
         :label="d.label"
       >
         <template #default="{ row }">
-          <div :class="{ 'is-leave': scheduleMap[row._id]?.[d.date]?.leave }">
+          <div
+            class="schedule-cell"
+            :class="[
+              shiftClass(scheduleMap[row._id]?.[d.date]?.shiftId),
+              { 'is-leave': scheduleMap[row._id]?.[d.date]?.leave }
+            ]"
+          >
             <template v-if="scheduleMap[row._id]?.[d.date]">
               <template v-if="canEdit">
                 <el-select
+                  class="schedule-select"
                   v-model="scheduleMap[row._id][d.date].shiftId"
                   placeholder=""
                   @change="val => onSelect(row._id, d.date, val)"
@@ -64,10 +73,10 @@
                   />
                 </el-select>
                 <el-select
+                  class="schedule-select"
                   v-model="scheduleMap[row._id][d.date].department"
                   placeholder="部門"
                   size="small"
-                  style="margin-top:4px"
                   @change="() => (scheduleMap[row._id][d.date].subDepartment = '')"
                 >
                   <el-option
@@ -78,10 +87,10 @@
                   />
                 </el-select>
                 <el-select
+                  class="schedule-select"
                   v-model="scheduleMap[row._id][d.date].subDepartment"
                   placeholder="單位"
                   size="small"
-                  style="margin-top:4px"
                 >
                   <el-option
                     v-for="sub in subDepsFor(scheduleMap[row._id][d.date].department)"
@@ -103,7 +112,7 @@
                   備註：{{ shiftInfo(scheduleMap[row._id][d.date].shiftId).remark }}
                 </p>
                 <template #reference>
-                  <span>{{ shiftInfo(scheduleMap[row._id][d.date].shiftId).code }}</span>
+                  <span class="shift-tag">{{ shiftInfo(scheduleMap[row._id][d.date].shiftId).code }}</span>
                 </template>
               </el-popover>
               <span v-else></span>
@@ -114,7 +123,7 @@
         </template>
       </el-table-column>
     </el-table>
-    <el-table :data="approvalList" style="margin-top: 20px;">
+    <el-table class="schedule-table" :data="approvalList" style="margin-top: 20px;">
       <el-table-column label="申請人">
         <template #default="{ row }">{{ row.applicant_employee?.name }}</template>
       </el-table-column>
@@ -145,9 +154,7 @@ const selectedDepartment = ref('')
 const selectedSubDepartment = ref('')
 
 const filteredSubDepartments = computed(() =>
-  subDepartments.value.filter(
-    s => String(s.department) === selectedDepartment.value
-  )
+  subDepartments.value.filter(s => s.department === selectedDepartment.value)
 )
 
 const router = useRouter()
@@ -193,21 +200,38 @@ async function fetchShiftOptions() {
   }
 }
 
+async function fetchSubDepartments(dept = '') {
+  try {
+    const url = dept ? `/api/sub-departments?department=${dept}` : '/api/sub-departments'
+    const res = await apiFetch(url)
+    const subData = res.ok ? await res.json() : []
+    const deptMap = departments.value.reduce((acc, d) => {
+      acc[d._id] = d._id
+      acc[d.name] = d._id
+      return acc
+    }, {})
+    subDepartments.value = Array.isArray(subData)
+      ? subData.map(s => {
+          let deptId = ''
+          if (s && typeof s.department === 'object') {
+            deptId = s.department._id || deptMap[s.department.name] || ''
+          } else {
+            deptId = deptMap[s.department] || s.department || ''
+          }
+          return { ...s, _id: String(s._id), department: String(deptId) }
+        })
+      : []
+  } catch (err) {
+    console.error(err)
+    subDepartments.value = []
+  }
+}
+
 async function fetchOptions() {
   try {
-    const [deptRes, subRes] = await Promise.all([
-      apiFetch('/api/departments'),
-      apiFetch('/api/sub-departments')
-    ])
+    const deptRes = await apiFetch('/api/departments')
     departments.value = deptRes.ok ? await deptRes.json() : []
-    const subData = subRes.ok ? await subRes.json() : []
-    subDepartments.value = Array.isArray(subData)
-      ? subData.map(s => ({
-          ...s,
-          _id: String(s._id),
-          department: String(s.department)
-        }))
-      : []
+    await fetchSubDepartments(selectedDepartment.value)
   } catch (err) {
     console.error(err)
   }
@@ -397,6 +421,7 @@ async function onSelect(empId, day, value) {
 
 async function onDepartmentChange() {
   selectedSubDepartment.value = ''
+  await fetchSubDepartments(selectedDepartment.value)
   await fetchEmployees(selectedDepartment.value, '')
   await fetchSchedules()
 }
@@ -428,6 +453,14 @@ async function handleScheduleError(res, defaultMsg, empId, day, prev) {
 
 function shiftInfo(id) {
   return shifts.value.find(s => s._id === id)
+}
+
+function shiftClass(id) {
+  const info = shiftInfo(id)
+  if (!info) return ''
+  if (/早/.test(info.code)) return 'shift-morning'
+  if (/晚|夜/.test(info.code)) return 'shift-evening'
+  return 'shift-normal'
 }
 
 function subDepsFor(deptId) {
@@ -476,18 +509,90 @@ onMounted(async () => {
 })
 </script>
 
-<style scoped>
+<style scoped lang="scss">
+@use "element-plus/theme-chalk/src/common/var.scss" as *;
+
 .schedule-page {
   padding: 20px;
 }
+
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
 .actions {
   margin: 10px 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
+
+.schedule-select {
+  font-size: 14px;
+  margin-right: 8px;
+
+  ::v-deep(.el-input__wrapper:hover) {
+    border-color: var(--el-color-primary);
+  }
+}
+
+.schedule-table {
+  font-size: 14px;
+
+  ::v-deep(.el-table__row:hover) {
+    background-color: var(--el-color-primary-light-9);
+  }
+}
+
+.schedule-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 4px;
+  border-radius: 4px;
+}
+
+.shift-tag {
+  display: inline-block;
+  padding: 2px 4px;
+  border-radius: 4px;
+}
+
+.shift-morning {
+  background-color: var(--el-color-primary-light-9);
+  border: 1px solid var(--el-color-primary-light-5);
+}
+
+.shift-evening {
+  background-color: var(--el-color-success-light-9);
+  border: 1px solid var(--el-color-success-light-5);
+}
+
+.shift-normal {
+  background-color: #f5f7fa;
+  border: 1px solid #e4e7ed;
+}
+
 .is-leave {
-  background-color: #fde2e2;
+  background-color: var(--el-color-warning-light-9);
+  border: 1px solid var(--el-color-warning-light-5);
 }
+
 .leave-icon {
   margin-left: 4px;
-  color: #f56c6c;
+  color: var(--el-color-danger);
+}
+
+@media (max-width: 600px) {
+  .actions {
+    flex-direction: column;
+  }
+
+  ::v-deep(.schedule-table .el-table__cell:first-child) {
+    display: none;
+  }
 }
 </style>
