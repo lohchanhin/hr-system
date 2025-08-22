@@ -107,6 +107,7 @@ export async function createSchedulesBatch(req, res) {
     if (!Array.isArray(schedules)) {
       return res.status(400).json({ error: 'schedules must be array' });
     }
+    const docs = [];
     for (const s of schedules) {
       const dt = new Date(s.date);
       const existing = await ShiftSchedule.findOne({ employee: s.employee, date: dt });
@@ -123,8 +124,15 @@ export async function createSchedulesBatch(req, res) {
       if (await hasLeaveConflict(s.employee, dt)) {
         return res.status(400).json({ error: 'leave conflict' });
       }
+      docs.push({
+        employee: s.employee,
+        date: dt,
+        shiftId: s.shiftId,
+        department: s.department,
+        subDepartment: s.subDepartment,
+      });
     }
-    const inserted = await ShiftSchedule.insertMany(schedules, { ordered: false });
+    const inserted = await ShiftSchedule.insertMany(docs, { ordered: false });
     res.status(201).json(inserted);
   } catch (err) {
     res.status(400).json({ error: err.message });

@@ -157,7 +157,45 @@ describe('Schedule API', () => {
     const res = await request(app).post('/api/schedules/batch').send(payload);
 
     expect(res.status).toBe(201);
-    expect(mockShiftSchedule.insertMany).toHaveBeenCalledWith(payload.schedules, { ordered: false });
+    expect(mockShiftSchedule.insertMany).toHaveBeenCalledWith([
+      {
+        employee: 'e1',
+        date: new Date('2023-01-01'),
+        shiftId: 'day',
+        department: undefined,
+        subDepartment: undefined
+      }
+    ], { ordered: false });
+  });
+
+  it('creates schedules batch with department and subDepartment', async () => {
+    mockShiftSchedule.findOne.mockResolvedValue(null);
+    mockApprovalRequest.findOne.mockResolvedValue(null);
+    mockShiftSchedule.insertMany.mockResolvedValue([{ _id: '1' }]);
+
+    const payload = {
+      schedules: [
+        {
+          employee: 'e1',
+          date: '2023-01-01',
+          shiftId: 'day',
+          department: 'd1',
+          subDepartment: 'sd1'
+        }
+      ]
+    };
+    const res = await request(app).post('/api/schedules/batch').send(payload);
+
+    expect(res.status).toBe(201);
+    expect(mockShiftSchedule.insertMany).toHaveBeenCalledWith([
+      {
+        employee: 'e1',
+        date: new Date('2023-01-01'),
+        shiftId: 'day',
+        department: 'd1',
+        subDepartment: 'sd1'
+      }
+    ], { ordered: false });
   });
 
   it('rejects batch if schedule exists', async () => {
@@ -173,6 +211,24 @@ describe('Schedule API', () => {
     const payload = {
       schedules: [
         { employee: 'e1', date: '2023-01-01', shiftId: 'day', department: 'd2' }
+      ]
+    };
+    const res = await request(app).post('/api/schedules/batch').send(payload);
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({ error: 'department overlap' });
+  });
+
+  it('rejects batch if cross sub-department', async () => {
+    mockShiftSchedule.findOne.mockResolvedValue({ _id: '1', department: 'd1', subDepartment: 'sd1' });
+    const payload = {
+      schedules: [
+        {
+          employee: 'e1',
+          date: '2023-01-01',
+          shiftId: 'day',
+          department: 'd1',
+          subDepartment: 'sd2'
+        }
       ]
     };
     const res = await request(app).post('/api/schedules/batch').send(payload);
