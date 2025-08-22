@@ -145,9 +145,7 @@ const selectedDepartment = ref('')
 const selectedSubDepartment = ref('')
 
 const filteredSubDepartments = computed(() =>
-  subDepartments.value.filter(
-    s => String(s.department) === selectedDepartment.value
-  )
+  subDepartments.value.filter(s => s.department === selectedDepartment.value)
 )
 
 const router = useRouter()
@@ -193,21 +191,38 @@ async function fetchShiftOptions() {
   }
 }
 
+async function fetchSubDepartments(dept = '') {
+  try {
+    const url = dept ? `/api/sub-departments?department=${dept}` : '/api/sub-departments'
+    const res = await apiFetch(url)
+    const subData = res.ok ? await res.json() : []
+    const deptMap = departments.value.reduce((acc, d) => {
+      acc[d._id] = d._id
+      acc[d.name] = d._id
+      return acc
+    }, {})
+    subDepartments.value = Array.isArray(subData)
+      ? subData.map(s => {
+          let deptId = ''
+          if (s && typeof s.department === 'object') {
+            deptId = s.department._id || deptMap[s.department.name] || ''
+          } else {
+            deptId = deptMap[s.department] || s.department || ''
+          }
+          return { ...s, _id: String(s._id), department: String(deptId) }
+        })
+      : []
+  } catch (err) {
+    console.error(err)
+    subDepartments.value = []
+  }
+}
+
 async function fetchOptions() {
   try {
-    const [deptRes, subRes] = await Promise.all([
-      apiFetch('/api/departments'),
-      apiFetch('/api/sub-departments')
-    ])
+    const deptRes = await apiFetch('/api/departments')
     departments.value = deptRes.ok ? await deptRes.json() : []
-    const subData = subRes.ok ? await subRes.json() : []
-    subDepartments.value = Array.isArray(subData)
-      ? subData.map(s => ({
-          ...s,
-          _id: String(s._id),
-          department: String(s.department)
-        }))
-      : []
+    await fetchSubDepartments(selectedDepartment.value)
   } catch (err) {
     console.error(err)
   }
@@ -397,6 +412,7 @@ async function onSelect(empId, day, value) {
 
 async function onDepartmentChange() {
   selectedSubDepartment.value = ''
+  await fetchSubDepartments(selectedDepartment.value)
   await fetchEmployees(selectedDepartment.value, '')
   await fetchSchedules()
 }
