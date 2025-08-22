@@ -194,9 +194,40 @@ export async function getSchedule(req, res) {
 
 export async function updateSchedule(req, res) {
   try {
-    const schedule = await ShiftSchedule.findByIdAndUpdate(req.params.id, req.body, { new: true });
+    const { employee, date, shiftId, department, subDepartment } = req.body;
+    const schedule = await ShiftSchedule.findById(req.params.id);
     if (!schedule) return res.status(404).json({ error: 'Not found' });
-    res.json(schedule);
+
+    const newEmployee = employee || schedule.employee;
+    const newDate = date ? new Date(date) : schedule.date;
+
+    const conflict = await ShiftSchedule.findOne({
+      employee: newEmployee,
+      date: newDate,
+      _id: { $ne: schedule._id },
+    });
+    if (conflict) {
+      if (
+        (department || subDepartment) &&
+        (conflict.department?.toString() !== department?.toString() ||
+          conflict.subDepartment?.toString() !== subDepartment?.toString())
+      ) {
+        return res.status(400).json({ error: 'department overlap' });
+      }
+      return res.status(400).json({ error: 'employee conflict' });
+    }
+
+    if (await hasLeaveConflict(newEmployee, newDate)) {
+      return res.status(400).json({ error: 'leave conflict' });
+    }
+
+    schedule.employee = newEmployee;
+    schedule.date = newDate;
+    if (shiftId !== undefined) schedule.shiftId = shiftId;
+    if (department !== undefined) schedule.department = department;
+    if (subDepartment !== undefined) schedule.subDepartment = subDepartment;
+    const saved = await schedule.save();
+    res.json(saved);
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
