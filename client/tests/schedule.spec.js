@@ -109,7 +109,7 @@ describe('Schedule.vue', () => {
     localStorage.setItem('employeeId', 's1')
     const wrapper = mountSchedule()
     await flush()
-    wrapper.vm.scheduleMap = { e1: { 1: { id: 'sch1', shiftId: 's1' } } }
+    wrapper.vm.scheduleMap = { e1: { 1: { id: 'sch1', shiftId: 's1', department: 'd1', subDepartment: 'sd1' } } }
     await wrapper.vm.onSelect('e1', 1, 's2')
     expect(wrapper.vm.scheduleMap.e1[1].shiftId).toBe('s1')
   })
@@ -127,7 +127,7 @@ describe('Schedule.vue', () => {
     localStorage.setItem('employeeId', 's1')
     const wrapper = mountSchedule()
     await flush()
-    wrapper.vm.scheduleMap = { e1: { 2: { shiftId: '' } } }
+    wrapper.vm.scheduleMap = { e1: { 2: { shiftId: '', department: 'd1', subDepartment: 'sd1' } } }
     await wrapper.vm.onSelect('e1', 2, 's1')
     expect(wrapper.vm.scheduleMap.e1[2].shiftId).toBe('')
   })
@@ -200,7 +200,7 @@ describe('Schedule.vue', () => {
     await wrapper.vm.onDepartmentChange()
     wrapper.vm.selectedSubDepartment = 'sd1'
     await wrapper.vm.onSubDepartmentChange()
-    wrapper.vm.scheduleMap = { e1: { 1: { shiftId: '' } } }
+    wrapper.vm.scheduleMap = { e1: { 1: { shiftId: '', department: 'd1', subDepartment: 'sd1' } } }
     await wrapper.vm.onSelect('e1', 1, 's1')
 
     expect(apiFetch).toHaveBeenNthCalledWith(4, `/api/employees?supervisor=s1`)
@@ -225,6 +225,43 @@ describe('Schedule.vue', () => {
       })
     )
     expect(wrapper.vm.scheduleMap.e1[1].shiftId).toBe('s1')
+  })
+
+  it('saves all schedules with selected department', async () => {
+    const month = dayjs().format('YYYY-MM')
+    apiFetch
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [{ _id: 'd1', name: 'Dept A' }] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [{ _id: 'sd1', name: 'Sub A', department: 'd1' }] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [{ _id: 'e1', name: 'E1', department: 'd1', subDepartment: 'sd1' }] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ approvals: [], leaves: [] }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => [{ _id: 'sch1' }] })
+
+    const wrapper = mountSchedule()
+    await flush()
+    wrapper.vm.scheduleMap = {
+      e1: {
+        1: { shiftId: 's1', department: 'd2', subDepartment: 'sd2' }
+      }
+    }
+    await wrapper.vm.saveAll()
+    expect(apiFetch).toHaveBeenLastCalledWith(
+      '/api/schedules/batch',
+      expect.objectContaining({
+        body: JSON.stringify({
+          schedules: [
+            {
+              employee: 'e1',
+              date: `${month}-01`,
+              shiftId: 's1',
+              department: 'd2',
+              subDepartment: 'sd2'
+            }
+          ]
+        })
+      })
+    )
   })
 
   it('stores data and navigates when previewing month', async () => {
