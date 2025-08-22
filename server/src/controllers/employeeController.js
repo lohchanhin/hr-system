@@ -360,12 +360,13 @@ function buildEmployeePatch(body = {}, existing = null) {
 /** GET /api/employees?q=...&supervisor=...&organization=...&department=...&status=...&role=... */
 export async function listEmployees(req, res) {
   try {
-    const { q, supervisor, organization, department, status, role } = req.query
+    const { q, supervisor, organization, department, subDepartment, status, role } = req.query
     const filter = {}
 
     if (supervisor) filter.supervisor = supervisor
     if (organization) filter.organization = organization
     if (department) filter.department = department
+    if (subDepartment) filter.subDepartment = subDepartment
     if (status) filter.status = status
     if (role) filter.role = role
     if (q) {
