@@ -117,7 +117,9 @@ const selectedDepartment = ref('')
 const selectedSubDepartment = ref('')
 
 const filteredSubDepartments = computed(() =>
-  subDepartments.value.filter(s => s.department === selectedDepartment.value)
+  subDepartments.value.filter(
+    s => String(s.department) === selectedDepartment.value
+  )
 )
 
 const router = useRouter()
@@ -170,7 +172,14 @@ async function fetchOptions() {
       apiFetch('/api/sub-departments')
     ])
     departments.value = deptRes.ok ? await deptRes.json() : []
-    subDepartments.value = subRes.ok ? await subRes.json() : []
+    const subData = subRes.ok ? await subRes.json() : []
+    subDepartments.value = Array.isArray(subData)
+      ? subData.map(s => ({
+          ...s,
+          _id: String(s._id),
+          department: String(s.department)
+        }))
+      : []
   } catch (err) {
     console.error(err)
   }

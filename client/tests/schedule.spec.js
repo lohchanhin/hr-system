@@ -72,6 +72,30 @@ describe('Schedule.vue', () => {
     expect(wrapper.vm.shifts).toEqual([{ _id: 's1', code: 'S1', startTime: '08:00', endTime: '17:00', remark: 'R' }])
   })
 
+  it('filters subDepartments by stringified department id', async () => {
+    apiFetch
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [{ _id: 'd1', name: 'Dept A' }] })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => [
+          { _id: 'sd1', name: 'Sub A', department: { toString: () => 'd1' } }
+        ]
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => [{ _id: 'e1', name: 'E1', department: 'd1', subDepartment: 'sd1' }]
+      })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ approvals: [], leaves: [] }) })
+    const wrapper = mountSchedule()
+    await flush()
+    wrapper.vm.selectedDepartment = 'd1'
+    expect(wrapper.vm.filteredSubDepartments).toEqual([
+      { _id: 'sd1', name: 'Sub A', department: 'd1' }
+    ])
+  })
+
   it('reverts change when update fails', async () => {
     apiFetch
       .mockResolvedValueOnce({ ok: true, json: async () => [] })
