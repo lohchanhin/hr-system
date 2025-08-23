@@ -1,9 +1,307 @@
-/* responsive styles for ModernLayout */
-@media (max-width: 768px) {
+/* HR System Responsive Design */
+
+/* Mobile First Approach */
+/* Base styles are for mobile (320px+) */
+
+/* Small devices (landscape phones, 576px and up) */
+@media (min-width: 576px) {
+  .hr-container {
+    max-width: 540px;
+    margin: 0 auto;
+    padding: 0 var(--hr-space-md);
+  }
+
+  .hr-grid-sm-2 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .hr-grid-sm-3 {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .hr-text-sm-lg {
+    font-size: var(--hr-font-size-lg);
+  }
+  .hr-text-sm-xl {
+    font-size: var(--hr-font-size-xl);
+  }
+}
+
+/* Medium devices (tablets, 768px and up) */
+@media (min-width: 768px) {
+  .hr-container {
+    max-width: 720px;
+  }
+
+  /* Layout adjustments for tablets */
   .modern-layout .layout-aside {
-    position: absolute;
-    z-index: 1000;
-    height: 100%;
-    background: #fff;
+    position: relative;
+    z-index: auto;
+    height: auto;
+    background: var(--hr-bg-card);
+    border-right: 1px solid var(--hr-border-light);
+  }
+
+  .hr-grid-md-2 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .hr-grid-md-3 {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .hr-grid-md-4 {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .hr-flex-md-row {
+    flex-direction: row;
+  }
+  .hr-flex-md-col {
+    flex-direction: column;
+  }
+
+  .hr-text-md-lg {
+    font-size: var(--hr-font-size-lg);
+  }
+  .hr-text-md-xl {
+    font-size: var(--hr-font-size-xl);
+  }
+  .hr-text-md-2xl {
+    font-size: var(--hr-font-size-2xl);
+  }
+
+  /* Hide mobile-only elements */
+  .hr-hide-md {
+    display: none;
+  }
+  .hr-show-md {
+    display: block;
+  }
+}
+
+/* Large devices (desktops, 992px and up) */
+@media (min-width: 992px) {
+  .hr-container {
+    max-width: 960px;
+  }
+
+  .hr-grid-lg-2 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .hr-grid-lg-3 {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .hr-grid-lg-4 {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+  .hr-grid-lg-5 {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+
+  .hr-text-lg-xl {
+    font-size: var(--hr-font-size-xl);
+  }
+  .hr-text-lg-2xl {
+    font-size: var(--hr-font-size-2xl);
+  }
+  .hr-text-lg-3xl {
+    font-size: var(--hr-font-size-3xl);
+  }
+
+  /* Desktop-specific spacing */
+  .hr-p-lg-xl {
+    padding: var(--hr-space-xl);
+  }
+  .hr-p-lg-2xl {
+    padding: var(--hr-space-2xl);
+  }
+
+  .hr-hide-lg {
+    display: none;
+  }
+  .hr-show-lg {
+    display: block;
+  }
+}
+
+/* Extra large devices (large desktops, 1200px and up) */
+@media (min-width: 1200px) {
+  .hr-container {
+    max-width: 1140px;
+  }
+
+  .hr-grid-xl-2 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .hr-grid-xl-3 {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .hr-grid-xl-4 {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+  .hr-grid-xl-5 {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+  .hr-grid-xl-6 {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+  }
+
+  .hr-text-xl-2xl {
+    font-size: var(--hr-font-size-2xl);
+  }
+  .hr-text-xl-3xl {
+    font-size: var(--hr-font-size-3xl);
+  }
+  .hr-text-xl-4xl {
+    font-size: var(--hr-font-size-4xl);
+  }
+
+  .hr-hide-xl {
+    display: none;
+  }
+  .hr-show-xl {
+    display: block;
+  }
+}
+
+/* Mobile-specific styles */
+@media (max-width: 767px) {
+  /* Stack elements vertically on mobile */
+  .hr-mobile-stack {
+    flex-direction: column;
+  }
+
+  .hr-mobile-full {
+    width: 100%;
+  }
+
+  /* Adjust padding for mobile */
+  .hr-mobile-p-sm {
+    padding: var(--hr-space-sm);
+  }
+
+  /* Mobile navigation adjustments */
+  .modern-layout .layout-aside {
+    position: fixed;
+    top: 0;
+    left: -100%;
+    z-index: var(--hr-z-modal);
+    width: 280px;
+    height: 100vh;
+    background: var(--hr-bg-card);
+    box-shadow: var(--hr-shadow-xl);
+    transition: left var(--hr-transition-normal);
+  }
+
+  .modern-layout .layout-aside.is-open {
+    left: 0;
+  }
+
+  /* Mobile overlay */
+  .hr-mobile-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: rgba(0, 0, 0, 0.5);
+    z-index: var(--hr-z-modal-backdrop);
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity var(--hr-transition-normal), visibility var(--hr-transition-normal);
+  }
+
+  .hr-mobile-overlay.is-open {
+    opacity: 1;
+    visibility: visible;
+  }
+
+  /* Mobile table responsiveness */
+  .hr-table-responsive {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .hr-table-responsive .hr-table {
+    min-width: 600px;
+  }
+
+  /* Mobile form adjustments */
+  .hr-form-mobile .hr-form-group {
+    margin-bottom: var(--hr-space-md);
+  }
+
+  .hr-form-mobile .hr-btn {
+    width: 100%;
+    justify-content: center;
+  }
+
+  /* Hide desktop-only elements */
+  .hr-hide-mobile {
+    display: none;
+  }
+  .hr-show-mobile {
+    display: block;
+  }
+}
+
+/* Print styles */
+@media print {
+  .hr-no-print {
+    display: none !important;
+  }
+
+  .hr-print-break {
+    page-break-after: always;
+  }
+
+  .hr-card {
+    box-shadow: none;
+    border: 1px solid var(--hr-border-medium);
+  }
+
+  body {
+    background: white !important;
+    color: black !important;
+  }
+}
+
+/* High contrast mode support */
+@media (prefers-contrast: high) {
+  :root {
+    --hr-border-light: var(--hr-gray-600);
+    --hr-border-medium: var(--hr-gray-700);
+    --hr-border-dark: var(--hr-gray-800);
+  }
+
+  .hr-card {
+    border-width: 2px;
+  }
+
+  .hr-btn {
+    border-width: 2px;
+  }
+}
+
+/* Reduced motion support */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+
+  .hr-fade-in,
+  .hr-slide-up {
+    animation: none;
+  }
+}
+
+/* Focus management for keyboard navigation */
+@media (prefers-reduced-motion: no-preference) {
+  .hr-focus-ring:focus {
+    outline: 2px solid var(--hr-primary);
+    outline-offset: 2px;
+    transition: outline-offset var(--hr-transition-fast);
   }
 }
