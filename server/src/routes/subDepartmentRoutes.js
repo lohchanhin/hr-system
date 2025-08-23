@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { authorizeRoles } from '../middleware/auth.js';
 import {
   listSubDepartments,
   createSubDepartment,
@@ -8,9 +9,9 @@ import {
 
 const router = Router();
 
-router.get('/', listSubDepartments);
-router.post('/', createSubDepartment);
-router.put('/:id', updateSubDepartment);
-router.delete('/:id', deleteSubDepartment);
+router.get('/', authorizeRoles('admin', 'supervisor'), listSubDepartments);
+router.post('/', authorizeRoles('admin'), createSubDepartment);
+router.put('/:id', authorizeRoles('admin'), updateSubDepartment);
+router.delete('/:id', authorizeRoles('admin'), deleteSubDepartment);
 
 export default router;

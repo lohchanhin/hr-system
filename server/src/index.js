@@ -306,7 +306,12 @@ app.use(
   },
   organizationRoutes
 );
-app.use('/api/sub-departments', authenticate, authorizeRoles('admin'), subDepartmentRoutes);
+app.use(
+  '/api/sub-departments',
+  authenticate,
+  authorizeRoles('admin', 'supervisor'),
+  subDepartmentRoutes
+);
 app.use('/api/dept-schedules', authenticate, authorizeRoles('admin'), deptScheduleRoutes);
 
 app.use('/api/dept-managers', authenticate, authorizeRoles('admin'), deptManagerRoutes);
