@@ -204,7 +204,8 @@ async function fetchSubDepartments(dept = '') {
   try {
     const url = dept ? `/api/sub-departments?department=${dept}` : '/api/sub-departments'
     const res = await apiFetch(url)
-    const subData = res.ok ? await res.json() : []
+    if (!res.ok) throw new Error('Failed to fetch sub departments')
+    const subData = await res.json()
     const deptMap = departments.value.reduce((acc, d) => {
       acc[d._id] = d._id
       acc[d.name] = d._id
@@ -221,9 +222,13 @@ async function fetchSubDepartments(dept = '') {
           return { ...s, _id: String(s._id), department: String(deptId) }
         })
       : []
+    if (subDepartments.value.length && !selectedSubDepartment.value) {
+      selectedSubDepartment.value = subDepartments.value[0]._id
+    }
   } catch (err) {
     console.error(err)
     subDepartments.value = []
+    selectedSubDepartment.value = ''
   }
 }
 
