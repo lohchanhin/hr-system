@@ -78,4 +78,3 @@ const menuStore = useMenuStore()
     padding: 20px;
   }
   </style>
-  

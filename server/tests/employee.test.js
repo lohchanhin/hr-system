@@ -272,4 +272,3 @@ describe('Employee authorization middleware', () => {
     expect(resCreate.status).toBe(403);
   });
 });
-

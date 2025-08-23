@@ -1,137 +1,253 @@
 <template>
   <div class="schedule-page">
-    <h2>排班管理</h2>
-    <div class="filters">
-      <el-date-picker v-model="currentMonth" type="month" @change="fetchSchedules" />
-      <el-select
-        class="schedule-select"
-        v-model="selectedDepartment"
-        placeholder="部門"
-        @change="onDepartmentChange"
-      >
-        <el-option
-          v-for="dept in departments"
-          :key="dept._id"
-          :label="dept.name"
-          :value="dept._id"
-        />
-      </el-select>
-      <el-select
-        class="schedule-select"
-        v-model="selectedSubDepartment"
-        placeholder="單位"
-        @change="onSubDepartmentChange"
-      >
-        <el-option
-          v-for="sub in filteredSubDepartments"
-          :key="sub._id"
-          :label="sub.name"
-          :value="sub._id"
-        />
-      </el-select>
+    <!-- Modern header with better typography and spacing -->
+    <div class="page-header">
+      <h1 class="page-title">排班管理</h1>
+      <p class="page-subtitle">管理員工排班與班表預覽</p>
     </div>
-    <div class="actions">
-      <el-button type="primary" @click="saveAll">儲存</el-button>
-      <el-button @click="preview('week')">預覽週表</el-button>
-      <el-button @click="preview('month')">預覽月表</el-button>
-      <el-button @click="() => exportSchedules('pdf')">匯出 PDF</el-button>
-      <el-button @click="() => exportSchedules('excel')">匯出 Excel</el-button>
-    </div>
-    <el-table class="schedule-table" :data="employees" style="margin-top: 20px;">
-      <el-table-column label="樓層／單位">
-        <template #default="{ row }">
-          {{ row.department }}<span v-if="row.subDepartment">／{{ row.subDepartment }}</span>
-        </template>
-      </el-table-column>
-      <el-table-column prop="name" label="員工" />
-      <el-table-column
-        v-for="d in days"
-        :key="d.date"
-        :label="d.label"
-      >
-        <template #default="{ row }">
-          <div
-            class="schedule-cell"
-            :class="[
-              shiftClass(scheduleMap[row._id]?.[d.date]?.shiftId),
-              { 'is-leave': scheduleMap[row._id]?.[d.date]?.leave }
-            ]"
+    
+    <!-- Enhanced filters section with card design -->
+    <div class="filters-card">
+      <div class="filters-header">
+        <h3 class="filters-title">篩選條件</h3>
+      </div>
+      <div class="filters-content">
+        <div class="filter-group">
+          <label class="filter-label">選擇月份</label>
+          <el-date-picker 
+            v-model="currentMonth" 
+            type="month" 
+            @change="fetchSchedules"
+            class="modern-date-picker"
+          />
+        </div>
+        <div class="filter-group">
+          <label class="filter-label">部門</label>
+          <el-select
+            v-model="selectedDepartment"
+            placeholder="請選擇部門"
+            @change="onDepartmentChange"
+            class="modern-select"
           >
-            <template v-if="scheduleMap[row._id]?.[d.date]">
-              <template v-if="canEdit">
-                <el-select
-                  class="schedule-select"
-                  v-model="scheduleMap[row._id][d.date].shiftId"
-                  placeholder=""
-                  @change="val => onSelect(row._id, d.date, val)"
-                >
-                  <el-option
-                    v-for="opt in shifts"
-                    :key="opt._id"
-                    :label="opt.code"
-                    :value="opt._id"
-                  />
-                </el-select>
-                <el-select
-                  class="schedule-select"
-                  v-model="scheduleMap[row._id][d.date].department"
-                  placeholder="部門"
-                  size="small"
-                  @change="() => (scheduleMap[row._id][d.date].subDepartment = '')"
-                >
-                  <el-option
-                    v-for="dept in departments"
-                    :key="dept._id"
-                    :label="dept.name"
-                    :value="dept._id"
-                  />
-                </el-select>
-                <el-select
-                  class="schedule-select"
-                  v-model="scheduleMap[row._id][d.date].subDepartment"
-                  placeholder="單位"
-                  size="small"
-                >
-                  <el-option
-                    v-for="sub in subDepsFor(scheduleMap[row._id][d.date].department)"
-                    :key="sub._id"
-                    :label="sub.name"
-                    :value="sub._id"
-                  />
-                </el-select>
-              </template>
-              <el-popover
-                v-else
-                v-if="shiftInfo(scheduleMap[row._id][d.date].shiftId)"
-                placement="top"
-                trigger="click"
-              >
-                <p>上班：{{ shiftInfo(scheduleMap[row._id][d.date].shiftId).startTime }}</p>
-                <p>下班：{{ shiftInfo(scheduleMap[row._id][d.date].shiftId).endTime }}</p>
-                <p v-if="shiftInfo(scheduleMap[row._id][d.date].shiftId).remark">
-                  備註：{{ shiftInfo(scheduleMap[row._id][d.date].shiftId).remark }}
-                </p>
-                <template #reference>
-                  <span class="shift-tag">{{ shiftInfo(scheduleMap[row._id][d.date].shiftId).code }}</span>
+            <el-option
+              v-for="dept in departments"
+              :key="dept._id"
+              :label="dept.name"
+              :value="dept._id"
+            />
+          </el-select>
+        </div>
+        <div class="filter-group">
+          <label class="filter-label">單位</label>
+          <el-select
+            v-model="selectedSubDepartment"
+            placeholder="請選擇單位"
+            @change="onSubDepartmentChange"
+            class="modern-select"
+          >
+            <el-option
+              v-for="sub in filteredSubDepartments"
+              :key="sub._id"
+              :label="sub.name"
+              :value="sub._id"
+            />
+          </el-select>
+        </div>
+      </div>
+    </div>
+
+    <!-- Enhanced actions section with modern button design -->
+    <div class="actions-card">
+      <div class="primary-actions">
+        <el-button type="primary" @click="saveAll" class="action-btn primary">
+          <i class="el-icon-check"></i>
+          儲存排班
+        </el-button>
+      </div>
+      <div class="secondary-actions">
+        <el-button @click="preview('week')" class="action-btn secondary">
+          <i class="el-icon-calendar"></i>
+          預覽週表
+        </el-button>
+        <el-button @click="preview('month')" class="action-btn secondary">
+          <i class="el-icon-date"></i>
+          預覽月表
+        </el-button>
+        <el-button @click="() => exportSchedules('pdf')" class="action-btn export">
+          <i class="el-icon-download"></i>
+          匯出 PDF
+        </el-button>
+        <el-button @click="() => exportSchedules('excel')" class="action-btn export">
+          <i class="el-icon-s-grid"></i>
+          匯出 Excel
+        </el-button>
+      </div>
+    </div>
+
+    <!-- Enhanced schedule table with modern design -->
+    <div class="schedule-card">
+      <div class="schedule-header">
+        <h3 class="schedule-title">員工排班表</h3>
+        <div class="schedule-legend">
+          <span class="legend-item morning">早班</span>
+          <span class="legend-item evening">晚班</span>
+          <span class="legend-item normal">正常班</span>
+          <span class="legend-item leave">請假</span>
+        </div>
+      </div>
+      
+      <el-table 
+        class="modern-schedule-table" 
+        :data="employees" 
+        :header-cell-style="{ backgroundColor: '#ecfeff', color: '#164e63', fontWeight: '600' }"
+        :row-style="{ backgroundColor: '#ffffff' }"
+      >
+        <el-table-column label="部門／單位" width="180" fixed="left">
+          <template #default="{ row }">
+            <div class="employee-info">
+              <div class="department-name">{{ row.department }}</div>
+              <div v-if="row.subDepartment" class="sub-department">{{ row.subDepartment }}</div>
+            </div>
+          </template>
+        </el-table-column>
+        <el-table-column prop="name" label="員工姓名" width="120" fixed="left">
+          <template #default="{ row }">
+            <div class="employee-name">{{ row.name }}</div>
+          </template>
+        </el-table-column>
+        <el-table-column
+          v-for="d in days"
+          :key="d.date"
+          :label="d.label"
+          width="140"
+          align="center"
+        >
+          <template #default="{ row }">
+            <div
+              class="modern-schedule-cell"
+              :class="[
+                shiftClass(scheduleMap[row._id]?.[d.date]?.shiftId),
+                { 'has-leave': scheduleMap[row._id]?.[d.date]?.leave }
+              ]"
+            >
+              <template v-if="scheduleMap[row._id]?.[d.date]">
+                <template v-if="canEdit">
+                  <el-select
+                    v-model="scheduleMap[row._id][d.date].shiftId"
+                    placeholder="選擇班別"
+                    @change="val => onSelect(row._id, d.date, val)"
+                    class="cell-select shift-select"
+                    size="small"
+                  >
+                    <el-option
+                      v-for="opt in shifts"
+                      :key="opt._id"
+                      :label="opt.code"
+                      :value="opt._id"
+                    />
+                  </el-select>
+                  <div class="department-selects">
+                    <el-select
+                      v-model="scheduleMap[row._id][d.date].department"
+                      placeholder="部門"
+                      size="small"
+                      @change="() => (scheduleMap[row._id][d.date].subDepartment = '')"
+                      class="cell-select dept-select"
+                    >
+                      <el-option
+                        v-for="dept in departments"
+                        :key="dept._id"
+                        :label="dept.name"
+                        :value="dept._id"
+                      />
+                    </el-select>
+                    <el-select
+                      v-model="scheduleMap[row._id][d.date].subDepartment"
+                      placeholder="單位"
+                      size="small"
+                      class="cell-select sub-dept-select"
+                    >
+                      <el-option
+                        v-for="sub in subDepsFor(scheduleMap[row._id][d.date].department)"
+                        :key="sub._id"
+                        :label="sub.name"
+                        :value="sub._id"
+                      />
+                    </el-select>
+                  </div>
                 </template>
-              </el-popover>
-              <span v-else></span>
-              <span v-if="scheduleMap[row._id][d.date].leave" class="leave-icon">L</span>
-            </template>
-            <span v-else>-</span>
-          </div>
-        </template>
-      </el-table-column>
-    </el-table>
-    <el-table class="schedule-table" :data="approvalList" style="margin-top: 20px;">
-      <el-table-column label="申請人">
-        <template #default="{ row }">{{ row.applicant_employee?.name }}</template>
-      </el-table-column>
-      <el-table-column label="類型">
-        <template #default="{ row }">{{ row.form?.name || '' }}</template>
-      </el-table-column>
-      <el-table-column prop="status" label="狀態" />
-    </el-table>
+                <el-popover
+                  v-else
+                  v-if="shiftInfo(scheduleMap[row._id][d.date].shiftId)"
+                  placement="top"
+                  trigger="hover"
+                  :width="200"
+                >
+                  <div class="shift-details">
+                    <div class="detail-row">
+                      <span class="detail-label">上班時間：</span>
+                      <span class="detail-value">{{ shiftInfo(scheduleMap[row._id][d.date].shiftId).startTime }}</span>
+                    </div>
+                    <div class="detail-row">
+                      <span class="detail-label">下班時間：</span>
+                      <span class="detail-value">{{ shiftInfo(scheduleMap[row._id][d.date].shiftId).endTime }}</span>
+                    </div>
+                    <div v-if="shiftInfo(scheduleMap[row._id][d.date].shiftId).remark" class="detail-row">
+                      <span class="detail-label">備註：</span>
+                      <span class="detail-value">{{ shiftInfo(scheduleMap[row._id][d.date].shiftId).remark }}</span>
+                    </div>
+                  </div>
+                  <template #reference>
+                    <div class="modern-shift-tag">
+                      {{ shiftInfo(scheduleMap[row._id][d.date].shiftId).code }}
+                    </div>
+                  </template>
+                </el-popover>
+                <div v-if="scheduleMap[row._id][d.date].leave" class="leave-indicator">
+                  <i class="el-icon-warning-outline"></i>
+                  <span>請假</span>
+                </div>
+              </template>
+              <span v-else class="empty-cell">-</span>
+            </div>
+          </template>
+        </el-table-column>
+      </el-table>
+    </div>
+
+    <!-- Enhanced approval list with modern card design -->
+    <div v-if="approvalList.length" class="approval-card">
+      <div class="approval-header">
+        <h3 class="approval-title">待處理審批</h3>
+        <div class="approval-count">{{ approvalList.length }} 項待處理</div>
+      </div>
+      <el-table 
+        class="modern-approval-table" 
+        :data="approvalList"
+        :header-cell-style="{ backgroundColor: '#f1f5f9', color: '#164e63', fontWeight: '600' }"
+      >
+        <el-table-column label="申請人" width="120">
+          <template #default="{ row }">
+            <div class="applicant-name">{{ row.applicant_employee?.name }}</div>
+          </template>
+        </el-table-column>
+        <el-table-column label="申請類型" width="150">
+          <template #default="{ row }">
+            <div class="form-type">{{ row.form?.name || '未知類型' }}</div>
+          </template>
+        </el-table-column>
+        <el-table-column prop="status" label="狀態" width="100">
+          <template #default="{ row }">
+            <el-tag 
+              :type="row.status === 'approved' ? 'success' : row.status === 'rejected' ? 'danger' : 'warning'"
+              class="status-tag"
+            >
+              {{ row.status }}
+            </el-tag>
+          </template>
+        </el-table-column>
+      </el-table>
+    </div>
   </div>
 </template>
 
@@ -517,87 +633,417 @@ onMounted(async () => {
 <style scoped lang="scss">
 @use "element-plus/theme-chalk/src/common/var.scss" as *;
 
+/* Modern HR system styling with professional design */
 .schedule-page {
-  padding: 20px;
+  padding: 24px;
+  background: linear-gradient(135deg, #f8fafc 0%, #ecfeff 100%);
+  min-height: 100vh;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
 }
 
-.filters {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  margin-bottom: 10px;
-}
-
-.actions {
-  margin: 10px 0;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.schedule-select {
-  font-size: 14px;
-  margin-right: 8px;
-
-  ::v-deep(.el-input__wrapper:hover) {
-    border-color: var(--el-color-primary);
+.page-header {
+  margin-bottom: 32px;
+  text-align: center;
+  
+  .page-title {
+    font-size: 2.5rem;
+    font-weight: 800;
+    color: #164e63;
+    margin: 0 0 8px 0;
+    letter-spacing: -0.025em;
+  }
+  
+  .page-subtitle {
+    font-size: 1.125rem;
+    color: #475569;
+    margin: 0;
+    font-weight: 400;
   }
 }
 
-.schedule-table {
-  font-size: 14px;
+.filters-card, .actions-card, .schedule-card, .approval-card {
+  background: white;
+  border-radius: 16px;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+  margin-bottom: 24px;
+  overflow: hidden;
+  border: 1px solid #ecfeff;
+}
 
-  ::v-deep(.el-table__row:hover) {
-    background-color: var(--el-color-primary-light-9);
+.filters-card {
+  .filters-header {
+    background: linear-gradient(135deg, #164e63 0%, #0891b2 100%);
+    padding: 20px 24px;
+    
+    .filters-title {
+      color: white;
+      font-size: 1.25rem;
+      font-weight: 600;
+      margin: 0;
+    }
+  }
+  
+  .filters-content {
+    padding: 24px;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    gap: 20px;
+  }
+  
+  .filter-group {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    
+    .filter-label {
+      font-weight: 600;
+      color: #164e63;
+      font-size: 0.875rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
   }
 }
 
-.schedule-cell {
+.modern-date-picker, .modern-select {
+  ::v-deep(.el-input__wrapper) {
+    border-radius: 8px;
+    border: 2px solid #ecfeff;
+    transition: all 0.2s ease;
+    
+    &:hover {
+      border-color: #10b981;
+    }
+    
+    &.is-focus {
+      border-color: #10b981;
+      box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.1);
+    }
+  }
+}
+
+.actions-card {
+  padding: 20px 24px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 16px;
+  
+  .primary-actions, .secondary-actions {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+}
+
+.action-btn {
+  border-radius: 8px;
+  font-weight: 600;
+  padding: 12px 20px;
+  transition: all 0.2s ease;
+  
+  &.primary {
+    background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+    border: none;
+    color: white;
+    
+    &:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 4px 12px rgba(16, 185, 129, 0.4);
+    }
+  }
+  
+  &.secondary {
+    background: white;
+    border: 2px solid #164e63;
+    color: #164e63;
+    
+    &:hover {
+      background: #164e63;
+      color: white;
+      transform: translateY(-1px);
+    }
+  }
+  
+  &.export {
+    background: white;
+    border: 2px solid #10b981;
+    color: #10b981;
+    
+    &:hover {
+      background: #10b981;
+      color: white;
+      transform: translateY(-1px);
+    }
+  }
+}
+
+.schedule-card {
+  .schedule-header {
+    background: linear-gradient(135deg, #f1f5f9 0%, #ecfeff 100%);
+    padding: 20px 24px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 16px;
+    
+    .schedule-title {
+      color: #164e63;
+      font-size: 1.25rem;
+      font-weight: 700;
+      margin: 0;
+    }
+    
+    .schedule-legend {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      
+      .legend-item {
+        padding: 4px 12px;
+        border-radius: 20px;
+        font-size: 0.75rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        
+        &.morning {
+          background: #dbeafe;
+          color: #1e40af;
+        }
+        
+        &.evening {
+          background: #d1fae5;
+          color: #059669;
+        }
+        
+        &.normal {
+          background: #f1f5f9;
+          color: #475569;
+        }
+        
+        &.leave {
+          background: #fef3c7;
+          color: #d97706;
+        }
+      }
+    }
+  }
+}
+
+.modern-schedule-table {
+  ::v-deep(.el-table__header) {
+    th {
+      border-bottom: 2px solid #ecfeff;
+    }
+  }
+  
+  ::v-deep(.el-table__row) {
+    &:hover {
+      background-color: #f8fafc !important;
+    }
+  }
+}
+
+.employee-info {
+  .department-name {
+    font-weight: 600;
+    color: #164e63;
+    font-size: 0.875rem;
+  }
+  
+  .sub-department {
+    font-size: 0.75rem;
+    color: #64748b;
+    margin-top: 2px;
+  }
+}
+
+.employee-name {
+  font-weight: 600;
+  color: #1e293b;
+}
+
+.modern-schedule-cell {
+  padding: 8px;
+  border-radius: 8px;
+  min-height: 60px;
   display: flex;
   flex-direction: column;
   gap: 4px;
-  padding: 4px;
-  border-radius: 4px;
-}
-
-.shift-tag {
-  display: inline-block;
-  padding: 2px 4px;
-  border-radius: 4px;
-}
-
-.shift-morning {
-  background-color: var(--el-color-primary-light-9);
-  border: 1px solid var(--el-color-primary-light-5);
-}
-
-.shift-evening {
-  background-color: var(--el-color-success-light-9);
-  border: 1px solid var(--el-color-success-light-5);
-}
-
-.shift-normal {
-  background-color: #f5f7fa;
-  border: 1px solid #e4e7ed;
-}
-
-.is-leave {
-  background-color: var(--el-color-warning-light-9);
-  border: 1px solid var(--el-color-warning-light-5);
-}
-
-.leave-icon {
-  margin-left: 4px;
-  color: var(--el-color-danger);
-}
-
-@media (max-width: 600px) {
-  .actions {
-    flex-direction: column;
+  transition: all 0.2s ease;
+  
+  &.shift-morning {
+    background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%);
+    border: 1px solid #93c5fd;
   }
+  
+  &.shift-evening {
+    background: linear-gradient(135deg, #d1fae5 0%, #a7f3d0 100%);
+    border: 1px solid #6ee7b7;
+  }
+  
+  &.shift-normal {
+    background: linear-gradient(135deg, #f1f5f9 0%, #e2e8f0 100%);
+    border: 1px solid #cbd5e1;
+  }
+  
+  &.has-leave {
+    background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
+    border: 1px solid #fbbf24;
+  }
+}
 
-  ::v-deep(.schedule-table .el-table__cell:first-child) {
-    display: none;
+.cell-select {
+  ::v-deep(.el-input__wrapper) {
+    border-radius: 6px;
+    border: 1px solid rgba(255, 255, 255, 0.8);
+    background: rgba(255, 255, 255, 0.9);
+    backdrop-filter: blur(4px);
+  }
+}
+
+.department-selects {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.modern-shift-tag {
+  background: white;
+  color: #164e63;
+  padding: 4px 8px;
+  border-radius: 6px;
+  font-weight: 600;
+  font-size: 0.75rem;
+  text-align: center;
+  cursor: pointer;
+  border: 1px solid rgba(22, 78, 99, 0.2);
+  transition: all 0.2s ease;
+  
+  &:hover {
+    background: #164e63;
+    color: white;
+    transform: scale(1.05);
+  }
+}
+
+.shift-details {
+  .detail-row {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 8px;
+    
+    .detail-label {
+      font-weight: 600;
+      color: #475569;
+    }
+    
+    .detail-value {
+      color: #164e63;
+      font-weight: 500;
+    }
+  }
+}
+
+.leave-indicator {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: #d97706;
+  font-size: 0.75rem;
+  font-weight: 600;
+  background: rgba(251, 191, 36, 0.1);
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.empty-cell {
+  color: #94a3b8;
+  font-size: 1.25rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+}
+
+.approval-card {
+  .approval-header {
+    background: linear-gradient(135deg, #164e63 0%, #0891b2 100%);
+    padding: 20px 24px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    
+    .approval-title {
+      color: white;
+      font-size: 1.25rem;
+      font-weight: 600;
+      margin: 0;
+    }
+    
+    .approval-count {
+      background: rgba(255, 255, 255, 0.2);
+      color: white;
+      padding: 4px 12px;
+      border-radius: 20px;
+      font-size: 0.875rem;
+      font-weight: 600;
+    }
+  }
+}
+
+.modern-approval-table {
+  ::v-deep(.el-table__row) {
+    &:hover {
+      background-color: #f8fafc !important;
+    }
+  }
+}
+
+.applicant-name, .form-type {
+  font-weight: 500;
+  color: #1e293b;
+}
+
+.status-tag {
+  font-weight: 600;
+  border-radius: 6px;
+}
+
+@media (max-width: 768px) {
+  .schedule-page {
+    padding: 16px;
+  }
+  
+  .page-header .page-title {
+    font-size: 2rem;
+  }
+  
+  .filters-content {
+    grid-template-columns: 1fr;
+  }
+  
+  .actions-card {
+    flex-direction: column;
+    align-items: stretch;
+    
+    .primary-actions, .secondary-actions {
+      justify-content: center;
+    }
+  }
+  
+  .schedule-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  
+  .modern-schedule-table {
+    ::v-deep(.el-table__fixed-column--left) {
+      z-index: 10;
+    }
   }
 }
 </style>

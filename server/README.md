@@ -4,9 +4,9 @@ This directory contains the Express backend for the HR system.
 
 ## Setup
 
-```bash
+\`\`\`bash
 npm install
-```
+\`\`\`
 
 Create a `.env` file based on `.env.example` and set the following variables:
 
@@ -16,15 +16,15 @@ Create a `.env` file based on `.env.example` and set the following variables:
 
 To run the unit tests:
 
-```bash
+\`\`\`bash
 npm test
-```
+\`\`\`
 
 ## Development
 
-```bash
+\`\`\`bash
 npm run dev
-```
+\`\`\`
 
 This starts the server with nodemon enabled.
 
@@ -32,9 +32,9 @@ This starts the server with nodemon enabled.
 
 This repository provides a seeding script under `scripts/seed.js` to insert the default test users into MongoDB. Make sure your `.env` file includes a valid `MONGODB_URI` and run it with:
 
-```bash
+\`\`\`bash
 node scripts/seed.js
-```
+\`\`\`
 
 When running in development, the server automatically seeds a few test users if they do not already exist.  Each user is also given a matching record in the `Employee` collection, and the employee id will be returned when logging in:
 

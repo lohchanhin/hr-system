@@ -26,4 +26,3 @@ const logout = () => {
     padding: 20px;
   }
   </style>
-  

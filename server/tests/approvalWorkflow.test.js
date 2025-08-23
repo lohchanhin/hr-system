@@ -60,4 +60,3 @@ describe('createApprovalRequest', () => {
     expect(res.json).toHaveBeenCalledWith({ error: 'workflow not configured' })
   })
 })
-

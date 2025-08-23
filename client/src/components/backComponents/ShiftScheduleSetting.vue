@@ -435,4 +435,3 @@ async function fetchManagers() {
     margin-top: 20px;
   }
   </style>
-  
