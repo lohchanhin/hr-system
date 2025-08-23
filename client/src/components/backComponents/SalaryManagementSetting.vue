@@ -423,4 +423,3 @@ const settingId = ref(null)
     margin-top: 20px;
   }
   </style>
-  

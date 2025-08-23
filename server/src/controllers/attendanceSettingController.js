@@ -1,4 +1,3 @@
-
 import AttendanceManagementSetting from '../models/AttendanceManagementSetting.js';
 
 export async function listSettings(req, res) {

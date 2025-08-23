@@ -51,4 +51,3 @@ describe('setWorkflow', () => {
     expect(res.json).toHaveBeenCalledWith({ steps: [], policy: newPolicy })
   })
 })
-

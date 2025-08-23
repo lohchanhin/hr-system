@@ -360,5 +360,3 @@ watch(selectedDept, val => {
   margin-top: 20px;
 }
 </style>
-
-
