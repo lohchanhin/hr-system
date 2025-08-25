@@ -868,7 +868,7 @@ watch(
 )
 
 /* 事件 --------------------------------------------------------------------- */
-function openEmployeeDialog(index = null) {
+async function openEmployeeDialog(index = null) {
   if (index !== null) {
     editEmployeeIndex = index
     const emp = employeeList.value[index]
@@ -881,8 +881,18 @@ function openEmployeeDialog(index = null) {
     employeeDialogTab.value = 'account'
     employeeForm.value = { ...structuredClone(emptyEmployee) }
   }
-  fetchDepartments()
-  fetchSubDepartments(employeeForm.value.department)
+
+  await fetchDepartments()
+  if (
+    employeeForm.value.department &&
+    !/^[0-9a-fA-F]{24}$/.test(employeeForm.value.department)
+  ) {
+    const dept = departmentList.value.find(
+      d => d.name === employeeForm.value.department
+    )
+    if (dept) employeeForm.value.department = dept._id
+  }
+  await fetchSubDepartments(employeeForm.value.department)
   employeeDialogVisible.value = true
 }
 
