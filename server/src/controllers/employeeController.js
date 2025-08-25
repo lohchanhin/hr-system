@@ -528,3 +528,20 @@ export async function deleteEmployee(req, res) {
     res.status(400).json({ error: err.message })
   }
 }
+
+/** POST /api/employees/set-supervisors */
+export async function setSupervisors(req, res) {
+  try {
+    const { assignments } = req.body ?? {}
+    if (!Array.isArray(assignments)) return res.status(400).json({ error: 'Invalid assignments' })
+
+    for (const { employee, supervisor } of assignments) {
+      await Employee.updateOne({ _id: employee }, { supervisor })
+      await User.findOneAndUpdate({ employee }, { supervisor })
+    }
+
+    res.json({ success: true })
+  } catch (err) {
+    res.status(400).json({ error: err.message })
+  }
+}

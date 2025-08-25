@@ -190,6 +190,17 @@ describe('Employee API', () => {
     expect(mockEmployee.findByIdAndDelete).toHaveBeenCalledWith('1');
     expect(res.body).toEqual({ success: true });
   });
+
+  it('sets supervisors in batch', async () => {
+    mockEmployee.updateOne.mockResolvedValue();
+    mockUser.findOneAndUpdate.mockResolvedValue();
+    const payload = { assignments: [{ employee: 'e1', supervisor: 's1' }] };
+    const res = await request(app).post('/api/employees/set-supervisors').send(payload);
+    expect(res.status).toBe(200);
+    expect(mockEmployee.updateOne).toHaveBeenCalledWith({ _id: 'e1' }, { supervisor: 's1' });
+    expect(mockUser.findOneAndUpdate).toHaveBeenCalledWith({ employee: 'e1' }, { supervisor: 's1' });
+    expect(res.body).toEqual({ success: true });
+  });
 });
 
 describe('Employee authorization middleware', () => {

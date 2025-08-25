@@ -6,7 +6,7 @@ const saveMock = jest.fn();
 const mockReport = jest.fn().mockImplementation(() => ({ save: saveMock }));
 mockReport.find = jest.fn();
 
-jest.mock('../src/models/Report.js', () => ({ default: mockReport }), { virtual: true });
+jest.unstable_mockModule('../src/models/Report.js', () => ({ default: mockReport }));
 
 let app;
 let reportRoutes;

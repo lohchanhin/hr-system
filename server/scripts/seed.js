@@ -66,6 +66,7 @@ async function seed() {
     { username: 'admin', password: 'password', role: 'admin' }
   ];
 
+  let supervisorId = null;
   for (const data of users) {
     const existing = await User.findOne({ username: data.username });
     if (!existing) {
@@ -86,10 +87,16 @@ async function seed() {
         subDepartment: employee.subDepartment,
         employee: employee._id
       });
+      if (data.role === 'supervisor') supervisorId = employee._id;
       console.log(`Created user ${data.username}`);
     } else {
       console.log(`User ${data.username} already exists`);
     }
+  }
+
+  if (supervisorId) {
+    await Employee.updateMany({ role: 'employee' }, { supervisor: supervisorId });
+    await User.updateMany({ role: 'employee' }, { supervisor: supervisorId });
   }
 
   await mongoose.disconnect();

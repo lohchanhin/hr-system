@@ -40,6 +40,11 @@ describe('Auth API', () => {
     expect(res.status).toBe(200);
     expect(res.body.token).toBe('tok');
     expect(res.body.user).toEqual({ id: 'u1', role: 'employee', username: 'john', employeeId: 'e1' });
+    expect(signSpy).toHaveBeenCalledWith(
+      { id: 'u1', role: 'employee', employeeId: 'e1' },
+      'secret',
+      { expiresIn: '1h' }
+    );
     signSpy.mockRestore();
   });
 

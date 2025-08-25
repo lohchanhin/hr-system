@@ -3,10 +3,13 @@ import express from 'express';
 import { jest } from '@jest/globals';
 
 const saveMock = jest.fn();
-const mockAttendanceRecord = jest.fn().mockImplementation(() => ({ save: saveMock }));
+const mockAttendanceRecord = jest.fn().mockImplementation((data = {}) => ({
+  ...data,
+  save: saveMock
+}));
 mockAttendanceRecord.find = jest.fn(() => ({ populate: jest.fn().mockResolvedValue([]) }));
 
-jest.mock('../src/models/AttendanceRecord.js', () => ({ default: mockAttendanceRecord }), { virtual: true });
+jest.unstable_mockModule('../src/models/AttendanceRecord.js', () => ({ default: mockAttendanceRecord }));
 
 let app;
 let attendanceRoutes;
