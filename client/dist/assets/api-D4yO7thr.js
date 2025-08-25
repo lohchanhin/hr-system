@@ -1,0 +1,1 @@
+import{p as r,m as c}from"./index-BOg20HvU.js";const h="http://localhost:3000";function i(n,t={}){const e=r(),a={...t.headers||{},...e?{Authorization:`Bearer ${e}`}:{}};return fetch(`${h}${n}`,{...t,headers:a}).then(o=>(o.status===401&&(c(),window.location.href="/login"),o))}export{i as a};
