@@ -950,9 +950,9 @@ function getRoleLabel(role) {
 
 function getRoleDescription(role) {
   const descMap = {
-    'admin': '系統管理員，擁有所有權限',
-    'supervisor': '部門主管，管理下屬員工',
-    'employee': '一般員工，基本操作權限'
+    'admin': '',
+    'supervisor': '',
+    'employee': ''
   }
   return descMap[role] || ''
 }
