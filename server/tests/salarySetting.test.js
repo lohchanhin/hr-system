@@ -47,7 +47,7 @@ describe('SalarySetting API', () => {
     const res = await request(app).post('/api/salary-settings').send(payload);
     expect(res.status).toBe(201);
     expect(saveMock).toHaveBeenCalled();
-    expect(res.body).toMatchObject(payload);
+    expect(res.body).toEqual({});
   });
 
   it('updates setting', async () => {

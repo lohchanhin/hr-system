@@ -100,8 +100,8 @@ const employeeSchema = new Schema(
 
     /* 組織/部門/職稱（C01~C04） */
     organization: String, // 以字串存 _id（若要 population 再改 ObjectId+ref）
-    department: String,
-    subDepartment: String, // C02-1
+    department: { type: Schema.Types.ObjectId, ref: 'Department', default: null },
+    subDepartment: { type: Schema.Types.ObjectId, ref: 'SubDepartment', default: null }, // C02-1
     supervisor: { type: Schema.Types.ObjectId, ref: 'Employee', default: null },
 
     title: String, // C03
