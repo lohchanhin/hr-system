@@ -727,6 +727,7 @@ async function fetchEmployees() {
     const list = await res.json()
     employeeList.value = list.map(e => ({
       ...e,
+      organization: e.organization?._id || e.organization || '',
       department: e.department?._id || e.department || '',
       subDepartment: e.subDepartment?._id || e.subDepartment || ''
     }))
