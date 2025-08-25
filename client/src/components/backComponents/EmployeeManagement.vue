@@ -646,7 +646,11 @@
 
 <script setup>
 import { ref, onMounted, computed, watch } from 'vue'
+import { useRouter } from 'vue-router'
+import { ElMessage } from 'element-plus'
 import { apiFetch } from '../../api'
+
+const router = useRouter()
 
 /* 下拉選單選項：可改由後端「後臺控制 C0x」提供 ------------------------------ */
 const ROLE_OPTIONS = [
@@ -690,22 +694,35 @@ function subDepartmentLabel(id) {
   return sd ? sd.name : id
 }
 
+function handle401(res) {
+  if (res.status === 401) {
+    ElMessage.error('登入逾時，請重新登入')
+    router.push('/login')
+    return true
+  }
+  return false
+}
+
 /* 取資料 ------------------------------------------------------------------- */
 async function fetchDepartments() {
   const res = await apiFetch('/api/departments')
+  if (handle401(res)) return
   if (res.ok) departmentList.value = await res.json()
 }
 async function fetchSubDepartments(dept = '') {
   const url = dept ? `/api/sub-departments?department=${dept}` : '/api/sub-departments'
   const res = await apiFetch(url)
+  if (handle401(res)) return
   if (res.ok) subDepartmentList.value = await res.json()
 }
 async function fetchOrganizations() {
   const res = await apiFetch('/api/organizations')
+  if (handle401(res)) return
   if (res.ok) orgList.value = await res.json()
 }
 async function fetchEmployees() {
   const res = await apiFetch('/api/employees')
+  if (handle401(res)) return
   if (res.ok) employeeList.value = await res.json()
 }
 onMounted(() => {

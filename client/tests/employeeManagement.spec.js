@@ -1,11 +1,18 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount } from '@vue/test-utils'
-import ElementPlus from 'element-plus'
-import EmployeeManagement from '../src/components/backComponents/EmployeeManagement.vue'
+import ElementPlus, { ElMessage } from 'element-plus'
+
+const push = vi.fn()
+vi.mock('vue-router', () => ({
+  useRouter: () => ({ push })
+}))
 
 vi.mock('../src/api', () => ({
   apiFetch: vi.fn(() => Promise.resolve({ ok: true, json: async () => [] }))
 }))
+
+import EmployeeManagement from '../src/components/backComponents/EmployeeManagement.vue'
+import { apiFetch } from '../src/api'
 
 describe('EmployeeManagement.vue', () => {
   beforeEach(() => {
@@ -58,5 +65,28 @@ describe('EmployeeManagement.vue', () => {
       .findAllComponents({ name: 'ElFormItem' })
       .find(w => w.props('label') === '小單位/區域(C02-1)')
     expect(subDeptItem.findComponent({ name: 'ElSelect' }).exists()).toBe(true)
+  })
+
+  describe('401 handling', () => {
+    const fns = ['fetchDepartments', 'fetchSubDepartments', 'fetchOrganizations', 'fetchEmployees']
+
+    beforeEach(() => {
+      push.mockReset()
+      apiFetch.mockReset()
+      apiFetch.mockResolvedValue({ ok: true, json: async () => [] })
+    })
+
+    fns.forEach(fn => {
+      it(`${fn} redirects to login on 401`, async () => {
+        const wrapper = mount(EmployeeManagement, { global: { plugins: [ElementPlus] } })
+        const spy = vi.spyOn(ElMessage, 'error')
+        apiFetch.mockResolvedValueOnce({ ok: false, status: 401 })
+        await wrapper.vm[fn]()
+        expect(spy).toHaveBeenCalledWith('登入逾時，請重新登入')
+        expect(push).toHaveBeenCalledWith('/login')
+        spy.mockRestore()
+        wrapper.unmount()
+      })
+    })
   })
 })
