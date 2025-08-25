@@ -3,17 +3,15 @@ export function getMenu(req, res) {
   const menus = {
     employee: [
       { name: 'Attendance', label: '出勤打卡', icon: 'el-icon-postcard' },
-      { name: 'Leave', label: '請假申請', icon: 'el-icon-date' }
+      { name: 'Approval', label: '簽核流程', icon: 'el-icon-s-operation' }
     ],
     supervisor: [
       { name: 'Attendance', label: '出勤打卡', icon: 'el-icon-postcard' },
-      { name: 'Leave', label: '請假申請', icon: 'el-icon-date' },
       { name: 'Schedule', label: '排班管理', icon: 'el-icon-timer' },
       { name: 'Approval', label: '簽核流程', icon: 'el-icon-s-operation' }
     ],
     hr: [
       { name: 'Attendance', label: '出勤打卡', icon: 'el-icon-postcard' },
-      { name: 'Leave', label: '請假申請', icon: 'el-icon-date' },
       { name: 'Schedule', label: '排班管理', icon: 'el-icon-timer' },
       { name: 'Approval', label: '簽核流程', icon: 'el-icon-s-operation' }
     ],

@@ -8,7 +8,7 @@ mockDepartment.find = jest.fn();
 mockDepartment.findByIdAndUpdate = jest.fn();
 mockDepartment.findByIdAndDelete = jest.fn();
 
-jest.mock('../src/models/Department.js', () => ({ default: mockDepartment }), { virtual: true });
+jest.unstable_mockModule('../src/models/Department.js', () => ({ default: mockDepartment }));
 
 let app;
 let departmentRoutes;
@@ -49,7 +49,7 @@ describe('Department API', () => {
     expect(res.status).toBe(201);
     expect(saveMock).toHaveBeenCalled();
     expect(mockDepartment).toHaveBeenCalledWith(
-      expect.objectContaining({ organization: '1' })
+      expect.objectContaining({ organization: 'org1' })
     );
   });
 
@@ -67,7 +67,7 @@ describe('Department API', () => {
     expect(res.status).toBe(200);
     expect(mockDepartment.findByIdAndUpdate).toHaveBeenCalledWith(
       '1',
-      expect.objectContaining({ organization: '1' }),
+      expect.objectContaining({ organization: 'org1' }),
       expect.any(Object)
     );
   });
@@ -77,5 +77,35 @@ describe('Department API', () => {
     const res = await request(app).delete('/api/departments/1');
     expect(res.status).toBe(200);
     expect(mockDepartment.findByIdAndDelete).toHaveBeenCalledWith('1');
+  });
+});
+
+describe('Department authorization middleware', () => {
+  it('allows employee to list but not create', async () => {
+    const { authorizeRoles } = await import('../src/middleware/auth.js');
+    const authenticate = (req, res, next) => {
+      req.user = { role: 'employee' };
+      next();
+    };
+    const appAuth = express();
+    appAuth.use(express.json());
+    appAuth.use(
+      '/api/departments',
+      authenticate,
+      (req, res, next) => {
+        if (req.method === 'GET') {
+          return authorizeRoles('admin', 'supervisor', 'employee')(req, res, next);
+        }
+        return authorizeRoles('admin')(req, res, next);
+      },
+      departmentRoutes
+    );
+
+    mockDepartment.find.mockResolvedValue([]);
+    const resList = await request(appAuth).get('/api/departments');
+    expect(resList.status).toBe(200);
+
+    const resCreate = await request(appAuth).post('/api/departments').send({});
+    expect(resCreate.status).toBe(403);
   });
 });

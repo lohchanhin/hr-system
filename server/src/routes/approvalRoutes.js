@@ -9,30 +9,32 @@ import {
   createApprovalRequest, getApprovalRequest, myApprovalRequests, inboxApprovals, actOnApproval,
 } from '../controllers/approvalRequestController.js'
 
+import { authorizeRoles } from '../middleware/auth.js'
+
 const router = Router()
 
 // Form Template
-router.get('/forms', listFormTemplates)
-router.post('/forms', createFormTemplate)
-router.get('/forms/:id', getFormTemplate)
-router.put('/forms/:id', updateFormTemplate)
-router.delete('/forms/:id', deleteFormTemplate)
+router.get('/forms', authorizeRoles('employee', 'supervisor', 'admin'), listFormTemplates)
+router.post('/forms', authorizeRoles('admin'), createFormTemplate)
+router.get('/forms/:id', authorizeRoles('employee', 'supervisor', 'admin'), getFormTemplate)
+router.put('/forms/:id', authorizeRoles('admin'), updateFormTemplate)
+router.delete('/forms/:id', authorizeRoles('admin'), deleteFormTemplate)
 
 // Fields
-router.get('/forms/:formId/fields', listFields)
-router.post('/forms/:formId/fields', addField)
-router.put('/forms/:formId/fields/:fieldId', updateField)
-router.delete('/forms/:formId/fields/:fieldId', deleteField)
+router.get('/forms/:formId/fields', authorizeRoles('employee', 'supervisor', 'admin'), listFields)
+router.post('/forms/:formId/fields', authorizeRoles('admin'), addField)
+router.put('/forms/:formId/fields/:fieldId', authorizeRoles('admin'), updateField)
+router.delete('/forms/:formId/fields/:fieldId', authorizeRoles('admin'), deleteField)
 
 // Workflow
-router.get('/forms/:formId/workflow', getWorkflow)
-router.put('/forms/:formId/workflow', setWorkflow)
+router.get('/forms/:formId/workflow', authorizeRoles('employee', 'supervisor', 'admin'), getWorkflow)
+router.put('/forms/:formId/workflow', authorizeRoles('admin'), setWorkflow)
 
 // Requests
-router.post('/approvals', createApprovalRequest)           // 建立送審單
-router.get('/approvals/:id', getApprovalRequest)           // 單筆
-router.get('/approvals', myApprovalRequests)               // 申請者列表 ?employee_id=
-router.get('/inbox', inboxApprovals)                       // 審核者待辦 ?employee_id=
-router.post('/approvals/:id/act', actOnApproval)           // { decision:'approve'|'reject'|'return', comment?, employee_id? }
+router.post('/', authorizeRoles('employee', 'supervisor', 'admin'), createApprovalRequest)
+router.get('/inbox', authorizeRoles('employee', 'supervisor', 'admin'), inboxApprovals)
+router.get('/:id', authorizeRoles('employee', 'supervisor', 'admin'), getApprovalRequest)
+router.get('/', authorizeRoles('employee', 'supervisor', 'admin'), myApprovalRequests)
+router.post('/:id/act', authorizeRoles('employee', 'supervisor', 'admin'), actOnApproval)
 
 export default router

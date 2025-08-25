@@ -20,6 +20,21 @@ apiFetch.mockImplementation((url, opts) => {
 })
 
 describe('ApprovalFlowSetting approver select', () => {
+  it('renders Chinese headers in workflow dialog', async () => {
+    const wrapper = mount(ApprovalFlowSetting, {
+      global: { plugins: [ElementPlus], stubs: { teleport: true } }
+    })
+    await flushPromises()
+    await wrapper.vm.openWorkflowDialog({ _id: 'f1' })
+    await flushPromises()
+    const headers = wrapper
+      .findAll('.el-dialog .el-table th .cell')
+      .map(h => h.text())
+    expect(headers).toContain('簽核類型')
+    expect(headers).toContain('簽核對象')
+    expect(headers).toContain('範圍')
+  })
+
   it('loads options and saves selected id', async () => {
     const wrapper = mount(ApprovalFlowSetting, { global: { plugins: [ElementPlus] } })
     await flushPromises()

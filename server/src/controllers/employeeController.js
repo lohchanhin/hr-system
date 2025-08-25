@@ -22,6 +22,16 @@ const toArray = (v) => {
 }
 const firstOr = (arr, fallback) => (Array.isArray(arr) && arr.length ? arr[0] : fallback)
 
+// 專用於 enum 欄位的值檢查
+function sanitizeEnum(value, allowed) {
+  if (value === '' || value === null || value === undefined) return undefined
+  return allowed.includes(value) ? value : undefined
+}
+
+const MARITAL_STATUSES = ['已婚', '未婚', '離婚', '喪偶']
+const EMPLOYMENT_STATUSES = ['正職員工', '試用期員工', '離職員工', '留職停薪']
+const BLOOD_TYPES = ['A', 'B', 'O', 'AB', 'HR']
+
 /* 把前端送來的 experiences/licenses/trainings 正規化成模型想要的形狀 */
 function normalizeExperiences(list) {
   if (!Array.isArray(list)) return undefined
@@ -108,11 +118,11 @@ function buildEmployeeDoc(body = {}) {
     idNumber: body.idNumber,
     birthday: toDate(body.birthday),
     birthplace: body.birthplace,
-    bloodType: body.bloodType,           // A/B/O/AB/HR
+    bloodType: sanitizeEnum(body.bloodType, BLOOD_TYPES),           // A/B/O/AB/HR
     languages: toArray(body.languages) ?? [],
     disabilityLevel: body.disabilityLevel,
     identityCategory: toArray(body.identityCategory) ?? [], // C07 多選
-    maritalStatus: body.maritalStatus,
+    maritalStatus: sanitizeEnum(body.maritalStatus, MARITAL_STATUSES),
     dependents: toNum(body.dependents) ?? 0,
 
     /* 聯絡方式 */
@@ -134,14 +144,14 @@ function buildEmployeeDoc(body = {}) {
     isClocking: Boolean(body.isClocking),
 
     /* 人員狀態與試用 */
-    employmentStatus: body.employmentStatus,        // alias → status
+    employmentStatus: sanitizeEnum(body.employmentStatus, EMPLOYMENT_STATUSES),        // alias → status
     probationDays: toNum(body.probationDays) ?? 0,
 
     /* 體檢 */
     medicalCheck: {
       height: toNum(body.height),
       weight: toNum(body.weight),
-      bloodType: body.medicalBloodType,
+      bloodType: sanitizeEnum(body.medicalBloodType, BLOOD_TYPES),
     },
 
     /* 學歷(C08) */
@@ -230,11 +240,11 @@ function buildEmployeePatch(body = {}, existing = null) {
   put('idNumber', body.idNumber)
   if (isDefined(body.birthday)) put('birthDate', toDate(body.birthday))
   put('birthPlace', body.birthplace)
-  put('bloodType', body.bloodType)
+  put('bloodType', sanitizeEnum(body.bloodType, BLOOD_TYPES))
   if (isDefined(body.languages)) put('languages', toArray(body.languages) ?? [])
   put('disabilityLevel', body.disabilityLevel)
   if (isDefined(body.identityCategory)) put('identityCategory', toArray(body.identityCategory) ?? [])
-  put('maritalStatus', body.maritalStatus)
+  put('maritalStatus', sanitizeEnum(body.maritalStatus, MARITAL_STATUSES))
   if (isDefined(body.dependents)) put('dependents', toNum(body.dependents))
 
   // 聯絡
@@ -255,13 +265,13 @@ function buildEmployeePatch(body = {}, existing = null) {
   if (isDefined(body.isClocking)) put('needClockIn', Boolean(body.isClocking))
 
   // 狀態/試用
-  put('status', body.employmentStatus ?? body.status)
+  put('status', sanitizeEnum(body.employmentStatus ?? body.status, EMPLOYMENT_STATUSES))
   if (isDefined(body.probationDays)) put('probationDays', toNum(body.probationDays))
 
   // 體檢
   if (isDefined(body.height)) put('medicalCheck.height', toNum(body.height))
   if (isDefined(body.weight)) put('medicalCheck.weight', toNum(body.weight))
-  if (isDefined(body.medicalBloodType)) put('medicalCheck.bloodType', body.medicalBloodType)
+  put('medicalCheck.bloodType', sanitizeEnum(body.medicalBloodType, BLOOD_TYPES))
 
   // 學歷
   if (isDefined(body.educationLevel)) put('education.level', body.educationLevel)
@@ -350,12 +360,13 @@ function buildEmployeePatch(body = {}, existing = null) {
 /** GET /api/employees?q=...&supervisor=...&organization=...&department=...&status=...&role=... */
 export async function listEmployees(req, res) {
   try {
-    const { q, supervisor, organization, department, status, role } = req.query
+    const { q, supervisor, organization, department, subDepartment, status, role } = req.query
     const filter = {}
 
     if (supervisor) filter.supervisor = supervisor
     if (organization) filter.organization = organization
     if (department) filter.department = department
+    if (subDepartment) filter.subDepartment = subDepartment
     if (status) filter.status = status
     if (role) filter.role = role
     if (q) {

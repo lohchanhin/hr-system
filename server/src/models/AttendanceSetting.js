@@ -4,6 +4,7 @@ const attendanceSettingSchema = new mongoose.Schema({
   shifts: [
     {
       name: String,
+      code: String,
       startTime: String,
       endTime: String,
       breakTime: String,

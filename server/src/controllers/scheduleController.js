@@ -1,5 +1,40 @@
 import ShiftSchedule from '../models/ShiftSchedule.js';
 import Employee from '../models/Employee.js';
+import ApprovalRequest from '../models/approval_request.js';
+import FormTemplate from '../models/form_template.js';
+import FormField from '../models/form_field.js';
+
+let leaveFieldCache = null;
+async function getLeaveFieldIds() {
+  if (leaveFieldCache) return leaveFieldCache;
+  const form = await FormTemplate.findOne({ name: '請假' });
+  if (!form) return {};
+  const fields = await FormField.find({ form: form._id });
+  const startField = fields.find(f => f.label === '開始日期');
+  const endField = fields.find(f => f.label === '結束日期');
+  const typeField = fields.find(f => f.label === '假別');
+  leaveFieldCache = {
+    formId: form._id.toString(),
+    startId: startField?._id.toString(),
+    endId: endField?._id.toString(),
+    typeId: typeField?._id.toString(),
+  };
+  return leaveFieldCache;
+}
+
+async function hasLeaveConflict(employeeId, date) {
+  const { formId, startId, endId } = await getLeaveFieldIds();
+  if (!formId || !startId || !endId) return false;
+  const query = {
+    form: formId,
+    applicant_employee: employeeId,
+    status: 'approved',
+  };
+  query[`form_data.${startId}`] = { $lte: date };
+  query[`form_data.${endId}`] = { $gte: date };
+  const approval = await ApprovalRequest.findOne(query);
+  return !!approval;
+}
 
 export async function listMonthlySchedules(req, res) {
   try {
@@ -25,13 +60,79 @@ export async function listMonthlySchedules(req, res) {
   }
 }
 
+export async function listLeaveApprovals(req, res) {
+  try {
+    const { month, employee, supervisor } = req.query;
+    if (!month) return res.status(400).json({ error: 'month required' });
+    const start = new Date(`${month}-01`);
+    const end = new Date(start);
+    end.setMonth(end.getMonth() + 1);
+
+    let ids = [];
+    if (supervisor) {
+      const emps = await Employee.find({ supervisor }).select('_id');
+      ids = emps.map((e) => e._id.toString());
+    } else if (employee) {
+      ids = [employee];
+    }
+
+    const empFilter = ids.length ? { $in: ids } : undefined;
+
+    const approvalQuery = { createdAt: { $gte: start, $lt: end } };
+    if (empFilter) approvalQuery.applicant_employee = empFilter;
+    const approvals = await ApprovalRequest.find(approvalQuery)
+      .populate('applicant_employee')
+      .populate('form');
+
+    const { formId, startId, endId, typeId } = await getLeaveFieldIds();
+    const leaves = approvals
+      .filter(a => a.form && String(a.form._id) === formId && a.status === 'approved')
+      .map(a => ({
+        employee: a.applicant_employee,
+        leaveType: a.form_data?.[typeId],
+        startDate: a.form_data?.[startId],
+        endDate: a.form_data?.[endId],
+        status: a.status,
+      }));
+
+    res.json({ leaves, approvals });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+}
+
 export async function createSchedulesBatch(req, res) {
   try {
     const { schedules } = req.body;
     if (!Array.isArray(schedules)) {
       return res.status(400).json({ error: 'schedules must be array' });
     }
-    const inserted = await ShiftSchedule.insertMany(schedules, { ordered: false });
+    const docs = [];
+    for (const s of schedules) {
+      const dt = new Date(s.date);
+      const existing = await ShiftSchedule.findOne({ employee: s.employee, date: dt });
+      if (existing) {
+        if (
+          (s.department || s.subDepartment) &&
+          (existing.department?.toString() !== s.department?.toString() ||
+            existing.subDepartment?.toString() !== s.subDepartment?.toString())
+        ) {
+          return res.status(400).json({ error: 'department overlap' });
+        }
+        return res.status(400).json({ error: 'employee conflict' });
+      }
+      if (await hasLeaveConflict(s.employee, dt)) {
+        return res.status(400).json({ error: 'leave conflict' });
+      }
+      docs.push({
+        employee: s.employee,
+        date: dt,
+        shiftId: s.shiftId,
+        department: s.department,
+        subDepartment: s.subDepartment,
+      });
+    }
+    const inserted = await ShiftSchedule.insertMany(docs, { ordered: false });
     res.status(201).json(inserted);
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -49,12 +150,32 @@ export async function listSchedules(req, res) {
 
 export async function createSchedule(req, res) {
   try {
-    const { employee, date, shiftId } = req.body;
-    const schedule = await ShiftSchedule.findOneAndUpdate(
-      { employee, date },
-      { shiftId },
-      { upsert: true, new: true, setDefaultsOnInsert: true }
-    );
+    const { employee, date, shiftId, department, subDepartment } = req.body;
+    const dt = new Date(date);
+
+    const existing = await ShiftSchedule.findOne({ employee, date: dt });
+    if (existing) {
+      if (
+        (department || subDepartment) &&
+        (existing.department?.toString() !== department?.toString() ||
+          existing.subDepartment?.toString() !== subDepartment?.toString())
+      ) {
+        return res.status(400).json({ error: 'department overlap' });
+      }
+      return res.status(400).json({ error: 'employee conflict' });
+    }
+
+    if (await hasLeaveConflict(employee, dt)) {
+      return res.status(400).json({ error: 'leave conflict' });
+    }
+
+    const schedule = await ShiftSchedule.create({
+      employee,
+      date: dt,
+      shiftId,
+      department,
+      subDepartment
+    });
     res.status(201).json(schedule);
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -73,9 +194,40 @@ export async function getSchedule(req, res) {
 
 export async function updateSchedule(req, res) {
   try {
-    const schedule = await ShiftSchedule.findByIdAndUpdate(req.params.id, req.body, { new: true });
+    const { employee, date, shiftId, department, subDepartment } = req.body;
+    const schedule = await ShiftSchedule.findById(req.params.id);
     if (!schedule) return res.status(404).json({ error: 'Not found' });
-    res.json(schedule);
+
+    const newEmployee = employee || schedule.employee;
+    const newDate = date ? new Date(date) : schedule.date;
+
+    const conflict = await ShiftSchedule.findOne({
+      employee: newEmployee,
+      date: newDate,
+      _id: { $ne: schedule._id },
+    });
+    if (conflict) {
+      if (
+        (department || subDepartment) &&
+        (conflict.department?.toString() !== department?.toString() ||
+          conflict.subDepartment?.toString() !== subDepartment?.toString())
+      ) {
+        return res.status(400).json({ error: 'department overlap' });
+      }
+      return res.status(400).json({ error: 'employee conflict' });
+    }
+
+    if (await hasLeaveConflict(newEmployee, newDate)) {
+      return res.status(400).json({ error: 'leave conflict' });
+    }
+
+    schedule.employee = newEmployee;
+    schedule.date = newDate;
+    if (shiftId !== undefined) schedule.shiftId = shiftId;
+    if (department !== undefined) schedule.department = department;
+    if (subDepartment !== undefined) schedule.subDepartment = subDepartment;
+    const saved = await schedule.save();
+    res.json(saved);
   } catch (err) {
     res.status(400).json({ error: err.message });
   }

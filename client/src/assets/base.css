@@ -1,73 +1,213 @@
-/* color palette from <https://github.com/vuejs/theme> */
+/* Professional HR System Design Tokens */
 :root {
-  --vt-c-white: #ffffff;
-  --vt-c-white-soft: #f8f8f8;
-  --vt-c-white-mute: #f2f2f2;
+  /* Primary HR Color Palette - Professional Cyan Theme */
+  --hr-primary: #164e63; /* Cyan-800 - Professional, trustworthy */
+  --hr-primary-light: #0891b2; /* Cyan-600 - Lighter primary */
+  --hr-primary-dark: #0c4a6e; /* Cyan-900 - Darker primary */
 
-  --vt-c-black: #181818;
-  --vt-c-black-soft: #222222;
-  --vt-c-black-mute: #282828;
+  --hr-secondary: #10b981; /* Emerald-500 - Interactive elements */
+  --hr-secondary-light: #34d399; /* Emerald-400 - Hover states */
+  --hr-secondary-dark: #059669; /* Emerald-600 - Active states */
 
-  --vt-c-indigo: #2c3e50;
+  /* Neutral Colors */
+  --hr-white: #ffffff;
+  --hr-gray-50: #f8fafc;
+  --hr-gray-100: #f1f5f9;
+  --hr-gray-200: #e2e8f0;
+  --hr-gray-300: #cbd5e1;
+  --hr-gray-400: #94a3b8;
+  --hr-gray-500: #64748b;
+  --hr-gray-600: #475569;
+  --hr-gray-700: #334155;
+  --hr-gray-800: #1e293b;
+  --hr-gray-900: #0f172a;
 
-  --vt-c-divider-light-1: rgba(60, 60, 60, 0.29);
-  --vt-c-divider-light-2: rgba(60, 60, 60, 0.12);
-  --vt-c-divider-dark-1: rgba(84, 84, 84, 0.65);
-  --vt-c-divider-dark-2: rgba(84, 84, 84, 0.48);
+  /* Semantic Colors */
+  --hr-success: #10b981;
+  --hr-warning: #f59e0b;
+  --hr-error: #ef4444;
+  --hr-info: #3b82f6;
 
-  --vt-c-text-light-1: var(--vt-c-indigo);
-  --vt-c-text-light-2: rgba(60, 60, 60, 0.66);
-  --vt-c-text-dark-1: var(--vt-c-white);
-  --vt-c-text-dark-2: rgba(235, 235, 235, 0.64);
+  /* Background Colors */
+  --hr-bg-primary: var(--hr-white);
+  --hr-bg-secondary: var(--hr-gray-50);
+  --hr-bg-muted: var(--hr-gray-100);
+  --hr-bg-card: var(--hr-white);
+
+  /* Text Colors */
+  --hr-text-primary: var(--hr-gray-900);
+  --hr-text-secondary: var(--hr-gray-600);
+  --hr-text-muted: var(--hr-gray-500);
+  --hr-text-inverse: var(--hr-white);
+
+  /* Border Colors */
+  --hr-border-light: var(--hr-gray-200);
+  --hr-border-medium: var(--hr-gray-300);
+  --hr-border-dark: var(--hr-gray-400);
+
+  /* Spacing Scale */
+  --hr-space-xs: 0.25rem; /* 4px */
+  --hr-space-sm: 0.5rem; /* 8px */
+  --hr-space-md: 1rem; /* 16px */
+  --hr-space-lg: 1.5rem; /* 24px */
+  --hr-space-xl: 2rem; /* 32px */
+  --hr-space-2xl: 3rem; /* 48px */
+  --hr-space-3xl: 4rem; /* 64px */
+
+  /* Border Radius */
+  --hr-radius-sm: 0.25rem; /* 4px */
+  --hr-radius-md: 0.5rem; /* 8px */
+  --hr-radius-lg: 0.75rem; /* 12px */
+  --hr-radius-xl: 1rem; /* 16px */
+
+  /* Shadows */
+  --hr-shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+  --hr-shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+  --hr-shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+  --hr-shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+
+  /* Typography */
+  --hr-font-family-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --hr-font-family-mono: "SF Mono", Monaco, "Cascadia Code", "Roboto Mono", Consolas, monospace;
+
+  --hr-font-size-xs: 0.75rem; /* 12px */
+  --hr-font-size-sm: 0.875rem; /* 14px */
+  --hr-font-size-base: 1rem; /* 16px */
+  --hr-font-size-lg: 1.125rem; /* 18px */
+  --hr-font-size-xl: 1.25rem; /* 20px */
+  --hr-font-size-2xl: 1.5rem; /* 24px */
+  --hr-font-size-3xl: 1.875rem; /* 30px */
+  --hr-font-size-4xl: 2.25rem; /* 36px */
+
+  --hr-font-weight-normal: 400;
+  --hr-font-weight-medium: 500;
+  --hr-font-weight-semibold: 600;
+  --hr-font-weight-bold: 700;
+
+  --hr-line-height-tight: 1.25;
+  --hr-line-height-normal: 1.5;
+  --hr-line-height-relaxed: 1.75;
+
+  /* Transitions */
+  --hr-transition-fast: 150ms ease-in-out;
+  --hr-transition-normal: 250ms ease-in-out;
+  --hr-transition-slow: 350ms ease-in-out;
+
+  /* Z-index Scale */
+  --hr-z-dropdown: 1000;
+  --hr-z-sticky: 1020;
+  --hr-z-fixed: 1030;
+  --hr-z-modal-backdrop: 1040;
+  --hr-z-modal: 1050;
+  --hr-z-popover: 1060;
+  --hr-z-tooltip: 1070;
+  --hr-z-toast: 1080;
 }
 
-/* semantic color variables for this project */
-:root {
-  --color-background: var(--vt-c-white);
-  --color-background-soft: var(--vt-c-white-soft);
-  --color-background-mute: var(--vt-c-white-mute);
+/* Dark Mode Support */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --hr-bg-primary: var(--hr-gray-900);
+    --hr-bg-secondary: var(--hr-gray-800);
+    --hr-bg-muted: var(--hr-gray-700);
+    --hr-bg-card: var(--hr-gray-800);
 
-  --color-border: var(--vt-c-divider-light-2);
-  --color-border-hover: var(--vt-c-divider-light-1);
+    --hr-text-primary: var(--hr-gray-100);
+    --hr-text-secondary: var(--hr-gray-300);
+    --hr-text-muted: var(--hr-gray-400);
 
-  --color-heading: #000;
-  --color-text: #000;
-
-  --section-gap: 160px;
+    --hr-border-light: var(--hr-gray-700);
+    --hr-border-medium: var(--hr-gray-600);
+    --hr-border-dark: var(--hr-gray-500);
+  }
 }
 
-
+/* Base Reset and Typography */
 *,
 *::before,
 *::after {
   box-sizing: border-box;
   margin: 0;
-  font-weight: normal;
+  padding: 0;
+}
+
+html {
+  font-size: 16px;
+  line-height: 1.5;
+  -webkit-text-size-adjust: 100%;
+  -moz-text-size-adjust: 100%;
+  text-size-adjust: 100%;
 }
 
 body {
   min-height: 100vh;
-  color: var(--color-text);
-  background: var(--color-background);
-  transition:
-    color 0.5s,
-    background-color 0.5s;
-  line-height: 1.6;
-  font-family:
-    Inter,
-    -apple-system,
-    BlinkMacSystemFont,
-    'Segoe UI',
-    Roboto,
-    Oxygen,
-    Ubuntu,
-    Cantarell,
-    'Fira Sans',
-    'Droid Sans',
-    'Helvetica Neue',
-    sans-serif;
-  font-size: 15px;
+  font-family: var(--hr-font-family-sans);
+  font-size: var(--hr-font-size-base);
+  font-weight: var(--hr-font-weight-normal);
+  line-height: var(--hr-line-height-normal);
+  color: var(--hr-text-primary);
+  background-color: var(--hr-bg-primary);
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  transition: color var(--hr-transition-normal), background-color var(--hr-transition-normal);
+}
+
+/* Responsive Typography */
+@media (max-width: 640px) {
+  html {
+    font-size: 14px;
+  }
+}
+
+@media (min-width: 1024px) {
+  html {
+    font-size: 16px;
+  }
+}
+
+@media (min-width: 1280px) {
+  html {
+    font-size: 18px;
+  }
+}
+
+/* Focus Management */
+:focus {
+  outline: 2px solid var(--hr-primary);
+  outline-offset: 2px;
+}
+
+:focus:not(:focus-visible) {
+  outline: none;
+}
+
+/* Scrollbar Styling */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--hr-bg-secondary);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--hr-gray-400);
+  border-radius: var(--hr-radius-md);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--hr-gray-500);
+}
+
+/* Selection Styling */
+::selection {
+  background-color: var(--hr-primary);
+  color: var(--hr-text-inverse);
+}
+
+::-moz-selection {
+  background-color: var(--hr-primary);
+  color: var(--hr-text-inverse);
 }

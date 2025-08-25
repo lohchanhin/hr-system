@@ -91,14 +91,14 @@
               <el-table-column label="#" width="60">
                 <template #default="{ $index }">{{ $index + 1 }}</template>
               </el-table-column>
-              <el-table-column label="Approver Type" width="150">
+              <el-table-column label="簽核類型" width="150">
                 <template #default="{ row }">
                   <el-select v-model="row.approver_type" placeholder="選擇類型" style="width:140px">
                     <el-option v-for="t in APPROVER_TYPES" :key="t" :label="t" :value="t" />
                   </el-select>
                 </template>
               </el-table-column>
-              <el-table-column label="Approver Value" width="200">
+              <el-table-column label="簽核對象" width="200">
                 <template #default="{ row }">
                   <el-select v-if="row.approver_type==='user'" v-model="row.approver_value" placeholder="選擇員工" multiple>
                     <el-option v-for="e in employeeOptions" :key="e.id" :label="e.name" :value="e.id" />
@@ -109,7 +109,7 @@
                   <el-input v-else v-model="row.approver_value" placeholder="userId/標籤/角色..." />
                 </template>
               </el-table-column>
-              <el-table-column label="Scope" width="120">
+              <el-table-column label="範圍" width="120">
                 <template #default="{ row }">
                   <el-select v-model="row.scope_type" style="width:110px">
                     <el-option label="none" value="none" />
@@ -141,17 +141,75 @@
           </el-dialog>
         </div>
       </el-tab-pane>
+      <el-tab-pane label="欄位設定" name="fields">
+        <div class="tab-content">
+          <div class="flex items-center gap-2 mb-2">
+            <el-select v-model="selectedFormId" placeholder="選擇表單樣板" style="width: 320px" @change="loadFields">
+              <el-option v-for="f in forms" :key="f._id" :label="`${f.name}（${f.category}）`" :value="f._id" />
+            </el-select>
+            <el-button type="primary" :disabled="!selectedFormId" @click="openFieldDialog()">新增欄位</el-button>
+          </div>
+
+          <el-table v-if="selectedFormId" :data="fields" border>
+            <el-table-column type="index" label="#" width="50" />
+            <el-table-column prop="label" label="欄位名稱" />
+            <el-table-column prop="type_1" label="型別1" width="120" />
+            <el-table-column prop="type_2" label="型別2" width="120" />
+            <el-table-column label="必填" width="80">
+              <template #default="{ row }">
+                <el-switch v-model="row.required" @change="updateField(row)" />
+              </template>
+            </el-table-column>
+            <el-table-column label="排序" width="140">
+              <template #default="{ $index }">
+                <el-button size="small" @click="moveField($index,-1)" :disabled="$index===0">上移</el-button>
+                <el-button size="small" @click="moveField($index,1)" :disabled="$index===fields.length-1">下移</el-button>
+              </template>
+            </el-table-column>
+            <el-table-column label="操作" width="180">
+              <template #default="{ row }">
+                <el-button size="small" @click="openFieldDialog('edit',row)">編輯</el-button>
+                <el-button size="small" type="danger" @click="removeField(row)">刪除</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+          <div v-else class="text-gray-500">請先從上方選擇表單樣板。</div>
+        </div>
+
+        <el-dialog v-model="fieldDialogVisible" :title="fieldDialogMode==='edit' ? '編輯欄位' : '新增欄位'" width="520px">
+          <el-form :model="fieldDialog" label-width="120px">
+            <el-form-item label="標籤"><el-input v-model="fieldDialog.label" /></el-form-item>
+            <el-form-item label="型別1">
+              <el-select v-model="fieldDialog.type_1" placeholder="選擇型別">
+                <el-option v-for="t in FIELD_TYPES" :key="t" :label="t" :value="t" />
+              </el-select>
+            </el-form-item>
+            <el-form-item label="型別2"><el-input v-model="fieldDialog.type_2" /></el-form-item>
+            <el-form-item label="必填"><el-switch v-model="fieldDialog.required" /></el-form-item>
+            <el-form-item label="選項">
+              <el-input v-model="fieldDialog.optionsStr" type="textarea" :rows="2" placeholder="JSON 或以逗號分隔" />
+            </el-form-item>
+            <el-form-item label="提示文字"><el-input v-model="fieldDialog.placeholder" /></el-form-item>
+          </el-form>
+          <template #footer>
+            <el-button @click="fieldDialogVisible=false">取消</el-button>
+            <el-button type="primary" @click="saveField">儲存</el-button>
+          </template>
+        </el-dialog>
+      </el-tab-pane>
     </el-tabs>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, watch } from 'vue'
 import { apiFetch } from '../../api'  // 你專案現有封裝
 
 const API = {
   forms: '/api/approvals/forms',
   workflow: (formId) => `/api/approvals/forms/${formId}/workflow`,
+  fields: (formId) => `/api/approvals/forms/${formId}/fields`,
+  field: (formId, fieldId) => `/api/approvals/forms/${formId}/fields/${fieldId}`,
   employees: '/api/employees/options',
   roles: '/api/roles',
 }
@@ -163,6 +221,7 @@ const APPROVER_TYPES = ['manager','tag','user','role','department','org','group'
 const activeTab = ref('commonRule')
 const forms = ref([])
 const selectedFormId = ref('')
+const fields = ref([])
 
 /* 通用規則 policy */
 const policyForm = ref({
@@ -182,6 +241,100 @@ const workflowDialogVisible = ref(false)
 const workflowSteps = ref([])
 const employeeOptions = ref([])
 const roleOptions = ref([])
+
+const fieldDialogVisible = ref(false)
+const fieldDialogMode = ref('create')
+const fieldDialog = ref({ _id: '', label: '', type_1: 'text', type_2: '', required: false, optionsStr: '', placeholder: '', order: 0 })
+const FIELD_TYPES = ['text','textarea','number','select','checkbox','date','time','datetime','file','user','department','org']
+
+watch([activeTab, selectedFormId], () => {
+  if (activeTab.value === 'fields' && selectedFormId.value) loadFields()
+})
+
+function parseOptions(str) {
+  if (!str) return undefined
+  try { return JSON.parse(str) } catch { return str.split(',').map(s => s.trim()).filter(Boolean) }
+}
+
+async function loadFields() {
+  if (!selectedFormId.value) return
+  const res = await apiFetch(API.fields(selectedFormId.value))
+  if (res.ok) {
+    const arr = await res.json()
+    fields.value = Array.isArray(arr) ? arr.sort((a,b)=> (a.order??0)-(b.order??0)) : []
+  }
+}
+
+function openFieldDialog(mode='create', row=null) {
+  fieldDialogMode.value = mode
+  if (mode === 'edit' && row) {
+    fieldDialog.value = { ...row, optionsStr: row.options ? JSON.stringify(row.options) : '' }
+  } else {
+    fieldDialog.value = { _id: '', label: '', type_1: 'text', type_2: '', required: false, optionsStr: '', placeholder: '', order: fields.value.length }
+  }
+  fieldDialogVisible.value = true
+}
+
+async function saveField() {
+  if (!selectedFormId.value) return
+  const payload = {
+    label: fieldDialog.value.label,
+    type_1: fieldDialog.value.type_1,
+    type_2: fieldDialog.value.type_2,
+    required: fieldDialog.value.required,
+    options: parseOptions(fieldDialog.value.optionsStr),
+    placeholder: fieldDialog.value.placeholder,
+    order: fieldDialog.value.order ?? fields.value.length,
+  }
+  let res
+  if (fieldDialogMode.value === 'edit' && fieldDialog.value._id) {
+    res = await apiFetch(API.field(selectedFormId.value, fieldDialog.value._id), {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    })
+  } else {
+    res = await apiFetch(API.fields(selectedFormId.value), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    })
+  }
+  if (res.ok) {
+    fieldDialogVisible.value = false
+    await loadFields()
+  }
+}
+
+async function updateField(row) {
+  const payload = { label: row.label, type_1: row.type_1, type_2: row.type_2, required: row.required, options: row.options, placeholder: row.placeholder, order: row.order }
+  await apiFetch(API.field(selectedFormId.value, row._id), {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  })
+}
+
+async function removeField(row) {
+  await apiFetch(API.field(selectedFormId.value, row._id), { method: 'DELETE' })
+  await loadFields()
+}
+
+async function moveField(index, offset) {
+  const newIndex = index + offset
+  if (newIndex < 0 || newIndex >= fields.value.length) return
+  const arr = fields.value
+  const [item] = arr.splice(index, 1)
+  arr.splice(newIndex, 0, item)
+  for (let i = 0; i < arr.length; i++) {
+    arr[i].order = i
+    await apiFetch(API.field(selectedFormId.value, arr[i]._id), {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ order: i })
+    })
+  }
+}
 
 /* 讀取樣板列表 */
 async function loadForms() {

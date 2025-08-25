@@ -77,7 +77,7 @@ async function seed() {
         department: '人力資源部',
         subDepartment: '招聘組',
         title: 'Staff',
-        status: '在職'
+        status: '正職員工'
       });
       await User.create({
         ...data,
