@@ -50,3 +50,15 @@ export function clearToken() {
   localStorage.removeItem('token');
   localStorage.removeItem('token_expires');
 }
+
+export function setRefreshToken(token) {
+  localStorage.setItem('refresh_token', token);
+}
+
+export function getRefreshToken() {
+  return localStorage.getItem('refresh_token');
+}
+
+export function clearRefreshToken() {
+  localStorage.removeItem('refresh_token');
+}

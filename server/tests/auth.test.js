@@ -35,15 +35,27 @@ describe('Auth API', () => {
   it('logs in with valid credentials', async () => {
     mockUser.findOne.mockResolvedValue(fakeUser);
     compareMock.mockResolvedValue(true);
-    const signSpy = jest.spyOn(jwt, 'sign').mockReturnValue('tok');
+    const signSpy = jest
+      .spyOn(jwt, 'sign')
+      .mockImplementation((payload, secret, opts) =>
+        opts?.expiresIn === '1h' ? 'tok' : 'ref'
+      );
     const res = await request(app).post('/api/login').send({ username: 'john', password: 'pass' });
     expect(res.status).toBe(200);
     expect(res.body.token).toBe('tok');
+    expect(res.body.refreshToken).toBe('ref');
     expect(res.body.user).toEqual({ id: 'u1', role: 'employee', username: 'john', employeeId: 'e1' });
-    expect(signSpy).toHaveBeenCalledWith(
+    expect(signSpy).toHaveBeenNthCalledWith(
+      1,
       { id: 'u1', role: 'employee', employeeId: 'e1' },
       'secret',
       { expiresIn: '1h' }
+    );
+    expect(signSpy).toHaveBeenNthCalledWith(
+      2,
+      { id: 'u1', role: 'employee', employeeId: 'e1' },
+      'secret',
+      { expiresIn: '7d' }
     );
     signSpy.mockRestore();
   });
@@ -63,4 +75,22 @@ describe('Auth API', () => {
     const result = await isTokenBlacklisted('tok')
     expect(result).toBe(true)
   })
+
+  it('issues new token with refresh token', async () => {
+    const refresh = jwt.sign(
+      { id: 'u1', role: 'employee', employeeId: 'e1' },
+      'secret',
+      { expiresIn: '7d' }
+    );
+    const signSpy = jest.spyOn(jwt, 'sign').mockReturnValue('newTok');
+    const res = await request(app).post('/api/refresh').send({ refreshToken: refresh });
+    expect(res.status).toBe(200);
+    expect(res.body.token).toBe('newTok');
+    expect(signSpy).toHaveBeenCalledWith(
+      { id: 'u1', role: 'employee', employeeId: 'e1' },
+      'secret',
+      { expiresIn: '1h' }
+    );
+    signSpy.mockRestore();
+  });
 });

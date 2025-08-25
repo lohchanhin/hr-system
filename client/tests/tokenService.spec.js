@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { setToken, getToken, clearToken, _expiryTimeout } from '../src/utils/tokenService'
+import { setToken, getToken, clearToken, setRefreshToken, getRefreshToken, clearRefreshToken, _expiryTimeout } from '../src/utils/tokenService'
 
 function createToken(offset = 3600) {
   const header = Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64')
@@ -31,5 +31,12 @@ describe('tokenService', () => {
     vi.runOnlyPendingTimers()
     expect(getToken()).toBeNull()
     expect(localStorage.getItem('token')).toBeNull()
+  })
+
+  it('stores and clears refresh token', () => {
+    setRefreshToken('ref')
+    expect(getRefreshToken()).toBe('ref')
+    clearRefreshToken()
+    expect(getRefreshToken()).toBeNull()
   })
 })

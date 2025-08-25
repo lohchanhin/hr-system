@@ -100,7 +100,7 @@ import { useRouter } from 'vue-router'
 import { useMenuStore } from '../stores/menu'
 import { storeToRefs } from 'pinia'
 import { apiFetch } from '../api'
-import { setToken } from '../utils/tokenService'
+import { setToken, setRefreshToken } from '../utils/tokenService'
 import { ElMessage } from 'element-plus'
 
 const router = useRouter()
@@ -143,6 +143,7 @@ const onLogin = async () => {
     if (res.ok) {
       const data = await res.json()
       setToken(data.token)
+      setRefreshToken(data.refreshToken)
       localStorage.setItem('role', data.user.role)
       localStorage.setItem('employeeId', data.user.employeeId)
       

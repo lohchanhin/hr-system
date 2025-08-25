@@ -51,7 +51,7 @@
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useMenuStore } from '../stores/menu'
-import { clearToken } from '../utils/tokenService'
+import { clearToken, clearRefreshToken } from '../utils/tokenService'
 import { storeToRefs } from 'pinia'
 
 const router = useRouter()
@@ -77,6 +77,7 @@ function toggleCollapse() {
 
 function logout() {
   clearToken()
+  clearRefreshToken()
   localStorage.removeItem('role')
   localStorage.removeItem('employeeId')
   router.push('/')

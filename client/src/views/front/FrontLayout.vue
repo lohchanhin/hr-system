@@ -54,7 +54,7 @@
 import { ref, onMounted, computed } from "vue";
 import { useRouter, useRoute } from "vue-router";
 import { useMenuStore } from "../../stores/menu";
-import { clearToken } from "../../utils/tokenService";
+import { clearToken, clearRefreshToken } from "../../utils/tokenService";
 import { storeToRefs } from "pinia";
 
 const router = useRouter();
@@ -85,6 +85,7 @@ function onLogout() {
   localStorage.removeItem("role");
   localStorage.removeItem("username");
   clearToken();
+  clearRefreshToken();
   router.push(`/`);
 }
 </script>
