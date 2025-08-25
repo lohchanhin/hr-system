@@ -7,7 +7,7 @@ const mockSalarySetting = jest.fn().mockImplementation(() => ({ save: saveMock }
 mockSalarySetting.find = jest.fn();
 mockSalarySetting.findByIdAndUpdate = jest.fn();
 
-jest.mock('../src/models/SalarySetting.js', () => ({ default: mockSalarySetting }), { virtual: true });
+jest.unstable_mockModule('../src/models/SalarySetting.js', () => ({ default: mockSalarySetting }));
 
 let app;
 let salaryRoutes;

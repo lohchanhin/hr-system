@@ -4,12 +4,16 @@ import { jest } from '@jest/globals';
 import { authorizeRoles } from '../src/middleware/auth.js';
 
 const saveMock = jest.fn();
-const mockUser = jest.fn().mockImplementation(() => ({ save: saveMock }));
+const mockUser = jest.fn().mockImplementation((data = {}) => ({
+  ...data,
+  save: saveMock,
+  toObject: () => ({ ...data })
+}));
 mockUser.find = jest.fn();
 mockUser.findById = jest.fn();
 mockUser.findByIdAndDelete = jest.fn();
 
-jest.mock('../src/models/User.js', () => ({ default: mockUser }), { virtual: true });
+jest.unstable_mockModule('../src/models/User.js', () => ({ default: mockUser }));
 
 let app;
 let userRoutes;
@@ -38,7 +42,7 @@ describe('User API as admin', () => {
 
   it('lists users', async () => {
     const fake = [{ username: 'a' }];
-    mockUser.find.mockResolvedValue(fake);
+    mockUser.find.mockReturnValue({ select: jest.fn().mockResolvedValue(fake) });
     const res = await request(app).get('/api/users');
     expect(res.status).toBe(200);
     expect(res.body).toEqual(fake);
@@ -53,7 +57,7 @@ describe('User API as admin', () => {
   });
 
   it('updates user', async () => {
-    mockUser.findById.mockResolvedValue({ save: saveMock, username: 'u' });
+    mockUser.findById.mockResolvedValue({ save: saveMock, username: 'u', toObject: () => ({ username: 'u' }) });
     saveMock.mockResolvedValue();
     const res = await request(app).put('/api/users/1').send({ username: 'b' });
     expect(res.status).toBe(200);
