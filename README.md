@@ -94,6 +94,13 @@ curl -X DELETE http://localhost:3000/api/shifts/<id> \
 | `supervisor`  | supervisor  |
 | `admin`       | admin       |
 
+預設狀態下，`user` 為一般員工，其主管欄位預設為 `supervisor`。`supervisor` 可以管理 `user` 的排班並審核其申請。
+
+範例流程：
+1. 以 `supervisor` 登入後端，為 `user` 指派班表。
+2. 使用 `user` 帳號登入並提出請假申請。
+3. 切換回 `supervisor` 帳號，在待簽核列表中核准該申請。
+
 啟動時也會建立一個名為「示範機構」的機構，以及預設的「人力資源部」與「招聘組」區
 域，便於前端選單立即取得資料。
 
