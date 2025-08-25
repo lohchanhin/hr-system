@@ -3,12 +3,12 @@ import { jest } from '@jest/globals';
 const mockUserFindOne = jest.fn();
 const mockUserCreate = jest.fn();
 
-jest.mock('../src/models/User.js', () => ({ default: { findOne: mockUserFindOne, create: mockUserCreate } }), { virtual: true });
+jest.unstable_mockModule('../src/models/User.js', () => ({ default: { findOne: mockUserFindOne, create: mockUserCreate } }));
 
 const mockEmpCreate = jest.fn(async (data) => ({ _id: `${data.name}_id`, ...data }));
 const mockEmpUpdateMany = jest.fn();
 
-jest.mock('../src/models/Employee.js', () => ({ default: { create: mockEmpCreate, updateMany: mockEmpUpdateMany } }), { virtual: true });
+jest.unstable_mockModule('../src/models/Employee.js', () => ({ default: { create: mockEmpCreate, updateMany: mockEmpUpdateMany } }));
 
 beforeAll(() => {
   process.env.PORT = '3000';
@@ -23,10 +23,11 @@ describe('seedTestUsers', () => {
     mockUserCreate.mockResolvedValue({});
     const { seedTestUsers } = await import('../src/index.js');
     await seedTestUsers();
-    expect(mockEmpCreate).toHaveBeenCalledWith(expect.objectContaining({ name: 'scheduler', signTags: ['\u6392\u73ed\u8cac\u4efb\u4eba'] }));
+    expect(mockEmpCreate).toHaveBeenCalledWith(expect.objectContaining({ name: 'scheduler', signTags: ['\u6392\u73ed\u8ca0\u8cac\u4eba'] }));
     expect(mockEmpCreate).toHaveBeenCalledWith(expect.objectContaining({ name: 'supportHead', signTags: ['\u652f\u63f4\u55ae\u4f4d\u4e3b\u7ba1'] }));
     expect(mockEmpCreate).toHaveBeenCalledWith(expect.objectContaining({ name: 'salesHead', signTags: ['\u696d\u52d9\u4e3b\u7ba1'] }));
-    expect(mockEmpCreate).toHaveBeenCalledWith(expect.objectContaining({ name: 'salesManager', signTags: ['\u696d\u52d9\u8cac\u4efb\u4eba'] }));
+    expect(mockEmpCreate).toHaveBeenCalledWith(expect.objectContaining({ name: 'salesManager', signTags: ['\u696d\u52d9\u8ca0\u8cac\u4eba'] }));
     expect(mockEmpCreate).toHaveBeenCalledWith(expect.objectContaining({ name: 'hr', signTags: ['\u4eba\u8cc7'] }));
+    expect(mockEmpUpdateMany).toHaveBeenCalledWith({ role: 'employee' }, { supervisor: expect.any(String) });
   });
 });

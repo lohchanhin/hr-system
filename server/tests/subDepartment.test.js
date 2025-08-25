@@ -8,7 +8,8 @@ mockSubDepartment.find = jest.fn();
 mockSubDepartment.findByIdAndUpdate = jest.fn();
 mockSubDepartment.findByIdAndDelete = jest.fn();
 
-jest.mock('../src/models/SubDepartment.js', () => ({ default: mockSubDepartment }), { virtual: true });
+jest.unstable_mockModule('../src/models/SubDepartment.js', () => ({ default: mockSubDepartment }));
+jest.unstable_mockModule('../src/middleware/auth.js', () => ({ authorizeRoles: () => (req, res, next) => next() }));
 
 let app;
 let subDepartmentRoutes;

@@ -3,10 +3,13 @@ import express from 'express';
 import { jest } from '@jest/globals';
 
 const saveMock = jest.fn();
-const mockPayrollRecord = jest.fn().mockImplementation(() => ({ save: saveMock }));
+const mockPayrollRecord = jest.fn().mockImplementation((data = {}) => ({
+  ...data,
+  save: saveMock
+}));
 mockPayrollRecord.find = jest.fn(() => ({ populate: jest.fn().mockResolvedValue([]) }));
 
-jest.mock('../src/models/PayrollRecord.js', () => ({ default: mockPayrollRecord }), { virtual: true });
+jest.unstable_mockModule('../src/models/PayrollRecord.js', () => ({ default: mockPayrollRecord }));
 
 let app;
 let payrollRoutes;

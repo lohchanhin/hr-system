@@ -5,7 +5,7 @@ import jwt from 'jsonwebtoken'
 
 const mockBlacklistedToken = { create: jest.fn(), findOne: jest.fn() };
 
-jest.mock('../src/models/BlacklistedToken.js', () => ({ default: mockBlacklistedToken }), { virtual: true });
+jest.unstable_mockModule('../src/models/BlacklistedToken.js', () => ({ default: mockBlacklistedToken }));
 
 let blacklistUtils;
 let authenticate;
