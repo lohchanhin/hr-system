@@ -67,6 +67,30 @@ describe('EmployeeManagement.vue', () => {
     expect(subDeptItem.findComponent({ name: 'ElSelect' }).exists()).toBe(true)
   })
 
+  it('loads subDepartments when editing employee with department name', async () => {
+    const wrapper = mount(EmployeeManagement, { global: { plugins: [ElementPlus] } })
+    const deptSpy = vi
+      .spyOn(wrapper.vm, 'fetchDepartments')
+      .mockImplementation(async () => {
+        wrapper.vm.departmentList = [{ _id: 'd1', name: 'D1' }]
+      })
+    const subSpy = vi
+      .spyOn(wrapper.vm, 'fetchSubDepartments')
+      .mockImplementation(async dept => {
+        wrapper.vm.subDepartmentList = [
+          { _id: 'sd1', name: 'SD1', department: dept }
+        ]
+      })
+    wrapper.vm.employeeList = [
+      { _id: 'e1', name: 'E1', department: 'D1', subDepartment: 'sd1' }
+    ]
+    await wrapper.vm.openEmployeeDialog(0)
+    expect(deptSpy).toHaveBeenCalled()
+    expect(subSpy).toHaveBeenCalledWith('d1')
+    expect(wrapper.vm.employeeForm.department).toBe('d1')
+    expect(wrapper.vm.subDepartmentList[0].department).toBe('d1')
+  })
+
   describe('401 handling', () => {
     const fns = ['fetchDepartments', 'fetchSubDepartments', 'fetchOrganizations', 'fetchEmployees']
 
