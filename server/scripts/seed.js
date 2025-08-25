@@ -74,7 +74,7 @@ async function seed() {
         name: data.username,
         email: `${data.username}@example.com`,
         role: data.role,
-        organization: '示範機構',
+        organization: org._id,
         department: dept._id,
         subDepartment: subDept._id,
         title: 'Staff',

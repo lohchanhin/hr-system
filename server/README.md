@@ -52,3 +52,11 @@ basic reference data when the application is started for the first time.
 
 透過 API 新增部門時，請在 payload 中加入 `organization` 欄位，以指定其所屬機構；
 新增小單位則需帶入 `department` 欄位對應上層部門。
+
+### 資料轉換腳本
+
+若既有資料的 `organization` 欄位為名稱，可執行以下腳本轉換為對應的 `_id`：
+
+```bash
+node scripts/migrate-organization-ids.js
+```
