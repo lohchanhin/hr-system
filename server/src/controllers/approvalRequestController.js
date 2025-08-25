@@ -85,7 +85,7 @@ export async function createApprovalRequest(req, res) {
 
     const applicantEmp = applicant_employee_id
       ? await Employee.findById(applicant_employee_id)
-      : (await User.findById(req.user?._id).populate('employee'))?.employee
+      : (await User.findById(req.user?.id).populate('employee'))?.employee
 
     // 依每關解析審核人
     const reqSteps = []
@@ -106,14 +106,14 @@ export async function createApprovalRequest(req, res) {
       form: form._id,
       workflow: wf._id,
       form_data,
-      applicant_user: req.user?._id,
+      applicant_user: req.user?.id,
       applicant_employee: applicantEmp?._id || undefined,
       applicant_org: applicantEmp?.organization,
       applicant_department: applicantEmp?.department,
       status: 'pending',
       current_step_index: 0,
       steps: reqSteps,
-      logs: [{ action: 'create', by_user: req.user?._id, by_employee: applicantEmp?._id, message: '建立送審單' }],
+      logs: [{ action: 'create', by_user: req.user?.id, by_employee: applicantEmp?._id, message: '建立送審單' }],
     })
 
     // 通知第一關審核人
@@ -143,7 +143,7 @@ export async function getApprovalRequest(req, res) {
 /* 申請者的清單 */
 export async function myApprovalRequests(req, res) {
   try {
-    const empId = req.query.employee_id || (await User.findById(req.user?._id))?.employee
+    const empId = req.query.employee_id || (await User.findById(req.user?.id))?.employee
     const list = await ApprovalRequest.find({ applicant_employee: empId }).sort({ createdAt: -1 })
     res.json(list)
   } catch (e) {
@@ -154,7 +154,7 @@ export async function myApprovalRequests(req, res) {
 /* 審核者的待辦匣 */
 export async function inboxApprovals(req, res) {
   try {
-    const empId = req.query.employee_id || (await User.findById(req.user?._id))?.employee
+    const empId = req.query.employee_id || (await User.findById(req.user?.id))?.employee
     // 找出目前關卡包含我，且我的 decision 是 pending 的
     const list = await ApprovalRequest.find({
       status: 'pending',
@@ -216,7 +216,7 @@ export async function actOnApproval(req, res) {
     const doc = await ApprovalRequest.findById(req.params.id)
     if (!doc) return res.status(404).json({ error: 'not found' })
     if (doc.status !== 'pending') return res.status(400).json({ error: 'not pending' })
-    const empId = req.body.employee_id || (await User.findById(req.user?._id))?.employee
+    const empId = req.body.employee_id || (await User.findById(req.user?.id))?.employee
     const idx = doc.current_step_index
     const step = doc.steps[idx]
     if (!step) return res.status(400).json({ error: 'invalid step' })
