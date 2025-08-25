@@ -135,8 +135,8 @@ function buildEmployeeDoc(body = {}) {
 
     /* 組織/部門/職稱 */
     organization: body.organization,
-    department: body.department,
-    subDepartment: body.subDepartment,
+    department: body.department === '' ? undefined : body.department,
+    subDepartment: body.subDepartment === '' ? undefined : body.subDepartment,
     supervisor,
     title: body.title,
     practiceTitle: body.practiceTitle,
@@ -257,8 +257,14 @@ function buildEmployeePatch(body = {}, existing = null) {
 
   // 組織/職稱
   put('organization', body.organization)
-  put('department', body.department)
-  put('subDepartment', body.subDepartment)
+  if (isDefined(body.department)) {
+    if (body.department === '') un('department')
+    else put('department', body.department)
+  }
+  if (isDefined(body.subDepartment)) {
+    if (body.subDepartment === '') un('subDepartment')
+    else put('subDepartment', body.subDepartment)
+  }
   put('title', body.title)
   put('practiceTitle', body.practiceTitle)
   if (isDefined(body.isPartTime)) put('partTime', Boolean(body.isPartTime))
@@ -375,7 +381,6 @@ export async function listEmployees(req, res) {
         { name: rx },
         { employeeId: rx },
         { email: rx },
-        { department: rx },
         { title: rx },
       ]
     }

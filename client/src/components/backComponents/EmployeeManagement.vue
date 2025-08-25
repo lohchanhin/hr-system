@@ -723,7 +723,14 @@ async function fetchOrganizations() {
 async function fetchEmployees() {
   const res = await apiFetch('/api/employees')
   if (handle401(res)) return
-  if (res.ok) employeeList.value = await res.json()
+  if (res.ok) {
+    const list = await res.json()
+    employeeList.value = list.map(e => ({
+      ...e,
+      department: e.department?._id || e.department || '',
+      subDepartment: e.subDepartment?._id || e.subDepartment || ''
+    }))
+  }
 }
 onMounted(() => {
   fetchDepartments()
@@ -875,6 +882,8 @@ function openEmployeeDialog(index = null) {
     editEmployeeId = emp._id || ''
     // 以 emptyEmployee 為基底，可避免漏欄位
     employeeForm.value = { ...structuredClone(emptyEmployee), ...emp, password: '', photoList: [] }
+    employeeForm.value.department = emp.department?._id || emp.department || ''
+    employeeForm.value.subDepartment = emp.subDepartment?._id || emp.subDepartment || ''
   } else {
     editEmployeeIndex = null
     editEmployeeId = ''

@@ -46,9 +46,9 @@ async function seed() {
     console.log('Created sample department');
   }
 
-  const subDeptExists = await SubDepartment.findOne({ code: 'HR1' });
-  if (!subDeptExists) {
-    await SubDepartment.create({
+  let subDept = await SubDepartment.findOne({ code: 'HR1' });
+  if (!subDept) {
+    subDept = await SubDepartment.create({
       department: dept._id,
       code: 'HR1',
       name: '招聘組',
@@ -75,8 +75,8 @@ async function seed() {
         email: `${data.username}@example.com`,
         role: data.role,
         organization: '示範機構',
-        department: '人力資源部',
-        subDepartment: '招聘組',
+        department: dept._id,
+        subDepartment: subDept._id,
         title: 'Staff',
         status: '正職員工'
       });

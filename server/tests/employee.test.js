@@ -35,7 +35,7 @@ beforeEach(() => {
 
 describe('Employee API', () => {
   it('lists employees', async () => {
-    const fakeEmployees = [{ name: 'John', department: 'Sales', title: 'Staff', status: '正職員工' }];
+    const fakeEmployees = [{ name: 'John', department: 'd1', title: 'Staff', status: '正職員工' }];
     mockEmployee.find.mockReturnValue({
       populate: jest.fn().mockReturnValue({
         sort: jest.fn().mockResolvedValue(fakeEmployees),
@@ -91,8 +91,8 @@ describe('Employee API', () => {
       name: 'Jane',
       email: 'jane@example.com',
       organization: 'Org',
-      department: 'HR',
-      subDepartment: 'Sub',
+      department: 'd1',
+      subDepartment: 'sd1',
       title: 'Manager',
       employmentStatus: '正職員工',
       username: 'jane',
@@ -108,8 +108,8 @@ describe('Employee API', () => {
       name: 'Jane',
       email: 'jane@example.com',
       organization: 'Org',
-      department: 'HR',
-      subDepartment: 'Sub',
+      department: 'd1',
+      subDepartment: 'sd1',
       title: 'Manager',
       employmentStatus: '正職員工',
       supervisor: 's1'
@@ -119,8 +119,8 @@ describe('Employee API', () => {
       password: 'secret',
       role: 'employee',
       organization: 'Org',
-      department: 'HR',
-      subDepartment: 'Sub',
+      department: 'd1',
+      subDepartment: 'sd1',
       employee: '1',
       supervisor: 's1'
     });
