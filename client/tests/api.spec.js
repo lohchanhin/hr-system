@@ -14,7 +14,7 @@ describe('apiFetch', () => {
     vi.stubGlobal('fetch', vi.fn())
     Object.defineProperty(window, 'location', {
       writable: true,
-      value: { href: '' }
+      value: { href: '', pathname: '' }
     })
   })
 
@@ -23,11 +23,20 @@ describe('apiFetch', () => {
     window.location = originalLocation
   })
 
-  it('redirects to login on 401', async () => {
+  it('redirects to login on 401 for frontend path', async () => {
+    window.location.pathname = '/profile'
     fetch.mockResolvedValueOnce({ status: 401 })
     await apiFetch('/test')
     expect(clearToken).toHaveBeenCalled()
     expect(window.location.href).toBe('/login')
+  })
+
+  it('redirects to manager login on 401 for backend path', async () => {
+    window.location.pathname = '/manager/dashboard'
+    fetch.mockResolvedValueOnce({ status: 401 })
+    await apiFetch('/test')
+    expect(clearToken).toHaveBeenCalled()
+    expect(window.location.href).toBe('/manager/login')
   })
 
   it('returns response on success', async () => {

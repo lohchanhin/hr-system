@@ -12,7 +12,10 @@ export function apiFetch(path, options = {}) {
   return fetch(`${API_BASE_URL}${path}`, { ...options, headers }).then(res => {
     if (res.status === 401) {
       clearToken()
-      window.location.href = '/login'
+      const path = window.location.pathname || ''
+      window.location.href = path.startsWith('/manager')
+        ? '/manager/login'
+        : '/login'
     }
     return res
   })
