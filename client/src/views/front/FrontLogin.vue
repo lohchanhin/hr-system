@@ -225,7 +225,7 @@ async function onLogin() {
           if (first) {
             router.push({ name: first.name })
           } else {
-            router.push('/layout')
+            router.push('/manager')
           }
           break
         default:

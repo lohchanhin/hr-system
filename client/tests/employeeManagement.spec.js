@@ -101,7 +101,7 @@ describe('EmployeeManagement.vue', () => {
         apiFetch.mockResolvedValueOnce({ ok: false, status: 401 })
         await wrapper.vm[fn]()
         expect(spy).toHaveBeenCalledWith('登入逾時，請重新登入')
-        expect(push).toHaveBeenCalledWith('/login')
+        expect(push).toHaveBeenCalledWith('/manager/login')
         spy.mockRestore()
         wrapper.unmount()
       })
