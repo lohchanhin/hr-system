@@ -697,7 +697,7 @@ function subDepartmentLabel(id) {
 function handle401(res) {
   if (res.status === 401) {
     ElMessage.error('登入逾時，請重新登入')
-    router.push('/login')
+    router.push('/manager/login')
     return true
   }
   return false

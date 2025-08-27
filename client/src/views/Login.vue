@@ -153,7 +153,7 @@ const onLogin = async () => {
       if (first) {
         router.push({ name: first.name })
       } else {
-        router.push({ name: 'Login' })
+        router.push({ name: 'ManagerLogin' })
       }
     } else {
       const errorData = await res.json()
