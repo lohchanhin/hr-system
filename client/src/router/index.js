@@ -116,16 +116,23 @@ const router = createRouter({
 
 // ★ 路由守衛
 router.beforeEach((to, from, next) => {
-  // 簡易示範: 後台 requiresAuth
-  if (to.meta.requiresAuth) {
+  const requiresAuth = to.matched.some(r => r.meta.requiresAuth)
+  const frontRequiresAuth = to.matched.some(r => r.meta.frontRequiresAuth)
+
+  // 後台登入檢查
+  if (requiresAuth) {
     const token = getToken()
     if (!token) {
       return next({ name: 'ManagerLogin' })
     }
+    const userRole = localStorage.getItem('role') || 'employee'
+    if (!['supervisor', 'admin'].includes(userRole)) {
+      return next('/login')
+    }
   }
 
-  // 若要檢查前台也需登入
-  if (to.meta.frontRequiresAuth) {
+  // 前台登入檢查
+  if (frontRequiresAuth) {
     const token = getToken()
     if (!token) {
       return next({ name: 'FrontLogin' })
