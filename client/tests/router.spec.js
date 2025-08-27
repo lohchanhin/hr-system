@@ -51,14 +51,31 @@ describe('router', () => {
   it('role guard blocks unauthorized user', () => {
     localStorage.setItem('role', 'employee')
     const next = vi.fn()
-    capturedGuard({ meta: { roles: ['supervisor'] } }, {}, next)
+    capturedGuard({ matched: [], meta: { roles: ['supervisor'] } }, {}, next)
     expect(next).toHaveBeenCalledWith({ name: 'Forbidden' })
   })
 
   it('role guard allows employee when permitted', () => {
     localStorage.setItem('role', 'employee')
     const next = vi.fn()
-    capturedGuard({ meta: { roles: ['employee', 'supervisor', 'admin'] } }, {}, next)
+    capturedGuard({ matched: [], meta: { roles: ['employee', 'supervisor', 'admin'] } }, {}, next)
+    expect(next).toHaveBeenCalled()
+    expect(next.mock.calls[0][0]).toBeUndefined()
+  })
+
+  it('backend guard redirects non-supervisor', () => {
+    localStorage.setItem('token', 't')
+    localStorage.setItem('role', 'employee')
+    const next = vi.fn()
+    capturedGuard({ matched: [{ meta: { requiresAuth: true } }], meta: {} }, {}, next)
+    expect(next).toHaveBeenCalledWith('/login')
+  })
+
+  it('backend guard allows supervisor', () => {
+    localStorage.setItem('token', 't')
+    localStorage.setItem('role', 'supervisor')
+    const next = vi.fn()
+    capturedGuard({ matched: [{ meta: { requiresAuth: true } }], meta: {} }, {}, next)
     expect(next).toHaveBeenCalled()
     expect(next.mock.calls[0][0]).toBeUndefined()
   })
