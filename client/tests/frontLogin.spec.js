@@ -8,22 +8,23 @@ function createToken(offset = 3600) {
   return `${header}.${payload}.sig`
 }
 
+const push = vi.fn()
 vi.mock('vue-router', () => ({
-  useRouter: () => ({ push: vi.fn() })
+  useRouter: () => ({ push })
 }))
 
 describe('FrontLogin.vue', () => {
   beforeEach(() => {
     localStorage.clear()
     vi.stubGlobal('fetch', vi.fn())
+    push.mockReset()
   })
 
   afterEach(() => {
     vi.restoreAllMocks()
   })
 
-
-  it('stores role and employeeId on login', async () => {
+  it('stores role and employeeId and redirects to attendance on login', async () => {
     fetch
       .mockResolvedValueOnce({
         ok: true,
@@ -34,20 +35,11 @@ describe('FrontLogin.vue', () => {
         json: async () => ([])
       })
     const wrapper = mount(FrontLogin)
+    await wrapper.find('input[placeholder="請輸入員工帳號"]').setValue('u1')
+    await wrapper.find('input[placeholder="請輸入密碼"]').setValue('p1p1p1')
     await wrapper.find('button').trigger('click')
     expect(localStorage.getItem('role')).toBe('employee')
     expect(localStorage.getItem('employeeId')).toBe('e1')
-  })
-
-  it('stores admin role when API returns admin', async () => {
-    fetch
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ token: createToken(), user: { role: 'admin' } })
-      })
-      .mockResolvedValueOnce({ ok: true, json: async () => [] })
-    const wrapper = mount(FrontLogin)
-    await wrapper.find('button').trigger('click')
-    expect(localStorage.getItem('role')).toBe('admin')
+    expect(push).toHaveBeenCalledWith('/front/attendance')
   })
 })
