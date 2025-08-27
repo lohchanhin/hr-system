@@ -18,10 +18,10 @@
     
     <div class="login-form-container">
       <el-card class="login-card" shadow="always">
-        <!-- Enhanced header with role-based messaging -->
+        <!-- Enhanced header -->
         <div class="login-header">
           <h2 class="login-title">員工登入</h2>
-          <p class="login-description">選擇您的身份並登入系統</p>
+          <p class="login-description">請登入系統</p>
         </div>
 
         <!-- Enhanced form with better styling and validation -->
@@ -32,31 +32,6 @@
           :rules="loginRules"
           @submit.prevent="onLogin"
         >
-          <!-- Enhanced role selection with visual cards -->
-          <el-form-item prop="role" class="form-item">
-            <div class="input-label">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path d="M16 7C16 9.20914 14.2091 11 12 11C9.79086 11 8 9.20914 8 7C8 4.79086 9.79086 3 12 3C14.2091 3 16 4.79086 16 7Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                <path d="M12 14C8.13401 14 5 17.134 5 21H19C19 17.134 15.866 14 12 14Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-              </svg>
-              <span>選擇身份</span>
-            </div>
-            <div class="role-selection">
-              <div 
-                v-for="role in roles" 
-                :key="role.value"
-                :class="['role-card', { active: loginForm.role === role.value }]"
-                @click="loginForm.role = role.value"
-              >
-                <div class="role-icon" v-html="role.icon"></div>
-                <div class="role-info">
-                  <div class="role-name">{{ role.label }}</div>
-                  <div class="role-desc">{{ role.description }}</div>
-                </div>
-              </div>
-            </div>
-          </el-form-item>
-
           <el-form-item prop="username" class="form-item">
             <div class="input-label">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -155,25 +130,10 @@ const roles = [
     label: '一般員工',
     description: '查看排班、打卡考勤',
     icon: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M20 21V19C20 17.9391 19.5786 16.9217 18.8284 16.1716C18.0783 15.4214 17.0609 15 16 15H8C6.93913 15 5.92172 15.4214 5.17157 16.1716C4.42143 16.9217 4 17.9391 4 19V21" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><circle cx="12" cy="7" r="4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>'
-  },
-  {
-    value: 'supervisor',
-    label: '部門主管',
-    description: '管理排班、審核請假',
-    icon: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M17 21V19C17 17.9391 16.5786 16.9217 15.8284 16.1716C15.0783 15.4214 14.0609 15 13 15H5C3.93913 15 2.92172 15.4214 2.17157 16.1716C1.42143 16.9217 1 17.9391 1 19V21" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><circle cx="9" cy="7" r="4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M23 21V19C23 18.1645 22.7155 17.3541 22.2094 16.6977C21.7033 16.0414 20.9999 15.5759 20.2 15.3805" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M16 3.13C16.8003 3.32548 17.5037 3.79099 18.0098 4.44738C18.5159 5.10377 18.8002 5.91416 18.8002 6.75C18.8002 7.58584 18.5159 8.39623 18.0098 9.05262C17.5037 9.70901 16.8003 10.1745 16 10.37" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>'
-  },
-  {
-    value: 'admin',
-    label: '系統管理員',
-    description: '完整系統管理權限',
-    icon: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M12 15L8 11L10.5 8.5L12 10L15.5 6.5L18 9L12 15Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M22 12C22 17.5228 17.5228 22 12 22C6.47715 22 2 17.5228 2 12C2 6.47715 6.47715 2 12 2C17.5228 2 22 6.47715 22 12Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>'
   }
 ]
 
 const loginRules = {
-  role: [
-    { required: true, message: '請選擇身份', trigger: 'change' }
-  ],
   username: [
     { required: true, message: '請輸入員工帳號', trigger: 'blur' },
     { min: 3, message: '帳號長度至少3個字符', trigger: 'blur' }
@@ -208,30 +168,10 @@ async function onLogin() {
       setToken(data.token)
       localStorage.setItem('role', data.user.role)
       localStorage.setItem('employeeId', data.user.employeeId)
-      
-      ElMessage.success(`歡迎回來，${roles.find(r => r.value === data.user.role)?.label}！`)
-      
-      await menuStore.fetchMenu()
+      ElMessage.success(`歡迎回來，${roles[0].label}！`)
 
-      switch (data.user.role) {
-        case 'employee':
-          router.push('/front/attendance')
-          break
-        case 'supervisor':
-          router.push('/front/schedule')
-          break
-        case 'admin':
-          const first = menuStore.items[0]
-          if (first) {
-            router.push({ name: first.name })
-          } else {
-            router.push('/manager')
-          }
-          break
-        default:
-          router.push('/front/attendance')
-          break
-      }
+      await menuStore.fetchMenu()
+      router.push('/front/attendance')
     } else {
       ElMessage.error(data.message || '登入失敗，請檢查帳號密碼')
     }
@@ -370,67 +310,6 @@ async function onLogin() {
 .input-label svg {
   color: #6b7280;
 }
-
-.role-selection {
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-}
-
-.role-card {
-  display: flex;
-  align-items: center;
-  gap: 1rem;
-  padding: 1rem;
-  border: 2px solid #e5e7eb;
-  border-radius: 8px;
-  cursor: pointer;
-  transition: all 0.2s ease;
-  background: white;
-}
-
-.role-card:hover {
-  border-color: #10b981;
-  background: #f0fdf4;
-}
-
-.role-card.active {
-  border-color: #10b981;
-  background: #f0fdf4;
-  box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.1);
-}
-
-.role-icon {
-  width: 40px;
-  height: 40px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: #ecfeff;
-  border-radius: 8px;
-  color: #0891b2;
-}
-
-.role-card.active .role-icon {
-  background: #10b981;
-  color: white;
-}
-
-.role-info {
-  flex: 1;
-}
-
-.role-name {
-  font-weight: 600;
-  color: #374151;
-  margin-bottom: 0.25rem;
-}
-
-.role-desc {
-  font-size: 0.85rem;
-  color: #6b7280;
-}
-
 .custom-input :deep(.el-input__wrapper) {
   border-radius: 8px;
   border: 1px solid #e5e7eb;
@@ -504,14 +383,6 @@ async function onLogin() {
   
   .login-card :deep(.el-card__body) {
     padding: 2rem;
-  }
-  
-  .role-selection {
-    gap: 0.5rem;
-  }
-  
-  .role-card {
-    padding: 0.75rem;
   }
 }
 </style>
