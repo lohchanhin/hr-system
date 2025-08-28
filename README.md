@@ -86,23 +86,7 @@ curl -X DELETE http://localhost:3000/api/shifts/<id> \
    npm test
    \`\`\`
 
-首次啟動時會自動建立幾個測試帳號並同步產生對應的員工紀錄，預設密碼均為 `password`：
-
-| 帳號          | 角色         |
-|---------------|-------------|
-| `user`        | employee    |
-| `supervisor`  | supervisor  |
-| `admin`       | admin       |
-
-預設狀態下，`user` 為一般員工，其主管欄位預設為 `supervisor`。`supervisor` 可以管理 `user` 的排班並審核其申請。
-
-範例流程：
-1. 以 `supervisor` 登入後端，為 `user` 指派班表。
-2. 使用 `user` 帳號登入並提出請假申請。
-3. 切換回 `supervisor` 帳號，在待簽核列表中核准該申請。
-
-啟動時也會建立一個名為「示範機構」的機構，以及預設的「人力資源部」與「招聘組」區
-域，便於前端選單立即取得資料。
+系統預設不會自動建立測試帳號或示範資料。如需測試資料，請參閱下方「生成測試資料」章節手動執行腳本。
 
 更詳細說明請參閱 [`server/README.md`](server/README.md)。
 
@@ -115,6 +99,12 @@ node server/scripts/seed.js
 \`\`\`
 
 此腳本會建立預設帳號（`user`、`supervisor`、`admin`，密碼皆為 `password`）以及示範機構「示範機構」（含「人力資源部」與「招聘組」）。更多詳情請參閱 [server/README.md](server/README.md)。
+
+| 帳號         | 角色        |
+|--------------|-------------|
+| `user`       | employee    |
+| `supervisor` | supervisor  |
+| `admin`      | admin       |
 
 ## 同時啟動前後端
 

@@ -334,9 +334,6 @@ app.get('*', (req, res, next) => {
 async function start() {
   try {
     await connectDB(process.env.MONGODB_URI);
-    await seedSampleData();
-    await seedTestUsers();
-    await seedApprovalTemplates();
     app.listen(PORT, () => {
       console.log(`Server running on port ${PORT}`);
     });
