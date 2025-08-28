@@ -4,6 +4,7 @@ import { jest } from '@jest/globals'
 import jwt from 'jsonwebtoken'
 
 const verifyMock = jest.fn();
+const selectMock = jest.fn();
 const fakeEmployee = { _id: 'e1', role: 'employee', username: 'john', verifyPassword: verifyMock };
 const mockEmployee = { findOne: jest.fn() };
 const mockBlacklistedToken = { create: jest.fn(), findOne: jest.fn() };
@@ -26,6 +27,7 @@ beforeAll(async () => {
 
 beforeEach(() => {
   mockEmployee.findOne.mockReset();
+  selectMock.mockReset();
   verifyMock.mockReset();
   mockBlacklistedToken.create.mockReset();
   mockBlacklistedToken.findOne.mockReset();
@@ -33,7 +35,8 @@ beforeEach(() => {
 
 describe('Auth API', () => {
   it('logs in with valid credentials', async () => {
-    mockEmployee.findOne.mockResolvedValue(fakeEmployee);
+    mockEmployee.findOne.mockReturnValue({ select: selectMock });
+    selectMock.mockResolvedValue(fakeEmployee);
     verifyMock.mockReturnValue(true);
     const signSpy = jest.spyOn(jwt, 'sign').mockReturnValue('tok');
     const res = await request(app).post('/api/login').send({ username: 'john', password: 'pass' });
@@ -49,7 +52,8 @@ describe('Auth API', () => {
   });
 
   it('fails with invalid credentials', async () => {
-    mockEmployee.findOne.mockResolvedValue(fakeEmployee);
+    mockEmployee.findOne.mockReturnValue({ select: selectMock });
+    selectMock.mockResolvedValue(fakeEmployee);
     verifyMock.mockReturnValue(false);
     const res = await request(app).post('/api/login').send({ username: 'john', password: 'wrong' });
     expect(res.status).toBe(401);
