@@ -2,7 +2,6 @@ import ApprovalWorkflow from '../models/approval_workflow.js'
 import ApprovalRequest from '../models/approval_request.js'
 import FormTemplate from '../models/form_template.js'
 import Employee from '../models/Employee.js'
-import User from '../models/User.js'
 
 /* 依流程步驟解析「此關簽核人」 */
 async function resolveApprovers(step, applicantEmp) {
@@ -37,10 +36,7 @@ async function resolveApprovers(step, applicantEmp) {
   if (type === 'role') {
     const role = String(val || '')
     if (!role) return []
-    const users = await User.find({ role }, { employee: 1 })
-    const empIds = users.map(u => u.employee).filter(Boolean)
-    if (!empIds.length) return []
-    const list = await Employee.find({ _id: { $in: empIds }, ...scopeFilter }, { _id: 1 })
+    const list = await Employee.find({ role, ...scopeFilter }, { _id: 1 })
     return list.map(x => x._id)
   }
 
@@ -85,7 +81,7 @@ export async function createApprovalRequest(req, res) {
 
     const applicantEmp = applicant_employee_id
       ? await Employee.findById(applicant_employee_id)
-      : (await User.findById(req.user?.id).populate('employee'))?.employee
+      : await Employee.findById(req.user?.id)
 
     // 依每關解析審核人
     const reqSteps = []
@@ -106,14 +102,13 @@ export async function createApprovalRequest(req, res) {
       form: form._id,
       workflow: wf._id,
       form_data,
-      applicant_user: req.user?.id,
-      applicant_employee: applicantEmp?._id || undefined,
+      applicant_employee: applicantEmp?._id || req.user?.id,
       applicant_org: applicantEmp?.organization,
       applicant_department: applicantEmp?.department,
       status: 'pending',
       current_step_index: 0,
       steps: reqSteps,
-      logs: [{ action: 'create', by_user: req.user?.id, by_employee: applicantEmp?._id, message: '建立送審單' }],
+      logs: [{ action: 'create', by_employee: applicantEmp?._id || req.user?.id, message: '建立送審單' }],
     })
 
     // 通知第一關審核人
@@ -143,7 +138,7 @@ export async function getApprovalRequest(req, res) {
 /* 申請者的清單 */
 export async function myApprovalRequests(req, res) {
   try {
-    const empId = req.query.employee_id || (await User.findById(req.user?.id))?.employee
+    const empId = req.query.employee_id || req.user?.id
     const list = await ApprovalRequest.find({ applicant_employee: empId }).sort({ createdAt: -1 })
     res.json(list)
   } catch (e) {
@@ -154,7 +149,7 @@ export async function myApprovalRequests(req, res) {
 /* 審核者的待辦匣 */
 export async function inboxApprovals(req, res) {
   try {
-    const empId = req.query.employee_id || (await User.findById(req.user?.id))?.employee
+    const empId = req.query.employee_id || req.user?.id
     // 找出目前關卡包含我，且我的 decision 是 pending 的
     const list = await ApprovalRequest.find({
       status: 'pending',
@@ -216,7 +211,7 @@ export async function actOnApproval(req, res) {
     const doc = await ApprovalRequest.findById(req.params.id)
     if (!doc) return res.status(404).json({ error: 'not found' })
     if (doc.status !== 'pending') return res.status(400).json({ error: 'not pending' })
-    const empId = req.body.employee_id || (await User.findById(req.user?.id))?.employee
+    const empId = req.body.employee_id || req.user?.id
     const idx = doc.current_step_index
     const step = doc.steps[idx]
     if (!step) return res.status(400).json({ error: 'invalid step' })

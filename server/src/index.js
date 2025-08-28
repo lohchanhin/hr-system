@@ -4,7 +4,6 @@ import cors from 'cors';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { connectDB } from './config/db.js';
-import User from './models/User.js';
 import Employee from './models/Employee.js';
 import Organization from './models/Organization.js';
 import Department from './models/Department.js';
@@ -22,7 +21,6 @@ import reportRoutes from './routes/reportRoutes.js';
 import insuranceRoutes from './routes/insuranceRoutes.js';
 import approvalRoutes from './routes/approvalRoutes.js';
 import menuRoutes from './routes/menuRoutes.js';
-import userRoutes from './routes/userRoutes.js';
 import departmentRoutes from './routes/departmentRoutes.js';
 import organizationRoutes from './routes/organizationRoutes.js';
 import subDepartmentRoutes from './routes/subDepartmentRoutes.js';
@@ -95,11 +93,13 @@ export async function seedTestUsers() {
   ];
   let supervisorId = null;
   for (const data of users) {
-    const existing = await User.findOne({ username: data.username });
+    const existing = await Employee.findOne({ username: data.username });
     if (!existing) {
       const employee = await Employee.create({
         name: data.username,
         email: `${data.username}@example.com`,
+        username: data.username,
+        password: data.password,
         role: data.role,
         organization: '示範機構',
         department: '人力資源部',
@@ -107,13 +107,6 @@ export async function seedTestUsers() {
         title: 'Staff',
         status: '正職員工',
         signTags: data.signTags ?? []
-      });
-      await User.create({
-        ...data,
-        organization: employee.organization,
-        department: employee.department,
-        subDepartment: employee.subDepartment,
-        employee: employee._id
       });
       if (data.role === 'supervisor') supervisorId = employee._id;
       console.log(`Created test user ${data.username}`);
@@ -215,14 +208,20 @@ export async function seedApprovalTemplates() {
 }
 
 export async function ensureAdminUser() {
-  const existing = await User.findOne({ role: 'admin' });
+  const existing = await Employee.findOne({ role: 'admin' });
   if (existing) {
     console.log('Admin user already exists');
     return;
   }
   const username = process.env.DEFAULT_ADMIN_USERNAME || 'admin';
   const password = process.env.DEFAULT_ADMIN_PASSWORD || 'password';
-  await User.create({ username, password, role: 'admin' });
+  await Employee.create({
+    name: username,
+    email: `${username}@example.com`,
+    username,
+    password,
+    role: 'admin',
+  });
   console.log(`Created default admin user ${username}`);
 }
 
@@ -295,7 +294,6 @@ app.use('/api/reports', authenticate, authorizeRoles('admin'), reportRoutes);
 app.use('/api/insurance', authenticate, authorizeRoles('admin'), insuranceRoutes);
 app.use('/api/approvals', authenticate, approvalRoutes);
 app.use('/api/menu', authenticate, menuRoutes);
-app.use('/api/users', authenticate, authorizeRoles('admin'), userRoutes);
 app.use(
   '/api/departments',
   authenticate,
