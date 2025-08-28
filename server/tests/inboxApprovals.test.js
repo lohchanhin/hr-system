@@ -3,14 +3,12 @@ import express from 'express'
 import { jest } from '@jest/globals'
 
 const mockApprovalRequest = { find: jest.fn() }
-const mockUser = { findById: jest.fn() }
 
 let app
 let approvalRoutes
 
 beforeAll(async () => {
   await jest.unstable_mockModule('../src/models/approval_request.js', () => ({ default: mockApprovalRequest }))
-  await jest.unstable_mockModule('../src/models/User.js', () => ({ default: mockUser }))
   await jest.unstable_mockModule('../src/middleware/auth.js', () => ({
     authenticate: (req, res, next) => { req.user = { role: 'supervisor' }; next() },
     authorizeRoles: () => (req, res, next) => next()
@@ -23,7 +21,6 @@ beforeAll(async () => {
 
 beforeEach(() => {
   mockApprovalRequest.find.mockReset()
-  mockUser.findById.mockReset()
 })
 
 describe('GET /api/approvals/inbox', () => {

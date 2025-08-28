@@ -3,12 +3,12 @@ import express from 'express'
 import { jest } from '@jest/globals'
 import jwt from 'jsonwebtoken'
 
-const compareMock = jest.fn();
-const fakeUser = { _id: 'u1', role: 'employee', username: 'john', employee: 'e1', comparePassword: compareMock };
-const mockUser = { findOne: jest.fn() };
+const verifyMock = jest.fn();
+const fakeEmployee = { _id: 'e1', role: 'employee', username: 'john', verifyPassword: verifyMock };
+const mockEmployee = { findOne: jest.fn() };
 const mockBlacklistedToken = { create: jest.fn(), findOne: jest.fn() };
 
-jest.unstable_mockModule('../src/models/User.js', () => ({ default: mockUser }));
+jest.unstable_mockModule('../src/models/Employee.js', () => ({ default: mockEmployee }));
 jest.unstable_mockModule('../src/models/BlacklistedToken.js', () => ({ default: mockBlacklistedToken }));
 
 let app;
@@ -25,23 +25,23 @@ beforeAll(async () => {
 });
 
 beforeEach(() => {
-  mockUser.findOne.mockReset();
-  compareMock.mockReset();
+  mockEmployee.findOne.mockReset();
+  verifyMock.mockReset();
   mockBlacklistedToken.create.mockReset();
   mockBlacklistedToken.findOne.mockReset();
 });
 
 describe('Auth API', () => {
   it('logs in with valid credentials', async () => {
-    mockUser.findOne.mockResolvedValue(fakeUser);
-    compareMock.mockResolvedValue(true);
+    mockEmployee.findOne.mockResolvedValue(fakeEmployee);
+    verifyMock.mockReturnValue(true);
     const signSpy = jest.spyOn(jwt, 'sign').mockReturnValue('tok');
     const res = await request(app).post('/api/login').send({ username: 'john', password: 'pass' });
     expect(res.status).toBe(200);
     expect(res.body.token).toBe('tok');
-    expect(res.body.user).toEqual({ id: 'u1', role: 'employee', username: 'john', employeeId: 'e1' });
+    expect(res.body.user).toEqual({ id: 'e1', role: 'employee', username: 'john' });
     expect(signSpy).toHaveBeenCalledWith(
-      { id: 'u1', role: 'employee', employeeId: 'e1' },
+      { id: 'e1', role: 'employee' },
       'secret',
       { expiresIn: '1h' }
     );
@@ -49,8 +49,8 @@ describe('Auth API', () => {
   });
 
   it('fails with invalid credentials', async () => {
-    mockUser.findOne.mockResolvedValue(fakeUser);
-    compareMock.mockResolvedValue(false);
+    mockEmployee.findOne.mockResolvedValue(fakeEmployee);
+    verifyMock.mockReturnValue(false);
     const res = await request(app).post('/api/login').send({ username: 'john', password: 'wrong' });
     expect(res.status).toBe(401);
   });

@@ -4,7 +4,6 @@ const mockFormTemplate = { findById: jest.fn() }
 const mockApprovalWorkflow = { findOne: jest.fn() }
 const mockApprovalRequest = { create: jest.fn() }
 const mockEmployee = { findById: jest.fn() }
-const mockUser = { findById: jest.fn() }
 
 let createApprovalRequest
 
@@ -13,7 +12,6 @@ beforeAll(async () => {
   await jest.unstable_mockModule('../src/models/approval_workflow.js', () => ({ default: mockApprovalWorkflow }))
   await jest.unstable_mockModule('../src/models/approval_request.js', () => ({ default: mockApprovalRequest }))
   await jest.unstable_mockModule('../src/models/Employee.js', () => ({ default: mockEmployee }))
-  await jest.unstable_mockModule('../src/models/User.js', () => ({ default: mockUser }))
   const mod = await import('../src/controllers/approvalRequestController.js')
   createApprovalRequest = mod.createApprovalRequest
 })
@@ -23,7 +21,6 @@ beforeEach(() => {
   mockApprovalWorkflow.findOne.mockReset()
   mockApprovalRequest.create.mockReset()
   mockEmployee.findById.mockReset()
-  mockUser.findById.mockReset()
   mockEmployee.findById.mockResolvedValue({ _id: 'emp1' })
 })
 
