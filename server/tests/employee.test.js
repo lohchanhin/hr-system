@@ -109,6 +109,22 @@ describe('Employee API', () => {
     }));
   });
 
+  it('creates employee with username and role', async () => {
+    const payload = {
+      name: 'Sam',
+      email: 'sam@example.com',
+      username: 'sam',
+      password: 'pass',
+      role: 'admin'
+    }
+    mockEmployee.create.mockImplementation(async (doc) => ({ _id: '3', ...doc }))
+    const res = await request(app).post('/api/employees').send(payload)
+    expect(res.status).toBe(201)
+    const doc = mockEmployee.create.mock.calls[0][0]
+    expect(doc.username).toBe('sam')
+    expect(doc.role).toBe('admin')
+  })
+
   it('sanitizes enum fields when creating employee', async () => {
     const payload = {
       name: 'Ann',
@@ -158,6 +174,21 @@ describe('Employee API', () => {
     expect(mockEmployee.updateOne).toHaveBeenCalledWith({ _id: '1' }, { $set: { name: 'Updated', supervisor: 's2' } });
     expect(res.body).toMatchObject({ _id: '1', name: 'Updated', supervisor: 's2' });
   });
+
+  it('updates password and role', async () => {
+    const updated = { _id: '1', role: 'admin', save: jest.fn().mockResolvedValue({}) }
+    mockEmployee.findById
+      .mockResolvedValueOnce({ _id: '1', role: 'employee' })
+      .mockResolvedValueOnce(updated)
+    mockEmployee.updateOne.mockResolvedValue()
+
+    const res = await request(app).put('/api/employees/1').send({ password: 'new', role: 'admin' })
+    expect(res.status).toBe(200)
+    expect(mockEmployee.updateOne).toHaveBeenCalledWith({ _id: '1' }, { $set: { role: 'admin' } })
+    expect(updated.password).toBe('new')
+    expect(updated.save).toHaveBeenCalled()
+    expect(res.body).toMatchObject({ _id: '1', role: 'admin' })
+  })
 
   it('fails updating with invalid email or role', async () => {
     mockEmployee.findById.mockResolvedValue({ _id: '1', name: 'John' });
