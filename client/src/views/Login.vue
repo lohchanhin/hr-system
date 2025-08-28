@@ -81,7 +81,15 @@
             </el-button>
           </el-form-item>
         </el-form>
-        
+
+        <el-button
+          type="text"
+          class="employee-login-link"
+          @click="router.push('/login')"
+        >
+          返回員工登入
+        </el-button>
+
         <!-- Added security notice -->
         <div class="security-notice">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -329,6 +337,13 @@ const onLogin = async () => {
 .login-button:hover {
   transform: translateY(-1px);
   box-shadow: 0 4px 12px rgba(22, 78, 99, 0.3);
+}
+
+.employee-login-link {
+  display: block;
+  width: 100%;
+  text-align: right;
+  margin-top: 0.5rem;
 }
 
 .security-notice {

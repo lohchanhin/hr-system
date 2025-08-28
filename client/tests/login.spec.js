@@ -13,7 +13,37 @@ const push = vi.fn()
 vi.mock('vue-router', () => ({
   useRouter: () => ({ push })
 }))
-vi.mock('element-plus', () => ({ ElMessage: { success: vi.fn(), error: vi.fn() } }))
+vi.mock('element-plus', async () => {
+  const actual = await vi.importActual('element-plus')
+  return { ...actual, ElMessage: { success: vi.fn(), error: vi.fn() } }
+})
+
+function mountLogin() {
+  return mount(Login, {
+    global: {
+      components: {
+        'el-input': {
+          props: ['modelValue'],
+          emits: ['update:modelValue'],
+          template:
+            '<input :value="modelValue" @input="$emit(\'update:modelValue\', $event.target.value)" />'
+        },
+        'el-button': {
+          emits: ['click'],
+          template: '<button @click="$emit(\'click\')"><slot /></button>'
+        }
+      },
+      stubs: {
+        'el-form': {
+          template: '<form><slot /></form>',
+          methods: { validate: () => Promise.resolve(true) }
+        },
+        'el-form-item': { template: '<div><slot /></div>' },
+        'el-card': { template: '<div><slot /></div>' }
+      }
+    }
+  })
+}
 
 describe('Login.vue', () => {
   beforeEach(() => {
@@ -28,12 +58,16 @@ describe('Login.vue', () => {
     localStorage.clear()
   })
 
+  afterAll(() => {
+    vi.resetModules()
+  })
+
   it('redirects supervisor to schedule', async () => {
     fetch.mockResolvedValueOnce({
       ok: true,
       json: async () => ({ token: createToken(), user: { role: 'supervisor', employeeId: 'e1' } })
     })
-    const wrapper = mount(Login)
+    const wrapper = mountLogin()
     wrapper.vm.loginFormRef = { validate: async () => true }
     wrapper.vm.loginForm.username = 'u'
     wrapper.vm.loginForm.password = 'p'
@@ -52,7 +86,7 @@ describe('Login.vue', () => {
         ok: true,
         json: async () => ([{ name: 'Settings' }])
       })
-    const wrapper = mount(Login)
+    const wrapper = mountLogin()
     wrapper.vm.loginFormRef = { validate: async () => true }
     wrapper.vm.loginForm.username = 'u'
     wrapper.vm.loginForm.password = 'p'
@@ -68,13 +102,21 @@ describe('Login.vue', () => {
       })
       .mockResolvedValueOnce({
         ok: true,
-        json: async () => ([]) 
+        json: async () => ([])
       })
-    const wrapper = mount(Login)
+    const wrapper = mountLogin()
     wrapper.vm.loginFormRef = { validate: async () => true }
     wrapper.vm.loginForm.username = 'u'
     wrapper.vm.loginForm.password = 'p'
     await wrapper.vm.onLogin()
     expect(push).toHaveBeenCalledWith('/manager')
+  })
+
+  it('navigates to employee login when link clicked', async () => {
+    const wrapper = mountLogin()
+    const button = wrapper.find('.employee-login-link')
+    expect(button.exists()).toBe(true)
+    await button.trigger('click')
+    expect(push).toHaveBeenCalledWith('/login')
   })
 })
