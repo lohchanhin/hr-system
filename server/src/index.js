@@ -214,6 +214,18 @@ export async function seedApprovalTemplates() {
   }
 }
 
+export async function ensureAdminUser() {
+  const existing = await User.findOne({ role: 'admin' });
+  if (existing) {
+    console.log('Admin user already exists');
+    return;
+  }
+  const username = process.env.DEFAULT_ADMIN_USERNAME || 'admin';
+  const password = process.env.DEFAULT_ADMIN_PASSWORD || 'password';
+  await User.create({ username, password, role: 'admin' });
+  console.log(`Created default admin user ${username}`);
+}
+
 dotenv.config();
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -334,6 +346,7 @@ app.get('*', (req, res, next) => {
 async function start() {
   try {
     await connectDB(process.env.MONGODB_URI);
+    await ensureAdminUser();
     app.listen(PORT, () => {
       console.log(`Server running on port ${PORT}`);
     });
