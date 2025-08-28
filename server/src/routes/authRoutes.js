@@ -7,7 +7,7 @@ const router = Router();
 
 router.post('/login', async (req, res) => {
   const { username, password } = req.body
-  const employee = await Employee.findOne({ username })
+  const employee = await Employee.findOne({ username }).select('+passwordHash')
   if (!employee) return res.status(401).json({ error: 'Invalid credentials' })
 
   const match = employee.verifyPassword(password)
