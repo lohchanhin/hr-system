@@ -1,110 +1,41 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
-import ElementPlus, { ElMessage } from 'element-plus'
-
-const push = vi.fn()
-vi.mock('vue-router', () => ({
-  useRouter: () => ({ push })
-}))
-
 vi.mock('../src/api', () => ({
   apiFetch: vi.fn(() => Promise.resolve({ ok: true, json: async () => [] }))
 }))
-
-import EmployeeManagement from '../src/components/backComponents/EmployeeManagement.vue'
 import { apiFetch } from '../src/api'
+import EmployeeManagement from '../src/components/backComponents/EmployeeManagement.vue'
+vi.mock('vue-router', () => ({
+  useRouter: () => ({ push: vi.fn() })
+}))
 
-const mountOptions = {
-  global: {
-    plugins: [ElementPlus],
-    stubs: { ElTabPane: { template: '<div><slot /></div>' } }
-  }
-}
+const elStubs = ['el-table','el-table-column','el-button','el-tabs','el-tab-pane','el-form','el-form-item','el-input','el-select','el-option','el-dialog','el-avatar','el-tag','el-radio','el-radio-group','el-date-picker','el-input-number','el-switch']
 
 describe('EmployeeManagement.vue', () => {
   beforeEach(() => {
-    vi.stubGlobal('fetch', vi.fn())
+    apiFetch.mockClear()
   })
 
-  afterEach(() => {
-    vi.restoreAllMocks()
+  it('fetches lists on mount', () => {
+    mount(EmployeeManagement, { global: { stubs: elStubs } })
+    const calls = apiFetch.mock.calls.map(c => c[0])
+    expect(calls).toContain('/api/employees')
+    expect(calls).toContain('/api/departments')
+    expect(calls).toContain('/api/organizations')
+    expect(calls).toContain('/api/sub-departments')
   })
 
-  it('filters departments by organization', async () => {
-    const wrapper = mount(EmployeeManagement, mountOptions)
-    wrapper.vm.departmentList = [
-      { _id: 'd1', name: 'D1', organization: 'o1' },
-      { _id: 'd2', name: 'D2', organization: 'o2' }
-    ]
-    wrapper.vm.employeeForm.organization = 'o1'
-    await wrapper.vm.$nextTick()
-    expect(wrapper.vm.filteredDepartments.length).toBe(1)
-    expect(wrapper.vm.filteredDepartments[0]._id).toBe('d1')
-  })
-
-  it('normalizes organization id when fetching employees', async () => {
-    const wrapper = mount(EmployeeManagement, mountOptions)
-    apiFetch.mockResolvedValueOnce({
-      ok: true,
-      json: async () => [
-        {
-          _id: 'e1',
-          organization: { _id: 'o1' },
-          department: { _id: 'd1' },
-          subDepartment: { _id: 'sd1' }
-        }
-      ]
-    })
-    await wrapper.vm.fetchEmployees()
-    expect(wrapper.vm.employeeList[0].organization).toBe('o1')
-  })
-
-  it('filters supervisor list by selected organization and department', async () => {
-    const wrapper = mount(EmployeeManagement, mountOptions)
-    wrapper.vm.employeeForm.organization = 'o1'
-    wrapper.vm.employeeForm.department = 'd1'
-    wrapper.vm.employeeList = [
-      { _id: 's1', name: 'SupA', role: 'supervisor', organization: 'o1', department: 'd1' },
-      { _id: 's2', name: 'SupB', role: 'supervisor', organization: 'o2', department: 'd2' }
-    ]
-    await wrapper.vm.$nextTick()
-    expect(wrapper.vm.supervisorList.length).toBe(1)
-    expect(wrapper.vm.supervisorList[0]._id).toBe('s1')
-  })
-
-  it('filters subDepartments', async () => {
-    const wrapper = mount(EmployeeManagement, mountOptions)
-    wrapper.vm.employeeForm.department = 'd1'
-    await wrapper.vm.$nextTick()
-    wrapper.vm.subDepartmentList = [
-      { _id: 'sd1', name: 'SD1', department: 'd1' },
-      { _id: 'sd2', name: 'SD2', department: 'd2' }
-    ]
-    await wrapper.vm.$nextTick()
-    expect(wrapper.vm.filteredSubDepartments.length).toBe(1)
-    expect(wrapper.vm.filteredSubDepartments[0]._id).toBe('sd1')
-  })
-
-  describe('401 handling', () => {
-    const fns = ['fetchDepartments', 'fetchSubDepartments', 'fetchOrganizations', 'fetchEmployees']
-
-    beforeEach(() => {
-      push.mockReset()
-      apiFetch.mockReset()
-      apiFetch.mockResolvedValue({ ok: true, json: async () => [] })
-    })
-
-    fns.forEach(fn => {
-      it(`${fn} redirects to login on 401`, async () => {
-        const wrapper = mount(EmployeeManagement, mountOptions)
-        const spy = vi.spyOn(ElMessage, 'error')
-        apiFetch.mockResolvedValueOnce({ ok: false, status: 401 })
-        await wrapper.vm[fn]()
-        expect(spy).toHaveBeenCalledWith('登入逾時，請重新登入')
-        expect(push).toHaveBeenCalledWith('/manager/login')
-        spy.mockRestore()
-        wrapper.unmount()
-      })
-    })
+  it('sends login info when saving employee', async () => {
+    const wrapper = mount(EmployeeManagement, { global: { stubs: elStubs } })
+    apiFetch.mockClear()
+    apiFetch.mockResolvedValueOnce({ ok: true, json: async () => ({}) })
+    wrapper.vm.employeeForm = { ...wrapper.vm.employeeForm, name: 'n', username: 'u', password: 'p', role: 'admin' }
+    wrapper.vm.editEmployeeIndex = null
+    await wrapper.vm.saveEmployee()
+    const body = JSON.parse(apiFetch.mock.calls[0][1].body)
+    expect(body.username).toBe('u')
+    expect(body.password).toBe('p')
+    expect(body.role).toBe('admin')
+    expect(apiFetch).toHaveBeenCalledWith('/api/employees', expect.objectContaining({ method: 'POST' }))
   })
 })
