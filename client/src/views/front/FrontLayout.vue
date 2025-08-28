@@ -31,6 +31,18 @@
           <span class="menu-label">{{ item.label }}</span>
         </el-menu-item>
       </el-menu>
+      <!-- 進入後台按鈕 -->
+      <div v-if="showManagerBtn" class="manager-section">
+        <el-button
+          type="primary"
+          @click="gotoManager"
+          class="manager-btn"
+          block
+          data-test="manager-btn"
+        >
+          進入後台
+        </el-button>
+      </div>
 
       <!-- 登出按鈕 -->
       <div class="logout-section">
@@ -64,6 +76,7 @@ const { items: menuItems } = storeToRefs(menuStore);
 
 const username = ref("");
 const activeMenu = computed(() => route.name?.toLowerCase() || "");
+const showManagerBtn = ref(false);
 
 onMounted(() => {
   const savedRole = localStorage.getItem("role");
@@ -71,7 +84,11 @@ onMounted(() => {
   if (savedUsername) {
     username.value = savedUsername;
   }
-  
+
+  if (savedRole === "supervisor" || savedRole === "admin") {
+    showManagerBtn.value = true;
+  }
+
   if (menuItems.value.length === 0) {
     menuStore.fetchMenu();
   }
@@ -79,6 +96,10 @@ onMounted(() => {
 
 function gotoPage(pageName) {
   router.push(`/front/${pageName}`);
+}
+
+function gotoManager() {
+  router.push(`/manager`);
 }
 
 function onLogout() {
@@ -175,6 +196,27 @@ function onLogout() {
   font-size: 14px;
 }
 
+.manager-section {
+  padding: 20px;
+  border-top: 1px solid rgba(203, 213, 225, 0.1);
+}
+
+.manager-btn {
+  background: #3b82f6 !important;
+  border: none !important;
+  color: #ffffff !important;
+  font-weight: 500;
+  height: 44px;
+  border-radius: 8px;
+  transition: all 0.3s ease;
+}
+
+.manager-btn:hover {
+  background: #2563eb !important;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+}
+
 .logout-section {
   padding: 20px;
   border-top: 1px solid rgba(203, 213, 225, 0.1);
@@ -261,8 +303,12 @@ function onLogout() {
   .menu-label {
     display: none;
   }
-  
+
   .logout-section {
+    padding: 8px;
+  }
+
+  .manager-section {
     padding: 8px;
   }
 }
