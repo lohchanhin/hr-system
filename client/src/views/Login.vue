@@ -147,13 +147,17 @@ const onLogin = async () => {
       localStorage.setItem('employeeId', data.user.employeeId)
       
       ElMessage.success('登入成功！')
-      
-      await menuStore.fetchMenu()
-      const first = menuStore.items[0]
-      if (first) {
-        router.push({ name: first.name })
-      } else {
-        router.push({ name: 'ManagerLogin' })
+
+      if (data.user.role === 'supervisor') {
+        router.push('/front/schedule')
+      } else if (data.user.role === 'admin') {
+        await menuStore.fetchMenu()
+        const first = menuStore.items[0]
+        if (first) {
+          router.push({ name: first.name })
+        } else {
+          router.push('/manager')
+        }
       }
     } else {
       const errorData = await res.json()
