@@ -83,6 +83,14 @@
           </el-form-item>
         </el-form>
 
+        <el-button
+          type="text"
+          class="manager-login-link"
+          @click="router.push('/manager/login')"
+        >
+          主管／系統管理員登入
+        </el-button>
+
         <!-- Added role-based access information -->
         <div class="access-info">
           <div class="info-item">
@@ -340,6 +348,13 @@ async function onLogin() {
 .login-button:hover {
   transform: translateY(-1px);
   box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
+}
+
+.manager-login-link {
+  display: block;
+  width: 100%;
+  text-align: right;
+  margin-top: 0.5rem;
 }
 
 .access-info {
