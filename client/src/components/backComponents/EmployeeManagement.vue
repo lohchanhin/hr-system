@@ -907,11 +907,32 @@ async function openEmployeeDialog(index = null) {
 }
 
 async function saveEmployee() {
-  if (!employeeForm.value.name || !employeeForm.value.username) {
-    alert('請填寫姓名與帳號')
+  const form = employeeForm.value
+  if (!form.name) {
+    alert('請填寫姓名')
     return
   }
-  const payload = { ...employeeForm.value }
+  if (!form.username) {
+    alert('請填寫登入帳號')
+    return
+  }
+  if (!form.password) {
+    alert('請填寫登入密碼')
+    return
+  }
+  if (!form.role) {
+    alert('請填寫系統權限')
+    return
+  }
+  if (!form.organization) {
+    alert('請填寫所屬機構')
+    return
+  }
+  if (!form.department) {
+    alert('請填寫所屬部門')
+    return
+  }
+  const payload = { ...form }
   if (payload.supervisor === '' || payload.supervisor === null) delete payload.supervisor
 
   let res

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
+import { nextTick } from 'vue'
 vi.mock('../src/api', () => ({
   apiFetch: vi.fn(() => Promise.resolve({ ok: true, json: async () => [] }))
 }))
@@ -29,7 +30,7 @@ describe('EmployeeManagement.vue', () => {
     const wrapper = mount(EmployeeManagement, { global: { stubs: elStubs } })
     apiFetch.mockClear()
     apiFetch.mockResolvedValueOnce({ ok: true, json: async () => ({}) })
-    wrapper.vm.employeeForm = { ...wrapper.vm.employeeForm, name: 'n', username: 'u', password: 'p', role: 'admin' }
+    wrapper.vm.employeeForm = { ...wrapper.vm.employeeForm, name: 'n', username: 'u', password: 'p', role: 'admin', organization: 'o', department: 'd' }
     wrapper.vm.editEmployeeIndex = null
     await wrapper.vm.saveEmployee()
     const body = JSON.parse(apiFetch.mock.calls[0][1].body)
@@ -37,5 +38,35 @@ describe('EmployeeManagement.vue', () => {
     expect(body.password).toBe('p')
     expect(body.role).toBe('admin')
     expect(apiFetch).toHaveBeenCalledWith('/api/employees', expect.objectContaining({ method: 'POST' }))
+  })
+
+  it.each([
+    ['name', '姓名'],
+    ['username', '登入帳號'],
+    ['password', '登入密碼'],
+    ['role', '系統權限'],
+    ['organization', '所屬機構'],
+    ['department', '所屬部門']
+  ])('alerts when %s missing', async (field, label) => {
+    const wrapper = mount(EmployeeManagement, { global: { stubs: elStubs } })
+    const alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => {})
+    apiFetch.mockClear()
+    wrapper.vm.fetchSubDepartments = vi.fn()
+    wrapper.vm.employeeForm = {
+      ...wrapper.vm.employeeForm,
+      name: 'n',
+      username: 'u',
+      password: 'p',
+      role: 'admin',
+      organization: 'o',
+      department: 'd'
+    }
+    await nextTick()
+    apiFetch.mockClear()
+    delete wrapper.vm.employeeForm[field]
+    await wrapper.vm.saveEmployee()
+    expect(alertSpy).toHaveBeenCalledWith('請填寫' + label)
+    expect(apiFetch).not.toHaveBeenCalled()
+    alertSpy.mockRestore()
   })
 })
