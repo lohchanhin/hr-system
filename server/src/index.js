@@ -288,7 +288,17 @@ app.use(
 );
 
 
-app.use('/api/schedules', authenticate, authorizeRoles('supervisor', 'admin'), scheduleRoutes);
+app.use(
+  '/api/schedules',
+  authenticate,
+  (req, res, next) => {
+    if (req.method === 'GET') {
+      return authorizeRoles('employee', 'supervisor', 'admin')(req, res, next);
+    }
+    return authorizeRoles('supervisor', 'admin')(req, res, next);
+  },
+  scheduleRoutes
+);
 app.use('/api/payroll', authenticate, authorizeRoles('admin'), payrollRoutes);
 app.use('/api/reports', authenticate, authorizeRoles('admin'), reportRoutes);
 app.use('/api/insurance', authenticate, authorizeRoles('admin'), insuranceRoutes);
