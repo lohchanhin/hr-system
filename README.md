@@ -21,6 +21,81 @@
 - **報表產生** – 匯出各式統計或管理報表。
 - **審核流程** – 提供申請單的審核與簽核機制。
 
+## 使用情境
+
+1. 管理員登入
+   ```bash
+   curl -X POST http://localhost:3000/api/login \
+     -H 'Content-Type: application/json' \
+     -d '{"username":"admin","password":"password"}'
+   ```
+   前端：登入頁輸入管理員帳密。
+2. 建立員工
+   ```bash
+   curl -X POST http://localhost:3000/api/employees \
+     -H 'Content-Type: application/json' \
+     -H "Authorization: Bearer <token>" \
+     -d '{"username":"mary","password":"pass","role":"employee"}'
+   ```
+   前端：「員工管理」>「新增」。
+3. 設定班別
+   ```bash
+   curl -X POST http://localhost:3000/api/shifts \
+     -H 'Content-Type: application/json' \
+     -H "Authorization: Bearer <token>" \
+     -d '{"name":"早班","startTime":"09:00","endTime":"18:00"}'
+   ```
+   前端：「排班與班別管理設定」>「班別設定」。
+4. 排班指派
+   ```bash
+   curl -X POST http://localhost:3000/api/schedules \
+     -H 'Content-Type: application/json' \
+     -H "Authorization: Bearer <token>" \
+     -d '{"employee":"<員工ID>","date":"2023-05-01","shiftId":"<班別ID>"}'
+   ```
+   前端：「排班管理」頁面選取員工與日期。
+5. 員工登入
+   ```bash
+   curl -X POST http://localhost:3000/api/login \
+     -H 'Content-Type: application/json' \
+     -d '{"username":"mary","password":"pass"}'
+   ```
+   前端：登入頁輸入員工帳密。
+6. 員工打卡
+   ```bash
+   curl -X POST http://localhost:3000/api/attendance \
+     -H 'Content-Type: application/json' \
+     -H "Authorization: Bearer <token>" \
+     -d '{"action":"clockIn"}'
+   ```
+   前端：「出勤打卡」頁面點擊「上班簽到」。
+7. 申請請假
+   ```bash
+   curl -X POST http://localhost:3000/api/approvals \
+     -H 'Content-Type: application/json' \
+     -H "Authorization: Bearer <token>" \
+     -d '{"formId":"<請假單ID>","data":{"start":"2023-05-02","end":"2023-05-03","type":"SICK"}}'
+   ```
+   前端：「申請中心」選擇請假表單送出。
+8. 主管審核
+   ```bash
+   curl -X GET http://localhost:3000/api/approvals/inbox \
+     -H "Authorization: Bearer <token>"
+   ```
+   前端：「待辦簽核」列表核准或退回。
+9. 產生薪資報表
+   ```bash
+   curl http://localhost:3000/api/reports \
+     -H "Authorization: Bearer <token>"
+   ```
+   前端：「報表中心」下載薪資報表。
+10. 管理員登出
+    ```bash
+    curl -X POST http://localhost:3000/api/logout \
+      -H "Authorization: Bearer <token>"
+    ```
+    前端：右上角選單點選「登出」。
+
 ### 班別設定
 
 班別用於描述員工的工作時段，協助排班與出勤判定。常見欄位包括：
