@@ -11,7 +11,11 @@ export async function listRecords(req, res) {
 
 export async function createRecord(req, res) {
   try {
-    const record = new AttendanceRecord(req.body);
+    const { employee, action, timestamp, remark } = req.body;
+    if (!employee || !action) {
+      return res.status(400).json({ error: 'employee and action are required' });
+    }
+    const record = new AttendanceRecord({ employee, action, timestamp, remark });
     await record.save();
     res.status(201).json(record);
   } catch (err) {

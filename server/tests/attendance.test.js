@@ -42,12 +42,19 @@ describe('Attendance API', () => {
     expect(res.body).toEqual({ error: 'fail' });
   });
 
-  it('creates record', async () => {
-    const payload = { action: 'clockIn' };
-    saveMock.mockResolvedValue();
-    const res = await request(app).post('/api/attendance').send(payload);
-    expect(res.status).toBe(201);
-    expect(saveMock).toHaveBeenCalled();
-    expect(res.body).toMatchObject(payload);
+    it('creates record with remark', async () => {
+      const payload = { action: 'clockIn', employee: 'emp1', remark: 'test' };
+      saveMock.mockResolvedValue();
+      const res = await request(app).post('/api/attendance').send(payload);
+      expect(res.status).toBe(201);
+      expect(saveMock).toHaveBeenCalled();
+      expect(res.body).toMatchObject(payload);
+    });
+
+    it('returns 400 when employee is missing', async () => {
+      const payload = { action: 'clockIn' };
+      const res = await request(app).post('/api/attendance').send(payload);
+      expect(res.status).toBe(400);
+      expect(saveMock).not.toHaveBeenCalled();
+    });
   });
-});
