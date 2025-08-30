@@ -152,7 +152,7 @@ const onLogin = async () => {
       const data = await res.json()
       setToken(data.token)
       localStorage.setItem('role', data.user.role)
-      localStorage.setItem('employeeId', data.user.employeeId)
+      localStorage.setItem('employeeId', data.user.employeeId || data.user.id)
       
       ElMessage.success('登入成功！')
 

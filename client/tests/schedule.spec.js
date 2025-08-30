@@ -23,6 +23,7 @@ describe('Schedule.vue', () => {
     ElMessage.success.mockReset()
     pushMock.mockReset()
     sessionStorage.clear()
+    localStorage.clear()
   })
 
   function mountSchedule() {
@@ -45,6 +46,37 @@ describe('Schedule.vue', () => {
   function flush() {
     return new Promise(resolve => setTimeout(resolve))
   }
+
+  it('includes supervisor id in requests when present', async () => {
+    const month = dayjs().format('YYYY-MM')
+    localStorage.setItem('employeeId', 'sup1')
+    apiFetch
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ approvals: [], leaves: [] }) })
+    mountSchedule()
+    await flush()
+    expect(apiFetch.mock.calls[3][0]).toBe('/api/employees?supervisor=sup1')
+    expect(apiFetch.mock.calls[4][0]).toBe(`/api/schedules/monthly?month=${month}&supervisor=sup1`)
+  })
+
+  it('omits supervisor param when id missing', async () => {
+    const month = dayjs().format('YYYY-MM')
+    apiFetch
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ approvals: [], leaves: [] }) })
+    mountSchedule()
+    await flush()
+    expect(apiFetch.mock.calls[3][0]).toBe('/api/employees')
+    expect(apiFetch.mock.calls[4][0]).toBe(`/api/schedules/monthly?month=${month}`)
+  })
 
   it('loads shift options when API returns array directly', async () => {
     apiFetch
