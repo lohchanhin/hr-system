@@ -359,10 +359,11 @@ async function fetchOptions() {
 }
 
 async function fetchSchedules() {
-  const supervisorId = localStorage.getItem('employeeId') || ''
+  const supervisorId = localStorage.getItem('employeeId')
+  const supParam = supervisorId && supervisorId !== 'undefined' ? `&supervisor=${supervisorId}` : ''
   try {
     const res = await apiFetch(
-      `/api/schedules/monthly?month=${currentMonth.value}&supervisor=${supervisorId}`
+      `/api/schedules/monthly?month=${currentMonth.value}${supParam}`
     )
     if (!res.ok) throw new Error('Failed to fetch schedules')
     const data = await res.json()
@@ -396,7 +397,7 @@ async function fetchSchedules() {
     })
 
     const res2 = await apiFetch(
-      `/api/schedules/leave-approvals?month=${currentMonth.value}&supervisor=${supervisorId}`
+      `/api/schedules/leave-approvals?month=${currentMonth.value}${supParam}`
     )
     if (res2.ok) {
       const extra = await res2.json()
@@ -589,10 +590,12 @@ function subDepsFor(deptId) {
 }
 
 async function fetchEmployees(department = '', subDepartment = '') {
-  const supervisorId = localStorage.getItem('employeeId') || ''
-  let url = `/api/employees?supervisor=${supervisorId}`
-  if (department) url += `&department=${department}`
-  if (subDepartment) url += `&subDepartment=${subDepartment}`
+  const supervisorId = localStorage.getItem('employeeId')
+  const params = []
+  if (supervisorId && supervisorId !== 'undefined') params.push(`supervisor=${supervisorId}`)
+  if (department) params.push(`department=${department}`)
+  if (subDepartment) params.push(`subDepartment=${subDepartment}`)
+  const url = `/api/employees${params.length ? `?${params.join('&')}` : ''}`
   try {
     const empRes = await apiFetch(url)
     if (!empRes.ok) throw new Error('Failed to fetch employees')

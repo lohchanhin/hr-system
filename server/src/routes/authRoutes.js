@@ -18,7 +18,15 @@ router.post('/login', async (req, res) => {
     process.env.JWT_SECRET || 'secret',
     { expiresIn: '1h' }
   )
-  res.json({ token, user: { id: employee._id, role: employee.role, username: employee.username } })
+  res.json({
+    token,
+    user: {
+      id: employee._id,
+      employeeId: employee._id,
+      role: employee.role,
+      username: employee.username
+    }
+  })
 })
 
 router.post('/logout', async (req, res) => {

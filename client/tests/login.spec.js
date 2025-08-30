@@ -73,6 +73,7 @@ describe('Login.vue', () => {
     wrapper.vm.loginForm.password = 'p'
     await wrapper.vm.onLogin()
     expect(localStorage.getItem('role')).toBe('supervisor')
+    expect(localStorage.getItem('employeeId')).toBe('e1')
     expect(push).toHaveBeenCalledWith('/front/schedule')
   })
 
@@ -91,6 +92,7 @@ describe('Login.vue', () => {
     wrapper.vm.loginForm.username = 'u'
     wrapper.vm.loginForm.password = 'p'
     await wrapper.vm.onLogin()
+    expect(localStorage.getItem('employeeId')).toBe('a1')
     expect(push).toHaveBeenCalledWith({ name: 'Settings' })
   })
 
@@ -109,6 +111,7 @@ describe('Login.vue', () => {
     wrapper.vm.loginForm.username = 'u'
     wrapper.vm.loginForm.password = 'p'
     await wrapper.vm.onLogin()
+    expect(localStorage.getItem('employeeId')).toBe('a1')
     expect(push).toHaveBeenCalledWith('/manager')
   })
 

@@ -43,6 +43,7 @@ describe('Auth Integration', () => {
     expect(selectMock).toHaveBeenCalledWith('+passwordHash')
     expect(res.status).toBe(200)
     expect(res.body.user).toMatchObject({ username: 'tester' })
+    expect(res.body.user.employeeId).toBe(String(employee._id))
     expect(res.body.token).toBeDefined()
   })
 })

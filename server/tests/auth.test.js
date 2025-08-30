@@ -52,7 +52,7 @@ describe('Auth API', () => {
     const res = await request(app).post('/api/login').send({ username: 'john', password: 'pass' });
     expect(res.status).toBe(200);
     expect(res.body.token).toBeDefined();
-    expect(res.body.user).toEqual({ id: '1', role: 'employee', username: 'john' });
+    expect(res.body.user).toEqual({ id: '1', employeeId: '1', role: 'employee', username: 'john' });
     expect(signSpy).toHaveBeenCalledWith({ id: '1', role: 'employee' }, 'secret', { expiresIn: '1h' });
     signSpy.mockRestore();
   });
