@@ -85,7 +85,7 @@ onMounted(() => {
     username.value = savedUsername;
   }
 
-  if (savedRole === "supervisor" || savedRole === "admin") {
+  if (savedRole === "supervisor") {
     showManagerBtn.value = true;
   }
 

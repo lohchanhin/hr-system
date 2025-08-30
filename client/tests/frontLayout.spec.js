@@ -30,8 +30,8 @@ describe('FrontLayout manager button', () => {
     })
   }
 
-  it.each(['supervisor', 'admin'])('顯示按鈕並導向 %s', async role => {
-    localStorage.setItem('role', role)
+  it('supervisor 顯示按鈕並導向', async () => {
+    localStorage.setItem('role', 'supervisor')
     const wrapper = mountLayout()
     await wrapper.vm.$nextTick()
     const btn = wrapper.get('[data-test="manager-btn"]')
@@ -39,10 +39,21 @@ describe('FrontLayout manager button', () => {
     expect(push).toHaveBeenCalledWith('/manager')
   })
 
+  it('管理員不顯示按鈕並可登出', async () => {
+    localStorage.setItem('role', 'admin')
+    localStorage.setItem('username', 'boss')
+    const wrapper = mountLayout()
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('[data-test="manager-btn"]').exists()).toBe(false)
+    await wrapper.find('.logout-btn').trigger('click')
+    expect(push).toHaveBeenCalledWith('/')
+    expect(localStorage.getItem('role')).toBeNull()
+    expect(localStorage.getItem('username')).toBeNull()
+  })
+
   it('無權限不顯示按鈕', () => {
     localStorage.setItem('role', 'employee')
     const wrapper = mountLayout()
-    // onMounted will run, but no button expected
     expect(wrapper.find('[data-test="manager-btn"]').exists()).toBe(false)
   })
 })

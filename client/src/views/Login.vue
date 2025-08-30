@@ -105,14 +105,11 @@
 <script setup>
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { useMenuStore } from '../stores/menu'
-import { storeToRefs } from 'pinia'
 import { apiFetch } from '../api'
 import { setToken } from '../utils/tokenService'
 import { ElMessage } from 'element-plus'
 
 const router = useRouter()
-const menuStore = useMenuStore()
 
 const loginForm = ref({
   username: '',
@@ -159,13 +156,7 @@ const onLogin = async () => {
       if (data.user.role === 'supervisor') {
         router.push('/front/schedule')
       } else if (data.user.role === 'admin') {
-        await menuStore.fetchMenu()
-        const first = menuStore.items[0]
-        if (first) {
-          router.push({ name: first.name })
-        } else {
-          router.push('/manager')
-        }
+        router.push('/front/attendance')
       }
     } else {
       const errorData = await res.json()

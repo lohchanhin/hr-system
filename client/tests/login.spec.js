@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach, afterAll } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { setActivePinia, createPinia } from 'pinia'
 import Login from '../src/views/Login.vue'
@@ -77,42 +77,18 @@ describe('Login.vue', () => {
     expect(push).toHaveBeenCalledWith('/front/schedule')
   })
 
-  it('redirects admin to first menu item', async () => {
-    fetch
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ token: createToken(), user: { role: 'admin', employeeId: 'a1' } })
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ([{ name: 'Settings' }])
-      })
+  it('redirects admin to front attendance', async () => {
+    fetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ token: createToken(), user: { role: 'admin', employeeId: 'a1' } })
+    })
     const wrapper = mountLogin()
     wrapper.vm.loginFormRef = { validate: async () => true }
     wrapper.vm.loginForm.username = 'u'
     wrapper.vm.loginForm.password = 'p'
     await wrapper.vm.onLogin()
     expect(localStorage.getItem('employeeId')).toBe('a1')
-    expect(push).toHaveBeenCalledWith({ name: 'Settings' })
-  })
-
-  it('redirects admin to /manager when menu empty', async () => {
-    fetch
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ token: createToken(), user: { role: 'admin', employeeId: 'a1' } })
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ([])
-      })
-    const wrapper = mountLogin()
-    wrapper.vm.loginFormRef = { validate: async () => true }
-    wrapper.vm.loginForm.username = 'u'
-    wrapper.vm.loginForm.password = 'p'
-    await wrapper.vm.onLogin()
-    expect(localStorage.getItem('employeeId')).toBe('a1')
-    expect(push).toHaveBeenCalledWith('/manager')
+    expect(push).toHaveBeenCalledWith('/front/attendance')
   })
 
   it('navigates to employee login when link clicked', async () => {
