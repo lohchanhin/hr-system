@@ -39,7 +39,9 @@ function mountLogin() {
           methods: { validate: () => Promise.resolve(true) }
         },
         'el-form-item': { template: '<div><slot /></div>' },
-        'el-card': { template: '<div><slot /></div>' }
+        'el-card': { template: '<div><slot /></div>' },
+        'el-radio-group': { template: '<div><slot /></div>' },
+        'el-radio': { props: ['label'], template: '<div><slot /></div>' }
       }
     }
   })
@@ -55,6 +57,7 @@ describe('Login.vue', () => {
 
   afterEach(() => {
     vi.restoreAllMocks()
+    vi.unstubAllGlobals()
     localStorage.clear()
   })
 
@@ -71,13 +74,20 @@ describe('Login.vue', () => {
     wrapper.vm.loginFormRef = { validate: async () => true }
     wrapper.vm.loginForm.username = 'u'
     wrapper.vm.loginForm.password = 'p'
+    wrapper.vm.loginForm.role = 'supervisor'
     await wrapper.vm.onLogin()
+    expect(fetch).toHaveBeenCalledWith(
+      expect.stringContaining('/api/login'),
+      expect.objectContaining({
+        body: JSON.stringify({ username: 'u', password: 'p', role: 'supervisor' })
+      })
+    )
     expect(localStorage.getItem('role')).toBe('supervisor')
     expect(localStorage.getItem('employeeId')).toBe('e1')
     expect(push).toHaveBeenCalledWith('/front/schedule')
   })
 
-  it('redirects admin to front attendance', async () => {
+  it('redirects admin to manager', async () => {
     fetch.mockResolvedValueOnce({
       ok: true,
       json: async () => ({ token: createToken(), user: { role: 'admin', employeeId: 'a1' } })
@@ -86,9 +96,26 @@ describe('Login.vue', () => {
     wrapper.vm.loginFormRef = { validate: async () => true }
     wrapper.vm.loginForm.username = 'u'
     wrapper.vm.loginForm.password = 'p'
+    wrapper.vm.loginForm.role = 'admin'
     await wrapper.vm.onLogin()
     expect(localStorage.getItem('employeeId')).toBe('a1')
-    expect(push).toHaveBeenCalledWith('/front/attendance')
+    expect(push).toHaveBeenCalledWith('/manager')
+  })
+
+  it('shows error on role mismatch', async () => {
+    fetch.mockResolvedValueOnce({
+      ok: false,
+      json: async () => ({ message: '角色錯誤' })
+    })
+    const wrapper = mountLogin()
+    wrapper.vm.loginFormRef = { validate: async () => true }
+    wrapper.vm.loginForm.username = 'u'
+    wrapper.vm.loginForm.password = 'p'
+    wrapper.vm.loginForm.role = 'admin'
+    await wrapper.vm.onLogin()
+    const { ElMessage } = await import('element-plus')
+    expect(ElMessage.error).toHaveBeenCalledWith('角色錯誤')
+    expect(push).not.toHaveBeenCalled()
   })
 
   it('navigates to employee login when link clicked', async () => {

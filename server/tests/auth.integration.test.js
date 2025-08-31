@@ -37,7 +37,7 @@ describe('Auth Integration', () => {
     selectMock.mockResolvedValue(employee)
     mockEmployee.findOne.mockReturnValue({ select: selectMock })
 
-    const res = await request(app).post('/api/login').send({ username: 'tester', password: 'pass123' })
+    const res = await request(app).post('/api/login').send({ username: 'tester', password: 'pass123', role: 'employee' })
 
     expect(mockEmployee.findOne).toHaveBeenCalledWith({ username: 'tester' })
     expect(selectMock).toHaveBeenCalledWith('+passwordHash')

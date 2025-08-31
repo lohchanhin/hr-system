@@ -6,12 +6,16 @@ import { blacklistToken } from '../utils/tokenBlacklist.js'
 const router = Router();
 
 router.post('/login', async (req, res) => {
-  const { username, password } = req.body
+  const { username, password, role } = req.body
   const employee = await Employee.findOne({ username }).select('+passwordHash')
   if (!employee) return res.status(401).json({ error: 'Invalid credentials' })
 
   const match = employee.verifyPassword(password)
   if (!match) return res.status(401).json({ error: 'Invalid credentials' })
+
+  if (role !== employee.role) {
+    return res.status(403).json({ error: 'Forbidden' })
+  }
 
   const token = jwt.sign(
     { id: employee._id, role: employee.role },

@@ -24,9 +24,9 @@
         </div>
         
         <!-- Enhanced form with better styling and validation -->
-        <el-form 
-          :model="loginForm" 
-          ref="loginFormRef" 
+        <el-form
+          :model="loginForm"
+          ref="loginFormRef"
           class="login-form"
           :rules="loginRules"
           @submit.prevent="onLogin"
@@ -64,6 +64,16 @@
               class="custom-input"
               show-password
             />
+          </el-form-item>
+
+          <el-form-item prop="role" class="form-item">
+            <div class="input-label">
+              <span>角色</span>
+            </div>
+            <el-radio-group v-model="loginForm.role">
+              <el-radio label="supervisor">主管</el-radio>
+              <el-radio label="admin">系統管理員</el-radio>
+            </el-radio-group>
           </el-form-item>
           
           <!-- Enhanced login button with loading state -->
@@ -113,7 +123,8 @@ const router = useRouter()
 
 const loginForm = ref({
   username: '',
-  password: ''
+  password: '',
+  role: ''
 })
 
 const loginFormRef = ref(null)
@@ -127,7 +138,8 @@ const loginRules = {
   password: [
     { required: true, message: '請輸入密碼', trigger: 'blur' },
     { min: 6, message: '密碼長度至少6個字符', trigger: 'blur' }
-  ]
+  ],
+  role: [{ required: true, message: '請選擇角色', trigger: 'change' }]
 }
 
 const onLogin = async () => {
@@ -139,10 +151,11 @@ const onLogin = async () => {
     
     isLoading.value = true
     
+    const { username, password, role } = loginForm.value
     const res = await apiFetch('/api/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(loginForm.value)
+      body: JSON.stringify({ username, password, role })
     })
     
     if (res.ok) {
@@ -156,7 +169,7 @@ const onLogin = async () => {
       if (data.user.role === 'supervisor') {
         router.push('/front/schedule')
       } else if (data.user.role === 'admin') {
-        router.push('/front/attendance')
+        router.push('/manager')
       }
     } else {
       const errorData = await res.json()
