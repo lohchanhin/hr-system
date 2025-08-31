@@ -46,4 +46,12 @@ describe('apiFetch', () => {
     expect(res).toBe(response)
     expect(clearToken).not.toHaveBeenCalled()
   })
+
+  it('does not redirect when autoRedirect is false', async () => {
+    window.location.pathname = '/profile'
+    fetch.mockResolvedValueOnce({ status: 401 })
+    await apiFetch('/test', {}, { autoRedirect: false })
+    expect(clearToken).not.toHaveBeenCalled()
+    expect(window.location.href).toBe('')
+  })
 })

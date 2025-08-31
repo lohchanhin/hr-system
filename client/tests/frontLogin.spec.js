@@ -2,6 +2,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import FrontLogin from '../src/views/front/FrontLogin.vue'
 vi.mock('../src/stores/menu', () => ({ useMenuStore: () => ({ fetchMenu: vi.fn() }) }))
+vi.mock('element-plus', async () => {
+  const actual = await vi.importActual('element-plus')
+  return { ...actual, ElMessage: { success: vi.fn(), error: vi.fn() } }
+})
 
 function createToken(offset = 3600) {
   const header = Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64')
@@ -41,14 +45,18 @@ function mountLogin() {
 }
 
 describe('FrontLogin.vue', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     localStorage.clear()
     vi.stubGlobal('fetch', vi.fn())
     push.mockReset()
+    const { ElMessage } = await import('element-plus')
+    ElMessage.success.mockReset()
+    ElMessage.error.mockReset()
   })
 
   afterEach(() => {
     vi.restoreAllMocks()
+    vi.unstubAllGlobals()
   })
 
   it('stores role and employeeId and redirects to attendance on login', async () => {
@@ -63,7 +71,7 @@ describe('FrontLogin.vue', () => {
     await wrapper.find('.login-button').trigger('click')
     await flushPromises()
     expect(fetch).toHaveBeenCalledWith(
-      '/api/login',
+      expect.stringContaining('/api/login'),
       expect.objectContaining({
         body: expect.stringContaining('"role":"employee"')
       })
@@ -79,5 +87,28 @@ describe('FrontLogin.vue', () => {
     expect(button.exists()).toBe(true)
     await button.trigger('click')
     expect(push).toHaveBeenCalledWith('/manager/login')
+  })
+
+  it('shows error message on login failure', async () => {
+    const originalLocation = window.location
+    Object.defineProperty(window, 'location', {
+      writable: true,
+      value: { href: '', pathname: '' }
+    })
+    fetch.mockResolvedValueOnce({
+      ok: false,
+      status: 401,
+      json: async () => ({ message: '登入失敗' })
+    })
+    const wrapper = mountLogin()
+    await wrapper.find('input[placeholder="請輸入員工帳號"]').setValue('u1')
+    await wrapper.find('input[placeholder="請輸入密碼"]').setValue('p1p1p1')
+    await wrapper.find('.login-button').trigger('click')
+    await flushPromises()
+    const { ElMessage } = await import('element-plus')
+    expect(ElMessage.error).toHaveBeenCalledWith('登入失敗')
+    expect(push).not.toHaveBeenCalled()
+    expect(window.location.href).toBe('')
+    window.location = originalLocation
   })
 })

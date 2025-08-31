@@ -112,8 +112,14 @@ describe('Login.vue', () => {
   })
 
   it('shows error on role mismatch', async () => {
+    const originalLocation = window.location
+    Object.defineProperty(window, 'location', {
+      writable: true,
+      value: { href: '', pathname: '' }
+    })
     fetch.mockResolvedValueOnce({
       ok: false,
+      status: 401,
       json: async () => ({ message: '角色錯誤' })
     })
     const wrapper = mountLogin()
@@ -126,6 +132,8 @@ describe('Login.vue', () => {
     expect(ElMessage.error).toHaveBeenCalledWith('角色錯誤')
     expect(fetchMenuSpy).not.toHaveBeenCalled()
     expect(push).not.toHaveBeenCalled()
+    expect(window.location.href).toBe('')
+    window.location = originalLocation
   })
 
   it('navigates to employee login when link clicked', async () => {

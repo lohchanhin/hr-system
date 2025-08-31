@@ -154,11 +154,15 @@ const onLogin = async () => {
     isLoading.value = true
     
     const { username, password, role } = loginForm.value
-    const res = await apiFetch('/api/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, password, role })
-    })
+    const res = await apiFetch(
+      '/api/login',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password, role })
+      },
+      { autoRedirect: false }
+    )
     
     if (res.ok) {
       const data = await res.json()
