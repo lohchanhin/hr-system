@@ -62,7 +62,7 @@ const menuStore = useMenuStore();
 const { items: menuItems } = storeToRefs(menuStore);
 
 const username = ref("");
-const activeMenu = computed(() => route.name?.toLowerCase() || "");
+const activeMenu = computed(() => route.name || "");
 
 onMounted(() => {
   const savedUsername = localStorage.getItem("username");
@@ -76,7 +76,7 @@ onMounted(() => {
 });
 
 function gotoPage(pageName) {
-  router.push(`/front/${pageName}`);
+  router.push({ name: pageName });
 }
 
   function onLogout() {
