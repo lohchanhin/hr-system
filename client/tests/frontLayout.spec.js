@@ -30,15 +30,6 @@ describe('FrontLayout manager button', () => {
     })
   }
 
-  it('supervisor 顯示按鈕並導向', async () => {
-    localStorage.setItem('role', 'supervisor')
-    const wrapper = mountLayout()
-    await wrapper.vm.$nextTick()
-    const btn = wrapper.get('[data-test="manager-btn"]')
-    await btn.trigger('click')
-    expect(push).toHaveBeenCalledWith('/manager')
-  })
-
   it('管理員不顯示按鈕並可登出', async () => {
     localStorage.setItem('role', 'admin')
     localStorage.setItem('username', 'boss')
@@ -51,7 +42,14 @@ describe('FrontLayout manager button', () => {
     expect(localStorage.getItem('username')).toBeNull()
   })
 
-  it('無權限不顯示按鈕', () => {
+  it('主管不顯示按鈕', async () => {
+    localStorage.setItem('role', 'supervisor')
+    const wrapper = mountLayout()
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('[data-test="manager-btn"]').exists()).toBe(false)
+  })
+
+  it('員工不顯示按鈕', () => {
     localStorage.setItem('role', 'employee')
     const wrapper = mountLayout()
     expect(wrapper.find('[data-test="manager-btn"]').exists()).toBe(false)
