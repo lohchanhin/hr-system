@@ -453,8 +453,12 @@ const renderValue = (v) => Array.isArray(v) ? v.join(', ') : (v ?? '-')
 
 /* 人名快取（顯示審核人用） */
 const employeeNameCache = reactive({})
-function approverName(empId) {
-  return employeeNameCache[empId] || empId
+function approverName(emp) {
+  if (emp && typeof emp === 'object') {
+    const id = emp._id || emp.employeeId || ''
+    return emp.name || employeeNameCache[id] || id
+  }
+  return employeeNameCache[emp] || emp
 }
 
 /* -------------------- 申請表單（動態產生） -------------------- */

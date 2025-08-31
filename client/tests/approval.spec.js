@@ -2,13 +2,31 @@ import { describe, it, expect, vi } from 'vitest'
 import { shallowMount, flushPromises } from '@vue/test-utils'
 import Approval from '../src/views/front/Approval.vue'
 
-const stubs = [
-  'el-option','el-select','el-button','el-form-item','el-divider','el-input',
-  'el-input-number','el-checkbox','el-checkbox-group','el-date-picker',
-  'el-time-picker','el-upload','el-form','el-tab-pane','el-table-column',
-  'el-tag','el-table','el-tabs','el-descriptions-item','el-descriptions',
-  'el-timeline-item','el-timeline','el-dialog'
-]
+const stubs = {
+  'el-option': true,
+  'el-select': true,
+  'el-button': true,
+  'el-form-item': true,
+  'el-divider': true,
+  'el-input': true,
+  'el-input-number': true,
+  'el-checkbox': true,
+  'el-checkbox-group': true,
+  'el-date-picker': true,
+  'el-time-picker': true,
+  'el-upload': true,
+  'el-form': true,
+  'el-tab-pane': true,
+  'el-table-column': true,
+  'el-tag': true,
+  'el-table': true,
+  'el-tabs': true,
+  'el-descriptions-item': true,
+  'el-descriptions': true,
+  'el-timeline-item': true,
+  'el-timeline': true,
+  'el-dialog': { template: '<div><slot /><slot name="footer" /></div>' }
+}
 
 describe('Approval.vue', () => {
   it('fetches list on mount', async () => {
@@ -93,8 +111,35 @@ describe('Approval.vue', () => {
     await wrapper.vm.openDetail('a1')
     await flushPromises()
     expect(wrapper.vm.detail.visible).toBe(true)
-    expect(wrapper.html()).toContain('事由')
-    expect(wrapper.html()).toContain('測試')
+    expect(wrapper.vm.detail.doc.form.fields[0].label).toBe('事由')
+    expect(wrapper.vm.detail.doc.form_data.f1).toBe('測試')
+    window.fetch.mockRestore()
+  })
+
+  it('renders approver name when approver object returned', async () => {
+    const doc = {
+      _id: 'a1',
+      form: { name: '請假單', category: '請假', fields: [] },
+      applicant_employee: { name: 'Bob' },
+      status: 'pending',
+      form_data: {},
+      steps: [
+        { approvers: [{ approver: { _id: 'u1', name: 'Alice' }, decision: 'pending' }] }
+      ]
+    }
+    vi.spyOn(window, 'fetch').mockImplementation((url) => {
+      if (url.includes('/api/approvals/a1')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve(doc) })
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve([]) })
+    })
+    const wrapper = shallowMount(Approval, { global: { stubs } })
+    await flushPromises()
+    await wrapper.vm.openDetail('a1')
+    await flushPromises()
+    const text = wrapper.vm.approverName(wrapper.vm.detail.doc.steps[0].approvers[0].approver)
+    expect(text).toBe('Alice')
+    expect(text).not.toContain('{')
     window.fetch.mockRestore()
   })
 
