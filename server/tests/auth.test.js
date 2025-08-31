@@ -38,7 +38,7 @@ afterEach(() => {
 });
 
 describe('Auth API', () => {
-  it('使用正確帳密登入', async () => {
+  it('使用正確帳密與角色登入', async () => {
     mockEmployee.findOne.mockReturnValue({
       select: () =>
         Promise.resolve({
@@ -49,12 +49,26 @@ describe('Auth API', () => {
         })
     });
     const signSpy = jest.spyOn(jwt, 'sign');
-    const res = await request(app).post('/api/login').send({ username: 'john', password: 'pass' });
+    const res = await request(app).post('/api/login').send({ username: 'john', password: 'pass', role: 'employee' });
     expect(res.status).toBe(200);
     expect(res.body.token).toBeDefined();
     expect(res.body.user).toEqual({ id: '1', employeeId: '1', role: 'employee', username: 'john' });
     expect(signSpy).toHaveBeenCalledWith({ id: '1', role: 'employee' }, 'secret', { expiresIn: '1h' });
     signSpy.mockRestore();
+  });
+
+  it('角色不符登入失敗', async () => {
+    mockEmployee.findOne.mockReturnValue({
+      select: () =>
+        Promise.resolve({
+          _id: '1',
+          role: 'employee',
+          username: 'john',
+          verifyPassword: (pwd) => pwd === 'pass'
+        })
+    });
+    const res = await request(app).post('/api/login').send({ username: 'john', password: 'pass', role: 'admin' });
+    expect(res.status).toBe(403);
   });
 
   it('使用錯誤密碼登入失敗', async () => {
@@ -67,7 +81,7 @@ describe('Auth API', () => {
           verifyPassword: () => false
         })
     });
-    const res = await request(app).post('/api/login').send({ username: 'john', password: 'wrong' });
+    const res = await request(app).post('/api/login').send({ username: 'john', password: 'wrong', role: 'employee' });
     expect(res.status).toBe(401);
   });
 
