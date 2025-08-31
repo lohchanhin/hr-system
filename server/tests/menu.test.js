@@ -24,6 +24,7 @@ describe('Menu API', () => {
     expect(res.status).toBe(200);
     expect(Array.isArray(res.body)).toBe(true);
     expect(res.body.find(i => i.name === 'Attendance')).toBeDefined();
+    expect(res.body.find(i => i.name === 'MySchedule')).toBeDefined();
     expect(res.body.find(i => i.name === 'Approval')).toBeDefined();
   });
 
