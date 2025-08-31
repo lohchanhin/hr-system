@@ -1,5 +1,6 @@
 <template>
   <div class="my-schedule">
+    <el-date-picker v-model="selectedMonth" type="month" value-format="YYYY-MM" />
     <el-table v-if="schedules.length" :data="schedules" class="schedule-table">
       <el-table-column prop="date" label="日期" width="120" />
       <el-table-column prop="shiftName" label="班別" />
@@ -9,13 +10,14 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, watch } from 'vue'
 import dayjs from 'dayjs'
 import { apiFetch } from '../../api'
 import { getToken } from '../../utils/tokenService'
 
 const schedules = ref([])
 const shiftMap = ref({})
+const selectedMonth = ref(dayjs().format('YYYY-MM'))
 
 async function fetchShifts() {
   try {
@@ -30,15 +32,14 @@ async function fetchShifts() {
   }
 }
 
-onMounted(async () => {
+async function loadSchedules() {
   const token = getToken()
   if (!token) return
   try {
     await fetchShifts()
     const payload = JSON.parse(atob(token.split('.')[1]))
     const userId = payload.id || payload._id || payload.sub
-    const month = dayjs().format('YYYY-MM')
-    const res = await apiFetch(`/api/schedules/monthly?month=${month}&employee=${userId}`)
+    const res = await apiFetch(`/api/schedules/monthly?month=${selectedMonth.value}&employee=${userId}`)
     if (res.ok) {
       const data = await res.json()
       schedules.value = data.map(s => ({
@@ -50,7 +51,11 @@ onMounted(async () => {
   } catch (err) {
     console.error(err)
   }
-})
+}
+
+onMounted(loadSchedules)
+
+watch(selectedMonth, loadSchedules)
 </script>
 
 <style scoped>
