@@ -99,7 +99,7 @@ describe('Login.vue', () => {
     wrapper.vm.loginForm.role = 'admin'
     await wrapper.vm.onLogin()
     expect(localStorage.getItem('employeeId')).toBe('a1')
-    expect(push).toHaveBeenCalledWith('/manager')
+    expect(push).toHaveBeenCalledWith('/manager/settings')
   })
 
   it('shows error on role mismatch', async () => {

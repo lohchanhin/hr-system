@@ -169,7 +169,7 @@ const onLogin = async () => {
       if (data.user.role === 'supervisor') {
         router.push('/front/schedule')
       } else if (data.user.role === 'admin') {
-        router.push('/manager')
+        router.push('/manager/settings')
       }
     } else {
       const errorData = await res.json()

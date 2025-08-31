@@ -40,6 +40,11 @@ describe('router', () => {
     expect(paths).toContain('/manager/login')
   })
 
+  it('redirects /manager to settings', () => {
+    const manager = router.getRoutes().find(r => r.path === '/manager')
+    expect(manager.redirect).toBe('/manager/settings')
+  })
+
   it('front child routes define role meta', () => {
     const front = router.getRoutes().find(r => r.name === 'FrontLayout')
     const childRoles = front.children.map(r => ({ name: r.name, roles: r.meta && r.meta.roles }))
