@@ -205,8 +205,8 @@ describe('Schedule.vue', () => {
     await flush()
     expect(wrapper.vm.days[0].label).toMatch(/^1\(.\)$/)
     const cols = wrapper.findAll('.col')
-    expect(cols[0].attributes('data-label')).toBe('樓層／單位')
-    expect(cols[1].attributes('data-label')).toBe('員工')
+    expect(cols[0].attributes('data-label')).toBe('部門／單位')
+    expect(cols[1].attributes('data-label')).toBe('員工姓名')
     expect(cols[2].attributes('data-label')).toMatch(/^1\(.\)$/)
   })
 
@@ -264,7 +264,7 @@ describe('Schedule.vue', () => {
     wrapper.vm.scheduleMap = { e1: { 1: { shiftId: '', department: 'd1', subDepartment: 'sd1' } } }
     await wrapper.vm.onSelect('e1', 1, 's1')
 
-    expect(apiFetch).toHaveBeenNthCalledWith(4, `/api/employees?supervisor=s1`)
+    expect(apiFetch).toHaveBeenNthCalledWith(4, `/api/employees?supervisor=s1&subDepartment=sd1`)
     expect(apiFetch).toHaveBeenNthCalledWith(
       8,
       `/api/employees?supervisor=s1&department=d1`

@@ -133,7 +133,7 @@ async function fetchRecords() {
     const data = await res.json()
     records.value = data.map(r => ({
       action: reverseActionMap[r.action] || r.action,
-      time: dayjs(r.timestamp).format('YYYY-MM-DD HH:mm:ss'),
+      time: dayjs(r.timestamp).format('YYYY/MM/DD HH:mm:ss'),
       remark: r.remark || ''
     }))
   }
@@ -202,7 +202,7 @@ async function addRecord(action, remark = '') {
     const saved = await res.json()
     records.value.push({
       action: reverseActionMap[saved.action] || saved.action,
-      time: dayjs(saved.timestamp).format('YYYY-MM-DD HH:mm:ss'),
+      time: dayjs(saved.timestamp).format('YYYY/MM/DD HH:mm:ss'),
       remark: saved.remark || ''
     })
   }
@@ -211,7 +211,7 @@ async function addRecord(action, remark = '') {
 function updateTime() {
   const now = dayjs()
   currentTime.value = now.format('HH:mm:ss')
-  currentDate.value = now.format('YYYY年MM月DD日 dddd')
+  currentDate.value = now.format('YYYY/MM/DD')
 }
 
 function getActionTagType(action) {

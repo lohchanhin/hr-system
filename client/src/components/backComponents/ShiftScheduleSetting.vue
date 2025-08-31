@@ -435,7 +435,7 @@ import { apiFetch } from '../../api'
 import { getToken } from '../../utils/tokenService'
 
 const activeTab = ref('calendar')
-const dateFormat = 'YYYY-MM-DD'
+const dateFormat = 'YYYY/MM/DD'
 const timeFormat = 'HH:mm'
 
 // =========== 1) 年度行事曆/休假日設定 ===========
