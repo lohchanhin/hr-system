@@ -164,9 +164,10 @@ async function onLogin() {
     const res = await apiFetch('/api/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ 
-        username: loginForm.value.username, 
-        password: loginForm.value.password 
+      body: JSON.stringify({
+        username: loginForm.value.username,
+        password: loginForm.value.password,
+        role: loginForm.value.role
       })
     })
     

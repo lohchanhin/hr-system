@@ -62,6 +62,12 @@ describe('FrontLogin.vue', () => {
     await wrapper.find('input[placeholder="請輸入密碼"]').setValue('p1p1p1')
     await wrapper.find('.login-button').trigger('click')
     await flushPromises()
+    expect(fetch).toHaveBeenCalledWith(
+      '/api/login',
+      expect.objectContaining({
+        body: expect.stringContaining('"role":"employee"')
+      })
+    )
     expect(localStorage.getItem('role')).toBe('employee')
     expect(localStorage.getItem('employeeId')).toBe('e1')
     expect(push).toHaveBeenCalledWith('/front/attendance')
