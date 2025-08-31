@@ -97,4 +97,26 @@ describe('Approval.vue', () => {
     expect(wrapper.html()).toContain('測試')
     window.fetch.mockRestore()
   })
+
+  it('handles non-array approvers in detail steps', async () => {
+    const doc = {
+      _id: 'a1',
+      form: { name: '請假單', category: '請假', fields: [] },
+      applicant_employee: { name: 'Bob' },
+      status: 'pending',
+      form_data: {},
+      steps: [{ approvers: true }]
+    }
+    vi.spyOn(window, 'fetch').mockImplementation((url) => {
+      if (url.includes('/api/approvals/a1')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve(doc) })
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve([]) })
+    })
+    const wrapper = shallowMount(Approval, { global: { stubs } })
+    await flushPromises()
+    await expect(wrapper.vm.openDetail('a1')).resolves.toBeUndefined()
+    expect(wrapper.vm.detail.visible).toBe(true)
+    window.fetch.mockRestore()
+  })
 })
