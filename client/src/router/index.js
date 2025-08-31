@@ -46,6 +46,7 @@ const routes = [
     name: 'ManagerLayout',
     component: ManagerLayout,
     meta: { requiresAuth: true },
+    redirect: '/manager/settings',
     children: [
       { path: 'settings', name: 'Settings', component: Settings },
       { path: 'attendance-setting', name: 'AttendanceSetting', component: AttendanceSetting },
