@@ -38,8 +38,36 @@ describe('GET /api/approvals/inbox', () => {
     expect(res.body).toEqual(docs)
     expect(mockApprovalRequest.find).toHaveBeenCalledWith({
       status: 'pending',
-      'steps.approvers.approver': 'emp1',
-      'steps.approvers.decision': 'pending'
+      steps: {
+        $elemMatch: { approvers: { $elemMatch: { approver: 'emp1', decision: 'pending' } } },
+      },
+    })
+  })
+
+  it('excludes approvals where approver is not pending', async () => {
+    const docs = [
+      {
+        steps: [{ approvers: [{ approver: 'emp1', decision: 'pending' }] }],
+        current_step_index: 0,
+        form: { name: 'F', category: 'C' },
+      },
+      {
+        steps: [{ approvers: [{ approver: 'emp1', decision: 'approved' }, { approver: 'emp2', decision: 'pending' }] }],
+        current_step_index: 0,
+        form: { name: 'F2', category: 'C2' },
+      },
+    ]
+    mockApprovalRequest.find.mockReturnValue({ populate: jest.fn().mockResolvedValue(docs) })
+
+    const res = await request(app).get('/api/approvals/inbox?employee_id=emp1')
+
+    expect(res.status).toBe(200)
+    expect(res.body).toEqual([docs[0]])
+    expect(mockApprovalRequest.find).toHaveBeenCalledWith({
+      status: 'pending',
+      steps: {
+        $elemMatch: { approvers: { $elemMatch: { approver: 'emp1', decision: 'pending' } } },
+      },
     })
   })
 })
