@@ -76,12 +76,14 @@ const routes = [
       {
         path: 'attendance',
         name: 'Attendance',
+        alias: 'Attendance',
         component: Attendance,
         meta: { roles: ['employee', 'supervisor', 'admin'] },
       },
       {
         path: 'my-schedule',
         name: 'MySchedule',
+        alias: 'MySchedule',
         component: MySchedule,
         meta: { roles: ['employee', 'supervisor', 'admin'] },
       },
@@ -106,6 +108,7 @@ const routes = [
       {
         path: 'approval',
         name: 'Approval',
+        alias: 'Approval',
         component: Approval,
         meta: { roles: ['employee', 'supervisor', 'admin'] },
       },

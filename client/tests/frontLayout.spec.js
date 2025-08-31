@@ -11,7 +11,11 @@ vi.mock('vue-router', () => ({
 }))
 
 vi.mock('../src/stores/menu', () => ({
-  useMenuStore: () => ({ items: ref([]), fetchMenu: vi.fn() })
+  useMenuStore: () => ({
+    items: ref([{ name: 'MySchedule', label: '我的排班' }]),
+    fetchMenu: vi.fn(),
+    setMenu: vi.fn(),
+  })
 }))
 
 describe('FrontLayout manager button', () => {
@@ -22,6 +26,8 @@ describe('FrontLayout manager button', () => {
 
   afterAll(() => {
     vi.resetModules()
+    vi.unmock('vue-router')
+    vi.unmock('../src/stores/menu')
   })
 
   function mountLayout() {
@@ -53,5 +59,12 @@ describe('FrontLayout manager button', () => {
     localStorage.setItem('role', 'employee')
     const wrapper = mountLayout()
     expect(wrapper.find('[data-test="manager-btn"]').exists()).toBe(false)
+  })
+
+  it('點選我的排班導向 MySchedule', async () => {
+    const wrapper = mountLayout()
+    await wrapper.vm.$nextTick()
+    await wrapper.find('el-menu-item-stub[index="MySchedule"]').trigger('click')
+    expect(push).toHaveBeenCalledWith({ name: 'MySchedule' })
   })
 })
