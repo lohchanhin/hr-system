@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach, afterAll } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { setActivePinia, createPinia } from 'pinia'
-import Login from '../src/views/Login.vue'
+import { useMenuStore } from '../src/stores/menu'
+let Login
 
 function createToken(offset = 3600) {
   const header = Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64')
@@ -48,11 +49,17 @@ function mountLogin() {
 }
 
 describe('Login.vue', () => {
-  beforeEach(() => {
+  let fetchMenuSpy
+  beforeEach(async () => {
+    vi.resetModules()
     setActivePinia(createPinia())
     vi.stubGlobal('fetch', vi.fn())
     localStorage.clear()
     push.mockReset()
+    const module = await import('../src/views/Login.vue')
+    Login = module.default
+    const menuStore = useMenuStore()
+    fetchMenuSpy = vi.spyOn(menuStore, 'fetchMenu').mockResolvedValue()
   })
 
   afterEach(() => {
@@ -84,6 +91,7 @@ describe('Login.vue', () => {
     )
     expect(localStorage.getItem('role')).toBe('supervisor')
     expect(localStorage.getItem('employeeId')).toBe('e1')
+    expect(fetchMenuSpy).toHaveBeenCalled()
     expect(push).toHaveBeenCalledWith('/front/schedule')
   })
 
@@ -99,6 +107,7 @@ describe('Login.vue', () => {
     wrapper.vm.loginForm.role = 'admin'
     await wrapper.vm.onLogin()
     expect(localStorage.getItem('employeeId')).toBe('a1')
+    expect(fetchMenuSpy).toHaveBeenCalled()
     expect(push).toHaveBeenCalledWith('/manager/settings')
   })
 
@@ -115,6 +124,7 @@ describe('Login.vue', () => {
     await wrapper.vm.onLogin()
     const { ElMessage } = await import('element-plus')
     expect(ElMessage.error).toHaveBeenCalledWith('角色錯誤')
+    expect(fetchMenuSpy).not.toHaveBeenCalled()
     expect(push).not.toHaveBeenCalled()
   })
 
