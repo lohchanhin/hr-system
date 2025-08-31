@@ -9,11 +9,13 @@ jest.unstable_mockModule('../src/middleware/auth.js', () => ({
 
 let app;
 let menuRoutes;
+let authenticate;
 
 beforeAll(async () => {
+  ({ authenticate } = await import('../src/middleware/auth.js'));
   menuRoutes = (await import('../src/routes/menuRoutes.js')).default;
   app = express();
-  app.use('/api/menu', menuRoutes);
+  app.use('/api/menu', authenticate, menuRoutes);
 });
 
 describe('Menu API', () => {
