@@ -29,6 +29,7 @@ const Attendance = () => import('@/views/front/Attendance.vue')
 const Approval = () => import('@/views/front/Approval.vue')
 const PreviewWeek = () => import('@/views/front/PreviewWeek.vue')
 const PreviewMonth = () => import('@/views/front/PreviewMonth.vue')
+const MySchedule = () => import('@/views/front/MySchedule.vue')
 
 const routes = [
   // 首頁重導至前台登入
@@ -76,6 +77,12 @@ const routes = [
         path: 'attendance',
         name: 'Attendance',
         component: Attendance,
+        meta: { roles: ['employee', 'supervisor', 'admin'] },
+      },
+      {
+        path: 'my-schedule',
+        name: 'MySchedule',
+        component: MySchedule,
         meta: { roles: ['employee', 'supervisor', 'admin'] },
       },
       {
