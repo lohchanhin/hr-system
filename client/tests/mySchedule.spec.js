@@ -18,10 +18,12 @@ describe('MySchedule.vue', () => {
     return new Promise(resolve => setTimeout(resolve))
   }
 
-  it('fetches schedules for current user', async () => {
+  it('fetches schedules with shift names and formatted dates', async () => {
     const token = `h.${btoa(JSON.stringify({ id: 'emp1', role: 'employee' }))}.s`
     localStorage.setItem('token', token)
-    apiFetch.mockResolvedValueOnce({ ok: true, json: async () => [{ date: '2023-01-01', shiftId: 'A' }] })
+    apiFetch
+      .mockResolvedValueOnce({ ok: true, json: async () => [{ _id: '1', name: '早班' }] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [{ date: '2023-01-01', shiftId: '1' }] })
 
     const wrapper = shallowMount(MySchedule, {
       global: {
@@ -32,7 +34,9 @@ describe('MySchedule.vue', () => {
       }
     })
     await flush()
-    expect(apiFetch).toHaveBeenCalledWith(`/api/schedules/monthly?month=${dayjs().format('YYYY-MM')}&employee=emp1`)
-    expect(wrapper.vm.schedules).toHaveLength(1)
+    expect(apiFetch).toHaveBeenNthCalledWith(1, '/api/attendance-settings')
+    expect(apiFetch).toHaveBeenNthCalledWith(2, `/api/schedules/monthly?month=${dayjs().format('YYYY-MM')}&employee=emp1`)
+    expect(wrapper.vm.schedules[0].shiftName).toBe('早班')
+    expect(wrapper.vm.schedules[0].date).toBe('2023/01/01')
   })
 })
