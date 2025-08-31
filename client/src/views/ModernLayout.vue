@@ -75,12 +75,13 @@ function toggleCollapse() {
   isCollapse.value = !isCollapse.value
 }
 
-function logout() {
-  clearToken()
-  localStorage.removeItem('role')
-  localStorage.removeItem('employeeId')
-  router.push('/')
-}
+  function logout() {
+    clearToken()
+    menuStore.setMenu([])
+    localStorage.removeItem('role')
+    localStorage.removeItem('employeeId')
+    router.push('/')
+  }
 </script>
 
 <style scoped>

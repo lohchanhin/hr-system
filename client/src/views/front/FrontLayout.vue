@@ -79,12 +79,13 @@ function gotoPage(pageName) {
   router.push(`/front/${pageName}`);
 }
 
-function onLogout() {
-  localStorage.removeItem("role");
-  localStorage.removeItem("username");
-  clearToken();
-  router.push(`/`);
-}
+  function onLogout() {
+    localStorage.removeItem("role");
+    localStorage.removeItem("username");
+    clearToken();
+    menuStore.setMenu([]);
+    router.push(`/`);
+  }
 </script>
 
 <style scoped>
