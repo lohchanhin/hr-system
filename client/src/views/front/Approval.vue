@@ -381,11 +381,15 @@
       <div v-if="detail.doc">
         <p class="mb-2"><b>表單：</b>{{ detail.doc.form?.name }}（{{ detail.doc.form?.category }}）</p>
         <p class="mb-2"><b>申請人：</b>{{ detail.doc.applicant_employee?.name || '-' }}</p>
-        <p class="mb-2"><b>狀態：</b>{{ detail.doc.status }}</p>
+        <p class="mb-2"><b>狀態：</b>{{ getStatusText(detail.doc.status) }}</p>
         <el-divider content-position="left">填寫內容</el-divider>
         <el-descriptions :column="1" size="small" border>
-          <el-descriptions-item v-for="(val, key) in detail.doc.form_data" :key="key" :label="labelFromFieldId(key)">
-            <span>{{ renderValue(val) }}</span>
+          <el-descriptions-item
+            v-for="fld in detail.doc.form?.fields || []"
+            :key="fld._id"
+            :label="fld.label"
+          >
+            <span>{{ renderValue(detail.doc.form_data?.[fld._id]) }}</span>
           </el-descriptions-item>
         </el-descriptions>
 
@@ -405,7 +409,9 @@
               <el-table-column label="審核人" width="200">
                 <template #default="{ row }">{{ approverName(row.approver) }}</template>
               </el-table-column>
-              <el-table-column prop="decision" label="決議" width="120" />
+              <el-table-column label="決議" width="120">
+                <template #default="{ row }">{{ getStatusText(row.decision) }}</template>
+              </el-table-column>
               <el-table-column label="時間" width="200">
                 <template #default="{ row }">{{ fmt(row.decided_at) }}</template>
               </el-table-column>
@@ -449,12 +455,6 @@ const renderValue = (v) => Array.isArray(v) ? v.join(', ') : (v ?? '-')
 const employeeNameCache = reactive({})
 function approverName(empId) {
   return employeeNameCache[empId] || empId
-}
-
-/* 供描述卡顯示欄名用 */
-function labelFromFieldId(fid) {
-  const f = fieldList.value.find(x => x._id === fid)
-  return f ? f.label : fid
 }
 
 /* -------------------- 申請表單（動態產生） -------------------- */
@@ -686,9 +686,12 @@ async function fetchMyList() {
 const detail = reactive({ visible: false, doc: null })
 
 async function openDetail(id) {
+  detail.visible = false
+  detail.doc = null
   const res = await apiFetch(`/api/approvals/${id}`)
   if (res.ok) {
-    detail.doc = await res.json()
+    const data = await res.json()
+    detail.doc = data
     detail.visible = true
     // 補快取人名
     (detail.doc.steps || []).forEach(s => s.approvers.forEach(a => {
