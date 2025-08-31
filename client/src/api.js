@@ -1,7 +1,7 @@
 import { getToken, clearToken } from './utils/tokenService'
 
 export const API_BASE_URL =
-  import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:3000'
+  import.meta.env.VITE_API_BASE_URL ?? window.location.origin
 
 export function apiFetch(path, options = {}, { autoRedirect = true } = {}) {
   const token = getToken()
