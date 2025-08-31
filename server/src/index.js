@@ -268,7 +268,7 @@ app.use(
   authenticate,
   (req, res, next) => {
     if (req.method === 'GET') {
-      return authorizeRoles('supervisor', 'admin')(req, res, next);
+      return authorizeRoles('employee', 'supervisor', 'admin')(req, res, next);
     }
     return authorizeRoles('admin')(req, res, next);
   },
