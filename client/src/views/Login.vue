@@ -118,8 +118,10 @@ import { useRouter } from 'vue-router'
 import { apiFetch } from '../api'
 import { setToken } from '../utils/tokenService'
 import { ElMessage } from 'element-plus'
+import { useMenuStore } from '../stores/menu'
 
 const router = useRouter()
+const menuStore = useMenuStore()
 
 const loginForm = ref({
   username: '',
@@ -163,7 +165,8 @@ const onLogin = async () => {
       setToken(data.token)
       localStorage.setItem('role', data.user.role)
       localStorage.setItem('employeeId', data.user.employeeId || data.user.id)
-      
+
+      await menuStore.fetchMenu()
       ElMessage.success('登入成功！')
 
       if (data.user.role === 'supervisor') {
