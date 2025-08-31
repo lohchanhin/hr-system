@@ -9,11 +9,13 @@ const mockShiftSchedule = {
 const mockApprovalRequest = { findOne: jest.fn() };
 const mockFormTemplate = { findOne: jest.fn() };
 const mockFormField = { find: jest.fn() };
+const mockAttendanceSetting = { findOne: jest.fn() };
 
 jest.unstable_mockModule('../src/models/ShiftSchedule.js', () => ({ default: mockShiftSchedule }));
 jest.unstable_mockModule('../src/models/approval_request.js', () => ({ default: mockApprovalRequest }));
 jest.unstable_mockModule('../src/models/form_template.js', () => ({ default: mockFormTemplate }));
 jest.unstable_mockModule('../src/models/form_field.js', () => ({ default: mockFormField }));
+jest.unstable_mockModule('../src/models/AttendanceSetting.js', () => ({ default: mockAttendanceSetting }));
 
 const { createSchedule, createSchedulesBatch, updateSchedule } = await import('../src/controllers/scheduleController.js');
 

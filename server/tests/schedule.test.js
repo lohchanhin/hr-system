@@ -21,6 +21,7 @@ const mockFormTemplate = { findOne: jest.fn() };
 const mockFormField = { find: jest.fn() };
 
 const mockEmployee = { find: jest.fn() };
+const mockAttendanceSetting = { findOne: jest.fn() };
 
 /* --------------------------- jest.mock 設定區 --------------------------- */
 
@@ -30,6 +31,7 @@ jest.unstable_mockModule('../src/models/approval_request.js', () => ({ default: 
 jest.unstable_mockModule('../src/models/form_template.js', () => ({ default: mockFormTemplate }));
 jest.unstable_mockModule('../src/models/form_field.js', () => ({ default: mockFormField }));
 jest.unstable_mockModule('../src/models/Employee.js', () => ({ default: mockEmployee }));
+jest.unstable_mockModule('../src/models/AttendanceSetting.js', () => ({ default: mockAttendanceSetting }));
 
 // 驗證中介層直接放行
 jest.unstable_mockModule('../src/middleware/supervisor.js', () => ({ verifySupervisor: (req, res, next) => next() }));
@@ -61,23 +63,35 @@ beforeEach(() => {
     { _id: 't', label: '假別' },
   ]);
   mockEmployee.find.mockReset();
+  mockAttendanceSetting.findOne.mockReset();
+  mockAttendanceSetting.findOne.mockReturnValue({
+    lean: jest.fn().mockResolvedValue({
+      shifts: [{ _id: 's1', name: 'Morning' }]
+    })
+  });
 });
 
 /* --------------------------------- Tests -------------------------------- */
 describe('Schedule API', () => {
   it('lists schedules', async () => {
-    const fakeSchedules = [{ shiftId: 's1', code: 'A', startTime: '09:00', endTime: '18:00' }];
-    mockShiftSchedule.find.mockReturnValue({ populate: jest.fn().mockResolvedValue(fakeSchedules) });
+    const fakeSchedules = [{ shiftId: 's1', date: new Date('2023-01-01') }];
+    mockShiftSchedule.find.mockReturnValue({
+      populate: jest.fn().mockReturnThis(),
+      lean: jest.fn().mockResolvedValue(fakeSchedules)
+    });
 
     const res = await request(app).get('/api/schedules');
 
     expect(res.status).toBe(200);
-    expect(res.body).toEqual(fakeSchedules);
+    expect(res.body).toEqual([
+      { shiftId: 's1', date: '2023/01/01', shiftName: 'Morning' }
+    ]);
   });
 
   it('returns 500 if listing fails', async () => {
     mockShiftSchedule.find.mockReturnValue({
-      populate: jest.fn().mockRejectedValue(new Error('fail')),
+      populate: jest.fn().mockReturnThis(),
+      lean: jest.fn().mockRejectedValue(new Error('fail')),
     });
 
     const res = await request(app).get('/api/schedules');
@@ -137,14 +151,19 @@ describe('Schedule API', () => {
 
 
   it('lists schedules by month (with employee filter)', async () => {
-    const fake = [{ shiftId: 'night', code: 'N', startTime: '00:00', endTime: '08:00' }];
-    mockShiftSchedule.find.mockReturnValue({ populate: jest.fn().mockResolvedValue(fake) });
+    const fake = [{ shiftId: 's1', date: new Date('2023-01-02') }];
+    mockShiftSchedule.find.mockReturnValue({
+      populate: jest.fn().mockReturnThis(),
+      lean: jest.fn().mockResolvedValue(fake)
+    });
 
     const res = await request(app).get('/api/schedules/monthly?month=2023-01&employee=e1');
 
     expect(res.status).toBe(200);
     expect(mockShiftSchedule.find).toHaveBeenCalled();
-    expect(res.body).toEqual(fake);
+    expect(res.body).toEqual([
+      { shiftId: 's1', date: '2023/01/02', shiftName: 'Morning' }
+    ]);
   });
 
 
