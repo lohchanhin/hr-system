@@ -155,10 +155,14 @@ export async function inboxApprovals(req, res) {
   try {
     const empId = req.query.employee_id || req.user?.id
     // 找出目前關卡包含我，且我的 decision 是 pending 的
+    // 使用 $elemMatch 確保 approver 與 decision 位於同一子文件
     const list = await ApprovalRequest.find({
       status: 'pending',
-      'steps.approvers.approver': empId,
-      'steps.approvers.decision': 'pending',
+      steps: {
+        $elemMatch: {
+          approvers: { $elemMatch: { approver: empId, decision: 'pending' } },
+        },
+      },
     }).populate('form', 'name category')
     // 仍以程式邏輯判斷是否為當前關卡：
     const mine = list.filter(doc => {
