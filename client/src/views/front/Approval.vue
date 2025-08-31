@@ -694,9 +694,13 @@ async function openDetail(id) {
     detail.doc = data
     detail.visible = true
     // 補快取人名
-    (detail.doc.steps || []).forEach(s => s.approvers.forEach(a => {
-      if (a.approver?._id && a.approver?.name) employeeNameCache[a.approver._id] = a.approver.name
-    }))
+    const steps = Array.isArray(detail.doc.steps) ? detail.doc.steps : []
+    steps.forEach(s => {
+      const approvers = Array.isArray(s.approvers) ? s.approvers : []
+      approvers.forEach(a => {
+        if (a.approver?._id && a.approver?.name) employeeNameCache[a.approver._id] = a.approver.name
+      })
+    })
   }
 }
 
