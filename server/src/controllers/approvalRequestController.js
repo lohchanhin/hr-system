@@ -1,6 +1,7 @@
 import ApprovalWorkflow from '../models/approval_workflow.js'
 import ApprovalRequest from '../models/approval_request.js'
 import FormTemplate from '../models/form_template.js'
+import FormField from '../models/form_field.js'
 import Employee from '../models/Employee.js'
 
 /* 依流程步驟解析「此關簽核人」 */
@@ -129,7 +130,10 @@ export async function getApprovalRequest(req, res) {
       .populate('applicant_employee', 'name employeeId department organization')
       .populate('steps.approvers.approver', 'name employeeId')
     if (!doc) return res.status(404).json({ error: 'not found' })
-    res.json(doc)
+    const fields = await FormField.find({ form: doc.form._id }).sort({ order: 1 })
+    const result = doc.toObject()
+    result.form.fields = fields
+    res.json(result)
   } catch (e) {
     res.status(400).json({ error: e.message })
   }
