@@ -1,0 +1,1 @@
+import{A as o,r as s}from"./index-umFJ41UP.js";import{a as r}from"./api-B8tfGK9d.js";const c=o("menu",()=>{const t=s([]);async function n(){const e=await r("/api/menu");e.ok&&(t.value=await e.json())}function a(e){t.value=e}return{items:t,fetchMenu:n,setMenu:a}});export{c as u};
