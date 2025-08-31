@@ -49,8 +49,9 @@ export async function listMonthlySchedules(req, res) {
       const emps = await Employee.find({ supervisor }).select('_id');
       const ids = emps.map((e) => e._id.toString());
       query.employee = { $in: ids };
-    } else if (employee) {
-      query.employee = employee;
+    } else {
+      const empId = employee || (req.user?.role === 'employee' ? req.user.id : undefined);
+      if (empId) query.employee = empId;
     }
 
     const schedules = await ShiftSchedule.find(query).populate('employee');
