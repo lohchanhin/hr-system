@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { shallowMount } from '@vue/test-utils'
-import dayjs from 'dayjs'
 import { apiFetch } from '../src/api'
 
 vi.mock('../src/api', () => ({ apiFetch: vi.fn() }))
@@ -18,25 +17,33 @@ describe('MySchedule.vue', () => {
     return new Promise(resolve => setTimeout(resolve))
   }
 
-  it('fetches schedules with shift names and formatted dates', async () => {
+  it('uses selected month when loading schedules', async () => {
     const token = `h.${btoa(JSON.stringify({ id: 'emp1', role: 'employee' }))}.s`
     localStorage.setItem('token', token)
     apiFetch
-      .mockResolvedValueOnce({ ok: true, json: async () => [{ _id: '1', name: '早班' }] })
-      .mockResolvedValueOnce({ ok: true, json: async () => [{ date: '2023-01-01', shiftId: '1' }] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
 
     const wrapper = shallowMount(MySchedule, {
       global: {
         stubs: {
           'el-table': { template: '<div><slot></slot></div>' },
-          'el-table-column': true
+          'el-table-column': true,
+          'el-date-picker': true
         }
       }
     })
     await flush()
+    apiFetch.mockReset()
+    apiFetch
+      .mockResolvedValueOnce({ ok: true, json: async () => [{ _id: '1', name: '早班' }] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [{ date: '2023-02-01', shiftId: '1' }] })
+    wrapper.vm.selectedMonth = '2023-02'
+    await flush()
+    await flush()
     expect(apiFetch).toHaveBeenNthCalledWith(1, '/api/attendance-settings')
-    expect(apiFetch).toHaveBeenNthCalledWith(2, `/api/schedules/monthly?month=${dayjs().format('YYYY-MM')}&employee=emp1`)
+    expect(apiFetch).toHaveBeenNthCalledWith(2, '/api/schedules/monthly?month=2023-02&employee=emp1')
     expect(wrapper.vm.schedules[0].shiftName).toBe('早班')
-    expect(wrapper.vm.schedules[0].date).toBe('2023/01/01')
+    expect(wrapper.vm.schedules[0].date).toBe('2023/02/01')
   })
 })
