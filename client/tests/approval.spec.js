@@ -72,4 +72,29 @@ describe('Approval.vue', () => {
     window.fetch.mockRestore()
     alertSpy.mockRestore()
   })
+
+  it('shows detail dialog after viewing', async () => {
+    const doc = {
+      _id: 'a1',
+      form: { name: '請假單', category: '請假', fields: [{ _id: 'f1', label: '事由' }] },
+      applicant_employee: { name: 'Bob' },
+      status: 'pending',
+      form_data: { f1: '測試' },
+      steps: []
+    }
+    vi.spyOn(window, 'fetch').mockImplementation((url) => {
+      if (url.includes('/api/approvals/a1')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve(doc) })
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve([]) })
+    })
+    const wrapper = shallowMount(Approval, { global: { stubs } })
+    await flushPromises()
+    await wrapper.vm.openDetail('a1')
+    await flushPromises()
+    expect(wrapper.vm.detail.visible).toBe(true)
+    expect(wrapper.html()).toContain('事由')
+    expect(wrapper.html()).toContain('測試')
+    window.fetch.mockRestore()
+  })
 })
