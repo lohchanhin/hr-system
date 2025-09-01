@@ -154,7 +154,12 @@
               class="modern-schedule-cell"
               :class="[
                 shiftClass(scheduleMap[row._id]?.[d.date]?.shiftId),
-                { 'has-leave': scheduleMap[row._id]?.[d.date]?.leave }
+                {
+                  'has-leave': scheduleMap[row._id]?.[d.date]?.leave,
+                  'missing-shift':
+                    !scheduleMap[row._id]?.[d.date]?.shiftId &&
+                    !scheduleMap[row._id]?.[d.date]?.leave
+                }
               ]"
             >
               <template v-if="scheduleMap[row._id]?.[d.date]">
@@ -240,6 +245,15 @@
                     </template>
                   </el-popover>
                 </template>
+                <div
+                  v-if="
+                    !scheduleMap[row._id][d.date].shiftId &&
+                    !scheduleMap[row._id][d.date].leave
+                  "
+                  class="missing-label"
+                >
+                  未排班
+                </div>
               </template>
               <span v-else class="empty-cell">-</span>
             </div>
@@ -487,6 +501,13 @@ async function fetchSchedules() {
 }
 
 async function saveAll() {
+  const hasMissing = Object.values(scheduleMap.value).some(days =>
+    Object.values(days).some(it => !it.shiftId && !it.leave)
+  )
+  if (hasMissing) {
+    ElMessage.warning('尚有未排班項目，請確認後再儲存')
+    return
+  }
   const schedules = []
   Object.keys(scheduleMap.value).forEach(empId => {
     Object.keys(scheduleMap.value[empId]).forEach(day => {
@@ -1065,6 +1086,24 @@ onMounted(async () => {
   background: #fef9c3;
   padding: 2px 6px;
   border-radius: 4px;
+}
+
+.missing-shift {
+  background: #fee2e2;
+}
+
+.missing-label {
+  color: #b91c1c;
+  font-size: 0.75rem;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  &::before {
+    content: '⚠';
+    margin-right: 4px;
+  }
 }
 
 .empty-cell {
