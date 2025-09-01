@@ -9,15 +9,18 @@ import {
   listMonthlySchedules,
   createSchedulesBatch,
   deleteOldSchedules,
-  listLeaveApprovals
+  listLeaveApprovals,
+  listSupervisorSummary
 } from '../controllers/scheduleController.js';
 import { verifySupervisor } from '../middleware/supervisor.js';
+import { authenticate, authorizeRoles } from '../middleware/auth.js';
 
 const router = Router();
 
 router.get('/', listSchedules);
 router.get('/monthly', listMonthlySchedules);
 router.get('/leave-approvals', listLeaveApprovals);
+router.get('/summary', authenticate, authorizeRoles('supervisor'), listSupervisorSummary);
 router.get('/export', exportSchedules);
 router.post('/batch', verifySupervisor, createSchedulesBatch);
 router.post('/', verifySupervisor, createSchedule);

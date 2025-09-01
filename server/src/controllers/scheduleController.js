@@ -125,6 +125,60 @@ export async function listLeaveApprovals(req, res) {
   }
 }
 
+export async function listSupervisorSummary(req, res) {
+  try {
+    const { month } = req.query;
+    const supervisor = req.user?.id;
+    if (!month) return res.status(400).json({ error: 'month required' });
+    if (!supervisor) return res.status(400).json({ error: 'supervisor required' });
+
+    const start = new Date(`${month}-01`);
+    const end = new Date(start);
+    end.setMonth(end.getMonth() + 1);
+
+    const employees = await Employee.find({ supervisor })
+      .select('_id name')
+      .lean();
+    const ids = employees.map((e) => e._id.toString());
+    const summaryMap = {};
+    employees.forEach((e) => {
+      summaryMap[e._id.toString()] = {
+        employee: e._id.toString(),
+        name: e.name,
+        shiftCount: 0,
+        leaveCount: 0,
+        absenceCount: 0,
+      };
+    });
+
+    if (!ids.length) return res.json([]);
+
+    const setting = await AttendanceSetting.findOne().lean();
+    const shiftMap = {};
+    setting?.shifts?.forEach((s) => {
+      shiftMap[s._id.toString()] = s.name;
+    });
+
+    const schedules = await ShiftSchedule.find({
+      employee: { $in: ids },
+      date: { $gte: start, $lt: end },
+    }).lean();
+
+    schedules.forEach((s) => {
+      const name = shiftMap[s.shiftId?.toString()] || '';
+      const sum = summaryMap[s.employee.toString()];
+      if (!sum) return;
+      if (name.includes('假')) sum.leaveCount += 1;
+      else if (name.includes('缺')) sum.absenceCount += 1;
+      else sum.shiftCount += 1;
+    });
+
+    res.json(Object.values(summaryMap));
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+}
+
 export async function createSchedulesBatch(req, res) {
   try {
     const { schedules } = req.body;
