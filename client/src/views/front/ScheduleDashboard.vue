@@ -28,15 +28,17 @@ const metrics = computed(() => [
 <style scoped>
 .dashboard {
   display: flex;
+  flex-wrap: wrap;
   gap: 16px;
   margin: 24px 0;
 }
 .metric-card {
-  flex: 1;
+  width: 200px;
+  padding: 12px;
   text-align: center;
 }
 .metric-icon {
-  font-size: 24px;
+  font-size: 16px;
   margin-bottom: 4px;
 }
 .metric-label {
