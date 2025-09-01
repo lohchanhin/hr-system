@@ -300,6 +300,25 @@ describe('Schedule.vue', () => {
     expect(cols[2].attributes('data-label')).toMatch(/^1\(.\)$/)
   })
 
+  it('displays leave label when leave data exists', async () => {
+    apiFetch
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ approvals: [], leaves: [] }) })
+    const wrapper = mountSchedule()
+    await flush()
+    wrapper.vm.employees = [
+      { _id: undefined, name: 'E1', department: '', subDepartment: '' }
+    ]
+    wrapper.vm.scheduleMap = { undefined: { 1: { leave: {} } } }
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('.leave-indicator').text()).toBe('請假中')
+  })
+
   it('maps department ids to names', async () => {
     apiFetch
       .mockResolvedValueOnce({ ok: true, json: async () => [] })
