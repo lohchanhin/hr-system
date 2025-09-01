@@ -91,6 +91,10 @@ export async function seedTestUsers() {
     { username: 'salesManager', password: 'password', role: 'supervisor', signTags: ['業務負責人'] },
     { username: 'hr', password: 'password', role: 'admin', signTags: ['人資'] }
   ];
+  const org = await Organization.findOne({ name: '示範機構' });
+  const dept = await Department.findOne({ name: '人力資源部' });
+  const subDept = await SubDepartment.findOne({ name: '招聘組' });
+
   let supervisorId = null;
   for (const data of users) {
     const existing = await Employee.findOne({ username: data.username });
@@ -101,9 +105,9 @@ export async function seedTestUsers() {
         username: data.username,
         password: data.password,
         role: data.role,
-        organization: '示範機構',
-        department: '人力資源部',
-        subDepartment: '招聘組',
+        organization: org?._id.toString(),
+        department: dept?._id,
+        subDepartment: subDept?._id,
         title: 'Staff',
         status: '正職員工',
         signTags: data.signTags ?? []
