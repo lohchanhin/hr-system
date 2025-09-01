@@ -7,7 +7,7 @@ test('seed script loads env from server/.env', async () => {
 
   await jest.unstable_mockModule('dotenv', () => ({ default: { config: configMock } }));
   await jest.unstable_mockModule('../src/config/db.js', () => ({ connectDB: jest.fn() }));
-  await jest.unstable_mockModule('../src/index.js', () => ({
+  await jest.unstable_mockModule('../src/seedUtils.js', () => ({
     seedSampleData: jest.fn(),
     seedTestUsers: jest.fn(),
     seedApprovalTemplates: jest.fn()

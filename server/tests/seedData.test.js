@@ -17,7 +17,7 @@ beforeAll(async () => {
   await jest.unstable_mockModule('../src/models/Department.js', () => ({ default: mockDept }));
   await jest.unstable_mockModule('../src/models/SubDepartment.js', () => ({ default: mockSubDept }));
   await jest.unstable_mockModule('../src/models/Employee.js', () => ({ default: mockEmployee }));
-  const mod = await import('../src/index.js');
+  const mod = await import('../src/seedUtils.js');
   seedSampleData = mod.seedSampleData;
   seedTestUsers = mod.seedTestUsers;
 });

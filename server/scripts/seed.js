@@ -9,7 +9,7 @@ const __dirname = path.dirname(__filename);
 
 dotenv.config({ path: path.resolve(__dirname, '../.env') });
 
-const { seedSampleData, seedTestUsers, seedApprovalTemplates } = await import('../src/index.js');
+const { seedSampleData, seedTestUsers, seedApprovalTemplates } = await import('../src/seedUtils.js');
 
 if (!process.env.MONGODB_URI) {
   console.error('MONGODB_URI is not defined in the environment');
