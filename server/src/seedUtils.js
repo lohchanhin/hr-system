@@ -52,6 +52,14 @@ export async function seedSampleData() {
 }
 
 export async function seedTestUsers() {
+  const org = await Organization.findOne({ name: '示範機構' });
+  const dept = await Department.findOne({ code: 'HR' });
+  const subDept = await SubDepartment.findOne({ code: 'HR1' });
+
+  if (!org) throw new Error('Organization not found');
+  if (!dept) throw new Error('Department not found');
+  if (!subDept) throw new Error('SubDepartment not found');
+
   const users = [
     { username: 'user', password: 'password', role: 'employee' },
     { username: 'supervisor', password: 'password', role: 'supervisor' },
@@ -72,9 +80,9 @@ export async function seedTestUsers() {
         username: data.username,
         password: data.password,
         role: data.role,
-        organization: '示範機構',
-        department: '人力資源部',
-        subDepartment: '招聘組',
+        organization: org._id.toString(),
+        department: dept._id,
+        subDepartment: subDept._id,
         title: 'Staff',
         status: '正職員工',
         signTags: data.signTags ?? []
