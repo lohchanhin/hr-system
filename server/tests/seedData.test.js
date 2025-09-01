@@ -3,7 +3,21 @@ import { jest } from '@jest/globals';
 const mockOrg = { findOne: jest.fn(), create: jest.fn() };
 const mockDept = { findOne: jest.fn(), create: jest.fn() };
 const mockSubDept = { findOne: jest.fn(), create: jest.fn() };
-const mockEmployee = { findOne: jest.fn(), create: jest.fn(), updateMany: jest.fn() };
+
+const mockEmployees = [];
+const mockEmployee = {
+  findOne: jest.fn(async ({ username }) => mockEmployees.find((e) => e.username === username) || null),
+  create: jest.fn(async (data) => {
+    const emp = { _id: data.username, ...data };
+    mockEmployees.push(emp);
+    return emp;
+  }),
+  updateMany: jest.fn(async (filter, update) => {
+    mockEmployees.forEach((e) => {
+      if (e.role === filter.role) e.supervisor = update.supervisor;
+    });
+  }),
+};
 
 let seedSampleData;
 let seedTestUsers;
@@ -26,7 +40,8 @@ beforeEach(() => {
   Object.values(mockOrg).forEach((fn) => fn.mockReset && fn.mockReset());
   Object.values(mockDept).forEach((fn) => fn.mockReset && fn.mockReset());
   Object.values(mockSubDept).forEach((fn) => fn.mockReset && fn.mockReset());
-  Object.values(mockEmployee).forEach((fn) => fn.mockReset && fn.mockReset());
+  Object.values(mockEmployee).forEach((fn) => fn.mockClear());
+  mockEmployees.length = 0;
 });
 
 describe('seedSampleData', () => {
@@ -50,8 +65,6 @@ describe('seedTestUsers', () => {
     mockOrg.findOne.mockResolvedValue({ _id: orgId });
     mockDept.findOne.mockResolvedValue({ _id: 'dept1' });
     mockSubDept.findOne.mockResolvedValue({ _id: 'sub1' });
-    mockEmployee.findOne.mockResolvedValue(null);
-    mockEmployee.create.mockImplementation(async (data) => ({ _id: data.username, ...data }));
     await seedTestUsers();
     expect(mockOrg.findOne).toHaveBeenCalledWith({ name: '示範機構' });
     expect(mockDept.findOne).toHaveBeenCalledWith({ code: 'HR' });
@@ -65,14 +78,15 @@ describe('seedTestUsers', () => {
       subDepartment: 'sub1'
     }));
     expect(mockEmployee.create).toHaveBeenCalledWith(expect.objectContaining({ username: 'hr', signTags: ['人資'] }));
-    expect(mockEmployee.updateMany).toHaveBeenCalledWith({ role: 'employee' }, { supervisor: 'salesManager' });
+    expect(mockEmployee.updateMany).toHaveBeenCalledWith({ role: 'employee' }, { supervisor: 'supervisor' });
+    const user = mockEmployees.find((e) => e.username === 'user');
+    expect(user.supervisor).toBe('supervisor');
   });
 
   it('throws when required data is missing', async () => {
     mockOrg.findOne.mockResolvedValue(null);
     mockDept.findOne.mockResolvedValue({ _id: 'dept1' });
     mockSubDept.findOne.mockResolvedValue({ _id: 'sub1' });
-    mockEmployee.findOne.mockResolvedValue(null);
     await expect(seedTestUsers()).rejects.toThrow('Organization not found');
     expect(mockEmployee.create).not.toHaveBeenCalled();
   });
