@@ -46,12 +46,24 @@ describe('seedSampleData', () => {
 
 describe('seedTestUsers', () => {
   it('creates test users and assigns supervisor', async () => {
+    mockOrg.findOne.mockResolvedValue({ _id: 'org1' });
+    mockDept.findOne.mockResolvedValue({ _id: 'dept1' });
+    mockSubDept.findOne.mockResolvedValue({ _id: 'sub1' });
     mockEmployee.findOne.mockResolvedValue(null);
     mockEmployee.create.mockImplementation(async (data) => ({ _id: data.username, ...data }));
     await seedTestUsers();
     expect(mockEmployee.create).toHaveBeenCalledTimes(8);
-    expect(mockEmployee.create).toHaveBeenCalledWith(expect.objectContaining({ username: 'scheduler', signTags: ['排班負責人'] }));
-    expect(mockEmployee.create).toHaveBeenCalledWith(expect.objectContaining({ username: 'hr', signTags: ['人資'] }));
+    mockEmployee.create.mock.calls.forEach(([data]) => {
+      expect(data).toEqual(
+        expect.objectContaining({ organization: 'org1', department: 'dept1', subDepartment: 'sub1' })
+      );
+    });
+    expect(mockEmployee.create).toHaveBeenCalledWith(
+      expect.objectContaining({ username: 'scheduler', signTags: ['排班負責人'] })
+    );
+    expect(mockEmployee.create).toHaveBeenCalledWith(
+      expect.objectContaining({ username: 'hr', signTags: ['人資'] })
+    );
     expect(mockEmployee.updateMany).toHaveBeenCalledWith({ role: 'employee' }, { supervisor: 'salesManager' });
   });
 });
