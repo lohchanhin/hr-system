@@ -19,7 +19,7 @@ beforeAll(async () => {
   await jest.unstable_mockModule('../src/models/form_field.js', () => ({ default: { findOne: mockFieldFindOne, create: mockFieldCreate } }));
   await jest.unstable_mockModule('../src/models/approval_workflow.js', () => ({ default: { findOne: mockWorkflowFindOne, create: mockWorkflowCreate } }));
 
-  const mod = await import('../src/index.js');
+  const mod = await import('../src/seedUtils.js');
   seedApprovalTemplates = mod.seedApprovalTemplates;
 });
 
