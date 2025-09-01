@@ -210,6 +210,42 @@ describe('Schedule.vue', () => {
     expect(wrapper.vm.filteredEmployees[0].name).toBe('Alice')
   })
 
+  it('filters employees by status', async () => {
+    apiFetch.mockResolvedValue({ ok: true, json: async () => [] })
+    const wrapper = mountSchedule()
+    await flush()
+    wrapper.vm.employees = [
+      { _id: 'e1', name: 'A', department: '', subDepartment: '' },
+      { _id: 'e2', name: 'B', department: '', subDepartment: '' }
+    ]
+    wrapper.vm.scheduleMap = {
+      e1: { 1: { shiftId: '', department: '', subDepartment: '' } },
+      e2: { 1: { shiftId: 's1', department: '', subDepartment: '', leave: {} } }
+    }
+    wrapper.vm.statusFilter = 'unscheduled'
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.filteredEmployees.map(e => e._id)).toEqual(['e1'])
+    wrapper.vm.statusFilter = 'onLeave'
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.filteredEmployees.map(e => e._id)).toEqual(['e2'])
+  })
+
+  it('toggles row expansion in lazy mode', async () => {
+    apiFetch.mockResolvedValue({ ok: true, json: async () => [] })
+    const wrapper = mountSchedule()
+    await flush()
+    wrapper.vm.employees = Array.from({ length: 51 }, (_, i) => ({
+      _id: 'e' + i,
+      name: 'E' + i,
+      department: '',
+      subDepartment: ''
+    }))
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.lazyMode).toBe(true)
+    wrapper.vm.toggleRow('e1')
+    expect(wrapper.vm.expandedRows.has('e1')).toBe(true)
+  })
+
   it('reverts change when update fails', async () => {
     apiFetch
       .mockResolvedValueOnce({ ok: true, json: async () => [] })

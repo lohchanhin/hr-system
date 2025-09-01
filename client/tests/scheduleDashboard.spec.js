@@ -16,5 +16,6 @@ describe('ScheduleDashboard.vue', () => {
     expect(wrapper.text()).toContain('1')
     expect(wrapper.text()).toContain('請假中員工')
     expect(wrapper.text()).toContain('2')
+    expect(wrapper.findAll('.metric-icon').length).toBe(3)
   })
 })
