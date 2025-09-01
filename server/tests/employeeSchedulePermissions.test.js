@@ -28,7 +28,8 @@ jest.unstable_mockModule('../src/controllers/scheduleController.js', () => ({
   listMonthlySchedules: jest.fn(),
   createSchedulesBatch: jest.fn(),
   deleteOldSchedules: jest.fn(),
-  listLeaveApprovals: jest.fn()
+  listLeaveApprovals: jest.fn(),
+  listSupervisorSummary: jest.fn()
 }));
 
 let app;
