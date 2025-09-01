@@ -5,7 +5,9 @@
       <h1 class="page-title">排班管理</h1>
       <p class="page-subtitle">管理員工排班與班表預覽</p>
     </div>
-    
+
+    <ScheduleDashboard :summary="summary" />
+
     <!-- Enhanced filters section with card design -->
     <div class="filters-card">
       <div class="filters-header">
@@ -14,10 +16,10 @@
       <div class="filters-content">
         <div class="filter-group">
           <label class="filter-label">選擇月份</label>
-          <el-date-picker 
-            v-model="currentMonth" 
-            type="month" 
-            @change="fetchSchedules"
+          <el-date-picker
+            v-model="currentMonth"
+            type="month"
+            @change="onMonthChange"
             class="modern-date-picker"
           />
         </div>
@@ -94,11 +96,17 @@
           <span class="legend-item normal">正常班</span>
           <span class="legend-item leave">請假</span>
         </div>
+        <el-input
+          v-model="employeeSearch"
+          placeholder="搜尋員工"
+          clearable
+          class="employee-search"
+        />
       </div>
-      
-      <el-table 
-        class="modern-schedule-table" 
-        :data="employees" 
+
+      <el-table
+        class="modern-schedule-table"
+        :data="filteredEmployees"
         :header-cell-style="{ backgroundColor: '#ecfeff', color: '#164e63', fontWeight: '600' }"
         :row-style="{ backgroundColor: '#ffffff' }"
       >
@@ -258,6 +266,7 @@ import { apiFetch } from '../../api'
 import { useAuthStore } from '../../stores/auth'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRouter } from 'vue-router'
+import ScheduleDashboard from './ScheduleDashboard.vue'
 
 const currentMonth = ref(dayjs().format('YYYY-MM'))
 const scheduleMap = ref({})
@@ -268,6 +277,14 @@ const departments = ref([])
 const subDepartments = ref([])
 const selectedDepartment = ref('')
 const selectedSubDepartment = ref('')
+const summary = ref({ direct: 0, unscheduled: 0, onLeave: 0 })
+const employeeSearch = ref('')
+
+const filteredEmployees = computed(() =>
+  employeeSearch.value
+    ? employees.value.filter(e => e.name.includes(employeeSearch.value))
+    : employees.value
+)
 
 const filteredSubDepartments = computed(() =>
   subDepartments.value.filter(s => s.department === selectedDepartment.value)
@@ -625,7 +642,29 @@ async function fetchEmployees(department = '', subDepartment = '') {
   }
 }
 
+async function fetchSummary() {
+  try {
+    const res = await apiFetch(`/api/schedules/summary?month=${currentMonth.value}`)
+    if (res.ok) {
+      const data = await res.json()
+      summary.value = {
+        direct: data.length,
+        unscheduled: data.filter(e => e.shiftCount === 0).length,
+        onLeave: data.filter(e => e.leaveCount > 0).length
+      }
+    }
+  } catch (err) {
+    console.error(err)
+  }
+}
+
+async function onMonthChange() {
+  await fetchSchedules()
+  await fetchSummary()
+}
+
 onMounted(async () => {
+  await fetchSummary()
   await fetchShiftOptions()
   await fetchOptions()
   await fetchEmployees(selectedDepartment.value, selectedSubDepartment.value)
@@ -832,6 +871,10 @@ onMounted(async () => {
           color: #d97706;
         }
       }
+    }
+
+    .employee-search {
+      max-width: 200px;
     }
   }
 }

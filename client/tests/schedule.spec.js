@@ -37,7 +37,9 @@ describe('Schedule.vue', () => {
             template: '<div class="col" :data-label="label"><slot :row="{}"></slot></div>'
           },
           'el-select': true,
-          'el-option': true
+          'el-option': true,
+          'el-input': true,
+          ScheduleDashboard: { template: '<div class="dashboard-stub"></div>', props: ['summary'] }
         }
       }
     })
@@ -56,11 +58,12 @@ describe('Schedule.vue', () => {
       .mockResolvedValueOnce({ ok: true, json: async () => [] })
       .mockResolvedValueOnce({ ok: true, json: async () => [] })
       .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
       .mockResolvedValueOnce({ ok: true, json: async () => ({ approvals: [], leaves: [] }) })
     mountSchedule()
     await flush()
-    expect(apiFetch.mock.calls[3][0]).toBe('/api/employees?supervisor=sup1')
-    expect(apiFetch.mock.calls[4][0]).toBe(`/api/schedules/monthly?month=${month}&supervisor=sup1`)
+    expect(apiFetch.mock.calls[4][0]).toBe('/api/employees?supervisor=sup1')
+    expect(apiFetch.mock.calls[5][0]).toBe(`/api/schedules/monthly?month=${month}&supervisor=sup1`)
   })
 
   it('omits supervisor param when id missing', async () => {
@@ -71,15 +74,40 @@ describe('Schedule.vue', () => {
       .mockResolvedValueOnce({ ok: true, json: async () => [] })
       .mockResolvedValueOnce({ ok: true, json: async () => [] })
       .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
       .mockResolvedValueOnce({ ok: true, json: async () => ({ approvals: [], leaves: [] }) })
     mountSchedule()
     await flush()
-    expect(apiFetch.mock.calls[3][0]).toBe('/api/employees')
-    expect(apiFetch.mock.calls[4][0]).toBe(`/api/schedules/monthly?month=${month}`)
+    expect(apiFetch.mock.calls[4][0]).toBe('/api/employees')
+    expect(apiFetch.mock.calls[5][0]).toBe(`/api/schedules/monthly?month=${month}`)
+  })
+
+  it('fetches summary and passes to dashboard', async () => {
+    const month = dayjs().format('YYYY-MM')
+    apiFetch
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => [
+          { shiftCount: 1, leaveCount: 0 },
+          { shiftCount: 0, leaveCount: 1 }
+        ]
+      })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ approvals: [], leaves: [] }) })
+    const wrapper = mountSchedule()
+    await flush()
+    expect(apiFetch).toHaveBeenCalledWith(`/api/schedules/summary?month=${month}`)
+    const dash = wrapper.findComponent({ name: 'ScheduleDashboard' })
+    expect(dash.props('summary')).toEqual({ direct: 2, unscheduled: 1, onLeave: 1 })
   })
 
   it('loads shift options when API returns array directly', async () => {
     apiFetch
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
       .mockResolvedValueOnce({ ok: true, json: async () => [{ _id: 's1', code: 'S1', startTime: '08:00', endTime: '17:00', remark: 'R' }] })
       .mockResolvedValueOnce({ ok: true, json: async () => [{ _id: '1F', name: '1F' }] })
       .mockResolvedValueOnce({ ok: true, json: async () => [{ _id: 'HR', name: 'HR', department: '1F' }] })
@@ -93,6 +121,7 @@ describe('Schedule.vue', () => {
 
   it('loads shift options when API returns object with shifts', async () => {
     apiFetch
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
       .mockResolvedValueOnce({ ok: true, json: async () => ({ shifts: [{ _id: 's1', code: 'S1', startTime: '08:00', endTime: '17:00', remark: 'R' }] }) })
       .mockResolvedValueOnce({ ok: true, json: async () => [{ _id: '1F', name: '1F' }] })
       .mockResolvedValueOnce({ ok: true, json: async () => [{ _id: 'HR', name: 'HR', department: '1F' }] })
@@ -106,6 +135,7 @@ describe('Schedule.vue', () => {
 
   it('filters subDepartments by department id', async () => {
     apiFetch
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
       .mockResolvedValueOnce({ ok: true, json: async () => [] })
       .mockResolvedValueOnce({ ok: true, json: async () => [{ _id: 'd1', name: 'Dept A' }] })
       .mockResolvedValueOnce({
@@ -131,6 +161,7 @@ describe('Schedule.vue', () => {
   it('fetches sub-departments when department changes', async () => {
     apiFetch
       .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
       .mockResolvedValueOnce({ ok: true, json: async () => [{ _id: 'd1', name: 'Dept A' }] })
       .mockResolvedValueOnce({ ok: true, json: async () => [] })
       .mockResolvedValueOnce({ ok: true, json: async () => [{ _id: 'e1', name: 'E1', department: '', subDepartment: '' }] })
@@ -154,6 +185,29 @@ describe('Schedule.vue', () => {
     expect(wrapper.vm.subDepartments).toEqual([
       { _id: 'sd1', name: 'Sub A', department: 'd1' }
     ])
+  })
+
+  it('filters employees by name', async () => {
+    apiFetch
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => [
+          { _id: 'e1', name: 'Alice', department: '', subDepartment: '' },
+          { _id: 'e2', name: 'Bob', department: '', subDepartment: '' }
+        ]
+      })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ approvals: [], leaves: [] }) })
+    const wrapper = mountSchedule()
+    await flush()
+    wrapper.vm.employeeSearch = 'Ali'
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.filteredEmployees.length).toBe(1)
+    expect(wrapper.vm.filteredEmployees[0].name).toBe('Alice')
   })
 
   it('reverts change when update fails', async () => {
@@ -236,6 +290,7 @@ describe('Schedule.vue', () => {
     const month = dayjs().format('YYYY-MM')
     apiFetch
       .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
       .mockResolvedValueOnce({ ok: true, json: async () => [{ _id: 'd1', name: 'Dept A' }] })
       .mockResolvedValueOnce({ ok: true, json: async () => [{ _id: 'sd1', name: 'Sub A', department: 'd1' }] })
       .mockResolvedValueOnce({ ok: true, json: async () => [{ _id: 'e1', name: 'E1', department: 'd1', subDepartment: 'sd1' }] })
@@ -264,13 +319,13 @@ describe('Schedule.vue', () => {
     wrapper.vm.scheduleMap = { e1: { 1: { shiftId: '', department: 'd1', subDepartment: 'sd1' } } }
     await wrapper.vm.onSelect('e1', 1, 's1')
 
-    expect(apiFetch).toHaveBeenNthCalledWith(4, `/api/employees?supervisor=s1&subDepartment=sd1`)
+    expect(apiFetch).toHaveBeenNthCalledWith(5, `/api/employees?supervisor=s1&subDepartment=sd1`)
     expect(apiFetch).toHaveBeenNthCalledWith(
-      8,
+      9,
       `/api/employees?supervisor=s1&department=d1`
     )
     expect(apiFetch).toHaveBeenNthCalledWith(
-      11,
+      12,
       `/api/employees?supervisor=s1&department=d1&subDepartment=sd1`
     )
     expect(apiFetch).toHaveBeenLastCalledWith(
@@ -291,6 +346,7 @@ describe('Schedule.vue', () => {
   it('saves all schedules with selected department', async () => {
     const month = dayjs().format('YYYY-MM')
     apiFetch
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
       .mockResolvedValueOnce({ ok: true, json: async () => [] })
       .mockResolvedValueOnce({ ok: true, json: async () => [{ _id: 'd1', name: 'Dept A' }] })
       .mockResolvedValueOnce({ ok: true, json: async () => [{ _id: 'sd1', name: 'Sub A', department: 'd1' }] })
@@ -330,6 +386,7 @@ describe('Schedule.vue', () => {
       .mockResolvedValueOnce({ ok: true, json: async () => [] })
       .mockResolvedValueOnce({ ok: true, json: async () => [] })
       .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
       .mockResolvedValueOnce({ ok: true, json: async () => [{ _id: 'e1', name: 'E1', department: 'd1', subDepartment: 'sd1' }] })
       .mockResolvedValueOnce({ ok: true, json: async () => [] })
       .mockResolvedValueOnce({ ok: true, json: async () => ({ approvals: [], leaves: [] }) })
@@ -347,6 +404,7 @@ describe('Schedule.vue', () => {
 
   it('exports pdf and triggers download', async () => {
     apiFetch
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
       .mockResolvedValueOnce({ ok: true, json: async () => [] })
       .mockResolvedValueOnce({ ok: true, json: async () => [] })
       .mockResolvedValueOnce({ ok: true, json: async () => [] })
