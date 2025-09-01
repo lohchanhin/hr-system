@@ -154,7 +154,10 @@
               class="modern-schedule-cell"
               :class="[
                 shiftClass(scheduleMap[row._id]?.[d.date]?.shiftId),
-                { 'has-leave': scheduleMap[row._id]?.[d.date]?.leave }
+                {
+                  'has-leave': scheduleMap[row._id]?.[d.date]?.leave,
+                  unscheduled: isUnscheduled(row._id, d.date)
+                }
               ]"
             >
               <template v-if="scheduleMap[row._id]?.[d.date]">
@@ -233,6 +236,10 @@
                 <div v-if="scheduleMap[row._id][d.date].leave" class="leave-indicator">
                   <i class="el-icon-warning-outline"></i>
                   <span>請假</span>
+                </div>
+                <div v-if="isUnscheduled(row._id, d.date)" class="unscheduled-indicator">
+                  <component :is="CircleCloseFilled" />
+                  <span>未排班</span>
                 </div>
               </template>
               <span v-else class="empty-cell">-</span>
@@ -327,6 +334,21 @@ const lazyMode = computed(() => employees.value.length > 50)
 const toggleRow = id => {
   if (expandedRows.value.has(id)) expandedRows.value.delete(id)
   else expandedRows.value.add(id)
+}
+
+const isUnscheduled = (empId, day) => {
+  const item = scheduleMap.value[empId]?.[day]
+  return item && !item.shiftId && !item.leave
+}
+
+const hasUnscheduled = () => {
+  return Object.keys(scheduleMap.value).some(empId =>
+    Object.keys(scheduleMap.value[empId] || {}).some(day => isUnscheduled(empId, day))
+  )
+}
+
+const showUnscheduledWarning = () => {
+  if (hasUnscheduled()) ElMessage.warning('存在未排班的日期')
 }
 
 const filteredSubDepartments = computed(() =>
@@ -474,6 +496,7 @@ async function fetchSchedules() {
         }
       })
     }
+    showUnscheduledWarning()
   } catch (err) {
     console.error(err)
     ElMessage.error('取得排班資料失敗')
@@ -481,6 +504,7 @@ async function fetchSchedules() {
 }
 
 async function saveAll() {
+  showUnscheduledWarning()
   const schedules = []
   Object.keys(scheduleMap.value).forEach(empId => {
     Object.keys(scheduleMap.value[empId]).forEach(day => {
@@ -992,6 +1016,11 @@ onMounted(async () => {
     background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
     border: 1px solid #fbbf24;
   }
+
+  &.unscheduled {
+    background: #fee2e2;
+    border: 1px solid #fca5a5;
+  }
 }
 
 .collapsed-cell {
@@ -1012,6 +1041,15 @@ onMounted(async () => {
   display: flex;
   flex-direction: column;
   gap: 2px;
+}
+
+.unscheduled-indicator {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: #dc2626;
+  font-size: 12px;
+  justify-content: center;
 }
 
 .modern-shift-tag {

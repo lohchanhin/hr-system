@@ -135,6 +135,7 @@ export async function listSupervisorSummary(req, res) {
     const start = new Date(`${month}-01`);
     const end = new Date(start);
     end.setMonth(end.getMonth() + 1);
+    const totalDays = new Date(start.getFullYear(), start.getMonth() + 1, 0).getDate();
 
     const employees = await Employee.find({ supervisor })
       .select('_id name')
@@ -148,6 +149,9 @@ export async function listSupervisorSummary(req, res) {
         shiftCount: 0,
         leaveCount: 0,
         absenceCount: 0,
+        unscheduledSet: new Set(
+          Array.from({ length: totalDays }, (_, i) => i + 1)
+        ),
       };
     });
 
@@ -168,12 +172,43 @@ export async function listSupervisorSummary(req, res) {
       const name = shiftMap[s.shiftId?.toString()] || '';
       const sum = summaryMap[s.employee.toString()];
       if (!sum) return;
+      sum.unscheduledSet.delete(new Date(s.date).getDate());
       if (name.includes('假')) sum.leaveCount += 1;
       else if (name.includes('缺')) sum.absenceCount += 1;
       else sum.shiftCount += 1;
     });
 
-    res.json(Object.values(summaryMap));
+    const { formId, startId, endId } = await getLeaveFieldIds();
+    if (formId && startId && endId && ids.length) {
+      const approvalQuery = {
+        form: formId,
+        status: 'approved',
+        applicant_employee: { $in: ids },
+      };
+      approvalQuery[`form_data.${startId}`] = { $lte: end };
+      approvalQuery[`form_data.${endId}`] = { $gte: start };
+      const approvals = await ApprovalRequest.find(approvalQuery).lean();
+      approvals.forEach((a) => {
+        const empId = a.applicant_employee?.toString();
+        const sum = summaryMap[empId];
+        if (!sum) return;
+        const sDate = new Date(a.form_data[startId]);
+        const eDate = new Date(a.form_data[endId]);
+        for (let d = new Date(sDate); d <= eDate && d < end; d.setDate(d.getDate() + 1)) {
+          const day = d.getDate();
+          if (sum.unscheduledSet.delete(day)) {
+            sum.leaveCount += 1;
+          }
+        }
+      });
+    }
+
+    const result = Object.values(summaryMap).map((s) => {
+      const unscheduledDates = Array.from(s.unscheduledSet).sort((a, b) => a - b);
+      const { unscheduledSet, ...rest } = s;
+      return { ...rest, unscheduledDates };
+    });
+    res.json(result);
   } catch (err) {
     res.status(400).json({ error: err.message });
   }

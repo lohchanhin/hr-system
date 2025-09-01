@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { shallowMount } from '@vue/test-utils'
 import dayjs from 'dayjs'
 import { createPinia, setActivePinia } from 'pinia'
-global.ElMessage = { error: vi.fn(), success: vi.fn() }
+global.ElMessage = { error: vi.fn(), success: vi.fn(), warning: vi.fn() }
 
 vi.mock('../src/api', () => ({ apiFetch: vi.fn() }))
 vi.mock('../src/utils/tokenService', () => ({ getToken: () => 'tok' }))
@@ -21,6 +21,7 @@ describe('Schedule.vue', () => {
     apiFetch.mockReset()
     ElMessage.error.mockReset()
     ElMessage.success.mockReset()
+    ElMessage.warning.mockReset()
     pushMock.mockReset()
     sessionStorage.clear()
     localStorage.clear()
@@ -64,6 +65,22 @@ describe('Schedule.vue', () => {
     await flush()
     expect(apiFetch.mock.calls[4][0]).toBe('/api/employees?supervisor=sup1')
     expect(apiFetch.mock.calls[5][0]).toBe(`/api/schedules/monthly?month=${month}&supervisor=sup1`)
+  })
+
+  it('warns when unscheduled days exist', async () => {
+    const month = dayjs().format('YYYY-MM')
+    apiFetch
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [{ _id: 'e1', name: 'E1', department: '', subDepartment: '' }] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ approvals: [], leaves: [] }) })
+    mountSchedule()
+    await flush()
+    expect(apiFetch).toHaveBeenCalledWith(`/api/schedules/monthly?month=${month}`)
+    expect(ElMessage.warning).toHaveBeenCalled()
   })
 
   it('omits supervisor param when id missing', async () => {

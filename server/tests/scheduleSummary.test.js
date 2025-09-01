@@ -5,10 +5,16 @@ import { jest } from '@jest/globals';
 const mockShiftSchedule = { find: jest.fn() };
 const mockEmployee = { find: jest.fn() };
 const mockAttendanceSetting = { findOne: jest.fn() };
+const mockApprovalRequest = { find: jest.fn() };
+const mockFormTemplate = { findOne: jest.fn().mockResolvedValue(null) };
+const mockFormField = { find: jest.fn() };
 
 jest.unstable_mockModule('../src/models/ShiftSchedule.js', () => ({ default: mockShiftSchedule }));
 jest.unstable_mockModule('../src/models/Employee.js', () => ({ default: mockEmployee }));
 jest.unstable_mockModule('../src/models/AttendanceSetting.js', () => ({ default: mockAttendanceSetting }));
+jest.unstable_mockModule('../src/models/approval_request.js', () => ({ default: mockApprovalRequest }));
+jest.unstable_mockModule('../src/models/form_template.js', () => ({ default: mockFormTemplate }));
+jest.unstable_mockModule('../src/models/form_field.js', () => ({ default: mockFormField }));
 
 const mockAuth = {
   currentUser: { id: 'sup1', role: 'supervisor' },
@@ -40,6 +46,9 @@ beforeEach(() => {
   mockShiftSchedule.find.mockReset();
   mockEmployee.find.mockReset();
   mockAttendanceSetting.findOne.mockReset();
+  mockApprovalRequest.find.mockReset();
+  mockFormTemplate.findOne.mockReset().mockResolvedValue(null);
+  mockFormField.find.mockReset();
   mockAuth.currentUser = { id: 'sup1', role: 'supervisor' };
 });
 
@@ -69,10 +78,13 @@ describe('Supervisor schedule summary', () => {
     const res = await request(app).get('/api/schedules/summary?month=2023-05');
 
     expect(res.status).toBe(200);
-    expect(res.body).toEqual([
-      { employee: 'emp1', name: 'Emp1', shiftCount: 1, leaveCount: 0, absenceCount: 0 },
-      { employee: 'emp2', name: 'Emp2', shiftCount: 0, leaveCount: 0, absenceCount: 0 },
-    ]);
+    const emp1 = res.body.find(e => e.employee === 'emp1');
+    const emp2 = res.body.find(e => e.employee === 'emp2');
+    expect(emp1.shiftCount).toBe(1);
+    expect(emp1.unscheduledDates.length).toBe(30);
+    expect(emp1.unscheduledDates.includes(1)).toBe(false);
+    expect(emp2.shiftCount).toBe(0);
+    expect(emp2.unscheduledDates.length).toBe(31);
     expect(res.body.find(e => e.employee === 'emp3')).toBeUndefined();
   });
 
