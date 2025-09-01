@@ -2,8 +2,8 @@ import { createRouter, createWebHistory } from 'vue-router'
 import { getToken } from '@/utils/tokenService'
 
 // ★ 既有的後台檔案
-const Login = () => import('@/views/Login.vue')
-const Layout = () => import('@/views/ModernLayout.vue')
+const ManagerLogin = () => import('@/views/Login.vue')
+const ManagerLayout = () => import('@/views/ModernLayout.vue')
 const Settings = () => import('@/views/Settings.vue')
 const AttendanceSetting = () => import('@/components/backComponents/AttendanceSetting.vue')
 const AttendanceManagementSetting = () => import('@/components/backComponents/AttendanceManagementSetting.vue')
@@ -17,7 +17,6 @@ const HRManagementSystemSetting = () => import('@/components/backComponents/HRMa
 
 const OrgDepartmentSettingView = () => import('@/views/OrgDepartmentSettingView.vue')
 
-
 // ★ 錯誤頁面
 const Forbidden = () => import('@/views/Forbidden.vue')
 const NotFound = () => import('@/views/NotFound.vue')
@@ -30,23 +29,25 @@ const Attendance = () => import('@/views/front/Attendance.vue')
 const Approval = () => import('@/views/front/Approval.vue')
 const PreviewWeek = () => import('@/views/front/PreviewWeek.vue')
 const PreviewMonth = () => import('@/views/front/PreviewMonth.vue')
+const MySchedule = () => import('@/views/front/MySchedule.vue')
 
 const routes = [
-  // ========== 後台路由區段 (既有) ==========
+  // 首頁重導至前台登入
+  { path: '/', redirect: '/login' },
+
+  // 前台登入
+  { path: '/login', name: 'FrontLogin', component: FrontLogin },
+
+  // 後台登入
+  { path: '/manager/login', name: 'ManagerLogin', component: ManagerLogin },
+
+  // ========== 後台路由區段 ==========
   {
-    path: '/',
-    redirect: '/front/login'
-  },
-  {
-    path: '/login',    // 後台用 Login
-    name: 'Login',
-    component: Login
-  },
-  {
-    path: '/layout',
-    name: 'Layout',
-    component: Layout,
+    path: '/manager',
+    name: 'ManagerLayout',
+    component: ManagerLayout,
     meta: { requiresAuth: true },
+    redirect: '/manager/settings',
     children: [
       { path: 'settings', name: 'Settings', component: Settings },
       { path: 'attendance-setting', name: 'AttendanceSetting', component: AttendanceSetting },
@@ -58,20 +59,13 @@ const routes = [
       { path: 'salary-management-setting', name: 'SalaryManagementSetting', component: SalaryManagementSetting },
       { path: 'social-insurance-retirement-setting', name: 'SocialInsuranceRetirementSetting', component: SocialInsuranceRetirementSetting },
       { path: 'hr-management-system-setting', name: 'HRManagementSystemSetting', component: HRManagementSystemSetting },
-
       { path: 'org-department-setting', name: 'OrgDepartmentSetting', component: OrgDepartmentSettingView },
-
-    ]
+    ],
   },
 
-  // ========== 前台路由區段 (新) ==========
+  // ========== 前台路由區段 ==========
   {
-    path: '/front/login',  // 前台登入
-    name: 'FrontLogin',
-    component: FrontLogin
-  },
-  {
-    path: '/front',        // 前台主骨架
+    path: '/front',
     name: 'FrontLayout',
     component: FrontLayout,
     // 若需要簡易的「前台登入判斷」，可加 meta
@@ -82,58 +76,74 @@ const routes = [
       {
         path: 'attendance',
         name: 'Attendance',
+        alias: 'Attendance',
         component: Attendance,
-        meta: { roles: ['employee', 'supervisor', 'admin'] }
+        meta: { roles: ['employee', 'supervisor', 'admin'] },
+      },
+      {
+        path: 'my-schedule',
+        name: 'MySchedule',
+        alias: 'MySchedule',
+        component: MySchedule,
+        meta: { roles: ['employee', 'supervisor', 'admin'] },
       },
       {
         path: 'schedule',
         name: 'Schedule',
         component: Schedule,
-        meta: { roles: ['supervisor', 'admin'] }
+        meta: { roles: ['supervisor', 'admin'] },
       },
       {
         path: 'preview-week',
         name: 'PreviewWeek',
         component: PreviewWeek,
-        meta: { roles: ['supervisor', 'admin'] }
+        meta: { roles: ['supervisor', 'admin'] },
       },
       {
         path: 'preview-month',
         name: 'PreviewMonth',
         component: PreviewMonth,
-        meta: { roles: ['supervisor', 'admin'] }
+        meta: { roles: ['supervisor', 'admin'] },
       },
       {
         path: 'approval',
         name: 'Approval',
+        alias: 'Approval',
         component: Approval,
-        meta: { roles: ['employee', 'supervisor', 'admin'] }
-      }
-    ]
+        meta: { roles: ['employee', 'supervisor', 'admin'] },
+      },
+    ],
   },
 
   // 錯誤頁面
   { path: '/403', name: 'Forbidden', component: Forbidden },
-  { path: '/:pathMatch(.*)*', name: 'NotFound', component: NotFound }
+  { path: '/:pathMatch(.*)*', name: 'NotFound', component: NotFound },
 ]
 
 const router = createRouter({
   history: createWebHistory(),
-  routes
+  routes,
 })
 
 // ★ 路由守衛
 router.beforeEach((to, from, next) => {
-  // 簡易示範: 後台 requiresAuth
-  if (to.meta.requiresAuth) {
+  const requiresAuth = to.matched.some(r => r.meta.requiresAuth)
+  const frontRequiresAuth = to.matched.some(r => r.meta.frontRequiresAuth)
+
+  // 後台登入檢查
+  if (requiresAuth) {
     const token = getToken()
     if (!token) {
-      return next({ name: 'Login' })
+      return next({ name: 'ManagerLogin' })
+    }
+    const userRole = localStorage.getItem('role') || 'employee'
+    if (!['supervisor', 'admin'].includes(userRole)) {
+      return next('/login')
     }
   }
 
-  // 若要檢查前台也需登入
-  if (to.meta.frontRequiresAuth) {
+  // 前台登入檢查
+  if (frontRequiresAuth) {
     const token = getToken()
     if (!token) {
       return next({ name: 'FrontLogin' })

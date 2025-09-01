@@ -9,14 +9,8 @@ const mockEmployee = {
   create: jest.fn(),
   updateOne: jest.fn(),
 };
-const mockUser = {
-  create: jest.fn(),
-  findOneAndUpdate: jest.fn(),
-  findOneAndDelete: jest.fn(),
-};
 
 jest.unstable_mockModule('../src/models/Employee.js', () => ({ default: mockEmployee }));
-jest.unstable_mockModule('../src/models/User.js', () => ({ default: mockUser }));
 
 let app;
 let employeeRoutes;
@@ -30,12 +24,11 @@ beforeAll(async () => {
 
 beforeEach(() => {
   Object.values(mockEmployee).forEach((fn) => fn.mockReset && fn.mockReset());
-  Object.values(mockUser).forEach((fn) => fn.mockReset && fn.mockReset());
 });
 
 describe('Employee API', () => {
   it('lists employees', async () => {
-    const fakeEmployees = [{ name: 'John', department: 'Sales', title: 'Staff', status: '正職員工' }];
+    const fakeEmployees = [{ name: 'John', department: 'd1', title: 'Staff', status: '正職員工' }];
     mockEmployee.find.mockReturnValue({
       populate: jest.fn().mockReturnValue({
         sort: jest.fn().mockResolvedValue(fakeEmployees),
@@ -91,8 +84,8 @@ describe('Employee API', () => {
       name: 'Jane',
       email: 'jane@example.com',
       organization: 'Org',
-      department: 'HR',
-      subDepartment: 'Sub',
+      department: 'd1',
+      subDepartment: 'sd1',
       title: 'Manager',
       employmentStatus: '正職員工',
       username: 'jane',
@@ -108,22 +101,12 @@ describe('Employee API', () => {
       name: 'Jane',
       email: 'jane@example.com',
       organization: 'Org',
-      department: 'HR',
-      subDepartment: 'Sub',
+      department: 'd1',
+      subDepartment: 'sd1',
       title: 'Manager',
       employmentStatus: '正職員工',
       supervisor: 's1'
     }));
-    expect(mockUser.create).toHaveBeenCalledWith({
-      username: 'jane',
-      password: 'secret',
-      role: 'employee',
-      organization: 'Org',
-      department: 'HR',
-      subDepartment: 'Sub',
-      employee: '1',
-      supervisor: 's1'
-    });
   });
 
   it('sanitizes enum fields when creating employee', async () => {
@@ -173,7 +156,6 @@ describe('Employee API', () => {
     const res = await request(app).put('/api/employees/1').send({ name: 'Updated', supervisor: 's2' });
     expect(res.status).toBe(200);
     expect(mockEmployee.updateOne).toHaveBeenCalledWith({ _id: '1' }, { $set: { name: 'Updated', supervisor: 's2' } });
-    expect(mockUser.findOneAndUpdate).toHaveBeenCalledWith({ employee: '1' }, { supervisor: 's2' }, { new: true });
     expect(res.body).toMatchObject({ _id: '1', name: 'Updated', supervisor: 's2' });
   });
 
@@ -188,6 +170,15 @@ describe('Employee API', () => {
     const res = await request(app).delete('/api/employees/1');
     expect(res.status).toBe(200);
     expect(mockEmployee.findByIdAndDelete).toHaveBeenCalledWith('1');
+    expect(res.body).toEqual({ success: true });
+  });
+
+  it('sets supervisors in batch', async () => {
+    mockEmployee.updateOne.mockResolvedValue();
+    const payload = { assignments: [{ employee: 'e1', supervisor: 's1' }] };
+    const res = await request(app).post('/api/employees/set-supervisors').send(payload);
+    expect(res.status).toBe(200);
+    expect(mockEmployee.updateOne).toHaveBeenCalledWith({ _id: 'e1' }, { supervisor: 's1' });
     expect(res.body).toEqual({ success: true });
   });
 });

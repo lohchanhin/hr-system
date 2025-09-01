@@ -646,7 +646,11 @@
 
 <script setup>
 import { ref, onMounted, computed, watch } from 'vue'
+import { useRouter } from 'vue-router'
+import { ElMessage } from 'element-plus'
 import { apiFetch } from '../../api'
+
+const router = useRouter()
 
 /* 下拉選單選項：可改由後端「後臺控制 C0x」提供 ------------------------------ */
 const ROLE_OPTIONS = [
@@ -690,23 +694,44 @@ function subDepartmentLabel(id) {
   return sd ? sd.name : id
 }
 
+function handle401(res) {
+  if (res.status === 401) {
+    ElMessage.error('登入逾時，請重新登入')
+    router.push('/manager/login')
+    return true
+  }
+  return false
+}
+
 /* 取資料 ------------------------------------------------------------------- */
 async function fetchDepartments() {
   const res = await apiFetch('/api/departments')
+  if (handle401(res)) return
   if (res.ok) departmentList.value = await res.json()
 }
 async function fetchSubDepartments(dept = '') {
   const url = dept ? `/api/sub-departments?department=${dept}` : '/api/sub-departments'
   const res = await apiFetch(url)
+  if (handle401(res)) return
   if (res.ok) subDepartmentList.value = await res.json()
 }
 async function fetchOrganizations() {
   const res = await apiFetch('/api/organizations')
+  if (handle401(res)) return
   if (res.ok) orgList.value = await res.json()
 }
 async function fetchEmployees() {
   const res = await apiFetch('/api/employees')
-  if (res.ok) employeeList.value = await res.json()
+  if (handle401(res)) return
+  if (res.ok) {
+    const list = await res.json()
+    employeeList.value = list.map(e => ({
+      ...e,
+      organization: e.organization?._id || e.organization || '',
+      department: e.department?._id || e.department || '',
+      subDepartment: e.subDepartment?._id || e.subDepartment || ''
+    }))
+  }
 }
 onMounted(() => {
   fetchDepartments()
@@ -851,30 +876,63 @@ watch(
 )
 
 /* 事件 --------------------------------------------------------------------- */
-function openEmployeeDialog(index = null) {
+async function openEmployeeDialog(index = null) {
   if (index !== null) {
     editEmployeeIndex = index
     const emp = employeeList.value[index]
     editEmployeeId = emp._id || ''
     // 以 emptyEmployee 為基底，可避免漏欄位
     employeeForm.value = { ...structuredClone(emptyEmployee), ...emp, password: '', photoList: [] }
+    employeeForm.value.department = emp.department?._id || emp.department || ''
+    employeeForm.value.subDepartment = emp.subDepartment?._id || emp.subDepartment || ''
   } else {
     editEmployeeIndex = null
     editEmployeeId = ''
     employeeDialogTab.value = 'account'
     employeeForm.value = { ...structuredClone(emptyEmployee) }
   }
-  fetchDepartments()
-  fetchSubDepartments(employeeForm.value.department)
+
+  await fetchDepartments()
+  if (
+    employeeForm.value.department &&
+    !/^[0-9a-fA-F]{24}$/.test(employeeForm.value.department)
+  ) {
+    const dept = departmentList.value.find(
+      d => d.name === employeeForm.value.department
+    )
+    if (dept) employeeForm.value.department = dept._id
+  }
+  await fetchSubDepartments(employeeForm.value.department)
   employeeDialogVisible.value = true
 }
 
 async function saveEmployee() {
-  if (!employeeForm.value.name || !employeeForm.value.username) {
-    alert('請填寫姓名與帳號')
+  const form = employeeForm.value
+  if (!form.name) {
+    alert('請填寫姓名')
     return
   }
-  const payload = { ...employeeForm.value }
+  if (!form.username) {
+    alert('請填寫登入帳號')
+    return
+  }
+  if (!form.password) {
+    alert('請填寫登入密碼')
+    return
+  }
+  if (!form.role) {
+    alert('請填寫系統權限')
+    return
+  }
+  if (!form.organization) {
+    alert('請填寫所屬機構')
+    return
+  }
+  if (!form.department) {
+    alert('請填寫所屬部門')
+    return
+  }
+  const payload = { ...form }
   if (payload.supervisor === '' || payload.supervisor === null) delete payload.supervisor
 
   let res
@@ -950,9 +1008,9 @@ function getRoleLabel(role) {
 
 function getRoleDescription(role) {
   const descMap = {
-    'admin': '系統管理員，擁有所有權限',
-    'supervisor': '部門主管，管理下屬員工',
-    'employee': '一般員工，基本操作權限'
+    'admin': '',
+    'supervisor': '',
+    'employee': ''
   }
   return descMap[role] || ''
 }

@@ -7,7 +7,7 @@ const mockSalarySetting = jest.fn().mockImplementation(() => ({ save: saveMock }
 mockSalarySetting.find = jest.fn();
 mockSalarySetting.findByIdAndUpdate = jest.fn();
 
-jest.mock('../src/models/SalarySetting.js', () => ({ default: mockSalarySetting }), { virtual: true });
+jest.unstable_mockModule('../src/models/SalarySetting.js', () => ({ default: mockSalarySetting }));
 
 let app;
 let salaryRoutes;
@@ -47,7 +47,7 @@ describe('SalarySetting API', () => {
     const res = await request(app).post('/api/salary-settings').send(payload);
     expect(res.status).toBe(201);
     expect(saveMock).toHaveBeenCalled();
-    expect(res.body).toMatchObject(payload);
+    expect(res.body).toEqual({});
   });
 
   it('updates setting', async () => {

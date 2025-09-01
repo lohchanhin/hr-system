@@ -1,8 +1,24 @@
+import mongoose from 'mongoose';
 import SubDepartment from '../models/SubDepartment.js';
+import Department from '../models/Department.js';
 
 export async function listSubDepartments(req, res) {
   try {
-    const filter = req.query.department ? { department: req.query.department } : {};
+    const filter = {};
+    const { department } = req.query;
+
+    if (department) {
+      if (mongoose.Types.ObjectId.isValid(department)) {
+        filter.department = department;
+      } else {
+        const dept = await Department.findOne({ name: department });
+        if (!dept) {
+          return res.status(400).json({ error: 'Department not found' });
+        }
+        filter.department = dept._id;
+      }
+    }
+
     const subDepts = await SubDepartment.find(filter);
     res.json(subDepts);
   } catch (err) {

@@ -24,7 +24,7 @@ export async function createFormTemplate(req, res) {
     const doc = await FormTemplate.create({
       name, category, description, owner_org_id,
       is_active: is_active !== undefined ? !!is_active : true,
-      created_by: req.user?._id, // 若有 auth
+      created_by: req.user?.id, // 若有 auth
     })
     // 建立預設空流程
     await ApprovalWorkflow.create({ form: doc._id, steps: [], policy: { maxApprovalLevel: 5, allowDelegate: false, overdueDays: 3, overdueAction: 'none' } })

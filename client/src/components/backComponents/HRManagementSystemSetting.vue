@@ -5,7 +5,6 @@
     <h2>人事管理與系統設定</h2>
 
     <el-tabs v-model="activeTab" type="card">
-      <AccountRoleSetting />
       <SystemOrgSetting />
       <EmployeeManagement />
     </el-tabs>
@@ -14,11 +13,10 @@
 
 <script setup>
 import { ref } from 'vue'
-import AccountRoleSetting from './AccountRoleSetting.vue'
 import SystemOrgSetting from './SystemOrgSetting.vue'
 import EmployeeManagement from './EmployeeManagement.vue'
 
-const activeTab = ref('accountRole')
+const activeTab = ref('systemOrg')
 </script>
 
 <style scoped>

@@ -3,6 +3,28 @@ import Employee from '../models/Employee.js';
 import ApprovalRequest from '../models/approval_request.js';
 import FormTemplate from '../models/form_template.js';
 import FormField from '../models/form_field.js';
+import AttendanceSetting from '../models/AttendanceSetting.js';
+
+function formatDate(date) {
+  const d = new Date(date);
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${yyyy}/${mm}/${dd}`;
+}
+
+async function attachShiftInfo(schedules) {
+  const setting = await AttendanceSetting.findOne().lean();
+  const map = {};
+  setting?.shifts?.forEach((s) => {
+    map[s._id.toString()] = s.name;
+  });
+  return schedules.map((s) => ({
+    ...s,
+    date: formatDate(s.date),
+    shiftName: map[s.shiftId?.toString()] || '',
+  }));
+}
 
 let leaveFieldCache = null;
 async function getLeaveFieldIds() {
@@ -49,11 +71,13 @@ export async function listMonthlySchedules(req, res) {
       const emps = await Employee.find({ supervisor }).select('_id');
       const ids = emps.map((e) => e._id.toString());
       query.employee = { $in: ids };
-    } else if (employee) {
-      query.employee = employee;
+    } else {
+      const empId = employee || (req.user?.role === 'employee' ? req.user.id : undefined);
+      if (empId) query.employee = empId;
     }
 
-    const schedules = await ShiftSchedule.find(query).populate('employee');
+    const raw = await ShiftSchedule.find(query).populate('employee').lean();
+    const schedules = await attachShiftInfo(raw);
     res.json(schedules);
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -101,6 +125,60 @@ export async function listLeaveApprovals(req, res) {
   }
 }
 
+export async function listSupervisorSummary(req, res) {
+  try {
+    const { month } = req.query;
+    const supervisor = req.user?.id;
+    if (!month) return res.status(400).json({ error: 'month required' });
+    if (!supervisor) return res.status(400).json({ error: 'supervisor required' });
+
+    const start = new Date(`${month}-01`);
+    const end = new Date(start);
+    end.setMonth(end.getMonth() + 1);
+
+    const employees = await Employee.find({ supervisor })
+      .select('_id name')
+      .lean();
+    const ids = employees.map((e) => e._id.toString());
+    const summaryMap = {};
+    employees.forEach((e) => {
+      summaryMap[e._id.toString()] = {
+        employee: e._id.toString(),
+        name: e.name,
+        shiftCount: 0,
+        leaveCount: 0,
+        absenceCount: 0,
+      };
+    });
+
+    if (!ids.length) return res.json([]);
+
+    const setting = await AttendanceSetting.findOne().lean();
+    const shiftMap = {};
+    setting?.shifts?.forEach((s) => {
+      shiftMap[s._id.toString()] = s.name;
+    });
+
+    const schedules = await ShiftSchedule.find({
+      employee: { $in: ids },
+      date: { $gte: start, $lt: end },
+    }).lean();
+
+    schedules.forEach((s) => {
+      const name = shiftMap[s.shiftId?.toString()] || '';
+      const sum = summaryMap[s.employee.toString()];
+      if (!sum) return;
+      if (name.includes('假')) sum.leaveCount += 1;
+      else if (name.includes('缺')) sum.absenceCount += 1;
+      else sum.shiftCount += 1;
+    });
+
+    res.json(Object.values(summaryMap));
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+}
+
 export async function createSchedulesBatch(req, res) {
   try {
     const { schedules } = req.body;
@@ -141,7 +219,8 @@ export async function createSchedulesBatch(req, res) {
 
 export async function listSchedules(req, res) {
   try {
-    const schedules = await ShiftSchedule.find().populate('employee');
+    const raw = await ShiftSchedule.find().populate('employee').lean();
+    const schedules = await attachShiftInfo(raw);
     res.json(schedules);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -257,7 +336,8 @@ export async function deleteOldSchedules(req, res) {
 
 export async function exportSchedules(req, res) {
   try {
-    const schedules = await ShiftSchedule.find().populate('employee');
+    const raw = await ShiftSchedule.find().populate('employee').lean();
+    const schedules = await attachShiftInfo(raw);
     const format = req.query.format === 'excel' ? 'excel' : 'pdf';
 
     if (format === 'excel') {
@@ -272,13 +352,15 @@ export async function exportSchedules(req, res) {
       ws.columns = [
         { header: 'Employee', key: 'employee' },
         { header: 'Date', key: 'date' },
-        { header: 'Shift ID', key: 'shiftId' }
+        { header: 'Shift ID', key: 'shiftId' },
+        { header: 'Shift Name', key: 'shiftName' }
       ];
       schedules.forEach((s) => {
         ws.addRow({
           employee: s.employee?.name ?? '',
-          date: new Date(s.date).toISOString().split('T')[0],
-          shiftId: s.shiftId
+          date: s.date,
+          shiftId: s.shiftId,
+          shiftName: s.shiftName
         });
       });
       res.setHeader(
@@ -301,13 +383,9 @@ export async function exportSchedules(req, res) {
       doc.fontSize(16).text('Schedules', { align: 'center' });
       doc.moveDown();
       schedules.forEach((s) => {
-        doc
-          .fontSize(12)
-          .text(
-            `${s.employee?.name ?? ''}\t${new Date(s.date)
-              .toISOString()
-              .split('T')[0]}\t${s.shiftId}`
-          );
+        doc.fontSize(12).text(
+          `${s.employee?.name ?? ''}\t${s.date}\t${s.shiftId}\t${s.shiftName}`
+        );
       });
       doc.pipe(res);
       doc.end();

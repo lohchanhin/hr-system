@@ -46,9 +46,9 @@ async function seed() {
     console.log('Created sample department');
   }
 
-  const subDeptExists = await SubDepartment.findOne({ code: 'HR1' });
-  if (!subDeptExists) {
-    await SubDepartment.create({
+  let subDept = await SubDepartment.findOne({ code: 'HR1' });
+  if (!subDept) {
+    subDept = await SubDepartment.create({
       department: dept._id,
       code: 'HR1',
       name: '招聘組',
@@ -66,6 +66,7 @@ async function seed() {
     { username: 'admin', password: 'password', role: 'admin' }
   ];
 
+  let supervisorId = null;
   for (const data of users) {
     const existing = await User.findOne({ username: data.username });
     if (!existing) {
@@ -73,9 +74,9 @@ async function seed() {
         name: data.username,
         email: `${data.username}@example.com`,
         role: data.role,
-        organization: '示範機構',
-        department: '人力資源部',
-        subDepartment: '招聘組',
+        organization: org._id,
+        department: dept._id,
+        subDepartment: subDept._id,
         title: 'Staff',
         status: '正職員工'
       });
@@ -86,10 +87,16 @@ async function seed() {
         subDepartment: employee.subDepartment,
         employee: employee._id
       });
+      if (data.role === 'supervisor') supervisorId = employee._id;
       console.log(`Created user ${data.username}`);
     } else {
       console.log(`User ${data.username} already exists`);
     }
+  }
+
+  if (supervisorId) {
+    await Employee.updateMany({ role: 'employee' }, { supervisor: supervisorId });
+    await User.updateMany({ role: 'employee' }, { supervisor: supervisorId });
   }
 
   await mongoose.disconnect();

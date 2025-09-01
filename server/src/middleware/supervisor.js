@@ -1,12 +1,11 @@
-import User from '../models/User.js';
 import Employee from '../models/Employee.js';
 import ShiftSchedule from '../models/ShiftSchedule.js';
 
 export async function verifySupervisor(req, res, next) {
   try {
-    const user = await User.findById(req.user.id).populate('employee');
-    if (!user) return res.status(401).json({ error: 'Invalid user' });
-    if (['admin'].includes(user.role)) return next();
+    const actor = await Employee.findById(req.user.id);
+    if (!actor) return res.status(401).json({ error: 'Invalid user' });
+    if (['admin'].includes(actor.role)) return next();
 
     let employeeIds = [];
     if (req.body.employee) employeeIds = [req.body.employee];
@@ -18,10 +17,8 @@ export async function verifySupervisor(req, res, next) {
     }
     if (!employeeIds.length) return res.status(400).json({ error: 'Missing employee' });
 
-    const supervisorIds = [];
-    if (user.employee) supervisorIds.push(user.employee._id.toString());
-    if (user.supervisor) supervisorIds.push(user.supervisor.toString());
-    supervisorIds.push(user._id.toString());
+    const supervisorIds = [actor._id.toString()];
+    if (actor.supervisor) supervisorIds.push(actor.supervisor.toString());
 
     for (const id of employeeIds) {
       const emp = await Employee.findById(id);

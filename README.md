@@ -21,6 +21,81 @@
 - **報表產生** – 匯出各式統計或管理報表。
 - **審核流程** – 提供申請單的審核與簽核機制。
 
+## 使用情境
+
+1. 管理員登入
+   ```bash
+   curl -X POST http://localhost:3000/api/login \
+     -H 'Content-Type: application/json' \
+     -d '{"username":"admin","password":"password"}'
+   ```
+   前端：登入頁輸入管理員帳密。
+2. 建立員工
+   ```bash
+   curl -X POST http://localhost:3000/api/employees \
+     -H 'Content-Type: application/json' \
+     -H "Authorization: Bearer <token>" \
+     -d '{"username":"mary","password":"pass","role":"employee"}'
+   ```
+   前端：「員工管理」>「新增」。
+3. 設定班別
+   ```bash
+   curl -X POST http://localhost:3000/api/shifts \
+     -H 'Content-Type: application/json' \
+     -H "Authorization: Bearer <token>" \
+     -d '{"name":"早班","startTime":"09:00","endTime":"18:00"}'
+   ```
+   前端：「排班與班別管理設定」>「班別設定」。
+4. 排班指派
+   ```bash
+   curl -X POST http://localhost:3000/api/schedules \
+     -H 'Content-Type: application/json' \
+     -H "Authorization: Bearer <token>" \
+     -d '{"employee":"<員工ID>","date":"2023-05-01","shiftId":"<班別ID>"}'
+   ```
+   前端：「排班管理」頁面選取員工與日期。
+5. 員工登入
+   ```bash
+   curl -X POST http://localhost:3000/api/login \
+     -H 'Content-Type: application/json' \
+     -d '{"username":"mary","password":"pass"}'
+   ```
+   前端：登入頁輸入員工帳密。
+6. 員工打卡
+   ```bash
+   curl -X POST http://localhost:3000/api/attendance \
+     -H 'Content-Type: application/json' \
+     -H "Authorization: Bearer <token>" \
+     -d '{"action":"clockIn"}'
+   ```
+   前端：「出勤打卡」頁面點擊「上班簽到」。
+7. 申請請假
+   ```bash
+   curl -X POST http://localhost:3000/api/approvals \
+     -H 'Content-Type: application/json' \
+     -H "Authorization: Bearer <token>" \
+     -d '{"formId":"<請假單ID>","data":{"start":"2023-05-02","end":"2023-05-03","type":"SICK"}}'
+   ```
+   前端：「申請中心」選擇請假表單送出。
+8. 主管審核
+   ```bash
+   curl -X GET http://localhost:3000/api/approvals/inbox \
+     -H "Authorization: Bearer <token>"
+   ```
+   前端：「待辦簽核」列表核准或退回。
+9. 產生薪資報表
+   ```bash
+   curl http://localhost:3000/api/reports \
+     -H "Authorization: Bearer <token>"
+   ```
+   前端：「報表中心」下載薪資報表。
+10. 管理員登出
+    ```bash
+    curl -X POST http://localhost:3000/api/logout \
+      -H "Authorization: Bearer <token>"
+    ```
+    前端：右上角選單點選「登出」。
+
 ### 班別設定
 
 班別用於描述員工的工作時段，協助排班與出勤判定。常見欄位包括：
@@ -86,16 +161,7 @@ curl -X DELETE http://localhost:3000/api/shifts/<id> \
    npm test
    \`\`\`
 
-首次啟動時會自動建立幾個測試帳號並同步產生對應的員工紀錄，預設密碼均為 `password`：
-
-| 帳號          | 角色         |
-|---------------|-------------|
-| `user`        | employee    |
-| `supervisor`  | supervisor  |
-| `admin`       | admin       |
-
-啟動時也會建立一個名為「示範機構」的機構，以及預設的「人力資源部」與「招聘組」區
-域，便於前端選單立即取得資料。
+系統預設不會自動建立測試帳號或示範資料。如需測試資料，請參閱下方「生成測試資料」章節手動執行腳本。
 
 更詳細說明請參閱 [`server/README.md`](server/README.md)。
 
@@ -108,6 +174,12 @@ node server/scripts/seed.js
 \`\`\`
 
 此腳本會建立預設帳號（`user`、`supervisor`、`admin`，密碼皆為 `password`）以及示範機構「示範機構」（含「人力資源部」與「招聘組」）。更多詳情請參閱 [server/README.md](server/README.md)。
+
+| 帳號         | 角色        |
+|--------------|-------------|
+| `user`       | employee    |
+| `supervisor` | supervisor  |
+| `admin`      | admin       |
 
 ## 同時啟動前後端
 
@@ -125,7 +197,7 @@ npm run dev
    \`\`\`bash
    npm install
    \`\`\`
-2. (選擇性) 在 `client/.env` 設定 `VITE_API_BASE_URL` 以指定後端 API 位址，預設可使用 `http://localhost:3000`
+2. (選擇性) 在 `client/.env` 設定 `VITE_API_BASE_URL` 以指定後端 API 位址；未設定時，前端將自動使用目前網域（開發伺服器仍預設代理至 `http://localhost:3000`）
 3. 啟動 Vite 開發伺服器：
    \`\`\`bash
    npm run dev
@@ -241,6 +313,20 @@ web: npm start --prefix server
 
 班別設定提供可用的班別清單；排班時需在 `shiftId` 欄位填入對應班別的 `id` 才能顯示正確班別。前端「排班管理」頁面可選擇員工、點擊日期並從下拉選單挑選班別完成指派。
 
+### 主管儀表板
+
+主管可在「排班儀表板」快速檢視直屬員工人數、未排班與請假狀況。前端會呼叫下列 API 取得摘要資料：
+
+```bash
+GET /api/schedules/summary?month=2023-05
+```
+
+參數說明：
+
+- `month`：必填，`YYYY-MM` 格式，用於指定查詢月份。
+
+僅 `supervisor` 角色可存取此 API，回傳陣列包含每位員工的 `shiftCount`、`leaveCount` 等欄位供儀表板計算指標。
+
 ## 簽核流程
 
 ### 建立流程
@@ -327,3 +413,6 @@ npm test
 ## 授權
 
 本專案目前未提供授權，所有權利保留。
+
+
+## 第一階段

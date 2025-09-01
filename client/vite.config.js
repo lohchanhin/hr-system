@@ -7,8 +7,9 @@ import vueDevTools from 'vite-plugin-vue-devtools'
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
-  const API_BASE_URL = env.VITE_API_BASE_URL ?? 'http://localhost:3000'
-  return {
+  const API_BASE_URL = env.VITE_API_BASE_URL || (mode === 'development' ? 'http://localhost:3000' : '')
+
+  const config = {
     plugins: [
       vue(),
       vueDevTools(),
@@ -18,16 +19,21 @@ export default defineConfig(({ mode }) => {
         '@': fileURLToPath(new URL('./src', import.meta.url))
       },
     },
-    server: {
+    test: {
+      environment: 'jsdom'
+    }
+  }
+
+  if (mode === 'development') {
+    config.server = {
       proxy: {
         '/api': {
           target: API_BASE_URL,
           changeOrigin: true
         }
       }
-    },
-    test: {
-      environment: 'jsdom'
     }
   }
+
+  return config
 })

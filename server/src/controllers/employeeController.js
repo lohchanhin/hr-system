@@ -1,6 +1,5 @@
 // backend/controllers/employeeController.js
 import Employee from '../models/Employee.js'   // ← 對齊你新的 model 檔名
-import User from '../models/User.js'
 
 /* ───────────────────────────── 小工具：型別轉換 ───────────────────────────── */
 const isDefined = (v) => v !== undefined
@@ -135,8 +134,8 @@ function buildEmployeeDoc(body = {}) {
 
     /* 組織/部門/職稱 */
     organization: body.organization,
-    department: body.department,
-    subDepartment: body.subDepartment,
+    department: body.department === '' ? undefined : body.department,
+    subDepartment: body.subDepartment === '' ? undefined : body.subDepartment,
     supervisor,
     title: body.title,
     practiceTitle: body.practiceTitle,
@@ -257,8 +256,14 @@ function buildEmployeePatch(body = {}, existing = null) {
 
   // 組織/職稱
   put('organization', body.organization)
-  put('department', body.department)
-  put('subDepartment', body.subDepartment)
+  if (isDefined(body.department)) {
+    if (body.department === '') un('department')
+    else put('department', body.department)
+  }
+  if (isDefined(body.subDepartment)) {
+    if (body.subDepartment === '') un('subDepartment')
+    else put('subDepartment', body.subDepartment)
+  }
   put('title', body.title)
   put('practiceTitle', body.practiceTitle)
   if (isDefined(body.isPartTime)) put('partTime', Boolean(body.isPartTime))
@@ -375,7 +380,6 @@ export async function listEmployees(req, res) {
         { name: rx },
         { employeeId: rx },
         { email: rx },
-        { department: rx },
         { title: rx },
       ]
     }
@@ -406,10 +410,8 @@ export async function createEmployee(req, res) {
     const body = req.body ?? {}
     const {
       name, email, role, username, password,
-      organization, department, subDepartment, title,
     } = body
 
-    // 基本檢核（延用你原有邏輯）
     if (!name) return res.status(400).json({ error: 'Name is required' })
     if (!email) return res.status(400).json({ error: 'Email is required' })
     if (!username) return res.status(400).json({ error: 'Username is required' })
@@ -421,25 +423,10 @@ export async function createEmployee(req, res) {
       if (!validRoles.includes(role)) return res.status(400).json({ error: 'Invalid role' })
     }
 
-    // 準備 Employee doc
     const employeeDoc = buildEmployeeDoc(body)
+    employeeDoc.password = password
 
     const employee = await Employee.create(employeeDoc)
-
-    // 主管欄位（空字串已在 build 處理）
-    const sup = employee.supervisor ?? undefined
-
-    // 建立 User（沿用你原本行為；User 的密碼雜湊交由 User model 處理）
-    await User.create({
-      username,
-      password,
-      role: role ?? 'employee',
-      organization,
-      department,
-      subDepartment,
-      employee: employee._id,
-      supervisor: sup,
-    })
 
     res.status(201).json(employee)
   } catch (err) {
@@ -492,20 +479,9 @@ export async function updateEmployee(req, res) {
     // 取回最新
     const updated = await Employee.findById(employee._id)
 
-    // 同步 User 的屬性
-    const userUpdate = {}
-    if (isDefined(body.username)) userUpdate.username = body.username
-    if (isDefined(body.password)) userUpdate.password = body.password // 交由 User model 做 hash
-    if (isDefined(body.role)) userUpdate.role = body.role
-    if (isDefined(body.organization)) userUpdate.organization = body.organization
-    if (isDefined(body.department)) userUpdate.department = body.department
-    if (isDefined(body.subDepartment)) userUpdate.subDepartment = body.subDepartment
-    if (isDefined(body.supervisor)) {
-      if (body.supervisor === '') userUpdate.supervisor = undefined
-      else userUpdate.supervisor = body.supervisor
-    }
-    if (Object.keys(userUpdate).length) {
-      await User.findOneAndUpdate({ employee: employee._id }, userUpdate, { new: true })
+    if (isDefined(body.password)) {
+      updated.password = body.password
+      await updated.save()
     }
 
     res.json(updated)
@@ -520,8 +496,21 @@ export async function deleteEmployee(req, res) {
     const employee = await Employee.findByIdAndDelete(req.params.id)
     if (!employee) return res.status(404).json({ error: 'Not found' })
 
-    // 同步刪除綁定的 User
-    await User.findOneAndDelete({ employee: employee._id })
+    res.json({ success: true })
+  } catch (err) {
+    res.status(400).json({ error: err.message })
+  }
+}
+
+/** POST /api/employees/set-supervisors */
+export async function setSupervisors(req, res) {
+  try {
+    const { assignments } = req.body ?? {}
+    if (!Array.isArray(assignments)) return res.status(400).json({ error: 'Invalid assignments' })
+
+    for (const { employee, supervisor } of assignments) {
+      await Employee.updateOne({ _id: employee }, { supervisor })
+    }
 
     res.json({ success: true })
   } catch (err) {

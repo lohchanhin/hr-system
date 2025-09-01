@@ -5,7 +5,8 @@ import {
   createEmployee,
   getEmployee,
   updateEmployee,
-  deleteEmployee
+  deleteEmployee,
+  setSupervisors
 } from '../controllers/employeeController.js';
 
 const router = Router();
@@ -13,6 +14,7 @@ const router = Router();
 router.get('/', listEmployees);
 router.get('/options', listEmployeeOptions);
 router.post('/', createEmployee);
+router.post('/set-supervisors', setSupervisors);
 router.get('/:id', getEmployee);
 router.put('/:id', updateEmployee);
 router.delete('/:id', deleteEmployee);

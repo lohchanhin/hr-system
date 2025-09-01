@@ -31,7 +31,6 @@
           <span class="menu-label">{{ item.label }}</span>
         </el-menu-item>
       </el-menu>
-
       <!-- 登出按鈕 -->
       <div class="logout-section">
         <el-button type="danger" @click="onLogout" class="logout-btn" block>
@@ -63,30 +62,30 @@ const menuStore = useMenuStore();
 const { items: menuItems } = storeToRefs(menuStore);
 
 const username = ref("");
-const activeMenu = computed(() => route.name?.toLowerCase() || "");
+const activeMenu = computed(() => route.name || "");
 
 onMounted(() => {
-  const savedRole = localStorage.getItem("role");
   const savedUsername = localStorage.getItem("username");
   if (savedUsername) {
     username.value = savedUsername;
   }
-  
+
   if (menuItems.value.length === 0) {
     menuStore.fetchMenu();
   }
 });
 
 function gotoPage(pageName) {
-  router.push(`/front/${pageName}`);
+  router.push({ name: pageName });
 }
 
-function onLogout() {
-  localStorage.removeItem("role");
-  localStorage.removeItem("username");
-  clearToken();
-  router.push(`/`);
-}
+  function onLogout() {
+    localStorage.removeItem("role");
+    localStorage.removeItem("username");
+    clearToken();
+    menuStore.setMenu([]);
+    router.push(`/`);
+  }
 </script>
 
 <style scoped>
@@ -261,7 +260,7 @@ function onLogout() {
   .menu-label {
     display: none;
   }
-  
+
   .logout-section {
     padding: 8px;
   }

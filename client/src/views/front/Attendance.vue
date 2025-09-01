@@ -55,8 +55,8 @@
     <div class="records-section">
       <h2 class="section-title">今日打卡記錄</h2>
       <div class="table-container">
-        <el-table 
-          :data="records" 
+        <el-table
+          :data="records"
           class="records-table"
           :header-cell-style="{ background: '#f8fafc', color: '#475569', fontWeight: '600' }"
           :row-style="{ height: '56px' }"
@@ -87,13 +87,25 @@
         </el-table>
       </div>
     </div>
+
+    <el-dialog v-model="remarkDialogVisible" title="新增備註" width="400px">
+      <el-input v-model="remarkText" placeholder="請輸入備註（可留空）" />
+      <template #footer>
+        <span class="dialog-footer">
+          <el-button @click="remarkDialogVisible = false">取消</el-button>
+          <el-button type="primary" @click="confirmRemark">確認</el-button>
+        </span>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
 import { ref, onMounted, onUnmounted } from 'vue'
 import dayjs from 'dayjs'
+import { ElMessage } from 'element-plus'
 import { apiFetch } from '../../api'
+import { getToken } from '../../utils/tokenService'
 
 // 將中文動作與後端定義的值互轉
 const actionMap = {
@@ -111,37 +123,73 @@ const currentTime = ref('')
 const currentDate = ref('')
 let timeInterval = null
 
+const remarkDialogVisible = ref(false)
+const remarkText = ref('')
+const pendingAction = ref('')
+
 async function fetchRecords() {
   const res = await apiFetch('/api/attendance')
   if (res.ok) {
     const data = await res.json()
     records.value = data.map(r => ({
       action: reverseActionMap[r.action] || r.action,
-      time: dayjs(r.timestamp).format('YYYY-MM-DD HH:mm:ss'),
+      time: dayjs(r.timestamp).format('YYYY/MM/DD HH:mm:ss'),
       remark: r.remark || ''
     }))
   }
 }
 
 function onClockIn() {
-  addRecord('上班簽到')
+  openRemarkDialog('上班簽到')
 }
 function onClockOut() {
-  addRecord('下班簽退')
+  openRemarkDialog('下班簽退')
 }
 function onOuting() {
-  addRecord('外出登記')
+  openRemarkDialog('外出登記')
 }
 function onBreakIn() {
-  addRecord('中午休息')
+  openRemarkDialog('中午休息')
 }
 
-async function addRecord(action) {
+function openRemarkDialog(action) {
+  pendingAction.value = action
+  remarkText.value = ''
+  remarkDialogVisible.value = true
+}
+
+async function confirmRemark() {
+  remarkDialogVisible.value = false
+  await addRecord(pendingAction.value, remarkText.value)
+}
+
+function getEmployeeId() {
+  let id = localStorage.getItem('employeeId')
+  if (!id) {
+    const token = getToken()
+    if (token) {
+      try {
+        const payload = JSON.parse(atob(token.split('.')[1]))
+        id = payload.employeeId || payload.id
+      } catch (e) {
+        id = null
+      }
+    }
+  }
+  return id
+}
+
+async function addRecord(action, remark = '') {
+  const employeeId = getEmployeeId()
+  if (!employeeId) {
+    ElMessage.warning('請重新登入')
+    return
+  }
   const payload = {
     action: actionMap[action] || action,
     timestamp: new Date(),
-    remark: '',
-    employee: localStorage.getItem('employeeId') || ''
+    remark,
+    employee: employeeId
   }
   const res = await apiFetch('/api/attendance', {
     method: 'POST',
@@ -154,7 +202,7 @@ async function addRecord(action) {
     const saved = await res.json()
     records.value.push({
       action: reverseActionMap[saved.action] || saved.action,
-      time: dayjs(saved.timestamp).format('YYYY-MM-DD HH:mm:ss'),
+      time: dayjs(saved.timestamp).format('YYYY/MM/DD HH:mm:ss'),
       remark: saved.remark || ''
     })
   }
@@ -163,7 +211,7 @@ async function addRecord(action) {
 function updateTime() {
   const now = dayjs()
   currentTime.value = now.format('HH:mm:ss')
-  currentDate.value = now.format('YYYY年MM月DD日 dddd')
+  currentDate.value = now.format('YYYY/MM/DD')
 }
 
 function getActionTagType(action) {
