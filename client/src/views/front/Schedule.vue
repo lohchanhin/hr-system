@@ -203,37 +203,43 @@
                     </el-select>
                   </div>
                 </template>
-                <el-popover
-                  v-else
-                  v-if="shiftInfo(scheduleMap[row._id][d.date].shiftId)"
-                  placement="top"
-                  trigger="hover"
-                  :width="200"
-                >
-                  <div class="shift-details">
-                    <div class="detail-row">
-                      <span class="detail-label">上班時間：</span>
-                      <span class="detail-value">{{ shiftInfo(scheduleMap[row._id][d.date].shiftId).startTime }}</span>
-                    </div>
-                    <div class="detail-row">
-                      <span class="detail-label">下班時間：</span>
-                      <span class="detail-value">{{ shiftInfo(scheduleMap[row._id][d.date].shiftId).endTime }}</span>
-                    </div>
-                    <div v-if="shiftInfo(scheduleMap[row._id][d.date].shiftId).remark" class="detail-row">
-                      <span class="detail-label">備註：</span>
-                      <span class="detail-value">{{ shiftInfo(scheduleMap[row._id][d.date].shiftId).remark }}</span>
-                    </div>
+                <template v-else>
+                  <div
+                    v-if="scheduleMap[row._id][d.date].leave"
+                    class="leave-indicator"
+                  >
+                    請假中
                   </div>
-                  <template #reference>
-                    <div class="modern-shift-tag">
-                      {{ shiftInfo(scheduleMap[row._id][d.date].shiftId).code }}
+                  <el-popover
+                    v-else-if="shiftInfo(scheduleMap[row._id][d.date].shiftId)"
+                    placement="top"
+                    trigger="hover"
+                    :width="200"
+                  >
+                    <div class="shift-details">
+                      <div class="detail-row">
+                        <span class="detail-label">上班時間：</span>
+                        <span class="detail-value">{{ shiftInfo(scheduleMap[row._id][d.date].shiftId).startTime }}</span>
+                      </div>
+                      <div class="detail-row">
+                        <span class="detail-label">下班時間：</span>
+                        <span class="detail-value">{{ shiftInfo(scheduleMap[row._id][d.date].shiftId).endTime }}</span>
+                      </div>
+                      <div
+                        v-if="shiftInfo(scheduleMap[row._id][d.date].shiftId).remark"
+                        class="detail-row"
+                      >
+                        <span class="detail-label">備註：</span>
+                        <span class="detail-value">{{ shiftInfo(scheduleMap[row._id][d.date].shiftId).remark }}</span>
+                      </div>
                     </div>
-                  </template>
-                </el-popover>
-                <div v-if="scheduleMap[row._id][d.date].leave" class="leave-indicator">
-                  <i class="el-icon-warning-outline"></i>
-                  <span>請假</span>
-                </div>
+                    <template #reference>
+                      <div class="modern-shift-tag">
+                        {{ shiftInfo(scheduleMap[row._id][d.date].shiftId).code }}
+                      </div>
+                    </template>
+                  </el-popover>
+                </template>
               </template>
               <span v-else class="empty-cell">-</span>
             </div>
@@ -1052,13 +1058,11 @@ onMounted(async () => {
 }
 
 .leave-indicator {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  color: #d97706;
+  display: inline-block;
+  color: #b45309;
   font-size: 0.75rem;
   font-weight: 600;
-  background: rgba(251, 191, 36, 0.1);
+  background: #fef9c3;
   padding: 2px 6px;
   border-radius: 4px;
 }
