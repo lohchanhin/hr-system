@@ -29,6 +29,7 @@ import holidayMoveSettingRoutes from './routes/holidayMoveSettingRoutes.js';
 import attendanceShiftRoutes from './routes/attendanceShiftRoutes.js';
 import shiftRoutes from './routes/shiftRoutes.js';
 import deptManagerRoutes from './routes/deptManagerRoutes.js';
+
 export async function ensureAdminUser() {
   const existing = await Employee.findOne({ role: 'admin' });
   if (existing) {
