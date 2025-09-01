@@ -3,7 +3,7 @@ import mongoose from 'mongoose';
 import { connectDB } from '../src/config/db.js';
 import { seedSampleData, seedTestUsers, seedApprovalTemplates } from '../src/index.js';
 
-dotenv.config();
+dotenv.config({override:true});
 
 if (!process.env.MONGODB_URI) {
   console.error('MONGODB_URI is not defined in the environment');

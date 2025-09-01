@@ -36,6 +36,9 @@ import attendanceShiftRoutes from './routes/attendanceShiftRoutes.js';
 import shiftRoutes from './routes/shiftRoutes.js';
 import deptManagerRoutes from './routes/deptManagerRoutes.js';
 
+dotenv.config({override:true});
+
+
 export async function seedSampleData() {
   let org = await Organization.findOne({ name: '示範機構' });
   if (!org) {
@@ -226,6 +229,7 @@ export async function ensureAdminUser() {
 }
 
 dotenv.config();
+dotenv.config({override:true});
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const distPath = path.join(__dirname, '..', '..', 'client', 'dist');
