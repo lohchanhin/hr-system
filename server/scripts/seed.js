@@ -1,11 +1,7 @@
 import dotenv from 'dotenv';
 import mongoose from 'mongoose';
 import { connectDB } from '../src/config/db.js';
-import User from '../src/models/User.js';
-import Employee from '../src/models/Employee.js';
-import Organization from '../src/models/Organization.js';
-import Department from '../src/models/Department.js';
-import SubDepartment from '../src/models/SubDepartment.js';
+import { seedSampleData, seedTestUsers, seedApprovalTemplates } from '../src/index.js';
 
 dotenv.config();
 
@@ -16,89 +12,9 @@ if (!process.env.MONGODB_URI) {
 
 async function seed() {
   await connectDB(process.env.MONGODB_URI);
-
-  let org = await Organization.findOne({ name: '示範機構' });
-  if (!org) {
-    org = await Organization.create({
-      name: '示範機構',
-      systemCode: 'ORG001',
-      unitName: '總院',
-      orgCode: '001',
-      taxIdNumber: '12345678',
-      phone: '02-12345678',
-      address: '台北市信義路1號',
-      principal: '示範負責人'
-    });
-    console.log('Created sample organization');
-  }
-
-  let dept = await Department.findOne({ code: 'HR' });
-  if (!dept) {
-    dept = await Department.create({
-      name: '人力資源部',
-      code: 'HR',
-      organization: org._id,
-      unitName: '人力資源',
-      location: '台北',
-      phone: '02-23456789',
-      manager: 'supervisor'
-    });
-    console.log('Created sample department');
-  }
-
-  let subDept = await SubDepartment.findOne({ code: 'HR1' });
-  if (!subDept) {
-    subDept = await SubDepartment.create({
-      department: dept._id,
-      code: 'HR1',
-      name: '招聘組',
-      unitName: '招聘組',
-      location: '台北',
-      phone: '02-23456789',
-      manager: 'supervisor'
-    });
-    console.log('Created sample sub-department');
-  }
-
-  const users = [
-    { username: 'user', password: 'password', role: 'employee' },
-    { username: 'supervisor', password: 'password', role: 'supervisor' },
-    { username: 'admin', password: 'password', role: 'admin' }
-  ];
-
-  let supervisorId = null;
-  for (const data of users) {
-    const existing = await User.findOne({ username: data.username });
-    if (!existing) {
-      const employee = await Employee.create({
-        name: data.username,
-        email: `${data.username}@example.com`,
-        role: data.role,
-        organization: org._id,
-        department: dept._id,
-        subDepartment: subDept._id,
-        title: 'Staff',
-        status: '正職員工'
-      });
-      await User.create({
-        ...data,
-        organization: employee.organization,
-        department: employee.department,
-        subDepartment: employee.subDepartment,
-        employee: employee._id
-      });
-      if (data.role === 'supervisor') supervisorId = employee._id;
-      console.log(`Created user ${data.username}`);
-    } else {
-      console.log(`User ${data.username} already exists`);
-    }
-  }
-
-  if (supervisorId) {
-    await Employee.updateMany({ role: 'employee' }, { supervisor: supervisorId });
-    await User.updateMany({ role: 'employee' }, { supervisor: supervisorId });
-  }
-
+  await seedSampleData();
+  await seedTestUsers();
+  await seedApprovalTemplates();
   await mongoose.disconnect();
 }
 
