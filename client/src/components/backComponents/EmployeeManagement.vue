@@ -224,9 +224,9 @@
                 <span>個人資訊</span>
               </div>
             </template>
-            
+
             <div class="tab-content">
-              <el-form :model="employeeForm" label-width="140px" class="form-section">
+              <el-form ref="formRef" :model="employeeForm" :rules="rules" label-width="140px" class="form-section">
                 <div class="form-group">
                   <h3 class="form-group-title">基本資料</h3>
                   <div class="form-row">
@@ -289,7 +289,7 @@
                 <div class="form-group">
                   <h3 class="form-group-title">聯絡資訊</h3>
                   <div class="form-row">
-                    <el-form-item label="Email">
+                    <el-form-item label="Email" required prop="email">
                       <el-input v-model="employeeForm.email" placeholder="請輸入Email" />
                     </el-form-item>
                     <el-form-item label="行動電話">
@@ -840,6 +840,17 @@ const emptyEmployee = {
   salaryItems: []
 }
 const employeeForm = ref({ ...emptyEmployee })
+const formRef = ref()
+const rules = {
+  email: [
+    {
+      required: true,
+      message: '請輸入有效 Email',
+      type: 'email',
+      trigger: ['blur', 'change']
+    }
+  ]
+}
 
 /* 派生 --------------------------------------------------------------------- */
 const filteredDepartments = computed(() =>
@@ -907,6 +918,8 @@ async function openEmployeeDialog(index = null) {
 }
 
 async function saveEmployee() {
+  const valid = await formRef.value?.validate?.().catch(() => false)
+  if (valid === false) return
   const form = employeeForm.value
   if (!form.name) {
     alert('請填寫姓名')

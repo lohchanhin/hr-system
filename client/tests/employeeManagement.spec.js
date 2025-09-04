@@ -26,6 +26,12 @@ describe('EmployeeManagement.vue', () => {
     expect(calls).toContain('/api/sub-departments')
   })
 
+  it('has email validation rule', () => {
+    const wrapper = mount(EmployeeManagement, { global: { stubs: elStubs } })
+    expect(wrapper.vm.rules.email[0].required).toBe(true)
+    expect(wrapper.vm.rules.email[0].type).toBe('email')
+  })
+
   it('sends login info when saving employee', async () => {
     const wrapper = mount(EmployeeManagement, { global: { stubs: elStubs } })
     apiFetch.mockClear()
