@@ -648,7 +648,7 @@
 <script setup>
 import { ref, onMounted, computed, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { apiFetch } from '../../api'
 import { REQUIRED_FIELDS } from './requiredFields'
 
@@ -927,8 +927,20 @@ async function openEmployeeDialog(index = null) {
 }
 
 async function saveEmployee() {
-  const valid = await formRef.value?.validate().catch(() => false)
-  if (!valid) return
+  let errors
+  try {
+    await formRef.value?.validate()
+  } catch (err) {
+    errors = err
+  }
+  if (errors) {
+    const fields = Object.values(errors)
+      .flat()
+      .map(e => e.message.replace(/^請(?:輸入|選擇)(?:有效)?\s*/, ''))
+    ElMessageBox.alert(`請補齊：${fields.join('、')}`)
+    return
+  }
+
   const form = employeeForm.value
   const payload = { ...form }
   if (payload.supervisor === '' || payload.supervisor === null) delete payload.supervisor
