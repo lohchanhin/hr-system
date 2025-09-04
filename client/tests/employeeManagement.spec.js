@@ -5,11 +5,15 @@ vi.mock('../src/api', () => ({
 }))
 import { apiFetch } from '../src/api'
 import EmployeeManagement from '../src/components/backComponents/EmployeeManagement.vue'
+import { REQUIRED_FIELDS } from '../src/components/backComponents/requiredFields'
+import Schema from 'async-validator'
+import { ElMessageBox } from 'element-plus'
 vi.mock('vue-router', () => ({
   useRouter: () => ({ push: vi.fn() })
 }))
 vi.mock('element-plus', () => ({
-  ElMessage: { success: vi.fn(), error: vi.fn() }
+  ElMessage: { success: vi.fn(), error: vi.fn() },
+  ElMessageBox: { alert: vi.fn() }
 }))
 
 const elStubs = ['el-table','el-table-column','el-button','el-tabs','el-tab-pane','el-form','el-form-item','el-input','el-select','el-option','el-dialog','el-avatar','el-tag','el-radio','el-radio-group','el-date-picker','el-input-number','el-switch']
@@ -30,11 +34,21 @@ describe('EmployeeManagement.vue', () => {
 
   it('has validation rules for required fields', () => {
     const wrapper = mount(EmployeeManagement, { global: { stubs: elStubs } })
-    const required = ['name','username','password','role','organization','department','email']
-    required.forEach(r => {
+    REQUIRED_FIELDS.forEach(r => {
       expect(wrapper.vm.rules[r][0].required).toBe(true)
     })
     expect(wrapper.vm.rules.email[0].type).toBe('email')
+  })
+
+  it('rejects when required fields are empty', async () => {
+    const wrapper = mount(EmployeeManagement, { global: { stubs: elStubs } })
+    for (const field of REQUIRED_FIELDS) {
+      const validator = new Schema({ [field]: wrapper.vm.rules[field] })
+      const msg = wrapper.vm.rules[field][0].message
+      await expect(validator.validate({ [field]: '' })).rejects.toMatchObject({
+        errors: [{ message: msg }]
+      })
+    }
   })
 
   it('sends login info when saving employee', async () => {
@@ -42,25 +56,39 @@ describe('EmployeeManagement.vue', () => {
     const validate = vi.fn(() => Promise.resolve(true))
     wrapper.vm.formRef = { validate }
     apiFetch.mockClear()
-    apiFetch.mockResolvedValueOnce({ ok: true, json: async () => ({}) })
-    wrapper.vm.employeeForm = { ...wrapper.vm.employeeForm, name: 'n', username: 'u', password: 'p', role: 'admin', organization: 'o', department: 'd' }
+    apiFetch.mockImplementation((url, opts) =>
+      Promise.resolve({ ok: true, json: async () => (opts?.method === 'POST' ? {} : []) })
+    )
+    wrapper.vm.employeeForm = { ...wrapper.vm.employeeForm, name: 'n', username: 'u', password: 'p', role: 'admin', organization: 'o', department: 'd', gender: 'M', email: 'a@a.com' }
     wrapper.vm.editEmployeeIndex = null
     await wrapper.vm.saveEmployee()
     expect(validate).toHaveBeenCalled()
-    const body = JSON.parse(apiFetch.mock.calls[0][1].body)
+    const postCall = apiFetch.mock.calls.find(c => c[1]?.method === 'POST')
+    expect(postCall).toBeTruthy()
+    const body = JSON.parse(postCall[1].body)
     expect(body.username).toBe('u')
     expect(body.password).toBe('p')
     expect(body.role).toBe('admin')
     expect(apiFetch).toHaveBeenCalledWith('/api/employees', expect.objectContaining({ method: 'POST' }))
   })
 
-  it('stops saving when validation fails', async () => {
+  it('alerts missing fields when validation fails', async () => {
     const wrapper = mount(EmployeeManagement, { global: { stubs: elStubs } })
-    const validate = vi.fn(() => Promise.resolve(false))
+    const validate = vi.fn(() =>
+      Promise.reject({
+        gender: [{ message: '請選擇性別' }],
+        email: [{ message: '請輸入有效 Email' }]
+      })
+    )
     wrapper.vm.formRef = { validate }
     apiFetch.mockClear()
     await wrapper.vm.saveEmployee()
     expect(validate).toHaveBeenCalled()
-    expect(apiFetch).not.toHaveBeenCalled()
+    expect(ElMessageBox.alert).toHaveBeenCalled()
+    const msg = ElMessageBox.alert.mock.calls[0][0]
+    expect(msg).toContain('性別')
+    expect(msg).toContain('Email')
+    const postCall = apiFetch.mock.calls.find(c => c[1]?.method === 'POST')
+    expect(postCall).toBeUndefined()
   })
 })
