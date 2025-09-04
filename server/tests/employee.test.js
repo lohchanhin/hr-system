@@ -138,6 +138,13 @@ describe('Employee API', () => {
     expect(res.status).toBe(400);
   });
 
+  it('fails when email is missing', async () => {
+    const payload = { name: 'A', username: 'a', password: 'p' };
+    const res = await request(app).post('/api/employees').send(payload);
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({ error: 'Email is required' });
+  });
+
   it('gets employee', async () => {
     const fake = { _id: '1', name: 'John' };
     mockEmployee.findById.mockReturnValue({ populate: jest.fn().mockResolvedValue(fake) });

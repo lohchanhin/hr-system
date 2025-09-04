@@ -91,7 +91,7 @@ const employeeSchema = new Schema(
     dependents: { type: Number, default: 0 }, // 扣繳
 
     /* 聯絡方式 */
-    email: { type: String, unique: true, sparse: true, index: true },
+    email: { type: String, unique: true, sparse: true, index: true, required: true },
     mobile: { type: String, alias: 'phone' }, // 前端 phone = mobile
     landline: String,
     householdAddress: String, // 戶籍地
