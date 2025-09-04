@@ -7,11 +7,13 @@ import { apiFetch } from '../src/api'
 import EmployeeManagement from '../src/components/backComponents/EmployeeManagement.vue'
 import { REQUIRED_FIELDS } from '../src/components/backComponents/requiredFields'
 import Schema from 'async-validator'
+import { ElMessageBox } from 'element-plus'
 vi.mock('vue-router', () => ({
   useRouter: () => ({ push: vi.fn() })
 }))
 vi.mock('element-plus', () => ({
-  ElMessage: { success: vi.fn(), error: vi.fn() }
+  ElMessage: { success: vi.fn(), error: vi.fn() },
+  ElMessageBox: { alert: vi.fn() }
 }))
 
 const elStubs = ['el-table','el-table-column','el-button','el-tabs','el-tab-pane','el-form','el-form-item','el-input','el-select','el-option','el-dialog','el-avatar','el-tag','el-radio','el-radio-group','el-date-picker','el-input-number','el-switch']
@@ -70,13 +72,22 @@ describe('EmployeeManagement.vue', () => {
     expect(apiFetch).toHaveBeenCalledWith('/api/employees', expect.objectContaining({ method: 'POST' }))
   })
 
-  it('stops saving when validation fails', async () => {
+  it('alerts missing fields when validation fails', async () => {
     const wrapper = mount(EmployeeManagement, { global: { stubs: elStubs } })
-    const validate = vi.fn(() => Promise.resolve(false))
+    const validate = vi.fn(() =>
+      Promise.reject({
+        gender: [{ message: '請選擇性別' }],
+        email: [{ message: '請輸入有效 Email' }]
+      })
+    )
     wrapper.vm.formRef = { validate }
     apiFetch.mockClear()
     await wrapper.vm.saveEmployee()
     expect(validate).toHaveBeenCalled()
+    expect(ElMessageBox.alert).toHaveBeenCalled()
+    const msg = ElMessageBox.alert.mock.calls[0][0]
+    expect(msg).toContain('性別')
+    expect(msg).toContain('Email')
     const postCall = apiFetch.mock.calls.find(c => c[1]?.method === 'POST')
     expect(postCall).toBeUndefined()
   })
