@@ -5,7 +5,9 @@
       <h1 class="page-title">排班管理</h1>
       <p class="page-subtitle">管理員工排班與班表預覽</p>
     </div>
-    
+
+    <ScheduleDashboard :summary="summary" />
+
     <!-- Enhanced filters section with card design -->
     <div class="filters-card">
       <div class="filters-header">
@@ -14,10 +16,10 @@
       <div class="filters-content">
         <div class="filter-group">
           <label class="filter-label">選擇月份</label>
-          <el-date-picker 
-            v-model="currentMonth" 
-            type="month" 
-            @change="fetchSchedules"
+          <el-date-picker
+            v-model="currentMonth"
+            type="month"
+            @change="onMonthChange"
             class="modern-date-picker"
           />
         </div>
@@ -94,13 +96,25 @@
           <span class="legend-item normal">正常班</span>
           <span class="legend-item leave">請假</span>
         </div>
+        <el-input
+          v-model="employeeSearch"
+          placeholder="搜尋員工"
+          clearable
+          class="employee-search"
+        />
+        <el-select v-model="statusFilter" placeholder="狀態" class="status-filter">
+          <el-option label="全部" value="all" />
+          <el-option label="缺班" value="unscheduled" />
+          <el-option label="待審核請假" value="onLeave" />
+        </el-select>
       </div>
-      
-      <el-table 
-        class="modern-schedule-table" 
-        :data="employees" 
+
+      <el-table
+        class="modern-schedule-table"
+        :data="filteredEmployees"
         :header-cell-style="{ backgroundColor: '#ecfeff', color: '#164e63', fontWeight: '600' }"
         :row-style="{ backgroundColor: '#ffffff' }"
+        @row-click="row => lazyMode && toggleRow(row._id)"
       >
         <el-table-column label="部門／單位" width="180" fixed="left">
           <template #default="{ row }">
@@ -112,7 +126,19 @@
         </el-table-column>
         <el-table-column prop="name" label="員工姓名" width="120" fixed="left">
           <template #default="{ row }">
-            <div class="employee-name">{{ row.name }}</div>
+            <div class="employee-name">
+              <component
+                v-if="employeeStatus(row._id) === 'unscheduled'"
+                :is="CircleCloseFilled"
+                class="status-icon unscheduled"
+              />
+              <component
+                v-else-if="employeeStatus(row._id) === 'onLeave'"
+                :is="WarningFilled"
+                class="status-icon on-leave"
+              />
+              {{ row.name }}
+            </div>
           </template>
         </el-table-column>
         <el-table-column
@@ -124,10 +150,16 @@
         >
           <template #default="{ row }">
             <div
+              v-if="!lazyMode || expandedRows.has(row._id)"
               class="modern-schedule-cell"
               :class="[
                 shiftClass(scheduleMap[row._id]?.[d.date]?.shiftId),
-                { 'has-leave': scheduleMap[row._id]?.[d.date]?.leave }
+                {
+                  'has-leave': scheduleMap[row._id]?.[d.date]?.leave,
+                  'missing-shift':
+                    !scheduleMap[row._id]?.[d.date]?.shiftId &&
+                    !scheduleMap[row._id]?.[d.date]?.leave
+                }
               ]"
             >
               <template v-if="scheduleMap[row._id]?.[d.date]">
@@ -176,40 +208,56 @@
                     </el-select>
                   </div>
                 </template>
-                <el-popover
-                  v-else
-                  v-if="shiftInfo(scheduleMap[row._id][d.date].shiftId)"
-                  placement="top"
-                  trigger="hover"
-                  :width="200"
-                >
-                  <div class="shift-details">
-                    <div class="detail-row">
-                      <span class="detail-label">上班時間：</span>
-                      <span class="detail-value">{{ shiftInfo(scheduleMap[row._id][d.date].shiftId).startTime }}</span>
-                    </div>
-                    <div class="detail-row">
-                      <span class="detail-label">下班時間：</span>
-                      <span class="detail-value">{{ shiftInfo(scheduleMap[row._id][d.date].shiftId).endTime }}</span>
-                    </div>
-                    <div v-if="shiftInfo(scheduleMap[row._id][d.date].shiftId).remark" class="detail-row">
-                      <span class="detail-label">備註：</span>
-                      <span class="detail-value">{{ shiftInfo(scheduleMap[row._id][d.date].shiftId).remark }}</span>
-                    </div>
+                <template v-else>
+                  <div
+                    v-if="scheduleMap[row._id][d.date].leave"
+                    class="leave-indicator"
+                  >
+                    請假中
                   </div>
-                  <template #reference>
-                    <div class="modern-shift-tag">
-                      {{ shiftInfo(scheduleMap[row._id][d.date].shiftId).code }}
+                  <el-popover
+                    v-else-if="shiftInfo(scheduleMap[row._id][d.date].shiftId)"
+                    placement="top"
+                    trigger="hover"
+                    :width="200"
+                  >
+                    <div class="shift-details">
+                      <div class="detail-row">
+                        <span class="detail-label">上班時間：</span>
+                        <span class="detail-value">{{ shiftInfo(scheduleMap[row._id][d.date].shiftId).startTime }}</span>
+                      </div>
+                      <div class="detail-row">
+                        <span class="detail-label">下班時間：</span>
+                        <span class="detail-value">{{ shiftInfo(scheduleMap[row._id][d.date].shiftId).endTime }}</span>
+                      </div>
+                      <div
+                        v-if="shiftInfo(scheduleMap[row._id][d.date].shiftId).remark"
+                        class="detail-row"
+                      >
+                        <span class="detail-label">備註：</span>
+                        <span class="detail-value">{{ shiftInfo(scheduleMap[row._id][d.date].shiftId).remark }}</span>
+                      </div>
                     </div>
-                  </template>
-                </el-popover>
-                <div v-if="scheduleMap[row._id][d.date].leave" class="leave-indicator">
-                  <i class="el-icon-warning-outline"></i>
-                  <span>請假</span>
+                    <template #reference>
+                      <div class="modern-shift-tag">
+                        {{ shiftInfo(scheduleMap[row._id][d.date].shiftId).code }}
+                      </div>
+                    </template>
+                  </el-popover>
+                </template>
+                <div
+                  v-if="
+                    !scheduleMap[row._id][d.date].shiftId &&
+                    !scheduleMap[row._id][d.date].leave
+                  "
+                  class="missing-label"
+                >
+                  未排班
                 </div>
               </template>
               <span v-else class="empty-cell">-</span>
             </div>
+            <div v-else class="modern-schedule-cell collapsed-cell">展開班表</div>
           </template>
         </el-table-column>
       </el-table>
@@ -258,6 +306,8 @@ import { apiFetch } from '../../api'
 import { useAuthStore } from '../../stores/auth'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRouter } from 'vue-router'
+import ScheduleDashboard from './ScheduleDashboard.vue'
+import { CircleCloseFilled, WarningFilled } from '@element-plus/icons-vue'
 
 const currentMonth = ref(dayjs().format('YYYY-MM'))
 const scheduleMap = ref({})
@@ -268,6 +318,36 @@ const departments = ref([])
 const subDepartments = ref([])
 const selectedDepartment = ref('')
 const selectedSubDepartment = ref('')
+const summary = ref({ direct: 0, unscheduled: 0, onLeave: 0 })
+const employeeSearch = ref('')
+const statusFilter = ref('all')
+const expandedRows = ref(new Set())
+
+const employeeStatus = empId => {
+  const days = scheduleMap.value[empId] || {}
+  const values = Object.values(days)
+  const hasShift = values.some(v => v.shiftId)
+  const hasLeave = values.some(v => v.leave)
+  if (!hasShift) return 'unscheduled'
+  if (hasLeave) return 'onLeave'
+  return 'scheduled'
+}
+
+const filteredEmployees = computed(() => {
+  let list = employeeSearch.value
+    ? employees.value.filter(e => e.name.includes(employeeSearch.value))
+    : employees.value
+  if (statusFilter.value !== 'all') {
+    list = list.filter(e => employeeStatus(e._id) === statusFilter.value)
+  }
+  return list
+})
+
+const lazyMode = computed(() => employees.value.length > 50)
+const toggleRow = id => {
+  if (expandedRows.value.has(id)) expandedRows.value.delete(id)
+  else expandedRows.value.add(id)
+}
 
 const filteredSubDepartments = computed(() =>
   subDepartments.value.filter(s => s.department === selectedDepartment.value)
@@ -421,6 +501,13 @@ async function fetchSchedules() {
 }
 
 async function saveAll() {
+  const hasMissing = Object.values(scheduleMap.value).some(days =>
+    Object.values(days).some(it => !it.shiftId && !it.leave)
+  )
+  if (hasMissing) {
+    ElMessage.warning('尚有未排班項目，請確認後再儲存')
+    return
+  }
   const schedules = []
   Object.keys(scheduleMap.value).forEach(empId => {
     Object.keys(scheduleMap.value[empId]).forEach(day => {
@@ -625,7 +712,29 @@ async function fetchEmployees(department = '', subDepartment = '') {
   }
 }
 
+async function fetchSummary() {
+  try {
+    const res = await apiFetch(`/api/schedules/summary?month=${currentMonth.value}`)
+    if (res.ok) {
+      const data = await res.json()
+      summary.value = {
+        direct: data.length,
+        unscheduled: data.filter(e => e.shiftCount === 0).length,
+        onLeave: data.filter(e => e.leaveCount > 0).length
+      }
+    }
+  } catch (err) {
+    console.error(err)
+  }
+}
+
+async function onMonthChange() {
+  await fetchSchedules()
+  await fetchSummary()
+}
+
 onMounted(async () => {
+  await fetchSummary()
   await fetchShiftOptions()
   await fetchOptions()
   await fetchEmployees(selectedDepartment.value, selectedSubDepartment.value)
@@ -833,6 +942,13 @@ onMounted(async () => {
         }
       }
     }
+
+    .employee-search {
+      max-width: 200px;
+    }
+    .status-filter {
+      max-width: 160px;
+    }
   }
 }
 
@@ -869,6 +985,12 @@ onMounted(async () => {
   color: #1e293b;
 }
 
+.status-icon {
+  margin-right: 4px;
+  &.unscheduled { color: #dc2626; }
+  &.on-leave { color: #f59e0b; }
+}
+
 .modern-schedule-cell {
   padding: 8px;
   border-radius: 8px;
@@ -897,6 +1019,11 @@ onMounted(async () => {
     background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
     border: 1px solid #fbbf24;
   }
+}
+
+.collapsed-cell {
+  color: #94a3b8;
+  text-align: center;
 }
 
 .cell-select {
@@ -952,15 +1079,31 @@ onMounted(async () => {
 }
 
 .leave-indicator {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  color: #d97706;
+  display: inline-block;
+  color: #b45309;
   font-size: 0.75rem;
   font-weight: 600;
-  background: rgba(251, 191, 36, 0.1);
+  background: #fef9c3;
   padding: 2px 6px;
   border-radius: 4px;
+}
+
+.missing-shift {
+  background: #fee2e2;
+}
+
+.missing-label {
+  color: #b91c1c;
+  font-size: 0.75rem;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  &::before {
+    content: '⚠';
+    margin-right: 4px;
+  }
 }
 
 .empty-cell {

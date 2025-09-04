@@ -126,9 +126,10 @@
         title="員工資料管理" 
         width="1200px"
         class="employee-dialog"
-        :close-on-click-modal="false"
+      :close-on-click-modal="false"
       >
-        <el-tabs v-model="employeeDialogTab" type="border-card" class="employee-tabs">
+        <el-form ref="formRef" :model="employeeForm" :rules="rules" label-width="140px" class="employee-form">
+          <el-tabs v-model="employeeDialogTab" type="border-card" class="employee-tabs">
           <!-- 帳號/權限 -->
           <el-tab-pane name="account">
             <template #label>
@@ -139,20 +140,20 @@
             </template>
             
             <div class="tab-content">
-              <el-form :model="employeeForm" label-width="140px" class="form-section">
+              <div class="form-section">
                 <div class="form-group">
                   <h3 class="form-group-title">登入資訊</h3>
-                  <el-form-item label="登入帳號" required>
+                  <el-form-item label="登入帳號" required prop="username">
                     <el-input v-model="employeeForm.username" placeholder="請輸入登入帳號" />
                   </el-form-item>
-                  <el-form-item label="登入密碼" required>
+                  <el-form-item label="登入密碼" required prop="password">
                     <el-input v-model="employeeForm.password" type="password" placeholder="請輸入密碼" show-password />
                   </el-form-item>
                 </div>
-                
+
                 <div class="form-group">
                   <h3 class="form-group-title">權限設定</h3>
-                  <el-form-item label="系統權限" required>
+                  <el-form-item label="系統權限" required prop="role">
                     <el-radio-group v-model="employeeForm.role" class="role-radio-group">
                       <el-radio v-for="r in ROLE_OPTIONS" :key="r.value" :label="r.value" class="role-radio">
                         <div class="role-option">
@@ -162,14 +163,14 @@
                       </el-radio>
                     </el-radio-group>
                   </el-form-item>
-                  
+
                   <el-form-item label="權限職等">
                     <el-select v-model="employeeForm.permissionGrade" placeholder="選擇職等">
                       <el-option v-for="g in PERMISSION_GRADE_OPTIONS" :key="g" :label="g" :value="g" />
                     </el-select>
                   </el-form-item>
                 </div>
-              </el-form>
+              </div>
             </div>
           </el-tab-pane>
 
@@ -183,7 +184,7 @@
             </template>
             
             <div class="tab-content">
-              <el-form :model="employeeForm" label-width="140px" class="form-section">
+              <div class="form-section">
                 <div class="form-group">
                   <h3 class="form-group-title">簽核權限</h3>
                   <el-form-item label="簽核角色">
@@ -212,7 +213,7 @@
                     </el-select>
                   </el-form-item>
                 </div>
-              </el-form>
+              </div>
             </div>
           </el-tab-pane>
 
@@ -224,16 +225,16 @@
                 <span>個人資訊</span>
               </div>
             </template>
-            
+
             <div class="tab-content">
-              <el-form :model="employeeForm" label-width="140px" class="form-section">
+              <div class="form-section">
                 <div class="form-group">
                   <h3 class="form-group-title">基本資料</h3>
                   <div class="form-row">
                     <el-form-item label="員工編號">
                       <el-input v-model="employeeForm.employeeNo" placeholder="請輸入員工編號" />
                     </el-form-item>
-                    <el-form-item label="員工姓名" required>
+                    <el-form-item label="員工姓名" required prop="name">
                       <el-input v-model="employeeForm.name" placeholder="請輸入員工姓名" />
                     </el-form-item>
                   </div>
@@ -289,7 +290,7 @@
                 <div class="form-group">
                   <h3 class="form-group-title">聯絡資訊</h3>
                   <div class="form-row">
-                    <el-form-item label="Email">
+                    <el-form-item label="Email" required prop="email">
                       <el-input v-model="employeeForm.email" placeholder="請輸入Email" />
                     </el-form-item>
                     <el-form-item label="行動電話">
@@ -314,7 +315,7 @@
                     <el-input v-model="employeeForm.contactAddress" placeholder="請輸入聯絡地址" />
                   </el-form-item>
                 </div>
-              </el-form>
+              </div>
             </div>
           </el-tab-pane>
 
@@ -328,16 +329,16 @@
             </template>
             
             <div class="tab-content">
-              <el-form :model="employeeForm" label-width="140px" class="form-section">
+              <div class="form-section">
                 <div class="form-group">
                   <h3 class="form-group-title">組織架構</h3>
                   <div class="form-row">
-                    <el-form-item label="所屬機構" required>
+                    <el-form-item label="所屬機構" required prop="organization">
                       <el-select v-model="employeeForm.organization" placeholder="選擇機構">
                         <el-option v-for="org in orgList" :key="org._id" :label="org.name" :value="org._id" />
                       </el-select>
                     </el-form-item>
-                    <el-form-item label="所屬部門" required>
+                    <el-form-item label="所屬部門" required prop="department">
                       <el-select v-model="employeeForm.department" placeholder="選擇部門">
                         <el-option
                           v-for="dept in filteredDepartments"
@@ -438,7 +439,7 @@
                     </el-form-item>
                   </div>
                 </div>
-              </el-form>
+              </div>
             </div>
           </el-tab-pane>
 
@@ -452,7 +453,7 @@
             </template>
             
             <div class="tab-content">
-              <el-form :model="employeeForm" label-width="140px" class="form-section">
+              <div class="form-section">
                 <!-- 學歷資訊 -->
                 <div class="form-group">
                   <h3 class="form-group-title">學歷資訊</h3>
@@ -564,7 +565,7 @@
                     新增經歷
                   </el-button>
                 </div>
-              </el-form>
+              </div>
             </div>
           </el-tab-pane>
 
@@ -578,7 +579,7 @@
             </template>
             
             <div class="tab-content">
-              <el-form :model="employeeForm" label-width="160px" class="form-section">
+              <div class="form-section">
                 <div class="form-group">
                   <h3 class="form-group-title">薪資資訊</h3>
                   <div class="form-row">
@@ -625,11 +626,11 @@
                     </div>
                   </div>
                 </div>
-              </el-form>
+              </div>
             </div>
           </el-tab-pane>
-        </el-tabs>
-
+          </el-tabs>
+        </el-form>
         <template #footer>
           <div class="dialog-footer">
             <el-button @click="employeeDialogVisible = false" class="cancel-btn">取消</el-button>
@@ -840,6 +841,23 @@ const emptyEmployee = {
   salaryItems: []
 }
 const employeeForm = ref({ ...emptyEmployee })
+const formRef = ref()
+const rules = {
+  username: [{ required: true, message: '請輸入登入帳號', trigger: 'blur' }],
+  password: [{ required: true, message: '請輸入登入密碼', trigger: 'blur' }],
+  role: [{ required: true, message: '請選擇系統權限', trigger: 'change' }],
+  organization: [{ required: true, message: '請選擇所屬機構', trigger: 'change' }],
+  department: [{ required: true, message: '請選擇所屬部門', trigger: 'change' }],
+  name: [{ required: true, message: '請輸入員工姓名', trigger: 'blur' }],
+  email: [
+    {
+      required: true,
+      message: '請輸入有效 Email',
+      type: 'email',
+      trigger: ['blur', 'change']
+    }
+  ]
+}
 
 /* 派生 --------------------------------------------------------------------- */
 const filteredDepartments = computed(() =>
@@ -907,31 +925,9 @@ async function openEmployeeDialog(index = null) {
 }
 
 async function saveEmployee() {
+  const valid = await formRef.value?.validate().catch(() => false)
+  if (!valid) return
   const form = employeeForm.value
-  if (!form.name) {
-    alert('請填寫姓名')
-    return
-  }
-  if (!form.username) {
-    alert('請填寫登入帳號')
-    return
-  }
-  if (!form.password) {
-    alert('請填寫登入密碼')
-    return
-  }
-  if (!form.role) {
-    alert('請填寫系統權限')
-    return
-  }
-  if (!form.organization) {
-    alert('請填寫所屬機構')
-    return
-  }
-  if (!form.department) {
-    alert('請填寫所屬部門')
-    return
-  }
   const payload = { ...form }
   if (payload.supervisor === '' || payload.supervisor === null) delete payload.supervisor
 
@@ -952,6 +948,9 @@ async function saveEmployee() {
   if (res && res.ok) {
     await fetchEmployees()
     employeeDialogVisible.value = false
+    ElMessage.success('儲存成功')
+  } else {
+    ElMessage.error('儲存失敗')
   }
 }
 

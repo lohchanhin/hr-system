@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
-import { nextTick } from 'vue'
 vi.mock('../src/api', () => ({
   apiFetch: vi.fn(() => Promise.resolve({ ok: true, json: async () => [] }))
 }))
@@ -8,6 +7,9 @@ import { apiFetch } from '../src/api'
 import EmployeeManagement from '../src/components/backComponents/EmployeeManagement.vue'
 vi.mock('vue-router', () => ({
   useRouter: () => ({ push: vi.fn() })
+}))
+vi.mock('element-plus', () => ({
+  ElMessage: { success: vi.fn(), error: vi.fn() }
 }))
 
 const elStubs = ['el-table','el-table-column','el-button','el-tabs','el-tab-pane','el-form','el-form-item','el-input','el-select','el-option','el-dialog','el-avatar','el-tag','el-radio','el-radio-group','el-date-picker','el-input-number','el-switch']
@@ -26,13 +28,25 @@ describe('EmployeeManagement.vue', () => {
     expect(calls).toContain('/api/sub-departments')
   })
 
+  it('has validation rules for required fields', () => {
+    const wrapper = mount(EmployeeManagement, { global: { stubs: elStubs } })
+    const required = ['name','username','password','role','organization','department','email']
+    required.forEach(r => {
+      expect(wrapper.vm.rules[r][0].required).toBe(true)
+    })
+    expect(wrapper.vm.rules.email[0].type).toBe('email')
+  })
+
   it('sends login info when saving employee', async () => {
     const wrapper = mount(EmployeeManagement, { global: { stubs: elStubs } })
+    const validate = vi.fn(() => Promise.resolve(true))
+    wrapper.vm.formRef = { validate }
     apiFetch.mockClear()
     apiFetch.mockResolvedValueOnce({ ok: true, json: async () => ({}) })
     wrapper.vm.employeeForm = { ...wrapper.vm.employeeForm, name: 'n', username: 'u', password: 'p', role: 'admin', organization: 'o', department: 'd' }
     wrapper.vm.editEmployeeIndex = null
     await wrapper.vm.saveEmployee()
+    expect(validate).toHaveBeenCalled()
     const body = JSON.parse(apiFetch.mock.calls[0][1].body)
     expect(body.username).toBe('u')
     expect(body.password).toBe('p')
@@ -40,33 +54,13 @@ describe('EmployeeManagement.vue', () => {
     expect(apiFetch).toHaveBeenCalledWith('/api/employees', expect.objectContaining({ method: 'POST' }))
   })
 
-  it.each([
-    ['name', '姓名'],
-    ['username', '登入帳號'],
-    ['password', '登入密碼'],
-    ['role', '系統權限'],
-    ['organization', '所屬機構'],
-    ['department', '所屬部門']
-  ])('alerts when %s missing', async (field, label) => {
+  it('stops saving when validation fails', async () => {
     const wrapper = mount(EmployeeManagement, { global: { stubs: elStubs } })
-    const alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => {})
+    const validate = vi.fn(() => Promise.resolve(false))
+    wrapper.vm.formRef = { validate }
     apiFetch.mockClear()
-    wrapper.vm.fetchSubDepartments = vi.fn()
-    wrapper.vm.employeeForm = {
-      ...wrapper.vm.employeeForm,
-      name: 'n',
-      username: 'u',
-      password: 'p',
-      role: 'admin',
-      organization: 'o',
-      department: 'd'
-    }
-    await nextTick()
-    apiFetch.mockClear()
-    delete wrapper.vm.employeeForm[field]
     await wrapper.vm.saveEmployee()
-    expect(alertSpy).toHaveBeenCalledWith('請填寫' + label)
+    expect(validate).toHaveBeenCalled()
     expect(apiFetch).not.toHaveBeenCalled()
-    alertSpy.mockRestore()
   })
 })
