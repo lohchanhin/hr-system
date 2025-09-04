@@ -240,7 +240,7 @@
                   </div>
                   
                   <div class="form-row">
-                    <el-form-item label="性別">
+                    <el-form-item label="性別" required prop="gender">
                       <el-select v-model="employeeForm.gender" placeholder="選擇性別">
                         <el-option label="男" value="M" />
                         <el-option label="女" value="F" />
@@ -650,6 +650,7 @@ import { ref, onMounted, computed, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { apiFetch } from '../../api'
+import { REQUIRED_FIELDS } from './requiredFields'
 
 const router = useRouter()
 
@@ -848,6 +849,7 @@ const rules = {
   role: [{ required: true, message: '請選擇系統權限', trigger: 'change' }],
   organization: [{ required: true, message: '請選擇所屬機構', trigger: 'change' }],
   department: [{ required: true, message: '請選擇所屬部門', trigger: 'change' }],
+  gender: [{ required: true, message: '請選擇性別', trigger: 'change' }],
   name: [{ required: true, message: '請輸入員工姓名', trigger: 'blur' }],
   email: [
     {
