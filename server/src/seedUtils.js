@@ -87,7 +87,7 @@ export async function seedTestUsers() {
         status: '正職員工',
         signTags: data.signTags ?? []
       });
-      if (data.role === 'supervisor') supervisorId = employee._id;
+      if (data.username === 'supervisor') supervisorId = employee._id;
       console.log(`Created test user ${data.username}`);
     }
   }

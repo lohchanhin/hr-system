@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { shallowMount } from '@vue/test-utils'
 import dayjs from 'dayjs'
 import { createPinia, setActivePinia } from 'pinia'
-global.ElMessage = { error: vi.fn(), success: vi.fn() }
+global.ElMessage = { error: vi.fn(), success: vi.fn(), warning: vi.fn() }
 
 vi.mock('../src/api', () => ({ apiFetch: vi.fn() }))
 vi.mock('../src/utils/tokenService', () => ({ getToken: () => 'tok' }))
@@ -21,6 +21,7 @@ describe('Schedule.vue', () => {
     apiFetch.mockReset()
     ElMessage.error.mockReset()
     ElMessage.success.mockReset()
+    ElMessage.warning.mockReset()
     pushMock.mockReset()
     sessionStorage.clear()
     localStorage.clear()
@@ -300,6 +301,25 @@ describe('Schedule.vue', () => {
     expect(cols[2].attributes('data-label')).toMatch(/^1\(.\)$/)
   })
 
+  it('displays leave label when leave data exists', async () => {
+    apiFetch
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ approvals: [], leaves: [] }) })
+    const wrapper = mountSchedule()
+    await flush()
+    wrapper.vm.employees = [
+      { _id: undefined, name: 'E1', department: '', subDepartment: '' }
+    ]
+    wrapper.vm.scheduleMap = { undefined: { 1: { leave: {} } } }
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('.leave-indicator').text()).toBe('請假中')
+  })
+
   it('maps department ids to names', async () => {
     apiFetch
       .mockResolvedValueOnce({ ok: true, json: async () => [] })
@@ -415,6 +435,26 @@ describe('Schedule.vue', () => {
         })
       })
     )
+  })
+
+  it('warns and aborts save when missing shifts exist', async () => {
+    apiFetch
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ approvals: [], leaves: [] }) })
+
+    const wrapper = mountSchedule()
+    await flush()
+    wrapper.vm.scheduleMap = {
+      e1: { 1: { shiftId: '', department: '', subDepartment: '' } }
+    }
+    await wrapper.vm.saveAll()
+    expect(ElMessage.warning).toHaveBeenCalled()
+    expect(apiFetch).not.toHaveBeenCalledWith('/api/schedules/batch', expect.anything())
   })
 
   it('stores data and navigates when previewing month', async () => {
