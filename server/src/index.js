@@ -62,6 +62,8 @@ if (missing.length) {
 
 const app = express();
 const PORT = process.env.PORT;
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const distPath = path.resolve(__dirname, '../../client/dist');
 
 app.use(express.json());
 app.use(cors());
@@ -166,6 +168,13 @@ app.use('/api/break-settings', authenticate, authorizeRoles('admin'), breakSetti
 app.use('/api/holiday-move-settings', authenticate, authorizeRoles('admin'), holidayMoveSettingRoutes);
 
 
+app.get('*', (req, res, next) => {
+  if (req.path.startsWith('/api')) return next();
+  res.sendFile(path.join(distPath, 'index.html'));
+});
+
+// Serve static front-end files if available
+app.use(express.static(distPath));
 app.get('*', (req, res, next) => {
   if (req.path.startsWith('/api')) return next();
   res.sendFile(path.join(distPath, 'index.html'));
