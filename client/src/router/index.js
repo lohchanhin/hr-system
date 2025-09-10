@@ -136,7 +136,7 @@ router.beforeEach((to, from, next) => {
     if (!token) {
       return next({ name: 'ManagerLogin' })
     }
-    const userRole = localStorage.getItem('role') || 'employee'
+    const userRole = sessionStorage.getItem('role') || 'employee'
     if (!['supervisor', 'admin'].includes(userRole)) {
       return next('/login')
     }
@@ -152,7 +152,7 @@ router.beforeEach((to, from, next) => {
 
   // 若有角色限制 meta.roles
   if (to.meta.roles) {
-    const userRole = localStorage.getItem('role') || 'employee'
+    const userRole = sessionStorage.getItem('role') || 'employee'
     if (!to.meta.roles.includes(userRole)) {
       return next({ name: 'Forbidden' })
     }

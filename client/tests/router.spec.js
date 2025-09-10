@@ -13,10 +13,12 @@ import router from '../src/router/index.js'
 
 beforeEach(() => {
   localStorage.clear()
+  sessionStorage.clear()
 })
 
 afterEach(() => {
   localStorage.clear()
+  sessionStorage.clear()
 })
 
 describe('router', () => {
@@ -55,14 +57,14 @@ describe('router', () => {
   })
 
   it('role guard blocks unauthorized user', () => {
-    localStorage.setItem('role', 'employee')
+    sessionStorage.setItem('role', 'employee')
     const next = vi.fn()
     capturedGuard({ matched: [], meta: { roles: ['supervisor'] } }, {}, next)
     expect(next).toHaveBeenCalledWith({ name: 'Forbidden' })
   })
 
   it('role guard allows employee when permitted', () => {
-    localStorage.setItem('role', 'employee')
+    sessionStorage.setItem('role', 'employee')
     const next = vi.fn()
     capturedGuard({ matched: [], meta: { roles: ['employee', 'supervisor', 'admin'] } }, {}, next)
     expect(next).toHaveBeenCalled()
@@ -71,7 +73,7 @@ describe('router', () => {
 
   it('backend guard redirects non-supervisor', () => {
     localStorage.setItem('token', 't')
-    localStorage.setItem('role', 'employee')
+    sessionStorage.setItem('role', 'employee')
     const next = vi.fn()
     capturedGuard({ matched: [{ meta: { requiresAuth: true } }], meta: {} }, {}, next)
     expect(next).toHaveBeenCalledWith('/login')
@@ -79,7 +81,7 @@ describe('router', () => {
 
   it('backend guard allows supervisor', () => {
     localStorage.setItem('token', 't')
-    localStorage.setItem('role', 'supervisor')
+    sessionStorage.setItem('role', 'supervisor')
     const next = vi.fn()
     capturedGuard({ matched: [{ meta: { requiresAuth: true } }], meta: {} }, {}, next)
     expect(next).toHaveBeenCalled()
