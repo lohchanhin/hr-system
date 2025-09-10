@@ -11,6 +11,7 @@ vi.mock('../src/api', () => ({
 describe('OrgDepartmentSetting.vue', () => {
   beforeEach(() => {
     vi.stubGlobal('fetch', vi.fn())
+    vi.stubGlobal('alert', vi.fn())
   })
 
   afterEach(() => {
@@ -23,6 +24,7 @@ describe('OrgDepartmentSetting.vue', () => {
     expect(calls.find(c => c[0] === '/api/organizations')).toBeTruthy()
     expect(calls.find(c => c[0] === '/api/departments')).toBeTruthy()
     expect(calls.find(c => c[0] === '/api/sub-departments')).toBeTruthy()
+    expect(calls.find(c => c[0] === '/api/dept-managers')).toBeTruthy()
   })
 
   it('posts to correct endpoint when creating org', async () => {
@@ -47,5 +49,19 @@ describe('OrgDepartmentSetting.vue', () => {
     apiFetch.mockClear()
     await wrapper.vm.fetchList('dept', '123')
     expect(apiFetch).toHaveBeenCalledWith('/api/departments?organization=123', expect.anything())
+  })
+
+  it('saves dept schedule to correct endpoint', async () => {
+    const wrapper = mount(OrgDepartmentSetting, { global: { plugins: [ElementPlus] } })
+    apiFetch.mockClear()
+    await wrapper.vm.saveDeptSchedule()
+    expect(apiFetch).toHaveBeenCalledWith('/api/dept-schedules', expect.objectContaining({ method: 'POST' }))
+  })
+
+  it('saves break setting to correct endpoint', async () => {
+    const wrapper = mount(OrgDepartmentSetting, { global: { plugins: [ElementPlus] } })
+    apiFetch.mockClear()
+    await wrapper.vm.saveBreakSetting()
+    expect(apiFetch).toHaveBeenCalledWith('/api/break-settings', expect.objectContaining({ method: 'POST' }))
   })
 })

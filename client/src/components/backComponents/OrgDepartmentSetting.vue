@@ -124,8 +124,8 @@
           </div>
           
           <div class="table-container">
-            <el-table 
-              :data="filteredDeptList" 
+            <el-table
+              :data="filteredDeptList"
               class="data-table"
               :header-cell-style="{ background: '#f8fafc', color: '#475569', fontWeight: '600' }"
               :row-style="{ height: '56px' }"
@@ -165,6 +165,89 @@
                 </template>
               </el-table-column>
             </el-table>
+          </div>
+
+          <!-- 部門排班規則與中場休息設定 -->
+          <div class="settings-block">
+            <div class="settings-card">
+              <h3 class="section-title">部門排班規則</h3>
+              <el-form :model="deptScheduleForm" label-width="200px" class="settings-form">
+                <el-form-item label="預設週休二日">
+                  <el-switch
+                    v-model="deptScheduleForm.defaultTwoDayOff"
+                    active-text="啟用"
+                    inactive-text="停用"
+                    active-color="#10b981"
+                  />
+                </el-form-item>
+                <el-form-item label="可否臨時調班">
+                  <el-switch
+                    v-model="deptScheduleForm.tempChangeAllowed"
+                    active-text="允許"
+                    inactive-text="禁止"
+                    active-color="#10b981"
+                  />
+                </el-form-item>
+                <el-form-item label="部門排班管理者">
+                  <el-select
+                    v-model="deptScheduleForm.deptManager"
+                    placeholder="選擇管理者"
+                    style="width: 300px"
+                  >
+                    <el-option
+                      v-for="mgr in managerList"
+                      :key="mgr.value"
+                      :label="mgr.label"
+                      :value="mgr.value"
+                    />
+                  </el-select>
+                </el-form-item>
+                <el-form-item>
+                  <el-button type="primary" @click="saveDeptSchedule" class="save-settings-btn">
+                    <i class="el-icon-check"></i>
+                    儲存部門排班規則
+                  </el-button>
+                </el-form-item>
+              </el-form>
+            </div>
+
+            <div class="settings-card">
+              <h3 class="section-title">中場休息設定</h3>
+              <el-form :model="breakSettingForm" label-width="220px" class="settings-form">
+                <el-form-item label="是否啟用全局中場休息設定">
+                  <el-switch
+                    v-model="breakSettingForm.enableGlobalBreak"
+                    active-text="啟用"
+                    inactive-text="停用"
+                    active-color="#10b981"
+                  />
+                </el-form-item>
+                <el-form-item label="全局休息時間 (分鐘)">
+                  <el-input-number
+                    v-model="breakSettingForm.breakMinutes"
+                    :min="0"
+                    :max="240"
+                    :disabled="!breakSettingForm.enableGlobalBreak"
+                    style="width: 200px"
+                  />
+                </el-form-item>
+                <el-form-item label="是否允許多段休息">
+                  <el-switch
+                    v-model="breakSettingForm.allowMultiBreak"
+                    :disabled="!breakSettingForm.enableGlobalBreak"
+                    active-text="允許"
+                    inactive-text="不允許"
+                    active-color="#10b981"
+                  />
+                </el-form-item>
+                <el-form-item>
+                  <el-button type="primary" @click="saveBreakSetting" class="save-settings-btn">
+                    <i class="el-icon-check"></i>
+                    儲存休息設定
+                  </el-button>
+                </el-form-item>
+              </el-form>
+            </div>
           </div>
         </div>
       </el-tab-pane>
@@ -406,6 +489,19 @@ const form = ref(defaultForm('org'))
 const currentType = ref('org')
 const editIndex = ref(null)
 
+// 部門排班規則與中場休息設定
+const deptScheduleForm = ref({
+  defaultTwoDayOff: true,
+  tempChangeAllowed: false,
+  deptManager: ''
+})
+const breakSettingForm = ref({
+  enableGlobalBreak: false,
+  breakMinutes: 60,
+  allowMultiBreak: false
+})
+const managerList = ref([])
+
 const filteredDeptList = computed(() =>
   selectedOrg.value
     ? deptList.value.filter(d => d.organization === selectedOrg.value)
@@ -559,7 +655,41 @@ function deleteItem(type, index) {
   })
 }
 
-onMounted(fetchAll)
+async function fetchManagers() {
+  const res = await apiFetch('/api/dept-managers')
+  if (res.ok) {
+    managerList.value = await res.json()
+  }
+}
+
+async function saveDeptSchedule() {
+  const method = deptScheduleForm.value._id ? 'PUT' : 'POST'
+  let url = '/api/dept-schedules'
+  if (method === 'PUT') url += `/${deptScheduleForm.value._id}`
+  const res = await apiFetch(url, {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(deptScheduleForm.value)
+  })
+  if (res.ok) alert('已儲存「部門排班規則」設定')
+}
+
+async function saveBreakSetting() {
+  const method = breakSettingForm.value._id ? 'PUT' : 'POST'
+  let url = '/api/break-settings'
+  if (method === 'PUT') url += `/${breakSettingForm.value._id}`
+  const res = await apiFetch(url, {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(breakSettingForm.value)
+  })
+  if (res.ok) alert('已儲存「中場休息」設定')
+}
+
+onMounted(() => {
+  fetchAll()
+  fetchManagers()
+})
 
 watch(selectedOrg, val => {
   fetchList('dept', val)
