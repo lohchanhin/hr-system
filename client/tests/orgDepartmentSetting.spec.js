@@ -48,7 +48,7 @@ describe('OrgDepartmentSetting.vue', () => {
     const wrapper = mount(OrgDepartmentSetting, { global: { plugins: [ElementPlus] } })
     apiFetch.mockClear()
     await wrapper.vm.fetchList('dept', '123')
-    expect(apiFetch).toHaveBeenCalledWith('/api/departments?organization=123', expect.anything())
+    expect(apiFetch).toHaveBeenCalledWith('/api/departments?organization=123')
   })
 
   it('saves dept schedule to correct endpoint', async () => {
@@ -63,5 +63,21 @@ describe('OrgDepartmentSetting.vue', () => {
     apiFetch.mockClear()
     await wrapper.vm.saveBreakSetting()
     expect(apiFetch).toHaveBeenCalledWith('/api/break-settings', expect.objectContaining({ method: 'POST' }))
+  })
+
+  it('選取部門時顯示名稱會更新', async () => {
+    const wrapper = mount(OrgDepartmentSetting, { global: { plugins: [ElementPlus] } })
+    wrapper.vm.deptList = [
+      { _id: 'd1', name: '人資部' },
+      { _id: 'd2', name: '財務部' }
+    ]
+
+    wrapper.vm.selectedDept = 'd1'
+    await wrapper.vm.$nextTick()
+    expect(wrapper.html()).toContain('目前部門：人資部')
+
+    wrapper.vm.selectedDept = 'd2'
+    await wrapper.vm.$nextTick()
+    expect(wrapper.html()).toContain('目前部門：財務部')
   })
 })
