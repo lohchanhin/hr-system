@@ -265,9 +265,9 @@
           <div class="content-header">
             <h2 class="section-title">小單位列表</h2>
             <div class="header-actions">
-              <el-select 
-                v-model="selectedDept" 
-                placeholder="篩選部門" 
+              <el-select
+                v-model="selectedDept"
+                placeholder="篩選部門"
                 class="filter-select"
                 @change="fetchList('sub', selectedDept)"
                 clearable
@@ -285,10 +285,12 @@
               </el-button>
             </div>
           </div>
-          
+
+          <div v-if="selectedDeptName" class="current-dept">目前部門：{{ selectedDeptName }}</div>
+
           <div class="table-container">
-            <el-table 
-              :data="filteredSubList" 
+            <el-table
+              :data="filteredSubList"
               class="data-table"
               :header-cell-style="{ background: '#f8fafc', color: '#475569', fontWeight: '600' }"
               :row-style="{ height: '56px' }"
@@ -513,6 +515,11 @@ const filteredSubList = computed(() =>
     ? subList.value.filter(s => s.department === selectedDept.value)
     : subList.value
 )
+
+const selectedDeptName = computed(() => {
+  const dept = deptList.value.find(d => d._id === selectedDept.value)
+  return dept ? dept.name : ''
+})
 
 const dialogTitle = computed(() => {
   const typeLabel = currentType.value === 'org'
@@ -797,6 +804,11 @@ watch(selectedDept, val => {
 
 .filter-select {
   min-width: 200px;
+}
+
+.current-dept {
+  margin: 0 0 16px 0;
+  color: #334155;
 }
 
 .add-btn {
