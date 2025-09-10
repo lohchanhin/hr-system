@@ -5,7 +5,7 @@
     <div class="page-header">
       <div class="header-content">
         <h1 class="page-title">排班與班別管理設定</h1>
-        <p class="page-description">管理班別時間、假日設定、排班規則和休息時間配置</p>
+        <p class="page-description">管理班別時間、假日設定與國定假日挪移配置</p>
       </div>
       <div class="header-stats">
         <div class="stat-item">
@@ -253,122 +253,7 @@
         </div>
       </el-tab-pane>
 
-      <!-- 3) 部門排班規則 -->
-      <el-tab-pane name="deptSchedule">
-        <template #label>
-          <div class="tab-label">
-            <i class="el-icon-s-operation"></i>
-            <span>部門排班規則</span>
-          </div>
-        </template>
-        
-        <div class="tab-content">
-          <div class="settings-card">
-            <h2 class="section-title">排班規則設定</h2>
-            <el-form :model="deptScheduleForm" label-width="200px" class="settings-form">
-              <div class="form-group">
-                <el-form-item label="預設週休二日">
-                  <el-switch 
-                    v-model="deptScheduleForm.defaultTwoDayOff" 
-                    active-text="啟用" 
-                    inactive-text="停用"
-                    active-color="#10b981"
-                  />
-                  <div class="form-help">啟用後新員工預設採用週休二日制度</div>
-                </el-form-item>
-                
-                <el-form-item label="可否臨時調班">
-                  <el-switch 
-                    v-model="deptScheduleForm.tempChangeAllowed"
-                    active-text="允許" 
-                    inactive-text="禁止"
-                    active-color="#10b981"
-                  />
-                  <div class="form-help">允許員工在系統中申請臨時調班</div>
-                </el-form-item>
-                
-                <el-form-item label="部門排班管理者">
-                  <el-select 
-                    v-model="deptScheduleForm.deptManager" 
-                    placeholder="選擇管理者"
-                    style="width: 300px"
-                  >
-                    <el-option v-for="mgr in managerList" :key="mgr.value" :label="mgr.label" :value="mgr.value" />
-                  </el-select>
-                  <div class="form-help">指定負責部門排班管理的人員</div>
-                </el-form-item>
-              </div>
-              
-              <el-form-item>
-                <el-button type="primary" @click="saveDeptSchedule" class="save-settings-btn">
-                  <i class="el-icon-check"></i>
-                  儲存部門排班規則
-                </el-button>
-              </el-form-item>
-            </el-form>
-          </div>
-        </div>
-      </el-tab-pane>
-
-      <!-- 4) 中場休息時間全局設定 -->
-      <el-tab-pane name="breakSetting">
-        <template #label>
-          <div class="tab-label">
-            <i class="el-icon-coffee-cup"></i>
-            <span>中場休息設定</span>
-          </div>
-        </template>
-        
-        <div class="tab-content">
-          <div class="settings-card">
-            <h2 class="section-title">休息時間設定</h2>
-            <el-form :model="breakSettingForm" label-width="220px" class="settings-form">
-              <div class="form-group">
-                <el-form-item label="是否啟用全局中場休息設定">
-                  <el-switch 
-                    v-model="breakSettingForm.enableGlobalBreak"
-                    active-text="啟用" 
-                    inactive-text="停用"
-                    active-color="#10b981"
-                  />
-                  <div class="form-help">啟用後所有員工都會套用統一的休息時間設定</div>
-                </el-form-item>
-                
-                <el-form-item label="全局休息時間 (分鐘)">
-                  <el-input-number 
-                    v-model="breakSettingForm.breakMinutes" 
-                    :min="0" 
-                    :max="240"
-                    :disabled="!breakSettingForm.enableGlobalBreak"
-                    style="width: 200px"
-                  />
-                  <div class="form-help">設定每日的休息時間長度</div>
-                </el-form-item>
-                
-                <el-form-item label="是否允許多段休息">
-                  <el-switch 
-                    v-model="breakSettingForm.allowMultiBreak" 
-                    :disabled="!breakSettingForm.enableGlobalBreak"
-                    active-text="允許" 
-                    inactive-text="不允許"
-                    active-color="#10b981"
-                  />
-                  <div class="form-help">允許員工將休息時間分成多個時段</div>
-                </el-form-item>
-              </div>
-              
-              <el-form-item>
-                <el-button type="primary" @click="saveBreakSetting" class="save-settings-btn">
-                  <i class="el-icon-check"></i>
-                  儲存休息設定
-                </el-button>
-              </el-form-item>
-            </el-form>
-          </div>
-        </div>
-      </el-tab-pane>
-
-      <!-- 5) 員工個人國定假日挪移/簽名 -->
+      <!-- 3) 員工個人國定假日挪移/簽名 -->
       <el-tab-pane name="holidayMove">
         <template #label>
           <div class="tab-label">
@@ -582,72 +467,7 @@ async function deleteShift(index) {
   await fetchShifts()
 }
   
-// =========== 3) 部門排班規則 ===========
-const deptScheduleForm = ref({
-  defaultTwoDayOff: true,
-  tempChangeAllowed: false,
-  deptManager: ''
-})
-const managerList = ref([])
-
-async function fetchManagers() {
-  const res = await apiFetch('/api/dept-managers', {
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${getToken()}`
-    }
-  })
-  if (res.ok) {
-    managerList.value = await res.json()
-  }
-}
-
-async function saveDeptSchedule() {
-  const method = deptScheduleForm.value._id ? 'PUT' : 'POST'
-  let url = '/api/dept-schedules'
-  if (method === 'PUT') {
-    url += `/${deptScheduleForm.value._id}`
-  }
-  const res = await apiFetch(url, {
-    method,
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${getToken()}`
-    },
-    body: JSON.stringify(deptScheduleForm.value)
-  })
-  if (res.ok) {
-    alert('已儲存「部門排班規則」設定')
-  }
-}
-
-// =========== 4) 中場休息時間 ===========
-const breakSettingForm = ref({
-  enableGlobalBreak: false,
-  breakMinutes: 60,
-  allowMultiBreak: false
-})
-  
-async function saveBreakSetting() {
-  const method = breakSettingForm.value._id ? 'PUT' : 'POST'
-  let url = '/api/break-settings'
-  if (method === 'PUT') {
-    url += `/${breakSettingForm.value._id}`
-  }
-  const res = await apiFetch(url, {
-    method,
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${getToken()}`
-    },
-    body: JSON.stringify(breakSettingForm.value)
-  })
-  if (res.ok) {
-    alert('已儲存「中場休息」設定')
-  }
-}
-  
-// =========== 5) 員工個人國定假日挪移設定 ===========
+// =========== 3) 員工個人國定假日挪移設定 ===========
 const holidayMoveForm = ref({
   enableHolidayMove: false,
   needSignature: false,
@@ -676,7 +496,6 @@ async function saveHolidayMove() {
 onMounted(() => {
   fetchHolidays()
   fetchShifts()
-  fetchManagers()
 })
   
 function getHolidayTagType(type) {
