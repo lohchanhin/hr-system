@@ -22,7 +22,11 @@ export async function createDepartment(req, res) {
       location,
       phone,
       manager,
-      organization
+      organization,
+      defaultTwoDayOff,
+      tempChangeAllowed,
+      deptManager,
+      scheduleNotes
     } = req.body;
     const dept = new Department({
       name,
@@ -31,7 +35,11 @@ export async function createDepartment(req, res) {
       location,
       phone,
       manager,
-      organization
+      organization,
+      defaultTwoDayOff,
+      tempChangeAllowed,
+      deptManager,
+      scheduleNotes
     });
     await dept.save();
     res.status(201).json(dept);
@@ -49,11 +57,15 @@ export async function updateDepartment(req, res) {
       location,
       phone,
       manager,
-      organization
+      organization,
+      defaultTwoDayOff,
+      tempChangeAllowed,
+      deptManager,
+      scheduleNotes
     } = req.body;
     const dept = await Department.findByIdAndUpdate(
       req.params.id,
-      { name, code, unitName, location, phone, manager, organization },
+      { name, code, unitName, location, phone, manager, organization, defaultTwoDayOff, tempChangeAllowed, deptManager, scheduleNotes },
       { new: true }
     );
     if (!dept) return res.status(404).json({ error: 'Not found' });
