@@ -33,9 +33,10 @@ beforeEach(() => {
 
 describe('SubDepartment API', () => {
   it('lists sub-departments', async () => {
-    mockSubDepartment.find.mockResolvedValue([{ name: 'Sub' }]);
+    mockSubDepartment.find.mockResolvedValue([{ name: 'Sub', shift: '507f1f77bcf86cd799439014' }]);
     const res = await request(app).get('/api/sub-departments');
     expect(res.status).toBe(200);
+    expect(res.body[0]).toMatchObject({ shiftId: '507f1f77bcf86cd799439014' });
   });
 
   it('lists sub-departments by department id', async () => {
@@ -64,16 +65,32 @@ describe('SubDepartment API', () => {
 
   it('creates sub-department', async () => {
     saveMock.mockResolvedValue();
-    const res = await request(app).post('/api/sub-departments').send({ name: 'Sub', department: 'dept1' });
+    const payload = { name: 'Sub', department: 'dept1', shiftId: 'shift1' };
+    const res = await request(app).post('/api/sub-departments').send(payload);
     expect(res.status).toBe(201);
     expect(saveMock).toHaveBeenCalled();
+    expect(mockSubDepartment).toHaveBeenCalledWith(expect.objectContaining({
+      name: 'Sub',
+      department: 'dept1',
+      shift: 'shift1'
+    }));
+    const constructed = mockSubDepartment.mock.calls[0][0];
+    expect(constructed).not.toHaveProperty('shiftId');
   });
 
   it('updates sub-department', async () => {
-    mockSubDepartment.findByIdAndUpdate.mockResolvedValue({ name: 'Sub' });
-    const res = await request(app).put('/api/sub-departments/1').send({ name: 'Sub', department: 'dept1' });
+    mockSubDepartment.findByIdAndUpdate.mockResolvedValue({ name: 'Sub', shift: 'shift2' });
+    const res = await request(app)
+      .put('/api/sub-departments/1')
+      .send({ name: 'Sub', department: 'dept1', shiftId: 'shift2' });
     expect(res.status).toBe(200);
-    expect(mockSubDepartment.findByIdAndUpdate).toHaveBeenCalled();
+    expect(mockSubDepartment.findByIdAndUpdate).toHaveBeenCalledWith(
+      '1',
+      expect.objectContaining({ shift: 'shift2' }),
+      { new: true }
+    );
+    const body = res.body;
+    expect(body.shiftId).toBe('shift2');
   });
 
   it('deletes sub-department', async () => {

@@ -15,6 +15,7 @@ const subDepartmentSchema = new mongoose.Schema({
   // 部門主管
   manager: String,
   headcount: Number,
+  shift: { type: mongoose.Schema.Types.ObjectId, ref: 'Shift' },
   scheduleSetting: String
 }, { timestamps: true });
 
