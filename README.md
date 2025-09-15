@@ -106,6 +106,33 @@
 - **breakTime**：中場休息總時長。
 - **crossDay**：是否跨日。
 
+### 部門排班規則
+
+部門層級除了基本資訊外，亦可設定排班規則，確保各部門的出勤策略與換班流程保持一致：
+
+- **defaultTwoDayOff**：是否預設週休二日，供新排班時快速帶入休假節奏。
+- **tempChangeAllowed**：是否允許臨時調班，用於控制換班審核流程。
+- **deptManager**：排班管理者（由後端 `/api/dept-managers` 提供的清單），負責審核或調整班表。
+- **scheduleNotes**：排班備註，用於記錄部門特殊需求或調班說明。
+
+建立或更新部門時，以上欄位會與基本資訊一併提交至 `/api/departments`：
+
+```bash
+curl -X POST http://localhost:3000/api/departments \
+  -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer <token>" \
+  -d '{
+    "name":"客服部",
+    "organization":"<ORG_ID>",
+    "defaultTwoDayOff":true,
+    "tempChangeAllowed":false,
+    "deptManager":"<EMP_ID>",
+    "scheduleNotes":"需提前一週完成換班申請"
+  }'
+```
+
+前端可在「機構與部門設定」>「部門管理」的編輯視窗中調整上述規則，儲存後即會同步至後端資料庫。
+
 #### 操作範例
 
 API 範例：

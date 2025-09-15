@@ -42,6 +42,7 @@ describe('OrgDepartmentSetting.vue', () => {
     wrapper.vm.openDialog('dept')
     expect(wrapper.findComponent({ name: 'ElSelect' }).exists()).toBe(true)
     expect(wrapper.vm.form).toHaveProperty('organization')
+    expect(wrapper.vm.form).toHaveProperty('defaultTwoDayOff', true)
   })
 
   it('fetchList adds parent id query', async () => {
@@ -51,11 +52,51 @@ describe('OrgDepartmentSetting.vue', () => {
     expect(apiFetch).toHaveBeenCalledWith('/api/departments?organization=123')
   })
 
-  it('saves dept schedule to correct endpoint', async () => {
+  it('merges schedule defaults when editing dept without data', () => {
+    const wrapper = mount(OrgDepartmentSetting, { global: { plugins: [ElementPlus] } })
+    wrapper.vm.deptList = [
+      {
+        _id: 'd1',
+        name: 'HR',
+        organization: 'org1',
+        defaultTwoDayOff: false
+      }
+    ]
+    wrapper.vm.openDialog('dept', 0)
+    expect(wrapper.vm.form.defaultTwoDayOff).toBe(false)
+    expect(wrapper.vm.form.tempChangeAllowed).toBe(false)
+    expect(wrapper.vm.form).toHaveProperty('deptManager', '')
+  })
+
+  it('saves department with schedule fields', async () => {
     const wrapper = mount(OrgDepartmentSetting, { global: { plugins: [ElementPlus] } })
     apiFetch.mockClear()
-    await wrapper.vm.saveDeptSchedule()
-    expect(apiFetch).toHaveBeenCalledWith('/api/dept-schedules', expect.objectContaining({ method: 'POST' }))
+    wrapper.vm.openDialog('dept')
+    wrapper.vm.form = {
+      name: '人資',
+      organization: 'org1',
+      code: 'D1',
+      unitName: '',
+      location: '',
+      phone: '',
+      manager: '',
+      defaultTwoDayOff: false,
+      tempChangeAllowed: true,
+      deptManager: 'mgr1',
+      scheduleNotes: '備註'
+    }
+    wrapper.vm.editIndex = null
+    await wrapper.vm.saveItem()
+    const postCall = apiFetch.mock.calls.find(([url, options]) => url === '/api/departments' && options?.method === 'POST')
+    expect(postCall).toBeTruthy()
+    const [, options] = postCall
+    const payload = JSON.parse(options.body)
+    expect(payload).toMatchObject({
+      defaultTwoDayOff: false,
+      tempChangeAllowed: true,
+      deptManager: 'mgr1',
+      scheduleNotes: '備註'
+    })
   })
 
   it('saves break setting to correct endpoint', async () => {
