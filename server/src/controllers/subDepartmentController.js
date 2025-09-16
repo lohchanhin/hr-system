@@ -2,6 +2,28 @@ import mongoose from 'mongoose';
 import SubDepartment from '../models/SubDepartment.js';
 import Department from '../models/Department.js';
 
+function formatSubDepartment(doc) {
+  if (!doc) return doc;
+  const plain = typeof doc.toObject === 'function' ? doc.toObject() : { ...doc };
+  const shiftValue = plain.shift ?? null;
+  return {
+    ...plain,
+    shiftId: shiftValue ? shiftValue.toString() : '',
+  };
+}
+
+function mapShiftPayload(payload = {}) {
+  const data = { ...payload };
+  if (Object.prototype.hasOwnProperty.call(data, 'shiftId')) {
+    data.shift = data.shiftId || null;
+    delete data.shiftId;
+  }
+  if (data.shift === '') {
+    data.shift = null;
+  }
+  return data;
+}
+
 export async function listSubDepartments(req, res) {
   try {
     const filter = {};
@@ -20,7 +42,7 @@ export async function listSubDepartments(req, res) {
     }
 
     const subDepts = await SubDepartment.find(filter);
-    res.json(subDepts);
+    res.json(subDepts.map(formatSubDepartment));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -28,9 +50,9 @@ export async function listSubDepartments(req, res) {
 
 export async function createSubDepartment(req, res) {
   try {
-    const subDept = new SubDepartment(req.body);
+    const subDept = new SubDepartment(mapShiftPayload(req.body));
     await subDept.save();
-    res.status(201).json(subDept);
+    res.status(201).json(formatSubDepartment(subDept));
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
@@ -38,9 +60,13 @@ export async function createSubDepartment(req, res) {
 
 export async function updateSubDepartment(req, res) {
   try {
-    const subDept = await SubDepartment.findByIdAndUpdate(req.params.id, req.body, { new: true });
+    const subDept = await SubDepartment.findByIdAndUpdate(
+      req.params.id,
+      mapShiftPayload(req.body),
+      { new: true }
+    );
     if (!subDept) return res.status(404).json({ error: 'Not found' });
-    res.json(subDept);
+    res.json(formatSubDepartment(subDept));
   } catch (err) {
     res.status(400).json({ error: err.message });
   }

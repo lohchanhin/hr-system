@@ -12,6 +12,7 @@ describe('OrgDepartmentSetting.vue', () => {
   beforeEach(() => {
     vi.stubGlobal('fetch', vi.fn())
     vi.stubGlobal('alert', vi.fn())
+    apiFetch.mockImplementation(() => Promise.resolve({ ok: true, json: async () => [] }))
   })
 
   afterEach(() => {
@@ -20,11 +21,13 @@ describe('OrgDepartmentSetting.vue', () => {
 
   it('fetches all lists on mount', async () => {
     mount(OrgDepartmentSetting, { global: { plugins: [ElementPlus] } })
+    await new Promise(resolve => setTimeout(resolve, 0))
     const calls = apiFetch.mock.calls
     expect(calls.find(c => c[0] === '/api/organizations')).toBeTruthy()
     expect(calls.find(c => c[0] === '/api/departments')).toBeTruthy()
     expect(calls.find(c => c[0] === '/api/sub-departments')).toBeTruthy()
     expect(calls.find(c => c[0] === '/api/dept-managers')).toBeTruthy()
+    expect(calls.find(c => c[0] === '/api/shifts')).toBeTruthy()
   })
 
   it('posts to correct endpoint when creating org', async () => {
@@ -104,6 +107,62 @@ describe('OrgDepartmentSetting.vue', () => {
     apiFetch.mockClear()
     await wrapper.vm.saveBreakSetting()
     expect(apiFetch).toHaveBeenCalledWith('/api/break-settings', expect.objectContaining({ method: 'POST' }))
+  })
+
+  it('小單位表單開啟時會載入班別選項', async () => {
+    const shifts = [{ _id: 's1', name: '早班', code: 'A1' }]
+    apiFetch.mockImplementation(url => {
+      if (url === '/api/shifts') {
+        return Promise.resolve({ ok: true, json: async () => shifts })
+      }
+      return Promise.resolve({ ok: true, json: async () => [] })
+    })
+    const wrapper = mount(OrgDepartmentSetting, { global: { plugins: [ElementPlus] } })
+    await Promise.resolve()
+    await Promise.resolve()
+    apiFetch.mockClear()
+    wrapper.vm.openDialog('sub')
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(apiFetch.mock.calls.some(([url]) => url === '/api/shifts')).toBe(true)
+    expect(wrapper.vm.shiftOptions).toEqual(shifts)
+  })
+
+  it('編輯小單位時會帶入既有班別', () => {
+    const wrapper = mount(OrgDepartmentSetting, { global: { plugins: [ElementPlus] } })
+    wrapper.vm.subList = [
+      { _id: 'sd1', name: '夜班組', department: 'dept1', shift: 's2' }
+    ]
+    wrapper.vm.openDialog('sub', 0)
+    expect(wrapper.vm.form.shiftId).toBe('s2')
+    expect(wrapper.vm.form).not.toHaveProperty('shift')
+  })
+
+  it('儲存小單位時會包含班別ID', async () => {
+    apiFetch.mockImplementation(url => {
+      if (url === '/api/shifts') {
+        return Promise.resolve({ ok: true, json: async () => [{ _id: 's1', name: '早班' }] })
+      }
+      return Promise.resolve({ ok: true, json: async () => [] })
+    })
+    const wrapper = mount(OrgDepartmentSetting, { global: { plugins: [ElementPlus] } })
+    wrapper.vm.openDialog('sub')
+    await Promise.resolve()
+    await Promise.resolve()
+    wrapper.vm.form = {
+      ...wrapper.vm.form,
+      name: '夜班組',
+      department: 'dept1',
+      shiftId: 's1'
+    }
+    wrapper.vm.editIndex = null
+    apiFetch.mockClear()
+    await wrapper.vm.saveItem()
+    const call = apiFetch.mock.calls.find(([url, options]) => url === '/api/sub-departments' && options?.method === 'POST')
+    expect(call).toBeTruthy()
+    const [, options] = call
+    const payload = JSON.parse(options.body)
+    expect(payload.shiftId).toBe('s1')
+    expect(payload).not.toHaveProperty('shift')
   })
 
   it('選取部門時顯示名稱會更新', async () => {

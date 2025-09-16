@@ -457,7 +457,19 @@
               <el-input-number v-model="form.headcount" :min="0" placeholder="請輸入人力需求數" />
             </el-form-item>
             <el-form-item label="班表拉選">
-              <el-input v-model="form.scheduleSetting" placeholder="請輸入班表設定" />
+              <el-select
+                v-model="form.shiftId"
+                placeholder="選擇班別"
+                style="width: 100%"
+                clearable
+              >
+                <el-option
+                  v-for="shift in shiftOptions"
+                  :key="shift._id"
+                  :label="shiftLabel(shift)"
+                  :value="shift._id"
+                />
+              </el-select>
             </el-form-item>
           </div>
         </template>
@@ -486,6 +498,8 @@ const deptList = ref([])
 const subList = ref([])
 const selectedOrg = ref('')
 const selectedDept = ref('')
+const shiftOptions = ref([])
+const shiftsLoaded = ref(false)
 
 const dialogVisible = ref(false)
 const form = ref(defaultForm('org'))
@@ -545,7 +559,12 @@ async function fetchList(type, parentId) {
     const data = await res.json()
     if (type === 'org') orgList.value = data
     else if (type === 'dept') deptList.value = data
-    else subList.value = data
+    else {
+      subList.value = data.map(item => ({
+        ...item,
+        shiftId: item.shiftId ?? item.shift ?? ''
+      }))
+    }
   }
 }
 
@@ -555,6 +574,7 @@ async function fetchAll() {
     fetchList('dept', selectedOrg.value),
     fetchList('sub', selectedDept.value)
   ])
+  await fetchShifts()
 }
 
 function defaultForm(type) {
@@ -595,7 +615,7 @@ function defaultForm(type) {
       phone: '',
       manager: '',
       headcount: 0,
-      scheduleSetting: '',
+      shiftId: '',
       department: ''
     }
   }
@@ -603,6 +623,7 @@ function defaultForm(type) {
 
 function openDialog(type, index = null) {
   currentType.value = type
+  if (type === 'sub') fetchShifts(true)
   if (index !== null) {
     editIndex.value = index
     const item =
@@ -612,6 +633,11 @@ function openDialog(type, index = null) {
           ? deptList.value[index]
           : subList.value[index]
     form.value = { ...defaultForm(type), ...item }
+    if (type === 'sub') {
+      const shiftValue = item?.shiftId ?? item?.shift ?? ''
+      form.value.shiftId = shiftValue ? shiftValue.toString() : ''
+      delete form.value.shift
+    }
   } else {
     editIndex.value = null
     form.value = defaultForm(type)
@@ -629,19 +655,23 @@ async function saveItem() {
       : currentType.value === 'dept'
         ? deptList
         : subList
+  const payload = { ...form.value }
+  if (currentType.value === 'sub') {
+    delete payload.shift
+  }
   let res
   if (editIndex.value === null) {
     res = await apiFetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(form.value)
+      body: JSON.stringify(payload)
     })
   } else {
     const id = list.value[editIndex.value]._id
     res = await apiFetch(`${url}/${id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(form.value)
+      body: JSON.stringify(payload)
     })
   }
   if (res && res.ok) {
@@ -666,6 +696,28 @@ async function fetchManagers() {
   const res = await apiFetch('/api/dept-managers')
   if (res.ok) {
     managerList.value = await res.json()
+  }
+}
+
+function shiftLabel(shift) {
+  if (!shift) return ''
+  const name = shift.name || ''
+  const code = shift.code || ''
+  if (name && code) return `${name} (${code})`
+  return name || code || '未命名班別'
+}
+
+async function fetchShifts(force = false) {
+  if (shiftsLoaded.value && !force) return
+  try {
+    const res = await apiFetch('/api/shifts')
+    if (res.ok) {
+      const data = await res.json()
+      shiftOptions.value = Array.isArray(data) ? data : []
+      shiftsLoaded.value = true
+    }
+  } catch (err) {
+    console.error(err)
   }
 }
 
