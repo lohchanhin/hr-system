@@ -230,6 +230,25 @@
               <div class="form-section">
                 <div class="form-group">
                   <h3 class="form-group-title">基本資料</h3>
+                  <el-form-item label="個人照片" class="photo-upload-item">
+                    <el-upload
+                      class="employee-photo-upload"
+                      v-model:file-list="employeeForm.photoList"
+                      :http-request="handlePhotoRequest"
+                      :on-success="handlePhotoSuccess"
+                      :on-remove="handlePhotoRemove"
+                      :on-exceed="handlePhotoExceed"
+                      list-type="picture-card"
+                      :limit="1"
+                      accept="image/*"
+                      :disabled="photoUploading"
+                    >
+                      <div class="upload-placeholder">
+                        <i class="el-icon-plus"></i>
+                        <span>上傳照片</span>
+                      </div>
+                    </el-upload>
+                  </el-form-item>
                   <div class="form-row">
                     <el-form-item label="員工編號">
                       <el-input v-model="employeeForm.employeeNo" placeholder="請輸入員工編號" />
@@ -281,7 +300,40 @@
                       <el-option v-for="lan in LANGUAGE_OPTIONS" :key="lan" :label="lan" :value="lan" />
                     </el-select>
                   </el-form-item>
-                  
+
+                  <div class="form-row">
+                    <el-form-item label="身心障礙等級">
+                      <el-select
+                        v-model="employeeForm.disabilityLevel"
+                        placeholder="選擇等級"
+                        clearable
+                      >
+                        <el-option
+                          v-for="level in DISABILITY_LEVELS"
+                          :key="level"
+                          :label="level"
+                          :value="level"
+                        />
+                      </el-select>
+                    </el-form-item>
+                    <el-form-item label="身分註記">
+                      <el-select
+                        v-model="employeeForm.identityCategory"
+                        multiple
+                        filterable
+                        collapse-tags
+                        placeholder="選擇身份別"
+                      >
+                        <el-option
+                          v-for="flag in IDENTITY_FLAGS"
+                          :key="flag"
+                          :label="flag"
+                          :value="flag"
+                        />
+                      </el-select>
+                    </el-form-item>
+                  </div>
+
                   <el-form-item label="扶養人數">
                     <el-input-number v-model="employeeForm.dependents" :min="0" />
                   </el-form-item>
@@ -683,6 +735,7 @@ const departmentList = ref([])
 const subDepartmentList = ref([])
 const orgList = ref([])
 const employeeDialogVisible = ref(false)
+const photoUploading = ref(false)
 let editEmployeeIndex = null
 let editEmployeeId = ''
 
@@ -703,6 +756,96 @@ function handle401(res) {
     return true
   }
   return false
+}
+
+/* 照片上傳處理 -------------------------------------------------------------- */
+function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : '')
+    reader.onerror = () => reject(new Error('READ_ERROR'))
+    reader.readAsDataURL(file)
+  })
+}
+
+function normalizePhotoUploadList(uploadFiles = []) {
+  const normalized = uploadFiles
+    .slice(-1)
+    .map(file => {
+      const response = file.response
+      const responseUrl =
+        (typeof response === 'object' && response !== null && 'url' in response && response.url) ||
+        (typeof response === 'object' && response !== null && 'data' in response && response.data?.url) ||
+        (typeof response === 'string' ? response : '')
+
+      return {
+        ...file,
+        url: file.url || responseUrl || '',
+        status: 'success',
+        percentage: file.percentage ?? 100
+      }
+    })
+
+  employeeForm.value.photoList = normalized
+  employeeForm.value.photo = normalized.length ? normalized[0].url || '' : ''
+}
+
+async function handlePhotoRequest({ file, onSuccess, onError }) {
+  photoUploading.value = true
+  try {
+    const dataUrl = await readFileAsDataUrl(file)
+    onSuccess?.({ url: dataUrl })
+  } catch (err) {
+    onError?.(err)
+    ElMessage.error('照片載入失敗，請重新選擇檔案')
+  } finally {
+    photoUploading.value = false
+  }
+}
+
+function handlePhotoSuccess(response, uploadFile, uploadFiles) {
+  if (!uploadFile.url) {
+    if (typeof response === 'string') uploadFile.url = response
+    else if (response && typeof response === 'object') {
+      uploadFile.url = response.url || response?.data?.url || uploadFile.url || ''
+    }
+  }
+  normalizePhotoUploadList(uploadFiles)
+}
+
+function handlePhotoRemove(_file, uploadFiles) {
+  normalizePhotoUploadList(uploadFiles)
+}
+
+function handlePhotoExceed() {
+  ElMessage.warning('僅能上傳一張照片')
+}
+
+function buildPhotoUploadFile(url, name = '') {
+  if (!url) return null
+  return {
+    name: name ? `${name} 照片` : '員工照片',
+    url,
+    status: 'success',
+    percentage: 100
+  }
+}
+
+function extractPhotoUrls(files = []) {
+  return files
+    .map(file => {
+      if (!file) return ''
+      if (typeof file === 'string') return file
+      if (file.url) return file.url
+      const response = file.response
+      if (typeof response === 'string') return response
+      if (typeof response === 'object' && response !== null) {
+        if ('url' in response && response.url) return response.url
+        if ('data' in response && response.data?.url) return response.data.url
+      }
+      return ''
+    })
+    .filter(url => typeof url === 'string' && url)
 }
 
 /* 取資料 ------------------------------------------------------------------- */
@@ -775,6 +918,7 @@ const emptyEmployee = {
   householdAddress: '',
   contactAddress: '',
   lineId: '',
+  photo: '',
   photoList: [],
 
   // 部門/機構
@@ -903,6 +1047,12 @@ async function openEmployeeDialog(index = null) {
     editEmployeeId = emp._id || ''
     // 以 emptyEmployee 為基底，可避免漏欄位
     employeeForm.value = { ...structuredClone(emptyEmployee), ...emp, password: '', photoList: [] }
+    employeeForm.value.photo = employeeForm.value.photo || ''
+    const existingPhotoFile = buildPhotoUploadFile(employeeForm.value.photo, employeeForm.value.name)
+    employeeForm.value.photoList = existingPhotoFile ? [existingPhotoFile] : []
+    employeeForm.value.identityCategory = Array.isArray(employeeForm.value.identityCategory)
+      ? [...employeeForm.value.identityCategory]
+      : []
     employeeForm.value.department = emp.department?._id || emp.department || ''
     employeeForm.value.subDepartment = emp.subDepartment?._id || emp.subDepartment || ''
   } else {
@@ -943,6 +1093,21 @@ async function saveEmployee() {
 
   const form = employeeForm.value
   const payload = { ...form }
+  const normalizedPhotoList = extractPhotoUrls(form.photoList)
+  if (normalizedPhotoList.length) {
+    payload.photoList = normalizedPhotoList
+    payload.photo = normalizedPhotoList[0]
+  } else if (editEmployeeIndex !== null) {
+    payload.photoList = []
+    payload.photo = ''
+  } else {
+    delete payload.photoList
+    if (!form.photo) delete payload.photo
+  }
+
+  payload.identityCategory = Array.isArray(form.identityCategory)
+    ? [...form.identityCategory]
+    : []
   if (payload.supervisor === '' || payload.supervisor === null) delete payload.supervisor
 
   let res
@@ -1252,6 +1417,44 @@ function getStatusTagType(status) {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 20px;
+}
+
+.photo-upload-item {
+  margin-bottom: 12px;
+}
+
+.employee-photo-upload {
+  display: inline-flex;
+}
+
+.employee-photo-upload:deep(.el-upload--picture-card) {
+  width: 148px;
+  height: 148px;
+  border-radius: 12px;
+  border-color: #cbd5f5;
+}
+
+.employee-photo-upload:deep(.el-upload--picture-card:hover) {
+  border-color: #10b981;
+}
+
+.employee-photo-upload:deep(.el-upload-list__item) {
+  border-radius: 12px;
+}
+
+.upload-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: #64748b;
+  font-size: 14px;
+  gap: 6px;
+}
+
+.upload-placeholder i {
+  font-size: 24px;
+  color: #10b981;
 }
 
 .role-radio-group {
