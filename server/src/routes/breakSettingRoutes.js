@@ -4,11 +4,15 @@ import {
   createSetting,
   getSetting,
   updateSetting,
-  deleteSetting
+  deleteSetting,
+  getSettingForDepartment,
+  getSettingForSubDepartment
 } from '../controllers/breakSettingController.js';
 
 const router = Router();
 
+router.get('/department/:departmentId', getSettingForDepartment);
+router.get('/sub-department/:subDepartmentId', getSettingForSubDepartment);
 router.get('/', listSettings);
 router.post('/', createSetting);
 router.get('/:id', getSetting);
