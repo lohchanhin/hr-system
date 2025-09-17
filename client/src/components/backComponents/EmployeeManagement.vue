@@ -562,7 +562,7 @@
                       <el-input v-model="employeeForm.schoolName" placeholder="請輸入學校名稱" />
                     </el-form-item>
                   </div>
-                  
+
                   <div class="form-row">
                     <el-form-item label="主修科系">
                       <el-input v-model="employeeForm.major" placeholder="請輸入主修科系" />
@@ -587,6 +587,50 @@
                   <div class="form-row">
                     <el-form-item label="畢業年度" class="full-width-item">
                       <el-input v-model="employeeForm.graduationYear" placeholder="請輸入畢業年度" />
+                    </el-form-item>
+                  </div>
+                </div>
+
+                <!-- 役別資訊 -->
+                <div class="form-group">
+                  <h3 class="form-group-title">役別資訊</h3>
+                  <div class="form-row">
+                    <el-form-item label="役別類型">
+                      <el-select
+                        v-model="employeeForm.serviceType"
+                        placeholder="選擇或輸入役別類型"
+                        filterable
+                        allow-create
+                        default-first-option
+                        clearable
+                      >
+                        <el-option
+                          v-for="type in SERVICE_TYPES"
+                          :key="type"
+                          :label="type"
+                          :value="type"
+                        />
+                      </el-select>
+                    </el-form-item>
+                    <el-form-item label="軍種">
+                      <el-input v-model="employeeForm.militaryBranch" placeholder="請輸入軍種" />
+                    </el-form-item>
+                  </div>
+
+                  <div class="form-row">
+                    <el-form-item label="軍階">
+                      <el-input v-model="employeeForm.militaryRank" placeholder="請輸入軍階" />
+                    </el-form-item>
+                    <el-form-item label="退伍年">
+                      <el-input-number
+                        v-model="employeeForm.dischargeYear"
+                        :min="1900"
+                        :max="CURRENT_YEAR + 10"
+                        :step="1"
+                        :value-on-clear="null"
+                        controls-position="right"
+                        placeholder="請輸入退伍年"
+                      />
                     </el-form-item>
                   </div>
                 </div>
@@ -788,7 +832,9 @@ const SALARY_ITEM_OPTIONS = ['本薪', '全勤', '加班費', '交通津貼', '�
 const SIGN_ROLES = ['填報', '覆核', '審核', '核定']                                              // 簽核角色
 const SIGN_LEVELS = ['L1', 'L2', 'L3', 'L4']                                                     // 簽核層級
 const DEFAULT_TAGS = ['資深', '新人', '外聘', '志工']
+const SERVICE_TYPES = ['義務役', '志願役', '替代役', '免役', '尚未服役']
 const ABO_TYPES = ['A', 'B', 'O', 'AB', 'HR']                                                   // 依你的表格式
+const CURRENT_YEAR = new Date().getFullYear()
 
 /* 狀態 --------------------------------------------------------------------- */
 const employeeDialogTab = ref('account')
@@ -957,6 +1003,12 @@ async function fetchEmployees() {
       graduationStatus: e?.education?.status ?? e?.graduationStatus ?? '',
       graduationYear: toStringOrEmpty(
         e?.education?.graduationYear ?? e?.graduationYear ?? ''
+      ),
+      serviceType: e?.militaryService?.serviceType ?? e?.serviceType ?? '',
+      militaryBranch: e?.militaryService?.branch ?? e?.militaryBranch ?? '',
+      militaryRank: e?.militaryService?.rank ?? e?.militaryRank ?? '',
+      dischargeYear: toNumberOrNull(
+        e?.militaryService?.dischargeYear ?? e?.dischargeYear
       )
     }))
   }
@@ -1036,7 +1088,7 @@ const emptyEmployee = {
   serviceType: '',
   militaryBranch: '',
   militaryRank: '',
-  dischargeYear: '',
+  dischargeYear: null,
 
   // 緊急聯絡人
   emergency1: { name: '', relation: '', phone1: '', phone2: '' },
@@ -1160,6 +1212,20 @@ async function openEmployeeDialog(index = null) {
     employeeForm.value.weight = toNumberOrNull(emp.weight ?? emp.medicalCheck?.weight)
     employeeForm.value.medicalBloodType =
       emp.medicalBloodType ?? emp.medicalCheck?.bloodType ?? ''
+    const service = emp.militaryService ?? {}
+    employeeForm.value.serviceType =
+      employeeForm.value.serviceType || service.serviceType || ''
+    employeeForm.value.militaryBranch =
+      employeeForm.value.militaryBranch || service.branch || ''
+    employeeForm.value.militaryRank =
+      employeeForm.value.militaryRank || service.rank || ''
+    const dischargeYearSource =
+      employeeForm.value.dischargeYear === '' ||
+      employeeForm.value.dischargeYear === null ||
+      employeeForm.value.dischargeYear === undefined
+        ? service.dischargeYear
+        : employeeForm.value.dischargeYear
+    employeeForm.value.dischargeYear = toNumberOrNull(dischargeYearSource)
     employeeForm.value.department = emp.department?._id || emp.department || ''
     employeeForm.value.subDepartment = emp.subDepartment?._id || emp.subDepartment || ''
   } else {
@@ -1215,6 +1281,7 @@ async function saveEmployee() {
   payload.identityCategory = Array.isArray(form.identityCategory)
     ? [...form.identityCategory]
     : []
+  payload.dischargeYear = toNumberOrNull(form.dischargeYear)
   if (payload.supervisor === '' || payload.supervisor === null) delete payload.supervisor
 
   let res
