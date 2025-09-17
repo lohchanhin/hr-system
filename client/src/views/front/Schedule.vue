@@ -29,6 +29,7 @@
             v-model="selectedDepartment"
             placeholder="請選擇部門"
             @change="onDepartmentChange"
+            :disabled="true"
             class="modern-select"
           >
             <el-option
@@ -318,6 +319,10 @@ const departments = ref([])
 const subDepartments = ref([])
 const selectedDepartment = ref('')
 const selectedSubDepartment = ref('')
+const supervisorDepartmentId = ref('')
+const supervisorDepartmentName = ref('')
+const supervisorSubDepartmentId = ref('')
+const supervisorSubDepartmentName = ref('')
 const summary = ref({ direct: 0, unscheduled: 0, onLeave: 0 })
 const employeeSearch = ref('')
 const statusFilter = ref('all')
@@ -409,28 +414,78 @@ async function fetchShiftOptions() {
 
 async function fetchSubDepartments(dept = '') {
   try {
-    const url = dept ? `/api/sub-departments?department=${dept}` : '/api/sub-departments'
+    const targetDept = dept || supervisorDepartmentId.value
+    const url = targetDept
+      ? `/api/sub-departments?department=${targetDept}`
+      : '/api/sub-departments'
     const res = await apiFetch(url)
     if (!res.ok) throw new Error('Failed to fetch sub departments')
     const subData = await res.json()
     const deptMap = departments.value.reduce((acc, d) => {
-      acc[d._id] = d._id
-      acc[d.name] = d._id
+      const id = String(d._id)
+      acc[id] = id
+      if (d.name) acc[d.name] = id
       return acc
     }, {})
-    subDepartments.value = Array.isArray(subData)
-      ? subData.map(s => {
-          let deptId = ''
-          if (s && typeof s.department === 'object') {
-            deptId = s.department._id || deptMap[s.department.name] || ''
-          } else {
-            deptId = deptMap[s.department] || s.department || ''
-          }
-          return { ...s, _id: String(s._id), department: String(deptId) }
-        })
+    if (supervisorDepartmentId.value) {
+      deptMap[supervisorDepartmentId.value] = supervisorDepartmentId.value
+    }
+    if (supervisorDepartmentName.value) {
+      deptMap[supervisorDepartmentName.value] = supervisorDepartmentId.value || supervisorDepartmentName.value
+    }
+    const normalized = Array.isArray(subData)
+      ? subData
+          .map(s => {
+            const rawDept = s?.department
+            let deptId = ''
+            if (rawDept && typeof rawDept === 'object') {
+              deptId = rawDept?._id || rawDept?.id || deptMap[rawDept?.name] || ''
+            } else {
+              deptId = deptMap[rawDept] || rawDept || ''
+            }
+            return {
+              ...s,
+              _id: String(s?._id ?? s?.id ?? ''),
+              department: String(deptId)
+            }
+          })
+          .filter(s => s._id)
       : []
-    if (subDepartments.value.length && !selectedSubDepartment.value) {
-      selectedSubDepartment.value = subDepartments.value[0]._id
+    let filtered = normalized
+    if (targetDept) {
+      filtered = normalized.filter(s => s.department === String(targetDept))
+      if (!filtered.length && supervisorSubDepartmentId.value) {
+        const matched = normalized.find(s => s._id === supervisorSubDepartmentId.value)
+        if (matched) {
+          filtered = [matched]
+        } else {
+          filtered = [
+            {
+              _id: supervisorSubDepartmentId.value,
+              name: supervisorSubDepartmentName.value || '',
+              department: String(targetDept)
+            }
+          ]
+        }
+      }
+    }
+    subDepartments.value = filtered
+    if (subDepartments.value.length) {
+      if (
+        supervisorSubDepartmentId.value &&
+        subDepartments.value.some(s => s._id === supervisorSubDepartmentId.value)
+      ) {
+        selectedSubDepartment.value = supervisorSubDepartmentId.value
+      } else if (
+        selectedSubDepartment.value &&
+        subDepartments.value.some(s => s._id === selectedSubDepartment.value)
+      ) {
+        // keep existing selection
+      } else {
+        selectedSubDepartment.value = subDepartments.value[0]._id
+      }
+    } else {
+      selectedSubDepartment.value = ''
     }
   } catch (err) {
     console.error(err)
@@ -442,8 +497,52 @@ async function fetchSubDepartments(dept = '') {
 async function fetchOptions() {
   try {
     const deptRes = await apiFetch('/api/departments')
-    departments.value = deptRes.ok ? await deptRes.json() : []
-    await fetchSubDepartments(selectedDepartment.value)
+    const deptData = deptRes.ok ? await deptRes.json() : []
+    const normalized = Array.isArray(deptData)
+      ? deptData
+          .map(d => {
+            const id = d?._id ?? d?.id ?? d?.value ?? ''
+            return {
+              ...d,
+              _id: String(id),
+              name: d?.name ?? ''
+            }
+          })
+          .filter(d => d._id)
+      : []
+    const targetDeptId = selectedDepartment.value || supervisorDepartmentId.value
+    let filtered = normalized
+    if (targetDeptId) {
+      filtered = normalized.filter(
+        d =>
+          d._id === targetDeptId ||
+          (supervisorDepartmentName.value && d.name === supervisorDepartmentName.value)
+      )
+      if (!filtered.length && targetDeptId) {
+        filtered = [
+          {
+            _id: targetDeptId,
+            name:
+              supervisorDepartmentName.value ||
+              normalized.find(d => d._id === targetDeptId)?.name ||
+              ''
+          }
+        ]
+      }
+    }
+    departments.value = filtered.length ? filtered : normalized
+    if (departments.value.length) {
+      if (!departments.value.some(d => d._id === selectedDepartment.value)) {
+        selectedDepartment.value = departments.value[0]._id
+      }
+    } else if (!selectedDepartment.value && targetDeptId) {
+      selectedDepartment.value = targetDeptId
+    }
+    const deptForSubs =
+      selectedDepartment.value ||
+      supervisorDepartmentId.value ||
+      (departments.value.length ? departments.value[0]._id : '')
+    await fetchSubDepartments(deptForSubs)
   } catch (err) {
     console.error(err)
   }
@@ -456,6 +555,56 @@ const getStoredSupervisorId = () => {
   const localId = window.localStorage?.getItem('employeeId')
   if (localId && localId !== 'undefined') return localId
   return ''
+}
+
+async function fetchSupervisorContext() {
+  const supervisorId = getStoredSupervisorId()
+  if (!supervisorId) {
+    supervisorDepartmentId.value = ''
+    supervisorDepartmentName.value = ''
+    supervisorSubDepartmentId.value = ''
+    supervisorSubDepartmentName.value = ''
+    return
+  }
+  try {
+    const res = await apiFetch(`/api/employees/${supervisorId}`)
+    if (!res.ok) throw new Error('Failed to fetch supervisor context')
+    const data = await res.json()
+    const deptInfo = data?.department
+    const deptId =
+      typeof deptInfo === 'object'
+        ? deptInfo?._id || deptInfo?.id || deptInfo?.value
+        : deptInfo
+    const deptName =
+      typeof deptInfo === 'object'
+        ? deptInfo?.name || ''
+        : data?.departmentName || ''
+    supervisorDepartmentId.value = deptId ? String(deptId) : ''
+    supervisorDepartmentName.value = deptName ? String(deptName) : ''
+    if (supervisorDepartmentId.value) {
+      selectedDepartment.value = supervisorDepartmentId.value
+    } else {
+      selectedDepartment.value = ''
+    }
+    const subInfo = data?.subDepartment
+    const subId =
+      typeof subInfo === 'object'
+        ? subInfo?._id || subInfo?.id || subInfo?.value
+        : subInfo
+    const subName =
+      typeof subInfo === 'object'
+        ? subInfo?.name || ''
+        : data?.subDepartmentName || ''
+    supervisorSubDepartmentId.value = subId ? String(subId) : ''
+    supervisorSubDepartmentName.value = subName ? String(subName) : ''
+    if (supervisorSubDepartmentId.value) {
+      selectedSubDepartment.value = supervisorSubDepartmentId.value
+    } else {
+      selectedSubDepartment.value = ''
+    }
+  } catch (err) {
+    console.error(err)
+  }
 }
 
 async function fetchSchedules() {
@@ -701,9 +850,11 @@ function subDepsFor(deptId) {
 async function fetchEmployees(department = '', subDepartment = '') {
   const supervisorId = getStoredSupervisorId()
   const params = []
+  const deptId = department || selectedDepartment.value || supervisorDepartmentId.value
+  const subId = subDepartment || selectedSubDepartment.value
   if (supervisorId) params.push(`supervisor=${supervisorId}`)
-  if (department) params.push(`department=${department}`)
-  if (subDepartment) params.push(`subDepartment=${subDepartment}`)
+  if (deptId) params.push(`department=${deptId}`)
+  if (subId) params.push(`subDepartment=${subId}`)
   const url = `/api/employees${params.length ? `?${params.join('&')}` : ''}`
   try {
     const empRes = await apiFetch(url)
@@ -758,6 +909,7 @@ async function onMonthChange() {
 onMounted(async () => {
   await fetchSummary()
   await fetchShiftOptions()
+  await fetchSupervisorContext()
   await fetchOptions()
   await fetchEmployees(selectedDepartment.value, selectedSubDepartment.value)
   await fetchSchedules()
