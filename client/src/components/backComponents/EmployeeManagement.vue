@@ -912,13 +912,47 @@
                       </el-select>
                     </el-form-item>
                     <el-form-item label="薪資金額">
-                      <el-input-number 
-                        v-model="employeeForm.salaryAmount" 
-                        :min="0" 
+                      <el-input-number
+                        v-model="employeeForm.salaryAmount"
+                        :min="0"
                         :step="1000"
-                        :formatter="value => `$ ${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')"
-                        :parser="value => value.replace(/\$\s?|(,*)/g, '')"
+                        :formatter="value => `$ ${value ?? 0}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')"
+                        :parser="value => (value ? value.replace(/\$\s?|(,*)/g, '') : '')"
                       />
+                    </el-form-item>
+                    <el-form-item label="勞退自提" prop="laborPensionSelf">
+                      <el-input-number
+                        v-model="employeeForm.laborPensionSelf"
+                        :min="0"
+                        :step="100"
+                        :formatter="value => `$ ${value ?? 0}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')"
+                        :parser="value => (value ? value.replace(/\$\s?|(,*)/g, '') : '')"
+                      />
+                    </el-form-item>
+                    <el-form-item label="員工預支" prop="employeeAdvance">
+                      <el-input-number
+                        v-model="employeeForm.employeeAdvance"
+                        :min="0"
+                        :step="100"
+                        :formatter="value => `$ ${value ?? 0}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')"
+                        :parser="value => (value ? value.replace(/\$\s?|(,*)/g, '') : '')"
+                      />
+                    </el-form-item>
+                    <el-form-item class="full-width-item" label="薪資項目" prop="salaryItems">
+                      <el-select
+                        v-model="employeeForm.salaryItems"
+                        multiple
+                        collapse-tags
+                        collapse-tags-tooltip
+                        placeholder="選擇薪資項目"
+                      >
+                        <el-option
+                          v-for="item in SALARY_ITEM_OPTIONS"
+                          :key="item"
+                          :label="item"
+                          :value="item"
+                        />
+                      </el-select>
                     </el-form-item>
                   </div>
                 </div>
@@ -1286,6 +1320,11 @@ async function fetchEmployees() {
         organization: e.organization?._id || e.organization || '',
         department: e.department?._id || e.department || '',
         subDepartment: e.subDepartment?._id || e.subDepartment || '',
+        laborPensionSelf: toNumberOrNull(e?.laborPensionSelf) ?? 0,
+        employeeAdvance: toNumberOrNull(e?.employeeAdvance) ?? 0,
+        salaryItems: ensureArrayValue(e?.salaryItems).filter(item =>
+          SALARY_ITEM_OPTIONS.includes(item)
+        ),
         height: toNumberOrNull(e?.medicalCheck?.height ?? e?.height),
         weight: toNumberOrNull(e?.medicalCheck?.weight ?? e?.weight),
         medicalBloodType: e?.medicalCheck?.bloodType ?? e?.medicalBloodType ?? '',
@@ -1438,6 +1477,16 @@ const emptyEmployee = {
 }
 const employeeForm = ref({ ...emptyEmployee })
 const formRef = ref()
+const createNonNegativeRule = label => ({
+  validator: (_rule, value) => {
+    if (value === '' || value === null || value === undefined) return Promise.resolve()
+    if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
+      return Promise.reject(new Error(`請輸入正確的${label}`))
+    }
+    return Promise.resolve()
+  },
+  trigger: ['blur', 'change']
+})
 const rules = {
   username: [{ required: true, message: '請輸入登入帳號', trigger: 'blur' }],
   password: [{ required: true, message: '請輸入登入密碼', trigger: 'blur' }],
@@ -1452,6 +1501,23 @@ const rules = {
       message: '請輸入有效 Email',
       type: 'email',
       trigger: ['blur', 'change']
+    }
+  ],
+  laborPensionSelf: [createNonNegativeRule('勞退自提')],
+  employeeAdvance: [createNonNegativeRule('員工預支')],
+  salaryItems: [
+    {
+      validator: (_rule, value) => {
+        if (value === '' || value === null || value === undefined) return Promise.resolve()
+        if (!Array.isArray(value)) {
+          return Promise.reject(new Error('請選擇有效的薪資項目'))
+        }
+        const invalid = value.some(item => !SALARY_ITEM_OPTIONS.includes(item))
+        return invalid
+          ? Promise.reject(new Error('請選擇有效的薪資項目'))
+          : Promise.resolve()
+      },
+      trigger: 'change'
     }
   ]
 }
@@ -1507,6 +1573,13 @@ async function openEmployeeDialog(index = null) {
     employeeForm.value.photoList = existingPhotoFile ? [existingPhotoFile] : []
     employeeForm.value.licenses = formatLicensesForForm(emp.licenses ?? [])
     employeeForm.value.trainings = formatTrainingsForForm(emp.trainings ?? [])
+    employeeForm.value.laborPensionSelf =
+      toNumberOrNull(employeeForm.value.laborPensionSelf) ?? 0
+    employeeForm.value.employeeAdvance =
+      toNumberOrNull(employeeForm.value.employeeAdvance) ?? 0
+    employeeForm.value.salaryItems = ensureArrayValue(employeeForm.value.salaryItems).filter(item =>
+      SALARY_ITEM_OPTIONS.includes(item)
+    )
     const education = emp.education ?? {}
     if (!employeeForm.value.educationLevel && education.level) {
       employeeForm.value.educationLevel = education.level
@@ -1601,6 +1674,11 @@ async function saveEmployee() {
   payload.identityCategory = Array.isArray(form.identityCategory)
     ? [...form.identityCategory]
     : []
+  payload.laborPensionSelf = toNumberOrNull(form.laborPensionSelf) ?? 0
+  payload.employeeAdvance = toNumberOrNull(form.employeeAdvance) ?? 0
+  payload.salaryItems = Array.isArray(form.salaryItems)
+    ? form.salaryItems.filter(item => SALARY_ITEM_OPTIONS.includes(item))
+    : ensureArrayValue(form.salaryItems).filter(item => SALARY_ITEM_OPTIONS.includes(item))
   payload.dischargeYear = toNumberOrNull(form.dischargeYear)
   if (payload.supervisor === '' || payload.supervisor === null) delete payload.supervisor
 
