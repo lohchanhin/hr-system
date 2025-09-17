@@ -39,7 +39,7 @@ const trainingSchema = new Schema(
     date: Date,
     // 多檔
     files: { type: [String], default: [], alias: 'fileList' },
-    category: String,
+    category: { type: [String], default: [] },
     score: Number,
   },
   { _id: false }
