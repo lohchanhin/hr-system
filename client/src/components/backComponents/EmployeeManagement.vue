@@ -506,6 +506,49 @@
             
             <div class="tab-content">
               <div class="form-section">
+                <!-- 身體檢查 -->
+                <div class="form-group">
+                  <h3 class="form-group-title">身體檢查</h3>
+                  <div class="form-row">
+                    <el-form-item label="身高 (cm)">
+                      <el-input-number
+                        v-model="employeeForm.height"
+                        :min="0"
+                        :max="250"
+                        :step="0.1"
+                        :precision="1"
+                        :value-on-clear="null"
+                        controls-position="right"
+                        placeholder="請輸入身高"
+                      />
+                    </el-form-item>
+                    <el-form-item label="體重 (kg)">
+                      <el-input-number
+                        v-model="employeeForm.weight"
+                        :min="0"
+                        :max="300"
+                        :step="0.1"
+                        :precision="1"
+                        :value-on-clear="null"
+                        controls-position="right"
+                        placeholder="請輸入體重"
+                      />
+                    </el-form-item>
+                  </div>
+                  <div class="form-row">
+                    <el-form-item label="體檢血型">
+                      <el-select v-model="employeeForm.medicalBloodType" placeholder="選擇血型" clearable>
+                        <el-option
+                          v-for="blood in ABO_TYPES"
+                          :key="`medical-${blood}`"
+                          :label="blood"
+                          :value="blood"
+                        />
+                      </el-select>
+                    </el-form-item>
+                  </div>
+                </div>
+
                 <!-- 學歷資訊 -->
                 <div class="form-group">
                   <h3 class="form-group-title">學歷資訊</h3>
@@ -848,6 +891,12 @@ function extractPhotoUrls(files = []) {
     .filter(url => typeof url === 'string' && url)
 }
 
+function toNumberOrNull(value) {
+  if (value === '' || value === null || value === undefined) return null
+  const num = Number(value)
+  return Number.isFinite(num) ? num : null
+}
+
 /* 取資料 ------------------------------------------------------------------- */
 async function fetchDepartments() {
   const res = await apiFetch('/api/departments')
@@ -874,7 +923,10 @@ async function fetchEmployees() {
       ...e,
       organization: e.organization?._id || e.organization || '',
       department: e.department?._id || e.department || '',
-      subDepartment: e.subDepartment?._id || e.subDepartment || ''
+      subDepartment: e.subDepartment?._id || e.subDepartment || '',
+      height: toNumberOrNull(e?.medicalCheck?.height ?? e?.height),
+      weight: toNumberOrNull(e?.medicalCheck?.weight ?? e?.weight),
+      medicalBloodType: e?.medicalCheck?.bloodType ?? e?.medicalBloodType ?? ''
     }))
   }
 }
@@ -938,8 +990,8 @@ const emptyEmployee = {
   probationDays: '',
 
   // 體檢
-  height: '',
-  weight: '',
+  height: null,
+  weight: null,
   medicalBloodType: '',
 
   // 學歷
@@ -1053,6 +1105,10 @@ async function openEmployeeDialog(index = null) {
     employeeForm.value.identityCategory = Array.isArray(employeeForm.value.identityCategory)
       ? [...employeeForm.value.identityCategory]
       : []
+    employeeForm.value.height = toNumberOrNull(emp.height ?? emp.medicalCheck?.height)
+    employeeForm.value.weight = toNumberOrNull(emp.weight ?? emp.medicalCheck?.weight)
+    employeeForm.value.medicalBloodType =
+      emp.medicalBloodType ?? emp.medicalCheck?.bloodType ?? ''
     employeeForm.value.department = emp.department?._id || emp.department || ''
     employeeForm.value.subDepartment = emp.subDepartment?._id || emp.subDepartment || ''
   } else {
