@@ -16,6 +16,7 @@ const SocialInsuranceRetirementSetting = () => import('@/components/backComponen
 const HRManagementSystemSetting = () => import('@/components/backComponents/HRManagementSystemSetting.vue')
 
 const OrgDepartmentSettingView = () => import('@/views/OrgDepartmentSettingView.vue')
+const OtherControlSettingView = () => import('@/views/OtherControlSettingView.vue')
 
 // ★ 錯誤頁面
 const Forbidden = () => import('@/views/Forbidden.vue')
@@ -60,6 +61,7 @@ const routes = [
       { path: 'social-insurance-retirement-setting', name: 'SocialInsuranceRetirementSetting', component: SocialInsuranceRetirementSetting },
       { path: 'hr-management-system-setting', name: 'HRManagementSystemSetting', component: HRManagementSystemSetting },
       { path: 'org-department-setting', name: 'OrgDepartmentSetting', component: OrgDepartmentSettingView },
+      { path: 'other-control-setting', name: 'OtherControlSetting', component: OtherControlSettingView },
     ],
   },
 
