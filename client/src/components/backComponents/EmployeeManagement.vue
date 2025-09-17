@@ -678,6 +678,143 @@
                     新增經歷
                   </el-button>
                 </div>
+
+                <!-- 證照資訊 -->
+                <div class="form-group">
+                  <h3 class="form-group-title">證照</h3>
+                  <div class="experience-list">
+                    <div
+                      v-for="(license, i) in employeeForm.licenses"
+                      :key="`license-${i}`"
+                      class="experience-item"
+                    >
+                      <div class="experience-header">
+                        <h4 class="experience-title">證照 {{ i + 1 }}</h4>
+                        <el-button type="danger" size="small" @click="removeLicense(i)" class="remove-btn">
+                          <i class="el-icon-delete"></i>
+                          刪除
+                        </el-button>
+                      </div>
+                      <div class="form-row">
+                        <el-form-item label="證照名稱">
+                          <el-input v-model="license.name" placeholder="請輸入證照名稱" />
+                        </el-form-item>
+                        <el-form-item label="證照字號">
+                          <el-input v-model="license.number" placeholder="請輸入證照字號" />
+                        </el-form-item>
+                      </div>
+                      <div class="form-row">
+                        <el-form-item label="核發日期">
+                          <el-date-picker v-model="license.startDate" type="date" placeholder="選擇核發日期" />
+                        </el-form-item>
+                        <el-form-item label="有效期限">
+                          <el-date-picker v-model="license.endDate" type="date" placeholder="選擇有效期限" />
+                        </el-form-item>
+                      </div>
+                      <div class="form-row">
+                        <el-form-item label="證照檔案" class="full-width-item">
+                          <el-upload
+                            v-model:file-list="license.fileList"
+                            action="#"
+                            multiple
+                            list-type="text"
+                            :http-request="handleAttachmentRequest"
+                            :on-success="(res, file, fileList) => handleAttachmentSuccess('licenses', i, res, file, fileList)"
+                            :on-remove="(file, fileList) => handleAttachmentRemove('licenses', i, file, fileList)"
+                          >
+                            <el-button type="primary" plain>
+                              <i class="el-icon-upload2"></i>
+                              上傳檔案
+                            </el-button>
+                            <template #tip>
+                              <div class="upload-tip">可上傳多個檔案，將以連結形式儲存</div>
+                            </template>
+                          </el-upload>
+                        </el-form-item>
+                      </div>
+                    </div>
+                  </div>
+                  <el-button type="primary" @click="addLicense" class="add-item-btn">
+                    <i class="el-icon-plus"></i>
+                    新增證照
+                  </el-button>
+                </div>
+
+                <!-- 教育訓練 -->
+                <div class="form-group">
+                  <h3 class="form-group-title">教育訓練</h3>
+                  <div class="experience-list">
+                    <div
+                      v-for="(training, i) in employeeForm.trainings"
+                      :key="`training-${i}`"
+                      class="experience-item"
+                    >
+                      <div class="experience-header">
+                        <h4 class="experience-title">教育訓練 {{ i + 1 }}</h4>
+                        <el-button type="danger" size="small" @click="removeTraining(i)" class="remove-btn">
+                          <i class="el-icon-delete"></i>
+                          刪除
+                        </el-button>
+                      </div>
+                      <div class="form-row">
+                        <el-form-item label="課程名稱">
+                          <el-input v-model="training.course" placeholder="請輸入課程名稱" />
+                        </el-form-item>
+                        <el-form-item label="課程代碼">
+                          <el-input v-model="training.courseNo" placeholder="請輸入課程代碼" />
+                        </el-form-item>
+                      </div>
+                      <div class="form-row">
+                        <el-form-item label="上課日期">
+                          <el-date-picker v-model="training.date" type="date" placeholder="選擇日期" />
+                        </el-form-item>
+                        <el-form-item label="積分類別" class="full-width-item">
+                          <el-select
+                            v-model="training.category"
+                            multiple
+                            collapse-tags
+                            placeholder="選擇積分類別"
+                          >
+                            <el-option v-for="cat in CREDIT_CATEGORIES" :key="cat" :label="cat" :value="cat" />
+                          </el-select>
+                        </el-form-item>
+                      </div>
+                      <div class="form-row">
+                        <el-form-item label="積分">
+                          <el-input-number
+                            v-model="training.score"
+                            :min="0"
+                            :step="0.5"
+                            :value-on-clear="null"
+                          />
+                        </el-form-item>
+                        <el-form-item label="訓練檔案" class="full-width-item">
+                          <el-upload
+                            v-model:file-list="training.fileList"
+                            action="#"
+                            multiple
+                            list-type="text"
+                            :http-request="handleAttachmentRequest"
+                            :on-success="(res, file, fileList) => handleAttachmentSuccess('trainings', i, res, file, fileList)"
+                            :on-remove="(file, fileList) => handleAttachmentRemove('trainings', i, file, fileList)"
+                          >
+                            <el-button type="primary" plain>
+                              <i class="el-icon-upload2"></i>
+                              上傳檔案
+                            </el-button>
+                            <template #tip>
+                              <div class="upload-tip">支援多檔上傳，將以連結形式儲存</div>
+                            </template>
+                          </el-upload>
+                        </el-form-item>
+                      </div>
+                    </div>
+                  </div>
+                  <el-button type="primary" @click="addTraining" class="add-item-btn">
+                    <i class="el-icon-plus"></i>
+                    新增教育訓練
+                  </el-button>
+                </div>
               </div>
             </div>
           </el-tab-pane>
@@ -893,8 +1030,8 @@ function buildPhotoUploadFile(url, name = '') {
   }
 }
 
-function extractPhotoUrls(files = []) {
-  return files
+function extractUploadUrls(files = []) {
+  return (Array.isArray(files) ? files : [files])
     .map(file => {
       if (!file) return ''
       if (typeof file === 'string') return file
@@ -910,6 +1047,96 @@ function extractPhotoUrls(files = []) {
     .filter(url => typeof url === 'string' && url)
 }
 
+function extractPhotoUrls(files = []) {
+  return extractUploadUrls(files)
+}
+
+function normalizeAttachmentList(uploadFiles = [], namePrefix = '附件') {
+  return (Array.isArray(uploadFiles) ? uploadFiles : [uploadFiles])
+    .map((file, index) => {
+      if (!file) return null
+      if (typeof file === 'string') {
+        return {
+          name: `${namePrefix}${index + 1}`,
+          url: file,
+          status: 'success',
+          percentage: 100,
+          uid: `${namePrefix}-${index}`
+        }
+      }
+
+      if (typeof file === 'object') {
+        let url = file.url
+        if (!url) {
+          const response = file.response
+          if (typeof response === 'string') url = response
+          else if (response && typeof response === 'object') {
+            url = response.url || response?.data?.url || ''
+          }
+        }
+        if (!url) return null
+        const normalized = {
+          ...file,
+          name: file.name || `${namePrefix}${index + 1}`,
+          url,
+          status: 'success',
+          percentage: file.percentage ?? 100
+        }
+        if (!normalized.uid) normalized.uid = `${namePrefix}-${index}`
+        return normalized
+      }
+      return null
+    })
+    .filter(file => file && typeof file.url === 'string' && file.url)
+}
+
+function buildAttachmentFileList(source, namePrefix = '附件') {
+  if (!source) return []
+  const list = Array.isArray(source) ? source : [source]
+  return normalizeAttachmentList(list, namePrefix)
+}
+
+function ensureArrayValue(value) {
+  if (Array.isArray(value)) return value.filter(v => v !== '' && v !== null && v !== undefined)
+  if (value === '' || value === null || value === undefined) return []
+  return [value]
+}
+
+function getAttachmentPrefix(type, index) {
+  return type === 'licenses' ? `證照${index + 1}-附件` : `教育訓練${index + 1}-附件`
+}
+
+function updateAttachmentList(type, index, uploadFiles) {
+  const target = type === 'licenses' ? employeeForm.value.licenses : employeeForm.value.trainings
+  if (!Array.isArray(target) || !target[index]) return
+  const prefix = getAttachmentPrefix(type, index)
+  target[index].fileList = normalizeAttachmentList(uploadFiles, prefix)
+}
+
+async function handleAttachmentRequest({ file, onSuccess, onError }) {
+  try {
+    const dataUrl = await readFileAsDataUrl(file)
+    onSuccess?.({ url: dataUrl })
+  } catch (err) {
+    onError?.(err)
+    ElMessage.error('檔案載入失敗，請重新選擇')
+  }
+}
+
+function handleAttachmentSuccess(type, index, response, uploadFile, uploadFiles) {
+  if (!uploadFile.url) {
+    if (typeof response === 'string') uploadFile.url = response
+    else if (response && typeof response === 'object') {
+      uploadFile.url = response.url || response?.data?.url || uploadFile.url || ''
+    }
+  }
+  updateAttachmentList(type, index, uploadFiles)
+}
+
+function handleAttachmentRemove(type, index, _file, uploadFiles) {
+  updateAttachmentList(type, index, uploadFiles)
+}
+
 function toNumberOrNull(value) {
   if (value === '' || value === null || value === undefined) return null
   const num = Number(value)
@@ -919,6 +1146,35 @@ function toNumberOrNull(value) {
 function toStringOrEmpty(value) {
   if (value === undefined || value === null) return ''
   return String(value)
+}
+
+function formatLicensesForForm(list = []) {
+  if (!Array.isArray(list)) return []
+  return list.map((item = {}, index) => ({
+    name: item?.name ?? '',
+    number: item?.number ?? '',
+    startDate: item?.startDate ?? item?.issueDate ?? '',
+    endDate: item?.endDate ?? item?.expiryDate ?? '',
+    fileList: buildAttachmentFileList(
+      item?.fileList ?? item?.files ?? (item?.file ? [item.file] : []),
+      `證照${index + 1}-附件`
+    )
+  }))
+}
+
+function formatTrainingsForForm(list = []) {
+  if (!Array.isArray(list)) return []
+  return list.map((item = {}, index) => ({
+    course: item?.course ?? item?.name ?? '',
+    courseNo: item?.courseNo ?? item?.code ?? '',
+    date: item?.date ?? '',
+    category: ensureArrayValue(item?.category ?? item?.categories),
+    score: toNumberOrNull(item?.score),
+    fileList: buildAttachmentFileList(
+      item?.fileList ?? item?.files ?? (item?.file ? [item.file] : []),
+      `教育訓練${index + 1}-附件`
+    )
+  }))
 }
 
 /* 取資料 ------------------------------------------------------------------- */
@@ -1137,6 +1393,8 @@ async function openEmployeeDialog(index = null) {
     employeeForm.value.photo = employeeForm.value.photo || ''
     const existingPhotoFile = buildPhotoUploadFile(employeeForm.value.photo, employeeForm.value.name)
     employeeForm.value.photoList = existingPhotoFile ? [existingPhotoFile] : []
+    employeeForm.value.licenses = formatLicensesForForm(emp.licenses ?? [])
+    employeeForm.value.trainings = formatTrainingsForForm(emp.trainings ?? [])
     const education = emp.education ?? {}
     if (!employeeForm.value.educationLevel && education.level) {
       employeeForm.value.educationLevel = education.level
@@ -1167,6 +1425,8 @@ async function openEmployeeDialog(index = null) {
     editEmployeeId = ''
     employeeDialogTab.value = 'account'
     employeeForm.value = { ...structuredClone(emptyEmployee) }
+    employeeForm.value.licenses = []
+    employeeForm.value.trainings = []
   }
 
   await fetchDepartments()
@@ -1217,6 +1477,58 @@ async function saveEmployee() {
     : []
   if (payload.supervisor === '' || payload.supervisor === null) delete payload.supervisor
 
+  const normalizedLicenses = (Array.isArray(form.licenses) ? form.licenses : [])
+    .map(license => {
+      const fileList = extractUploadUrls(license?.fileList ?? [])
+      const name = typeof license?.name === 'string' ? license.name.trim() : license?.name ?? ''
+      const number = typeof license?.number === 'string' ? license.number.trim() : license?.number ?? ''
+      const startDate = license?.startDate || ''
+      const endDate = license?.endDate || ''
+      return {
+        name,
+        number,
+        startDate,
+        endDate,
+        fileList
+      }
+    })
+    .filter(license =>
+      license.name ||
+      license.number ||
+      license.startDate ||
+      license.endDate ||
+      (Array.isArray(license.fileList) && license.fileList.length)
+    )
+  payload.licenses = normalizedLicenses
+
+  const normalizedTrainings = (Array.isArray(form.trainings) ? form.trainings : [])
+    .map(training => {
+      const fileList = extractUploadUrls(training?.fileList ?? [])
+      const categories = ensureArrayValue(training?.category ?? training?.categories)
+      const course = typeof training?.course === 'string' ? training.course.trim() : training?.course ?? ''
+      const courseNo = typeof training?.courseNo === 'string' ? training.courseNo.trim() : training?.courseNo ?? ''
+      const date = training?.date || ''
+      const scoreValue = toNumberOrNull(training?.score)
+      const normalized = {
+        course,
+        courseNo,
+        date,
+        category: categories,
+        fileList
+      }
+      if (scoreValue !== null) normalized.score = scoreValue
+      return normalized
+    })
+    .filter(training =>
+      training.course ||
+      training.courseNo ||
+      training.date ||
+      (Array.isArray(training.category) && training.category.length) ||
+      (Array.isArray(training.fileList) && training.fileList.length) ||
+      training.score !== undefined
+    )
+  payload.trainings = normalizedTrainings
+
   let res
   if (editEmployeeIndex === null) {
     res = await apiFetch('/api/employees', {
@@ -1261,7 +1573,14 @@ function removeLicense(i) {
   employeeForm.value.licenses.splice(i, 1)
 }
 function addTraining() {
-  employeeForm.value.trainings.push({ course: '', courseNo: '', date: '', fileList: [], category: '', score: '' })
+  employeeForm.value.trainings.push({
+    course: '',
+    courseNo: '',
+    date: '',
+    fileList: [],
+    category: [],
+    score: null
+  })
 }
 function removeTraining(i) {
   employeeForm.value.trainings.splice(i, 1)
@@ -1561,6 +1880,12 @@ function getStatusTagType(status) {
   color: #64748b;
   font-size: 14px;
   gap: 6px;
+}
+
+.upload-tip {
+  margin-top: 8px;
+  font-size: 12px;
+  color: #64748b;
 }
 
 .upload-placeholder i {

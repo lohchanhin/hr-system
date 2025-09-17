@@ -27,6 +27,31 @@ function sanitizeEnum(value, allowed) {
   return allowed.includes(value) ? value : undefined
 }
 
+function extractUploadUrl(item) {
+  if (!item) return undefined
+  if (typeof item === 'string') return item
+  if (typeof item === 'object') {
+    if (item.url) return item.url
+    const response = item.response
+    if (typeof response === 'string') return response
+    if (response && typeof response === 'object') {
+      if (response.url) return response.url
+      if (response.data && typeof response.data === 'object' && response.data.url) {
+        return response.data.url
+      }
+    }
+  }
+  return undefined
+}
+
+function normalizeUploadList(list) {
+  if (!Array.isArray(list)) {
+    const single = extractUploadUrl(list)
+    return single ? [single] : []
+  }
+  return list.map(extractUploadUrl).filter((url) => typeof url === 'string' && url)
+}
+
 const MARITAL_STATUSES = ['已婚', '未婚', '離婚', '喪偶']
 const EMPLOYMENT_STATUSES = ['正職員工', '試用期員工', '離職員工', '留職停薪']
 const BLOOD_TYPES = ['A', 'B', 'O', 'AB', 'HR']
@@ -44,27 +69,33 @@ function normalizeExperiences(list) {
 }
 function normalizeLicenses(list) {
   if (!Array.isArray(list)) return undefined
-  return list.map((x = {}) => ({
-    name: x.name ?? '',
-    number: x.number ?? '',
-    startDate: toDate(x.startDate ?? x.issueDate),
-    endDate: toDate(x.endDate ?? x.expiryDate),
-    // 前端 el-upload 習慣 fileList；model 以 alias 對應到 files
-    fileList: Array.isArray(x.fileList) ? x.fileList : (x.file ? [x.file] : []),
-    file: x.file ?? undefined, // 相容舊資料
-  }))
+  return list.map((x = {}) => {
+    const fileList = normalizeUploadList(x.fileList ?? x.files ?? (x.file ? [x.file] : []))
+    return {
+      name: x.name ?? '',
+      number: x.number ?? '',
+      startDate: toDate(x.startDate ?? x.issueDate),
+      endDate: toDate(x.endDate ?? x.expiryDate),
+      // 前端 el-upload 習慣 fileList；model 以 alias 對應到 files
+      fileList,
+      file: extractUploadUrl(x.file) ?? firstOr(fileList, undefined), // 相容舊資料
+    }
+  })
 }
 function normalizeTrainings(list) {
   if (!Array.isArray(list)) return undefined
-  return list.map((x = {}) => ({
-    course: x.course ?? x.name ?? '',
-    courseNo: x.courseNo ?? x.code ?? '',
-    date: toDate(x.date),
-    fileList: Array.isArray(x.fileList) ? x.fileList : (x.file ? [x.file] : []),
-    category: x.category ?? '',
-    score: toNum(x.score),
-    file: x.file ?? undefined, // 相容舊資料
-  }))
+  return list.map((x = {}) => {
+    const fileList = normalizeUploadList(x.fileList ?? x.files ?? (x.file ? [x.file] : []))
+    return {
+      course: x.course ?? x.name ?? '',
+      courseNo: x.courseNo ?? x.code ?? '',
+      date: toDate(x.date),
+      fileList,
+      category: toArray(x.category ?? x.categories) ?? [],
+      score: toNum(x.score),
+      file: extractUploadUrl(x.file) ?? firstOr(fileList, undefined), // 相容舊資料
+    }
+  })
 }
 
 /* 依前端欄位建 Employee doc（建立用：盡量完整帶入） */
