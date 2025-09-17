@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { mount, flushPromises } from '@vue/test-utils'
 vi.mock('../src/api', () => ({
   apiFetch: vi.fn(() => Promise.resolve({ ok: true, json: async () => [] }))
 }))
@@ -21,6 +21,7 @@ const elStubs = ['el-table','el-table-column','el-button','el-tabs','el-tab-pane
 describe('EmployeeManagement.vue', () => {
   beforeEach(() => {
     apiFetch.mockClear()
+    apiFetch.mockImplementation(() => Promise.resolve({ ok: true, json: async () => [] }))
   })
 
   it('fetches lists on mount', () => {
@@ -90,5 +91,35 @@ describe('EmployeeManagement.vue', () => {
     expect(msg).toContain('Email')
     const postCall = apiFetch.mock.calls.find(c => c[1]?.method === 'POST')
     expect(postCall).toBeUndefined()
+  })
+
+  it('填入體檢資料並顯示於編輯表單', async () => {
+    const responses = {
+      '/api/departments': [],
+      '/api/organizations': [],
+      '/api/sub-departments': [],
+      '/api/sub-departments?department=dep1': [],
+      '/api/employees': [
+        {
+          _id: 'e1',
+          name: '測試員工',
+          organization: 'org1',
+          department: 'dep1',
+          subDepartment: 'sub1',
+          medicalCheck: { height: 172.5, weight: 65.3, bloodType: 'B' }
+        }
+      ]
+    }
+    apiFetch.mockImplementation(url =>
+      Promise.resolve({ ok: true, json: async () => responses[url] ?? [] })
+    )
+
+    const wrapper = mount(EmployeeManagement, { global: { stubs: elStubs } })
+    await flushPromises()
+    await wrapper.vm.openEmployeeDialog(0)
+
+    expect(wrapper.vm.employeeForm.height).toBe(172.5)
+    expect(wrapper.vm.employeeForm.weight).toBe(65.3)
+    expect(wrapper.vm.employeeForm.medicalBloodType).toBe('B')
   })
 })
