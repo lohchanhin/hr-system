@@ -102,11 +102,88 @@ describe('OrgDepartmentSetting.vue', () => {
     })
   })
 
-  it('saves break setting to correct endpoint', async () => {
+  it('儲存休息設定時會附帶部門識別碼並更新表單', async () => {
     const wrapper = mount(OrgDepartmentSetting, { global: { plugins: [ElementPlus] } })
-    apiFetch.mockClear()
+
+    apiFetch.mockReset()
+    apiFetch.mockImplementation((url, options) => {
+      if (url === '/api/break-settings?department=dept1') {
+        return Promise.resolve({ ok: true, json: async () => [] })
+      }
+      if (url === '/api/break-settings' && options?.method === 'POST') {
+        const payload = JSON.parse(options.body)
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            _id: 'break1',
+            department: payload.department,
+            enableGlobalBreak: payload.enableGlobalBreak,
+            breakMinutes: payload.breakMinutes,
+            allowMultiBreak: payload.allowMultiBreak
+          })
+        })
+      }
+      return Promise.resolve({ ok: true, json: async () => [] })
+    })
+
+    wrapper.vm.selectedDept = 'dept1'
+    await new Promise(resolve => setTimeout(resolve, 0))
+
+    wrapper.vm.breakSettingForm = {
+      ...wrapper.vm.breakSettingForm,
+      enableGlobalBreak: true,
+      breakMinutes: 45,
+      allowMultiBreak: true
+    }
+
     await wrapper.vm.saveBreakSetting()
-    expect(apiFetch).toHaveBeenCalledWith('/api/break-settings', expect.objectContaining({ method: 'POST' }))
+
+    const postCall = apiFetch.mock.calls.find(([url]) => url === '/api/break-settings')
+    expect(postCall).toBeTruthy()
+    const [, options] = postCall
+    const body = JSON.parse(options.body)
+    expect(body).toMatchObject({
+      department: 'dept1',
+      enableGlobalBreak: true,
+      breakMinutes: 45,
+      allowMultiBreak: true
+    })
+    expect(wrapper.vm.breakSettingForm._id).toBe('break1')
+    expect(alert).toHaveBeenCalled()
+  })
+
+  it('切換部門時會載入對應的休息設定', async () => {
+    const wrapper = mount(OrgDepartmentSetting, { global: { plugins: [ElementPlus] } })
+
+    apiFetch.mockReset()
+    const setting = {
+      _id: 'break2',
+      department: 'dept2',
+      enableGlobalBreak: true,
+      breakMinutes: 30,
+      allowMultiBreak: false
+    }
+
+    apiFetch.mockImplementation(url => {
+      if (url === '/api/break-settings?department=dept2') {
+        return Promise.resolve({ ok: true, json: async () => [setting] })
+      }
+      if (url.startsWith('/api/sub-departments')) {
+        return Promise.resolve({ ok: true, json: async () => [] })
+      }
+      return Promise.resolve({ ok: true, json: async () => [] })
+    })
+
+    wrapper.vm.selectedDept = 'dept2'
+    await new Promise(resolve => setTimeout(resolve, 0))
+
+    expect(apiFetch).toHaveBeenCalledWith('/api/break-settings?department=dept2')
+    expect(wrapper.vm.breakSettingForm).toMatchObject({
+      _id: 'break2',
+      department: 'dept2',
+      breakMinutes: 30,
+      enableGlobalBreak: true
+    })
   })
 
   it('小單位表單開啟時會載入班別選項', async () => {

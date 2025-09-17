@@ -507,11 +507,7 @@ const currentType = ref('org')
 const editIndex = ref(null)
 
 // 部門排班規則與中場休息設定
-const breakSettingForm = ref({
-  enableGlobalBreak: false,
-  breakMinutes: 60,
-  allowMultiBreak: false
-})
+const breakSettingForm = ref(defaultBreakSettingForm())
 const managerList = ref([])
 
 const filteredDeptList = computed(() =>
@@ -575,6 +571,21 @@ async function fetchAll() {
     fetchList('sub', selectedDept.value)
   ])
   await fetchShifts()
+  if (selectedDept.value) {
+    await fetchBreakSettingForDepartment(selectedDept.value)
+  } else {
+    breakSettingForm.value = defaultBreakSettingForm()
+  }
+}
+
+function defaultBreakSettingForm(departmentId = '') {
+  return {
+    _id: undefined,
+    department: departmentId || '',
+    enableGlobalBreak: false,
+    breakMinutes: 60,
+    allowMultiBreak: false
+  }
 }
 
 function defaultForm(type) {
@@ -721,16 +732,74 @@ async function fetchShifts(force = false) {
   }
 }
 
+async function fetchBreakSettingForDepartment(departmentId) {
+  if (!departmentId) {
+    breakSettingForm.value = defaultBreakSettingForm()
+    return
+  }
+
+  breakSettingForm.value = defaultBreakSettingForm(departmentId)
+
+  try {
+    const res = await apiFetch(`/api/break-settings?department=${departmentId}`)
+    if (res.ok) {
+      const data = await res.json()
+      const record = Array.isArray(data) ? data[0] : data
+      if (record) {
+        breakSettingForm.value = {
+          ...breakSettingForm.value,
+          ...record,
+          department: departmentId
+        }
+        return
+      }
+    }
+  } catch (err) {
+    console.error(err)
+  }
+}
+
 async function saveBreakSetting() {
+  if (!selectedDept.value) {
+    alert('請先選擇部門')
+    return
+  }
+
   const method = breakSettingForm.value._id ? 'PUT' : 'POST'
   let url = '/api/break-settings'
-  if (method === 'PUT') url += `/${breakSettingForm.value._id}`
+  const payload = {
+    ...breakSettingForm.value,
+    department: selectedDept.value
+  }
+  const { _id, ...body } = payload
+  if (method === 'PUT') url += `/${_id}`
   const res = await apiFetch(url, {
     method,
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(breakSettingForm.value)
+    body: JSON.stringify(body)
   })
-  if (res.ok) alert('已儲存「中場休息」設定')
+  if (res.ok) {
+    let saved = null
+    if (typeof res.json === 'function') {
+      try {
+        saved = await res.json()
+      } catch (err) {
+        saved = null
+      }
+    }
+
+    if (saved) {
+      breakSettingForm.value = {
+        ...defaultBreakSettingForm(selectedDept.value),
+        ...saved,
+        department: selectedDept.value
+      }
+    } else {
+      await fetchBreakSettingForDepartment(selectedDept.value)
+    }
+
+    alert('已儲存「中場休息」設定')
+  }
 }
 
 onMounted(() => {
@@ -744,6 +813,7 @@ watch(selectedOrg, val => {
 
 watch(selectedDept, val => {
   fetchList('sub', val)
+  fetchBreakSettingForDepartment(val)
 })
 </script>
 
