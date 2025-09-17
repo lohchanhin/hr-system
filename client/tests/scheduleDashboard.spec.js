@@ -1,7 +1,8 @@
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import dayjs from 'dayjs'
 import Schedule from '../src/views/front/Schedule.vue'
+import { createPinia, setActivePinia } from 'pinia'
 
 vi.mock('../src/api', () => ({ apiFetch: vi.fn() }))
 import { apiFetch } from '../src/api'
@@ -30,6 +31,10 @@ function flush() {
 }
 
 describe('排班儀表板', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+  })
+
   it('顯示 API 回傳的指標數據', async () => {
     const month = dayjs().format('YYYY-MM')
     apiFetch

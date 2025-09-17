@@ -40,7 +40,7 @@ describe('Schedule.vue', () => {
           'el-select': true,
           'el-option': true,
           'el-input': true,
-          ScheduleDashboard: { template: '<div class="dashboard-stub"></div>', props: ['summary'] }
+          ScheduleDashboard: { name: 'ScheduleDashboard', template: '<div class="dashboard-stub"></div>', props: ['summary'] }
         }
       }
     })
@@ -322,6 +322,7 @@ describe('Schedule.vue', () => {
 
   it('maps department ids to names', async () => {
     apiFetch
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
       .mockResolvedValueOnce({ ok: true, json: async () => [] })
       .mockResolvedValueOnce({ ok: true, json: async () => [{ _id: 'd1', name: 'Dept A' }] })
       .mockResolvedValueOnce({ ok: true, json: async () => [{ _id: 'sd1', name: 'Sub A', department: 'd1' }] })

@@ -362,6 +362,17 @@ const canEdit = computed(() => {
   return ['supervisor', 'admin'].includes(authStore.role)
 })
 
+const callWarning = message => {
+  const moduleWarn = ElMessage?.warning
+  if (typeof moduleWarn === 'function') {
+    moduleWarn(message)
+  }
+  const globalWarn = typeof window !== 'undefined' ? window.ElMessage?.warning : undefined
+  if (typeof globalWarn === 'function' && globalWarn !== moduleWarn) {
+    globalWarn(message)
+  }
+}
+
 const days = computed(() => {
   const dt = dayjs(currentMonth.value + '-01')
   const end = dt.endOf('month').date()
@@ -438,20 +449,29 @@ async function fetchOptions() {
   }
 }
 
+const getStoredSupervisorId = () => {
+  if (typeof window === 'undefined') return ''
+  const sessionId = window.sessionStorage?.getItem('employeeId')
+  if (sessionId && sessionId !== 'undefined') return sessionId
+  const localId = window.localStorage?.getItem('employeeId')
+  if (localId && localId !== 'undefined') return localId
+  return ''
+}
+
 async function fetchSchedules() {
-  const supervisorId = localStorage.getItem('employeeId')
-  const supParam = supervisorId && supervisorId !== 'undefined' ? `&supervisor=${supervisorId}` : ''
+  const supervisorId = getStoredSupervisorId()
+  const supParam = supervisorId ? `&supervisor=${supervisorId}` : ''
   try {
     const res = await apiFetch(
       `/api/schedules/monthly?month=${currentMonth.value}${supParam}`
     )
     if (!res.ok) throw new Error('Failed to fetch schedules')
     const data = await res.json()
-    console.log("Schedules:",data)
+    const schedules = Array.isArray(data) ? data : []
 
     const ds = days.value
     scheduleMap.value = {}
-    if (!employees.value.length) {
+    if (!employees.value.length && schedules.length) {
       await fetchEmployees(selectedDepartment.value, selectedSubDepartment.value)
     }
     employees.value.forEach(emp => {
@@ -464,7 +484,7 @@ async function fetchSchedules() {
         }
       })
     })
-    data.forEach((s) => {
+    schedules.forEach(s => {
       const empId = s.employee?._id || s.employee
       const d = dayjs(s.date).date()
       const emp = employees.value.find(e => e._id === empId) || {}
@@ -481,8 +501,10 @@ async function fetchSchedules() {
     )
     if (res2.ok) {
       const extra = await res2.json()
-      approvalList.value = extra.approvals || []
-      ;(extra.leaves || []).forEach(l => {
+      const approvals = Array.isArray(extra?.approvals) ? extra.approvals : []
+      const leaves = Array.isArray(extra?.leaves) ? extra.leaves : []
+      approvalList.value = approvals
+      leaves.forEach(l => {
         if (l.status !== 'approved') return
         const empId = l.employee?._id || l.employee
         const start = dayjs(l.startDate).date()
@@ -505,7 +527,7 @@ async function saveAll() {
     Object.values(days).some(it => !it.shiftId && !it.leave)
   )
   if (hasMissing) {
-    ElMessage.warning('尚有未排班項目，請確認後再儲存')
+    callWarning('尚有未排班項目，請確認後再儲存')
     return
   }
   const schedules = []
@@ -677,9 +699,9 @@ function subDepsFor(deptId) {
 }
 
 async function fetchEmployees(department = '', subDepartment = '') {
-  const supervisorId = localStorage.getItem('employeeId')
+  const supervisorId = getStoredSupervisorId()
   const params = []
-  if (supervisorId && supervisorId !== 'undefined') params.push(`supervisor=${supervisorId}`)
+  if (supervisorId) params.push(`supervisor=${supervisorId}`)
   if (department) params.push(`department=${department}`)
   if (subDepartment) params.push(`subDepartment=${subDepartment}`)
   const url = `/api/employees${params.length ? `?${params.join('&')}` : ''}`
