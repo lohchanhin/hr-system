@@ -39,6 +39,10 @@ describe('EmployeeManagement.vue', () => {
       expect(wrapper.vm.rules[r][0].required).toBe(true)
     })
     expect(wrapper.vm.rules.email[0].type).toBe('email')
+    expect(typeof wrapper.vm.rules.laborPensionSelf[0].validator).toBe('function')
+    expect(wrapper.vm.rules.laborPensionSelf[0].trigger).toContain('change')
+    expect(typeof wrapper.vm.rules.employeeAdvance[0].validator).toBe('function')
+    expect(wrapper.vm.rules.salaryItems[0].trigger).toBe('change')
   })
 
   it('rejects when required fields are empty', async () => {
@@ -50,6 +54,33 @@ describe('EmployeeManagement.vue', () => {
         errors: [{ message: msg }]
       })
     }
+  })
+
+  it('驗證薪資欄位格式', async () => {
+    const wrapper = mount(EmployeeManagement, { global: { stubs: elStubs } })
+    const pensionValidator = new Schema({ laborPensionSelf: wrapper.vm.rules.laborPensionSelf })
+    await expect(
+      pensionValidator.validate({ laborPensionSelf: -100 })
+    ).rejects.toMatchObject({ errors: [{ message: '請輸入正確的勞退自提' }] })
+    await expect(
+      pensionValidator.validate({ laborPensionSelf: 1200 })
+    ).resolves.toEqual({ laborPensionSelf: 1200 })
+
+    const advanceValidator = new Schema({ employeeAdvance: wrapper.vm.rules.employeeAdvance })
+    await expect(
+      advanceValidator.validate({ employeeAdvance: 'abc' })
+    ).rejects.toMatchObject({ errors: [{ message: '請輸入正確的員工預支' }] })
+    await expect(
+      advanceValidator.validate({ employeeAdvance: 0 })
+    ).resolves.toEqual({ employeeAdvance: 0 })
+
+    const salaryItemsValidator = new Schema({ salaryItems: wrapper.vm.rules.salaryItems })
+    await expect(
+      salaryItemsValidator.validate({ salaryItems: ['本薪', '未知'] })
+    ).rejects.toMatchObject({ errors: [{ message: '請選擇有效的薪資項目' }] })
+    await expect(
+      salaryItemsValidator.validate({ salaryItems: ['本薪', '全勤'] })
+    ).resolves.toEqual({ salaryItems: ['本薪', '全勤'] })
   })
 
   it('sends login info when saving employee', async () => {
@@ -70,6 +101,9 @@ describe('EmployeeManagement.vue', () => {
       department: 'd',
       gender: 'M',
       email: 'a@a.com',
+      laborPensionSelf: 2500,
+      employeeAdvance: 3600,
+      salaryItems: ['本薪', '未知項目'],
       serviceType: '志願役',
       militaryBranch: '陸軍',
       militaryRank: '上兵',
@@ -84,6 +118,9 @@ describe('EmployeeManagement.vue', () => {
     expect(body.username).toBe('u')
     expect(body.password).toBe('p')
     expect(body.role).toBe('admin')
+    expect(body.laborPensionSelf).toBe(2500)
+    expect(body.employeeAdvance).toBe(3600)
+    expect(body.salaryItems).toEqual(['本薪'])
     expect(body.serviceType).toBe('志願役')
     expect(body.militaryBranch).toBe('陸軍')
     expect(body.militaryRank).toBe('上兵')
@@ -124,6 +161,9 @@ describe('EmployeeManagement.vue', () => {
           organization: 'org1',
           department: 'dep1',
           subDepartment: 'sub1',
+          laborPensionSelf: 1800,
+          employeeAdvance: null,
+          salaryItems: ['本薪', '全勤', '未知選項'],
           medicalCheck: { height: 172.5, weight: 65.3, bloodType: 'B' },
           licenses: [
             {
@@ -158,6 +198,9 @@ describe('EmployeeManagement.vue', () => {
     expect(wrapper.vm.employeeForm.height).toBe(172.5)
     expect(wrapper.vm.employeeForm.weight).toBe(65.3)
     expect(wrapper.vm.employeeForm.medicalBloodType).toBe('B')
+    expect(wrapper.vm.employeeForm.laborPensionSelf).toBe(1800)
+    expect(wrapper.vm.employeeForm.employeeAdvance).toBe(0)
+    expect(wrapper.vm.employeeForm.salaryItems).toEqual(['本薪', '全勤'])
     expect(wrapper.vm.employeeForm.licenses).toHaveLength(1)
     expect(wrapper.vm.employeeForm.licenses[0].fileList[0].url).toBe('https://file.example/license.png')
     expect(wrapper.vm.employeeForm.trainings[0].category).toEqual(['院內'])
