@@ -60,7 +60,21 @@ describe('EmployeeManagement.vue', () => {
     apiFetch.mockImplementation((url, opts) =>
       Promise.resolve({ ok: true, json: async () => (opts?.method === 'POST' ? {} : []) })
     )
-    wrapper.vm.employeeForm = { ...wrapper.vm.employeeForm, name: 'n', username: 'u', password: 'p', role: 'admin', organization: 'o', department: 'd', gender: 'M', email: 'a@a.com' }
+    wrapper.vm.employeeForm = {
+      ...wrapper.vm.employeeForm,
+      name: 'n',
+      username: 'u',
+      password: 'p',
+      role: 'admin',
+      organization: 'o',
+      department: 'd',
+      gender: 'M',
+      email: 'a@a.com',
+      serviceType: '志願役',
+      militaryBranch: '陸軍',
+      militaryRank: '上兵',
+      dischargeYear: '2020'
+    }
     wrapper.vm.editEmployeeIndex = null
     await wrapper.vm.saveEmployee()
     expect(validate).toHaveBeenCalled()
@@ -70,6 +84,10 @@ describe('EmployeeManagement.vue', () => {
     expect(body.username).toBe('u')
     expect(body.password).toBe('p')
     expect(body.role).toBe('admin')
+    expect(body.serviceType).toBe('志願役')
+    expect(body.militaryBranch).toBe('陸軍')
+    expect(body.militaryRank).toBe('上兵')
+    expect(body.dischargeYear).toBe(2020)
     expect(apiFetch).toHaveBeenCalledWith('/api/employees', expect.objectContaining({ method: 'POST' }))
   })
 
@@ -121,5 +139,41 @@ describe('EmployeeManagement.vue', () => {
     expect(wrapper.vm.employeeForm.height).toBe(172.5)
     expect(wrapper.vm.employeeForm.weight).toBe(65.3)
     expect(wrapper.vm.employeeForm.medicalBloodType).toBe('B')
+  })
+
+  it('填入役別資訊並顯示於編輯表單', async () => {
+    const responses = {
+      '/api/departments': [],
+      '/api/organizations': [],
+      '/api/sub-departments': [],
+      '/api/sub-departments?department=dep1': [],
+      '/api/employees': [
+        {
+          _id: 'e1',
+          name: '測試員工',
+          organization: 'org1',
+          department: 'dep1',
+          subDepartment: 'sub1',
+          militaryService: {
+            serviceType: '義務役',
+            branch: '海軍',
+            rank: '一等兵',
+            dischargeYear: 2018
+          }
+        }
+      ]
+    }
+    apiFetch.mockImplementation(url =>
+      Promise.resolve({ ok: true, json: async () => responses[url] ?? [] })
+    )
+
+    const wrapper = mount(EmployeeManagement, { global: { stubs: elStubs } })
+    await flushPromises()
+    await wrapper.vm.openEmployeeDialog(0)
+
+    expect(wrapper.vm.employeeForm.serviceType).toBe('義務役')
+    expect(wrapper.vm.employeeForm.militaryBranch).toBe('海軍')
+    expect(wrapper.vm.employeeForm.militaryRank).toBe('一等兵')
+    expect(wrapper.vm.employeeForm.dischargeYear).toBe(2018)
   })
 })
