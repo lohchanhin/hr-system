@@ -486,8 +486,37 @@
                     <el-form-item label="到職日期">
                       <el-date-picker v-model="employeeForm.hireDate" type="date" placeholder="選擇到職日期" />
                     </el-form-item>
+                    <el-form-item label="起聘日期">
+                      <el-date-picker v-model="employeeForm.appointDate" type="date" placeholder="選擇起聘日期" />
+                    </el-form-item>
+                  </div>
+
+                  <div class="form-row">
                     <el-form-item label="離職日期">
                       <el-date-picker v-model="employeeForm.resignDate" type="date" placeholder="選擇離職日期" />
+                    </el-form-item>
+                    <el-form-item label="解聘日期">
+                      <el-date-picker v-model="employeeForm.dismissDate" type="date" placeholder="選擇解聘日期" />
+                    </el-form-item>
+                  </div>
+
+                  <div class="form-row">
+                    <el-form-item label="再任起聘">
+                      <el-date-picker v-model="employeeForm.reAppointDate" type="date" placeholder="選擇再任起聘日期" />
+                    </el-form-item>
+                    <el-form-item label="再任解聘">
+                      <el-date-picker v-model="employeeForm.reDismissDate" type="date" placeholder="選擇再任解聘日期" />
+                    </el-form-item>
+                  </div>
+
+                  <div class="form-row">
+                    <el-form-item label="聘任備註" class="full-width-item">
+                      <el-input
+                        v-model="employeeForm.employmentNote"
+                        type="textarea"
+                        :rows="2"
+                        placeholder="請輸入聘任備註"
+                      />
                     </el-form-item>
                   </div>
                 </div>
@@ -1194,6 +1223,11 @@ function toStringOrEmpty(value) {
   return String(value)
 }
 
+function toDateOrEmpty(value) {
+  if (value === undefined || value === null || value === '') return ''
+  return value
+}
+
 function formatLicensesForForm(list = []) {
   if (!Array.isArray(list)) return []
   return list.map((item = {}, index) => ({
@@ -1245,28 +1279,54 @@ async function fetchEmployees() {
   if (handle401(res)) return
   if (res.ok) {
     const list = await res.json()
-    employeeList.value = list.map(e => ({
-      ...e,
-      organization: e.organization?._id || e.organization || '',
-      department: e.department?._id || e.department || '',
-      subDepartment: e.subDepartment?._id || e.subDepartment || '',
-      height: toNumberOrNull(e?.medicalCheck?.height ?? e?.height),
-      weight: toNumberOrNull(e?.medicalCheck?.weight ?? e?.weight),
-      medicalBloodType: e?.medicalCheck?.bloodType ?? e?.medicalBloodType ?? '',
-      educationLevel: e?.education?.level ?? e?.educationLevel ?? '',
-      schoolName: e?.education?.school ?? e?.schoolName ?? '',
-      major: e?.education?.major ?? e?.major ?? '',
-      graduationStatus: e?.education?.status ?? e?.graduationStatus ?? '',
-      graduationYear: toStringOrEmpty(
-        e?.education?.graduationYear ?? e?.graduationYear ?? ''
-      ),
-      serviceType: e?.militaryService?.serviceType ?? e?.serviceType ?? '',
-      militaryBranch: e?.militaryService?.branch ?? e?.militaryBranch ?? '',
-      militaryRank: e?.militaryService?.rank ?? e?.militaryRank ?? '',
-      dischargeYear: toNumberOrNull(
-        e?.militaryService?.dischargeYear ?? e?.dischargeYear
-      )
-    }))
+    employeeList.value = list.map(e => {
+      const appointment = e?.appointment ?? {}
+      return {
+        ...e,
+        organization: e.organization?._id || e.organization || '',
+        department: e.department?._id || e.department || '',
+        subDepartment: e.subDepartment?._id || e.subDepartment || '',
+        height: toNumberOrNull(e?.medicalCheck?.height ?? e?.height),
+        weight: toNumberOrNull(e?.medicalCheck?.weight ?? e?.weight),
+        medicalBloodType: e?.medicalCheck?.bloodType ?? e?.medicalBloodType ?? '',
+        educationLevel: e?.education?.level ?? e?.educationLevel ?? '',
+        schoolName: e?.education?.school ?? e?.schoolName ?? '',
+        major: e?.education?.major ?? e?.major ?? '',
+        graduationStatus: e?.education?.status ?? e?.graduationStatus ?? '',
+        graduationYear: toStringOrEmpty(
+          e?.education?.graduationYear ?? e?.graduationYear ?? ''
+        ),
+        serviceType: e?.militaryService?.serviceType ?? e?.serviceType ?? '',
+        militaryBranch: e?.militaryService?.branch ?? e?.militaryBranch ?? '',
+        militaryRank: e?.militaryService?.rank ?? e?.militaryRank ?? '',
+        dischargeYear: toNumberOrNull(
+          e?.militaryService?.dischargeYear ?? e?.dischargeYear
+        ),
+        hireDate: toDateOrEmpty(appointment?.hireDate ?? e?.hireDate),
+        appointDate: toDateOrEmpty(
+          appointment?.appointDate ?? appointment?.startDate ?? e?.appointDate
+        ),
+        resignDate: toDateOrEmpty(
+          appointment?.resignationDate ?? e?.resignDate
+        ),
+        dismissDate: toDateOrEmpty(
+          appointment?.dismissalDate ?? e?.dismissDate
+        ),
+        reAppointDate: toDateOrEmpty(
+          appointment?.reAppointDate ??
+            appointment?.rehireStartDate ??
+            e?.reAppointDate
+        ),
+        reDismissDate: toDateOrEmpty(
+          appointment?.reDismissDate ??
+            appointment?.rehireEndDate ??
+            e?.reDismissDate
+        ),
+        employmentNote: toStringOrEmpty(
+          appointment?.remark ?? e?.employmentNote ?? ''
+        )
+      }
+    })
   }
 }
 onMounted(() => {
