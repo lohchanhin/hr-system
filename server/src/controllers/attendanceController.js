@@ -2,7 +2,18 @@ import AttendanceRecord from '../models/AttendanceRecord.js';
 
 export async function listRecords(req, res) {
   try {
-    const records = await AttendanceRecord.find().populate('employee');
+    const isEmployee = req.user?.role === 'employee';
+    const query = {};
+
+    if (isEmployee) {
+      query.employee = req.user?.id;
+    } else if (req.query.employee) {
+      query.employee = req.query.employee;
+    }
+
+    const records = await AttendanceRecord.find(query)
+      .sort({ timestamp: -1 })
+      .populate('employee');
     res.json(records);
   } catch (err) {
     res.status(500).json({ error: err.message });
