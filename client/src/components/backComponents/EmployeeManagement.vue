@@ -567,7 +567,25 @@
                     <el-form-item label="主修科系">
                       <el-input v-model="employeeForm.major" placeholder="請輸入主修科系" />
                     </el-form-item>
-                    <el-form-item label="畢業年度">
+                    <el-form-item label="畢業狀態">
+                      <el-select
+                        v-model="employeeForm.graduationStatus"
+                        placeholder="選擇畢業狀態"
+                        clearable
+                        @clear="onGraduationStatusClear"
+                      >
+                        <el-option
+                          v-for="status in GRADUATION_STATUSES"
+                          :key="status"
+                          :label="status"
+                          :value="status"
+                        />
+                      </el-select>
+                    </el-form-item>
+                  </div>
+
+                  <div class="form-row">
+                    <el-form-item label="畢業年度" class="full-width-item">
                       <el-input v-model="employeeForm.graduationYear" placeholder="請輸入畢業年度" />
                     </el-form-item>
                   </div>
@@ -762,6 +780,7 @@ const LANGUAGE_OPTIONS = ['中文', '台語', '客語', '英語', '馬來語']  
 const DISABILITY_LEVELS = ['極重度', '重度身心障礙', '中度身心障礙', '輕度身心障礙']             // C06
 const IDENTITY_FLAGS = ['原住民', '新住民', '榮民']                                               // C07
 const EDUCATION_LEVELS = ['博士', '碩士', '大學', '專科', '高中職', '國中以下']                   // C08
+const GRADUATION_STATUSES = ['畢業', '肄業']                                                    // C08-1
 const RELATION_OPTIONS = ['父', '母', '配偶', '子', '女', '兄', '姊', '弟', '妹', '其他']         // C09
 const CREDIT_CATEGORIES = ['院內', '院外', '線上', '研討會', '自學']                               // C10
 const SALARY_TYPES = ['月薪', '日薪', '時薪']
@@ -897,6 +916,11 @@ function toNumberOrNull(value) {
   return Number.isFinite(num) ? num : null
 }
 
+function toStringOrEmpty(value) {
+  if (value === undefined || value === null) return ''
+  return String(value)
+}
+
 /* 取資料 ------------------------------------------------------------------- */
 async function fetchDepartments() {
   const res = await apiFetch('/api/departments')
@@ -926,7 +950,14 @@ async function fetchEmployees() {
       subDepartment: e.subDepartment?._id || e.subDepartment || '',
       height: toNumberOrNull(e?.medicalCheck?.height ?? e?.height),
       weight: toNumberOrNull(e?.medicalCheck?.weight ?? e?.weight),
-      medicalBloodType: e?.medicalCheck?.bloodType ?? e?.medicalBloodType ?? ''
+      medicalBloodType: e?.medicalCheck?.bloodType ?? e?.medicalBloodType ?? '',
+      educationLevel: e?.education?.level ?? e?.educationLevel ?? '',
+      schoolName: e?.education?.school ?? e?.schoolName ?? '',
+      major: e?.education?.major ?? e?.major ?? '',
+      graduationStatus: e?.education?.status ?? e?.graduationStatus ?? '',
+      graduationYear: toStringOrEmpty(
+        e?.education?.graduationYear ?? e?.graduationYear ?? ''
+      )
     }))
   }
 }
@@ -1092,6 +1123,10 @@ watch(
 )
 
 /* 事件 --------------------------------------------------------------------- */
+function onGraduationStatusClear() {
+  employeeForm.value.graduationStatus = ''
+}
+
 async function openEmployeeDialog(index = null) {
   if (index !== null) {
     editEmployeeIndex = index
@@ -1102,6 +1137,22 @@ async function openEmployeeDialog(index = null) {
     employeeForm.value.photo = employeeForm.value.photo || ''
     const existingPhotoFile = buildPhotoUploadFile(employeeForm.value.photo, employeeForm.value.name)
     employeeForm.value.photoList = existingPhotoFile ? [existingPhotoFile] : []
+    const education = emp.education ?? {}
+    if (!employeeForm.value.educationLevel && education.level) {
+      employeeForm.value.educationLevel = education.level
+    }
+    if (!employeeForm.value.schoolName && education.school) {
+      employeeForm.value.schoolName = education.school
+    }
+    if (!employeeForm.value.major && education.major) {
+      employeeForm.value.major = education.major
+    }
+    if (!employeeForm.value.graduationStatus && education.status) {
+      employeeForm.value.graduationStatus = education.status
+    }
+    employeeForm.value.graduationYear = toStringOrEmpty(
+      employeeForm.value.graduationYear || education.graduationYear || ''
+    )
     employeeForm.value.identityCategory = Array.isArray(employeeForm.value.identityCategory)
       ? [...employeeForm.value.identityCategory]
       : []
@@ -1473,6 +1524,10 @@ function getStatusTagType(status) {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 20px;
+}
+
+.full-width-item {
+  grid-column: span 2;
 }
 
 .photo-upload-item {
