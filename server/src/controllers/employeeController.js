@@ -30,6 +30,7 @@ function sanitizeEnum(value, allowed) {
 const MARITAL_STATUSES = ['已婚', '未婚', '離婚', '喪偶']
 const EMPLOYMENT_STATUSES = ['正職員工', '試用期員工', '離職員工', '留職停薪']
 const BLOOD_TYPES = ['A', 'B', 'O', 'AB', 'HR']
+const GRADUATION_STATUSES = ['畢業', '肄業']
 
 /* 把前端送來的 experiences/licenses/trainings 正規化成模型想要的形狀 */
 function normalizeExperiences(list) {
@@ -67,7 +68,7 @@ function normalizeTrainings(list) {
 }
 
 /* 依前端欄位建 Employee doc（建立用：盡量完整帶入） */
-function buildEmployeeDoc(body = {}) {
+export function buildEmployeeDoc(body = {}) {
   const supervisor = body.supervisor === '' ? undefined : body.supervisor
 
   // 聯絡人陣列：前端可能傳 emergency1 / emergency2
@@ -158,7 +159,7 @@ function buildEmployeeDoc(body = {}) {
       level: body.educationLevel,
       school: body.schoolName,
       major: body.major,
-      status: body.graduationStatus,
+      status: sanitizeEnum(body.graduationStatus, GRADUATION_STATUSES),
       graduationYear: toNum(body.graduationYear),
     },
 
@@ -210,7 +211,7 @@ function buildEmployeeDoc(body = {}) {
 }
 
 /* 產生 $set / $unset 用於部份更新（不會覆蓋未提供欄位） */
-function buildEmployeePatch(body = {}, existing = null) {
+export function buildEmployeePatch(body = {}, existing = null) {
   const $set = {}
   const $unset = {}
 
@@ -282,7 +283,14 @@ function buildEmployeePatch(body = {}, existing = null) {
   if (isDefined(body.educationLevel)) put('education.level', body.educationLevel)
   if (isDefined(body.schoolName)) put('education.school', body.schoolName)
   if (isDefined(body.major)) put('education.major', body.major)
-  if (isDefined(body.graduationStatus)) put('education.status', body.graduationStatus)
+  if (isDefined(body.graduationStatus)) {
+    if (body.graduationStatus === '' || body.graduationStatus === null) {
+      un('education.status')
+    } else {
+      const sanitizedStatus = sanitizeEnum(body.graduationStatus, GRADUATION_STATUSES)
+      if (isDefined(sanitizedStatus)) put('education.status', sanitizedStatus)
+    }
+  }
   if (isDefined(body.graduationYear)) put('education.graduationYear', toNum(body.graduationYear))
 
   // 役別
