@@ -167,46 +167,6 @@
             </el-table>
           </div>
 
-          <!-- 中場休息設定 -->
-          <div class="settings-block">
-            <div class="settings-card">
-              <h3 class="section-title">中場休息設定</h3>
-              <el-form :model="breakSettingForm" label-width="220px" class="settings-form">
-                <el-form-item label="是否啟用全局中場休息設定">
-                  <el-switch
-                    v-model="breakSettingForm.enableGlobalBreak"
-                    active-text="啟用"
-                    inactive-text="停用"
-                    active-color="#10b981"
-                  />
-                </el-form-item>
-                <el-form-item label="全局休息時間 (分鐘)">
-                  <el-input-number
-                    v-model="breakSettingForm.breakMinutes"
-                    :min="0"
-                    :max="240"
-                    :disabled="!breakSettingForm.enableGlobalBreak"
-                    style="width: 200px"
-                  />
-                </el-form-item>
-                <el-form-item label="是否允許多段休息">
-                  <el-switch
-                    v-model="breakSettingForm.allowMultiBreak"
-                    :disabled="!breakSettingForm.enableGlobalBreak"
-                    active-text="允許"
-                    inactive-text="不允許"
-                    active-color="#10b981"
-                  />
-                </el-form-item>
-                <el-form-item>
-                  <el-button type="primary" @click="saveBreakSetting" class="save-settings-btn">
-                    <i class="el-icon-check"></i>
-                    儲存休息設定
-                  </el-button>
-                </el-form-item>
-              </el-form>
-            </div>
-          </div>
         </div>
       </el-tab-pane>
 
@@ -425,6 +385,36 @@
               />
             </el-form-item>
           </div>
+
+          <div class="form-section">
+            <h3 class="form-section-title">中場休息設定</h3>
+            <el-form-item label="是否啟用全局中場休息設定">
+              <el-switch
+                v-model="form.enableGlobalBreak"
+                active-text="啟用"
+                inactive-text="停用"
+                active-color="#10b981"
+              />
+            </el-form-item>
+            <el-form-item label="全局休息時間 (分鐘)">
+              <el-input-number
+                v-model="form.breakMinutes"
+                :min="0"
+                :max="240"
+                :disabled="!form.enableGlobalBreak"
+                style="width: 200px"
+              />
+            </el-form-item>
+            <el-form-item label="是否允許多段休息">
+              <el-switch
+                v-model="form.allowMultiBreak"
+                :disabled="!form.enableGlobalBreak"
+                active-text="允許"
+                inactive-text="不允許"
+                active-color="#10b981"
+              />
+            </el-form-item>
+          </div>
         </template>
         
         <template v-else>
@@ -507,7 +497,6 @@ const currentType = ref('org')
 const editIndex = ref(null)
 
 // 部門排班規則與中場休息設定
-const breakSettingForm = ref(defaultBreakSettingForm())
 const managerList = ref([])
 
 const filteredDeptList = computed(() =>
@@ -571,21 +560,6 @@ async function fetchAll() {
     fetchList('sub', selectedDept.value)
   ])
   await fetchShifts()
-  if (selectedDept.value) {
-    await fetchBreakSettingForDepartment(selectedDept.value)
-  } else {
-    breakSettingForm.value = defaultBreakSettingForm()
-  }
-}
-
-function defaultBreakSettingForm(departmentId = '') {
-  return {
-    _id: undefined,
-    department: departmentId || '',
-    enableGlobalBreak: false,
-    breakMinutes: 60,
-    allowMultiBreak: false
-  }
 }
 
 function defaultForm(type) {
@@ -615,7 +589,11 @@ function defaultForm(type) {
       defaultTwoDayOff: true,
       tempChangeAllowed: false,
       deptManager: '',
-      scheduleNotes: ''
+      scheduleNotes: '',
+      enableGlobalBreak: false,
+      breakMinutes: 60,
+      allowMultiBreak: false,
+      breakSettingId: ''
     }
   } else {
     return {
@@ -632,9 +610,9 @@ function defaultForm(type) {
   }
 }
 
-function openDialog(type, index = null) {
+async function openDialog(type, index = null) {
   currentType.value = type
-  if (type === 'sub') fetchShifts(true)
+  if (type === 'sub') await fetchShifts(true)
   if (index !== null) {
     editIndex.value = index
     const item =
@@ -648,6 +626,12 @@ function openDialog(type, index = null) {
       const shiftValue = item?.shiftId ?? item?.shift ?? ''
       form.value.shiftId = shiftValue ? shiftValue.toString() : ''
       delete form.value.shift
+    }
+    if (type === 'dept') {
+      const breakSetting = await fetchBreakSettingForDepartment(item?._id)
+      if (breakSetting) {
+        form.value = { ...form.value, ...breakSetting }
+      }
     }
   } else {
     editIndex.value = null
@@ -666,7 +650,17 @@ async function saveItem() {
       : currentType.value === 'dept'
         ? deptList
         : subList
-  const payload = { ...form.value }
+  let payload = { ...form.value }
+  if (currentType.value === 'dept') {
+    const {
+      enableGlobalBreak,
+      breakMinutes,
+      allowMultiBreak,
+      breakSettingId,
+      ...rest
+    } = payload
+    payload = rest
+  }
   if (currentType.value === 'sub') {
     delete payload.shift
   }
@@ -685,7 +679,25 @@ async function saveItem() {
       body: JSON.stringify(payload)
     })
   }
+  let responseData = null
+  if (res && res.ok && currentType.value === 'dept') {
+    const contentType = res.headers?.get?.('content-type') || ''
+    if (contentType.includes('application/json') && typeof res.json === 'function') {
+      try {
+        responseData = await res.json()
+      } catch (err) {
+        responseData = null
+      }
+    }
+  }
   if (res && res.ok) {
+    if (currentType.value === 'dept') {
+      const departmentId =
+        form.value._id || responseData?._id || responseData?.id || list.value[editIndex.value]?._id
+      if (departmentId) {
+        await upsertBreakSetting(departmentId)
+      }
+    }
     await fetchAll()
     dialogVisible.value = false
   }
@@ -733,73 +745,61 @@ async function fetchShifts(force = false) {
 }
 
 async function fetchBreakSettingForDepartment(departmentId) {
-  if (!departmentId) {
-    breakSettingForm.value = defaultBreakSettingForm()
-    return
-  }
-
-  breakSettingForm.value = defaultBreakSettingForm(departmentId)
-
+  if (!departmentId) return null
   try {
     const res = await apiFetch(`/api/break-settings?department=${departmentId}`)
     if (res.ok) {
       const data = await res.json()
       const record = Array.isArray(data) ? data[0] : data
       if (record) {
-        breakSettingForm.value = {
-          ...breakSettingForm.value,
-          ...record,
-          department: departmentId
+        return {
+          breakSettingId: record._id || '',
+          enableGlobalBreak: !!record.enableGlobalBreak,
+          breakMinutes:
+            typeof record.breakMinutes === 'number' ? record.breakMinutes : 60,
+          allowMultiBreak: !!record.allowMultiBreak
         }
-        return
       }
     }
   } catch (err) {
     console.error(err)
   }
+  return null
 }
 
-async function saveBreakSetting() {
-  if (!selectedDept.value) {
-    alert('請先選擇部門')
-    return
-  }
-
-  const method = breakSettingForm.value._id ? 'PUT' : 'POST'
-  let url = '/api/break-settings'
+async function upsertBreakSetting(departmentId) {
   const payload = {
-    ...breakSettingForm.value,
-    department: selectedDept.value
+    department: departmentId,
+    enableGlobalBreak: !!form.value.enableGlobalBreak,
+    breakMinutes: Number(form.value.breakMinutes ?? 0),
+    allowMultiBreak: !!form.value.allowMultiBreak
   }
-  const { _id, ...body } = payload
-  if (method === 'PUT') url += `/${_id}`
+  let url = '/api/break-settings'
+  let method = 'POST'
+  if (form.value.breakSettingId) {
+    url += `/${form.value.breakSettingId}`
+    method = 'PUT'
+  }
   const res = await apiFetch(url, {
     method,
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body)
+    body: JSON.stringify(payload)
   })
-  if (res.ok) {
-    let saved = null
-    if (typeof res.json === 'function') {
+  if (res && res.ok) {
+    const contentType = res.headers?.get?.('content-type') || ''
+    if (contentType.includes('application/json') && typeof res.json === 'function') {
       try {
-        saved = await res.json()
+        const data = await res.json()
+        if (data?._id) {
+          form.value.breakSettingId = data._id
+        }
       } catch (err) {
-        saved = null
+        console.error(err)
       }
     }
-
-    if (saved) {
-      breakSettingForm.value = {
-        ...defaultBreakSettingForm(selectedDept.value),
-        ...saved,
-        department: selectedDept.value
-      }
-    } else {
-      await fetchBreakSettingForDepartment(selectedDept.value)
-    }
-
-    alert('已儲存「中場休息」設定')
+    return true
   }
+  return false
 }
 
 onMounted(() => {
@@ -813,7 +813,6 @@ watch(selectedOrg, val => {
 
 watch(selectedDept, val => {
   fetchList('sub', val)
-  fetchBreakSettingForDepartment(val)
 })
 </script>
 

@@ -40,9 +40,9 @@ describe('OrgDepartmentSetting.vue', () => {
     expect(apiFetch).toHaveBeenCalledWith('/api/organizations', expect.objectContaining({ method: 'POST' }))
   })
 
-  it('shows organization select in dept form', () => {
+  it('shows organization select in dept form', async () => {
     const wrapper = mount(OrgDepartmentSetting, { global: { plugins: [ElementPlus] } })
-    wrapper.vm.openDialog('dept')
+    await wrapper.vm.openDialog('dept')
     expect(wrapper.findComponent({ name: 'ElSelect' }).exists()).toBe(true)
     expect(wrapper.vm.form).toHaveProperty('organization')
     expect(wrapper.vm.form).toHaveProperty('defaultTwoDayOff', true)
@@ -55,7 +55,7 @@ describe('OrgDepartmentSetting.vue', () => {
     expect(apiFetch).toHaveBeenCalledWith('/api/departments?organization=123')
   })
 
-  it('merges schedule defaults when editing dept without data', () => {
+  it('merges schedule defaults when editing dept without data', async () => {
     const wrapper = mount(OrgDepartmentSetting, { global: { plugins: [ElementPlus] } })
     wrapper.vm.deptList = [
       {
@@ -65,7 +65,7 @@ describe('OrgDepartmentSetting.vue', () => {
         defaultTwoDayOff: false
       }
     ]
-    wrapper.vm.openDialog('dept', 0)
+    await wrapper.vm.openDialog('dept', 0)
     expect(wrapper.vm.form.defaultTwoDayOff).toBe(false)
     expect(wrapper.vm.form.tempChangeAllowed).toBe(false)
     expect(wrapper.vm.form).toHaveProperty('deptManager', '')
@@ -74,7 +74,7 @@ describe('OrgDepartmentSetting.vue', () => {
   it('saves department with schedule fields', async () => {
     const wrapper = mount(OrgDepartmentSetting, { global: { plugins: [ElementPlus] } })
     apiFetch.mockClear()
-    wrapper.vm.openDialog('dept')
+    await wrapper.vm.openDialog('dept')
     wrapper.vm.form = {
       name: '人資',
       organization: 'org1',
@@ -102,87 +102,82 @@ describe('OrgDepartmentSetting.vue', () => {
     })
   })
 
-  it('儲存休息設定時會附帶部門識別碼並更新表單', async () => {
-    const wrapper = mount(OrgDepartmentSetting, { global: { plugins: [ElementPlus] } })
+  it('部門對話框可載入中場休息設定', async () => {
+    const breakSetting = {
+      _id: 'break1',
+      department: 'dept1',
+      enableGlobalBreak: true,
+      breakMinutes: 45,
+      allowMultiBreak: true
+    }
 
     apiFetch.mockReset()
-    apiFetch.mockImplementation((url, options) => {
+    apiFetch.mockImplementation(url => {
       if (url === '/api/break-settings?department=dept1') {
-        return Promise.resolve({ ok: true, json: async () => [] })
+        return Promise.resolve({ ok: true, json: async () => [breakSetting] })
       }
-      if (url === '/api/break-settings' && options?.method === 'POST') {
-        const payload = JSON.parse(options.body)
+      return Promise.resolve({ ok: true, json: async () => [] })
+    })
+
+    const wrapper = mount(OrgDepartmentSetting, { global: { plugins: [ElementPlus] } })
+    wrapper.vm.deptList = [
+      { _id: 'dept1', name: '人資部', organization: 'org1' }
+    ]
+
+    await wrapper.vm.openDialog('dept', 0)
+
+    expect(apiFetch).toHaveBeenCalledWith('/api/break-settings?department=dept1')
+    expect(wrapper.vm.form.enableGlobalBreak).toBe(true)
+    expect(wrapper.vm.form.breakMinutes).toBe(45)
+    expect(wrapper.vm.form.allowMultiBreak).toBe(true)
+    expect(wrapper.vm.form.breakSettingId).toBe('break1')
+  })
+
+  it('儲存部門時會同步儲存中場休息設定', async () => {
+    apiFetch.mockReset()
+    apiFetch.mockImplementation((url, options) => {
+      if (url === '/api/departments' && options?.method === 'POST') {
         return Promise.resolve({
           ok: true,
-          json: async () => ({
-            _id: 'break1',
-            department: payload.department,
-            enableGlobalBreak: payload.enableGlobalBreak,
-            breakMinutes: payload.breakMinutes,
-            allowMultiBreak: payload.allowMultiBreak
-          })
+          json: async () => ({ _id: 'dept99' }),
+          headers: { get: () => 'application/json' }
+        })
+      }
+      if (url === '/api/break-settings') {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ _id: 'break99' }),
+          headers: { get: () => 'application/json' }
         })
       }
       return Promise.resolve({ ok: true, json: async () => [] })
     })
 
-    wrapper.vm.selectedDept = 'dept1'
-    await new Promise(resolve => setTimeout(resolve, 0))
-
-    wrapper.vm.breakSettingForm = {
-      ...wrapper.vm.breakSettingForm,
-      enableGlobalBreak: true,
-      breakMinutes: 45,
-      allowMultiBreak: true
-    }
-
-    await wrapper.vm.saveBreakSetting()
-
-    const postCall = apiFetch.mock.calls.find(([url]) => url === '/api/break-settings')
-    expect(postCall).toBeTruthy()
-    const [, options] = postCall
-    const body = JSON.parse(options.body)
-    expect(body).toMatchObject({
-      department: 'dept1',
-      enableGlobalBreak: true,
-      breakMinutes: 45,
-      allowMultiBreak: true
-    })
-    expect(wrapper.vm.breakSettingForm._id).toBe('break1')
-    expect(alert).toHaveBeenCalled()
-  })
-
-  it('切換部門時會載入對應的休息設定', async () => {
     const wrapper = mount(OrgDepartmentSetting, { global: { plugins: [ElementPlus] } })
-
-    apiFetch.mockReset()
-    const setting = {
-      _id: 'break2',
-      department: 'dept2',
+    await wrapper.vm.openDialog('dept')
+    wrapper.vm.form = {
+      ...wrapper.vm.form,
+      name: '資訊部',
+      organization: 'org1',
       enableGlobalBreak: true,
-      breakMinutes: 30,
+      breakMinutes: 50,
       allowMultiBreak: false
     }
+    wrapper.vm.editIndex = null
 
-    apiFetch.mockImplementation(url => {
-      if (url === '/api/break-settings?department=dept2') {
-        return Promise.resolve({ ok: true, json: async () => [setting] })
-      }
-      if (url.startsWith('/api/sub-departments')) {
-        return Promise.resolve({ ok: true, json: async () => [] })
-      }
-      return Promise.resolve({ ok: true, json: async () => [] })
-    })
+    await wrapper.vm.saveItem()
 
-    wrapper.vm.selectedDept = 'dept2'
-    await new Promise(resolve => setTimeout(resolve, 0))
-
-    expect(apiFetch).toHaveBeenCalledWith('/api/break-settings?department=dept2')
-    expect(wrapper.vm.breakSettingForm).toMatchObject({
-      _id: 'break2',
-      department: 'dept2',
-      breakMinutes: 30,
-      enableGlobalBreak: true
+    const deptCall = apiFetch.mock.calls.find(([url, opts]) => url === '/api/departments' && opts?.method === 'POST')
+    expect(deptCall).toBeTruthy()
+    const breakCall = apiFetch.mock.calls.find(([url]) => url === '/api/break-settings')
+    expect(breakCall).toBeTruthy()
+    const [, breakOptions] = breakCall
+    const breakPayload = JSON.parse(breakOptions.body)
+    expect(breakPayload).toMatchObject({
+      department: 'dept99',
+      enableGlobalBreak: true,
+      breakMinutes: 50,
+      allowMultiBreak: false
     })
   })
 
@@ -198,18 +193,20 @@ describe('OrgDepartmentSetting.vue', () => {
     await Promise.resolve()
     await Promise.resolve()
     apiFetch.mockClear()
-    wrapper.vm.openDialog('sub')
+    await wrapper.vm.openDialog('sub')
     await new Promise(resolve => setTimeout(resolve, 0))
     expect(apiFetch.mock.calls.some(([url]) => url === '/api/shifts')).toBe(true)
     expect(wrapper.vm.shiftOptions).toEqual(shifts)
   })
 
-  it('編輯小單位時會帶入既有班別', () => {
+  it('編輯小單位時會帶入既有班別', async () => {
     const wrapper = mount(OrgDepartmentSetting, { global: { plugins: [ElementPlus] } })
+    await new Promise(resolve => setTimeout(resolve, 0))
     wrapper.vm.subList = [
       { _id: 'sd1', name: '夜班組', department: 'dept1', shift: 's2' }
     ]
-    wrapper.vm.openDialog('sub', 0)
+    await wrapper.vm.$nextTick()
+    await wrapper.vm.openDialog('sub', 0)
     expect(wrapper.vm.form.shiftId).toBe('s2')
     expect(wrapper.vm.form).not.toHaveProperty('shift')
   })
@@ -222,7 +219,7 @@ describe('OrgDepartmentSetting.vue', () => {
       return Promise.resolve({ ok: true, json: async () => [] })
     })
     const wrapper = mount(OrgDepartmentSetting, { global: { plugins: [ElementPlus] } })
-    wrapper.vm.openDialog('sub')
+    await wrapper.vm.openDialog('sub')
     await Promise.resolve()
     await Promise.resolve()
     wrapper.vm.form = {
