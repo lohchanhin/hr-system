@@ -6,14 +6,15 @@ import { apiFetch } from '../src/api'
 vi.mock('../src/api', () => ({ apiFetch: vi.fn() }))
 vi.mock('element-plus', async () => {
   const actual = await vi.importActual('element-plus')
+  const message = vi.fn()
+  message.success = vi.fn()
+  message.error = vi.fn()
+  message.info = vi.fn()
+  message.warning = vi.fn()
   return {
     ...actual,
-    ElMessage: {
-      success: vi.fn(),
-      error: vi.fn(),
-      info: vi.fn(),
-      warning: vi.fn(),
-    },
+    default: actual.default,
+    ElMessage: message,
   }
 })
 
@@ -61,9 +62,19 @@ describe('DepartmentReports.vue', () => {
   beforeEach(async () => {
     vi.clearAllMocks()
     apiFetch.mockReset()
+    window.sessionStorage.setItem('employeeId', 'sup1')
     apiFetch.mockResolvedValueOnce({
       ok: true,
-      json: async () => [{ _id: 'dept1', name: '研發部' }],
+      json: async () => ({
+        department: { _id: 'dept1', name: '研發部' },
+      }),
+    })
+    apiFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => [
+        { _id: 'dept1', name: '研發部' },
+        { _id: 'dept2', name: '客服部' },
+      ],
     })
 
     originalCreateObjectURL = window.URL.createObjectURL
@@ -93,6 +104,7 @@ describe('DepartmentReports.vue', () => {
   })
 
   afterEach(() => {
+    window.sessionStorage.clear()
     createObjectURLSpy?.mockRestore()
     revokeObjectURLSpy?.mockRestore()
     createElementSpy?.mockRestore()

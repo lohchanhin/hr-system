@@ -65,7 +65,13 @@
           </el-table>
 
           <!-- 新增/編輯 樣板 Dialog -->
-          <el-dialog v-model="formDialogVisible" :title="formDialogMode==='edit' ? '編輯表單樣板' : '新增表單樣板'" width="520px">
+          <el-dialog
+            v-model="formDialogVisible"
+            :title="formDialogMode==='edit' ? '編輯表單樣板' : '新增表單樣板'"
+            width="520px"
+            :append-to-body="false"
+            :teleported="false"
+          >
             <el-form :model="formDialog" label-width="120px">
               <el-form-item label="表單名稱"><el-input v-model="formDialog.name" /></el-form-item>
               <el-form-item label="分類">
@@ -83,7 +89,13 @@
           </el-dialog>
 
           <!-- 流程設定 Dialog -->
-          <el-dialog v-model="workflowDialogVisible" title="流程關卡設定" width="800px">
+          <el-dialog
+            v-model="workflowDialogVisible"
+            title="流程關卡設定"
+            width="800px"
+            :append-to-body="false"
+            :teleported="false"
+          >
             <div class="mb-2">
               <el-button size="small" @click="addStep">新增關卡</el-button>
             </div>
@@ -419,14 +431,14 @@ async function removeForm(row = null) {
 }
 
 /* 流程步驟 Dialog */
-function openWorkflowDialog(row) {
+async function openWorkflowDialog(row) {
   selectedFormId.value = row._id
-  loadWorkflow().then(async () => {
-    const res = await apiFetch(API.workflow(selectedFormId.value))
-    const wf = res.ok ? await res.json() : {}
-    workflowSteps.value = (wf?.steps || []).map(s => ({ ...s })) // 深拷貝
-    workflowDialogVisible.value = true
-  })
+  workflowDialogVisible.value = true
+  workflowSteps.value = []
+  await loadWorkflow()
+  const res = await apiFetch(API.workflow(selectedFormId.value))
+  const wf = res.ok ? await res.json() : {}
+  workflowSteps.value = (wf?.steps || []).map((s) => ({ ...s })) // 深拷貝
 }
 function addStep() {
   workflowSteps.value.push({

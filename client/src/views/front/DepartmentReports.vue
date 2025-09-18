@@ -132,6 +132,8 @@ import { ElMessage } from 'element-plus'
 import { apiFetch } from '../../api'
 
 const departments = ref([])
+const supervisorDepartmentId = ref('')
+const supervisorDepartmentName = ref('')
 const reportTypes = [
   { value: 'attendance', label: '出勤統計' },
   { value: 'leave', label: '請假統計' },
@@ -172,8 +174,15 @@ const formatExtensionMap = {
   pdf: 'pdf',
 }
 
-const canExport = computed(
-  () => Boolean(selectedMonth.value && selectedDepartment.value && reportEndpointMap[reportType.value])
+const hasDepartmentAccess = computed(() =>
+  Boolean(
+    selectedDepartment.value &&
+      departments.value.some((dept) => String(dept?._id) === String(selectedDepartment.value))
+  )
+)
+
+const canExport = computed(() =>
+  Boolean(selectedMonth.value && hasDepartmentAccess.value && reportEndpointMap[reportType.value])
 )
 
 const canPreview = computed(() => canExport.value)
@@ -255,21 +264,108 @@ const summaryItems = computed(() => {
 onMounted(async () => {
   loading.departments = true
   try {
-    const res = await apiFetch('/api/departments')
-    if (!res.ok) {
-      throw new Error('無法取得部門清單')
-    }
-    const data = await res.json()
-    departments.value = Array.isArray(data) ? data : []
-    if (!selectedDepartment.value && departments.value.length) {
-      selectedDepartment.value = departments.value[0]._id
-    }
+    await fetchSupervisorDepartment()
+    await fetchAllowedDepartments()
   } catch (err) {
-    ElMessage.error(err.message || '取得部門資料失敗')
+    ElMessage.error(err.message || '載入主管部門資訊失敗')
   } finally {
     loading.departments = false
   }
 })
+
+const getStoredEmployeeId = () => {
+  if (typeof window === 'undefined') return ''
+  const sessionId = window.sessionStorage?.getItem('employeeId')
+  if (sessionId && sessionId !== 'undefined') return sessionId
+  const localId = window.localStorage?.getItem('employeeId')
+  if (localId && localId !== 'undefined') return localId
+  return ''
+}
+
+async function fetchSupervisorDepartment() {
+  const employeeId = getStoredEmployeeId()
+  if (!employeeId) {
+    supervisorDepartmentId.value = ''
+    supervisorDepartmentName.value = ''
+    ElMessage.warning('尚未取得登入者資料，請重新登入後再試')
+    return
+  }
+  const res = await apiFetch(`/api/employees/${employeeId}`)
+  if (!res.ok) {
+    throw new Error('無法取得主管資訊')
+  }
+  const data = await res.json()
+  const deptInfo = data?.department
+  const deptId =
+    typeof deptInfo === 'object'
+      ? deptInfo?._id || deptInfo?.id || deptInfo?.value
+      : deptInfo
+  const deptName =
+    typeof deptInfo === 'object'
+      ? deptInfo?.name || ''
+      : data?.departmentName || ''
+  supervisorDepartmentId.value = deptId ? String(deptId) : ''
+  supervisorDepartmentName.value = deptName ? String(deptName) : ''
+}
+
+async function fetchAllowedDepartments() {
+  if (!supervisorDepartmentId.value && !supervisorDepartmentName.value) {
+    departments.value = []
+    selectedDepartment.value = ''
+    ElMessage.warning('尚未為您設定可管理的部門，請聯絡系統管理員')
+    return
+  }
+  const res = await apiFetch('/api/departments')
+  if (!res.ok) {
+    throw new Error('無法取得部門清單')
+  }
+  const data = await res.json()
+  const normalized = Array.isArray(data)
+    ? data.map((dept) => {
+        const idValue =
+          dept?._id ?? dept?.id ?? dept?.value ?? (typeof dept === 'string' ? dept : '')
+        const nameValue = dept?.name ?? dept?.label ?? dept?.departmentName ?? ''
+        return {
+          ...dept,
+          _id: idValue ? String(idValue) : '',
+          name: String(nameValue || dept?.name || ''),
+        }
+      })
+    : []
+  const targetId = supervisorDepartmentId.value
+  const targetName = supervisorDepartmentName.value.trim().toLowerCase()
+  let allowed = normalized.filter((dept) => {
+    const deptId = String(dept?._id || '')
+    const deptName = String(dept?.name || '').trim().toLowerCase()
+    return (
+      (targetId && deptId === targetId) ||
+      (targetName && deptName && deptName === targetName)
+    )
+  })
+  if (!allowed.length && targetId) {
+    allowed = [
+      {
+        _id: targetId,
+        name: supervisorDepartmentName.value || '主管部門',
+      },
+    ]
+  }
+  allowed = allowed.filter((dept) => dept?._id)
+  departments.value = allowed
+  if (!departments.value.length) {
+    selectedDepartment.value = ''
+    ElMessage.warning('未找到與您相符的部門，請聯絡系統管理員')
+    return
+  }
+  const preferred = departments.value.find((dept) => dept._id === targetId)
+  selectedDepartment.value = preferred?._id || departments.value[0]._id || ''
+}
+
+function ensureDepartmentAccess() {
+  if (hasDepartmentAccess.value) return true
+  ElMessage.warning('目前無可操作的部門，請確認您的部門權限設定')
+  return false
+}
 
 function buildQuery(params) {
   const usp = new URLSearchParams(params)
@@ -277,6 +373,7 @@ function buildQuery(params) {
 }
 
 async function handlePreview() {
+  if (!canPreview.value && !ensureDepartmentAccess()) return
   if (!canPreview.value) return
   const endpoint = reportEndpointMap[reportType.value]
   if (!endpoint) {
@@ -325,7 +422,9 @@ async function handlePreview() {
 }
 
 async function exportReport() {
-  if (!canExport.value || exporting.value) return
+  if (exporting.value) return
+  if (!canExport.value && !ensureDepartmentAccess()) return
+  if (!canExport.value) return
   const endpoint = reportEndpointMap[reportType.value]
   if (!endpoint) {
     ElMessage.error('尚未提供此報表的匯出服務')
