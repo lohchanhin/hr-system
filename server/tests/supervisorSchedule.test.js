@@ -4,15 +4,15 @@ import { jest } from '@jest/globals';
 
 const mockShiftSchedule = { findOne: jest.fn(), create: jest.fn(), insertMany: jest.fn() };
 const mockApprovalRequest = { findOne: jest.fn() };
-const mockFormTemplate = { findOne: jest.fn() };
-const mockFormField = { find: jest.fn() };
+const mockGetLeaveFieldIds = jest.fn();
 const mockEmployee = { findById: jest.fn(), find: jest.fn() };
 
 jest.unstable_mockModule('../src/models/ShiftSchedule.js', () => ({ default: mockShiftSchedule }));
 jest.unstable_mockModule('../src/models/approval_request.js', () => ({ default: mockApprovalRequest }));
-jest.unstable_mockModule('../src/models/form_template.js', () => ({ default: mockFormTemplate }));
-jest.unstable_mockModule('../src/models/form_field.js', () => ({ default: mockFormField }));
 jest.unstable_mockModule('../src/models/Employee.js', () => ({ default: mockEmployee }));
+jest.unstable_mockModule('../src/services/leaveFieldService.js', () => ({
+  getLeaveFieldIds: mockGetLeaveFieldIds,
+}));
 
 let app;
 let scheduleRoutes;
@@ -36,11 +36,14 @@ beforeEach(() => {
   mockShiftSchedule.create.mockReset();
   mockShiftSchedule.insertMany.mockReset();
   mockApprovalRequest.findOne.mockReset();
-  mockFormTemplate.findOne.mockResolvedValue({ _id: 'form1' });
-  mockFormField.find.mockResolvedValue([
-    { _id: 's', label: '開始日期' },
-    { _id: 'e', label: '結束日期' },
-  ]);
+  mockGetLeaveFieldIds.mockReset();
+  mockGetLeaveFieldIds.mockResolvedValue({
+    formId: 'form1',
+    startId: 's',
+    endId: 'e',
+    typeId: 't',
+    typeOptions: [],
+  });
   mockEmployee.findById.mockReset();
   mockEmployee.find.mockReset();
 });

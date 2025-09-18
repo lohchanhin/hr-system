@@ -1,9 +1,8 @@
 import ShiftSchedule from '../models/ShiftSchedule.js';
 import Employee from '../models/Employee.js';
 import ApprovalRequest from '../models/approval_request.js';
-import FormTemplate from '../models/form_template.js';
-import FormField from '../models/form_field.js';
 import AttendanceSetting from '../models/AttendanceSetting.js';
+import { getLeaveFieldIds } from '../services/leaveFieldService.js';
 
 function formatDate(date) {
   const d = new Date(date);
@@ -24,24 +23,6 @@ async function attachShiftInfo(schedules) {
     date: formatDate(s.date),
     shiftName: map[s.shiftId?.toString()] || '',
   }));
-}
-
-let leaveFieldCache = null;
-async function getLeaveFieldIds() {
-  if (leaveFieldCache) return leaveFieldCache;
-  const form = await FormTemplate.findOne({ name: '請假' });
-  if (!form) return {};
-  const fields = await FormField.find({ form: form._id });
-  const startField = fields.find(f => f.label === '開始日期');
-  const endField = fields.find(f => f.label === '結束日期');
-  const typeField = fields.find(f => f.label === '假別');
-  leaveFieldCache = {
-    formId: form._id.toString(),
-    startId: startField?._id.toString(),
-    endId: endField?._id.toString(),
-    typeId: typeField?._id.toString(),
-  };
-  return leaveFieldCache;
 }
 
 async function hasLeaveConflict(employeeId, date) {
