@@ -123,7 +123,17 @@ app.use(
   scheduleRoutes
 );
 app.use('/api/payroll', authenticate, authorizeRoles('admin'), payrollRoutes);
-app.use('/api/reports', authenticate, authorizeRoles('admin'), reportRoutes);
+app.use(
+  '/api/reports',
+  authenticate,
+  (req, res, next) => {
+    if (req.method === 'GET') {
+      return authorizeRoles('admin', 'supervisor')(req, res, next);
+    }
+    return authorizeRoles('admin')(req, res, next);
+  },
+  reportRoutes
+);
 app.use('/api/insurance', authenticate, authorizeRoles('admin'), insuranceRoutes);
 app.use('/api/approvals', authenticate, approvalRoutes);
 app.use('/api/menu', authenticate, menuRoutes);
