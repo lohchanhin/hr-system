@@ -31,6 +31,7 @@ const Approval = () => import('@/views/front/Approval.vue')
 const PreviewWeek = () => import('@/views/front/PreviewWeek.vue')
 const PreviewMonth = () => import('@/views/front/PreviewMonth.vue')
 const MySchedule = () => import('@/views/front/MySchedule.vue')
+const DepartmentReports = () => import('@/views/front/DepartmentReports.vue')
 
 const routes = [
   // 首頁重導至前台登入
@@ -93,6 +94,12 @@ const routes = [
         path: 'schedule',
         name: 'Schedule',
         component: Schedule,
+        meta: { roles: ['supervisor', 'admin'] },
+      },
+      {
+        path: 'department-reports',
+        name: 'DepartmentReports',
+        component: DepartmentReports,
         meta: { roles: ['supervisor', 'admin'] },
       },
       {

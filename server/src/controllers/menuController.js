@@ -9,6 +9,7 @@ export function getMenu(req, res) {
     supervisor: [
       { name: 'Attendance', label: '出勤打卡', icon: 'el-icon-postcard' },
       { name: 'Schedule', label: '排班管理', icon: 'el-icon-timer' },
+      { name: 'DepartmentReports', label: '部門報表', icon: 'el-icon-data-analysis' },
       { name: 'Approval', label: '簽核流程', icon: 'el-icon-s-operation' }
     ],
     hr: [
