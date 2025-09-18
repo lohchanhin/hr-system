@@ -4,13 +4,15 @@ import {
   createReport,
   getReport,
   updateReport,
-  deleteReport
+  deleteReport,
+  exportDepartmentAttendance
 } from '../controllers/reportController.js';
 
 const router = Router();
 
 router.get('/', listReports);
 router.post('/', createReport);
+router.get('/department/attendance/export', exportDepartmentAttendance);
 router.get('/:id', getReport);
 router.put('/:id', updateReport);
 router.delete('/:id', deleteReport);
