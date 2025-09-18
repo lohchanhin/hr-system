@@ -17,21 +17,21 @@ const mockShiftSchedule = {
 
 const mockApprovalRequest = { findOne: jest.fn(), find: jest.fn() };
 
-const mockFormTemplate = { findOne: jest.fn() };
-const mockFormField = { find: jest.fn() };
-
 const mockEmployee = { find: jest.fn() };
 const mockAttendanceSetting = { findOne: jest.fn() };
+
+const mockGetLeaveFieldIds = jest.fn();
 
 /* --------------------------- jest.mock 設定區 --------------------------- */
 
 
 jest.unstable_mockModule('../src/models/ShiftSchedule.js', () => ({ default: mockShiftSchedule }));
 jest.unstable_mockModule('../src/models/approval_request.js', () => ({ default: mockApprovalRequest }));
-jest.unstable_mockModule('../src/models/form_template.js', () => ({ default: mockFormTemplate }));
-jest.unstable_mockModule('../src/models/form_field.js', () => ({ default: mockFormField }));
 jest.unstable_mockModule('../src/models/Employee.js', () => ({ default: mockEmployee }));
 jest.unstable_mockModule('../src/models/AttendanceSetting.js', () => ({ default: mockAttendanceSetting }));
+jest.unstable_mockModule('../src/services/leaveFieldService.js', () => ({
+  getLeaveFieldIds: mockGetLeaveFieldIds,
+}));
 
 // 驗證中介層直接放行
 jest.unstable_mockModule('../src/middleware/supervisor.js', () => ({ verifySupervisor: (req, res, next) => next() }));
@@ -56,12 +56,14 @@ beforeEach(() => {
 
   mockApprovalRequest.findOne.mockReset();
   mockApprovalRequest.find.mockReset();
-  mockFormTemplate.findOne.mockResolvedValue({ _id: 'form1' });
-  mockFormField.find.mockResolvedValue([
-    { _id: 's', label: '開始日期' },
-    { _id: 'e', label: '結束日期' },
-    { _id: 't', label: '假別' },
-  ]);
+  mockGetLeaveFieldIds.mockReset();
+  mockGetLeaveFieldIds.mockResolvedValue({
+    formId: 'form1',
+    startId: 's',
+    endId: 'e',
+    typeId: 't',
+    typeOptions: [],
+  });
   mockEmployee.find.mockReset();
   mockAttendanceSetting.findOne.mockReset();
   mockAttendanceSetting.findOne.mockReturnValue({

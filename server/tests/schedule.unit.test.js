@@ -7,15 +7,15 @@ const mockShiftSchedule = {
   insertMany: jest.fn(),
 };
 const mockApprovalRequest = { findOne: jest.fn() };
-const mockFormTemplate = { findOne: jest.fn() };
-const mockFormField = { find: jest.fn() };
+const mockGetLeaveFieldIds = jest.fn();
 const mockAttendanceSetting = { findOne: jest.fn() };
 
 jest.unstable_mockModule('../src/models/ShiftSchedule.js', () => ({ default: mockShiftSchedule }));
 jest.unstable_mockModule('../src/models/approval_request.js', () => ({ default: mockApprovalRequest }));
-jest.unstable_mockModule('../src/models/form_template.js', () => ({ default: mockFormTemplate }));
-jest.unstable_mockModule('../src/models/form_field.js', () => ({ default: mockFormField }));
 jest.unstable_mockModule('../src/models/AttendanceSetting.js', () => ({ default: mockAttendanceSetting }));
+jest.unstable_mockModule('../src/services/leaveFieldService.js', () => ({
+  getLeaveFieldIds: mockGetLeaveFieldIds,
+}));
 
 const { createSchedule, createSchedulesBatch, updateSchedule } = await import('../src/controllers/scheduleController.js');
 
@@ -24,11 +24,14 @@ describe('createSchedule validations', () => {
     mockShiftSchedule.findOne.mockReset();
     mockShiftSchedule.create.mockReset();
     mockApprovalRequest.findOne.mockReset();
-    mockFormTemplate.findOne.mockResolvedValue({ _id: 'form1' });
-    mockFormField.find.mockResolvedValue([
-      { _id: 's', label: '開始日期' },
-      { _id: 'e', label: '結束日期' },
-    ]);
+    mockGetLeaveFieldIds.mockReset();
+    mockGetLeaveFieldIds.mockResolvedValue({
+      formId: 'form1',
+      startId: 's',
+      endId: 'e',
+      typeId: 't',
+      typeOptions: [],
+    });
   });
 
   it('returns department overlap when existing schedule in other dept', async () => {
@@ -48,11 +51,14 @@ describe('createSchedulesBatch validations', () => {
     mockShiftSchedule.findOne.mockReset();
     mockShiftSchedule.insertMany.mockReset();
     mockApprovalRequest.findOne.mockReset();
-    mockFormTemplate.findOne.mockResolvedValue({ _id: 'form1' });
-    mockFormField.find.mockResolvedValue([
-      { _id: 's', label: '開始日期' },
-      { _id: 'e', label: '結束日期' },
-    ]);
+    mockGetLeaveFieldIds.mockReset();
+    mockGetLeaveFieldIds.mockResolvedValue({
+      formId: 'form1',
+      startId: 's',
+      endId: 'e',
+      typeId: 't',
+      typeOptions: [],
+    });
   });
 
   it('returns leave conflict when batch has approved leave', async () => {
@@ -73,11 +79,14 @@ describe('updateSchedule validations', () => {
     mockShiftSchedule.findOne.mockReset();
     mockShiftSchedule.findById.mockReset();
     mockApprovalRequest.findOne.mockReset();
-    mockFormTemplate.findOne.mockResolvedValue({ _id: 'form1' });
-    mockFormField.find.mockResolvedValue([
-      { _id: 's', label: '開始日期' },
-      { _id: 'e', label: '結束日期' },
-    ]);
+    mockGetLeaveFieldIds.mockReset();
+    mockGetLeaveFieldIds.mockResolvedValue({
+      formId: 'form1',
+      startId: 's',
+      endId: 'e',
+      typeId: 't',
+      typeOptions: [],
+    });
   });
 
   it('returns department overlap when updating to other dept with existing schedule', async () => {
