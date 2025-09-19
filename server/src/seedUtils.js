@@ -7,6 +7,9 @@ import SubDepartment from './models/SubDepartment.js';
 import FormTemplate from './models/form_template.js';
 import FormField from './models/form_field.js';
 import ApprovalWorkflow from './models/approval_workflow.js';
+import AttendanceSetting from './models/AttendanceSetting.js';
+import AttendanceRecord from './models/AttendanceRecord.js';
+import ShiftSchedule from './models/ShiftSchedule.js';
 
 const CITY_OPTIONS = ['台北市', '新北市', '桃園市', '台中市', '台南市', '高雄市'];
 const PRINCIPAL_NAMES = ['林經理', '張主管', '王負責人', '李主任', '陳董事'];
@@ -24,6 +27,67 @@ const SUPERVISOR_CONFIGS = [
   },
 ];
 const SUPERVISOR_TITLE = '部門主管';
+
+const ATTENDANCE_SETTING_TEMPLATE = {
+  shifts: [
+    {
+      name: '早班',
+      code: 'SHIFT-A',
+      startTime: '08:30',
+      endTime: '17:30',
+      breakTime: '01:00',
+      crossDay: false,
+      remark: '行政支援時段',
+    },
+    {
+      name: '中班',
+      code: 'SHIFT-B',
+      startTime: '12:00',
+      endTime: '21:00',
+      breakTime: '01:00',
+      crossDay: false,
+      remark: '客服及支援時段',
+    },
+    {
+      name: '晚班',
+      code: 'SHIFT-C',
+      startTime: '14:00',
+      endTime: '23:00',
+      breakTime: '01:00',
+      crossDay: false,
+      remark: '傍晚支援與延長營運',
+    },
+  ],
+  abnormalRules: {
+    lateGrace: 10,
+    earlyLeaveGrace: 10,
+    missingThreshold: 3,
+    autoNotify: true,
+  },
+  breakOutRules: {
+    enableBreakPunch: true,
+    breakInterval: 30,
+    outingNeedApprove: false,
+  },
+  overtimeRules: {
+    weekdayThreshold: 30,
+    holidayRate: 1.33,
+    toCompRate: 1.0,
+  },
+};
+
+const WORKDAYS_PER_EMPLOYEE = 22;
+const CLOCK_IN_VARIANCE_MINUTES = 15;
+const CLOCK_OUT_VARIANCE_MINUTES = 25;
+
+function buildAttendanceSettingPayload() {
+  return {
+    shifts: ATTENDANCE_SETTING_TEMPLATE.shifts.map((shift) => ({ ...shift })),
+    abnormalRules: { ...ATTENDANCE_SETTING_TEMPLATE.abnormalRules },
+    breakOutRules: { ...ATTENDANCE_SETTING_TEMPLATE.breakOutRules },
+    overtimeRules: { ...ATTENDANCE_SETTING_TEMPLATE.overtimeRules },
+  };
+}
 
 function randomElement(list) {
   return list[Math.floor(Math.random() * list.length)];
@@ -117,6 +181,141 @@ function takeAssignment(hierarchy, pool) {
   }
   const index = Math.floor(Math.random() * pool.length);
   return pool.splice(index, 1)[0];
+}
+
+function startOfUtcDay(date) {
+  const utcDate = new Date(date);
+  utcDate.setUTCHours(0, 0, 0, 0);
+  return utcDate;
+}
+
+function generateRecentWorkdays(count, referenceDate = new Date()) {
+  const workdays = [];
+  let cursor = startOfUtcDay(referenceDate);
+
+  while (workdays.length < count) {
+    const candidate = new Date(cursor);
+    if (candidate.getUTCDay() !== 0 && candidate.getUTCDay() !== 6) {
+      workdays.push(candidate);
+    }
+    cursor.setUTCDate(cursor.getUTCDate() - 1);
+  }
+
+  return workdays.reverse();
+}
+
+function parseTimeString(time) {
+  const [hours, minutes] = time.split(':').map((value) => parseInt(value, 10));
+  return { hours, minutes };
+}
+
+function addUtcMinutes(date, minutes) {
+  const result = new Date(date);
+  result.setUTCMinutes(result.getUTCMinutes() + minutes);
+  return result;
+}
+
+function buildShiftTimes(day, shift) {
+  const start = startOfUtcDay(day);
+  const { hours: startHours, minutes: startMinutes } = parseTimeString(shift.startTime);
+  start.setUTCHours(startHours, startMinutes, 0, 0);
+
+  const end = startOfUtcDay(day);
+  const { hours: endHours, minutes: endMinutes } = parseTimeString(shift.endTime);
+  end.setUTCHours(endHours, endMinutes, 0, 0);
+
+  if (shift.crossDay || end <= start) {
+    end.setUTCDate(end.getUTCDate() + 1);
+  }
+
+  return { start, end };
+}
+
+function randomOffset(min, max) {
+  return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+function buildDailyAttendanceRecords(employeeId, day, shift) {
+  const { start, end } = buildShiftTimes(day, shift);
+  const clockIn = addUtcMinutes(start, randomOffset(-CLOCK_IN_VARIANCE_MINUTES, 5));
+  const clockOut = addUtcMinutes(end, randomOffset(-10, CLOCK_OUT_VARIANCE_MINUTES));
+
+  const records = [
+    { employee: employeeId, action: 'clockIn', timestamp: clockIn },
+    { employee: employeeId, action: 'clockOut', timestamp: clockOut },
+  ];
+
+  if (Math.random() < 0.6) {
+    const midpoint = new Date((clockIn.getTime() + clockOut.getTime()) / 2);
+    const outing = addUtcMinutes(midpoint, randomOffset(-30, 30));
+    records.push({ employee: employeeId, action: 'outing', timestamp: outing });
+
+    if (Math.random() < 0.7) {
+      const breakIn = addUtcMinutes(outing, Math.max(5, randomOffset(10, 45)));
+      if (breakIn < clockOut) {
+        records.push({ employee: employeeId, action: 'breakIn', timestamp: breakIn });
+      }
+    }
+  }
+
+  records.sort((a, b) => a.timestamp - b.timestamp);
+  return records;
+}
+
+async function seedAttendanceData({
+  supervisors,
+  employeesBySupervisor,
+  attendanceSetting,
+  hierarchy,
+}) {
+  const workdays = generateRecentWorkdays(WORKDAYS_PER_EMPLOYEE);
+  const assignmentCombos = buildAssignmentPool(hierarchy);
+  const shiftOptions = attendanceSetting.shifts.map((shift) => ({
+    shiftId: shift._id,
+    data: {
+      startTime: shift.startTime,
+      endTime: shift.endTime,
+      crossDay: Boolean(shift.crossDay),
+    },
+  }));
+
+  const schedules = [];
+  const records = [];
+
+  supervisors.forEach((supervisor) => {
+    const team = employeesBySupervisor.get(toStringId(supervisor._id)) ?? [];
+    team.forEach(({ employee, assignment }) => {
+      workdays.forEach((day) => {
+        const shiftOption = randomElement(shiftOptions);
+        const randomCombo = assignmentCombos.length
+          ? randomElement(assignmentCombos)
+          : assignment;
+        const chosenAssignment =
+          assignmentCombos.length && Math.random() < 0.5 ? randomCombo : assignment;
+
+        const departmentId = chosenAssignment.department?._id ?? chosenAssignment.department;
+        const subDepartmentId =
+          chosenAssignment.subDepartment?._id ?? chosenAssignment.subDepartment;
+
+        schedules.push({
+          employee: employee._id,
+          date: new Date(day),
+          shiftId: shiftOption.shiftId,
+          department: departmentId,
+          subDepartment: subDepartmentId,
+        });
+
+        records.push(
+          ...buildDailyAttendanceRecords(employee._id, day, shiftOption.data),
+        );
+      });
+    });
+  });
+
+  const createdSchedules = schedules.length ? await ShiftSchedule.insertMany(schedules) : [];
+  const createdRecords = records.length ? await AttendanceRecord.insertMany(records) : [];
+
+  return { attendanceRecords: createdRecords, shiftSchedules: createdSchedules };
 }
 
 export async function seedSampleData() {
@@ -229,6 +428,7 @@ export async function seedTestUsers() {
   }
 
   const employees = [];
+  const employeesBySupervisor = new Map();
   for (let i = 0; i < 6; i += 1) {
     const assignment = takeAssignment(hierarchy, assignmentPool);
     const usernameSeed = generateUniqueValue('employee', usedUsernames).toLowerCase();
@@ -249,9 +449,33 @@ export async function seedTestUsers() {
       signTags: [],
     });
     employees.push(employee);
+
+    const supervisorKey = toStringId(supervisor._id);
+    if (!employeesBySupervisor.has(supervisorKey)) {
+      employeesBySupervisor.set(supervisorKey, []);
+    }
+    employeesBySupervisor.get(supervisorKey).push({
+      employee,
+      assignment: {
+        department: assignment.department,
+        subDepartment: assignment.subDepartment,
+      },
+    });
   }
 
-  return { supervisors, employees };
+  await AttendanceSetting.deleteMany({});
+  const attendanceSetting = await AttendanceSetting.create(buildAttendanceSettingPayload());
+  await AttendanceRecord.deleteMany({});
+  await ShiftSchedule.deleteMany({});
+
+  const { attendanceRecords, shiftSchedules } = await seedAttendanceData({
+    supervisors,
+    employeesBySupervisor,
+    attendanceSetting,
+    hierarchy,
+  });
+
+  return { supervisors, employees, attendanceSetting, attendanceRecords, shiftSchedules };
 }
 
 export async function seedApprovalTemplates() {
