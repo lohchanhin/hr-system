@@ -11,6 +11,19 @@ import ApprovalWorkflow from './models/approval_workflow.js';
 const CITY_OPTIONS = ['台北市', '新北市', '桃園市', '台中市', '台南市', '高雄市'];
 const PRINCIPAL_NAMES = ['林經理', '張主管', '王負責人', '李主任', '陳董事'];
 const PHONE_PREFIXES = ['02', '03', '04', '05', '06', '07'];
+const EMPLOYEE_TITLES = ['專員', '助理', '資深專員', '專案企劃', '業務代表'];
+const EMPLOYEE_STATUSES = ['正職員工', '試用期員工', '留職停薪'];
+const EMPLOYEE_NAMES = ['王小明', '李美玲', '陳俊宏', '黃淑芬', '吳建國', '張雅惠'];
+const SUPERVISOR_CONFIGS = [
+  { name: '人資主管', prefix: 'hr-supervisor', signTags: ['人資'] },
+  { name: '支援服務主管', prefix: 'support-supervisor', signTags: ['支援單位主管'] },
+  {
+    name: '營運部主管',
+    prefix: 'operations-supervisor',
+    signTags: ['業務主管', '業務負責人', '排班負責人'],
+  },
+];
+const SUPERVISOR_TITLE = '部門主管';
 
 function randomElement(list) {
   return list[Math.floor(Math.random() * list.length)];
@@ -29,6 +42,11 @@ function randomPhone() {
   return `${prefix}-${randomDigits(8)}`;
 }
 
+function toStringId(value) {
+  if (value == null) return value;
+  return typeof value === 'string' ? value : value.toString();
+}
+
 function generateUniqueValue(prefix, usedSet) {
   let value;
   do {
@@ -36,6 +54,69 @@ function generateUniqueValue(prefix, usedSet) {
   } while (usedSet.has(value));
   usedSet.add(value);
   return value;
+}
+
+function buildHierarchy(organizations, departments, subDepartments) {
+  const departmentsByOrg = new Map();
+  departments.forEach((department) => {
+    const orgId = toStringId(department.organization);
+    if (!departmentsByOrg.has(orgId)) {
+      departmentsByOrg.set(orgId, []);
+    }
+    departmentsByOrg.get(orgId).push(department);
+  });
+
+  const subDepartmentsByDept = new Map();
+  subDepartments.forEach((subDept) => {
+    const deptId = toStringId(subDept.department);
+    if (!subDepartmentsByDept.has(deptId)) {
+      subDepartmentsByDept.set(deptId, []);
+    }
+    subDepartmentsByDept.get(deptId).push(subDept);
+  });
+
+  return { organizations, departmentsByOrg, subDepartmentsByDept };
+}
+
+function buildAssignmentPool(hierarchy) {
+  const combos = [];
+  hierarchy.organizations.forEach((organization) => {
+    const orgId = toStringId(organization._id);
+    const deptList = hierarchy.departmentsByOrg.get(orgId) ?? [];
+    deptList.forEach((department) => {
+      const deptId = toStringId(department._id);
+      const subDeptList = hierarchy.subDepartmentsByDept.get(deptId) ?? [];
+      subDeptList.forEach((subDepartment) => {
+        combos.push({ organization, department, subDepartment });
+      });
+    });
+  });
+  return combos;
+}
+
+function randomAssignmentFromHierarchy(hierarchy) {
+  const organization = randomElement(hierarchy.organizations);
+  const orgId = toStringId(organization._id);
+  const departments = hierarchy.departmentsByOrg.get(orgId) ?? [];
+  if (departments.length === 0) {
+    throw new Error('Department not found');
+  }
+  const department = randomElement(departments);
+  const deptId = toStringId(department?._id);
+  const subDepartments = hierarchy.subDepartmentsByDept.get(deptId) ?? [];
+  if (subDepartments.length === 0) {
+    throw new Error('SubDepartment not found');
+  }
+  const subDepartment = randomElement(subDepartments);
+  return { organization, department, subDepartment };
+}
+
+function takeAssignment(hierarchy, pool) {
+  if (pool.length === 0) {
+    return randomAssignmentFromHierarchy(hierarchy);
+  }
+  const index = Math.floor(Math.random() * pool.length);
+  return pool.splice(index, 1)[0];
 }
 
 export async function seedSampleData() {
@@ -110,48 +191,67 @@ export async function seedSampleData() {
 }
 
 export async function seedTestUsers() {
-  const org = await Organization.findOne({});
-  const dept = org ? await Department.findOne({ organization: org._id }) : null;
-  const subDept = dept ? await SubDepartment.findOne({ department: dept._id }) : null;
+  const organizations = await Organization.find({});
+  if (!organizations.length) throw new Error('Organization not found');
 
-  if (!org) throw new Error('Organization not found');
-  if (!dept) throw new Error('Department not found');
-  if (!subDept) throw new Error('SubDepartment not found');
+  const departments = await Department.find({});
+  if (!departments.length) throw new Error('Department not found');
 
-  const users = [
-    { username: 'user', password: 'password', role: 'employee' },
-    { username: 'supervisor', password: 'password', role: 'supervisor' },
-    { username: 'admin', password: 'password', role: 'admin' },
-    { username: 'scheduler', password: 'password', role: 'supervisor', signTags: ['排班負責人'] },
-    { username: 'supportHead', password: 'password', role: 'supervisor', signTags: ['支援單位主管'] },
-    { username: 'salesHead', password: 'password', role: 'supervisor', signTags: ['業務主管'] },
-    { username: 'salesManager', password: 'password', role: 'supervisor', signTags: ['業務負責人'] },
-    { username: 'hr', password: 'password', role: 'admin', signTags: ['人資'] }
-  ];
-  let supervisorId = null;
-  for (const data of users) {
-    const existing = await Employee.findOne({ username: data.username });
-    if (!existing) {
-      const employee = await Employee.create({
-        name: data.username,
-        email: `${data.username}@example.com`,
-        username: data.username,
-        password: data.password,
-        role: data.role,
-        organization: org._id.toString(),
-        department: dept._id,
-        subDepartment: subDept._id,
-        title: 'Staff',
-        status: '正職員工',
-        signTags: data.signTags ?? []
-      });
-      if (data.username === 'supervisor') supervisorId = employee._id;
-      console.log(`Created test user ${data.username}`);
-    }
+  const subDepartments = await SubDepartment.find({});
+  if (!subDepartments.length) throw new Error('SubDepartment not found');
+
+  const hierarchy = buildHierarchy(organizations, departments, subDepartments);
+  const assignmentPool = buildAssignmentPool(hierarchy);
+  if (!assignmentPool.length) throw new Error('SubDepartment not found');
+
+  const usedUsernames = new Set();
+  const usedEmails = new Set();
+
+  const supervisors = [];
+  for (const config of SUPERVISOR_CONFIGS) {
+    const assignment = takeAssignment(hierarchy, assignmentPool);
+    const usernameSeed = generateUniqueValue(config.prefix, usedUsernames).toLowerCase();
+    const emailSeed = generateUniqueValue(`${config.prefix}-mail`, usedEmails).toLowerCase();
+    const supervisor = await Employee.create({
+      name: config.name,
+      email: `${emailSeed}@example.com`,
+      username: usernameSeed,
+      password: 'password',
+      role: 'supervisor',
+      organization: toStringId(assignment.organization._id),
+      department: assignment.department._id,
+      subDepartment: assignment.subDepartment._id,
+      title: SUPERVISOR_TITLE,
+      status: '正職員工',
+      signTags: config.signTags,
+    });
+    supervisors.push(supervisor);
   }
-  if (supervisorId) {
-    await Employee.updateMany({ role: 'employee' }, { supervisor: supervisorId });
+
+  const employees = [];
+  for (let i = 0; i < 6; i += 1) {
+    const assignment = takeAssignment(hierarchy, assignmentPool);
+    const usernameSeed = generateUniqueValue('employee', usedUsernames).toLowerCase();
+    const emailSeed = generateUniqueValue('employee-mail', usedEmails).toLowerCase();
+    const supervisor = supervisors[i % supervisors.length];
+    const employee = await Employee.create({
+      name: EMPLOYEE_NAMES[i % EMPLOYEE_NAMES.length],
+      email: `${emailSeed}@example.com`,
+      username: usernameSeed,
+      password: 'password',
+      role: 'employee',
+      organization: toStringId(assignment.organization._id),
+      department: assignment.department._id,
+      subDepartment: assignment.subDepartment._id,
+      supervisor: supervisor._id,
+      title: randomElement(EMPLOYEE_TITLES),
+      status: randomElement(EMPLOYEE_STATUSES),
+      signTags: [],
+    });
+    employees.push(employee);
   }
+
+  return { supervisors, employees };
 }
 
 export async function seedApprovalTemplates() {

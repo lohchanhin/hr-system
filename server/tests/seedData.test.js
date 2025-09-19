@@ -30,6 +30,7 @@ const mockOrg = {
     return document;
   }),
   findOne: jest.fn(orgFindOneDefault),
+  find: jest.fn(async () => mockOrganizations),
 };
 
 const mockDept = {
@@ -42,6 +43,7 @@ const mockDept = {
     return document;
   }),
   findOne: jest.fn(deptFindOneDefault),
+  find: jest.fn(async () => mockDepartments),
 };
 
 const mockSubDept = {
@@ -54,6 +56,7 @@ const mockSubDept = {
     return document;
   }),
   findOne: jest.fn(subDeptFindOneDefault),
+  find: jest.fn(async () => mockSubDepartments),
 };
 
 const mockEmployee = {
@@ -102,6 +105,9 @@ beforeEach(() => {
   mockOrg.findOne.mockImplementation(orgFindOneDefault);
   mockDept.findOne.mockImplementation(deptFindOneDefault);
   mockSubDept.findOne.mockImplementation(subDeptFindOneDefault);
+  mockOrg.find.mockResolvedValue(mockOrganizations);
+  mockDept.find.mockResolvedValue(mockDepartments);
+  mockSubDept.find.mockResolvedValue(mockSubDepartments);
 });
 
 const countBy = (list, key) =>
@@ -139,26 +145,58 @@ describe('seedTestUsers', () => {
   it('使用最新的組織層級建立測試帳號', async () => {
     const { organizations, departments, subDepartments } = await seedSampleData();
 
-    mockOrg.findOne.mockResolvedValue(organizations[0]);
-    mockDept.findOne.mockImplementation(async ({ organization }) =>
-      departments.find((dept) => dept.organization === organization) ?? null,
-    );
-    mockSubDept.findOne.mockImplementation(async ({ department }) =>
-      subDepartments.find((sub) => sub.department === department) ?? null,
-    );
+    mockOrg.find.mockResolvedValue(organizations);
+    mockDept.find.mockResolvedValue(departments);
+    mockSubDept.find.mockResolvedValue(subDepartments);
 
-    await seedTestUsers();
+    const result = await seedTestUsers();
 
-    expect(mockEmployee.create).toHaveBeenCalledTimes(8);
-    const createdUser = mockEmployee.create.mock.calls[0][0];
-    expect(createdUser.organization).toBe(organizations[0]._id.toString());
-    expect(createdUser.department).toBe(departments[0]._id);
-    expect(createdUser.subDepartment).toBe(subDepartments[0]._id);
-    expect(mockEmployee.updateMany).toHaveBeenCalledWith({ role: 'employee' }, { supervisor: 'supervisor' });
+    expect(result.supervisors).toHaveLength(3);
+    expect(result.employees).toHaveLength(6);
+    expect(mockEmployee.create).toHaveBeenCalledTimes(9);
+
+    const createdSupervisors = mockEmployees.slice(0, 3);
+    const createdEmployees = mockEmployees.slice(3);
+
+    createdSupervisors.forEach((supervisor) => {
+      expect(supervisor.role).toBe('supervisor');
+      expect(supervisor.signTags.length).toBeGreaterThan(0);
+    });
+
+    const supervisorTags = new Set(createdSupervisors.flatMap((item) => item.signTags));
+    expect(supervisorTags.has('人資')).toBe(true);
+    expect(supervisorTags.has('支援單位主管')).toBe(true);
+    expect(supervisorTags.has('業務主管')).toBe(true);
+
+    const orgIds = new Set(organizations.map((org) => org._id.toString()));
+    const deptIds = new Set(departments.map((dept) => dept._id.toString()));
+    const subDeptIds = new Set(subDepartments.map((sub) => sub._id.toString()));
+
+    for (const user of mockEmployees) {
+      expect(orgIds.has(user.organization)).toBe(true);
+      expect(deptIds.has(user.department.toString())).toBe(true);
+      expect(subDeptIds.has(user.subDepartment.toString())).toBe(true);
+      expect(user.email.endsWith('@example.com')).toBe(true);
+      expect(user.username).toBe(user.username.toLowerCase());
+    }
+
+    const supervisorIds = new Set(createdSupervisors.map((supervisor) => supervisor._id));
+    createdEmployees.forEach((employee) => {
+      expect(employee.role).toBe('employee');
+      expect(employee.signTags).toEqual([]);
+      expect(['正職員工', '試用期員工', '留職停薪']).toContain(employee.status);
+      expect(supervisorIds.has(employee.supervisor)).toBe(true);
+    });
+
+    const usernames = mockEmployees.map((user) => user.username);
+    expect(new Set(usernames).size).toBe(usernames.length);
+
+    const emails = mockEmployees.map((user) => user.email);
+    expect(new Set(emails).size).toBe(emails.length);
   });
 
   it('缺少層級資料時拋出錯誤', async () => {
-    mockOrg.findOne.mockResolvedValue(null);
+    mockOrg.find.mockResolvedValue([]);
     await expect(seedTestUsers()).rejects.toThrow('Organization not found');
     expect(mockEmployee.create).not.toHaveBeenCalled();
   });
