@@ -2,7 +2,7 @@
   <div class="department-reports-page">
     <header class="page-header">
       <h1 class="page-title">部門報表中心</h1>
-      <p class="page-subtitle">彙整各部門出勤、請假、薪資與保險統計</p>
+      <p class="page-subtitle">彙整各部門出勤與請假統計</p>
     </header>
 
     <el-card class="filters-card" shadow="never">
@@ -137,8 +137,6 @@ const supervisorDepartmentName = ref('')
 const reportTypes = [
   { value: 'attendance', label: '出勤統計' },
   { value: 'leave', label: '請假統計' },
-  { value: 'salary', label: '薪資試算' },
-  { value: 'insurance', label: '保險申報' },
 ]
 const exportFormats = [
   { value: 'excel', label: 'Excel (.xlsx)' },
@@ -165,8 +163,6 @@ const loading = reactive({
 const reportEndpointMap = {
   attendance: '/api/reports/department/attendance/export',
   leave: '/api/reports/department/leave/export',
-  salary: '/api/reports/department/salary/export',
-  insurance: '/api/reports/department/insurance/export',
 }
 
 const formatExtensionMap = {
@@ -203,22 +199,6 @@ const dynamicColumns = computed(() => {
       { prop: 'days', label: '天數', minWidth: 100 },
     ]
   }
-  if (reportType.value === 'salary') {
-    return [
-      { prop: 'baseSalary', label: '基本薪資', minWidth: 140 },
-      { prop: 'allowance', label: '津貼', minWidth: 120 },
-      { prop: 'deduction', label: '扣款', minWidth: 120 },
-      { prop: 'payable', label: '應發金額', minWidth: 140 },
-    ]
-  }
-  if (reportType.value === 'insurance') {
-    return [
-      { prop: 'insuranceType', label: '保險別', minWidth: 140 },
-      { prop: 'employeeShare', label: '員工自付', minWidth: 140 },
-      { prop: 'employerShare', label: '公司負擔', minWidth: 140 },
-      { prop: 'total', label: '總計', minWidth: 120 },
-    ]
-  }
   return []
 })
 
@@ -243,20 +223,6 @@ const summaryItems = computed(() => {
         }))
       : []
     return [...base, ...byType]
-  }
-  if (reportType.value === 'salary') {
-    return [
-      { label: '總人數', value: preview.summary.totalEmployees ?? preview.records.length },
-      { label: '應發總額', value: preview.summary.totalPayable ?? preview.summary.total ?? 0 },
-      { label: '實發總額', value: preview.summary.totalActual ?? preview.summary.actual ?? 0 },
-    ]
-  }
-  if (reportType.value === 'insurance') {
-    return [
-      { label: '投保人數', value: preview.summary.totalEmployees ?? preview.records.length },
-      { label: '員工自付總額', value: preview.summary.employeeShare ?? 0 },
-      { label: '公司負擔總額', value: preview.summary.employerShare ?? 0 },
-    ]
   }
   return []
 })
