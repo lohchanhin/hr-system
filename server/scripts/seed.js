@@ -18,7 +18,10 @@ if (!process.env.MONGODB_URI) {
 
 async function seed() {
   await connectDB(process.env.MONGODB_URI);
-  await seedSampleData();
+  const structure = await seedSampleData();
+  if (structure?.organizations?.length) {
+    console.log(`Seeded organizations: ${structure.organizations.map((org) => org.name).join(', ')}`);
+  }
   await seedTestUsers();
   await seedApprovalTemplates();
   await mongoose.disconnect();
