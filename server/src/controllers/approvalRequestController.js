@@ -163,7 +163,9 @@ export async function inboxApprovals(req, res) {
           approvers: { $elemMatch: { approver: empId, decision: 'pending' } },
         },
       },
-    }).populate('form', 'name category')
+    })
+      .sort({ createdAt: -1 })
+      .populate('form', 'name category')
     // 仍以程式邏輯判斷是否為當前關卡：
     const mine = list.filter(doc => {
       const step = doc.steps?.[doc.current_step_index]
