@@ -56,11 +56,85 @@ export async function deleteReport(req, res) {
 }
 
 function normalizeId(value) {
-  if (!value) return '';
-  if (typeof value === 'string') return value;
-  if (typeof value === 'object' && value._id) return normalizeId(value._id);
-  if (typeof value.toString === 'function') return value.toString();
-  return String(value);
+  if (value === undefined || value === null) return '';
+
+  const visited = new Set();
+  let current = value;
+  let depth = 0;
+  const MAX_DEPTH = 50;
+
+  while (current !== undefined && current !== null && depth < MAX_DEPTH) {
+    const type = typeof current;
+
+    if (type === 'string' || type === 'number' || type === 'boolean' || type === 'bigint') {
+      return String(current);
+    }
+
+    if (type === 'object') {
+      if (visited.has(current)) break;
+      visited.add(current);
+
+      if (typeof current.toHexString === 'function') {
+        const hex = current.toHexString();
+        if (hex) return String(hex);
+      }
+
+      if (typeof current.toString === 'function' && current.toString !== Object.prototype.toString) {
+        const str = current.toString();
+        if (typeof str === 'string' && str && str !== '[object Object]') {
+          return str;
+        }
+      }
+
+      if ('_id' in current) {
+        const next = current._id;
+        if (next !== current && next !== undefined && next !== null) {
+          current = next;
+          depth += 1;
+          continue;
+        }
+      }
+
+      if (typeof current.valueOf === 'function') {
+        const valueOf = current.valueOf();
+        if (valueOf !== current) {
+          current = valueOf;
+          depth += 1;
+          continue;
+        }
+      }
+
+      break;
+    }
+
+    if (type === 'function') {
+      if (visited.has(current)) break;
+      visited.add(current);
+      current = current();
+      depth += 1;
+      continue;
+    }
+
+    return String(current);
+  }
+
+  if (depth >= MAX_DEPTH) return '';
+
+  if (current === undefined || current === null) return '';
+
+  if (typeof current === 'string') return current;
+  if (typeof current === 'number' || typeof current === 'boolean' || typeof current === 'bigint') {
+    return String(current);
+  }
+
+  if (typeof current.toString === 'function') {
+    const fallback = current.toString();
+    if (typeof fallback === 'string' && fallback !== '[object Object]') {
+      return fallback;
+    }
+  }
+
+  return String(current);
 }
 
 function normalizeDateKey(dateLike) {
