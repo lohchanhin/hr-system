@@ -4,6 +4,11 @@ const mockOrganizations = [];
 const mockDepartments = [];
 const mockSubDepartments = [];
 const mockEmployees = [];
+const mockAttendanceSettings = [];
+const mockAttendanceRecords = [];
+const mockShiftSchedules = [];
+
+const MIN_WORKDAYS = 20;
 
 const matchDocument = (doc, filter) =>
   Object.entries(filter).every(([key, value]) => doc[key] === value);
@@ -75,6 +80,53 @@ const mockEmployee = {
   }),
 };
 
+const mockAttendanceSetting = {
+  deleteMany: jest.fn(async () => {
+    mockAttendanceSettings.length = 0;
+  }),
+  create: jest.fn(async (data) => {
+    const settingIndex = mockAttendanceSettings.length + 1;
+    const document = {
+      _id: `setting-${settingIndex}`,
+      ...data,
+      shifts: data.shifts.map((shift, index) => ({
+        _id: `shift-${settingIndex}-${index + 1}`,
+        ...shift,
+      })),
+    };
+    mockAttendanceSettings.push(document);
+    return document;
+  }),
+};
+
+const mockAttendanceRecord = {
+  deleteMany: jest.fn(async () => {
+    mockAttendanceRecords.length = 0;
+  }),
+  insertMany: jest.fn(async (records) => {
+    const docs = records.map((record, index) => ({
+      _id: `attendance-${mockAttendanceRecords.length + index + 1}`,
+      ...record,
+    }));
+    mockAttendanceRecords.push(...docs);
+    return docs;
+  }),
+};
+
+const mockShiftSchedule = {
+  deleteMany: jest.fn(async () => {
+    mockShiftSchedules.length = 0;
+  }),
+  insertMany: jest.fn(async (schedules) => {
+    const docs = schedules.map((schedule, index) => ({
+      _id: `schedule-${mockShiftSchedules.length + index + 1}`,
+      ...schedule,
+    }));
+    mockShiftSchedules.push(...docs);
+    return docs;
+  }),
+};
+
 let seedSampleData;
 let seedTestUsers;
 
@@ -88,6 +140,9 @@ beforeAll(async () => {
   await jest.unstable_mockModule('../src/models/Department.js', () => ({ default: mockDept }));
   await jest.unstable_mockModule('../src/models/SubDepartment.js', () => ({ default: mockSubDept }));
   await jest.unstable_mockModule('../src/models/Employee.js', () => ({ default: mockEmployee }));
+  await jest.unstable_mockModule('../src/models/AttendanceSetting.js', () => ({ default: mockAttendanceSetting }));
+  await jest.unstable_mockModule('../src/models/AttendanceRecord.js', () => ({ default: mockAttendanceRecord }));
+  await jest.unstable_mockModule('../src/models/ShiftSchedule.js', () => ({ default: mockShiftSchedule }));
 
   const module = await import('../src/seedUtils.js');
   seedSampleData = module.seedSampleData;
@@ -99,6 +154,9 @@ beforeEach(() => {
   mockDepartments.length = 0;
   mockSubDepartments.length = 0;
   mockEmployees.length = 0;
+  mockAttendanceSettings.length = 0;
+  mockAttendanceRecords.length = 0;
+  mockShiftSchedules.length = 0;
 
   jest.clearAllMocks();
 
@@ -108,6 +166,44 @@ beforeEach(() => {
   mockOrg.find.mockResolvedValue(mockOrganizations);
   mockDept.find.mockResolvedValue(mockDepartments);
   mockSubDept.find.mockResolvedValue(mockSubDepartments);
+  mockAttendanceSetting.deleteMany.mockImplementation(async () => {
+    mockAttendanceSettings.length = 0;
+  });
+  mockAttendanceSetting.create.mockImplementation(async (data) => {
+    const settingIndex = mockAttendanceSettings.length + 1;
+    const document = {
+      _id: `setting-${settingIndex}`,
+      ...data,
+      shifts: data.shifts.map((shift, index) => ({
+        _id: `shift-${settingIndex}-${index + 1}`,
+        ...shift,
+      })),
+    };
+    mockAttendanceSettings.push(document);
+    return document;
+  });
+  mockAttendanceRecord.deleteMany.mockImplementation(async () => {
+    mockAttendanceRecords.length = 0;
+  });
+  mockAttendanceRecord.insertMany.mockImplementation(async (records) => {
+    const docs = records.map((record, index) => ({
+      _id: `attendance-${mockAttendanceRecords.length + index + 1}`,
+      ...record,
+    }));
+    mockAttendanceRecords.push(...docs);
+    return docs;
+  });
+  mockShiftSchedule.deleteMany.mockImplementation(async () => {
+    mockShiftSchedules.length = 0;
+  });
+  mockShiftSchedule.insertMany.mockImplementation(async (schedules) => {
+    const docs = schedules.map((schedule, index) => ({
+      _id: `schedule-${mockShiftSchedules.length + index + 1}`,
+      ...schedule,
+    }));
+    mockShiftSchedules.push(...docs);
+    return docs;
+  });
 });
 
 const countBy = (list, key) =>
@@ -193,11 +289,71 @@ describe('seedTestUsers', () => {
 
     const emails = mockEmployees.map((user) => user.email);
     expect(new Set(emails).size).toBe(emails.length);
+
+    expect(mockAttendanceSetting.deleteMany).toHaveBeenCalledWith({});
+    expect(mockAttendanceSetting.create).toHaveBeenCalledTimes(1);
+    expect(result.attendanceSetting.shifts.length).toBeGreaterThanOrEqual(2);
+    const shiftIdSet = new Set(result.attendanceSetting.shifts.map((shift) => shift._id));
+    expect(shiftIdSet.size).toBe(result.attendanceSetting.shifts.length);
+
+    expect(mockAttendanceRecord.deleteMany).toHaveBeenCalledWith({});
+    expect(mockShiftSchedule.deleteMany).toHaveBeenCalledWith({});
+    expect(mockAttendanceRecord.insertMany).toHaveBeenCalledTimes(1);
+    expect(mockShiftSchedule.insertMany).toHaveBeenCalledTimes(1);
+
+    expect(result.attendanceRecords.length).toBe(mockAttendanceRecords.length);
+    expect(result.shiftSchedules.length).toBe(mockShiftSchedules.length);
+
+    const employeeCount = result.employees.length;
+    const expectedMinimumAttendance = employeeCount * MIN_WORKDAYS * 2;
+    expect(mockAttendanceRecords.length).toBeGreaterThanOrEqual(expectedMinimumAttendance);
+    const expectedMinimumSchedules = employeeCount * MIN_WORKDAYS;
+    expect(mockShiftSchedules.length).toBeGreaterThanOrEqual(expectedMinimumSchedules);
+
+    const scheduleKeySet = new Set();
+    mockShiftSchedules.forEach((schedule) => {
+      const dayKey = new Date(schedule.date).toISOString().slice(0, 10);
+      const key = `${schedule.employee}|${dayKey}`;
+      expect(scheduleKeySet.has(key)).toBe(false);
+      scheduleKeySet.add(key);
+      expect(shiftIdSet.has(schedule.shiftId)).toBe(true);
+      expect(deptIds.has(schedule.department.toString())).toBe(true);
+      expect(subDeptIds.has(schedule.subDepartment.toString())).toBe(true);
+    });
+
+    const attendanceByDay = new Map();
+    mockAttendanceRecords.forEach((record) => {
+      const dayKey = new Date(record.timestamp).toISOString().slice(0, 10);
+      const key = `${record.employee}|${dayKey}`;
+      if (!attendanceByDay.has(key)) {
+        attendanceByDay.set(key, []);
+      }
+      attendanceByDay.get(key).push(record.action);
+    });
+
+    attendanceByDay.forEach((actions) => {
+      expect(actions.filter((action) => action === 'clockIn')).toHaveLength(1);
+      expect(actions.filter((action) => action === 'clockOut')).toHaveLength(1);
+    });
+
+    expect(attendanceByDay.size).toBe(scheduleKeySet.size);
+
+    const employeeDayCounts = new Map();
+    attendanceByDay.forEach((_, key) => {
+      const [employeeId] = key.split('|');
+      employeeDayCounts.set(employeeId, (employeeDayCounts.get(employeeId) ?? 0) + 1);
+    });
+    employeeDayCounts.forEach((count) => {
+      expect(count).toBeGreaterThanOrEqual(MIN_WORKDAYS);
+    });
   });
 
   it('缺少層級資料時拋出錯誤', async () => {
     mockOrg.find.mockResolvedValue([]);
     await expect(seedTestUsers()).rejects.toThrow('Organization not found');
     expect(mockEmployee.create).not.toHaveBeenCalled();
+    expect(mockAttendanceSetting.create).not.toHaveBeenCalled();
+    expect(mockAttendanceRecord.insertMany).not.toHaveBeenCalled();
+    expect(mockShiftSchedule.insertMany).not.toHaveBeenCalled();
   });
 });
