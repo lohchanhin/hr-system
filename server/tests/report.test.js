@@ -234,6 +234,30 @@ describe('Report API', () => {
     });
   });
 
+  it('handles circular _id proxies in attendance export', async () => {
+    const circularId = { toString: () => 'emp-loop' };
+    circularId._id = circularId;
+    const wrappedId = { _id: circularId };
+
+    mockEmployee.find.mockResolvedValueOnce([{ _id: wrappedId, name: 'Loop' }]);
+    mockShiftSchedule.find.mockResolvedValue([
+      { employee: wrappedId, date: new Date('2024-01-05') },
+    ]);
+    mockAttendanceRecord.find.mockResolvedValue([
+      { employee: wrappedId, action: 'clockIn', timestamp: new Date('2024-01-05T08:00:00Z') },
+    ]);
+
+    const res = await request(app)
+      .get('/api/reports/department/attendance/export?month=2024-01&department=dept-loop')
+      .set('x-user-role', 'admin');
+
+    expect(res.status).toBe(200);
+    expect(res.body.records).toEqual([
+      { employee: 'emp-loop', name: 'Loop', scheduled: 1, attended: 1, absent: 0 },
+    ]);
+    expect(res.body.summary).toEqual({ scheduled: 1, attended: 1, absent: 0 });
+  });
+
   it('returns 404 when no leave data', async () => {
     mockEmployee.find.mockResolvedValueOnce([
       { _id: 'emp1', name: 'Alice' },
@@ -249,6 +273,53 @@ describe('Report API', () => {
 
     expect(res.status).toBe(404);
     expect(res.body).toEqual({ error: 'No data' });
+  });
+
+  it('handles circular _id proxies in leave export', async () => {
+    const employeeCircularId = { toString: () => 'emp-leave-loop' };
+    employeeCircularId._id = employeeCircularId;
+    const employeeWrappedId = { _id: employeeCircularId };
+
+    const approvalCircularId = { toString: () => 'approval-loop' };
+    approvalCircularId._id = approvalCircularId;
+    const approvalWrappedId = { _id: approvalCircularId };
+
+    mockEmployee.find.mockResolvedValueOnce([{ _id: employeeWrappedId, name: 'Loop' }]);
+
+    const populate = jest.fn().mockReturnThis();
+    const lean = jest.fn().mockResolvedValue([
+      {
+        _id: approvalWrappedId,
+        applicant_employee: { _id: employeeWrappedId, name: 'Loop' },
+        form_data: { start: '2024-01-15', end: '2024-01-16', type: 'SICK' },
+      },
+    ]);
+    mockApprovalRequest.find.mockReturnValue({ populate, lean });
+
+    const res = await request(app)
+      .get('/api/reports/department/leave/export?month=2024-01&department=dept-loop&format=json')
+      .set('x-user-role', 'admin');
+
+    expect(res.status).toBe(200);
+    expect(res.body.records).toEqual([
+      {
+        approvalId: 'approval-loop',
+        employee: 'emp-leave-loop',
+        name: 'Loop',
+        leaveType: 'SICK',
+        leaveCode: 'SICK',
+        startDate: '2024-01-15',
+        endDate: '2024-01-16',
+        days: 2,
+      },
+    ]);
+    expect(res.body.summary).toEqual({
+      totalLeaves: 1,
+      totalDays: 2,
+      byType: [
+        { leaveType: 'SICK', leaveCode: 'SICK', count: 1, days: 2 },
+      ],
+    });
   });
 
   it('rejects employee leave export', async () => {
