@@ -111,6 +111,9 @@ app.use(
   authenticate,
   (req, res, next) => {
     if (req.method === 'GET') {
+      if (req.path?.startsWith('/export')) {
+        return authorizeRoles('admin', 'supervisor')(req, res, next);
+      }
       return authorizeRoles('employee', 'supervisor', 'admin')(req, res, next);
     }
     return authorizeRoles('supervisor', 'admin')(req, res, next);
