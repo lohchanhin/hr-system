@@ -52,7 +52,7 @@ describe('Supervisor schedule permissions', () => {
   it('allows supervisor to create schedule for own employee', async () => {
     mockEmployee.findById.mockImplementation((id) => {
       if (id === 'u1') return Promise.resolve({ _id: 'u1', role: 'supervisor', supervisor: 'sup1' });
-      if (id === 'emp1') return Promise.resolve({ _id: 'emp1', supervisor: 'sup1' });
+      if (id === 'emp1') return Promise.resolve({ _id: 'emp1', supervisor: 'u1' });
       return Promise.resolve(null);
     });
     mockShiftSchedule.findOne.mockResolvedValue(null);
@@ -67,10 +67,25 @@ describe('Supervisor schedule permissions', () => {
     expect(mockShiftSchedule.create).toHaveBeenCalled();
   });
 
+  it('rejects supervisor creating schedule for employee under different supervisor', async () => {
+    mockEmployee.findById.mockImplementation((id) => {
+      if (id === 'u1') return Promise.resolve({ _id: 'u1', role: 'supervisor', supervisor: 'sup1' });
+      if (id === 'emp2') return Promise.resolve({ _id: 'emp2', supervisor: 'sup1' });
+      return Promise.resolve(null);
+    });
+
+    const res = await request(app)
+      .post('/api/schedules')
+      .send({ employee: 'emp2', date: '2023-01-01', shiftId: 'day' });
+
+    expect(res.status).toBe(403);
+    expect(mockShiftSchedule.create).not.toHaveBeenCalled();
+  });
+
   it('rejects batch creation if any employee not under supervisor', async () => {
     mockEmployee.findById.mockImplementation((id) => {
       if (id === 'u1') return Promise.resolve({ _id: 'u1', role: 'supervisor', supervisor: 'sup1' });
-      if (id === 'emp1') return Promise.resolve({ _id: 'emp1', supervisor: 'sup1' });
+      if (id === 'emp1') return Promise.resolve({ _id: 'emp1', supervisor: 'u1' });
       if (id === 'emp2') return Promise.resolve({ _id: 'emp2', supervisor: 'other' });
       return Promise.resolve(null);
     });
@@ -89,16 +104,20 @@ describe('Supervisor schedule permissions', () => {
   });
 
   it('lists supervisor employees and creates schedules batch', async () => {
-    const fakeEmployees = [{ _id: 'emp1', supervisor: 'sup1', name: 'Emp1' }];
+    const fakeEmployees = [{ _id: 'emp1', supervisor: 'u1', name: 'Emp1' }];
     mockEmployee.find.mockReturnValue({
       populate: jest.fn().mockReturnValue({ sort: jest.fn().mockResolvedValue(fakeEmployees) })
     });
-    const listRes = await request(app).get('/api/employees?supervisor=sup1');
+    const listRes = await request(app).get('/api/employees?supervisor=u1');
     expect(listRes.status).toBe(200);
-    expect(mockEmployee.find).toHaveBeenCalledWith({ supervisor: 'sup1' });
+    expect(mockEmployee.find).toHaveBeenCalledWith({ supervisor: 'u1' });
     expect(listRes.body).toEqual(fakeEmployees);
 
-    mockEmployee.findById.mockResolvedValue({ _id: 'emp1', supervisor: 'sup1' });
+    mockEmployee.findById.mockImplementation((id) => {
+      if (id === 'u1') return Promise.resolve({ _id: 'u1', role: 'supervisor', supervisor: 'sup1' });
+      if (id === 'emp1') return Promise.resolve({ _id: 'emp1', supervisor: 'u1' });
+      return Promise.resolve(null);
+    });
     mockShiftSchedule.findOne.mockResolvedValue(null);
     mockApprovalRequest.findOne.mockResolvedValue(null);
     mockShiftSchedule.insertMany.mockResolvedValue([{ _id: 'sch1' }]);

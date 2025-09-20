@@ -17,13 +17,12 @@ export async function verifySupervisor(req, res, next) {
     }
     if (!employeeIds.length) return res.status(400).json({ error: 'Missing employee' });
 
-    const supervisorIds = [actor._id.toString()];
-    if (actor.supervisor) supervisorIds.push(actor.supervisor.toString());
+    const supervisorId = actor._id.toString();
 
     for (const id of employeeIds) {
       const emp = await Employee.findById(id);
       if (!emp) return res.status(404).json({ error: 'Employee not found' });
-      if (!(emp.supervisor && supervisorIds.includes(emp.supervisor.toString()))) {
+      if (!(emp.supervisor && emp.supervisor.toString() === supervisorId)) {
         return res.status(403).json({ error: 'Forbidden' });
       }
     }
