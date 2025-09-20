@@ -5,7 +5,15 @@ import { createPinia, setActivePinia } from 'pinia'
 global.ElMessage = { error: vi.fn(), success: vi.fn(), warning: vi.fn() }
 
 vi.mock('../src/api', () => ({ apiFetch: vi.fn() }))
-vi.mock('../src/utils/tokenService', () => ({ getToken: () => 'tok' }))
+const encodeBase64 = data => Buffer.from(data, 'utf8').toString('base64')
+const createToken = payload => `stub.${encodeBase64(JSON.stringify(payload ?? {}))}.sig`
+const setRoleToken = role => {
+  if (role) {
+    localStorage.setItem('token', createToken({ role }))
+  } else {
+    localStorage.removeItem('token')
+  }
+}
 const pushMock = vi.fn()
 vi.mock('vue-router', async () => {
   const actual = await vi.importActual('vue-router')
@@ -25,6 +33,7 @@ describe('Schedule.vue', () => {
     pushMock.mockReset()
     sessionStorage.clear()
     localStorage.clear()
+    setRoleToken('employee')
   })
 
   function mountSchedule() {
@@ -52,6 +61,7 @@ describe('Schedule.vue', () => {
 
   it('includes supervisor id in requests when present', async () => {
     const month = dayjs().format('YYYY-MM')
+    setRoleToken('supervisor')
     localStorage.setItem('employeeId', 'sup1')
     apiFetch
       .mockResolvedValueOnce({ ok: true, json: async () => [] })
@@ -86,6 +96,29 @@ describe('Schedule.vue', () => {
 
   it('omits supervisor param when id missing', async () => {
     const month = dayjs().format('YYYY-MM')
+    setRoleToken('employee')
+    apiFetch
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ approvals: [], leaves: [] }) })
+    mountSchedule()
+    await flush()
+    const employeesCall = apiFetch.mock.calls.find(([url]) => url.startsWith('/api/employees'))
+    expect(employeesCall?.[0]).toBe('/api/employees')
+    const monthlyCall = apiFetch.mock.calls.find(([url]) =>
+      url.startsWith(`/api/schedules/monthly?month=${month}`)
+    )
+    expect(monthlyCall?.[0]).toBe(`/api/schedules/monthly?month=${month}`)
+  })
+
+  it('does not append supervisor param for employee role even when id exists', async () => {
+    const month = dayjs().format('YYYY-MM')
+    setRoleToken('employee')
+    localStorage.setItem('employeeId', 'sup1')
     apiFetch
       .mockResolvedValueOnce({ ok: true, json: async () => [] })
       .mockResolvedValueOnce({ ok: true, json: async () => [] })
@@ -181,6 +214,7 @@ describe('Schedule.vue', () => {
   })
 
   it('locks department options to supervisor department', async () => {
+    setRoleToken('supervisor')
     localStorage.setItem('employeeId', 'sup2')
     apiFetch
       .mockResolvedValueOnce({ ok: true, json: async () => [] })
@@ -309,6 +343,7 @@ describe('Schedule.vue', () => {
   })
 
   it('reverts change when update fails', async () => {
+    setRoleToken('supervisor')
     apiFetch
       .mockResolvedValueOnce({ ok: true, json: async () => [] })
       .mockResolvedValueOnce({ ok: true, json: async () => [] })
@@ -365,7 +400,7 @@ describe('Schedule.vue', () => {
     await flush()
     wrapper.vm.scheduleMap = { e1: { 2: { shiftId: '', department: 'd1', subDepartment: 'sd1' } } }
     await wrapper.vm.onSelect('e1', 2, 's1')
-    expect(wrapper.vm.scheduleMap.e1[2].shiftId).toBe('')
+    expect(wrapper.vm.scheduleMap.e1?.[2]?.shiftId ?? '').toBe('')
   })
 
   it('shows floor column and weekday labels', async () => {
@@ -430,6 +465,7 @@ describe('Schedule.vue', () => {
 
   it('creates schedule after selecting department and unit', async () => {
     const month = dayjs().format('YYYY-MM')
+    setRoleToken('supervisor')
     apiFetch
       .mockResolvedValueOnce({ ok: true, json: async () => [] })
       .mockResolvedValueOnce({ ok: true, json: async () => [] })

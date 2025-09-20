@@ -193,6 +193,42 @@ describe('Schedule API', () => {
     ]);
   });
 
+  it('拒絕員工使用主管篩選參數', async () => {
+    const employeeApp = buildScheduleAppWithRole('employee');
+
+    const res = await request(employeeApp)
+      .get('/api/schedules/monthly?month=2023-01&supervisor=sup1');
+
+    expect(res.status).toBe(403);
+    expect(res.body).toEqual({ error: 'forbidden' });
+    expect(mockEmployee.find).not.toHaveBeenCalled();
+    expect(mockShiftSchedule.find).not.toHaveBeenCalled();
+  });
+
+  it('允許主管使用主管篩選參數', async () => {
+    const supervisorApp = buildScheduleAppWithRole('supervisor');
+    const fake = [{ employee: 'emp1', shiftId: 's1', date: new Date('2023-01-02') }];
+    const leanMock = jest.fn().mockResolvedValue(fake);
+    mockShiftSchedule.find.mockReturnValue({
+      populate: jest.fn().mockReturnThis(),
+      lean: leanMock
+    });
+    const selectMock = jest.fn().mockResolvedValue([{ _id: 'emp1' }]);
+    mockEmployee.find.mockReturnValue({ select: selectMock });
+
+    const res = await request(supervisorApp)
+      .get('/api/schedules/monthly?month=2023-01&supervisor=sup1');
+
+    expect(res.status).toBe(200);
+    expect(selectMock).toHaveBeenCalledWith('_id');
+    expect(mockShiftSchedule.find).toHaveBeenCalledWith(expect.objectContaining({
+      employee: { $in: ['emp1'] }
+    }));
+    expect(res.body).toEqual([
+      { employee: 'emp1', shiftId: 's1', date: '2023/01/02', shiftName: 'Morning' }
+    ]);
+  });
+
 
   it('creates schedules batch', async () => {
     mockShiftSchedule.findOne.mockResolvedValue(null);
