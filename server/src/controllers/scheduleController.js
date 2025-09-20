@@ -49,6 +49,11 @@ export async function listMonthlySchedules(req, res) {
     const query = { date: { $gte: start, $lt: end } };
 
     if (supervisor) {
+      const role = req.user?.role;
+      const allowedRoles = ['supervisor', 'admin'];
+      if (!allowedRoles.includes(role)) {
+        return res.status(403).json({ error: 'forbidden' });
+      }
       const emps = await Employee.find({ supervisor }).select('_id');
       const ids = emps.map((e) => e._id.toString());
       query.employee = { $in: ids };

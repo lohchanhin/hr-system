@@ -363,9 +363,8 @@ const router = useRouter()
 const authStore = useAuthStore()
 authStore.loadUser()
 
-const canEdit = computed(() => {
-  return ['supervisor', 'admin'].includes(authStore.role)
-})
+const canUseSupervisorFilter = computed(() => ['supervisor', 'admin'].includes(authStore.role))
+const canEdit = canUseSupervisorFilter
 
 const callWarning = message => {
   const moduleWarn = ElMessage?.warning
@@ -553,6 +552,7 @@ async function fetchOptions() {
 }
 
 const getStoredSupervisorId = () => {
+  if (!canUseSupervisorFilter.value) return ''
   if (typeof window === 'undefined') return ''
   const sessionId = window.sessionStorage?.getItem('employeeId')
   if (sessionId && sessionId !== 'undefined') return sessionId
@@ -755,7 +755,7 @@ async function exportSchedules(format) {
 async function onSelect(empId, day, value) {
   const dateStr = `${currentMonth.value}-${String(day).padStart(2, '0')}`
   const existing = scheduleMap.value[empId][day]
-  const prev = existing.shiftId
+  const prev = existing?.shiftId ?? ''
   if (existing && existing.id) {
     try {
       const res = await apiFetch(`/api/schedules/${existing.id}`, {
@@ -816,7 +816,16 @@ async function onSubDepartmentChange() {
 }
 
 async function handleScheduleError(res, defaultMsg, empId, day, prev) {
-  scheduleMap.value[empId][day].shiftId = prev
+  if (!scheduleMap.value[empId]) {
+    scheduleMap.value[empId] = {}
+  }
+  const current = scheduleMap.value[empId][day] || {
+    shiftId: '',
+    department: '',
+    subDepartment: ''
+  }
+  current.shiftId = prev
+  scheduleMap.value[empId][day] = current
   let msg = ''
   try {
     if (res) {
