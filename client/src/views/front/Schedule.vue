@@ -390,10 +390,10 @@ const days = computed(() => {
 })
 
 async function fetchShiftOptions() {
-  const res = await apiFetch('/api/attendance-settings')
+  const res = await apiFetch('/api/shifts')
   if (res.ok) {
     const data = await res.json()
-    const list = Array.isArray(data?.shifts) ? data.shifts : data
+    const list = Array.isArray(data) ? data : []
     if (Array.isArray(list)) {
       shifts.value = list.map(s => ({
         _id: s._id,

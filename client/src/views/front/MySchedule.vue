@@ -21,10 +21,10 @@ const selectedMonth = ref(dayjs().format('YYYY-MM'))
 
 async function fetchShifts() {
   try {
-    const res = await apiFetch('/api/attendance-settings')
+    const res = await apiFetch('/api/shifts')
     if (res.ok) {
       const data = await res.json()
-      const list = Array.isArray(data?.shifts) ? data.shifts : data
+      const list = Array.isArray(data) ? data : []
       shiftMap.value = Object.fromEntries(list.map(s => [s._id, s.name]))
     }
   } catch (err) {
