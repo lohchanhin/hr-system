@@ -70,6 +70,41 @@
   - [ ] 匯出個人班表按鈕應受權限保護，無權匯出時不顯示或禁用。
   - [ ] 月份切換後自動重新抓取資料，確保 watch 事件觸發成功。
 
+## 簽核系統
+
+### 系統管理員
+- **功能使用流程**
+  1. 以系統管理員角色登入後台，於「簽核流程設定」畫面（`ApprovalFlowSetting.vue`）維護表單樣板、欄位與流程關卡。
+  2. 建立或更新樣板時依序呼叫 `POST /api/approvals/forms`、`PUT /api/approvals/forms/:id` 與 `PUT /api/approvals/forms/:id/workflow`，確保階段條件與通知人員皆設定完成。
+  3. 送出設定後透過 API 回覆確認 `approvalTemplateController`、`approvalRequestController` 中的權限驗證（`authorizeRoles('admin')`）通過，並再次載入列表驗證資料。
+- **檢查清單**
+  - [ ] `ApprovalFlowSetting.vue` 載入時呼叫 `GET /api/approvals/forms` 並正確呈現現有樣板。
+  - [ ] 更新流程關卡後，後端 `approvalTemplateController.updateWorkflow` 實際寫入，重新整理仍維持設定。
+  - [ ] 操作需具備 `authorizeRoles('admin')` 授權，未授權帳號應收到 403 並顯示提示。
+  - [ ] 新增或刪除表單時，確認 `approvalRequestController` 無遺留舊流程引用，避免壞掉的簽核流程。
+
+### 主管
+- **功能使用流程**
+  1. 主管登入前台 `views/front/Approval.vue`，切換至「待我簽核」頁籤載入 `GET /api/approvals/inbox` 工作清單。
+  2. 開啟任一簽核案件後檢視申請明細與歷史紀錄，確認簽核順序與所需附件完整。
+  3. 依案件狀態執行 `POST /api/approvals/:id/act`，選擇核可、退簽或否決並確認操作成功，必要時輸入原因。
+- **檢查清單**
+  - [ ] 「待我簽核」頁籤能正確過濾屬於主管的案件，API 回應來源為 `approvalRequestController.listInbox`。
+  - [ ] 執行核可/退簽/否決後，`approvalRequestController.act` 返回 200 並於列表中移除或更新狀態。
+  - [ ] 動作需符合 `authorizeRoles('employee', 'supervisor', 'admin')` 授權規範，未授權操作返回 403 並顯示訊息。
+  - [ ] 退簽時確認回傳資料包含下一步處理人與備註，避免流程卡住。
+
+### 一般員工
+- **功能使用流程**
+  1. 一般員工登入 `views/front/Approval.vue` 的「申請表單」頁籤，選擇適用的簽核樣板並填寫必填欄位。
+  2. 送出表單時呼叫 `POST /api/approvals` 建立簽核申請，系統顯示送出結果與下一位簽核人。
+  3. 於「我的申請」頁籤透過 `GET /api/approvals` 查看案件進度，若發生錯誤（欄位缺失或流程設定問題）需依提示修正後重送。
+- **檢查清單**
+  - [ ] 建立申請時 `approvalRequestController.create` 成功返回案件編號，畫面呈現提交成功訊息。
+  - [ ] 查詢列表時確認僅顯示登入者的申請，`authorizeRoles('employee', 'supervisor', 'admin')` 授權涵蓋所有可申請角色。
+  - [ ] 當後端回傳驗證錯誤（400/422）或流程不存在（404）時，前端顯示清楚錯誤與重新送出機制。
+  - [ ] 撤回或重新送件需觸發對應 API，並確認錯誤處理不會導致表單資料遺失。
+
 ## 報表匯出
 
 ### 系統管理員
