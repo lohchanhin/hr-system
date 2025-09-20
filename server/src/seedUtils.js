@@ -7,9 +7,11 @@ import SubDepartment from './models/SubDepartment.js';
 import FormTemplate from './models/form_template.js';
 import FormField from './models/form_field.js';
 import ApprovalWorkflow from './models/approval_workflow.js';
+import ApprovalRequest from './models/approval_request.js';
 import AttendanceSetting from './models/AttendanceSetting.js';
 import AttendanceRecord from './models/AttendanceRecord.js';
 import ShiftSchedule from './models/ShiftSchedule.js';
+import { getLeaveFieldIds, resetLeaveFieldCache } from './services/leaveFieldService.js';
 
 const CITY_OPTIONS = ['台北市', '新北市', '桃園市', '台中市', '台南市', '高雄市'];
 const PRINCIPAL_NAMES = ['林經理', '張主管', '王負責人', '李主任', '陳董事'];
@@ -79,6 +81,13 @@ const ATTENDANCE_SETTING_TEMPLATE = {
 const WORKDAYS_PER_EMPLOYEE = 22;
 const CLOCK_IN_VARIANCE_MINUTES = 15;
 const CLOCK_OUT_VARIANCE_MINUTES = 25;
+const APPROVAL_STATUSES = ['approved', 'pending', 'rejected', 'returned'];
+const LEAVE_REASON_POOL = ['家庭因素', '身體不適', '旅行計畫', '進修課程', '陪同家人就醫'];
+const SUPPORT_REASON_POOL = ['部門支援需求', '專案跨部協作', '臨時人力支援'];
+const RETAIN_REASON_POOL = ['年度專案需求', '留任關鍵人才', '客戶專案延續'];
+const CERTIFICATE_PURPOSE_POOL = ['銀行貸款', '學校申請', '簽證辦理'];
+const RESIGNATION_PURPOSE_POOL = ['離職後保險', '移民資料', '外部審查'];
+const LEAVE_TYPE_FALLBACK = ['特休', '事假', '病假'];
 
 function buildAttendanceSettingPayload() {
   return {
@@ -547,6 +556,8 @@ export async function seedApprovalTemplates() {
     },
   ];
 
+  const templateDetails = {};
+
   for (const t of templates) {
     let form = await FormTemplate.findOne({ name: t.name });
     if (!form) {
@@ -563,7 +574,460 @@ export async function seedApprovalTemplates() {
 
     let workflow = await ApprovalWorkflow.findOne({ form: form._id });
     if (!workflow) {
-      await ApprovalWorkflow.create({ form: form._id, steps: t.steps });
+      workflow = await ApprovalWorkflow.create({ form: form._id, steps: t.steps });
+    } else if (!workflow.steps?.length && t.steps?.length) {
+      workflow.steps = t.steps;
+      await workflow.save();
     }
+
+    const fields = await FormField.find({ form: form._id }).sort({ order: 1 }).lean();
+    templateDetails[t.name] = {
+      form,
+      workflow,
+      fields,
+    };
   }
+
+  resetLeaveFieldCache();
+  const leaveFieldInfo = await getLeaveFieldIds();
+
+  return { templates: templateDetails, leaveFieldInfo };
+}
+
+function buildFieldMap(fields) {
+  return fields.reduce((acc, field) => {
+    acc[field.label] = field._id?.toString();
+    return acc;
+  }, {});
+}
+
+function buildTagMap(employees) {
+  const tagMap = new Map();
+  employees.forEach((emp) => {
+    const tags = emp?.signTags ?? [];
+    tags.forEach((tag) => {
+      if (!tag) return;
+      const key = String(tag);
+      if (!tagMap.has(key)) {
+        tagMap.set(key, []);
+      }
+      const list = tagMap.get(key);
+      const idStr = toStringId(emp._id);
+      if (!list.some((value) => toStringId(value) === idStr)) {
+        list.push(emp._id);
+      }
+    });
+  });
+  return tagMap;
+}
+
+async function ensureTagAssignments(tagMap, requiredTags, supervisors) {
+  for (const tag of requiredTags) {
+    const current = tagMap.get(tag);
+    if (current && current.length) continue;
+    const fallback = supervisors.find((item) => item);
+    if (!fallback) {
+      tagMap.set(tag, []);
+      continue;
+    }
+    await Employee.updateOne({ _id: fallback._id }, { $addToSet: { signTags: tag } });
+    const updatedTags = new Set([...(fallback.signTags ?? []), tag]);
+    fallback.signTags = Array.from(updatedTags);
+    tagMap.set(tag, [fallback._id]);
+  }
+  return tagMap;
+}
+
+function resolveApproverIds(step, applicant, tagMap) {
+  const type = step?.approver_type;
+  if (type === 'manager') {
+    return applicant?.supervisor ? [applicant.supervisor] : [];
+  }
+  if (type === 'tag') {
+    const tagName = String(step?.approver_value ?? '');
+    if (!tagName) return [];
+    return [...(tagMap.get(tagName) ?? [])];
+  }
+  if (type === 'user') {
+    const value = step?.approver_value;
+    if (Array.isArray(value)) return value.filter(Boolean);
+    return value ? [value] : [];
+  }
+  return [];
+}
+
+function buildBaseSteps(workflow, applicant, tagMap) {
+  const steps = workflow?.steps ?? [];
+  return steps
+    .slice()
+    .sort((a, b) => (a.step_order ?? 0) - (b.step_order ?? 0))
+    .map((step) => {
+      const approverIds = resolveApproverIds(step, applicant, tagMap);
+      return {
+        step_order: step.step_order,
+        approvers: approverIds.map((id) => ({ approver: id, decision: 'pending' })),
+        all_must_approve: step.all_must_approve !== false,
+        is_required: step.is_required !== false,
+        can_return: step.can_return !== false,
+        started_at: undefined,
+        finished_at: undefined,
+      };
+    });
+}
+
+function addUtcDays(date, days) {
+  const result = new Date(date);
+  result.setUTCDate(result.getUTCDate() + days);
+  return result;
+}
+
+function buildDateRange(index) {
+  const base = startOfUtcDay(new Date());
+  const start = addUtcDays(base, -((index % 5) * 3 + index + 1));
+  const end = addUtcDays(start, (index % 3) + 1);
+  return { start, end };
+}
+
+function applyStatusToSteps(baseSteps, status, baseDate) {
+  const steps = baseSteps.map((step) => ({
+    ...step,
+    approvers: step.approvers.map((approver) => ({ ...approver })),
+    started_at: undefined,
+    finished_at: undefined,
+  }));
+
+  const logs = [];
+  if (!steps.length) {
+    return { steps, logs, currentStepIndex: 0, status };
+  }
+
+  const approvedMessage = (step) => `第 ${step.step_order} 關核准`;
+  const moveNextMessage = (order) => `進入第 ${order} 關`;
+
+  if (status === 'approved') {
+    steps.forEach((step, idx) => {
+      const start = addUtcMinutes(baseDate, idx * 90 + 30);
+      const finish = addUtcMinutes(start, 60);
+      step.started_at = start;
+      step.finished_at = finish;
+      step.approvers = step.approvers.map((approver) => ({
+        ...approver,
+        decision: 'approved',
+        comment: '同意',
+        decided_at: finish,
+      }));
+      step.approvers.forEach((approver) => {
+        logs.push({ at: finish, action: 'approve', by_employee: approver.approver, message: approvedMessage(step) });
+      });
+      if (idx + 1 < steps.length) {
+        logs.push({ at: finish, action: 'move_next', message: moveNextMessage(idx + 2) });
+      }
+    });
+    logs.push({ at: addUtcMinutes(baseDate, steps.length * 120 + 30), action: 'finish', message: '全部完成' });
+    return { steps, logs, currentStepIndex: Math.max(steps.length - 1, 0), status: 'approved' };
+  }
+
+  if (status === 'pending') {
+    const currentIdx = steps.length > 1 ? 1 : 0;
+    steps.forEach((step, idx) => {
+      if (idx < currentIdx) {
+        const start = addUtcMinutes(baseDate, idx * 80 + 20);
+        const finish = addUtcMinutes(start, 50);
+        step.started_at = start;
+        step.finished_at = finish;
+        step.approvers = step.approvers.map((approver) => ({
+          ...approver,
+          decision: 'approved',
+          comment: '同意',
+          decided_at: finish,
+        }));
+        step.approvers.forEach((approver) => {
+          logs.push({ at: finish, action: 'approve', by_employee: approver.approver, message: approvedMessage(step) });
+        });
+        if (idx + 1 < steps.length) {
+          logs.push({ at: finish, action: 'move_next', message: moveNextMessage(idx + 2) });
+        }
+      } else if (idx === currentIdx) {
+        step.started_at = addUtcMinutes(baseDate, idx * 80 + 20);
+        step.approvers = step.approvers.map((approver) => ({ ...approver, decision: 'pending' }));
+      }
+    });
+    return { steps, logs, currentStepIndex: currentIdx, status: 'pending' };
+  }
+
+  if (status === 'rejected') {
+    const targetIdx = steps.length > 1 ? 1 : 0;
+    steps.forEach((step, idx) => {
+      const start = addUtcMinutes(baseDate, idx * 70 + 15);
+      step.started_at = start;
+      if (idx < targetIdx) {
+        const finish = addUtcMinutes(start, 40);
+        step.finished_at = finish;
+        step.approvers = step.approvers.map((approver) => ({
+          ...approver,
+          decision: 'approved',
+          comment: '同意',
+          decided_at: finish,
+        }));
+        step.approvers.forEach((approver) => {
+          logs.push({ at: finish, action: 'approve', by_employee: approver.approver, message: approvedMessage(step) });
+        });
+        if (idx + 1 < steps.length) {
+          logs.push({ at: finish, action: 'move_next', message: moveNextMessage(idx + 2) });
+        }
+      } else if (idx === targetIdx) {
+        const finish = addUtcMinutes(start, 30);
+        step.finished_at = finish;
+        if (step.approvers.length) {
+          const [first, ...rest] = step.approvers;
+          step.approvers = [
+            { ...first, decision: 'rejected', comment: '不同意', decided_at: finish },
+            ...rest.map((approver) => ({ ...approver, decision: 'pending' })),
+          ];
+          logs.push({ at: finish, action: 'reject', by_employee: first.approver, message: '不同意' });
+        }
+      }
+    });
+    return { steps, logs, currentStepIndex: targetIdx, status: 'rejected' };
+  }
+
+  if (status === 'returned') {
+    const step = steps[0];
+    if (step) {
+      const start = addUtcMinutes(baseDate, 30);
+      const finish = addUtcMinutes(start, 25);
+      step.started_at = start;
+      step.finished_at = finish;
+      if (step.approvers.length) {
+        const [first, ...rest] = step.approvers;
+        step.approvers = [
+          { ...first, decision: 'returned', comment: '補件', decided_at: finish },
+          ...rest.map((approver) => ({ ...approver, decision: 'pending' })),
+        ];
+        logs.push({ at: finish, action: 'return', by_employee: first.approver, message: '退回申請者' });
+      }
+    }
+    return { steps, logs, currentStepIndex: 0, status: 'returned' };
+  }
+
+  return { steps, logs, currentStepIndex: 0, status };
+}
+
+function buildLeaveFormData(fieldMap, leaveFieldInfo, index) {
+  const { start, end } = buildDateRange(index);
+  const data = {};
+  const leaveTypes = (leaveFieldInfo?.typeOptions ?? [])
+    .map((item) => item?.value)
+    .filter((value) => value !== undefined && value !== null);
+  const typeList = leaveTypes.length ? leaveTypes : LEAVE_TYPE_FALLBACK;
+  const typeValue = typeList[index % typeList.length];
+  const startFieldId = leaveFieldInfo?.startId ?? fieldMap['開始日期'];
+  const endFieldId = leaveFieldInfo?.endId ?? fieldMap['結束日期'];
+  const typeFieldId = leaveFieldInfo?.typeId ?? fieldMap['假別'];
+  const reasonFieldId = fieldMap['事由'];
+
+  if (typeFieldId) data[typeFieldId] = typeValue;
+  if (startFieldId) data[startFieldId] = start;
+  if (endFieldId) data[endFieldId] = end;
+  if (reasonFieldId) data[reasonFieldId] = LEAVE_REASON_POOL[index % LEAVE_REASON_POOL.length];
+
+  return { data, rangeStart: start };
+}
+
+function buildSupportFormData(fieldMap, index) {
+  const { start, end } = buildDateRange(index + 3);
+  const data = {};
+  if (fieldMap['開始日期']) data[fieldMap['開始日期']] = start;
+  if (fieldMap['結束日期']) data[fieldMap['結束日期']] = end;
+  if (fieldMap['申請事由']) data[fieldMap['申請事由']] = SUPPORT_REASON_POOL[index % SUPPORT_REASON_POOL.length];
+  if (fieldMap['附件']) data[fieldMap['附件']] = [`support-${index + 1}.pdf`];
+  return { data, rangeStart: start };
+}
+
+function buildRetentionFormData(fieldMap, index) {
+  const { start } = buildDateRange(index + 5);
+  const data = {};
+  if (fieldMap['年度']) data[fieldMap['年度']] = String(start.getUTCFullYear());
+  if (fieldMap['保留天數']) data[fieldMap['保留天數']] = (index % 5) + 1;
+  if (fieldMap['理由']) data[fieldMap['理由']] = RETAIN_REASON_POOL[index % RETAIN_REASON_POOL.length];
+  return { data, rangeStart: start };
+}
+
+function buildEmploymentCertificateData(fieldMap, index) {
+  const { start } = buildDateRange(index + 7);
+  const data = {};
+  if (fieldMap['用途']) data[fieldMap['用途']] = CERTIFICATE_PURPOSE_POOL[index % CERTIFICATE_PURPOSE_POOL.length];
+  if (fieldMap['開立日期']) data[fieldMap['開立日期']] = start;
+  return { data, rangeStart: start };
+}
+
+function buildResignationCertificateData(fieldMap, index) {
+  const { start } = buildDateRange(index + 9);
+  const data = {};
+  if (fieldMap['用途']) data[fieldMap['用途']] = RESIGNATION_PURPOSE_POOL[index % RESIGNATION_PURPOSE_POOL.length];
+  if (fieldMap['離職日期']) data[fieldMap['離職日期']] = start;
+  return { data, rangeStart: start };
+}
+
+function createApprovalPayload({
+  applicant,
+  form,
+  workflow,
+  formData,
+  status,
+  createdAt,
+  baseSteps,
+}) {
+  const { steps, logs: statusLogs, currentStepIndex, status: finalStatus } = applyStatusToSteps(baseSteps, status, createdAt);
+  const logs = [
+    {
+      at: createdAt,
+      by_employee: applicant?._id,
+      action: 'create',
+      message: `建立【${form.name}】申請`,
+    },
+    ...statusLogs,
+  ];
+
+  return {
+    form: form._id,
+    workflow: workflow._id,
+    form_data: formData,
+    applicant_employee: applicant?._id,
+    applicant_org: applicant?.organization,
+    applicant_department: applicant?.department,
+    status: finalStatus,
+    current_step_index: Math.min(currentStepIndex, Math.max(steps.length - 1, 0)),
+    steps,
+    logs,
+    createdAt,
+    updatedAt: addUtcMinutes(createdAt, 10),
+  };
+}
+
+async function loadFormConfig(name) {
+  const form = await FormTemplate.findOne({ name });
+  if (!form) return null;
+  const workflow = await ApprovalWorkflow.findOne({ form: form._id });
+  if (!workflow || !workflow.steps?.length) return null;
+  const fields = await FormField.find({ form: form._id }).sort({ order: 1 }).lean();
+  return { form, workflow, fields, fieldMap: buildFieldMap(fields) };
+}
+
+export async function seedApprovalRequests({ supervisors = [], employees = [] } = {}) {
+  const formNames = ['請假', '支援申請', '特休保留', '在職證明', '離職證明'];
+  const formConfigs = await Promise.all(formNames.map((name) => loadFormConfig(name)));
+  const configMap = new Map();
+  formConfigs.forEach((config, index) => {
+    if (config) configMap.set(formNames[index], config);
+  });
+
+  const leaveConfig = configMap.get('請假');
+  if (!leaveConfig) {
+    throw new Error('請假表單尚未建立或流程未設定');
+  }
+
+  const leaveFieldInfo = await getLeaveFieldIds();
+
+  const requiredTags = new Set();
+  configMap.forEach((config) => {
+    config.workflow.steps.forEach((step) => {
+      if (step.approver_type === 'tag' && step.approver_value) {
+        requiredTags.add(String(step.approver_value));
+      }
+    });
+  });
+
+  let applicants = employees;
+  if (!applicants.length) {
+    applicants = await Employee.find({ role: 'employee' });
+  }
+
+  let supervisorList = supervisors;
+  if (!supervisorList.length) {
+    supervisorList = await Employee.find({ role: 'supervisor' });
+  }
+
+  const allEmployees = [...new Map([...supervisorList, ...applicants].map((emp) => [toStringId(emp._id), emp])).values()];
+  let tagMap = buildTagMap(allEmployees);
+  tagMap = await ensureTagAssignments(tagMap, [...requiredTags], supervisorList);
+
+  const leaveStatuses = APPROVAL_STATUSES;
+  let requestIndex = 0;
+  const requests = [];
+
+  applicants.forEach((applicant, applicantIdx) => {
+    const leaveStatus = leaveStatuses[requestIndex % leaveStatuses.length];
+    const { data: leaveData, rangeStart: leaveStart } = buildLeaveFormData(
+      leaveConfig.fieldMap,
+      leaveFieldInfo,
+      requestIndex,
+    );
+    const leaveSteps = buildBaseSteps(leaveConfig.workflow, applicant, tagMap);
+    requests.push(
+      createApprovalPayload({
+        applicant,
+        form: leaveConfig.form,
+        workflow: leaveConfig.workflow,
+        formData: leaveData,
+        status: leaveStatus,
+        createdAt: addUtcMinutes(leaveStart, 9 * 60),
+        baseSteps: leaveSteps,
+      }),
+    );
+    requestIndex += 1;
+
+    const secondStatus = leaveStatuses[requestIndex % leaveStatuses.length];
+    const { data: leaveDataSecond, rangeStart: leaveStartSecond } = buildLeaveFormData(
+      leaveConfig.fieldMap,
+      leaveFieldInfo,
+      requestIndex,
+    );
+    const leaveStepsSecond = buildBaseSteps(leaveConfig.workflow, applicant, tagMap);
+    requests.push(
+      createApprovalPayload({
+        applicant,
+        form: leaveConfig.form,
+        workflow: leaveConfig.workflow,
+        formData: leaveDataSecond,
+        status: secondStatus,
+        createdAt: addUtcMinutes(leaveStartSecond, 9 * 60 + 30),
+        baseSteps: leaveStepsSecond,
+      }),
+    );
+    requestIndex += 1;
+
+    const otherForms = ['支援申請', '特休保留', '在職證明', '離職證明'];
+    const formName = otherForms[applicantIdx % otherForms.length];
+    const config = configMap.get(formName);
+    if (!config) return;
+
+    let payloadBuilder;
+    if (formName === '支援申請') payloadBuilder = buildSupportFormData;
+    else if (formName === '特休保留') payloadBuilder = buildRetentionFormData;
+    else if (formName === '在職證明') payloadBuilder = buildEmploymentCertificateData;
+    else if (formName === '離職證明') payloadBuilder = buildResignationCertificateData;
+    else payloadBuilder = buildSupportFormData;
+
+    const { data: otherData, rangeStart: otherStart } = payloadBuilder(config.fieldMap, applicantIdx);
+    const otherStatus = leaveStatuses[requestIndex % leaveStatuses.length];
+    const otherSteps = buildBaseSteps(config.workflow, applicant, tagMap);
+    requests.push(
+      createApprovalPayload({
+        applicant,
+        form: config.form,
+        workflow: config.workflow,
+        formData: otherData,
+        status: otherStatus,
+        createdAt: addUtcMinutes(otherStart, 10 * 60),
+        baseSteps: otherSteps,
+      }),
+    );
+    requestIndex += 1;
+  });
+
+  await ApprovalRequest.deleteMany({});
+  const inserted = requests.length ? await ApprovalRequest.insertMany(requests) : [];
+
+  return { requests: inserted };
 }

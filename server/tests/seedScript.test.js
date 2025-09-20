@@ -9,8 +9,9 @@ test('seed script loads env from server/.env', async () => {
   await jest.unstable_mockModule('../src/config/db.js', () => ({ connectDB: jest.fn() }));
   await jest.unstable_mockModule('../src/seedUtils.js', () => ({
     seedSampleData: jest.fn(),
-    seedTestUsers: jest.fn(),
-    seedApprovalTemplates: jest.fn()
+    seedTestUsers: jest.fn().mockResolvedValue({ supervisors: [], employees: [] }),
+    seedApprovalTemplates: jest.fn(),
+    seedApprovalRequests: jest.fn(),
   }));
   await jest.unstable_mockModule('mongoose', () => ({ default: { disconnect: jest.fn() } }));
 
