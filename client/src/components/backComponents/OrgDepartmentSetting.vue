@@ -736,7 +736,11 @@ async function fetchShifts(force = false) {
     const res = await apiFetch('/api/shifts')
     if (res.ok) {
       const data = await res.json()
-      shiftOptions.value = Array.isArray(data) ? data : []
+      shiftOptions.value = Array.isArray(data?.shifts)
+        ? data.shifts
+        : Array.isArray(data)
+          ? data
+          : []
       shiftsLoaded.value = true
     }
   } catch (err) {

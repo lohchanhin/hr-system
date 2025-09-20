@@ -27,6 +27,20 @@ const attendanceSettingSchema = new mongoose.Schema({
     weekdayThreshold: Number,
     holidayRate: Number,
     toCompRate: Number
+  },
+  management: {
+    enableImport: { type: Boolean, default: false },
+    importFormat: String,
+    importMapping: String,
+    allowMakeUpClock: { type: Boolean, default: true },
+    makeUpDays: Number,
+    makeUpNeedApprove: { type: Boolean, default: true },
+    supervisorCrossDept: { type: Boolean, default: false },
+    hrAllDept: { type: Boolean, default: true },
+    employeeHistoryMonths: Number,
+    nonExtWorkAlert: { type: Boolean, default: false },
+    overtimeNoClockNotify: { type: Boolean, default: true },
+    notifyTargets: [String]
   }
 });
 

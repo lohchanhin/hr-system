@@ -412,7 +412,12 @@ async function fetchShifts() {
     }
   })
   if (res.ok) {
-    shiftList.value = await res.json()
+    const data = await res.json()
+    shiftList.value = Array.isArray(data?.shifts)
+      ? data.shifts
+      : Array.isArray(data)
+        ? data
+        : []
   }
 }
   
