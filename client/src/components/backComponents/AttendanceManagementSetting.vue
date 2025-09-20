@@ -106,33 +106,28 @@ import { apiFetch } from '../../api'
 
   async function fetchSetting() {
     const res = await apiFetch('/api/attendance-settings')
-    if (res.ok) {
-      const data = await res.json()
-      if (data.length) {
-        Object.assign(form.value, data[0])
-        settingId.value = data[0]._id || ''
-      }
+    if (!res.ok) return
+    const data = await res.json()
+    const target = Array.isArray(data) ? data[0] : data
+    if (target) {
+      const management = target.management || target
+      Object.assign(form.value, management)
+      settingId.value = target._id || ''
     }
   }
-  
+
   async function saveSettings() {
-    const payload = { ...form.value }
-    let res
-    if (settingId.value) {
-      res = await apiFetch(`/api/attendance-settings/${settingId.value}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      })
-    } else {
-      res = await apiFetch('/api/attendance-settings', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      })
-    }
+    const payload = { management: { ...form.value } }
+    const res = await apiFetch('/api/attendance-settings', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    })
     if (res.ok) {
       const saved = await res.json()
+      if (saved.management) {
+        Object.assign(form.value, saved.management)
+      }
       settingId.value = saved._id || settingId.value
       alert('已儲存「考勤管理設定」')
     }
