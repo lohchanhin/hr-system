@@ -13,6 +13,8 @@ import AttendanceRecord from './models/AttendanceRecord.js';
 import ShiftSchedule from './models/ShiftSchedule.js';
 import { getLeaveFieldIds, resetLeaveFieldCache } from './services/leaveFieldService.js';
 
+export const SEED_TEST_PASSWORD = 'password';
+
 const CITY_OPTIONS = ['台北市', '新北市', '桃園市', '台中市', '台南市', '高雄市'];
 const PRINCIPAL_NAMES = ['林經理', '張主管', '王負責人', '李主任', '陳董事'];
 const PHONE_PREFIXES = ['02', '03', '04', '05', '06', '07'];
@@ -424,7 +426,7 @@ export async function seedTestUsers() {
       name: config.name,
       email: `${emailSeed}@example.com`,
       username: usernameSeed,
-      password: 'password',
+      password: SEED_TEST_PASSWORD,
       role: 'supervisor',
       organization: toStringId(assignment.organization._id),
       department: assignment.department._id,
@@ -447,7 +449,7 @@ export async function seedTestUsers() {
       name: EMPLOYEE_NAMES[i % EMPLOYEE_NAMES.length],
       email: `${emailSeed}@example.com`,
       username: usernameSeed,
-      password: 'password',
+      password: SEED_TEST_PASSWORD,
       role: 'employee',
       organization: toStringId(assignment.organization._id),
       department: assignment.department._id,
