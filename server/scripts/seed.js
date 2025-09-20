@@ -9,7 +9,7 @@ const __dirname = path.dirname(__filename);
 
 dotenv.config({ path: path.resolve(__dirname, '../.env') });
 
-const { seedSampleData, seedTestUsers, seedApprovalTemplates } = await import('../src/seedUtils.js');
+const { seedSampleData, seedTestUsers, seedApprovalTemplates, seedApprovalRequests } = await import('../src/seedUtils.js');
 
 if (!process.env.MONGODB_URI) {
   console.error('MONGODB_URI is not defined in the environment');
@@ -22,8 +22,9 @@ async function seed() {
   if (structure?.organizations?.length) {
     console.log(`Seeded organizations: ${structure.organizations.map((org) => org.name).join(', ')}`);
   }
-  await seedTestUsers();
+  const { supervisors, employees } = await seedTestUsers();
   await seedApprovalTemplates();
+  await seedApprovalRequests({ supervisors, employees });
   await mongoose.disconnect();
 }
 
