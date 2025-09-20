@@ -9,7 +9,18 @@ const mockAttendanceRecord = jest.fn().mockImplementation((data = {}) => ({
 }));
 mockAttendanceRecord.find = jest.fn();
 
+const mockEmployee = {
+  findById: jest.fn(),
+  find: jest.fn(),
+};
+
+const mockAttendanceManagementSetting = {
+  findOne: jest.fn(),
+};
+
 jest.unstable_mockModule('../src/models/AttendanceRecord.js', () => ({ default: mockAttendanceRecord }));
+jest.unstable_mockModule('../src/models/Employee.js', () => ({ default: mockEmployee }));
+jest.unstable_mockModule('../src/models/AttendanceManagementSetting.js', () => ({ default: mockAttendanceManagementSetting }));
 
 let app;
 let attendanceRoutes;
@@ -40,14 +51,20 @@ beforeAll(async () => {
 beforeEach(() => {
   saveMock.mockReset();
   mockAttendanceRecord.find.mockReset();
+  mockEmployee.findById.mockReset();
+  mockEmployee.find.mockReset();
+  mockAttendanceManagementSetting.findOne.mockReset();
+  mockEmployee.findById.mockResolvedValue(null);
+  mockEmployee.find.mockResolvedValue([]);
+  mockAttendanceManagementSetting.findOne.mockResolvedValue(null);
   currentUser = undefined;
 });
 
 describe('Attendance API', () => {
-  it('lists records for privileged roles with newest first', async () => {
+  it('lists records for admins with newest first', async () => {
     const fakeRecords = [{ action: 'clockIn' }];
     const { sortMock, populateMock } = setupFindChain({ records: fakeRecords });
-    currentUser = { id: 'sup1', role: 'supervisor' };
+    currentUser = { id: 'admin1', role: 'admin' };
 
     const res = await request(app).get('/api/attendance');
 
@@ -55,6 +72,56 @@ describe('Attendance API', () => {
     expect(sortMock).toHaveBeenCalledWith({ timestamp: -1 });
     expect(populateMock).toHaveBeenCalledWith('employee');
     expect(res.status).toBe(200);
+    expect(res.body).toEqual(fakeRecords);
+  });
+
+  it('returns 403 when supervisor queries unauthorized employee', async () => {
+    currentUser = { id: 'sup1', role: 'supervisor' };
+    mockEmployee.findById.mockImplementation((id) => {
+      if (id === 'sup1') return Promise.resolve({ _id: 'sup1', department: 'deptA' });
+      if (id === 'empX') return Promise.resolve({ _id: 'empX', department: 'deptB', supervisor: 'other' });
+      return Promise.resolve(null);
+    });
+    mockAttendanceManagementSetting.findOne.mockResolvedValue({ supervisorCrossDept: false });
+
+    const res = await request(app).get('/api/attendance').query({ employee: 'empX' });
+
+    expect(res.status).toBe(403);
+    expect(mockAttendanceRecord.find).not.toHaveBeenCalled();
+  });
+
+  it('scopes supervisor queries to authorized employees when no employee filter is provided', async () => {
+    const fakeRecords = [{ action: 'clockIn' }];
+    const { sortMock } = setupFindChain({ records: fakeRecords });
+    currentUser = { id: 'sup1', role: 'supervisor' };
+    mockEmployee.findById.mockResolvedValue({ _id: 'sup1', department: 'deptA' });
+    mockEmployee.find.mockImplementation((filter) => {
+      if (filter.supervisor === 'sup1') {
+        return Promise.resolve([
+          { _id: 'empA', department: 'deptA', supervisor: 'sup1' },
+          { _id: 'empB', department: 'deptB', supervisor: 'sup1' }
+        ]);
+      }
+      if (filter.department === 'deptA') {
+        return Promise.resolve([
+          { _id: 'empA', department: 'deptA', supervisor: 'sup1' },
+          { _id: 'empC', department: 'deptA', supervisor: 'sup2' },
+          { _id: 'sup1', department: 'deptA' }
+        ]);
+      }
+      return Promise.resolve([]);
+    });
+    mockAttendanceManagementSetting.findOne.mockResolvedValue({ supervisorCrossDept: false });
+
+    const res = await request(app).get('/api/attendance');
+
+    expect(res.status).toBe(200);
+    expect(mockAttendanceRecord.find).toHaveBeenCalledWith({ employee: { $in: expect.any(Array) } });
+    const scopedIds = mockAttendanceRecord.find.mock.calls[0][0].employee.$in;
+    expect(scopedIds).toEqual(expect.arrayContaining(['empA', 'empC']));
+    expect(scopedIds).not.toContain('empB');
+    expect(scopedIds).not.toContain('sup1');
+    expect(sortMock).toHaveBeenCalledWith({ timestamp: -1 });
     expect(res.body).toEqual(fakeRecords);
   });
 
