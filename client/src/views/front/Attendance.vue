@@ -131,11 +131,15 @@ async function fetchRecords() {
   const res = await apiFetch('/api/attendance')
   if (res.ok) {
     const data = await res.json()
-    records.value = data.map(r => ({
-      action: reverseActionMap[r.action] || r.action,
-      time: dayjs(r.timestamp).format('YYYY/MM/DD HH:mm:ss'),
-      remark: r.remark || ''
-    }))
+    records.value = data.map(r => {
+      const timestamp = r.timestamp
+      return {
+        action: reverseActionMap[r.action] || r.action,
+        time: timestamp ? dayjs(timestamp).format('YYYY/MM/DD HH:mm:ss') : '',
+        remark: r.remark || '',
+        timestamp
+      }
+    })
   }
 }
 
@@ -200,11 +204,14 @@ async function addRecord(action, remark = '') {
   })
   if (res.ok) {
     const saved = await res.json()
-    records.value.push({
+    const timestamp = saved.timestamp || payload.timestamp
+    const savedRecord = {
       action: reverseActionMap[saved.action] || saved.action,
-      time: dayjs(saved.timestamp).format('YYYY/MM/DD HH:mm:ss'),
-      remark: saved.remark || ''
-    })
+      time: timestamp ? dayjs(timestamp).format('YYYY/MM/DD HH:mm:ss') : '',
+      remark: saved.remark || '',
+      timestamp
+    }
+    records.value.unshift(savedRecord)
   }
 }
 
