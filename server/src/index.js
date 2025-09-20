@@ -26,7 +26,7 @@ import salarySettingRoutes from './routes/salarySettingRoutes.js';
 import breakSettingRoutes from './routes/breakSettingRoutes.js';
 import holidayMoveSettingRoutes from './routes/holidayMoveSettingRoutes.js';
 
-import attendanceShiftRoutes from './routes/attendanceShiftRoutes.js';
+import attendanceSettingRoutes from './routes/attendanceSettingRoutes.js';
 import shiftRoutes from './routes/shiftRoutes.js';
 import deptManagerRoutes from './routes/deptManagerRoutes.js';
 
@@ -89,13 +89,8 @@ app.use('/api/roles', authenticate, authorizeRoles('admin', 'supervisor'), roleR
 app.use(
   '/api/attendance-settings',
   authenticate,
-  (req, res, next) => {
-    if (req.method === 'GET') {
-      return authorizeRoles('employee', 'supervisor', 'admin')(req, res, next);
-    }
-    return authorizeRoles('admin')(req, res, next);
-  },
-  attendanceShiftRoutes
+  authorizeRoles('admin'),
+  attendanceSettingRoutes
 );
 
 app.use(
@@ -103,7 +98,7 @@ app.use(
   authenticate,
   (req, res, next) => {
     if (req.method === 'GET') {
-      return authorizeRoles('supervisor', 'admin')(req, res, next);
+      return authorizeRoles('employee', 'supervisor', 'admin')(req, res, next);
     }
     return authorizeRoles('admin')(req, res, next);
   },
