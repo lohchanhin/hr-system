@@ -4,6 +4,8 @@
 import request from 'supertest';
 import express from 'express';
 import { jest } from '@jest/globals';
+import ExcelJS from 'exceljs';
+import { authorizeRoles } from '../src/middleware/auth.js';
 
 /* ----------------------------- Mocks: Models ----------------------------- */
 // 統一成物件型態，提供各端點會用到的方法
@@ -75,6 +77,29 @@ beforeEach(() => {
 
 /* --------------------------------- Tests -------------------------------- */
 describe('Schedule API', () => {
+  const buildScheduleAppWithRole = (role) => {
+    const exportApp = express();
+    exportApp.use(express.json());
+    exportApp.use((req, res, next) => {
+      req.user = { id: 'tester', role };
+      next();
+    });
+    exportApp.use(
+      '/api/schedules',
+      (req, res, next) => {
+        if (req.method === 'GET') {
+          if (req.path?.startsWith('/export')) {
+            return authorizeRoles('admin', 'supervisor')(req, res, next);
+          }
+          return authorizeRoles('employee', 'supervisor', 'admin')(req, res, next);
+        }
+        return authorizeRoles('supervisor', 'admin')(req, res, next);
+      },
+      scheduleRoutes
+    );
+    return exportApp;
+  };
+
   it('lists schedules', async () => {
     const fakeSchedules = [{ shiftId: 's1', date: new Date('2023-01-01') }];
     mockShiftSchedule.find.mockReturnValue({
@@ -314,5 +339,100 @@ describe('Schedule API', () => {
     expect(res.body).toEqual({ deleted: 1 });
     expect(data).toHaveLength(1);
     expect(data[0]._id).toBe('2');
+  });
+
+  it('rejects export when employee calls endpoint', async () => {
+    const exportApp = buildScheduleAppWithRole('employee');
+    const res = await request(exportApp)
+      .get('/api/schedules/export?month=2024-05&department=deptA');
+
+    expect(res.status).toBe(403);
+    expect(res.body).toEqual({ error: 'Forbidden' });
+    expect(mockShiftSchedule.find).not.toHaveBeenCalled();
+  });
+
+  it('exports filtered excel with custom filename', async () => {
+    const exportApp = buildScheduleAppWithRole('admin');
+    const allSchedules = [
+      {
+        employee: { name: 'Alice' },
+        date: new Date('2024-05-10T00:00:00.000Z'),
+        shiftId: 's1',
+        department: 'deptA',
+      },
+      {
+        employee: { name: 'Bob' },
+        date: new Date('2024-06-01T00:00:00.000Z'),
+        shiftId: 's1',
+        department: 'deptA',
+      },
+      {
+        employee: { name: 'Cara' },
+        date: new Date('2024-05-05T00:00:00.000Z'),
+        shiftId: 's2',
+        department: 'deptB',
+      },
+    ];
+
+    mockShiftSchedule.find.mockImplementation((query) => {
+      expect(query.department).toBe('deptA');
+      expect(query.date.$gte.toISOString()).toBe(
+        new Date('2024-05-01T00:00:00.000Z').toISOString()
+      );
+      expect(query.date.$lt.toISOString()).toBe(
+        new Date('2024-06-01T00:00:00.000Z').toISOString()
+      );
+
+      const filtered = allSchedules.filter(
+        (item) =>
+          item.date >= query.date.$gte &&
+          item.date < query.date.$lt &&
+          item.department === query.department
+      );
+
+      const chain = {
+        populate: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockResolvedValue(filtered),
+      };
+      return chain;
+    });
+
+    const res = await request(exportApp)
+      .get('/api/schedules/export?month=2024-05&department=deptA&format=excel')
+      .buffer(true)
+      .parse((response, callback) => {
+        const chunks = [];
+        response.on('data', (chunk) => chunks.push(chunk));
+        response.on('end', () => callback(null, Buffer.concat(chunks)));
+      });
+
+    expect(res.status).toBe(200);
+    expect(res.headers['content-disposition']).toBe(
+      'attachment; filename="schedules-202405-deptA.xlsx"'
+    );
+    expect(mockShiftSchedule.find).toHaveBeenCalledTimes(1);
+
+    const toBuffer = (body) => {
+      if (Buffer.isBuffer(body)) return body;
+      if (body instanceof Uint8Array) return Buffer.from(body);
+      if (Array.isArray(body)) return Buffer.from(body);
+      if (body && typeof body === 'object' && 'data' in body) {
+        return Buffer.from(body.data);
+      }
+      const type = body === null
+        ? 'null'
+        : `${typeof body}:${body.constructor?.name ?? 'unknown'}`;
+      throw new Error(`Unexpected response body type: ${type}`);
+    };
+
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(toBuffer(res.body));
+    const worksheet = workbook.getWorksheet('Schedules');
+    expect(worksheet.rowCount).toBe(2);
+    const dataRow = worksheet.getRow(2).values;
+    expect(dataRow[1]).toBe('Alice');
+    expect(dataRow[2]).toBe('2024/05/10');
+    expect(dataRow[3]).toBe('s1');
+    expect(dataRow[4]).toBe('Morning');
   });
 });
