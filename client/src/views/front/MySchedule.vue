@@ -19,17 +19,29 @@ const schedules = ref([])
 const shiftMap = ref({})
 const selectedMonth = ref(dayjs().format('YYYY-MM'))
 
+function formatShiftLabel(shift) {
+  if (!shift) return ''
+  const name = (shift.name || '').trim()
+  const code = (shift.code || '').trim()
+  if (name && code) return `${name} (${code})`
+  return name || code
+}
+
 async function fetchShifts() {
   try {
-    const res = await apiFetch('/api/attendance-settings')
+    const res = await apiFetch('/api/shifts')
     const data = await res.json().catch(() => null)
     if (!res.ok) return
-    const list = Array.isArray(data?.shifts)
-      ? data.shifts
-      : Array.isArray(data)
-        ? data
-        : []
-    shiftMap.value = Object.fromEntries(list.map(s => [s._id, s.name]))
+    const list = Array.isArray(data) ? data : []
+    shiftMap.value = Object.fromEntries(
+      list.map(s => [
+        s._id,
+        {
+          name: s.name || '',
+          code: s.code || ''
+        }
+      ])
+    )
   } catch (err) {
     console.error(err)
   }
@@ -49,11 +61,14 @@ async function loadSchedules() {
     const res = await apiFetch(`/api/schedules/monthly?${params.toString()}`)
     if (res.ok) {
       const data = await res.json()
-      schedules.value = data.map(s => ({
-        ...s,
-        date: dayjs(s.date).format('YYYY/MM/DD'),
-        shiftName: shiftMap.value[s.shiftId] || ''
-      }))
+      schedules.value = data.map(s => {
+        const shift = shiftMap.value[s.shiftId]
+        return {
+          ...s,
+          date: dayjs(s.date).format('YYYY/MM/DD'),
+          shiftName: formatShiftLabel(shift) || s.shiftName || ''
+        }
+      })
     }
   } catch (err) {
     console.error(err)
