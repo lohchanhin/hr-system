@@ -1,19 +1,13 @@
 import { Router } from 'express';
 
 import {
-  listSettings,
-  createSetting,
-  getSetting,
-  updateSetting,
-  deleteSetting
+  getAttendanceSetting,
+  updateAttendanceSetting,
 } from '../controllers/attendanceSettingController.js';
 
 const router = Router();
 
-router.get('/', listSettings);
-router.post('/', createSetting);
-router.get('/:id', getSetting);
-router.put('/:id', updateSetting);
-router.delete('/:id', deleteSetting);
+router.get('/', getAttendanceSetting);
+router.put('/', updateAttendanceSetting);
 
 export default router;

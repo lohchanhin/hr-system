@@ -124,8 +124,8 @@
           </div>
           
           <div class="table-container">
-            <el-table 
-              :data="filteredDeptList" 
+            <el-table
+              :data="filteredDeptList"
               class="data-table"
               :header-cell-style="{ background: '#f8fafc', color: '#475569', fontWeight: '600' }"
               :row-style="{ height: '56px' }"
@@ -166,6 +166,7 @@
               </el-table-column>
             </el-table>
           </div>
+
         </div>
       </el-tab-pane>
 
@@ -182,9 +183,9 @@
           <div class="content-header">
             <h2 class="section-title">小單位列表</h2>
             <div class="header-actions">
-              <el-select 
-                v-model="selectedDept" 
-                placeholder="篩選部門" 
+              <el-select
+                v-model="selectedDept"
+                placeholder="篩選部門"
                 class="filter-select"
                 @change="fetchList('sub', selectedDept)"
                 clearable
@@ -202,10 +203,12 @@
               </el-button>
             </div>
           </div>
-          
+
+          <div v-if="selectedDeptName" class="current-dept">目前部門：{{ selectedDeptName }}</div>
+
           <div class="table-container">
-            <el-table 
-              :data="filteredSubList" 
+            <el-table
+              :data="filteredSubList"
               class="data-table"
               :header-cell-style="{ background: '#f8fafc', color: '#475569', fontWeight: '600' }"
               :row-style="{ height: '56px' }"
@@ -339,6 +342,79 @@
               <el-input v-model="form.manager" placeholder="請輸入部門主管姓名" />
             </el-form-item>
           </div>
+
+          <div class="form-section">
+            <h3 class="form-section-title">排班規則</h3>
+            <el-form-item label="預設週休二日">
+              <el-switch
+                v-model="form.defaultTwoDayOff"
+                active-text="啟用"
+                inactive-text="停用"
+                active-color="#10b981"
+              />
+            </el-form-item>
+            <el-form-item label="允許臨時調班">
+              <el-switch
+                v-model="form.tempChangeAllowed"
+                active-text="允許"
+                inactive-text="禁止"
+                active-color="#10b981"
+              />
+            </el-form-item>
+            <el-form-item label="排班管理者">
+              <el-select
+                v-model="form.deptManager"
+                placeholder="選擇管理者"
+                style="width: 100%"
+                clearable
+              >
+                <el-option
+                  v-for="mgr in managerList"
+                  :key="mgr.value"
+                  :label="mgr.label"
+                  :value="mgr.value"
+                />
+              </el-select>
+            </el-form-item>
+            <el-form-item label="排班備註">
+              <el-input
+                v-model="form.scheduleNotes"
+                type="textarea"
+                :rows="3"
+                placeholder="例如換班審核流程、注意事項"
+              />
+            </el-form-item>
+          </div>
+
+          <div class="form-section">
+            <h3 class="form-section-title">中場休息設定</h3>
+            <el-form-item label="是否啟用全局中場休息設定">
+              <el-switch
+                v-model="form.enableGlobalBreak"
+                active-text="啟用"
+                inactive-text="停用"
+                active-color="#10b981"
+              />
+            </el-form-item>
+            <el-form-item label="全局休息時間 (分鐘)">
+              <el-input-number
+                v-model="form.breakMinutes"
+                :min="0"
+                :max="240"
+                :disabled="!form.enableGlobalBreak"
+                style="width: 200px"
+              />
+            </el-form-item>
+            <el-form-item label="是否允許多段休息">
+              <el-switch
+                v-model="form.allowMultiBreak"
+                :disabled="!form.enableGlobalBreak"
+                active-text="允許"
+                inactive-text="不允許"
+                active-color="#10b981"
+              />
+            </el-form-item>
+          </div>
         </template>
         
         <template v-else>
@@ -371,7 +447,19 @@
               <el-input-number v-model="form.headcount" :min="0" placeholder="請輸入人力需求數" />
             </el-form-item>
             <el-form-item label="班表拉選">
-              <el-input v-model="form.scheduleSetting" placeholder="請輸入班表設定" />
+              <el-select
+                v-model="form.shiftId"
+                placeholder="選擇班別"
+                style="width: 100%"
+                clearable
+              >
+                <el-option
+                  v-for="shift in shiftOptions"
+                  :key="shift._id"
+                  :label="shiftLabel(shift)"
+                  :value="shift._id"
+                />
+              </el-select>
             </el-form-item>
           </div>
         </template>
@@ -400,11 +488,16 @@ const deptList = ref([])
 const subList = ref([])
 const selectedOrg = ref('')
 const selectedDept = ref('')
+const shiftOptions = ref([])
+const shiftsLoaded = ref(false)
 
 const dialogVisible = ref(false)
 const form = ref(defaultForm('org'))
 const currentType = ref('org')
 const editIndex = ref(null)
+
+// 部門排班規則與中場休息設定
+const managerList = ref([])
 
 const filteredDeptList = computed(() =>
   selectedOrg.value
@@ -417,6 +510,11 @@ const filteredSubList = computed(() =>
     ? subList.value.filter(s => s.department === selectedDept.value)
     : subList.value
 )
+
+const selectedDeptName = computed(() => {
+  const dept = deptList.value.find(d => d._id === selectedDept.value)
+  return dept ? dept.name : ''
+})
 
 const dialogTitle = computed(() => {
   const typeLabel = currentType.value === 'org'
@@ -446,7 +544,12 @@ async function fetchList(type, parentId) {
     const data = await res.json()
     if (type === 'org') orgList.value = data
     else if (type === 'dept') deptList.value = data
-    else subList.value = data
+    else {
+      subList.value = data.map(item => ({
+        ...item,
+        shiftId: item.shiftId ?? item.shift ?? ''
+      }))
+    }
   }
 }
 
@@ -456,6 +559,7 @@ async function fetchAll() {
     fetchList('dept', selectedOrg.value),
     fetchList('sub', selectedDept.value)
   ])
+  await fetchShifts()
 }
 
 function defaultForm(type) {
@@ -481,7 +585,15 @@ function defaultForm(type) {
       location: '',
       phone: '',
       manager: '',
-      organization: ''
+      organization: '',
+      defaultTwoDayOff: true,
+      tempChangeAllowed: false,
+      deptManager: '',
+      scheduleNotes: '',
+      enableGlobalBreak: false,
+      breakMinutes: 60,
+      allowMultiBreak: false,
+      breakSettingId: ''
     }
   } else {
     return {
@@ -492,14 +604,15 @@ function defaultForm(type) {
       phone: '',
       manager: '',
       headcount: 0,
-      scheduleSetting: '',
+      shiftId: '',
       department: ''
     }
   }
 }
 
-function openDialog(type, index = null) {
+async function openDialog(type, index = null) {
   currentType.value = type
+  if (type === 'sub') await fetchShifts(true)
   if (index !== null) {
     editIndex.value = index
     const item =
@@ -508,7 +621,18 @@ function openDialog(type, index = null) {
         : type === 'dept'
           ? deptList.value[index]
           : subList.value[index]
-    form.value = { ...item }
+    form.value = { ...defaultForm(type), ...item }
+    if (type === 'sub') {
+      const shiftValue = item?.shiftId ?? item?.shift ?? ''
+      form.value.shiftId = shiftValue ? shiftValue.toString() : ''
+      delete form.value.shift
+    }
+    if (type === 'dept') {
+      const breakSetting = await fetchBreakSettingForDepartment(item?._id)
+      if (breakSetting) {
+        form.value = { ...form.value, ...breakSetting }
+      }
+    }
   } else {
     editIndex.value = null
     form.value = defaultForm(type)
@@ -526,22 +650,54 @@ async function saveItem() {
       : currentType.value === 'dept'
         ? deptList
         : subList
+  let payload = { ...form.value }
+  if (currentType.value === 'dept') {
+    const {
+      enableGlobalBreak,
+      breakMinutes,
+      allowMultiBreak,
+      breakSettingId,
+      ...rest
+    } = payload
+    payload = rest
+  }
+  if (currentType.value === 'sub') {
+    delete payload.shift
+  }
   let res
   if (editIndex.value === null) {
     res = await apiFetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(form.value)
+      body: JSON.stringify(payload)
     })
   } else {
     const id = list.value[editIndex.value]._id
     res = await apiFetch(`${url}/${id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(form.value)
+      body: JSON.stringify(payload)
     })
   }
+  let responseData = null
+  if (res && res.ok && currentType.value === 'dept') {
+    const contentType = res.headers?.get?.('content-type') || ''
+    if (contentType.includes('application/json') && typeof res.json === 'function') {
+      try {
+        responseData = await res.json()
+      } catch (err) {
+        responseData = null
+      }
+    }
+  }
   if (res && res.ok) {
+    if (currentType.value === 'dept') {
+      const departmentId =
+        form.value._id || responseData?._id || responseData?.id || list.value[editIndex.value]?._id
+      if (departmentId) {
+        await upsertBreakSetting(departmentId)
+      }
+    }
     await fetchAll()
     dialogVisible.value = false
   }
@@ -559,7 +715,101 @@ function deleteItem(type, index) {
   })
 }
 
-onMounted(fetchAll)
+async function fetchManagers() {
+  const res = await apiFetch('/api/dept-managers')
+  if (res.ok) {
+    managerList.value = await res.json()
+  }
+}
+
+function shiftLabel(shift) {
+  if (!shift) return ''
+  const name = shift.name || ''
+  const code = shift.code || ''
+  if (name && code) return `${name} (${code})`
+  return name || code || '未命名班別'
+}
+
+async function fetchShifts(force = false) {
+  if (shiftsLoaded.value && !force) return
+  try {
+    const res = await apiFetch('/api/shifts')
+    if (res.ok) {
+      const data = await res.json()
+      shiftOptions.value = Array.isArray(data?.shifts)
+        ? data.shifts
+        : Array.isArray(data)
+          ? data
+          : []
+      shiftsLoaded.value = true
+    }
+  } catch (err) {
+    console.error(err)
+  }
+}
+
+async function fetchBreakSettingForDepartment(departmentId) {
+  if (!departmentId) return null
+  try {
+    const res = await apiFetch(`/api/break-settings?department=${departmentId}`)
+    if (res.ok) {
+      const data = await res.json()
+      const record = Array.isArray(data) ? data[0] : data
+      if (record) {
+        return {
+          breakSettingId: record._id || '',
+          enableGlobalBreak: !!record.enableGlobalBreak,
+          breakMinutes:
+            typeof record.breakMinutes === 'number' ? record.breakMinutes : 60,
+          allowMultiBreak: !!record.allowMultiBreak
+        }
+      }
+    }
+  } catch (err) {
+    console.error(err)
+  }
+  return null
+}
+
+async function upsertBreakSetting(departmentId) {
+  const payload = {
+    department: departmentId,
+    enableGlobalBreak: !!form.value.enableGlobalBreak,
+    breakMinutes: Number(form.value.breakMinutes ?? 0),
+    allowMultiBreak: !!form.value.allowMultiBreak
+  }
+  let url = '/api/break-settings'
+  let method = 'POST'
+  if (form.value.breakSettingId) {
+    url += `/${form.value.breakSettingId}`
+    method = 'PUT'
+  }
+  const res = await apiFetch(url, {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  })
+  if (res && res.ok) {
+    const contentType = res.headers?.get?.('content-type') || ''
+    if (contentType.includes('application/json') && typeof res.json === 'function') {
+      try {
+        const data = await res.json()
+        if (data?._id) {
+          form.value.breakSettingId = data._id
+        }
+      } catch (err) {
+        console.error(err)
+      }
+    }
+    return true
+  }
+  return false
+}
+
+onMounted(() => {
+  fetchAll()
+  fetchManagers()
+})
 
 watch(selectedOrg, val => {
   fetchList('dept', val)
@@ -667,6 +917,11 @@ watch(selectedDept, val => {
 
 .filter-select {
   min-width: 200px;
+}
+
+.current-dept {
+  margin: 0 0 16px 0;
+  color: #334155;
 }
 
 .add-btn {

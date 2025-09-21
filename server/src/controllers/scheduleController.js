@@ -1,9 +1,8 @@
 import ShiftSchedule from '../models/ShiftSchedule.js';
 import Employee from '../models/Employee.js';
 import ApprovalRequest from '../models/approval_request.js';
-import FormTemplate from '../models/form_template.js';
-import FormField from '../models/form_field.js';
 import AttendanceSetting from '../models/AttendanceSetting.js';
+import { getLeaveFieldIds } from '../services/leaveFieldService.js';
 
 function formatDate(date) {
   const d = new Date(date);
@@ -24,24 +23,6 @@ async function attachShiftInfo(schedules) {
     date: formatDate(s.date),
     shiftName: map[s.shiftId?.toString()] || '',
   }));
-}
-
-let leaveFieldCache = null;
-async function getLeaveFieldIds() {
-  if (leaveFieldCache) return leaveFieldCache;
-  const form = await FormTemplate.findOne({ name: '請假' });
-  if (!form) return {};
-  const fields = await FormField.find({ form: form._id });
-  const startField = fields.find(f => f.label === '開始日期');
-  const endField = fields.find(f => f.label === '結束日期');
-  const typeField = fields.find(f => f.label === '假別');
-  leaveFieldCache = {
-    formId: form._id.toString(),
-    startId: startField?._id.toString(),
-    endId: endField?._id.toString(),
-    typeId: typeField?._id.toString(),
-  };
-  return leaveFieldCache;
 }
 
 async function hasLeaveConflict(employeeId, date) {
@@ -68,6 +49,11 @@ export async function listMonthlySchedules(req, res) {
     const query = { date: { $gte: start, $lt: end } };
 
     if (supervisor) {
+      const role = req.user?.role;
+      const allowedRoles = ['supervisor', 'admin'];
+      if (!allowedRoles.includes(role)) {
+        return res.status(403).json({ error: 'forbidden' });
+      }
       const emps = await Employee.find({ supervisor }).select('_id');
       const ids = emps.map((e) => e._id.toString());
       query.employee = { $in: ids };
@@ -336,9 +322,42 @@ export async function deleteOldSchedules(req, res) {
 
 export async function exportSchedules(req, res) {
   try {
-    const raw = await ShiftSchedule.find().populate('employee').lean();
+    const { month, department, subDepartment, format: formatParam } = req.query;
+    if (!month || !department) {
+      return res.status(400).json({ error: 'month and department required' });
+    }
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) {
+      return res.status(400).json({ error: 'invalid month format' });
+    }
+
+    const start = new Date(`${month}-01`);
+    const end = new Date(start);
+    end.setMonth(end.getMonth() + 1);
+
+    const query = {
+      date: { $gte: start, $lt: end },
+      department,
+    };
+    if (subDepartment) query.subDepartment = subDepartment;
+
+    const raw = await ShiftSchedule.find(query).populate('employee').lean();
     const schedules = await attachShiftInfo(raw);
-    const format = req.query.format === 'excel' ? 'excel' : 'pdf';
+    const format = formatParam === 'excel' ? 'excel' : 'pdf';
+
+    const sanitizeSegment = (value) => {
+      const cleaned = String(value)
+        .trim()
+        .replace(/[^a-zA-Z0-9_-]/g, '');
+      return cleaned || 'all';
+    };
+
+    const sanitizedMonth = month.replace(/\D/g, '') || 'all';
+    const filenameParts = ['schedules', sanitizedMonth, sanitizeSegment(department)];
+    if (subDepartment) {
+      filenameParts.push(sanitizeSegment(subDepartment));
+    }
+    const extension = format === 'excel' ? 'xlsx' : 'pdf';
+    const filename = `${filenameParts.join('-')}.${extension}`;
 
     if (format === 'excel') {
       let ExcelJS;
@@ -367,7 +386,7 @@ export async function exportSchedules(req, res) {
         'Content-Type',
         'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
       );
-      res.setHeader('Content-Disposition', 'attachment; filename="schedules.xlsx"');
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
       const buffer = await workbook.xlsx.writeBuffer();
       return res.send(buffer);
     } else {
@@ -379,7 +398,7 @@ export async function exportSchedules(req, res) {
       }
       const doc = new PDFDocument();
       res.setHeader('Content-Type', 'application/pdf');
-      res.setHeader('Content-Disposition', 'attachment; filename="schedules.pdf"');
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
       doc.fontSize(16).text('Schedules', { align: 'center' });
       doc.moveDown();
       schedules.forEach((s) => {

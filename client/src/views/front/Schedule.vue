@@ -29,6 +29,7 @@
             v-model="selectedDepartment"
             placeholder="請選擇部門"
             @change="onDepartmentChange"
+            :disabled="true"
             class="modern-select"
           >
             <el-option
@@ -318,6 +319,11 @@ const departments = ref([])
 const subDepartments = ref([])
 const selectedDepartment = ref('')
 const selectedSubDepartment = ref('')
+const supervisorDepartmentId = ref('')
+const supervisorDepartmentName = ref('')
+const supervisorSubDepartmentId = ref('')
+const supervisorSubDepartmentName = ref('')
+const supervisorAssignableSubDepartmentIds = ref([])
 const summary = ref({ direct: 0, unscheduled: 0, onLeave: 0 })
 const employeeSearch = ref('')
 const statusFilter = ref('all')
@@ -358,9 +364,19 @@ const router = useRouter()
 const authStore = useAuthStore()
 authStore.loadUser()
 
-const canEdit = computed(() => {
-  return ['supervisor', 'admin'].includes(authStore.role)
-})
+const canUseSupervisorFilter = computed(() => ['supervisor', 'admin'].includes(authStore.role))
+const canEdit = canUseSupervisorFilter
+
+const callWarning = message => {
+  const moduleWarn = ElMessage?.warning
+  if (typeof moduleWarn === 'function') {
+    moduleWarn(message)
+  }
+  const globalWarn = typeof window !== 'undefined' ? window.ElMessage?.warning : undefined
+  if (typeof globalWarn === 'function' && globalWarn !== moduleWarn) {
+    globalWarn(message)
+  }
+}
 
 const days = computed(() => {
   const dt = dayjs(currentMonth.value + '-01')
@@ -374,10 +390,14 @@ const days = computed(() => {
 })
 
 async function fetchShiftOptions() {
-  const res = await apiFetch('/api/attendance-settings')
+  const res = await apiFetch('/api/shifts')
   if (res.ok) {
     const data = await res.json()
-    const list = Array.isArray(data?.shifts) ? data.shifts : data
+    const list = Array.isArray(data?.shifts)
+      ? data.shifts
+      : Array.isArray(data)
+        ? data
+        : []
     if (Array.isArray(list)) {
       shifts.value = list.map(s => ({
         _id: s._id,
@@ -398,28 +418,91 @@ async function fetchShiftOptions() {
 
 async function fetchSubDepartments(dept = '') {
   try {
-    const url = dept ? `/api/sub-departments?department=${dept}` : '/api/sub-departments'
+    const targetDept = dept || supervisorDepartmentId.value
+    const url = targetDept
+      ? `/api/sub-departments?department=${targetDept}`
+      : '/api/sub-departments'
     const res = await apiFetch(url)
     if (!res.ok) throw new Error('Failed to fetch sub departments')
     const subData = await res.json()
     const deptMap = departments.value.reduce((acc, d) => {
-      acc[d._id] = d._id
-      acc[d.name] = d._id
+      const id = String(d._id)
+      acc[id] = id
+      if (d.name) acc[d.name] = id
       return acc
     }, {})
-    subDepartments.value = Array.isArray(subData)
-      ? subData.map(s => {
-          let deptId = ''
-          if (s && typeof s.department === 'object') {
-            deptId = s.department._id || deptMap[s.department.name] || ''
-          } else {
-            deptId = deptMap[s.department] || s.department || ''
-          }
-          return { ...s, _id: String(s._id), department: String(deptId) }
-        })
+    if (supervisorDepartmentId.value) {
+      deptMap[supervisorDepartmentId.value] = supervisorDepartmentId.value
+    }
+    if (supervisorDepartmentName.value) {
+      deptMap[supervisorDepartmentName.value] = supervisorDepartmentId.value || supervisorDepartmentName.value
+    }
+    const normalized = Array.isArray(subData)
+      ? subData
+          .map(s => {
+            const rawDept = s?.department
+            let deptId = ''
+            if (rawDept && typeof rawDept === 'object') {
+              deptId = rawDept?._id || rawDept?.id || deptMap[rawDept?.name] || ''
+            } else {
+              deptId = deptMap[rawDept] || rawDept || ''
+            }
+            return {
+              ...s,
+              _id: String(s?._id ?? s?.id ?? ''),
+              department: String(deptId)
+            }
+          })
+          .filter(s => s._id)
       : []
-    if (subDepartments.value.length && !selectedSubDepartment.value) {
-      selectedSubDepartment.value = subDepartments.value[0]._id
+    let filtered = normalized
+    if (targetDept) {
+      filtered = normalized.filter(s => s.department === String(targetDept))
+      if (!filtered.length && supervisorSubDepartmentId.value) {
+        const matched = normalized.find(s => s._id === supervisorSubDepartmentId.value)
+        if (matched) {
+          filtered = [matched]
+        } else {
+          filtered = [
+            {
+              _id: supervisorSubDepartmentId.value,
+              name: supervisorSubDepartmentName.value || '',
+              department: String(targetDept)
+            }
+          ]
+        }
+      }
+    }
+    if (authStore.role === 'supervisor') {
+      const baseIds = supervisorAssignableSubDepartmentIds.value.length
+        ? supervisorAssignableSubDepartmentIds.value
+        : supervisorSubDepartmentId.value
+          ? [supervisorSubDepartmentId.value]
+          : []
+      const allowedSet = new Set(baseIds.map(id => String(id)))
+      if (allowedSet.size) {
+        filtered = filtered.filter(s => allowedSet.has(String(s._id)))
+      } else {
+        filtered = []
+      }
+    }
+    subDepartments.value = filtered
+    if (subDepartments.value.length) {
+      if (
+        supervisorSubDepartmentId.value &&
+        subDepartments.value.some(s => s._id === supervisorSubDepartmentId.value)
+      ) {
+        selectedSubDepartment.value = supervisorSubDepartmentId.value
+      } else if (
+        selectedSubDepartment.value &&
+        subDepartments.value.some(s => s._id === selectedSubDepartment.value)
+      ) {
+        // keep existing selection
+      } else {
+        selectedSubDepartment.value = subDepartments.value[0]._id
+      }
+    } else {
+      selectedSubDepartment.value = ''
     }
   } catch (err) {
     console.error(err)
@@ -431,27 +514,188 @@ async function fetchSubDepartments(dept = '') {
 async function fetchOptions() {
   try {
     const deptRes = await apiFetch('/api/departments')
-    departments.value = deptRes.ok ? await deptRes.json() : []
-    await fetchSubDepartments(selectedDepartment.value)
+    const deptData = deptRes.ok ? await deptRes.json() : []
+    const normalized = Array.isArray(deptData)
+      ? deptData
+          .map(d => {
+            const id = d?._id ?? d?.id ?? d?.value ?? ''
+            return {
+              ...d,
+              _id: String(id),
+              name: d?.name ?? ''
+            }
+          })
+          .filter(d => d._id)
+      : []
+    const targetDeptId = selectedDepartment.value || supervisorDepartmentId.value
+    let filtered = normalized
+    if (targetDeptId) {
+      filtered = normalized.filter(
+        d =>
+          d._id === targetDeptId ||
+          (supervisorDepartmentName.value && d.name === supervisorDepartmentName.value)
+      )
+      if (!filtered.length && targetDeptId) {
+        filtered = [
+          {
+            _id: targetDeptId,
+            name:
+              supervisorDepartmentName.value ||
+              normalized.find(d => d._id === targetDeptId)?.name ||
+              ''
+          }
+        ]
+      }
+    }
+    departments.value = filtered.length ? filtered : normalized
+    if (departments.value.length) {
+      if (!departments.value.some(d => d._id === selectedDepartment.value)) {
+        selectedDepartment.value = departments.value[0]._id
+      }
+    } else if (!selectedDepartment.value && targetDeptId) {
+      selectedDepartment.value = targetDeptId
+    }
+    const deptForSubs =
+      selectedDepartment.value ||
+      supervisorDepartmentId.value ||
+      (departments.value.length ? departments.value[0]._id : '')
+    await fetchSubDepartments(deptForSubs)
   } catch (err) {
     console.error(err)
   }
 }
 
+const getStoredSupervisorId = () => {
+  if (!canUseSupervisorFilter.value) return ''
+  if (typeof window === 'undefined') return ''
+  const sessionId = window.sessionStorage?.getItem('employeeId')
+  if (sessionId && sessionId !== 'undefined') return sessionId
+  const localId = window.localStorage?.getItem('employeeId')
+  if (localId && localId !== 'undefined') return localId
+  return ''
+}
+
+async function fetchSupervisorContext() {
+  if (authStore.role !== 'supervisor') {
+    supervisorDepartmentId.value = ''
+    supervisorDepartmentName.value = ''
+    supervisorSubDepartmentId.value = ''
+    supervisorSubDepartmentName.value = ''
+    supervisorAssignableSubDepartmentIds.value = []
+    return
+  }
+  const supervisorId = getStoredSupervisorId()
+  if (!supervisorId) {
+    supervisorDepartmentId.value = ''
+    supervisorDepartmentName.value = ''
+    supervisorSubDepartmentId.value = ''
+    supervisorSubDepartmentName.value = ''
+    supervisorAssignableSubDepartmentIds.value = []
+    return
+  }
+  let data = null
+  try {
+    const res = await apiFetch(`/api/employees/${supervisorId}`)
+    if (!res.ok) throw new Error('Failed to fetch supervisor context')
+    data = await res.json()
+  } catch (err) {
+    console.error(err)
+  }
+  const deptInfo = data?.department
+  const deptId =
+    typeof deptInfo === 'object'
+      ? deptInfo?._id || deptInfo?.id || deptInfo?.value
+      : deptInfo
+  const deptName =
+    typeof deptInfo === 'object'
+      ? deptInfo?.name || ''
+      : data?.departmentName || ''
+  supervisorDepartmentId.value = deptId ? String(deptId) : ''
+  supervisorDepartmentName.value = deptName ? String(deptName) : ''
+  if (supervisorDepartmentId.value) {
+    selectedDepartment.value = supervisorDepartmentId.value
+  } else {
+    selectedDepartment.value = ''
+  }
+  const subInfo = data?.subDepartment
+  const subId =
+    typeof subInfo === 'object'
+      ? subInfo?._id || subInfo?.id || subInfo?.value
+      : subInfo
+  const subName =
+    typeof subInfo === 'object'
+      ? subInfo?.name || ''
+      : data?.subDepartmentName || ''
+  supervisorSubDepartmentId.value = subId ? String(subId) : ''
+  supervisorSubDepartmentName.value = subName ? String(subName) : ''
+  if (supervisorSubDepartmentId.value) {
+    selectedSubDepartment.value = supervisorSubDepartmentId.value
+  } else {
+    selectedSubDepartment.value = ''
+  }
+  await fetchSupervisorSubDepartmentScope(supervisorId)
+}
+
+async function fetchSupervisorSubDepartmentScope(supervisorId = '') {
+  if (authStore.role !== 'supervisor') {
+    supervisorAssignableSubDepartmentIds.value = []
+    return
+  }
+  const targetId = supervisorId || getStoredSupervisorId()
+  if (!targetId) {
+    supervisorAssignableSubDepartmentIds.value = supervisorSubDepartmentId.value
+      ? [String(supervisorSubDepartmentId.value)]
+      : []
+    return
+  }
+  try {
+    const res = await apiFetch(`/api/employees?supervisor=${targetId}`)
+    if (!res.ok) throw new Error('Failed to fetch direct reports')
+    const payload = await res.json()
+    const list = Array.isArray(payload) ? payload : []
+    const seen = new Set()
+    const allowed = []
+    const add = value => {
+      if (!value && value !== 0) return
+      const str = String(value)
+      if (!str) return
+      if (!seen.has(str)) {
+        seen.add(str)
+        allowed.push(str)
+      }
+    }
+    list.forEach(emp => {
+      const raw = emp?.subDepartment
+      if (raw && typeof raw === 'object') {
+        add(raw?._id || raw?.id || raw?.value)
+      } else {
+        add(raw)
+      }
+    })
+    add(supervisorSubDepartmentId.value)
+    supervisorAssignableSubDepartmentIds.value = allowed
+  } catch (err) {
+    console.error(err)
+    supervisorAssignableSubDepartmentIds.value = supervisorSubDepartmentId.value
+      ? [String(supervisorSubDepartmentId.value)]
+      : []
+  }
+}
+
 async function fetchSchedules() {
-  const supervisorId = localStorage.getItem('employeeId')
-  const supParam = supervisorId && supervisorId !== 'undefined' ? `&supervisor=${supervisorId}` : ''
+  const supervisorId = getStoredSupervisorId()
+  const supParam = supervisorId ? `&supervisor=${supervisorId}` : ''
   try {
     const res = await apiFetch(
       `/api/schedules/monthly?month=${currentMonth.value}${supParam}`
     )
     if (!res.ok) throw new Error('Failed to fetch schedules')
     const data = await res.json()
-    console.log("Schedules:",data)
+    const schedules = Array.isArray(data) ? data : []
 
     const ds = days.value
     scheduleMap.value = {}
-    if (!employees.value.length) {
+    if (!employees.value.length && schedules.length) {
       await fetchEmployees(selectedDepartment.value, selectedSubDepartment.value)
     }
     employees.value.forEach(emp => {
@@ -464,7 +708,7 @@ async function fetchSchedules() {
         }
       })
     })
-    data.forEach((s) => {
+    schedules.forEach(s => {
       const empId = s.employee?._id || s.employee
       const d = dayjs(s.date).date()
       const emp = employees.value.find(e => e._id === empId) || {}
@@ -481,8 +725,10 @@ async function fetchSchedules() {
     )
     if (res2.ok) {
       const extra = await res2.json()
-      approvalList.value = extra.approvals || []
-      ;(extra.leaves || []).forEach(l => {
+      const approvals = Array.isArray(extra?.approvals) ? extra.approvals : []
+      const leaves = Array.isArray(extra?.leaves) ? extra.leaves : []
+      approvalList.value = approvals
+      leaves.forEach(l => {
         if (l.status !== 'approved') return
         const empId = l.employee?._id || l.employee
         const start = dayjs(l.startDate).date()
@@ -505,7 +751,7 @@ async function saveAll() {
     Object.values(days).some(it => !it.shiftId && !it.leave)
   )
   if (hasMissing) {
-    ElMessage.warning('尚有未排班項目，請確認後再儲存')
+    callWarning('尚有未排班項目，請確認後再儲存')
     return
   }
   const schedules = []
@@ -580,7 +826,7 @@ async function exportSchedules(format) {
 async function onSelect(empId, day, value) {
   const dateStr = `${currentMonth.value}-${String(day).padStart(2, '0')}`
   const existing = scheduleMap.value[empId][day]
-  const prev = existing.shiftId
+  const prev = existing?.shiftId ?? ''
   if (existing && existing.id) {
     try {
       const res = await apiFetch(`/api/schedules/${existing.id}`, {
@@ -641,7 +887,16 @@ async function onSubDepartmentChange() {
 }
 
 async function handleScheduleError(res, defaultMsg, empId, day, prev) {
-  scheduleMap.value[empId][day].shiftId = prev
+  if (!scheduleMap.value[empId]) {
+    scheduleMap.value[empId] = {}
+  }
+  const current = scheduleMap.value[empId][day] || {
+    shiftId: '',
+    department: '',
+    subDepartment: ''
+  }
+  current.shiftId = prev
+  scheduleMap.value[empId][day] = current
   let msg = ''
   try {
     if (res) {
@@ -677,11 +932,13 @@ function subDepsFor(deptId) {
 }
 
 async function fetchEmployees(department = '', subDepartment = '') {
-  const supervisorId = localStorage.getItem('employeeId')
+  const supervisorId = getStoredSupervisorId()
   const params = []
-  if (supervisorId && supervisorId !== 'undefined') params.push(`supervisor=${supervisorId}`)
-  if (department) params.push(`department=${department}`)
-  if (subDepartment) params.push(`subDepartment=${subDepartment}`)
+  const deptId = department || selectedDepartment.value || supervisorDepartmentId.value
+  const subId = subDepartment || selectedSubDepartment.value
+  if (supervisorId) params.push(`supervisor=${supervisorId}`)
+  if (deptId) params.push(`department=${deptId}`)
+  if (subId) params.push(`subDepartment=${subId}`)
   const url = `/api/employees${params.length ? `?${params.join('&')}` : ''}`
   try {
     const empRes = await apiFetch(url)
@@ -736,6 +993,7 @@ async function onMonthChange() {
 onMounted(async () => {
   await fetchSummary()
   await fetchShiftOptions()
+  await fetchSupervisorContext()
   await fetchOptions()
   await fetchEmployees(selectedDepartment.value, selectedSubDepartment.value)
   await fetchSchedules()

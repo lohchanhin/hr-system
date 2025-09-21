@@ -620,9 +620,16 @@ async function fetchInbox() {
   const res = await apiFetch('/api/approvals/inbox')
   if (res.ok) {
     const arr = await res.json()
-    inboxList.value = arr
+    const toTime = (val) => {
+      const time = new Date(val ?? 0).getTime()
+      return Number.isFinite(time) ? time : 0
+    }
+    const sortedList = Array.isArray(arr)
+      ? [...arr].sort((a, b) => toTime(b?.createdAt) - toTime(a?.createdAt))
+      : []
+    inboxList.value = sortedList
     // 快取審核者名字
-    arr.forEach(doc => {
+    sortedList.forEach(doc => {
       (doc.steps?.[doc.current_step_index]?.approvers || []).forEach(a => {
         if (a.approver && a.approver.name) employeeNameCache[a.approver._id] = a.approver.name
       })

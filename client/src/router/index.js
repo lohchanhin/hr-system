@@ -16,6 +16,7 @@ const SocialInsuranceRetirementSetting = () => import('@/components/backComponen
 const HRManagementSystemSetting = () => import('@/components/backComponents/HRManagementSystemSetting.vue')
 
 const OrgDepartmentSettingView = () => import('@/views/OrgDepartmentSettingView.vue')
+const OtherControlSettingView = () => import('@/views/OtherControlSettingView.vue')
 
 // ★ 錯誤頁面
 const Forbidden = () => import('@/views/Forbidden.vue')
@@ -30,6 +31,7 @@ const Approval = () => import('@/views/front/Approval.vue')
 const PreviewWeek = () => import('@/views/front/PreviewWeek.vue')
 const PreviewMonth = () => import('@/views/front/PreviewMonth.vue')
 const MySchedule = () => import('@/views/front/MySchedule.vue')
+const DepartmentReports = () => import('@/views/front/DepartmentReports.vue')
 
 const routes = [
   // 首頁重導至前台登入
@@ -60,6 +62,7 @@ const routes = [
       { path: 'social-insurance-retirement-setting', name: 'SocialInsuranceRetirementSetting', component: SocialInsuranceRetirementSetting },
       { path: 'hr-management-system-setting', name: 'HRManagementSystemSetting', component: HRManagementSystemSetting },
       { path: 'org-department-setting', name: 'OrgDepartmentSetting', component: OrgDepartmentSettingView },
+      { path: 'other-control-setting', name: 'OtherControlSetting', component: OtherControlSettingView },
     ],
   },
 
@@ -91,6 +94,12 @@ const routes = [
         path: 'schedule',
         name: 'Schedule',
         component: Schedule,
+        meta: { roles: ['supervisor', 'admin'] },
+      },
+      {
+        path: 'department-reports',
+        name: 'DepartmentReports',
+        component: DepartmentReports,
         meta: { roles: ['supervisor', 'admin'] },
       },
       {
@@ -136,7 +145,7 @@ router.beforeEach((to, from, next) => {
     if (!token) {
       return next({ name: 'ManagerLogin' })
     }
-    const userRole = localStorage.getItem('role') || 'employee'
+    const userRole = sessionStorage.getItem('role') || 'employee'
     if (!['supervisor', 'admin'].includes(userRole)) {
       return next('/login')
     }
@@ -152,7 +161,7 @@ router.beforeEach((to, from, next) => {
 
   // 若有角色限制 meta.roles
   if (to.meta.roles) {
-    const userRole = localStorage.getItem('role') || 'employee'
+    const userRole = sessionStorage.getItem('role') || 'employee'
     if (!to.meta.roles.includes(userRole)) {
       return next({ name: 'Forbidden' })
     }

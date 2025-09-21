@@ -44,12 +44,22 @@ describe('Department API', () => {
   it('creates department', async () => {
     saveMock.mockResolvedValue();
 
-    const res = await request(app).post('/api/departments').send({ name: 'HR', code: 'D1', organization: 'org1' });
+    const payload = {
+      name: 'HR',
+      code: 'D1',
+      organization: 'org1',
+      defaultTwoDayOff: false,
+      tempChangeAllowed: true,
+      deptManager: 'mgr1',
+      scheduleNotes: 'note'
+    };
+
+    const res = await request(app).post('/api/departments').send(payload);
 
     expect(res.status).toBe(201);
     expect(saveMock).toHaveBeenCalled();
     expect(mockDepartment).toHaveBeenCalledWith(
-      expect.objectContaining({ organization: 'org1' })
+      expect.objectContaining(payload)
     );
   });
 
@@ -62,12 +72,21 @@ describe('Department API', () => {
   it('updates department', async () => {
     mockDepartment.findByIdAndUpdate.mockResolvedValue({ name: 'HR' });
 
-    const res = await request(app).put('/api/departments/1').send({ name: 'HR', organization: 'org1' });
+    const payload = {
+      name: 'HR',
+      organization: 'org1',
+      defaultTwoDayOff: false,
+      tempChangeAllowed: true,
+      deptManager: 'mgr1',
+      scheduleNotes: 'note'
+    };
+
+    const res = await request(app).put('/api/departments/1').send(payload);
 
     expect(res.status).toBe(200);
     expect(mockDepartment.findByIdAndUpdate).toHaveBeenCalledWith(
       '1',
-      expect.objectContaining({ organization: 'org1' }),
+      expect.objectContaining(payload),
       expect.any(Object)
     );
   });

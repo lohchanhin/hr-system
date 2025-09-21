@@ -2,48 +2,193 @@ import request from 'supertest';
 import express from 'express';
 import { jest } from '@jest/globals';
 
-const findOne = jest.fn().mockResolvedValue({ shifts: [{ name: '日班' }] });
+const findOne = jest.fn();
+const create = jest.fn();
 
 jest.unstable_mockModule('../src/models/AttendanceSetting.js', () => ({
-  default: { findOne }
+  default: {
+    findOne,
+    create,
+  },
 }));
 
 let app;
 let authorizeRoles;
-let attendanceShiftRoutes;
+let attendanceSettingRoutes;
+
+function buildDoc(overrides = {}) {
+  const doc = {
+    _id: 'setting-id',
+    shifts: [],
+    abnormalRules: {
+      lateGrace: 5,
+      earlyLeaveGrace: 5,
+      missingThreshold: 30,
+      autoNotify: true,
+    },
+    breakOutRules: {
+      enableBreakPunch: true,
+      breakInterval: 60,
+      outingNeedApprove: false,
+    },
+    overtimeRules: {
+      weekdayThreshold: 30,
+      holidayRate: 2,
+      toCompRate: 1.5,
+    },
+    management: {
+      enableImport: false,
+      importFormat: '',
+      importMapping: '',
+      allowMakeUpClock: true,
+      makeUpDays: 3,
+      makeUpNeedApprove: true,
+      supervisorCrossDept: false,
+      hrAllDept: true,
+      employeeHistoryMonths: 6,
+      nonExtWorkAlert: false,
+      overtimeNoClockNotify: true,
+      notifyTargets: ['員工', '主管'],
+    },
+    ...overrides,
+  };
+
+  doc.save = jest.fn().mockResolvedValue(doc);
+  doc.toObject = jest.fn(() => ({
+    _id: doc._id,
+    shifts: doc.shifts,
+    abnormalRules: doc.abnormalRules,
+    breakOutRules: doc.breakOutRules,
+    overtimeRules: doc.overtimeRules,
+    management: doc.management,
+  }));
+  return doc;
+}
 
 beforeAll(async () => {
   ({ authorizeRoles } = await import('../src/middleware/auth.js'));
-  attendanceShiftRoutes = (await import('../src/routes/attendanceShiftRoutes.js')).default;
+  attendanceSettingRoutes = (await import('../src/routes/attendanceSettingRoutes.js')).default;
 
   app = express();
   app.use(express.json());
-  // 模擬已驗證的員工使用者
   app.use((req, res, next) => {
-    req.user = { role: 'employee' };
+    req.user = { role: 'admin' };
     next();
   });
-  app.use(
-    '/api/attendance-settings',
-    (req, res, next) => {
-      if (req.method === 'GET') {
-        return authorizeRoles('employee', 'supervisor', 'admin')(req, res, next);
-      }
-      return authorizeRoles('admin')(req, res, next);
-    },
-    attendanceShiftRoutes
-  );
+  app.use('/api/attendance-settings', authorizeRoles('admin'), attendanceSettingRoutes);
 });
 
-afterEach(() => {
-  findOne.mockClear();
+beforeEach(() => {
+  jest.clearAllMocks();
 });
 
-describe('Attendance settings access', () => {
-  it('允許員工取得班別資料', async () => {
+describe('AttendanceSetting routes', () => {
+  it('returns existing setting with merged defaults', async () => {
+    const doc = buildDoc({
+      abnormalRules: {
+        lateGrace: 10,
+        autoNotify: false,
+      },
+    });
+    findOne.mockResolvedValue(doc);
+
     const res = await request(app).get('/api/attendance-settings');
+
     expect(res.status).toBe(200);
-    expect(res.body).toEqual([{ name: '日班' }]);
-    expect(findOne).toHaveBeenCalled();
+    expect(res.body.abnormalRules).toEqual({
+      lateGrace: 10,
+      earlyLeaveGrace: 5,
+      missingThreshold: 30,
+      autoNotify: false,
+    });
+    expect(res.body.breakOutRules).toEqual({
+      enableBreakPunch: true,
+      breakInterval: 60,
+      outingNeedApprove: false,
+    });
+    expect(res.body.management).toEqual({
+      enableImport: false,
+      importFormat: '',
+      importMapping: '',
+      allowMakeUpClock: true,
+      makeUpDays: 3,
+      makeUpNeedApprove: true,
+      supervisorCrossDept: false,
+      hrAllDept: true,
+      employeeHistoryMonths: 6,
+      nonExtWorkAlert: false,
+      overtimeNoClockNotify: true,
+      notifyTargets: ['員工', '主管'],
+    });
+    expect(findOne).toHaveBeenCalledTimes(1);
+  });
+
+  it('creates default setting if none exists', async () => {
+    const created = buildDoc();
+    findOne.mockResolvedValueOnce(null);
+    create.mockResolvedValueOnce(created);
+
+    const res = await request(app).get('/api/attendance-settings');
+
+    expect(res.status).toBe(200);
+    expect(create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        shifts: [],
+        abnormalRules: expect.objectContaining({ lateGrace: 5 }),
+        management: expect.objectContaining({ enableImport: false }),
+      })
+    );
+    expect(res.body.overtimeRules).toEqual({
+      weekdayThreshold: 30,
+      holidayRate: 2,
+      toCompRate: 1.5,
+    });
+  });
+
+  it('persists updated rules', async () => {
+    const doc = buildDoc();
+    findOne.mockResolvedValue(doc);
+
+    const res = await request(app)
+      .put('/api/attendance-settings')
+      .send({
+        abnormalRules: { lateGrace: 3, autoNotify: false },
+        breakOutRules: { breakInterval: 90 },
+        overtimeRules: { holidayRate: 2.5 },
+      });
+
+    expect(res.status).toBe(200);
+    expect(doc.save).toHaveBeenCalledTimes(1);
+    expect(doc.abnormalRules).toEqual({
+      lateGrace: 3,
+      earlyLeaveGrace: 5,
+      missingThreshold: 30,
+      autoNotify: false,
+    });
+    expect(doc.breakOutRules.breakInterval).toBe(90);
+    expect(doc.overtimeRules.holidayRate).toBe(2.5);
+    expect(res.body.abnormalRules.lateGrace).toBe(3);
+    expect(res.body.breakOutRules.breakInterval).toBe(90);
+  });
+
+  it('updates management preferences', async () => {
+    const doc = buildDoc();
+    findOne.mockResolvedValue(doc);
+
+    const res = await request(app)
+      .put('/api/attendance-settings')
+      .send({
+        management: {
+          enableImport: true,
+          notifyTargets: ['HR'],
+        },
+      });
+
+    expect(res.status).toBe(200);
+    expect(doc.save).toHaveBeenCalled();
+    expect(doc.management.enableImport).toBe(true);
+    expect(doc.management.notifyTargets).toEqual(['HR']);
+    expect(res.body.management.enableImport).toBe(true);
+    expect(res.body.management.notifyTargets).toEqual(['HR']);
   });
 });

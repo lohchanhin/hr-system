@@ -37,6 +37,48 @@ describe('Approval.vue', () => {
     window.fetch.mockRestore()
   })
 
+  it('sorts inbox approvals by createdAt descending', async () => {
+    const inboxDocs = [
+      {
+        _id: 'req-old',
+        createdAt: '2024-01-01T00:00:00.000Z',
+        current_step_index: 0,
+        applicant_employee: { _id: 'app1', name: '王小明', employeeId: 'E001', department: 'HR', organization: '總部' },
+        steps: [{ approvers: [{ approver: { _id: 'u1', name: 'Alice' }, decision: 'pending' }] }],
+      },
+      {
+        _id: 'req-new',
+        createdAt: '2024-03-01T00:00:00.000Z',
+        current_step_index: 0,
+        applicant_employee: { _id: 'app2', name: '李小華', employeeId: 'E002', department: 'Finance', organization: '總部' },
+        steps: [{ approvers: [{ approver: { _id: 'u1', name: 'Alice' }, decision: 'pending' }] }],
+      },
+      {
+        _id: 'req-mid',
+        createdAt: '2024-02-01T00:00:00.000Z',
+        current_step_index: 0,
+        applicant_employee: { _id: 'app3', name: '陳大雄', employeeId: 'E003', department: 'IT', organization: '分部' },
+        steps: [{ approvers: [{ approver: { _id: 'u1', name: 'Alice' }, decision: 'pending' }] }],
+      },
+    ]
+    vi.spyOn(window, 'fetch').mockImplementation((url) => {
+      if (url.includes('/api/approvals/inbox')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve([...inboxDocs]) })
+      }
+      if (url.includes('/api/approvals')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve([]) })
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve([]) })
+    })
+
+    const wrapper = shallowMount(Approval, { global: { stubs } })
+    await flushPromises()
+
+    const expectedOrder = [...inboxDocs].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+    expect(wrapper.vm.inboxList.map(doc => doc._id)).toEqual(expectedOrder.map(doc => doc._id))
+    window.fetch.mockRestore()
+  })
+
   it('loads fields and workflow for selected form', async () => {
     let employeeCall = 0
     vi.spyOn(window, 'fetch').mockImplementation((url) => {

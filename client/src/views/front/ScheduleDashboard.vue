@@ -11,6 +11,7 @@
 <script setup>
 import { computed } from 'vue'
 import { UserFilled, CircleCloseFilled, WarningFilled } from '@element-plus/icons-vue'
+defineOptions({ name: 'ScheduleDashboard' })
 const props = defineProps({
   summary: {
     type: Object,

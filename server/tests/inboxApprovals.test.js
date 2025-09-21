@@ -23,6 +23,14 @@ beforeEach(() => {
   mockApprovalRequest.find.mockReset()
 })
 
+function mockPopulateChain(docs) {
+  const populateApplicant = jest.fn().mockResolvedValue(docs)
+  const populateForm = jest.fn().mockReturnValue({ populate: populateApplicant })
+  const sort = jest.fn().mockReturnValue({ populate: populateForm })
+  mockApprovalRequest.find.mockReturnValue({ sort })
+  return { sort, populateForm, populateApplicant }
+}
+
 describe('GET /api/approvals/inbox', () => {
   it('returns pending approvals for supervisor', async () => {
     const docs = [{
@@ -30,12 +38,15 @@ describe('GET /api/approvals/inbox', () => {
       current_step_index: 0,
       form: { name: 'F', category: 'C' }
     }]
-    mockApprovalRequest.find.mockReturnValue({ populate: jest.fn().mockResolvedValue(docs) })
+    const { sort, populateForm, populateApplicant } = mockPopulateChain(docs)
 
     const res = await request(app).get('/api/approvals/inbox?employee_id=emp1')
 
     expect(res.status).toBe(200)
     expect(res.body).toEqual(docs)
+    expect(sort).toHaveBeenCalledWith({ createdAt: -1 })
+    expect(populateForm).toHaveBeenCalledWith('form', 'name category')
+    expect(populateApplicant).toHaveBeenCalledWith('applicant_employee', 'name employeeId department organization')
     expect(mockApprovalRequest.find).toHaveBeenCalledWith({
       status: 'pending',
       steps: {
@@ -57,17 +68,52 @@ describe('GET /api/approvals/inbox', () => {
         form: { name: 'F2', category: 'C2' },
       },
     ]
-    mockApprovalRequest.find.mockReturnValue({ populate: jest.fn().mockResolvedValue(docs) })
+    const { sort } = mockPopulateChain(docs)
 
     const res = await request(app).get('/api/approvals/inbox?employee_id=emp1')
 
     expect(res.status).toBe(200)
     expect(res.body).toEqual([docs[0]])
+    expect(sort).toHaveBeenCalledWith({ createdAt: -1 })
     expect(mockApprovalRequest.find).toHaveBeenCalledWith({
       status: 'pending',
       steps: {
         $elemMatch: { approvers: { $elemMatch: { approver: 'emp1', decision: 'pending' } } },
       },
     })
+  })
+
+  it('returns approvals sorted by createdAt descending', async () => {
+    const docs = [
+      {
+        _id: 'req1',
+        createdAt: '2024-01-01T00:00:00.000Z',
+        steps: [{ approvers: [{ approver: 'emp1', decision: 'pending' }] }],
+        current_step_index: 0,
+        form: { name: 'Old', category: 'Cat' }
+      },
+      {
+        _id: 'req2',
+        createdAt: '2024-03-01T00:00:00.000Z',
+        steps: [{ approvers: [{ approver: 'emp1', decision: 'pending' }] }],
+        current_step_index: 0,
+        form: { name: 'New', category: 'Cat' }
+      },
+      {
+        _id: 'req3',
+        createdAt: '2024-02-01T00:00:00.000Z',
+        steps: [{ approvers: [{ approver: 'emp1', decision: 'pending' }] }],
+        current_step_index: 0,
+        form: { name: 'Mid', category: 'Cat' }
+      }
+    ]
+    const sortedDocs = [...docs].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+    const { sort } = mockPopulateChain(sortedDocs)
+
+    const res = await request(app).get('/api/approvals/inbox?employee_id=emp1')
+
+    expect(res.status).toBe(200)
+    expect(res.body.map(doc => doc._id)).toEqual(sortedDocs.map(doc => doc._id))
+    expect(sort).toHaveBeenCalledWith({ createdAt: -1 })
   })
 })

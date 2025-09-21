@@ -126,9 +126,10 @@
         title="員工資料管理" 
         width="1200px"
         class="employee-dialog"
-        :close-on-click-modal="false"
+      :close-on-click-modal="false"
       >
-        <el-tabs v-model="employeeDialogTab" type="border-card" class="employee-tabs">
+        <el-form ref="formRef" :model="employeeForm" :rules="rules" label-width="140px" class="employee-form">
+          <el-tabs v-model="employeeDialogTab" type="border-card" class="employee-tabs">
           <!-- 帳號/權限 -->
           <el-tab-pane name="account">
             <template #label>
@@ -139,20 +140,20 @@
             </template>
             
             <div class="tab-content">
-              <el-form :model="employeeForm" label-width="140px" class="form-section">
+              <div class="form-section">
                 <div class="form-group">
                   <h3 class="form-group-title">登入資訊</h3>
-                  <el-form-item label="登入帳號" required>
+                  <el-form-item label="登入帳號" required prop="username">
                     <el-input v-model="employeeForm.username" placeholder="請輸入登入帳號" />
                   </el-form-item>
-                  <el-form-item label="登入密碼" required>
+                  <el-form-item label="登入密碼" required prop="password">
                     <el-input v-model="employeeForm.password" type="password" placeholder="請輸入密碼" show-password />
                   </el-form-item>
                 </div>
-                
+
                 <div class="form-group">
                   <h3 class="form-group-title">權限設定</h3>
-                  <el-form-item label="系統權限" required>
+                  <el-form-item label="系統權限" required prop="role">
                     <el-radio-group v-model="employeeForm.role" class="role-radio-group">
                       <el-radio v-for="r in ROLE_OPTIONS" :key="r.value" :label="r.value" class="role-radio">
                         <div class="role-option">
@@ -162,14 +163,14 @@
                       </el-radio>
                     </el-radio-group>
                   </el-form-item>
-                  
+
                   <el-form-item label="權限職等">
                     <el-select v-model="employeeForm.permissionGrade" placeholder="選擇職等">
                       <el-option v-for="g in PERMISSION_GRADE_OPTIONS" :key="g" :label="g" :value="g" />
                     </el-select>
                   </el-form-item>
                 </div>
-              </el-form>
+              </div>
             </div>
           </el-tab-pane>
 
@@ -183,7 +184,7 @@
             </template>
             
             <div class="tab-content">
-              <el-form :model="employeeForm" label-width="140px" class="form-section">
+              <div class="form-section">
                 <div class="form-group">
                   <h3 class="form-group-title">簽核權限</h3>
                   <el-form-item label="簽核角色">
@@ -212,7 +213,7 @@
                     </el-select>
                   </el-form-item>
                 </div>
-              </el-form>
+              </div>
             </div>
           </el-tab-pane>
 
@@ -224,22 +225,41 @@
                 <span>個人資訊</span>
               </div>
             </template>
-            
+
             <div class="tab-content">
-              <el-form :model="employeeForm" label-width="140px" class="form-section">
+              <div class="form-section">
                 <div class="form-group">
                   <h3 class="form-group-title">基本資料</h3>
+                  <el-form-item label="個人照片" class="photo-upload-item">
+                    <el-upload
+                      class="employee-photo-upload"
+                      v-model:file-list="employeeForm.photoList"
+                      :http-request="handlePhotoRequest"
+                      :on-success="handlePhotoSuccess"
+                      :on-remove="handlePhotoRemove"
+                      :on-exceed="handlePhotoExceed"
+                      list-type="picture-card"
+                      :limit="1"
+                      accept="image/*"
+                      :disabled="photoUploading"
+                    >
+                      <div class="upload-placeholder">
+                        <i class="el-icon-plus"></i>
+                        <span>上傳照片</span>
+                      </div>
+                    </el-upload>
+                  </el-form-item>
                   <div class="form-row">
                     <el-form-item label="員工編號">
                       <el-input v-model="employeeForm.employeeNo" placeholder="請輸入員工編號" />
                     </el-form-item>
-                    <el-form-item label="員工姓名" required>
+                    <el-form-item label="員工姓名" required prop="name">
                       <el-input v-model="employeeForm.name" placeholder="請輸入員工姓名" />
                     </el-form-item>
                   </div>
                   
                   <div class="form-row">
-                    <el-form-item label="性別">
+                    <el-form-item label="性別" required prop="gender">
                       <el-select v-model="employeeForm.gender" placeholder="選擇性別">
                         <el-option label="男" value="M" />
                         <el-option label="女" value="F" />
@@ -280,7 +300,40 @@
                       <el-option v-for="lan in LANGUAGE_OPTIONS" :key="lan" :label="lan" :value="lan" />
                     </el-select>
                   </el-form-item>
-                  
+
+                  <div class="form-row">
+                    <el-form-item label="身心障礙等級">
+                      <el-select
+                        v-model="employeeForm.disabilityLevel"
+                        placeholder="選擇等級"
+                        clearable
+                      >
+                        <el-option
+                          v-for="level in DISABILITY_LEVELS"
+                          :key="level"
+                          :label="level"
+                          :value="level"
+                        />
+                      </el-select>
+                    </el-form-item>
+                    <el-form-item label="身分註記">
+                      <el-select
+                        v-model="employeeForm.identityCategory"
+                        multiple
+                        filterable
+                        collapse-tags
+                        placeholder="選擇身份別"
+                      >
+                        <el-option
+                          v-for="flag in IDENTITY_FLAGS"
+                          :key="flag"
+                          :label="flag"
+                          :value="flag"
+                        />
+                      </el-select>
+                    </el-form-item>
+                  </div>
+
                   <el-form-item label="扶養人數">
                     <el-input-number v-model="employeeForm.dependents" :min="0" />
                   </el-form-item>
@@ -289,7 +342,7 @@
                 <div class="form-group">
                   <h3 class="form-group-title">聯絡資訊</h3>
                   <div class="form-row">
-                    <el-form-item label="Email">
+                    <el-form-item label="Email" required prop="email">
                       <el-input v-model="employeeForm.email" placeholder="請輸入Email" />
                     </el-form-item>
                     <el-form-item label="行動電話">
@@ -314,7 +367,7 @@
                     <el-input v-model="employeeForm.contactAddress" placeholder="請輸入聯絡地址" />
                   </el-form-item>
                 </div>
-              </el-form>
+              </div>
             </div>
           </el-tab-pane>
 
@@ -328,16 +381,16 @@
             </template>
             
             <div class="tab-content">
-              <el-form :model="employeeForm" label-width="140px" class="form-section">
+              <div class="form-section">
                 <div class="form-group">
                   <h3 class="form-group-title">組織架構</h3>
                   <div class="form-row">
-                    <el-form-item label="所屬機構" required>
+                    <el-form-item label="所屬機構" required prop="organization">
                       <el-select v-model="employeeForm.organization" placeholder="選擇機構">
                         <el-option v-for="org in orgList" :key="org._id" :label="org.name" :value="org._id" />
                       </el-select>
                     </el-form-item>
-                    <el-form-item label="所屬部門" required>
+                    <el-form-item label="所屬部門" required prop="department">
                       <el-select v-model="employeeForm.department" placeholder="選擇部門">
                         <el-option
                           v-for="dept in filteredDepartments"
@@ -433,12 +486,41 @@
                     <el-form-item label="到職日期">
                       <el-date-picker v-model="employeeForm.hireDate" type="date" placeholder="選擇到職日期" />
                     </el-form-item>
+                    <el-form-item label="起聘日期">
+                      <el-date-picker v-model="employeeForm.appointDate" type="date" placeholder="選擇起聘日期" />
+                    </el-form-item>
+                  </div>
+
+                  <div class="form-row">
                     <el-form-item label="離職日期">
                       <el-date-picker v-model="employeeForm.resignDate" type="date" placeholder="選擇離職日期" />
                     </el-form-item>
+                    <el-form-item label="解聘日期">
+                      <el-date-picker v-model="employeeForm.dismissDate" type="date" placeholder="選擇解聘日期" />
+                    </el-form-item>
+                  </div>
+
+                  <div class="form-row">
+                    <el-form-item label="再任起聘">
+                      <el-date-picker v-model="employeeForm.reAppointDate" type="date" placeholder="選擇再任起聘日期" />
+                    </el-form-item>
+                    <el-form-item label="再任解聘">
+                      <el-date-picker v-model="employeeForm.reDismissDate" type="date" placeholder="選擇再任解聘日期" />
+                    </el-form-item>
+                  </div>
+
+                  <div class="form-row">
+                    <el-form-item label="聘任備註" class="full-width-item">
+                      <el-input
+                        v-model="employeeForm.employmentNote"
+                        type="textarea"
+                        :rows="2"
+                        placeholder="請輸入聘任備註"
+                      />
+                    </el-form-item>
                   </div>
                 </div>
-              </el-form>
+              </div>
             </div>
           </el-tab-pane>
 
@@ -452,7 +534,50 @@
             </template>
             
             <div class="tab-content">
-              <el-form :model="employeeForm" label-width="140px" class="form-section">
+              <div class="form-section">
+                <!-- 身體檢查 -->
+                <div class="form-group">
+                  <h3 class="form-group-title">身體檢查</h3>
+                  <div class="form-row">
+                    <el-form-item label="身高 (cm)">
+                      <el-input-number
+                        v-model="employeeForm.height"
+                        :min="0"
+                        :max="250"
+                        :step="0.1"
+                        :precision="1"
+                        :value-on-clear="null"
+                        controls-position="right"
+                        placeholder="請輸入身高"
+                      />
+                    </el-form-item>
+                    <el-form-item label="體重 (kg)">
+                      <el-input-number
+                        v-model="employeeForm.weight"
+                        :min="0"
+                        :max="300"
+                        :step="0.1"
+                        :precision="1"
+                        :value-on-clear="null"
+                        controls-position="right"
+                        placeholder="請輸入體重"
+                      />
+                    </el-form-item>
+                  </div>
+                  <div class="form-row">
+                    <el-form-item label="體檢血型">
+                      <el-select v-model="employeeForm.medicalBloodType" placeholder="選擇血型" clearable>
+                        <el-option
+                          v-for="blood in ABO_TYPES"
+                          :key="`medical-${blood}`"
+                          :label="blood"
+                          :value="blood"
+                        />
+                      </el-select>
+                    </el-form-item>
+                  </div>
+                </div>
+
                 <!-- 學歷資訊 -->
                 <div class="form-group">
                   <h3 class="form-group-title">學歷資訊</h3>
@@ -466,13 +591,75 @@
                       <el-input v-model="employeeForm.schoolName" placeholder="請輸入學校名稱" />
                     </el-form-item>
                   </div>
-                  
+
                   <div class="form-row">
                     <el-form-item label="主修科系">
                       <el-input v-model="employeeForm.major" placeholder="請輸入主修科系" />
                     </el-form-item>
-                    <el-form-item label="畢業年度">
+                    <el-form-item label="畢業狀態">
+                      <el-select
+                        v-model="employeeForm.graduationStatus"
+                        placeholder="選擇畢業狀態"
+                        clearable
+                        @clear="onGraduationStatusClear"
+                      >
+                        <el-option
+                          v-for="status in GRADUATION_STATUSES"
+                          :key="status"
+                          :label="status"
+                          :value="status"
+                        />
+                      </el-select>
+                    </el-form-item>
+                  </div>
+
+                  <div class="form-row">
+                    <el-form-item label="畢業年度" class="full-width-item">
                       <el-input v-model="employeeForm.graduationYear" placeholder="請輸入畢業年度" />
+                    </el-form-item>
+                  </div>
+                </div>
+
+                <!-- 役別資訊 -->
+                <div class="form-group">
+                  <h3 class="form-group-title">役別資訊</h3>
+                  <div class="form-row">
+                    <el-form-item label="役別類型">
+                      <el-select
+                        v-model="employeeForm.serviceType"
+                        placeholder="選擇或輸入役別類型"
+                        filterable
+                        allow-create
+                        default-first-option
+                        clearable
+                      >
+                        <el-option
+                          v-for="type in SERVICE_TYPES"
+                          :key="type"
+                          :label="type"
+                          :value="type"
+                        />
+                      </el-select>
+                    </el-form-item>
+                    <el-form-item label="軍種">
+                      <el-input v-model="employeeForm.militaryBranch" placeholder="請輸入軍種" />
+                    </el-form-item>
+                  </div>
+
+                  <div class="form-row">
+                    <el-form-item label="軍階">
+                      <el-input v-model="employeeForm.militaryRank" placeholder="請輸入軍階" />
+                    </el-form-item>
+                    <el-form-item label="退伍年">
+                      <el-input-number
+                        v-model="employeeForm.dischargeYear"
+                        :min="1900"
+                        :max="CURRENT_YEAR + 10"
+                        :step="1"
+                        :value-on-clear="null"
+                        controls-position="right"
+                        placeholder="請輸入退伍年"
+                      />
                     </el-form-item>
                   </div>
                 </div>
@@ -564,7 +751,144 @@
                     新增經歷
                   </el-button>
                 </div>
-              </el-form>
+
+                <!-- 證照資訊 -->
+                <div class="form-group">
+                  <h3 class="form-group-title">證照</h3>
+                  <div class="experience-list">
+                    <div
+                      v-for="(license, i) in employeeForm.licenses"
+                      :key="`license-${i}`"
+                      class="experience-item"
+                    >
+                      <div class="experience-header">
+                        <h4 class="experience-title">證照 {{ i + 1 }}</h4>
+                        <el-button type="danger" size="small" @click="removeLicense(i)" class="remove-btn">
+                          <i class="el-icon-delete"></i>
+                          刪除
+                        </el-button>
+                      </div>
+                      <div class="form-row">
+                        <el-form-item label="證照名稱">
+                          <el-input v-model="license.name" placeholder="請輸入證照名稱" />
+                        </el-form-item>
+                        <el-form-item label="證照字號">
+                          <el-input v-model="license.number" placeholder="請輸入證照字號" />
+                        </el-form-item>
+                      </div>
+                      <div class="form-row">
+                        <el-form-item label="核發日期">
+                          <el-date-picker v-model="license.startDate" type="date" placeholder="選擇核發日期" />
+                        </el-form-item>
+                        <el-form-item label="有效期限">
+                          <el-date-picker v-model="license.endDate" type="date" placeholder="選擇有效期限" />
+                        </el-form-item>
+                      </div>
+                      <div class="form-row">
+                        <el-form-item label="證照檔案" class="full-width-item">
+                          <el-upload
+                            v-model:file-list="license.fileList"
+                            action="#"
+                            multiple
+                            list-type="text"
+                            :http-request="handleAttachmentRequest"
+                            :on-success="(res, file, fileList) => handleAttachmentSuccess('licenses', i, res, file, fileList)"
+                            :on-remove="(file, fileList) => handleAttachmentRemove('licenses', i, file, fileList)"
+                          >
+                            <el-button type="primary" plain>
+                              <i class="el-icon-upload2"></i>
+                              上傳檔案
+                            </el-button>
+                            <template #tip>
+                              <div class="upload-tip">可上傳多個檔案，將以連結形式儲存</div>
+                            </template>
+                          </el-upload>
+                        </el-form-item>
+                      </div>
+                    </div>
+                  </div>
+                  <el-button type="primary" @click="addLicense" class="add-item-btn">
+                    <i class="el-icon-plus"></i>
+                    新增證照
+                  </el-button>
+                </div>
+
+                <!-- 教育訓練 -->
+                <div class="form-group">
+                  <h3 class="form-group-title">教育訓練</h3>
+                  <div class="experience-list">
+                    <div
+                      v-for="(training, i) in employeeForm.trainings"
+                      :key="`training-${i}`"
+                      class="experience-item"
+                    >
+                      <div class="experience-header">
+                        <h4 class="experience-title">教育訓練 {{ i + 1 }}</h4>
+                        <el-button type="danger" size="small" @click="removeTraining(i)" class="remove-btn">
+                          <i class="el-icon-delete"></i>
+                          刪除
+                        </el-button>
+                      </div>
+                      <div class="form-row">
+                        <el-form-item label="課程名稱">
+                          <el-input v-model="training.course" placeholder="請輸入課程名稱" />
+                        </el-form-item>
+                        <el-form-item label="課程代碼">
+                          <el-input v-model="training.courseNo" placeholder="請輸入課程代碼" />
+                        </el-form-item>
+                      </div>
+                      <div class="form-row">
+                        <el-form-item label="上課日期">
+                          <el-date-picker v-model="training.date" type="date" placeholder="選擇日期" />
+                        </el-form-item>
+                        <el-form-item label="積分類別" class="full-width-item">
+                          <el-select
+                            v-model="training.category"
+                            multiple
+                            collapse-tags
+                            placeholder="選擇積分類別"
+                          >
+                            <el-option v-for="cat in CREDIT_CATEGORIES" :key="cat" :label="cat" :value="cat" />
+                          </el-select>
+                        </el-form-item>
+                      </div>
+                      <div class="form-row">
+                        <el-form-item label="積分">
+                          <el-input-number
+                            v-model="training.score"
+                            :min="0"
+                            :step="0.5"
+                            :value-on-clear="null"
+                          />
+                        </el-form-item>
+                        <el-form-item label="訓練檔案" class="full-width-item">
+                          <el-upload
+                            v-model:file-list="training.fileList"
+                            action="#"
+                            multiple
+                            list-type="text"
+                            :http-request="handleAttachmentRequest"
+                            :on-success="(res, file, fileList) => handleAttachmentSuccess('trainings', i, res, file, fileList)"
+                            :on-remove="(file, fileList) => handleAttachmentRemove('trainings', i, file, fileList)"
+                          >
+                            <el-button type="primary" plain>
+                              <i class="el-icon-upload2"></i>
+                              上傳檔案
+                            </el-button>
+                            <template #tip>
+                              <div class="upload-tip">支援多檔上傳，將以連結形式儲存</div>
+                            </template>
+                          </el-upload>
+                        </el-form-item>
+                      </div>
+                    </div>
+                  </div>
+                  <el-button type="primary" @click="addTraining" class="add-item-btn">
+                    <i class="el-icon-plus"></i>
+                    新增教育訓練
+                  </el-button>
+                </div>
+              </div>
             </div>
           </el-tab-pane>
 
@@ -578,7 +902,7 @@
             </template>
             
             <div class="tab-content">
-              <el-form :model="employeeForm" label-width="160px" class="form-section">
+              <div class="form-section">
                 <div class="form-group">
                   <h3 class="form-group-title">薪資資訊</h3>
                   <div class="form-row">
@@ -588,13 +912,47 @@
                       </el-select>
                     </el-form-item>
                     <el-form-item label="薪資金額">
-                      <el-input-number 
-                        v-model="employeeForm.salaryAmount" 
-                        :min="0" 
+                      <el-input-number
+                        v-model="employeeForm.salaryAmount"
+                        :min="0"
                         :step="1000"
-                        :formatter="value => `$ ${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')"
-                        :parser="value => value.replace(/\$\s?|(,*)/g, '')"
+                        :formatter="value => `$ ${value ?? 0}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')"
+                        :parser="value => (value ? value.replace(/\$\s?|(,*)/g, '') : '')"
                       />
+                    </el-form-item>
+                    <el-form-item label="勞退自提" prop="laborPensionSelf">
+                      <el-input-number
+                        v-model="employeeForm.laborPensionSelf"
+                        :min="0"
+                        :step="100"
+                        :formatter="value => `$ ${value ?? 0}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')"
+                        :parser="value => (value ? value.replace(/\$\s?|(,*)/g, '') : '')"
+                      />
+                    </el-form-item>
+                    <el-form-item label="員工預支" prop="employeeAdvance">
+                      <el-input-number
+                        v-model="employeeForm.employeeAdvance"
+                        :min="0"
+                        :step="100"
+                        :formatter="value => `$ ${value ?? 0}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')"
+                        :parser="value => (value ? value.replace(/\$\s?|(,*)/g, '') : '')"
+                      />
+                    </el-form-item>
+                    <el-form-item class="full-width-item" label="薪資項目" prop="salaryItems">
+                      <el-select
+                        v-model="employeeForm.salaryItems"
+                        multiple
+                        collapse-tags
+                        collapse-tags-tooltip
+                        placeholder="選擇薪資項目"
+                      >
+                        <el-option
+                          v-for="item in SALARY_ITEM_OPTIONS"
+                          :key="item"
+                          :label="item"
+                          :value="item"
+                        />
+                      </el-select>
                     </el-form-item>
                   </div>
                 </div>
@@ -625,11 +983,11 @@
                     </div>
                   </div>
                 </div>
-              </el-form>
+              </div>
             </div>
           </el-tab-pane>
-        </el-tabs>
-
+          </el-tabs>
+        </el-form>
         <template #footer>
           <div class="dialog-footer">
             <el-button @click="employeeDialogVisible = false" class="cancel-btn">取消</el-button>
@@ -647,8 +1005,9 @@
 <script setup>
 import { ref, onMounted, computed, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { apiFetch } from '../../api'
+import { REQUIRED_FIELDS } from './requiredFields'
 
 const router = useRouter()
 
@@ -665,6 +1024,7 @@ const LANGUAGE_OPTIONS = ['中文', '台語', '客語', '英語', '馬來語']  
 const DISABILITY_LEVELS = ['極重度', '重度身心障礙', '中度身心障礙', '輕度身心障礙']             // C06
 const IDENTITY_FLAGS = ['原住民', '新住民', '榮民']                                               // C07
 const EDUCATION_LEVELS = ['博士', '碩士', '大學', '專科', '高中職', '國中以下']                   // C08
+const GRADUATION_STATUSES = ['畢業', '肄業']                                                    // C08-1
 const RELATION_OPTIONS = ['父', '母', '配偶', '子', '女', '兄', '姊', '弟', '妹', '其他']         // C09
 const CREDIT_CATEGORIES = ['院內', '院外', '線上', '研討會', '自學']                               // C10
 const SALARY_TYPES = ['月薪', '日薪', '時薪']
@@ -672,7 +1032,9 @@ const SALARY_ITEM_OPTIONS = ['本薪', '全勤', '加班費', '交通津貼', '�
 const SIGN_ROLES = ['填報', '覆核', '審核', '核定']                                              // 簽核角色
 const SIGN_LEVELS = ['L1', 'L2', 'L3', 'L4']                                                     // 簽核層級
 const DEFAULT_TAGS = ['資深', '新人', '外聘', '志工']
+const SERVICE_TYPES = ['義務役', '志願役', '替代役', '免役', '尚未服役']
 const ABO_TYPES = ['A', 'B', 'O', 'AB', 'HR']                                                   // 依你的表格式
+const CURRENT_YEAR = new Date().getFullYear()
 
 /* 狀態 --------------------------------------------------------------------- */
 const employeeDialogTab = ref('account')
@@ -681,6 +1043,7 @@ const departmentList = ref([])
 const subDepartmentList = ref([])
 const orgList = ref([])
 const employeeDialogVisible = ref(false)
+const photoUploading = ref(false)
 let editEmployeeIndex = null
 let editEmployeeId = ''
 
@@ -701,6 +1064,231 @@ function handle401(res) {
     return true
   }
   return false
+}
+
+/* 照片上傳處理 -------------------------------------------------------------- */
+function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : '')
+    reader.onerror = () => reject(new Error('READ_ERROR'))
+    reader.readAsDataURL(file)
+  })
+}
+
+function normalizePhotoUploadList(uploadFiles = []) {
+  const normalized = uploadFiles
+    .slice(-1)
+    .map(file => {
+      const response = file.response
+      const responseUrl =
+        (typeof response === 'object' && response !== null && 'url' in response && response.url) ||
+        (typeof response === 'object' && response !== null && 'data' in response && response.data?.url) ||
+        (typeof response === 'string' ? response : '')
+
+      return {
+        ...file,
+        url: file.url || responseUrl || '',
+        status: 'success',
+        percentage: file.percentage ?? 100
+      }
+    })
+
+  employeeForm.value.photoList = normalized
+  employeeForm.value.photo = normalized.length ? normalized[0].url || '' : ''
+}
+
+async function handlePhotoRequest({ file, onSuccess, onError }) {
+  photoUploading.value = true
+  try {
+    const dataUrl = await readFileAsDataUrl(file)
+    onSuccess?.({ url: dataUrl })
+  } catch (err) {
+    onError?.(err)
+    ElMessage.error('照片載入失敗，請重新選擇檔案')
+  } finally {
+    photoUploading.value = false
+  }
+}
+
+function handlePhotoSuccess(response, uploadFile, uploadFiles) {
+  if (!uploadFile.url) {
+    if (typeof response === 'string') uploadFile.url = response
+    else if (response && typeof response === 'object') {
+      uploadFile.url = response.url || response?.data?.url || uploadFile.url || ''
+    }
+  }
+  normalizePhotoUploadList(uploadFiles)
+}
+
+function handlePhotoRemove(_file, uploadFiles) {
+  normalizePhotoUploadList(uploadFiles)
+}
+
+function handlePhotoExceed() {
+  ElMessage.warning('僅能上傳一張照片')
+}
+
+function buildPhotoUploadFile(url, name = '') {
+  if (!url) return null
+  return {
+    name: name ? `${name} 照片` : '員工照片',
+    url,
+    status: 'success',
+    percentage: 100
+  }
+}
+
+function extractUploadUrls(files = []) {
+  return (Array.isArray(files) ? files : [files])
+    .map(file => {
+      if (!file) return ''
+      if (typeof file === 'string') return file
+      if (file.url) return file.url
+      const response = file.response
+      if (typeof response === 'string') return response
+      if (typeof response === 'object' && response !== null) {
+        if ('url' in response && response.url) return response.url
+        if ('data' in response && response.data?.url) return response.data.url
+      }
+      return ''
+    })
+    .filter(url => typeof url === 'string' && url)
+}
+
+function extractPhotoUrls(files = []) {
+  return extractUploadUrls(files)
+}
+
+function normalizeAttachmentList(uploadFiles = [], namePrefix = '附件') {
+  return (Array.isArray(uploadFiles) ? uploadFiles : [uploadFiles])
+    .map((file, index) => {
+      if (!file) return null
+      if (typeof file === 'string') {
+        return {
+          name: `${namePrefix}${index + 1}`,
+          url: file,
+          status: 'success',
+          percentage: 100,
+          uid: `${namePrefix}-${index}`
+        }
+      }
+
+      if (typeof file === 'object') {
+        let url = file.url
+        if (!url) {
+          const response = file.response
+          if (typeof response === 'string') url = response
+          else if (response && typeof response === 'object') {
+            url = response.url || response?.data?.url || ''
+          }
+        }
+        if (!url) return null
+        const normalized = {
+          ...file,
+          name: file.name || `${namePrefix}${index + 1}`,
+          url,
+          status: 'success',
+          percentage: file.percentage ?? 100
+        }
+        if (!normalized.uid) normalized.uid = `${namePrefix}-${index}`
+        return normalized
+      }
+      return null
+    })
+    .filter(file => file && typeof file.url === 'string' && file.url)
+}
+
+function buildAttachmentFileList(source, namePrefix = '附件') {
+  if (!source) return []
+  const list = Array.isArray(source) ? source : [source]
+  return normalizeAttachmentList(list, namePrefix)
+}
+
+function ensureArrayValue(value) {
+  if (Array.isArray(value)) return value.filter(v => v !== '' && v !== null && v !== undefined)
+  if (value === '' || value === null || value === undefined) return []
+  return [value]
+}
+
+function getAttachmentPrefix(type, index) {
+  return type === 'licenses' ? `證照${index + 1}-附件` : `教育訓練${index + 1}-附件`
+}
+
+function updateAttachmentList(type, index, uploadFiles) {
+  const target = type === 'licenses' ? employeeForm.value.licenses : employeeForm.value.trainings
+  if (!Array.isArray(target) || !target[index]) return
+  const prefix = getAttachmentPrefix(type, index)
+  target[index].fileList = normalizeAttachmentList(uploadFiles, prefix)
+}
+
+async function handleAttachmentRequest({ file, onSuccess, onError }) {
+  try {
+    const dataUrl = await readFileAsDataUrl(file)
+    onSuccess?.({ url: dataUrl })
+  } catch (err) {
+    onError?.(err)
+    ElMessage.error('檔案載入失敗，請重新選擇')
+  }
+}
+
+function handleAttachmentSuccess(type, index, response, uploadFile, uploadFiles) {
+  if (!uploadFile.url) {
+    if (typeof response === 'string') uploadFile.url = response
+    else if (response && typeof response === 'object') {
+      uploadFile.url = response.url || response?.data?.url || uploadFile.url || ''
+    }
+  }
+  updateAttachmentList(type, index, uploadFiles)
+}
+
+function handleAttachmentRemove(type, index, _file, uploadFiles) {
+  updateAttachmentList(type, index, uploadFiles)
+}
+
+function toNumberOrNull(value) {
+  if (value === '' || value === null || value === undefined) return null
+  const num = Number(value)
+  return Number.isFinite(num) ? num : null
+}
+
+function toStringOrEmpty(value) {
+  if (value === undefined || value === null) return ''
+  return String(value)
+}
+
+function toDateOrEmpty(value) {
+  if (value === undefined || value === null || value === '') return ''
+  return value
+}
+
+function formatLicensesForForm(list = []) {
+  if (!Array.isArray(list)) return []
+  return list.map((item = {}, index) => ({
+    name: item?.name ?? '',
+    number: item?.number ?? '',
+    startDate: item?.startDate ?? item?.issueDate ?? '',
+    endDate: item?.endDate ?? item?.expiryDate ?? '',
+    fileList: buildAttachmentFileList(
+      item?.fileList ?? item?.files ?? (item?.file ? [item.file] : []),
+      `證照${index + 1}-附件`
+    )
+  }))
+}
+
+function formatTrainingsForForm(list = []) {
+  if (!Array.isArray(list)) return []
+  return list.map((item = {}, index) => ({
+    course: item?.course ?? item?.name ?? '',
+    courseNo: item?.courseNo ?? item?.code ?? '',
+    date: item?.date ?? '',
+    category: ensureArrayValue(item?.category ?? item?.categories),
+    score: toNumberOrNull(item?.score),
+    fileList: buildAttachmentFileList(
+      item?.fileList ?? item?.files ?? (item?.file ? [item.file] : []),
+      `教育訓練${index + 1}-附件`
+    )
+  }))
 }
 
 /* 取資料 ------------------------------------------------------------------- */
@@ -725,12 +1313,59 @@ async function fetchEmployees() {
   if (handle401(res)) return
   if (res.ok) {
     const list = await res.json()
-    employeeList.value = list.map(e => ({
-      ...e,
-      organization: e.organization?._id || e.organization || '',
-      department: e.department?._id || e.department || '',
-      subDepartment: e.subDepartment?._id || e.subDepartment || ''
-    }))
+    employeeList.value = list.map(e => {
+      const appointment = e?.appointment ?? {}
+      return {
+        ...e,
+        organization: e.organization?._id || e.organization || '',
+        department: e.department?._id || e.department || '',
+        subDepartment: e.subDepartment?._id || e.subDepartment || '',
+        laborPensionSelf: toNumberOrNull(e?.laborPensionSelf) ?? 0,
+        employeeAdvance: toNumberOrNull(e?.employeeAdvance) ?? 0,
+        salaryItems: ensureArrayValue(e?.salaryItems).filter(item =>
+          SALARY_ITEM_OPTIONS.includes(item)
+        ),
+        height: toNumberOrNull(e?.medicalCheck?.height ?? e?.height),
+        weight: toNumberOrNull(e?.medicalCheck?.weight ?? e?.weight),
+        medicalBloodType: e?.medicalCheck?.bloodType ?? e?.medicalBloodType ?? '',
+        educationLevel: e?.education?.level ?? e?.educationLevel ?? '',
+        schoolName: e?.education?.school ?? e?.schoolName ?? '',
+        major: e?.education?.major ?? e?.major ?? '',
+        graduationStatus: e?.education?.status ?? e?.graduationStatus ?? '',
+        graduationYear: toStringOrEmpty(
+          e?.education?.graduationYear ?? e?.graduationYear ?? ''
+        ),
+        serviceType: e?.militaryService?.serviceType ?? e?.serviceType ?? '',
+        militaryBranch: e?.militaryService?.branch ?? e?.militaryBranch ?? '',
+        militaryRank: e?.militaryService?.rank ?? e?.militaryRank ?? '',
+        dischargeYear: toNumberOrNull(
+          e?.militaryService?.dischargeYear ?? e?.dischargeYear
+        ),
+        hireDate: toDateOrEmpty(appointment?.hireDate ?? e?.hireDate),
+        appointDate: toDateOrEmpty(
+          appointment?.appointDate ?? appointment?.startDate ?? e?.appointDate
+        ),
+        resignDate: toDateOrEmpty(
+          appointment?.resignationDate ?? e?.resignDate
+        ),
+        dismissDate: toDateOrEmpty(
+          appointment?.dismissalDate ?? e?.dismissDate
+        ),
+        reAppointDate: toDateOrEmpty(
+          appointment?.reAppointDate ??
+            appointment?.rehireStartDate ??
+            e?.reAppointDate
+        ),
+        reDismissDate: toDateOrEmpty(
+          appointment?.reDismissDate ??
+            appointment?.rehireEndDate ??
+            e?.reDismissDate
+        ),
+        employmentNote: toStringOrEmpty(
+          appointment?.remark ?? e?.employmentNote ?? ''
+        )
+      }
+    })
   }
 }
 onMounted(() => {
@@ -773,6 +1408,7 @@ const emptyEmployee = {
   householdAddress: '',
   contactAddress: '',
   lineId: '',
+  photo: '',
   photoList: [],
 
   // 部門/機構
@@ -792,8 +1428,8 @@ const emptyEmployee = {
   probationDays: '',
 
   // 體檢
-  height: '',
-  weight: '',
+  height: null,
+  weight: null,
   medicalBloodType: '',
 
   // 學歷
@@ -807,7 +1443,7 @@ const emptyEmployee = {
   serviceType: '',
   militaryBranch: '',
   militaryRank: '',
-  dischargeYear: '',
+  dischargeYear: null,
 
   // 緊急聯絡人
   emergency1: { name: '', relation: '', phone1: '', phone2: '' },
@@ -840,6 +1476,51 @@ const emptyEmployee = {
   salaryItems: []
 }
 const employeeForm = ref({ ...emptyEmployee })
+const formRef = ref()
+const createNonNegativeRule = label => ({
+  validator: (_rule, value) => {
+    if (value === '' || value === null || value === undefined) return Promise.resolve()
+    if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
+      return Promise.reject(new Error(`請輸入正確的${label}`))
+    }
+    return Promise.resolve()
+  },
+  trigger: ['blur', 'change']
+})
+const rules = {
+  username: [{ required: true, message: '請輸入登入帳號', trigger: 'blur' }],
+  password: [{ required: true, message: '請輸入登入密碼', trigger: 'blur' }],
+  role: [{ required: true, message: '請選擇系統權限', trigger: 'change' }],
+  organization: [{ required: true, message: '請選擇所屬機構', trigger: 'change' }],
+  department: [{ required: true, message: '請選擇所屬部門', trigger: 'change' }],
+  gender: [{ required: true, message: '請選擇性別', trigger: 'change' }],
+  name: [{ required: true, message: '請輸入員工姓名', trigger: 'blur' }],
+  email: [
+    {
+      required: true,
+      message: '請輸入有效 Email',
+      type: 'email',
+      trigger: ['blur', 'change']
+    }
+  ],
+  laborPensionSelf: [createNonNegativeRule('勞退自提')],
+  employeeAdvance: [createNonNegativeRule('員工預支')],
+  salaryItems: [
+    {
+      validator: (_rule, value) => {
+        if (value === '' || value === null || value === undefined) return Promise.resolve()
+        if (!Array.isArray(value)) {
+          return Promise.reject(new Error('請選擇有效的薪資項目'))
+        }
+        const invalid = value.some(item => !SALARY_ITEM_OPTIONS.includes(item))
+        return invalid
+          ? Promise.reject(new Error('請選擇有效的薪資項目'))
+          : Promise.resolve()
+      },
+      trigger: 'change'
+    }
+  ]
+}
 
 /* 派生 --------------------------------------------------------------------- */
 const filteredDepartments = computed(() =>
@@ -876,6 +1557,10 @@ watch(
 )
 
 /* 事件 --------------------------------------------------------------------- */
+function onGraduationStatusClear() {
+  employeeForm.value.graduationStatus = ''
+}
+
 async function openEmployeeDialog(index = null) {
   if (index !== null) {
     editEmployeeIndex = index
@@ -883,6 +1568,55 @@ async function openEmployeeDialog(index = null) {
     editEmployeeId = emp._id || ''
     // 以 emptyEmployee 為基底，可避免漏欄位
     employeeForm.value = { ...structuredClone(emptyEmployee), ...emp, password: '', photoList: [] }
+    employeeForm.value.photo = employeeForm.value.photo || ''
+    const existingPhotoFile = buildPhotoUploadFile(employeeForm.value.photo, employeeForm.value.name)
+    employeeForm.value.photoList = existingPhotoFile ? [existingPhotoFile] : []
+    employeeForm.value.licenses = formatLicensesForForm(emp.licenses ?? [])
+    employeeForm.value.trainings = formatTrainingsForForm(emp.trainings ?? [])
+    employeeForm.value.laborPensionSelf =
+      toNumberOrNull(employeeForm.value.laborPensionSelf) ?? 0
+    employeeForm.value.employeeAdvance =
+      toNumberOrNull(employeeForm.value.employeeAdvance) ?? 0
+    employeeForm.value.salaryItems = ensureArrayValue(employeeForm.value.salaryItems).filter(item =>
+      SALARY_ITEM_OPTIONS.includes(item)
+    )
+    const education = emp.education ?? {}
+    if (!employeeForm.value.educationLevel && education.level) {
+      employeeForm.value.educationLevel = education.level
+    }
+    if (!employeeForm.value.schoolName && education.school) {
+      employeeForm.value.schoolName = education.school
+    }
+    if (!employeeForm.value.major && education.major) {
+      employeeForm.value.major = education.major
+    }
+    if (!employeeForm.value.graduationStatus && education.status) {
+      employeeForm.value.graduationStatus = education.status
+    }
+    employeeForm.value.graduationYear = toStringOrEmpty(
+      employeeForm.value.graduationYear || education.graduationYear || ''
+    )
+    employeeForm.value.identityCategory = Array.isArray(employeeForm.value.identityCategory)
+      ? [...employeeForm.value.identityCategory]
+      : []
+    employeeForm.value.height = toNumberOrNull(emp.height ?? emp.medicalCheck?.height)
+    employeeForm.value.weight = toNumberOrNull(emp.weight ?? emp.medicalCheck?.weight)
+    employeeForm.value.medicalBloodType =
+      emp.medicalBloodType ?? emp.medicalCheck?.bloodType ?? ''
+    const service = emp.militaryService ?? {}
+    employeeForm.value.serviceType =
+      employeeForm.value.serviceType || service.serviceType || ''
+    employeeForm.value.militaryBranch =
+      employeeForm.value.militaryBranch || service.branch || ''
+    employeeForm.value.militaryRank =
+      employeeForm.value.militaryRank || service.rank || ''
+    const dischargeYearSource =
+      employeeForm.value.dischargeYear === '' ||
+      employeeForm.value.dischargeYear === null ||
+      employeeForm.value.dischargeYear === undefined
+        ? service.dischargeYear
+        : employeeForm.value.dischargeYear
+    employeeForm.value.dischargeYear = toNumberOrNull(dischargeYearSource)
     employeeForm.value.department = emp.department?._id || emp.department || ''
     employeeForm.value.subDepartment = emp.subDepartment?._id || emp.subDepartment || ''
   } else {
@@ -890,6 +1624,8 @@ async function openEmployeeDialog(index = null) {
     editEmployeeId = ''
     employeeDialogTab.value = 'account'
     employeeForm.value = { ...structuredClone(emptyEmployee) }
+    employeeForm.value.licenses = []
+    employeeForm.value.trainings = []
   }
 
   await fetchDepartments()
@@ -907,33 +1643,96 @@ async function openEmployeeDialog(index = null) {
 }
 
 async function saveEmployee() {
+  let errors
+  try {
+    await formRef.value?.validate()
+  } catch (err) {
+    errors = err
+  }
+  if (errors) {
+    const fields = Object.values(errors)
+      .flat()
+      .map(e => e.message.replace(/^請(?:輸入|選擇)(?:有效)?\s*/, ''))
+    ElMessageBox.alert(`請補齊：${fields.join('、')}`)
+    return
+  }
+
   const form = employeeForm.value
-  if (!form.name) {
-    alert('請填寫姓名')
-    return
-  }
-  if (!form.username) {
-    alert('請填寫登入帳號')
-    return
-  }
-  if (!form.password) {
-    alert('請填寫登入密碼')
-    return
-  }
-  if (!form.role) {
-    alert('請填寫系統權限')
-    return
-  }
-  if (!form.organization) {
-    alert('請填寫所屬機構')
-    return
-  }
-  if (!form.department) {
-    alert('請填寫所屬部門')
-    return
-  }
   const payload = { ...form }
+  const normalizedPhotoList = extractPhotoUrls(form.photoList)
+  if (normalizedPhotoList.length) {
+    payload.photoList = normalizedPhotoList
+    payload.photo = normalizedPhotoList[0]
+  } else if (editEmployeeIndex !== null) {
+    payload.photoList = []
+    payload.photo = ''
+  } else {
+    delete payload.photoList
+    if (!form.photo) delete payload.photo
+  }
+
+  payload.identityCategory = Array.isArray(form.identityCategory)
+    ? [...form.identityCategory]
+    : []
+  payload.laborPensionSelf = toNumberOrNull(form.laborPensionSelf) ?? 0
+  payload.employeeAdvance = toNumberOrNull(form.employeeAdvance) ?? 0
+  payload.salaryItems = Array.isArray(form.salaryItems)
+    ? form.salaryItems.filter(item => SALARY_ITEM_OPTIONS.includes(item))
+    : ensureArrayValue(form.salaryItems).filter(item => SALARY_ITEM_OPTIONS.includes(item))
+  payload.dischargeYear = toNumberOrNull(form.dischargeYear)
   if (payload.supervisor === '' || payload.supervisor === null) delete payload.supervisor
+
+  const normalizedLicenses = (Array.isArray(form.licenses) ? form.licenses : [])
+    .map(license => {
+      const fileList = extractUploadUrls(license?.fileList ?? [])
+      const name = typeof license?.name === 'string' ? license.name.trim() : license?.name ?? ''
+      const number = typeof license?.number === 'string' ? license.number.trim() : license?.number ?? ''
+      const startDate = license?.startDate || ''
+      const endDate = license?.endDate || ''
+      return {
+        name,
+        number,
+        startDate,
+        endDate,
+        fileList
+      }
+    })
+    .filter(license =>
+      license.name ||
+      license.number ||
+      license.startDate ||
+      license.endDate ||
+      (Array.isArray(license.fileList) && license.fileList.length)
+    )
+  payload.licenses = normalizedLicenses
+
+  const normalizedTrainings = (Array.isArray(form.trainings) ? form.trainings : [])
+    .map(training => {
+      const fileList = extractUploadUrls(training?.fileList ?? [])
+      const categories = ensureArrayValue(training?.category ?? training?.categories)
+      const course = typeof training?.course === 'string' ? training.course.trim() : training?.course ?? ''
+      const courseNo = typeof training?.courseNo === 'string' ? training.courseNo.trim() : training?.courseNo ?? ''
+      const date = training?.date || ''
+      const scoreValue = toNumberOrNull(training?.score)
+      const normalized = {
+        course,
+        courseNo,
+        date,
+        category: categories,
+        fileList
+      }
+      if (scoreValue !== null) normalized.score = scoreValue
+      return normalized
+    })
+    .filter(training =>
+      training.course ||
+      training.courseNo ||
+      training.date ||
+      (Array.isArray(training.category) && training.category.length) ||
+      (Array.isArray(training.fileList) && training.fileList.length) ||
+      training.score !== undefined
+    )
+  payload.trainings = normalizedTrainings
 
   let res
   if (editEmployeeIndex === null) {
@@ -952,6 +1751,9 @@ async function saveEmployee() {
   if (res && res.ok) {
     await fetchEmployees()
     employeeDialogVisible.value = false
+    ElMessage.success('儲存成功')
+  } else {
+    ElMessage.error('儲存失敗')
   }
 }
 
@@ -976,7 +1778,14 @@ function removeLicense(i) {
   employeeForm.value.licenses.splice(i, 1)
 }
 function addTraining() {
-  employeeForm.value.trainings.push({ course: '', courseNo: '', date: '', fileList: [], category: '', score: '' })
+  employeeForm.value.trainings.push({
+    course: '',
+    courseNo: '',
+    date: '',
+    fileList: [],
+    category: [],
+    score: null
+  })
 }
 function removeTraining(i) {
   employeeForm.value.trainings.splice(i, 1)
@@ -1239,6 +2048,54 @@ function getStatusTagType(status) {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 20px;
+}
+
+.full-width-item {
+  grid-column: span 2;
+}
+
+.photo-upload-item {
+  margin-bottom: 12px;
+}
+
+.employee-photo-upload {
+  display: inline-flex;
+}
+
+.employee-photo-upload:deep(.el-upload--picture-card) {
+  width: 148px;
+  height: 148px;
+  border-radius: 12px;
+  border-color: #cbd5f5;
+}
+
+.employee-photo-upload:deep(.el-upload--picture-card:hover) {
+  border-color: #10b981;
+}
+
+.employee-photo-upload:deep(.el-upload-list__item) {
+  border-radius: 12px;
+}
+
+.upload-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: #64748b;
+  font-size: 14px;
+  gap: 6px;
+}
+
+.upload-tip {
+  margin-top: 8px;
+  font-size: 12px;
+  color: #64748b;
+}
+
+.upload-placeholder i {
+  font-size: 24px;
+  color: #10b981;
 }
 
 .role-radio-group {

@@ -78,8 +78,8 @@ function toggleCollapse() {
   function logout() {
     clearToken()
     menuStore.setMenu([])
-    localStorage.removeItem('role')
-    localStorage.removeItem('employeeId')
+    sessionStorage.removeItem('role')
+    sessionStorage.removeItem('employeeId')
     router.push('/')
   }
 </script>

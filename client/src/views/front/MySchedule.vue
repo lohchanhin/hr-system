@@ -22,11 +22,14 @@ const selectedMonth = ref(dayjs().format('YYYY-MM'))
 async function fetchShifts() {
   try {
     const res = await apiFetch('/api/attendance-settings')
-    if (res.ok) {
-      const data = await res.json()
-      const list = Array.isArray(data?.shifts) ? data.shifts : data
-      shiftMap.value = Object.fromEntries(list.map(s => [s._id, s.name]))
-    }
+    const data = await res.json().catch(() => null)
+    if (!res.ok) return
+    const list = Array.isArray(data?.shifts)
+      ? data.shifts
+      : Array.isArray(data)
+        ? data
+        : []
+    shiftMap.value = Object.fromEntries(list.map(s => [s._id, s.name]))
   } catch (err) {
     console.error(err)
   }
@@ -38,8 +41,12 @@ async function loadSchedules() {
   try {
     await fetchShifts()
     const payload = JSON.parse(atob(token.split('.')[1]))
-    const userId = payload.id || payload._id || payload.sub
-    const res = await apiFetch(`/api/schedules/monthly?month=${selectedMonth.value}&employee=${userId}`)
+    const userId =
+      payload.employeeId || payload.id || payload._id || payload.sub
+    if (!userId) return
+    const params = new URLSearchParams({ month: selectedMonth.value })
+    params.set('employee', userId)
+    const res = await apiFetch(`/api/schedules/monthly?${params.toString()}`)
     if (res.ok) {
       const data = await res.json()
       schedules.value = data.map(s => ({

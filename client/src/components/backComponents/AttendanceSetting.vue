@@ -124,74 +124,108 @@
   
   <script setup>
   import { ref, onMounted } from 'vue'
+  import { ElMessage } from 'element-plus'
   import { apiFetch } from '../../api'
 
-
-async function loadSettings() {
-  const res = await apiFetch('/api/attendance-settings')
-  if (res.ok) {
-    const data = await res.json()
-    if (data.abnormalRules) abnormalForm.value = { ...abnormalForm.value, ...data.abnormalRules }
-    if (data.breakOutRules) breakOutForm.value = { ...breakOutForm.value, ...data.breakOutRules }
-    if (data.overtimeRules) overtimeForm.value = { ...overtimeForm.value, ...data.overtimeRules }
-  }
-}
-
-async function loadShifts() {
-  const res = await apiFetch('/api/shifts')
-  if (res.ok) {
-    shiftList.value = await res.json()
-  }
-}
-
-async function saveSettings() {
-  const payload = {
-    abnormalRules: abnormalForm.value,
-    breakOutRules: breakOutForm.value,
-    overtimeRules: overtimeForm.value
-  }
-  await apiFetch('/api/attendance-settings', {
-    method: 'PUT',
-    headers: {
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify(payload)
-  })
-}
-  
   const activeTab = ref('shift')
-  
-// ================ 班別設定 ================
-const shiftList = ref([])
+
+  const defaultAbnormalRules = {
+    lateGrace: 5,
+    earlyLeaveGrace: 5,
+    missingThreshold: 30,
+    autoNotify: true
+  }
+
+  const defaultBreakOutRules = {
+    enableBreakPunch: true,
+    breakInterval: 60,
+    outingNeedApprove: false
+  }
+
+  const defaultOvertimeRules = {
+    weekdayThreshold: 30,
+    holidayRate: 2.0,
+    toCompRate: 1.5
+  }
+
+  const shiftList = ref([])
   const shiftDialogVisible = ref(false)
   const timeFormat = 'HH:mm'
-  
+
   const shiftForm = ref({
     name: '',
     startTime: '',
     endTime: '',
     breakTime: ''
   })
-  let editIndex = null // 用於區分是"新增"還是"編輯"
-  
+  let editIndex = null
+
+  const abnormalForm = ref({ ...defaultAbnormalRules })
+  const breakOutForm = ref({ ...defaultBreakOutRules })
+  const overtimeForm = ref({ ...defaultOvertimeRules })
+
+  function applySetting(data) {
+    if (!data || typeof data !== 'object') return
+    if (Array.isArray(data.shifts)) {
+      shiftList.value = data.shifts
+    }
+    if (data.abnormalRules) {
+      abnormalForm.value = { ...defaultAbnormalRules, ...data.abnormalRules }
+    }
+    if (data.breakOutRules) {
+      breakOutForm.value = { ...defaultBreakOutRules, ...data.breakOutRules }
+    }
+    if (data.overtimeRules) {
+      overtimeForm.value = { ...defaultOvertimeRules, ...data.overtimeRules }
+    }
+  }
+
+  async function loadSettings() {
+    const res = await apiFetch('/api/attendance-settings')
+    const data = await res.json().catch(() => null)
+    if (!res.ok) {
+      console.error('讀取出勤設定失敗', data?.error || res.statusText)
+      return
+    }
+    applySetting(data)
+  }
+
+  async function saveSettings() {
+    const payload = {
+      abnormalRules: { ...abnormalForm.value },
+      breakOutRules: { ...breakOutForm.value },
+      overtimeRules: { ...overtimeForm.value }
+    }
+    const res = await apiFetch('/api/attendance-settings', {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(payload)
+    })
+    const data = await res.json().catch(() => null)
+    if (!res.ok) {
+      throw new Error(data?.error || '儲存設定時發生錯誤')
+    }
+    applySetting(data)
+    return data
+  }
+
   // 開啟 dialog
   const openShiftDialog = (index = null) => {
     if (index !== null) {
-      // 編輯
       editIndex = index
       shiftForm.value = { ...shiftList.value[index] }
     } else {
-      // 新增
       editIndex = null
       shiftForm.value = { name: '', startTime: '', endTime: '', breakTime: '' }
     }
     shiftDialogVisible.value = true
   }
-  
+
   // 儲存 (新增或編輯)
   const saveShift = async () => {
     if (editIndex === null) {
-      // 新增
       const res = await apiFetch('/api/shifts', {
         method: 'POST',
         headers: {
@@ -204,7 +238,6 @@ const shiftList = ref([])
         shiftList.value.push(newShift)
       }
     } else {
-      // 編輯
       const id = shiftList.value[editIndex]._id
       const res = await apiFetch(`/api/shifts/${id}`, {
         method: 'PUT',
@@ -230,47 +263,36 @@ const shiftList = ref([])
       shiftList.value.splice(index, 1)
     }
   }
-  
-  // ================ 異常判定規則 ================
-  const abnormalForm = ref({
-    lateGrace: 5,            // 遲到容許誤差
-    earlyLeaveGrace: 5,      // 早退容許誤差
-    missingThreshold: 30,    // 超過多少分鐘不打卡視為缺卡
-    autoNotify: true         // 是否自動通知
-  })
-  
+
   const saveAbnormalRules = async () => {
-    await saveSettings()
-    alert('已儲存「異常判定規則」設定')
+    try {
+      await saveSettings()
+      ElMessage.success('已儲存「異常判定規則」設定')
+    } catch (error) {
+      ElMessage.error(error.message || '儲存失敗')
+    }
   }
-  
-  // ================ 分段打卡/外出規則 ================
-  const breakOutForm = ref({
-    enableBreakPunch: true,   // 是否允許分段打卡
-    breakInterval: 60,        // 分段打卡最少間隔
-    outingNeedApprove: false  // 外出登記是否需要主管審核
-  })
-  
+
   const saveBreakOutSetting = async () => {
-    await saveSettings()
-    alert('已儲存「分段打卡/外出」設定')
+    try {
+      await saveSettings()
+      ElMessage.success('已儲存「分段打卡/外出」設定')
+    } catch (error) {
+      ElMessage.error(error.message || '儲存失敗')
+    }
   }
-  
-  // ================ 加班規則 ================
-  const overtimeForm = ref({
-    weekdayThreshold: 30, // 下班後 30 分鐘起算加班
-    holidayRate: 2.0,     // 假日加班倍數
-    toCompRate: 1.5       // 轉補休時的折算比率
-  })
-  
+
   const saveOvertimeRules = async () => {
-    await saveSettings()
-    alert('已儲存「加班規則」設定')
+    try {
+      await saveSettings()
+      ElMessage.success('已儲存「加班規則」設定')
+    } catch (error) {
+      ElMessage.error(error.message || '儲存失敗')
+    }
   }
 
   onMounted(() => {
     loadSettings()
-    loadShifts()
   })
 </script>
   

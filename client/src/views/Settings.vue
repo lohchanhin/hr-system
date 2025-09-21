@@ -15,8 +15,8 @@ import { clearToken } from '../utils/tokenService'
   
 const logout = () => {
   clearToken()
-  localStorage.removeItem('role')
-  localStorage.removeItem('employeeId')
+  sessionStorage.removeItem('role')
+  sessionStorage.removeItem('employeeId')
   router.push('/')
 }
   </script>

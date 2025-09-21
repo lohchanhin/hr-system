@@ -9,6 +9,7 @@ export function getMenu(req, res) {
     supervisor: [
       { name: 'Attendance', label: '出勤打卡', icon: 'el-icon-postcard' },
       { name: 'Schedule', label: '排班管理', icon: 'el-icon-timer' },
+      { name: 'DepartmentReports', label: '部門報表', icon: 'el-icon-data-analysis' },
       { name: 'Approval', label: '簽核流程', icon: 'el-icon-s-operation' }
     ],
     hr: [
@@ -26,6 +27,7 @@ export function getMenu(req, res) {
       { name: 'SalaryManagementSetting', label: '薪資管理', icon: 'el-icon-money' },
       { name: 'SocialInsuranceRetirementSetting', label: '社保與退休', icon: 'el-icon-s-check' },
       { name: 'HRManagementSystemSetting', label: '人資管理', icon: 'el-icon-user-solid' },
+      { name: 'OtherControlSetting', label: '其他控制設定', icon: 'el-icon-more' },
       { name: 'OrgDepartmentSetting', label: '權限&機構&部門設定', icon: 'el-icon-s-grid' }
     ]
   };
