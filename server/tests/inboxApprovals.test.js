@@ -23,6 +23,14 @@ beforeEach(() => {
   mockApprovalRequest.find.mockReset()
 })
 
+function mockPopulateChain(docs) {
+  const populateApplicant = jest.fn().mockResolvedValue(docs)
+  const populateForm = jest.fn().mockReturnValue({ populate: populateApplicant })
+  const sort = jest.fn().mockReturnValue({ populate: populateForm })
+  mockApprovalRequest.find.mockReturnValue({ sort })
+  return { sort, populateForm, populateApplicant }
+}
+
 describe('GET /api/approvals/inbox', () => {
   it('returns pending approvals for supervisor', async () => {
     const docs = [{
@@ -30,15 +38,15 @@ describe('GET /api/approvals/inbox', () => {
       current_step_index: 0,
       form: { name: 'F', category: 'C' }
     }]
-    const populate = jest.fn().mockResolvedValue(docs)
-    const sort = jest.fn().mockReturnValue({ populate })
-    mockApprovalRequest.find.mockReturnValue({ sort })
+    const { sort, populateForm, populateApplicant } = mockPopulateChain(docs)
 
     const res = await request(app).get('/api/approvals/inbox?employee_id=emp1')
 
     expect(res.status).toBe(200)
     expect(res.body).toEqual(docs)
     expect(sort).toHaveBeenCalledWith({ createdAt: -1 })
+    expect(populateForm).toHaveBeenCalledWith('form', 'name category')
+    expect(populateApplicant).toHaveBeenCalledWith('applicant_employee', 'name employeeId department organization')
     expect(mockApprovalRequest.find).toHaveBeenCalledWith({
       status: 'pending',
       steps: {
@@ -60,9 +68,7 @@ describe('GET /api/approvals/inbox', () => {
         form: { name: 'F2', category: 'C2' },
       },
     ]
-    const populate = jest.fn().mockResolvedValue(docs)
-    const sort = jest.fn().mockReturnValue({ populate })
-    mockApprovalRequest.find.mockReturnValue({ sort })
+    const { sort } = mockPopulateChain(docs)
 
     const res = await request(app).get('/api/approvals/inbox?employee_id=emp1')
 
@@ -102,9 +108,7 @@ describe('GET /api/approvals/inbox', () => {
       }
     ]
     const sortedDocs = [...docs].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
-    const populate = jest.fn().mockResolvedValue(sortedDocs)
-    const sort = jest.fn().mockReturnValue({ populate })
-    mockApprovalRequest.find.mockReturnValue({ sort })
+    const { sort } = mockPopulateChain(sortedDocs)
 
     const res = await request(app).get('/api/approvals/inbox?employee_id=emp1')
 

@@ -43,18 +43,21 @@ describe('Approval.vue', () => {
         _id: 'req-old',
         createdAt: '2024-01-01T00:00:00.000Z',
         current_step_index: 0,
+        applicant_employee: { _id: 'app1', name: '王小明', employeeId: 'E001', department: 'HR', organization: '總部' },
         steps: [{ approvers: [{ approver: { _id: 'u1', name: 'Alice' }, decision: 'pending' }] }],
       },
       {
         _id: 'req-new',
         createdAt: '2024-03-01T00:00:00.000Z',
         current_step_index: 0,
+        applicant_employee: { _id: 'app2', name: '李小華', employeeId: 'E002', department: 'Finance', organization: '總部' },
         steps: [{ approvers: [{ approver: { _id: 'u1', name: 'Alice' }, decision: 'pending' }] }],
       },
       {
         _id: 'req-mid',
         createdAt: '2024-02-01T00:00:00.000Z',
         current_step_index: 0,
+        applicant_employee: { _id: 'app3', name: '陳大雄', employeeId: 'E003', department: 'IT', organization: '分部' },
         steps: [{ approvers: [{ approver: { _id: 'u1', name: 'Alice' }, decision: 'pending' }] }],
       },
     ]
