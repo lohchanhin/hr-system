@@ -36,14 +36,20 @@ describe('MySchedule.vue', () => {
     await flush()
     apiFetch.mockReset()
     apiFetch
-      .mockResolvedValueOnce({ ok: true, json: async () => [{ _id: '1', name: '早班' }] })
-      .mockResolvedValueOnce({ ok: true, json: async () => [{ date: '2023-02-01', shiftId: '1' }] })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => [{ _id: '1', name: '早班', code: 'A1' }]
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => [{ date: '2023-02-01', shiftId: '1' }]
+      })
     wrapper.vm.selectedMonth = '2023-02'
     await flush()
     await flush()
-    expect(apiFetch).toHaveBeenNthCalledWith(1, '/api/attendance-settings')
+    expect(apiFetch).toHaveBeenNthCalledWith(1, '/api/shifts')
     expect(apiFetch).toHaveBeenNthCalledWith(2, '/api/schedules/monthly?month=2023-02&employee=emp1')
-    expect(wrapper.vm.schedules[0].shiftName).toBe('早班')
+    expect(wrapper.vm.schedules[0].shiftName).toBe('早班 (A1)')
     expect(wrapper.vm.schedules[0].date).toBe('2023/02/01')
   })
 })
