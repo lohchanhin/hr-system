@@ -1,5 +1,4 @@
 import { fileURLToPath, URL } from 'node:url'
-
 import { defineConfig, loadEnv } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import vueDevTools from 'vite-plugin-vue-devtools'
@@ -7,21 +6,27 @@ import vueDevTools from 'vite-plugin-vue-devtools'
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
-  const API_BASE_URL = env.VITE_API_BASE_URL || (mode === 'development' ? 'http://localhost:3000' : '')
+
+  // 明確定義 fallback：dev 走 localhost:3000，prod 要有環境變數
+  const API_BASE_URL =
+    env.VITE_API_BASE_URL ||
+    (mode === 'development'
+      ? 'http://localhost:3000'
+      : 'https://hr-system-d7fc5ea7aab1.herokuapp.com') // 確保 prod 不會是空字串
 
   const config = {
-    plugins: [
-      vue(),
-      vueDevTools(),
-    ],
+    plugins: [vue(), vueDevTools()],
     resolve: {
       alias: {
-        '@': fileURLToPath(new URL('./src', import.meta.url))
+        '@': fileURLToPath(new URL('./src', import.meta.url)),
       },
     },
+    define: {
+      __API_BASE_URL__: JSON.stringify(API_BASE_URL), // 可選：讓前端也能直接引用
+    },
     test: {
-      environment: 'jsdom'
-    }
+      environment: 'jsdom',
+    },
   }
 
   if (mode === 'development') {
@@ -29,9 +34,9 @@ export default defineConfig(({ mode }) => {
       proxy: {
         '/api': {
           target: API_BASE_URL,
-          changeOrigin: true
-        }
-      }
+          changeOrigin: true,
+        },
+      },
     }
   }
 
