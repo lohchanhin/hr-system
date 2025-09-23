@@ -73,7 +73,6 @@ app.use(cors({
   credentials: true,
   methods: "GET,POST,PUT,DELETE,OPTIONS"
 }));
-
 app.get('/env.js', (req, res) => {
   res.type('application/javascript');
   const config = {
@@ -81,6 +80,7 @@ app.get('/env.js', (req, res) => {
   };
   res.send(`window.__APP_CONFIG__ = ${JSON.stringify(config)};`);
 });
+
 app.use(express.static(distPath));
 
 app.get('/api/health', (req, res) => {
