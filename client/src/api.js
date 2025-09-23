@@ -1,7 +1,14 @@
 import { getToken, clearToken } from './utils/tokenService'
 
-export const API_BASE_URL =
-  import.meta.env.VITE_API_BASE_URL ?? window.location.origin
+const runtimeBaseUrl =
+  typeof window !== 'undefined' ? window.__APP_CONFIG__?.apiBaseUrl : undefined
+
+const envBaseUrl = import.meta.env.VITE_API_BASE_URL
+
+const locationBaseUrl =
+  typeof window !== 'undefined' && window.location ? window.location.origin : ''
+
+export const API_BASE_URL = runtimeBaseUrl ?? envBaseUrl ?? locationBaseUrl
 
 export async function apiFetch(path, options = {}, { autoRedirect = true } = {}) {
   const token = getToken()

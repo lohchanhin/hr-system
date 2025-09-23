@@ -73,7 +73,13 @@ app.use(cors({
   credentials: true,
   methods: "GET,POST,PUT,DELETE,OPTIONS"
 }));
-app.options('*', cors());
+app.get('/env.js', (req, res) => {
+  res.type('application/javascript');
+  const config = {
+    apiBaseUrl: process.env.VITE_API_BASE_URL ?? '',
+  };
+  res.send(`window.__APP_CONFIG__ = ${JSON.stringify(config)};`);
+});
 
 app.use(express.static(distPath));
 
