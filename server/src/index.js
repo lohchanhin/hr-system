@@ -65,7 +65,14 @@ const app = express();
 const PORT = process.env.PORT;
 
 app.use(express.json());
-app.use(cors());
+app.use(cors({
+  origin: [
+    "https://hr-system-d7fc5ea7aab1.herokuapp.com", // 前端 domain
+    "http://localhost:5173" // 開發用
+  ],
+  credentials: true,
+  methods: "GET,POST,PUT,DELETE,OPTIONS"
+}));
 app.use(express.static(distPath));
 
 app.get('/api/health', (req, res) => {
