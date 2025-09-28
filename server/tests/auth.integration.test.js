@@ -42,8 +42,17 @@ describe('Auth Integration', () => {
     expect(mockEmployee.findOne).toHaveBeenCalledWith({ username: 'tester' })
     expect(selectMock).toHaveBeenCalledWith('+passwordHash')
     expect(res.status).toBe(200)
-    expect(res.body.user).toMatchObject({ username: 'tester' })
+    expect(res.body.user).toMatchObject({
+      username: 'tester',
+      name: 'Tester',
+      role: 'employee',
+      organizationName: '',
+      departmentName: '',
+      subDepartmentName: '',
+      employeeNumber: '',
+    })
     expect(res.body.user.employeeId).toBe(String(employee._id))
+    expect(res.body.user.id).toBe(String(employee._id))
     expect(res.body.token).toBeDefined()
   })
 })
