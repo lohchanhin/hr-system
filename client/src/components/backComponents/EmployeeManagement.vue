@@ -165,8 +165,21 @@
                   </el-form-item>
 
                   <el-form-item label="權限職等">
-                    <el-select v-model="employeeForm.permissionGrade" placeholder="選擇職等">
-                      <el-option v-for="g in PERMISSION_GRADE_OPTIONS" :key="g" :label="g" :value="g" />
+                    <el-select
+                      v-model="employeeForm.permissionGrade"
+                      placeholder="選擇職等"
+                      class="code-select"
+                    >
+                      <el-option
+                        v-for="g in PERMISSION_GRADE_OPTIONS"
+                        :key="g.level"
+                        :label="formatPermissionGradeLabel(g)"
+                        :value="g.level"
+                      >
+                        <div class="option-wrapper">
+                          <div class="option-title">{{ g.level }}｜{{ g.description }}</div>
+                        </div>
+                      </el-option>
                     </el-select>
                   </el-form-item>
                 </div>
@@ -188,14 +201,38 @@
                 <div class="form-group">
                   <h3 class="form-group-title">簽核權限</h3>
                   <el-form-item label="簽核角色">
-                    <el-select v-model="employeeForm.signRole" placeholder="選擇簽核角色">
-                      <el-option v-for="o in SIGN_ROLES" :key="o" :label="o" :value="o" />
-                    </el-select>
+                    <el-radio-group v-model="employeeForm.signRole" class="sign-role-group">
+                      <el-radio
+                        v-for="option in SIGN_ROLE_OPTIONS"
+                        :key="option.id"
+                        :label="option.id"
+                        class="sign-role-radio"
+                      >
+                        <div class="option-wrapper">
+                          <div class="option-title">{{ option.id }}｜{{ option.label }}</div>
+                          <div class="option-desc">{{ option.description }}</div>
+                        </div>
+                      </el-radio>
+                    </el-radio-group>
                   </el-form-item>
-                  
+
                   <el-form-item label="簽核層級">
-                    <el-select v-model="employeeForm.signLevel" placeholder="選擇層級">
-                      <el-option v-for="l in SIGN_LEVELS" :key="l" :label="l" :value="l" />
+                    <el-select
+                      v-model="employeeForm.signLevel"
+                      placeholder="選擇層級"
+                      class="code-select"
+                    >
+                      <el-option
+                        v-for="level in SIGN_LEVEL_OPTIONS"
+                        :key="level.id"
+                        :label="formatSignLevelLabel(level)"
+                        :value="level.id"
+                      >
+                        <div class="option-wrapper">
+                          <div class="option-title">{{ level.id }}｜{{ level.label }}</div>
+                          <div class="option-desc">{{ level.description }}</div>
+                        </div>
+                      </el-option>
                     </el-select>
                   </el-form-item>
                   
@@ -1017,7 +1054,13 @@ const ROLE_OPTIONS = [
   { label: '主管', value: 'supervisor' },
   { label: '員工', value: 'employee' },
 ]
-const PERMISSION_GRADE_OPTIONS = ['一級', '二級', '三級']          // 權限/職等(不可控僅示意)
+const PERMISSION_GRADE_OPTIONS = [
+  { level: 'L1', description: '一般使用者 / 基層專員' },
+  { level: 'L2', description: '資深專員 / 小組長' },
+  { level: 'L3', description: '部門主管 / 課長' },
+  { level: 'L4', description: '處室主管 / 協理' },
+  { level: 'L5', description: '高階決策者 / 最高主管' }
+] // 權限/職等(不可控僅示意)
 const TITLE_OPTIONS = ['護理師', '照顧服務員', '社工師', '物理治療師', '職能治療師', '行政人員'] // C03
 const PRACTICE_TITLE_OPTIONS = ['護理師', '社工師', '物理治療師', '職能治療師', '醫師']        // C04
 const LANGUAGE_OPTIONS = ['中文', '台語', '客語', '英語', '馬來語']                               // C05
@@ -1029,12 +1072,94 @@ const RELATION_OPTIONS = ['父', '母', '配偶', '子', '女', '兄', '姊', '�
 const CREDIT_CATEGORIES = ['院內', '院外', '線上', '研討會', '自學']                               // C10
 const SALARY_TYPES = ['月薪', '日薪', '時薪']
 const SALARY_ITEM_OPTIONS = ['本薪', '全勤', '加班費', '交通津貼', '伙食津貼', '績效獎金']
-const SIGN_ROLES = ['填報', '覆核', '審核', '核定']                                              // 簽核角色
-const SIGN_LEVELS = ['L1', 'L2', 'L3', 'L4']                                                     // 簽核層級
+const SIGN_ROLE_OPTIONS = [
+  { id: 'R001', label: '填報', description: '提出申請與初始資料填寫' },
+  { id: 'R002', label: '覆核', description: '確認申請內容與佐證完整性' },
+  { id: 'R003', label: '審核', description: '評估申請是否符合政策與規範' },
+  { id: 'R004', label: '核定', description: '做出最終核准或駁回決策' },
+  { id: 'R005', label: '知會', description: '接收流程進度並保留紀錄' },
+  { id: 'R006', label: '財務覆核', description: '檢視成本預算與財務影響' },
+  { id: 'R007', label: '人資覆核', description: '確保人事政策與法規符合' }
+] // 簽核角色
+const SIGN_LEVEL_OPTIONS = [
+  { id: 'U001', label: 'L1', description: '單位承辦或第一層主管' },
+  { id: 'U002', label: 'L2', description: '部門主管或組長' },
+  { id: 'U003', label: 'L3', description: '處室主管或經理' },
+  { id: 'U004', label: 'L4', description: '高階主管或副執行長' },
+  { id: 'U005', label: 'L5', description: '執行長 / 院長 / 董事會' }
+] // 簽核層級
 const DEFAULT_TAGS = ['資深', '新人', '外聘', '志工']
 const SERVICE_TYPES = ['義務役', '志願役', '替代役', '免役', '尚未服役']
 const ABO_TYPES = ['A', 'B', 'O', 'AB', 'HR']                                                   // 依你的表格式
 const CURRENT_YEAR = new Date().getFullYear()
+
+const SIGN_ROLE_ID_SET = new Set(SIGN_ROLE_OPTIONS.map(option => option.id))
+const SIGN_ROLE_LABEL_TO_ID = new Map(SIGN_ROLE_OPTIONS.map(option => [option.label, option.id]))
+;['填報人員', '覆核人員', '審核人員', '核定人員', '知會人員', '財務覆核人員', '人資覆核人員'].forEach((alias, index) => {
+  const option = SIGN_ROLE_OPTIONS[index]
+  if (option) SIGN_ROLE_LABEL_TO_ID.set(alias, option.id)
+})
+
+const SIGN_LEVEL_ID_SET = new Set(SIGN_LEVEL_OPTIONS.map(level => level.id))
+const SIGN_LEVEL_LABEL_TO_ID = new Map(SIGN_LEVEL_OPTIONS.map(level => [level.label, level.id]))
+
+const PERMISSION_GRADE_LEVEL_SET = new Set(PERMISSION_GRADE_OPTIONS.map(option => option.level))
+const PERMISSION_GRADE_LABEL_TO_LEVEL = new Map([
+  ['一級', 'L1'],
+  ['二級', 'L2'],
+  ['三級', 'L3'],
+  ['四級', 'L4'],
+  ['五級', 'L5'],
+  ['一般職等', 'L1'],
+  ['資深職等', 'L2'],
+  ['主管職等', 'L3'],
+])
+
+function normalizeSignRole(value) {
+  if (!value && value !== 0) return ''
+  if (typeof value === 'string') {
+    const trimmed = value.trim()
+    if (!trimmed) return ''
+    if (SIGN_ROLE_ID_SET.has(trimmed)) return trimmed
+    const mapped = SIGN_ROLE_LABEL_TO_ID.get(trimmed)
+    return mapped ?? trimmed
+  }
+  return value
+}
+
+function normalizeSignLevel(value) {
+  if (!value && value !== 0) return ''
+  if (typeof value === 'string') {
+    const trimmed = value.trim()
+    if (!trimmed) return ''
+    if (SIGN_LEVEL_ID_SET.has(trimmed)) return trimmed
+    const mapped = SIGN_LEVEL_LABEL_TO_ID.get(trimmed)
+    return mapped ?? trimmed
+  }
+  return value
+}
+
+function normalizePermissionGrade(value) {
+  if (!value && value !== 0) return ''
+  if (typeof value === 'string') {
+    const trimmed = value.trim()
+    if (!trimmed) return ''
+    if (PERMISSION_GRADE_LEVEL_SET.has(trimmed)) return trimmed
+    const mapped = PERMISSION_GRADE_LABEL_TO_LEVEL.get(trimmed)
+    return mapped ?? trimmed
+  }
+  return value
+}
+
+function formatPermissionGradeLabel(option) {
+  if (!option) return ''
+  return `${option.level}｜${option.description}`
+}
+
+function formatSignLevelLabel(option) {
+  if (!option) return ''
+  return `${option.id}｜${option.label}`
+}
 
 /* 狀態 --------------------------------------------------------------------- */
 const employeeDialogTab = ref('account')
@@ -1317,6 +1442,9 @@ async function fetchEmployees() {
       const appointment = e?.appointment ?? {}
       return {
         ...e,
+        permissionGrade: normalizePermissionGrade(e?.permissionGrade),
+        signRole: normalizeSignRole(e?.signRole),
+        signLevel: normalizeSignLevel(e?.signLevel),
         organization: e.organization?._id || e.organization || '',
         department: e.department?._id || e.department || '',
         subDepartment: e.subDepartment?._id || e.subDepartment || '',
@@ -1568,6 +1696,9 @@ async function openEmployeeDialog(index = null) {
     editEmployeeId = emp._id || ''
     // 以 emptyEmployee 為基底，可避免漏欄位
     employeeForm.value = { ...structuredClone(emptyEmployee), ...emp, password: '', photoList: [] }
+    employeeForm.value.permissionGrade = normalizePermissionGrade(employeeForm.value.permissionGrade)
+    employeeForm.value.signRole = normalizeSignRole(employeeForm.value.signRole)
+    employeeForm.value.signLevel = normalizeSignLevel(employeeForm.value.signLevel)
     employeeForm.value.photo = employeeForm.value.photo || ''
     const existingPhotoFile = buildPhotoUploadFile(employeeForm.value.photo, employeeForm.value.name)
     employeeForm.value.photoList = existingPhotoFile ? [existingPhotoFile] : []
@@ -1838,6 +1969,51 @@ function getStatusTagType(status) {
 <style scoped>
 .employee-management {
   padding: 0;
+}
+
+.code-select {
+  width: 100%;
+}
+
+.option-wrapper {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+
+.option-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.option-desc {
+  font-size: 12px;
+  color: #64748b;
+}
+
+.sign-role-group {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.sign-role-radio {
+  align-items: flex-start;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 12px;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.sign-role-radio:hover {
+  border-color: #38bdf8;
+  box-shadow: 0 6px 16px rgba(14, 116, 144, 0.12);
+}
+
+.sign-role-radio :deep(.el-radio__label) {
+  width: 100%;
 }
 
 /* 頁面標題區域 */
