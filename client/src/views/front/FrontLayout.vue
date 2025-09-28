@@ -9,7 +9,35 @@
           <el-avatar :size="40" class="user-avatar">
             <i class="el-icon-user"></i>
           </el-avatar>
-          <span class="user-name">{{ username || '員工' }}</span>
+          <span class="user-name">{{ displayName }}</span>
+          <el-descriptions
+            class="profile-descriptions"
+            size="small"
+            :column="1"
+            border
+            :label-style="{ width: '72px' }"
+          >
+            <el-descriptions-item label="姓名">
+              <el-tooltip :content="displayName" placement="top">
+                <span class="info-text">{{ displayName }}</span>
+              </el-tooltip>
+            </el-descriptions-item>
+            <el-descriptions-item label="機構">
+              <el-tooltip :content="displayOrganization" placement="top">
+                <span class="info-text">{{ displayOrganization }}</span>
+              </el-tooltip>
+            </el-descriptions-item>
+            <el-descriptions-item label="部門">
+              <el-tooltip :content="displayDepartment" placement="top">
+                <span class="info-text">{{ displayDepartment }}</span>
+              </el-tooltip>
+            </el-descriptions-item>
+            <el-descriptions-item label="小單位">
+              <el-tooltip :content="displaySubDepartment" placement="top">
+                <span class="info-text">{{ displaySubDepartment }}</span>
+              </el-tooltip>
+            </el-descriptions-item>
+          </el-descriptions>
         </div>
       </div>
       
@@ -53,6 +81,7 @@
 import { ref, onMounted, computed } from "vue";
 import { useRouter, useRoute } from "vue-router";
 import { useMenuStore } from "../../stores/menu";
+import { useProfileStore } from "../../stores/profile";
 import { clearToken } from "../../utils/tokenService";
 import { storeToRefs } from "pinia";
 
@@ -60,9 +89,44 @@ const router = useRouter();
 const route = useRoute();
 const menuStore = useMenuStore();
 const { items: menuItems } = storeToRefs(menuStore);
+const profileStore = useProfileStore();
+const { profile } = storeToRefs(profileStore);
 
 const username = ref("");
 const activeMenu = computed(() => route.name || "");
+
+const fallbackText = "未提供";
+
+function formatText(value, fallback = fallbackText) {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed.length ? trimmed : fallback;
+  }
+  if (value) {
+    return `${value}`;
+  }
+  return fallback;
+}
+
+const displayName = computed(() => {
+  const fromProfile = profile.value?.name;
+  if (typeof fromProfile === "string" && fromProfile.trim().length) {
+    return fromProfile.trim();
+  }
+  return username.value || "員工";
+});
+
+const displayOrganization = computed(() =>
+  formatText(profile.value?.organizationName)
+);
+
+const displayDepartment = computed(() =>
+  formatText(profile.value?.departmentName)
+);
+
+const displaySubDepartment = computed(() =>
+  formatText(profile.value?.subDepartmentName)
+);
 
 onMounted(() => {
   const savedUsername = localStorage.getItem("username");
@@ -73,19 +137,28 @@ onMounted(() => {
   if (menuItems.value.length === 0) {
     menuStore.fetchMenu();
   }
+
+  profileStore
+    .fetchProfile()
+    .catch(() => {
+      // 取得個人資料失敗時不阻擋主畫面載入，於此靜默處理
+    });
 });
 
 function gotoPage(pageName) {
   router.push({ name: pageName });
 }
 
-  function onLogout() {
-    localStorage.removeItem("role");
-    localStorage.removeItem("username");
-    clearToken();
-    menuStore.setMenu([]);
-    router.push(`/`);
-  }
+function onLogout() {
+  localStorage.removeItem("role");
+  localStorage.removeItem("username");
+  localStorage.removeItem("employeeId");
+  sessionStorage.removeItem("employeeId");
+  clearToken();
+  menuStore.setMenu([]);
+  profileStore.clearProfile();
+  router.push(`/`);
+}
 </script>
 
 <style scoped>
@@ -135,6 +208,31 @@ function gotoPage(pageName) {
   color: #cbd5e1;
   font-size: 14px;
   font-weight: 500;
+}
+
+.profile-descriptions {
+  width: 100%;
+  margin-top: 12px;
+  background-color: rgba(15, 23, 42, 0.35);
+  border-color: rgba(203, 213, 225, 0.2);
+  --el-descriptions-table-row-bg-color: transparent;
+  --el-descriptions-table-border: 1px solid rgba(148, 163, 184, 0.2);
+}
+
+.profile-descriptions ::v-deep(.el-descriptions__label) {
+  color: #93c5fd;
+}
+
+.profile-descriptions ::v-deep(.el-descriptions__content) {
+  color: #e2e8f0;
+}
+
+.info-text {
+  display: inline-block;
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .sidebar-menu {
