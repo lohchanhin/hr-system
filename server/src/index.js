@@ -21,6 +21,7 @@ import subDepartmentRoutes from './routes/subDepartmentRoutes.js';
 import holidayRoutes from './routes/holidayRoutes.js';
 import deptScheduleRoutes from './routes/deptScheduleRoutes.js';
 import roleRoutes from './routes/roleRoutes.js';
+import otherControlSettingRoutes from './routes/otherControlSettingRoutes.js';
 
 import salarySettingRoutes from './routes/salarySettingRoutes.js';
 import breakSettingRoutes from './routes/breakSettingRoutes.js';
@@ -151,6 +152,12 @@ app.use(
 app.use('/api/insurance', authenticate, authorizeRoles('admin'), insuranceRoutes);
 app.use('/api/approvals', authenticate, approvalRoutes);
 app.use('/api/menu', authenticate, menuRoutes);
+app.use(
+  '/api/other-control-settings',
+  authenticate,
+  authorizeRoles('admin'),
+  otherControlSettingRoutes
+);
 app.use(
   '/api/departments',
   authenticate,
