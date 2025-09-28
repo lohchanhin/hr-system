@@ -102,9 +102,9 @@
           <div class="content-header">
             <h2 class="section-title">部門列表</h2>
             <div class="header-actions">
-              <el-select 
-                v-model="selectedOrg" 
-                placeholder="篩選機構" 
+              <el-select
+                v-model="selectedOrg"
+                placeholder="篩選機構"
                 class="filter-select"
                 @change="fetchList('dept', selectedOrg)"
                 clearable
@@ -183,6 +183,12 @@
           <div class="content-header">
             <h2 class="section-title">小單位列表</h2>
             <div class="header-actions">
+              <el-tag
+                type="info"
+                class="dept-context-tag"
+              >
+                {{ selectedDeptContext || '請選擇部門' }}
+              </el-tag>
               <el-select
                 v-model="selectedDept"
                 placeholder="篩選部門"
@@ -516,6 +522,17 @@ const selectedDeptName = computed(() => {
   return dept ? dept.name : ''
 })
 
+const selectedDeptContext = computed(() => {
+  if (!selectedDept.value) return ''
+  const dept = deptList.value.find(d => d._id === selectedDept.value)
+  if (!dept) return ''
+  const orgId = dept.organization
+  const orgName = orgList.value.find(org => org._id === orgId)?.name
+  const deptName = dept.name
+  if (!orgName || !deptName) return ''
+  return `${orgName}-${deptName}`
+})
+
 const dialogTitle = computed(() => {
   const typeLabel = currentType.value === 'org'
     ? '機構'
@@ -543,8 +560,20 @@ async function fetchList(type, parentId) {
   if (res.ok) {
     const data = await res.json()
     if (type === 'org') orgList.value = data
-    else if (type === 'dept') deptList.value = data
-    else {
+    else if (type === 'dept') {
+      deptList.value = data.map(item => {
+        const orgField = item.organization
+        let orgId = ''
+        if (typeof orgField === 'string') orgId = orgField
+        else if (orgField && typeof orgField === 'object') {
+          orgId = orgField._id || orgField.id || ''
+        } else if ('organizationId' in item) {
+          orgId = item.organizationId
+        }
+        if (!orgId && parentId) orgId = parentId
+        return { ...item, organization: orgId }
+      })
+    } else {
       subList.value = data.map(item => ({
         ...item,
         shiftId: item.shiftId ?? item.shift ?? ''
@@ -913,6 +942,13 @@ watch(selectedDept, val => {
   display: flex;
   gap: 16px;
   align-items: center;
+}
+
+.dept-context-tag {
+  background: #eef2ff;
+  color: #4338ca;
+  border-color: transparent;
+  font-weight: 500;
 }
 
 .filter-select {

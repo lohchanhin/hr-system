@@ -51,8 +51,17 @@ describe('OrgDepartmentSetting.vue', () => {
   it('fetchList adds parent id query', async () => {
     const wrapper = mount(OrgDepartmentSetting, { global: { plugins: [ElementPlus] } })
     apiFetch.mockClear()
+    apiFetch.mockImplementationOnce(() =>
+      Promise.resolve({
+        ok: true,
+        json: async () => ([{ _id: 'd1', name: 'HR' }])
+      })
+    )
     await wrapper.vm.fetchList('dept', '123')
     expect(apiFetch).toHaveBeenCalledWith('/api/departments?organization=123')
+    expect(wrapper.vm.deptList).toEqual([
+      expect.objectContaining({ _id: 'd1', organization: '123' })
+    ])
   })
 
   it('merges schedule defaults when editing dept without data', async () => {
@@ -237,6 +246,30 @@ describe('OrgDepartmentSetting.vue', () => {
     const payload = JSON.parse(options.body)
     expect(payload.shiftId).toBe('s1')
     expect(payload).not.toHaveProperty('shift')
+  })
+
+  it('顯示選取部門的機構與部門組合', async () => {
+    const wrapper = mount(OrgDepartmentSetting, { global: { plugins: [ElementPlus] } })
+    wrapper.vm.orgList = [
+      { _id: 'org1', name: '總公司' },
+      { _id: 'org2', name: '分公司' }
+    ]
+    wrapper.vm.deptList = [
+      { _id: 'dept1', name: '人資部', organization: 'org1' },
+      { _id: 'dept2', name: '研發部', organization: 'org2' }
+    ]
+
+    wrapper.vm.selectedDept = 'dept1'
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('.dept-context-tag').text()).toBe('總公司-人資部')
+
+    wrapper.vm.selectedDept = 'dept2'
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('.dept-context-tag').text()).toBe('分公司-研發部')
+
+    wrapper.vm.selectedDept = ''
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('.dept-context-tag').text()).toBe('請選擇部門')
   })
 
   it('選取部門時顯示名稱會更新', async () => {
