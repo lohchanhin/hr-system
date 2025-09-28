@@ -97,6 +97,9 @@ describe('EmployeeManagement.vue', () => {
       username: 'u',
       password: 'p',
       role: 'admin',
+      permissionGrade: 'L3',
+      signRole: 'R003',
+      signLevel: 'U002',
       organization: 'o',
       department: 'd',
       gender: 'M',
@@ -118,6 +121,9 @@ describe('EmployeeManagement.vue', () => {
     expect(body.username).toBe('u')
     expect(body.password).toBe('p')
     expect(body.role).toBe('admin')
+    expect(body.permissionGrade).toBe('L3')
+    expect(body.signRole).toBe('R003')
+    expect(body.signLevel).toBe('U002')
     expect(body.laborPensionSelf).toBe(2500)
     expect(body.employeeAdvance).toBe(3600)
     expect(body.salaryItems).toEqual(['本薪'])
@@ -206,6 +212,39 @@ describe('EmployeeManagement.vue', () => {
     expect(wrapper.vm.employeeForm.trainings[0].category).toEqual(['院內'])
     expect(wrapper.vm.employeeForm.trainings[0].score).toBe(4)
     expect(wrapper.vm.employeeForm.trainings[0].fileList[0].url).toBe('https://file.example/train.pdf')
+  })
+
+  it('將舊版簽核設定轉換為代碼', async () => {
+    const responses = {
+      '/api/departments': [],
+      '/api/organizations': [],
+      '/api/sub-departments': [],
+      '/api/sub-departments?department=dep2': [],
+      '/api/employees': [
+        {
+          _id: 'e2',
+          name: '舊資料',
+          permissionGrade: '二級',
+          signRole: '覆核',
+          signLevel: 'L3',
+          organization: 'org2',
+          department: 'dep2',
+          gender: 'F',
+          email: 'legacy@example.com'
+        }
+      ]
+    }
+    apiFetch.mockImplementation(url =>
+      Promise.resolve({ ok: true, json: async () => responses[url] ?? [] })
+    )
+
+    const wrapper = mount(EmployeeManagement, { global: { stubs: elStubs } })
+    await flushPromises()
+    await wrapper.vm.openEmployeeDialog(0)
+
+    expect(wrapper.vm.employeeForm.permissionGrade).toBe('L2')
+    expect(wrapper.vm.employeeForm.signRole).toBe('R002')
+    expect(wrapper.vm.employeeForm.signLevel).toBe('U003')
   })
 
   it('儲存時會帶入證照與訓練檔案連結', async () => {
