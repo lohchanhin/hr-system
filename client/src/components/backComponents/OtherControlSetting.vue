@@ -355,17 +355,23 @@ const ipForm = ref({ label: '', address: '' })
 const fieldTypeOptions = [
   { label: '文字輸入', value: 'text' },
   { label: '多行文字', value: 'textarea' },
+  { label: '數字輸入', value: 'number' },
   { label: '單選選項', value: 'select' },
   { label: '複選', value: 'checkbox' },
-  { label: '日期', value: 'date' }
+  { label: '複合加選', value: 'composite' },
+  { label: '日期', value: 'date' },
+  { label: '時間區間', value: 'timeRange' },
+  { label: '布林選項', value: 'boolean' }
 ]
 const fieldTypeMap = fieldTypeOptions.reduce((map, option) => ({ ...map, [option.value]: option.label }), {})
 
-const customFields = ref([
+const defaultCustomFields = [
   {
     label: '員工證字號',
     fieldKey: 'nationalId',
     type: 'text',
+    category: 'employee',
+    group: '基本資料',
     required: true,
     description: '供報稅與投保使用'
   },
@@ -373,16 +379,175 @@ const customFields = ref([
     label: '制服尺寸',
     fieldKey: 'uniformSize',
     type: 'select',
+    category: 'employee',
+    group: '報到資訊',
     required: false,
     description: '入職前通知行政備貨'
+  },
+  {
+    label: '職稱選單 (C03)',
+    fieldKey: 'C03',
+    type: 'select',
+    category: 'dictionary',
+    group: '職務設定',
+    required: true,
+    description: '維護員工職稱清單'
+  },
+  {
+    label: '執業職稱選單 (C04)',
+    fieldKey: 'C04',
+    type: 'select',
+    category: 'dictionary',
+    group: '職務設定',
+    required: false,
+    description: '提供專業人員執業職稱選項'
+  },
+  {
+    label: '語言能力庫 (C05)',
+    fieldKey: 'C05',
+    type: 'composite',
+    category: 'dictionary',
+    group: '基本資料',
+    required: false,
+    description: '設定可勾選的語言能力與層級'
+  },
+  {
+    label: '身障等級 (C06)',
+    fieldKey: 'C06',
+    type: 'select',
+    category: 'dictionary',
+    group: '基本資料',
+    required: false,
+    description: '維護身心障礙手冊等級'
+  },
+  {
+    label: '身分類別 (C07)',
+    fieldKey: 'C07',
+    type: 'select',
+    category: 'dictionary',
+    group: '基本資料',
+    required: false,
+    description: '設定身份註記分類'
+  },
+  {
+    label: '教育程度 (C08)',
+    fieldKey: 'C08',
+    type: 'select',
+    category: 'dictionary',
+    group: '學歷資料',
+    required: false,
+    description: '維護教育程度選單'
+  },
+  {
+    label: '緊急聯絡人稱謂 (C09)',
+    fieldKey: 'C09',
+    type: 'select',
+    category: 'dictionary',
+    group: '聯絡資訊',
+    required: false,
+    description: '提供緊急聯絡人稱謂選項'
+  },
+  {
+    label: '教育訓練積分類別 (C10)',
+    fieldKey: 'C10',
+    type: 'select',
+    category: 'dictionary',
+    group: '教育訓練',
+    required: false,
+    description: '維護教育訓練積分類別'
+  },
+  {
+    label: '班別名稱 (C11)',
+    fieldKey: 'C11_name',
+    type: 'text',
+    category: 'dictionary',
+    group: '班別設定',
+    required: true,
+    description: '顯示於班別選單的名稱'
+  },
+  {
+    label: '班別說明 (C11)',
+    fieldKey: 'C11_content',
+    type: 'textarea',
+    category: 'dictionary',
+    group: '班別設定',
+    required: false,
+    description: '補充班別內容或注意事項'
+  },
+  {
+    label: '班別時段 (C11)',
+    fieldKey: 'C11_timeRange',
+    type: 'timeRange',
+    category: 'dictionary',
+    group: '班別設定',
+    required: true,
+    description: '設定班別的起訖時間'
+  },
+  {
+    label: '休息是否計薪 (C11)',
+    fieldKey: 'C11_paidBreak',
+    type: 'boolean',
+    category: 'dictionary',
+    group: '班別設定',
+    required: false,
+    description: '決定休息時間是否計薪'
+  },
+  {
+    label: '允許彈性時間 (C11)',
+    fieldKey: 'C11_allowFlexTime',
+    type: 'boolean',
+    category: 'dictionary',
+    group: '班別設定',
+    required: false,
+    description: '是否允許彈性前後時間'
+  },
+  {
+    label: '彈性區間分鐘數 (C11)',
+    fieldKey: 'C11_flexWindow',
+    type: 'number',
+    category: 'dictionary',
+    group: '班別設定',
+    required: false,
+    description: '可彈性調整的分鐘數'
+  },
+  {
+    label: '假別類別 (C12)',
+    fieldKey: 'C12',
+    type: 'select',
+    category: 'dictionary',
+    group: '假別設定',
+    required: true,
+    description: '維護假別類別與對應設定'
+  },
+  {
+    label: '加班原因 (C13)',
+    fieldKey: 'C13',
+    type: 'select',
+    category: 'dictionary',
+    group: '加班設定',
+    required: false,
+    description: '設定常用的加班原因'
+  },
+  {
+    label: '津貼項目 (C14)',
+    fieldKey: 'C14',
+    type: 'select',
+    category: 'dictionary',
+    group: '薪資設定',
+    required: false,
+    description: '維護津貼或補貼項目'
   }
-])
+]
+
+const customFields = ref([...defaultCustomFields])
 const fieldDialogVisible = ref(false)
 const editingFieldIndex = ref(-1)
 const fieldForm = ref({
   label: '',
   fieldKey: '',
   type: 'text',
+  category: '',
+  group: '',
   required: false,
   description: ''
 })
@@ -469,8 +634,10 @@ async function loadSettings() {
           ipWhitelist.value = data.security.ipWhitelist
         }
       }
-      if (Array.isArray(data.customFields)) {
+      if (Array.isArray(data.customFields) && data.customFields.length) {
         customFields.value = data.customFields
+      } else {
+        customFields.value = [...defaultCustomFields]
       }
       if (data.integration) {
         integrationForm.value = { ...integrationForm.value, ...data.integration }
@@ -563,6 +730,8 @@ function openFieldDialog(index = -1) {
       label: '',
       fieldKey: '',
       type: 'text',
+      category: '',
+      group: '',
       required: false,
       description: ''
     }
