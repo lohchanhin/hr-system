@@ -115,6 +115,49 @@
         </div>
       </el-tab-pane>
 
+      <el-tab-pane label="字典項目" name="item-setting">
+        <div class="tab-content">
+          <el-alert
+            title="維護人資字典選項，確保報到與流程表單可即時使用最新的項目"
+            type="info"
+            show-icon
+            class="info-alert"
+          />
+          <div class="dictionary-action-row">
+            <div class="dictionary-header">
+              <h3>{{ activeDictionaryLabel }}</h3>
+              <span class="hint">字典代碼：{{ activeDictionaryKey }}</span>
+            </div>
+            <div class="dictionary-controls">
+              <el-select v-model="activeDictionaryKey" size="small" class="dictionary-select">
+                <el-option
+                  v-for="dict in dictionaryDefinitions"
+                  :key="dict.key"
+                  :label="`${dict.key} ${dict.label}`"
+                  :value="dict.key"
+                />
+              </el-select>
+              <el-button type="primary" size="small" @click="openOptionDialog()">新增選項</el-button>
+            </div>
+          </div>
+          <el-table :data="itemSettings[activeDictionaryKey] || []" border>
+            <el-table-column type="index" width="60" label="#" />
+            <el-table-column prop="name" label="選項名稱" />
+            <el-table-column prop="code" label="代碼" width="160" />
+            <el-table-column label="操作" width="200">
+              <template #default="{ $index }">
+                <el-button size="small" @click="openOptionDialog(activeDictionaryKey, $index)">編輯</el-button>
+                <el-button
+                  size="small"
+                  type="danger"
+                  @click="removeOption(activeDictionaryKey, $index)"
+                >刪除</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+        </div>
+      </el-tab-pane>
+
       <el-tab-pane label="自訂欄位" name="custom-field">
         <div class="tab-content">
           <el-alert
@@ -241,6 +284,33 @@
       </template>
     </el-dialog>
 
+    <el-dialog v-model="optionDialogVisible" :title="optionDialogTitle" width="420px">
+      <el-form :model="optionForm" label-width="100px">
+        <el-form-item label="所屬字典">
+          <el-select v-model="optionForm.dictionaryKey" :disabled="editingOptionIndex > -1">
+            <el-option
+              v-for="dict in dictionaryDefinitions"
+              :key="dict.key"
+              :label="`${dict.key} ${dict.label}`"
+              :value="dict.key"
+            />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="選項名稱">
+          <el-input v-model="optionForm.name" placeholder="顯示於下拉選單的名稱" />
+        </el-form-item>
+        <el-form-item label="選項代碼">
+          <el-input v-model="optionForm.code" placeholder="系統對應的代碼" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <span class="dialog-footer">
+          <el-button @click="optionDialogVisible = false">取消</el-button>
+          <el-button type="primary" @click="saveOption">儲存</el-button>
+        </span>
+      </template>
+    </el-dialog>
+
     <el-dialog v-model="fieldDialogVisible" title="自訂欄位" width="480px">
       <el-form :model="fieldForm" label-width="100px">
         <el-form-item label="欄位名稱">
@@ -308,11 +378,64 @@
 </template>
 
 <script setup>
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { apiFetch } from '../../api'
 
 const activeTab = ref('notification')
+
+const dictionaryDefinitions = ref([
+  { key: 'C03', label: '職稱' },
+  { key: 'C04', label: '執業職稱' },
+  { key: 'C05', label: '語言能力' },
+  { key: 'C06', label: '身障等級' },
+  { key: 'C07', label: '身分類別' }
+])
+
+function createDefaultItemSettings() {
+  const defaults = {
+    C03: [
+      { name: '人資專員', code: 'HR-S' },
+      { name: '工程師', code: 'ENG' }
+    ],
+    C04: [
+      { name: '護理師', code: 'NURSE' },
+      { name: '會計師', code: 'CPA' }
+    ],
+    C05: [
+      { name: '英文 — 流利', code: 'EN_FL' },
+      { name: '日文 — 進階', code: 'JP_ADV' }
+    ],
+    C06: [
+      { name: '第一類中度', code: 'DISA_MID' },
+      { name: '第二類輕度', code: 'DISA_LIGHT' }
+    ],
+    C07: [
+      { name: '正式員工', code: 'FULLTIME' },
+      { name: '約聘人員', code: 'CONTRACT' }
+    ]
+  }
+  dictionaryDefinitions.value.forEach(dict => {
+    if (!defaults[dict.key]) {
+      defaults[dict.key] = []
+    }
+  })
+  return defaults
+}
+
+const itemSettings = ref(createDefaultItemSettings())
+const activeDictionaryKey = ref(dictionaryDefinitions.value[0]?.key ?? '')
+const optionDialogVisible = ref(false)
+const editingOptionIndex = ref(-1)
+const optionForm = ref({ dictionaryKey: activeDictionaryKey.value, name: '', code: '' })
+
+const activeDictionaryLabel = computed(() => {
+  return dictionaryDefinitions.value.find(dict => dict.key === activeDictionaryKey.value)?.label || ''
+})
+
+const optionDialogTitle = computed(() =>
+  editingOptionIndex.value > -1 ? '編輯字典選項' : '新增字典選項'
+)
 
 const notificationForm = ref({
   enableEmail: true,
@@ -639,6 +762,28 @@ async function loadSettings() {
       } else {
         customFields.value = [...defaultCustomFields]
       }
+      if (data.itemSettings && typeof data.itemSettings === 'object') {
+        Object.keys(data.itemSettings).forEach(key => {
+          if (!dictionaryDefinitions.value.some(dict => dict.key === key)) {
+            dictionaryDefinitions.value.push({ key, label: key })
+          }
+        })
+        const merged = createDefaultItemSettings()
+        dictionaryDefinitions.value.forEach(dict => {
+          if (Array.isArray(data.itemSettings[dict.key])) {
+            merged[dict.key] = data.itemSettings[dict.key].map(option => ({
+              name: option.name ?? '',
+              code: option.code ?? ''
+            }))
+          }
+        })
+        itemSettings.value = merged
+        if (!dictionaryDefinitions.value.some(dict => dict.key === activeDictionaryKey.value)) {
+          activeDictionaryKey.value = dictionaryDefinitions.value[0]?.key ?? ''
+        }
+      } else {
+        itemSettings.value = createDefaultItemSettings()
+      }
       if (data.integration) {
         integrationForm.value = { ...integrationForm.value, ...data.integration }
         integrationStatus.value = {
@@ -684,6 +829,95 @@ async function saveSecuritySetting() {
     ElMessage.success('已儲存安全設定')
   } catch (error) {
     ElMessage.error('儲存安全設定時發生問題')
+  }
+}
+
+async function saveItemSettings(successMessage = '已儲存字典項目設定') {
+  try {
+    const res = await apiFetch(
+      '/api/other-control-settings/item-settings',
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ itemSettings: itemSettings.value })
+      },
+      { autoRedirect: false }
+    )
+    if (!res.ok) throw new Error('儲存失敗')
+    if (successMessage) {
+      ElMessage.success(successMessage)
+    }
+    return true
+  } catch (error) {
+    ElMessage.error('儲存字典項目時發生問題')
+    return false
+  }
+}
+
+function openOptionDialog(dictionaryKey = activeDictionaryKey.value, index = -1) {
+  if (dictionaryKey) {
+    activeDictionaryKey.value = dictionaryKey
+  }
+  editingOptionIndex.value = index
+  if (index > -1) {
+    const target = itemSettings.value[dictionaryKey]?.[index]
+    if (target) {
+      optionForm.value = {
+        dictionaryKey,
+        name: target.name,
+        code: target.code
+      }
+    }
+  } else {
+    optionForm.value = {
+      dictionaryKey: dictionaryKey || dictionaryDefinitions.value[0]?.key || '',
+      name: '',
+      code: ''
+    }
+  }
+  optionDialogVisible.value = true
+}
+
+async function saveOption() {
+  if (!optionForm.value.name || !optionForm.value.code || !optionForm.value.dictionaryKey) {
+    ElMessage.warning('請完整填寫字典與選項資訊')
+    return
+  }
+  const previousState = JSON.parse(JSON.stringify(itemSettings.value))
+  const dictionaryKey = optionForm.value.dictionaryKey
+  const options = [...(previousState[dictionaryKey] || [])]
+  if (editingOptionIndex.value > -1) {
+    options.splice(editingOptionIndex.value, 1, {
+      name: optionForm.value.name,
+      code: optionForm.value.code
+    })
+  } else {
+    options.push({ name: optionForm.value.name, code: optionForm.value.code })
+  }
+  itemSettings.value = { ...previousState, [dictionaryKey]: options }
+  const message = editingOptionIndex.value > -1 ? '已更新字典選項' : '已新增字典選項'
+  const saved = await saveItemSettings(message)
+  if (saved) {
+    optionDialogVisible.value = false
+  } else {
+    itemSettings.value = previousState
+  }
+}
+
+async function removeOption(dictionaryKey, index) {
+  if (!dictionaryKey || index < 0) return
+  try {
+    await ElMessageBox.confirm('確定要刪除此選項嗎？', '提醒', { type: 'warning' })
+  } catch (error) {
+    return
+  }
+  const previousState = JSON.parse(JSON.stringify(itemSettings.value))
+  const options = [...(previousState[dictionaryKey] || [])]
+  options.splice(index, 1)
+  itemSettings.value = { ...previousState, [dictionaryKey]: options }
+  const saved = await saveItemSettings('已刪除字典選項')
+  if (!saved) {
+    itemSettings.value = previousState
   }
 }
 
@@ -881,6 +1115,36 @@ function toggleRuleStatus(index) {
 
 .info-alert {
   margin-bottom: 12px;
+}
+
+.dictionary-action-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+  gap: 12px;
+}
+
+.dictionary-header {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.dictionary-header h3 {
+  margin: 0;
+  font-size: 18px;
+  color: #1e293b;
+}
+
+.dictionary-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.dictionary-select {
+  width: 200px;
 }
 
 .status-alert {
