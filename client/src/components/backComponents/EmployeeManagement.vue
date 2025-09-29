@@ -63,7 +63,7 @@
           <el-table-column prop="title" label="職稱" width="150">
             <template #default="{ row }">
               <el-tag v-if="row.title" type="info" class="title-tag">
-                {{ row.title }}
+                {{ getOptionLabel(titleOptions, row.title) }}
               </el-tag>
               <span v-else class="no-data">未設定</span>
             </template>
@@ -333,8 +333,19 @@
                   </div>
                   
                   <el-form-item label="語言能力">
-                    <el-select v-model="employeeForm.languages" multiple filterable placeholder="選擇語言">
-                      <el-option v-for="lan in LANGUAGE_OPTIONS" :key="lan" :label="lan" :value="lan" />
+                    <el-select
+                      v-model="employeeForm.languages"
+                      multiple
+                      filterable
+                      placeholder="選擇語言"
+                      :disabled="!languageOptions.length"
+                    >
+                      <el-option
+                        v-for="option in languageOptions"
+                        :key="option.value"
+                        :label="option.label"
+                        :value="option.value"
+                      />
                     </el-select>
                   </el-form-item>
 
@@ -344,12 +355,13 @@
                         v-model="employeeForm.disabilityLevel"
                         placeholder="選擇等級"
                         clearable
+                        :disabled="!disabilityLevelOptions.length"
                       >
                         <el-option
-                          v-for="level in DISABILITY_LEVELS"
-                          :key="level"
-                          :label="level"
-                          :value="level"
+                          v-for="option in disabilityLevelOptions"
+                          :key="option.value"
+                          :label="option.label"
+                          :value="option.value"
                         />
                       </el-select>
                     </el-form-item>
@@ -360,12 +372,13 @@
                         filterable
                         collapse-tags
                         placeholder="選擇身份別"
+                        :disabled="!identityCategoryOptions.length"
                       >
                         <el-option
-                          v-for="flag in IDENTITY_FLAGS"
-                          :key="flag"
-                          :label="flag"
-                          :value="flag"
+                          v-for="option in identityCategoryOptions"
+                          :key="option.value"
+                          :label="option.label"
+                          :value="option.value"
                         />
                       </el-select>
                     </el-form-item>
@@ -467,13 +480,31 @@
                   <h3 class="form-group-title">職務資訊</h3>
                   <div class="form-row">
                     <el-form-item label="職稱">
-                      <el-select v-model="employeeForm.title" placeholder="選擇職稱">
-                        <el-option v-for="t in TITLE_OPTIONS" :key="t" :label="t" :value="t" />
+                      <el-select
+                        v-model="employeeForm.title"
+                        placeholder="選擇職稱"
+                        :disabled="!titleOptions.length"
+                      >
+                        <el-option
+                          v-for="option in titleOptions"
+                          :key="option.value"
+                          :label="option.label"
+                          :value="option.value"
+                        />
                       </el-select>
                     </el-form-item>
                     <el-form-item label="執業職稱">
-                      <el-select v-model="employeeForm.practiceTitle" placeholder="選擇執業職稱">
-                        <el-option v-for="t in PRACTICE_TITLE_OPTIONS" :key="t" :label="t" :value="t" />
+                      <el-select
+                        v-model="employeeForm.practiceTitle"
+                        placeholder="選擇執業職稱"
+                        :disabled="!practiceTitleOptions.length"
+                      >
+                        <el-option
+                          v-for="option in practiceTitleOptions"
+                          :key="option.value"
+                          :label="option.label"
+                          :value="option.value"
+                        />
                       </el-select>
                     </el-form-item>
                   </div>
@@ -620,8 +651,17 @@
                   <h3 class="form-group-title">學歷資訊</h3>
                   <div class="form-row">
                     <el-form-item label="教育程度">
-                      <el-select v-model="employeeForm.educationLevel" placeholder="選擇教育程度">
-                        <el-option v-for="e in EDUCATION_LEVELS" :key="e" :label="e" :value="e" />
+                      <el-select
+                        v-model="employeeForm.educationLevel"
+                        placeholder="選擇教育程度"
+                        :disabled="!educationLevelOptions.length"
+                      >
+                        <el-option
+                          v-for="option in educationLevelOptions"
+                          :key="option.value"
+                          :label="option.label"
+                          :value="option.value"
+                        />
                       </el-select>
                     </el-form-item>
                     <el-form-item label="學校名稱">
@@ -639,12 +679,13 @@
                         placeholder="選擇畢業狀態"
                         clearable
                         @clear="onGraduationStatusClear"
+                        :disabled="!graduationStatusOptions.length"
                       >
                         <el-option
-                          v-for="status in GRADUATION_STATUSES"
-                          :key="status"
-                          :label="status"
-                          :value="status"
+                          v-for="option in graduationStatusOptions"
+                          :key="option.value"
+                          :label="option.label"
+                          :value="option.value"
                         />
                       </el-select>
                     </el-form-item>
@@ -712,7 +753,12 @@
                       </el-form-item>
                       <el-form-item label="關係">
                         <el-select v-model="employeeForm.emergency1.relation" placeholder="選擇關係">
-                          <el-option v-for="r in RELATION_OPTIONS" :key="'r1-'+r" :label="r" :value="r" />
+                        <el-option
+                          v-for="option in relationOptions"
+                          :key="`r1-${option.value}`"
+                          :label="option.label"
+                          :value="option.value"
+                        />
                         </el-select>
                       </el-form-item>
                     </div>
@@ -734,7 +780,12 @@
                       </el-form-item>
                       <el-form-item label="關係">
                         <el-select v-model="employeeForm.emergency2.relation" placeholder="選擇關係">
-                          <el-option v-for="r in RELATION_OPTIONS" :key="'r2-'+r" :label="r" :value="r" />
+                        <el-option
+                          v-for="option in relationOptions"
+                          :key="`r2-${option.value}`"
+                          :label="option.label"
+                          :value="option.value"
+                        />
                         </el-select>
                       </el-form-item>
                     </div>
@@ -885,7 +936,12 @@
                             collapse-tags
                             placeholder="選擇積分類別"
                           >
-                            <el-option v-for="cat in CREDIT_CATEGORIES" :key="cat" :label="cat" :value="cat" />
+                            <el-option
+                              v-for="option in creditCategoryOptions"
+                              :key="option.value"
+                              :label="option.label"
+                              :value="option.value"
+                            />
                           </el-select>
                         </el-form-item>
                       </div>
@@ -1048,6 +1104,87 @@ import { REQUIRED_FIELDS } from './requiredFields'
 
 const router = useRouter()
 
+function extractOptionValue(option) {
+  if (option === null || option === undefined) return ''
+  if (typeof option === 'string') return option
+  if (typeof option === 'number' || typeof option === 'boolean') return String(option)
+  if (typeof option === 'object') {
+    const value =
+      option.code ??
+      option.value ??
+      option.name ??
+      option.label ??
+      (typeof option.toString === 'function' ? option.toString() : '')
+    if (typeof value === 'string') return value
+    if (typeof value === 'number' || typeof value === 'boolean') return String(value)
+    return ''
+  }
+  return ''
+}
+
+function createOptionListFromStrings(list = []) {
+  const array = Array.isArray(list) ? list : [list]
+  return array
+    .map(item => {
+      if (item === null || item === undefined) return null
+      if (typeof item === 'object' && !Array.isArray(item)) {
+        const label =
+          item.name ??
+          item.label ??
+          item.value ??
+          item.code ??
+          (typeof item.toString === 'function' ? item.toString() : '')
+        let value = item.code ?? item.value ?? ''
+        if (!value && label) value = label
+        if (!label && !value) return null
+        const normalizedValue = typeof value === 'string' ? value : String(value)
+        return {
+          label: label || normalizedValue,
+          value: normalizedValue
+        }
+      }
+      const stringValue = String(item).trim()
+      if (!stringValue) return null
+      return { label: stringValue, value: stringValue }
+    })
+    .filter(Boolean)
+}
+
+function cloneOptionList(list = []) {
+  return (Array.isArray(list) ? list : []).map(option => ({ ...option }))
+}
+
+function normalizeDictionaryOptions(options, fallback = []) {
+  if (!Array.isArray(options)) return cloneOptionList(fallback)
+  const normalized = createOptionListFromStrings(options)
+  return normalized.length ? normalized : cloneOptionList(fallback)
+}
+
+function toOptionValueArray(value) {
+  const list = Array.isArray(value)
+    ? value
+    : value === null || value === undefined || value === ''
+      ? []
+      : [value]
+  return list
+    .map(item => extractOptionValue(item))
+    .filter(v => v !== '')
+}
+
+function getOptionLabel(optionsRefOrList, value) {
+  const normalizedValue = extractOptionValue(value)
+  if (!normalizedValue) return ''
+  const options = Array.isArray(optionsRefOrList?.value)
+    ? optionsRefOrList.value
+    : Array.isArray(optionsRefOrList)
+      ? optionsRefOrList
+      : []
+  const match = options.find(
+    option => option.value === normalizedValue || option.label === normalizedValue
+  )
+  return match?.label ?? normalizedValue
+}
+
 /* 下拉選單選項：可改由後端「後臺控制 C0x」提供 ------------------------------ */
 const ROLE_OPTIONS = [
   { label: '管理員', value: 'admin' },
@@ -1061,15 +1198,140 @@ const PERMISSION_GRADE_OPTIONS = [
   { level: 'L4', description: '處室主管 / 協理' },
   { level: 'L5', description: '高階決策者 / 最高主管' }
 ] // 權限/職等(不可控僅示意)
-const TITLE_OPTIONS = ['護理師', '照顧服務員', '社工師', '物理治療師', '職能治療師', '行政人員'] // C03
-const PRACTICE_TITLE_OPTIONS = ['護理師', '社工師', '物理治療師', '職能治療師', '醫師']        // C04
-const LANGUAGE_OPTIONS = ['中文', '台語', '客語', '英語', '馬來語']                               // C05
-const DISABILITY_LEVELS = ['極重度', '重度身心障礙', '中度身心障礙', '輕度身心障礙']             // C06
-const IDENTITY_FLAGS = ['原住民', '新住民', '榮民']                                               // C07
-const EDUCATION_LEVELS = ['博士', '碩士', '大學', '專科', '高中職', '國中以下']                   // C08
-const GRADUATION_STATUSES = ['畢業', '肄業']                                                    // C08-1
-const RELATION_OPTIONS = ['父', '母', '配偶', '子', '女', '兄', '姊', '弟', '妹', '其他']         // C09
-const CREDIT_CATEGORIES = ['院內', '院外', '線上', '研討會', '自學']                               // C10
+
+const FALLBACK_TITLE_OPTIONS = createOptionListFromStrings([
+  '護理師',
+  '照顧服務員',
+  '社工師',
+  '物理治療師',
+  '職能治療師',
+  '行政人員'
+]) // C03
+const FALLBACK_PRACTICE_TITLE_OPTIONS = createOptionListFromStrings([
+  '護理師',
+  '社工師',
+  '物理治療師',
+  '職能治療師',
+  '醫師'
+]) // C04
+const FALLBACK_LANGUAGE_OPTIONS = createOptionListFromStrings([
+  '中文',
+  '台語',
+  '客語',
+  '英語',
+  '馬來語'
+]) // C05
+const FALLBACK_DISABILITY_LEVEL_OPTIONS = createOptionListFromStrings([
+  '極重度',
+  '重度身心障礙',
+  '中度身心障礙',
+  '輕度身心障礙'
+]) // C06
+const FALLBACK_IDENTITY_CATEGORY_OPTIONS = createOptionListFromStrings([
+  '原住民',
+  '新住民',
+  '榮民'
+]) // C07
+const FALLBACK_EDUCATION_LEVEL_OPTIONS = createOptionListFromStrings([
+  '博士',
+  '碩士',
+  '大學',
+  '專科',
+  '高中職',
+  '國中以下'
+]) // C08
+const FALLBACK_GRADUATION_STATUS_OPTIONS = createOptionListFromStrings(['畢業', '肄業']) // C08-1
+const FALLBACK_RELATION_OPTIONS = createOptionListFromStrings([
+  '父',
+  '母',
+  '配偶',
+  '子',
+  '女',
+  '兄',
+  '姊',
+  '弟',
+  '妹',
+  '其他'
+]) // C09
+const FALLBACK_CREDIT_CATEGORY_OPTIONS = createOptionListFromStrings([
+  '院內',
+  '院外',
+  '線上',
+  '研討會',
+  '自學'
+]) // C10
+
+const DICTIONARY_OPTION_CONFIGS = [
+  { key: 'C03', ref: titleOptions, fallback: FALLBACK_TITLE_OPTIONS, label: '職稱' },
+  {
+    key: 'C04',
+    ref: practiceTitleOptions,
+    fallback: FALLBACK_PRACTICE_TITLE_OPTIONS,
+    label: '執業職稱'
+  },
+  { key: 'C05', ref: languageOptions, fallback: FALLBACK_LANGUAGE_OPTIONS, label: '語言能力' },
+  {
+    key: 'C06',
+    ref: disabilityLevelOptions,
+    fallback: FALLBACK_DISABILITY_LEVEL_OPTIONS,
+    label: '身心障礙等級'
+  },
+  {
+    key: 'C07',
+    ref: identityCategoryOptions,
+    fallback: FALLBACK_IDENTITY_CATEGORY_OPTIONS,
+    label: '身分類別'
+  },
+  {
+    key: 'C08',
+    ref: educationLevelOptions,
+    fallback: FALLBACK_EDUCATION_LEVEL_OPTIONS,
+    label: '教育程度'
+  },
+  {
+    key: 'C08-1',
+    ref: graduationStatusOptions,
+    fallback: FALLBACK_GRADUATION_STATUS_OPTIONS,
+    label: '畢業狀態'
+  },
+  {
+    key: 'C09',
+    ref: relationOptions,
+    fallback: FALLBACK_RELATION_OPTIONS,
+    label: '緊急聯絡人稱謂'
+  },
+  {
+    key: 'C10',
+    ref: creditCategoryOptions,
+    fallback: FALLBACK_CREDIT_CATEGORY_OPTIONS,
+    label: '教育訓練積分類別'
+  }
+]
+
+function ensureDictionaryFallbacks({ notify = true } = {}) {
+  const restored = []
+  DICTIONARY_OPTION_CONFIGS.forEach(({ ref, fallback, label }) => {
+    if (!Array.isArray(ref.value) || ref.value.length === 0) {
+      ref.value = cloneOptionList(fallback)
+      restored.push(label)
+    }
+  })
+  if (notify && restored.length) {
+    ElMessage.warning(`字典 ${restored.join('、')} 尚未設定，已套用預設選項`)
+  }
+  return restored
+}
+
+const titleOptions = ref([])
+const practiceTitleOptions = ref([])
+const languageOptions = ref([])
+const disabilityLevelOptions = ref([])
+const identityCategoryOptions = ref([])
+const educationLevelOptions = ref([])
+const graduationStatusOptions = ref([])
+const relationOptions = ref([])
+const creditCategoryOptions = ref([])
+
 const SALARY_TYPES = ['月薪', '日薪', '時薪']
 const SALARY_ITEM_OPTIONS = ['本薪', '全勤', '加班費', '交通津貼', '伙食津貼', '績效獎金']
 const SIGN_ROLE_OPTIONS = [
@@ -1407,7 +1669,7 @@ function formatTrainingsForForm(list = []) {
     course: item?.course ?? item?.name ?? '',
     courseNo: item?.courseNo ?? item?.code ?? '',
     date: item?.date ?? '',
-    category: ensureArrayValue(item?.category ?? item?.categories),
+    category: toOptionValueArray(item?.category ?? item?.categories),
     score: toNumberOrNull(item?.score),
     fileList: buildAttachmentFileList(
       item?.fileList ?? item?.files ?? (item?.file ? [item.file] : []),
@@ -1417,6 +1679,36 @@ function formatTrainingsForForm(list = []) {
 }
 
 /* 取資料 ------------------------------------------------------------------- */
+async function loadItemSettings() {
+  try {
+    const res = await apiFetch('/api/other-control-settings/item-settings')
+    if (handle401(res)) return
+    if (!res.ok) throw new Error(`ITEM_SETTINGS_FETCH_FAILED_${res.status}`)
+    const payload = await res.json()
+    const dictionaryData =
+      payload?.itemSettings && typeof payload.itemSettings === 'object'
+        ? payload.itemSettings
+        : payload && typeof payload === 'object' && !Array.isArray(payload)
+          ? payload
+          : {}
+    const missingLabels = []
+    DICTIONARY_OPTION_CONFIGS.forEach(({ key, ref, fallback, label }) => {
+      const source = dictionaryData?.[key]
+      if (!Array.isArray(source) || !source.length) {
+        missingLabels.push(label)
+      }
+      ref.value = normalizeDictionaryOptions(source, fallback)
+    })
+    const uniqueMissing = [...new Set(missingLabels)].filter(Boolean)
+    if (uniqueMissing.length) {
+      ElMessage.warning(`字典 ${uniqueMissing.join('、')} 尚未設定，已套用預設選項`)
+    }
+  } catch (error) {
+    console.warn('載入字典項目失敗：', error)
+    ensureDictionaryFallbacks()
+  }
+}
+
 async function fetchDepartments() {
   const res = await apiFetch('/api/departments')
   if (handle401(res)) return
@@ -1442,6 +1734,11 @@ async function fetchEmployees() {
       const appointment = e?.appointment ?? {}
       return {
         ...e,
+        title: extractOptionValue(e?.title),
+        practiceTitle: extractOptionValue(e?.practiceTitle),
+        languages: toOptionValueArray(e?.languages),
+        disabilityLevel: extractOptionValue(e?.disabilityLevel),
+        identityCategory: toOptionValueArray(e?.identityCategory),
         permissionGrade: normalizePermissionGrade(e?.permissionGrade),
         signRole: normalizeSignRole(e?.signRole),
         signLevel: normalizeSignLevel(e?.signLevel),
@@ -1456,10 +1753,10 @@ async function fetchEmployees() {
         height: toNumberOrNull(e?.medicalCheck?.height ?? e?.height),
         weight: toNumberOrNull(e?.medicalCheck?.weight ?? e?.weight),
         medicalBloodType: e?.medicalCheck?.bloodType ?? e?.medicalBloodType ?? '',
-        educationLevel: e?.education?.level ?? e?.educationLevel ?? '',
+        educationLevel: extractOptionValue(e?.education?.level ?? e?.educationLevel),
         schoolName: e?.education?.school ?? e?.schoolName ?? '',
         major: e?.education?.major ?? e?.major ?? '',
-        graduationStatus: e?.education?.status ?? e?.graduationStatus ?? '',
+        graduationStatus: extractOptionValue(e?.education?.status ?? e?.graduationStatus),
         graduationYear: toStringOrEmpty(
           e?.education?.graduationYear ?? e?.graduationYear ?? ''
         ),
@@ -1497,6 +1794,8 @@ async function fetchEmployees() {
   }
 }
 onMounted(() => {
+  ensureDictionaryFallbacks({ notify: false })
+  loadItemSettings()
   fetchDepartments()
   fetchEmployees()
   fetchOrganizations()
@@ -1690,12 +1989,17 @@ function onGraduationStatusClear() {
 }
 
 async function openEmployeeDialog(index = null) {
+  ensureDictionaryFallbacks()
   if (index !== null) {
     editEmployeeIndex = index
     const emp = employeeList.value[index]
     editEmployeeId = emp._id || ''
     // 以 emptyEmployee 為基底，可避免漏欄位
     employeeForm.value = { ...structuredClone(emptyEmployee), ...emp, password: '', photoList: [] }
+    employeeForm.value.title = extractOptionValue(employeeForm.value.title)
+    employeeForm.value.practiceTitle = extractOptionValue(employeeForm.value.practiceTitle)
+    employeeForm.value.languages = toOptionValueArray(employeeForm.value.languages)
+    employeeForm.value.disabilityLevel = extractOptionValue(employeeForm.value.disabilityLevel)
     employeeForm.value.permissionGrade = normalizePermissionGrade(employeeForm.value.permissionGrade)
     employeeForm.value.signRole = normalizeSignRole(employeeForm.value.signRole)
     employeeForm.value.signLevel = normalizeSignLevel(employeeForm.value.signLevel)
@@ -1727,9 +2031,7 @@ async function openEmployeeDialog(index = null) {
     employeeForm.value.graduationYear = toStringOrEmpty(
       employeeForm.value.graduationYear || education.graduationYear || ''
     )
-    employeeForm.value.identityCategory = Array.isArray(employeeForm.value.identityCategory)
-      ? [...employeeForm.value.identityCategory]
-      : []
+    employeeForm.value.identityCategory = toOptionValueArray(employeeForm.value.identityCategory)
     employeeForm.value.height = toNumberOrNull(emp.height ?? emp.medicalCheck?.height)
     employeeForm.value.weight = toNumberOrNull(emp.weight ?? emp.medicalCheck?.weight)
     employeeForm.value.medicalBloodType =
@@ -1750,6 +2052,8 @@ async function openEmployeeDialog(index = null) {
     employeeForm.value.dischargeYear = toNumberOrNull(dischargeYearSource)
     employeeForm.value.department = emp.department?._id || emp.department || ''
     employeeForm.value.subDepartment = emp.subDepartment?._id || emp.subDepartment || ''
+    employeeForm.value.educationLevel = extractOptionValue(employeeForm.value.educationLevel)
+    employeeForm.value.graduationStatus = extractOptionValue(employeeForm.value.graduationStatus)
   } else {
     editEmployeeIndex = null
     editEmployeeId = ''
@@ -1790,6 +2094,8 @@ async function saveEmployee() {
 
   const form = employeeForm.value
   const payload = { ...form }
+  payload.title = extractOptionValue(form.title)
+  payload.practiceTitle = extractOptionValue(form.practiceTitle)
   const normalizedPhotoList = extractPhotoUrls(form.photoList)
   if (normalizedPhotoList.length) {
     payload.photoList = normalizedPhotoList
@@ -1802,9 +2108,11 @@ async function saveEmployee() {
     if (!form.photo) delete payload.photo
   }
 
-  payload.identityCategory = Array.isArray(form.identityCategory)
-    ? [...form.identityCategory]
-    : []
+  payload.languages = toOptionValueArray(form.languages)
+  payload.identityCategory = toOptionValueArray(form.identityCategory)
+  payload.disabilityLevel = extractOptionValue(form.disabilityLevel)
+  payload.educationLevel = extractOptionValue(form.educationLevel)
+  payload.graduationStatus = extractOptionValue(form.graduationStatus)
   payload.laborPensionSelf = toNumberOrNull(form.laborPensionSelf) ?? 0
   payload.employeeAdvance = toNumberOrNull(form.employeeAdvance) ?? 0
   payload.salaryItems = Array.isArray(form.salaryItems)
@@ -1840,7 +2148,7 @@ async function saveEmployee() {
   const normalizedTrainings = (Array.isArray(form.trainings) ? form.trainings : [])
     .map(training => {
       const fileList = extractUploadUrls(training?.fileList ?? [])
-      const categories = ensureArrayValue(training?.category ?? training?.categories)
+      const categories = toOptionValueArray(training?.category ?? training?.categories)
       const course = typeof training?.course === 'string' ? training.course.trim() : training?.course ?? ''
       const courseNo = typeof training?.courseNo === 'string' ? training.courseNo.trim() : training?.courseNo ?? ''
       const date = training?.date || ''
