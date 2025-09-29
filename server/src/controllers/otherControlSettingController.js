@@ -192,6 +192,23 @@ const defaultSettings = {
       description: '維護津貼或補貼項目'
     }
   ],
+  itemSettings: {
+    C03: ['助理', '專員', '經理'],
+    C04: ['護理師', '藥師', '工程師'],
+    C05: [
+      { label: '英文', levels: ['A1', 'B2', 'C1'] },
+      { label: '日文', levels: ['N3', 'N2', 'N1'] }
+    ],
+    C06: ['第一類', '第二類', '第三類'],
+    C07: ['一般員工', '派遣', '實習'],
+    C08: ['高中', '大學', '碩士', '博士'],
+    C09: ['父親', '母親', '配偶', '其他'],
+    C10: ['新進訓練', '專業課程', '領導力'],
+    C11: ['日班', '晚班', '大夜班'],
+    C12: ['特休假', '病假', '事假'],
+    C13: ['專案趕工', '系統維護', '例行支援'],
+    C14: ['交通補助', '餐費補助', '職務津貼']
+  },
   integration: {
     vendor: 'none',
     syncSchedule: true,
@@ -260,6 +277,32 @@ export function updateIntegrationSettings(req, res) {
     ...(req.body || {})
   }
   res.json(otherControlSettings.integration)
+}
+
+export function getItemSettings(req, res) {
+  res.json(otherControlSettings.itemSettings)
+}
+
+export function updateItemSettings(req, res) {
+  const payload = req.body
+
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    return res.status(400).json({ error: 'itemSettings 必須為物件' })
+  }
+
+  const invalidEntry = Object.entries(payload).find(([, value]) => !Array.isArray(value))
+
+  if (invalidEntry) {
+    const [key] = invalidEntry
+    return res.status(400).json({ error: `itemSettings.${key} 必須為陣列` })
+  }
+
+  otherControlSettings.itemSettings = {
+    ...otherControlSettings.itemSettings,
+    ...payload
+  }
+
+  res.json(otherControlSettings.itemSettings)
 }
 
 export function replaceCustomFields(req, res) {
