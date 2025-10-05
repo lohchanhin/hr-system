@@ -149,7 +149,14 @@ const dictionaryDefinitions = ref([
   { key: 'C04', label: '執業職稱' },
   { key: 'C05', label: '語言能力' },
   { key: 'C06', label: '身障等級' },
-  { key: 'C07', label: '身分類別' }
+  { key: 'C07', label: '身分類別' },
+  { key: 'C08', label: '教育程度' },
+  { key: 'C09', label: '緊急聯絡人稱謂' },
+  { key: 'C10', label: '教育訓練積分類別' },
+  { key: 'C11', label: '班別設定' },
+  { key: 'C12', label: '假別類別' },
+  { key: 'C13', label: '加班原因' },
+  { key: 'C14', label: '津貼項目' }
 ])
 
 function pickFirstString(...values) {
@@ -184,33 +191,62 @@ function normalizeDictionaryOption(option) {
   return { name: '', code: '' }
 }
 
+const defaultDictionaryOptions = {
+  C03: [
+    { name: '人資專員', code: 'HR-S' },
+    { name: '工程師', code: 'ENG' }
+  ],
+  C04: [
+    { name: '護理師', code: 'NURSE' },
+    { name: '會計師', code: 'CPA' }
+  ],
+  C05: [
+    { name: '英文 — 流利', code: 'EN_FL' },
+    { name: '日文 — 進階', code: 'JP_ADV' }
+  ],
+  C06: [
+    { name: '第一類中度', code: 'DISA_MID' },
+    { name: '第二類輕度', code: 'DISA_LIGHT' }
+  ],
+  C07: [
+    { name: '正式員工', code: 'FULLTIME' },
+    { name: '約聘人員', code: 'CONTRACT' }
+  ],
+  C08: [
+    { name: '博士', code: 'PHD' },
+    { name: '大學', code: 'BACHELOR' }
+  ],
+  C09: [
+    { name: '先生', code: 'MR' },
+    { name: '女士', code: 'MS' }
+  ],
+  C10: [
+    { name: '專業課程', code: 'PROFESSIONAL' },
+    { name: '基礎課程', code: 'BASIC' }
+  ],
+  C11: [
+    { name: '日班', code: 'DAY' },
+    { name: '晚班', code: 'NIGHT' }
+  ],
+  C12: [
+    { name: '特休假', code: 'ANNUAL' },
+    { name: '病假', code: 'SICK' }
+  ],
+  C13: [
+    { name: '專案需求', code: 'PROJECT' },
+    { name: '排班調整', code: 'SCHEDULE' }
+  ],
+  C14: [
+    { name: '交通津貼', code: 'TRAFFIC' },
+    { name: '餐費補助', code: 'MEAL' }
+  ]
+}
+
 function createDefaultItemSettings() {
-  const defaults = {
-    C03: [
-      { name: '人資專員', code: 'HR-S' },
-      { name: '工程師', code: 'ENG' }
-    ],
-    C04: [
-      { name: '護理師', code: 'NURSE' },
-      { name: '會計師', code: 'CPA' }
-    ],
-    C05: [
-      { name: '英文 — 流利', code: 'EN_FL' },
-      { name: '日文 — 進階', code: 'JP_ADV' }
-    ],
-    C06: [
-      { name: '第一類中度', code: 'DISA_MID' },
-      { name: '第二類輕度', code: 'DISA_LIGHT' }
-    ],
-    C07: [
-      { name: '正式員工', code: 'FULLTIME' },
-      { name: '約聘人員', code: 'CONTRACT' }
-    ]
-  }
+  const defaults = {}
   dictionaryDefinitions.value.forEach(dict => {
-    if (!defaults[dict.key]) {
-      defaults[dict.key] = []
-    }
+    const baseOptions = defaultDictionaryOptions[dict.key] || []
+    defaults[dict.key] = baseOptions.map(option => normalizeDictionaryOption(option))
   })
   return defaults
 }

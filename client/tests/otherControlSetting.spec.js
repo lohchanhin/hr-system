@@ -48,6 +48,53 @@ describe('OtherControlSetting custom field defaults', () => {
     expect(keyTypeMap.C14).toBe('select')
   })
 
+  it('dictionaryDefinitions covers C03~C14 with correct labels', async () => {
+    const wrapper = mount(OtherControlSetting, { global: { plugins: [ElementPlus] } })
+    await flushPromises()
+
+    const expectedPairs = [
+      { key: 'C03', label: '職稱' },
+      { key: 'C04', label: '執業職稱' },
+      { key: 'C05', label: '語言能力' },
+      { key: 'C06', label: '身障等級' },
+      { key: 'C07', label: '身分類別' },
+      { key: 'C08', label: '教育程度' },
+      { key: 'C09', label: '緊急聯絡人稱謂' },
+      { key: 'C10', label: '教育訓練積分類別' },
+      { key: 'C11', label: '班別設定' },
+      { key: 'C12', label: '假別類別' },
+      { key: 'C13', label: '加班原因' },
+      { key: 'C14', label: '津貼項目' }
+    ]
+
+    expect(wrapper.vm.dictionaryDefinitions).toEqual(expect.arrayContaining(expectedPairs))
+  })
+
+  it('renders dictionary select options with proper labels for C08 以後', async () => {
+    const wrapper = mount(OtherControlSetting, { attachTo: document.body, global: { plugins: [ElementPlus] } })
+    await flushPromises()
+
+    const trigger = wrapper.find('.dictionary-select .el-select__wrapper')
+    await trigger.trigger('click')
+    await flushPromises()
+
+    const dropdownItems = Array.from(document.querySelectorAll('.el-select-dropdown__item'))
+    const optionTexts = dropdownItems.map(item => item.textContent?.trim())
+    const expectedLabels = [
+      'C08 教育程度',
+      'C09 緊急聯絡人稱謂',
+      'C10 教育訓練積分類別',
+      'C11 班別設定',
+      'C12 假別類別',
+      'C13 加班原因',
+      'C14 津貼項目'
+    ]
+
+    expect(optionTexts).toEqual(expect.arrayContaining(expectedLabels))
+
+    wrapper.unmount()
+  })
+
   it('supports extended field type options when adding a new field', async () => {
     const wrapper = mount(OtherControlSetting, { global: { plugins: [ElementPlus] } })
     await flushPromises()
