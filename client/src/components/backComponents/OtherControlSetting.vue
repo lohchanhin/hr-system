@@ -152,6 +152,38 @@ const dictionaryDefinitions = ref([
   { key: 'C07', label: '身分類別' }
 ])
 
+function pickFirstString(...values) {
+  for (const value of values) {
+    if (typeof value === 'string' && value.length) {
+      return value
+    }
+  }
+  return ''
+}
+
+function normalizeDictionaryOption(option) {
+  if (typeof option === 'string') {
+    return { name: option, code: option }
+  }
+
+  if (option && typeof option === 'object') {
+    const name =
+      typeof option.name === 'string'
+        ? option.name
+        : pickFirstString(option.label, option.text, option.display, option.value, option.code)
+    const code =
+      typeof option.code === 'string'
+        ? option.code
+        : pickFirstString(option.value, option.key, option.name, option.label)
+
+    const finalName = name || code || ''
+    const finalCode = code || name || ''
+    return { ...option, name: finalName, code: finalCode }
+  }
+
+  return { name: '', code: '' }
+}
+
 function createDefaultItemSettings() {
   const defaults = {
     C03: [
@@ -420,10 +452,7 @@ async function loadSettings() {
         const merged = createDefaultItemSettings()
         dictionaryDefinitions.value.forEach(dict => {
           if (Array.isArray(data.itemSettings[dict.key])) {
-            merged[dict.key] = data.itemSettings[dict.key].map(option => ({
-              name: option.name ?? '',
-              code: option.code ?? ''
-            }))
+            merged[dict.key] = data.itemSettings[dict.key].map(option => normalizeDictionaryOption(option))
           }
         })
         itemSettings.value = merged

@@ -65,4 +65,65 @@ describe('OtherControlSetting custom field defaults', () => {
     expect(created).toBeTruthy()
     expect(created.type).toBe('number')
   })
+
+  it('createDefaultItemSettings 會涵蓋所有字典並保持 name/code 結構', async () => {
+    const wrapper = mount(OtherControlSetting, { global: { plugins: [ElementPlus] } })
+    await flushPromises()
+
+    const defaults = wrapper.vm.createDefaultItemSettings()
+    const dictionaryKeys = wrapper.vm.dictionaryDefinitions.map(dict => dict.key)
+
+    expect(Object.keys(defaults)).toEqual(expect.arrayContaining(dictionaryKeys))
+    dictionaryKeys.forEach(key => {
+      expect(Array.isArray(defaults[key])).toBe(true)
+      defaults[key].forEach(option => {
+        expect(typeof option.name).toBe('string')
+        expect(typeof option.code).toBe('string')
+      })
+    })
+  })
+
+  it('loadSettings 會將字串選項正規化為 name/code 物件', async () => {
+    apiFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        itemSettings: {
+          C03: ['行政專員', '總務']
+        }
+      })
+    })
+
+    const wrapper = mount(OtherControlSetting, { global: { plugins: [ElementPlus] } })
+    await flushPromises()
+
+    expect(wrapper.vm.itemSettings.C03).toEqual([
+      { name: '行政專員', code: '行政專員' },
+      { name: '總務', code: '總務' }
+    ])
+  })
+
+  it('loadSettings 會保留物件屬性並填滿 name/code 欄位', async () => {
+    apiFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        itemSettings: {
+          C04: [
+            { label: '臨床藥師', value: 'CLINIC_PHARM' },
+            { name: '物理治療師', code: 'PHYS_THER' }
+          ]
+        }
+      })
+    })
+
+    const wrapper = mount(OtherControlSetting, { global: { plugins: [ElementPlus] } })
+    await flushPromises()
+
+    expect(wrapper.vm.itemSettings.C04[0]).toMatchObject({
+      label: '臨床藥師',
+      value: 'CLINIC_PHARM',
+      name: '臨床藥師',
+      code: 'CLINIC_PHARM'
+    })
+    expect(wrapper.vm.itemSettings.C04[1]).toEqual({ name: '物理治療師', code: 'PHYS_THER' })
+  })
 })
