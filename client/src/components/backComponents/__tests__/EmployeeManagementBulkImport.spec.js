@@ -135,11 +135,18 @@ describe('EmployeeManagement - 批量匯入流程', () => {
 
     const originalCreateObjectURL = window.URL.createObjectURL
     const originalRevokeObjectURL = window.URL.revokeObjectURL
+    const originalBlob = window.Blob
 
     const createObjectURLSpy = vi.fn(() => 'blob:template')
     const revokeObjectURLSpy = vi.fn()
     window.URL.createObjectURL = createObjectURLSpy
     window.URL.revokeObjectURL = revokeObjectURLSpy
+
+    const blobCalls = []
+    window.Blob = vi.fn((parts, options) => {
+      blobCalls.push({ parts, options })
+      return { size: parts.reduce((sum, part) => sum + String(part).length, 0), type: options?.type }
+    })
 
     const anchor = document.createElement('a')
     const clickSpy = vi.spyOn(anchor, 'click').mockImplementation(() => {})
@@ -156,6 +163,12 @@ describe('EmployeeManagement - 批量匯入流程', () => {
     expect(clickSpy).toHaveBeenCalledTimes(1)
     expect(removeChildSpy).toHaveBeenCalledWith(anchor)
     expect(revokeObjectURLSpy).toHaveBeenCalledWith('blob:template')
+    expect(blobCalls.length).toBe(1)
+    const [headerRow, descriptionRow] = blobCalls[0].parts[0].split('\n')
+    expect(headerRow).toContain('employeeId')
+    expect(headerRow).toContain('email')
+    expect(descriptionRow).toContain('電子郵件 (必填唯一)')
+    expect(descriptionRow).toContain('性別 (M=男, F=女, O=其他)')
 
     createElementSpy.mockRestore()
     appendChildSpy.mockRestore()
@@ -163,6 +176,7 @@ describe('EmployeeManagement - 批量匯入流程', () => {
     clickSpy.mockRestore()
     window.URL.createObjectURL = originalCreateObjectURL
     window.URL.revokeObjectURL = originalRevokeObjectURL
+    window.Blob = originalBlob
   })
 
   it('匯入成功後顯示成功訊息並重新載入員工列表', async () => {
@@ -181,8 +195,11 @@ describe('EmployeeManagement - 批量匯入流程', () => {
       type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
     })
     wrapper.vm.handleBulkImportFileChange({ name: 'employees.xlsx', raw: file })
-    wrapper.vm.bulkImportForm.columnMappings.employeeNo = '員工編號'
-    wrapper.vm.bulkImportForm.columnMappings.name = '姓名'
+
+    expect(wrapper.vm.bulkImportRequiredFieldNames).toEqual(['員工編號', '姓名', '電子郵件'])
+    expect(wrapper.vm.bulkImportForm.columnMappings.employeeNo).toBe('employeeId')
+    expect(wrapper.vm.bulkImportForm.columnMappings.name).toBe('name')
+    expect(wrapper.vm.bulkImportForm.columnMappings.email).toBe('email')
 
     const beforeEmployeeCalls = apiFetchMock.mock.calls.filter(
       ([path]) => path === '/api/employees'
@@ -195,7 +212,12 @@ describe('EmployeeManagement - 批量匯入流程', () => {
     const formData = importEmployeesBulkMock.mock.calls[0][0]
     const entries = Array.from(formData.entries())
     expect(entries.find(([key]) => key === 'file')).toBeTruthy()
-    expect(entries.find(([key]) => key === 'mappings')).toBeTruthy()
+    const mappingEntry = entries.find(([key]) => key === 'mappings')
+    expect(mappingEntry).toBeTruthy()
+    const parsedMappings = JSON.parse(mappingEntry[1])
+    expect(parsedMappings.employeeNo).toBe('employeeId')
+    expect(parsedMappings.name).toBe('name')
+    expect(parsedMappings.email).toBe('email')
 
     expect(ElMessage.success).toHaveBeenCalledWith('匯入成功')
     expect(ElMessage.warning).not.toHaveBeenCalled()
@@ -219,8 +241,6 @@ describe('EmployeeManagement - 批量匯入流程', () => {
       type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
     })
     wrapper.vm.handleBulkImportFileChange({ name: 'employees.xlsx', raw: file })
-    wrapper.vm.bulkImportForm.columnMappings.employeeNo = '員工編號'
-    wrapper.vm.bulkImportForm.columnMappings.name = '姓名'
 
     await wrapper.vm.submitBulkImport()
     await flushPromises()
