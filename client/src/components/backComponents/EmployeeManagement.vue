@@ -23,10 +23,22 @@
       <!-- 操作區域 -->
       <div class="content-header">
         <h2 class="section-title">員工列表</h2>
-        <el-button type="primary" @click="openEmployeeDialog()" class="add-btn">
-          <i class="el-icon-plus"></i>
-          新增員工
-        </el-button>
+        <div class="content-actions">
+          <el-button type="primary" @click="openEmployeeDialog()" class="add-btn">
+            <i class="el-icon-plus"></i>
+            新增員工
+          </el-button>
+          <el-button
+            type="success"
+            plain
+            class="import-btn"
+            data-test="bulk-import-button"
+            @click="openBulkImportDialog"
+          >
+            <i class="el-icon-upload2"></i>
+            批量匯入
+          </el-button>
+        </div>
       </div>
 
       <!-- 美化員工列表表格 -->
@@ -121,9 +133,9 @@
       </div>
 
       <!-- 美化員工資料對話框 -->
-      <el-dialog 
-        v-model="employeeDialogVisible" 
-        title="員工資料管理" 
+      <el-dialog
+        v-model="employeeDialogVisible"
+        title="員工資料管理"
         width="1200px"
         class="employee-dialog"
       :close-on-click-modal="false"
@@ -1091,15 +1103,142 @@
           </div>
         </template>
       </el-dialog>
+
+      <el-dialog
+        v-model="bulkImportDialogVisible"
+        title="批量匯入員工"
+        width="720px"
+        class="bulk-import-dialog"
+        :close-on-click-modal="false"
+      >
+        <div class="bulk-import-header">
+          <el-alert type="info" show-icon :closable="false">
+            <template #title>
+              下載範本後依欄位填寫資料，再上傳 Excel 以進行匯入。
+            </template>
+            <div class="template-link">
+              <i class="el-icon-document"></i>
+              <el-button
+                type="primary"
+                link
+                data-test="bulk-import-template-download"
+                @click="downloadBulkImportTemplate"
+              >
+                下載匯入範本
+              </el-button>
+            </div>
+          </el-alert>
+        </div>
+
+        <div class="bulk-import-upload">
+          <el-upload
+            drag
+            action=""
+            :auto-upload="false"
+            accept=".xlsx,.xls,.csv"
+            :file-list="bulkImportUploadFileList"
+            :limit="1"
+            :on-change="handleBulkImportFileChange"
+            :on-remove="handleBulkImportFileRemove"
+          >
+            <i class="el-icon-upload"></i>
+            <div class="el-upload__text">
+              將檔案拖曳至此或 <em>點此選擇</em>
+            </div>
+            <div class="el-upload__tip">支援 .xlsx、.xls、.csv 檔案格式，檔案大小請勿超過 5MB</div>
+          </el-upload>
+        </div>
+
+        <div class="bulk-import-form">
+          <h3 class="bulk-import-subtitle">欄位對應設定</h3>
+          <p class="bulk-import-description">
+            設定 Excel 欄位名稱對應到系統資料欄位，未填寫之欄位會套用預設值。
+          </p>
+          <el-form :model="bulkImportForm" label-width="150px">
+            <el-form-item
+              v-for="mapping in bulkImportFieldConfigs"
+              :key="mapping.key"
+              :label="mapping.label"
+              :required="mapping.required"
+            >
+              <el-input
+                v-model="bulkImportForm.columnMappings[mapping.key]"
+                :placeholder="`請輸入 ${mapping.placeholder}`"
+              />
+            </el-form-item>
+
+            <h3 class="bulk-import-subtitle">匯入參數設定</h3>
+            <el-form-item label="匯入預設權限" required>
+              <el-select v-model="bulkImportForm.options.defaultRole" placeholder="請選擇預設權限">
+                <el-option
+                  v-for="role in ROLE_OPTIONS"
+                  :key="role.value"
+                  :label="role.label"
+                  :value="role.value"
+                />
+              </el-select>
+            </el-form-item>
+            <el-form-item label="預設登入密碼">
+              <el-input
+                v-model="bulkImportForm.options.resetPassword"
+                type="password"
+                show-password
+                placeholder="未設定則由後端自動產生"
+              />
+            </el-form-item>
+            <el-form-item label="寄發通知信">
+              <el-switch v-model="bulkImportForm.options.sendWelcomeEmail" />
+            </el-form-item>
+          </el-form>
+        </div>
+
+        <div class="bulk-import-result" v-if="bulkImportPreview.length || bulkImportErrors.length">
+          <el-alert
+            v-if="bulkImportErrors.length"
+            type="warning"
+            :closable="false"
+            show-icon
+            class="bulk-import-error"
+          >
+            <template #title>匯入時發現以下問題，請確認後重新處理：</template>
+            <ul class="error-list">
+              <li v-for="(error, idx) in bulkImportErrors" :key="idx">{{ error }}</li>
+            </ul>
+          </el-alert>
+
+          <div v-if="bulkImportPreview.length" class="bulk-import-preview">
+            <h4>匯入預覽</h4>
+            <el-table :data="bulkImportPreview" size="small" height="240">
+              <el-table-column prop="employeeNo" label="員工編號" width="140" />
+              <el-table-column prop="name" label="姓名" width="140" />
+              <el-table-column prop="department" label="部門" min-width="120" />
+              <el-table-column prop="role" label="權限" width="120" />
+              <el-table-column prop="email" label="Email" min-width="160" />
+            </el-table>
+          </div>
+        </div>
+
+        <template #footer>
+          <el-button @click="bulkImportDialogVisible = false">取消</el-button>
+          <el-button
+            type="primary"
+            :loading="bulkImportLoading"
+            :disabled="!isBulkImportReady || bulkImportLoading"
+            @click="submitBulkImport"
+          >
+            開始匯入
+          </el-button>
+        </template>
+      </el-dialog>
     </div>
   </el-tab-pane>
 </template>
 
 <script setup>
-import { ref, onMounted, computed, watch } from 'vue'
+import { ref, onMounted, computed, watch, reactive } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { apiFetch } from '../../api'
+import { apiFetch, importEmployeesBulk } from '../../api'
 import { REQUIRED_FIELDS } from './requiredFields'
 
 const router = useRouter()
@@ -1191,6 +1330,61 @@ const ROLE_OPTIONS = [
   { label: '主管', value: 'supervisor' },
   { label: '員工', value: 'employee' },
 ]
+const BULK_IMPORT_FIELD_CONFIGS = [
+  {
+    key: 'employeeNo',
+    label: '員工編號欄位',
+    placeholder: 'Excel 欄位名稱（例如：員工編號）',
+    required: true,
+    templateHeader: '員工編號',
+    sampleValue: 'E0001'
+  },
+  {
+    key: 'name',
+    label: '姓名欄位',
+    placeholder: 'Excel 欄位名稱（例如：姓名）',
+    required: true,
+    templateHeader: '姓名',
+    sampleValue: '王小明'
+  },
+  {
+    key: 'department',
+    label: '部門欄位',
+    placeholder: 'Excel 欄位名稱（例如：部門名稱）',
+    required: false,
+    templateHeader: '部門',
+    sampleValue: '人資部'
+  },
+  {
+    key: 'role',
+    label: '系統權限欄位',
+    placeholder: 'Excel 欄位名稱（例如：權限）',
+    required: false,
+    templateHeader: '系統權限',
+    sampleValue: 'employee'
+  },
+  {
+    key: 'email',
+    label: 'Email 欄位',
+    placeholder: 'Excel 欄位名稱（例如：Email）',
+    required: false,
+    templateHeader: 'Email',
+    sampleValue: 'example@company.com'
+  },
+  {
+    key: 'phone',
+    label: '聯絡電話欄位',
+    placeholder: 'Excel 欄位名稱（例如：手機）',
+    required: false,
+    templateHeader: '聯絡電話',
+    sampleValue: '0912-345-678'
+  }
+]
+const BULK_IMPORT_REQUIRED_FIELDS = BULK_IMPORT_FIELD_CONFIGS.filter(item => item.required).map(
+  item => item.key
+)
+const bulkImportFieldConfigs = BULK_IMPORT_FIELD_CONFIGS
+const BULK_IMPORT_TEMPLATE_FILENAME = 'employee-import-template.csv'
 const PERMISSION_GRADE_OPTIONS = [
   { level: 'L1', description: '一般使用者 / 基層專員' },
   { level: 'L2', description: '資深專員 / 小組長' },
@@ -1209,6 +1403,76 @@ const graduationStatusOptions = ref([])
 const relationOptions = ref([])
 const creditCategoryOptions = ref([])
 const salaryItemOptions = ref([])
+const defaultBulkImportRole =
+  ROLE_OPTIONS.find(option => option.value === 'employee')?.value ?? ROLE_OPTIONS[0]?.value ?? ''
+const bulkImportDialogVisible = ref(false)
+const bulkImportLoading = ref(false)
+const bulkImportFile = ref(null)
+const bulkImportUploadFileList = ref([])
+const bulkImportPreview = ref([])
+const bulkImportErrors = ref([])
+const bulkImportForm = reactive({
+  columnMappings: bulkImportFieldConfigs.reduce((acc, config) => {
+    acc[config.key] = ''
+    return acc
+  }, {}),
+  options: {
+    defaultRole: defaultBulkImportRole,
+    resetPassword: '',
+    sendWelcomeEmail: false
+  }
+})
+
+function escapeCsvValue(value) {
+  if (value === null || value === undefined) return '""'
+  const text = String(value).replace(/"/g, '""')
+  return `"${text}"`
+}
+
+function buildBulkImportTemplateCsvContent() {
+  const rows = [
+    bulkImportFieldConfigs.map(config => config.templateHeader || config.label || config.key),
+    bulkImportFieldConfigs.map(config => config.sampleValue ?? '')
+  ]
+  const csvBody = rows.map(row => row.map(escapeCsvValue).join(',')).join('\n')
+  return `\ufeff${csvBody}`
+}
+
+function downloadBulkImportTemplate() {
+  if (typeof window === 'undefined' || typeof document === 'undefined') return
+  const csvContent = buildBulkImportTemplateCsvContent()
+  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
+  const urlFactory =
+    (window.URL && typeof window.URL.createObjectURL === 'function' && window.URL) ||
+    (typeof URL !== 'undefined' && typeof URL.createObjectURL === 'function' ? URL : null)
+
+  if (!urlFactory) {
+    ElMessage.warning('無法產生範本下載，請改用手動建立檔案')
+    return
+  }
+
+  const url = urlFactory.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.setAttribute('download', BULK_IMPORT_TEMPLATE_FILENAME)
+  document.body.appendChild(link)
+
+  try {
+    link.click()
+  } finally {
+    document.body.removeChild(link)
+    if (typeof urlFactory.revokeObjectURL === 'function') {
+      urlFactory.revokeObjectURL(url)
+    }
+  }
+}
+const isBulkImportReady = computed(() => {
+  const requiredCompleted = BULK_IMPORT_REQUIRED_FIELDS.every(key => {
+    const value = bulkImportForm.columnMappings[key]
+    return typeof value === 'string' && value.trim() !== ''
+  })
+  return Boolean(bulkImportFile.value) && requiredCompleted
+})
 
 const FALLBACK_TITLE_OPTIONS = createOptionListFromStrings([
   '護理師',
@@ -2027,6 +2291,12 @@ const supervisorList = computed(() =>
     : []
 )
 
+watch(bulkImportDialogVisible, visible => {
+  if (!visible) {
+    resetBulkImportState()
+  }
+})
+
 watch(
   () => employeeForm.value.department,
   async dept => {
@@ -2072,6 +2342,93 @@ watch(
 /* 事件 --------------------------------------------------------------------- */
 function onGraduationStatusClear() {
   employeeForm.value.graduationStatus = ''
+}
+
+function openBulkImportDialog() {
+  bulkImportDialogVisible.value = true
+}
+
+function resetBulkImportState({ resetMappings = false } = {}) {
+  bulkImportLoading.value = false
+  bulkImportFile.value = null
+  bulkImportUploadFileList.value = []
+  bulkImportPreview.value = []
+  bulkImportErrors.value = []
+  if (resetMappings) {
+    Object.keys(bulkImportForm.columnMappings).forEach(key => {
+      bulkImportForm.columnMappings[key] = ''
+    })
+    bulkImportForm.options.defaultRole = defaultBulkImportRole
+    bulkImportForm.options.resetPassword = ''
+    bulkImportForm.options.sendWelcomeEmail = false
+  }
+}
+
+function handleBulkImportFileChange(uploadFile) {
+  if (uploadFile?.raw) {
+    bulkImportFile.value = uploadFile.raw
+    bulkImportUploadFileList.value = [uploadFile]
+    bulkImportPreview.value = []
+    bulkImportErrors.value = []
+  }
+}
+
+function handleBulkImportFileRemove() {
+  bulkImportFile.value = null
+  bulkImportUploadFileList.value = []
+  bulkImportPreview.value = []
+  bulkImportErrors.value = []
+}
+
+async function submitBulkImport() {
+  if (!bulkImportFile.value) {
+    ElMessage.warning('請先選擇要匯入的檔案')
+    return
+  }
+  if (!isBulkImportReady.value) {
+    ElMessage.warning('請確認必要欄位對應是否完整')
+    return
+  }
+  bulkImportLoading.value = true
+  try {
+    const formData = new FormData()
+    formData.append('file', bulkImportFile.value)
+    formData.append('mappings', JSON.stringify(bulkImportForm.columnMappings))
+    formData.append('options', JSON.stringify(bulkImportForm.options))
+
+    const res = await importEmployeesBulk(formData)
+    let payload = {}
+    try {
+      payload = await res.json()
+    } catch (error) {
+      payload = {}
+    }
+
+    if (!res.ok) {
+      bulkImportErrors.value = Array.isArray(payload?.errors) ? payload.errors : []
+      const message = payload?.message || payload?.error || '批量匯入失敗，請稍後再試'
+      throw new Error(message)
+    }
+
+    bulkImportPreview.value = Array.isArray(payload?.preview) ? payload.preview : []
+    bulkImportErrors.value = Array.isArray(payload?.errors) ? payload.errors : []
+
+    if (bulkImportErrors.value.length) {
+      ElMessage.warning('匯入完成，但有部分資料需要檢查')
+    } else {
+      ElMessage.success('匯入成功')
+    }
+
+    await fetchEmployees()
+    if (!bulkImportErrors.value.length) {
+      bulkImportDialogVisible.value = false
+    }
+  } catch (error) {
+    const message = error?.message || '批量匯入失敗，請稍後再試'
+    ElMessage.error(message)
+  } finally {
+    bulkImportLoading.value = false
+  }
 }
 
 async function openEmployeeDialog(index = null) {
@@ -2460,6 +2817,12 @@ function getStatusTagType(status) {
   margin-bottom: 24px;
 }
 
+.content-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
 .section-title {
   font-size: 20px;
   font-weight: 600;
@@ -2467,6 +2830,88 @@ function getStatusTagType(status) {
   margin: 0;
   padding-left: 16px;
   border-left: 4px solid #10b981;
+}
+
+.import-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 999px;
+  font-weight: 600;
+}
+
+.bulk-import-dialog :deep(.el-dialog__body) {
+  padding-top: 10px;
+}
+
+.bulk-import-header {
+  margin-bottom: 20px;
+}
+
+.template-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  font-size: 14px;
+}
+
+.template-link :deep(.el-button) {
+  color: #0ea5e9;
+  padding: 0;
+}
+
+.bulk-import-upload {
+  margin-bottom: 24px;
+}
+
+.bulk-import-form {
+  background: #f8fafc;
+  border-radius: 12px;
+  padding: 20px;
+  margin-bottom: 24px;
+}
+
+.bulk-import-subtitle {
+  font-size: 16px;
+  font-weight: 600;
+  margin: 16px 0 12px 0;
+  color: #1f2937;
+}
+
+.bulk-import-subtitle:first-of-type {
+  margin-top: 0;
+}
+
+.bulk-import-description {
+  margin: 0 0 12px 0;
+  color: #475569;
+  font-size: 14px;
+}
+
+.bulk-import-result {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.bulk-import-error {
+  background: #fff7ed;
+  border-radius: 8px;
+  padding: 12px 16px;
+}
+
+.error-list {
+  margin: 12px 0 0 0;
+  padding-left: 20px;
+  color: #b45309;
+}
+
+.bulk-import-preview h4 {
+  margin: 0 0 12px 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: #0f172a;
 }
 
 .add-btn {

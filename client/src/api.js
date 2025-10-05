@@ -26,3 +26,8 @@ export async function apiFetch(path, options = {}, { autoRedirect = true } = {})
   }
   return res
 }
+
+export function importEmployeesBulk(formData, fetchOptions = {}, fetchConfig = {}) {
+  const options = { method: 'POST', body: formData, ...fetchOptions }
+  return apiFetch('/api/employees/import', options, fetchConfig)
+}
