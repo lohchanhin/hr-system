@@ -190,6 +190,16 @@
 
         <el-dialog v-model="fieldDialogVisible" :title="fieldDialogMode==='edit' ? '編輯欄位' : '新增欄位'" width="520px">
           <el-form :model="fieldDialog" label-width="120px">
+            <el-form-item v-if="customFieldOptions.length" label="套用自訂欄位">
+              <el-select
+                v-model="selectedCustomFieldKey"
+                placeholder="選擇自訂欄位"
+                clearable
+                @change="handleCustomFieldSelect"
+              >
+                <el-option v-for="opt in customFieldOptions" :key="opt.value" :label="opt.label" :value="opt.value" />
+              </el-select>
+            </el-form-item>
             <el-form-item label="標籤"><el-input v-model="fieldDialog.label" /></el-form-item>
             <el-form-item label="型別1">
               <el-select v-model="fieldDialog.type_1" placeholder="選擇型別">
@@ -224,6 +234,7 @@ const API = {
   field: (formId, fieldId) => `/api/approvals/forms/${formId}/fields/${fieldId}`,
   employees: '/api/employees/options',
   roles: '/api/roles',
+  otherControlSettings: '/api/other-control-settings',
 }
 
 const CATEGORIES = ['人事類','總務類','請假類','其他']
@@ -254,9 +265,12 @@ const workflowSteps = ref([])
 const employeeOptions = ref([])
 const roleOptions = ref([])
 
+const customFieldOptions = ref([])
+const selectedCustomFieldKey = ref('')
+
 const fieldDialogVisible = ref(false)
 const fieldDialogMode = ref('create')
-const fieldDialog = ref({ _id: '', label: '', type_1: 'text', type_2: '', required: false, optionsStr: '', placeholder: '', order: 0 })
+const fieldDialog = ref({ _id: '', field_key: '', label: '', type_1: 'text', type_2: '', required: false, optionsStr: '', placeholder: '', order: 0 })
 const FIELD_TYPES = ['text','textarea','number','select','checkbox','date','time','datetime','file','user','department','org']
 
 watch([activeTab, selectedFormId], () => {
@@ -280,9 +294,11 @@ async function loadFields() {
 function openFieldDialog(mode='create', row=null) {
   fieldDialogMode.value = mode
   if (mode === 'edit' && row) {
-    fieldDialog.value = { ...row, optionsStr: row.options ? JSON.stringify(row.options) : '' }
+    fieldDialog.value = { ...row, optionsStr: row.options ? JSON.stringify(row.options) : '', field_key: row.field_key || '' }
+    selectedCustomFieldKey.value = row.field_key || ''
   } else {
-    fieldDialog.value = { _id: '', label: '', type_1: 'text', type_2: '', required: false, optionsStr: '', placeholder: '', order: fields.value.length }
+    fieldDialog.value = { _id: '', field_key: '', label: '', type_1: 'text', type_2: '', required: false, optionsStr: '', placeholder: '', order: fields.value.length }
+    selectedCustomFieldKey.value = ''
   }
   fieldDialogVisible.value = true
 }
@@ -298,6 +314,7 @@ async function saveField() {
     placeholder: fieldDialog.value.placeholder,
     order: fieldDialog.value.order ?? fields.value.length,
   }
+  if (fieldDialog.value.field_key) payload.field_key = fieldDialog.value.field_key
   let res
   if (fieldDialogMode.value === 'edit' && fieldDialog.value._id) {
     res = await apiFetch(API.field(selectedFormId.value, fieldDialog.value._id), {
@@ -320,6 +337,7 @@ async function saveField() {
 
 async function updateField(row) {
   const payload = { label: row.label, type_1: row.type_1, type_2: row.type_2, required: row.required, options: row.options, placeholder: row.placeholder, order: row.order }
+  if (row.field_key) payload.field_key = row.field_key
   await apiFetch(API.field(selectedFormId.value, row._id), {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
@@ -365,6 +383,64 @@ async function loadEmployeeOptions() {
 async function loadRoleOptions() {
   const res = await apiFetch(API.roles)
   if (res.ok) roleOptions.value = await res.json()
+}
+
+async function loadCustomFieldOptions() {
+  const res = await apiFetch(API.otherControlSettings)
+  if (!res.ok) {
+    customFieldOptions.value = []
+    return
+  }
+  const data = await res.json()
+  const list = Array.isArray(data?.customFields) ? data.customFields : Array.isArray(data) ? data : []
+  customFieldOptions.value = list
+    .filter((field) => field && field.fieldKey)
+    .map((field) => {
+      const label = field.label || field.fieldKey
+      const typeLabel = field.type || field.type_1 || 'unknown'
+      return {
+        value: field.fieldKey,
+        label: `${label}（${typeLabel}）`,
+        field: {
+          ...field,
+          type_1: field.type_1 || field.type || 'text',
+          type_2: field.type_2 || '',
+          required: field.required ?? false,
+          placeholder: field.placeholder || '',
+          options: field.options,
+        }
+      }
+    })
+}
+
+function stringifyOptions(options) {
+  if (!options) return ''
+  if (typeof options === 'string') return options
+  try {
+    return JSON.stringify(options)
+  } catch (e) {
+    return ''
+  }
+}
+
+function handleCustomFieldSelect(fieldKey) {
+  if (!fieldKey) {
+    fieldDialog.value = { ...fieldDialog.value, field_key: '' }
+    return
+  }
+  const option = customFieldOptions.value.find(opt => opt.value === fieldKey)
+  if (!option) return
+  const { field } = option
+  fieldDialog.value = {
+    ...fieldDialog.value,
+    field_key: field.fieldKey,
+    label: field.label || field.fieldKey,
+    type_1: field.type_1,
+    type_2: field.type_2 || '',
+    required: field.required ?? false,
+    placeholder: field.placeholder || '',
+    optionsStr: stringifyOptions(field.options),
+  }
 }
 
 /* 切換樣板時，同步讀 workflow.policy */
@@ -470,6 +546,7 @@ async function saveWorkflow() {
 }
 
 onMounted(async () => {
+  await loadCustomFieldOptions()
   await loadForms()
   selectedFormId.value = forms.value[0]?._id || ''
   if (selectedFormId.value) await loadWorkflow()
