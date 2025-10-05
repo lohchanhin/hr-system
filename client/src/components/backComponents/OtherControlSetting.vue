@@ -638,22 +638,104 @@ async function saveField() {
     ElMessage.warning('欄位名稱與識別代碼為必填')
     return
   }
+  const previousFields = customFields.value.map(field => ({ ...field }))
   if (editingFieldIndex.value > -1) {
     customFields.value.splice(editingFieldIndex.value, 1, { ...fieldForm.value })
   } else {
     customFields.value.push({ ...fieldForm.value })
   }
-  fieldDialogVisible.value = false
-  ElMessage.success('已更新自訂欄位')
+  try {
+    const res = await apiFetch(
+      '/api/other-control-settings/custom-fields',
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ customFields: customFields.value })
+      },
+      { autoRedirect: false }
+    )
+
+    if (!res.ok) {
+      let responseText = ''
+      try {
+        responseText = await res.text()
+      } catch (readError) {
+        console.warn('讀取儲存自訂欄位回應失敗：', readError)
+      }
+
+      let errorMessage = '儲存自訂欄位失敗，請稍後再試'
+      if (responseText) {
+        try {
+          const data = JSON.parse(responseText)
+          if (data?.message) {
+            errorMessage = data.message
+          }
+        } catch (parseError) {
+          errorMessage = responseText
+        }
+      }
+
+      throw new Error(errorMessage)
+    }
+
+    fieldDialogVisible.value = false
+    editingFieldIndex.value = -1
+    ElMessage.success('已更新自訂欄位')
+  } catch (error) {
+    customFields.value = previousFields
+    const message = error?.message || '儲存自訂欄位失敗，請稍後再試'
+    ElMessage.error(message)
+  }
 }
 
 async function removeField(index) {
   try {
     await ElMessageBox.confirm('確定要刪除此欄位嗎？', '提醒', { type: 'warning' })
-    customFields.value.splice(index, 1)
-    ElMessage.success('已刪除自訂欄位')
   } catch (error) {
     // 取消
+    return
+  }
+  const previousFields = customFields.value.map(field => ({ ...field }))
+  customFields.value.splice(index, 1)
+  try {
+    const res = await apiFetch(
+      '/api/other-control-settings/custom-fields',
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ customFields: customFields.value })
+      },
+      { autoRedirect: false }
+    )
+
+    if (!res.ok) {
+      let responseText = ''
+      try {
+        responseText = await res.text()
+      } catch (readError) {
+        console.warn('讀取刪除自訂欄位回應失敗：', readError)
+      }
+
+      let errorMessage = '刪除自訂欄位失敗，請稍後再試'
+      if (responseText) {
+        try {
+          const data = JSON.parse(responseText)
+          if (data?.message) {
+            errorMessage = data.message
+          }
+        } catch (parseError) {
+          errorMessage = responseText
+        }
+      }
+
+      throw new Error(errorMessage)
+    }
+
+    ElMessage.success('已刪除自訂欄位')
+  } catch (error) {
+    customFields.value = previousFields
+    const message = error?.message || '刪除自訂欄位失敗，請稍後再試'
+    ElMessage.error(message)
   }
 }
 </script>
