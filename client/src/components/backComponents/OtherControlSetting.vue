@@ -440,23 +440,45 @@ async function loadSettings() {
 }
 
 async function saveItemSettings(successMessage = '已儲存字典項目設定') {
+  const payload = itemSettings.value
+  const fallbackMessage = '儲存字典項目時發生問題，請稍後再試'
   try {
     const res = await apiFetch(
       '/api/other-control-settings/item-settings',
       {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ itemSettings: itemSettings.value })
+        body: JSON.stringify(payload)
       },
       { autoRedirect: false }
     )
-    if (!res.ok) throw new Error('儲存失敗')
+
+    const responseText = await res.text().catch(() => '')
+    let responseData = null
+    if (responseText) {
+      try {
+        responseData = JSON.parse(responseText)
+      } catch (parseError) {
+        console.warn('解析儲存字典項目回應時發生錯誤：', parseError)
+      }
+    }
+
+    if (!res.ok) {
+      const errorMessage = responseData?.message || fallbackMessage
+      if (responseText && !responseData?.message) {
+        console.error('儲存字典項目失敗回應：', responseText)
+      }
+      throw new Error(errorMessage)
+    }
+
     if (successMessage) {
       ElMessage.success(successMessage)
     }
-    return true
+
+    return responseData ?? true
   } catch (error) {
-    ElMessage.error('儲存字典項目時發生問題')
+    console.error('儲存字典項目時發生例外：', error)
+    ElMessage.error(error?.message || fallbackMessage)
     return false
   }
 }
