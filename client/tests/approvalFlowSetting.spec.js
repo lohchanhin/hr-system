@@ -5,6 +5,9 @@ import ApprovalFlowSetting from '../src/components/backComponents/ApprovalFlowSe
 
 const employees = [{ id: 'e1', name: 'Alice' }]
 const workflowData = { steps: [{ step_order: 1, approver_type: 'user', approver_value: ['e1'] }] }
+const customFields = [
+  { fieldKey: 'custom_phone', label: '緊急聯絡電話', type: 'text', required: true, placeholder: '請輸入電話' }
+]
 
 vi.mock('../src/api', () => ({ apiFetch: vi.fn() }))
 import { apiFetch } from '../src/api'
@@ -14,6 +17,7 @@ apiFetch.mockImplementation((url, opts) => {
   if (url === '/api/approvals/forms') return Promise.resolve({ ok: true, json: async () => [] })
   if (url === '/api/employees/options') return Promise.resolve({ ok: true, json: async () => employees })
   if (url === '/api/roles') return Promise.resolve({ ok: true, json: async () => [] })
+  if (url === '/api/other-control-settings') return Promise.resolve({ ok: true, json: async () => ({ customFields }) })
   if (url === '/api/approvals/forms/f1/workflow' && !opts) return Promise.resolve({ ok: true, json: async () => workflowData })
   if (url === '/api/approvals/forms/f1/workflow' && opts?.method === 'PUT') return Promise.resolve({ ok: true })
   return Promise.resolve({ ok: true, json: async () => ({}) })
@@ -79,5 +83,28 @@ describe('ApprovalFlowSetting approver select', () => {
     const call = apiFetch.mock.calls.filter(c => c[0] === '/api/approvals/forms/f1/workflow' && c[1]?.method === 'PUT').pop()
     const body = JSON.parse(call[1].body)
     expect(body.steps[0].approver_value).toEqual(['e1'])
+  })
+
+  it('offers custom field options and fills dialog after selection', async () => {
+    const wrapper = mount(ApprovalFlowSetting, { global: { plugins: [ElementPlus] } })
+    await flushPromises()
+    expect(apiFetch).toHaveBeenCalledWith('/api/other-control-settings')
+
+    wrapper.vm.openFieldDialog()
+    await flushPromises()
+
+    const select = wrapper.findAllComponents({ name: 'ElSelect' }).find((s) => s.props('placeholder') === '選擇自訂欄位')
+    expect(select).toBeTruthy()
+    const option = wrapper.findAllComponents({ name: 'ElOption' }).find((o) => o.props('value') === customFields[0].fieldKey)
+    expect(option?.props('label')).toContain(customFields[0].label)
+
+    wrapper.vm.handleCustomFieldSelect(customFields[0].fieldKey)
+    await flushPromises()
+
+    expect(wrapper.vm.fieldDialog.field_key).toBe(customFields[0].fieldKey)
+    expect(wrapper.vm.fieldDialog.label).toBe(customFields[0].label)
+    expect(wrapper.vm.fieldDialog.type_1).toBe(customFields[0].type)
+    expect(wrapper.vm.fieldDialog.required).toBe(true)
+    expect(wrapper.vm.fieldDialog.placeholder).toBe(customFields[0].placeholder)
   })
 })
