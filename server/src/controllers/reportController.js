@@ -6,10 +6,257 @@ import ApprovalRequest from '../models/approval_request.js';
 import { getLeaveFieldIds } from '../services/leaveFieldService.js';
 import { exportTabularReport } from '../services/reportExportHelper.js';
 
+const NOTIFICATION_FREQUENCIES = new Set(['daily', 'weekly', 'monthly']);
+
+function defaultExportSettings() {
+  return { formats: [], includeLogo: false, footerNote: '' };
+}
+
+function defaultPermissionSettings() {
+  return {
+    supervisorDept: false,
+    hrAllDept: false,
+    employeeDownload: false,
+    historyMonths: 6,
+  };
+}
+
+function defaultNotificationSettings() {
+  return { autoSend: false, sendFrequency: '', recipients: [] };
+}
+
+function normalizeFieldArray(value) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((field) => (typeof field === 'string' ? field.trim() : ''))
+    .filter(Boolean);
+}
+
+function normalizeExportSettings(raw, { partial } = {}) {
+  if (raw === undefined) {
+    return { value: partial ? undefined : defaultExportSettings(), errors: [] };
+  }
+
+  if (typeof raw !== 'object' || raw === null) {
+    return { value: undefined, errors: ['匯出設定需為物件'] };
+  }
+
+  const errors = [];
+  const formats =
+    'formats' in raw
+      ? Array.isArray(raw.formats)
+        ? normalizeFieldArray(raw.formats)
+        : (errors.push('匯出格式需為陣列'), [])
+      : [];
+
+  let includeLogo = false;
+  if ('includeLogo' in raw) {
+    includeLogo = Boolean(raw.includeLogo);
+  }
+
+  let footerNote = '';
+  if ('footerNote' in raw) {
+    if (raw.footerNote === undefined || raw.footerNote === null) {
+      footerNote = '';
+    } else if (typeof raw.footerNote !== 'string') {
+      errors.push('頁尾備註需為文字');
+    } else {
+      footerNote = raw.footerNote.trim();
+    }
+  }
+
+  return {
+    value: { formats, includeLogo, footerNote },
+    errors,
+  };
+}
+
+function normalizePermissionSettings(raw, { partial } = {}) {
+  if (raw === undefined) {
+    return { value: partial ? undefined : defaultPermissionSettings(), errors: [] };
+  }
+
+  if (typeof raw !== 'object' || raw === null) {
+    return { value: undefined, errors: ['權限設定需為物件'] };
+  }
+
+  const errors = [];
+  const settings = defaultPermissionSettings();
+
+  if ('supervisorDept' in raw) settings.supervisorDept = Boolean(raw.supervisorDept);
+  if ('hrAllDept' in raw) settings.hrAllDept = Boolean(raw.hrAllDept);
+  if ('employeeDownload' in raw)
+    settings.employeeDownload = Boolean(raw.employeeDownload);
+
+  if ('historyMonths' in raw) {
+    const months = Number(raw.historyMonths);
+    if (!Number.isFinite(months) || months < 0) {
+      errors.push('可查詢歷史月份需為非負整數');
+    } else {
+      settings.historyMonths = Math.floor(months);
+    }
+  }
+
+  return { value: settings, errors };
+}
+
+function normalizeNotificationSettings(raw, { partial } = {}) {
+  if (raw === undefined) {
+    return { value: partial ? undefined : defaultNotificationSettings(), errors: [] };
+  }
+
+  if (typeof raw !== 'object' || raw === null) {
+    return { value: undefined, errors: ['通知設定需為物件'] };
+  }
+
+  const errors = [];
+  const settings = defaultNotificationSettings();
+
+  if ('autoSend' in raw) settings.autoSend = Boolean(raw.autoSend);
+
+  if ('sendFrequency' in raw && raw.sendFrequency !== '' && raw.sendFrequency !== undefined && raw.sendFrequency !== null) {
+    const frequency = String(raw.sendFrequency).trim();
+    if (!NOTIFICATION_FREQUENCIES.has(frequency)) {
+      errors.push('寄送頻率必須為 daily、weekly 或 monthly');
+    } else {
+      settings.sendFrequency = frequency;
+    }
+  }
+
+  if ('recipients' in raw) {
+    if (!Array.isArray(raw.recipients)) {
+      errors.push('寄送對象需為陣列');
+    } else {
+      settings.recipients = normalizeFieldArray(raw.recipients);
+    }
+  }
+
+  if (!settings.autoSend) {
+    settings.sendFrequency = '';
+    settings.recipients = [];
+  }
+
+  return { value: settings, errors };
+}
+
+function normalizeReportPayload(body, { partial = false } = {}) {
+  const errors = [];
+
+  if (!body || typeof body !== 'object') {
+    return { data: {}, errors: ['請提供有效的報表資料'] };
+  }
+
+  const data = {};
+
+  if ('name' in body) {
+    if (typeof body.name !== 'string') {
+      errors.push('報表名稱需為文字');
+    } else {
+      const name = body.name.trim();
+      if (!name) {
+        errors.push('報表名稱為必填');
+      } else {
+        data.name = name;
+      }
+    }
+  } else if (!partial) {
+    errors.push('報表名稱為必填');
+  }
+
+  if ('type' in body) {
+    if (typeof body.type !== 'string') {
+      errors.push('報表類型需為文字');
+    } else {
+      const type = body.type.trim();
+      data.type = type || 'custom';
+    }
+  } else if (!partial) {
+    data.type = 'custom';
+  }
+
+  if ('fields' in body) {
+    if (!Array.isArray(body.fields)) {
+      errors.push('欄位設定需為陣列');
+    } else {
+      data.fields = normalizeFieldArray(body.fields);
+    }
+  } else if (!partial) {
+    data.fields = [];
+  }
+
+  if ('data' in body) {
+    data.data = body.data;
+  } else if (!partial) {
+    data.data = {};
+  }
+
+  const { value: exportSettings, errors: exportErrors } = normalizeExportSettings(
+    body.exportSettings,
+    { partial }
+  );
+  errors.push(...exportErrors);
+  if (exportSettings !== undefined) data.exportSettings = exportSettings;
+
+  const { value: permissionSettings, errors: permissionErrors } =
+    normalizePermissionSettings(body.permissionSettings, { partial });
+  errors.push(...permissionErrors);
+  if (permissionSettings !== undefined) data.permissionSettings = permissionSettings;
+
+  const { value: notificationSettings, errors: notificationErrors } =
+    normalizeNotificationSettings(body.notificationSettings, { partial });
+  errors.push(...notificationErrors);
+  if (notificationSettings !== undefined)
+    data.notificationSettings = notificationSettings;
+
+  return { data, errors };
+}
+
+function buildReportResponse(report) {
+  if (!report) return null;
+
+  const source =
+    typeof report.toObject === 'function'
+      ? report.toObject({ depopulate: true })
+      : report;
+
+  const idValue = source._id ?? source.id;
+  const id =
+    idValue && typeof idValue.toString === 'function'
+      ? idValue.toString()
+      : idValue;
+
+  const { value: exportSettings } = normalizeExportSettings(source.exportSettings, {
+    partial: false,
+  });
+  const { value: permissionSettings } = normalizePermissionSettings(
+    source.permissionSettings,
+    { partial: false }
+  );
+  const { value: notificationSettings } = normalizeNotificationSettings(
+    source.notificationSettings,
+    { partial: false }
+  );
+
+  return {
+    id: id ?? undefined,
+    name: typeof source.name === 'string' ? source.name : '',
+    type:
+      typeof source.type === 'string' && source.type.trim()
+        ? source.type.trim()
+        : 'custom',
+    fields: normalizeFieldArray(source.fields),
+    exportSettings,
+    permissionSettings,
+    notificationSettings,
+    createdAt: source.createdAt ?? undefined,
+    updatedAt: source.updatedAt ?? undefined,
+  };
+}
+
 export async function listReports(req, res) {
   try {
     const reports = await Report.find();
-    res.json(reports);
+    res.json(reports.map((report) => buildReportResponse(report)));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -17,9 +264,14 @@ export async function listReports(req, res) {
 
 export async function createReport(req, res) {
   try {
-    const report = new Report(req.body);
+    const { data, errors } = normalizeReportPayload(req.body, { partial: false });
+    if (errors.length) {
+      return res.status(400).json({ error: errors.join('、') });
+    }
+
+    const report = new Report(data);
     await report.save();
-    res.status(201).json(report);
+    res.status(201).json(buildReportResponse(report));
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
@@ -29,7 +281,7 @@ export async function getReport(req, res) {
   try {
     const report = await Report.findById(req.params.id);
     if (!report) return res.status(404).json({ error: 'Not found' });
-    res.json(report);
+    res.json(buildReportResponse(report));
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
@@ -37,9 +289,21 @@ export async function getReport(req, res) {
 
 export async function updateReport(req, res) {
   try {
-    const report = await Report.findByIdAndUpdate(req.params.id, req.body, { new: true });
+    const { data, errors } = normalizeReportPayload(req.body, { partial: true });
+    if (errors.length) {
+      return res.status(400).json({ error: errors.join('、') });
+    }
+
+    if (Object.keys(data).length === 0) {
+      return res.status(400).json({ error: '請提供至少一項更新欄位' });
+    }
+
+    const report = await Report.findByIdAndUpdate(req.params.id, data, {
+      new: true,
+      runValidators: true,
+    });
     if (!report) return res.status(404).json({ error: 'Not found' });
-    res.json(report);
+    res.json(buildReportResponse(report));
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
