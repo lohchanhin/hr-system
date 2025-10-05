@@ -1150,24 +1150,39 @@
         </div>
 
         <div class="bulk-import-form">
-          <h3 class="bulk-import-subtitle">欄位對應設定</h3>
+          <h3 class="bulk-import-subtitle">欄位格式與必填說明</h3>
           <p class="bulk-import-description">
-            設定 Excel 欄位名稱對應到系統資料欄位，未填寫之欄位會套用預設值。
+            系統已預先套用官方批量匯入 Excel 模板，請依下列欄位填寫資料後再上傳檔案。
           </p>
-          <el-form :model="bulkImportForm" label-width="150px">
-            <el-form-item
-              v-for="mapping in bulkImportFieldConfigs"
-              :key="mapping.key"
-              :label="mapping.label"
-              :required="mapping.required"
-            >
-              <el-input
-                v-model="bulkImportForm.columnMappings[mapping.key]"
-                :placeholder="`請輸入 ${mapping.placeholder}`"
-              />
-            </el-form-item>
+          <el-alert type="warning" show-icon class="bulk-import-required-alert" :closable="false">
+            <template #title>必填欄位：{{ bulkImportRequiredFieldNames.join('、') }}</template>
+            <div>若未提供必填欄位資料，匯入時將提示錯誤並中止處理。</div>
+          </el-alert>
 
-            <h3 class="bulk-import-subtitle">匯入參數設定</h3>
+          <section
+            v-for="section in bulkImportTemplateSections"
+            :key="section.title"
+            class="bulk-import-section"
+          >
+            <h4 class="bulk-import-section-title">{{ section.title }}</h4>
+            <el-table :data="section.fields" border size="small" class="bulk-import-table">
+              <el-table-column prop="header" label="Excel 欄位 (英文)" width="220">
+                <template #default="{ row }">
+                  <code class="bulk-import-header-code">{{ row.header }}</code>
+                </template>
+              </el-table-column>
+              <el-table-column prop="description" label="欄位說明" min-width="300" />
+              <el-table-column label="是否必填" width="120" align="center">
+                <template #default="{ row }">
+                  <el-tag v-if="row.required" type="danger" size="small">必填</el-tag>
+                  <span v-else class="bulk-import-optional-text">選填</span>
+                </template>
+              </el-table-column>
+            </el-table>
+          </section>
+
+          <h3 class="bulk-import-subtitle bulk-import-options-title">匯入參數設定</h3>
+          <el-form :model="bulkImportForm" label-width="150px">
             <el-form-item label="匯入預設權限" required>
               <el-select v-model="bulkImportForm.options.defaultRole" placeholder="請選擇預設權限">
                 <el-option
@@ -1330,58 +1345,446 @@ const ROLE_OPTIONS = [
   { label: '主管', value: 'supervisor' },
   { label: '員工', value: 'employee' },
 ]
-const BULK_IMPORT_FIELD_CONFIGS = [
+const BULK_IMPORT_FIELD_CONFIGS = Object.freeze([
   {
     key: 'employeeNo',
-    label: '員工編號欄位',
-    placeholder: 'Excel 欄位名稱（例如：員工編號）',
+    header: 'employeeId',
+    label: '員工編號',
+    description: '員工編號',
     required: true,
-    templateHeader: '員工編號',
-    sampleValue: 'E0001'
+    category: '基本資料'
   },
   {
     key: 'name',
-    label: '姓名欄位',
-    placeholder: 'Excel 欄位名稱（例如：姓名）',
+    header: 'name',
+    label: '姓名',
+    description: '姓名',
     required: true,
-    templateHeader: '姓名',
-    sampleValue: '王小明'
+    category: '基本資料'
   },
   {
-    key: 'department',
-    label: '部門欄位',
-    placeholder: 'Excel 欄位名稱（例如：部門名稱）',
-    required: false,
-    templateHeader: '部門',
-    sampleValue: '人資部'
+    key: 'gender',
+    header: 'gender',
+    label: '性別',
+    description: '性別 (M=男, F=女, O=其他)',
+    category: '基本資料'
   },
   {
-    key: 'role',
-    label: '系統權限欄位',
-    placeholder: 'Excel 欄位名稱（例如：權限）',
-    required: false,
-    templateHeader: '系統權限',
-    sampleValue: 'employee'
+    key: 'idNumber',
+    header: 'idNumber',
+    label: '身分證號',
+    description: '身分證號',
+    category: '基本資料'
+  },
+  {
+    key: 'birthday',
+    header: 'birthDate',
+    label: '生日',
+    description: '生日 (yyyy-mm-dd)',
+    category: '基本資料'
+  },
+  {
+    key: 'birthplace',
+    header: 'birthPlace',
+    label: '出生地',
+    description: '出生地',
+    category: '基本資料'
+  },
+  {
+    key: 'bloodType',
+    header: 'bloodType',
+    label: '血型',
+    description: '血型 (A/B/O/AB/HR)',
+    category: '基本資料'
+  },
+  {
+    key: 'languages',
+    header: 'languages',
+    label: '語言',
+    description: '語言 (多個以逗號分隔)',
+    category: '個人特質'
+  },
+  {
+    key: 'disabilityLevel',
+    header: 'disabilityLevel',
+    label: '失能等級',
+    description: '失能等級',
+    category: '個人特質'
+  },
+  {
+    key: 'identityCategory',
+    header: 'identityCategory',
+    label: '身分類別',
+    description: '身分類別 (多個以逗號分隔)',
+    category: '個人特質'
+  },
+  {
+    key: 'maritalStatus',
+    header: 'maritalStatus',
+    label: '婚姻狀況',
+    description: '婚姻狀況 (已婚/未婚/離婚/喪偶)',
+    category: '家庭狀況'
+  },
+  {
+    key: 'dependents',
+    header: 'dependents',
+    label: '扶養人數',
+    description: '扶養人數',
+    category: '家庭狀況'
   },
   {
     key: 'email',
-    label: 'Email 欄位',
-    placeholder: 'Excel 欄位名稱（例如：Email）',
-    required: false,
-    templateHeader: 'Email',
-    sampleValue: 'example@company.com'
+    header: 'email',
+    label: '電子郵件',
+    description: '電子郵件 (必填唯一)',
+    required: true,
+    category: '聯絡資訊'
   },
   {
     key: 'phone',
-    label: '聯絡電話欄位',
-    placeholder: 'Excel 欄位名稱（例如：手機）',
-    required: false,
-    templateHeader: '聯絡電話',
-    sampleValue: '0912-345-678'
+    header: 'mobile',
+    label: '手機號碼',
+    description: '手機號碼',
+    category: '聯絡資訊'
+  },
+  {
+    key: 'landline',
+    header: 'landline',
+    label: '市話',
+    description: '市話',
+    category: '聯絡資訊'
+  },
+  {
+    key: 'householdAddress',
+    header: 'householdAddress',
+    label: '戶籍地址',
+    description: '戶籍地址',
+    category: '聯絡資訊'
+  },
+  {
+    key: 'contactAddress',
+    header: 'contactAddress',
+    label: '聯絡地址',
+    description: '聯絡地址',
+    category: '聯絡資訊'
+  },
+  {
+    key: 'lineId',
+    header: 'lineId',
+    label: 'Line 帳號',
+    description: 'Line 帳號',
+    category: '聯絡資訊'
+  },
+  {
+    key: 'organization',
+    header: 'organization',
+    label: '所屬機構',
+    description: '所屬機構',
+    category: '組織與職務'
+  },
+  {
+    key: 'department',
+    header: 'department',
+    label: '部門 ID',
+    description: '部門 ID',
+    category: '組織與職務'
+  },
+  {
+    key: 'subDepartment',
+    header: 'subDepartment',
+    label: '子部門 ID',
+    description: '子部門 ID',
+    category: '組織與職務'
+  },
+  {
+    key: 'supervisor',
+    header: 'supervisor',
+    label: '主管員工 ID',
+    description: '主管員工 ID',
+    category: '組織與職務'
+  },
+  {
+    key: 'title',
+    header: 'title',
+    label: '職稱',
+    description: '職稱',
+    category: '組織與職務'
+  },
+  {
+    key: 'practiceTitle',
+    header: 'practiceTitle',
+    label: '執業職稱',
+    description: '執業職稱',
+    category: '組織與職務'
+  },
+  {
+    key: 'employmentStatus',
+    header: 'status',
+    label: '人員狀態',
+    description: '人員狀態 (正職員工/試用期/離職/留職停薪)',
+    category: '雇用設定'
+  },
+  {
+    key: 'probationDays',
+    header: 'probationDays',
+    label: '試用期天數',
+    description: '試用期天數',
+    category: '雇用設定'
+  },
+  {
+    key: 'isPartTime',
+    header: 'partTime',
+    label: '是否兼職',
+    description: '是否兼職 (TRUE/FALSE)',
+    category: '雇用設定'
+  },
+  {
+    key: 'isClocking',
+    header: 'needClockIn',
+    label: '是否需打卡',
+    description: '是否需打卡 (TRUE/FALSE)',
+    category: '雇用設定'
+  },
+  {
+    key: 'educationLevel',
+    header: 'education_level',
+    label: '學歷程度',
+    description: '學歷程度',
+    category: '學歷資訊'
+  },
+  {
+    key: 'schoolName',
+    header: 'education_school',
+    label: '畢業學校',
+    description: '畢業學校',
+    category: '學歷資訊'
+  },
+  {
+    key: 'major',
+    header: 'education_major',
+    label: '主修科目',
+    description: '主修科目',
+    category: '學歷資訊'
+  },
+  {
+    key: 'graduationStatus',
+    header: 'education_status',
+    label: '學歷狀態',
+    description: '學歷狀態 (畢業/肄業)',
+    category: '學歷資訊'
+  },
+  {
+    key: 'graduationYear',
+    header: 'education_graduationYear',
+    label: '畢業年份',
+    description: '畢業年份',
+    category: '學歷資訊'
+  },
+  {
+    key: 'serviceType',
+    header: 'militaryService_type',
+    label: '役別類型',
+    description: '役別類型 (志願役/義務役)',
+    category: '兵役資訊'
+  },
+  {
+    key: 'militaryBranch',
+    header: 'militaryService_branch',
+    label: '軍種',
+    description: '軍種',
+    category: '兵役資訊'
+  },
+  {
+    key: 'militaryRank',
+    header: 'militaryService_rank',
+    label: '軍階',
+    description: '軍階',
+    category: '兵役資訊'
+  },
+  {
+    key: 'dischargeYear',
+    header: 'militaryService_dischargeYear',
+    label: '退伍年份',
+    description: '退伍年份',
+    category: '兵役資訊'
+  },
+  {
+    key: 'emergency1.name',
+    header: 'emergency1_name',
+    label: '緊急聯絡人1 姓名',
+    description: '緊急聯絡人1 姓名',
+    category: '緊急聯絡人'
+  },
+  {
+    key: 'emergency1.relation',
+    header: 'emergency1_relation',
+    label: '緊急聯絡人1 關係',
+    description: '緊急聯絡人1 關係',
+    category: '緊急聯絡人'
+  },
+  {
+    key: 'emergency1.phone1',
+    header: 'emergency1_phone1',
+    label: '緊急聯絡人1 電話1',
+    description: '緊急聯絡人1 電話1',
+    category: '緊急聯絡人'
+  },
+  {
+    key: 'emergency1.phone2',
+    header: 'emergency1_phone2',
+    label: '緊急聯絡人1 電話2',
+    description: '緊急聯絡人1 電話2',
+    category: '緊急聯絡人'
+  },
+  {
+    key: 'emergency2.name',
+    header: 'emergency2_name',
+    label: '緊急聯絡人2 姓名',
+    description: '緊急聯絡人2 姓名',
+    category: '緊急聯絡人'
+  },
+  {
+    key: 'emergency2.relation',
+    header: 'emergency2_relation',
+    label: '緊急聯絡人2 關係',
+    description: '緊急聯絡人2 關係',
+    category: '緊急聯絡人'
+  },
+  {
+    key: 'emergency2.phone1',
+    header: 'emergency2_phone1',
+    label: '緊急聯絡人2 電話1',
+    description: '緊急聯絡人2 電話1',
+    category: '緊急聯絡人'
+  },
+  {
+    key: 'emergency2.phone2',
+    header: 'emergency2_phone2',
+    label: '緊急聯絡人2 電話2',
+    description: '緊急聯絡人2 電話2',
+    category: '緊急聯絡人'
+  },
+  {
+    key: 'hireDate',
+    header: 'hireDate',
+    label: '到職日期',
+    description: '到職日期 (yyyy-mm-dd)',
+    category: '任職期間'
+  },
+  {
+    key: 'appointDate',
+    header: 'startDate',
+    label: '起聘日期',
+    description: '起聘日期 (yyyy-mm-dd)',
+    category: '任職期間'
+  },
+  {
+    key: 'resignDate',
+    header: 'resignationDate',
+    label: '離職日期',
+    description: '離職日期 (yyyy-mm-dd)',
+    category: '任職期間'
+  },
+  {
+    key: 'dismissDate',
+    header: 'dismissalDate',
+    label: '解聘日期',
+    description: '解聘日期 (yyyy-mm-dd)',
+    category: '任職期間'
+  },
+  {
+    key: 'reAppointDate',
+    header: 'rehireStartDate',
+    label: '再任起聘',
+    description: '再任起聘 (yyyy-mm-dd)',
+    category: '任職期間'
+  },
+  {
+    key: 'reDismissDate',
+    header: 'rehireEndDate',
+    label: '再任解聘',
+    description: '再任解聘 (yyyy-mm-dd)',
+    category: '任職期間'
+  },
+  {
+    key: 'employmentNote',
+    header: 'appointment_remark',
+    label: '任職備註',
+    description: '任職備註',
+    category: '任職期間'
+  },
+  {
+    key: 'salaryType',
+    header: 'salaryType',
+    label: '薪資類型',
+    description: '薪資類型 (月薪/日薪/時薪)',
+    category: '薪資與帳戶'
+  },
+  {
+    key: 'salaryAmount',
+    header: 'salaryAmount',
+    label: '薪資金額',
+    description: '薪資金額',
+    category: '薪資與帳戶'
+  },
+  {
+    key: 'laborPensionSelf',
+    header: 'laborPensionSelf',
+    label: '自提勞退 (%)',
+    description: '自提勞退 (%)',
+    category: '薪資與帳戶'
+  },
+  {
+    key: 'employeeAdvance',
+    header: 'employeeAdvance',
+    label: '員工墊付金額',
+    description: '員工墊付金額',
+    category: '薪資與帳戶'
+  },
+  {
+    key: 'salaryAccountA.bank',
+    header: 'salaryAccountA_bank',
+    label: '薪資帳戶A 銀行代號',
+    description: '薪資帳戶A 銀行代號',
+    category: '薪資與帳戶'
+  },
+  {
+    key: 'salaryAccountA.acct',
+    header: 'salaryAccountA_acct',
+    label: '薪資帳戶A 帳號',
+    description: '薪資帳戶A 帳號',
+    category: '薪資與帳戶'
+  },
+  {
+    key: 'salaryAccountB.bank',
+    header: 'salaryAccountB_bank',
+    label: '薪資帳戶B 銀行代號',
+    description: '薪資帳戶B 銀行代號',
+    category: '薪資與帳戶'
+  },
+  {
+    key: 'salaryAccountB.acct',
+    header: 'salaryAccountB_acct',
+    label: '薪資帳戶B 帳號',
+    description: '薪資帳戶B 帳號',
+    category: '薪資與帳戶'
+  },
+  {
+    key: 'salaryItems',
+    header: 'salaryItems',
+    label: '其他薪資項目',
+    description: '其他薪資項目 (多個逗號分隔)',
+    category: '薪資與帳戶'
   }
-]
+])
 const BULK_IMPORT_REQUIRED_FIELDS = BULK_IMPORT_FIELD_CONFIGS.filter(item => item.required).map(
   item => item.key
+)
+const DEFAULT_BULK_IMPORT_COLUMN_MAPPINGS = Object.freeze(
+  BULK_IMPORT_FIELD_CONFIGS.reduce((acc, field) => {
+    acc[field.key] = field.header
+    return acc
+  }, {})
 )
 const bulkImportFieldConfigs = BULK_IMPORT_FIELD_CONFIGS
 const BULK_IMPORT_TEMPLATE_FILENAME = 'employee-import-template.csv'
@@ -1412,16 +1815,38 @@ const bulkImportUploadFileList = ref([])
 const bulkImportPreview = ref([])
 const bulkImportErrors = ref([])
 const bulkImportForm = reactive({
-  columnMappings: bulkImportFieldConfigs.reduce((acc, config) => {
-    acc[config.key] = ''
-    return acc
-  }, {}),
+  columnMappings: { ...DEFAULT_BULK_IMPORT_COLUMN_MAPPINGS },
   options: {
     defaultRole: defaultBulkImportRole,
     resetPassword: '',
     sendWelcomeEmail: false
   }
 })
+
+const bulkImportTemplateSections = computed(() => {
+  const groups = new Map()
+  bulkImportFieldConfigs.forEach(field => {
+    const group = field.category || '其他欄位'
+    if (!groups.has(group)) {
+      groups.set(group, [])
+    }
+    groups.get(group).push(field)
+  })
+  return Array.from(groups.entries()).map(([title, fields]) => ({ title, fields }))
+})
+
+const bulkImportRequiredFieldNames = computed(() =>
+  bulkImportFieldConfigs
+    .filter(field => field.required)
+    .map(field => field.label || field.description || field.header)
+)
+
+const missingBulkImportRequiredColumns = computed(() =>
+  BULK_IMPORT_REQUIRED_FIELDS.filter(key => {
+    const value = bulkImportForm.columnMappings[key]
+    return typeof value !== 'string' || !value.trim()
+  })
+)
 
 function escapeCsvValue(value) {
   if (value === null || value === undefined) return '""'
@@ -1430,10 +1855,11 @@ function escapeCsvValue(value) {
 }
 
 function buildBulkImportTemplateCsvContent() {
-  const rows = [
-    bulkImportFieldConfigs.map(config => config.templateHeader || config.label || config.key),
-    bulkImportFieldConfigs.map(config => config.sampleValue ?? '')
-  ]
+  const headerRow = bulkImportFieldConfigs.map(config => config.header || config.key)
+  const descriptionRow = bulkImportFieldConfigs.map(
+    config => config.description || config.label || config.header || config.key
+  )
+  const rows = [headerRow, descriptionRow]
   const csvBody = rows.map(row => row.map(escapeCsvValue).join(',')).join('\n')
   return `\ufeff${csvBody}`
 }
@@ -1466,13 +1892,9 @@ function downloadBulkImportTemplate() {
     }
   }
 }
-const isBulkImportReady = computed(() => {
-  const requiredCompleted = BULK_IMPORT_REQUIRED_FIELDS.every(key => {
-    const value = bulkImportForm.columnMappings[key]
-    return typeof value === 'string' && value.trim() !== ''
-  })
-  return Boolean(bulkImportFile.value) && requiredCompleted
-})
+const isBulkImportReady = computed(
+  () => Boolean(bulkImportFile.value) && missingBulkImportRequiredColumns.value.length === 0
+)
 
 const FALLBACK_TITLE_OPTIONS = createOptionListFromStrings([
   '護理師',
@@ -2348,7 +2770,7 @@ function openBulkImportDialog() {
   bulkImportDialogVisible.value = true
 }
 
-function resetBulkImportState({ resetMappings = false } = {}) {
+function resetBulkImportState({ resetMappings = true } = {}) {
   bulkImportLoading.value = false
   bulkImportFile.value = null
   bulkImportUploadFileList.value = []
@@ -2356,7 +2778,12 @@ function resetBulkImportState({ resetMappings = false } = {}) {
   bulkImportErrors.value = []
   if (resetMappings) {
     Object.keys(bulkImportForm.columnMappings).forEach(key => {
-      bulkImportForm.columnMappings[key] = ''
+      if (!(key in DEFAULT_BULK_IMPORT_COLUMN_MAPPINGS)) {
+        delete bulkImportForm.columnMappings[key]
+      }
+    })
+    Object.entries(DEFAULT_BULK_IMPORT_COLUMN_MAPPINGS).forEach(([key, header]) => {
+      bulkImportForm.columnMappings[key] = header
     })
     bulkImportForm.options.defaultRole = defaultBulkImportRole
     bulkImportForm.options.resetPassword = ''
@@ -2887,6 +3314,54 @@ function getStatusTagType(status) {
   margin: 0 0 12px 0;
   color: #475569;
   font-size: 14px;
+}
+
+.bulk-import-required-alert {
+  margin-bottom: 16px;
+}
+
+.bulk-import-section {
+  margin-bottom: 20px;
+}
+
+.bulk-import-section:last-of-type {
+  margin-bottom: 0;
+}
+
+.bulk-import-section-title {
+  margin: 20px 0 8px 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.bulk-import-section:first-of-type .bulk-import-section-title {
+  margin-top: 0;
+}
+
+.bulk-import-table {
+  background: #fff;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.bulk-import-header-code {
+  display: inline-block;
+  padding: 2px 6px;
+  background: #e2e8f0;
+  border-radius: 4px;
+  font-family: 'Fira Code', Consolas, 'Courier New', monospace;
+  font-size: 13px;
+  color: #1e293b;
+}
+
+.bulk-import-optional-text {
+  color: #6b7280;
+  font-size: 13px;
+}
+
+.bulk-import-options-title {
+  margin-top: 28px;
 }
 
 .bulk-import-result {

@@ -6,6 +6,80 @@ import { buildEmployeeDoc } from './employeeController.js'
 const REQUIRED_MAPPING_KEYS = ['employeeNo', 'name', 'email']
 const VALID_ROLES = ['employee', 'supervisor', 'admin']
 
+const DEFAULT_COLUMN_MAPPINGS = Object.freeze({
+  employeeNo: 'employeeId',
+  name: 'name',
+  gender: 'gender',
+  idNumber: 'idNumber',
+  birthday: 'birthDate',
+  birthplace: 'birthPlace',
+  bloodType: 'bloodType',
+  languages: 'languages',
+  disabilityLevel: 'disabilityLevel',
+  identityCategory: 'identityCategory',
+  maritalStatus: 'maritalStatus',
+  dependents: 'dependents',
+  email: 'email',
+  phone: 'mobile',
+  landline: 'landline',
+  householdAddress: 'householdAddress',
+  contactAddress: 'contactAddress',
+  lineId: 'lineId',
+  organization: 'organization',
+  department: 'department',
+  subDepartment: 'subDepartment',
+  supervisor: 'supervisor',
+  title: 'title',
+  practiceTitle: 'practiceTitle',
+  employmentStatus: 'status',
+  probationDays: 'probationDays',
+  isPartTime: 'partTime',
+  isClocking: 'needClockIn',
+  educationLevel: 'education_level',
+  schoolName: 'education_school',
+  major: 'education_major',
+  graduationStatus: 'education_status',
+  graduationYear: 'education_graduationYear',
+  serviceType: 'militaryService_type',
+  militaryBranch: 'militaryService_branch',
+  militaryRank: 'militaryService_rank',
+  dischargeYear: 'militaryService_dischargeYear',
+  'emergency1.name': 'emergency1_name',
+  'emergency1.relation': 'emergency1_relation',
+  'emergency1.phone1': 'emergency1_phone1',
+  'emergency1.phone2': 'emergency1_phone2',
+  'emergency2.name': 'emergency2_name',
+  'emergency2.relation': 'emergency2_relation',
+  'emergency2.phone1': 'emergency2_phone1',
+  'emergency2.phone2': 'emergency2_phone2',
+  hireDate: 'hireDate',
+  appointDate: 'startDate',
+  resignDate: 'resignationDate',
+  dismissDate: 'dismissalDate',
+  reAppointDate: 'rehireStartDate',
+  reDismissDate: 'rehireEndDate',
+  employmentNote: 'appointment_remark',
+  salaryType: 'salaryType',
+  salaryAmount: 'salaryAmount',
+  laborPensionSelf: 'laborPensionSelf',
+  employeeAdvance: 'employeeAdvance',
+  'salaryAccountA.bank': 'salaryAccountA_bank',
+  'salaryAccountA.acct': 'salaryAccountA_acct',
+  'salaryAccountB.bank': 'salaryAccountB_bank',
+  'salaryAccountB.acct': 'salaryAccountB_acct',
+  salaryItems: 'salaryItems'
+})
+
+const CHINESE_HEADER_HINTS = new Set([
+  '員工編號',
+  '姓名',
+  '電子郵件 (必填唯一)',
+  '手機號碼',
+  '部門 ID',
+  '主管員工 ID',
+  '人員狀態 (正職員工/試用期/離職/留職停薪)'
+])
+
 const BOOLEAN_FIELDS = new Set(['isPartTime', 'partTime', 'isClocking', 'needClockIn'])
 const DATE_FIELDS = new Set([
   'birthday',
@@ -22,8 +96,10 @@ const NUMBER_FIELDS = new Set([
   'salaryAmount',
   'laborPensionSelf',
   'employeeAdvance',
-  'graduationYear'
+  'graduationYear',
+  'dischargeYear'
 ])
+const CSV_ARRAY_FIELDS = new Set(['languages', 'identityCategory', 'salaryItems'])
 
 const EMAIL_REGEX = /^\S+@\S+\.\S+$/
 
@@ -92,6 +168,114 @@ function formatRowError(rowNumber, messages) {
   return `第 ${rowNumber} 列：${text}`
 }
 
+function setPathValue(target, path, value) {
+  if (!path.includes('.')) {
+    target[path] = value
+    return
+  }
+  const parts = path.split('.')
+  let current = target
+  for (let index = 0; index < parts.length - 1; index += 1) {
+    const key = parts[index]
+    if (!current[key] || typeof current[key] !== 'object') {
+      current[key] = {}
+    }
+    current = current[key]
+  }
+  current[parts[parts.length - 1]] = value
+}
+
+function getPathValue(target, path) {
+  if (!target) return undefined
+  if (!path.includes('.')) return target[path]
+  return path.split('.').reduce((acc, key) => {
+    if (!acc || typeof acc !== 'object') return undefined
+    return acc[key]
+  }, target)
+}
+
+function hasChineseHeaderHints(row) {
+  if (!row) return false
+  let matches = 0
+  row.eachCell(cell => {
+    const value = toPlainCellValue(cell)
+    if (typeof value === 'string' && CHINESE_HEADER_HINTS.has(value.trim())) {
+      matches += 1
+    }
+  })
+  return matches >= 3
+}
+
+function splitToList(value) {
+  if (value === undefined || value === null) return undefined
+  if (Array.isArray(value)) {
+    return value.map(item => (typeof item === 'string' ? item.trim() : item)).filter(item => item !== '' && item !== null && item !== undefined)
+  }
+  if (typeof value !== 'string') return value
+  const trimmed = value.trim()
+  if (!trimmed) return []
+  return trimmed
+    .split(/[，,、;；\n]+/)
+    .map(item => item.trim())
+    .filter(item => item)
+}
+
+const STATUS_ALIASES = new Map([
+  ['試用期', '試用期員工'],
+  ['離職', '離職員工'],
+  ['正職', '正職員工']
+])
+
+function normalizeRowObject(normalized) {
+  if (typeof normalized.gender === 'string') {
+    normalized.gender = normalized.gender.trim().toUpperCase()
+  }
+  if (typeof normalized.bloodType === 'string') {
+    normalized.bloodType = normalized.bloodType.trim().toUpperCase()
+  }
+  if (typeof normalized.employmentStatus === 'string') {
+    const trimmed = normalized.employmentStatus.trim()
+    const alias = STATUS_ALIASES.get(trimmed) || STATUS_ALIASES.get(trimmed.replace(/員工$/, ''))
+    normalized.employmentStatus = alias || trimmed
+  }
+
+  CSV_ARRAY_FIELDS.forEach(field => {
+    if (field in normalized) {
+      const list = splitToList(normalized[field])
+      if (Array.isArray(list)) {
+        normalized[field] = list
+      } else if (list === undefined) {
+        delete normalized[field]
+      }
+    }
+  })
+
+  if (normalized.phone && !normalized.mobile) {
+    normalized.mobile = normalized.phone
+  }
+
+  const trimEmergencyContact = contact => {
+    if (!contact || typeof contact !== 'object') return null
+    const cleaned = {
+      name: typeof contact.name === 'string' ? contact.name.trim() : contact.name,
+      relation: typeof contact.relation === 'string' ? contact.relation.trim() : contact.relation,
+      phone1: typeof contact.phone1 === 'string' ? contact.phone1.trim() : contact.phone1,
+      phone2: typeof contact.phone2 === 'string' ? contact.phone2.trim() : contact.phone2
+    }
+    const hasContent = Object.values(cleaned).some(value => value !== '' && value !== null && value !== undefined)
+    return hasContent ? cleaned : null
+  }
+
+  const emergency1 = trimEmergencyContact(normalized.emergency1)
+  const emergency2 = trimEmergencyContact(normalized.emergency2)
+  if (emergency1) normalized.emergency1 = emergency1
+  else delete normalized.emergency1
+  if (emergency2) normalized.emergency2 = emergency2
+  else delete normalized.emergency2
+
+  return normalized
+}
+
 function deriveUsername(row) {
   if (typeof row.username === 'string' && row.username.trim()) {
     return row.username.trim()
@@ -132,17 +316,21 @@ export async function bulkImportEmployees(req, res) {
     return
   }
 
-  let columnMappings
-  try {
-    columnMappings = JSON.parse(req.body?.mappings || '{}')
-  } catch (error) {
-    res.status(400).json({ message: '欄位對應格式錯誤', errors: ['mappings JSON 解析失敗'] })
-    return
-  }
+  let columnMappings = { ...DEFAULT_COLUMN_MAPPINGS }
+  if (req.body?.mappings) {
+    let parsed
+    try {
+      parsed = JSON.parse(req.body.mappings)
+    } catch (error) {
+      res.status(400).json({ message: '欄位對應格式錯誤', errors: ['mappings JSON 解析失敗'] })
+      return
+    }
 
-  if (!columnMappings || typeof columnMappings !== 'object') {
-    res.status(400).json({ message: '欄位對應格式錯誤', errors: ['欄位對應缺失'] })
-    return
+    if (!parsed || typeof parsed !== 'object') {
+      res.status(400).json({ message: '欄位對應格式錯誤', errors: ['欄位對應缺失'] })
+      return
+    }
+    columnMappings = parsed
   }
 
   const missingMappings = REQUIRED_MAPPING_KEYS.filter(key => {
@@ -203,6 +391,12 @@ export async function bulkImportEmployees(req, res) {
     }
   })
 
+  const headerRowsToSkip = new Set()
+  const secondRow = worksheet.getRow(2)
+  if (hasChineseHeaderHints(secondRow)) {
+    headerRowsToSkip.add(2)
+  }
+
   const missingColumns = Object.entries(columnMappings)
     .filter(([, header]) => typeof header === 'string' && header.trim())
     .filter(([, header]) => !headerMap.has(header.trim()))
@@ -219,6 +413,7 @@ export async function bulkImportEmployees(req, res) {
   const parsedRows = []
   const maxRow = worksheet.actualRowCount || worksheet.rowCount
   for (let index = 2; index <= maxRow; index += 1) {
+    if (headerRowsToSkip.has(index)) continue
     const row = worksheet.getRow(index)
     if (!row || row.cellCount === 0) continue
 
@@ -234,49 +429,59 @@ export async function bulkImportEmployees(req, res) {
       if (cellValue !== '' && cellValue !== null && cellValue !== undefined) {
         hasData = true
       }
-      original[key] = cellValue
+      setPathValue(original, key, cellValue)
 
-      if (BOOLEAN_FIELDS.has(key)) {
+      const baseKey = key.split('.')[0]
+
+      if (BOOLEAN_FIELDS.has(baseKey)) {
         const boolValue = toBoolean(cellValue)
         if (typeof boolValue === 'boolean') {
-          normalized[key] = boolValue
+          setPathValue(normalized, key, boolValue)
         }
         return
       }
 
-      if (DATE_FIELDS.has(key)) {
+      if (DATE_FIELDS.has(baseKey)) {
         const dateValue = toDateValue(cellValue)
         if (dateValue) {
-          normalized[key] = dateValue
+          setPathValue(normalized, key, dateValue)
         } else if (typeof cellValue === 'string' && cellValue.trim()) {
-          normalized[key] = cellValue.trim()
+          setPathValue(normalized, key, cellValue.trim())
         }
         return
       }
 
-      if (NUMBER_FIELDS.has(key)) {
+      if (NUMBER_FIELDS.has(baseKey)) {
         const numberValue = toNumberValue(cellValue)
         if (numberValue !== undefined) {
-          normalized[key] = numberValue
+          setPathValue(normalized, key, numberValue)
         }
         return
       }
 
       if (typeof cellValue === 'string') {
-        normalized[key] = cellValue.trim()
+        setPathValue(normalized, key, cellValue.trim())
       } else {
-        normalized[key] = cellValue
+        setPathValue(normalized, key, cellValue)
       }
 
-      if (key === 'employeeNo' && normalized[key] !== undefined && normalized[key] !== null) {
-        normalized[key] = String(normalized[key]).trim()
+      if (baseKey === 'employeeNo') {
+        const currentValue = getPathValue(normalized, key)
+        if (currentValue !== undefined && currentValue !== null) {
+          setPathValue(normalized, key, String(currentValue).trim())
+        }
       }
-      if (key === 'role' && typeof normalized[key] === 'string') {
-        normalized[key] = normalized[key].trim().toLowerCase()
+      if (baseKey === 'role') {
+        const currentRole = getPathValue(normalized, key)
+        if (typeof currentRole === 'string') {
+          setPathValue(normalized, key, currentRole.trim().toLowerCase())
+        }
       }
     })
 
     if (!hasData) continue
+
+    normalizeRowObject(normalized)
 
     parsedRows.push({
       rowNumber: index,
