@@ -48,7 +48,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useMenuStore } from '../stores/menu'
 import { clearToken } from '../utils/tokenService'
@@ -67,6 +67,42 @@ onMounted(async () => {
   }
 })
 
+function redirectToFirstMenu(firstName) {
+  if (!firstName) return
+  const currentName = router.currentRoute?.value?.name
+  if (currentName === firstName) return
+  if (typeof router.replace === 'function') {
+    router.replace({ name: firstName })
+  } else {
+    router.push({ name: firstName })
+  }
+}
+
+watch(
+  () => menuItems.value,
+  items => {
+    if (!Array.isArray(items) || items.length === 0) return
+    const firstName = items[0]?.name
+    if (!firstName) return
+    const currentName = router.currentRoute?.value?.name
+    if (!currentName || currentName === 'Settings' || currentName === 'ManagerLayout') {
+      redirectToFirstMenu(firstName)
+    }
+    if (!active.value) {
+      active.value = currentName && currentName !== 'Settings' ? currentName : firstName
+    }
+  },
+  { immediate: true }
+)
+
+watch(
+  () => router.currentRoute?.value?.name,
+  name => {
+    active.value = typeof name === 'string' ? name : ''
+  },
+  { immediate: true }
+)
+
 function gotoPage(name) {
   active.value = name
   router.push({ name })
@@ -75,13 +111,13 @@ function toggleCollapse() {
   isCollapse.value = !isCollapse.value
 }
 
-  function logout() {
-    clearToken()
-    menuStore.setMenu([])
-    sessionStorage.removeItem('role')
-    sessionStorage.removeItem('employeeId')
-    router.push('/')
-  }
+function logout() {
+  clearToken()
+  menuStore.setMenu([])
+  sessionStorage.removeItem('role')
+  sessionStorage.removeItem('employeeId')
+  router.push('/')
+}
 </script>
 
 <style scoped>
@@ -207,6 +243,15 @@ function toggleCollapse() {
   margin: 16px;
   border-radius: 12px;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.main-content h1,
+.main-content h2,
+.main-content h3,
+.main-content h4,
+.main-content h5,
+.main-content h6 {
+  color: var(--hr-text-primary);
 }
 
 @media (max-width: 768px) {

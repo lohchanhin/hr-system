@@ -1333,6 +1333,8 @@ const DICTIONARY_OPTION_CONFIGS = [
   }
 ]
 
+const DICTIONARY_MISSING_WARNING_SKIP_KEYS = new Set(['C08-1'])
+
 function ensureDictionaryFallbacks({ notify = true } = {}) {
   const restored = []
   DICTIONARY_OPTION_CONFIGS.forEach(({ ref, fallback, label }) => {
@@ -1745,7 +1747,10 @@ async function loadItemSettings() {
     const missingLabels = []
     DICTIONARY_OPTION_CONFIGS.forEach(({ key, ref, fallback, label }) => {
       const source = dictionaryData?.[key]
-      if (!Array.isArray(source) || !source.length) {
+      if (
+        (!Array.isArray(source) || !source.length) &&
+        !DICTIONARY_MISSING_WARNING_SKIP_KEYS.has(key)
+      ) {
         missingLabels.push(label)
       }
       ref.value = normalizeDictionaryOptions(source, fallback)
