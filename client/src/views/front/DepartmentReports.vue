@@ -137,6 +137,13 @@ const supervisorDepartmentName = ref('')
 const reportTypes = [
   { value: 'attendance', label: '出勤統計' },
   { value: 'leave', label: '請假統計' },
+  { value: 'tardiness', label: '遲到統計' },
+  { value: 'earlyLeave', label: '早退統計' },
+  { value: 'workHours', label: '工時統計' },
+  { value: 'overtime', label: '加班申請' },
+  { value: 'compTime', label: '補休申請' },
+  { value: 'makeUp', label: '補打卡申請' },
+  { value: 'specialLeave', label: '特休統計' },
 ]
 const exportFormats = [
   { value: 'excel', label: 'Excel (.xlsx)' },
@@ -163,6 +170,13 @@ const loading = reactive({
 const reportEndpointMap = {
   attendance: '/api/reports/department/attendance/export',
   leave: '/api/reports/department/leave/export',
+  tardiness: '/api/reports/department/tardiness/export',
+  earlyLeave: '/api/reports/department/early-leave/export',
+  workHours: '/api/reports/department/work-hours/export',
+  overtime: '/api/reports/department/overtime/export',
+  compTime: '/api/reports/department/comp-time/export',
+  makeUp: '/api/reports/department/make-up/export',
+  specialLeave: '/api/reports/department/special-leave/export',
 }
 
 const formatExtensionMap = {
@@ -199,6 +213,60 @@ const dynamicColumns = computed(() => {
       { prop: 'days', label: '天數', minWidth: 100 },
     ]
   }
+  if (reportType.value === 'tardiness') {
+    return [
+      { prop: 'date', label: '日期', minWidth: 140 },
+      { prop: 'scheduledStart', label: '排定上班', minWidth: 140 },
+      { prop: 'actualClockIn', label: '實際打卡', minWidth: 140 },
+      { prop: 'minutesLate', label: '遲到分鐘', minWidth: 120 },
+    ]
+  }
+  if (reportType.value === 'earlyLeave') {
+    return [
+      { prop: 'date', label: '日期', minWidth: 140 },
+      { prop: 'scheduledEnd', label: '排定下班', minWidth: 140 },
+      { prop: 'actualClockOut', label: '實際打卡', minWidth: 140 },
+      { prop: 'minutesEarly', label: '早退分鐘', minWidth: 120 },
+    ]
+  }
+  if (reportType.value === 'workHours') {
+    return [
+      { prop: 'date', label: '日期', minWidth: 140 },
+      { prop: 'scheduledHours', label: '排定工時(小時)', minWidth: 160 },
+      { prop: 'workedHours', label: '實際工時(小時)', minWidth: 160 },
+      { prop: 'differenceHours', label: '差異(小時)', minWidth: 140 },
+    ]
+  }
+  if (reportType.value === 'overtime') {
+    return [
+      { prop: 'date', label: '日期', minWidth: 140 },
+      { prop: 'startTime', label: '開始時間', minWidth: 120 },
+      { prop: 'endTime', label: '結束時間', minWidth: 120 },
+      { prop: 'hours', label: '時數', minWidth: 100 },
+      { prop: 'reason', label: '原因', minWidth: 180 },
+    ]
+  }
+  if (reportType.value === 'compTime') {
+    return [
+      { prop: 'date', label: '日期', minWidth: 140 },
+      { prop: 'hours', label: '補休時數', minWidth: 120 },
+      { prop: 'overtimeReference', label: '來源加班單', minWidth: 180 },
+    ]
+  }
+  if (reportType.value === 'makeUp') {
+    return [
+      { prop: 'date', label: '日期', minWidth: 140 },
+      { prop: 'category', label: '補卡類別', minWidth: 160 },
+      { prop: 'note', label: '補卡說明', minWidth: 200 },
+    ]
+  }
+  if (reportType.value === 'specialLeave') {
+    return [
+      { prop: 'startDate', label: '開始日期', minWidth: 140 },
+      { prop: 'endDate', label: '結束日期', minWidth: 140 },
+      { prop: 'days', label: '天數', minWidth: 100 },
+    ]
+  }
   return []
 })
 
@@ -223,6 +291,55 @@ const summaryItems = computed(() => {
         }))
       : []
     return [...base, ...byType]
+  }
+  if (reportType.value === 'tardiness') {
+    return [
+      { label: '遲到件數', value: preview.summary.totalLateCount ?? 0 },
+      { label: '遲到總分鐘', value: preview.summary.totalLateMinutes ?? 0 },
+      { label: '平均遲到分鐘', value: preview.summary.averageLateMinutes ?? 0 },
+    ]
+  }
+  if (reportType.value === 'earlyLeave') {
+    return [
+      { label: '早退件數', value: preview.summary.totalEarlyLeaveCount ?? 0 },
+      { label: '早退總分鐘', value: preview.summary.totalEarlyMinutes ?? 0 },
+      { label: '平均早退分鐘', value: preview.summary.averageEarlyMinutes ?? 0 },
+    ]
+  }
+  if (reportType.value === 'workHours') {
+    return [
+      { label: '排定總工時', value: preview.summary.totalScheduledHours ?? 0 },
+      { label: '實際總工時', value: preview.summary.totalWorkedHours ?? 0 },
+      { label: '工時差異', value: preview.summary.differenceHours ?? 0 },
+    ]
+  }
+  if (reportType.value === 'overtime') {
+    return [
+      { label: '加班申請數', value: preview.summary.totalRequests ?? 0 },
+      { label: '加班總時數', value: preview.summary.totalHours ?? 0 },
+    ]
+  }
+  if (reportType.value === 'compTime') {
+    return [
+      { label: '補休申請數', value: preview.summary.totalRequests ?? 0 },
+      { label: '補休總時數', value: preview.summary.totalHours ?? 0 },
+    ]
+  }
+  if (reportType.value === 'makeUp') {
+    const base = [{ label: '補卡申請數', value: preview.summary.totalRequests ?? 0 }]
+    const categories = Array.isArray(preview.summary.byCategory)
+      ? preview.summary.byCategory.map((item) => ({
+          label: `${item.label ?? '未分類'} 件數`,
+          value: `${item.count ?? 0} 筆`,
+        }))
+      : []
+    return [...base, ...categories]
+  }
+  if (reportType.value === 'specialLeave') {
+    return [
+      { label: '特休申請數', value: preview.summary.totalRequests ?? 0 },
+      { label: '特休總天數', value: preview.summary.totalDays ?? 0 },
+    ]
   }
   return []
 })
