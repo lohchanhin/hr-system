@@ -1040,10 +1040,10 @@
                         placeholder="選擇薪資項目"
                       >
                         <el-option
-                          v-for="item in SALARY_ITEM_OPTIONS"
-                          :key="item"
-                          :label="item"
-                          :value="item"
+                          v-for="item in salaryItemOptions"
+                          :key="item.value"
+                          :label="item.label"
+                          :value="item.value"
                         />
                       </el-select>
                     </el-form-item>
@@ -1199,6 +1199,17 @@ const PERMISSION_GRADE_OPTIONS = [
   { level: 'L5', description: '高階決策者 / 最高主管' }
 ] // 權限/職等(不可控僅示意)
 
+const titleOptions = ref([])
+const practiceTitleOptions = ref([])
+const languageOptions = ref([])
+const disabilityLevelOptions = ref([])
+const identityCategoryOptions = ref([])
+const educationLevelOptions = ref([])
+const graduationStatusOptions = ref([])
+const relationOptions = ref([])
+const creditCategoryOptions = ref([])
+const salaryItemOptions = ref([])
+
 const FALLBACK_TITLE_OPTIONS = createOptionListFromStrings([
   '護理師',
   '照顧服務員',
@@ -1260,6 +1271,14 @@ const FALLBACK_CREDIT_CATEGORY_OPTIONS = createOptionListFromStrings([
   '研討會',
   '自學'
 ]) // C10
+const FALLBACK_SALARY_ITEM_OPTIONS = createOptionListFromStrings([
+  '本薪',
+  '全勤',
+  '加班費',
+  '交通津貼',
+  '伙食津貼',
+  '績效獎金'
+]) // C14
 
 const DICTIONARY_OPTION_CONFIGS = [
   { key: 'C03', ref: titleOptions, fallback: FALLBACK_TITLE_OPTIONS, label: '職稱' },
@@ -1305,6 +1324,12 @@ const DICTIONARY_OPTION_CONFIGS = [
     ref: creditCategoryOptions,
     fallback: FALLBACK_CREDIT_CATEGORY_OPTIONS,
     label: '教育訓練積分類別'
+  },
+  {
+    key: 'C14',
+    ref: salaryItemOptions,
+    fallback: FALLBACK_SALARY_ITEM_OPTIONS,
+    label: '津貼項目'
   }
 ]
 
@@ -1322,18 +1347,7 @@ function ensureDictionaryFallbacks({ notify = true } = {}) {
   return restored
 }
 
-const titleOptions = ref([])
-const practiceTitleOptions = ref([])
-const languageOptions = ref([])
-const disabilityLevelOptions = ref([])
-const identityCategoryOptions = ref([])
-const educationLevelOptions = ref([])
-const graduationStatusOptions = ref([])
-const relationOptions = ref([])
-const creditCategoryOptions = ref([])
-
 const SALARY_TYPES = ['月薪', '日薪', '時薪']
-const SALARY_ITEM_OPTIONS = ['本薪', '全勤', '加班費', '交通津貼', '伙食津貼', '績效獎金']
 const SIGN_ROLE_OPTIONS = [
   { id: 'R001', label: '填報', description: '提出申請與初始資料填寫' },
   { id: 'R002', label: '覆核', description: '確認申請內容與佐證完整性' },
@@ -1598,6 +1612,43 @@ function ensureArrayValue(value) {
   return [value]
 }
 
+function toNormalizedOptionValue(value) {
+  if (value === '' || value === null || value === undefined) return ''
+  return typeof value === 'string' ? value : String(value)
+}
+
+function getSalaryItemValueSet() {
+  const source = Array.isArray(salaryItemOptions.value) ? salaryItemOptions.value : []
+  return new Set(
+    source
+      .map(option => {
+        if (option && typeof option === 'object') {
+          const rawValue =
+            option.value ??
+            option.code ??
+            option.name ??
+            option.label ??
+            (typeof option.toString === 'function' ? option.toString() : '')
+          return toNormalizedOptionValue(rawValue)
+        }
+        return toNormalizedOptionValue(option)
+      })
+      .filter(Boolean)
+  )
+}
+
+function filterValidSalaryItems(values) {
+  const valueSet = getSalaryItemValueSet()
+  return ensureArrayValue(values)
+    .map(toNormalizedOptionValue)
+    .filter(value => valueSet.has(value))
+}
+
+function areArraysShallowEqual(a = [], b = []) {
+  if (a.length !== b.length) return false
+  return a.every((item, index) => item === b[index])
+}
+
 function getAttachmentPrefix(type, index) {
   return type === 'licenses' ? `證照${index + 1}-附件` : `教育訓練${index + 1}-附件`
 }
@@ -1747,9 +1798,7 @@ async function fetchEmployees() {
         subDepartment: e.subDepartment?._id || e.subDepartment || '',
         laborPensionSelf: toNumberOrNull(e?.laborPensionSelf) ?? 0,
         employeeAdvance: toNumberOrNull(e?.employeeAdvance) ?? 0,
-        salaryItems: ensureArrayValue(e?.salaryItems).filter(item =>
-          SALARY_ITEM_OPTIONS.includes(item)
-        ),
+        salaryItems: filterValidSalaryItems(e?.salaryItems),
         height: toNumberOrNull(e?.medicalCheck?.height ?? e?.height),
         weight: toNumberOrNull(e?.medicalCheck?.weight ?? e?.weight),
         medicalBloodType: e?.medicalCheck?.bloodType ?? e?.medicalBloodType ?? '',
@@ -1939,7 +1988,9 @@ const rules = {
         if (!Array.isArray(value)) {
           return Promise.reject(new Error('請選擇有效的薪資項目'))
         }
-        const invalid = value.some(item => !SALARY_ITEM_OPTIONS.includes(item))
+        const valueSet = getSalaryItemValueSet()
+        const normalized = ensureArrayValue(value).map(toNormalizedOptionValue)
+        const invalid = normalized.some(item => !valueSet.has(item))
         return invalid
           ? Promise.reject(new Error('請選擇有效的薪資項目'))
           : Promise.resolve()
@@ -1983,6 +2034,36 @@ watch(
   }
 )
 
+watch(
+  () => employeeForm.value.salaryItems,
+  value => {
+    const rawArray = ensureArrayValue(value)
+    const current = rawArray.map(toNormalizedOptionValue)
+    const filtered = filterValidSalaryItems(current)
+    if (!areArraysShallowEqual(filtered, current)) {
+      employeeForm.value.salaryItems = filtered
+    } else if (!areArraysShallowEqual(current, rawArray)) {
+      employeeForm.value.salaryItems = current
+    }
+  },
+  { deep: true }
+)
+
+watch(
+  () => salaryItemOptions.value,
+  () => {
+    const rawArray = ensureArrayValue(employeeForm.value.salaryItems)
+    const current = rawArray.map(toNormalizedOptionValue)
+    const filtered = filterValidSalaryItems(current)
+    if (!areArraysShallowEqual(filtered, current)) {
+      employeeForm.value.salaryItems = filtered
+    } else if (!areArraysShallowEqual(current, rawArray)) {
+      employeeForm.value.salaryItems = current
+    }
+  },
+  { deep: true }
+)
+
 /* 事件 --------------------------------------------------------------------- */
 function onGraduationStatusClear() {
   employeeForm.value.graduationStatus = ''
@@ -2012,9 +2093,7 @@ async function openEmployeeDialog(index = null) {
       toNumberOrNull(employeeForm.value.laborPensionSelf) ?? 0
     employeeForm.value.employeeAdvance =
       toNumberOrNull(employeeForm.value.employeeAdvance) ?? 0
-    employeeForm.value.salaryItems = ensureArrayValue(employeeForm.value.salaryItems).filter(item =>
-      SALARY_ITEM_OPTIONS.includes(item)
-    )
+    employeeForm.value.salaryItems = filterValidSalaryItems(employeeForm.value.salaryItems)
     const education = emp.education ?? {}
     if (!employeeForm.value.educationLevel && education.level) {
       employeeForm.value.educationLevel = education.level
@@ -2115,9 +2194,7 @@ async function saveEmployee() {
   payload.graduationStatus = extractOptionValue(form.graduationStatus)
   payload.laborPensionSelf = toNumberOrNull(form.laborPensionSelf) ?? 0
   payload.employeeAdvance = toNumberOrNull(form.employeeAdvance) ?? 0
-  payload.salaryItems = Array.isArray(form.salaryItems)
-    ? form.salaryItems.filter(item => SALARY_ITEM_OPTIONS.includes(item))
-    : ensureArrayValue(form.salaryItems).filter(item => SALARY_ITEM_OPTIONS.includes(item))
+  payload.salaryItems = filterValidSalaryItems(form.salaryItems)
   payload.dischargeYear = toNumberOrNull(form.dischargeYear)
   if (payload.supervisor === '' || payload.supervisor === null) delete payload.supervisor
 
