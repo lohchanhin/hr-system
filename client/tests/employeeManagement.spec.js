@@ -12,7 +12,7 @@ vi.mock('vue-router', () => ({
   useRouter: () => ({ push: vi.fn() })
 }))
 vi.mock('element-plus', () => ({
-  ElMessage: { success: vi.fn(), error: vi.fn() },
+  ElMessage: { success: vi.fn(), error: vi.fn(), warning: vi.fn() },
   ElMessageBox: { alert: vi.fn() }
 }))
 
@@ -31,6 +31,7 @@ describe('EmployeeManagement.vue', () => {
     expect(calls).toContain('/api/departments')
     expect(calls).toContain('/api/organizations')
     expect(calls).toContain('/api/sub-departments')
+    expect(calls).toContain('/api/other-control-settings/item-settings')
   })
 
   it('has validation rules for required fields', () => {
@@ -81,6 +82,42 @@ describe('EmployeeManagement.vue', () => {
     await expect(
       salaryItemsValidator.validate({ salaryItems: ['本薪', '全勤'] })
     ).resolves.toEqual({ salaryItems: ['本薪', '全勤'] })
+  })
+
+  it('從字典載入津貼項目並同步表單選項', async () => {
+    const responses = {
+      '/api/departments': [],
+      '/api/organizations': [],
+      '/api/sub-departments': [],
+      '/api/employees': [],
+      '/api/other-control-settings/item-settings': {
+        itemSettings: {
+          C14: [
+            { label: '交通補助', value: 'transport' },
+            { label: '夜班津貼', value: 'night' }
+          ]
+        }
+      }
+    }
+    apiFetch.mockImplementation(url =>
+      Promise.resolve({ ok: true, json: async () => responses[url] ?? [] })
+    )
+
+    const wrapper = mount(EmployeeManagement, { global: { stubs: elStubs } })
+    await flushPromises()
+
+    expect(wrapper.vm.salaryItemOptions).toEqual([
+      { label: '交通補助', value: 'transport' },
+      { label: '夜班津貼', value: 'night' }
+    ])
+
+    wrapper.vm.employeeForm.salaryItems = ['transport', 'night', '過時']
+    await flushPromises()
+    expect(wrapper.vm.employeeForm.salaryItems).toEqual(['transport', 'night'])
+
+    wrapper.vm.salaryItemOptions = [{ label: '績效獎金', value: 'bonus' }]
+    await flushPromises()
+    expect(wrapper.vm.employeeForm.salaryItems).toEqual([])
   })
 
   it('sends login info when saving employee', async () => {
