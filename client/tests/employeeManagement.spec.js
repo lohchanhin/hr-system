@@ -9,7 +9,7 @@ import { REQUIRED_FIELDS } from '../src/components/backComponents/requiredFields
 import Schema from 'async-validator'
 import { ElMessageBox } from 'element-plus'
 vi.mock('vue-router', () => ({
-  useRouter: () => ({ push: vi.fn() })
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn() })
 }))
 vi.mock('element-plus', () => ({
   ElMessage: { success: vi.fn(), error: vi.fn(), warning: vi.fn() },
@@ -118,6 +118,46 @@ describe('EmployeeManagement.vue', () => {
     wrapper.vm.salaryItemOptions = [{ label: '績效獎金', value: 'bonus' }]
     await flushPromises()
     expect(wrapper.vm.employeeForm.salaryItems).toEqual([])
+  })
+
+  it('缺少畢業狀態時使用預設選項且不顯示警告', async () => {
+    const dictionaryResponse = {
+      itemSettings: {
+        C03: ['專員', '經理'],
+        C04: ['護理師'],
+        C05: ['英文', '日文'],
+        C06: ['第一類'],
+        C07: ['一般員工'],
+        C08: ['大學'],
+        C09: ['父親'],
+        C10: ['新進訓練'],
+        C14: ['本薪']
+      }
+    }
+
+    const responses = {
+      '/api/departments': [],
+      '/api/organizations': [],
+      '/api/sub-departments': [],
+      '/api/employees': [],
+      '/api/other-control-settings/item-settings': dictionaryResponse
+    }
+
+    apiFetch.mockImplementation(url =>
+      Promise.resolve({ ok: true, json: async () => responses[url] ?? [] })
+    )
+
+    const { ElMessage } = await import('element-plus')
+    ElMessage.warning.mockClear()
+
+    const wrapper = mount(EmployeeManagement, { global: { stubs: elStubs } })
+    await flushPromises()
+
+    expect(wrapper.vm.graduationStatusOptions).toEqual([
+      { label: '畢業', value: '畢業' },
+      { label: '肄業', value: '肄業' }
+    ])
+    expect(ElMessage.warning).not.toHaveBeenCalled()
   })
 
   it('sends login info when saving employee', async () => {

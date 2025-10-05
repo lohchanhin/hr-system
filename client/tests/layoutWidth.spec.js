@@ -1,17 +1,18 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { ref } from 'vue'
 import { mount } from '@vue/test-utils'
 import ElementPlus from 'element-plus'
 import ModernLayout from '../src/views/ModernLayout.vue'
 import Layout from '../src/views/Layout.vue'
 
 vi.mock('vue-router', () => ({
-  useRouter: () => ({ push: vi.fn() })
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn(), currentRoute: ref({ name: '' }) })
 }))
 
 vi.mock('../src/stores/menu', () => ({
   useMenuStore: () => ({
     fetchMenu: vi.fn(),
-    items: []
+    items: ref([])
   })
 }))
 

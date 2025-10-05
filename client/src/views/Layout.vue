@@ -55,4 +55,13 @@ const gotoPage = (name) => {
   flex: 0 0 75%;
   width: 75%;
 }
+
+.layout-main h1,
+.layout-main h2,
+.layout-main h3,
+.layout-main h4,
+.layout-main h5,
+.layout-main h6 {
+  color: var(--hr-text-primary);
+}
 </style>
