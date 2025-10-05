@@ -143,7 +143,10 @@ app.use(
   authenticate,
   (req, res, next) => {
     if (req.method === 'GET') {
-      return authorizeRoles('admin', 'supervisor')(req, res, next);
+      if (req.path?.startsWith('/department')) {
+        return authorizeRoles('admin', 'supervisor')(req, res, next);
+      }
+      return authorizeRoles('admin')(req, res, next);
     }
     return authorizeRoles('admin')(req, res, next);
   },

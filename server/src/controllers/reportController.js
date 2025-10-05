@@ -1,10 +1,10 @@
 import Report from '../models/Report.js';
-import Employee from '../models/Employee.js';
-import ShiftSchedule from '../models/ShiftSchedule.js';
-import AttendanceRecord from '../models/AttendanceRecord.js';
-import ApprovalRequest from '../models/approval_request.js';
-import { getLeaveFieldIds } from '../services/leaveFieldService.js';
 import { exportTabularReport } from '../services/reportExportHelper.js';
+import {
+  getDepartmentReportData,
+  ReportAccessError,
+  getReportDisplayName,
+} from '../services/reportMetricsService.js';
 
 const NOTIFICATION_FREQUENCIES = new Set(['daily', 'weekly', 'monthly']);
 
@@ -401,354 +401,258 @@ function normalizeId(value) {
   return String(current);
 }
 
-function normalizeDateKey(dateLike) {
-  const date = new Date(dateLike);
-  if (Number.isNaN(date.getTime())) return '';
-  return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
-}
-
-function formatYMD(dateLike) {
-  if (!dateLike) return '';
-  const date = new Date(dateLike);
-  if (Number.isNaN(date.getTime())) return '';
-  const yyyy = date.getFullYear();
-  const mm = String(date.getMonth() + 1).padStart(2, '0');
-  const dd = String(date.getDate()).padStart(2, '0');
-  return `${yyyy}-${mm}-${dd}`;
-}
-
-function calculateInclusiveDays(start, end) {
-  const startDate = start ? new Date(start) : null;
-  const endDate = end ? new Date(end) : null;
-  if (!startDate || !endDate) return 0;
-  const startTime = startDate.getTime();
-  const endTime = endDate.getTime();
-  if (Number.isNaN(startTime) || Number.isNaN(endTime)) return 0;
-  if (endTime < startTime) return 0;
-  const diff = endTime - startTime;
-  return Math.floor(diff / (24 * 60 * 60 * 1000)) + 1;
-}
-
-function createTypeMap(options = []) {
-  const map = new Map();
-  options.forEach((opt) => {
-    if (!opt) return;
-    const value = opt.value ?? opt.code ?? opt.id ?? opt.key;
-    const label = opt.label ?? opt.name ?? opt.title ?? opt.text ?? opt.display ?? value;
-    if (value !== undefined && value !== null) {
-      const strValue = String(value);
-      map.set(strValue, label !== undefined && label !== null ? String(label) : strValue);
-    }
-    if (label !== undefined && label !== null) {
-      const labelStr = String(label);
-      if (!map.has(labelStr)) map.set(labelStr, labelStr);
-    }
-  });
-  return map;
-}
-
-function humanizeLeaveType(raw, typeMap) {
-  if (raw === undefined || raw === null) return { label: '', code: '' };
-  if (typeof raw === 'object') {
-    const codeCandidate =
-      raw.code ?? raw.value ?? raw.id ?? raw._id ?? (typeof raw.toString === 'function' ? raw.toString() : '');
-    const code = codeCandidate ? String(codeCandidate) : '';
-    const labelCandidate = raw.label ?? raw.name ?? raw.title ?? (code ? typeMap.get(code) : undefined);
-    const label = labelCandidate ? String(labelCandidate) : code;
-    return { label, code: code || label };
-  }
-  const code = String(raw);
-  const label =
-    typeMap.get(code) ??
-    typeMap.get(code.toUpperCase?.() ?? code) ??
-    typeMap.get(code.toLowerCase?.() ?? code) ??
-    code;
-  return { label: String(label), code };
-}
-
-export async function exportDepartmentAttendance(req, res) {
-  try {
-    const { month, department, format: rawFormat } = req.query;
-    if (!month || !department) {
-      return res.status(400).json({ error: 'month and department required' });
-    }
-
-    const start = new Date(`${month}-01`);
-    if (Number.isNaN(start.getTime())) {
-      return res.status(400).json({ error: 'invalid month' });
-    }
-    const end = new Date(start);
-    end.setMonth(end.getMonth() + 1);
-
-    const format = typeof rawFormat === 'string' ? rawFormat.toLowerCase() : 'json';
-
-    const role = req.user?.role;
-    const actorId = req.user?.id;
-
-    let employees = [];
-    if (role === 'supervisor') {
-      if (!actorId) return res.status(403).json({ error: 'Forbidden' });
-      employees = await Employee.find({ department, supervisor: actorId });
-      if (!employees.length) {
-        const exists = await Employee.exists({ department });
-        if (exists) return res.status(403).json({ error: 'Forbidden' });
-        return res.status(404).json({ error: 'No data' });
-      }
-    } else {
-      employees = await Employee.find({ department });
-      if (!employees.length) {
-        return res.status(404).json({ error: 'No data' });
-      }
-    }
-
-    const employeeIds = employees.map((emp) => normalizeId(emp._id)).filter(Boolean);
-
-    const schedules = await ShiftSchedule.find({
-      employee: { $in: employeeIds },
-      date: { $gte: start, $lt: end },
-    });
-
-    const attendanceRecords = await AttendanceRecord.find({
-      employee: { $in: employeeIds },
-      action: 'clockIn',
-      timestamp: { $gte: start, $lt: end },
-    });
-
-    const recordMap = new Map();
-    const results = employees.map((emp) => {
-      const id = normalizeId(emp._id);
-      const record = {
-        employee: id,
-        name: emp.name,
-        scheduled: 0,
-        attended: 0,
-        absent: 0,
-      };
-      recordMap.set(id, record);
-      return record;
-    });
-
-    schedules.forEach((schedule) => {
-      const id = normalizeId(schedule.employee);
-      const record = recordMap.get(id);
-      if (record) {
-        record.scheduled += 1;
-      }
-    });
-
-    const attendanceKeys = new Set();
-    attendanceRecords.forEach((attendance) => {
-      const id = normalizeId(attendance.employee);
-      const dateKey = normalizeDateKey(attendance.timestamp);
-      if (!id || !dateKey) return;
-      const combined = `${id}-${dateKey}`;
-      if (!attendanceKeys.has(combined)) {
-        attendanceKeys.add(combined);
-        const record = recordMap.get(id);
-        if (record) record.attended += 1;
-      }
-    });
-
-    results.forEach((record) => {
-      record.absent = Math.max(record.scheduled - record.attended, 0);
-    });
-
-    const summary = results.reduce(
-      (acc, record) => {
-        acc.scheduled += record.scheduled;
-        acc.attended += record.attended;
-        acc.absent += record.absent;
-        return acc;
-      },
-      { scheduled: 0, attended: 0, absent: 0 }
-    );
-
-    if (format === 'excel' || format === 'pdf') {
-      const rows = results.map((record) => ({
-        employee: record.name,
-        scheduled: record.scheduled,
-        attended: record.attended,
-        absent: record.absent,
-      }));
-      await exportTabularReport(res, {
-        format,
-        fileName: `attendance-${department}-${month}`,
-        sheetName: 'Attendance',
-        title: `${month} ${department} 出勤統計`,
-        columns: [
-          { header: '員工姓名', key: 'employee', width: 24 },
-          { header: '排班天數', key: 'scheduled', width: 14 },
-          { header: '實際出勤', key: 'attended', width: 14 },
-          { header: '缺勤天數', key: 'absent', width: 14 },
-        ],
-        rows,
-        summaryRows: [
-          { label: '排班總計', value: summary.scheduled },
-          { label: '出勤總計', value: summary.attended },
-          { label: '缺勤總計', value: summary.absent },
-        ],
-      });
-      return;
-    }
-
-    res.json({
-      month,
-      department,
-      summary,
-      records: results,
-    });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-}
-
-export async function exportDepartmentLeave(req, res) {
-  try {
-    const { month, department, format: rawFormat } = req.query;
-    if (!month || !department) {
-      return res.status(400).json({ error: 'month and department required' });
-    }
-
-    const role = req.user?.role;
-    if (!['admin', 'supervisor'].includes(role)) {
-      return res.status(403).json({ error: 'Forbidden' });
-    }
-
-    const start = new Date(`${month}-01`);
-    if (Number.isNaN(start.getTime())) {
-      return res.status(400).json({ error: 'invalid month' });
-    }
-    const end = new Date(start);
-    end.setMonth(end.getMonth() + 1);
-
-    const format = typeof rawFormat === 'string' ? rawFormat.toLowerCase() : 'json';
-
-    const { formId, startId, endId, typeId, typeOptions } = await getLeaveFieldIds();
-    if (!formId || !startId || !endId) {
-      return res.status(400).json({ error: 'leave form not configured' });
-    }
-
-    const actorId = req.user?.id;
-    let employees = [];
-    if (role === 'supervisor') {
-      if (!actorId) return res.status(403).json({ error: 'Forbidden' });
-      employees = await Employee.find({ department, supervisor: actorId });
-      if (!employees.length) {
-        const exists = await Employee.exists({ department });
-        if (exists) return res.status(403).json({ error: 'Forbidden' });
-        return res.status(404).json({ error: 'No data' });
-      }
-    } else {
-      employees = await Employee.find({ department });
-      if (!employees.length) {
-        return res.status(404).json({ error: 'No data' });
-      }
-    }
-
-    const employeeIds = employees.map((emp) => normalizeId(emp._id)).filter(Boolean);
-    if (!employeeIds.length) {
-      return res.status(404).json({ error: 'No data' });
-    }
-
-    const approvals = await ApprovalRequest.find({
-      form: formId,
-      status: 'approved',
-      applicant_employee: { $in: employeeIds },
-      createdAt: { $gte: start, $lt: end },
-    })
-      .populate('applicant_employee', 'name')
-      .lean();
-
-    if (!approvals.length) {
-      return res.status(404).json({ error: 'No data' });
-    }
-
-    const typeMap = createTypeMap(typeOptions);
-    const records = approvals.map((approval) => {
-      const startValue = startId ? approval.form_data?.[startId] : undefined;
-      const endValue = endId ? approval.form_data?.[endId] : undefined;
-      const typeValue = typeId ? approval.form_data?.[typeId] : undefined;
-      const { label: leaveType, code: leaveCode } = humanizeLeaveType(typeValue, typeMap);
-      const days = calculateInclusiveDays(startValue, endValue);
-      return {
-        approvalId: normalizeId(approval._id),
-        employee: normalizeId(approval.applicant_employee?._id ?? approval.applicant_employee),
-        name: approval.applicant_employee?.name ?? '',
-        leaveType,
-        leaveCode,
-        startDate: formatYMD(startValue),
-        endDate: formatYMD(endValue),
-        days,
-      };
-    });
-
-    const typeSummaryMap = new Map();
-    let totalDays = 0;
-    records.forEach((record) => {
-      totalDays += Number.isFinite(record.days) ? record.days : 0;
-      const key = record.leaveCode || record.leaveType || '';
-      const existing = typeSummaryMap.get(key) || {
-        leaveType: record.leaveType || record.leaveCode || '',
-        leaveCode: record.leaveCode || '',
-        count: 0,
-        days: 0,
-      };
-      existing.count += 1;
-      existing.days += Number.isFinite(record.days) ? record.days : 0;
-      if (!existing.leaveType && record.leaveType) existing.leaveType = record.leaveType;
-      if (!existing.leaveCode && record.leaveCode) existing.leaveCode = record.leaveCode;
-      typeSummaryMap.set(key, existing);
-    });
-
-    const summary = {
-      totalLeaves: records.length,
-      totalDays,
-      byType: Array.from(typeSummaryMap.values()),
-    };
-
-    if (format === 'excel' || format === 'pdf') {
-      const rows = records.map((record) => ({
-        employee: record.name,
-        leaveType: record.leaveType || record.leaveCode,
-        leaveCode: record.leaveCode,
-        startDate: record.startDate,
-        endDate: record.endDate,
-        days: record.days,
-      }));
-      const summaryRows = [
-        { label: '總請假件數', value: summary.totalLeaves },
-        { label: '總請假天數', value: summary.totalDays },
-        ...summary.byType.map((item) => ({
-          label: `${item.leaveType || item.leaveCode} 件數`,
-          value: `${item.count} 筆 / ${item.days} 天`,
-        })),
+const DEPARTMENT_EXPORT_CONFIG = {
+  attendance: {
+    columns: [
+      { header: '員工姓名', key: 'name', width: 24 },
+      { header: '排班天數', key: 'scheduled', width: 14 },
+      { header: '出勤天數', key: 'attended', width: 14 },
+      { header: '缺勤天數', key: 'absent', width: 14 },
+    ],
+    mapRow: (record) => ({
+      name: record.name,
+      scheduled: record.scheduled,
+      attended: record.attended,
+      absent: record.absent,
+    }),
+    buildSummaryRows: (summary = {}) => [
+      { label: '排班總計', value: summary.scheduled ?? 0 },
+      { label: '出勤總計', value: summary.attended ?? 0 },
+      { label: '缺勤總計', value: summary.absent ?? 0 },
+    ],
+  },
+  leave: {
+    columns: [
+      { header: '員工姓名', key: 'name', width: 24 },
+      { header: '假別', key: 'leaveType', width: 18 },
+      { header: '假別代碼', key: 'leaveCode', width: 16 },
+      { header: '開始日期', key: 'startDate', width: 16 },
+      { header: '結束日期', key: 'endDate', width: 16 },
+      { header: '天數', key: 'days', width: 10 },
+    ],
+    mapRow: (record) => ({
+      name: record.name,
+      leaveType: record.leaveType,
+      leaveCode: record.leaveCode,
+      startDate: record.startDate,
+      endDate: record.endDate,
+      days: record.days,
+    }),
+    buildSummaryRows: (summary = {}) => {
+      const rows = [
+        { label: '總請假件數', value: summary.totalLeaves ?? 0 },
+        { label: '總請假天數', value: summary.totalDays ?? 0 },
       ];
-      await exportTabularReport(res, {
-        format,
-        fileName: `leave-${department}-${month}`,
-        sheetName: 'Department Leave',
-        title: `${month} ${department} 請假統計`,
-        columns: [
-          { header: '員工姓名', key: 'employee', width: 24 },
-          { header: '假別', key: 'leaveType', width: 18 },
-          { header: '假別代碼', key: 'leaveCode', width: 16 },
-          { header: '開始日期', key: 'startDate', width: 16 },
-          { header: '結束日期', key: 'endDate', width: 16 },
-          { header: '天數', key: 'days', width: 10 },
-        ],
-        rows,
-        summaryRows,
+      (summary.byType ?? []).forEach((item) => {
+        rows.push({
+          label: `${item.leaveType || item.leaveCode || '其他'} 件數`,
+          value: `${item.count ?? 0} 筆 / ${item.days ?? 0} 天`,
+        });
       });
-      return;
+      return rows;
+    },
+  },
+  tardiness: {
+    columns: [
+      { header: '員工姓名', key: 'name', width: 24 },
+      { header: '日期', key: 'date', width: 16 },
+      { header: '排定上班', key: 'scheduledStart', width: 14 },
+      { header: '實際打卡', key: 'actualClockIn', width: 14 },
+      { header: '遲到分鐘', key: 'minutesLate', width: 12 },
+    ],
+    mapRow: (record) => ({
+      name: record.name,
+      date: record.date,
+      scheduledStart: record.scheduledStart,
+      actualClockIn: record.actualClockIn,
+      minutesLate: record.minutesLate,
+    }),
+    buildSummaryRows: (summary = {}) => [
+      { label: '遲到件數', value: summary.totalLateCount ?? 0 },
+      { label: '遲到總分鐘', value: summary.totalLateMinutes ?? 0 },
+      { label: '平均遲到分鐘', value: summary.averageLateMinutes ?? 0 },
+    ],
+  },
+  earlyLeave: {
+    columns: [
+      { header: '員工姓名', key: 'name', width: 24 },
+      { header: '日期', key: 'date', width: 16 },
+      { header: '排定下班', key: 'scheduledEnd', width: 14 },
+      { header: '實際打卡', key: 'actualClockOut', width: 14 },
+      { header: '早退分鐘', key: 'minutesEarly', width: 12 },
+    ],
+    mapRow: (record) => ({
+      name: record.name,
+      date: record.date,
+      scheduledEnd: record.scheduledEnd,
+      actualClockOut: record.actualClockOut,
+      minutesEarly: record.minutesEarly,
+    }),
+    buildSummaryRows: (summary = {}) => [
+      { label: '早退件數', value: summary.totalEarlyLeaveCount ?? 0 },
+      { label: '早退總分鐘', value: summary.totalEarlyMinutes ?? 0 },
+      { label: '平均早退分鐘', value: summary.averageEarlyMinutes ?? 0 },
+    ],
+  },
+  workHours: {
+    columns: [
+      { header: '員工姓名', key: 'name', width: 24 },
+      { header: '日期', key: 'date', width: 16 },
+      { header: '排定工時(小時)', key: 'scheduledHours', width: 18 },
+      { header: '實際工時(小時)', key: 'workedHours', width: 18 },
+      { header: '差異(小時)', key: 'differenceHours', width: 14 },
+    ],
+    mapRow: (record) => ({
+      name: record.name,
+      date: record.date,
+      scheduledHours: record.scheduledHours,
+      workedHours: record.workedHours,
+      differenceHours: record.differenceHours,
+    }),
+    buildSummaryRows: (summary = {}) => [
+      { label: '排定總工時', value: summary.totalScheduledHours ?? 0 },
+      { label: '實際總工時', value: summary.totalWorkedHours ?? 0 },
+      { label: '工時差異', value: summary.differenceHours ?? 0 },
+    ],
+  },
+  overtime: {
+    columns: [
+      { header: '員工姓名', key: 'name', width: 24 },
+      { header: '日期', key: 'date', width: 16 },
+      { header: '開始時間', key: 'startTime', width: 14 },
+      { header: '結束時間', key: 'endTime', width: 14 },
+      { header: '時數', key: 'hours', width: 10 },
+      { header: '原因', key: 'reason', width: 24 },
+    ],
+    mapRow: (record) => ({
+      name: record.name,
+      date: record.date,
+      startTime: record.startTime,
+      endTime: record.endTime,
+      hours: record.hours,
+      reason: record.reason,
+    }),
+    buildSummaryRows: (summary = {}) => [
+      { label: '加班申請數', value: summary.totalRequests ?? 0 },
+      { label: '加班總時數', value: summary.totalHours ?? 0 },
+    ],
+  },
+  compTime: {
+    columns: [
+      { header: '員工姓名', key: 'name', width: 24 },
+      { header: '日期', key: 'date', width: 16 },
+      { header: '補休時數', key: 'hours', width: 14 },
+      { header: '來源加班單', key: 'overtimeReference', width: 24 },
+    ],
+    mapRow: (record) => ({
+      name: record.name,
+      date: record.date,
+      hours: record.hours,
+      overtimeReference: record.overtimeReference,
+    }),
+    buildSummaryRows: (summary = {}) => [
+      { label: '補休申請數', value: summary.totalRequests ?? 0 },
+      { label: '補休總時數', value: summary.totalHours ?? 0 },
+    ],
+  },
+  makeUp: {
+    columns: [
+      { header: '員工姓名', key: 'name', width: 24 },
+      { header: '日期', key: 'date', width: 16 },
+      { header: '補卡類別', key: 'category', width: 18 },
+      { header: '補卡說明', key: 'note', width: 28 },
+    ],
+    mapRow: (record) => ({
+      name: record.name,
+      date: record.date,
+      category: record.category,
+      note: record.note,
+    }),
+    buildSummaryRows: (summary = {}) => {
+      const rows = [{ label: '補卡申請數', value: summary.totalRequests ?? 0 }];
+      (summary.byCategory ?? []).forEach((item) => {
+        rows.push({ label: `${item.label ?? '未分類'} 件數`, value: `${item.count ?? 0} 筆` });
+      });
+      return rows;
+    },
+  },
+  specialLeave: {
+    columns: [
+      { header: '員工姓名', key: 'name', width: 24 },
+      { header: '開始日期', key: 'startDate', width: 16 },
+      { header: '結束日期', key: 'endDate', width: 16 },
+      { header: '天數', key: 'days', width: 10 },
+    ],
+    mapRow: (record) => ({
+      name: record.name,
+      startDate: record.startDate,
+      endDate: record.endDate,
+      days: record.days,
+    }),
+    buildSummaryRows: (summary = {}) => [
+      { label: '特休申請數', value: summary.totalRequests ?? 0 },
+      { label: '特休總天數', value: summary.totalDays ?? 0 },
+    ],
+  },
+};
+
+function createDepartmentReportHandler(type) {
+  return async function departmentReportHandler(req, res) {
+    const { month, department, format: rawFormat } = req.query;
+    if (!month || !department) {
+      return res.status(400).json({ error: 'month and department required' });
     }
 
-    res.json({
-      month,
-      department,
-      summary,
-      records,
-    });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+    const format = typeof rawFormat === 'string' ? rawFormat.toLowerCase() : 'json';
+
+    try {
+      const data = await getDepartmentReportData({
+        type,
+        month,
+        departmentId: department,
+        actor: { role: req.user?.role, id: req.user?.id },
+      });
+
+      if (format === 'excel' || format === 'pdf') {
+        const config = DEPARTMENT_EXPORT_CONFIG[type] ?? {};
+        const mapRow = config.mapRow || ((row) => row);
+        const rows = (data.records ?? []).map(mapRow);
+        const summaryRows = config.buildSummaryRows
+          ? config.buildSummaryRows(data.summary ?? {})
+          : [];
+        await exportTabularReport(res, {
+          format,
+          fileName: `${type}-${department}-${month}`,
+          sheetName: getReportDisplayName(type),
+          title: `${month} ${getReportDisplayName(type)}`,
+          columns: config.columns ?? [],
+          rows,
+          summaryRows,
+        });
+        return;
+      }
+
+      res.json({
+        month,
+        department,
+        summary: data.summary ?? null,
+        records: data.records ?? [],
+      });
+    } catch (err) {
+      if (err instanceof ReportAccessError) {
+        return res.status(err.status ?? 500).json({ error: err.message });
+      }
+      res.status(500).json({ error: err.message });
+    }
+  };
 }
+
+export const exportDepartmentAttendance = createDepartmentReportHandler('attendance');
+export const exportDepartmentLeave = createDepartmentReportHandler('leave');
+export const exportDepartmentTardiness = createDepartmentReportHandler('tardiness');
+export const exportDepartmentEarlyLeave = createDepartmentReportHandler('earlyLeave');
+export const exportDepartmentWorkHours = createDepartmentReportHandler('workHours');
+export const exportDepartmentOvertime = createDepartmentReportHandler('overtime');
+export const exportDepartmentCompTime = createDepartmentReportHandler('compTime');
+export const exportDepartmentMakeUp = createDepartmentReportHandler('makeUp');
+export const exportDepartmentSpecialLeave = createDepartmentReportHandler('specialLeave');
