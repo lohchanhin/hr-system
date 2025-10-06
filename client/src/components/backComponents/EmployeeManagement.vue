@@ -3198,7 +3198,7 @@ function getStatusTagType(status) {
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
 }
 
-.sign-role-radio {
+:deep(.el-radio.sign-role-radio) {
   display: flex;
   align-items: flex-start;
   gap: 12px;
@@ -3206,28 +3206,32 @@ function getStatusTagType(status) {
   border-radius: 10px;
   padding: 12px;
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  height: auto !important;
+  line-height: 1.5;
+  white-space: normal;
 }
 
-.sign-role-radio.is-checked {
+:deep(.el-radio.sign-role-radio.is-checked) {
   border-color: #0284c7;
   box-shadow: 0 6px 18px rgba(2, 132, 199, 0.18);
   background: linear-gradient(135deg, rgba(14, 116, 144, 0.08), rgba(14, 116, 144, 0.02));
 }
 
-.sign-role-radio:hover {
+:deep(.el-radio.sign-role-radio:hover) {
   border-color: #38bdf8;
   box-shadow: 0 6px 16px rgba(14, 116, 144, 0.12);
 }
 
-.sign-role-radio :deep(.el-radio__input) {
+:deep(.el-radio.sign-role-radio .el-radio__input) {
   margin-top: 4px;
 }
 
-.sign-role-radio :deep(.el-radio__label) {
+:deep(.el-radio.sign-role-radio .el-radio__label) {
   flex: 1;
   display: flex;
   flex-direction: column;
   gap: 4px;
+  white-space: normal;
 }
 
 /* 頁面標題區域 */
