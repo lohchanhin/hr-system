@@ -1171,7 +1171,11 @@
                   <code class="bulk-import-header-code">{{ row.header }}</code>
                 </template>
               </el-table-column>
-              <el-table-column prop="description" label="欄位說明" min-width="300" />
+              <el-table-column prop="displayDescription" label="欄位說明" min-width="300">
+                <template #default="{ row }">
+                  {{ row.displayDescription || row.description || row.label || row.header }}
+                </template>
+              </el-table-column>
               <el-table-column label="是否必填" width="120" align="center">
                 <template #default="{ row }">
                   <el-tag v-if="row.required" type="danger" size="small">必填</el-tag>
@@ -1777,6 +1781,15 @@ const BULK_IMPORT_FIELD_CONFIGS = Object.freeze([
     category: '薪資與帳戶'
   }
 ])
+
+function formatBulkImportDescription(config = {}) {
+  const base =
+    config.description || config.label || config.header || config.key || ''
+  if (!config.required) return typeof base === 'string' ? base : String(base)
+  const text = typeof base === 'string' ? base : String(base)
+  return text.includes('必填') ? text : `${text} (必填)`
+}
+
 const BULK_IMPORT_REQUIRED_FIELDS = BULK_IMPORT_FIELD_CONFIGS.filter(item => item.required).map(
   item => item.key
 )
@@ -1786,8 +1799,13 @@ const DEFAULT_BULK_IMPORT_COLUMN_MAPPINGS = Object.freeze(
     return acc
   }, {})
 )
-const bulkImportFieldConfigs = BULK_IMPORT_FIELD_CONFIGS
 const BULK_IMPORT_TEMPLATE_FILENAME = 'employee-import-template.csv'
+const bulkImportFieldConfigs = computed(() =>
+  BULK_IMPORT_FIELD_CONFIGS.map(field => ({
+    ...field,
+    displayDescription: formatBulkImportDescription(field)
+  }))
+)
 const PERMISSION_GRADE_OPTIONS = [
   { level: 'L1', description: '一般使用者 / 基層專員' },
   { level: 'L2', description: '資深專員 / 小組長' },
@@ -1825,7 +1843,7 @@ const bulkImportForm = reactive({
 
 const bulkImportTemplateSections = computed(() => {
   const groups = new Map()
-  bulkImportFieldConfigs.forEach(field => {
+  bulkImportFieldConfigs.value.forEach(field => {
     const group = field.category || '其他欄位'
     if (!groups.has(group)) {
       groups.set(group, [])
@@ -1836,7 +1854,7 @@ const bulkImportTemplateSections = computed(() => {
 })
 
 const bulkImportRequiredFieldNames = computed(() =>
-  bulkImportFieldConfigs
+  bulkImportFieldConfigs.value
     .filter(field => field.required)
     .map(field => field.label || field.description || field.header)
 )
@@ -1855,9 +1873,16 @@ function escapeCsvValue(value) {
 }
 
 function buildBulkImportTemplateCsvContent() {
-  const headerRow = bulkImportFieldConfigs.map(config => config.header || config.key)
-  const descriptionRow = bulkImportFieldConfigs.map(
-    config => config.description || config.label || config.header || config.key
+  const headerRow = bulkImportFieldConfigs.value.map(
+    config => config.header || config.key
+  )
+  const descriptionRow = bulkImportFieldConfigs.value.map(
+    config =>
+      config.displayDescription ||
+      config.description ||
+      config.label ||
+      config.header ||
+      config.key
   )
   const rows = [headerRow, descriptionRow]
   const csvBody = rows.map(row => row.map(escapeCsvValue).join(',')).join('\n')
@@ -3174,11 +3199,19 @@ function getStatusTagType(status) {
 }
 
 .sign-role-radio {
+  display: flex;
   align-items: flex-start;
+  gap: 12px;
   border: 1px solid #e2e8f0;
   border-radius: 10px;
   padding: 12px;
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.sign-role-radio.is-checked {
+  border-color: #0284c7;
+  box-shadow: 0 6px 18px rgba(2, 132, 199, 0.18);
+  background: linear-gradient(135deg, rgba(14, 116, 144, 0.08), rgba(14, 116, 144, 0.02));
 }
 
 .sign-role-radio:hover {
@@ -3186,8 +3219,15 @@ function getStatusTagType(status) {
   box-shadow: 0 6px 16px rgba(14, 116, 144, 0.12);
 }
 
+.sign-role-radio :deep(.el-radio__input) {
+  margin-top: 4px;
+}
+
 .sign-role-radio :deep(.el-radio__label) {
-  width: 100%;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 
 /* 頁面標題區域 */

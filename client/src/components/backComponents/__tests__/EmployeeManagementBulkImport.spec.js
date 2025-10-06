@@ -167,6 +167,8 @@ describe('EmployeeManagement - 批量匯入流程', () => {
     const [headerRow, descriptionRow] = blobCalls[0].parts[0].split('\n')
     expect(headerRow).toContain('employeeId')
     expect(headerRow).toContain('email')
+    expect(descriptionRow).toContain('員工編號 (必填)')
+    expect(descriptionRow).toContain('姓名 (必填)')
     expect(descriptionRow).toContain('電子郵件 (必填唯一)')
     expect(descriptionRow).toContain('性別 (M=男, F=女, O=其他)')
 
