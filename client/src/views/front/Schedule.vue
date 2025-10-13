@@ -62,7 +62,13 @@
     <!-- Enhanced actions section with modern button design -->
     <div class="actions-card">
       <div class="primary-actions">
-        <el-button type="primary" @click="saveAll" class="action-btn primary">
+        <el-button
+          type="primary"
+          @click="saveAll"
+          class="action-btn primary"
+          :disabled="isSaveDisabled"
+          data-test="save-all-button"
+        >
           <i class="el-icon-check"></i>
           儲存排班
         </el-button>
@@ -377,6 +383,25 @@ const callWarning = message => {
     globalWarn(message)
   }
 }
+
+const callInfo = message => {
+  const moduleInfo = ElMessage?.info
+  if (typeof moduleInfo === 'function') {
+    moduleInfo(message)
+  }
+  const globalInfo = typeof window !== 'undefined' ? window.ElMessage?.info : undefined
+  if (typeof globalInfo === 'function' && globalInfo !== moduleInfo) {
+    globalInfo(message)
+  }
+}
+
+const hasPendingSchedules = computed(() =>
+  Object.values(scheduleMap.value).some(days =>
+    Object.values(days).some(item => item?.shiftId && !item?.id)
+  )
+)
+
+const isSaveDisabled = computed(() => !hasPendingSchedules.value)
 
 const days = computed(() => {
   const dt = dayjs(currentMonth.value + '-01')
@@ -769,7 +794,10 @@ async function saveAll() {
       }
     })
   })
-  if (!schedules.length) return
+  if (!schedules.length) {
+    callInfo('目前沒有可儲存的排班')
+    return
+  }
   try {
     const res = await apiFetch('/api/schedules/batch', {
       method: 'POST',
@@ -1117,13 +1145,28 @@ onMounted(async () => {
     background: linear-gradient(135deg, #10b981 0%, #059669 100%);
     border: none;
     color: white;
-    
+
     &:hover {
       transform: translateY(-1px);
       box-shadow: 0 4px 12px rgba(16, 185, 129, 0.4);
     }
   }
-  
+
+  &.primary.is-disabled,
+  &.primary:disabled {
+    background: linear-gradient(135deg, #94a3b8 0%, #64748b 100%);
+    box-shadow: none;
+    transform: none;
+    cursor: not-allowed;
+    color: rgba(255, 255, 255, 0.85);
+  }
+
+  &.primary.is-disabled:hover,
+  &.primary:disabled:hover {
+    transform: none;
+    box-shadow: none;
+  }
+
   &.secondary {
     background: white;
     border: 2px solid #164e63;
