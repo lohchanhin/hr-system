@@ -24,7 +24,19 @@ test('seed script loads env from server/.env', async () => {
     seedApprovalRequests: jest.fn(),
     SEED_TEST_PASSWORD: 'mocked-password',
   }));
-  await jest.unstable_mockModule('mongoose', () => ({ default: { disconnect: jest.fn() } }));
+  await jest.unstable_mockModule('../src/services/supervisorReportSeed.js', () => ({
+    ensureDefaultSupervisorReports: jest.fn().mockResolvedValue(),
+  }));
+  class MockSchema {
+    constructor() {}
+  }
+  MockSchema.Types = { Mixed: class {} };
+  const mockMongoose = {
+    disconnect: jest.fn(),
+    Schema: MockSchema,
+    model: jest.fn(),
+  };
+  await jest.unstable_mockModule('mongoose', () => ({ default: mockMongoose }));
 
   await import('../scripts/seed.js');
 
