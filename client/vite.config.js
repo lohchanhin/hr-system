@@ -4,6 +4,18 @@ import vue from '@vitejs/plugin-vue'
 import vueDevTools from 'vite-plugin-vue-devtools'
 
 // https://vite.dev/config/
+function resolveSrcAlias() {
+  try {
+    const srcUrl = new URL('./src', import.meta.url)
+    if (srcUrl.protocol === 'file:') {
+      return fileURLToPath(srcUrl)
+    }
+  } catch (error) {
+    // 在測試或非 file protocol 環境下 fallback 至相對路徑
+  }
+  return './src'
+}
+
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
 
@@ -18,7 +30,7 @@ export default defineConfig(({ mode }) => {
     plugins: [vue(), vueDevTools()],
     resolve: {
       alias: {
-        '@': fileURLToPath(new URL('./src', import.meta.url)),
+        '@': resolveSrcAlias(),
       },
     },
     define: {

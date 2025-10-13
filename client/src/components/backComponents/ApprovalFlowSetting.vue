@@ -226,6 +226,11 @@
 <script setup>
 import { ref, onMounted, watch } from 'vue'
 import { apiFetch } from '../../api'  // 你專案現有封裝
+import {
+  normalizeCustomFieldOptions,
+  parseCustomFieldOptionsInput,
+  stringifyCustomFieldOptions
+} from '../../utils/fieldOptions'
 
 const API = {
   forms: '/api/approvals/forms',
@@ -277,54 +282,6 @@ watch([activeTab, selectedFormId], () => {
   if (activeTab.value === 'fields' && selectedFormId.value) loadFields()
 })
 
-function parseOptions(str) {
-  if (!str) return undefined
-  try {
-    return JSON.parse(str)
-  } catch {
-    return str
-      .split(/[\n,]/)
-      .map(s => s.trim())
-      .filter(Boolean)
-  }
-}
-
-function normalizeCustomFieldOptions(options) {
-  if (options == null) return undefined
-
-  if (Array.isArray(options)) {
-    return options.map(option => {
-      if (typeof option === 'string' || typeof option === 'number') {
-        return option
-      }
-      if (option && typeof option === 'object') {
-        return { ...option }
-      }
-      return option
-    })
-  }
-
-  if (options && typeof options === 'object') {
-    return { ...options }
-  }
-
-  if (typeof options === 'string') {
-    const trimmed = options.trim()
-    if (!trimmed) return undefined
-    try {
-      return normalizeCustomFieldOptions(JSON.parse(trimmed))
-    } catch (error) {
-      const segments = trimmed
-        .split(/[\n,]/)
-        .map(segment => segment.trim())
-        .filter(Boolean)
-      return segments.length ? segments : undefined
-    }
-  }
-
-  return options
-}
-
 async function loadFields() {
   if (!selectedFormId.value) return
   const res = await apiFetch(API.fields(selectedFormId.value), undefined)
@@ -337,7 +294,11 @@ async function loadFields() {
 function openFieldDialog(mode='create', row=null) {
   fieldDialogMode.value = mode
   if (mode === 'edit' && row) {
-    fieldDialog.value = { ...row, optionsStr: row.options ? JSON.stringify(row.options) : '', field_key: row.field_key || '' }
+    fieldDialog.value = {
+      ...row,
+      optionsStr: stringifyCustomFieldOptions(row.options),
+      field_key: row.field_key || ''
+    }
     selectedCustomFieldKey.value = row.field_key || ''
   } else {
     fieldDialog.value = { _id: '', field_key: '', label: '', type_1: 'text', type_2: '', required: false, optionsStr: '', placeholder: '', order: fields.value.length }
@@ -353,7 +314,7 @@ async function saveField() {
     type_1: fieldDialog.value.type_1,
     type_2: fieldDialog.value.type_2,
     required: fieldDialog.value.required,
-    options: parseOptions(fieldDialog.value.optionsStr),
+    options: parseCustomFieldOptionsInput(fieldDialog.value.optionsStr),
     placeholder: fieldDialog.value.placeholder,
     order: fieldDialog.value.order ?? fields.value.length,
   }
@@ -471,23 +432,6 @@ async function loadCustomFieldOptions() {
     })
 }
 
-function stringifyOptions(options) {
-  const normalized = normalizeCustomFieldOptions(options)
-  if (normalized == null) return ''
-  if (Array.isArray(normalized)) {
-    const simpleValues = normalized.every(option => typeof option === 'string' || typeof option === 'number')
-    if (simpleValues) {
-      return normalized.map(option => String(option)).join('\n')
-    }
-  }
-  if (typeof normalized === 'string') return normalized
-  try {
-    return JSON.stringify(normalized)
-  } catch (e) {
-    return ''
-  }
-}
-
 function handleCustomFieldSelect(fieldKey) {
   if (!fieldKey) {
     fieldDialog.value = { ...fieldDialog.value, field_key: '' }
@@ -505,7 +449,7 @@ function handleCustomFieldSelect(fieldKey) {
     type_2: field.type_2 || '',
     required: field.required ?? false,
     placeholder: field.placeholder || '',
-    optionsStr: stringifyOptions(normalizedOptions),
+    optionsStr: stringifyCustomFieldOptions(normalizedOptions),
   }
 }
 

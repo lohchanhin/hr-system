@@ -28,14 +28,28 @@ const elementStubs = {
   'el-alert': { template: '<div><slot /></div>' },
   'el-select': { template: '<div><slot /></div>' },
   'el-option': { template: '<div><slot /></div>' },
-  'el-button': { template: '<button type="button"><slot /></button>' },
+  'el-button': {
+    template: '<button type="button" v-bind="$attrs" @click="$emit(\'click\')"><slot /></button>'
+  },
   'el-table': { template: '<div><slot /></div>' },
   'el-table-column': { template: '<div><slot :$index="0" :row="{}" /></div>' },
   'el-dialog': { template: '<div><slot /><slot name="footer" /></div>', props: ['modelValue'] },
   'el-form': { template: '<form><slot /></form>' },
   'el-form-item': { template: '<div><slot /></div>' },
-  'el-input': { template: '<input />', props: ['modelValue'] },
-  'el-switch': { template: '<input type="checkbox" />', props: ['modelValue'] }
+  'el-input': {
+    props: ['modelValue'],
+    emits: ['update:modelValue'],
+    template:
+      '<input v-bind="$attrs" :value="modelValue" @input="$emit(\'update:modelValue\', $event.target.value)" />'
+  },
+  'el-switch': {
+    props: ['modelValue'],
+    emits: ['update:modelValue'],
+    template:
+      '<input type="checkbox" v-bind="$attrs" :checked="modelValue" @change="$emit(\'update:modelValue\', $event.target.checked)" />'
+  },
+  'el-row': { template: '<div v-bind="$attrs"><slot /></div>' },
+  'el-col': { template: '<div v-bind="$attrs"><slot /></div>' }
 }
 
 async function mountComponent() {
@@ -199,7 +213,7 @@ describe('OtherControlSetting - custom fields', () => {
 
     const payload = JSON.parse(putCall[1].body)
     expect(payload.customFields).toHaveLength(existingFields.length + 1)
-    expect(payload.customFields.at(-1)).toEqual(newField)
+    expect(payload.customFields[payload.customFields.length - 1]).toEqual(newField)
 
     expect(wrapper.vm.customFields).toHaveLength(existingFields.length + 1)
     expect(ElMessage.success).toHaveBeenCalledWith('已更新自訂欄位')
@@ -207,7 +221,7 @@ describe('OtherControlSetting - custom fields', () => {
     expect(wrapper.vm.fieldDialogVisible).toBe(false)
   })
 
-  it('新增含選項的自訂欄位會解析輸入並提交 options', async () => {
+  it('新增含選項的自訂欄位可透過動態列新增、排序與刪除選項', async () => {
     const existingFields = []
     const newField = {
       label: '制服尺寸',
@@ -231,9 +245,50 @@ describe('OtherControlSetting - custom fields', () => {
 
     const wrapper = await mountComponent()
 
+    wrapper.vm.openFieldDialog()
+    await flushPromises()
+
     Object.assign(wrapper.vm.fieldForm, newField)
-    wrapper.vm.fieldForm.optionsInput = 'XS, S, M\nL'
-    wrapper.vm.fieldDialogVisible = true
+    await flushPromises()
+
+    let optionRows = wrapper.findAll('[data-test="option-row"]')
+    expect(optionRows).toHaveLength(1)
+
+    await optionRows[0].find('[data-test="option-name"]').setValue('XS')
+
+    const addButton = wrapper.find('[data-test="add-option"]')
+    await addButton.trigger('click')
+    await flushPromises()
+    optionRows = wrapper.findAll('[data-test="option-row"]')
+    await optionRows[1].find('[data-test="option-name"]').setValue('M')
+
+    await addButton.trigger('click')
+    await flushPromises()
+    optionRows = wrapper.findAll('[data-test="option-row"]')
+    await optionRows[2].find('[data-test="option-name"]').setValue('L')
+
+    const listBeforeMove = wrapper.vm.fieldForm.optionsList
+    const indexOfL = listBeforeMove.findIndex(opt => opt.name === 'L')
+    const indexOfM = listBeforeMove.findIndex(opt => opt.name === 'M')
+    if (indexOfL > -1 && indexOfM > -1) {
+      wrapper.vm.moveOptionRow(indexOfL, indexOfM - indexOfL)
+      await flushPromises()
+    }
+
+    const filteredNamesAfterMove = wrapper.vm.fieldForm.optionsList
+      .map(opt => opt.name)
+      .filter(Boolean)
+    expect(filteredNamesAfterMove[0]).toBe('XS')
+    expect(filteredNamesAfterMove.indexOf('L')).toBeLessThan(
+      filteredNamesAfterMove.indexOf('M')
+    )
+
+    optionRows = wrapper.findAll('[data-test="option-row"]')
+    const rowToRemove = optionRows.find(row =>
+      row.find('[data-test="option-name"]').element.value === 'M'
+    )
+    await rowToRemove.find('[data-test="remove-option"]').trigger('click')
+    await flushPromises()
 
     await wrapper.vm.saveField()
 
@@ -243,13 +298,13 @@ describe('OtherControlSetting - custom fields', () => {
 
     expect(putCall).toBeTruthy()
     const payload = JSON.parse(putCall[1].body)
-    const latestPayloadField = payload.customFields.at(-1)
+    const latestPayloadField = payload.customFields[payload.customFields.length - 1]
     expect(latestPayloadField.fieldKey).toBe(newField.fieldKey)
-    expect(latestPayloadField.options).toEqual(['XS', 'S', 'M', 'L'])
+    expect(latestPayloadField.options).toEqual(['XS', 'L'])
 
-    const latestLocalField = wrapper.vm.customFields.at(-1)
+    const latestLocalField = wrapper.vm.customFields[wrapper.vm.customFields.length - 1]
     expect(latestLocalField.fieldKey).toBe(newField.fieldKey)
-    expect(latestLocalField.options).toEqual(['XS', 'S', 'M', 'L'])
+    expect(latestLocalField.options).toEqual(['XS', 'L'])
     expect(ElMessage.success).toHaveBeenCalledWith('已更新自訂欄位')
     expect(wrapper.vm.fieldDialogVisible).toBe(false)
   })
@@ -331,9 +386,24 @@ describe('OtherControlSetting - custom fields', () => {
     const wrapper = await mountComponent()
 
     wrapper.vm.openFieldDialog(0)
-    expect(wrapper.vm.fieldForm.optionsInput).toBe('XS\nS')
+    await flushPromises()
 
-    wrapper.vm.fieldForm.optionsInput = 'XS\nS\nM'
+    let optionRows = wrapper.findAll('[data-test="option-row"]')
+    expect(optionRows).toHaveLength(2)
+    expect(wrapper.vm.fieldForm.optionsList.map(opt => opt.name)).toEqual(['XS', 'S'])
+
+    await optionRows[0].find('[data-test="option-code"]').setValue('XS')
+    await optionRows[1].find('[data-test="option-name"]').setValue('S-plus')
+    await optionRows[1].find('[data-test="option-code"]').setValue('S')
+
+    const addButton = wrapper.find('[data-test="add-option"]')
+    await addButton.trigger('click')
+    await flushPromises()
+
+    optionRows = wrapper.findAll('[data-test="option-row"]')
+    const lastRow = optionRows[optionRows.length - 1]
+    await lastRow.find('[data-test="option-name"]').setValue('M')
+    await lastRow.find('[data-test="option-code"]').setValue('M')
 
     await wrapper.vm.saveField()
 
@@ -343,8 +413,16 @@ describe('OtherControlSetting - custom fields', () => {
 
     expect(putCall).toBeTruthy()
     const payload = JSON.parse(putCall[1].body)
-    expect(payload.customFields[0].options).toEqual(['XS', 'S', 'M'])
-    expect(wrapper.vm.customFields[0].options).toEqual(['XS', 'S', 'M'])
+    expect(payload.customFields[0].options).toEqual([
+      { name: 'XS', code: 'XS' },
+      { name: 'S-plus', code: 'S' },
+      { name: 'M', code: 'M' }
+    ])
+    expect(wrapper.vm.customFields[0].options).toEqual([
+      { name: 'XS', code: 'XS' },
+      { name: 'S-plus', code: 'S' },
+      { name: 'M', code: 'M' }
+    ])
     expect(ElMessage.success).toHaveBeenCalledWith('已更新自訂欄位')
   })
 
