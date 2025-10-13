@@ -4,6 +4,7 @@ import path from 'path';
 import { writeFile } from 'fs/promises';
 import { fileURLToPath } from 'url';
 import { connectDB } from '../src/config/db.js';
+import { ensureDefaultSupervisorReports } from '../src/services/supervisorReportSeed.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -26,6 +27,7 @@ if (!process.env.MONGODB_URI) {
 async function seed() {
   await connectDB(process.env.MONGODB_URI);
   const structure = await seedSampleData();
+  await ensureDefaultSupervisorReports();
   if (structure?.organizations?.length) {
     console.log(`Seeded organizations: ${structure.organizations.map((org) => org.name).join(', ')}`);
   }
