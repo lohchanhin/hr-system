@@ -139,6 +139,29 @@ function normalizeNotificationSettings(raw, { partial } = {}) {
   return { value: settings, errors };
 }
 
+function normalizeReportType(value) {
+  if (typeof value !== 'string') return '';
+  return value.trim();
+}
+
+async function isDepartmentReportAllowedForActor(type, actor) {
+  const normalizedType = normalizeReportType(type);
+  if (!normalizedType) return false;
+  if (!actor || !actor.role) return false;
+
+  if (actor.role === 'admin') return true;
+
+  if (actor.role === 'supervisor') {
+    const exists = await Report.exists({
+      type: normalizedType,
+      'permissionSettings.supervisorDept': true,
+    });
+    return Boolean(exists);
+  }
+
+  return false;
+}
+
 function normalizeReportPayload(body, { partial = false } = {}) {
   const errors = [];
 
@@ -256,6 +279,15 @@ function buildReportResponse(report) {
 export async function listReports(req, res) {
   try {
     const reports = await Report.find();
+    res.json(reports.map((report) => buildReportResponse(report)));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+}
+
+export async function listSupervisorDepartmentReports(req, res) {
+  try {
+    const reports = await Report.find({ 'permissionSettings.supervisorDept': true });
     res.json(reports.map((report) => buildReportResponse(report)));
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -604,17 +636,28 @@ function createDepartmentReportHandler(type) {
     }
 
     const format = typeof rawFormat === 'string' ? rawFormat.toLowerCase() : 'json';
+    const actor = { role: req.user?.role, id: req.user?.id };
+    const normalizedType = normalizeReportType(type);
+
+    try {
+      const allowed = await isDepartmentReportAllowedForActor(normalizedType, actor);
+      if (!allowed) {
+        return res.status(403).json({ error: '報表類型未開放' });
+      }
+    } catch (err) {
+      return res.status(500).json({ error: err.message });
+    }
 
     try {
       const data = await getDepartmentReportData({
-        type,
+        type: normalizedType,
         month,
         departmentId: department,
-        actor: { role: req.user?.role, id: req.user?.id },
+        actor,
       });
 
       if (format === 'excel' || format === 'pdf') {
-        const config = DEPARTMENT_EXPORT_CONFIG[type] ?? {};
+        const config = DEPARTMENT_EXPORT_CONFIG[normalizedType] ?? {};
         const mapRow = config.mapRow || ((row) => row);
         const rows = (data.records ?? []).map(mapRow);
         const summaryRows = config.buildSummaryRows
@@ -622,9 +665,9 @@ function createDepartmentReportHandler(type) {
           : [];
         await exportTabularReport(res, {
           format,
-          fileName: `${type}-${department}-${month}`,
-          sheetName: getReportDisplayName(type),
-          title: `${month} ${getReportDisplayName(type)}`,
+          fileName: `${normalizedType}-${department}-${month}`,
+          sheetName: getReportDisplayName(normalizedType),
+          title: `${month} ${getReportDisplayName(normalizedType)}`,
           columns: config.columns ?? [],
           rows,
           summaryRows,

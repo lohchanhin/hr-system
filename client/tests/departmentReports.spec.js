@@ -76,6 +76,25 @@ describe('DepartmentReports.vue', () => {
         { _id: 'dept2', name: '客服部' },
       ],
     })
+    apiFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => [
+        {
+          id: 'tpl-attendance',
+          name: '出勤統計',
+          type: 'attendance',
+          exportSettings: { formats: ['excel', 'pdf'] },
+          permissionSettings: { supervisorDept: true },
+        },
+        {
+          id: 'tpl-leave',
+          name: '請假統計',
+          type: 'leave',
+          exportSettings: { formats: ['pdf'] },
+          permissionSettings: { supervisorDept: true },
+        },
+      ],
+    })
 
     originalCreateObjectURL = window.URL.createObjectURL
     if (!originalCreateObjectURL) {
@@ -194,5 +213,23 @@ describe('DepartmentReports.vue', () => {
 
     expect(ElMessage.error).toHaveBeenCalledWith('Forbidden')
     expect(wrapper.vm.preview.state).toBe('idle')
+  })
+  it('依後端模板限制報表與匯出格式', async () => {
+    const wrapper = createWrapper()
+    await flushPromises()
+
+    expect(wrapper.vm.availableReportOptions.map((opt) => opt.value)).toEqual([
+      'attendance',
+      'leave',
+    ])
+    expect(wrapper.vm.reportType).toBe('attendance')
+    expect(wrapper.vm.availableExportFormats.map((opt) => opt.value)).toEqual(['excel', 'pdf'])
+    expect(wrapper.vm.exportFormat).toBe('excel')
+
+    wrapper.vm.reportType = 'leave'
+    await flushPromises()
+
+    expect(wrapper.vm.availableExportFormats.map((opt) => opt.value)).toEqual(['pdf'])
+    expect(wrapper.vm.exportFormat).toBe('pdf')
   })
 })

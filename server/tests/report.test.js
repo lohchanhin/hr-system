@@ -48,6 +48,7 @@ mockReport.find = jest.fn();
 mockReport.findById = jest.fn();
 mockReport.findByIdAndUpdate = jest.fn();
 mockReport.findByIdAndDelete = jest.fn();
+mockReport.exists = jest.fn();
 
 jest.unstable_mockModule('../src/models/Report.js', () => ({ default: mockReport }));
 
@@ -74,6 +75,7 @@ beforeEach(() => {
   mockReport.findById.mockReset();
   mockReport.findByIdAndUpdate.mockReset();
   mockReport.findByIdAndDelete.mockReset();
+  mockReport.exists.mockReset();
   saveMock.mockResolvedValue(undefined);
 });
 
@@ -120,6 +122,51 @@ describe('Report API', () => {
         sendFrequency: 'weekly',
         recipients: ['HR', '主管'],
       },
+    });
+  });
+
+  it('提供主管可用的報表模板清單', async () => {
+    mockReport.find.mockResolvedValue([
+      buildReportDocument({
+        _id: 'tpl-attendance',
+        name: '出勤統計模板',
+        type: 'attendance',
+        exportSettings: { formats: ['excel', 'pdf'], includeLogo: false, footerNote: '' },
+        permissionSettings: {
+          supervisorDept: true,
+          hrAllDept: false,
+          employeeDownload: false,
+          historyMonths: 6,
+        },
+      }),
+      buildReportDocument({
+        _id: 'tpl-leave',
+        name: '請假統計模板',
+        type: 'leave',
+        exportSettings: { formats: ['pdf'], includeLogo: false, footerNote: '' },
+        permissionSettings: {
+          supervisorDept: true,
+          hrAllDept: true,
+          employeeDownload: false,
+          historyMonths: 3,
+        },
+      }),
+    ]);
+
+    const res = await request(app)
+      .get('/api/reports/department/templates')
+      .set('x-user-role', 'supervisor')
+      .set('x-user-id', 'sup-1');
+
+    expect(mockReport.find).toHaveBeenCalledWith({ 'permissionSettings.supervisorDept': true });
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveLength(2);
+    expect(res.body[0]).toMatchObject({
+      id: 'tpl-attendance',
+      type: 'attendance',
+      name: '出勤統計模板',
+      exportSettings: { formats: ['excel', 'pdf'] },
+      permissionSettings: expect.objectContaining({ supervisorDept: true }),
     });
   });
 

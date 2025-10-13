@@ -45,9 +45,15 @@
         </div>
         <div class="filter-item">
           <label class="filter-label">報表種類</label>
-          <el-select v-model="reportType" placeholder="選擇報表" class="w-full">
+          <el-select
+            v-model="reportType"
+            placeholder="選擇報表"
+            class="w-full"
+            :disabled="loading.templates || availableReportOptions.length === 0"
+            :loading="loading.templates"
+          >
             <el-option
-              v-for="type in reportTypes"
+              v-for="type in availableReportOptions"
               :key="type.value"
               :label="type.label"
               :value="type.value"
@@ -56,9 +62,15 @@
         </div>
         <div class="filter-item">
           <label class="filter-label">匯出格式</label>
-          <el-select v-model="exportFormat" placeholder="選擇格式" class="w-full">
+          <el-select
+            v-model="exportFormat"
+            placeholder="選擇格式"
+            class="w-full"
+            :disabled="loading.templates || availableExportFormats.length === 0"
+            :loading="loading.templates"
+          >
             <el-option
-              v-for="format in exportFormats"
+              v-for="format in availableExportFormats"
               :key="format.value"
               :label="format.label"
               :value="format.value"
@@ -126,7 +138,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted, watch } from 'vue'
 import dayjs from 'dayjs'
 import { ElMessage } from 'element-plus'
 import { apiFetch } from '../../api'
@@ -134,26 +146,12 @@ import { apiFetch } from '../../api'
 const departments = ref([])
 const supervisorDepartmentId = ref('')
 const supervisorDepartmentName = ref('')
-const reportTypes = [
-  { value: 'attendance', label: '出勤統計' },
-  { value: 'leave', label: '請假統計' },
-  { value: 'tardiness', label: '遲到統計' },
-  { value: 'earlyLeave', label: '早退統計' },
-  { value: 'workHours', label: '工時統計' },
-  { value: 'overtime', label: '加班申請' },
-  { value: 'compTime', label: '補休申請' },
-  { value: 'makeUp', label: '補打卡申請' },
-  { value: 'specialLeave', label: '特休統計' },
-]
-const exportFormats = [
-  { value: 'excel', label: 'Excel (.xlsx)' },
-  { value: 'pdf', label: 'PDF (.pdf)' },
-]
+const reportTemplates = ref([])
 
 const selectedMonth = ref(dayjs().format('YYYY-MM'))
 const selectedDepartment = ref('')
-const reportType = ref('attendance')
-const exportFormat = ref('excel')
+const reportType = ref('')
+const exportFormat = ref('')
 const exporting = ref(false)
 
 const preview = reactive({
@@ -165,6 +163,7 @@ const preview = reactive({
 
 const loading = reactive({
   departments: false,
+  templates: false,
 })
 
 const reportEndpointMap = {
@@ -179,6 +178,11 @@ const reportEndpointMap = {
   specialLeave: '/api/reports/department/special-leave/export',
 }
 
+const formatLabelMap = {
+  excel: 'Excel (.xlsx)',
+  pdf: 'PDF (.pdf)',
+}
+
 const formatExtensionMap = {
   excel: 'xlsx',
   pdf: 'pdf',
@@ -191,11 +195,95 @@ const hasDepartmentAccess = computed(() =>
   )
 )
 
-const canExport = computed(() =>
-  Boolean(selectedMonth.value && hasDepartmentAccess.value && reportEndpointMap[reportType.value])
+const templateMap = computed(() => {
+  const map = new Map()
+  reportTemplates.value.forEach((template) => {
+    if (template?.type && !map.has(template.type)) {
+      map.set(template.type, template)
+    }
+  })
+  return map
+})
+
+const availableReportOptions = computed(() => {
+  const options = []
+  const seen = new Set()
+  reportTemplates.value.forEach((template) => {
+    const value = template?.type
+    if (!value || seen.has(value) || !reportEndpointMap[value]) return
+    const label = template?.name?.trim?.() || value
+    options.push({ value, label })
+    seen.add(value)
+  })
+  return options
+})
+
+const selectedTemplate = computed(() => {
+  if (!reportType.value) return null
+  return templateMap.value.get(reportType.value) || null
+})
+
+const availableExportFormats = computed(() => {
+  const template = selectedTemplate.value
+  if (!template) return []
+  const seen = new Set()
+  const formats = Array.isArray(template.exportFormats) ? template.exportFormats : []
+  return formats
+    .map((format) => (typeof format === 'string' ? format.trim().toLowerCase() : ''))
+    .filter((format) => {
+      if (!format || !formatLabelMap[format] || seen.has(format)) return false
+      seen.add(format)
+      return true
+    })
+    .map((format) => ({ value: format, label: formatLabelMap[format] }))
+})
+
+const canExport = computed(() => {
+  if (!selectedMonth.value || !hasDepartmentAccess.value) return false
+  if (!reportType.value || !reportEndpointMap[reportType.value]) return false
+  return availableExportFormats.value.some((item) => item.value === exportFormat.value)
+})
+
+const canPreview = computed(
+  () =>
+    Boolean(
+      selectedMonth.value &&
+        hasDepartmentAccess.value &&
+        reportType.value &&
+        reportEndpointMap[reportType.value] &&
+        selectedTemplate.value
+    )
 )
 
-const canPreview = computed(() => canExport.value)
+watch(
+  availableReportOptions,
+  (options) => {
+    if (!Array.isArray(options) || options.length === 0) {
+      reportType.value = ''
+      return
+    }
+    const exists = options.some((option) => option.value === reportType.value)
+    if (!exists) {
+      reportType.value = options[0].value
+    }
+  },
+  { immediate: true }
+)
+
+watch(
+  availableExportFormats,
+  (formats) => {
+    if (!Array.isArray(formats) || formats.length === 0) {
+      exportFormat.value = ''
+      return
+    }
+    const exists = formats.some((format) => format.value === exportFormat.value)
+    if (!exists) {
+      exportFormat.value = formats[0].value
+    }
+  },
+  { immediate: true }
+)
 
 const dynamicColumns = computed(() => {
   if (reportType.value === 'attendance') {
@@ -346,13 +434,16 @@ const summaryItems = computed(() => {
 
 onMounted(async () => {
   loading.departments = true
+  loading.templates = true
   try {
     await fetchSupervisorDepartment()
     await fetchAllowedDepartments()
+    await fetchSupervisorReportTemplates()
   } catch (err) {
-    ElMessage.error(err.message || '載入主管部門資訊失敗')
+    ElMessage.error(err.message || '載入主管報表資訊失敗')
   } finally {
     loading.departments = false
+    loading.templates = false
   }
 })
 
@@ -444,6 +535,55 @@ async function fetchAllowedDepartments() {
   selectedDepartment.value = preferred?._id || departments.value[0]._id || ''
 }
 
+async function fetchSupervisorReportTemplates() {
+  const res = await apiFetch('/api/reports/department/templates')
+  if (!res.ok) {
+    throw new Error('無法取得主管報表設定')
+  }
+  const data = await res.json()
+  const normalized = Array.isArray(data)
+    ? data
+        .map((item) => {
+          const idValue = item?.id ?? item?._id ?? ''
+          const type = typeof item?.type === 'string' ? item.type.trim() : ''
+          const name = typeof item?.name === 'string' ? item.name.trim() : ''
+          const rawFormats = Array.isArray(item?.exportSettings?.formats)
+            ? item.exportSettings.formats
+            : Array.isArray(item?.exportFormats)
+              ? item.exportFormats
+              : []
+          const exportFormats = rawFormats
+            .map((format) => (typeof format === 'string' ? format.trim().toLowerCase() : ''))
+            .filter(Boolean)
+          const permissionSettings =
+            item?.permissionSettings && typeof item.permissionSettings === 'object'
+              ? { ...item.permissionSettings }
+              : {}
+          const exportSettings =
+            item?.exportSettings && typeof item.exportSettings === 'object'
+              ? { ...item.exportSettings }
+              : { formats: [] }
+          return {
+            id: idValue ? String(idValue) : '',
+            type,
+            name: name || type,
+            exportFormats,
+            permissionSettings,
+            exportSettings,
+          }
+        })
+        .filter((item) => item.type)
+    : []
+
+  reportTemplates.value = normalized
+
+  if (!normalized.length) {
+    reportType.value = ''
+    exportFormat.value = ''
+    ElMessage.warning('目前沒有開放的主管報表模板')
+  }
+}
+
 function ensureDepartmentAccess() {
   if (hasDepartmentAccess.value) return true
   ElMessage.warning('目前無可操作的部門，請確認您的部門權限設定')
@@ -533,13 +673,15 @@ async function exportReport() {
     const monthText = selectedMonth.value?.replace('-', '') || dayjs().format('YYYYMM')
     const deptName =
       departments.value.find((dept) => dept._id === selectedDepartment.value)?.name || 'department'
-    const typeKey = reportTypes.find((type) => type.value === reportType.value)?.value || 'report'
+    const template = selectedTemplate.value
+    const typeKey = template?.type || reportType.value || 'report'
+    const templateName = template?.name || typeKey
     const sanitize = (text) =>
       String(text)
         .trim()
         .replace(/\s+/g, '-')
         .replace(/[^\w\u4e00-\u9fa5-]+/gi, '')
-    const fileName = `${monthText}-${sanitize(deptName)}-${sanitize(typeKey)}.${extension}`
+    const fileName = `${monthText}-${sanitize(deptName)}-${sanitize(templateName)}.${extension}`
 
     const url = window.URL.createObjectURL(blob)
     const link = document.createElement('a')

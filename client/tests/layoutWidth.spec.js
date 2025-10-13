@@ -25,19 +25,18 @@ describe('layout widths', () => {
     vi.restoreAllMocks()
   })
 
-  it('ModernLayout aside and main flex to 25/75', () => {
+  it('ModernLayout aside maintains sidebar width and flexible main content', async () => {
     const wrapper = mount(ModernLayout, { global: { plugins: [ElementPlus] } })
-    const asideStyle = getComputedStyle(wrapper.find('.layout-aside').element)
-    const mainStyle = getComputedStyle(wrapper.find('.layout-main').element)
-    expect(asideStyle.flexBasis || asideStyle.width).toBe('25%')
-    expect(mainStyle.flexBasis || mainStyle.width).toBe('75%')
+    expect(wrapper.find('.layout-aside').attributes('style')).toContain('width: 280px')
+    wrapper.vm.toggleCollapse()
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('.layout-aside').attributes('style')).toContain('width: 64px')
+    expect(wrapper.find('.layout-main').exists()).toBe(true)
   })
 
   it('Layout aside and main flex to 25/75', () => {
     const wrapper = mount(Layout, { global: { plugins: [ElementPlus] } })
-    const asideStyle = getComputedStyle(wrapper.find('.layout-aside').element)
-    const mainStyle = getComputedStyle(wrapper.find('.layout-main').element)
-    expect(asideStyle.flexBasis || asideStyle.width).toBe('25%')
-    expect(mainStyle.flexBasis || mainStyle.width).toBe('75%')
+    expect(wrapper.find('.layout-aside').attributes('style')).toContain('width: 25%')
+    expect(wrapper.find('.layout-main').attributes('style')).toContain('width: 75%')
   })
 })

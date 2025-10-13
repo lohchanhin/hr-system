@@ -18,6 +18,10 @@ const mockExportTabularReport = jest.fn((res, payload) => {
   res.status(200).json({ ok: true, payload });
 });
 
+const mockReport = jest.fn();
+mockReport.exists = jest.fn();
+mockReport.find = jest.fn();
+
 class ReportAccessError extends Error {
   constructor(status, message) {
     super(message);
@@ -33,6 +37,10 @@ jest.unstable_mockModule('../src/services/reportMetricsService.js', () => ({
 
 jest.unstable_mockModule('../src/services/reportExportHelper.js', () => ({
   exportTabularReport: mockExportTabularReport,
+}));
+
+jest.unstable_mockModule('../src/models/Report.js', () => ({
+  default: mockReport,
 }));
 
 let app;
@@ -57,6 +65,10 @@ beforeEach(() => {
   mockGetDepartmentReportData.mockReset();
   mockGetReportDisplayName.mockClear();
   mockExportTabularReport.mockReset();
+  mockReport.exists.mockReset();
+  mockReport.find.mockReset();
+  mockReport.exists.mockResolvedValue(true);
+  mockReport.find.mockResolvedValue([]);
 });
 
 describe('Department report exports', () => {
@@ -202,5 +214,19 @@ describe('Department report exports', () => {
       .set('x-user-id', 'emp1');
 
     expect(res.status).toBe(403);
+  });
+
+  it('拒絕主管匯出未授權的報表類型', async () => {
+    mockReport.exists.mockResolvedValueOnce(false);
+
+    const res = await request(app)
+      .get('/api/reports/department/attendance/export')
+      .query({ month: '2024-01', department: 'dept5', format: 'json' })
+      .set('x-user-role', 'supervisor')
+      .set('x-user-id', 'sup-deny');
+
+    expect(res.status).toBe(403);
+    expect(res.body).toEqual({ error: '報表類型未開放' });
+    expect(mockGetDepartmentReportData).not.toHaveBeenCalled();
   });
 });
