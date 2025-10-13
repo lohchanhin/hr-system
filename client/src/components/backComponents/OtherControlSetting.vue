@@ -126,16 +126,69 @@
         <el-form-item label="使用說明">
           <el-input v-model="fieldForm.description" type="textarea" />
         </el-form-item>
-        <el-form-item
-          v-if="['select', 'checkbox', 'composite'].includes(fieldForm.type)"
-          label="選項設定"
-        >
-          <el-input
-            v-model="fieldForm.optionsInput"
-            type="textarea"
-            :rows="3"
-            placeholder="輸入 JSON 陣列或以逗號分隔的選項"
-          />
+        <el-form-item v-if="shouldShowOptionEditor" label="選項設定">
+          <div class="options-editor">
+            <div
+              v-for="(option, index) in fieldForm.optionsList"
+              :key="option.id"
+              class="options-editor__row"
+              data-test="option-row"
+            >
+              <el-row :gutter="8" align="middle">
+                <el-col :span="10">
+                  <el-input
+                    v-model="option.name"
+                    placeholder="顯示文字"
+                    data-test="option-name"
+                  />
+                </el-col>
+                <el-col :span="10">
+                  <el-input
+                    v-model="option.code"
+                    placeholder="代碼"
+                    data-test="option-code"
+                  />
+                </el-col>
+                <el-col :span="4" class="options-editor__actions">
+                  <el-button
+                    link
+                    type="primary"
+                    :disabled="index === 0"
+                    @click="moveOptionRow(index, -1)"
+                    data-test="move-up"
+                  >
+                    上
+                  </el-button>
+                  <el-button
+                    link
+                    type="primary"
+                    :disabled="index === fieldForm.optionsList.length - 1"
+                    @click="moveOptionRow(index, 1)"
+                    data-test="move-down"
+                  >
+                    下
+                  </el-button>
+                  <el-button
+                    link
+                    type="danger"
+                    @click="removeOptionRow(index)"
+                    data-test="remove-option"
+                  >
+                    刪
+                  </el-button>
+                </el-col>
+              </el-row>
+            </div>
+            <el-button
+              type="primary"
+              plain
+              size="small"
+              @click="addOptionRow()"
+              data-test="add-option"
+            >
+              新增選項
+            </el-button>
+          </div>
         </el-form-item>
       </el-form>
       <template #footer>
@@ -149,9 +202,10 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { apiFetch } from '../../api'
+import { editableListToOptions, optionsToEditableList } from '../../utils/fieldOptions'
 
 const activeTab = ref('item-setting')
 
@@ -202,66 +256,23 @@ function normalizeDictionaryOption(option) {
   return { name: '', code: '' }
 }
 
-function formatFieldOptionsInput(options) {
-  if (options == null) {
-    return ''
-  }
+const optionFieldTypes = ['select', 'checkbox', 'composite']
+let optionRowSeed = 0
 
-  if (typeof options === 'string') {
-    return options
-  }
-
-  if (Array.isArray(options)) {
-    const simpleValues = options.every(option =>
-      typeof option === 'string' || typeof option === 'number'
-    )
-    if (simpleValues) {
-      return options.map(option => String(option)).join('\n')
-    }
-  }
-
-  try {
-    return JSON.stringify(options)
-  } catch (error) {
-    console.warn('無法序列化自訂欄位選項：', error)
-    return ''
+function createOptionRow(option = {}) {
+  return {
+    id: optionRowSeed++,
+    name: typeof option.name === 'string' ? option.name : '',
+    code: typeof option.code === 'string' ? option.code : ''
   }
 }
 
-function parseFieldOptionsValue(value) {
-  if (typeof value !== 'string') {
-    return undefined
+function createOptionRowsFromOptions(options) {
+  const list = optionsToEditableList(options)
+  if (!list.length) {
+    return []
   }
-
-  const trimmed = value.trim()
-  if (!trimmed) {
-    return undefined
-  }
-
-  try {
-    const parsed = JSON.parse(trimmed)
-    if (Array.isArray(parsed)) {
-      return parsed.map(option => {
-        if (typeof option === 'string') {
-          return option.trim()
-        }
-        if (option && typeof option === 'object') {
-          return { ...option }
-        }
-        return option
-      })
-    }
-    if (parsed && typeof parsed === 'object') {
-      return { ...parsed }
-    }
-    return parsed
-  } catch (error) {
-    const segments = trimmed
-      .split(/[\n,]/)
-      .map(segment => segment.trim())
-      .filter(Boolean)
-    return segments.length ? segments : undefined
-  }
+  return list.map(item => createOptionRow(item))
 }
 
 const defaultDictionaryOptions = {
@@ -537,8 +548,61 @@ const fieldForm = ref({
   required: false,
   description: '',
   options: undefined,
-  optionsInput: ''
+  optionsList: []
 })
+
+const shouldShowOptionEditor = computed(() => optionFieldTypes.includes(fieldForm.value.type))
+
+function ensureOptionRows() {
+  if (!Array.isArray(fieldForm.value.optionsList)) {
+    fieldForm.value.optionsList = []
+  }
+  if (!shouldShowOptionEditor.value) {
+    return
+  }
+  if (!fieldForm.value.optionsList.length) {
+    fieldForm.value.optionsList.push(createOptionRow())
+  }
+}
+
+watch(
+  () => fieldForm.value.type,
+  type => {
+    if (optionFieldTypes.includes(type)) {
+      ensureOptionRows()
+    }
+  }
+)
+
+function addOptionRow() {
+  if (!Array.isArray(fieldForm.value.optionsList)) {
+    fieldForm.value.optionsList = []
+  }
+  fieldForm.value.optionsList.push(createOptionRow())
+}
+
+function removeOptionRow(index) {
+  if (!Array.isArray(fieldForm.value.optionsList) || index < 0) {
+    return
+  }
+  fieldForm.value.optionsList.splice(index, 1)
+  if (shouldShowOptionEditor.value && fieldForm.value.optionsList.length === 0) {
+    addOptionRow()
+  }
+}
+
+function moveOptionRow(index, offset) {
+  if (!Array.isArray(fieldForm.value.optionsList)) {
+    return
+  }
+  const newIndex = index + offset
+  if (newIndex < 0 || newIndex >= fieldForm.value.optionsList.length) {
+    return
+  }
+  const list = fieldForm.value.optionsList
+  const [item] = list.splice(index, 1)
+  list.splice(newIndex, 0, item)
+}
 
 onMounted(() => {
   loadSettings()
@@ -697,7 +761,7 @@ function openFieldDialog(index = -1) {
     fieldForm.value = {
       ...targetField,
       options: targetField.options,
-      optionsInput: formatFieldOptionsInput(targetField.options)
+      optionsList: createOptionRowsFromOptions(targetField.options)
     }
   } else {
     fieldForm.value = {
@@ -709,9 +773,10 @@ function openFieldDialog(index = -1) {
       required: false,
       description: '',
       options: undefined,
-      optionsInput: ''
+      optionsList: []
     }
   }
+  ensureOptionRows()
   fieldDialogVisible.value = true
 }
 
@@ -721,18 +786,19 @@ async function saveField() {
     return
   }
   const previousFields = JSON.parse(JSON.stringify(customFields.value))
-  const parsedOptions = parseFieldOptionsValue(fieldForm.value.optionsInput)
-  if (parsedOptions !== undefined) {
-    fieldForm.value.options = parsedOptions
-  } else if ('options' in fieldForm.value) {
-    delete fieldForm.value.options
+  const shouldIncludeOptions = optionFieldTypes.includes(fieldForm.value.type)
+  let parsedOptions
+  if (shouldIncludeOptions) {
+    parsedOptions = editableListToOptions(fieldForm.value.optionsList)
   }
 
   const sanitizedField = { ...fieldForm.value }
-  if (parsedOptions === undefined) {
+  if (shouldIncludeOptions && parsedOptions !== undefined) {
+    sanitizedField.options = parsedOptions
+  } else {
     delete sanitizedField.options
   }
-  delete sanitizedField.optionsInput
+  delete sanitizedField.optionsList
 
   const updatedField = JSON.parse(JSON.stringify(sanitizedField))
 
