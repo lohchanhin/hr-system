@@ -207,6 +207,53 @@ describe('OtherControlSetting - custom fields', () => {
     expect(wrapper.vm.fieldDialogVisible).toBe(false)
   })
 
+  it('新增含選項的自訂欄位會解析輸入並提交 options', async () => {
+    const existingFields = []
+    const newField = {
+      label: '制服尺寸',
+      fieldKey: 'uniformSize',
+      type: 'select',
+      category: 'profile',
+      group: '報到資訊',
+      required: true,
+      description: '提供員工選擇制服尺寸'
+    }
+
+    apiFetchMock.mockImplementation((path, options = {}) => {
+      if (path === '/api/other-control-settings' && options.method === 'GET') {
+        return Promise.resolve(mockInitialResponse(existingFields))
+      }
+      if (path === '/api/other-control-settings/custom-fields' && options.method === 'PUT') {
+        return Promise.resolve(new Response('', { status: 200 }))
+      }
+      return Promise.resolve(new Response('', { status: 404 }))
+    })
+
+    const wrapper = await mountComponent()
+
+    Object.assign(wrapper.vm.fieldForm, newField)
+    wrapper.vm.fieldForm.optionsInput = 'XS, S, M\nL'
+    wrapper.vm.fieldDialogVisible = true
+
+    await wrapper.vm.saveField()
+
+    const putCall = apiFetchMock.mock.calls.find(
+      ([requestPath]) => requestPath === '/api/other-control-settings/custom-fields'
+    )
+
+    expect(putCall).toBeTruthy()
+    const payload = JSON.parse(putCall[1].body)
+    const latestPayloadField = payload.customFields.at(-1)
+    expect(latestPayloadField.fieldKey).toBe(newField.fieldKey)
+    expect(latestPayloadField.options).toEqual(['XS', 'S', 'M', 'L'])
+
+    const latestLocalField = wrapper.vm.customFields.at(-1)
+    expect(latestLocalField.fieldKey).toBe(newField.fieldKey)
+    expect(latestLocalField.options).toEqual(['XS', 'S', 'M', 'L'])
+    expect(ElMessage.success).toHaveBeenCalledWith('已更新自訂欄位')
+    expect(wrapper.vm.fieldDialogVisible).toBe(false)
+  })
+
   it('新增自訂欄位失敗時會還原資料並提示錯誤訊息', async () => {
     const existingFields = [
       {
@@ -255,6 +302,50 @@ describe('OtherControlSetting - custom fields', () => {
     expect(ElMessage.success).not.toHaveBeenCalled()
     expect(ElMessage.error).toHaveBeenCalledWith('後端錯誤')
     expect(wrapper.vm.fieldDialogVisible).toBe(true)
+  })
+
+  it('編輯含選項的自訂欄位時會保留既有選項並提交更新', async () => {
+    const existingFields = [
+      {
+        label: '制服尺寸',
+        fieldKey: 'uniformSize',
+        type: 'select',
+        category: 'profile',
+        group: '報到資訊',
+        required: true,
+        description: '提供員工選擇制服尺寸',
+        options: ['XS', 'S']
+      }
+    ]
+
+    apiFetchMock.mockImplementation((path, options = {}) => {
+      if (path === '/api/other-control-settings' && options.method === 'GET') {
+        return Promise.resolve(mockInitialResponse(existingFields))
+      }
+      if (path === '/api/other-control-settings/custom-fields' && options.method === 'PUT') {
+        return Promise.resolve(new Response('', { status: 200 }))
+      }
+      return Promise.resolve(new Response('', { status: 404 }))
+    })
+
+    const wrapper = await mountComponent()
+
+    wrapper.vm.openFieldDialog(0)
+    expect(wrapper.vm.fieldForm.optionsInput).toBe('XS\nS')
+
+    wrapper.vm.fieldForm.optionsInput = 'XS\nS\nM'
+
+    await wrapper.vm.saveField()
+
+    const putCall = apiFetchMock.mock.calls.find(
+      ([requestPath]) => requestPath === '/api/other-control-settings/custom-fields'
+    )
+
+    expect(putCall).toBeTruthy()
+    const payload = JSON.parse(putCall[1].body)
+    expect(payload.customFields[0].options).toEqual(['XS', 'S', 'M'])
+    expect(wrapper.vm.customFields[0].options).toEqual(['XS', 'S', 'M'])
+    expect(ElMessage.success).toHaveBeenCalledWith('已更新自訂欄位')
   })
 
   it('刪除自訂欄位時會送出完整清單並顯示成功訊息', async () => {

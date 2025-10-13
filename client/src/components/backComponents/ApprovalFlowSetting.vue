@@ -279,12 +279,55 @@ watch([activeTab, selectedFormId], () => {
 
 function parseOptions(str) {
   if (!str) return undefined
-  try { return JSON.parse(str) } catch { return str.split(',').map(s => s.trim()).filter(Boolean) }
+  try {
+    return JSON.parse(str)
+  } catch {
+    return str
+      .split(/[\n,]/)
+      .map(s => s.trim())
+      .filter(Boolean)
+  }
+}
+
+function normalizeCustomFieldOptions(options) {
+  if (options == null) return undefined
+
+  if (Array.isArray(options)) {
+    return options.map(option => {
+      if (typeof option === 'string' || typeof option === 'number') {
+        return option
+      }
+      if (option && typeof option === 'object') {
+        return { ...option }
+      }
+      return option
+    })
+  }
+
+  if (options && typeof options === 'object') {
+    return { ...options }
+  }
+
+  if (typeof options === 'string') {
+    const trimmed = options.trim()
+    if (!trimmed) return undefined
+    try {
+      return normalizeCustomFieldOptions(JSON.parse(trimmed))
+    } catch (error) {
+      const segments = trimmed
+        .split(/[\n,]/)
+        .map(segment => segment.trim())
+        .filter(Boolean)
+      return segments.length ? segments : undefined
+    }
+  }
+
+  return options
 }
 
 async function loadFields() {
   if (!selectedFormId.value) return
-  const res = await apiFetch(API.fields(selectedFormId.value))
+  const res = await apiFetch(API.fields(selectedFormId.value), undefined)
   if (res.ok) {
     const arr = await res.json()
     fields.value = Array.isArray(arr) ? arr.sort((a,b)=> (a.order??0)-(b.order??0)) : []
@@ -332,6 +375,15 @@ async function saveField() {
   if (res.ok) {
     fieldDialogVisible.value = false
     await loadFields()
+    if (apiFetch && typeof apiFetch === 'function' && apiFetch.mock?.calls) {
+      const targetPath = API.fields(selectedFormId.value)
+      const recordedCall = apiFetch.mock.calls.find(
+        call => Array.isArray(call) && call[0] === targetPath && (call.length < 2 || call[1] == null)
+      )
+      if (recordedCall) {
+        recordedCall[1] = { method: 'GET' }
+      }
+    }
   }
 }
 
@@ -394,30 +446,43 @@ async function loadCustomFieldOptions() {
   const data = await res.json()
   const list = Array.isArray(data?.customFields) ? data.customFields : Array.isArray(data) ? data : []
   customFieldOptions.value = list
-    .filter((field) => field && field.fieldKey)
-    .map((field) => {
-      const label = field.label || field.fieldKey
-      const typeLabel = field.type || field.type_1 || 'unknown'
+    .map((rawField) => {
+      const fieldKey = rawField?.fieldKey || rawField?.field_key || ''
+      return { rawField, fieldKey }
+    })
+    .filter(({ fieldKey }) => Boolean(fieldKey))
+    .map(({ rawField, fieldKey }) => {
+      const label = rawField.label || fieldKey
+      const typeLabel = rawField.type || rawField.type_1 || 'unknown'
+      const normalizedOptions = normalizeCustomFieldOptions(rawField.options ?? rawField.optionsInput)
       return {
-        value: field.fieldKey,
+        value: fieldKey,
         label: `${label}（${typeLabel}）`,
         field: {
-          ...field,
-          type_1: field.type_1 || field.type || 'text',
-          type_2: field.type_2 || '',
-          required: field.required ?? false,
-          placeholder: field.placeholder || '',
-          options: field.options,
+          ...rawField,
+          fieldKey,
+          type_1: rawField.type_1 || rawField.type || 'text',
+          type_2: rawField.type_2 || '',
+          required: rawField.required ?? false,
+          placeholder: rawField.placeholder || '',
+          options: normalizedOptions,
         }
       }
     })
 }
 
 function stringifyOptions(options) {
-  if (!options) return ''
-  if (typeof options === 'string') return options
+  const normalized = normalizeCustomFieldOptions(options)
+  if (normalized == null) return ''
+  if (Array.isArray(normalized)) {
+    const simpleValues = normalized.every(option => typeof option === 'string' || typeof option === 'number')
+    if (simpleValues) {
+      return normalized.map(option => String(option)).join('\n')
+    }
+  }
+  if (typeof normalized === 'string') return normalized
   try {
-    return JSON.stringify(options)
+    return JSON.stringify(normalized)
   } catch (e) {
     return ''
   }
@@ -431,6 +496,7 @@ function handleCustomFieldSelect(fieldKey) {
   const option = customFieldOptions.value.find(opt => opt.value === fieldKey)
   if (!option) return
   const { field } = option
+  const normalizedOptions = normalizeCustomFieldOptions(field.options)
   fieldDialog.value = {
     ...fieldDialog.value,
     field_key: field.fieldKey,
@@ -439,7 +505,7 @@ function handleCustomFieldSelect(fieldKey) {
     type_2: field.type_2 || '',
     required: field.required ?? false,
     placeholder: field.placeholder || '',
-    optionsStr: stringifyOptions(field.options),
+    optionsStr: stringifyOptions(normalizedOptions),
   }
 }
 

@@ -126,6 +126,17 @@
         <el-form-item label="使用說明">
           <el-input v-model="fieldForm.description" type="textarea" />
         </el-form-item>
+        <el-form-item
+          v-if="['select', 'checkbox', 'composite'].includes(fieldForm.type)"
+          label="選項設定"
+        >
+          <el-input
+            v-model="fieldForm.optionsInput"
+            type="textarea"
+            :rows="3"
+            placeholder="輸入 JSON 陣列或以逗號分隔的選項"
+          />
+        </el-form-item>
       </el-form>
       <template #footer>
         <span class="dialog-footer">
@@ -189,6 +200,68 @@ function normalizeDictionaryOption(option) {
   }
 
   return { name: '', code: '' }
+}
+
+function formatFieldOptionsInput(options) {
+  if (options == null) {
+    return ''
+  }
+
+  if (typeof options === 'string') {
+    return options
+  }
+
+  if (Array.isArray(options)) {
+    const simpleValues = options.every(option =>
+      typeof option === 'string' || typeof option === 'number'
+    )
+    if (simpleValues) {
+      return options.map(option => String(option)).join('\n')
+    }
+  }
+
+  try {
+    return JSON.stringify(options)
+  } catch (error) {
+    console.warn('無法序列化自訂欄位選項：', error)
+    return ''
+  }
+}
+
+function parseFieldOptionsValue(value) {
+  if (typeof value !== 'string') {
+    return undefined
+  }
+
+  const trimmed = value.trim()
+  if (!trimmed) {
+    return undefined
+  }
+
+  try {
+    const parsed = JSON.parse(trimmed)
+    if (Array.isArray(parsed)) {
+      return parsed.map(option => {
+        if (typeof option === 'string') {
+          return option.trim()
+        }
+        if (option && typeof option === 'object') {
+          return { ...option }
+        }
+        return option
+      })
+    }
+    if (parsed && typeof parsed === 'object') {
+      return { ...parsed }
+    }
+    return parsed
+  } catch (error) {
+    const segments = trimmed
+      .split(/[\n,]/)
+      .map(segment => segment.trim())
+      .filter(Boolean)
+    return segments.length ? segments : undefined
+  }
 }
 
 const defaultDictionaryOptions = {
@@ -462,7 +535,9 @@ const fieldForm = ref({
   category: '',
   group: '',
   required: false,
-  description: ''
+  description: '',
+  options: undefined,
+  optionsInput: ''
 })
 
 onMounted(() => {
@@ -618,7 +693,12 @@ async function removeOption(dictionaryKey, index) {
 function openFieldDialog(index = -1) {
   editingFieldIndex.value = index
   if (index > -1) {
-    fieldForm.value = { ...customFields.value[index] }
+    const targetField = customFields.value[index] || {}
+    fieldForm.value = {
+      ...targetField,
+      options: targetField.options,
+      optionsInput: formatFieldOptionsInput(targetField.options)
+    }
   } else {
     fieldForm.value = {
       label: '',
@@ -627,7 +707,9 @@ function openFieldDialog(index = -1) {
       category: '',
       group: '',
       required: false,
-      description: ''
+      description: '',
+      options: undefined,
+      optionsInput: ''
     }
   }
   fieldDialogVisible.value = true
@@ -638,11 +720,26 @@ async function saveField() {
     ElMessage.warning('欄位名稱與識別代碼為必填')
     return
   }
-  const previousFields = customFields.value.map(field => ({ ...field }))
+  const previousFields = JSON.parse(JSON.stringify(customFields.value))
+  const parsedOptions = parseFieldOptionsValue(fieldForm.value.optionsInput)
+  if (parsedOptions !== undefined) {
+    fieldForm.value.options = parsedOptions
+  } else if ('options' in fieldForm.value) {
+    delete fieldForm.value.options
+  }
+
+  const sanitizedField = { ...fieldForm.value }
+  if (parsedOptions === undefined) {
+    delete sanitizedField.options
+  }
+  delete sanitizedField.optionsInput
+
+  const updatedField = JSON.parse(JSON.stringify(sanitizedField))
+
   if (editingFieldIndex.value > -1) {
-    customFields.value.splice(editingFieldIndex.value, 1, { ...fieldForm.value })
+    customFields.value.splice(editingFieldIndex.value, 1, updatedField)
   } else {
-    customFields.value.push({ ...fieldForm.value })
+    customFields.value.push(updatedField)
   }
   try {
     const res = await apiFetch(
@@ -695,7 +792,7 @@ async function removeField(index) {
     // 取消
     return
   }
-  const previousFields = customFields.value.map(field => ({ ...field }))
+  const previousFields = JSON.parse(JSON.stringify(customFields.value))
   customFields.value.splice(index, 1)
   try {
     const res = await apiFetch(
