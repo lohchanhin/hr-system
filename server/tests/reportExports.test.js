@@ -125,6 +125,29 @@ describe('Department report exports', () => {
     });
   });
 
+  it('允許主管匯出預設模板類型', async () => {
+    mockReport.exists.mockResolvedValueOnce(true);
+    mockGetDepartmentReportData.mockResolvedValueOnce({
+      summary: { total: 0 },
+      records: [],
+    });
+
+    const res = await request(app)
+      .get('/api/reports/department/attendance/export')
+      .query({ month: '2024-02', department: 'dept-ok', format: 'json' })
+      .set('x-user-role', 'supervisor')
+      .set('x-user-id', 'sup-ok');
+
+    expect(res.status).toBe(200);
+    expect(mockReport.exists).toHaveBeenCalledWith({
+      type: 'attendance',
+      'permissionSettings.supervisorDept': true,
+    });
+    expect(res.body).toEqual(
+      expect.objectContaining({ month: '2024-02', department: 'dept-ok', records: [] })
+    );
+  });
+
   it('calls export helper for Excel report', async () => {
     mockGetDepartmentReportData.mockResolvedValueOnce({
       summary: { totalWorkedHours: 160, totalScheduledHours: 168, differenceHours: -8 },
