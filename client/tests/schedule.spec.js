@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { shallowMount } from '@vue/test-utils'
 import dayjs from 'dayjs'
 import { createPinia, setActivePinia } from 'pinia'
-global.ElMessage = { error: vi.fn(), success: vi.fn(), warning: vi.fn() }
+global.ElMessage = { error: vi.fn(), success: vi.fn(), warning: vi.fn(), info: vi.fn() }
 
 vi.mock('../src/api', () => ({ apiFetch: vi.fn() }))
 const encodeBase64 = data => Buffer.from(data, 'utf8').toString('base64')
@@ -30,6 +30,7 @@ describe('Schedule.vue', () => {
     ElMessage.error.mockReset()
     ElMessage.success.mockReset()
     ElMessage.warning.mockReset()
+    ElMessage.info.mockReset()
     pushMock.mockReset()
     sessionStorage.clear()
     localStorage.clear()
@@ -666,6 +667,32 @@ describe('Schedule.vue', () => {
     }
     await wrapper.vm.saveAll()
     expect(ElMessage.warning).toHaveBeenCalled()
+    expect(apiFetch).not.toHaveBeenCalledWith('/api/schedules/batch', expect.anything())
+  })
+
+  it('disables save button and informs when nothing to save', async () => {
+    apiFetch
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ approvals: [], leaves: [] }) })
+
+    const wrapper = mountSchedule()
+    await flush()
+    wrapper.vm.scheduleMap = {
+      e1: {
+        1: { id: 'existing', shiftId: 's1', department: 'd1', subDepartment: 'sd1' }
+      }
+    }
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.isSaveDisabled).toBe(true)
+    const button = wrapper.find('[data-test="save-all-button"]')
+    expect(button.attributes('disabled')).toBeDefined()
+    await wrapper.vm.saveAll()
+    expect(ElMessage.info).toHaveBeenCalledWith('目前沒有可儲存的排班')
     expect(apiFetch).not.toHaveBeenCalledWith('/api/schedules/batch', expect.anything())
   })
 
