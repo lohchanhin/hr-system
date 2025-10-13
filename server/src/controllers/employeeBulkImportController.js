@@ -1,5 +1,6 @@
 import ExcelJS from 'exceljs'
 import crypto from 'crypto'
+import { Readable } from 'stream'
 import Employee from '../models/Employee.js'
 import { buildEmployeeDoc } from './employeeController.js'
 
@@ -367,7 +368,18 @@ export async function bulkImportEmployees(req, res) {
   let worksheet
   try {
     if (req.file.mimetype === 'text/csv' || req.file.originalname?.endsWith('.csv')) {
-      await workbook.csv.read(req.file.buffer)
+      let csvSource
+      try {
+        const csvContent = req.file.buffer.toString('utf8')
+        csvSource = Readable.from(csvContent)
+      } catch (conversionError) {
+        res.status(400).json({
+          message: '無法讀取 Excel 檔案',
+          errors: [`CSV 串流轉換失敗：${conversionError.message}`]
+        })
+        return
+      }
+      await workbook.csv.read(csvSource)
     } else {
       await workbook.xlsx.load(req.file.buffer)
     }
