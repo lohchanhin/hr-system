@@ -49,14 +49,20 @@ mockReport.findById = jest.fn();
 mockReport.findByIdAndUpdate = jest.fn();
 mockReport.findByIdAndDelete = jest.fn();
 mockReport.exists = jest.fn();
+mockReport.updateOne = jest.fn();
 
 jest.unstable_mockModule('../src/models/Report.js', () => ({ default: mockReport }));
 
 let app;
 let reportRoutes;
+let ensureDefaultSupervisorReports;
+let SUPERVISOR_REPORT_TEMPLATES;
 
 beforeAll(async () => {
   reportRoutes = (await import('../src/routes/reportRoutes.js')).default;
+  ({ ensureDefaultSupervisorReports, SUPERVISOR_REPORT_TEMPLATES } = await import(
+    '../src/services/supervisorReportSeed.js'
+  ));
   app = express();
   app.use(express.json());
   app.use((req, res, next) => {
@@ -76,7 +82,34 @@ beforeEach(() => {
   mockReport.findByIdAndUpdate.mockReset();
   mockReport.findByIdAndDelete.mockReset();
   mockReport.exists.mockReset();
+  mockReport.updateOne.mockReset();
   saveMock.mockResolvedValue(undefined);
+});
+
+describe('ensureDefaultSupervisorReports', () => {
+  it('建立主管預設報表模板', async () => {
+    mockReport.updateOne.mockResolvedValue({ acknowledged: true });
+
+    await ensureDefaultSupervisorReports();
+
+    expect(mockReport.updateOne).toHaveBeenCalledTimes(SUPERVISOR_REPORT_TEMPLATES.length);
+    SUPERVISOR_REPORT_TEMPLATES.forEach((template) => {
+      expect(mockReport.updateOne).toHaveBeenCalledWith(
+        { type: template.type },
+        {
+          $setOnInsert: expect.objectContaining({
+            name: template.name,
+            type: template.type,
+            exportSettings: expect.objectContaining({
+              formats: expect.arrayContaining(template.exportSettings.formats),
+            }),
+            permissionSettings: expect.objectContaining({ supervisorDept: true }),
+          }),
+        },
+        { upsert: true }
+      );
+    });
+  });
 });
 
 describe('Report API', () => {

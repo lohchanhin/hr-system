@@ -30,6 +30,7 @@ import holidayMoveSettingRoutes from './routes/holidayMoveSettingRoutes.js';
 import attendanceSettingRoutes from './routes/attendanceSettingRoutes.js';
 import shiftRoutes from './routes/shiftRoutes.js';
 import deptManagerRoutes from './routes/deptManagerRoutes.js';
+import { ensureDefaultSupervisorReports } from './services/supervisorReportSeed.js';
 
 export async function ensureAdminUser() {
   const existing = await Employee.findOne({ role: 'admin' });
@@ -212,6 +213,7 @@ async function start() {
   try {
     await connectDB(process.env.MONGODB_URI);
     await ensureAdminUser();
+    await ensureDefaultSupervisorReports();
     app.listen(PORT, () => {
       console.log(`Server running on port ${PORT}`);
     });
