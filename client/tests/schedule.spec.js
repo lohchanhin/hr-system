@@ -178,13 +178,18 @@ describe('Schedule.vue', () => {
       .mockResolvedValueOnce({ ok: true, json: async () => ({ approvals: [], leaves: [] }) })
     const wrapper = mountSchedule()
     await flush()
-    expect(wrapper.vm.shifts).toEqual([{ _id: 's1', code: 'S1', startTime: '08:00', endTime: '17:00', remark: 'R' }])
+    expect(wrapper.vm.shifts).toEqual([
+      { _id: 's1', code: 'S1', name: '', startTime: '08:00', endTime: '17:00', remark: 'R' }
+    ])
   })
 
   it('loads shift options when API returns object with shifts', async () => {
     apiFetch
       .mockResolvedValueOnce({ ok: true, json: async () => [] })
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ shifts: [{ _id: 's1', code: 'S1', startTime: '08:00', endTime: '17:00', remark: 'R' }] }) })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ shifts: [{ _id: 's1', code: 'S1', name: '早班', startTime: '08:00', endTime: '17:00', remark: 'R' }] })
+      })
       .mockResolvedValueOnce({ ok: true, json: async () => [{ _id: '1F', name: '1F' }] })
       .mockResolvedValueOnce({ ok: true, json: async () => [{ _id: 'HR', name: 'HR', department: '1F' }] })
       .mockResolvedValueOnce({ ok: true, json: async () => [{ _id: 'e1', name: 'E1', department: '1F', subDepartment: 'HR' }] })
@@ -192,7 +197,26 @@ describe('Schedule.vue', () => {
       .mockResolvedValueOnce({ ok: true, json: async () => ({ approvals: [], leaves: [] }) })
     const wrapper = mountSchedule()
     await flush()
-    expect(wrapper.vm.shifts).toEqual([{ _id: 's1', code: 'S1', startTime: '08:00', endTime: '17:00', remark: 'R' }])
+    expect(wrapper.vm.shifts).toEqual([
+      { _id: 's1', code: 'S1', name: '早班', startTime: '08:00', endTime: '17:00', remark: 'R' }
+    ])
+  })
+
+  it('formats shift label with code and name when available', async () => {
+    apiFetch
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ approvals: [], leaves: [] }) })
+    const wrapper = mountSchedule()
+    await flush()
+    const shift = { code: 'S1', name: '早班' }
+    expect(wrapper.vm.formatShiftLabel(shift)).toBe('S1(早班)')
+    expect(wrapper.vm.formatShiftLabel({ code: 'S2', name: '' })).toBe('S2')
+    expect(wrapper.vm.formatShiftLabel(null)).toBe('')
   })
 
   it('filters subDepartments by department id', async () => {

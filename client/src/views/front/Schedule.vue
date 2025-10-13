@@ -175,7 +175,7 @@
                     <el-option
                       v-for="opt in shifts"
                       :key="opt._id"
-                      :label="opt.code"
+                      :label="formatShiftLabel(opt)"
                       :value="opt._id"
                     />
                   </el-select>
@@ -241,7 +241,7 @@
                     </div>
                     <template #reference>
                       <div class="modern-shift-tag">
-                        {{ shiftInfo(scheduleMap[row._id][d.date].shiftId).code }}
+                        {{ formatShiftLabel(shiftInfo(scheduleMap[row._id][d.date].shiftId)) }}
                       </div>
                     </template>
                   </el-popover>
@@ -402,6 +402,7 @@ async function fetchShiftOptions() {
       shifts.value = list.map(s => ({
         _id: s._id,
         code: s.code,
+        name: s.name ?? '',
         startTime: s.startTime,
         endTime: s.endTime,
         remark: s.remark
@@ -917,6 +918,14 @@ async function handleScheduleError(res, defaultMsg, empId, day, prev) {
 
 function shiftInfo(id) {
   return shifts.value.find(s => s._id === id)
+}
+
+function formatShiftLabel(shift) {
+  if (!shift) return ''
+  const code = shift.code ?? ''
+  const name = shift.name ?? ''
+  if (!code && !name) return ''
+  return name ? `${code}(${name})` : code
 }
 
 function shiftClass(id) {
