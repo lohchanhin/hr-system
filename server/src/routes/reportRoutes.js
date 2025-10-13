@@ -14,6 +14,7 @@ import {
   exportDepartmentCompTime,
   exportDepartmentMakeUp,
   exportDepartmentSpecialLeave,
+  listSupervisorDepartmentReports,
 } from '../controllers/reportController.js';
 import { authorizeRoles } from '../middleware/auth.js';
 
@@ -23,6 +24,7 @@ router.get('/', listReports);
 router.post('/', createReport);
 const departmentReportGuard = authorizeRoles('supervisor', 'admin');
 
+router.get('/department/templates', departmentReportGuard, listSupervisorDepartmentReports);
 router.get('/department/attendance/export', departmentReportGuard, exportDepartmentAttendance);
 router.get('/department/leave/export', departmentReportGuard, exportDepartmentLeave);
 router.get('/department/tardiness/export', departmentReportGuard, exportDepartmentTardiness);

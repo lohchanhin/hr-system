@@ -5,6 +5,22 @@ vi.mock('vite', () => ({
   loadEnv: () => ({})
 }))
 
+vi.mock('vite-plugin-vue-devtools', () => ({
+  default: () => ({ name: 'mock-devtools' })
+}))
+
+vi.mock('@vitejs/plugin-vue', () => ({
+  default: () => ({ name: 'mock-vue' })
+}))
+
+vi.mock('node:url', async () => {
+  const actual = await vi.importActual('node:url')
+  return {
+    ...actual,
+    fileURLToPath: () => '/mock-path'
+  }
+})
+
 import configFactory from '../vite.config'
 
 describe('vite.config', () => {

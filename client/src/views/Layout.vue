@@ -1,7 +1,7 @@
 <!-- src/views/Layout.vue (示例) -->
 <template>
   <div class="layout-container">
-    <el-aside class="layout-aside">
+    <el-aside class="layout-aside" width="25%">
       <el-menu default-active="Settings" class="el-menu-vertical-demo">
         <el-menu-item
           v-for="item in menuItems"
@@ -14,7 +14,7 @@
         </el-menu-item>
       </el-menu>
     </el-aside>
-    <el-main class="layout-main">
+    <el-main class="layout-main" style="flex: 0 0 75%; width: 75%;">
       <router-view />
     </el-main>
   </div>
