@@ -164,11 +164,79 @@ async function createWorkbookBuffer(rows) {
   return Buffer.from(arrayBuffer)
 }
 
+function escapeCsvValue(value) {
+  if (value === null || value === undefined) return ''
+  const text = String(value)
+  if (text.includes('"')) {
+    return `"${text.replace(/"/g, '""')}"`
+  }
+  if (text.includes(',') || text.includes('\n')) {
+    return `"${text}"`
+  }
+  return text
+}
+
+function createCsvBuffer(rows) {
+  const csvLines = []
+  csvLines.push(EN_HEADERS.map(escapeCsvValue).join(','))
+  csvLines.push(ZH_HEADERS.map(escapeCsvValue).join(','))
+  rows.forEach((data) => {
+    const values = EN_HEADERS.map((header) => escapeCsvValue(data[header] ?? ''))
+    csvLines.push(values.join(','))
+  })
+  const csvContent = csvLines.join('\n')
+  return Buffer.from(csvContent, 'utf8')
+}
+
 beforeEach(() => {
   Object.values(mockEmployeeModel).forEach(fn => fn.mockReset())
 })
 
 describe('POST /api/employees/bulk-import', () => {
+  it('可由官方 CSV 範本匯入並產出預覽資料', async () => {
+    const application = await setupApp()
+    const buffer = createCsvBuffer([
+      {
+        employeeId: 'E0101',
+        name: '林宥辰',
+        email: 'csv_user@example.com',
+        department: 'RD',
+        status: '正職員工',
+        partTime: 'FALSE',
+        needClockIn: 'TRUE',
+        languages: '中文,英文'
+      }
+    ])
+
+    mockEmployeeModel.find.mockResolvedValue([])
+    mockEmployeeModel.create.mockImplementation(async (doc) => ({
+      _id: `${doc.employeeNo}-id`,
+      employeeId: doc.employeeNo,
+      name: doc.name,
+      department: doc.department,
+      role: doc.role,
+      email: doc.email
+    }))
+
+    const response = await request(application)
+      .post('/api/employees/bulk-import')
+      .attach('file', buffer, { filename: 'import.csv', contentType: 'text/csv' })
+
+    expect(response.status).toBe(200)
+    expect(response.body.successCount).toBe(1)
+    expect(response.body.failureCount).toBe(0)
+    expect(response.body.preview).toEqual([
+      {
+        employeeNo: 'E0101',
+        name: '林宥辰',
+        department: 'RD',
+        role: 'employee',
+        email: 'csv_user@example.com'
+      }
+    ])
+    expect(response.body.errors).toEqual([])
+  })
+
   it('成功匯入資料並回傳預覽與統計', async () => {
     const application = await setupApp()
     const buffer = await createWorkbookBuffer([
