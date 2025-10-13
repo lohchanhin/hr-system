@@ -276,78 +276,12 @@ function buildReportResponse(report) {
   };
 }
 
-export async function listReports(req, res) {
-  try {
-    const reports = await Report.find();
-    res.json(reports.map((report) => buildReportResponse(report)));
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-}
-
 export async function listSupervisorDepartmentReports(req, res) {
   try {
     const reports = await Report.find({ 'permissionSettings.supervisorDept': true });
     res.json(reports.map((report) => buildReportResponse(report)));
   } catch (err) {
     res.status(500).json({ error: err.message });
-  }
-}
-
-export async function createReport(req, res) {
-  try {
-    const { data, errors } = normalizeReportPayload(req.body, { partial: false });
-    if (errors.length) {
-      return res.status(400).json({ error: errors.join('、') });
-    }
-
-    const report = new Report(data);
-    await report.save();
-    res.status(201).json(buildReportResponse(report));
-  } catch (err) {
-    res.status(400).json({ error: err.message });
-  }
-}
-
-export async function getReport(req, res) {
-  try {
-    const report = await Report.findById(req.params.id);
-    if (!report) return res.status(404).json({ error: 'Not found' });
-    res.json(buildReportResponse(report));
-  } catch (err) {
-    res.status(400).json({ error: err.message });
-  }
-}
-
-export async function updateReport(req, res) {
-  try {
-    const { data, errors } = normalizeReportPayload(req.body, { partial: true });
-    if (errors.length) {
-      return res.status(400).json({ error: errors.join('、') });
-    }
-
-    if (Object.keys(data).length === 0) {
-      return res.status(400).json({ error: '請提供至少一項更新欄位' });
-    }
-
-    const report = await Report.findByIdAndUpdate(req.params.id, data, {
-      new: true,
-      runValidators: true,
-    });
-    if (!report) return res.status(404).json({ error: 'Not found' });
-    res.json(buildReportResponse(report));
-  } catch (err) {
-    res.status(400).json({ error: err.message });
-  }
-}
-
-export async function deleteReport(req, res) {
-  try {
-    const report = await Report.findByIdAndDelete(req.params.id);
-    if (!report) return res.status(404).json({ error: 'Not found' });
-    res.json({ success: true });
-  } catch (err) {
-    res.status(400).json({ error: err.message });
   }
 }
 

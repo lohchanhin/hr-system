@@ -1,10 +1,5 @@
 import { Router } from 'express';
 import {
-  listReports,
-  createReport,
-  getReport,
-  updateReport,
-  deleteReport,
   exportDepartmentAttendance,
   exportDepartmentLeave,
   exportDepartmentTardiness,
@@ -20,8 +15,6 @@ import { authorizeRoles } from '../middleware/auth.js';
 
 const router = Router();
 
-router.get('/', listReports);
-router.post('/', createReport);
 const departmentReportGuard = authorizeRoles('supervisor', 'admin');
 
 router.get('/department/templates', departmentReportGuard, listSupervisorDepartmentReports);
@@ -34,8 +27,5 @@ router.get('/department/overtime/export', departmentReportGuard, exportDepartmen
 router.get('/department/comp-time/export', departmentReportGuard, exportDepartmentCompTime);
 router.get('/department/make-up/export', departmentReportGuard, exportDepartmentMakeUp);
 router.get('/department/special-leave/export', departmentReportGuard, exportDepartmentSpecialLeave);
-router.get('/:id', getReport);
-router.put('/:id', updateReport);
-router.delete('/:id', deleteReport);
 
 export default router;
