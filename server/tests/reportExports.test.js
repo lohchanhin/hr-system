@@ -222,10 +222,23 @@ describe('Department report exports', () => {
     const res = await request(app)
       .get('/api/reports/department/comp-time/export')
       .query({ month: '2024-01' })
-      .set('x-user-role', 'admin');
+      .set('x-user-role', 'supervisor')
+      .set('x-user-id', 'sup-query');
 
     expect(res.status).toBe(400);
     expect(res.body).toEqual({ error: 'month and department required' });
+    expect(mockGetDepartmentReportData).not.toHaveBeenCalled();
+  });
+
+  it('拒絕管理員匯出主管部門報表', async () => {
+    const res = await request(app)
+      .get('/api/reports/department/attendance/export')
+      .query({ month: '2024-03', department: 'dept-admin', format: 'json' })
+      .set('x-user-role', 'admin')
+      .set('x-user-id', 'adm-block');
+
+    expect(res.status).toBe(403);
+    expect(res.body).toEqual({ error: 'Forbidden' });
     expect(mockGetDepartmentReportData).not.toHaveBeenCalled();
   });
 

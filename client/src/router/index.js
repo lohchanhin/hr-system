@@ -1,4 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
+import { ElMessage } from 'element-plus'
 import { getToken } from '@/utils/tokenService'
 
 // ★ 既有的後台檔案
@@ -98,7 +99,7 @@ const routes = [
         path: 'department-reports',
         name: 'DepartmentReports',
         component: DepartmentReports,
-        meta: { roles: ['supervisor', 'admin'] },
+        meta: { roles: ['supervisor'] },
       },
       {
         path: 'preview-week',
@@ -132,6 +133,15 @@ const router = createRouter({
   routes,
 })
 
+const showWarningMessage = message => {
+  const globalWarning = typeof window !== 'undefined' ? window.ElMessage?.warning : undefined
+  const moduleWarning = ElMessage?.warning
+  const handler = globalWarning || moduleWarning
+  if (handler) {
+    handler(message)
+  }
+}
+
 // ★ 路由守衛
 router.beforeEach((to, from, next) => {
   const requiresAuth = to.matched.some(r => r.meta.requiresAuth)
@@ -161,6 +171,11 @@ router.beforeEach((to, from, next) => {
   if (to.meta.roles) {
     const userRole = sessionStorage.getItem('role') || 'employee'
     if (!to.meta.roles.includes(userRole)) {
+      if (to.name === 'DepartmentReports') {
+        showWarningMessage('僅主管可以存取部門報表，請聯絡您的主管協助')
+      } else {
+        showWarningMessage('您沒有權限瀏覽此頁面')
+      }
       return next({ name: 'Forbidden' })
     }
   }
