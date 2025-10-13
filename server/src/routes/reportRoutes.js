@@ -15,7 +15,7 @@ import { authorizeRoles } from '../middleware/auth.js';
 
 const router = Router();
 
-const departmentReportGuard = authorizeRoles('supervisor', 'admin');
+const departmentReportGuard = authorizeRoles('supervisor');
 
 router.get('/department/templates', departmentReportGuard, listSupervisorDepartmentReports);
 router.get('/department/attendance/export', departmentReportGuard, exportDepartmentAttendance);
