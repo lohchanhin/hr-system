@@ -1114,7 +1114,7 @@
         <div class="bulk-import-header">
           <el-alert type="info" show-icon :closable="false">
             <template #title>
-              下載範本後依欄位填寫資料，再上傳 Excel 以進行匯入。
+              下載範本後依欄位填寫資料，或直接使用範本內建的 5 筆示範資料測試匯入流程。
             </template>
             <div class="template-link">
               <i class="el-icon-document"></i>
@@ -1799,6 +1799,94 @@ const DEFAULT_BULK_IMPORT_COLUMN_MAPPINGS = Object.freeze(
     return acc
   }, {})
 )
+const BULK_IMPORT_TEMPLATE_SAMPLE_EMPLOYEES = Object.freeze([
+  {
+    employeeId: 'EMP-0001',
+    name: '王曉明',
+    gender: 'M',
+    birthDate: '1990-03-12',
+    email: 'import.hr001@example.com',
+    mobile: '0912000001',
+    organization: '總公司',
+    department: 'HR001',
+    title: '人資專員',
+    status: '正職員工',
+    hireDate: '2020-07-01',
+    partTime: 'FALSE',
+    needClockIn: 'TRUE',
+    lineId: 'hr-king',
+    languages: '中文,英文'
+  },
+  {
+    employeeId: 'EMP-0002',
+    name: '林語彤',
+    gender: 'F',
+    birthDate: '1994-08-25',
+    email: 'import.hr002@example.com',
+    mobile: '0912000002',
+    organization: '台北院區',
+    department: 'NUR101',
+    title: '資深護理師',
+    status: '試用期',
+    hireDate: '2024-02-15',
+    partTime: 'FALSE',
+    needClockIn: 'TRUE',
+    lineId: 'nurse-ruby',
+    languages: '中文,台語'
+  },
+  {
+    employeeId: 'EMP-0003',
+    name: '陳建宇',
+    gender: 'M',
+    birthDate: '1988-11-05',
+    email: 'import.hr003@example.com',
+    mobile: '0912000003',
+    organization: '總公司',
+    department: 'IT001',
+    title: '系統工程師',
+    status: '正職員工',
+    hireDate: '2019-11-20',
+    partTime: 'FALSE',
+    needClockIn: 'FALSE',
+    lineId: 'it-jack',
+    languages: '中文,英文'
+  },
+  {
+    employeeId: 'EMP-0004',
+    name: '吳雅珊',
+    gender: 'F',
+    birthDate: '1992-01-18',
+    email: 'import.hr004@example.com',
+    mobile: '0912000004',
+    organization: '總公司',
+    department: 'FIN201',
+    title: '會計專員',
+    status: '留職停薪',
+    hireDate: '2018-04-09',
+    partTime: 'TRUE',
+    needClockIn: 'FALSE',
+    lineId: 'fin-olivia',
+    languages: '中文,英文'
+  },
+  {
+    employeeId: 'EMP-0005',
+    name: '張志強',
+    gender: 'M',
+    birthDate: '1985-06-30',
+    email: 'import.hr005@example.com',
+    mobile: '0912000005',
+    organization: '新北院區',
+    department: 'OPS301',
+    title: '營運主管',
+    status: '離職',
+    hireDate: '2016-01-03',
+    resignationDate: '2023-12-31',
+    partTime: 'FALSE',
+    needClockIn: 'TRUE',
+    lineId: 'ops-alex',
+    languages: '中文,英文'
+  }
+])
 const BULK_IMPORT_TEMPLATE_FILENAME = 'employee-import-template.csv'
 const bulkImportFieldConfigs = computed(() =>
   BULK_IMPORT_FIELD_CONFIGS.map(field => ({
@@ -1884,7 +1972,10 @@ function buildBulkImportTemplateCsvContent() {
       config.header ||
       config.key
   )
-  const rows = [headerRow, descriptionRow]
+  const sampleRows = BULK_IMPORT_TEMPLATE_SAMPLE_EMPLOYEES.map(sample =>
+    headerRow.map(column => sample[column] ?? '')
+  )
+  const rows = [headerRow, descriptionRow, ...sampleRows]
   const csvBody = rows.map(row => row.map(escapeCsvValue).join(',')).join('\n')
   return `\ufeff${csvBody}`
 }
