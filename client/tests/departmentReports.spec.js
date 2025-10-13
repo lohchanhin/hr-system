@@ -58,6 +58,7 @@ describe('DepartmentReports.vue', () => {
   let revokeObjectURLSpy
   let createElementSpy
   let realCreateElement
+  let supervisorTemplates
 
   beforeEach(async () => {
     vi.clearAllMocks()
@@ -76,24 +77,75 @@ describe('DepartmentReports.vue', () => {
         { _id: 'dept2', name: '客服部' },
       ],
     })
+    supervisorTemplates = [
+      {
+        id: 'tpl-attendance',
+        name: '出勤統計',
+        type: 'attendance',
+        exportSettings: { formats: ['excel'] },
+        permissionSettings: { supervisorDept: true },
+      },
+      {
+        id: 'tpl-leave',
+        name: '請假統計',
+        type: 'leave',
+        exportSettings: { formats: ['excel', 'pdf'] },
+        permissionSettings: { supervisorDept: true },
+      },
+      {
+        id: 'tpl-tardiness',
+        name: '遲到統計',
+        type: 'tardiness',
+        exportSettings: { formats: ['excel'] },
+        permissionSettings: { supervisorDept: true },
+      },
+      {
+        id: 'tpl-early',
+        name: '早退統計',
+        type: 'earlyLeave',
+        exportSettings: { formats: ['excel'] },
+        permissionSettings: { supervisorDept: true },
+      },
+      {
+        id: 'tpl-work-hours',
+        name: '工時統計',
+        type: 'workHours',
+        exportSettings: { formats: ['excel'] },
+        permissionSettings: { supervisorDept: true },
+      },
+      {
+        id: 'tpl-overtime',
+        name: '加班申請統計',
+        type: 'overtime',
+        exportSettings: { formats: ['pdf'] },
+        permissionSettings: { supervisorDept: true },
+      },
+      {
+        id: 'tpl-comp-time',
+        name: '補休申請統計',
+        type: 'compTime',
+        exportSettings: { formats: ['pdf'] },
+        permissionSettings: { supervisorDept: true },
+      },
+      {
+        id: 'tpl-make-up',
+        name: '補打卡統計',
+        type: 'makeUp',
+        exportSettings: { formats: ['excel'] },
+        permissionSettings: { supervisorDept: true },
+      },
+      {
+        id: 'tpl-special-leave',
+        name: '特休統計',
+        type: 'specialLeave',
+        exportSettings: { formats: ['excel'] },
+        permissionSettings: { supervisorDept: true },
+      },
+    ]
+
     apiFetch.mockResolvedValueOnce({
       ok: true,
-      json: async () => [
-        {
-          id: 'tpl-attendance',
-          name: '出勤統計',
-          type: 'attendance',
-          exportSettings: { formats: ['excel', 'pdf'] },
-          permissionSettings: { supervisorDept: true },
-        },
-        {
-          id: 'tpl-leave',
-          name: '請假統計',
-          type: 'leave',
-          exportSettings: { formats: ['pdf'] },
-          permissionSettings: { supervisorDept: true },
-        },
-      ],
+      json: async () => supervisorTemplates,
     })
 
     originalCreateObjectURL = window.URL.createObjectURL
@@ -165,6 +217,45 @@ describe('DepartmentReports.vue', () => {
     expect(ElMessage.success).toHaveBeenCalledWith('匯出成功')
   })
 
+  it('針對九種主管報表匯出呼叫正確端點', async () => {
+    const wrapper = createWrapper()
+    await flushPromises()
+
+    wrapper.vm.selectedMonth = '2024-05'
+    wrapper.vm.selectedDepartment = 'dept1'
+
+    const expectations = [
+      { type: 'attendance', format: 'excel', endpoint: '/api/reports/department/attendance/export' },
+      { type: 'leave', format: 'pdf', endpoint: '/api/reports/department/leave/export' },
+      { type: 'tardiness', format: 'excel', endpoint: '/api/reports/department/tardiness/export' },
+      { type: 'earlyLeave', format: 'excel', endpoint: '/api/reports/department/early-leave/export' },
+      { type: 'workHours', format: 'excel', endpoint: '/api/reports/department/work-hours/export' },
+      { type: 'overtime', format: 'pdf', endpoint: '/api/reports/department/overtime/export' },
+      { type: 'compTime', format: 'pdf', endpoint: '/api/reports/department/comp-time/export' },
+      { type: 'makeUp', format: 'excel', endpoint: '/api/reports/department/make-up/export' },
+      { type: 'specialLeave', format: 'excel', endpoint: '/api/reports/department/special-leave/export' },
+    ]
+
+    for (const item of expectations) {
+      apiFetch.mockResolvedValueOnce({
+        ok: true,
+        headers: { get: () => 'application/octet-stream' },
+        blob: async () => new Blob(['data']),
+      })
+
+      wrapper.vm.reportType = item.type
+      await flushPromises()
+      wrapper.vm.exportFormat = item.format
+
+      await wrapper.vm.exportReport()
+
+      expect(apiFetch).toHaveBeenLastCalledWith(
+        `${item.endpoint}?month=2024-05&department=dept1&format=${item.format}`,
+        expect.objectContaining({ headers: { Accept: 'application/octet-stream' } })
+      )
+    }
+  })
+
   it('顯示 JSON 預覽摘要', async () => {
     const wrapper = createWrapper()
     await flushPromises()
@@ -218,15 +309,29 @@ describe('DepartmentReports.vue', () => {
     const wrapper = createWrapper()
     await flushPromises()
 
-    expect(wrapper.vm.availableReportOptions.map((opt) => opt.value)).toEqual([
+    const optionValues = wrapper.vm.availableReportOptions.map((opt) => opt.value)
+    expect(optionValues).toEqual([
       'attendance',
       'leave',
+      'tardiness',
+      'earlyLeave',
+      'workHours',
+      'overtime',
+      'compTime',
+      'makeUp',
+      'specialLeave',
     ])
     expect(wrapper.vm.reportType).toBe('attendance')
-    expect(wrapper.vm.availableExportFormats.map((opt) => opt.value)).toEqual(['excel', 'pdf'])
+    expect(wrapper.vm.availableExportFormats.map((opt) => opt.value)).toEqual(['excel'])
     expect(wrapper.vm.exportFormat).toBe('excel')
 
     wrapper.vm.reportType = 'leave'
+    await flushPromises()
+
+    expect(wrapper.vm.availableExportFormats.map((opt) => opt.value)).toEqual(['excel', 'pdf'])
+    expect(wrapper.vm.exportFormat).toBe('excel')
+
+    wrapper.vm.reportType = 'overtime'
     await flushPromises()
 
     expect(wrapper.vm.availableExportFormats.map((opt) => opt.value)).toEqual(['pdf'])

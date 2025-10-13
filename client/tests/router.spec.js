@@ -53,14 +53,21 @@ describe('router', () => {
     expect(childRoles.find(c => c.name === 'Attendance').roles).toEqual(['employee', 'supervisor', 'admin'])
     expect(childRoles.find(c => c.name === 'MySchedule').roles).toEqual(['employee', 'supervisor', 'admin'])
     expect(childRoles.find(c => c.name === 'Schedule').roles).toEqual(['supervisor', 'admin'])
-    expect(childRoles.find(c => c.name === 'DepartmentReports').roles).toEqual(['supervisor', 'admin'])
+    expect(childRoles.find(c => c.name === 'DepartmentReports').roles).toEqual(['supervisor'])
     expect(childRoles.find(c => c.name === 'Approval').roles).toEqual(['employee', 'supervisor', 'admin'])
   })
 
   it('forwards employees to forbidden when opening department reports', () => {
     sessionStorage.setItem('role', 'employee')
     const next = vi.fn()
-    capturedGuard({ matched: [], meta: { roles: ['supervisor', 'admin'], name: 'DepartmentReports' } }, {}, next)
+    capturedGuard({ matched: [], meta: { roles: ['supervisor'], name: 'DepartmentReports' } }, {}, next)
+    expect(next).toHaveBeenCalledWith({ name: 'Forbidden' })
+  })
+
+  it('forwards admins to forbidden when opening department reports', () => {
+    sessionStorage.setItem('role', 'admin')
+    const next = vi.fn()
+    capturedGuard({ matched: [], meta: { roles: ['supervisor'], name: 'DepartmentReports' } }, {}, next)
     expect(next).toHaveBeenCalledWith({ name: 'Forbidden' })
   })
 

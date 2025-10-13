@@ -102,12 +102,6 @@ describe('ensureDefaultSupervisorReports', () => {
 });
 
 describe('Report API', () => {
-  it('已停用一般報表列表端點', async () => {
-    const res = await request(app).get('/api/reports');
-    expect(res.status).toBe(404);
-    expect(mockReport.find).not.toHaveBeenCalled();
-  });
-
   it('提供主管可用的報表模板清單', async () => {
     mockReport.find.mockResolvedValue([
       buildReportDocument({
@@ -163,26 +157,26 @@ describe('Report API', () => {
     expect(res.body).toEqual({ error: 'Forbidden' });
   });
 
-  it('已停用建立報表端點', async () => {
-    const res = await request(app).post('/api/reports').send({ name: '報表' });
-    expect(res.status).toBe(404);
-    expect(mockReport.mock.calls).toHaveLength(0);
+  it('拒絕系統管理員查詢主管報表模板', async () => {
+    const res = await request(app)
+      .get('/api/reports/department/templates')
+      .set('x-user-role', 'admin')
+      .set('x-user-id', 'admin-1');
+
+    expect(res.status).toBe(403);
+    expect(res.body).toEqual({ error: 'Forbidden' });
   });
 
-  it('已停用單一報表讀取端點', async () => {
-    const res = await request(app).get('/api/reports/r1');
-    expect(res.status).toBe(404);
-  });
+  it('查詢主管報表模板時發生錯誤會回傳 500', async () => {
+    mockReport.find.mockRejectedValue(new Error('資料庫失敗'));
 
-  it('已停用更新報表端點', async () => {
-    const res = await request(app).put('/api/reports/r-update').send({ name: '更新' });
-    expect(res.status).toBe(404);
-  });
+    const res = await request(app)
+      .get('/api/reports/department/templates')
+      .set('x-user-role', 'supervisor')
+      .set('x-user-id', 'sup-1');
 
-  it('已停用刪除報表端點', async () => {
-    const res = await request(app).delete('/api/reports/r-delete');
-    expect(res.status).toBe(404);
+    expect(res.status).toBe(500);
+    expect(res.body).toEqual({ error: '資料庫失敗' });
   });
-
 });
 

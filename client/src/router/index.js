@@ -98,7 +98,7 @@ const routes = [
         path: 'department-reports',
         name: 'DepartmentReports',
         component: DepartmentReports,
-        meta: { roles: ['supervisor', 'admin'] },
+        meta: { roles: ['supervisor'] },
       },
       {
         path: 'preview-week',

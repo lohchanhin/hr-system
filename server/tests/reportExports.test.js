@@ -222,7 +222,8 @@ describe('Department report exports', () => {
     const res = await request(app)
       .get('/api/reports/department/comp-time/export')
       .query({ month: '2024-01' })
-      .set('x-user-role', 'admin');
+      .set('x-user-role', 'supervisor')
+      .set('x-user-id', 'sup-missing');
 
     expect(res.status).toBe(400);
     expect(res.body).toEqual({ error: 'month and department required' });
