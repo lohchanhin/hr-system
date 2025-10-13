@@ -2,8 +2,6 @@ import request from 'supertest';
 import express from 'express';
 import { jest } from '@jest/globals';
 
-const saveMock = jest.fn();
-
 function buildReportDocument(overrides = {}) {
   return {
     _id: overrides._id ?? 'report-id',
@@ -35,9 +33,8 @@ function buildReportDocument(overrides = {}) {
       },
     createdAt: overrides.createdAt ?? new Date('2024-01-01T00:00:00Z'),
     updatedAt: overrides.updatedAt ?? new Date('2024-01-02T00:00:00Z'),
-    save: saveMock,
     toObject() {
-      const { save, toObject, ...rest } = this;
+      const { toObject, ...rest } = this;
       return { ...rest };
     },
   };
@@ -45,9 +42,6 @@ function buildReportDocument(overrides = {}) {
 
 const mockReport = jest.fn().mockImplementation((payload = {}) => buildReportDocument(payload));
 mockReport.find = jest.fn();
-mockReport.findById = jest.fn();
-mockReport.findByIdAndUpdate = jest.fn();
-mockReport.findByIdAndDelete = jest.fn();
 mockReport.exists = jest.fn();
 mockReport.updateOne = jest.fn();
 
@@ -75,15 +69,10 @@ beforeAll(async () => {
 });
 
 beforeEach(() => {
-  saveMock.mockReset();
   mockReport.mockClear();
   mockReport.find.mockReset();
-  mockReport.findById.mockReset();
-  mockReport.findByIdAndUpdate.mockReset();
-  mockReport.findByIdAndDelete.mockReset();
   mockReport.exists.mockReset();
   mockReport.updateOne.mockReset();
-  saveMock.mockResolvedValue(undefined);
 });
 
 describe('ensureDefaultSupervisorReports', () => {
@@ -113,49 +102,10 @@ describe('ensureDefaultSupervisorReports', () => {
 });
 
 describe('Report API', () => {
-  it('lists reports', async () => {
-    const fakeReports = [
-      buildReportDocument({
-        _id: 'r1',
-        name: '出勤統計',
-        fields: ['員工', '部門', '出勤天數 '],
-        exportSettings: { formats: ['PDF', ' Excel '], includeLogo: true, footerNote: ' 需覆核 ' },
-      }),
-      buildReportDocument({
-        _id: 'r2',
-        name: '請假統計',
-        type: 'leave',
-        fields: ['員工', '請假天數'],
-        notificationSettings: { autoSend: true, sendFrequency: 'weekly', recipients: ['HR', ' 主管 '] },
-      }),
-    ];
-    mockReport.find.mockResolvedValue(fakeReports);
+  it('已停用一般報表列表端點', async () => {
     const res = await request(app).get('/api/reports');
-    expect(res.status).toBe(200);
-    expect(res.body).toHaveLength(2);
-    expect(res.body[0]).toMatchObject({
-      id: 'r1',
-      name: '出勤統計',
-      type: 'custom',
-      fields: ['員工', '部門', '出勤天數'],
-      exportSettings: {
-        formats: ['PDF', 'Excel'],
-        includeLogo: true,
-        footerNote: '需覆核',
-      },
-      permissionSettings: expect.objectContaining({ hrAllDept: true }),
-      notificationSettings: { autoSend: false, sendFrequency: '', recipients: [] },
-    });
-    expect(res.body[1]).toMatchObject({
-      id: 'r2',
-      name: '請假統計',
-      type: 'leave',
-      notificationSettings: {
-        autoSend: true,
-        sendFrequency: 'weekly',
-        recipients: ['HR', '主管'],
-      },
-    });
+    expect(res.status).toBe(404);
+    expect(mockReport.find).not.toHaveBeenCalled();
   });
 
   it('提供主管可用的報表模板清單', async () => {
@@ -203,163 +153,35 @@ describe('Report API', () => {
     });
   });
 
-  it('returns 500 if listing fails', async () => {
-    mockReport.find.mockRejectedValue(new Error('fail'));
-    const res = await request(app).get('/api/reports');
-    expect(res.status).toBe(500);
-    expect(res.body).toEqual({ error: 'fail' });
+  it('拒絕未授權角色查詢主管報表模板', async () => {
+    const res = await request(app)
+      .get('/api/reports/department/templates')
+      .set('x-user-role', 'employee')
+      .set('x-user-id', 'emp-1');
+
+    expect(res.status).toBe(403);
+    expect(res.body).toEqual({ error: 'Forbidden' });
   });
 
-  it('creates report with sanitization', async () => {
-    const payload = {
-      name: '  月度報表  ',
-      type: '',
-      fields: [' 員工 ', '', ' 部門 '],
-      exportSettings: { formats: ['PDF', ''], includeLogo: 'true', footerNote: ' 重要 ' },
-      permissionSettings: { historyMonths: 3.6, hrAllDept: false },
-      notificationSettings: {
-        autoSend: true,
-        sendFrequency: 'weekly',
-        recipients: ['HR', ''],
-      },
-    };
-
-    const res = await request(app).post('/api/reports').send(payload);
-
-    expect(res.status).toBe(201);
-    expect(saveMock).toHaveBeenCalledTimes(1);
-    expect(mockReport).toHaveBeenCalledWith(
-      expect.objectContaining({
-        name: '月度報表',
-        type: 'custom',
-        fields: ['員工', '部門'],
-      })
-    );
-    expect(res.body).toMatchObject({
-      id: 'report-id',
-      name: '月度報表',
-      type: 'custom',
-      fields: ['員工', '部門'],
-      exportSettings: {
-        formats: ['PDF'],
-        includeLogo: true,
-        footerNote: '重要',
-      },
-      permissionSettings: {
-        supervisorDept: false,
-        hrAllDept: false,
-        employeeDownload: false,
-        historyMonths: 3,
-      },
-      notificationSettings: {
-        autoSend: true,
-        sendFrequency: 'weekly',
-        recipients: ['HR'],
-      },
-    });
+  it('已停用建立報表端點', async () => {
+    const res = await request(app).post('/api/reports').send({ name: '報表' });
+    expect(res.status).toBe(404);
+    expect(mockReport.mock.calls).toHaveLength(0);
   });
 
-  it('rejects create without name', async () => {
-    const res = await request(app).post('/api/reports').send({ fields: [] });
-    expect(res.status).toBe(400);
-    expect(res.body).toEqual({ error: '報表名稱為必填' });
-  });
-
-  it('gets report with formatted response', async () => {
-    mockReport.findById.mockResolvedValue(
-      buildReportDocument({ _id: 'r1', name: '人員報表', type: 'people' })
-    );
+  it('已停用單一報表讀取端點', async () => {
     const res = await request(app).get('/api/reports/r1');
-    expect(res.status).toBe(200);
-    expect(res.body).toMatchObject({ id: 'r1', name: '人員報表', type: 'people' });
+    expect(res.status).toBe(404);
   });
 
-  it('updates report template', async () => {
-    mockReport.findByIdAndUpdate.mockResolvedValue(
-      buildReportDocument({
-        _id: 'r-update',
-        name: '更新後模板',
-        fields: ['姓名'],
-        exportSettings: { formats: ['CSV'], includeLogo: true, footerNote: '最終版' },
-        permissionSettings: {
-          supervisorDept: true,
-          hrAllDept: false,
-          employeeDownload: true,
-          historyMonths: 12,
-        },
-        notificationSettings: {
-          autoSend: true,
-          sendFrequency: 'monthly',
-          recipients: ['HR'],
-        },
-      })
-    );
-
-    const res = await request(app)
-      .put('/api/reports/r-update')
-      .send({
-        name: ' 更新後模板 ',
-        fields: ['姓名', ''],
-        exportSettings: { formats: ['CSV'], includeLogo: true, footerNote: '最終版 ' },
-        permissionSettings: {
-          supervisorDept: true,
-          hrAllDept: false,
-          employeeDownload: true,
-          historyMonths: 12,
-        },
-        notificationSettings: {
-          autoSend: true,
-          sendFrequency: 'monthly',
-          recipients: ['HR', ''],
-        },
-      });
-
-    expect(res.status).toBe(200);
-    expect(mockReport.findByIdAndUpdate).toHaveBeenCalledWith(
-      'r-update',
-      expect.objectContaining({
-        name: '更新後模板',
-        fields: ['姓名'],
-        exportSettings: {
-          formats: ['CSV'],
-          includeLogo: true,
-          footerNote: '最終版',
-        },
-        permissionSettings: expect.objectContaining({ historyMonths: 12 }),
-        notificationSettings: {
-          autoSend: true,
-          sendFrequency: 'monthly',
-          recipients: ['HR'],
-        },
-      }),
-      expect.objectContaining({ new: true, runValidators: true })
-    );
-    expect(res.body).toMatchObject({
-      id: 'r-update',
-      name: '更新後模板',
-      fields: ['姓名'],
-      notificationSettings: {
-        autoSend: true,
-        sendFrequency: 'monthly',
-        recipients: ['HR'],
-      },
-    });
+  it('已停用更新報表端點', async () => {
+    const res = await request(app).put('/api/reports/r-update').send({ name: '更新' });
+    expect(res.status).toBe(404);
   });
 
-  it('rejects invalid update payload', async () => {
-    const res = await request(app)
-      .put('/api/reports/r-update')
-      .send({ exportSettings: { formats: 'csv' } });
-    expect(res.status).toBe(400);
-    expect(res.body).toEqual({ error: '匯出格式需為陣列' });
-    expect(mockReport.findByIdAndUpdate).not.toHaveBeenCalled();
-  });
-
-  it('deletes report template', async () => {
-    mockReport.findByIdAndDelete.mockResolvedValue(buildReportDocument({ _id: 'r-delete' }));
+  it('已停用刪除報表端點', async () => {
     const res = await request(app).delete('/api/reports/r-delete');
-    expect(res.status).toBe(200);
-    expect(res.body).toEqual({ success: true });
+    expect(res.status).toBe(404);
   });
 
 });
