@@ -133,6 +133,9 @@ describe('EmployeeManagement - 批量匯入流程', () => {
     const wrapper = await mountComponent()
     await wrapper.find('[data-test="bulk-import-button"]').trigger('click')
 
+    const alertText = wrapper.find('.el-alert-stub').text()
+    expect(alertText).toContain('範本內建的 5 筆示範資料')
+
     const originalCreateObjectURL = window.URL.createObjectURL
     const originalRevokeObjectURL = window.URL.revokeObjectURL
     const originalBlob = window.Blob
@@ -164,13 +167,21 @@ describe('EmployeeManagement - 批量匯入流程', () => {
     expect(removeChildSpy).toHaveBeenCalledWith(anchor)
     expect(revokeObjectURLSpy).toHaveBeenCalledWith('blob:template')
     expect(blobCalls.length).toBe(1)
-    const [headerRow, descriptionRow] = blobCalls[0].parts[0].split('\n')
+    const csvContent = blobCalls[0].parts[0]
+    const rows = csvContent.trim().split('\n')
+    expect(rows.length).toBe(7)
+    const [headerRow, descriptionRow, ...sampleRows] = rows
+    expect(sampleRows.length).toBe(5)
     expect(headerRow).toContain('employeeId')
     expect(headerRow).toContain('email')
     expect(descriptionRow).toContain('員工編號 (必填)')
     expect(descriptionRow).toContain('姓名 (必填)')
     expect(descriptionRow).toContain('電子郵件 (必填唯一)')
     expect(descriptionRow).toContain('性別 (M=男, F=女, O=其他)')
+    expect(sampleRows[0]).toContain('EMP-0001')
+    expect(sampleRows[0]).toContain('import.hr001@example.com')
+    expect(sampleRows[4]).toContain('EMP-0005')
+    expect(sampleRows[4]).toContain('import.hr005@example.com')
 
     createElementSpy.mockRestore()
     appendChildSpy.mockRestore()
@@ -179,6 +190,54 @@ describe('EmployeeManagement - 批量匯入流程', () => {
     window.URL.createObjectURL = originalCreateObjectURL
     window.URL.revokeObjectURL = originalRevokeObjectURL
     window.Blob = originalBlob
+  })
+
+  it('使用範本示範資料可完成預覽匯入流程', async () => {
+    const wrapper = await mountComponent()
+    await wrapper.find('[data-test="bulk-import-button"]').trigger('click')
+
+    const csvContent = wrapper.vm.buildBulkImportTemplateCsvContent()
+    const samplePreview = [
+      {
+        employeeNo: 'EMP-0001',
+        name: '王曉明',
+        department: 'HR001',
+        role: 'employee',
+        email: 'import.hr001@example.com'
+      },
+      {
+        employeeNo: 'EMP-0002',
+        name: '林語彤',
+        department: 'NUR101',
+        role: 'employee',
+        email: 'import.hr002@example.com'
+      }
+    ]
+
+    importEmployeesBulkMock.mockImplementation(async formData => {
+      const uploadedFile = formData.get('file')
+      expect(uploadedFile).toBeTruthy()
+      const uploadedText = await uploadedFile.text()
+      expect(uploadedText).toContain('EMP-0001')
+      expect(uploadedText).toContain('import.hr005@example.com')
+      const response = createApiResponse({ preview: samplePreview, errors: [] })
+      const originalJson = response.json.bind(response)
+      response.json = async () => {
+        const data = await originalJson()
+        expect(data.preview).toEqual(samplePreview)
+        return data
+      }
+      return response
+    })
+    const file = new File([csvContent], 'employee-import-template.csv', { type: 'text/csv' })
+    wrapper.vm.handleBulkImportFileChange({ name: 'employee-import-template.csv', raw: file })
+
+    await wrapper.vm.submitBulkImport()
+    await flushPromises()
+
+    expect(importEmployeesBulkMock).toHaveBeenCalledTimes(1)
+    expect(wrapper.vm.bulkImportErrors).toEqual([])
+    expect(wrapper.vm.bulkImportPreview).toEqual([])
   })
 
   it('匯入成功後顯示成功訊息並重新載入員工列表', async () => {
