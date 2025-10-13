@@ -6,7 +6,7 @@
   width: 100%;
   min-height: 100vh;
   background-color: var(--hr-bg-primary);
-  color: var(--hr-text-primary);
+  color: black;
   font-family: var(--hr-font-family-sans);
 }
 
