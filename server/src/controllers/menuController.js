@@ -23,7 +23,6 @@ export function getMenu(req, res) {
       { name: 'LeaveOvertimeSetting', label: '請假加班設定', icon: 'el-icon-date' },
       { name: 'ShiftScheduleSetting', label: '排班表設定', icon: 'el-icon-timer' },
       { name: 'ApprovalFlowSetting', label: '簽核流程設定', icon: 'el-icon-s-operation' },
-      { name: 'ReportManagementSetting', label: '報表管理', icon: 'el-icon-document' },
       { name: 'SalaryManagementSetting', label: '薪資管理', icon: 'el-icon-money' },
       { name: 'SocialInsuranceRetirementSetting', label: '社保與退休', icon: 'el-icon-s-check' },
       { name: 'HRManagementSystemSetting', label: '人資管理', icon: 'el-icon-user-solid' },
