@@ -10,7 +10,6 @@ const AttendanceManagementSetting = () => import('@/components/backComponents/At
 const LeaveOvertimeSetting = () => import('@/components/backComponents/LeaveOvertimeSetting.vue')
 const ShiftScheduleSetting = () => import('@/components/backComponents/ShiftScheduleSetting.vue')
 const ApprovalFlowSetting = () => import('@/components/backComponents/ApprovalFlowSetting.vue')
-const ReportManagementSetting = () => import('@/components/backComponents/ReportManagementSetting.vue')
 const SalaryManagementSetting = () => import('@/components/backComponents/SalaryManagementSetting.vue')
 const SocialInsuranceRetirementSetting = () => import('@/components/backComponents/SocialInsuranceRetirementSetting.vue')
 const HRManagementSystemSetting = () => import('@/components/backComponents/HRManagementSystemSetting.vue')
@@ -57,7 +56,6 @@ const routes = [
       { path: 'leave-overtime-setting', name: 'LeaveOvertimeSetting', component: LeaveOvertimeSetting },
       { path: 'shift-schedule-setting', name: 'ShiftScheduleSetting', component: ShiftScheduleSetting },
       { path: 'approval-flow-setting', name: 'ApprovalFlowSetting', component: ApprovalFlowSetting },
-      { path: 'report-management-setting', name: 'ReportManagementSetting', component: ReportManagementSetting },
       { path: 'salary-management-setting', name: 'SalaryManagementSetting', component: SalaryManagementSetting },
       { path: 'social-insurance-retirement-setting', name: 'SocialInsuranceRetirementSetting', component: SocialInsuranceRetirementSetting },
       { path: 'hr-management-system-setting', name: 'HRManagementSystemSetting', component: HRManagementSystemSetting },
