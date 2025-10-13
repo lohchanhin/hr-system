@@ -213,18 +213,18 @@ function onLogout() {
 .profile-descriptions {
   width: 100%;
   margin-top: 12px;
-  background-color: rgba(15, 23, 42, 0.35);
-  border-color: rgba(203, 213, 225, 0.2);
+  background-color: rgba(0, 0, 0, 0.35);
+  border-color: rgba(0, 0, 0, 0.2);
   --el-descriptions-table-row-bg-color: transparent;
   --el-descriptions-table-border: 1px solid rgba(148, 163, 184, 0.2);
 }
 
 .profile-descriptions ::v-deep(.el-descriptions__label) {
-  color: #93c5fd;
+  color: #000000;
 }
 
 .profile-descriptions ::v-deep(.el-descriptions__content) {
-  color: #e2e8f0;
+  color: #000000;
 }
 
 .info-text {
