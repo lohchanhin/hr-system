@@ -353,11 +353,24 @@ const userApproverOptions = computed(() =>
   }))
 )
 
-const managerApproverOptions = computed(() =>
-  employeeOptions.value
+const APPLICANT_SUPERVISOR_VALUE = 'APPLICANT_SUPERVISOR'
+const APPLICANT_SUPERVISOR_OPTION = Object.freeze({
+  value: APPLICANT_SUPERVISOR_VALUE,
+  label: '申請者的主管',
+})
+
+const managerApproverOptions = computed(() => {
+  const seen = new Set([APPLICANT_SUPERVISOR_OPTION.value])
+  const supervisors = employeeOptions.value
     .filter((emp) => emp.role === 'supervisor')
     .map((emp) => ({ value: emp.id, label: emp.displayName || emp.name }))
-)
+    .filter((opt) => {
+      if (!opt.value || seen.has(opt.value)) return false
+      seen.add(opt.value)
+      return true
+    })
+  return [APPLICANT_SUPERVISOR_OPTION, ...supervisors]
+})
 
 const tagOptions = computed(() => {
   const set = new Set()
@@ -595,7 +608,14 @@ function normalizeStep(step) {
     case 'manager': {
       const validIds = new Set(managerApproverOptions.value.map((opt) => opt.value))
       const allowAny = employeeOptions.value.length === 0
-      normalized.approver_value = pickFirstValidValue(values, validIds, allowAny)
+      const resolved = pickFirstValidValue(values, validIds, allowAny)
+      if (resolved) {
+        normalized.approver_value = resolved
+      } else if (validIds.has(APPLICANT_SUPERVISOR_VALUE)) {
+        normalized.approver_value = APPLICANT_SUPERVISOR_VALUE
+      } else {
+        normalized.approver_value = ''
+      }
       break
     }
     case 'tag': {
@@ -646,7 +666,16 @@ function normalizeWorkflowSteps(steps = []) {
 }
 
 function handleApproverTypeChange(step) {
-  Object.assign(step, normalizeStep(step))
+  const normalized = normalizeStep(step)
+  if (normalized.approver_type === 'manager') {
+    const validIds = new Set(managerApproverOptions.value.map((opt) => opt.value))
+    if (!normalized.approver_value || !validIds.has(normalized.approver_value)) {
+      if (validIds.has(APPLICANT_SUPERVISOR_VALUE)) {
+        normalized.approver_value = APPLICANT_SUPERVISOR_VALUE
+      }
+    }
+  }
+  Object.assign(step, normalized)
 }
 
 watch([employeeOptions, signRoleOptions, signLevelOptions], () => {

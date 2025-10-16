@@ -131,7 +131,7 @@ describe('ApprovalFlowSetting approver select', () => {
     const wrapper = mount(ApprovalFlowSetting, { global: { plugins: [ElementPlus] } })
     await flushPromises()
     expect(new Set(wrapper.vm.tagOptions.map((opt) => opt.value))).toEqual(new Set(['人資', '業務']))
-    expect(wrapper.vm.managerApproverOptions.map((opt) => opt.value)).toEqual(['e1'])
+    expect(wrapper.vm.managerApproverOptions.map((opt) => opt.value)).toEqual(['APPLICANT_SUPERVISOR', 'e1'])
     expect(new Set(wrapper.vm.departmentOptions.map((opt) => opt.value))).toEqual(new Set(['d1', 'd2']))
     expect(new Set(wrapper.vm.organizationOptions.map((opt) => opt.value))).toEqual(new Set(['org1', 'org2']))
   })
@@ -149,6 +149,23 @@ describe('ApprovalFlowSetting approver select', () => {
     step.approver_value = 'R003'
     wrapper.vm.handleApproverTypeChange(step)
     expect(step.approver_value).toBe('R003')
+  })
+
+  it('keeps applicant supervisor option while allowing manual manager selection', async () => {
+    const wrapper = mount(ApprovalFlowSetting, { global: { plugins: [ElementPlus] } })
+    await flushPromises()
+    await wrapper.vm.openWorkflowDialog({ _id: 'f1' })
+    await flushPromises()
+
+    const step = wrapper.vm.workflowSteps[0]
+    step.approver_type = 'manager'
+    step.approver_value = 'APPLICANT_SUPERVISOR'
+    wrapper.vm.handleApproverTypeChange(step)
+    expect(step.approver_value).toBe('APPLICANT_SUPERVISOR')
+
+    step.approver_value = 'e1'
+    wrapper.vm.handleApproverTypeChange(step)
+    expect(step.approver_value).toBe('e1')
   })
 
   it('offers custom field options and fills dialog after selection', async () => {
