@@ -27,6 +27,7 @@ describe('Schedule.vue', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     apiFetch.mockReset()
+    apiFetch.mockResolvedValue({ ok: true, json: async () => [] })
     ElMessage.error.mockReset()
     ElMessage.success.mockReset()
     ElMessage.warning.mockReset()
@@ -709,25 +710,23 @@ describe('Schedule.vue', () => {
     ]
     apiFetch.mockResolvedValueOnce({ ok: true, json: async () => inserted })
     await wrapper.vm.applyBatch()
-    expect(apiFetch).toHaveBeenLastCalledWith(
-      '/api/schedules/batch',
-      expect.objectContaining({
-        body: JSON.stringify({
-          schedules: [
-            {
-              employee: 'e1',
-              date: `${month}-01`,
-              shiftId: 's1',
-              department: 'd2',
-              subDepartment: 'sd2'
-            }
-          ]
-        })
-      })
-    )
+    const batchCall = apiFetch.mock.calls.findLast(([url]) => url === '/api/schedules/batch')
+    expect(batchCall).toBeTruthy()
+    expect(JSON.parse(batchCall[1].body)).toEqual({
+      schedules: [
+        {
+          employee: 'e1',
+          date: `${month}-01`,
+          shiftId: 's1',
+          department: 'd2',
+          subDepartment: 'sd2'
+        }
+      ]
+    })
     expect(wrapper.vm.scheduleMap.e1[1]).toEqual(
       expect.objectContaining({ id: 'sch1', shiftId: 's1', department: 'd2', subDepartment: 'sd2' })
     )
+    expect(ElMessage.success).toHaveBeenCalledWith('批次套用完成')
   })
 
   it('updates existing schedules via batch apply', async () => {
@@ -748,27 +747,34 @@ describe('Schedule.vue', () => {
     wrapper.vm.batchShiftId = 's2'
     apiFetch.mockResolvedValueOnce({
       ok: true,
-      json: async () => ({
-        _id: 'sch1',
-        employee: 'e1',
-        date: `${month}-01`,
-        shiftId: 's2',
-        department: 'd1',
-        subDepartment: 'sd1'
-      })
+      json: async () => ([
+        {
+          _id: 'sch1',
+          employee: 'e1',
+          date: `${month}-01`,
+          shiftId: 's2',
+          department: 'd1',
+          subDepartment: 'sd1'
+        }
+      ])
     })
     await wrapper.vm.applyBatch()
-    const lastCall = apiFetch.mock.calls[apiFetch.mock.calls.length - 1]
-    expect(lastCall[0]).toBe('/api/schedules/sch1')
-    expect(JSON.parse(lastCall[1].body)).toEqual({
-      employee: 'e1',
-      day: 1,
-      date: `${month}-01`,
-      shiftId: 's2',
-      department: 'd1',
-      subDepartment: 'sd1'
+    const batchCall = apiFetch.mock.calls.findLast(([url]) => url === '/api/schedules/batch')
+    expect(batchCall).toBeTruthy()
+    expect(JSON.parse(batchCall[1].body)).toEqual({
+      schedules: [
+        {
+          employee: 'e1',
+          date: `${month}-01`,
+          shiftId: 's2',
+          department: 'd1',
+          subDepartment: 'sd1'
+        }
+      ]
     })
     expect(wrapper.vm.scheduleMap.e1[1].shiftId).toBe('s2')
+    expect(wrapper.vm.scheduleMap.e1[1].id).toBe('sch1')
+    expect(ElMessage.success).toHaveBeenCalledWith('批次套用完成')
   })
 
   it('skips leave dates during batch apply selections', async () => {
@@ -815,6 +821,7 @@ describe('Schedule.vue', () => {
         }
       ]
     })
+    expect(ElMessage.success).toHaveBeenCalledWith('批次套用完成')
   })
   it('stores data and navigates when previewing month', async () => {
     apiFetch
