@@ -4,8 +4,10 @@ import FormTemplate from '../models/form_template.js'
 import FormField from '../models/form_field.js'
 import Employee from '../models/Employee.js'
 
+const APPLICANT_SUPERVISOR_VALUE = 'APPLICANT_SUPERVISOR'
+
 /* 依流程步驟解析「此關簽核人」 */
-async function resolveApprovers(step, applicantEmp) {
+export async function resolveApprovers(step, applicantEmp) {
   const type = step.approver_type
   const val = step.approver_value
   const scope = step.scope_type || 'none'
@@ -16,8 +18,25 @@ async function resolveApprovers(step, applicantEmp) {
   if (scope === 'org' && applicantEmp?.organization) scopeFilter.organization = applicantEmp.organization
 
   if (type === 'manager') {
-    if (!applicantEmp?.supervisor) return []
-    return [applicantEmp.supervisor]
+    const candidates = Array.isArray(val) ? val : [val]
+    const selected = candidates.find((item) => item != null && item !== '')
+    let targetId = ''
+    if (selected != null && selected !== '') {
+      if (typeof selected === 'object') {
+        targetId = String(selected._id || selected.id || selected.value || '')
+      } else {
+        targetId = String(selected)
+      }
+    }
+
+    if (!targetId || targetId === APPLICANT_SUPERVISOR_VALUE) {
+      if (!applicantEmp?.supervisor) return []
+      return [applicantEmp.supervisor]
+    }
+
+    const supervisor = await Employee.findById(targetId, { _id: 1, role: 1 })
+    if (!supervisor || supervisor.role !== 'supervisor') return []
+    return [supervisor._id]
   }
 
   if (type === 'tag') {
