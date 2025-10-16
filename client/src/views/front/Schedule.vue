@@ -693,6 +693,17 @@ const callInfo = message => {
   }
 }
 
+const callSuccess = message => {
+  const moduleSuccess = ElMessage?.success
+  if (typeof moduleSuccess === 'function') {
+    moduleSuccess(message)
+  }
+  const globalSuccess = typeof window !== 'undefined' ? window.ElMessage?.success : undefined
+  if (typeof globalSuccess === 'function' && globalSuccess !== moduleSuccess) {
+    globalSuccess(message)
+  }
+}
+
 const leaveTooltip = (empId, day) => {
   const cell = scheduleMap.value?.[empId]?.[day]
   if (cell?.leave) {
@@ -1240,7 +1251,7 @@ async function handleBatchApiError(res, defaultMsg = '批次套用失敗') {
     }
   } catch (err) {}
   if (msg === 'employee conflict') {
-    ElMessageBox.alert('部分員工已存在排班，請取消後再試')
+    ElMessage.warning('部分員工既有排班已更新，請重新整理檢查')
   } else if (msg === 'department overlap') {
     ElMessageBox.alert('部門或單位與既有資料不一致，無法套用')
   } else if (msg === 'leave conflict') {
@@ -1261,8 +1272,7 @@ async function applyBatch() {
     callWarning('請選擇欲套用的班別')
     return
   }
-  const toCreate = []
-  const toUpdate = []
+  const batchPayload = []
   allSelectedCells.value.forEach(key => {
     const { empId, day } = parseCellKey(key)
     const info = scheduleMap.value[empId]?.[day]
@@ -1274,64 +1284,52 @@ async function applyBatch() {
     } else if (batchSubDepartment.value) {
       subDepartment = batchSubDepartment.value
     }
-    const payload = {
+    batchPayload.push({
       employee: empId,
       day,
       date: `${currentMonth.value}-${String(day).padStart(2, '0')}`,
       shiftId: batchShiftId.value,
       department,
       subDepartment
-    }
-    if (info.id) {
-      payload.id = info.id
-      toUpdate.push(payload)
-    } else {
-      toCreate.push(payload)
-    }
+    })
   })
 
-  if (!toCreate.length && !toUpdate.length) {
+  if (!batchPayload.length) {
     callInfo('選取的儲存格皆無需更新')
     return
   }
 
-  let created = []
-  if (toCreate.length) {
-    const res = await apiFetch('/api/schedules/batch', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        schedules: toCreate.map(({ day, ...rest }) => rest)
-      })
-    })
-    if (!res.ok) {
-      await handleBatchApiError(res)
-      return
-    }
-    created = await res.json()
-  }
-
-  const updated = []
-  for (const item of toUpdate) {
-    const { id, ...rest } = item
-    const res = await apiFetch(`/api/schedules/${id}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(rest)
-    })
-    if (!res.ok) {
-      await handleBatchApiError(res)
-      return
-    }
-    updated.push(await res.json())
-  }
-
   const payloadMap = new Map()
-  toCreate.concat(toUpdate).forEach(item => {
+  batchPayload.forEach(item => {
     payloadMap.set(buildCellKey(item.employee, item.day), item)
   })
 
-  created.concat(updated).forEach(entry => {
+  let res
+  try {
+    res = await apiFetch('/api/schedules/batch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        schedules: batchPayload.map(({ day, ...rest }) => rest)
+      })
+    })
+  } catch (err) {
+    await handleBatchApiError(null)
+    return
+  }
+  if (!res.ok) {
+    await handleBatchApiError(res)
+    return
+  }
+
+  const result = await res.json()
+
+  if (!Array.isArray(result) || !result.length) {
+    callInfo('沒有可更新的資料')
+    return
+  }
+
+  result.forEach(entry => {
     const empId = entry.employee?._id || entry.employee
     const d = dayjs(entry.date).date()
     if (!scheduleMap.value[empId]) {
@@ -1344,18 +1342,15 @@ async function applyBatch() {
       ...current,
       id: entry._id || payload.id || current.id,
       shiftId: entry.shiftId || payload.shiftId || current.shiftId,
-      department: payload.department || entry.department || current.department,
+      department:
+        payload.department ?? entry.department ?? current.department ?? '',
       subDepartment:
-        payload.subDepartment || entry.subDepartment || current.subDepartment
+        payload.subDepartment ?? entry.subDepartment ?? current.subDepartment ?? ''
     }
+    delete scheduleMap.value[empId][d].leave
   })
 
-  if (!created.length && !updated.length) {
-    callInfo('沒有可更新的資料')
-    return
-  }
-
-  ElMessage.success('批次套用完成')
+  callSuccess('批次套用完成')
 }
 
 function shiftInfo(id) {

@@ -221,33 +221,65 @@ export async function createSchedulesBatch(req, res) {
     if (!Array.isArray(schedules)) {
       return res.status(400).json({ error: 'schedules must be array' });
     }
-    const docs = [];
-    for (const s of schedules) {
-      const dt = new Date(s.date);
-      const existing = await ShiftSchedule.findOne({ employee: s.employee, date: dt });
-      if (existing) {
-        if (
-          (s.department || s.subDepartment) &&
-          (existing.department?.toString() !== s.department?.toString() ||
-            existing.subDepartment?.toString() !== s.subDepartment?.toString())
-        ) {
-          return res.status(400).json({ error: 'department overlap' });
-        }
-        return res.status(400).json({ error: 'employee conflict' });
+    const scheduleMap = new Map();
+    for (const raw of schedules) {
+      if (!raw?.employee || !raw?.date || !raw?.shiftId) {
+        return res.status(400).json({ error: 'invalid schedule payload' });
       }
-      if (await hasLeaveConflict(s.employee, dt)) {
-        return res.status(400).json({ error: 'leave conflict' });
+      const dt = new Date(raw.date);
+      if (Number.isNaN(dt?.getTime?.())) {
+        return res.status(400).json({ error: 'invalid date' });
       }
-      docs.push({
-        employee: s.employee,
+      dt.setHours(0, 0, 0, 0);
+      const key = `${raw.employee}-${dt.getTime()}`;
+      scheduleMap.set(key, {
+        employee: raw.employee,
         date: dt,
-        shiftId: s.shiftId,
-        department: s.department,
-        subDepartment: s.subDepartment,
+        shiftId: raw.shiftId,
+        department: raw.department,
+        subDepartment: raw.subDepartment,
       });
     }
-    const inserted = await ShiftSchedule.insertMany(docs, { ordered: false });
-    res.status(201).json(inserted);
+
+    const uniqueSchedules = Array.from(scheduleMap.values());
+
+    for (const entry of uniqueSchedules) {
+      if (await hasLeaveConflict(entry.employee, entry.date)) {
+        return res.status(400).json({ error: 'leave conflict' });
+      }
+    }
+
+    const updated = [];
+    const toInsert = [];
+
+    for (const sched of uniqueSchedules) {
+      const existing = await ShiftSchedule.findOne({ employee: sched.employee, date: sched.date });
+      if (existing) {
+        existing.employee = sched.employee;
+        existing.date = sched.date;
+        existing.shiftId = sched.shiftId;
+        existing.department = sched.department ?? existing.department;
+        existing.subDepartment = sched.subDepartment ?? existing.subDepartment;
+        const saved = await existing.save();
+        updated.push(typeof saved?.toObject === 'function' ? saved.toObject() : saved);
+      } else {
+        toInsert.push({
+          employee: sched.employee,
+          date: sched.date,
+          shiftId: sched.shiftId,
+          department: sched.department,
+          subDepartment: sched.subDepartment,
+        });
+      }
+    }
+
+    let inserted = [];
+    if (toInsert.length) {
+      const docs = await ShiftSchedule.insertMany(toInsert, { ordered: false });
+      inserted = docs.map((doc) => (typeof doc?.toObject === 'function' ? doc.toObject() : doc));
+    }
+
+    res.status(201).json([...inserted, ...updated]);
   } catch (err) {
     res.status(400).json({ error: err.message });
   }

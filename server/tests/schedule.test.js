@@ -24,6 +24,22 @@ const mockAttendanceSetting = { findOne: jest.fn() };
 
 const mockGetLeaveFieldIds = jest.fn();
 
+const buildScheduleDoc = (data = {}) => {
+  const doc = {
+    _id: 'sch1',
+    employee: 'e1',
+    date: new Date('2023-01-01'),
+    shiftId: 'old',
+    department: 'd1',
+    subDepartment: 'sd1',
+    ...data,
+  };
+  doc.save = jest.fn().mockImplementation(function save() {
+    return Promise.resolve({ ...this });
+  });
+  return doc;
+};
+
 /* --------------------------- jest.mock 設定區 --------------------------- */
 
 
@@ -281,41 +297,62 @@ describe('Schedule API', () => {
   });
 
   it('rejects batch if schedule exists', async () => {
-    mockShiftSchedule.findOne.mockResolvedValue({ _id: '1', department: 'd1' });
-    const payload = { schedules: [{ employee: 'e1', date: '2023-01-01', shiftId: 'day' }] };
-    const res = await request(app).post('/api/schedules/batch').send(payload);
-    expect(res.status).toBe(400);
-    expect(res.body).toEqual({ error: 'employee conflict' });
-  });
+    const existing = buildScheduleDoc();
+    mockShiftSchedule.findOne.mockResolvedValue(existing);
+    mockApprovalRequest.findOne.mockResolvedValue(null);
+    mockShiftSchedule.insertMany.mockResolvedValue([]);
 
-  it('rejects batch if cross-department', async () => {
-    mockShiftSchedule.findOne.mockResolvedValue({ _id: '1', department: 'd1' });
-    const payload = {
-      schedules: [
-        { employee: 'e1', date: '2023-01-01', shiftId: 'day', department: 'd2' }
-      ]
-    };
-    const res = await request(app).post('/api/schedules/batch').send(payload);
-    expect(res.status).toBe(400);
-    expect(res.body).toEqual({ error: 'department overlap' });
-  });
-
-  it('rejects batch if cross sub-department', async () => {
-    mockShiftSchedule.findOne.mockResolvedValue({ _id: '1', department: 'd1', subDepartment: 'sd1' });
     const payload = {
       schedules: [
         {
           employee: 'e1',
           date: '2023-01-01',
           shiftId: 'day',
-          department: 'd1',
+          department: 'd2',
           subDepartment: 'sd2'
         }
       ]
     };
+
     const res = await request(app).post('/api/schedules/batch').send(payload);
-    expect(res.status).toBe(400);
-    expect(res.body).toEqual({ error: 'department overlap' });
+
+    expect(res.status).toBe(201);
+    expect(existing.save).toHaveBeenCalled();
+    expect(mockShiftSchedule.insertMany).not.toHaveBeenCalled();
+    expect(res.body).toEqual([
+      expect.objectContaining({
+        _id: 'sch1',
+        employee: 'e1',
+        shiftId: 'day',
+        department: 'd2',
+        subDepartment: 'sd2'
+      })
+    ]);
+  });
+
+  it('keeps existing department info when override payload omits it', async () => {
+    const existing = buildScheduleDoc({ department: 'd3', subDepartment: 'sd9' });
+    mockShiftSchedule.findOne.mockResolvedValue(existing);
+    mockApprovalRequest.findOne.mockResolvedValue(null);
+    mockShiftSchedule.insertMany.mockResolvedValue([]);
+
+    const payload = {
+      schedules: [
+        {
+          employee: 'e1',
+          date: '2023-01-01',
+          shiftId: 'day'
+        }
+      ]
+    };
+
+    const res = await request(app).post('/api/schedules/batch').send(payload);
+
+    expect(res.status).toBe(201);
+    expect(existing.save).toHaveBeenCalled();
+    const savedPayload = res.body[0];
+    expect(savedPayload.department).toBe('d3');
+    expect(savedPayload.subDepartment).toBe('sd9');
   });
 
   it('rejects batch if leave conflict', async () => {
