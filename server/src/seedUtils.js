@@ -230,6 +230,15 @@ function takeAssignment(hierarchy, pool) {
   return pool.splice(index, 1)[0];
 }
 
+function snapshotAssignment(assignment) {
+  if (!assignment) return null;
+  return {
+    organization: toStringId(assignment.organization?._id ?? assignment.organization),
+    department: assignment.department?._id ?? assignment.department,
+    subDepartment: assignment.subDepartment?._id ?? assignment.subDepartment,
+  };
+}
+
 function startOfUtcDay(date) {
   const utcDate = new Date(date);
   utcDate.setUTCHours(0, 0, 0, 0);
@@ -454,6 +463,7 @@ export async function seedTestUsers() {
   const usedEmails = new Set();
 
   const supervisors = [];
+  const supervisorAssignments = new Map();
   for (const config of SUPERVISOR_CONFIGS) {
     const assignment = takeAssignment(hierarchy, assignmentPool);
     const usernameSeed = generateUniqueValue(config.prefix, usedUsernames).toLowerCase();
@@ -476,15 +486,25 @@ export async function seedTestUsers() {
       signTags: config.signTags,
     });
     supervisors.push(supervisor);
+
+    supervisorAssignments.set(toStringId(supervisor._id), snapshotAssignment(assignment));
   }
 
   const employees = [];
   const employeesBySupervisor = new Map();
   for (let i = 0; i < 6; i += 1) {
-    const assignment = takeAssignment(hierarchy, assignmentPool);
     const usernameSeed = generateUniqueValue('employee', usedUsernames).toLowerCase();
     const emailSeed = generateUniqueValue('employee-mail', usedEmails).toLowerCase();
     const supervisor = supervisors[i % supervisors.length];
+    const supervisorKey = toStringId(supervisor._id);
+    let assignment = supervisorAssignments.get(supervisorKey);
+
+    if (!assignment) {
+      const fallback = snapshotAssignment(takeAssignment(hierarchy, assignmentPool));
+      assignment = fallback;
+      supervisorAssignments.set(supervisorKey, fallback);
+    }
+
     const employeeSignConfig = SEED_SIGN_CONFIG.employee;
     const employee = await Employee.create({
       name: EMPLOYEE_NAMES[i % EMPLOYEE_NAMES.length],
@@ -495,9 +515,9 @@ export async function seedTestUsers() {
       signRole: employeeSignConfig.signRole,
       signLevel: employeeSignConfig.signLevel,
       permissionGrade: employeeSignConfig.permissionGrade,
-      organization: toStringId(assignment.organization._id),
-      department: assignment.department._id,
-      subDepartment: assignment.subDepartment._id,
+      organization: assignment.organization,
+      department: assignment.department,
+      subDepartment: assignment.subDepartment,
       supervisor: supervisor._id,
       title: randomElement(EMPLOYEE_TITLES),
       status: randomElement(EMPLOYEE_STATUSES),
@@ -505,16 +525,12 @@ export async function seedTestUsers() {
     });
     employees.push(employee);
 
-    const supervisorKey = toStringId(supervisor._id);
     if (!employeesBySupervisor.has(supervisorKey)) {
       employeesBySupervisor.set(supervisorKey, []);
     }
     employeesBySupervisor.get(supervisorKey).push({
       employee,
-      assignment: {
-        department: assignment.department,
-        subDepartment: assignment.subDepartment,
-      },
+      assignment: { ...assignment },
     });
   }
 

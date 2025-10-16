@@ -292,6 +292,17 @@ describe('seedTestUsers', () => {
       expect(employee.permissionGrade).toBe(seedSignConfig.employee.permissionGrade);
     });
 
+    createdSupervisors.forEach((supervisor) => {
+      const teamMembers = createdEmployees.filter(
+        (employee) => employee.supervisor === supervisor._id,
+      );
+      expect(teamMembers.length).toBeGreaterThanOrEqual(1);
+      teamMembers.forEach((employee) => {
+        expect(employee.department.toString()).toBe(supervisor.department.toString());
+        expect(employee.subDepartment.toString()).toBe(supervisor.subDepartment.toString());
+      });
+    });
+
     const usernames = mockEmployees.map((user) => user.username);
     expect(new Set(usernames).size).toBe(usernames.length);
 
