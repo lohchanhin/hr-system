@@ -45,10 +45,11 @@ const signLevels = [
 
 vi.mock('../src/api', () => ({ apiFetch: vi.fn() }))
 import { apiFetch } from '../src/api'
-global.ElMessage = { success: vi.fn() }
+global.ElMessage = { success: vi.fn(), error: vi.fn() }
 
 beforeEach(() => {
   apiFetch.mockClear()
+  global.ElMessage = { success: vi.fn(), error: vi.fn() }
 })
 
 apiFetch.mockImplementation((url, opts) => {
@@ -134,6 +135,27 @@ describe('ApprovalFlowSetting approver select', () => {
     expect(wrapper.vm.managerApproverOptions.map((opt) => opt.value)).toEqual(['APPLICANT_SUPERVISOR', 'e1'])
     expect(new Set(wrapper.vm.departmentOptions.map((opt) => opt.value))).toEqual(new Set(['d1', 'd2']))
     expect(new Set(wrapper.vm.organizationOptions.map((opt) => opt.value))).toEqual(new Set(['org1', 'org2']))
+  })
+
+  it('移除簽核對象時顯示錯誤並阻止送出', async () => {
+    const wrapper = mount(ApprovalFlowSetting, { global: { plugins: [ElementPlus] } })
+    await flushPromises()
+    await wrapper.vm.openWorkflowDialog({ _id: 'f1' })
+    await flushPromises()
+
+    wrapper.vm.selectedFormId = 'f1'
+    wrapper.vm.workflowSteps[0].approver_value = []
+
+    await wrapper.vm.saveWorkflow()
+
+    const putCalls = apiFetch.mock.calls.filter(
+      ([url, opts]) => url === '/api/approvals/forms/f1/workflow' && opts?.method === 'PUT'
+    )
+
+    expect(global.ElMessage.error).toHaveBeenCalledTimes(1)
+    expect(global.ElMessage.error.mock.calls[0][0]).toContain('第1關')
+    expect(putCalls.length).toBe(0)
+    expect(global.ElMessage.success).not.toHaveBeenCalled()
   })
 
   it('normalizes role selections using sign role dictionary', async () => {

@@ -595,57 +595,113 @@ function normalizeStep(step) {
     : step.approver_value != null
       ? [step.approver_value]
       : []
+  const originalStrings = values.map((val) => toValueString(val)).filter((val) => Boolean(val))
+  const meta = {
+    requiresApprover: false,
+    hasApprover: true,
+    filteredOutValues: [],
+    usedFallback: false,
+  }
 
   switch (normalized.approver_type) {
     case 'user': {
       const validIds = new Set(employeeOptions.value.map((emp) => emp.id))
       const allowAny = employeeOptions.value.length === 0
-      normalized.approver_value = values
-        .map((val) => toValueString(val))
-        .filter((val) => val && (allowAny || validIds.has(val)))
+      const normalizedValues = originalStrings.filter((val) => allowAny || validIds.has(val))
+      meta.requiresApprover = true
+      meta.hasApprover = normalizedValues.length > 0
+      meta.filteredOutValues = originalStrings.filter((val) => !normalizedValues.includes(val))
+      normalized.approver_value = normalizedValues
       break
     }
     case 'manager': {
       const validIds = new Set(managerApproverOptions.value.map((opt) => opt.value))
       const allowAny = employeeOptions.value.length === 0
       const resolved = pickFirstValidValue(values, validIds, allowAny)
+      let finalValue = ''
       if (resolved) {
-        normalized.approver_value = resolved
+        finalValue = resolved
       } else if (validIds.has(APPLICANT_SUPERVISOR_VALUE)) {
-        normalized.approver_value = APPLICANT_SUPERVISOR_VALUE
-      } else {
-        normalized.approver_value = ''
+        finalValue = APPLICANT_SUPERVISOR_VALUE
+        meta.usedFallback = true
       }
+      meta.requiresApprover = true
+      meta.hasApprover = Boolean(finalValue)
+      if (finalValue && !originalStrings.includes(finalValue)) meta.usedFallback = true
+      meta.filteredOutValues = finalValue
+        ? originalStrings.filter((val) => val !== finalValue && !validIds.has(val))
+        : originalStrings
+      normalized.approver_value = finalValue
       break
     }
     case 'tag': {
       const validTags = new Set(tagOptions.value.map((opt) => opt.value))
       const allowAny = employeeOptions.value.length === 0
-      normalized.approver_value = pickFirstValidValue(values, validTags, allowAny)
+      const picked = pickFirstValidValue(values, validTags, allowAny)
+      meta.requiresApprover = true
+      meta.hasApprover = Boolean(picked)
+      meta.filteredOutValues = picked
+        ? originalStrings.filter((val) => val !== picked && !validTags.has(val))
+        : originalStrings
+      normalized.approver_value = picked
       break
     }
     case 'role': {
       const validRoles = new Set(signRoleOptions.value.map((opt) => opt.value))
       const allowAny = signRoleOptions.value.length === 0
-      normalized.approver_value = pickFirstValidValue(values, validRoles, allowAny)
+      const picked = pickFirstValidValue(values, validRoles, allowAny)
+      meta.requiresApprover = true
+      meta.hasApprover = Boolean(picked)
+      meta.filteredOutValues = picked
+        ? originalStrings.filter((val) => val !== picked && !validRoles.has(val))
+        : originalStrings
+      normalized.approver_value = picked
       break
     }
     case 'level': {
       const validLevels = new Set(signLevelOptions.value.map((opt) => opt.value))
       const allowAny = signLevelOptions.value.length === 0
-      normalized.approver_value = pickFirstValidValue(values, validLevels, allowAny)
+      const picked = pickFirstValidValue(values, validLevels, allowAny)
+      meta.requiresApprover = true
+      meta.hasApprover = Boolean(picked)
+      meta.filteredOutValues = picked
+        ? originalStrings.filter((val) => val !== picked && !validLevels.has(val))
+        : originalStrings
+      normalized.approver_value = picked
       break
     }
     case 'department': {
       const validDepts = new Set(departmentOptions.value.map((opt) => opt.value))
       const allowAny = employeeOptions.value.length === 0
-      normalized.approver_value = pickFirstValidValue(values, validDepts, allowAny)
+      const picked = pickFirstValidValue(values, validDepts, allowAny)
+      meta.requiresApprover = true
+      meta.hasApprover = Boolean(picked)
+      meta.filteredOutValues = picked
+        ? originalStrings.filter((val) => val !== picked && !validDepts.has(val))
+        : originalStrings
+      normalized.approver_value = picked
       break
     }
     case 'org': {
       const validOrgs = new Set(organizationOptions.value.map((opt) => opt.value))
       const allowAny = employeeOptions.value.length === 0
-      normalized.approver_value = pickFirstValidValue(values, validOrgs, allowAny)
+      const picked = pickFirstValidValue(values, validOrgs, allowAny)
+      meta.requiresApprover = true
+      meta.hasApprover = Boolean(picked)
+      meta.filteredOutValues = picked
+        ? originalStrings.filter((val) => val !== picked && !validOrgs.has(val))
+        : originalStrings
+      normalized.approver_value = picked
+      break
+    }
+    case 'group': {
+      const picked = originalStrings[0] || ''
+      meta.requiresApprover = true
+      meta.hasApprover = Boolean(picked)
+      meta.filteredOutValues = picked
+        ? originalStrings.slice(1)
+        : originalStrings
+      normalized.approver_value = picked
       break
     }
     default: {
@@ -654,6 +710,7 @@ function normalizeStep(step) {
     }
   }
 
+  normalized.__meta = meta
   return normalized
 }
 
@@ -661,6 +718,7 @@ function normalizeWorkflowSteps(steps = []) {
   return steps.map((step, idx) => {
     const normalized = normalizeStep(step)
     normalized.step_order = step.step_order ?? idx + 1
+    if (normalized.__meta) normalized.__meta.stepOrder = normalized.step_order
     return normalized
   })
 }
@@ -829,8 +887,32 @@ function removeStep(i) {
 async function saveWorkflow() {
   const normalizedSteps = normalizeWorkflowSteps(workflowSteps.value)
   workflowSteps.value = normalizedSteps
+  const invalidStepEntry = normalizedSteps
+    .map((step, idx) => ({ step, idx }))
+    .find(({ step }) => {
+      const meta = step.__meta || {}
+      if (meta.requiresApprover) return !meta.hasApprover
+      if (Array.isArray(step.approver_value)) return step.approver_value.length === 0
+      if (typeof step.approver_value === 'string') return step.approver_value.trim() === ''
+      return false
+    })
+  if (invalidStepEntry) {
+    const { step, idx } = invalidStepEntry
+    const typeLabel = APPROVER_TYPES.find((opt) => opt.value === step.approver_type)?.label || step.approver_type
+    const stepLabel = `第${idx + 1}關`
+    const message = `${stepLabel}${typeLabel ? `（${typeLabel}）` : ''}缺少有效簽核人`
+    if (typeof ElMessage?.error === 'function') {
+      ElMessage.error(message)
+    } else if (typeof ElMessage === 'function') {
+      ElMessage(message)
+    }
+    return
+  }
   const payload = {
-    steps: normalizedSteps.map((s, idx) => ({ ...s, step_order: idx + 1 })),
+    steps: normalizedSteps.map((s, idx) => {
+      const { __meta, ...cleanStep } = s
+      return { ...cleanStep, step_order: idx + 1 }
+    }),
     policy: policyForm.value,
   }
   await apiFetch(API.workflow(selectedFormId.value), {
