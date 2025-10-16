@@ -150,12 +150,62 @@ export async function listSupervisorSummary(req, res) {
       date: { $gte: start, $lt: end },
     }).lean();
 
+    const leaveDaysMap = new Map();
+    const { formId, startId, endId } = await getLeaveFieldIds();
+    if (formId && startId && endId && ids.length) {
+      const leaveQuery = {
+        form: formId,
+        status: 'approved',
+        applicant_employee: { $in: ids },
+      };
+      leaveQuery[`form_data.${startId}`] = { $lte: end };
+      leaveQuery[`form_data.${endId}`] = { $gte: start };
+      const approvals = await ApprovalRequest.find(leaveQuery).lean();
+      approvals.forEach((approval) => {
+        const rawEmp = approval.applicant_employee;
+        const empId = rawEmp?._id?.toString?.() || rawEmp?.toString?.();
+        if (!empId) return;
+        const rawStart = approval.form_data?.[startId];
+        const rawEnd = approval.form_data?.[endId];
+        const startDate = rawStart ? new Date(rawStart) : null;
+        const endDate = rawEnd ? new Date(rawEnd) : null;
+        if (!startDate || !endDate || Number.isNaN(startDate) || Number.isNaN(endDate)) return;
+        startDate.setHours(0, 0, 0, 0);
+        endDate.setHours(0, 0, 0, 0);
+        const monthStart = new Date(start);
+        const monthEnd = new Date(end);
+        monthStart.setHours(0, 0, 0, 0);
+        monthEnd.setHours(0, 0, 0, 0);
+        const leaveStart = startDate < monthStart ? monthStart : new Date(startDate);
+        const leaveEnd = endDate >= monthEnd ? new Date(monthEnd.getTime() - 86400000) : new Date(endDate);
+        if (leaveEnd < leaveStart) return;
+        let pointer = new Date(leaveStart);
+        const bucket = leaveDaysMap.get(empId) || new Set();
+        while (pointer <= leaveEnd) {
+          const key = pointer.toISOString().slice(0, 10);
+          bucket.add(key);
+          pointer = new Date(pointer.getTime() + 86400000);
+        }
+        leaveDaysMap.set(empId, bucket);
+      });
+      leaveDaysMap.forEach((set, empId) => {
+        if (summaryMap[empId]) {
+          summaryMap[empId].leaveCount = set.size;
+        }
+      });
+    }
+
     schedules.forEach((s) => {
-      const name = shiftMap[s.shiftId?.toString()] || '';
-      const sum = summaryMap[s.employee.toString()];
+      const empId = s.employee?._id?.toString?.() || s.employee?.toString?.();
+      if (!empId) return;
+      const sum = summaryMap[empId];
       if (!sum) return;
-      if (name.includes('假')) sum.leaveCount += 1;
-      else if (name.includes('缺')) sum.absenceCount += 1;
+      const dayKey = s.date ? new Date(s.date).toISOString().slice(0, 10) : '';
+      if (dayKey && leaveDaysMap.get(empId)?.has(dayKey)) {
+        return;
+      }
+      const name = shiftMap[s.shiftId?.toString()] || '';
+      if (name.includes('缺')) sum.absenceCount += 1;
       else sum.shiftCount += 1;
     });
 

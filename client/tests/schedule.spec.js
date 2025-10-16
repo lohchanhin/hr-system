@@ -35,25 +35,80 @@ describe('Schedule.vue', () => {
     sessionStorage.clear()
     localStorage.clear()
     setRoleToken('employee')
+    if (typeof window !== 'undefined') {
+      window.ElMessage = global.ElMessage
+    }
   })
 
-  function mountSchedule() {
+  function mountSchedule(options = {}) {
+    const TableStub = {
+      name: 'ElTable',
+      props: ['data'],
+      provide() {
+        return { tableContext: this }
+      },
+      template: '<div class="table-stub"><slot></slot></div>'
+    }
+    const ColumnStub = {
+      name: 'ElTableColumn',
+      inject: ['tableContext'],
+      props: ['label'],
+      template: `
+        <div class="col" :data-label="label">
+          <div class="col-header"><slot name="header"></slot></div>
+          <div
+            v-for="row in (tableContext?.data || [])"
+            :key="row && (row._id || row.id || row.name || JSON.stringify(row))"
+            class="cell"
+          >
+            <slot :row="row"></slot>
+          </div>
+        </div>
+      `
+    }
+    const SelectStub = {
+      name: 'ElSelect',
+      props: ['modelValue', 'disabled'],
+      emits: ['update:modelValue', 'change'],
+      template: '<select v-bind="$attrs" :disabled="disabled"><slot></slot></select>'
+    }
+    const OptionStub = {
+      name: 'ElOption',
+      props: ['label', 'value'],
+      template: '<option :value="value"><slot>{{ label }}</slot></option>'
+    }
+    const CheckboxStub = {
+      name: 'ElCheckbox',
+      inheritAttrs: false,
+      props: ['modelValue', 'disabled'],
+      emits: ['change'],
+      template:
+        '<label class="checkbox-stub"><input type="checkbox" :checked="modelValue" :disabled="disabled" @change="$emit(\'change\', $event.target.checked)" /><slot></slot></label>'
+    }
+    const InputStub = { name: 'ElInput', template: '<input v-bind="$attrs" />' }
+    const PopoverStub = {
+      name: 'ElPopover',
+      template: '<div class="popover-stub"><slot></slot><slot name="reference"></slot></div>'
+    }
+    const TagStub = { name: 'ElTag', template: '<span v-bind="$attrs"><slot></slot></span>' }
+    const ButtonStub = { name: 'ElButton', template: '<button v-bind="$attrs"><slot></slot></button>' }
     return shallowMount(Schedule, {
       global: {
         stubs: {
           'el-date-picker': true,
-          'el-table': { template: '<div><slot></slot></div>' },
-          'el-table-column': {
-            props: ['label'],
-            template: '<div class="col" :data-label="label"><slot :row="{}"></slot></div>'
-          },
-          'el-select': true,
-          'el-option': true,
-          'el-checkbox': true,
-          'el-input': true,
+          'el-table': TableStub,
+          'el-table-column': ColumnStub,
+          'el-select': SelectStub,
+          'el-option': OptionStub,
+          'el-checkbox': CheckboxStub,
+          'el-input': InputStub,
+          'el-popover': PopoverStub,
+          'el-tag': TagStub,
+          'el-button': ButtonStub,
           ScheduleDashboard: { name: 'ScheduleDashboard', template: '<div class="dashboard-stub"></div>', props: ['summary'] }
         }
-      }
+      },
+      ...options
     })
   }
 
@@ -202,6 +257,87 @@ describe('Schedule.vue', () => {
     expect(wrapper.vm.shifts).toEqual([
       { _id: 's1', code: 'S1', name: '早班', startTime: '08:00', endTime: '17:00', remark: 'R' }
     ])
+  })
+
+  it('renders leave indicator and prevents editing when leave exists', async () => {
+    const month = dayjs().format('YYYY-MM')
+    setRoleToken('supervisor')
+    localStorage.setItem('employeeId', 'sup1')
+    apiFetch
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          shifts: [
+            { _id: 'shift1', code: 'A', name: '早班', startTime: '08:00', endTime: '17:00' }
+          ]
+        })
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          _id: 'sup1',
+          department: { _id: 'd1', name: 'Dept A' },
+          subDepartment: { _id: 'sd1', name: 'Sub A' }
+        })
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => [{ _id: 'e1', subDepartment: { _id: 'sd1' } }]
+      })
+      .mockResolvedValueOnce({ ok: true, json: async () => [{ _id: 'd1', name: 'Dept A' }] })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => [{ _id: 'sd1', name: 'Sub A', department: { _id: 'd1' } }]
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => [{ _id: 'e1', name: 'Emp1', department: 'd1', subDepartment: 'sd1' }]
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => [
+          {
+            _id: 'sch1',
+            employee: 'e1',
+            date: `${month}-01`,
+            shiftId: 'shift1',
+            department: 'd1',
+            subDepartment: 'sd1'
+          }
+        ]
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          approvals: [],
+          leaves: [
+            {
+              employee: 'e1',
+              leaveType: 'annual',
+              status: 'approved',
+              startDate: `${month}-01`,
+              endDate: `${month}-01`
+            }
+          ]
+        })
+      })
+
+    const wrapper = mountSchedule()
+    await flush()
+
+    const leaveIndicator = wrapper.find('[data-test="leave-indicator"]')
+    expect(leaveIndicator.exists()).toBe(true)
+    expect(leaveIndicator.text()).toContain('休假中')
+    expect(leaveIndicator.text()).toContain('不列入工時')
+    expect(leaveIndicator.find('select').exists()).toBe(false)
+    expect(wrapper.vm.scheduleMap.e1[1].leave.excludesHours).toBe(true)
+
+    const initialCalls = apiFetch.mock.calls.length
+    await wrapper.vm.onSelect('e1', 1, 'shift1')
+    await flush()
+    expect(apiFetch.mock.calls.length).toBe(initialCalls)
+    expect(ElMessage.info).toHaveBeenCalledWith('該日已核准請假，無法調整排班')
   })
 
   it('formats shift label with code and name when available', async () => {
@@ -515,7 +651,9 @@ describe('Schedule.vue', () => {
     ]
     wrapper.vm.scheduleMap = { undefined: { 1: { leave: {} } } }
     await wrapper.vm.$nextTick()
-    expect(wrapper.find('.leave-indicator').text()).toBe('請假中')
+    const indicatorText = wrapper.find('.leave-indicator').text()
+    expect(indicatorText).toContain('休假中')
+    expect(indicatorText).toContain('不列入工時')
   })
 
   it('maps department ids to names', async () => {

@@ -5,10 +5,14 @@ import { jest } from '@jest/globals';
 const mockShiftSchedule = { find: jest.fn() };
 const mockEmployee = { find: jest.fn() };
 const mockAttendanceSetting = { findOne: jest.fn() };
+const mockApprovalRequest = { find: jest.fn() };
+const mockGetLeaveFieldIds = jest.fn();
 
 jest.unstable_mockModule('../src/models/ShiftSchedule.js', () => ({ default: mockShiftSchedule }));
 jest.unstable_mockModule('../src/models/Employee.js', () => ({ default: mockEmployee }));
 jest.unstable_mockModule('../src/models/AttendanceSetting.js', () => ({ default: mockAttendanceSetting }));
+jest.unstable_mockModule('../src/models/approval_request.js', () => ({ default: mockApprovalRequest }));
+jest.unstable_mockModule('../src/services/leaveFieldService.js', () => ({ getLeaveFieldIds: mockGetLeaveFieldIds }));
 
 const mockAuth = {
   currentUser: { id: 'sup1', role: 'supervisor' },
@@ -40,6 +44,15 @@ beforeEach(() => {
   mockShiftSchedule.find.mockReset();
   mockEmployee.find.mockReset();
   mockAttendanceSetting.findOne.mockReset();
+  mockApprovalRequest.find.mockReset();
+  mockGetLeaveFieldIds.mockReset();
+  mockGetLeaveFieldIds.mockResolvedValue({
+    formId: 'leaveForm',
+    startId: 'start',
+    endId: 'end',
+    typeId: 'type',
+  });
+  mockApprovalRequest.find.mockReturnValue({ lean: jest.fn().mockResolvedValue([]) });
   mockAuth.currentUser = { id: 'sup1', role: 'supervisor' };
 });
 
@@ -62,7 +75,17 @@ describe('Supervisor schedule summary', () => {
     mockShiftSchedule.find.mockReturnValue({
       lean: jest.fn().mockResolvedValue([
         { employee: 'emp1', shiftId: 'shift1', date: new Date('2023-05-01') },
-        { employee: 'emp3', shiftId: 'shift1', date: new Date('2023-05-02') },
+        { employee: 'emp1', shiftId: 'shift1', date: new Date('2023-05-02') },
+        { employee: 'emp3', shiftId: 'shift1', date: new Date('2023-05-03') },
+      ]),
+    });
+
+    mockApprovalRequest.find.mockReturnValue({
+      lean: jest.fn().mockResolvedValue([
+        {
+          applicant_employee: 'emp1',
+          form_data: { start: '2023-05-02', end: '2023-05-03' },
+        },
       ]),
     });
 
@@ -70,7 +93,7 @@ describe('Supervisor schedule summary', () => {
 
     expect(res.status).toBe(200);
     expect(res.body).toEqual([
-      { employee: 'emp1', name: 'Emp1', shiftCount: 1, leaveCount: 0, absenceCount: 0 },
+      { employee: 'emp1', name: 'Emp1', shiftCount: 1, leaveCount: 2, absenceCount: 0 },
       { employee: 'emp2', name: 'Emp2', shiftCount: 0, leaveCount: 0, absenceCount: 0 },
     ]);
     expect(res.body.find(e => e.employee === 'emp3')).toBeUndefined();
