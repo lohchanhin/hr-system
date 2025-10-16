@@ -7,6 +7,11 @@ test('seed script loads env from server/.env', async () => {
   process.env.DEFAULT_ADMIN_PASSWORD = 'admin-secret';
   const configMock = jest.fn();
   const writeFileMock = jest.fn().mockResolvedValue();
+  const mockSignConfig = {
+    supervisor: { signRole: 'R003', signLevel: 'U003', permissionGrade: 'L3' },
+    employee: { signRole: 'R001', signLevel: 'U001', permissionGrade: 'L1' },
+    admin: { signRole: 'R004', signLevel: 'U005', permissionGrade: 'L5' },
+  };
   const supervisors = [
     { username: 'sup-01', name: '主管甲', title: '部門主管', role: 'supervisor', signTags: ['人資'] },
   ];
@@ -23,6 +28,7 @@ test('seed script loads env from server/.env', async () => {
     seedApprovalTemplates: jest.fn(),
     seedApprovalRequests: jest.fn(),
     SEED_TEST_PASSWORD: 'mocked-password',
+    SEED_SIGN_CONFIG: mockSignConfig,
   }));
   await jest.unstable_mockModule('../src/services/supervisorReportSeed.js', () => ({
     ensureDefaultSupervisorReports: jest.fn().mockResolvedValue(),
@@ -55,17 +61,26 @@ test('seed script loads env from server/.env', async () => {
         username: 'admin',
         password: 'admin-secret',
         role: 'admin',
+        signRole: mockSignConfig.admin.signRole,
+        signLevel: mockSignConfig.admin.signLevel,
+        permissionGrade: mockSignConfig.admin.permissionGrade,
       }),
       expect.objectContaining({
         username: 'sup-01',
         password: 'mocked-password',
         role: 'supervisor',
         signTags: ['人資'],
+        signRole: mockSignConfig.supervisor.signRole,
+        signLevel: mockSignConfig.supervisor.signLevel,
+        permissionGrade: mockSignConfig.supervisor.permissionGrade,
       }),
       expect.objectContaining({
         username: 'emp-01',
         password: 'mocked-password',
         role: 'employee',
+        signRole: mockSignConfig.employee.signRole,
+        signLevel: mockSignConfig.employee.signLevel,
+        permissionGrade: mockSignConfig.employee.permissionGrade,
       }),
     ]),
   );
