@@ -64,16 +64,49 @@
       <div class="primary-actions">
         <el-button
           type="primary"
-          @click="saveAll"
           class="action-btn primary"
-          :disabled="isSaveDisabled"
-          data-test="save-all-button"
+          @click="clearSelection"
+          :disabled="!hasAnySelection"
         >
-          <i class="el-icon-check"></i>
-          儲存排班
+          <i class="el-icon-close"></i>
+          清除選取
+        </el-button>
+        <el-button
+          type="primary"
+          class="action-btn primary"
+          plain
+          @click="selectAllEmployees"
+          :disabled="!employees.length"
+        >
+          <i class="el-icon-user"></i>
+          全選員工
+        </el-button>
+        <el-button
+          type="primary"
+          class="action-btn primary"
+          plain
+          @click="selectAllDays"
+          :disabled="!days.length"
+        >
+          <i class="el-icon-date"></i>
+          全選日期
         </el-button>
       </div>
       <div class="secondary-actions">
+        <div class="range-picker-wrapper">
+          <label class="range-label">自訂日期範圍</label>
+          <el-date-picker
+            v-model="customRange"
+            type="daterange"
+            start-placeholder="開始日期"
+            end-placeholder="結束日期"
+            range-separator="至"
+            unlink-panels
+            :disabled="!days.length"
+            class="modern-date-picker range-picker"
+            @change="onCustomRangeChange"
+          />
+        </div>
         <el-button @click="preview('week')" class="action-btn secondary">
           <i class="el-icon-calendar"></i>
           預覽週表
@@ -116,6 +149,61 @@
         </el-select>
       </div>
 
+      <div v-if="canEdit" class="batch-toolbar">
+        <el-select
+          v-model="batchShiftId"
+          placeholder="套用班別"
+          class="modern-select batch-select"
+          filterable
+          data-test="batch-shift-select"
+        >
+          <el-option
+            v-for="opt in shifts"
+            :key="opt._id"
+            :label="formatShiftLabel(opt)"
+            :value="opt._id"
+          />
+        </el-select>
+        <el-select
+          v-model="batchDepartment"
+          placeholder="套用部門"
+          clearable
+          class="modern-select batch-select"
+          data-test="batch-dept-select"
+        >
+          <el-option
+            v-for="dept in departments"
+            :key="dept._id"
+            :label="dept.name"
+            :value="dept._id"
+          />
+        </el-select>
+        <el-select
+          v-model="batchSubDepartment"
+          placeholder="套用單位"
+          clearable
+          class="modern-select batch-select"
+          :disabled="!batchDepartment"
+          data-test="batch-subdept-select"
+        >
+          <el-option
+            v-for="sub in batchSubDepartments"
+            :key="sub._id"
+            :label="sub.name"
+            :value="sub._id"
+          />
+        </el-select>
+        <el-button
+          type="primary"
+          class="action-btn primary apply-btn"
+          :disabled="!hasAnySelection || !batchShiftId"
+          @click="applyBatch"
+          data-test="batch-apply-button"
+        >
+          套用至選取
+        </el-button>
+      </div>
+
       <el-table
         class="modern-schedule-table"
         :data="filteredEmployees"
@@ -131,9 +219,15 @@
             </div>
           </template>
         </el-table-column>
-        <el-table-column prop="name" label="員工姓名" width="120" fixed="left">
+        <el-table-column prop="name" label="員工姓名" width="150" fixed="left">
           <template #default="{ row }">
             <div class="employee-name">
+              <el-checkbox
+                v-if="canEdit"
+                class="row-checkbox"
+                :model-value="selectedEmployeesSet.has(row._id)"
+                @change="val => toggleEmployee(row._id, val)"
+              />
               <component
                 v-if="employeeStatus(row._id) === 'unscheduled'"
                 :is="CircleCloseFilled"
@@ -155,6 +249,17 @@
           width="140"
           align="center"
         >
+          <template #header>
+            <div class="day-header">
+              <span>{{ d.label }}</span>
+              <el-checkbox
+                v-if="canEdit"
+                class="day-checkbox"
+                :model-value="selectedDaysSet.has(d.date)"
+                @change="val => toggleDay(d.date, val)"
+              />
+            </div>
+          </template>
           <template #default="{ row }">
             <div
               v-if="!lazyMode || expandedRows.has(row._id)"
@@ -165,10 +270,19 @@
                   'has-leave': scheduleMap[row._id]?.[d.date]?.leave,
                   'missing-shift':
                     !scheduleMap[row._id]?.[d.date]?.shiftId &&
-                    !scheduleMap[row._id]?.[d.date]?.leave
+                    !scheduleMap[row._id]?.[d.date]?.leave,
+                  'is-selected': isCellSelected(row._id, d.date)
                 }
               ]"
             >
+              <div v-if="canEdit" class="cell-selection" @click.stop>
+                <el-checkbox
+                  :model-value="manualSelectedCellsSet.has(buildCellKey(row._id, d.date))"
+                  :disabled="!isSelectableCell(row._id, d.date)"
+                  @change="val => toggleCell(row._id, d.date, val)"
+                  size="small"
+                />
+              </div>
               <template v-if="scheduleMap[row._id]?.[d.date]">
                 <template v-if="canEdit">
                   <el-select
@@ -307,7 +421,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import dayjs from 'dayjs'
 import { apiFetch } from '../../api'
 import { useAuthStore } from '../../stores/auth'
@@ -334,6 +448,178 @@ const summary = ref({ direct: 0, unscheduled: 0, onLeave: 0 })
 const employeeSearch = ref('')
 const statusFilter = ref('all')
 const expandedRows = ref(new Set())
+const selectedEmployees = ref(new Set())
+const selectedDays = ref(new Set())
+const manualSelectedCells = ref(new Set())
+const customRange = ref([])
+const batchShiftId = ref('')
+const batchDepartment = ref('')
+const batchSubDepartment = ref('')
+
+const selectedEmployeesSet = computed(() => selectedEmployees.value)
+const selectedDaysSet = computed(() => selectedDays.value)
+const manualSelectedCellsSet = computed(() => manualSelectedCells.value)
+
+const buildCellKey = (empId, day) => `${empId}-${day}`
+const parseCellKey = key => {
+  const [empId, day] = String(key).split('-')
+  return { empId, day: Number(day) }
+}
+
+const isSelectableCell = (empId, day) => {
+  const dayMap = scheduleMap.value[empId]
+  if (!dayMap) return false
+  const cell = dayMap[day]
+  if (!cell) return false
+  return !cell.leave
+}
+
+const allSelectedCells = computed(() => {
+  const result = new Set()
+  const dayList = days.value
+  const employeeList = employees.value
+  const addIfSelectable = (empId, day) => {
+    if (isSelectableCell(empId, day)) {
+      result.add(buildCellKey(empId, day))
+    }
+  }
+
+  manualSelectedCells.value.forEach(key => {
+    const { empId, day } = parseCellKey(key)
+    addIfSelectable(empId, day)
+  })
+
+  selectedEmployees.value.forEach(empId => {
+    dayList.forEach(d => addIfSelectable(empId, d.date))
+  })
+
+  selectedDays.value.forEach(day => {
+    employeeList.forEach(emp => addIfSelectable(emp._id, day))
+  })
+
+  return result
+})
+
+const hasAnySelection = computed(() => allSelectedCells.value.size > 0)
+
+const batchSubDepartments = computed(() =>
+  batchDepartment.value ? subDepsFor(batchDepartment.value) : []
+)
+
+const isCellSelected = (empId, day) =>
+  allSelectedCells.value.has(buildCellKey(empId, day))
+
+const pruneSelections = () => {
+  const validEmployees = new Set(employees.value.map(e => e._id))
+  const validDays = new Set(days.value.map(d => d.date))
+
+  selectedEmployees.value = new Set(
+    Array.from(selectedEmployees.value).filter(id => validEmployees.has(id))
+  )
+  selectedDays.value = new Set(
+    Array.from(selectedDays.value).filter(day => validDays.has(day))
+  )
+  const nextManual = new Set()
+  manualSelectedCells.value.forEach(key => {
+    const { empId, day } = parseCellKey(key)
+    if (validEmployees.has(empId) && validDays.has(day) && isSelectableCell(empId, day)) {
+      nextManual.add(buildCellKey(empId, day))
+    }
+  })
+  manualSelectedCells.value = nextManual
+}
+
+const clearSelection = () => {
+  selectedEmployees.value = new Set()
+  selectedDays.value = new Set()
+  manualSelectedCells.value = new Set()
+  customRange.value = []
+}
+
+const toggleEmployee = (empId, explicit) => {
+  const next = new Set(selectedEmployees.value)
+  const shouldSelect =
+    typeof explicit === 'boolean' ? explicit : !next.has(empId)
+  if (shouldSelect) {
+    next.add(empId)
+  } else {
+    next.delete(empId)
+  }
+  selectedEmployees.value = next
+}
+
+const toggleDay = (day, explicit) => {
+  const next = new Set(selectedDays.value)
+  const shouldSelect =
+    typeof explicit === 'boolean' ? explicit : !next.has(day)
+  if (shouldSelect) {
+    next.add(day)
+  } else {
+    next.delete(day)
+  }
+  selectedDays.value = next
+}
+
+const toggleCell = (empId, day, explicit) => {
+  if (!isSelectableCell(empId, day)) return
+  const key = buildCellKey(empId, day)
+  const next = new Set(manualSelectedCells.value)
+  const shouldSelect =
+    typeof explicit === 'boolean' ? explicit : !next.has(key)
+  if (shouldSelect) {
+    next.add(key)
+  } else {
+    next.delete(key)
+  }
+  manualSelectedCells.value = next
+}
+
+const selectAllEmployees = () => {
+  selectedEmployees.value = new Set(employees.value.map(e => e._id))
+}
+
+const selectAllDays = () => {
+  selectedDays.value = new Set(days.value.map(d => d.date))
+}
+
+const onCustomRangeChange = range => {
+  if (!Array.isArray(range) || range.length !== 2) return
+  const [startRaw, endRaw] = range
+  if (!startRaw || !endRaw) return
+  const monthStart = dayjs(`${currentMonth.value}-01`)
+  const start = dayjs(startRaw)
+  const end = dayjs(endRaw)
+  if (!start.isValid() || !end.isValid()) return
+  const monthEnd = monthStart.endOf('month')
+  let cursor = start.isBefore(monthStart) ? monthStart : start
+  const collected = []
+  while (cursor.isBefore(end) || cursor.isSame(end, 'day')) {
+    if (
+      cursor.year() === monthStart.year() &&
+      cursor.month() === monthStart.month()
+    ) {
+      collected.push(cursor.date())
+    }
+    if (cursor.isSame(monthEnd, 'day')) break
+    cursor = cursor.add(1, 'day')
+  }
+  selectedDays.value = new Set(collected)
+}
+
+watch(batchDepartment, (newVal, oldVal) => {
+  if (newVal !== oldVal) {
+    batchSubDepartment.value = ''
+  }
+})
+
+watch(batchSubDepartments, newList => {
+  if (
+    batchSubDepartment.value &&
+    !newList.some(sub => sub._id === batchSubDepartment.value)
+  ) {
+    batchSubDepartment.value = ''
+  }
+})
 
 const employeeStatus = empId => {
   const days = scheduleMap.value[empId] || {}
@@ -395,14 +681,6 @@ const callInfo = message => {
   }
 }
 
-const hasPendingSchedules = computed(() =>
-  Object.values(scheduleMap.value).some(days =>
-    Object.values(days).some(item => item?.shiftId && !item?.id)
-  )
-)
-
-const isSaveDisabled = computed(() => !hasPendingSchedules.value)
-
 const days = computed(() => {
   const dt = dayjs(currentMonth.value + '-01')
   const end = dt.endOf('month').date()
@@ -413,6 +691,9 @@ const days = computed(() => {
     return { date, label: `${date}(${wd})` }
   })
 })
+
+watch(employees, pruneSelections)
+watch(days, pruneSelections)
 
 async function fetchShiftOptions() {
   const res = await apiFetch('/api/shifts')
@@ -766,56 +1047,10 @@ async function fetchSchedules() {
         }
       })
     }
+    pruneSelections()
   } catch (err) {
     console.error(err)
     ElMessage.error('取得排班資料失敗')
-  }
-}
-
-async function saveAll() {
-  const hasMissing = Object.values(scheduleMap.value).some(days =>
-    Object.values(days).some(it => !it.shiftId && !it.leave)
-  )
-  if (hasMissing) {
-    callWarning('尚有未排班項目，請確認後再儲存')
-    return
-  }
-  const schedules = []
-  Object.keys(scheduleMap.value).forEach(empId => {
-    Object.keys(scheduleMap.value[empId]).forEach(day => {
-      const item = scheduleMap.value[empId][day]
-      if (item.shiftId && !item.id) {
-        schedules.push({
-          employee: empId,
-          date: `${currentMonth.value}-${String(day).padStart(2, '0')}`,
-          shiftId: item.shiftId,
-          department: item.department,
-          subDepartment: item.subDepartment
-        })
-      }
-    })
-  })
-  if (!schedules.length) {
-    callInfo('目前沒有可儲存的排班')
-    return
-  }
-  try {
-    const res = await apiFetch('/api/schedules/batch', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ schedules })
-    })
-    if (!res.ok) throw new Error('save failed')
-    const inserted = await res.json()
-    inserted.forEach(it => {
-      const empId = it.employee?._id || it.employee
-      const d = dayjs(it.date).date()
-      if (!scheduleMap.value[empId]) scheduleMap.value[empId] = {}
-      scheduleMap.value[empId][d] = { id: it._id, shiftId: it.shiftId }
-    })
-    ElMessage.success('儲存完成')
-  } catch (err) {
-    ElMessage.error('儲存失敗')
   }
 }
 
@@ -944,6 +1179,133 @@ async function handleScheduleError(res, defaultMsg, empId, day, prev) {
   }
 }
 
+async function handleBatchApiError(res, defaultMsg = '批次套用失敗') {
+  let msg = ''
+  try {
+    if (res) {
+      const data = await res.json()
+      msg = data?.error || ''
+    }
+  } catch (err) {}
+  if (msg === 'employee conflict') {
+    ElMessageBox.alert('部分員工已存在排班，請取消後再試')
+  } else if (msg === 'department overlap') {
+    ElMessageBox.alert('部門或單位與既有資料不一致，無法套用')
+  } else if (msg === 'leave conflict') {
+    ElMessageBox.alert('選取日期包含已核准請假，無法套用')
+  } else if (msg) {
+    ElMessage.error(msg)
+  } else {
+    ElMessage.error(defaultMsg)
+  }
+}
+
+async function applyBatch() {
+  if (!hasAnySelection.value) {
+    callWarning('請先選取要套用的儲存格')
+    return
+  }
+  if (!batchShiftId.value) {
+    callWarning('請選擇欲套用的班別')
+    return
+  }
+  const toCreate = []
+  const toUpdate = []
+  allSelectedCells.value.forEach(key => {
+    const { empId, day } = parseCellKey(key)
+    const info = scheduleMap.value[empId]?.[day]
+    if (!info || info.leave) return
+    const department = batchDepartment.value || info.department || ''
+    let subDepartment = info.subDepartment || ''
+    if (batchDepartment.value) {
+      subDepartment = batchSubDepartment.value || ''
+    } else if (batchSubDepartment.value) {
+      subDepartment = batchSubDepartment.value
+    }
+    const payload = {
+      employee: empId,
+      day,
+      date: `${currentMonth.value}-${String(day).padStart(2, '0')}`,
+      shiftId: batchShiftId.value,
+      department,
+      subDepartment
+    }
+    if (info.id) {
+      payload.id = info.id
+      toUpdate.push(payload)
+    } else {
+      toCreate.push(payload)
+    }
+  })
+
+  if (!toCreate.length && !toUpdate.length) {
+    callInfo('選取的儲存格皆無需更新')
+    return
+  }
+
+  let created = []
+  if (toCreate.length) {
+    const res = await apiFetch('/api/schedules/batch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        schedules: toCreate.map(({ day, ...rest }) => rest)
+      })
+    })
+    if (!res.ok) {
+      await handleBatchApiError(res)
+      return
+    }
+    created = await res.json()
+  }
+
+  const updated = []
+  for (const item of toUpdate) {
+    const { id, ...rest } = item
+    const res = await apiFetch(`/api/schedules/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(rest)
+    })
+    if (!res.ok) {
+      await handleBatchApiError(res)
+      return
+    }
+    updated.push(await res.json())
+  }
+
+  const payloadMap = new Map()
+  toCreate.concat(toUpdate).forEach(item => {
+    payloadMap.set(buildCellKey(item.employee, item.day), item)
+  })
+
+  created.concat(updated).forEach(entry => {
+    const empId = entry.employee?._id || entry.employee
+    const d = dayjs(entry.date).date()
+    if (!scheduleMap.value[empId]) {
+      scheduleMap.value[empId] = {}
+    }
+    const key = buildCellKey(empId, d)
+    const payload = payloadMap.get(key) || {}
+    const current = scheduleMap.value[empId][d] || {}
+    scheduleMap.value[empId][d] = {
+      ...current,
+      id: entry._id || payload.id || current.id,
+      shiftId: entry.shiftId || payload.shiftId || current.shiftId,
+      department: payload.department || entry.department || current.department,
+      subDepartment:
+        payload.subDepartment || entry.subDepartment || current.subDepartment
+    }
+  })
+
+  if (!created.length && !updated.length) {
+    callInfo('沒有可更新的資料')
+    return
+  }
+
+  ElMessage.success('批次套用完成')
+}
+
 function shiftInfo(id) {
   return shifts.value.find(s => s._id === id)
 }
@@ -1000,6 +1362,7 @@ async function fetchEmployees(department = '', subDepartment = '') {
       }))
       .sort((a, b) => a.department.localeCompare(b.department))
     employees.value = sorted
+    pruneSelections()
   } catch (err) {
     console.error(err)
     ElMessage.error('取得員工資料失敗')
@@ -1142,6 +1505,24 @@ onMounted(async () => {
     gap: 12px;
     flex-wrap: wrap;
   }
+
+  .range-picker-wrapper {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-width: 220px;
+  }
+
+  .range-label {
+    font-weight: 600;
+    color: #164e63;
+    font-size: 0.75rem;
+    letter-spacing: 0.05em;
+  }
+
+  .range-picker {
+    width: 240px;
+  }
 }
 
 .action-btn {
@@ -1260,6 +1641,24 @@ onMounted(async () => {
       max-width: 160px;
     }
   }
+
+  .batch-toolbar {
+    padding: 16px 24px;
+    background: #f8fafc;
+    border-bottom: 1px solid #e2e8f0;
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+
+  .batch-select {
+    min-width: 180px;
+  }
+
+  .apply-btn {
+    min-width: 140px;
+  }
 }
 
 .modern-schedule-table {
@@ -1293,12 +1692,32 @@ onMounted(async () => {
 .employee-name {
   font-weight: 600;
   color: #1e293b;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.row-checkbox {
+  margin-right: 2px;
 }
 
 .status-icon {
   margin-right: 4px;
   &.unscheduled { color: #dc2626; }
   &.on-leave { color: #f59e0b; }
+}
+
+.day-header {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.day-checkbox {
+  margin-left: 4px;
 }
 
 .modern-schedule-cell {
@@ -1309,7 +1728,9 @@ onMounted(async () => {
   flex-direction: column;
   gap: 4px;
   transition: all 0.2s ease;
-  
+  position: relative;
+  border: 1px solid rgba(203, 213, 225, 0.6);
+
   &.shift-morning {
     background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%);
     border: 1px solid #93c5fd;
@@ -1329,6 +1750,26 @@ onMounted(async () => {
     background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
     border: 1px solid #fbbf24;
   }
+
+  &.is-selected {
+    box-shadow: 0 0 0 2px rgba(14, 165, 233, 0.6) inset;
+    background-color: rgba(224, 242, 254, 0.6);
+  }
+}
+
+.cell-selection {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  background: rgba(255, 255, 255, 0.85);
+  border-radius: 4px;
+  padding: 2px;
+  box-shadow: 0 2px 6px rgba(15, 23, 42, 0.1);
+  z-index: 2;
+}
+
+.modern-schedule-cell.has-leave .cell-selection {
+  display: none;
 }
 
 .collapsed-cell {

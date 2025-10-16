@@ -49,6 +49,7 @@ describe('Schedule.vue', () => {
           },
           'el-select': true,
           'el-option': true,
+          'el-checkbox': true,
           'el-input': true,
           ScheduleDashboard: { name: 'ScheduleDashboard', template: '<div class="dashboard-stub"></div>', props: ['summary'] }
         }
@@ -540,98 +541,36 @@ describe('Schedule.vue', () => {
     ])
   })
 
-  it('creates schedule after selecting department and unit', async () => {
+  it('applies batch schedules to selected cells', async () => {
     const month = dayjs().format('YYYY-MM')
-    setRoleToken('supervisor')
-    apiFetch
-      .mockResolvedValueOnce({ ok: true, json: async () => [] })
-      .mockResolvedValueOnce({ ok: true, json: async () => [] })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
-          _id: 's1',
-          department: { _id: 'd1', name: 'Dept A' },
-          subDepartment: { _id: 'sd1', name: 'Sub A' }
-        })
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => [
-          { _id: 'e1', subDepartment: { _id: 'sd1', name: 'Sub A' } }
-        ]
-      })
-      .mockResolvedValueOnce({ ok: true, json: async () => [{ _id: 'd1', name: 'Dept A' }] })
-      .mockResolvedValueOnce({ ok: true, json: async () => [{ _id: 'sd1', name: 'Sub A', department: 'd1' }] })
-      .mockResolvedValueOnce({ ok: true, json: async () => [{ _id: 'e1', name: 'E1', department: 'd1', subDepartment: 'sd1' }] })
-      .mockResolvedValueOnce({ ok: true, json: async () => [] })
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ approvals: [], leaves: [] }) })
-      .mockResolvedValueOnce({ ok: true, json: async () => [{ _id: 'sd1', name: 'Sub A', department: { _id: 'd1' } }] })
-      .mockResolvedValueOnce({ ok: true, json: async () => [{ _id: 'e1', name: 'E1', department: 'd1', subDepartment: 'sd1' }] })
-      .mockResolvedValueOnce({ ok: true, json: async () => [] })
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ approvals: [], leaves: [] }) })
-      .mockResolvedValueOnce({ ok: true, json: async () => [{ _id: 'e1', name: 'E1', department: 'd1', subDepartment: 'sd1' }] })
-      .mockResolvedValueOnce({ ok: true, json: async () => [] })
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ approvals: [], leaves: [] }) })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ _id: 'sch1', employee: 'e1', shiftId: 's1', date: `${month}-01` })
-      })
-
-    localStorage.setItem('employeeId', 's1')
+    apiFetch.mockResolvedValue({ ok: true, json: async () => [] })
     const wrapper = mountSchedule()
     await flush()
-
-    wrapper.vm.selectedDepartment = 'd1'
-    await wrapper.vm.onDepartmentChange()
-    wrapper.vm.selectedSubDepartment = 'sd1'
-    await wrapper.vm.onSubDepartmentChange()
-    wrapper.vm.scheduleMap = { e1: { 1: { shiftId: '', department: 'd1', subDepartment: 'sd1' } } }
-    await wrapper.vm.onSelect('e1', 1, 's1')
-
-    const employeeUrls = apiFetch.mock.calls
-      .map(([url]) => url)
-      .filter(url => url.startsWith('/api/employees?') && url.includes('department='))
-    expect(employeeUrls).toEqual([
-      '/api/employees?supervisor=s1&department=d1&subDepartment=sd1',
-      '/api/employees?supervisor=s1&department=d1&subDepartment=sd1',
-      '/api/employees?supervisor=s1&department=d1&subDepartment=sd1'
-    ])
-    expect(apiFetch).toHaveBeenCalledWith('/api/employees?supervisor=s1')
-    expect(apiFetch).toHaveBeenLastCalledWith(
-      '/api/schedules',
-      expect.objectContaining({
-        body: JSON.stringify({
-          employee: 'e1',
-          date: `${month}-01`,
-          shiftId: 's1',
-          department: 'd1',
-          subDepartment: 'sd1'
-        })
-      })
-    )
-    expect(wrapper.vm.scheduleMap.e1[1].shiftId).toBe('s1')
-  })
-
-  it('saves all schedules with selected department', async () => {
-    const month = dayjs().format('YYYY-MM')
-    apiFetch
-      .mockResolvedValueOnce({ ok: true, json: async () => [] })
-      .mockResolvedValueOnce({ ok: true, json: async () => [] })
-      .mockResolvedValueOnce({ ok: true, json: async () => [{ _id: 'd1', name: 'Dept A' }] })
-      .mockResolvedValueOnce({ ok: true, json: async () => [{ _id: 'sd1', name: 'Sub A', department: 'd1' }] })
-      .mockResolvedValueOnce({ ok: true, json: async () => [{ _id: 'e1', name: 'E1', department: 'd1', subDepartment: 'sd1' }] })
-      .mockResolvedValueOnce({ ok: true, json: async () => [] })
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ approvals: [], leaves: [] }) })
-      .mockResolvedValueOnce({ ok: true, json: async () => [{ _id: 'sch1' }] })
-
-    const wrapper = mountSchedule()
-    await flush()
+    wrapper.vm.employees = [
+      { _id: 'e1', departmentId: 'd1', subDepartmentId: 'sd1', department: '', subDepartment: '' }
+    ]
     wrapper.vm.scheduleMap = {
       e1: {
-        1: { shiftId: 's1', department: 'd2', subDepartment: 'sd2' }
+        1: { shiftId: '', department: 'd1', subDepartment: 'sd1' }
       }
     }
-    await wrapper.vm.saveAll()
+    await wrapper.vm.$nextTick()
+    wrapper.vm.toggleCell('e1', 1, true)
+    wrapper.vm.batchShiftId = 's1'
+    wrapper.vm.batchDepartment = 'd2'
+    wrapper.vm.batchSubDepartment = 'sd2'
+    const inserted = [
+      {
+        _id: 'sch1',
+        employee: 'e1',
+        date: `${month}-01`,
+        shiftId: 's1',
+        department: 'd2',
+        subDepartment: 'sd2'
+      }
+    ]
+    apiFetch.mockResolvedValueOnce({ ok: true, json: async () => inserted })
+    await wrapper.vm.applyBatch()
     expect(apiFetch).toHaveBeenLastCalledWith(
       '/api/schedules/batch',
       expect.objectContaining({
@@ -648,54 +587,97 @@ describe('Schedule.vue', () => {
         })
       })
     )
+    expect(wrapper.vm.scheduleMap.e1[1]).toEqual(
+      expect.objectContaining({ id: 'sch1', shiftId: 's1', department: 'd2', subDepartment: 'sd2' })
+    )
   })
 
-  it('warns and aborts save when missing shifts exist', async () => {
-    apiFetch
-      .mockResolvedValueOnce({ ok: true, json: async () => [] })
-      .mockResolvedValueOnce({ ok: true, json: async () => [] })
-      .mockResolvedValueOnce({ ok: true, json: async () => [] })
-      .mockResolvedValueOnce({ ok: true, json: async () => [] })
-      .mockResolvedValueOnce({ ok: true, json: async () => [] })
-      .mockResolvedValueOnce({ ok: true, json: async () => [] })
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ approvals: [], leaves: [] }) })
-
+  it('updates existing schedules via batch apply', async () => {
+    const month = dayjs().format('YYYY-MM')
+    apiFetch.mockResolvedValue({ ok: true, json: async () => [] })
     const wrapper = mountSchedule()
     await flush()
-    wrapper.vm.scheduleMap = {
-      e1: { 1: { shiftId: '', department: '', subDepartment: '' } }
-    }
-    await wrapper.vm.saveAll()
-    expect(ElMessage.warning).toHaveBeenCalled()
-    expect(apiFetch).not.toHaveBeenCalledWith('/api/schedules/batch', expect.anything())
-  })
-
-  it('disables save button and informs when nothing to save', async () => {
-    apiFetch
-      .mockResolvedValueOnce({ ok: true, json: async () => [] })
-      .mockResolvedValueOnce({ ok: true, json: async () => [] })
-      .mockResolvedValueOnce({ ok: true, json: async () => [] })
-      .mockResolvedValueOnce({ ok: true, json: async () => [] })
-      .mockResolvedValueOnce({ ok: true, json: async () => [] })
-      .mockResolvedValueOnce({ ok: true, json: async () => [] })
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ approvals: [], leaves: [] }) })
-
-    const wrapper = mountSchedule()
-    await flush()
+    wrapper.vm.employees = [
+      { _id: 'e1', departmentId: 'd1', subDepartmentId: 'sd1', department: '', subDepartment: '' }
+    ]
     wrapper.vm.scheduleMap = {
       e1: {
-        1: { id: 'existing', shiftId: 's1', department: 'd1', subDepartment: 'sd1' }
+        1: { id: 'sch1', shiftId: 's0', department: 'd1', subDepartment: 'sd1' }
       }
     }
     await wrapper.vm.$nextTick()
-    expect(wrapper.vm.isSaveDisabled).toBe(true)
-    const button = wrapper.find('[data-test="save-all-button"]')
-    expect(button.attributes('disabled')).toBeDefined()
-    await wrapper.vm.saveAll()
-    expect(ElMessage.info).toHaveBeenCalledWith('目前沒有可儲存的排班')
-    expect(apiFetch).not.toHaveBeenCalledWith('/api/schedules/batch', expect.anything())
+    wrapper.vm.toggleCell('e1', 1, true)
+    wrapper.vm.batchShiftId = 's2'
+    apiFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        _id: 'sch1',
+        employee: 'e1',
+        date: `${month}-01`,
+        shiftId: 's2',
+        department: 'd1',
+        subDepartment: 'sd1'
+      })
+    })
+    await wrapper.vm.applyBatch()
+    const lastCall = apiFetch.mock.calls[apiFetch.mock.calls.length - 1]
+    expect(lastCall[0]).toBe('/api/schedules/sch1')
+    expect(JSON.parse(lastCall[1].body)).toEqual({
+      employee: 'e1',
+      day: 1,
+      date: `${month}-01`,
+      shiftId: 's2',
+      department: 'd1',
+      subDepartment: 'sd1'
+    })
+    expect(wrapper.vm.scheduleMap.e1[1].shiftId).toBe('s2')
   })
 
+  it('skips leave dates during batch apply selections', async () => {
+    const month = dayjs().format('YYYY-MM')
+    apiFetch.mockResolvedValue({ ok: true, json: async () => [] })
+    const wrapper = mountSchedule()
+    await flush()
+    wrapper.vm.employees = [
+      { _id: 'e1', departmentId: 'd1', subDepartmentId: 'sd1', department: '', subDepartment: '' }
+    ]
+    wrapper.vm.scheduleMap = {
+      e1: {
+        1: { shiftId: '', department: 'd1', subDepartment: 'sd1' },
+        2: { shiftId: '', department: 'd1', subDepartment: 'sd1', leave: { type: 'annual' } }
+      }
+    }
+    await wrapper.vm.$nextTick()
+    wrapper.vm.selectAllEmployees()
+    wrapper.vm.selectAllDays()
+    wrapper.vm.batchShiftId = 's1'
+    apiFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => [
+        {
+          _id: 'sch1',
+          employee: 'e1',
+          date: `${month}-01`,
+          shiftId: 's1',
+          department: 'd1',
+          subDepartment: 'sd1'
+        }
+      ]
+    })
+    await wrapper.vm.applyBatch()
+    const batchCall = apiFetch.mock.calls.find(([url]) => url === '/api/schedules/batch')
+    expect(JSON.parse(batchCall[1].body)).toEqual({
+      schedules: [
+        {
+          employee: 'e1',
+          date: `${month}-01`,
+          shiftId: 's1',
+          department: 'd1',
+          subDepartment: 'sd1'
+        }
+      ]
+    })
+  })
   it('stores data and navigates when previewing month', async () => {
     apiFetch
       .mockResolvedValueOnce({ ok: true, json: async () => [] })

@@ -72,6 +72,49 @@ describe('createSchedulesBatch validations', () => {
     expect(status).toHaveBeenCalledWith(400);
     expect(json).toHaveBeenCalledWith({ error: 'leave conflict' });
   });
+
+  it('creates multiple schedules when payload is valid', async () => {
+    mockShiftSchedule.findOne.mockResolvedValue(null);
+    mockApprovalRequest.findOne.mockResolvedValue(null);
+    const insertedDocs = [
+      { _id: '1', employee: 'e1', date: new Date('2023-01-01'), shiftId: 's1', department: 'd1', subDepartment: 'sd1' },
+      { _id: '2', employee: 'e2', date: new Date('2023-01-02'), shiftId: 's2', department: 'd2', subDepartment: 'sd2' }
+    ];
+    mockShiftSchedule.insertMany.mockResolvedValue(insertedDocs);
+    const req = {
+      body: {
+        schedules: [
+          { employee: 'e1', date: '2023-01-01', shiftId: 's1', department: 'd1', subDepartment: 'sd1' },
+          { employee: 'e2', date: '2023-01-02', shiftId: 's2', department: 'd2', subDepartment: 'sd2' }
+        ]
+      }
+    };
+    const status = jest.fn().mockReturnThis();
+    const json = jest.fn();
+    const res = { status, json };
+    await createSchedulesBatch(req, res);
+    expect(mockShiftSchedule.insertMany).toHaveBeenCalledWith(
+      [
+        {
+          employee: 'e1',
+          date: new Date('2023-01-01'),
+          shiftId: 's1',
+          department: 'd1',
+          subDepartment: 'sd1'
+        },
+        {
+          employee: 'e2',
+          date: new Date('2023-01-02'),
+          shiftId: 's2',
+          department: 'd2',
+          subDepartment: 'sd2'
+        }
+      ],
+      { ordered: false }
+    );
+    expect(status).toHaveBeenCalledWith(201);
+    expect(json).toHaveBeenCalledWith(insertedDocs);
+  });
 });
 
 describe('updateSchedule validations', () => {
