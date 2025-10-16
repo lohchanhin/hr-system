@@ -2262,6 +2262,16 @@ function subDepartmentLabel(id) {
   return sd ? sd.name : id
 }
 
+function resolveSubDepartmentId(item = {}) {
+  return (
+    item?._id ??
+    item?.id ??
+    item?.value ??
+    item?.code ??
+    (typeof item === 'string' ? item : '')
+  )
+}
+
 function handle401(res) {
   if (res.status === 401) {
     ElMessage.error('登入逾時，請重新登入')
@@ -2837,13 +2847,32 @@ watch(bulkImportDialogVisible, visible => {
 
 watch(
   () => employeeForm.value.department,
-  async dept => {
-    if (dept) {
-      await fetchSubDepartments(dept)
-    } else {
+  async (dept, prevDept) => {
+    const previousSubDepartment = employeeForm.value.subDepartment
+
+    if (!dept) {
       subDepartmentList.value = []
+      if (employeeForm.value.subDepartment) {
+        employeeForm.value.subDepartment = ''
+      }
+      return
     }
-    employeeForm.value.subDepartment = ''
+
+    await fetchSubDepartments(dept)
+
+    if (employeeForm.value.department !== dept) return
+
+    const isSelectionUnchanged = employeeForm.value.subDepartment === previousSubDepartment
+    const hasPreviousSelection = Boolean(previousSubDepartment)
+    const isValidInNewDepartment =
+      hasPreviousSelection &&
+      subDepartmentList.value.some(
+        sub => resolveSubDepartmentId(sub) === previousSubDepartment
+      )
+
+    if (!isValidInNewDepartment && dept !== prevDept && isSelectionUnchanged) {
+      employeeForm.value.subDepartment = ''
+    }
   }
 )
 
