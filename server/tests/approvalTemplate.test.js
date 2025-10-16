@@ -3,11 +3,15 @@ import { jest } from '@jest/globals'
 const mockApprovalWorkflow = { findOneAndUpdate: jest.fn() }
 
 let setWorkflow
+let getSignRoles
+let getSignLevels
 
 beforeAll(async () => {
   await jest.unstable_mockModule('../src/models/approval_workflow.js', () => ({ default: mockApprovalWorkflow }))
   const mod = await import('../src/controllers/approvalTemplateController.js')
   setWorkflow = mod.setWorkflow
+  getSignRoles = mod.getSignRoles
+  getSignLevels = mod.getSignLevels
 })
 
 beforeEach(() => {
@@ -49,5 +53,29 @@ describe('setWorkflow', () => {
       { new: true, upsert: true }
     )
     expect(res.json).toHaveBeenCalledWith({ steps: [], policy: newPolicy })
+  })
+})
+
+describe('sign dictionaries', () => {
+  it('returns sign roles list', async () => {
+    const res = makeRes()
+    await getSignRoles({}, res)
+    expect(res.json).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({ value: 'R001', label: '填報' }),
+        expect.objectContaining({ value: 'R007', label: '人資覆核' }),
+      ])
+    )
+  })
+
+  it('returns sign levels list', async () => {
+    const res = makeRes()
+    await getSignLevels({}, res)
+    expect(res.json).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({ value: 'U001', label: 'L1' }),
+        expect.objectContaining({ value: 'U005', label: 'L5' }),
+      ])
+    )
   })
 })

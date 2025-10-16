@@ -6,7 +6,7 @@ const stepSchema = new Schema(
     step_order: { type: Number, required: true }, // 第幾關（從 1 起跳）
     approver_type: {                               // 審核對象類型
       type: String,
-      enum: ['manager','tag','user','role','department','org','group'],
+      enum: ['manager','tag','user','role','level','department','org','group'],
       required: true,
     },
     approver_value: { type: Schema.Types.Mixed },  // 例如 tag 名稱 / userId 陣列...

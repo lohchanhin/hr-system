@@ -2,7 +2,7 @@ import { Router } from 'express'
 import {
   listFormTemplates, createFormTemplate, getFormTemplate, updateFormTemplate, deleteFormTemplate,
   addField, updateField, deleteField, listFields,
-  getWorkflow, setWorkflow,
+  getWorkflow, setWorkflow, getSignRoles, getSignLevels,
 } from '../controllers/approvalTemplateController.js'
 
 import {
@@ -29,6 +29,8 @@ router.delete('/forms/:formId/fields/:fieldId', authorizeRoles('admin'), deleteF
 // Workflow
 router.get('/forms/:formId/workflow', authorizeRoles('employee', 'supervisor', 'admin'), getWorkflow)
 router.put('/forms/:formId/workflow', authorizeRoles('admin'), setWorkflow)
+router.get('/sign-roles', authorizeRoles('employee', 'supervisor', 'admin'), getSignRoles)
+router.get('/sign-levels', authorizeRoles('employee', 'supervisor', 'admin'), getSignLevels)
 
 // Requests
 router.post('/', authorizeRoles('employee', 'supervisor', 'admin'), createApprovalRequest)

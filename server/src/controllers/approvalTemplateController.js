@@ -2,6 +2,24 @@ import FormTemplate from '../models/form_template.js'
 import FormField from '../models/form_field.js'
 import ApprovalWorkflow from '../models/approval_workflow.js'
 
+const SIGN_ROLE_OPTIONS = [
+  { value: 'R001', label: '填報', description: '提出申請與初始資料填寫' },
+  { value: 'R002', label: '覆核', description: '確認申請內容與佐證完整性' },
+  { value: 'R003', label: '審核', description: '評估申請是否符合政策與規範' },
+  { value: 'R004', label: '核定', description: '做出最終核准或駁回決策' },
+  { value: 'R005', label: '知會', description: '接收流程進度並保留紀錄' },
+  { value: 'R006', label: '財務覆核', description: '檢視成本預算與財務影響' },
+  { value: 'R007', label: '人資覆核', description: '確保人事政策與法規符合' },
+]
+
+const SIGN_LEVEL_OPTIONS = [
+  { value: 'U001', label: 'L1', description: '單位承辦或第一層主管' },
+  { value: 'U002', label: 'L2', description: '部門主管或組長' },
+  { value: 'U003', label: 'L3', description: '處室主管或經理' },
+  { value: 'U004', label: 'L4', description: '高階主管或副執行長' },
+  { value: 'U005', label: 'L5', description: '執行長 / 院長 / 董事會' },
+]
+
 /* ---------------------- FormTemplate CRUD ---------------------- */
 export async function listFormTemplates(req, res) {
   try {
@@ -148,4 +166,12 @@ export async function setWorkflow(req, res) {
   } catch (e) {
     res.status(400).json({ error: e.message })
   }
+}
+
+export async function getSignRoles(req, res) {
+  res.json(SIGN_ROLE_OPTIONS)
+}
+
+export async function getSignLevels(req, res) {
+  res.json(SIGN_LEVEL_OPTIONS)
 }

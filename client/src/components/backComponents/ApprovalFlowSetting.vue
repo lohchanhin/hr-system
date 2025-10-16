@@ -105,28 +105,87 @@
               </el-table-column>
               <el-table-column label="簽核類型" width="150">
                 <template #default="{ row }">
-                  <el-select v-model="row.approver_type" placeholder="選擇類型" style="width:140px">
-                    <el-option v-for="t in APPROVER_TYPES" :key="t" :label="t" :value="t" />
+                  <el-select
+                    v-model="row.approver_type"
+                    placeholder="選擇類型"
+                    style="width:140px"
+                    @change="handleApproverTypeChange(row)"
+                  >
+                    <el-option v-for="t in APPROVER_TYPES" :key="t.value" :label="t.label" :value="t.value" />
                   </el-select>
                 </template>
               </el-table-column>
               <el-table-column label="簽核對象" width="200">
                 <template #default="{ row }">
-                  <el-select v-if="row.approver_type==='user'" v-model="row.approver_value" placeholder="選擇員工" multiple>
-                    <el-option v-for="e in employeeOptions" :key="e.id" :label="e.name" :value="e.id" />
+                  <el-select
+                    v-if="row.approver_type==='user'"
+                    v-model="row.approver_value"
+                    placeholder="選擇員工"
+                    multiple
+                    filterable
+                  >
+                    <el-option v-for="e in userApproverOptions" :key="e.value" :label="e.label" :value="e.value" />
                   </el-select>
-                  <el-select v-else-if="row.approver_type==='role'" v-model="row.approver_value" placeholder="選擇角色">
-                    <el-option v-for="r in roleOptions" :key="r.id" :label="r.name" :value="r.id" />
+                  <el-select
+                    v-else-if="row.approver_type==='manager'"
+                    v-model="row.approver_value"
+                    placeholder="選擇主管"
+                    filterable
+                    clearable
+                  >
+                    <el-option v-for="m in managerApproverOptions" :key="m.value" :label="m.label" :value="m.value" />
                   </el-select>
-                  <el-input v-else v-model="row.approver_value" placeholder="userId/標籤/角色..." />
+                  <el-select
+                    v-else-if="row.approver_type==='tag'"
+                    v-model="row.approver_value"
+                    placeholder="選擇標籤"
+                    filterable
+                    clearable
+                  >
+                    <el-option v-for="tag in tagOptions" :key="tag.value" :label="tag.label" :value="tag.value" />
+                  </el-select>
+                  <el-select
+                    v-else-if="row.approver_type==='role'"
+                    v-model="row.approver_value"
+                    placeholder="選擇角色"
+                    filterable
+                    clearable
+                  >
+                    <el-option v-for="r in signRoleOptions" :key="r.value" :label="r.label" :value="r.value" />
+                  </el-select>
+                  <el-select
+                    v-else-if="row.approver_type==='level'"
+                    v-model="row.approver_value"
+                    placeholder="選擇層級"
+                    clearable
+                  >
+                    <el-option v-for="lvl in signLevelOptions" :key="lvl.value" :label="lvl.label" :value="lvl.value" />
+                  </el-select>
+                  <el-select
+                    v-else-if="row.approver_type==='department'"
+                    v-model="row.approver_value"
+                    placeholder="選擇部門"
+                    filterable
+                    clearable
+                  >
+                    <el-option v-for="dept in departmentOptions" :key="dept.value" :label="dept.label" :value="dept.value" />
+                  </el-select>
+                  <el-select
+                    v-else-if="row.approver_type==='org'"
+                    v-model="row.approver_value"
+                    placeholder="選擇機構"
+                    filterable
+                    clearable
+                  >
+                    <el-option v-for="org in organizationOptions" :key="org.value" :label="org.label" :value="org.value" />
+                  </el-select>
+                  <el-input v-else v-model="row.approver_value" placeholder="請輸入簽核對象" />
                 </template>
               </el-table-column>
               <el-table-column label="範圍" width="120">
                 <template #default="{ row }">
-                  <el-select v-model="row.scope_type" style="width:110px">
-                    <el-option label="none" value="none" />
-                    <el-option label="dept" value="dept" />
-                    <el-option label="org" value="org" />
+                  <el-select v-model="row.scope_type" style="width:110px" placeholder="選擇範圍">
+                    <el-option v-for="opt in SCOPE_OPTIONS" :key="opt.value" :label="opt.label" :value="opt.value" />
                   </el-select>
                 </template>
               </el-table-column>
@@ -224,7 +283,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, watch } from 'vue'
+import { ref, onMounted, watch, computed } from 'vue'
 import { apiFetch } from '../../api'  // 你專案現有封裝
 import {
   normalizeCustomFieldOptions,
@@ -238,12 +297,28 @@ const API = {
   fields: (formId) => `/api/approvals/forms/${formId}/fields`,
   field: (formId, fieldId) => `/api/approvals/forms/${formId}/fields/${fieldId}`,
   employees: '/api/employees/options',
-  roles: '/api/roles',
+  signRoles: '/api/approvals/sign-roles',
+  signLevels: '/api/approvals/sign-levels',
   otherControlSettings: '/api/other-control-settings',
 }
 
 const CATEGORIES = ['人事類','總務類','請假類','其他']
-const APPROVER_TYPES = ['manager','tag','user','role','department','org','group']
+const APPROVER_TYPES = [
+  { value: 'manager', label: '主管' },
+  { value: 'tag', label: '標籤' },
+  { value: 'user', label: '員工' },
+  { value: 'role', label: '角色' },
+  { value: 'level', label: '層級' },
+  { value: 'department', label: '部門' },
+  { value: 'org', label: '機構' },
+  { value: 'group', label: '群組' },
+]
+const SCOPE_OPTIONS = [
+  { value: 'none', label: '不限' },
+  { value: 'dept', label: '部門' },
+  { value: 'org', label: '機構' },
+  { value: 'group', label: '群組' },
+]
 
 /* Tabs / 基本狀態 */
 const activeTab = ref('commonRule')
@@ -268,7 +343,55 @@ const formDialog = ref({ _id: '', name: '', category: '其他', is_active: true,
 const workflowDialogVisible = ref(false)
 const workflowSteps = ref([])
 const employeeOptions = ref([])
-const roleOptions = ref([])
+const signRoleOptions = ref([])
+const signLevelOptions = ref([])
+
+const userApproverOptions = computed(() =>
+  employeeOptions.value.map((emp) => ({
+    value: emp.id,
+    label: emp.displayName || emp.name,
+  }))
+)
+
+const managerApproverOptions = computed(() =>
+  employeeOptions.value
+    .filter((emp) => emp.role === 'supervisor')
+    .map((emp) => ({ value: emp.id, label: emp.displayName || emp.name }))
+)
+
+const tagOptions = computed(() => {
+  const set = new Set()
+  employeeOptions.value.forEach((emp) => {
+    const tags = Array.isArray(emp.signTags) ? emp.signTags : []
+    tags.forEach((tag) => {
+      if (tag) set.add(tag)
+    })
+  })
+  return Array.from(set)
+    .sort((a, b) => a.localeCompare(b, 'zh-Hant'))
+    .map((tag) => ({ value: tag, label: tag }))
+})
+
+const departmentOptions = computed(() => {
+  const map = new Map()
+  employeeOptions.value.forEach((emp) => {
+    const dept = emp.department
+    if (dept?.id) {
+      const label = dept.name || dept.id
+      map.set(dept.id, { value: dept.id, label })
+    }
+  })
+  return Array.from(map.values()).sort((a, b) => a.label.localeCompare(b.label, 'zh-Hant'))
+})
+
+const organizationOptions = computed(() => {
+  const map = new Map()
+  employeeOptions.value.forEach((emp) => {
+    const org = emp.organization
+    if (org) map.set(org, { value: org, label: org })
+  })
+  return Array.from(map.values()).sort((a, b) => a.label.localeCompare(b.label, 'zh-Hant'))
+})
 
 const customFieldOptions = ref([])
 const selectedCustomFieldKey = ref('')
@@ -387,16 +510,148 @@ async function loadForms() {
 
 async function loadEmployeeOptions() {
   const res = await apiFetch(API.employees)
-  if (res.ok) {
-    const list = await res.json()
-    employeeOptions.value = Array.isArray(list) ? list.map((e) => ({ id: e.id, name: e.name })) : []
+  if (!res.ok) {
+    employeeOptions.value = []
+    return
   }
+  const list = await res.json()
+  employeeOptions.value = Array.isArray(list)
+    ? list
+        .filter((item) => item && item.id)
+        .map((e) => {
+          const dept = e.department && typeof e.department === 'object'
+            ? { id: e.department.id || e.department._id || e.department, name: e.department.name || '' }
+            : null
+          return {
+            id: e.id,
+            name: e.name,
+            username: e.username,
+            signRole: e.signRole ?? '',
+            signLevel: e.signLevel ?? '',
+            signTags: Array.isArray(e.signTags) ? e.signTags : [],
+            organization: e.organization ?? '',
+            department: dept,
+            role: e.role ?? '',
+            displayName: e.displayName || (e.username ? `${e.name}（${e.username}）` : e.name),
+          }
+        })
+    : []
 }
 
-async function loadRoleOptions() {
-  const res = await apiFetch(API.roles)
-  if (res.ok) roleOptions.value = await res.json()
+async function loadSignRoleOptions() {
+  const res = await apiFetch(API.signRoles)
+  signRoleOptions.value = res.ok ? (await res.json()) ?? [] : []
 }
+
+async function loadSignLevelOptions() {
+  const res = await apiFetch(API.signLevels)
+  signLevelOptions.value = res.ok ? (await res.json()) ?? [] : []
+}
+
+function toValueString(val) {
+  if (val == null) return ''
+  if (typeof val === 'string') return val
+  if (typeof val === 'number') return String(val)
+  if (typeof val === 'object') {
+    if (val._id != null) return toValueString(val._id)
+    if (val.id != null) return toValueString(val.id)
+  }
+  return String(val)
+}
+
+function pickFirstValidValue(values, validSet, allowFallback = true) {
+  const allowAny = allowFallback && (!validSet || validSet.size === 0)
+  for (const raw of values) {
+    const str = toValueString(raw)
+    if (!str) continue
+    if (allowAny || (validSet && validSet.has(str))) return str
+  }
+  return allowAny && values.length ? toValueString(values[0]) : ''
+}
+
+function normalizeStep(step) {
+  const normalized = { ...step }
+  normalized.approver_type = step.approver_type || 'user'
+  normalized.scope_type = step.scope_type || 'none'
+  normalized.is_required = step.is_required ?? true
+  normalized.all_must_approve = step.all_must_approve ?? true
+  normalized.can_return = step.can_return ?? true
+
+  const values = Array.isArray(step.approver_value)
+    ? step.approver_value
+    : step.approver_value != null
+      ? [step.approver_value]
+      : []
+
+  switch (normalized.approver_type) {
+    case 'user': {
+      const validIds = new Set(employeeOptions.value.map((emp) => emp.id))
+      const allowAny = employeeOptions.value.length === 0
+      normalized.approver_value = values
+        .map((val) => toValueString(val))
+        .filter((val) => val && (allowAny || validIds.has(val)))
+      break
+    }
+    case 'manager': {
+      const validIds = new Set(managerApproverOptions.value.map((opt) => opt.value))
+      const allowAny = employeeOptions.value.length === 0
+      normalized.approver_value = pickFirstValidValue(values, validIds, allowAny)
+      break
+    }
+    case 'tag': {
+      const validTags = new Set(tagOptions.value.map((opt) => opt.value))
+      const allowAny = employeeOptions.value.length === 0
+      normalized.approver_value = pickFirstValidValue(values, validTags, allowAny)
+      break
+    }
+    case 'role': {
+      const validRoles = new Set(signRoleOptions.value.map((opt) => opt.value))
+      const allowAny = signRoleOptions.value.length === 0
+      normalized.approver_value = pickFirstValidValue(values, validRoles, allowAny)
+      break
+    }
+    case 'level': {
+      const validLevels = new Set(signLevelOptions.value.map((opt) => opt.value))
+      const allowAny = signLevelOptions.value.length === 0
+      normalized.approver_value = pickFirstValidValue(values, validLevels, allowAny)
+      break
+    }
+    case 'department': {
+      const validDepts = new Set(departmentOptions.value.map((opt) => opt.value))
+      const allowAny = employeeOptions.value.length === 0
+      normalized.approver_value = pickFirstValidValue(values, validDepts, allowAny)
+      break
+    }
+    case 'org': {
+      const validOrgs = new Set(organizationOptions.value.map((opt) => opt.value))
+      const allowAny = employeeOptions.value.length === 0
+      normalized.approver_value = pickFirstValidValue(values, validOrgs, allowAny)
+      break
+    }
+    default: {
+      const first = values.length ? values[0] : ''
+      normalized.approver_value = toValueString(first)
+    }
+  }
+
+  return normalized
+}
+
+function normalizeWorkflowSteps(steps = []) {
+  return steps.map((step, idx) => {
+    const normalized = normalizeStep(step)
+    normalized.step_order = step.step_order ?? idx + 1
+    return normalized
+  })
+}
+
+function handleApproverTypeChange(step) {
+  Object.assign(step, normalizeStep(step))
+}
+
+watch([employeeOptions, signRoleOptions, signLevelOptions], () => {
+  workflowSteps.value = normalizeWorkflowSteps(workflowSteps.value)
+})
 
 async function loadCustomFieldOptions() {
   const res = await apiFetch(API.otherControlSettings)
@@ -524,10 +779,10 @@ async function openWorkflowDialog(row) {
   await loadWorkflow()
   const res = await apiFetch(API.workflow(selectedFormId.value))
   const wf = res.ok ? await res.json() : {}
-  workflowSteps.value = (wf?.steps || []).map((s) => ({ ...s })) // 深拷貝
+  workflowSteps.value = normalizeWorkflowSteps(wf?.steps || [])
 }
 function addStep() {
-  workflowSteps.value.push({
+  const step = normalizeStep({
     step_order: workflowSteps.value.length + 1,
     approver_type: 'user',
     approver_value: [],
@@ -536,14 +791,17 @@ function addStep() {
     all_must_approve: true,
     can_return: true,
   })
+  workflowSteps.value.push(step)
 }
 function removeStep(i) {
   workflowSteps.value.splice(i, 1)
-  workflowSteps.value = workflowSteps.value.map((s, idx) => ({ ...s, step_order: idx + 1 }))
+  workflowSteps.value = normalizeWorkflowSteps(workflowSteps.value)
 }
 async function saveWorkflow() {
+  const normalizedSteps = normalizeWorkflowSteps(workflowSteps.value)
+  workflowSteps.value = normalizedSteps
   const payload = {
-    steps: workflowSteps.value.map((s, idx) => ({ ...s, step_order: idx + 1 })),
+    steps: normalizedSteps.map((s, idx) => ({ ...s, step_order: idx + 1 })),
     policy: policyForm.value,
   }
   await apiFetch(API.workflow(selectedFormId.value), {
@@ -561,7 +819,7 @@ onMounted(async () => {
   selectedFormId.value = forms.value[0]?._id || ''
   if (selectedFormId.value) await loadWorkflow()
   await loadEmployeeOptions()
-  await loadRoleOptions()
+  await Promise.all([loadSignRoleOptions(), loadSignLevelOptions()])
 })
 </script>
 
