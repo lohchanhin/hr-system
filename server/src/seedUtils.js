@@ -16,6 +16,42 @@ import { getLeaveFieldIds, resetLeaveFieldCache } from './services/leaveFieldSer
 export const SEED_TEST_PASSWORD = 'password';
 
 const CITY_OPTIONS = ['台北市', '新北市', '桃園市', '台中市', '台南市', '高雄市'];
+const SIGN_ROLE_OPTIONS = [
+  { value: 'R001', label: '填報' },
+  { value: 'R002', label: '覆核' },
+  { value: 'R003', label: '審核' },
+  { value: 'R004', label: '核定' },
+  { value: 'R005', label: '知會' },
+  { value: 'R006', label: '財務覆核' },
+  { value: 'R007', label: '人資覆核' },
+];
+const SIGN_LEVEL_OPTIONS = [
+  { value: 'U001', label: 'L1' },
+  { value: 'U002', label: 'L2' },
+  { value: 'U003', label: 'L3' },
+  { value: 'U004', label: 'L4' },
+  { value: 'U005', label: 'L5' },
+];
+export const SEED_SIGN_CONFIG = {
+  supervisor: {
+    signRole: SIGN_ROLE_OPTIONS.find((option) => option.value === 'R003')?.value ?? 'R003',
+    signLevel: SIGN_LEVEL_OPTIONS.find((option) => option.value === 'U003')?.value ?? 'U003',
+    permissionGrade:
+      SIGN_LEVEL_OPTIONS.find((option) => option.value === 'U003')?.label ?? 'L3',
+  },
+  employee: {
+    signRole: SIGN_ROLE_OPTIONS.find((option) => option.value === 'R001')?.value ?? 'R001',
+    signLevel: SIGN_LEVEL_OPTIONS.find((option) => option.value === 'U001')?.value ?? 'U001',
+    permissionGrade:
+      SIGN_LEVEL_OPTIONS.find((option) => option.value === 'U001')?.label ?? 'L1',
+  },
+  admin: {
+    signRole: SIGN_ROLE_OPTIONS.find((option) => option.value === 'R004')?.value ?? 'R004',
+    signLevel: SIGN_LEVEL_OPTIONS.find((option) => option.value === 'U005')?.value ?? 'U005',
+    permissionGrade:
+      SIGN_LEVEL_OPTIONS.find((option) => option.value === 'U005')?.label ?? 'L5',
+  },
+};
 const PRINCIPAL_NAMES = ['林經理', '張主管', '王負責人', '李主任', '陳董事'];
 const PHONE_PREFIXES = ['02', '03', '04', '05', '06', '07'];
 const EMPLOYEE_TITLES = ['專員', '助理', '資深專員', '專案企劃', '業務代表'];
@@ -422,12 +458,16 @@ export async function seedTestUsers() {
     const assignment = takeAssignment(hierarchy, assignmentPool);
     const usernameSeed = generateUniqueValue(config.prefix, usedUsernames).toLowerCase();
     const emailSeed = generateUniqueValue(`${config.prefix}-mail`, usedEmails).toLowerCase();
+    const supervisorSignConfig = SEED_SIGN_CONFIG.supervisor;
     const supervisor = await Employee.create({
       name: config.name,
       email: `${emailSeed}@example.com`,
       username: usernameSeed,
       password: SEED_TEST_PASSWORD,
       role: 'supervisor',
+      signRole: supervisorSignConfig.signRole,
+      signLevel: supervisorSignConfig.signLevel,
+      permissionGrade: supervisorSignConfig.permissionGrade,
       organization: toStringId(assignment.organization._id),
       department: assignment.department._id,
       subDepartment: assignment.subDepartment._id,
@@ -445,12 +485,16 @@ export async function seedTestUsers() {
     const usernameSeed = generateUniqueValue('employee', usedUsernames).toLowerCase();
     const emailSeed = generateUniqueValue('employee-mail', usedEmails).toLowerCase();
     const supervisor = supervisors[i % supervisors.length];
+    const employeeSignConfig = SEED_SIGN_CONFIG.employee;
     const employee = await Employee.create({
       name: EMPLOYEE_NAMES[i % EMPLOYEE_NAMES.length],
       email: `${emailSeed}@example.com`,
       username: usernameSeed,
       password: SEED_TEST_PASSWORD,
       role: 'employee',
+      signRole: employeeSignConfig.signRole,
+      signLevel: employeeSignConfig.signLevel,
+      permissionGrade: employeeSignConfig.permissionGrade,
       organization: toStringId(assignment.organization._id),
       department: assignment.department._id,
       subDepartment: assignment.subDepartment._id,

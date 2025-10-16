@@ -129,6 +129,7 @@ const mockShiftSchedule = {
 
 let seedSampleData;
 let seedTestUsers;
+let seedSignConfig;
 
 beforeAll(async () => {
   process.env.PORT = '3000';
@@ -147,6 +148,7 @@ beforeAll(async () => {
   const module = await import('../src/seedUtils.js');
   seedSampleData = module.seedSampleData;
   seedTestUsers = module.seedTestUsers;
+  seedSignConfig = module.SEED_SIGN_CONFIG;
 });
 
 beforeEach(() => {
@@ -257,6 +259,9 @@ describe('seedTestUsers', () => {
     createdSupervisors.forEach((supervisor) => {
       expect(supervisor.role).toBe('supervisor');
       expect(supervisor.signTags.length).toBeGreaterThan(0);
+      expect(supervisor.signRole).toBe(seedSignConfig.supervisor.signRole);
+      expect(supervisor.signLevel).toBe(seedSignConfig.supervisor.signLevel);
+      expect(supervisor.permissionGrade).toBe(seedSignConfig.supervisor.permissionGrade);
     });
 
     const supervisorTags = new Set(createdSupervisors.flatMap((item) => item.signTags));
@@ -282,6 +287,9 @@ describe('seedTestUsers', () => {
       expect(employee.signTags).toEqual([]);
       expect(['正職員工', '試用期員工', '留職停薪']).toContain(employee.status);
       expect(supervisorIds.has(employee.supervisor)).toBe(true);
+      expect(employee.signRole).toBe(seedSignConfig.employee.signRole);
+      expect(employee.signLevel).toBe(seedSignConfig.employee.signLevel);
+      expect(employee.permissionGrade).toBe(seedSignConfig.employee.permissionGrade);
     });
 
     const usernames = mockEmployees.map((user) => user.username);

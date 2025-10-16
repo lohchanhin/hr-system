@@ -17,6 +17,7 @@ const {
   seedApprovalTemplates,
   seedApprovalRequests,
   SEED_TEST_PASSWORD,
+  SEED_SIGN_CONFIG,
 } = await import('../src/seedUtils.js');
 
 if (!process.env.MONGODB_URI) {
@@ -34,6 +35,15 @@ async function seed() {
   const { supervisors, employees } = await seedTestUsers();
 
   const accounts = [];
+  const pickSignProfile = (user) => {
+    const defaults = SEED_SIGN_CONFIG[user.role] ?? {};
+    return {
+      signRole: user.signRole ?? defaults.signRole ?? '',
+      signLevel: user.signLevel ?? defaults.signLevel ?? '',
+      permissionGrade: user.permissionGrade ?? defaults.permissionGrade ?? '',
+    };
+  };
+
   const formatUserAccount = (user) => ({
     username: user.username,
     password: SEED_TEST_PASSWORD,
@@ -41,6 +51,7 @@ async function seed() {
     title: user.title ?? '',
     role: user.role,
     signTags: Array.isArray(user.signTags) ? [...user.signTags] : [],
+    ...pickSignProfile(user),
   });
 
   supervisors.forEach((supervisor) => {
@@ -52,6 +63,7 @@ async function seed() {
   });
 
   if (process.env.DEFAULT_ADMIN_USERNAME) {
+    const adminProfile = pickSignProfile({ role: 'admin' });
     accounts.unshift({
       username: process.env.DEFAULT_ADMIN_USERNAME,
       password: process.env.DEFAULT_ADMIN_PASSWORD ?? SEED_TEST_PASSWORD,
@@ -59,6 +71,7 @@ async function seed() {
       title: process.env.DEFAULT_ADMIN_TITLE ?? '系統管理員',
       role: 'admin',
       signTags: [],
+      ...adminProfile,
     });
   }
 
