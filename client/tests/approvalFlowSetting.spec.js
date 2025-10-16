@@ -42,6 +42,12 @@ const signLevels = [
   { value: 'U001', label: 'L1' },
   { value: 'U002', label: 'L2' },
 ]
+const SUB_DEPT_ID_1 = '507f1f77bcf86cd799439011'
+const SUB_DEPT_ID_2 = '507f1f77bcf86cd799439012'
+const subDepartments = [
+  { _id: SUB_DEPT_ID_1, name: '人資一組', department: { name: '人資部' } },
+  { _id: SUB_DEPT_ID_2, name: '人資二組', department: { name: '人資部' } },
+]
 
 vi.mock('../src/api', () => ({ apiFetch: vi.fn() }))
 import { apiFetch } from '../src/api'
@@ -57,6 +63,7 @@ apiFetch.mockImplementation((url, opts) => {
   if (url === '/api/employees/options') return Promise.resolve({ ok: true, json: async () => employees })
   if (url === '/api/approvals/sign-roles') return Promise.resolve({ ok: true, json: async () => signRoles })
   if (url === '/api/approvals/sign-levels') return Promise.resolve({ ok: true, json: async () => signLevels })
+  if (url === '/api/sub-departments') return Promise.resolve({ ok: true, json: async () => subDepartments })
   if (url === '/api/other-control-settings') return Promise.resolve({ ok: true, json: async () => ({ customFields }) })
   if (url === '/api/approvals/forms/f1/workflow' && !opts) return Promise.resolve({ ok: true, json: async () => workflowData })
   if (url === '/api/approvals/forms/f1/workflow' && opts?.method === 'PUT') return Promise.resolve({ ok: true })
@@ -82,6 +89,7 @@ describe('ApprovalFlowSetting approver select', () => {
   it('loads options and saves selected id', async () => {
     const wrapper = mount(ApprovalFlowSetting, { global: { plugins: [ElementPlus] } })
     await flushPromises()
+    expect(apiFetch).toHaveBeenCalledWith('/api/sub-departments')
     expect(apiFetch).toHaveBeenCalledWith('/api/employees/options')
     expect(apiFetch).toHaveBeenCalledWith('/api/approvals/sign-roles')
     expect(apiFetch).toHaveBeenCalledWith('/api/approvals/sign-levels')
@@ -135,6 +143,25 @@ describe('ApprovalFlowSetting approver select', () => {
     expect(wrapper.vm.managerApproverOptions.map((opt) => opt.value)).toEqual(['APPLICANT_SUPERVISOR', 'e1'])
     expect(new Set(wrapper.vm.departmentOptions.map((opt) => opt.value))).toEqual(new Set(['d1', 'd2']))
     expect(new Set(wrapper.vm.organizationOptions.map((opt) => opt.value))).toEqual(new Set(['org1', 'org2']))
+    expect(wrapper.vm.groupOptions.map((opt) => opt.value)).toEqual([SUB_DEPT_ID_1, SUB_DEPT_ID_2])
+  })
+
+  it('normalizes group selections and saves ids', async () => {
+    const wrapper = mount(ApprovalFlowSetting, { global: { plugins: [ElementPlus] } })
+    await flushPromises()
+    await wrapper.vm.openWorkflowDialog({ _id: 'f1' })
+    await flushPromises()
+    const step = wrapper.vm.workflowSteps[0]
+    step.approver_type = 'group'
+    wrapper.vm.handleApproverTypeChange(step)
+    step.approver_value = [SUB_DEPT_ID_1, SUB_DEPT_ID_2]
+    wrapper.vm.selectedFormId = 'f1'
+    await wrapper.vm.saveWorkflow()
+    const call = apiFetch.mock.calls.filter(
+      (c) => c[0] === '/api/approvals/forms/f1/workflow' && c[1]?.method === 'PUT'
+    ).pop()
+    const body = JSON.parse(call[1].body)
+    expect(body.steps[0].approver_value).toEqual([SUB_DEPT_ID_1, SUB_DEPT_ID_2])
   })
 
   it('移除簽核對象時顯示錯誤並阻止送出', async () => {

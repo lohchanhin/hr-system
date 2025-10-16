@@ -179,6 +179,17 @@
                   >
                     <el-option v-for="org in organizationOptions" :key="org.value" :label="org.label" :value="org.value" />
                   </el-select>
+                  <el-select
+                    v-else-if="row.approver_type==='group'"
+                    v-model="row.approver_value"
+                    placeholder="選擇小單位"
+                    multiple
+                    filterable
+                    collapse-tags
+                    clearable
+                  >
+                    <el-option v-for="group in groupOptions" :key="group.value" :label="group.label" :value="group.value" />
+                  </el-select>
                   <el-input v-else v-model="row.approver_value" placeholder="請輸入簽核對象" />
                 </template>
               </el-table-column>
@@ -300,6 +311,7 @@ const API = {
   signRoles: '/api/approvals/sign-roles',
   signLevels: '/api/approvals/sign-levels',
   otherControlSettings: '/api/other-control-settings',
+  subDepartments: '/api/sub-departments',
 }
 
 const CATEGORIES = ['人事類','總務類','請假類','其他']
@@ -345,6 +357,7 @@ const workflowSteps = ref([])
 const employeeOptions = ref([])
 const signRoleOptions = ref([])
 const signLevelOptions = ref([])
+const groupOptions = ref([])
 
 const userApproverOptions = computed(() =>
   employeeOptions.value.map((emp) => ({
@@ -561,6 +574,32 @@ async function loadSignLevelOptions() {
   signLevelOptions.value = res.ok ? (await res.json()) ?? [] : []
 }
 
+async function loadGroupOptions() {
+  const res = await apiFetch(API.subDepartments)
+  if (!res.ok) {
+    groupOptions.value = []
+    return
+  }
+  const list = await res.json()
+  if (!Array.isArray(list)) {
+    groupOptions.value = []
+    return
+  }
+  const seen = new Set()
+  groupOptions.value = list
+    .map((item) => {
+      const id = toValueString(item?._id ?? item?.id ?? item?.value)
+      if (!id) return null
+      const deptName = typeof item?.department === 'object'
+        ? item.department?.name || item.department?.code || toValueString(item.department?._id)
+        : toValueString(item?.department)
+      const baseLabel = item?.name || item?.code || id
+      const label = deptName ? `${baseLabel}（${deptName}）` : baseLabel
+      return { value: id, label }
+    })
+    .filter((opt) => opt && !seen.has(opt.value) && seen.add(opt.value))
+}
+
 function toValueString(val) {
   if (val == null) return ''
   if (typeof val === 'string') return val
@@ -695,13 +734,16 @@ function normalizeStep(step) {
       break
     }
     case 'group': {
-      const picked = originalStrings[0] || ''
+      const validGroups = new Set(groupOptions.value.map((opt) => opt.value))
+      const allowAny = groupOptions.value.length === 0
+      const filtered = originalStrings.filter((val) => allowAny || validGroups.has(val))
+      const normalizedValues = filtered.filter((val, idx) => filtered.indexOf(val) === idx)
       meta.requiresApprover = true
-      meta.hasApprover = Boolean(picked)
-      meta.filteredOutValues = picked
-        ? originalStrings.slice(1)
-        : originalStrings
-      normalized.approver_value = picked
+      meta.hasApprover = normalizedValues.length > 0
+      meta.filteredOutValues = normalizedValues.length === originalStrings.length
+        ? []
+        : originalStrings.filter((val) => !filtered.includes(val))
+      normalized.approver_value = normalizedValues
       break
     }
     default: {
@@ -732,11 +774,13 @@ function handleApproverTypeChange(step) {
         normalized.approver_value = APPLICANT_SUPERVISOR_VALUE
       }
     }
+  } else if (normalized.approver_type === 'group') {
+    if (!Array.isArray(normalized.approver_value)) normalized.approver_value = []
   }
   Object.assign(step, normalized)
 }
 
-watch([employeeOptions, signRoleOptions, signLevelOptions], () => {
+watch([employeeOptions, signRoleOptions, signLevelOptions, groupOptions], () => {
   workflowSteps.value = normalizeWorkflowSteps(workflowSteps.value)
 })
 
@@ -929,6 +973,7 @@ onMounted(async () => {
   await loadForms()
   selectedFormId.value = forms.value[0]?._id || ''
   if (selectedFormId.value) await loadWorkflow()
+  await loadGroupOptions()
   await loadEmployeeOptions()
   await Promise.all([loadSignRoleOptions(), loadSignLevelOptions()])
 })

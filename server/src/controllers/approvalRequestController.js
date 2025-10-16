@@ -1,8 +1,10 @@
+import mongoose from 'mongoose'
 import ApprovalWorkflow from '../models/approval_workflow.js'
 import ApprovalRequest from '../models/approval_request.js'
 import FormTemplate from '../models/form_template.js'
 import FormField from '../models/form_field.js'
 import Employee from '../models/Employee.js'
+import SubDepartment from '../models/SubDepartment.js'
 
 const APPLICANT_SUPERVISOR_VALUE = 'APPLICANT_SUPERVISOR'
 
@@ -74,7 +76,29 @@ export async function resolveApprovers(step, applicantEmp) {
     return list.map(x => x._id)
   }
 
-  // group: 你可以自己定義群組機制，這裡先不實作
+  if (type === 'group') {
+    const arr = Array.isArray(val) ? val : [val]
+    const subDeptIds = arr
+      .map((item) => {
+        if (typeof item === 'object' && item) {
+          return item._id || item.id || item.value || ''
+        }
+        return item
+      })
+      .map((id) => (typeof id === 'string' ? id : String(id || '')))
+      .filter((id) => id && mongoose.Types.ObjectId.isValid(id))
+
+    if (!subDeptIds.length) return []
+
+    const validSubDepts = await SubDepartment.find({ _id: { $in: subDeptIds } }, { _id: 1 })
+    if (!validSubDepts.length) return []
+
+    const validIds = validSubDepts.map((sub) => sub._id.toString())
+    const list = await Employee.find({ subDepartment: { $in: validIds }, ...scopeFilter }, { _id: 1 })
+    return list.map((emp) => emp._id)
+  }
+
+  // 其他尚未支援的簽核類型
   return []
 }
 
