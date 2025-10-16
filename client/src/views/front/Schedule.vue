@@ -265,7 +265,9 @@
               v-if="!lazyMode || expandedRows.has(row._id)"
               class="modern-schedule-cell"
               :class="[
-                shiftClass(scheduleMap[row._id]?.[d.date]?.shiftId),
+                scheduleMap[row._id]?.[d.date]?.leave
+                  ? ''
+                  : shiftClass(scheduleMap[row._id]?.[d.date]?.shiftId),
                 {
                   'has-leave': scheduleMap[row._id]?.[d.date]?.leave,
                   'missing-shift':
@@ -274,6 +276,7 @@
                   'is-selected': isCellSelected(row._id, d.date)
                 }
               ]"
+              :title="leaveTooltip(row._id, d.date)"
             >
               <div v-if="canEdit" class="cell-selection" @click.stop>
                 <el-checkbox
@@ -284,7 +287,22 @@
                 />
               </div>
               <template v-if="scheduleMap[row._id]?.[d.date]">
-                <template v-if="canEdit">
+                <div
+                  v-if="scheduleMap[row._id][d.date].leave"
+                  class="leave-indicator"
+                  data-test="leave-indicator"
+                >
+                  <el-tag
+                    type="warning"
+                    effect="light"
+                    size="small"
+                    class="leave-tag"
+                  >
+                    休假中
+                  </el-tag>
+                  <span class="leave-note">已核准請假，不列入工時</span>
+                </div>
+                <template v-else-if="canEdit">
                   <el-select
                     v-model="scheduleMap[row._id][d.date].shiftId"
                     placeholder="選擇班別"
@@ -330,14 +348,8 @@
                   </div>
                 </template>
                 <template v-else>
-                  <div
-                    v-if="scheduleMap[row._id][d.date].leave"
-                    class="leave-indicator"
-                  >
-                    請假中
-                  </div>
                   <el-popover
-                    v-else-if="shiftInfo(scheduleMap[row._id][d.date].shiftId)"
+                    v-if="shiftInfo(scheduleMap[row._id][d.date].shiftId)"
                     placement="top"
                     trigger="hover"
                     :width="200"
@@ -681,6 +693,14 @@ const callInfo = message => {
   }
 }
 
+const leaveTooltip = (empId, day) => {
+  const cell = scheduleMap.value?.[empId]?.[day]
+  if (cell?.leave) {
+    return '已核准請假，該日不列入工作時數'
+  }
+  return ''
+}
+
 const days = computed(() => {
   const dt = dayjs(currentMonth.value + '-01')
   const end = dt.endOf('month').date()
@@ -1006,9 +1026,10 @@ async function fetchSchedules() {
       await fetchEmployees(selectedDepartment.value, selectedSubDepartment.value)
     }
     employees.value.forEach(emp => {
-      scheduleMap.value[emp._id] = {}
+      const empKey = String(emp._id)
+      scheduleMap.value[empKey] = {}
       ds.forEach(d => {
-        scheduleMap.value[emp._id][d.date] = {
+        scheduleMap.value[empKey][d.date] = {
           shiftId: '',
           department: emp.departmentId,
           subDepartment: emp.subDepartmentId
@@ -1016,9 +1037,21 @@ async function fetchSchedules() {
       })
     })
     schedules.forEach(s => {
-      const empId = s.employee?._id || s.employee
+      const rawId = s.employee?._id || s.employee
+      if (!rawId) return
+      const empId = String(rawId)
+      if (!scheduleMap.value[empId]) {
+        scheduleMap.value[empId] = {}
+        ds.forEach(d => {
+          scheduleMap.value[empId][d.date] = {
+            shiftId: '',
+            department: '',
+            subDepartment: ''
+          }
+        })
+      }
       const d = dayjs(s.date).date()
-      const emp = employees.value.find(e => e._id === empId) || {}
+      const emp = employees.value.find(e => String(e._id) === empId) || {}
       scheduleMap.value[empId][d] = {
         id: s._id,
         shiftId: s.shiftId,
@@ -1035,15 +1068,30 @@ async function fetchSchedules() {
       const approvals = Array.isArray(extra?.approvals) ? extra.approvals : []
       const leaves = Array.isArray(extra?.leaves) ? extra.leaves : []
       approvalList.value = approvals
+      const monthStart = dayjs(`${currentMonth.value}-01`).startOf('day')
+      const monthEnd = monthStart.endOf('month').startOf('day')
       leaves.forEach(l => {
         if (l.status !== 'approved') return
-        const empId = l.employee?._id || l.employee
-        const start = dayjs(l.startDate).date()
-        const end = dayjs(l.endDate).date()
-        for (let d = start; d <= end; d++) {
-          if (scheduleMap.value[empId]?.[d]) {
-            scheduleMap.value[empId][d].leave = { type: l.leaveType }
+        const rawEmp = l.employee?._id || l.employee
+        if (!rawEmp) return
+        const empId = String(rawEmp)
+        const startDate = dayjs(l.startDate).startOf('day')
+        const endDate = dayjs(l.endDate).startOf('day')
+        if (!startDate.isValid() || !endDate.isValid()) return
+        let pointer = startDate.isBefore(monthStart) ? monthStart : startDate
+        const boundary = endDate.isAfter(monthEnd) ? monthEnd : endDate
+        while (!pointer.isAfter(boundary)) {
+          const dayNum = pointer.date()
+          const cell = scheduleMap.value?.[empId]?.[dayNum]
+          if (cell) {
+            cell.leave = {
+              type: l.leaveType,
+              startDate: l.startDate,
+              endDate: l.endDate,
+              excludesHours: true
+            }
           }
+          pointer = pointer.add(1, 'day')
         }
       })
     }
@@ -1090,6 +1138,10 @@ async function exportSchedules(format) {
 async function onSelect(empId, day, value) {
   const dateStr = `${currentMonth.value}-${String(day).padStart(2, '0')}`
   const existing = scheduleMap.value[empId][day]
+  if (existing?.leave) {
+    callInfo('該日已核准請假，無法調整排班')
+    return
+  }
   const prev = existing?.shiftId ?? ''
   if (existing && existing.id) {
     try {
@@ -1352,14 +1404,22 @@ async function fetchEmployees(department = '', subDepartment = '') {
       return acc
     }, {})
     const sorted = empData
-      .map(e => ({
-        _id: e._id,
-        name: e.name,
-        departmentId: e.department,
-        subDepartmentId: e.subDepartment,
-        department: deptMap[e.department] || '',
-        subDepartment: subMap[e.subDepartment] || ''
-      }))
+      .map(e => {
+        const id = e?._id ?? e?.id ?? ''
+        const deptId = e?.department ?? ''
+        const subId = e?.subDepartment ?? ''
+        const normalizedId = id ? String(id) : ''
+        const normalizedDept = deptId ? String(deptId) : ''
+        const normalizedSub = subId ? String(subId) : ''
+        return {
+          _id: normalizedId,
+          name: e.name,
+          departmentId: normalizedDept,
+          subDepartmentId: normalizedSub,
+          department: deptMap[normalizedDept] || '',
+          subDepartment: subMap[normalizedSub] || ''
+        }
+      })
       .sort((a, b) => a.department.localeCompare(b.department))
     employees.value = sorted
     pruneSelections()
@@ -1749,6 +1809,7 @@ onMounted(async () => {
   &.has-leave {
     background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
     border: 1px solid #fbbf24;
+    cursor: not-allowed;
   }
 
   &.is-selected {
@@ -1830,13 +1891,38 @@ onMounted(async () => {
 }
 
 .leave-indicator {
-  display: inline-block;
-  color: #b45309;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  background: linear-gradient(135deg, #fefce8 0%, #fef3c7 100%);
+  border-radius: 8px;
+  border: 1px dashed rgba(217, 119, 6, 0.45);
+  padding: 6px 8px;
+  color: #92400e;
   font-size: 0.75rem;
   font-weight: 600;
-  background: #fef9c3;
-  padding: 2px 6px;
-  border-radius: 4px;
+  text-align: center;
+  min-height: 48px;
+}
+
+.leave-tag {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: rgba(217, 119, 6, 0.12);
+  border: 1px solid rgba(217, 119, 6, 0.35);
+  color: #b45309;
+  letter-spacing: 0.08em;
+}
+
+.leave-note {
+  font-size: 0.7rem;
+  font-weight: 500;
+  color: #b45309;
 }
 
 .missing-shift {
