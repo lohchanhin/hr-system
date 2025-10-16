@@ -1,22 +1,61 @@
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import ElementPlus from 'element-plus'
 import ApprovalFlowSetting from '../src/components/backComponents/ApprovalFlowSetting.vue'
 
-const employees = [{ id: 'e1', name: 'Alice' }]
+const employees = [
+  {
+    id: 'e1',
+    name: 'Alice',
+    username: 'alice',
+    signRole: 'R003',
+    signLevel: 'U002',
+    signTags: ['人資'],
+    organization: 'org1',
+    department: { id: 'd1', name: '人資部' },
+    role: 'supervisor',
+    displayName: 'Alice（alice）',
+  },
+  {
+    id: 'e2',
+    name: 'Bob',
+    username: 'bob',
+    signRole: 'R002',
+    signLevel: 'U001',
+    signTags: ['業務'],
+    organization: 'org2',
+    department: { id: 'd2', name: '業務部' },
+    role: 'employee',
+    displayName: 'Bob（bob）',
+  },
+]
 const workflowData = { steps: [{ step_order: 1, approver_type: 'user', approver_value: ['e1'] }] }
 const customFields = [
   { fieldKey: 'custom_phone', label: '緊急聯絡電話', type: 'text', required: true, placeholder: '請輸入電話' }
+]
+const signRoles = [
+  { value: 'R001', label: '填報' },
+  { value: 'R002', label: '覆核' },
+  { value: 'R003', label: '審核' },
+]
+const signLevels = [
+  { value: 'U001', label: 'L1' },
+  { value: 'U002', label: 'L2' },
 ]
 
 vi.mock('../src/api', () => ({ apiFetch: vi.fn() }))
 import { apiFetch } from '../src/api'
 global.ElMessage = { success: vi.fn() }
 
+beforeEach(() => {
+  apiFetch.mockClear()
+})
+
 apiFetch.mockImplementation((url, opts) => {
   if (url === '/api/approvals/forms') return Promise.resolve({ ok: true, json: async () => [] })
   if (url === '/api/employees/options') return Promise.resolve({ ok: true, json: async () => employees })
-  if (url === '/api/roles') return Promise.resolve({ ok: true, json: async () => [] })
+  if (url === '/api/approvals/sign-roles') return Promise.resolve({ ok: true, json: async () => signRoles })
+  if (url === '/api/approvals/sign-levels') return Promise.resolve({ ok: true, json: async () => signLevels })
   if (url === '/api/other-control-settings') return Promise.resolve({ ok: true, json: async () => ({ customFields }) })
   if (url === '/api/approvals/forms/f1/workflow' && !opts) return Promise.resolve({ ok: true, json: async () => workflowData })
   if (url === '/api/approvals/forms/f1/workflow' && opts?.method === 'PUT') return Promise.resolve({ ok: true })
@@ -43,7 +82,10 @@ describe('ApprovalFlowSetting approver select', () => {
     const wrapper = mount(ApprovalFlowSetting, { global: { plugins: [ElementPlus] } })
     await flushPromises()
     expect(apiFetch).toHaveBeenCalledWith('/api/employees/options')
-    expect(wrapper.vm.employeeOptions).toEqual(employees)
+    expect(apiFetch).toHaveBeenCalledWith('/api/approvals/sign-roles')
+    expect(apiFetch).toHaveBeenCalledWith('/api/approvals/sign-levels')
+    expect(wrapper.vm.employeeOptions[0]).toMatchObject({ id: 'e1', username: 'alice', displayName: 'Alice（alice）' })
+    expect(wrapper.vm.userApproverOptions[0]).toEqual({ value: 'e1', label: 'Alice（alice）' })
     await wrapper.vm.openWorkflowDialog({ _id: 'f1' })
     await flushPromises()
     expect(wrapper.vm.workflowSteps[0].approver_value).toEqual(['e1'])
@@ -76,13 +118,37 @@ describe('ApprovalFlowSetting approver select', () => {
     await wrapper.vm.openWorkflowDialog({ _id: 'f1' })
     await flushPromises()
     const option = wrapper.findAllComponents({ name: 'ElOption' }).find(o => o.props('value') === 'e1')
-    expect(option.props('label')).toBe('Alice')
+    expect(option.props('label')).toBe('Alice（alice）')
     wrapper.vm.workflowSteps[0].approver_value = ['e1']
     wrapper.vm.selectedFormId = 'f1'
     await wrapper.vm.saveWorkflow()
     const call = apiFetch.mock.calls.filter(c => c[0] === '/api/approvals/forms/f1/workflow' && c[1]?.method === 'PUT').pop()
     const body = JSON.parse(call[1].body)
     expect(body.steps[0].approver_value).toEqual(['e1'])
+  })
+
+  it('derives selectable lists from employees with帳號', async () => {
+    const wrapper = mount(ApprovalFlowSetting, { global: { plugins: [ElementPlus] } })
+    await flushPromises()
+    expect(new Set(wrapper.vm.tagOptions.map((opt) => opt.value))).toEqual(new Set(['人資', '業務']))
+    expect(wrapper.vm.managerApproverOptions.map((opt) => opt.value)).toEqual(['e1'])
+    expect(new Set(wrapper.vm.departmentOptions.map((opt) => opt.value))).toEqual(new Set(['d1', 'd2']))
+    expect(new Set(wrapper.vm.organizationOptions.map((opt) => opt.value))).toEqual(new Set(['org1', 'org2']))
+  })
+
+  it('normalizes role selections using sign role dictionary', async () => {
+    const wrapper = mount(ApprovalFlowSetting, { global: { plugins: [ElementPlus] } })
+    await flushPromises()
+    await wrapper.vm.openWorkflowDialog({ _id: 'f1' })
+    await flushPromises()
+    const step = wrapper.vm.workflowSteps[0]
+    step.approver_type = 'role'
+    step.approver_value = 'R999'
+    wrapper.vm.handleApproverTypeChange(step)
+    expect(step.approver_value).toBe('')
+    step.approver_value = 'R003'
+    wrapper.vm.handleApproverTypeChange(step)
+    expect(step.approver_value).toBe('R003')
   })
 
   it('offers custom field options and fills dialog after selection', async () => {

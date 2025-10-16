@@ -435,8 +435,30 @@ export async function listEmployees(req, res) {
 
 export async function listEmployeeOptions(req, res) {
   try {
-    const employees = await Employee.find({}, 'name')
-    const options = employees.map((e) => ({ id: e._id, name: e.name }))
+    const employees = await Employee.find(
+      { username: { $exists: true, $ne: '' } },
+      'name username signRole signTags signLevel organization department role'
+    )
+      .populate('department', 'name')
+      .lean()
+    const options = employees.map((e) => {
+      const dept = e.department && typeof e.department === 'object'
+        ? { id: e.department._id?.toString?.() ?? e.department.id ?? e.department, name: e.department.name ?? '' }
+        : null
+      const signTags = Array.isArray(e.signTags) ? e.signTags.filter(Boolean) : []
+      return {
+        id: e._id?.toString?.() ?? e.id,
+        name: e.name,
+        username: e.username,
+        signRole: e.signRole ?? '',
+        signLevel: e.signLevel ?? '',
+        signTags,
+        organization: e.organization ?? '',
+        department: dept,
+        role: e.role ?? '',
+        displayName: e.username ? `${e.name}（${e.username}）` : e.name,
+      }
+    })
     res.json(options)
   } catch (err) {
     res.status(500).json({ error: err.message })

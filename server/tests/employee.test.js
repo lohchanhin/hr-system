@@ -60,12 +60,42 @@ describe('Employee API', () => {
   });
 
   it('lists employee options', async () => {
-    const opts = [{ _id: '1', name: 'A' }];
-    mockEmployee.find.mockResolvedValue(opts);
+    const fakeEmployees = [{
+      _id: '1',
+      name: 'Alice',
+      username: 'alice',
+      signRole: 'R003',
+      signLevel: 'U002',
+      signTags: ['人資'],
+      organization: 'org1',
+      department: { _id: 'd1', name: '人資部' },
+      role: 'supervisor',
+    }];
+    const lean = jest.fn().mockResolvedValue(fakeEmployees);
+    const populate = jest.fn().mockReturnValue({ lean });
+    mockEmployee.find.mockReturnValue({ populate });
     const res = await request(app).get('/api/employees/options');
     expect(res.status).toBe(200);
-    expect(mockEmployee.find).toHaveBeenCalledWith({}, 'name');
-    expect(res.body).toEqual([{ id: '1', name: 'A' }]);
+    expect(mockEmployee.find).toHaveBeenCalledWith(
+      { username: { $exists: true, $ne: '' } },
+      'name username signRole signTags signLevel organization department role'
+    );
+    expect(populate).toHaveBeenCalledWith('department', 'name');
+    expect(lean).toHaveBeenCalled();
+    expect(res.body).toEqual([
+      {
+        id: '1',
+        name: 'Alice',
+        username: 'alice',
+        signRole: 'R003',
+        signLevel: 'U002',
+        signTags: ['人資'],
+        organization: 'org1',
+        department: { id: 'd1', name: '人資部' },
+        role: 'supervisor',
+        displayName: 'Alice（alice）',
+      },
+    ]);
   });
 
   it('returns 500 if listing fails', async () => {
