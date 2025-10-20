@@ -453,6 +453,53 @@ describe('Schedule.vue', () => {
     expect(wrapper.vm.formatShiftLabel(null)).toBe('')
   })
 
+  it('renders shift legend items from API data', async () => {
+    apiFetch
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          shifts: [
+            { _id: 'shift1', code: 'M1', name: '早班' },
+            { _id: 'shift2', code: 'N1', name: '夜班' }
+          ]
+        })
+      })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ approvals: [], leaves: [] }) })
+    const wrapper = mountSchedule()
+    await flush()
+
+    const legendItems = wrapper.findAll('[data-test="shift-legend-item"]')
+    expect(legendItems).toHaveLength(2)
+    expect(legendItems[0].text()).toBe('M1(早班)')
+    expect(legendItems[0].classes()).toContain('shift-morning')
+    expect(legendItems[1].text()).toBe('N1(夜班)')
+    expect(legendItems[1].classes()).toContain('shift-evening')
+    expect(wrapper.find('[data-test="shift-legend-empty"]').exists()).toBe(false)
+  })
+
+  it('shows default legend message when no shift data exists', async () => {
+    apiFetch
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ approvals: [], leaves: [] }) })
+    const wrapper = mountSchedule()
+    await flush()
+
+    const emptyLegend = wrapper.find('[data-test="shift-legend-empty"]')
+    expect(emptyLegend.exists()).toBe(true)
+    expect(emptyLegend.text()).toContain('尚未設定班別')
+    expect(wrapper.findAll('[data-test="shift-legend-item"]').length).toBe(0)
+  })
+
   it('filters subDepartments by department id', async () => {
     apiFetch
       .mockResolvedValueOnce({ ok: true, json: async () => [] })

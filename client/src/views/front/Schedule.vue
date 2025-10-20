@@ -139,10 +139,21 @@
     <div class="schedule-card">
       <div class="schedule-header">
         <h3 class="schedule-title">員工排班表</h3>
-        <div class="schedule-legend">
-          <span class="legend-item morning">早班</span>
-          <span class="legend-item evening">晚班</span>
-          <span class="legend-item normal">正常班</span>
+        <div class="schedule-legend" data-test="schedule-legend">
+          <template v-if="legendShifts.length">
+            <span
+              v-for="legend in legendShifts"
+              :key="legend.key"
+              class="legend-item"
+              :class="legend.className"
+              data-test="shift-legend-item"
+            >
+              {{ legend.label }}
+            </span>
+          </template>
+          <span v-else class="legend-empty" data-test="shift-legend-empty">
+            尚未設定班別
+          </span>
           <span class="legend-item leave">請假</span>
         </div>
         <el-input
@@ -484,6 +495,26 @@ const isApplyingBatch = ref(false)
 const selectedEmployeesSet = computed(() => selectedEmployees.value)
 const selectedDaysSet = computed(() => selectedDays.value)
 const manualSelectedCellsSet = computed(() => manualSelectedCells.value)
+
+const legendShifts = computed(() => {
+  if (!Array.isArray(shifts.value) || !shifts.value.length) {
+    return []
+  }
+  const seen = new Set()
+  return shifts.value.reduce((acc, shift) => {
+    if (!shift) return acc
+    const label = formatShiftLabel(shift) || shift.name || shift.code || '未命名班別'
+    const key = String(shift._id || `${shift.code ?? ''}-${shift.name ?? ''}`)
+    if (!label || !key || seen.has(key)) return acc
+    seen.add(key)
+    acc.push({
+      key,
+      label,
+      className: shiftClass(shift) || 'shift-normal'
+    })
+    return acc
+  }, [])
+})
 
 const buildCellKey = (empId, day) => `${empId}-${day}`
 const parseCellKey = key => {
@@ -1409,11 +1440,15 @@ function formatShiftLabel(shift) {
   return name ? `${code}(${name})` : code
 }
 
-function shiftClass(id) {
-  const info = shiftInfo(id)
+function shiftClass(idOrShift) {
+  const info =
+    idOrShift && typeof idOrShift === 'object'
+      ? idOrShift
+      : shiftInfo(idOrShift)
   if (!info) return ''
-  if (/早/.test(info.code)) return 'shift-morning'
-  if (/晚|夜/.test(info.code)) return 'shift-evening'
+  const keyword = `${info.code ?? ''}${info.name ?? ''}`
+  if (/早/.test(keyword)) return 'shift-morning'
+  if (/晚|夜/.test(keyword)) return 'shift-evening'
   return 'shift-normal'
 }
 
@@ -1730,26 +1765,32 @@ onMounted(async () => {
         font-weight: 600;
         text-transform: uppercase;
         letter-spacing: 0.05em;
-        
-        &.morning {
+
+        &.shift-morning {
           background: #dbeafe;
           color: #1e40af;
         }
-        
-        &.evening {
+
+        &.shift-evening {
           background: #d1fae5;
           color: #059669;
         }
-        
-        &.normal {
+
+        &.shift-normal {
           background: #f1f5f9;
           color: #475569;
         }
-        
+
         &.leave {
           background: #fef3c7;
           color: #d97706;
         }
+      }
+
+      .legend-empty {
+        font-size: 0.75rem;
+        color: #64748b;
+        padding: 4px 0;
       }
     }
 
