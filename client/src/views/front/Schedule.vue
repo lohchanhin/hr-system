@@ -56,6 +56,15 @@
             />
           </el-select>
         </div>
+        <div v-if="showIncludeSelfToggle" class="filter-group include-self-group">
+          <label class="filter-label">包含自己</label>
+          <el-switch
+            v-model="includeSelf"
+            active-text="是"
+            inactive-text="否"
+            inline-prompt
+          />
+        </div>
       </div>
     </div>
 
@@ -457,6 +466,8 @@ const supervisorDepartmentName = ref('')
 const supervisorSubDepartmentId = ref('')
 const supervisorSubDepartmentName = ref('')
 const supervisorAssignableSubDepartmentIds = ref([])
+const supervisorProfile = ref(null)
+const includeSelf = ref(false)
 const summary = ref({ direct: 0, unscheduled: 0, onLeave: 0 })
 const employeeSearch = ref('')
 const statusFilter = ref('all')
@@ -596,6 +607,13 @@ const selectAllDays = () => {
   selectedDays.value = new Set(days.value.map(d => d.date))
 }
 
+const sortEmployeesByDept = list =>
+  [...list].sort((a, b) => {
+    const deptCompare = (a.department || '').localeCompare(b.department || '')
+    if (deptCompare !== 0) return deptCompare
+    return (a.name || '').localeCompare(b.name || '')
+  })
+
 const onCustomRangeChange = range => {
   if (!Array.isArray(range) || range.length !== 2) return
   const [startRaw, endRaw] = range
@@ -635,6 +653,14 @@ watch(batchSubDepartments, newList => {
   }
 })
 
+watch(includeSelf, async (val, oldVal) => {
+  if (val === oldVal) return
+  if (!showIncludeSelfToggle.value) return
+  await fetchEmployees(selectedDepartment.value, selectedSubDepartment.value)
+  await fetchSchedules()
+  await fetchSummary()
+})
+
 const employeeStatus = empId => {
   const days = scheduleMap.value[empId] || {}
   const values = Object.values(days)
@@ -671,6 +697,7 @@ const authStore = useAuthStore()
 authStore.loadUser()
 
 const canUseSupervisorFilter = computed(() => ['supervisor', 'admin'].includes(authStore.role))
+const showIncludeSelfToggle = computed(() => authStore.role === 'supervisor')
 const canEdit = canUseSupervisorFilter
 
 const callWarning = message => {
@@ -922,6 +949,7 @@ async function fetchSupervisorContext() {
     supervisorSubDepartmentId.value = ''
     supervisorSubDepartmentName.value = ''
     supervisorAssignableSubDepartmentIds.value = []
+    supervisorProfile.value = null
     return
   }
   const supervisorId = getStoredSupervisorId()
@@ -931,6 +959,7 @@ async function fetchSupervisorContext() {
     supervisorSubDepartmentId.value = ''
     supervisorSubDepartmentName.value = ''
     supervisorAssignableSubDepartmentIds.value = []
+    supervisorProfile.value = null
     return
   }
   let data = null
@@ -940,7 +969,9 @@ async function fetchSupervisorContext() {
     data = await res.json()
   } catch (err) {
     console.error(err)
+    supervisorProfile.value = null
   }
+  supervisorProfile.value = data || null
   const deptInfo = data?.department
   const deptId =
     typeof deptInfo === 'object'
@@ -1024,11 +1055,12 @@ async function fetchSupervisorSubDepartmentScope(supervisorId = '') {
 
 async function fetchSchedules() {
   const supervisorId = getStoredSupervisorId()
-  const supParam = supervisorId ? `&supervisor=${supervisorId}` : ''
+  const params = [`month=${currentMonth.value}`]
+  if (supervisorId) params.push(`supervisor=${supervisorId}`)
+  if (includeSelf.value && showIncludeSelfToggle.value) params.push('includeSelf=true')
+  const query = `?${params.join('&')}`
   try {
-    const res = await apiFetch(
-      `/api/schedules/monthly?month=${currentMonth.value}${supParam}`
-    )
+    const res = await apiFetch(`/api/schedules/monthly${query}`)
     if (!res.ok) throw new Error('Failed to fetch schedules')
     const data = await res.json()
     const schedules = Array.isArray(data) ? data : []
@@ -1073,9 +1105,7 @@ async function fetchSchedules() {
       }
     })
 
-    const res2 = await apiFetch(
-      `/api/schedules/leave-approvals?month=${currentMonth.value}${supParam}`
-    )
+    const res2 = await apiFetch(`/api/schedules/leave-approvals${query}`)
     if (res2.ok) {
       const extra = await res2.json()
       const approvals = Array.isArray(extra?.approvals) ? extra.approvals : []
@@ -1412,7 +1442,7 @@ async function fetchEmployees(department = '', subDepartment = '') {
       acc[s._id] = s.name
       return acc
     }, {})
-    const sorted = empData
+    const normalized = empData
       .map(e => {
         const id = e?._id ?? e?.id ?? ''
         const deptId = e?.department ?? ''
@@ -1429,8 +1459,24 @@ async function fetchEmployees(department = '', subDepartment = '') {
           subDepartment: subMap[normalizedSub] || ''
         }
       })
-      .sort((a, b) => a.department.localeCompare(b.department))
-    employees.value = sorted
+    let next = sortEmployeesByDept(normalized)
+    if (includeSelf.value && showIncludeSelfToggle.value) {
+      const supervisorIdStr = supervisorId ? String(supervisorId) : ''
+      if (supervisorIdStr && !next.some(e => e._id === supervisorIdStr)) {
+        next = sortEmployeesByDept([
+          ...next,
+          {
+            _id: supervisorIdStr,
+            name: supervisorProfile.value?.name || '主管本人',
+            departmentId: supervisorDepartmentId.value || '',
+            subDepartmentId: supervisorSubDepartmentId.value || '',
+            department: supervisorDepartmentName.value || '',
+            subDepartment: supervisorSubDepartmentName.value || ''
+          }
+        ])
+      }
+    }
+    employees.value = next
     pruneSelections()
   } catch (err) {
     console.error(err)
@@ -1440,7 +1486,11 @@ async function fetchEmployees(department = '', subDepartment = '') {
 
 async function fetchSummary() {
   try {
-    const res = await apiFetch(`/api/schedules/summary?month=${currentMonth.value}`)
+    const params = [`month=${currentMonth.value}`]
+    if (includeSelf.value && showIncludeSelfToggle.value) {
+      params.push('includeSelf=true')
+    }
+    const res = await apiFetch(`/api/schedules/summary?${params.join('&')}`)
     if (res.ok) {
       const data = await res.json()
       summary.value = {
