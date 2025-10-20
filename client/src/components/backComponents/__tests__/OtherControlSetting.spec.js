@@ -49,8 +49,14 @@ const elementStubs = {
       '<input type="checkbox" v-bind="$attrs" :checked="modelValue" @change="$emit(\'update:modelValue\', $event.target.checked)" />'
   },
   'el-row': { template: '<div v-bind="$attrs"><slot /></div>' },
-  'el-col': { template: '<div v-bind="$attrs"><slot /></div>' }
+  'el-col': { template: '<div v-bind="$attrs"><slot /></div>' },
+  'el-tag': { template: '<span><slot /></span>' }
 }
+
+const defaultCategories = [
+  { id: 'cat-leave', name: '請假類', code: '請假類', description: '', builtin: true },
+  { id: 'cat-general', name: '總務類', code: '總務類', description: '', builtin: true }
+]
 
 async function mountComponent() {
   const wrapper = shallowMount(OtherControlSetting, {
@@ -80,16 +86,26 @@ describe('OtherControlSetting - saveItemSettings', () => {
   it('送出扁平結構的字典項目並顯示成功訊息', async () => {
     const serverResponse = { saved: true, itemSettings: { TEST: [] } }
     apiFetchMock.mockImplementation(async (path, options = {}) => {
-      if (options.method === 'PUT') {
+      const method = options?.method || 'GET'
+      if (path === '/api/other-control-settings/item-settings' && method === 'PUT') {
         return new Response(JSON.stringify(serverResponse), {
           status: 200,
           headers: { 'Content-Type': 'application/json' }
         })
       }
-      return new Response(JSON.stringify({ itemSettings: {}, customFields: [] }), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' }
-      })
+      if (path === '/api/other-control-settings' && method === 'GET') {
+        return new Response(JSON.stringify({ itemSettings: {}, customFields: [] }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' }
+        })
+      }
+      if (path === '/api/other-control-settings/form-categories' && method === 'GET') {
+        return new Response(JSON.stringify(defaultCategories), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' }
+        })
+      }
+      return new Response('', { status: 404 })
     })
 
     const wrapper = await mountComponent()
@@ -118,13 +134,23 @@ describe('OtherControlSetting - saveItemSettings', () => {
 
   it('處理儲存失敗並提示錯誤訊息', async () => {
     apiFetchMock.mockImplementation(async (path, options = {}) => {
-      if (options.method === 'PUT') {
+      const method = options?.method || 'GET'
+      if (path === '/api/other-control-settings/item-settings' && method === 'PUT') {
         return new Response('', { status: 500 })
       }
-      return new Response(JSON.stringify({ itemSettings: {}, customFields: [] }), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' }
-      })
+      if (path === '/api/other-control-settings' && method === 'GET') {
+        return new Response(JSON.stringify({ itemSettings: {}, customFields: [] }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' }
+        })
+      }
+      if (path === '/api/other-control-settings/form-categories' && method === 'GET') {
+        return new Response(JSON.stringify(defaultCategories), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' }
+        })
+      }
+      return new Response('', { status: 404 })
     })
 
     const wrapper = await mountComponent()
@@ -190,6 +216,12 @@ describe('OtherControlSetting - custom fields', () => {
       if (path === '/api/other-control-settings/custom-fields' && options.method === 'PUT') {
         return Promise.resolve(new Response('', { status: 200 }))
       }
+      if (path === '/api/other-control-settings/form-categories' && options.method === 'GET') {
+        return Promise.resolve(new Response(JSON.stringify(defaultCategories), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' }
+        }))
+      }
       return Promise.resolve(new Response('', { status: 404 }))
     })
 
@@ -239,6 +271,12 @@ describe('OtherControlSetting - custom fields', () => {
       }
       if (path === '/api/other-control-settings/custom-fields' && options.method === 'PUT') {
         return Promise.resolve(new Response('', { status: 200 }))
+      }
+      if (path === '/api/other-control-settings/form-categories' && options.method === 'GET') {
+        return Promise.resolve(new Response(JSON.stringify(defaultCategories), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' }
+        }))
       }
       return Promise.resolve(new Response('', { status: 404 }))
     })
@@ -524,5 +562,109 @@ describe('OtherControlSetting - custom fields', () => {
     expect(JSON.parse(JSON.stringify(wrapper.vm.customFields))).toEqual(beforeRemove)
     expect(ElMessage.success).not.toHaveBeenCalled()
     expect(ElMessage.error).toHaveBeenCalledWith('刪除失敗')
+  })
+})
+
+describe('OtherControlSetting - form categories', () => {
+  let apiFetchMock
+
+  beforeEach(() => {
+    apiFetchMock = vi.spyOn(apiModule, 'apiFetch')
+    ElMessage.success.mockClear()
+    ElMessage.error.mockClear()
+    ElMessage.warning.mockClear()
+    ElMessageBox.confirm.mockReset()
+  })
+
+  afterEach(() => {
+    apiFetchMock.mockRestore()
+  })
+
+  it('新增分類後會顯示成功訊息並更新列表', async () => {
+    const categories = [...defaultCategories]
+
+    apiFetchMock.mockImplementation((path, options = {}) => {
+      const method = options?.method || 'GET'
+      if (path === '/api/other-control-settings' && method === 'GET') {
+        return Promise.resolve(new Response(JSON.stringify({ itemSettings: {}, customFields: [] }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' }
+        }))
+      }
+      if (path === '/api/other-control-settings/form-categories' && method === 'GET') {
+        return Promise.resolve(new Response(JSON.stringify(categories), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' }
+        }))
+      }
+      if (path === '/api/other-control-settings/form-categories' && method === 'POST') {
+        const body = JSON.parse(options.body)
+        const created = { id: 'cat-new', builtin: false, description: '', ...body }
+        categories.push(created)
+        return Promise.resolve(new Response(JSON.stringify(created), {
+          status: 201,
+          headers: { 'Content-Type': 'application/json' }
+        }))
+      }
+      return Promise.resolve(new Response('', { status: 404 }))
+    })
+
+    const wrapper = await mountComponent()
+
+    wrapper.vm.openCategoryDialog()
+    wrapper.vm.categoryForm.name = '出差審核'
+    wrapper.vm.categoryForm.code = 'travel'
+    await wrapper.vm.saveCategory()
+    await flushPromises()
+
+    expect(ElMessage.success).toHaveBeenCalledWith('已新增分類')
+    const saved = wrapper.vm.formCategories.find(cat => cat.code === 'travel')
+    expect(saved).toBeTruthy()
+    expect(saved.name).toBe('出差審核')
+  })
+
+  it('編輯分類時會更新現有資料', async () => {
+    const categories = [...defaultCategories]
+
+    apiFetchMock.mockImplementation((path, options = {}) => {
+      const method = options?.method || 'GET'
+      if (path === '/api/other-control-settings' && method === 'GET') {
+        return Promise.resolve(new Response(JSON.stringify({ itemSettings: {}, customFields: [] }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' }
+        }))
+      }
+      if (path === '/api/other-control-settings/form-categories' && method === 'GET') {
+        return Promise.resolve(new Response(JSON.stringify(categories), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' }
+        }))
+      }
+      if (path.startsWith('/api/other-control-settings/form-categories/') && method === 'PUT') {
+        const id = path.split('/').pop()
+        const body = JSON.parse(options.body)
+        const index = categories.findIndex(cat => cat.id === id)
+        if (index > -1) {
+          categories[index] = { ...categories[index], ...body }
+          return Promise.resolve(new Response(JSON.stringify(categories[index]), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' }
+          }))
+        }
+        return Promise.resolve(new Response('', { status: 404 }))
+      }
+      return Promise.resolve(new Response('', { status: 404 }))
+    })
+
+    const wrapper = await mountComponent()
+
+    const original = wrapper.vm.formCategories[0]
+    wrapper.vm.openCategoryDialog('edit', original)
+    wrapper.vm.categoryForm.name = '請假申請'
+    await wrapper.vm.saveCategory()
+    await flushPromises()
+
+    expect(ElMessage.success).toHaveBeenCalledWith('已更新分類')
+    expect(wrapper.vm.formCategories[0].name).toBe('請假申請')
   })
 })

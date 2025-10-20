@@ -1,3 +1,5 @@
+import { randomUUID } from 'crypto'
+
 const defaultSettings = {
   notification: {
     enableEmail: true,
@@ -238,14 +240,49 @@ const defaultSettings = {
   ]
 }
 
+const defaultFormCategories = [
+  {
+    id: 'cat-personnel',
+    name: '人事類',
+    code: '人事類',
+    description: '人員異動、到職與人事流程',
+    builtin: true
+  },
+  {
+    id: 'cat-general',
+    name: '總務類',
+    code: '總務類',
+    description: '行政資產、採購與總務流程',
+    builtin: true
+  },
+  {
+    id: 'cat-leave',
+    name: '請假類',
+    code: '請假類',
+    description: '各式請假、補休與出勤相關流程',
+    builtin: true
+  },
+  {
+    id: 'cat-other',
+    name: '其他',
+    code: '其他',
+    description: '尚未分類或臨時需求流程',
+    builtin: true
+  }
+]
+
 function cloneSettings() {
   return JSON.parse(JSON.stringify(defaultSettings))
 }
 
 let otherControlSettings = cloneSettings()
+let formCategories = defaultFormCategories.map((category) => ({ ...category }))
 
 export function getOtherControlSettings(req, res) {
-  res.json(otherControlSettings)
+  res.json({
+    ...otherControlSettings,
+    formCategories
+  })
 }
 
 export function updateNotificationSettings(req, res) {
@@ -314,6 +351,86 @@ export function replaceCustomFields(req, res) {
   res.json(otherControlSettings.customFields)
 }
 
+export function listFormCategories(req, res) {
+  res.json(formCategories)
+}
+
+export function createFormCategory(req, res) {
+  const payload = req.body || {}
+  const name = typeof payload.name === 'string' ? payload.name.trim() : ''
+  const code = typeof payload.code === 'string' ? payload.code.trim() : name
+  const description = typeof payload.description === 'string' ? payload.description.trim() : ''
+
+  if (!name) {
+    return res.status(400).json({ error: 'name 為必填欄位' })
+  }
+  if (!code) {
+    return res.status(400).json({ error: 'code 為必填欄位' })
+  }
+  if (formCategories.some((category) => category.code === code)) {
+    return res.status(409).json({ error: 'code 已存在' })
+  }
+
+  const newCategory = {
+    id: randomUUID(),
+    name,
+    code,
+    description,
+    builtin: false
+  }
+  formCategories.push(newCategory)
+  res.status(201).json(newCategory)
+}
+
+export function updateFormCategory(req, res) {
+  const { id } = req.params || {}
+  const index = formCategories.findIndex((category) => category.id === id)
+  if (index === -1) {
+    return res.status(404).json({ error: '找不到指定分類' })
+  }
+
+  const payload = req.body || {}
+  const name = typeof payload.name === 'string' ? payload.name.trim() : formCategories[index].name
+  const code = typeof payload.code === 'string' ? payload.code.trim() : formCategories[index].code
+  const description =
+    typeof payload.description === 'string'
+      ? payload.description.trim()
+      : formCategories[index].description
+
+  if (!name) {
+    return res.status(400).json({ error: 'name 為必填欄位' })
+  }
+  if (!code) {
+    return res.status(400).json({ error: 'code 為必填欄位' })
+  }
+  if (formCategories.some((category) => category.id !== id && category.code === code)) {
+    return res.status(409).json({ error: 'code 已存在' })
+  }
+
+  formCategories[index] = {
+    ...formCategories[index],
+    name,
+    code,
+    description
+  }
+
+  res.json(formCategories[index])
+}
+
+export function deleteFormCategory(req, res) {
+  const { id } = req.params || {}
+  const index = formCategories.findIndex((category) => category.id === id)
+  if (index === -1) {
+    return res.status(404).json({ error: '找不到指定分類' })
+  }
+  if (formCategories[index].builtin) {
+    return res.status(400).json({ error: '內建分類無法刪除' })
+  }
+  formCategories.splice(index, 1)
+  res.json({ success: true })
+}
+
 export function resetOtherControlSettings() {
   otherControlSettings = cloneSettings()
+  formCategories = defaultFormCategories.map((category) => ({ ...category }))
 }

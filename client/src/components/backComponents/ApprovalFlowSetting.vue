@@ -8,7 +8,12 @@
       <el-tab-pane label="通用流程規則" name="commonRule">
         <div class="flex items-center gap-2 mb-2">
           <el-select v-model="selectedFormId" placeholder="選擇表單樣板" style="width: 320px" @change="loadWorkflow">
-            <el-option v-for="f in forms" :key="f._id" :label="`${f.name}（${f.category}）`" :value="f._id" />
+            <el-option
+              v-for="f in forms"
+              :key="f._id"
+              :label="`${f.name}（${categoryNameMap[f.category] || f.category || '未分類'}）`"
+              :value="f._id"
+            />
           </el-select>
           <el-button type="primary" @click="openFormDialog()">新增樣板</el-button>
           <el-button :disabled="!selectedFormId" @click="openFormDialog('edit')">編輯樣板</el-button>
@@ -45,7 +50,11 @@
           <el-button type="primary" @click="openFormDialog()">新增表單樣板</el-button>
           <el-table :data="forms" style="margin-top: 20px;">
             <el-table-column prop="name" label="表單名稱" width="220" />
-            <el-table-column prop="category" label="分類" width="120" />
+            <el-table-column label="分類" width="160">
+              <template #default="{ row }">
+                {{ categoryNameMap[row.category] || (row.category || '未分類') }}
+              </template>
+            </el-table-column>
             <el-table-column prop="is_active" label="啟用" width="100">
               <template #default="{ row }">
                 <el-tag :type="row.is_active ? 'success' : 'info'">{{ row.is_active ? '啟用' : '停用' }}</el-tag>
@@ -75,8 +84,13 @@
             <el-form :model="formDialog" label-width="120px">
               <el-form-item label="表單名稱"><el-input v-model="formDialog.name" /></el-form-item>
               <el-form-item label="分類">
-                <el-select v-model="formDialog.category" placeholder="選擇分類">
-                  <el-option v-for="c in CATEGORIES" :key="c" :label="c" :value="c" />
+                <el-select v-model="formDialog.category" placeholder="選擇分類" :disabled="!categoryOptions.length">
+                  <el-option
+                    v-for="c in categoryOptions"
+                    :key="c.value"
+                    :label="c.label"
+                    :value="c.value"
+                  />
                 </el-select>
               </el-form-item>
               <el-form-item label="啟用"><el-switch v-model="formDialog.is_active" /></el-form-item>
@@ -227,7 +241,12 @@
         <div class="tab-content">
           <div class="flex items-center gap-2 mb-2">
             <el-select v-model="selectedFormId" placeholder="選擇表單樣板" style="width: 320px" @change="loadFields">
-              <el-option v-for="f in forms" :key="f._id" :label="`${f.name}（${f.category}）`" :value="f._id" />
+              <el-option
+                v-for="f in forms"
+                :key="f._id"
+                :label="`${f.name}（${categoryNameMap[f.category] || f.category || '未分類'}）`"
+                :value="f._id"
+              />
             </el-select>
             <el-button type="primary" :disabled="!selectedFormId" @click="openFieldDialog()">新增欄位</el-button>
           </div>
@@ -312,9 +331,9 @@ const API = {
   signLevels: '/api/approvals/sign-levels',
   otherControlSettings: '/api/other-control-settings',
   subDepartments: '/api/sub-departments',
+  formCategories: '/api/other-control-settings/form-categories'
 }
 
-const CATEGORIES = ['人事類','總務類','請假類','其他']
 const APPROVER_TYPES = [
   { value: 'manager', label: '主管' },
   { value: 'tag', label: '標籤' },
@@ -337,6 +356,17 @@ const activeTab = ref('commonRule')
 const forms = ref([])
 const selectedFormId = ref('')
 const fields = ref([])
+const categoryOptions = ref([])
+const categoryNameMap = computed(() => {
+  const map = {}
+  categoryOptions.value.forEach((option) => {
+    if (option?.value) {
+      map[option.value] = option.label || option.value
+    }
+  })
+  return map
+})
+const firstCategoryValue = computed(() => categoryOptions.value[0]?.value || '')
 
 /* 通用規則 policy */
 const policyForm = ref({
@@ -349,7 +379,7 @@ const policyForm = ref({
 /* 樣板 Dialog */
 const formDialogVisible = ref(false)
 const formDialogMode = ref('create') // 'create'|'edit'
-const formDialog = ref({ _id: '', name: '', category: '其他', is_active: true, description: '' })
+const formDialog = ref({ _id: '', name: '', category: firstCategoryValue.value || '', is_active: true, description: '' })
 
 /* 流程 Dialog */
 const workflowDialogVisible = ref(false)
@@ -431,6 +461,12 @@ watch([activeTab, selectedFormId], () => {
   if (activeTab.value === 'fields' && selectedFormId.value) loadFields()
 })
 
+watch(firstCategoryValue, (value) => {
+  if (!formDialog.value.category && value) {
+    formDialog.value.category = value
+  }
+})
+
 async function loadFields() {
   if (!selectedFormId.value) return
   const res = await apiFetch(API.fields(selectedFormId.value), undefined)
@@ -438,6 +474,40 @@ async function loadFields() {
     const arr = await res.json()
     fields.value = Array.isArray(arr) ? arr.sort((a,b)=> (a.order??0)-(b.order??0)) : []
   }
+}
+
+async function loadCategories() {
+  const res = await apiFetch(API.formCategories)
+  if (!res.ok) {
+    categoryOptions.value = []
+    return
+  }
+  const list = await res.json()
+  if (!Array.isArray(list)) {
+    categoryOptions.value = []
+    return
+  }
+  const seen = new Set()
+  categoryOptions.value = list
+    .map((item) => {
+      const rawCode = typeof item?.code === 'string' ? item.code.trim() : ''
+      const rawName = typeof item?.name === 'string' ? item.name.trim() : ''
+      const value = rawCode || rawName || (typeof item?.id === 'string' ? item.id : '')
+      if (!value) return null
+      const label = rawName || value
+      return {
+        value,
+        label,
+        id: item?.id || value,
+        description: typeof item?.description === 'string' ? item.description : '',
+        builtin: Boolean(item?.builtin)
+      }
+    })
+    .filter((option) => {
+      if (!option || seen.has(option.value)) return false
+      seen.add(option.value)
+      return true
+    })
 }
 
 function openFieldDialog(mode='create', row=null) {
@@ -863,15 +933,30 @@ async function savePolicy() {
 function openFormDialog(mode='create', row=null) {
   formDialogMode.value = mode
   if (mode === 'edit' && row) {
-    formDialog.value = { _id: row._id, name: row.name, category: row.category, is_active: row.is_active, description: row.description || '' }
+    formDialog.value = {
+      _id: row._id,
+      name: row.name,
+      category: row.category || firstCategoryValue.value || '',
+      is_active: row.is_active,
+      description: row.description || ''
+    }
   } else {
-    formDialog.value = { _id: '', name: '', category: '其他', is_active: true, description: '' }
+    formDialog.value = {
+      _id: '',
+      name: '',
+      category: firstCategoryValue.value || '',
+      is_active: true,
+      description: ''
+    }
   }
   formDialogVisible.value = true
 }
 
 async function saveFormTemplate() {
   const payload = { ...formDialog.value }
+  if (!payload.category && firstCategoryValue.value) {
+    payload.category = firstCategoryValue.value
+  }
   let res
   if (formDialogMode.value === 'edit') {
     res = await apiFetch(`${API.forms}/${payload._id}`, {
@@ -969,7 +1054,7 @@ async function saveWorkflow() {
 }
 
 onMounted(async () => {
-  await loadCustomFieldOptions()
+  await Promise.all([loadCategories(), loadCustomFieldOptions()])
   await loadForms()
   selectedFormId.value = forms.value[0]?._id || ''
   if (selectedFormId.value) await loadWorkflow()

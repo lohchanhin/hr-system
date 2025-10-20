@@ -46,6 +46,46 @@
         </div>
       </el-tab-pane>
 
+      <el-tab-pane label="表單分類" name="form-category">
+        <div class="tab-content">
+          <el-alert
+            title="維護簽核表單分類，提供前台建立與過濾流程樣板時使用"
+            type="info"
+            show-icon
+            class="info-alert"
+          />
+          <div class="list-action-row">
+            <el-button type="primary" @click="openCategoryDialog()">新增分類</el-button>
+          </div>
+          <el-table :data="formCategories" border>
+            <el-table-column type="index" width="60" label="#" />
+            <el-table-column prop="name" label="分類名稱" width="200" />
+            <el-table-column prop="code" label="識別碼" width="180" />
+            <el-table-column label="說明">
+              <template #default="{ row }">
+                {{ row.description || '—' }}
+              </template>
+            </el-table-column>
+            <el-table-column label="狀態" width="120">
+              <template #default="{ row }">
+                <el-tag v-if="row.builtin" size="small" type="info">內建</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="操作" width="220">
+              <template #default="{ row }">
+                <el-button size="small" @click="openCategoryDialog('edit', row)">編輯</el-button>
+                <el-button
+                  size="small"
+                  type="danger"
+                  :disabled="row.builtin"
+                  @click="removeCategory(row)"
+                >刪除</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+        </div>
+      </el-tab-pane>
+
       <el-tab-pane label="自訂欄位" name="custom-field">
         <div class="tab-content">
           <el-alert
@@ -103,6 +143,26 @@
         <span class="dialog-footer">
           <el-button @click="optionDialogVisible = false">取消</el-button>
           <el-button type="primary" @click="saveOption">儲存</el-button>
+        </span>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="categoryDialogVisible" :title="categoryDialogTitle" width="420px">
+      <el-form :model="categoryForm" label-width="100px">
+        <el-form-item label="分類名稱">
+          <el-input v-model="categoryForm.name" placeholder="顯示名稱" />
+        </el-form-item>
+        <el-form-item label="識別碼">
+          <el-input v-model="categoryForm.code" placeholder="資料庫儲存用代碼" />
+        </el-form-item>
+        <el-form-item label="說明">
+          <el-input v-model="categoryForm.description" type="textarea" :rows="3" placeholder="可補充分類用途或適用範圍" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <span class="dialog-footer">
+          <el-button @click="categoryDialogVisible = false">取消</el-button>
+          <el-button type="primary" @click="saveCategory">儲存</el-button>
         </span>
       </template>
     </el-dialog>
@@ -208,6 +268,11 @@ import { apiFetch } from '../../api'
 import { editableListToOptions, optionsToEditableList } from '../../utils/fieldOptions'
 
 const activeTab = ref('item-setting')
+const formCategories = ref([])
+const categoryDialogVisible = ref(false)
+const categoryDialogMode = ref('create')
+const categoryForm = ref({ id: '', name: '', code: '', description: '', builtin: false })
+const categoryDialogTitle = computed(() => (categoryDialogMode.value === 'edit' ? '編輯分類' : '新增分類'))
 
 const dictionaryDefinitions = ref([
   { key: 'C03', label: '職稱' },
@@ -254,6 +319,45 @@ function normalizeDictionaryOption(option) {
   }
 
   return { name: '', code: '' }
+}
+
+function normalizeCategory(category) {
+  if (!category || typeof category !== 'object') {
+    return null
+  }
+  const nameSources = [category.name, category.label]
+  const codeSources = [category.code, category.value]
+  let name = ''
+  for (const candidate of nameSources) {
+    if (typeof candidate === 'string' && candidate.trim()) {
+      name = candidate.trim()
+      break
+    }
+  }
+  let code = ''
+  for (const candidate of codeSources) {
+    if (typeof candidate === 'string' && candidate.trim()) {
+      code = candidate.trim()
+      break
+    }
+  }
+  if (!code) code = name
+  const id =
+    typeof category.id === 'string' && category.id.trim()
+      ? category.id.trim()
+      : typeof category._id === 'string' && category._id.trim()
+        ? category._id.trim()
+        : code || name
+  if (!id) {
+    return null
+  }
+  return {
+    id,
+    name: name || code || id,
+    code: code || name || id,
+    description: typeof category.description === 'string' ? category.description : '',
+    builtin: Boolean(category.builtin)
+  }
 }
 
 const optionFieldTypes = ['select', 'checkbox', 'composite']
@@ -606,6 +710,7 @@ function moveOptionRow(index, offset) {
 
 onMounted(() => {
   loadSettings()
+  loadFormCategories()
 })
 
 async function loadSettings() {
@@ -637,9 +742,157 @@ async function loadSettings() {
       } else {
         itemSettings.value = createDefaultItemSettings()
       }
+      if (Array.isArray(data.formCategories)) {
+        const normalized = data.formCategories.map(normalizeCategory).filter(Boolean)
+        if (normalized.length) {
+          formCategories.value = normalized
+        }
+      }
     }
   } catch (error) {
     console.warn('載入其他控制設定失敗：', error)
+  }
+}
+
+async function loadFormCategories() {
+  try {
+    const res = await apiFetch('/api/other-control-settings/form-categories', { method: 'GET' }, { autoRedirect: false })
+    if (!res.ok) {
+      return
+    }
+    const list = await res.json()
+    if (!Array.isArray(list)) {
+      return
+    }
+    const normalized = list.map(normalizeCategory).filter(Boolean)
+    formCategories.value = normalized
+  } catch (error) {
+    console.warn('載入表單分類失敗：', error)
+  }
+}
+
+function openCategoryDialog(mode = 'create', category = null) {
+  categoryDialogMode.value = mode
+  if (mode === 'edit' && category) {
+    categoryForm.value = {
+      id: category.id,
+      name: category.name,
+      code: category.code,
+      description: category.description || '',
+      builtin: !!category.builtin
+    }
+  } else {
+    categoryForm.value = { id: '', name: '', code: '', description: '', builtin: false }
+  }
+  categoryDialogVisible.value = true
+}
+
+async function saveCategory() {
+  const name = (categoryForm.value.name || '').trim()
+  const code = (categoryForm.value.code || '').trim() || name
+  if (!name || !code) {
+    ElMessage.warning('分類名稱與識別碼為必填')
+    return
+  }
+
+  const payload = {
+    name,
+    code,
+    description: (categoryForm.value.description || '').trim()
+  }
+
+  const isEdit = categoryDialogMode.value === 'edit' && categoryForm.value.id
+  const url = isEdit
+    ? `/api/other-control-settings/form-categories/${categoryForm.value.id}`
+    : '/api/other-control-settings/form-categories'
+
+  try {
+    const res = await apiFetch(
+      url,
+      {
+        method: isEdit ? 'PUT' : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      },
+      { autoRedirect: false }
+    )
+
+    const responseText = await res.text().catch(() => '')
+    let responseData = null
+    if (responseText) {
+      try {
+        responseData = JSON.parse(responseText)
+      } catch (error) {
+        // ignore parse error
+      }
+    }
+
+    if (!res.ok) {
+      const message = responseData?.error || responseData?.message || responseText || '儲存分類失敗，請稍後再試'
+      throw new Error(message)
+    }
+
+    const normalized = normalizeCategory(responseData)
+    if (normalized) {
+      if (isEdit) {
+        const index = formCategories.value.findIndex(item => item.id === normalized.id)
+        if (index > -1) {
+          formCategories.value.splice(index, 1, normalized)
+        }
+      } else {
+        formCategories.value.push(normalized)
+      }
+    } else {
+      await loadFormCategories()
+    }
+
+    categoryDialogVisible.value = false
+    const message = isEdit ? '已更新分類' : '已新增分類'
+    ElMessage.success(message)
+  } catch (error) {
+    const message = error?.message || '儲存分類失敗，請稍後再試'
+    ElMessage.error(message)
+  }
+}
+
+async function removeCategory(category) {
+  if (!category?.id) return
+  if (category.builtin) {
+    ElMessage.warning('內建分類不可刪除')
+    return
+  }
+  try {
+    await ElMessageBox.confirm('確定要刪除此分類嗎？', '提醒', { type: 'warning' })
+  } catch (error) {
+    return
+  }
+
+  try {
+    const res = await apiFetch(
+      `/api/other-control-settings/form-categories/${category.id}`,
+      { method: 'DELETE' },
+      { autoRedirect: false }
+    )
+
+    const responseText = await res.text().catch(() => '')
+    if (!res.ok) {
+      let message = '刪除分類失敗，請稍後再試'
+      if (responseText) {
+        try {
+          const data = JSON.parse(responseText)
+          message = data?.error || data?.message || message
+        } catch (error) {
+          message = responseText
+        }
+      }
+      throw new Error(message)
+    }
+
+    formCategories.value = formCategories.value.filter(item => item.id !== category.id)
+    ElMessage.success('已刪除分類')
+  } catch (error) {
+    const message = error?.message || '刪除分類失敗，請稍後再試'
+    ElMessage.error(message)
   }
 }
 

@@ -6,7 +6,11 @@ import {
   updateIntegrationSettings,
   replaceCustomFields,
   getItemSettings,
-  updateItemSettings
+  updateItemSettings,
+  listFormCategories,
+  createFormCategory,
+  updateFormCategory,
+  deleteFormCategory
 } from '../controllers/otherControlSettingController.js'
 
 const router = Router()
@@ -18,5 +22,9 @@ router.put('/integration', updateIntegrationSettings)
 router.put('/custom-fields', replaceCustomFields)
 router.get('/item-settings', getItemSettings)
 router.put('/item-settings', updateItemSettings)
+router.get('/form-categories', listFormCategories)
+router.post('/form-categories', createFormCategory)
+router.put('/form-categories/:id', updateFormCategory)
+router.delete('/form-categories/:id', deleteFormCategory)
 
 export default router
