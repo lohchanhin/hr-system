@@ -326,7 +326,84 @@
         </div>
       </el-tab-pane>
 
-      <!-- 3) 我的申請 -->
+      <!-- 3) 我已簽核（主管／管理員） -->
+      <el-tab-pane v-if="canViewHistory" name="history">
+        <template #label>
+          <div class="tab-label">
+            <i class="el-icon-finished"></i>
+            <span>我已簽核</span>
+          </div>
+        </template>
+
+        <div class="tab-content">
+          <div class="table-section">
+            <h2 class="section-title">歷史簽核紀錄</h2>
+            <div class="table-container" v-loading="historyLoading">
+              <el-alert
+                v-if="historyError"
+                type="error"
+                :closable="false"
+                class="mb-3"
+                :title="historyError"
+              />
+              <el-table
+                v-if="historyList.length"
+                :data="historyList"
+                class="approval-table"
+                :header-cell-style="{ background: '#f8fafc', color: '#475569', fontWeight: '600' }"
+                :row-style="{ height: '64px' }"
+              >
+                <el-table-column type="index" label="#" width="60" />
+                <el-table-column label="表單名稱" width="240">
+                  <template #default="{ row }">
+                    <div class="form-name">
+                      <i class="el-icon-document"></i>
+                      {{ row.form?.name || '-' }}
+                    </div>
+                  </template>
+                </el-table-column>
+                <el-table-column label="申請人" width="200">
+                  <template #default="{ row }">
+                    <div class="applicant-info">
+                      <el-avatar :size="32" class="applicant-avatar">
+                        {{ (row.applicant_employee?.name || '-').charAt(0) }}
+                      </el-avatar>
+                      <span>{{ row.applicant_employee?.name || '-' }}</span>
+                    </div>
+                  </template>
+                </el-table-column>
+                <el-table-column label="決策結果" width="150">
+                  <template #default="{ row }">
+                    <span>{{ getStatusText(row.__latest?.decision) }}</span>
+                  </template>
+                </el-table-column>
+                <el-table-column label="簽核時間" width="200">
+                  <template #default="{ row }">
+                    {{ fmt(row.__latest?.decided_at) }}
+                  </template>
+                </el-table-column>
+                <el-table-column prop="comment" label="備註" min-width="220">
+                  <template #default="{ row }">
+                    <span>{{ row.__latest?.comment || '-' }}</span>
+                  </template>
+                </el-table-column>
+                <el-table-column label="操作" width="120">
+                  <template #default="{ row }">
+                    <el-button size="small" @click="openDetail(row._id)">查看</el-button>
+                  </template>
+                </el-table-column>
+              </el-table>
+              <el-empty
+                v-else
+                description="尚未簽核過任何申請"
+                class="history-empty"
+              />
+            </div>
+          </div>
+        </div>
+      </el-tab-pane>
+
+      <!-- 4) 我的申請 -->
       <el-tab-pane name="mine">
         <template #label>
           <div class="tab-label">
@@ -441,11 +518,14 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted, computed } from 'vue'
+import { ref, reactive, onMounted, computed, watch } from 'vue'
 import { apiFetch } from '../../api'
+import { useAuthStore } from '../../stores/auth'
 
 /* -------------------- Tabs -------------------- */
 const activeTab = ref('inbox')
+const authStore = useAuthStore()
+const canViewHistory = computed(() => ['manager', 'admin'].includes(authStore.role))
 
 /* -------------------- 共用小工具 -------------------- */
 const fmt = (d) => (d ? new Date(d).toLocaleString() : '-')
@@ -660,6 +740,7 @@ async function doAction() {
     if (res.ok) {
       actionDlg.visible = false
       await fetchInbox()
+      if (canViewHistory.value) await fetchHistory()
       alert('已送出！')
     } else {
       const e = await res.json().catch(()=> ({}))
@@ -673,6 +754,63 @@ async function doAction() {
 /* -------------------- 我的申請 -------------------- */
 const myList = ref([])
 const formNameCache = reactive({})
+
+/* -------------------- 我已簽核 -------------------- */
+const historyList = ref([])
+const historyLoading = ref(false)
+const historyError = ref('')
+
+function extractLatestApproval(row) {
+  const approvals = Array.isArray(row?.my_approvals) ? row.my_approvals : []
+  if (!approvals.length) return null
+  return approvals.reduce((latest, current) => {
+    const latestTime = latest?.time ?? Number.NEGATIVE_INFINITY
+    const currentTime = new Date(current.decided_at || current.updatedAt || current.createdAt || 0).getTime()
+    if (currentTime > latestTime) {
+      return { time: currentTime, record: current }
+    }
+    return latest
+  }, null)?.record || approvals[approvals.length - 1]
+}
+
+async function fetchHistory() {
+  if (!canViewHistory.value) {
+    historyList.value = []
+    historyError.value = ''
+    return
+  }
+  historyLoading.value = true
+  historyError.value = ''
+  try {
+    const res = await apiFetch('/api/approvals/history')
+    if (res.ok) {
+      const arr = await res.json()
+      const sorted = Array.isArray(arr)
+        ? [...arr].sort((a, b) => {
+            const latestA = extractLatestApproval(a)
+            const latestB = extractLatestApproval(b)
+            const timeA = new Date(latestA?.decided_at || 0).getTime()
+            const timeB = new Date(latestB?.decided_at || 0).getTime()
+            return timeB - timeA
+          })
+        : []
+      historyList.value = sorted.map(item => ({
+        ...item,
+        __latest: extractLatestApproval(item)
+      }))
+    } else if (res.status === 401 || res.status === 403) {
+      historyList.value = []
+      historyError.value = '您沒有權限查看歷史簽核紀錄'
+      alert(historyError.value)
+    } else {
+      historyError.value = `載入歷史簽核失敗（HTTP ${res.status}）`
+    }
+  } catch (err) {
+    historyError.value = err?.message || '載入歷史簽核失敗'
+  } finally {
+    historyLoading.value = false
+  }
+}
 
 async function fetchMyList() {
   const res = await apiFetch('/api/approvals')
@@ -717,9 +855,29 @@ async function openDetail(id) {
 
 /* -------------------- 初始化 -------------------- */
 onMounted(async () => {
+  authStore.loadUser()
   await Promise.all([loadFormTemplates(), fetchUsersLite(), fetchDepts(), fetchOrgs()])
   // 預設進待我簽核
   await Promise.all([fetchInbox(), fetchMyList()])
+  if (canViewHistory.value) await fetchHistory()
+})
+
+watch(activeTab, async (tab) => {
+  if (tab === 'inbox') {
+    await fetchInbox()
+  } else if (tab === 'mine') {
+    await fetchMyList()
+  } else if (tab === 'history' && canViewHistory.value) {
+    await fetchHistory()
+  }
+})
+
+watch(canViewHistory, async (val) => {
+  if (!val) {
+    historyList.value = []
+  } else if (activeTab.value === 'history') {
+    await fetchHistory()
+  }
 })
 
 function getStatusTagType(status) {
