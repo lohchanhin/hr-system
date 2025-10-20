@@ -129,16 +129,44 @@ export async function createApprovalRequest(req, res) {
 
     // 依每關解析審核人
     const reqSteps = []
+    let previousSignature = null
     for (const s of wf.steps) {
       const empIds = await resolveApprovers(s, applicantEmp)
-      reqSteps.push({
-        step_order: s.step_order,
-        approvers: buildDecisionList(empIds),
+      const orderedApproverIds = []
+      const seen = new Set()
+      for (const rawId of empIds || []) {
+        const id = rawId != null ? String(rawId) : ''
+        if (!id || seen.has(id)) continue
+        seen.add(id)
+        orderedApproverIds.push(id)
+      }
+
+      const sortedApproverIds = [...orderedApproverIds].sort()
+      const normalizedConfig = {
+        approvers: sortedApproverIds,
         all_must_approve: !!s.all_must_approve,
         is_required: !!s.is_required,
         can_return: !!s.can_return,
+      }
+      const signature = JSON.stringify(normalizedConfig)
+      if (signature === previousSignature) {
+        previousSignature = signature
+        continue
+      }
+      previousSignature = signature
+
+      reqSteps.push({
+        step_order: reqSteps.length + 1,
+        approvers: buildDecisionList(orderedApproverIds),
+        all_must_approve: normalizedConfig.all_must_approve,
+        is_required: normalizedConfig.is_required,
+        can_return: normalizedConfig.can_return,
       })
     }
+
+    reqSteps.forEach((step, index) => {
+      step.step_order = index + 1
+    })
     // 第一關時間標記
     if (reqSteps[0]) reqSteps[0].started_at = new Date()
 
