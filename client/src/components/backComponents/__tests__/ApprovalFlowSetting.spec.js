@@ -57,7 +57,10 @@ describe('ApprovalFlowSetting - custom field options', () => {
     apiFetchMock.mockRestore()
   })
 
-  function mockApis(customFields) {
+  function mockApis(customFields, categories = [
+    { id: 'cat-leave', name: '請假類', code: '請假類', description: '', builtin: true },
+    { id: 'cat-general', name: '總務類', code: '總務類', description: '', builtin: true }
+  ]) {
     const forms = [
       { _id: 'form1', name: '請假單', category: '請假類', is_active: true }
     ]
@@ -68,6 +71,15 @@ describe('ApprovalFlowSetting - custom field options', () => {
         return Promise.resolve(
           new Response(
             JSON.stringify({ customFields }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } }
+          )
+        )
+      }
+
+      if (path === '/api/other-control-settings/form-categories' && method === 'GET') {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify(categories),
             { status: 200, headers: { 'Content-Type': 'application/json' } }
           )
         )
@@ -170,5 +182,21 @@ describe('ApprovalFlowSetting - custom field options', () => {
     wrapper.vm.handleCustomFieldSelect('travelLocation')
 
     expect(wrapper.vm.fieldDialog.optionsStr).toBe('台北\n台中\n高雄')
+  })
+
+  it('載入表單分類後提供對應標籤與預設值', async () => {
+    const categories = [
+      { id: 'cat-1', name: '請假流程', code: '請假類', description: '所有請假相關表單', builtin: true },
+      { id: 'cat-2', name: '資產總務', code: '總務類', description: '', builtin: false }
+    ]
+
+    mockApis([], categories)
+
+    const wrapper = await mountComponent()
+
+    expect(wrapper.vm.categoryOptions).toHaveLength(2)
+    expect(wrapper.vm.categoryOptions[0]).toMatchObject({ value: '請假類', label: '請假流程' })
+    expect(wrapper.vm.categoryNameMap['請假類']).toBe('請假流程')
+    expect(wrapper.vm.formDialog.category).toBe('請假類')
   })
 })
