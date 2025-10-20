@@ -19,7 +19,17 @@ export async function verifySupervisor(req, res, next) {
 
     const supervisorId = actor._id.toString();
 
-    for (const id of employeeIds) {
+    const normalized = employeeIds
+      .map((id) => (typeof id?.toString === 'function' ? id.toString() : id))
+      .filter(Boolean)
+      .filter((id) => id !== supervisorId);
+
+    const uniqueEmployeeIds = [];
+    for (const id of normalized) {
+      if (!uniqueEmployeeIds.includes(id)) uniqueEmployeeIds.push(id);
+    }
+
+    for (const id of uniqueEmployeeIds) {
       const emp = await Employee.findById(id);
       if (!emp) return res.status(404).json({ error: 'Employee not found' });
       if (!(emp.supervisor && emp.supervisor.toString() === supervisorId)) {

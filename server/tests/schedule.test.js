@@ -19,7 +19,7 @@ const mockShiftSchedule = {
 
 const mockApprovalRequest = { findOne: jest.fn(), find: jest.fn() };
 
-const mockEmployee = { find: jest.fn() };
+const mockEmployee = { find: jest.fn(), findById: jest.fn() };
 const mockAttendanceSetting = { findOne: jest.fn() };
 
 const mockGetLeaveFieldIds = jest.fn();
@@ -51,8 +51,7 @@ jest.unstable_mockModule('../src/services/leaveFieldService.js', () => ({
   getLeaveFieldIds: mockGetLeaveFieldIds,
 }));
 
-// 驗證中介層直接放行
-jest.unstable_mockModule('../src/middleware/supervisor.js', () => ({ verifySupervisor: (req, res, next) => next() }));
+let currentRole = 'supervisor';
 
 /* --------------------------------- App --------------------------------- */
 let app;
@@ -62,10 +61,16 @@ beforeAll(async () => {
   scheduleRoutes = (await import('../src/routes/scheduleRoutes.js')).default;
   app = express();
   app.use(express.json());
+  app.use((req, res, next) => {
+    currentRole = 'supervisor';
+    req.user = { id: 'tester', role: currentRole };
+    next();
+  });
   app.use('/api/schedules', scheduleRoutes);
 });
 
 beforeEach(() => {
+  currentRole = 'supervisor';
   mockShiftSchedule.find.mockReset();
   mockShiftSchedule.findOne.mockReset();
   mockShiftSchedule.create.mockReset();
@@ -83,6 +88,12 @@ beforeEach(() => {
     typeOptions: [],
   });
   mockEmployee.find.mockReset();
+  mockEmployee.findById.mockReset();
+  mockEmployee.findById.mockImplementation(async (id) => {
+    if (id === 'tester') return { _id: 'tester', role: currentRole };
+    if (!id) return null;
+    return { _id: id, supervisor: 'tester' };
+  });
   mockAttendanceSetting.findOne.mockReset();
   mockAttendanceSetting.findOne.mockReturnValue({
     lean: jest.fn().mockResolvedValue({
@@ -97,6 +108,7 @@ describe('Schedule API', () => {
     const exportApp = express();
     exportApp.use(express.json());
     exportApp.use((req, res, next) => {
+      currentRole = role;
       req.user = { id: 'tester', role };
       next();
     });
@@ -296,6 +308,52 @@ describe('Schedule API', () => {
     ], { ordered: false });
   });
 
+  it('allows supervisor to include self in batch payload without duplicate lookups', async () => {
+    mockShiftSchedule.findOne.mockResolvedValueOnce(null);
+    mockShiftSchedule.findOne.mockResolvedValueOnce(null);
+    mockApprovalRequest.findOne.mockResolvedValue(null);
+    mockShiftSchedule.insertMany.mockImplementation(async (docs) =>
+      docs.map((doc, index) => ({ ...doc, _id: `new${index}` }))
+    );
+
+    const payload = {
+      schedules: [
+        { employee: 'tester', date: '2023-01-01', shiftId: 'day' },
+        { employee: 'emp1', date: '2023-01-02', shiftId: 'night' },
+        { employee: 'emp1', date: '2023-01-02', shiftId: 'night' },
+      ]
+    };
+
+    const res = await request(app).post('/api/schedules/batch').send(payload);
+
+    expect(res.status).toBe(201);
+    expect(res.body).toEqual([
+      expect.objectContaining({ employee: 'tester', shiftId: 'day' }),
+      expect.objectContaining({ employee: 'emp1', shiftId: 'night' })
+    ]);
+    expect(mockEmployee.findById.mock.calls.filter(([id]) => id === 'emp1')).toHaveLength(1);
+    expect(mockEmployee.findById.mock.calls.map(([id]) => id)).toEqual([
+      'tester',
+      'emp1'
+    ]);
+    expect(mockShiftSchedule.insertMany).toHaveBeenCalledWith([
+      {
+        employee: 'tester',
+        date: new Date('2023-01-01'),
+        shiftId: 'day',
+        department: undefined,
+        subDepartment: undefined
+      },
+      {
+        employee: 'emp1',
+        date: new Date('2023-01-02'),
+        shiftId: 'night',
+        department: undefined,
+        subDepartment: undefined
+      }
+    ], { ordered: false });
+  });
+
   it('rejects batch if schedule exists', async () => {
     const existing = buildScheduleDoc();
     mockShiftSchedule.findOne.mockResolvedValue(existing);
@@ -423,7 +481,9 @@ describe('Schedule API', () => {
       return { deletedCount: deleted };
     });
 
-    const res = await request(app).delete('/api/schedules/older-than?before=2021-01-01');
+    const res = await request(app)
+      .delete('/api/schedules/older-than?before=2021-01-01')
+      .send({ employee: 'tester' });
 
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ deleted: 1 });
