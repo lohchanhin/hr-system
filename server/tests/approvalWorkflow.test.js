@@ -109,4 +109,42 @@ describe('createApprovalRequest', () => {
     expect(createdDoc.steps[0].finished_at).toBeInstanceOf(Date)
     expect(createdDoc.steps[1].started_at).toBeInstanceOf(Date)
   })
+
+  it('merges consecutive steps with identical approvers and config', async () => {
+    mockFormTemplate.findById.mockResolvedValue({ _id: 'form1', name: '出差單', is_active: true })
+    mockApprovalWorkflow.findOne.mockResolvedValue({
+      _id: 'wf1',
+      form: 'form1',
+      steps: [
+        { step_order: 1, approver_type: 'user', approver_value: ['lead1'], all_must_approve: true, is_required: true, can_return: false },
+        { step_order: 2, approver_type: 'user', approver_value: ['lead1'], all_must_approve: true, is_required: true, can_return: false },
+        { step_order: 3, approver_type: 'user', approver_value: ['lead2'], all_must_approve: false, is_required: true, can_return: false },
+      ],
+    })
+
+    let createdDoc
+    mockApprovalRequest.create.mockImplementation(async (payload) => {
+      createdDoc = buildMockDoc(payload)
+      mockApprovalRequest.findById.mockResolvedValue(createdDoc)
+      return createdDoc
+    })
+
+    const res = makeRes()
+    await createApprovalRequest({ body: { form_id: 'form1', form_data: {}, applicant_employee_id: 'emp1' } }, res)
+
+    expect(mockApprovalRequest.create).toHaveBeenCalledTimes(1)
+    const payload = mockApprovalRequest.create.mock.calls[0][0]
+    expect(payload.steps).toHaveLength(2)
+    expect(payload.steps[0].step_order).toBe(1)
+    expect(payload.steps[0].approvers).toEqual([{ approver: 'lead1', decision: 'pending' }])
+    expect(payload.steps[1].step_order).toBe(2)
+    expect(payload.steps[1].approvers).toEqual([{ approver: 'lead2', decision: 'pending' }])
+
+    expect(createdDoc.current_step_index).toBe(0)
+    expect(res.status).toHaveBeenCalledWith(201)
+    const responseDoc = res.json.mock.calls[0][0]
+    expect(responseDoc.steps).toHaveLength(2)
+    expect(responseDoc.steps[0].step_order).toBe(1)
+    expect(responseDoc.steps[1].step_order).toBe(2)
+  })
 })
