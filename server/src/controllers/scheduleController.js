@@ -41,12 +41,13 @@ async function hasLeaveConflict(employeeId, date) {
 
 export async function listMonthlySchedules(req, res) {
   try {
-    const { month, employee, supervisor } = req.query;
+    const { month, employee, supervisor, includeSelf: includeSelfRaw } = req.query;
     if (!month) return res.status(400).json({ error: 'month required' });
     const start = new Date(`${month}-01`);
     const end = new Date(start);
     end.setMonth(end.getMonth() + 1);
     const query = { date: { $gte: start, $lt: end } };
+    const includeSelf = String(includeSelfRaw).toLowerCase() === 'true';
 
     if (supervisor) {
       const role = req.user?.role;
@@ -55,8 +56,11 @@ export async function listMonthlySchedules(req, res) {
         return res.status(403).json({ error: 'forbidden' });
       }
       const emps = await Employee.find({ supervisor }).select('_id');
-      const ids = emps.map((e) => e._id.toString());
-      query.employee = { $in: ids };
+      const idSet = new Set(emps.map((e) => e._id.toString()));
+      if (includeSelf && supervisor) {
+        idSet.add(String(supervisor));
+      }
+      query.employee = { $in: Array.from(idSet) };
     } else {
       const empId = employee || (req.user?.role === 'employee' ? req.user.id : undefined);
       if (empId) query.employee = empId;
@@ -72,16 +76,21 @@ export async function listMonthlySchedules(req, res) {
 
 export async function listLeaveApprovals(req, res) {
   try {
-    const { month, employee, supervisor } = req.query;
+    const { month, employee, supervisor, includeSelf: includeSelfRaw } = req.query;
     if (!month) return res.status(400).json({ error: 'month required' });
     const start = new Date(`${month}-01`);
     const end = new Date(start);
     end.setMonth(end.getMonth() + 1);
 
+    const includeSelf = String(includeSelfRaw).toLowerCase() === 'true';
     let ids = [];
     if (supervisor) {
       const emps = await Employee.find({ supervisor }).select('_id');
-      ids = emps.map((e) => e._id.toString());
+      const idSet = new Set(emps.map((e) => e._id.toString()));
+      if (includeSelf && supervisor) {
+        idSet.add(String(supervisor));
+      }
+      ids = Array.from(idSet);
     } else if (employee) {
       ids = [employee];
     }
@@ -113,10 +122,11 @@ export async function listLeaveApprovals(req, res) {
 
 export async function listSupervisorSummary(req, res) {
   try {
-    const { month } = req.query;
+    const { month, includeSelf: includeSelfRaw } = req.query;
     const supervisor = req.user?.id;
     if (!month) return res.status(400).json({ error: 'month required' });
     if (!supervisor) return res.status(400).json({ error: 'supervisor required' });
+    const includeSelf = String(includeSelfRaw).toLowerCase() === 'true';
 
     const start = new Date(`${month}-01`);
     const end = new Date(start);
@@ -125,11 +135,13 @@ export async function listSupervisorSummary(req, res) {
     const employees = await Employee.find({ supervisor })
       .select('_id name')
       .lean();
-    const ids = employees.map((e) => e._id.toString());
     const summaryMap = {};
+    const ids = [];
     employees.forEach((e) => {
-      summaryMap[e._id.toString()] = {
-        employee: e._id.toString(),
+      const key = e._id.toString();
+      ids.push(key);
+      summaryMap[key] = {
+        employee: key,
         name: e.name,
         shiftCount: 0,
         leaveCount: 0,
@@ -137,7 +149,25 @@ export async function listSupervisorSummary(req, res) {
       };
     });
 
-    if (!ids.length) return res.json([]);
+    if (includeSelf) {
+      const self = await Employee.findById(supervisor).select('_id name').lean();
+      if (self?._id) {
+        const key = self._id.toString();
+        if (!summaryMap[key]) {
+          ids.push(key);
+          summaryMap[key] = {
+            employee: key,
+            name: self.name,
+            shiftCount: 0,
+            leaveCount: 0,
+            absenceCount: 0,
+          };
+        }
+      }
+    }
+
+    const uniqueIds = Array.from(new Set(ids));
+    if (!uniqueIds.length) return res.json([]);
 
     const setting = await AttendanceSetting.findOne().lean();
     const shiftMap = {};
@@ -146,17 +176,17 @@ export async function listSupervisorSummary(req, res) {
     });
 
     const schedules = await ShiftSchedule.find({
-      employee: { $in: ids },
+      employee: { $in: uniqueIds },
       date: { $gte: start, $lt: end },
     }).lean();
 
     const leaveDaysMap = new Map();
     const { formId, startId, endId } = await getLeaveFieldIds();
-    if (formId && startId && endId && ids.length) {
+    if (formId && startId && endId && uniqueIds.length) {
       const leaveQuery = {
         form: formId,
         status: 'approved',
-        applicant_employee: { $in: ids },
+        applicant_employee: { $in: uniqueIds },
       };
       leaveQuery[`form_data.${startId}`] = { $lte: end };
       leaveQuery[`form_data.${endId}`] = { $gte: start };

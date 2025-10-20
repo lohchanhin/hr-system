@@ -390,6 +390,23 @@ describe('Schedule API', () => {
     });
   });
 
+  it('leave approvals include supervisor when includeSelf is true', async () => {
+    const selectMock = jest.fn().mockResolvedValue([{ _id: 'emp1' }]);
+    mockEmployee.find.mockReturnValue({ select: selectMock });
+    const approvals = [];
+    mockApprovalRequest.find.mockReturnValue({
+      populate: jest.fn().mockReturnThis(),
+      then: (resolve) => resolve(approvals),
+    });
+
+    const res = await request(app)
+      .get('/api/schedules/leave-approvals?month=2023-01&supervisor=sup1&includeSelf=true');
+
+    expect(res.status).toBe(200);
+    const queryArg = mockApprovalRequest.find.mock.calls[0][0];
+    expect(queryArg.applicant_employee.$in).toEqual(expect.arrayContaining(['emp1', 'sup1']));
+  });
+
   it('deletes old schedules', async () => {
     // 用本地陣列模擬資料，deleteMany 以條件計算刪除數
     const data = [

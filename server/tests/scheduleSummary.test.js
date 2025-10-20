@@ -3,7 +3,7 @@ import express from 'express';
 import { jest } from '@jest/globals';
 
 const mockShiftSchedule = { find: jest.fn() };
-const mockEmployee = { find: jest.fn() };
+const mockEmployee = { find: jest.fn(), findById: jest.fn() };
 const mockAttendanceSetting = { findOne: jest.fn() };
 const mockApprovalRequest = { find: jest.fn() };
 const mockGetLeaveFieldIds = jest.fn();
@@ -43,6 +43,7 @@ beforeAll(async () => {
 beforeEach(() => {
   mockShiftSchedule.find.mockReset();
   mockEmployee.find.mockReset();
+  mockEmployee.findById.mockReset();
   mockAttendanceSetting.findOne.mockReset();
   mockApprovalRequest.find.mockReset();
   mockGetLeaveFieldIds.mockReset();
@@ -110,5 +111,38 @@ describe('Supervisor schedule summary', () => {
     const res = await request(app).get('/api/schedules/summary');
     expect(res.status).toBe(400);
     expect(res.body.error).toBe('month required');
+  });
+
+  it('includeSelf=true 時會加入主管本人資料', async () => {
+    mockEmployee.find.mockReturnValue({
+      select: jest.fn().mockReturnThis(),
+      lean: jest.fn().mockResolvedValue([{ _id: 'emp1', name: 'Emp1' }]),
+    });
+    mockEmployee.findById.mockReturnValue({
+      select: jest.fn().mockReturnThis(),
+      lean: jest.fn().mockResolvedValue({ _id: 'sup1', name: '主管本人' }),
+    });
+    mockAttendanceSetting.findOne.mockReturnValue({
+      lean: jest.fn().mockResolvedValue({ shifts: [{ _id: 'shift1', name: '早班' }] }),
+    });
+    mockShiftSchedule.find.mockReturnValue({
+      lean: jest.fn().mockResolvedValue([
+        { employee: 'sup1', shiftId: 'shift1', date: new Date('2023-05-01') },
+      ]),
+    });
+    mockApprovalRequest.find.mockReturnValue({
+      lean: jest.fn().mockResolvedValue([
+        {
+          applicant_employee: 'sup1',
+          form_data: { start: '2023-05-03', end: '2023-05-04' },
+        },
+      ]),
+    });
+
+    const res = await request(app).get('/api/schedules/summary?month=2023-05&includeSelf=true');
+
+    expect(res.status).toBe(200);
+    const summaryRows = res.body;
+    expect(summaryRows.some((row) => row.employee === 'sup1')).toBe(true);
   });
 });

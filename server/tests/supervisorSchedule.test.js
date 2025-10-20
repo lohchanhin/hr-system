@@ -2,10 +2,16 @@ import request from 'supertest';
 import express from 'express';
 import { jest } from '@jest/globals';
 
-const mockShiftSchedule = { findOne: jest.fn(), create: jest.fn(), insertMany: jest.fn() };
+const mockShiftSchedule = {
+  find: jest.fn(),
+  findOne: jest.fn(),
+  create: jest.fn(),
+  insertMany: jest.fn(),
+};
 const mockApprovalRequest = { findOne: jest.fn() };
 const mockGetLeaveFieldIds = jest.fn();
 const mockEmployee = { findById: jest.fn(), find: jest.fn() };
+const mockAttendanceSetting = { findOne: jest.fn() };
 
 jest.unstable_mockModule('../src/models/ShiftSchedule.js', () => ({ default: mockShiftSchedule }));
 jest.unstable_mockModule('../src/models/approval_request.js', () => ({ default: mockApprovalRequest }));
@@ -13,6 +19,7 @@ jest.unstable_mockModule('../src/models/Employee.js', () => ({ default: mockEmpl
 jest.unstable_mockModule('../src/services/leaveFieldService.js', () => ({
   getLeaveFieldIds: mockGetLeaveFieldIds,
 }));
+jest.unstable_mockModule('../src/models/AttendanceSetting.js', () => ({ default: mockAttendanceSetting }));
 
 let app;
 let scheduleRoutes;
@@ -32,6 +39,7 @@ beforeAll(async () => {
 });
 
 beforeEach(() => {
+  mockShiftSchedule.find.mockReset();
   mockShiftSchedule.findOne.mockReset();
   mockShiftSchedule.create.mockReset();
   mockShiftSchedule.insertMany.mockReset();
@@ -46,6 +54,10 @@ beforeEach(() => {
   });
   mockEmployee.findById.mockReset();
   mockEmployee.find.mockReset();
+  mockAttendanceSetting.findOne.mockReset();
+  mockAttendanceSetting.findOne.mockReturnValue({
+    lean: jest.fn().mockResolvedValue({ shifts: [] }),
+  });
 });
 
 describe('Supervisor schedule permissions', () => {
@@ -126,5 +138,21 @@ describe('Supervisor schedule permissions', () => {
     const res = await request(app).post('/api/schedules/batch').send(payload);
     expect(res.status).toBe(201);
     expect(mockShiftSchedule.insertMany).toHaveBeenCalled();
+  });
+
+  it('includes supervisor schedule when includeSelf is true', async () => {
+    const selectMock = jest.fn().mockResolvedValue([{ _id: 'emp1' }]);
+    mockEmployee.find.mockReturnValue({ select: selectMock });
+    const populateMock = jest.fn().mockReturnThis();
+    const leanMock = jest.fn().mockResolvedValue([]);
+    mockShiftSchedule.find.mockReturnValue({ populate: populateMock, lean: leanMock });
+
+    const res = await request(app)
+      .get('/api/schedules/monthly?month=2023-01&supervisor=u1&includeSelf=true');
+
+    expect(res.status).toBe(200);
+    expect(selectMock).toHaveBeenCalledWith('_id');
+    const queryArg = mockShiftSchedule.find.mock.calls[0][0];
+    expect(queryArg.employee.$in).toEqual(expect.arrayContaining(['emp1', 'u1']));
   });
 });
