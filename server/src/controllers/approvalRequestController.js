@@ -222,6 +222,66 @@ export async function inboxApprovals(req, res) {
   }
 }
 
+/* 已簽核歷史紀錄（主管視角） */
+export async function historyApprovals(req, res) {
+  try {
+    const empId = req.query.employee_id || req.user?.id
+    if (!empId) return res.status(400).json({ error: 'employee id required' })
+
+    const docs = await ApprovalRequest.find({
+      steps: {
+        $elemMatch: {
+          approvers: {
+            $elemMatch: { approver: empId, decision: { $ne: 'pending' } },
+          },
+        },
+      },
+    })
+      .sort({ updatedAt: -1 })
+      .populate('form', 'name category')
+      .populate('applicant_employee', 'name employeeId department organization')
+
+    const results = docs.map((doc) => {
+      const obj = typeof doc.toObject === 'function' ? doc.toObject() : doc
+      const actions = []
+      ;(obj.steps || []).forEach((step, index) => {
+        const stepOrder = step.step_order ?? (index + 1)
+        ;(step.approvers || []).forEach((approver) => {
+          const approverId = (() => {
+            if (!approver) return ''
+            if (typeof approver.approver === 'object' && approver.approver) {
+              return approver.approver._id || approver.approver.id || String(approver.approver)
+            }
+            return approver.approver
+          })()
+          if (String(approverId) === String(empId) && approver.decision !== 'pending') {
+            actions.push({
+              step_order: stepOrder,
+              decision: approver.decision,
+              decided_at: approver.decided_at,
+              comment: approver.comment,
+            })
+          }
+        })
+      })
+
+      return {
+        _id: obj._id,
+        status: obj.status,
+        form: obj.form,
+        applicant_employee: obj.applicant_employee,
+        createdAt: obj.createdAt,
+        updatedAt: obj.updatedAt,
+        my_approvals: actions,
+      }
+    }).filter(item => item.my_approvals.length)
+
+    res.json(results)
+  } catch (e) {
+    res.status(400).json({ error: e.message })
+  }
+}
+
 /* 進到下一關 or 結案 */
 async function tryAdvance(doc) {
   const idx = doc.current_step_index
