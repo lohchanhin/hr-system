@@ -6,7 +6,7 @@ import {
 } from '../controllers/approvalTemplateController.js'
 
 import {
-  createApprovalRequest, getApprovalRequest, myApprovalRequests, inboxApprovals, actOnApproval,
+  createApprovalRequest, getApprovalRequest, myApprovalRequests, inboxApprovals, actOnApproval, historyApprovals,
 } from '../controllers/approvalRequestController.js'
 
 import { authorizeRoles } from '../middleware/auth.js'
@@ -35,6 +35,7 @@ router.get('/sign-levels', authorizeRoles('employee', 'supervisor', 'admin'), ge
 // Requests
 router.post('/', authorizeRoles('employee', 'supervisor', 'admin'), createApprovalRequest)
 router.get('/inbox', authorizeRoles('employee', 'supervisor', 'admin'), inboxApprovals)
+router.get('/history', authorizeRoles('supervisor', 'admin'), historyApprovals)
 router.get('/:id', authorizeRoles('employee', 'supervisor', 'admin'), getApprovalRequest)
 router.get('/', authorizeRoles('employee', 'supervisor', 'admin'), myApprovalRequests)
 router.post('/:id/act', authorizeRoles('employee', 'supervisor', 'admin'), actOnApproval)
