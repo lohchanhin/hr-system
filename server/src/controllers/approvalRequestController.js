@@ -142,7 +142,7 @@ export async function createApprovalRequest(req, res) {
     // 第一關時間標記
     if (reqSteps[0]) reqSteps[0].started_at = new Date()
 
-    const doc = await ApprovalRequest.create({
+    let doc = await ApprovalRequest.create({
       form: form._id,
       workflow: wf._id,
       form_data,
@@ -155,9 +155,28 @@ export async function createApprovalRequest(req, res) {
       logs: [{ action: 'create', by_employee: applicantEmp?._id || req.user?.id, message: '建立送審單' }],
     })
 
-    // 通知第一關審核人
-    const firstApproverEmpIds = (reqSteps[0]?.approvers || []).map(a => a.approver)
-    await notifyUsers(firstApproverEmpIds, `有新的【${form.name}】待簽`)
+    const message = `有新的【${form.name}】待簽`
+
+    let advanced = false
+    let guard = 0
+    while (doc.status === 'pending' && guard < doc.steps.length) {
+      const currentStep = doc.steps[doc.current_step_index]
+      if (!currentStep || currentStep.approvers.length > 0) break
+      advanced = true
+      await tryAdvance(doc, { notifyMessage: message })
+      const refreshed = await ApprovalRequest.findById(doc._id)
+      if (!refreshed) break
+      doc = refreshed
+      guard += 1
+    }
+
+    if (!advanced && doc.status === 'pending') {
+      const currentStep = doc.steps[doc.current_step_index]
+      const approverIds = (currentStep?.approvers || [])
+        .filter(a => a.decision === 'pending')
+        .map(a => a.approver)
+      await notifyUsers(approverIds, message)
+    }
 
     res.status(201).json(doc)
   } catch (e) {
@@ -223,7 +242,8 @@ export async function inboxApprovals(req, res) {
 }
 
 /* 進到下一關 or 結案 */
-async function tryAdvance(doc) {
+async function tryAdvance(doc, options = {}) {
+  const { notifyMessage } = options
   const idx = doc.current_step_index
   const step = doc.steps[idx]
   if (!step) return doc
@@ -245,7 +265,7 @@ async function tryAdvance(doc) {
     await doc.save()
     // 通知下一關
     const nextApprovers = doc.steps[idx + 1].approvers.map(a => a.approver)
-    await notifyUsers(nextApprovers, '有新的簽核待處理')
+    await notifyUsers(nextApprovers, notifyMessage || '有新的簽核待處理')
   } else {
     // 全部完成
     doc.status = 'approved'
