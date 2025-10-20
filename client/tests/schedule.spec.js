@@ -2,7 +2,33 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { shallowMount } from '@vue/test-utils'
 import dayjs from 'dayjs'
 import { createPinia, setActivePinia } from 'pinia'
-global.ElMessage = { error: vi.fn(), success: vi.fn(), warning: vi.fn(), info: vi.fn() }
+
+const elementPlusMock = vi.hoisted(() => {
+  const ElMessage = { error: vi.fn(), success: vi.fn(), warning: vi.fn(), info: vi.fn() }
+  const ElMessageBox = { alert: vi.fn(), confirm: vi.fn() }
+  const loadingInstances = []
+  const loadingServiceMock = vi.fn(() => {
+    const instance = { close: vi.fn() }
+    loadingInstances.push(instance)
+    return instance
+  })
+  return {
+    module: {
+      ElMessage,
+      ElMessageBox,
+      ElLoading: { service: loadingServiceMock }
+    },
+    ElMessage,
+    ElMessageBox,
+    loadingInstances,
+    loadingServiceMock
+  }
+})
+
+vi.mock('element-plus', () => elementPlusMock.module)
+
+const { ElMessage, ElMessageBox, loadingInstances, loadingServiceMock } = elementPlusMock
+global.ElMessage = ElMessage
 
 vi.mock('../src/api', () => ({ apiFetch: vi.fn() }))
 const encodeBase64 = data => Buffer.from(data, 'utf8').toString('base64')
@@ -32,6 +58,10 @@ describe('Schedule.vue', () => {
     ElMessage.success.mockReset()
     ElMessage.warning.mockReset()
     ElMessage.info.mockReset()
+    ElMessageBox.alert.mockReset()
+    ElMessageBox.confirm.mockReset()
+    loadingServiceMock.mockClear()
+    loadingInstances.length = 0
     pushMock.mockReset()
     sessionStorage.clear()
     localStorage.clear()
@@ -258,6 +288,71 @@ describe('Schedule.vue', () => {
     expect(wrapper.vm.shifts).toEqual([
       { _id: 's1', code: 'S1', name: '早班', startTime: '08:00', endTime: '17:00', remark: 'R' }
     ])
+  })
+
+  it('shows loading state while applying batch schedules', async () => {
+    const month = dayjs().format('YYYY-MM')
+    setRoleToken('admin')
+    apiFetch.mockResolvedValue({ ok: true, json: async () => [] })
+    const wrapper = mountSchedule()
+    await flush()
+    wrapper.vm.employees = [
+      { _id: 'e1', departmentId: 'd1', subDepartmentId: 'sd1', department: '', subDepartment: '' }
+    ]
+    wrapper.vm.scheduleMap = {
+      e1: {
+        1: { shiftId: '', department: 'd1', subDepartment: 'sd1' }
+      }
+    }
+    await wrapper.vm.$nextTick()
+    wrapper.vm.toggleCell('e1', 1, true)
+    wrapper.vm.batchShiftId = 's1'
+
+    const inserted = [
+      {
+        _id: 'sch1',
+        employee: 'e1',
+        date: `${month}-01`,
+        shiftId: 's1',
+        department: 'd1',
+        subDepartment: 'sd1'
+      }
+    ]
+
+    let resolveFetch
+    apiFetch.mockImplementationOnce(
+      () =>
+        new Promise(resolve => {
+          resolveFetch = () =>
+            resolve({
+              ok: true,
+              json: async () => inserted
+            })
+        })
+    )
+
+    const applyPromise = wrapper.vm.applyBatch()
+    await wrapper.vm.$nextTick()
+    await Promise.resolve()
+
+    const button = wrapper.find('[data-test="batch-apply-button"]')
+    expect(button.exists()).toBe(true)
+    expect(wrapper.vm.isApplyingBatch).toBe(true)
+    expect(button.attributes('loading')).toBe('true')
+    expect(button.element.disabled).toBe(true)
+    expect(loadingServiceMock).toHaveBeenCalledTimes(1)
+    const loadingInstance = loadingServiceMock.mock.results[0]?.value
+    expect(typeof loadingInstance?.close).toBe('function')
+
+    resolveFetch()
+    await applyPromise
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.vm.isApplyingBatch).toBe(false)
+    expect(button.attributes('loading')).toBe('false')
+    expect(button.element.disabled).toBe(false)
+    expect(loadingInstance.close).toHaveBeenCalled()
+    expect(ElMessage.success).toHaveBeenCalledWith('批次套用完成')
   })
 
   it('renders leave indicator and prevents editing when leave exists', async () => {

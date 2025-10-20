@@ -196,7 +196,8 @@
         <el-button
           type="primary"
           class="action-btn primary apply-btn"
-          :disabled="!hasAnySelection || !batchShiftId"
+          :disabled="!hasAnySelection || !batchShiftId || isApplyingBatch"
+          :loading="isApplyingBatch"
           @click="applyBatch"
           data-test="batch-apply-button"
         >
@@ -437,7 +438,7 @@ import { ref, computed, onMounted, watch } from 'vue'
 import dayjs from 'dayjs'
 import { apiFetch } from '../../api'
 import { useAuthStore } from '../../stores/auth'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage, ElMessageBox, ElLoading } from 'element-plus'
 import { useRouter } from 'vue-router'
 import ScheduleDashboard from './ScheduleDashboard.vue'
 import { CircleCloseFilled, WarningFilled } from '@element-plus/icons-vue'
@@ -467,6 +468,7 @@ const customRange = ref([])
 const batchShiftId = ref('')
 const batchDepartment = ref('')
 const batchSubDepartment = ref('')
+const isApplyingBatch = ref(false)
 
 const selectedEmployeesSet = computed(() => selectedEmployees.value)
 const selectedDaysSet = computed(() => selectedDays.value)
@@ -1304,53 +1306,65 @@ async function applyBatch() {
     payloadMap.set(buildCellKey(item.employee, item.day), item)
   })
 
-  let res
-  try {
-    res = await apiFetch('/api/schedules/batch', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        schedules: batchPayload.map(({ day, ...rest }) => rest)
-      })
-    })
-  } catch (err) {
-    await handleBatchApiError(null)
-    return
-  }
-  if (!res.ok) {
-    await handleBatchApiError(res)
-    return
-  }
-
-  const result = await res.json()
-
-  if (!Array.isArray(result) || !result.length) {
-    callInfo('沒有可更新的資料')
-    return
-  }
-
-  result.forEach(entry => {
-    const empId = entry.employee?._id || entry.employee
-    const d = dayjs(entry.date).date()
-    if (!scheduleMap.value[empId]) {
-      scheduleMap.value[empId] = {}
-    }
-    const key = buildCellKey(empId, d)
-    const payload = payloadMap.get(key) || {}
-    const current = scheduleMap.value[empId][d] || {}
-    scheduleMap.value[empId][d] = {
-      ...current,
-      id: entry._id || payload.id || current.id,
-      shiftId: entry.shiftId || payload.shiftId || current.shiftId,
-      department:
-        payload.department ?? entry.department ?? current.department ?? '',
-      subDepartment:
-        payload.subDepartment ?? entry.subDepartment ?? current.subDepartment ?? ''
-    }
-    delete scheduleMap.value[empId][d].leave
+  isApplyingBatch.value = true
+  const loadingInstance = ElLoading.service({
+    fullscreen: true,
+    lock: true,
+    text: '批次套用中...'
   })
 
-  callSuccess('批次套用完成')
+  try {
+    let res
+    try {
+      res = await apiFetch('/api/schedules/batch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          schedules: batchPayload.map(({ day, ...rest }) => rest)
+        })
+      })
+    } catch (err) {
+      await handleBatchApiError(null)
+      return
+    }
+    if (!res.ok) {
+      await handleBatchApiError(res)
+      return
+    }
+
+    const result = await res.json()
+
+    if (!Array.isArray(result) || !result.length) {
+      callInfo('沒有可更新的資料')
+      return
+    }
+
+    result.forEach(entry => {
+      const empId = entry.employee?._id || entry.employee
+      const d = dayjs(entry.date).date()
+      if (!scheduleMap.value[empId]) {
+        scheduleMap.value[empId] = {}
+      }
+      const key = buildCellKey(empId, d)
+      const payload = payloadMap.get(key) || {}
+      const current = scheduleMap.value[empId][d] || {}
+      scheduleMap.value[empId][d] = {
+        ...current,
+        id: entry._id || payload.id || current.id,
+        shiftId: entry.shiftId || payload.shiftId || current.shiftId,
+        department:
+          payload.department ?? entry.department ?? current.department ?? '',
+        subDepartment:
+          payload.subDepartment ?? entry.subDepartment ?? current.subDepartment ?? ''
+      }
+      delete scheduleMap.value[empId][d].leave
+    })
+
+    callSuccess('批次套用完成')
+  } finally {
+    loadingInstance?.close()
+    isApplyingBatch.value = false
+  }
 }
 
 function shiftInfo(id) {
