@@ -1,8 +1,15 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { shallowMount } from '@vue/test-utils'
-import EmployeeManagement from '../EmployeeManagement.vue'
 import * as apiModule from '../../../api'
 import { ElMessage } from 'element-plus'
+
+vi.mock('xlsx', () => ({
+  read: vi.fn(() => ({ SheetNames: [], Sheets: {} })),
+  utils: {
+    sheet_to_json: vi.fn(() => [])
+  },
+  writeFile: vi.fn()
+}), { virtual: true })
 
 vi.mock('element-plus', () => {
   const success = vi.fn()
@@ -24,6 +31,8 @@ vi.mock('element-plus', () => {
 vi.mock('vue-router', () => ({
   useRouter: () => ({ push: vi.fn() })
 }))
+
+import EmployeeManagement from '../EmployeeManagement.vue'
 
 const flushPromises = () => new Promise(resolve => setTimeout(resolve))
 
@@ -379,6 +388,70 @@ describe('EmployeeManagement - 批量匯入流程', () => {
     const ignorePayload = JSON.parse(secondFormData.get('ignore'))
     expect(mappedPayload.department[key]).toBe('dep1')
     expect(ignorePayload.department).toEqual([])
+    expect(wrapper.vm.referenceMappingDialogVisible).toBe(false)
+  })
+
+  it('匯入時缺少多種參照類型可顯示並送出新類型的對應', async () => {
+    const missingResponse = {
+      message: '缺少對應資料',
+      missingReferences: {
+        department: {
+          values: [{ value: '人資部', normalizedValue: '人資部', rows: [2] }],
+          options: [{ id: 'dep1', name: '人資部', code: 'HR001' }]
+        },
+        team: {
+          values: [{ value: 'A班', rows: [2, 4] }],
+          options: [
+            { id: 'team1', name: 'A班', code: 'T001' },
+            { id: 'team2', name: 'B班' }
+          ]
+        }
+      },
+      errors: []
+    }
+
+    importEmployeesBulkMock
+      .mockResolvedValueOnce(createApiResponse(missingResponse, 409))
+      .mockResolvedValueOnce(createApiResponse({ preview: [], errors: [] }))
+
+    const wrapper = await mountComponent()
+    await wrapper.find('[data-test="bulk-import-button"]').trigger('click')
+
+    const file = new File(['mapping'], 'employees.csv', { type: 'text/csv' })
+    wrapper.vm.handleBulkImportFileChange({ name: 'employees.csv', raw: file })
+
+    await wrapper.vm.submitBulkImport()
+    await flushPromises()
+
+    expect(wrapper.vm.referenceMappingDialogVisible).toBe(true)
+    const keyList = Array.isArray(wrapper.vm.referenceMappingKeys)
+      ? wrapper.vm.referenceMappingKeys
+      : wrapper.vm.referenceMappingKeys?.value
+    expect(Array.isArray(keyList)).toBe(true)
+    expect(keyList).toContain('team')
+
+    const departmentEntry = wrapper.vm.referenceMappingPending.department[0]
+    const departmentKey = wrapper.vm.getReferenceEntryKey(departmentEntry)
+    const teamEntry = wrapper.vm.referenceMappingPending.team[0]
+    const teamKey = wrapper.vm.getReferenceEntryKey(teamEntry)
+
+    expect(wrapper.vm.referenceMappingSelections.team[teamKey].mode).toBe('map')
+    expect(wrapper.vm.referenceMappingOptions.team.map(opt => opt.id)).toContain('team1')
+
+    wrapper.vm.referenceMappingSelections.department[departmentKey].targetId = 'dep1'
+    wrapper.vm.referenceMappingSelections.team[teamKey].targetId = 'team1'
+
+    await wrapper.vm.confirmReferenceMappings()
+    await flushPromises()
+
+    expect(importEmployeesBulkMock).toHaveBeenCalledTimes(2)
+    const secondFormData = importEmployeesBulkMock.mock.calls[1][0]
+    const valuePayload = JSON.parse(secondFormData.get('valueMappings'))
+    const ignorePayload = JSON.parse(secondFormData.get('ignore'))
+
+    expect(valuePayload.department[departmentKey]).toBe('dep1')
+    expect(valuePayload.team[teamKey]).toBe('team1')
+    expect(ignorePayload.team).toEqual([])
     expect(wrapper.vm.referenceMappingDialogVisible).toBe(false)
   })
 })
