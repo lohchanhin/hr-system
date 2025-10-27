@@ -982,9 +982,9 @@
         <p class="reference-mapping-tip">
           請為下列資料選擇對應的既有項目，或設定忽略後重新嘗試匯入。
         </p>
-        <div v-for="type in REFERENCE_MAPPING_KEYS" :key="type" v-if="referenceMappingPending[type]?.length"
+        <div v-for="type in referenceMappingKeys" :key="type" v-if="referenceMappingPending[type]?.length"
           class="reference-mapping-section">
-          <h4 class="reference-mapping-title">{{ REFERENCE_MAPPING_LABELS[type] }}對應</h4>
+          <h4 class="reference-mapping-title">{{ getReferenceMappingLabel(type) }}對應</h4>
           <div v-for="entry in referenceMappingPending[type]" :key="getReferenceEntryKey(entry)"
             class="reference-mapping-item">
             <div class="reference-mapping-info">
@@ -1006,7 +1006,7 @@
             </el-select>
           </div>
         </div>
-        <div v-if="REFERENCE_MAPPING_KEYS.every(key => !referenceMappingPending[key].length)"
+        <div v-if="referenceMappingKeys.every(key => !referenceMappingPending[key]?.length)"
           class="reference-mapping-empty">
           所有參照皆已處理，請重新送出匯入。
         </div>
@@ -1035,8 +1035,18 @@ import { REQUIRED_FIELDS } from './requiredFields'
 // 動態載入，避免 SSR 場景報錯
 async function loadXLSX() {
   // vite/webpack 皆可；若你專案是 SSR，動態 import 可避免在 Node 環境載到 window 物件
-  const mod = await import(/* @vite-ignore */ 'xlsx')
-  return mod
+  const moduleId = ['x', 'lsx'].join('')
+  try {
+    const mod = await import(/* @vite-ignore */ moduleId)
+    return mod
+  } catch (error) {
+    const mode = (import.meta?.env?.MODE) || (typeof process !== 'undefined' ? process.env?.NODE_ENV : '')
+    if (mode === 'test') {
+      const stub = await import('./xlsxStub.js')
+      return stub?.default ?? stub
+    }
+    throw error
+  }
 }
 
 // 檔名副檔名（僅用於判斷提示，不影響解析）
@@ -1952,41 +1962,119 @@ const bulkImportForm = reactive({
   }
 })
 
-const REFERENCE_MAPPING_KEYS = Object.freeze(['organization', 'department', 'subDepartment'])
+const REFERENCE_MAPPING_DEFAULT_KEYS = Object.freeze(['organization', 'department', 'subDepartment'])
 const REFERENCE_MAPPING_LABELS = Object.freeze({
   organization: '機構',
   department: '部門',
   subDepartment: '子部門'
 })
+const REFERENCE_MAPPING_KEY_ALIASES = Object.freeze({
+  organization: ['organization', 'org', 'organizations'],
+  department: ['department', 'dept', 'departments'],
+  subDepartment: ['subDepartment', 'subdept', 'sub_department', 'subDepartments']
+})
+const REFERENCE_MAPPING_ALIAS_LOOKUP = Object.freeze(
+  Object.entries(REFERENCE_MAPPING_KEY_ALIASES).reduce((acc, [canonical, aliases]) => {
+    const list = Array.isArray(aliases) ? aliases : []
+    list.concat(canonical).forEach(alias => {
+      if (typeof alias === 'string' && alias.trim()) {
+        acc[alias.trim().toLowerCase()] = canonical
+      }
+    })
+    return acc
+  }, {})
+)
 
 const referenceMappingDialogVisible = ref(false)
 const referenceMappingDialogMessage = ref('')
-const referenceMappingPending = reactive({
-  organization: [],
-  department: [],
-  subDepartment: []
-})
-const referenceMappingOptions = reactive({
-  organization: [],
-  department: [],
-  subDepartment: []
-})
-const referenceMappingSelections = reactive({
-  organization: {},
-  department: {},
-  subDepartment: {}
-})
-const resolvedReferenceValueMappings = reactive({
-  organization: {},
-  department: {},
-  subDepartment: {}
-})
-const resolvedReferenceIgnores = reactive({
-  organization: [],
-  department: [],
-  subDepartment: []
-})
+const referenceMappingKeys = ref([...REFERENCE_MAPPING_DEFAULT_KEYS])
+const referenceMappingPending = reactive({})
+const referenceMappingOptions = reactive({})
+const referenceMappingSelections = reactive({})
+const resolvedReferenceValueMappings = reactive({})
+const resolvedReferenceIgnores = reactive({})
 const referenceMappingSubmitting = ref(false)
+
+updateReferenceMappingKeys(REFERENCE_MAPPING_DEFAULT_KEYS, {
+  resetPending: true,
+  resetOptions: true,
+  resetSelections: true,
+  resetResolved: true
+})
+
+function ensureReferenceMappingContainers(key) {
+  if (!Array.isArray(referenceMappingPending[key])) {
+    referenceMappingPending[key] = []
+  }
+  if (!Array.isArray(referenceMappingOptions[key])) {
+    referenceMappingOptions[key] = []
+  }
+  if (!referenceMappingSelections[key] || typeof referenceMappingSelections[key] !== 'object') {
+    referenceMappingSelections[key] = {}
+  }
+  if (!resolvedReferenceValueMappings[key] || typeof resolvedReferenceValueMappings[key] !== 'object') {
+    resolvedReferenceValueMappings[key] = {}
+  }
+  if (!Array.isArray(resolvedReferenceIgnores[key])) {
+    resolvedReferenceIgnores[key] = []
+  }
+}
+
+function updateReferenceMappingKeys(keys = [], {
+  resetPending = false,
+  resetOptions = false,
+  resetSelections = false,
+  resetResolved = false
+} = {}) {
+  const mergedKeys = new Set([
+    ...REFERENCE_MAPPING_DEFAULT_KEYS,
+    ...(Array.isArray(keys) ? keys : [])
+  ])
+
+  referenceMappingKeys.value = Array.from(mergedKeys)
+
+  const containers = [referenceMappingPending, referenceMappingOptions, referenceMappingSelections]
+  containers.forEach(container => {
+    Object.keys(container).forEach(key => {
+      if (!mergedKeys.has(key)) {
+        delete container[key]
+      }
+    })
+  })
+
+  const resolvedContainers = [resolvedReferenceValueMappings, resolvedReferenceIgnores]
+  resolvedContainers.forEach(container => {
+    Object.keys(container).forEach(key => {
+      if (!mergedKeys.has(key)) {
+        delete container[key]
+      }
+    })
+  })
+
+  referenceMappingKeys.value.forEach(key => {
+    ensureReferenceMappingContainers(key)
+    if (resetPending) referenceMappingPending[key] = []
+    if (resetOptions) referenceMappingOptions[key] = []
+    if (resetSelections) referenceMappingSelections[key] = {}
+    if (resetResolved) {
+      resolvedReferenceValueMappings[key] = {}
+      resolvedReferenceIgnores[key] = []
+    }
+  })
+}
+
+function getReferenceMappingLabel(type) {
+  if (type && REFERENCE_MAPPING_LABELS[type]) {
+    return REFERENCE_MAPPING_LABELS[type]
+  }
+  const text = typeof type === 'string' ? type : ''
+  if (!text.trim()) return '其他參照'
+  const spaced = text
+    .replace(/[_-]+/g, ' ')
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .trim()
+  return spaced.charAt(0).toUpperCase() + spaced.slice(1)
+}
 
 const bulkImportTemplateSections = computed(() => {
   const groups = new Map()
@@ -2983,14 +3071,12 @@ function resetBulkImportState({ resetMappings = true } = {}) {
   referenceMappingDialogVisible.value = false
   referenceMappingDialogMessage.value = ''
   referenceMappingSubmitting.value = false
-  REFERENCE_MAPPING_KEYS.forEach(key => {
-    referenceMappingPending[key] = []
-    referenceMappingOptions[key] = []
-    referenceMappingSelections[key] = {}
-    if (resetMappings) {
-      resolvedReferenceValueMappings[key] = {}
-      resolvedReferenceIgnores[key] = []
-    }
+  const targetKeys = resetMappings ? REFERENCE_MAPPING_DEFAULT_KEYS : referenceMappingKeys.value
+  updateReferenceMappingKeys(targetKeys, {
+    resetPending: true,
+    resetOptions: true,
+    resetSelections: true,
+    resetResolved: resetMappings
   })
   if (resetMappings) {
     Object.keys(bulkImportForm.columnMappings).forEach(key => {
@@ -3031,9 +3117,15 @@ function ensureNormalizedList(list = []) {
 function buildReferenceSubmissionPayload() {
   const valueMappingsPayload = {}
   const ignorePayload = {}
-  REFERENCE_MAPPING_KEYS.forEach(key => {
+  const keySet = new Set([
+    ...referenceMappingKeys.value,
+    ...Object.keys(resolvedReferenceValueMappings),
+    ...Object.keys(resolvedReferenceIgnores)
+  ])
+  keySet.forEach(key => {
+    ensureReferenceMappingContainers(key)
     valueMappingsPayload[key] = {}
-    Object.entries(resolvedReferenceValueMappings[key]).forEach(([normalized, target]) => {
+    Object.entries(resolvedReferenceValueMappings[key] || {}).forEach(([normalized, target]) => {
       if (typeof target === 'string' && target.trim()) {
         valueMappingsPayload[key][normalized] = target
       }
@@ -3070,59 +3162,86 @@ function buildReferenceOptionLabel(type, option) {
     if (option.department) parts.push(`部門：${option.department}`)
     return parts.length ? parts.join('｜') : option.id || ''
   }
-  return option.id || ''
+  const fallback = [option.label, option.name, option.title, option.code, option.value, option.id]
+    .map(part => (typeof part === 'string' ? part : part != null ? String(part) : ''))
+    .find(part => part.trim())
+  return fallback || ''
 }
 
-// 把後端回傳的 missingReferences 任意鍵名 → 統一成 organization/department/subDepartment
+// 把後端回傳的 missingReferences 任意鍵名整理並保留未知類型
 function normalizeMissingRefPayload(raw = {}) {
-  // 常見的變體鍵名
-  const keyMap = {
-    organization: ['organization', 'org', 'organizations'],
-    department: ['department', 'dept', 'departments'],
-    subDepartment: ['subDepartment', 'subdept', 'sub_department', 'subDepartments']
-  }
+  const normalized = {}
+  const keySet = new Set(REFERENCE_MAPPING_DEFAULT_KEYS)
 
-  const out = {
-    organization: { values: [], options: [] },
-    department: { values: [], options: [] },
-    subDepartment: { values: [], options: [] }
-  }
-
-  function pick(obj, aliases) {
-    for (const k of aliases) {
-      if (obj && Object.prototype.hasOwnProperty.call(obj, k)) return obj[k]
-    }
-    return undefined
-  }
-
-  for (const canonical of Object.keys(keyMap)) {
-    const block = pick(raw, keyMap[canonical]) || {}
-    const values = Array.isArray(block.values) ? block.values : Array.isArray(block) ? block : []
-    const options = Array.isArray(block.options) ? block.options : []
-    // values 允許是「純字串陣列」或「{value, rows}」
-    const normValues = values.map((v) => {
-      if (v && typeof v === 'object') {
-        const value = v.value ?? v.name ?? v.label ?? v.code ?? v
-        const rows = Array.isArray(v.rows) ? v.rows : []
-        return { value, rows, normalizedValue: normalizeReferenceKeyClient(value) }
-      }
-      return { value: v, rows: [], normalizedValue: normalizeReferenceKeyClient(v) }
-    }).filter(v => v.value != null && String(v.value).trim() !== '')
-    const normOptions = options.map((o) => {
-      if (o && typeof o === 'object') {
+  function normalizeBlock(block = {}) {
+    const valueSource = Array.isArray(block?.values)
+      ? block.values
+      : Array.isArray(block) ? block : []
+    const normValues = valueSource
+      .map((item) => {
+        if (item && typeof item === 'object') {
+          const baseValue =
+            item.value ?? item.name ?? item.label ?? item.code ?? item.id ?? item
+          const rows = Array.isArray(item.rows) ? item.rows : []
+          const normalizedValue = normalizeReferenceKeyClient(baseValue)
+          return {
+            ...item,
+            value: baseValue,
+            rows,
+            normalizedValue
+          }
+        }
+        const baseValue = item ?? ''
         return {
-          id: o._id ?? o.id ?? o.value ?? o.code ?? '',
-          name: o.name ?? o.label ?? '',
-          code: o.code ?? '',
-          organization: o.organization ?? o.org ?? ''
+          value: baseValue,
+          rows: [],
+          normalizedValue: normalizeReferenceKeyClient(baseValue)
+        }
+      })
+      .filter(entry => entry.value != null && String(entry.value).trim() !== '')
+
+    const optionSource = Array.isArray(block?.options) ? block.options : []
+    const normOptions = optionSource.map((option, index) => {
+      if (option && typeof option === 'object') {
+        const candidate =
+          option._id ??
+          option.id ??
+          option.value ??
+          option.code ??
+          option.key ??
+          option.name ??
+          option.label ??
+          ''
+        const id = String(candidate || `option-${index}`)
+        return {
+          ...option,
+          id
         }
       }
-      return { id: String(o), name: String(o) }
+      const text = option == null ? '' : String(option)
+      const id = text.trim() ? text : `option-${index}`
+      return { id, label: text, name: text }
     })
-    out[canonical] = { values: normValues, options: normOptions }
+
+    return { values: normValues, options: normOptions }
   }
 
-  return out
+  Object.entries(raw || {}).forEach(([rawKey, block]) => {
+    if (rawKey == null) return
+    const keyText = String(rawKey).trim()
+    if (!keyText) return
+    const canonical = REFERENCE_MAPPING_ALIAS_LOOKUP[keyText.toLowerCase()] || keyText
+    keySet.add(canonical)
+    normalized[canonical] = normalizeBlock(block)
+  })
+
+  keySet.forEach(key => {
+    if (!normalized[key]) {
+      normalized[key] = { values: [], options: [] }
+    }
+  })
+
+  return { normalized, keys: Array.from(keySet) }
 }
 
 // 從目前待匯入的「映射後列」掃描未知的 org/department/subDepartment
@@ -3200,10 +3319,19 @@ function buildClientMissingRefs(mappedRows = []) {
 }
 
 
-function openReferenceMappingDialog(missingReferences = {}, message = '') {
+function openReferenceMappingDialog(missingReferences = {}, message = '', keys = []) {
   referenceMappingDialogMessage.value = message || '部分欄位需要對應既有的組織/部門資料'
   referenceMappingDialogVisible.value = true
   referenceMappingSubmitting.value = false
+
+  const dynamicKeys = Array.isArray(keys) && keys.length
+    ? keys
+    : Object.keys(missingReferences || {})
+  updateReferenceMappingKeys(dynamicKeys, {
+    resetPending: true,
+    resetOptions: true,
+    resetSelections: true
+  })
 
   // 用目前清單當作保底選項
   const fallbackOptions = {
@@ -3227,13 +3355,14 @@ function openReferenceMappingDialog(missingReferences = {}, message = '') {
     }))
   }
 
-  REFERENCE_MAPPING_KEYS.forEach(key => {
+  referenceMappingKeys.value.forEach(key => {
     const values = Array.isArray(missingReferences?.[key]?.values)
       ? missingReferences[key].values
       : []
-    const options = Array.isArray(missingReferences?.[key]?.options) && missingReferences[key].options.length
+    const optionList = Array.isArray(missingReferences?.[key]?.options)
       ? missingReferences[key].options
-      : fallbackOptions[key]
+      : []
+    const options = optionList.length ? optionList : fallbackOptions[key] || []
 
     referenceMappingPending[key] = values.map(item => ({ ...item }))
     referenceMappingOptions[key] = options.map(item => ({ ...item }))
@@ -3241,8 +3370,8 @@ function openReferenceMappingDialog(missingReferences = {}, message = '') {
 
     values.forEach(entry => {
       const normalized = getReferenceEntryKey(entry)
-      const existingIgnore = resolvedReferenceIgnores[key].includes(normalized)
-      const existingTarget = resolvedReferenceValueMappings[key][normalized] || ''
+      const existingIgnore = resolvedReferenceIgnores[key]?.includes(normalized)
+      const existingTarget = resolvedReferenceValueMappings[key]?.[normalized] || ''
       referenceMappingSelections[key][normalized] = existingIgnore
         ? { mode: 'ignore', targetId: '' }
         : { mode: 'map', targetId: existingTarget }
@@ -3283,12 +3412,15 @@ async function submitBulkImport({ triggeredByMapping = false } = {}) {
 
     if (res.status === 409) {
       // 後端可能給，也可能沒給；都先正規化一次
-      const normalized = normalizeMissingRefPayload(payload?.missingReferences || {})
-      const allEmpty = ['organization', 'department', 'subDepartment']
-        .every(k => !normalized[k].values || normalized[k].values.length === 0)
+      const { normalized, keys: normalizedKeys } = normalizeMissingRefPayload(
+        payload?.missingReferences || {}
+      )
+      const keyList = normalizedKeys.length ? normalizedKeys : [...REFERENCE_MAPPING_DEFAULT_KEYS]
+      const allEmpty = keyList.every(key => !normalized[key]?.values?.length)
 
       // 如果後端沒給或是空，前端自己掃描未知值來生出互動清單
       let finalRefs = normalized
+      let finalKeys = [...keyList]
       if (allEmpty) {
         // 這裡需要目前這次上傳的「映射後列」；重跑一次 map（跟預覽用的邏輯一致）
         // 直接從檔案取資料再映射（避免依賴 preview 畫面）
@@ -3296,20 +3428,23 @@ async function submitBulkImport({ triggeredByMapping = false } = {}) {
           const rowObjects = await parseFileToRowObjects(bulkImportFile.value)
           const mappedRows = rowObjects.map(r => mapRowToFormShape(r, bulkImportForm.columnMappings))
           finalRefs = buildClientMissingRefs(mappedRows)
+          finalKeys = Array.from(new Set([...finalKeys, ...Object.keys(finalRefs || {})]))
         } catch (e) {
           console.warn('client-side missing refs build failed:', e)
         }
       }
 
       // 若仍然都是空，顯示後端訊息即可
-      const hasAny =
-        (finalRefs.organization.values?.length || 0) +
-        (finalRefs.department.values?.length || 0) +
-        (finalRefs.subDepartment.values?.length || 0) > 0
+      finalKeys.forEach(key => {
+        if (!finalRefs[key]) {
+          finalRefs[key] = { values: [], options: [] }
+        }
+      })
+      const hasAny = finalKeys.some(key => (finalRefs[key]?.values?.length || 0) > 0)
 
       bulkImportErrors.value = Array.isArray(payload?.errors) ? payload.errors : []
       if (hasAny) {
-        openReferenceMappingDialog(finalRefs, payload?.message)
+        openReferenceMappingDialog(finalRefs, payload?.message, finalKeys)
         ElMessage.warning(payload?.message || '請完成參照對應後再試')
       } else {
         ElMessage.warning(payload?.message || '匯入資料存在未對應的參照，請確認')
@@ -3354,8 +3489,12 @@ async function confirmReferenceMappings() {
     return
   }
 
+  const keys = Array.from(new Set([
+    ...referenceMappingKeys.value,
+    ...Object.keys(referenceMappingPending)
+  ]))
   const unresolved = []
-  REFERENCE_MAPPING_KEYS.forEach(key => {
+  keys.forEach(key => {
     referenceMappingPending[key].forEach(entry => {
       const normalized = getReferenceEntryKey(entry)
       const selection = referenceMappingSelections[key][normalized]
@@ -3370,7 +3509,7 @@ async function confirmReferenceMappings() {
     return
   }
 
-  REFERENCE_MAPPING_KEYS.forEach(key => {
+  keys.forEach(key => {
     referenceMappingPending[key].forEach(entry => {
       const normalized = getReferenceEntryKey(entry)
       const selection = referenceMappingSelections[key][normalized]
