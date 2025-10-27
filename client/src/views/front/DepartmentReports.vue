@@ -147,6 +147,10 @@ const departments = ref([])
 const supervisorDepartmentId = ref('')
 const supervisorDepartmentName = ref('')
 const reportTemplates = ref([])
+const userRole = ref(getStoredRole())
+
+const isAdmin = computed(() => userRole.value === 'admin')
+const isSupervisor = computed(() => userRole.value === 'supervisor')
 
 const selectedMonth = ref(dayjs().format('YYYY-MM'))
 const selectedDepartment = ref('')
@@ -433,10 +437,16 @@ const summaryItems = computed(() => {
 })
 
 onMounted(async () => {
+  userRole.value = getStoredRole()
   loading.departments = true
   loading.templates = true
   try {
-    await fetchSupervisorDepartment()
+    if (isSupervisor.value) {
+      await fetchSupervisorDepartment()
+    } else {
+      supervisorDepartmentId.value = ''
+      supervisorDepartmentName.value = ''
+    }
     await fetchAllowedDepartments()
     await fetchSupervisorReportTemplates()
   } catch (err) {
@@ -456,7 +466,21 @@ const getStoredEmployeeId = () => {
   return ''
 }
 
+function getStoredRole() {
+  if (typeof window === 'undefined') return ''
+  const sessionRole = window.sessionStorage?.getItem('role')
+  if (sessionRole && sessionRole !== 'undefined') return sessionRole
+  const localRole = window.localStorage?.getItem('role')
+  if (localRole && localRole !== 'undefined') return localRole
+  return ''
+}
+
 async function fetchSupervisorDepartment() {
+  if (!isSupervisor.value) {
+    supervisorDepartmentId.value = ''
+    supervisorDepartmentName.value = ''
+    return
+  }
   const employeeId = getStoredEmployeeId()
   if (!employeeId) {
     supervisorDepartmentId.value = ''
@@ -483,12 +507,6 @@ async function fetchSupervisorDepartment() {
 }
 
 async function fetchAllowedDepartments() {
-  if (!supervisorDepartmentId.value && !supervisorDepartmentName.value) {
-    departments.value = []
-    selectedDepartment.value = ''
-    ElMessage.warning('尚未為您設定可管理的部門，請聯絡系統管理員')
-    return
-  }
   const res = await apiFetch('/api/departments')
   if (!res.ok) {
     throw new Error('無法取得部門清單')
@@ -506,6 +524,27 @@ async function fetchAllowedDepartments() {
         }
       })
     : []
+  if (isAdmin.value) {
+    const available = normalized.filter((dept) => dept?._id)
+    departments.value = available
+    if (!departments.value.length) {
+      selectedDepartment.value = ''
+      ElMessage.warning('目前沒有可供查詢的部門資料，請先建立部門資訊')
+      return
+    }
+    const preferredId = selectedDepartment.value
+    const preferred = preferredId
+      ? departments.value.find((dept) => dept._id === preferredId)
+      : null
+    selectedDepartment.value = preferred?._id || departments.value[0]._id || ''
+    return
+  }
+  if (!supervisorDepartmentId.value && !supervisorDepartmentName.value) {
+    departments.value = []
+    selectedDepartment.value = ''
+    ElMessage.warning('尚未為您設定可管理的部門，請聯絡系統管理員')
+    return
+  }
   const targetId = supervisorDepartmentId.value
   const targetName = supervisorDepartmentName.value.trim().toLowerCase()
   let allowed = normalized.filter((dept) => {

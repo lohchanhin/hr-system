@@ -146,7 +146,7 @@
               v-for="legend in legendShifts"
               :key="legend.key"
               class="legend-item"
-              :class="legend.className"
+              :style="legend.style"
               data-test="shift-legend-item"
             >
               {{ legend.label }}
@@ -287,17 +287,22 @@
               v-if="!lazyMode || expandedRows.has(row._id)"
               class="modern-schedule-cell"
               :class="[
-                scheduleMap[row._id]?.[d.date]?.leave
-                  ? ''
-                  : shiftClass(scheduleMap[row._id]?.[d.date]?.shiftId),
                 {
                   'has-leave': scheduleMap[row._id]?.[d.date]?.leave,
                   'missing-shift':
                     !scheduleMap[row._id]?.[d.date]?.shiftId &&
                     !scheduleMap[row._id]?.[d.date]?.leave,
-                  'is-selected': isCellSelected(row._id, d.date)
+                  'is-selected': isCellSelected(row._id, d.date),
+                  'has-shift':
+                    !scheduleMap[row._id]?.[d.date]?.leave &&
+                    !!scheduleMap[row._id]?.[d.date]?.shiftId
                 }
               ]"
+              :style="
+                scheduleMap[row._id]?.[d.date]?.leave
+                  ? undefined
+                  : shiftClass(scheduleMap[row._id]?.[d.date]?.shiftId)
+              "
               :title="leaveTooltip(row._id, d.date)"
             >
               <div v-if="canEdit" class="cell-selection" @click.stop>
@@ -394,7 +399,10 @@
                       </div>
                     </div>
                     <template #reference>
-                      <div class="modern-shift-tag">
+                      <div
+                        class="modern-shift-tag"
+                        :style="shiftClass(shiftInfo(scheduleMap[row._id][d.date].shiftId))"
+                      >
                         {{ formatShiftLabel(shiftInfo(scheduleMap[row._id][d.date].shiftId)) }}
                       </div>
                     </template>
@@ -518,6 +526,7 @@ import { ElMessage, ElMessageBox, ElLoading } from 'element-plus'
 import { useRouter } from 'vue-router'
 import ScheduleDashboard from './ScheduleDashboard.vue'
 import { CircleCloseFilled, WarningFilled } from '@element-plus/icons-vue'
+import { buildShiftStyle } from '../../utils/shiftColors'
 
 const fmt = d => (d ? new Date(d).toLocaleString() : '-')
 const renderValue = v => (Array.isArray(v) ? v.join(', ') : v ?? '-')
@@ -571,7 +580,7 @@ const legendShifts = computed(() => {
     acc.push({
       key,
       label,
-      className: shiftClass(shift) || 'shift-normal'
+      style: shiftClass(shift)
     })
     return acc
   }, [])
@@ -1560,11 +1569,8 @@ function shiftClass(idOrShift) {
     idOrShift && typeof idOrShift === 'object'
       ? idOrShift
       : shiftInfo(idOrShift)
-  if (!info) return ''
-  const keyword = `${info.code ?? ''}${info.name ?? ''}`
-  if (/早/.test(keyword)) return 'shift-morning'
-  if (/晚|夜/.test(keyword)) return 'shift-evening'
-  return 'shift-normal'
+  if (!info) return {}
+  return buildShiftStyle(info)
 }
 
 function subDepsFor(deptId) {
@@ -1882,26 +1888,15 @@ onMounted(async () => {
         font-weight: 600;
         text-transform: uppercase;
         letter-spacing: 0.05em;
+        background: var(--shift-tag-bg, #f1f5f9);
+        color: var(--shift-text-color, #475569);
+        border: 1px solid var(--shift-border-color, rgba(148, 163, 184, 0.45));
+      }
 
-        &.shift-morning {
-          background: #dbeafe;
-          color: #1e40af;
-        }
-
-        &.shift-evening {
-          background: #d1fae5;
-          color: #059669;
-        }
-
-        &.shift-normal {
-          background: #f1f5f9;
-          color: #475569;
-        }
-
-        &.leave {
-          background: #fef3c7;
-          color: #d97706;
-        }
+      .legend-item.leave {
+        background: #fef3c7;
+        color: #d97706;
+        border: 1px solid rgba(217, 119, 6, 0.4);
       }
 
       .legend-empty {
@@ -2008,19 +2003,14 @@ onMounted(async () => {
   position: relative;
   border: 1px solid rgba(203, 213, 225, 0.6);
 
-  &.shift-morning {
-    background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%);
-    border: 1px solid #93c5fd;
-  }
-  
-  &.shift-evening {
-    background: linear-gradient(135deg, #d1fae5 0%, #a7f3d0 100%);
-    border: 1px solid #6ee7b7;
-  }
-  
-  &.shift-normal {
-    background: linear-gradient(135deg, #f1f5f9 0%, #e2e8f0 100%);
-    border: 1px solid #cbd5e1;
+  &.has-shift {
+    background: linear-gradient(
+      135deg,
+      var(--shift-cell-bg-start, #f1f5f9) 0%,
+      var(--shift-cell-bg-end, #e2e8f0) 100%
+    );
+    border: 1px solid var(--shift-border-color, #cbd5e1);
+    color: var(--shift-text-color, #0f172a);
   }
   
   &.has-leave {
@@ -2071,19 +2061,19 @@ onMounted(async () => {
 }
 
 .modern-shift-tag {
-  background: white;
-  color: #164e63;
+  background: var(--shift-tag-bg, white);
+  color: var(--shift-text-color, #164e63);
   padding: 4px 8px;
   border-radius: 6px;
   font-weight: 600;
   font-size: 0.75rem;
   text-align: center;
   cursor: pointer;
-  border: 1px solid rgba(22, 78, 99, 0.2);
+  border: 1px solid var(--shift-border-color, rgba(22, 78, 99, 0.2));
   transition: all 0.2s ease;
-  
+
   &:hover {
-    background: #164e63;
+    background: var(--shift-border-color, #164e63);
     color: white;
     transform: scale(1.05);
   }

@@ -405,7 +405,7 @@ describe('EmployeeManagement - 批量匯入流程', () => {
       missingReferences: {
         department: {
           values: [{ value: '人資部', normalizedValue: '人資部', rows: [3] }],
-          options: [{ id: 'dep1', name: '人資部', code: 'HR001' }]
+          options: [{ id: 'dep1', name: '人資部 HR', code: 'HR001' }]
         }
       },
       errors: []
@@ -452,12 +452,12 @@ describe('EmployeeManagement - 批量匯入流程', () => {
       missingReferences: {
         department: {
           values: [{ value: '人資部', normalizedValue: '人資部', rows: [2] }],
-          options: [{ id: 'dep1', name: '人資部', code: 'HR001' }]
+          options: [{ id: 'dep1', name: '人資部 HR', code: 'HR001' }]
         },
         team: {
           values: [{ value: 'A班', rows: [2, 4] }],
           options: [
-            { id: 'team1', name: 'A班', code: 'T001' },
+            { id: 'team1', name: 'Alpha班', code: 'T001' },
             { id: 'team2', name: 'B班' }
           ]
         }

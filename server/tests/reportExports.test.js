@@ -230,16 +230,31 @@ describe('Department report exports', () => {
     expect(mockGetDepartmentReportData).not.toHaveBeenCalled();
   });
 
-  it('拒絕管理員匯出主管部門報表', async () => {
+  it('允許管理員匯出主管部門報表', async () => {
+    mockGetDepartmentReportData.mockResolvedValueOnce({
+      summary: { totalDepartments: 1 },
+      records: [{ name: '王小明', attended: 20 }],
+    });
+
     const res = await request(app)
       .get('/api/reports/department/attendance/export')
       .query({ month: '2024-03', department: 'dept-admin', format: 'json' })
       .set('x-user-role', 'admin')
       .set('x-user-id', 'adm-block');
 
-    expect(res.status).toBe(403);
-    expect(res.body).toEqual({ error: 'Forbidden' });
-    expect(mockGetDepartmentReportData).not.toHaveBeenCalled();
+    expect(res.status).toBe(200);
+    expect(mockGetDepartmentReportData).toHaveBeenCalledWith({
+      type: 'attendance',
+      month: '2024-03',
+      departmentId: 'dept-admin',
+      actor: { role: 'admin', id: 'adm-block' },
+    });
+    expect(res.body).toEqual({
+      month: '2024-03',
+      department: 'dept-admin',
+      summary: { totalDepartments: 1 },
+      records: [{ name: '王小明', attended: 20 }],
+    });
   });
 
   it('rejects unauthorized role', async () => {

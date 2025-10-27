@@ -54,6 +54,12 @@ const routes = [
       { path: 'settings', name: 'Settings', component: Settings },
       { path: 'attendance-setting', name: 'AttendanceSetting', component: AttendanceSetting },
       { path: 'attendance-management', name: 'AttendanceManagementSetting', component: AttendanceManagementSetting },
+      {
+        path: 'department-reports',
+        name: 'DepartmentReports',
+        component: DepartmentReports,
+        meta: { roles: ['admin'], warningMessage: '僅系統管理員可以存取後台報表，請確認您的權限' },
+      },
       { path: 'leave-overtime-setting', name: 'LeaveOvertimeSetting', component: LeaveOvertimeSetting },
       { path: 'shift-schedule-setting', name: 'ShiftScheduleSetting', component: ShiftScheduleSetting },
       { path: 'approval-flow-setting', name: 'ApprovalFlowSetting', component: ApprovalFlowSetting },
@@ -97,9 +103,12 @@ const routes = [
       },
       {
         path: 'department-reports',
-        name: 'DepartmentReports',
+        name: 'FrontDepartmentReports',
         component: DepartmentReports,
-        meta: { roles: ['supervisor'] },
+        meta: {
+          roles: ['supervisor', 'admin'],
+          warningMessage: '僅主管可以存取部門報表，請聯絡您的主管協助',
+        },
       },
       {
         path: 'preview-week',
@@ -171,11 +180,8 @@ router.beforeEach((to, from, next) => {
   if (to.meta.roles) {
     const userRole = sessionStorage.getItem('role') || 'employee'
     if (!to.meta.roles.includes(userRole)) {
-      if (to.name === 'DepartmentReports') {
-        showWarningMessage('僅主管可以存取部門報表，請聯絡您的主管協助')
-      } else {
-        showWarningMessage('您沒有權限瀏覽此頁面')
-      }
+      const warningMessage = to.meta.warningMessage || '您沒有權限瀏覽此頁面'
+      showWarningMessage(warningMessage)
       return next({ name: 'Forbidden' })
     }
   }
