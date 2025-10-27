@@ -9,7 +9,15 @@ const attendanceSettingSchema = new mongoose.Schema({
       endTime: String,
       breakTime: String,
       crossDay: Boolean,
-      remark: String
+      remark: String,
+      color: {
+        type: String,
+        trim: true,
+      },
+      bgColor: {
+        type: String,
+        trim: true,
+      }
     }
   ],
   abnormalRules: {

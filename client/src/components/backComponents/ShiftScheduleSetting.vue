@@ -224,16 +224,37 @@
                 />
               </el-form-item>
               <el-form-item label="跨日班">
-                <el-switch 
-                  v-model="shiftForm.crossDay" 
-                  active-text="是" 
+                <el-switch
+                  v-model="shiftForm.crossDay"
+                  active-text="是"
                   inactive-text="否"
                   active-color="#10b981"
                 />
               </el-form-item>
+              <el-form-item label="班別底色">
+                <el-color-picker
+                  v-model="shiftForm.bgColor"
+                  :predefine="shiftBgPresets"
+                  color-format="hex"
+                  :show-alpha="false"
+                />
+              </el-form-item>
+              <el-form-item label="文字顏色">
+                <el-color-picker
+                  v-model="shiftForm.color"
+                  :predefine="shiftTextPresets"
+                  color-format="hex"
+                  :show-alpha="false"
+                />
+              </el-form-item>
+              <el-form-item label="顏色預覽">
+                <div class="shift-color-preview" :style="shiftPreviewStyle">
+                  {{ shiftForm.code || shiftForm.name || 'SHIFT' }}
+                </div>
+              </el-form-item>
               <el-form-item label="備註">
-                <el-input 
-                  v-model="shiftForm.remark" 
+                <el-input
+                  v-model="shiftForm.remark"
                   type="textarea"
                   :rows="3"
                   placeholder="班別說明或特殊注意事項"
@@ -315,9 +336,10 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { computed, ref, onMounted } from 'vue'
 import { apiFetch } from '../../api'
 import { getToken } from '../../utils/tokenService'
+import { buildShiftStyle } from '../../utils/shiftColors'
 
 const activeTab = ref('calendar')
 const dateFormat = 'YYYY/MM/DD'
@@ -395,13 +417,50 @@ const shiftList = ref([])
 const shiftDialogVisible = ref(false)
 let shiftEditIndex = null
 
-const shiftForm = ref({
+const shiftBgPresets = [
+  '#dbeafe',
+  '#ede9fe',
+  '#fef3c7',
+  '#dcfce7',
+  '#fee2e2',
+  '#fce7f3',
+  '#cffafe',
+  '#fae8ff'
+]
+
+const shiftTextPresets = [
+  '#0f172a',
+  '#1e3a8a',
+  '#047857',
+  '#92400e',
+  '#991b1b',
+  '#9d174d',
+  '#155e75',
+  '#f8fafc'
+]
+
+const createEmptyShiftForm = () => ({
   name: '',
   code: '',
   startTime: '',
   endTime: '',
   crossDay: false,
-  remark: ''
+  remark: '',
+  color: '',
+  bgColor: ''
+})
+
+const shiftForm = ref(createEmptyShiftForm())
+
+const shiftPreviewStyle = computed(() => {
+  const style = buildShiftStyle(shiftForm.value)
+  return {
+    background: `linear-gradient(135deg, ${
+      style['--shift-cell-bg-start'] ?? '#f1f5f9'
+    } 0%, ${style['--shift-cell-bg-end'] ?? '#e2e8f0'} 100%)`,
+    color: style['--shift-text-color'] ?? '#0f172a',
+    borderColor: style['--shift-border-color'] ?? 'rgba(148, 163, 184, 0.45)'
+  }
 })
 
 async function fetchShifts() {
@@ -425,18 +484,11 @@ function openShiftDialog(index = null) {
   if (index !== null) {
     // 編輯
     shiftEditIndex = index
-    shiftForm.value = { ...shiftList.value[index] }
+    shiftForm.value = { ...createEmptyShiftForm(), ...shiftList.value[index] }
   } else {
     // 新增
     shiftEditIndex = null
-    shiftForm.value = {
-      name: '',
-      code: '',
-      startTime: '',
-      endTime: '',
-      crossDay: false,
-      remark: ''
-    }
+    shiftForm.value = createEmptyShiftForm()
   }
   shiftDialogVisible.value = true
 }
@@ -688,6 +740,19 @@ function getHolidayTagType(type) {
   border-radius: 4px;
   background: #e2e8f0;
   color: #475569;
+}
+
+.shift-color-preview {
+  min-width: 140px;
+  height: 40px;
+  border-radius: 8px;
+  border: 1px solid rgba(148, 163, 184, 0.45);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
 /* 操作按鈕 */

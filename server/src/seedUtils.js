@@ -78,6 +78,8 @@ const ATTENDANCE_SETTING_TEMPLATE = {
       breakTime: '01:00',
       crossDay: false,
       remark: '行政支援時段',
+      color: '#1e3a8a',
+      bgColor: '#dbeafe',
     },
     {
       name: '中班',
@@ -87,6 +89,8 @@ const ATTENDANCE_SETTING_TEMPLATE = {
       breakTime: '01:00',
       crossDay: false,
       remark: '客服及支援時段',
+      color: '#065f46',
+      bgColor: '#ccfbf1',
     },
     {
       name: '晚班',
@@ -96,6 +100,8 @@ const ATTENDANCE_SETTING_TEMPLATE = {
       breakTime: '01:00',
       crossDay: false,
       remark: '傍晚支援與延長營運',
+      color: '#4c1d95',
+      bgColor: '#ede9fe',
     },
   ],
   abnormalRules: {

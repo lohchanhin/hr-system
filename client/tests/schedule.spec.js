@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { shallowMount } from '@vue/test-utils'
 import dayjs from 'dayjs'
 import { createPinia, setActivePinia } from 'pinia'
+import { buildShiftStyle } from '../src/utils/shiftColors'
 
 const elementPlusMock = vi.hoisted(() => {
   const ElMessage = { error: vi.fn(), success: vi.fn(), warning: vi.fn(), info: vi.fn() }
@@ -40,6 +41,19 @@ const setRoleToken = role => {
     localStorage.removeItem('token')
   }
 }
+
+const styleToObject = style =>
+  String(style || '')
+    .split(';')
+    .map(segment => segment.trim())
+    .filter(Boolean)
+    .reduce((acc, segment) => {
+      const [prop, value] = segment.split(':')
+      if (prop && value) {
+        acc[prop.trim()] = value.trim()
+      }
+      return acc
+    }, {})
 const pushMock = vi.fn()
 vi.mock('vue-router', async () => {
   const actual = await vi.importActual('vue-router')
@@ -476,9 +490,15 @@ describe('Schedule.vue', () => {
     const legendItems = wrapper.findAll('[data-test="shift-legend-item"]')
     expect(legendItems).toHaveLength(2)
     expect(legendItems[0].text()).toBe('M1(早班)')
-    expect(legendItems[0].classes()).toContain('shift-morning')
+    const firstStyle = styleToObject(legendItems[0].attributes('style'))
+    const expectedMorning = buildShiftStyle({ _id: 'shift1', code: 'M1', name: '早班' })
+    expect(firstStyle['--shift-base-color']).toBe(expectedMorning['--shift-base-color'])
+    expect(firstStyle['--shift-text-color']).toBe(expectedMorning['--shift-text-color'])
     expect(legendItems[1].text()).toBe('N1(夜班)')
-    expect(legendItems[1].classes()).toContain('shift-evening')
+    const secondStyle = styleToObject(legendItems[1].attributes('style'))
+    const expectedEvening = buildShiftStyle({ _id: 'shift2', code: 'N1', name: '夜班' })
+    expect(secondStyle['--shift-base-color']).toBe(expectedEvening['--shift-base-color'])
+    expect(secondStyle['--shift-text-color']).toBe(expectedEvening['--shift-text-color'])
     expect(wrapper.find('[data-test="shift-legend-empty"]').exists()).toBe(false)
   })
 
