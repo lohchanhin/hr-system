@@ -22,6 +22,7 @@ import holidayRoutes from './routes/holidayRoutes.js';
 import deptScheduleRoutes from './routes/deptScheduleRoutes.js';
 import roleRoutes from './routes/roleRoutes.js';
 import otherControlSettingRoutes from './routes/otherControlSettingRoutes.js';
+import conversationRoutes from './routes/conversationRoutes.js';
 
 import salarySettingRoutes from './routes/salarySettingRoutes.js';
 import breakSettingRoutes from './routes/breakSettingRoutes.js';
@@ -161,6 +162,12 @@ app.use(
   authenticate,
   authorizeRoles('admin'),
   otherControlSettingRoutes
+);
+app.use(
+  '/api/conversations',
+  authenticate,
+  authorizeRoles('admin', 'supervisor'),
+  conversationRoutes
 );
 app.use(
   '/api/departments',
