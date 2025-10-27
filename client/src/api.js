@@ -31,3 +31,8 @@ export function importEmployeesBulk(formData, fetchOptions = {}, fetchConfig = {
   const options = { method: 'POST', body: formData, ...fetchOptions }
   return apiFetch('/api/employees/import', options, fetchConfig)
 }
+
+export function importAttendanceRecords(formData, fetchOptions = {}, fetchConfig = {}) {
+  const options = { method: 'POST', body: formData, ...fetchOptions }
+  return apiFetch('/api/attendance/import', options, fetchConfig)
+}
