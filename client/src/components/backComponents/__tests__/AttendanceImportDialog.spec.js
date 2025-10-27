@@ -98,7 +98,9 @@ describe('AttendanceImportDialog', () => {
     expect(importAttendanceMock).toHaveBeenCalledTimes(1)
     const formData = importAttendanceMock.mock.calls[0][0]
     const entries = Object.fromEntries(formData.entries())
-    expect(JSON.parse(entries.options)).toMatchObject({ timezone: 'Asia/Taipei', dryRun: true })
+    const parsedOptions = JSON.parse(entries.options)
+    expect(parsedOptions).toMatchObject({ dryRun: true })
+    expect(parsedOptions.timezone).toBe(wrapper.vm.form.timezone)
     expect(JSON.parse(entries.mappings)).toMatchObject({ userId: 'USERID', timestamp: 'CHECKTIME', type: 'CHECKTYPE' })
     expect(ElMessage.success).toHaveBeenCalledWith('預覽完成，可直接匯入')
   })

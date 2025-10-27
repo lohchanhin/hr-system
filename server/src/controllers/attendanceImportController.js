@@ -615,13 +615,18 @@ export async function importAttendanceRecords(req, res) {
     await AttendanceRecord.insertMany(validRecords)
   }
 
+  const missingCount = Array.from(missingUserMap.values()).reduce(
+    (total, entry) => total + (entry.count || 0),
+    0
+  )
+
   const response = {
     dryRun,
     timezone,
     summary: {
       totalRows: rows.length,
       readyCount: validRecords.length,
-      missingCount: missingUserMap.size,
+      missingCount,
       ignoredCount,
       errorCount,
       importedCount: dryRun ? 0 : validRecords.length
