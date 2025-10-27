@@ -48,10 +48,31 @@
                 />
               </el-form-item>
               <el-form-item label="休息時段">
-                <el-input 
-                  v-model="shiftForm.breakTime" 
-                  placeholder="例如：12:00~13:00" 
+                <el-input
+                  v-model="shiftForm.breakTime"
+                  placeholder="例如：12:00~13:00"
                 />
+              </el-form-item>
+              <el-form-item label="班別底色">
+                <el-color-picker
+                  v-model="shiftForm.bgColor"
+                  :predefine="shiftBgPresets"
+                  color-format="hex"
+                  :show-alpha="false"
+                />
+              </el-form-item>
+              <el-form-item label="文字顏色">
+                <el-color-picker
+                  v-model="shiftForm.color"
+                  :predefine="shiftTextPresets"
+                  color-format="hex"
+                  :show-alpha="false"
+                />
+              </el-form-item>
+              <el-form-item label="顏色預覽">
+                <div class="shift-color-preview" :style="shiftPreviewStyle">
+                  {{ shiftForm.name || 'SHIFT' }}
+                </div>
               </el-form-item>
             </el-form>
             <span slot="footer" class="dialog-footer">
@@ -123,9 +144,10 @@
   </template>
   
   <script setup>
-  import { ref, onMounted } from 'vue'
+  import { computed, ref, onMounted } from 'vue'
   import { ElMessage } from 'element-plus'
   import { apiFetch } from '../../api'
+  import { buildShiftStyle } from '../../utils/shiftColors'
 
   const activeTab = ref('shift')
 
@@ -152,11 +174,47 @@
   const shiftDialogVisible = ref(false)
   const timeFormat = 'HH:mm'
 
-  const shiftForm = ref({
+  const shiftBgPresets = [
+    '#dbeafe',
+    '#ede9fe',
+    '#fef3c7',
+    '#dcfce7',
+    '#fee2e2',
+    '#fce7f3',
+    '#cffafe',
+    '#fae8ff'
+  ]
+
+  const shiftTextPresets = [
+    '#0f172a',
+    '#1e3a8a',
+    '#047857',
+    '#92400e',
+    '#991b1b',
+    '#9d174d',
+    '#155e75',
+    '#f8fafc'
+  ]
+
+  const createDefaultShiftForm = () => ({
     name: '',
     startTime: '',
     endTime: '',
-    breakTime: ''
+    breakTime: '',
+    color: '',
+    bgColor: ''
+  })
+
+  const shiftForm = ref(createDefaultShiftForm())
+  const shiftPreviewStyle = computed(() => {
+    const style = buildShiftStyle(shiftForm.value)
+    return {
+      background: `linear-gradient(135deg, ${
+        style['--shift-cell-bg-start'] ?? '#f1f5f9'
+      } 0%, ${style['--shift-cell-bg-end'] ?? '#e2e8f0'} 100%)`,
+      color: style['--shift-text-color'] ?? '#0f172a',
+      borderColor: style['--shift-border-color'] ?? 'rgba(148, 163, 184, 0.45)'
+    }
   })
   let editIndex = null
 
@@ -215,10 +273,10 @@
   const openShiftDialog = (index = null) => {
     if (index !== null) {
       editIndex = index
-      shiftForm.value = { ...shiftList.value[index] }
+      shiftForm.value = { ...createDefaultShiftForm(), ...shiftList.value[index] }
     } else {
       editIndex = null
-      shiftForm.value = { name: '', startTime: '', endTime: '', breakTime: '' }
+      shiftForm.value = createDefaultShiftForm()
     }
     shiftDialogVisible.value = true
   }
@@ -304,5 +362,18 @@
   .rule-form {
     max-width: 400px;
     margin-top: 20px;
+  }
+
+  .shift-color-preview {
+    min-width: 120px;
+    height: 36px;
+    border-radius: 8px;
+    border: 1px solid rgba(148, 163, 184, 0.45);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
   }
   </style>
