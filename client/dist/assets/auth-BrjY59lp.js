@@ -1,0 +1,1 @@
+import{B as r,r as l,y as s}from"./index-wMK2ufhn.js";const p=r("auth",()=>{const e=l("employee");function a(){const o=s();if(o)try{const t=JSON.parse(atob(o.split(".")[1]));e.value=t.role||"employee"}catch{e.value="employee"}else e.value="employee"}return{role:e,loadUser:a}});export{p as u};
