@@ -982,34 +982,45 @@
         <p class="reference-mapping-tip">
           請為下列資料選擇對應的既有項目，或設定忽略後重新嘗試匯入。
         </p>
-        <div v-for="type in referenceMappingKeys" :key="type" v-if="referenceMappingPending[type]?.length"
+
+        <!-- ✅ 用預先算好的 sections 來畫，避免模板裡層層 ?. -->
+        <div v-if="referenceMappingDialogVisible" v-for="section in referenceMappingSectionsForUI" :key="section.type"
           class="reference-mapping-section">
-          <h4 class="reference-mapping-title">{{ getReferenceMappingLabel(type) }}對應</h4>
-          <div v-for="entry in referenceMappingPending[type]" :key="getReferenceEntryKey(entry)"
-            class="reference-mapping-item">
-            <div class="reference-mapping-info">
-              <span class="reference-mapping-value">{{ entry.value || '（空值）' }}</span>
-              <span class="reference-mapping-rows">
-                出現於第 {{ (entry.rows || []).join('、') }} 列
-              </span>
+          <template v-if="Array.isArray(section.values) && section.values.length">
+            <h4 class="reference-mapping-title">{{ getReferenceMappingLabel(section.type) }}對應</h4>
+
+            <div v-for="entry in section.values" :key="getReferenceEntryKey(entry)" class="reference-mapping-item">
+              <div class="reference-mapping-info">
+                <span class="reference-mapping-value">{{ entry.value || '（空值）' }}</span>
+                <span class="reference-mapping-rows">出現於第 {{ (entry.rows || []).join('、') }} 列</span>
+              </div>
+
+              <el-radio-group v-model="getRefSel(section.type, getReferenceEntryKey(entry)).mode"
+                class="reference-mapping-mode">
+                <el-radio label="map">指定既有資料</el-radio>
+                <el-radio label="ignore">忽略此次匯入</el-radio>
+              </el-radio-group>
+
+              <el-select v-if="getRefSel(section.type, getReferenceEntryKey(entry)).mode === 'map'"
+                v-model="getRefSel(section.type, getReferenceEntryKey(entry)).targetId" placeholder="請選擇既有項目"
+                class="reference-mapping-select" filterable clearable>
+                <el-option v-for="option in section.options" :key="option.id"
+                  :label="buildReferenceOptionLabel(section.type, option)" :value="option.id" />
+              </el-select>
             </div>
-            <el-radio-group v-model="referenceMappingSelections[type][getReferenceEntryKey(entry)].mode"
-              class="reference-mapping-mode">
-              <el-radio label="map">指定既有資料</el-radio>
-              <el-radio label="ignore">忽略此次匯入</el-radio>
-            </el-radio-group>
-            <el-select v-if="referenceMappingSelections[type][getReferenceEntryKey(entry)]?.mode === 'map'"
-              v-model="referenceMappingSelections[type][getReferenceEntryKey(entry)].targetId" placeholder="請選擇既有項目"
-              class="reference-mapping-select" filterable clearable>
-              <el-option v-for="option in referenceMappingOptions[type]" :key="option.id"
-                :label="buildReferenceOptionLabel(type, option)" :value="option.id" />
-            </el-select>
-          </div>
+          </template>
         </div>
-        <div v-if="referenceMappingKeys.every(key => !referenceMappingPending[key]?.length)"
+
+        <div v-if="referenceMappingDialogVisible && referenceMappingSectionsForUI.every(s => !s.values.length)"
           class="reference-mapping-empty">
           所有參照皆已處理，請重新送出匯入。
         </div>
+
+
+        <div v-if="referenceMappingSectionsForUI.every(s => s.values.length === 0)" class="reference-mapping-empty">
+          所有參照皆已處理，請重新送出匯入。
+        </div>
+
         <template #footer>
           <el-button @click="referenceMappingDialogVisible = false" :disabled="referenceMappingSubmitting">
             稍後再處理
@@ -1019,6 +1030,7 @@
           </el-button>
         </template>
       </el-dialog>
+
     </div>
   </el-tab-pane>
 </template>
@@ -1032,22 +1044,85 @@ import { REQUIRED_FIELDS } from './requiredFields'
 
 // ========= 新增：Excel/CSV 讀取與預覽核心 =========
 
-// 動態載入，避免 SSR 場景報錯
+// --- 取代 loadXLSX：三段式保底載入（window -> import -> CDN） ---
 async function loadXLSX() {
-  // vite/webpack 皆可；若你專案是 SSR，動態 import 可避免在 Node 環境載到 window 物件
-  const moduleId = ['x', 'lsx'].join('')
+  // 1) 若全域已存在（例如你用 <script> 先載），直接用
+  if (typeof window !== 'undefined' && window && window.XLSX && window.XLSX.utils) {
+    return window.XLSX
+  }
+
+  // 2) 嘗試 ESM/CJS 動態載入（SSR / Vite / Webpack 正常路）
   try {
-    const mod = await import(/* @vite-ignore */ moduleId)
-    return mod
-  } catch (error) {
-    const mode = (import.meta?.env?.MODE) || (typeof process !== 'undefined' ? process.env?.NODE_ENV : '')
-    if (mode === 'test') {
-      const stub = await import('./xlsxStub.js')
-      return stub?.default ?? stub
+    const mod = await import(/* @vite-ignore */ 'xlsx')
+    const XLSX = (mod && (mod.default || mod.XLSX)) ? (mod.default || mod.XLSX) : mod
+    if (XLSX && XLSX.utils && XLSX.read) return XLSX
+  } catch (_) {
+    // 忽略，繼續走 CDN
+  }
+
+  // 3) 最後手動插入 CDN 腳本（僅限瀏覽器環境）
+  if (typeof window !== 'undefined' && typeof document !== 'undefined') {
+    await new Promise((resolve, reject) => {
+      const existed = document.querySelector('script[data-xlsx-cdn]')
+      if (existed) {
+        existed.addEventListener('load', () => resolve(null), { once: true })
+        existed.addEventListener('error', () => reject(new Error('XLSX_CDN_FAIL')), { once: true })
+        return
+      }
+      const s = document.createElement('script')
+      s.src = 'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js'
+      s.async = true
+      s.defer = true
+      s.setAttribute('data-xlsx-cdn', '1')
+      s.onload = () => resolve(null)
+      s.onerror = () => reject(new Error('XLSX_CDN_FAIL'))
+      document.head.appendChild(s)
+    })
+    if (window.XLSX && window.XLSX.utils && window.XLSX.read) return window.XLSX
+  }
+
+  throw new Error('XLSX_MODULE_INVALID_OR_NOT_FOUND')
+}
+
+function stripBOM(s = '') { return s.replace(/^\uFEFF/, '') }
+
+function decodeText(buf) {
+  try {
+    // 先嘗試 UTF-8
+    let s = new TextDecoder('utf-8', { fatal: false }).decode(buf)
+    // 若前兩碼是 UTF-16LE BOM（0xFF 0xFE），再用 UTF-16LE 重新解
+    if (s.length >= 2 && s.charCodeAt(0) === 0xFEFF) s = stripBOM(s)
+    // 粗判：如果第一行幾乎都是 \0，代表可能用錯編碼，再試 UTF-16LE
+    const zeroRatio = (s.slice(0, 64).match(/\x00/g) || []).length / Math.max(1, Math.min(64, s.length))
+    if (zeroRatio > 0.2) throw new Error('maybe-utf16le')
+    return stripBOM(s)
+  } catch {
+    // 再用 UTF-16LE 試一次
+    try {
+      return stripBOM(new TextDecoder('utf-16le', { fatal: false }).decode(buf))
+    } catch {
+      // 最後退回把 buffer 當 binary string
+      let bin = ''
+      const bytes = new Uint8Array(buf)
+      for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i])
+      return stripBOM(bin)
     }
-    throw error
   }
 }
+
+// 簡易 TSV/CSV 文字解析 → 二維陣列（只特別處理 tab；逗號交給 xlsx）
+function parseTSVToRows(text) {
+  const lines = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n').filter(l => l.length > 0)
+  if (!lines.length) return []
+  // 選分隔符：若 tab 欄位數量明顯多於逗號，採 tab
+  const first = lines[0]
+  const tabCount = (first.match(/\t/g) || []).length
+  const commaCount = (first.match(/,/g) || []).length
+  const delim = tabCount > commaCount ? '\t' : null
+  if (!delim) return []  // 留給 xlsx 的 CSV 路徑處理
+  return lines.map(line => line.split('\t'))
+}
+
 
 // 檔名副檔名（僅用於判斷提示，不影響解析）
 function getFileExt(file) {
@@ -1110,27 +1185,20 @@ function toCommaArray(value) {
     .filter(Boolean)
 }
 
-// ⛳ 只替換這個：把工作表轉成物件列（第1行=英文表頭，第2行=說明列要丟掉，資料從第3行開始）
 function sheetToObjects(XLSX, ws) {
-  // 用 header:1 拿「陣列」而不是物件，方便精準跳過第二行
+  if (!ws) return []
   const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' })
-  if (!rows || rows.length === 0) return []
+  if (!Array.isArray(rows) || rows.length === 0) return []
 
-  // 第1行：英文表頭
-  const headerRow = (rows[0] || []).map((h) =>
-    String(h ?? '')
-      .replace(/^\ufeff/, '') // 去掉 BOM
-      .trim()
-  )
-
-  // 第2行：中文說明列，直接丟掉
+  // 第1行：英文表頭；第2行：中文說明（丟棄）；第3行起：資料
+  const headerRow = (rows[0] || []).map(h => stripBOM(String(h ?? '').trim()))
   const dataRows = rows.slice(2)
 
-  // 將每列轉成 { header[i]: value } 物件；若整列空白就跳過
   const objects = []
   for (const r of dataRows) {
-    const isAllEmpty = !r || r.every((v) => String(v ?? '').trim() === '')
-    if (isAllEmpty) continue
+    if (!Array.isArray(r)) continue
+    const empty = r.every(v => String(v ?? '').trim() === '')
+    if (empty) continue
     const obj = {}
     for (let i = 0; i < headerRow.length; i++) {
       const key = headerRow[i] || `col_${i}`
@@ -1141,17 +1209,90 @@ function sheetToObjects(XLSX, ws) {
   return objects
 }
 
+function normalizeHeaderKey(s = '') { return stripBOM(String(s)).trim().toLowerCase() }
+function autoFixColumnMappingsFromHeader(headerKeys = []) {
+  // 讓 mapping 與實際 CSV 表頭自動對齊（忽略大小寫/空白/BOM）
+  const normMap = new Map(headerKeys.map(k => [normalizeHeaderKey(k), k]))
+  BULK_IMPORT_FIELD_CONFIGS.forEach(cfg => {
+    const want = cfg.header || cfg.key
+    const hit = normMap.get(normalizeHeaderKey(want))
+    if (hit) bulkImportForm.columnMappings[cfg.key] = hit
+  })
+}
 
-// 將 Excel/CSV 檔案轉為「英文字段鍵值」的物件陣列（鍵名 = header 英文）
 async function parseFileToRowObjects(file) {
   const XLSX = await loadXLSX()
   const buf = await fileToArrayBuffer(file)
-  const wb = XLSX.read(buf, { type: 'array' })
-  const firstSheetName = wb.SheetNames[0]
-  const ws = wb.Sheets[firstSheetName]
-  if (!ws) return []
-  return sheetToObjects(XLSX, ws)
+
+  // 1) 先用 xlsx 二進位路徑
+  try {
+    const wb = XLSX.read(buf, { type: 'array', codepage: 65001 })
+    const name = wb.SheetNames?.[0]
+    const ws = name ? wb.Sheets[name] : null
+    const objs = sheetToObjects(XLSX, ws)
+    if (objs.length) {
+      // 自動修正 mapping（避免大小寫/空白差異）
+      autoFixColumnMappingsFromHeader(Object.keys(objs[0]))
+      return objs
+    }
+  } catch (e) {
+    // 落到文字路徑
+  }
+
+  // 2) 文字路徑：處理 UTF-8 / UTF-16LE、tab 分隔
+  const text = decodeText(buf)
+  // 先嘗試 tab 解析
+  const tsvRows = parseTSVToRows(text)
+  if (tsvRows.length) {
+    const headerRow = (tsvRows[0] || []).map(h => stripBOM(String(h ?? '').trim()))
+    const descRow = tsvRows[1] || []
+    // 判斷第二列是否中文說明列（含「必填」等）；若是則丟掉
+    const isDesc = descRow.some(v => /必填|\(|\)|已婚|未婚|離婚|喪偶|TRUE|FALSE/.test(String(v || '')))
+    const dataRows = isDesc ? tsvRows.slice(2) : tsvRows.slice(1)
+
+    // 自動修正 mapping
+    autoFixColumnMappingsFromHeader(headerRow)
+
+    // 組物件
+    const objects = dataRows.map(row => {
+      const obj = {}
+      for (let i = 0; i < headerRow.length; i++) obj[headerRow[i] || `col_${i}`] = row[i] ?? ''
+      return obj
+    }).filter(obj => Object.values(obj).some(v => String(v ?? '').trim() !== ''))
+
+    if (objects.length) return objects
+  }
+
+  // 3) 最後再用 xlsx 的字串路徑讀 CSV（UTF-8/UTF-16LE 皆可）
+  try {
+    const wb2 = XLSX.read(text, { type: 'string' })
+    const name2 = wb2.SheetNames?.[0]
+    const ws2 = name2 ? wb2.Sheets[name2] : null
+    const objs2 = sheetToObjects(XLSX, ws2)
+    if (objs2.length) {
+      autoFixColumnMappingsFromHeader(Object.keys(objs2[0]))
+      return objs2
+    }
+  } catch (e) {
+    // ignore
+  }
+
+  // 都失敗就回空陣列（上層會提示）
+  return []
 }
+
+// 將 keys / pending / options 預先整理成可直接渲染的 sections
+const referenceMappingSectionsForUI = computed(() => {
+  const keys = Array.isArray(referenceMappingKeys.value) ? referenceMappingKeys.value : []
+  return keys.map(type => {
+    const values = Array.isArray(referenceMappingPending?.[type]) ? referenceMappingPending[type] : []
+    const options = Array.isArray(referenceMappingOptions?.[type]) ? referenceMappingOptions[type] : []
+    return { type, values, options }
+  })
+})
+
+
+
 
 // 由 mapping（bulkImportForm.columnMappings）將「英文字段」→「系統內鍵名」
 // 例：employeeNo <- row[employeeId]、name <- row[name]
@@ -1272,7 +1413,8 @@ async function parseAndPreviewBulkImport(file) {
 
 // ========= 修改：掛上到既有 on-change handler =========
 async function handleBulkImportFileChange(uploadFile) {
-  if (!uploadFile?.raw) return
+  const raw = uploadFile?.raw || uploadFile   // ← 保底
+  if (!raw) return
 
   const previousFile = bulkImportFile.value
   const previousUploadList = bulkImportUploadFileList.value.map(file => ({ ...file }))
@@ -3295,29 +3437,127 @@ function getReferenceEntryKey(entry) {
 function buildReferenceOptionLabel(type, option) {
   if (!option || typeof option !== 'object') return ''
   if (type === 'organization') {
-    const parts = [option.name, option.unitName, option.orgCode, option.systemCode]
-      .filter(part => typeof part === 'string' && part)
-    return parts.length ? parts.join(' / ') : option.id || ''
+    const parts = [option.name, option.unitName, option.orgCode, option.systemCode].filter(Boolean)
+    return parts.join(' / ')
   }
   if (type === 'department') {
-    const parts = []
-    if (option.name) parts.push(option.name)
-    if (option.code) parts.push(option.code)
+    const parts = [option.name, option.code].filter(Boolean)
     if (option.organization) parts.push(`所屬：${option.organization}`)
-    return parts.length ? parts.join('｜') : option.id || ''
+    return parts.join('｜')
   }
   if (type === 'subDepartment') {
-    const parts = []
-    if (option.name) parts.push(option.name)
-    if (option.code) parts.push(option.code)
+    const parts = [option.name, option.code].filter(Boolean)
     if (option.department) parts.push(`部門：${option.department}`)
-    return parts.length ? parts.join('｜') : option.id || ''
+    return parts.join('｜')
   }
   const fallback = [option.label, option.name, option.title, option.code, option.value, option.id]
-    .map(part => (typeof part === 'string' ? part : part != null ? String(part) : ''))
-    .find(part => part.trim())
+    .map(x => (x == null ? '' : String(x))).find(t => t.trim())
   return fallback || ''
 }
+
+
+function _normKey(s = '') {
+  return String(s).normalize('NFKC').replace(/^\uFEFF/, '').trim().toLowerCase()
+}
+function _candidateKeys(option, fields) {
+  const out = new Set()
+  fields.forEach(f => {
+    const v = option?.[f]
+    if (v != null && String(v).trim() !== '') out.add(_normKey(v))
+  })
+  return out
+}
+
+// 建立 options 索引（name / code / id / unitName 等都試）
+function _buildIndex(list = [], fields = ['name', 'code', 'id', 'orgCode', 'unitName', 'systemCode']) {
+  const idx = new Map()
+    ; (list || []).forEach(opt => {
+      _candidateKeys(opt, fields).forEach(k => {
+        if (k && !idx.has(k)) idx.set(k, opt)
+      })
+    })
+  return idx
+}
+
+// 取得現有資料清單做為 options（若後端缺 options）
+function _getFallbackOptions(key) {
+  if (key === 'organization') {
+    return (orgList.value || []).map(o => ({
+      id: o._id ?? o.id ?? '',
+      name: o.name ?? '',
+      orgCode: o.orgCode ?? o.code ?? '',
+      unitName: o.unitName ?? ''
+    }))
+  }
+  if (key === 'department') {
+    return (departmentList.value || []).map(d => ({
+      id: d._id ?? d.id ?? '',
+      name: d.name ?? '',
+      code: d.code ?? '',
+      organization: d.organization ?? ''
+    }))
+  }
+  if (key === 'subDepartment') {
+    return (subDepartmentList.value || []).map(s => ({
+      id: s._id ?? s.id ?? '',
+      name: s.name ?? '',
+      code: s.code ?? '',
+      department: s.department ?? ''
+    }))
+  }
+  return []
+}
+
+/**
+ * 自動匹配 missingReferences：
+ * - organization：用 name / orgCode / id 對「總公司」「台北院區」等
+ * - department：用 code / name / id 對「HR001」等
+ * - subDepartment：用 code / name / id
+ * 成功的會直接寫進 resolvedReferenceValueMappings，失敗的留給互動視窗。
+ * 回傳 { unresolved, keysUsed }
+ */
+function autoResolveMissingReferences(missingRefs = {}) {
+  const keys = Object.keys(missingRefs || {})
+  const unresolved = {}
+
+  keys.forEach(key => {
+    const block = missingRefs[key] || {}
+    const values = Array.isArray(block.values) ? block.values : []
+    const options = (Array.isArray(block.options) && block.options.length)
+      ? block.options
+      : _getFallbackOptions(key)
+
+    // 依不同類型設計索引欄位優先順序
+    let fields = ['id', 'code', 'name']
+    if (key === 'organization') fields = ['id', 'orgCode', 'name', 'unitName', 'systemCode']
+    const idx = _buildIndex(options, fields)
+
+    values.forEach(entry => {
+      const raw = entry?.value ?? ''
+      const norm = entry?.normalizedValue || _normKey(raw)
+      if (!norm) return
+      const hit = idx.get(norm)
+        || idx.get(_normKey(String(raw))) // 再試一次
+      if (hit?.id) {
+        // 直接記到 resolved
+        ensureReferenceMappingContainers(key)
+        if (!resolvedReferenceValueMappings[key]) resolvedReferenceValueMappings[key] = {}
+        resolvedReferenceValueMappings[key][norm] = String(hit.id)
+        // 同時確保 ignore 清掉
+        resolvedReferenceIgnores[key] = (resolvedReferenceIgnores[key] || []).filter(v => v !== norm)
+      } else {
+        // 留待互動
+        if (!unresolved[key]) unresolved[key] = { values: [], options }
+        unresolved[key].values.push(entry)
+      }
+    })
+    // 若該 key 都解完，unresolved 無需保留
+    if (unresolved[key] && unresolved[key].values.length === 0) delete unresolved[key]
+  })
+
+  return { unresolved, keysUsed: keys }
+}
+
 
 // 把後端回傳的 missingReferences 任意鍵名整理並保留未知類型
 function normalizeMissingRefPayload(raw = {}) {
@@ -3469,22 +3709,36 @@ function buildClientMissingRefs(mappedRows = []) {
   }
 }
 
+function getRefSel(type, k) {
+  ensureReferenceMappingContainers(type)
+  if (!referenceMappingSelections[type][k]) {
+    // 預設是「指定既有資料」，但 target 先留空
+    referenceMappingSelections[type][k] = { mode: 'map', targetId: '' }
+  }
+  return referenceMappingSelections[type][k]
+}
+
+
+
+
 
 function openReferenceMappingDialog(missingReferences = {}, message = '', keys = []) {
   referenceMappingDialogMessage.value = message || '部分欄位需要對應既有的組織/部門資料'
-  referenceMappingDialogVisible.value = true
   referenceMappingSubmitting.value = false
 
-  const dynamicKeys = Array.isArray(keys) && keys.length
-    ? keys
-    : Object.keys(missingReferences || {})
-  updateReferenceMappingKeys(dynamicKeys, {
+  // 來源 keys：優先用呼叫端傳入；否則用物件的實際鍵；最後回到預設三鍵
+  const dynamicKeys = (Array.isArray(keys) && keys.length ? keys : Object.keys(missingReferences || {}))
+    .filter(k => typeof k === 'string' && k.trim() !== '')
+  const finalKeys = dynamicKeys.length ? dynamicKeys : [...REFERENCE_MAPPING_DEFAULT_KEYS]
+
+  // 先建立容器，再填資料；避免在對話框初次 render 前出現未初始化的取值
+  updateReferenceMappingKeys(finalKeys, {
     resetPending: true,
     resetOptions: true,
     resetSelections: true
   })
 
-  // 用目前清單當作保底選項
+  // 保底選項（後端沒給 options 時使用）
   const fallbackOptions = {
     organization: (orgList.value || []).map(o => ({
       id: o._id ?? o.id ?? '',
@@ -3506,29 +3760,54 @@ function openReferenceMappingDialog(missingReferences = {}, message = '', keys =
     }))
   }
 
-  referenceMappingKeys.value.forEach(key => {
-    const values = Array.isArray(missingReferences?.[key]?.values)
-      ? missingReferences[key].values
-      : []
-    const optionList = Array.isArray(missingReferences?.[key]?.options)
-      ? missingReferences[key].options
-      : []
-    const options = optionList.length ? optionList : fallbackOptions[key] || []
+  // ✅ 永遠先取 block，再讀 values/options
+  referenceMappingKeys.value.forEach((key) => {
+    const block = (missingReferences && typeof missingReferences === 'object') ? missingReferences[key] : undefined
+    const values = Array.isArray(block?.values) ? block.values : []
+    const optionsRaw = Array.isArray(block?.options) ? block.options : []
+    const options = optionsRaw.length ? optionsRaw : (fallbackOptions[key] || [])
 
-    referenceMappingPending[key] = values.map(item => ({ ...item }))
-    referenceMappingOptions[key] = options.map(item => ({ ...item }))
+    ensureReferenceMappingContainers(key)
+    referenceMappingPending[key] = values.map(item => ({ ...item }))   // copy
+    referenceMappingOptions[key] = options.map(item => ({ ...item }))   // copy
     referenceMappingSelections[key] = {}
 
     values.forEach(entry => {
-      const normalized = getReferenceEntryKey(entry)
-      const existingIgnore = resolvedReferenceIgnores[key]?.includes(normalized)
-      const existingTarget = resolvedReferenceValueMappings[key]?.[normalized] || ''
-      referenceMappingSelections[key][normalized] = existingIgnore
-        ? { mode: 'ignore', targetId: '' }
-        : { mode: 'map', targetId: existingTarget }
+      const nk = getReferenceEntryKey(entry)
+      const sel = getRefSel(key, nk) // 保證 selection 物件存在
+      const existingTarget = resolvedReferenceValueMappings[key]?.[nk] || ''
+      const existingIgnore = resolvedReferenceIgnores[key]?.includes(nk)
+      if (existingIgnore) {
+        sel.mode = 'ignore'
+        sel.targetId = ''
+      } else if (existingTarget) {
+        sel.mode = 'map'
+        sel.targetId = existingTarget
+      } else {
+        sel.mode = 'map'
+        sel.targetId = ''
+      }
     })
   })
+
+  // 最後才打開對話框（避免初次 render 碰到未就緒資料）
+  referenceMappingDialogVisible.value = true
 }
+
+
+
+// 當彈窗打開時，再輸出目前 sections 概況（多一道保險）
+watch(referenceMappingDialogVisible, (v) => {
+  if (v) {
+    console.log('[ref-mapping] dialog opened; sections snapshot =',
+      (referenceMappingKeys.value || []).map(k => ({
+        k,
+        values: referenceMappingPending[k]?.length || 0,
+        options: referenceMappingOptions[k]?.length || 0
+      })))
+  }
+})
+
 
 
 async function submitBulkImport({ triggeredByMapping = false } = {}) {
@@ -3562,19 +3841,15 @@ async function submitBulkImport({ triggeredByMapping = false } = {}) {
     }
 
     if (res.status === 409) {
-      // 後端可能給，也可能沒給；都先正規化一次
-      const { normalized, keys: normalizedKeys } = normalizeMissingRefPayload(
-        payload?.missingReferences || {}
-      )
-      const keyList = normalizedKeys.length ? normalizedKeys : [...REFERENCE_MAPPING_DEFAULT_KEYS]
-      const allEmpty = keyList.every(key => !normalized[key]?.values?.length)
 
-      // 如果後端沒給或是空，前端自己掃描未知值來生出互動清單
+      // 1) 正規化後端 payload
+      const { normalized, keys: normalizedKeys } = normalizeMissingRefPayload(payload?.missingReferences || {})
       let finalRefs = normalized
-      let finalKeys = [...keyList]
+      let finalKeys = normalizedKeys.length ? normalizedKeys : [...REFERENCE_MAPPING_DEFAULT_KEYS]
+
+      // 2) 若後端沒給 values，就用檔案自行掃描未知值
+      const allEmpty = finalKeys.every(key => !finalRefs[key]?.values?.length)
       if (allEmpty) {
-        // 這裡需要目前這次上傳的「映射後列」；重跑一次 map（跟預覽用的邏輯一致）
-        // 直接從檔案取資料再映射（避免依賴 preview 畫面）
         try {
           const rowObjects = await parseFileToRowObjects(bulkImportFile.value)
           const mappedRows = rowObjects.map(r => mapRowToFormShape(r, bulkImportForm.columnMappings))
@@ -3585,23 +3860,25 @@ async function submitBulkImport({ triggeredByMapping = false } = {}) {
         }
       }
 
-      // 若仍然都是空，顯示後端訊息即可
-      finalKeys.forEach(key => {
-        if (!finalRefs[key]) {
-          finalRefs[key] = { values: [], options: [] }
-        }
-      })
-      const hasAny = finalKeys.some(key => (finalRefs[key]?.values?.length || 0) > 0)
+      // 3) 自動匹配可解決的
+      const { unresolved, keysUsed } = autoResolveMissingReferences(finalRefs)
+      const keysForDialog = (keysUsed && keysUsed.length) ? keysUsed : finalKeys
 
+      // 若都解完 → 自動重送；否則開對應視窗處理剩下的
+      const stillMissing = Object.values(unresolved).some(b => (b?.values?.length || 0) > 0)
       bulkImportErrors.value = Array.isArray(payload?.errors) ? payload.errors : []
-      if (hasAny) {
-        openReferenceMappingDialog(finalRefs, payload?.message, finalKeys)
-        ElMessage.warning(payload?.message || '請完成參照對應後再試')
+
+      if (!stillMissing) {
+        // 全部解決：直接重送（不彈窗）
+        await submitBulkImport({ triggeredByMapping: true })
       } else {
-        ElMessage.warning(payload?.message || '匯入資料存在未對應的參照，請確認')
+        openReferenceMappingDialog(unresolved, payload?.message, keysForDialog)
+        ElMessage.warning(payload?.message || '匯入資料存在未對應的組織或部門資訊，請完成對應後重新提交')
       }
       return
     }
+
+
 
 
     if (!res.ok) {
