@@ -2,6 +2,9 @@ import ExcelJS from 'exceljs'
 import crypto from 'crypto'
 import { Readable } from 'stream'
 import Employee from '../models/Employee.js'
+import Organization from '../models/Organization.js'
+import Department from '../models/Department.js'
+import SubDepartment from '../models/SubDepartment.js'
 import { buildEmployeeDoc } from './employeeController.js'
 
 const REQUIRED_MAPPING_KEYS = ['employeeNo', 'name', 'email']
@@ -102,7 +105,226 @@ const NUMBER_FIELDS = new Set([
 ])
 const CSV_ARRAY_FIELDS = new Set(['languages', 'identityCategory', 'salaryItems'])
 
+const REFERENCE_KEYS = ['organization', 'department', 'subDepartment']
+
+const REFERENCE_CONFIGS = {
+  organization: {
+    Model: Organization,
+    aliasFields: ['name', 'unitName', 'systemCode', 'orgCode'],
+    select: '_id name unitName systemCode orgCode'
+  },
+  department: {
+    Model: Department,
+    aliasFields: ['name', 'code'],
+    select: '_id name code organization'
+  },
+  subDepartment: {
+    Model: SubDepartment,
+    aliasFields: ['name', 'code'],
+    select: '_id name code department'
+  }
+}
+
+const REFERENCE_LABELS = {
+  organization: '機構',
+  department: '部門',
+  subDepartment: '子部門'
+}
+
 const EMAIL_REGEX = /^\S+@\S+\.\S+$/
+
+function normalizeReferenceKey(value) {
+  if (value === null || value === undefined) return ''
+  if (typeof value === 'string') return value.trim().toLowerCase()
+  if (typeof value === 'number') return String(value).trim().toLowerCase()
+  if (typeof value === 'object') {
+    if (typeof value.value === 'string') return value.value.trim().toLowerCase()
+    if (typeof value.raw === 'string') return value.raw.trim().toLowerCase()
+    if (typeof value.name === 'string') return value.name.trim().toLowerCase()
+    if (value._id) return String(value._id).trim().toLowerCase()
+    if (value.id) return String(value.id).trim().toLowerCase()
+  }
+  return String(value).trim().toLowerCase()
+}
+
+function toReferenceDisplay(value) {
+  if (value === null || value === undefined) return ''
+  if (typeof value === 'string') return value.trim()
+  if (typeof value === 'number') return String(value)
+  if (typeof value === 'object') {
+    if (typeof value.value === 'string') return value.value
+    if (typeof value.raw === 'string') return value.raw
+    if (typeof value.name === 'string') return value.name
+    if (typeof value.label === 'string') return value.label
+    if (value._id) return String(value._id)
+  }
+  return String(value)
+}
+
+function collectReferenceUsage(rows) {
+  const usage = {
+    organization: new Map(),
+    department: new Map(),
+    subDepartment: new Map()
+  }
+
+  rows.forEach(row => {
+    REFERENCE_KEYS.forEach(key => {
+      const rawValue = getPathValue(row.original, key)
+      const normalizedValue = normalizeReferenceKey(rawValue)
+      if (!normalizedValue) return
+      const display = toReferenceDisplay(rawValue)
+      const entry = usage[key].get(normalizedValue)
+      if (entry) {
+        entry.rows.add(row.rowNumber)
+      } else {
+        usage[key].set(normalizedValue, {
+          value: display,
+          normalizedValue,
+          rows: new Set([row.rowNumber])
+        })
+      }
+    })
+  })
+
+  return usage
+}
+
+function buildReferenceAliasMap(docs, aliasFields) {
+  const map = new Map()
+  docs.forEach(doc => {
+    const id = doc?._id?.toString?.()
+    if (id) {
+      map.set(normalizeReferenceKey(id), doc)
+    }
+    aliasFields.forEach(field => {
+      const value = doc?.[field]
+      if (typeof value === 'string' && value.trim()) {
+        map.set(normalizeReferenceKey(value), doc)
+      }
+    })
+  })
+  return map
+}
+
+function buildReferenceOptions(type, docs) {
+  if (!Array.isArray(docs)) return []
+  if (type === 'organization') {
+    return docs.map(doc => ({
+      id: doc?._id?.toString?.() ?? '',
+      name: doc?.name ?? '',
+      unitName: doc?.unitName ?? '',
+      systemCode: doc?.systemCode ?? '',
+      orgCode: doc?.orgCode ?? ''
+    }))
+  }
+  if (type === 'department') {
+    return docs.map(doc => ({
+      id: doc?._id?.toString?.() ?? '',
+      name: doc?.name ?? '',
+      code: doc?.code ?? '',
+      organization: doc?.organization ? doc.organization.toString() : ''
+    }))
+  }
+  if (type === 'subDepartment') {
+    return docs.map(doc => ({
+      id: doc?._id?.toString?.() ?? '',
+      name: doc?.name ?? '',
+      code: doc?.code ?? '',
+      department: doc?.department ? doc.department.toString() : ''
+    }))
+  }
+  return []
+}
+
+function toReferenceMappingMap(section = {}) {
+  const map = new Map()
+  Object.entries(section).forEach(([rawKey, target]) => {
+    const normalizedKey = normalizeReferenceKey(rawKey)
+    if (!normalizedKey) return
+    if (target === null) {
+      map.set(normalizedKey, null)
+    } else if (typeof target === 'string' && target.trim()) {
+      map.set(normalizedKey, target.trim())
+    }
+  })
+  return map
+}
+
+function toIgnoreSet(list = []) {
+  const set = new Set()
+  list.forEach(value => {
+    const normalized = normalizeReferenceKey(value)
+    if (normalized) set.add(normalized)
+  })
+  return set
+}
+
+function parseReferencePayload(rawValueMappings, rawIgnore) {
+  const valueMappings = {}
+  const ignore = {}
+
+  let parsedMappings = rawValueMappings
+  if (typeof rawValueMappings === 'string') {
+    try {
+      parsedMappings = JSON.parse(rawValueMappings)
+    } catch (error) {
+      return {
+        ok: false,
+        message: 'valueMappings 格式錯誤',
+        errors: ['valueMappings JSON 解析失敗']
+      }
+    }
+  }
+
+  let parsedIgnore = rawIgnore
+  if (typeof rawIgnore === 'string') {
+    try {
+      parsedIgnore = JSON.parse(rawIgnore)
+    } catch (error) {
+      return {
+        ok: false,
+        message: 'ignore 格式錯誤',
+        errors: ['ignore JSON 解析失敗']
+      }
+    }
+  }
+
+  if (parsedMappings && typeof parsedMappings !== 'object') {
+    return {
+      ok: false,
+      message: 'valueMappings 格式錯誤',
+      errors: ['valueMappings 必須為物件']
+    }
+  }
+
+  if (parsedIgnore && typeof parsedIgnore !== 'object') {
+    return {
+      ok: false,
+      message: 'ignore 格式錯誤',
+      errors: ['ignore 必須為物件']
+    }
+  }
+
+  REFERENCE_KEYS.forEach(key => {
+    const section = parsedMappings?.[key]
+    const ignoreSection = parsedIgnore?.[key]
+
+    if (section && (typeof section !== 'object' || Array.isArray(section))) {
+      valueMappings[key] = {}
+    } else {
+      valueMappings[key] = section || {}
+    }
+
+    if (ignoreSection && !Array.isArray(ignoreSection)) {
+      ignore[key] = []
+    } else {
+      ignore[key] = Array.isArray(ignoreSection) ? ignoreSection : []
+    }
+  })
+
+  return { ok: true, valueMappings, ignore }
+}
 
 function toPlainCellValue(cell) {
   if (!cell) return ''
@@ -317,21 +539,30 @@ export async function bulkImportEmployees(req, res) {
     return
   }
 
-  let columnMappings = { ...DEFAULT_COLUMN_MAPPINGS }
-  if (req.body?.mappings) {
-    let parsed
-    try {
-      parsed = JSON.parse(req.body.mappings)
-    } catch (error) {
-      res.status(400).json({ message: '欄位對應格式錯誤', errors: ['mappings JSON 解析失敗'] })
-      return
-    }
+  const payload = req.bulkImportPayload && typeof req.bulkImportPayload === 'object'
+    ? req.bulkImportPayload
+    : null
 
-    if (!parsed || typeof parsed !== 'object') {
-      res.status(400).json({ message: '欄位對應格式錯誤', errors: ['欄位對應缺失'] })
-      return
+  let columnMappings
+  if (payload?.mappings && typeof payload.mappings === 'object') {
+    columnMappings = { ...payload.mappings }
+  } else {
+    columnMappings = { ...DEFAULT_COLUMN_MAPPINGS }
+    if (req.body?.mappings) {
+      let parsed
+      try {
+        parsed = JSON.parse(req.body.mappings)
+      } catch (error) {
+        res.status(400).json({ message: '欄位對應格式錯誤', errors: ['mappings JSON 解析失敗'] })
+        return
+      }
+
+      if (!parsed || typeof parsed !== 'object') {
+        res.status(400).json({ message: '欄位對應格式錯誤', errors: ['欄位對應缺失'] })
+        return
+      }
+      columnMappings = parsed
     }
-    columnMappings = parsed
   }
 
   const missingMappings = REQUIRED_MAPPING_KEYS.filter(key => {
@@ -347,12 +578,35 @@ export async function bulkImportEmployees(req, res) {
   }
 
   let options = {}
-  try {
-    options = req.body?.options ? JSON.parse(req.body.options) : {}
-  } catch (error) {
-    res.status(400).json({ message: '匯入選項格式錯誤', errors: ['options JSON 解析失敗'] })
-    return
+  if (payload?.options && typeof payload.options === 'object' && !Array.isArray(payload.options)) {
+    options = payload.options
+  } else if (!payload) {
+    try {
+      options = req.body?.options ? JSON.parse(req.body.options) : {}
+    } catch (error) {
+      res.status(400).json({ message: '匯入選項格式錯誤', errors: ['options JSON 解析失敗'] })
+      return
+    }
   }
+
+  let valueMappingSections = payload?.valueMappings
+  let ignoreSections = payload?.ignore
+  if (!payload) {
+    const referenceParseResult = parseReferencePayload(req.body?.valueMappings, req.body?.ignore)
+    if (!referenceParseResult.ok) {
+      res.status(400).json({ message: referenceParseResult.message, errors: referenceParseResult.errors })
+      return
+    }
+    valueMappingSections = referenceParseResult.valueMappings
+    ignoreSections = referenceParseResult.ignore
+  }
+
+  valueMappingSections = valueMappingSections && typeof valueMappingSections === 'object'
+    ? valueMappingSections
+    : {}
+  ignoreSections = ignoreSections && typeof ignoreSections === 'object'
+    ? ignoreSections
+    : {}
 
   let defaultRole = typeof options?.defaultRole === 'string' && options.defaultRole.trim()
     ? options.defaultRole.trim().toLowerCase()
@@ -507,6 +761,164 @@ export async function bulkImportEmployees(req, res) {
     res.status(400).json({ message: '匯入檔案沒有資料', errors: [] })
     return
   }
+
+  const referenceUsage = collectReferenceUsage(parsedRows)
+  const mappingMaps = {}
+  const ignoreSets = {}
+  REFERENCE_KEYS.forEach(key => {
+    mappingMaps[key] = toReferenceMappingMap(valueMappingSections?.[key] || {})
+    const ignoreList = Array.isArray(ignoreSections?.[key]) ? ignoreSections[key] : []
+    ignoreSets[key] = toIgnoreSet(ignoreList)
+    // treat mapping 值為 null 與 ignore 一致
+    mappingMaps[key].forEach((value, sourceKey) => {
+      if (value === null) {
+        ignoreSets[key].add(sourceKey)
+      }
+    })
+  })
+
+  const requiredReferenceTypes = REFERENCE_KEYS.filter(type =>
+    referenceUsage[type].size > 0 || mappingMaps[type].size > 0
+  )
+
+  const referenceLookups = {}
+  for (const type of requiredReferenceTypes) {
+    const config = REFERENCE_CONFIGS[type]
+    try {
+      const docs = await config.Model.find({}, config.select).lean()
+      referenceLookups[type] = {
+        docs,
+        aliasMap: buildReferenceAliasMap(docs, config.aliasFields),
+        options: buildReferenceOptions(type, docs)
+      }
+    } catch (error) {
+      const label = REFERENCE_LABELS[type] || type
+      res.status(500).json({ message: `查詢${label}資料失敗`, error: error.message })
+      return
+    }
+  }
+
+  const resolutionMaps = {
+    organization: new Map(),
+    department: new Map(),
+    subDepartment: new Map()
+  }
+  const missingReferences = {}
+  const invalidMappings = []
+  const invalidMessageSet = new Set()
+
+  REFERENCE_KEYS.forEach(type => {
+    const usageMap = referenceUsage[type]
+    if (!usageMap.size && !mappingMaps[type].size && !ignoreSets[type].size) return
+    const lookup = referenceLookups[type] || { aliasMap: new Map(), options: [] }
+
+    usageMap.forEach(entry => {
+      const normalizedValue = entry.normalizedValue
+      if (!normalizedValue) return
+
+      if (ignoreSets[type].has(normalizedValue)) {
+        resolutionMaps[type].set(normalizedValue, { status: 'ignored', resolved: null })
+        return
+      }
+
+      if (mappingMaps[type].has(normalizedValue)) {
+        const target = mappingMaps[type].get(normalizedValue)
+        if (target === null) {
+          resolutionMaps[type].set(normalizedValue, { status: 'ignored', resolved: null })
+          return
+        }
+        const targetDoc = lookup.aliasMap.get(normalizeReferenceKey(target))
+        if (!targetDoc) {
+          const message = `valueMappings.${type} 中的「${entry.value}」沒有對應到有效項目`
+          if (!invalidMessageSet.has(message)) {
+            invalidMessageSet.add(message)
+            invalidMappings.push(message)
+          }
+          resolutionMaps[type].set(normalizedValue, { status: 'invalid' })
+        } else {
+          resolutionMaps[type].set(normalizedValue, {
+            status: 'mapped',
+            resolved: targetDoc._id?.toString?.() ?? ''
+          })
+        }
+        return
+      }
+
+      const autoDoc = lookup.aliasMap.get(normalizedValue)
+      if (autoDoc) {
+        resolutionMaps[type].set(normalizedValue, {
+          status: 'auto',
+          resolved: autoDoc._id?.toString?.() ?? ''
+        })
+      } else {
+        resolutionMaps[type].set(normalizedValue, { status: 'missing' })
+      }
+    })
+
+    mappingMaps[type].forEach((target, sourceKey) => {
+      if (target === null) return
+      const targetDoc = lookup.aliasMap.get(normalizeReferenceKey(target))
+      if (!targetDoc) {
+        const display = usageMap.get(sourceKey)?.value || sourceKey
+        const message = `valueMappings.${type} 中的「${display}」沒有對應到有效項目`
+        if (!invalidMessageSet.has(message)) {
+          invalidMessageSet.add(message)
+          invalidMappings.push(message)
+        }
+      }
+    })
+
+    const pending = []
+    usageMap.forEach(entry => {
+      const resolution = resolutionMaps[type].get(entry.normalizedValue)
+      if (!resolution || resolution.status === 'missing') {
+        pending.push({
+          value: entry.value,
+          normalizedValue: entry.normalizedValue,
+          rows: Array.from(entry.rows).sort((a, b) => a - b)
+        })
+      }
+    })
+
+    if (pending.length) {
+      const lookup = referenceLookups[type] || { options: [] }
+      missingReferences[type] = {
+        values: pending,
+        options: lookup.options || []
+      }
+    }
+  })
+
+  if (invalidMappings.length) {
+    res.status(400).json({
+      message: 'valueMappings 含有無效對應',
+      errors: invalidMappings
+    })
+    return
+  }
+
+  if (Object.keys(missingReferences).length) {
+    res.status(409).json({
+      message: '匯入資料存在未對應的組織或部門資訊，請完成對應後重新提交',
+      missingReferences,
+      errors: []
+    })
+    return
+  }
+
+  parsedRows.forEach(row => {
+    REFERENCE_KEYS.forEach(key => {
+      const normalizedValue = normalizeReferenceKey(getPathValue(row.original, key))
+      if (!normalizedValue) return
+      const resolution = resolutionMaps[key].get(normalizedValue)
+      if (!resolution) return
+      if (resolution.status === 'ignored') {
+        row.normalized[key] = null
+      } else if (typeof resolution.resolved === 'string' && resolution.resolved) {
+        row.normalized[key] = resolution.resolved
+      }
+    })
+  })
 
   const seenEmails = new Set()
   const emailCandidates = new Set()
