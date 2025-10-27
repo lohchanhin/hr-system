@@ -64,14 +64,20 @@ describe('router', () => {
     expect(childRoles.find(c => c.name === 'Attendance').roles).toEqual(['employee', 'supervisor', 'admin'])
     expect(childRoles.find(c => c.name === 'MySchedule').roles).toEqual(['employee', 'supervisor', 'admin'])
     expect(childRoles.find(c => c.name === 'Schedule').roles).toEqual(['supervisor', 'admin'])
-    expect(childRoles.find(c => c.name === 'DepartmentReports').roles).toEqual(['supervisor'])
+    expect(childRoles.find(c => c.name === 'FrontDepartmentReports').roles).toEqual(['supervisor', 'admin'])
     expect(childRoles.find(c => c.name === 'Approval').roles).toEqual(['employee', 'supervisor', 'admin'])
+  })
+
+  it('includes admin department report route under manager layout', () => {
+    const manager = router.getRoutes().find(r => r.name === 'ManagerLayout')
+    const childRoles = manager.children.map(r => ({ name: r.name, roles: r.meta && r.meta.roles }))
+    expect(childRoles.find(c => c.name === 'DepartmentReports').roles).toEqual(['admin'])
   })
 
   it('forwards employees to forbidden when opening department reports', () => {
     sessionStorage.setItem('role', 'employee')
     const next = vi.fn()
-    capturedGuard({ matched: [], meta: { roles: ['supervisor'] }, name: 'DepartmentReports' }, {}, next)
+    capturedGuard({ matched: [], meta: { roles: ['supervisor', 'admin'], warningMessage: '僅主管可以存取部門報表，請聯絡您的主管協助' }, name: 'FrontDepartmentReports' }, {}, next)
     expect(next).toHaveBeenCalledWith({ name: 'Forbidden' })
     expect(warningSpy).toHaveBeenCalledWith('僅主管可以存取部門報表，請聯絡您的主管協助')
   })
