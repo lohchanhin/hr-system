@@ -220,6 +220,16 @@ describe('EmployeeManagement - 批量匯入流程', () => {
       const uploadedText = await uploadedFile.text()
       expect(uploadedText).toContain('EMP-0001')
       expect(uploadedText).toContain('import.hr005@example.com')
+      expect(JSON.parse(formData.get('valueMappings'))).toEqual({
+        organization: {},
+        department: {},
+        subDepartment: {}
+      })
+      expect(JSON.parse(formData.get('ignore'))).toEqual({
+        organization: [],
+        department: [],
+        subDepartment: []
+      })
       const response = createApiResponse({ preview: samplePreview, errors: [] })
       const originalJson = response.json.bind(response)
       response.json = async () => {
@@ -279,6 +289,20 @@ describe('EmployeeManagement - 批量匯入流程', () => {
     expect(parsedMappings.employeeNo).toBe('employeeId')
     expect(parsedMappings.name).toBe('name')
     expect(parsedMappings.email).toBe('email')
+    const valueMappingEntry = entries.find(([key]) => key === 'valueMappings')
+    expect(valueMappingEntry).toBeTruthy()
+    expect(JSON.parse(valueMappingEntry[1])).toEqual({
+      organization: {},
+      department: {},
+      subDepartment: {}
+    })
+    const ignoreEntry = entries.find(([key]) => key === 'ignore')
+    expect(ignoreEntry).toBeTruthy()
+    expect(JSON.parse(ignoreEntry[1])).toEqual({
+      organization: [],
+      department: [],
+      subDepartment: []
+    })
 
     expect(ElMessage.success).toHaveBeenCalledWith('匯入成功')
     expect(ElMessage.warning).not.toHaveBeenCalled()
@@ -309,5 +333,52 @@ describe('EmployeeManagement - 批量匯入流程', () => {
     expect(ElMessage.error).toHaveBeenCalledWith('格式錯誤')
     expect(wrapper.vm.bulkImportErrors).toEqual(errorPayload.errors)
     expect(wrapper.vm.bulkImportDialogVisible).toBe(true)
+  })
+
+  it('匯入時若缺少參照會開啟對應視窗並可重新提交', async () => {
+    const missingResponse = {
+      message: '缺少對應資料',
+      missingReferences: {
+        department: {
+          values: [{ value: '人資部', normalizedValue: '人資部', rows: [3] }],
+          options: [{ id: 'dep1', name: '人資部', code: 'HR001' }]
+        }
+      },
+      errors: []
+    }
+
+    importEmployeesBulkMock
+      .mockResolvedValueOnce(createApiResponse(missingResponse, 409))
+      .mockResolvedValueOnce(createApiResponse({ preview: [], errors: [] }))
+
+    const wrapper = await mountComponent()
+    await wrapper.find('[data-test="bulk-import-button"]').trigger('click')
+
+    const file = new File(['mapping'], 'employees.xlsx', {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    })
+    wrapper.vm.handleBulkImportFileChange({ name: 'employees.xlsx', raw: file })
+
+    await wrapper.vm.submitBulkImport()
+    await flushPromises()
+
+    expect(wrapper.vm.referenceMappingDialogVisible).toBe(true)
+    const pending = wrapper.vm.referenceMappingPending.department
+    expect(pending).toHaveLength(1)
+    const entry = pending[0]
+    const key = wrapper.vm.getReferenceEntryKey(entry)
+    expect(wrapper.vm.referenceMappingSelections.department[key].mode).toBe('map')
+    wrapper.vm.referenceMappingSelections.department[key].targetId = 'dep1'
+
+    await wrapper.vm.confirmReferenceMappings()
+    await flushPromises()
+
+    expect(importEmployeesBulkMock).toHaveBeenCalledTimes(2)
+    const secondFormData = importEmployeesBulkMock.mock.calls[1][0]
+    const mappedPayload = JSON.parse(secondFormData.get('valueMappings'))
+    const ignorePayload = JSON.parse(secondFormData.get('ignore'))
+    expect(mappedPayload.department[key]).toBe('dep1')
+    expect(ignorePayload.department).toEqual([])
+    expect(wrapper.vm.referenceMappingDialogVisible).toBe(false)
   })
 })

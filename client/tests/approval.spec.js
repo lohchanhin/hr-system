@@ -1,6 +1,7 @@
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { shallowMount, flushPromises } from '@vue/test-utils'
 import Approval from '../src/views/front/Approval.vue'
+import { createPinia, setActivePinia } from 'pinia'
 
 const stubs = {
   'el-option': true,
@@ -29,6 +30,10 @@ const stubs = {
 }
 
 describe('Approval.vue', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+  })
+
   it('fetches list on mount', async () => {
     vi.spyOn(window, 'fetch').mockResolvedValue({ ok: true, json: () => Promise.resolve([]) })
     shallowMount(Approval, { global: { stubs } })

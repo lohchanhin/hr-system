@@ -1249,6 +1249,71 @@
           </el-button>
         </template>
       </el-dialog>
+
+      <el-dialog
+        v-model="referenceMappingDialogVisible"
+        :title="referenceMappingDialogMessage || '補齊參照對應'"
+        width="640px"
+        class="reference-mapping-dialog"
+        :close-on-click-modal="false"
+      >
+        <p class="reference-mapping-tip">
+          請為下列資料選擇對應的既有項目，或設定忽略後重新嘗試匯入。
+        </p>
+        <div
+          v-for="type in REFERENCE_MAPPING_KEYS"
+          :key="type"
+          v-if="referenceMappingPending[type]?.length"
+          class="reference-mapping-section"
+        >
+          <h4 class="reference-mapping-title">{{ REFERENCE_MAPPING_LABELS[type] }}對應</h4>
+          <div
+            v-for="entry in referenceMappingPending[type]"
+            :key="getReferenceEntryKey(entry)"
+            class="reference-mapping-item"
+          >
+            <div class="reference-mapping-info">
+              <span class="reference-mapping-value">{{ entry.value || '（空值）' }}</span>
+              <span class="reference-mapping-rows">
+                出現於第 {{ (entry.rows || []).join('、') }} 列
+              </span>
+            </div>
+            <el-radio-group
+              v-model="referenceMappingSelections[type][getReferenceEntryKey(entry)].mode"
+              class="reference-mapping-mode"
+            >
+              <el-radio label="map">指定既有資料</el-radio>
+              <el-radio label="ignore">忽略此次匯入</el-radio>
+            </el-radio-group>
+            <el-select
+              v-if="referenceMappingSelections[type][getReferenceEntryKey(entry)]?.mode === 'map'"
+              v-model="referenceMappingSelections[type][getReferenceEntryKey(entry)].targetId"
+              placeholder="請選擇既有項目"
+              class="reference-mapping-select"
+              filterable
+              clearable
+            >
+              <el-option
+                v-for="option in referenceMappingOptions[type]"
+                :key="option.id"
+                :label="buildReferenceOptionLabel(type, option)"
+                :value="option.id"
+              />
+            </el-select>
+          </div>
+        </div>
+        <div v-if="REFERENCE_MAPPING_KEYS.every(key => !referenceMappingPending[key].length)" class="reference-mapping-empty">
+          所有參照皆已處理，請重新送出匯入。
+        </div>
+        <template #footer>
+          <el-button @click="referenceMappingDialogVisible = false" :disabled="referenceMappingSubmitting">
+            稍後再處理
+          </el-button>
+          <el-button type="primary" :loading="referenceMappingSubmitting" @click="confirmReferenceMappings">
+            套用設定後重新匯入
+          </el-button>
+        </template>
+      </el-dialog>
     </div>
   </el-tab-pane>
 </template>
@@ -1928,6 +1993,42 @@ const bulkImportForm = reactive({
     sendWelcomeEmail: false
   }
 })
+
+const REFERENCE_MAPPING_KEYS = Object.freeze(['organization', 'department', 'subDepartment'])
+const REFERENCE_MAPPING_LABELS = Object.freeze({
+  organization: '機構',
+  department: '部門',
+  subDepartment: '子部門'
+})
+
+const referenceMappingDialogVisible = ref(false)
+const referenceMappingDialogMessage = ref('')
+const referenceMappingPending = reactive({
+  organization: [],
+  department: [],
+  subDepartment: []
+})
+const referenceMappingOptions = reactive({
+  organization: [],
+  department: [],
+  subDepartment: []
+})
+const referenceMappingSelections = reactive({
+  organization: {},
+  department: {},
+  subDepartment: {}
+})
+const resolvedReferenceValueMappings = reactive({
+  organization: {},
+  department: {},
+  subDepartment: {}
+})
+const resolvedReferenceIgnores = reactive({
+  organization: [],
+  department: [],
+  subDepartment: []
+})
+const referenceMappingSubmitting = ref(false)
 
 const bulkImportTemplateSections = computed(() => {
   const groups = new Map()
@@ -2921,6 +3022,18 @@ function resetBulkImportState({ resetMappings = true } = {}) {
   bulkImportUploadFileList.value = []
   bulkImportPreview.value = []
   bulkImportErrors.value = []
+  referenceMappingDialogVisible.value = false
+  referenceMappingDialogMessage.value = ''
+  referenceMappingSubmitting.value = false
+  REFERENCE_MAPPING_KEYS.forEach(key => {
+    referenceMappingPending[key] = []
+    referenceMappingOptions[key] = []
+    referenceMappingSelections[key] = {}
+    if (resetMappings) {
+      resolvedReferenceValueMappings[key] = {}
+      resolvedReferenceIgnores[key] = []
+    }
+  })
   if (resetMappings) {
     Object.keys(bulkImportForm.columnMappings).forEach(key => {
       if (!(key in DEFAULT_BULK_IMPORT_COLUMN_MAPPINGS)) {
@@ -2952,9 +3065,101 @@ function handleBulkImportFileRemove() {
   bulkImportErrors.value = []
 }
 
-async function submitBulkImport() {
+function normalizeReferenceKeyClient(value) {
+  if (value === null || value === undefined) return ''
+  if (typeof value === 'string') return value.trim().toLowerCase()
+  if (typeof value === 'number') return String(value).trim().toLowerCase()
+  return String(value).trim().toLowerCase()
+}
+
+function ensureNormalizedList(list = []) {
+  const seen = new Set()
+  const result = []
+  list.forEach(item => {
+    const normalized = normalizeReferenceKeyClient(item)
+    if (!normalized || seen.has(normalized)) return
+    seen.add(normalized)
+    result.push(normalized)
+  })
+  return result
+}
+
+function buildReferenceSubmissionPayload() {
+  const valueMappingsPayload = {}
+  const ignorePayload = {}
+  REFERENCE_MAPPING_KEYS.forEach(key => {
+    valueMappingsPayload[key] = {}
+    Object.entries(resolvedReferenceValueMappings[key]).forEach(([normalized, target]) => {
+      if (typeof target === 'string' && target.trim()) {
+        valueMappingsPayload[key][normalized] = target
+      }
+    })
+    ignorePayload[key] = ensureNormalizedList(resolvedReferenceIgnores[key])
+  })
+  return { valueMappingsPayload, ignorePayload }
+}
+
+function getReferenceEntryKey(entry) {
+  if (!entry) return ''
+  if (entry.normalizedValue) return entry.normalizedValue
+  return normalizeReferenceKeyClient(entry.value)
+}
+
+function buildReferenceOptionLabel(type, option) {
+  if (!option || typeof option !== 'object') return ''
+  if (type === 'organization') {
+    const parts = [option.name, option.unitName, option.orgCode, option.systemCode]
+      .filter(part => typeof part === 'string' && part)
+    return parts.length ? parts.join(' / ') : option.id || ''
+  }
+  if (type === 'department') {
+    const parts = []
+    if (option.name) parts.push(option.name)
+    if (option.code) parts.push(option.code)
+    if (option.organization) parts.push(`所屬：${option.organization}`)
+    return parts.length ? parts.join('｜') : option.id || ''
+  }
+  if (type === 'subDepartment') {
+    const parts = []
+    if (option.name) parts.push(option.name)
+    if (option.code) parts.push(option.code)
+    if (option.department) parts.push(`部門：${option.department}`)
+    return parts.length ? parts.join('｜') : option.id || ''
+  }
+  return option.id || ''
+}
+
+function openReferenceMappingDialog(missingReferences = {}, message = '') {
+  referenceMappingDialogMessage.value = message || '部分欄位需要對應既有的組織/部門資料'
+  referenceMappingDialogVisible.value = true
+  referenceMappingSubmitting.value = false
+  REFERENCE_MAPPING_KEYS.forEach(key => {
+    const values = Array.isArray(missingReferences?.[key]?.values)
+      ? missingReferences[key].values
+      : []
+    const options = Array.isArray(missingReferences?.[key]?.options)
+      ? missingReferences[key].options
+      : []
+    referenceMappingPending[key] = values.map(item => ({ ...item }))
+    referenceMappingOptions[key] = options.map(item => ({ ...item }))
+    referenceMappingSelections[key] = {}
+    values.forEach(entry => {
+      const normalized = getReferenceEntryKey(entry)
+      const existingIgnore = resolvedReferenceIgnores[key].includes(normalized)
+      const existingTarget = resolvedReferenceValueMappings[key][normalized] || ''
+      referenceMappingSelections[key][normalized] = existingIgnore
+        ? { mode: 'ignore', targetId: '' }
+        : { mode: 'map', targetId: existingTarget }
+    })
+  })
+}
+
+async function submitBulkImport({ triggeredByMapping = false } = {}) {
   if (!bulkImportFile.value) {
-    ElMessage.warning('請先選擇要匯入的檔案')
+    const tip = triggeredByMapping
+      ? '原始檔案已重置，請重新選擇匯入檔案後再試'
+      : '請先選擇要匯入的檔案'
+    ElMessage.warning(tip)
     return
   }
   if (!isBulkImportReady.value) {
@@ -2967,6 +3172,9 @@ async function submitBulkImport() {
     formData.append('file', bulkImportFile.value)
     formData.append('mappings', JSON.stringify(bulkImportForm.columnMappings))
     formData.append('options', JSON.stringify(bulkImportForm.options))
+    const { valueMappingsPayload, ignorePayload } = buildReferenceSubmissionPayload()
+    formData.append('valueMappings', JSON.stringify(valueMappingsPayload))
+    formData.append('ignore', JSON.stringify(ignorePayload))
 
     const res = await importEmployeesBulk(formData)
     let payload = {}
@@ -2974,6 +3182,13 @@ async function submitBulkImport() {
       payload = await res.json()
     } catch (error) {
       payload = {}
+    }
+
+    if (res.status === 409 && payload?.missingReferences) {
+      bulkImportErrors.value = Array.isArray(payload?.errors) ? payload.errors : []
+      openReferenceMappingDialog(payload.missingReferences, payload?.message)
+      ElMessage.warning(payload?.message || '請完成參照對應後再試')
+      return
     }
 
     if (!res.ok) {
@@ -2994,12 +3209,63 @@ async function submitBulkImport() {
     await fetchEmployees()
     if (!bulkImportErrors.value.length) {
       bulkImportDialogVisible.value = false
+      referenceMappingDialogVisible.value = false
+      referenceMappingDialogMessage.value = ''
     }
   } catch (error) {
     const message = error?.message || '批量匯入失敗，請稍後再試'
     ElMessage.error(message)
   } finally {
     bulkImportLoading.value = false
+  }
+}
+
+async function confirmReferenceMappings() {
+  if (!bulkImportFile.value) {
+    ElMessage.warning('原始檔案已重置，請重新選擇匯入檔案後再試')
+    referenceMappingDialogVisible.value = false
+    return
+  }
+
+  const unresolved = []
+  REFERENCE_MAPPING_KEYS.forEach(key => {
+    referenceMappingPending[key].forEach(entry => {
+      const normalized = getReferenceEntryKey(entry)
+      const selection = referenceMappingSelections[key][normalized]
+      if (!selection || (selection.mode === 'map' && !selection.targetId)) {
+        unresolved.push(entry.value || normalized)
+      }
+    })
+  })
+
+  if (unresolved.length) {
+    ElMessage.warning('請為所有未對應的項目選擇既有資料或設定忽略')
+    return
+  }
+
+  REFERENCE_MAPPING_KEYS.forEach(key => {
+    referenceMappingPending[key].forEach(entry => {
+      const normalized = getReferenceEntryKey(entry)
+      const selection = referenceMappingSelections[key][normalized]
+      if (!selection) return
+      if (selection.mode === 'ignore') {
+        delete resolvedReferenceValueMappings[key][normalized]
+        resolvedReferenceIgnores[key] = ensureNormalizedList([
+          ...resolvedReferenceIgnores[key],
+          normalized
+        ])
+      } else if (selection.mode === 'map' && selection.targetId) {
+        resolvedReferenceValueMappings[key][normalized] = selection.targetId
+        resolvedReferenceIgnores[key] = resolvedReferenceIgnores[key].filter(item => item !== normalized)
+      }
+    })
+  })
+
+  referenceMappingSubmitting.value = true
+  try {
+    await submitBulkImport({ triggeredByMapping: true })
+  } finally {
+    referenceMappingSubmitting.value = false
   }
 }
 
@@ -3551,6 +3817,72 @@ function getStatusTagType(status) {
   font-size: 15px;
   font-weight: 600;
   color: #0f172a;
+}
+
+.reference-mapping-dialog :deep(.el-dialog__body) {
+  padding: 16px 20px 8px;
+  background: #f8fafc;
+}
+
+.reference-mapping-tip {
+  margin-bottom: 12px;
+  color: #475569;
+  font-size: 13px;
+}
+
+.reference-mapping-section {
+  margin-bottom: 16px;
+  padding: 12px;
+  background: #fff;
+  border-radius: 10px;
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.08);
+}
+
+.reference-mapping-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #0f172a;
+  margin-bottom: 8px;
+}
+
+.reference-mapping-item {
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 12px;
+  background: #fdfdfd;
+  margin-bottom: 12px;
+}
+
+.reference-mapping-info {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
+.reference-mapping-value {
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.reference-mapping-rows {
+  font-size: 12px;
+  color: #64748b;
+}
+
+.reference-mapping-mode {
+  margin-bottom: 8px;
+}
+
+.reference-mapping-select {
+  width: 100%;
+}
+
+.reference-mapping-empty {
+  text-align: center;
+  padding: 12px 0;
+  color: #64748b;
 }
 
 .add-btn {

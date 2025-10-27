@@ -8,8 +8,38 @@ const mockEmployeeModel = {
   create: jest.fn()
 }
 
+const mockOrganizationModel = {
+  find: jest.fn()
+}
+
+const mockDepartmentModel = {
+  find: jest.fn()
+}
+
+const mockSubDepartmentModel = {
+  find: jest.fn()
+}
+
+function mockFindWithData(model, data) {
+  model.find.mockImplementation(() => ({
+    lean: jest.fn().mockResolvedValue(data)
+  }))
+}
+
 jest.unstable_mockModule('../src/models/Employee.js', () => ({
   default: mockEmployeeModel
+}))
+
+jest.unstable_mockModule('../src/models/Organization.js', () => ({
+  default: mockOrganizationModel
+}))
+
+jest.unstable_mockModule('../src/models/Department.js', () => ({
+  default: mockDepartmentModel
+}))
+
+jest.unstable_mockModule('../src/models/SubDepartment.js', () => ({
+  default: mockSubDepartmentModel
 }))
 
 let app
@@ -190,6 +220,12 @@ function createCsvBuffer(rows) {
 
 beforeEach(() => {
   Object.values(mockEmployeeModel).forEach(fn => fn.mockReset())
+  mockOrganizationModel.find.mockReset()
+  mockDepartmentModel.find.mockReset()
+  mockSubDepartmentModel.find.mockReset()
+  mockFindWithData(mockOrganizationModel, [])
+  mockFindWithData(mockDepartmentModel, [])
+  mockFindWithData(mockSubDepartmentModel, [])
 })
 
 describe('POST /api/employees/bulk-import', () => {
@@ -208,6 +244,9 @@ describe('POST /api/employees/bulk-import', () => {
       }
     ])
 
+    mockFindWithData(mockDepartmentModel, [
+      { _id: 'RD', code: 'RD', name: '研發部', organization: 'ORG001' }
+    ])
     mockEmployeeModel.find.mockResolvedValue([])
     mockEmployeeModel.create.mockImplementation(async (doc) => ({
       _id: `${doc.employeeNo}-id`,
@@ -386,5 +425,90 @@ describe('POST /api/employees/bulk-import', () => {
     expect(response.body.errors[0]).toMatch(/Email 重複/)
     expect(response.body.errors[1]).toMatch(/Email 已存在/)
     expect(mockEmployeeModel.create).toHaveBeenCalledTimes(1)
+  })
+
+  it('遇到未知部門時回傳 409 並提供對應選項', async () => {
+    const application = await setupApp()
+    const buffer = await createWorkbookBuffer([
+      {
+        employeeId: 'E0500',
+        name: '參照測試',
+        email: 'unknown-ref@example.com',
+        organization: '未知機構',
+        department: '未知部門',
+        subDepartment: '未知單位'
+      }
+    ])
+
+    mockFindWithData(mockOrganizationModel, [
+      { _id: 'org1', name: '總公司', orgCode: 'ORG-01' }
+    ])
+    mockFindWithData(mockDepartmentModel, [
+      { _id: 'dep1', name: '研發部', code: 'RD', organization: 'org1' }
+    ])
+    mockFindWithData(mockSubDepartmentModel, [
+      { _id: 'sub1', name: '研發一組', code: 'RD-1', department: 'dep1' }
+    ])
+    mockEmployeeModel.find.mockResolvedValue([])
+
+    const response = await request(application)
+      .post('/api/employees/bulk-import')
+      .attach('file', buffer, { filename: 'import.xlsx' })
+
+    expect(response.status).toBe(409)
+    expect(mockEmployeeModel.create).not.toHaveBeenCalled()
+    const { missingReferences } = response.body
+    expect(missingReferences).toBeTruthy()
+    expect(missingReferences.organization.values[0]).toMatchObject({ value: '未知機構', rows: [3] })
+    expect(missingReferences.department.values[0]).toMatchObject({ value: '未知部門', rows: [3] })
+    expect(missingReferences.subDepartment.values[0]).toMatchObject({ value: '未知單位', rows: [3] })
+    expect(missingReferences.department.options[0]).toMatchObject({ id: 'dep1', name: '研發部' })
+    expect(missingReferences.subDepartment.options[0]).toMatchObject({ id: 'sub1', name: '研發一組' })
+    expect(missingReferences.organization.options[0]).toMatchObject({ id: 'org1', name: '總公司' })
+  })
+
+  it('提供 valueMappings 與 ignore 後可完成匯入', async () => {
+    const application = await setupApp()
+    const buffer = await createWorkbookBuffer([
+      {
+        employeeId: 'E0501',
+        name: '參照映射',
+        email: 'mapped-ref@example.com',
+        organization: '未知機構',
+        department: '未知部門',
+        subDepartment: '未知單位'
+      }
+    ])
+
+    mockFindWithData(mockOrganizationModel, [
+      { _id: 'org1', name: '總公司', orgCode: 'ORG-01' }
+    ])
+    mockFindWithData(mockDepartmentModel, [
+      { _id: 'dep1', name: '研發部', code: 'RD', organization: 'org1' }
+    ])
+    mockFindWithData(mockSubDepartmentModel, [
+      { _id: 'sub1', name: '研發一組', code: 'RD-1', department: 'dep1' }
+    ])
+    mockEmployeeModel.find.mockResolvedValue([])
+    mockEmployeeModel.create.mockImplementation(async (doc) => ({
+      ...doc,
+      _id: `${doc.employeeNo}-id`
+    }))
+
+    const response = await request(application)
+      .post('/api/employees/bulk-import')
+      .field('valueMappings', JSON.stringify({
+        department: { '未知部門': 'dep1' },
+        subDepartment: { '未知單位': 'sub1' }
+      }))
+      .field('ignore', JSON.stringify({ organization: ['未知機構'] }))
+      .attach('file', buffer, { filename: 'import.xlsx' })
+
+    expect(response.status).toBe(200)
+    expect(mockEmployeeModel.create).toHaveBeenCalledTimes(1)
+    const createdDoc = mockEmployeeModel.create.mock.calls[0][0]
+    expect(createdDoc.department).toBe('dep1')
+    expect(createdDoc.subDepartment).toBe('sub1')
+    expect(createdDoc.organization).toBeNull()
   })
 })
