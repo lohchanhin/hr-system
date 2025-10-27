@@ -28,13 +28,8 @@
             <i class="el-icon-plus"></i>
             新增員工
           </el-button>
-          <el-button
-            type="success"
-            plain
-            class="import-btn"
-            data-test="bulk-import-button"
-            @click="openBulkImportDialog"
-          >
+          <el-button type="success" plain class="import-btn" data-test="bulk-import-button"
+            @click="openBulkImportDialog">
             <i class="el-icon-upload2"></i>
             批量匯入
           </el-button>
@@ -43,12 +38,9 @@
 
       <!-- 美化員工列表表格 -->
       <div class="table-container">
-        <el-table 
-          :data="employeeList" 
-          class="employee-table"
+        <el-table :data="employeeList" class="employee-table"
           :header-cell-style="{ background: '#f8fafc', color: '#475569', fontWeight: '600' }"
-          :row-style="{ height: '64px' }"
-        >
+          :row-style="{ height: '64px' }">
           <el-table-column prop="name" label="員工資訊" min-width="200">
             <template #default="{ row }">
               <div class="employee-info">
@@ -62,7 +54,7 @@
               </div>
             </template>
           </el-table-column>
-          
+
           <el-table-column label="部門" width="180">
             <template #default="{ row }">
               <div class="department-info">
@@ -71,7 +63,7 @@
               </div>
             </template>
           </el-table-column>
-          
+
           <el-table-column prop="title" label="職稱" width="150">
             <template #default="{ row }">
               <el-tag v-if="row.title" type="info" class="title-tag">
@@ -80,7 +72,7 @@
               <span v-else class="no-data">未設定</span>
             </template>
           </el-table-column>
-          
+
           <el-table-column prop="role" label="系統權限" width="120">
             <template #default="{ row }">
               <el-tag :type="getRoleTagType(row.role)" class="role-tag">
@@ -88,7 +80,7 @@
               </el-tag>
             </template>
           </el-table-column>
-          
+
           <el-table-column prop="employmentStatus" label="在職狀態" width="130">
             <template #default="{ row }">
               <el-tag :type="getStatusTagType(row.employmentStatus)" class="status-tag">
@@ -96,7 +88,7 @@
               </el-tag>
             </template>
           </el-table-column>
-          
+
           <el-table-column label="聯絡方式" width="200">
             <template #default="{ row }">
               <div class="contact-info">
@@ -114,7 +106,7 @@
               </div>
             </template>
           </el-table-column>
-          
+
           <el-table-column label="操作" width="200" fixed="right">
             <template #default="{ row, $index }">
               <div class="action-buttons">
@@ -133,964 +125,739 @@
       </div>
 
       <!-- 美化員工資料對話框 -->
-      <el-dialog
-        v-model="employeeDialogVisible"
-        title="員工資料管理"
-        width="1200px"
-        class="employee-dialog"
-      :close-on-click-modal="false"
-      >
+      <el-dialog v-model="employeeDialogVisible" title="員工資料管理" width="1200px" class="employee-dialog"
+        :close-on-click-modal="false">
         <el-form ref="formRef" :model="employeeForm" :rules="rules" label-width="140px" class="employee-form">
           <el-tabs v-model="employeeDialogTab" type="border-card" class="employee-tabs">
-          <!-- 帳號/權限 -->
-          <el-tab-pane name="account">
-            <template #label>
-              <div class="tab-label">
-                <i class="el-icon-user"></i>
-                <span>帳號權限</span>
-              </div>
-            </template>
-            
-            <div class="tab-content">
-              <div class="form-section">
-                <div class="form-group">
-                  <h3 class="form-group-title">登入資訊</h3>
-                  <el-form-item label="登入帳號" required prop="username">
-                    <el-input v-model="employeeForm.username" placeholder="請輸入登入帳號" />
-                  </el-form-item>
-                  <el-form-item label="登入密碼" required prop="password">
-                    <el-input v-model="employeeForm.password" type="password" placeholder="請輸入密碼" show-password />
-                  </el-form-item>
+            <!-- 帳號/權限 -->
+            <el-tab-pane name="account">
+              <template #label>
+                <div class="tab-label">
+                  <i class="el-icon-user"></i>
+                  <span>帳號權限</span>
                 </div>
+              </template>
 
-                <div class="form-group">
-                  <h3 class="form-group-title">權限設定</h3>
-                  <el-form-item label="系統權限" required prop="role">
-                    <el-radio-group v-model="employeeForm.role" class="role-radio-group">
-                      <el-radio v-for="r in ROLE_OPTIONS" :key="r.value" :label="r.value" class="role-radio">
-                        <div class="role-option">
-                          <div class="role-name">{{ r.label }}</div>
-                          <div class="role-desc">{{ getRoleDescription(r.value) }}</div>
+              <div class="tab-content">
+                <div class="form-section">
+                  <div class="form-group">
+                    <h3 class="form-group-title">登入資訊</h3>
+                    <el-form-item label="登入帳號" required prop="username">
+                      <el-input v-model="employeeForm.username" placeholder="請輸入登入帳號" />
+                    </el-form-item>
+                    <el-form-item label="登入密碼" required prop="password">
+                      <el-input v-model="employeeForm.password" type="password" placeholder="請輸入密碼" show-password />
+                    </el-form-item>
+                  </div>
+
+                  <div class="form-group">
+                    <h3 class="form-group-title">權限設定</h3>
+                    <el-form-item label="系統權限" required prop="role">
+                      <el-radio-group v-model="employeeForm.role" class="role-radio-group">
+                        <el-radio v-for="r in ROLE_OPTIONS" :key="r.value" :label="r.value" class="role-radio">
+                          <div class="role-option">
+                            <div class="role-name">{{ r.label }}</div>
+                            <div class="role-desc">{{ getRoleDescription(r.value) }}</div>
+                          </div>
+                        </el-radio>
+                      </el-radio-group>
+                    </el-form-item>
+
+                    <el-form-item label="權限職等">
+                      <el-select v-model="employeeForm.permissionGrade" placeholder="選擇職等" class="code-select">
+                        <el-option v-for="g in PERMISSION_GRADE_OPTIONS" :key="g.level"
+                          :label="formatPermissionGradeLabel(g)" :value="g.level">
+                          <div class="option-wrapper">
+                            <div class="option-title">{{ g.level }}｜{{ g.description }}</div>
+                          </div>
+                        </el-option>
+                      </el-select>
+                    </el-form-item>
+                  </div>
+                </div>
+              </div>
+            </el-tab-pane>
+
+            <!-- 簽核/標籤 -->
+            <el-tab-pane name="approval">
+              <template #label>
+                <div class="tab-label">
+                  <i class="el-icon-document-checked"></i>
+                  <span>簽核設定</span>
+                </div>
+              </template>
+
+              <div class="tab-content">
+                <div class="form-section">
+                  <div class="form-group">
+                    <h3 class="form-group-title">簽核權限</h3>
+                    <el-form-item label="簽核角色">
+                      <el-radio-group v-model="employeeForm.signRole" class="sign-role-group">
+                        <el-radio v-for="option in SIGN_ROLE_OPTIONS" :key="option.id" :label="option.id"
+                          class="sign-role-radio">
+                          <div class="option-wrapper">
+                            <div class="option-title">{{ option.id }}｜{{ option.label }}</div>
+                            <div class="option-desc">{{ option.description }}</div>
+                          </div>
+                        </el-radio>
+                      </el-radio-group>
+                    </el-form-item>
+
+                    <el-form-item label="簽核層級">
+                      <el-select v-model="employeeForm.signLevel" placeholder="選擇層級" class="code-select">
+                        <el-option v-for="level in SIGN_LEVEL_OPTIONS" :key="level.id"
+                          :label="formatSignLevelLabel(level)" :value="level.id">
+                          <div class="option-wrapper">
+                            <div class="option-title">{{ level.id }}｜{{ level.label }}</div>
+                            <div class="option-desc">{{ level.description }}</div>
+                          </div>
+                        </el-option>
+                      </el-select>
+                    </el-form-item>
+
+                    <el-form-item label="員工標籤">
+                      <el-select v-model="employeeForm.signTags" multiple filterable allow-create default-first-option
+                        placeholder="選擇或新增標籤" class="tag-select">
+                        <el-option v-for="t in DEFAULT_TAGS" :key="t" :label="t" :value="t" />
+                      </el-select>
+                    </el-form-item>
+                  </div>
+                </div>
+              </div>
+            </el-tab-pane>
+
+            <!-- 個人資訊 -->
+            <el-tab-pane name="personal">
+              <template #label>
+                <div class="tab-label">
+                  <i class="el-icon-user-solid"></i>
+                  <span>個人資訊</span>
+                </div>
+              </template>
+
+              <div class="tab-content">
+                <div class="form-section">
+                  <div class="form-group">
+                    <h3 class="form-group-title">基本資料</h3>
+                    <el-form-item label="個人照片" class="photo-upload-item">
+                      <el-upload class="employee-photo-upload" v-model:file-list="employeeForm.photoList"
+                        :http-request="handlePhotoRequest" :on-success="handlePhotoSuccess"
+                        :on-remove="handlePhotoRemove" :on-exceed="handlePhotoExceed" list-type="picture-card"
+                        :limit="1" accept="image/*" :disabled="photoUploading">
+                        <div class="upload-placeholder">
+                          <i class="el-icon-plus"></i>
+                          <span>上傳照片</span>
                         </div>
-                      </el-radio>
-                    </el-radio-group>
-                  </el-form-item>
-
-                  <el-form-item label="權限職等">
-                    <el-select
-                      v-model="employeeForm.permissionGrade"
-                      placeholder="選擇職等"
-                      class="code-select"
-                    >
-                      <el-option
-                        v-for="g in PERMISSION_GRADE_OPTIONS"
-                        :key="g.level"
-                        :label="formatPermissionGradeLabel(g)"
-                        :value="g.level"
-                      >
-                        <div class="option-wrapper">
-                          <div class="option-title">{{ g.level }}｜{{ g.description }}</div>
-                        </div>
-                      </el-option>
-                    </el-select>
-                  </el-form-item>
-                </div>
-              </div>
-            </div>
-          </el-tab-pane>
-
-          <!-- 簽核/標籤 -->
-          <el-tab-pane name="approval">
-            <template #label>
-              <div class="tab-label">
-                <i class="el-icon-document-checked"></i>
-                <span>簽核設定</span>
-              </div>
-            </template>
-            
-            <div class="tab-content">
-              <div class="form-section">
-                <div class="form-group">
-                  <h3 class="form-group-title">簽核權限</h3>
-                  <el-form-item label="簽核角色">
-                    <el-radio-group v-model="employeeForm.signRole" class="sign-role-group">
-                      <el-radio
-                        v-for="option in SIGN_ROLE_OPTIONS"
-                        :key="option.id"
-                        :label="option.id"
-                        class="sign-role-radio"
-                      >
-                        <div class="option-wrapper">
-                          <div class="option-title">{{ option.id }}｜{{ option.label }}</div>
-                          <div class="option-desc">{{ option.description }}</div>
-                        </div>
-                      </el-radio>
-                    </el-radio-group>
-                  </el-form-item>
-
-                  <el-form-item label="簽核層級">
-                    <el-select
-                      v-model="employeeForm.signLevel"
-                      placeholder="選擇層級"
-                      class="code-select"
-                    >
-                      <el-option
-                        v-for="level in SIGN_LEVEL_OPTIONS"
-                        :key="level.id"
-                        :label="formatSignLevelLabel(level)"
-                        :value="level.id"
-                      >
-                        <div class="option-wrapper">
-                          <div class="option-title">{{ level.id }}｜{{ level.label }}</div>
-                          <div class="option-desc">{{ level.description }}</div>
-                        </div>
-                      </el-option>
-                    </el-select>
-                  </el-form-item>
-                  
-                  <el-form-item label="員工標籤">
-                    <el-select
-                      v-model="employeeForm.signTags"
-                      multiple
-                      filterable
-                      allow-create
-                      default-first-option
-                      placeholder="選擇或新增標籤"
-                      class="tag-select"
-                    >
-                      <el-option v-for="t in DEFAULT_TAGS" :key="t" :label="t" :value="t" />
-                    </el-select>
-                  </el-form-item>
-                </div>
-              </div>
-            </div>
-          </el-tab-pane>
-
-          <!-- 個人資訊 -->
-          <el-tab-pane name="personal">
-            <template #label>
-              <div class="tab-label">
-                <i class="el-icon-user-solid"></i>
-                <span>個人資訊</span>
-              </div>
-            </template>
-
-            <div class="tab-content">
-              <div class="form-section">
-                <div class="form-group">
-                  <h3 class="form-group-title">基本資料</h3>
-                  <el-form-item label="個人照片" class="photo-upload-item">
-                    <el-upload
-                      class="employee-photo-upload"
-                      v-model:file-list="employeeForm.photoList"
-                      :http-request="handlePhotoRequest"
-                      :on-success="handlePhotoSuccess"
-                      :on-remove="handlePhotoRemove"
-                      :on-exceed="handlePhotoExceed"
-                      list-type="picture-card"
-                      :limit="1"
-                      accept="image/*"
-                      :disabled="photoUploading"
-                    >
-                      <div class="upload-placeholder">
-                        <i class="el-icon-plus"></i>
-                        <span>上傳照片</span>
-                      </div>
-                    </el-upload>
-                  </el-form-item>
-                  <div class="form-row">
-                    <el-form-item label="員工編號">
-                      <el-input v-model="employeeForm.employeeNo" placeholder="請輸入員工編號" />
+                      </el-upload>
                     </el-form-item>
-                    <el-form-item label="員工姓名" required prop="name">
-                      <el-input v-model="employeeForm.name" placeholder="請輸入員工姓名" />
-                    </el-form-item>
-                  </div>
-                  
-                  <div class="form-row">
-                    <el-form-item label="性別" required prop="gender">
-                      <el-select v-model="employeeForm.gender" placeholder="選擇性別">
-                        <el-option label="男" value="M" />
-                        <el-option label="女" value="F" />
-                      </el-select>
-                    </el-form-item>
-                    <el-form-item label="生日">
-                      <el-date-picker v-model="employeeForm.birthday" type="date" placeholder="選擇生日" />
-                    </el-form-item>
-                  </div>
-                  
-                  <div class="form-row">
-                    <el-form-item label="身分證號">
-                      <el-input v-model="employeeForm.idNumber" placeholder="請輸入身分證號" />
-                    </el-form-item>
-                    <el-form-item label="出生地">
-                      <el-input v-model="employeeForm.birthplace" placeholder="請輸入出生地" />
-                    </el-form-item>
-                  </div>
-                  
-                  <div class="form-row">
-                    <el-form-item label="血型">
-                      <el-select v-model="employeeForm.bloodType" placeholder="選擇血型">
-                        <el-option v-for="b in ABO_TYPES" :key="b" :value="b" :label="b" />
-                      </el-select>
-                    </el-form-item>
-                    <el-form-item label="婚姻狀態">
-                      <el-select v-model="employeeForm.maritalStatus" placeholder="選擇婚姻狀態">
-                        <el-option label="未婚" value="未婚" />
-                        <el-option label="已婚" value="已婚" />
-                        <el-option label="離婚" value="離婚" />
-                        <el-option label="喪偶" value="喪偶" />
-                      </el-select>
-                    </el-form-item>
-                  </div>
-                  
-                  <el-form-item label="語言能力">
-                    <el-select
-                      v-model="employeeForm.languages"
-                      multiple
-                      filterable
-                      placeholder="選擇語言"
-                      :disabled="!languageOptions.length"
-                    >
-                      <el-option
-                        v-for="option in languageOptions"
-                        :key="option.value"
-                        :label="option.label"
-                        :value="option.value"
-                      />
-                    </el-select>
-                  </el-form-item>
-
-                  <div class="form-row">
-                    <el-form-item label="身心障礙等級">
-                      <el-select
-                        v-model="employeeForm.disabilityLevel"
-                        placeholder="選擇等級"
-                        clearable
-                        :disabled="!disabilityLevelOptions.length"
-                      >
-                        <el-option
-                          v-for="option in disabilityLevelOptions"
-                          :key="option.value"
-                          :label="option.label"
-                          :value="option.value"
-                        />
-                      </el-select>
-                    </el-form-item>
-                    <el-form-item label="身分註記">
-                      <el-select
-                        v-model="employeeForm.identityCategory"
-                        multiple
-                        filterable
-                        collapse-tags
-                        placeholder="選擇身份別"
-                        :disabled="!identityCategoryOptions.length"
-                      >
-                        <el-option
-                          v-for="option in identityCategoryOptions"
-                          :key="option.value"
-                          :label="option.label"
-                          :value="option.value"
-                        />
-                      </el-select>
-                    </el-form-item>
-                  </div>
-
-                  <el-form-item label="扶養人數">
-                    <el-input-number v-model="employeeForm.dependents" :min="0" />
-                  </el-form-item>
-                </div>
-
-                <div class="form-group">
-                  <h3 class="form-group-title">聯絡資訊</h3>
-                  <div class="form-row">
-                    <el-form-item label="Email" required prop="email">
-                      <el-input v-model="employeeForm.email" placeholder="請輸入Email" />
-                    </el-form-item>
-                    <el-form-item label="行動電話">
-                      <el-input v-model="employeeForm.phone" placeholder="請輸入行動電話" />
-                    </el-form-item>
-                  </div>
-                  
-                  <div class="form-row">
-                    <el-form-item label="市內電話">
-                      <el-input v-model="employeeForm.landline" placeholder="請輸入市內電話" />
-                    </el-form-item>
-                    <el-form-item label="LINE ID">
-                      <el-input v-model="employeeForm.lineId" placeholder="請輸入LINE ID" />
-                    </el-form-item>
-                  </div>
-                  
-                  <el-form-item label="戶籍地址">
-                    <el-input v-model="employeeForm.householdAddress" placeholder="請輸入戶籍地址" />
-                  </el-form-item>
-                  
-                  <el-form-item label="聯絡地址">
-                    <el-input v-model="employeeForm.contactAddress" placeholder="請輸入聯絡地址" />
-                  </el-form-item>
-                </div>
-              </div>
-            </div>
-          </el-tab-pane>
-
-          <!-- 任職資訊 -->
-          <el-tab-pane name="employment">
-            <template #label>
-              <div class="tab-label">
-                <i class="el-icon-office-building"></i>
-                <span>任職資訊</span>
-              </div>
-            </template>
-            
-            <div class="tab-content">
-              <div class="form-section">
-                <div class="form-group">
-                  <h3 class="form-group-title">組織架構</h3>
-                  <div class="form-row">
-                    <el-form-item label="所屬機構" required prop="organization">
-                      <el-select v-model="employeeForm.organization" placeholder="選擇機構">
-                        <el-option v-for="org in orgList" :key="org._id" :label="org.name" :value="org._id" />
-                      </el-select>
-                    </el-form-item>
-                    <el-form-item label="所屬部門" required prop="department">
-                      <el-select v-model="employeeForm.department" placeholder="選擇部門">
-                        <el-option
-                          v-for="dept in filteredDepartments"
-                          :key="dept._id"
-                          :label="dept.name"
-                          :value="dept._id"
-                        />
-                      </el-select>
-                    </el-form-item>
-                  </div>
-                  
-                  <div class="form-row">
-                    <el-form-item label="小單位">
-                      <el-select v-model="employeeForm.subDepartment" placeholder="選擇小單位">
-                        <el-option
-                          v-for="sd in filteredSubDepartments"
-                          :key="sd._id"
-                          :label="sd.name"
-                          :value="sd._id"
-                        />
-                      </el-select>
-                    </el-form-item>
-                    <el-form-item label="直屬主管">
-                      <el-select v-model="employeeForm.supervisor" placeholder="選擇主管">
-                        <el-option
-                          v-for="sup in supervisorList"
-                          :key="sup._id"
-                          :label="sup.name"
-                          :value="sup._id"
-                        />
-                      </el-select>
-                    </el-form-item>
-                  </div>
-                </div>
-
-                <div class="form-group">
-                  <h3 class="form-group-title">職務資訊</h3>
-                  <div class="form-row">
-                    <el-form-item label="職稱">
-                      <el-select
-                        v-model="employeeForm.title"
-                        placeholder="選擇職稱"
-                        :disabled="!titleOptions.length"
-                      >
-                        <el-option
-                          v-for="option in titleOptions"
-                          :key="option.value"
-                          :label="option.label"
-                          :value="option.value"
-                        />
-                      </el-select>
-                    </el-form-item>
-                    <el-form-item label="執業職稱">
-                      <el-select
-                        v-model="employeeForm.practiceTitle"
-                        placeholder="選擇執業職稱"
-                        :disabled="!practiceTitleOptions.length"
-                      >
-                        <el-option
-                          v-for="option in practiceTitleOptions"
-                          :key="option.value"
-                          :label="option.label"
-                          :value="option.value"
-                        />
-                      </el-select>
-                    </el-form-item>
-                  </div>
-                  
-                  <div class="form-row">
-                    <el-form-item label="兼職人員">
-                      <el-switch 
-                        v-model="employeeForm.isPartTime" 
-                        active-text="是" 
-                        inactive-text="否"
-                        active-color="#10b981"
-                      />
-                    </el-form-item>
-                    <el-form-item label="需要打卡">
-                      <el-switch 
-                        v-model="employeeForm.isClocking" 
-                        active-text="是" 
-                        inactive-text="否"
-                        active-color="#10b981"
-                      />
-                    </el-form-item>
-                  </div>
-                </div>
-
-                <div class="form-group">
-                  <h3 class="form-group-title">聘用狀態</h3>
-                  <div class="form-row">
-                    <el-form-item label="在職狀態">
-                      <el-select v-model="employeeForm.employmentStatus" placeholder="選擇狀態">
-                        <el-option label="正職員工" value="正職員工" />
-                        <el-option label="試用期員工" value="試用期員工" />
-                        <el-option label="離職員工" value="離職員工" />
-                        <el-option label="留職停薪" value="留職停薪" />
-                      </el-select>
-                    </el-form-item>
-                    <el-form-item label="試用期">
-                      <el-select v-model="employeeForm.probationDays" placeholder="選擇天數">
-                        <el-option label="無" value="" />
-                        <el-option label="30天" value="30" />
-                        <el-option label="60天" value="60" />
-                        <el-option label="90天" value="90" />
-                      </el-select>
-                    </el-form-item>
-                  </div>
-                  
-                  <div class="form-row">
-                    <el-form-item label="到職日期">
-                      <el-date-picker v-model="employeeForm.hireDate" type="date" placeholder="選擇到職日期" />
-                    </el-form-item>
-                    <el-form-item label="起聘日期">
-                      <el-date-picker v-model="employeeForm.appointDate" type="date" placeholder="選擇起聘日期" />
-                    </el-form-item>
-                  </div>
-
-                  <div class="form-row">
-                    <el-form-item label="離職日期">
-                      <el-date-picker v-model="employeeForm.resignDate" type="date" placeholder="選擇離職日期" />
-                    </el-form-item>
-                    <el-form-item label="解聘日期">
-                      <el-date-picker v-model="employeeForm.dismissDate" type="date" placeholder="選擇解聘日期" />
-                    </el-form-item>
-                  </div>
-
-                  <div class="form-row">
-                    <el-form-item label="再任起聘">
-                      <el-date-picker v-model="employeeForm.reAppointDate" type="date" placeholder="選擇再任起聘日期" />
-                    </el-form-item>
-                    <el-form-item label="再任解聘">
-                      <el-date-picker v-model="employeeForm.reDismissDate" type="date" placeholder="選擇再任解聘日期" />
-                    </el-form-item>
-                  </div>
-
-                  <div class="form-row">
-                    <el-form-item label="聘任備註" class="full-width-item">
-                      <el-input
-                        v-model="employeeForm.employmentNote"
-                        type="textarea"
-                        :rows="2"
-                        placeholder="請輸入聘任備註"
-                      />
-                    </el-form-item>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </el-tab-pane>
-
-          <!-- 更多資訊 -->
-          <el-tab-pane name="more">
-            <template #label>
-              <div class="tab-label">
-                <i class="el-icon-more"></i>
-                <span>更多資訊</span>
-              </div>
-            </template>
-            
-            <div class="tab-content">
-              <div class="form-section">
-                <!-- 身體檢查 -->
-                <div class="form-group">
-                  <h3 class="form-group-title">身體檢查</h3>
-                  <div class="form-row">
-                    <el-form-item label="身高 (cm)">
-                      <el-input-number
-                        v-model="employeeForm.height"
-                        :min="0"
-                        :max="250"
-                        :step="0.1"
-                        :precision="1"
-                        :value-on-clear="null"
-                        controls-position="right"
-                        placeholder="請輸入身高"
-                      />
-                    </el-form-item>
-                    <el-form-item label="體重 (kg)">
-                      <el-input-number
-                        v-model="employeeForm.weight"
-                        :min="0"
-                        :max="300"
-                        :step="0.1"
-                        :precision="1"
-                        :value-on-clear="null"
-                        controls-position="right"
-                        placeholder="請輸入體重"
-                      />
-                    </el-form-item>
-                  </div>
-                  <div class="form-row">
-                    <el-form-item label="體檢血型">
-                      <el-select v-model="employeeForm.medicalBloodType" placeholder="選擇血型" clearable>
-                        <el-option
-                          v-for="blood in ABO_TYPES"
-                          :key="`medical-${blood}`"
-                          :label="blood"
-                          :value="blood"
-                        />
-                      </el-select>
-                    </el-form-item>
-                  </div>
-                </div>
-
-                <!-- 學歷資訊 -->
-                <div class="form-group">
-                  <h3 class="form-group-title">學歷資訊</h3>
-                  <div class="form-row">
-                    <el-form-item label="教育程度">
-                      <el-select
-                        v-model="employeeForm.educationLevel"
-                        placeholder="選擇教育程度"
-                        :disabled="!educationLevelOptions.length"
-                      >
-                        <el-option
-                          v-for="option in educationLevelOptions"
-                          :key="option.value"
-                          :label="option.label"
-                          :value="option.value"
-                        />
-                      </el-select>
-                    </el-form-item>
-                    <el-form-item label="學校名稱">
-                      <el-input v-model="employeeForm.schoolName" placeholder="請輸入學校名稱" />
-                    </el-form-item>
-                  </div>
-
-                  <div class="form-row">
-                    <el-form-item label="主修科系">
-                      <el-input v-model="employeeForm.major" placeholder="請輸入主修科系" />
-                    </el-form-item>
-                    <el-form-item label="畢業狀態">
-                      <el-select
-                        v-model="employeeForm.graduationStatus"
-                        placeholder="選擇畢業狀態"
-                        clearable
-                        @clear="onGraduationStatusClear"
-                        :disabled="!graduationStatusOptions.length"
-                      >
-                        <el-option
-                          v-for="option in graduationStatusOptions"
-                          :key="option.value"
-                          :label="option.label"
-                          :value="option.value"
-                        />
-                      </el-select>
-                    </el-form-item>
-                  </div>
-
-                  <div class="form-row">
-                    <el-form-item label="畢業年度" class="full-width-item">
-                      <el-input v-model="employeeForm.graduationYear" placeholder="請輸入畢業年度" />
-                    </el-form-item>
-                  </div>
-                </div>
-
-                <!-- 役別資訊 -->
-                <div class="form-group">
-                  <h3 class="form-group-title">役別資訊</h3>
-                  <div class="form-row">
-                    <el-form-item label="役別類型">
-                      <el-select
-                        v-model="employeeForm.serviceType"
-                        placeholder="選擇或輸入役別類型"
-                        filterable
-                        allow-create
-                        default-first-option
-                        clearable
-                      >
-                        <el-option
-                          v-for="type in SERVICE_TYPES"
-                          :key="type"
-                          :label="type"
-                          :value="type"
-                        />
-                      </el-select>
-                    </el-form-item>
-                    <el-form-item label="軍種">
-                      <el-input v-model="employeeForm.militaryBranch" placeholder="請輸入軍種" />
-                    </el-form-item>
-                  </div>
-
-                  <div class="form-row">
-                    <el-form-item label="軍階">
-                      <el-input v-model="employeeForm.militaryRank" placeholder="請輸入軍階" />
-                    </el-form-item>
-                    <el-form-item label="退伍年">
-                      <el-input-number
-                        v-model="employeeForm.dischargeYear"
-                        :min="1900"
-                        :max="CURRENT_YEAR + 10"
-                        :step="1"
-                        :value-on-clear="null"
-                        controls-position="right"
-                        placeholder="請輸入退伍年"
-                      />
-                    </el-form-item>
-                  </div>
-                </div>
-
-                <!-- 緊急聯絡人 -->
-                <div class="form-group">
-                  <h3 class="form-group-title">緊急聯絡人</h3>
-                  <div class="emergency-contact">
-                    <h4 class="contact-subtitle">聯絡人一</h4>
                     <div class="form-row">
-                      <el-form-item label="姓名">
-                        <el-input v-model="employeeForm.emergency1.name" placeholder="請輸入姓名" />
+                      <el-form-item label="員工編號">
+                        <el-input v-model="employeeForm.employeeNo" placeholder="請輸入員工編號" />
                       </el-form-item>
-                      <el-form-item label="關係">
-                        <el-select v-model="employeeForm.emergency1.relation" placeholder="選擇關係">
-                        <el-option
-                          v-for="option in relationOptions"
-                          :key="`r1-${option.value}`"
-                          :label="option.label"
-                          :value="option.value"
-                        />
+                      <el-form-item label="員工姓名" required prop="name">
+                        <el-input v-model="employeeForm.name" placeholder="請輸入員工姓名" />
+                      </el-form-item>
+                    </div>
+
+                    <div class="form-row">
+                      <el-form-item label="性別" required prop="gender">
+                        <el-select v-model="employeeForm.gender" placeholder="選擇性別">
+                          <el-option label="男" value="M" />
+                          <el-option label="女" value="F" />
+                        </el-select>
+                      </el-form-item>
+                      <el-form-item label="生日">
+                        <el-date-picker v-model="employeeForm.birthday" type="date" placeholder="選擇生日" />
+                      </el-form-item>
+                    </div>
+
+                    <div class="form-row">
+                      <el-form-item label="身分證號">
+                        <el-input v-model="employeeForm.idNumber" placeholder="請輸入身分證號" />
+                      </el-form-item>
+                      <el-form-item label="出生地">
+                        <el-input v-model="employeeForm.birthplace" placeholder="請輸入出生地" />
+                      </el-form-item>
+                    </div>
+
+                    <div class="form-row">
+                      <el-form-item label="血型">
+                        <el-select v-model="employeeForm.bloodType" placeholder="選擇血型">
+                          <el-option v-for="b in ABO_TYPES" :key="b" :value="b" :label="b" />
+                        </el-select>
+                      </el-form-item>
+                      <el-form-item label="婚姻狀態">
+                        <el-select v-model="employeeForm.maritalStatus" placeholder="選擇婚姻狀態">
+                          <el-option label="未婚" value="未婚" />
+                          <el-option label="已婚" value="已婚" />
+                          <el-option label="離婚" value="離婚" />
+                          <el-option label="喪偶" value="喪偶" />
                         </el-select>
                       </el-form-item>
                     </div>
+
+                    <el-form-item label="語言能力">
+                      <el-select v-model="employeeForm.languages" multiple filterable placeholder="選擇語言"
+                        :disabled="!languageOptions.length">
+                        <el-option v-for="option in languageOptions" :key="option.value" :label="option.label"
+                          :value="option.value" />
+                      </el-select>
+                    </el-form-item>
+
                     <div class="form-row">
-                      <el-form-item label="電話一">
-                        <el-input v-model="employeeForm.emergency1.phone1" placeholder="請輸入電話" />
+                      <el-form-item label="身心障礙等級">
+                        <el-select v-model="employeeForm.disabilityLevel" placeholder="選擇等級" clearable
+                          :disabled="!disabilityLevelOptions.length">
+                          <el-option v-for="option in disabilityLevelOptions" :key="option.value" :label="option.label"
+                            :value="option.value" />
+                        </el-select>
                       </el-form-item>
-                      <el-form-item label="電話二">
-                        <el-input v-model="employeeForm.emergency1.phone2" placeholder="請輸入電話" />
-                      </el-form-item>
-                    </div>
-                  </div>
-                  
-                  <div class="emergency-contact">
-                    <h4 class="contact-subtitle">聯絡人二</h4>
-                    <div class="form-row">
-                      <el-form-item label="姓名">
-                        <el-input v-model="employeeForm.emergency2.name" placeholder="請輸入姓名" />
-                      </el-form-item>
-                      <el-form-item label="關係">
-                        <el-select v-model="employeeForm.emergency2.relation" placeholder="選擇關係">
-                        <el-option
-                          v-for="option in relationOptions"
-                          :key="`r2-${option.value}`"
-                          :label="option.label"
-                          :value="option.value"
-                        />
+                      <el-form-item label="身分註記">
+                        <el-select v-model="employeeForm.identityCategory" multiple filterable collapse-tags
+                          placeholder="選擇身份別" :disabled="!identityCategoryOptions.length">
+                          <el-option v-for="option in identityCategoryOptions" :key="option.value" :label="option.label"
+                            :value="option.value" />
                         </el-select>
                       </el-form-item>
                     </div>
+
+                    <el-form-item label="扶養人數">
+                      <el-input-number v-model="employeeForm.dependents" :min="0" />
+                    </el-form-item>
+                  </div>
+
+                  <div class="form-group">
+                    <h3 class="form-group-title">聯絡資訊</h3>
                     <div class="form-row">
-                      <el-form-item label="電話一">
-                        <el-input v-model="employeeForm.emergency2.phone1" placeholder="請輸入電話" />
+                      <el-form-item label="Email" required prop="email">
+                        <el-input v-model="employeeForm.email" placeholder="請輸入Email" />
                       </el-form-item>
-                      <el-form-item label="電話二">
-                        <el-input v-model="employeeForm.emergency2.phone2" placeholder="請輸入電話" />
+                      <el-form-item label="行動電話">
+                        <el-input v-model="employeeForm.phone" placeholder="請輸入行動電話" />
+                      </el-form-item>
+                    </div>
+
+                    <div class="form-row">
+                      <el-form-item label="市內電話">
+                        <el-input v-model="employeeForm.landline" placeholder="請輸入市內電話" />
+                      </el-form-item>
+                      <el-form-item label="LINE ID">
+                        <el-input v-model="employeeForm.lineId" placeholder="請輸入LINE ID" />
+                      </el-form-item>
+                    </div>
+
+                    <el-form-item label="戶籍地址">
+                      <el-input v-model="employeeForm.householdAddress" placeholder="請輸入戶籍地址" />
+                    </el-form-item>
+
+                    <el-form-item label="聯絡地址">
+                      <el-input v-model="employeeForm.contactAddress" placeholder="請輸入聯絡地址" />
+                    </el-form-item>
+                  </div>
+                </div>
+              </div>
+            </el-tab-pane>
+
+            <!-- 任職資訊 -->
+            <el-tab-pane name="employment">
+              <template #label>
+                <div class="tab-label">
+                  <i class="el-icon-office-building"></i>
+                  <span>任職資訊</span>
+                </div>
+              </template>
+
+              <div class="tab-content">
+                <div class="form-section">
+                  <div class="form-group">
+                    <h3 class="form-group-title">組織架構</h3>
+                    <div class="form-row">
+                      <el-form-item label="所屬機構" required prop="organization">
+                        <el-select v-model="employeeForm.organization" placeholder="選擇機構">
+                          <el-option v-for="org in orgList" :key="org._id" :label="org.name" :value="org._id" />
+                        </el-select>
+                      </el-form-item>
+                      <el-form-item label="所屬部門" required prop="department">
+                        <el-select v-model="employeeForm.department" placeholder="選擇部門">
+                          <el-option v-for="dept in filteredDepartments" :key="dept._id" :label="dept.name"
+                            :value="dept._id" />
+                        </el-select>
+                      </el-form-item>
+                    </div>
+
+                    <div class="form-row">
+                      <el-form-item label="小單位">
+                        <el-select v-model="employeeForm.subDepartment" placeholder="選擇小單位">
+                          <el-option v-for="sd in filteredSubDepartments" :key="sd._id" :label="sd.name"
+                            :value="sd._id" />
+                        </el-select>
+                      </el-form-item>
+                      <el-form-item label="直屬主管">
+                        <el-select v-model="employeeForm.supervisor" placeholder="選擇主管">
+                          <el-option v-for="sup in supervisorList" :key="sup._id" :label="sup.name" :value="sup._id" />
+                        </el-select>
+                      </el-form-item>
+                    </div>
+                  </div>
+
+                  <div class="form-group">
+                    <h3 class="form-group-title">職務資訊</h3>
+                    <div class="form-row">
+                      <el-form-item label="職稱">
+                        <el-select v-model="employeeForm.title" placeholder="選擇職稱" :disabled="!titleOptions.length">
+                          <el-option v-for="option in titleOptions" :key="option.value" :label="option.label"
+                            :value="option.value" />
+                        </el-select>
+                      </el-form-item>
+                      <el-form-item label="執業職稱">
+                        <el-select v-model="employeeForm.practiceTitle" placeholder="選擇執業職稱"
+                          :disabled="!practiceTitleOptions.length">
+                          <el-option v-for="option in practiceTitleOptions" :key="option.value" :label="option.label"
+                            :value="option.value" />
+                        </el-select>
+                      </el-form-item>
+                    </div>
+
+                    <div class="form-row">
+                      <el-form-item label="兼職人員">
+                        <el-switch v-model="employeeForm.isPartTime" active-text="是" inactive-text="否"
+                          active-color="#10b981" />
+                      </el-form-item>
+                      <el-form-item label="需要打卡">
+                        <el-switch v-model="employeeForm.isClocking" active-text="是" inactive-text="否"
+                          active-color="#10b981" />
+                      </el-form-item>
+                    </div>
+                  </div>
+
+                  <div class="form-group">
+                    <h3 class="form-group-title">聘用狀態</h3>
+                    <div class="form-row">
+                      <el-form-item label="在職狀態">
+                        <el-select v-model="employeeForm.employmentStatus" placeholder="選擇狀態">
+                          <el-option label="正職員工" value="正職員工" />
+                          <el-option label="試用期員工" value="試用期員工" />
+                          <el-option label="離職員工" value="離職員工" />
+                          <el-option label="留職停薪" value="留職停薪" />
+                        </el-select>
+                      </el-form-item>
+                      <el-form-item label="試用期">
+                        <el-select v-model="employeeForm.probationDays" placeholder="選擇天數">
+                          <el-option label="無" value="" />
+                          <el-option label="30天" value="30" />
+                          <el-option label="60天" value="60" />
+                          <el-option label="90天" value="90" />
+                        </el-select>
+                      </el-form-item>
+                    </div>
+
+                    <div class="form-row">
+                      <el-form-item label="到職日期">
+                        <el-date-picker v-model="employeeForm.hireDate" type="date" placeholder="選擇到職日期" />
+                      </el-form-item>
+                      <el-form-item label="起聘日期">
+                        <el-date-picker v-model="employeeForm.appointDate" type="date" placeholder="選擇起聘日期" />
+                      </el-form-item>
+                    </div>
+
+                    <div class="form-row">
+                      <el-form-item label="離職日期">
+                        <el-date-picker v-model="employeeForm.resignDate" type="date" placeholder="選擇離職日期" />
+                      </el-form-item>
+                      <el-form-item label="解聘日期">
+                        <el-date-picker v-model="employeeForm.dismissDate" type="date" placeholder="選擇解聘日期" />
+                      </el-form-item>
+                    </div>
+
+                    <div class="form-row">
+                      <el-form-item label="再任起聘">
+                        <el-date-picker v-model="employeeForm.reAppointDate" type="date" placeholder="選擇再任起聘日期" />
+                      </el-form-item>
+                      <el-form-item label="再任解聘">
+                        <el-date-picker v-model="employeeForm.reDismissDate" type="date" placeholder="選擇再任解聘日期" />
+                      </el-form-item>
+                    </div>
+
+                    <div class="form-row">
+                      <el-form-item label="聘任備註" class="full-width-item">
+                        <el-input v-model="employeeForm.employmentNote" type="textarea" :rows="2"
+                          placeholder="請輸入聘任備註" />
                       </el-form-item>
                     </div>
                   </div>
                 </div>
+              </div>
+            </el-tab-pane>
 
-                <!-- 經歷管理 -->
-                <div class="form-group">
-                  <h3 class="form-group-title">工作經歷</h3>
-                  <div class="experience-list">
-                    <div
-                      v-for="(exp, i) in employeeForm.experiences"
-                      :key="i"
-                      class="experience-item"
-                    >
-                      <div class="experience-header">
-                        <h4 class="experience-title">經歷 {{ i + 1 }}</h4>
-                        <el-button type="danger" size="small" @click="removeExperience(i)" class="remove-btn">
-                          <i class="el-icon-delete"></i>
-                          刪除
-                        </el-button>
-                      </div>
-                      <div class="form-row">
-                        <el-form-item label="單位名稱">
-                          <el-input v-model="exp.unit" placeholder="請輸入單位名稱" />
-                        </el-form-item>
-                        <el-form-item label="職稱">
-                          <el-input v-model="exp.title" placeholder="請輸入職稱" />
-                        </el-form-item>
-                      </div>
-                      <div class="form-row">
-                        <el-form-item label="到職年月">
-                          <el-date-picker v-model="exp.start" type="month" placeholder="選擇到職年月" />
-                        </el-form-item>
-                        <el-form-item label="離職年月">
-                          <el-date-picker v-model="exp.end" type="month" placeholder="選擇離職年月" />
-                        </el-form-item>
-                      </div>
+            <!-- 更多資訊 -->
+            <el-tab-pane name="more">
+              <template #label>
+                <div class="tab-label">
+                  <i class="el-icon-more"></i>
+                  <span>更多資訊</span>
+                </div>
+              </template>
+
+              <div class="tab-content">
+                <div class="form-section">
+                  <!-- 身體檢查 -->
+                  <div class="form-group">
+                    <h3 class="form-group-title">身體檢查</h3>
+                    <div class="form-row">
+                      <el-form-item label="身高 (cm)">
+                        <el-input-number v-model="employeeForm.height" :min="0" :max="250" :step="0.1" :precision="1"
+                          :value-on-clear="null" controls-position="right" placeholder="請輸入身高" />
+                      </el-form-item>
+                      <el-form-item label="體重 (kg)">
+                        <el-input-number v-model="employeeForm.weight" :min="0" :max="300" :step="0.1" :precision="1"
+                          :value-on-clear="null" controls-position="right" placeholder="請輸入體重" />
+                      </el-form-item>
+                    </div>
+                    <div class="form-row">
+                      <el-form-item label="體檢血型">
+                        <el-select v-model="employeeForm.medicalBloodType" placeholder="選擇血型" clearable>
+                          <el-option v-for="blood in ABO_TYPES" :key="`medical-${blood}`" :label="blood"
+                            :value="blood" />
+                        </el-select>
+                      </el-form-item>
                     </div>
                   </div>
-                  <el-button type="primary" @click="addExperience" class="add-item-btn">
-                    <i class="el-icon-plus"></i>
-                    新增經歷
-                  </el-button>
-                </div>
 
-                <!-- 證照資訊 -->
-                <div class="form-group">
-                  <h3 class="form-group-title">證照</h3>
-                  <div class="experience-list">
-                    <div
-                      v-for="(license, i) in employeeForm.licenses"
-                      :key="`license-${i}`"
-                      class="experience-item"
-                    >
-                      <div class="experience-header">
-                        <h4 class="experience-title">證照 {{ i + 1 }}</h4>
-                        <el-button type="danger" size="small" @click="removeLicense(i)" class="remove-btn">
-                          <i class="el-icon-delete"></i>
-                          刪除
-                        </el-button>
-                      </div>
-                      <div class="form-row">
-                        <el-form-item label="證照名稱">
-                          <el-input v-model="license.name" placeholder="請輸入證照名稱" />
-                        </el-form-item>
-                        <el-form-item label="證照字號">
-                          <el-input v-model="license.number" placeholder="請輸入證照字號" />
-                        </el-form-item>
-                      </div>
-                      <div class="form-row">
-                        <el-form-item label="核發日期">
-                          <el-date-picker v-model="license.startDate" type="date" placeholder="選擇核發日期" />
-                        </el-form-item>
-                        <el-form-item label="有效期限">
-                          <el-date-picker v-model="license.endDate" type="date" placeholder="選擇有效期限" />
-                        </el-form-item>
-                      </div>
-                      <div class="form-row">
-                        <el-form-item label="證照檔案" class="full-width-item">
-                          <el-upload
-                            v-model:file-list="license.fileList"
-                            action="#"
-                            multiple
-                            list-type="text"
-                            :http-request="handleAttachmentRequest"
-                            :on-success="(res, file, fileList) => handleAttachmentSuccess('licenses', i, res, file, fileList)"
-                            :on-remove="(file, fileList) => handleAttachmentRemove('licenses', i, file, fileList)"
-                          >
-                            <el-button type="primary" plain>
-                              <i class="el-icon-upload2"></i>
-                              上傳檔案
-                            </el-button>
-                            <template #tip>
-                              <div class="upload-tip">可上傳多個檔案，將以連結形式儲存</div>
-                            </template>
-                          </el-upload>
-                        </el-form-item>
-                      </div>
+                  <!-- 學歷資訊 -->
+                  <div class="form-group">
+                    <h3 class="form-group-title">學歷資訊</h3>
+                    <div class="form-row">
+                      <el-form-item label="教育程度">
+                        <el-select v-model="employeeForm.educationLevel" placeholder="選擇教育程度"
+                          :disabled="!educationLevelOptions.length">
+                          <el-option v-for="option in educationLevelOptions" :key="option.value" :label="option.label"
+                            :value="option.value" />
+                        </el-select>
+                      </el-form-item>
+                      <el-form-item label="學校名稱">
+                        <el-input v-model="employeeForm.schoolName" placeholder="請輸入學校名稱" />
+                      </el-form-item>
+                    </div>
+
+                    <div class="form-row">
+                      <el-form-item label="主修科系">
+                        <el-input v-model="employeeForm.major" placeholder="請輸入主修科系" />
+                      </el-form-item>
+                      <el-form-item label="畢業狀態">
+                        <el-select v-model="employeeForm.graduationStatus" placeholder="選擇畢業狀態" clearable
+                          @clear="onGraduationStatusClear" :disabled="!graduationStatusOptions.length">
+                          <el-option v-for="option in graduationStatusOptions" :key="option.value" :label="option.label"
+                            :value="option.value" />
+                        </el-select>
+                      </el-form-item>
+                    </div>
+
+                    <div class="form-row">
+                      <el-form-item label="畢業年度" class="full-width-item">
+                        <el-input v-model="employeeForm.graduationYear" placeholder="請輸入畢業年度" />
+                      </el-form-item>
                     </div>
                   </div>
-                  <el-button type="primary" @click="addLicense" class="add-item-btn">
-                    <i class="el-icon-plus"></i>
-                    新增證照
-                  </el-button>
-                </div>
 
-                <!-- 教育訓練 -->
-                <div class="form-group">
-                  <h3 class="form-group-title">教育訓練</h3>
-                  <div class="experience-list">
-                    <div
-                      v-for="(training, i) in employeeForm.trainings"
-                      :key="`training-${i}`"
-                      class="experience-item"
-                    >
-                      <div class="experience-header">
-                        <h4 class="experience-title">教育訓練 {{ i + 1 }}</h4>
-                        <el-button type="danger" size="small" @click="removeTraining(i)" class="remove-btn">
-                          <i class="el-icon-delete"></i>
-                          刪除
-                        </el-button>
-                      </div>
+                  <!-- 役別資訊 -->
+                  <div class="form-group">
+                    <h3 class="form-group-title">役別資訊</h3>
+                    <div class="form-row">
+                      <el-form-item label="役別類型">
+                        <el-select v-model="employeeForm.serviceType" placeholder="選擇或輸入役別類型" filterable allow-create
+                          default-first-option clearable>
+                          <el-option v-for="type in SERVICE_TYPES" :key="type" :label="type" :value="type" />
+                        </el-select>
+                      </el-form-item>
+                      <el-form-item label="軍種">
+                        <el-input v-model="employeeForm.militaryBranch" placeholder="請輸入軍種" />
+                      </el-form-item>
+                    </div>
+
+                    <div class="form-row">
+                      <el-form-item label="軍階">
+                        <el-input v-model="employeeForm.militaryRank" placeholder="請輸入軍階" />
+                      </el-form-item>
+                      <el-form-item label="退伍年">
+                        <el-input-number v-model="employeeForm.dischargeYear" :min="1900" :max="CURRENT_YEAR + 10"
+                          :step="1" :value-on-clear="null" controls-position="right" placeholder="請輸入退伍年" />
+                      </el-form-item>
+                    </div>
+                  </div>
+
+                  <!-- 緊急聯絡人 -->
+                  <div class="form-group">
+                    <h3 class="form-group-title">緊急聯絡人</h3>
+                    <div class="emergency-contact">
+                      <h4 class="contact-subtitle">聯絡人一</h4>
                       <div class="form-row">
-                        <el-form-item label="課程名稱">
-                          <el-input v-model="training.course" placeholder="請輸入課程名稱" />
+                        <el-form-item label="姓名">
+                          <el-input v-model="employeeForm.emergency1.name" placeholder="請輸入姓名" />
                         </el-form-item>
-                        <el-form-item label="課程代碼">
-                          <el-input v-model="training.courseNo" placeholder="請輸入課程代碼" />
-                        </el-form-item>
-                      </div>
-                      <div class="form-row">
-                        <el-form-item label="上課日期">
-                          <el-date-picker v-model="training.date" type="date" placeholder="選擇日期" />
-                        </el-form-item>
-                        <el-form-item label="積分類別" class="full-width-item">
-                          <el-select
-                            v-model="training.category"
-                            multiple
-                            collapse-tags
-                            placeholder="選擇積分類別"
-                          >
-                            <el-option
-                              v-for="option in creditCategoryOptions"
-                              :key="option.value"
-                              :label="option.label"
-                              :value="option.value"
-                            />
+                        <el-form-item label="關係">
+                          <el-select v-model="employeeForm.emergency1.relation" placeholder="選擇關係">
+                            <el-option v-for="option in relationOptions" :key="`r1-${option.value}`"
+                              :label="option.label" :value="option.value" />
                           </el-select>
                         </el-form-item>
                       </div>
                       <div class="form-row">
-                        <el-form-item label="積分">
-                          <el-input-number
-                            v-model="training.score"
-                            :min="0"
-                            :step="0.5"
-                            :value-on-clear="null"
-                          />
+                        <el-form-item label="電話一">
+                          <el-input v-model="employeeForm.emergency1.phone1" placeholder="請輸入電話" />
                         </el-form-item>
-                        <el-form-item label="訓練檔案" class="full-width-item">
-                          <el-upload
-                            v-model:file-list="training.fileList"
-                            action="#"
-                            multiple
-                            list-type="text"
-                            :http-request="handleAttachmentRequest"
-                            :on-success="(res, file, fileList) => handleAttachmentSuccess('trainings', i, res, file, fileList)"
-                            :on-remove="(file, fileList) => handleAttachmentRemove('trainings', i, file, fileList)"
-                          >
-                            <el-button type="primary" plain>
-                              <i class="el-icon-upload2"></i>
-                              上傳檔案
-                            </el-button>
-                            <template #tip>
-                              <div class="upload-tip">支援多檔上傳，將以連結形式儲存</div>
-                            </template>
-                          </el-upload>
+                        <el-form-item label="電話二">
+                          <el-input v-model="employeeForm.emergency1.phone2" placeholder="請輸入電話" />
+                        </el-form-item>
+                      </div>
+                    </div>
+
+                    <div class="emergency-contact">
+                      <h4 class="contact-subtitle">聯絡人二</h4>
+                      <div class="form-row">
+                        <el-form-item label="姓名">
+                          <el-input v-model="employeeForm.emergency2.name" placeholder="請輸入姓名" />
+                        </el-form-item>
+                        <el-form-item label="關係">
+                          <el-select v-model="employeeForm.emergency2.relation" placeholder="選擇關係">
+                            <el-option v-for="option in relationOptions" :key="`r2-${option.value}`"
+                              :label="option.label" :value="option.value" />
+                          </el-select>
+                        </el-form-item>
+                      </div>
+                      <div class="form-row">
+                        <el-form-item label="電話一">
+                          <el-input v-model="employeeForm.emergency2.phone1" placeholder="請輸入電話" />
+                        </el-form-item>
+                        <el-form-item label="電話二">
+                          <el-input v-model="employeeForm.emergency2.phone2" placeholder="請輸入電話" />
                         </el-form-item>
                       </div>
                     </div>
                   </div>
-                  <el-button type="primary" @click="addTraining" class="add-item-btn">
-                    <i class="el-icon-plus"></i>
-                    新增教育訓練
-                  </el-button>
-                </div>
-              </div>
-            </div>
-          </el-tab-pane>
 
-          <!-- 薪資 -->
-          <el-tab-pane name="salary">
-            <template #label>
-              <div class="tab-label">
-                <i class="el-icon-money"></i>
-                <span>薪資設定</span>
-              </div>
-            </template>
-            
-            <div class="tab-content">
-              <div class="form-section">
-                <div class="form-group">
-                  <h3 class="form-group-title">薪資資訊</h3>
-                  <div class="form-row">
-                    <el-form-item label="薪資類別">
-                      <el-select v-model="employeeForm.salaryType" placeholder="選擇類別">
-                        <el-option v-for="s in SALARY_TYPES" :key="s" :label="s" :value="s" />
-                      </el-select>
-                    </el-form-item>
-                    <el-form-item label="薪資金額">
-                      <el-input-number
-                        v-model="employeeForm.salaryAmount"
-                        :min="0"
-                        :step="1000"
-                        :formatter="value => `$ ${value ?? 0}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')"
-                        :parser="value => (value ? value.replace(/\$\s?|(,*)/g, '') : '')"
-                      />
-                    </el-form-item>
-                    <el-form-item label="勞退自提" prop="laborPensionSelf">
-                      <el-input-number
-                        v-model="employeeForm.laborPensionSelf"
-                        :min="0"
-                        :step="100"
-                        :formatter="value => `$ ${value ?? 0}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')"
-                        :parser="value => (value ? value.replace(/\$\s?|(,*)/g, '') : '')"
-                      />
-                    </el-form-item>
-                    <el-form-item label="員工預支" prop="employeeAdvance">
-                      <el-input-number
-                        v-model="employeeForm.employeeAdvance"
-                        :min="0"
-                        :step="100"
-                        :formatter="value => `$ ${value ?? 0}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')"
-                        :parser="value => (value ? value.replace(/\$\s?|(,*)/g, '') : '')"
-                      />
-                    </el-form-item>
-                    <el-form-item class="full-width-item" label="薪資項目" prop="salaryItems">
-                      <el-select
-                        v-model="employeeForm.salaryItems"
-                        multiple
-                        collapse-tags
-                        collapse-tags-tooltip
-                        placeholder="選擇薪資項目"
-                      >
-                        <el-option
-                          v-for="item in salaryItemOptions"
-                          :key="item.value"
-                          :label="item.label"
-                          :value="item.value"
-                        />
-                      </el-select>
-                    </el-form-item>
+                  <!-- 經歷管理 -->
+                  <div class="form-group">
+                    <h3 class="form-group-title">工作經歷</h3>
+                    <div class="experience-list">
+                      <div v-for="(exp, i) in employeeForm.experiences" :key="i" class="experience-item">
+                        <div class="experience-header">
+                          <h4 class="experience-title">經歷 {{ i + 1 }}</h4>
+                          <el-button type="danger" size="small" @click="removeExperience(i)" class="remove-btn">
+                            <i class="el-icon-delete"></i>
+                            刪除
+                          </el-button>
+                        </div>
+                        <div class="form-row">
+                          <el-form-item label="單位名稱">
+                            <el-input v-model="exp.unit" placeholder="請輸入單位名稱" />
+                          </el-form-item>
+                          <el-form-item label="職稱">
+                            <el-input v-model="exp.title" placeholder="請輸入職稱" />
+                          </el-form-item>
+                        </div>
+                        <div class="form-row">
+                          <el-form-item label="到職年月">
+                            <el-date-picker v-model="exp.start" type="month" placeholder="選擇到職年月" />
+                          </el-form-item>
+                          <el-form-item label="離職年月">
+                            <el-date-picker v-model="exp.end" type="month" placeholder="選擇離職年月" />
+                          </el-form-item>
+                        </div>
+                      </div>
+                    </div>
+                    <el-button type="primary" @click="addExperience" class="add-item-btn">
+                      <i class="el-icon-plus"></i>
+                      新增經歷
+                    </el-button>
+                  </div>
+
+                  <!-- 證照資訊 -->
+                  <div class="form-group">
+                    <h3 class="form-group-title">證照</h3>
+                    <div class="experience-list">
+                      <div v-for="(license, i) in employeeForm.licenses" :key="`license-${i}`" class="experience-item">
+                        <div class="experience-header">
+                          <h4 class="experience-title">證照 {{ i + 1 }}</h4>
+                          <el-button type="danger" size="small" @click="removeLicense(i)" class="remove-btn">
+                            <i class="el-icon-delete"></i>
+                            刪除
+                          </el-button>
+                        </div>
+                        <div class="form-row">
+                          <el-form-item label="證照名稱">
+                            <el-input v-model="license.name" placeholder="請輸入證照名稱" />
+                          </el-form-item>
+                          <el-form-item label="證照字號">
+                            <el-input v-model="license.number" placeholder="請輸入證照字號" />
+                          </el-form-item>
+                        </div>
+                        <div class="form-row">
+                          <el-form-item label="核發日期">
+                            <el-date-picker v-model="license.startDate" type="date" placeholder="選擇核發日期" />
+                          </el-form-item>
+                          <el-form-item label="有效期限">
+                            <el-date-picker v-model="license.endDate" type="date" placeholder="選擇有效期限" />
+                          </el-form-item>
+                        </div>
+                        <div class="form-row">
+                          <el-form-item label="證照檔案" class="full-width-item">
+                            <el-upload v-model:file-list="license.fileList" action="#" multiple list-type="text"
+                              :http-request="handleAttachmentRequest"
+                              :on-success="(res, file, fileList) => handleAttachmentSuccess('licenses', i, res, file, fileList)"
+                              :on-remove="(file, fileList) => handleAttachmentRemove('licenses', i, file, fileList)">
+                              <el-button type="primary" plain>
+                                <i class="el-icon-upload2"></i>
+                                上傳檔案
+                              </el-button>
+                              <template #tip>
+                                <div class="upload-tip">可上傳多個檔案，將以連結形式儲存</div>
+                              </template>
+                            </el-upload>
+                          </el-form-item>
+                        </div>
+                      </div>
+                    </div>
+                    <el-button type="primary" @click="addLicense" class="add-item-btn">
+                      <i class="el-icon-plus"></i>
+                      新增證照
+                    </el-button>
+                  </div>
+
+                  <!-- 教育訓練 -->
+                  <div class="form-group">
+                    <h3 class="form-group-title">教育訓練</h3>
+                    <div class="experience-list">
+                      <div v-for="(training, i) in employeeForm.trainings" :key="`training-${i}`"
+                        class="experience-item">
+                        <div class="experience-header">
+                          <h4 class="experience-title">教育訓練 {{ i + 1 }}</h4>
+                          <el-button type="danger" size="small" @click="removeTraining(i)" class="remove-btn">
+                            <i class="el-icon-delete"></i>
+                            刪除
+                          </el-button>
+                        </div>
+                        <div class="form-row">
+                          <el-form-item label="課程名稱">
+                            <el-input v-model="training.course" placeholder="請輸入課程名稱" />
+                          </el-form-item>
+                          <el-form-item label="課程代碼">
+                            <el-input v-model="training.courseNo" placeholder="請輸入課程代碼" />
+                          </el-form-item>
+                        </div>
+                        <div class="form-row">
+                          <el-form-item label="上課日期">
+                            <el-date-picker v-model="training.date" type="date" placeholder="選擇日期" />
+                          </el-form-item>
+                          <el-form-item label="積分類別" class="full-width-item">
+                            <el-select v-model="training.category" multiple collapse-tags placeholder="選擇積分類別">
+                              <el-option v-for="option in creditCategoryOptions" :key="option.value"
+                                :label="option.label" :value="option.value" />
+                            </el-select>
+                          </el-form-item>
+                        </div>
+                        <div class="form-row">
+                          <el-form-item label="積分">
+                            <el-input-number v-model="training.score" :min="0" :step="0.5" :value-on-clear="null" />
+                          </el-form-item>
+                          <el-form-item label="訓練檔案" class="full-width-item">
+                            <el-upload v-model:file-list="training.fileList" action="#" multiple list-type="text"
+                              :http-request="handleAttachmentRequest"
+                              :on-success="(res, file, fileList) => handleAttachmentSuccess('trainings', i, res, file, fileList)"
+                              :on-remove="(file, fileList) => handleAttachmentRemove('trainings', i, file, fileList)">
+                              <el-button type="primary" plain>
+                                <i class="el-icon-upload2"></i>
+                                上傳檔案
+                              </el-button>
+                              <template #tip>
+                                <div class="upload-tip">支援多檔上傳，將以連結形式儲存</div>
+                              </template>
+                            </el-upload>
+                          </el-form-item>
+                        </div>
+                      </div>
+                    </div>
+                    <el-button type="primary" @click="addTraining" class="add-item-btn">
+                      <i class="el-icon-plus"></i>
+                      新增教育訓練
+                    </el-button>
                   </div>
                 </div>
+              </div>
+            </el-tab-pane>
 
-                <div class="form-group">
-                  <h3 class="form-group-title">銀行帳戶</h3>
-                  <div class="account-section">
-                    <h4 class="account-subtitle">薪資帳戶 A</h4>
+            <!-- 薪資 -->
+            <el-tab-pane name="salary">
+              <template #label>
+                <div class="tab-label">
+                  <i class="el-icon-money"></i>
+                  <span>薪資設定</span>
+                </div>
+              </template>
+
+              <div class="tab-content">
+                <div class="form-section">
+                  <div class="form-group">
+                    <h3 class="form-group-title">薪資資訊</h3>
                     <div class="form-row">
-                      <el-form-item label="銀行代碼/名稱">
-                        <el-input v-model="employeeForm.salaryAccountA.bank" placeholder="請輸入銀行資訊" />
+                      <el-form-item label="薪資類別">
+                        <el-select v-model="employeeForm.salaryType" placeholder="選擇類別">
+                          <el-option v-for="s in SALARY_TYPES" :key="s" :label="s" :value="s" />
+                        </el-select>
                       </el-form-item>
-                      <el-form-item label="帳號">
-                        <el-input v-model="employeeForm.salaryAccountA.acct" placeholder="請輸入帳號" />
+                      <el-form-item label="薪資金額">
+                        <el-input-number v-model="employeeForm.salaryAmount" :min="0" :step="1000"
+                          :formatter="value => `$ ${value ?? 0}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')"
+                          :parser="value => (value ? value.replace(/\$\s?|(,*)/g, '') : '')" />
+                      </el-form-item>
+                      <el-form-item label="勞退自提" prop="laborPensionSelf">
+                        <el-input-number v-model="employeeForm.laborPensionSelf" :min="0" :step="100"
+                          :formatter="value => `$ ${value ?? 0}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')"
+                          :parser="value => (value ? value.replace(/\$\s?|(,*)/g, '') : '')" />
+                      </el-form-item>
+                      <el-form-item label="員工預支" prop="employeeAdvance">
+                        <el-input-number v-model="employeeForm.employeeAdvance" :min="0" :step="100"
+                          :formatter="value => `$ ${value ?? 0}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')"
+                          :parser="value => (value ? value.replace(/\$\s?|(,*)/g, '') : '')" />
+                      </el-form-item>
+                      <el-form-item class="full-width-item" label="薪資項目" prop="salaryItems">
+                        <el-select v-model="employeeForm.salaryItems" multiple collapse-tags collapse-tags-tooltip
+                          placeholder="選擇薪資項目">
+                          <el-option v-for="item in salaryItemOptions" :key="item.value" :label="item.label"
+                            :value="item.value" />
+                        </el-select>
                       </el-form-item>
                     </div>
                   </div>
-                  
-                  <div class="account-section">
-                    <h4 class="account-subtitle">薪資帳戶 B</h4>
-                    <div class="form-row">
-                      <el-form-item label="銀行代碼/名稱">
-                        <el-input v-model="employeeForm.salaryAccountB.bank" placeholder="請輸入銀行資訊" />
-                      </el-form-item>
-                      <el-form-item label="帳號">
-                        <el-input v-model="employeeForm.salaryAccountB.acct" placeholder="請輸入帳號" />
-                      </el-form-item>
+
+                  <div class="form-group">
+                    <h3 class="form-group-title">銀行帳戶</h3>
+                    <div class="account-section">
+                      <h4 class="account-subtitle">薪資帳戶 A</h4>
+                      <div class="form-row">
+                        <el-form-item label="銀行代碼/名稱">
+                          <el-input v-model="employeeForm.salaryAccountA.bank" placeholder="請輸入銀行資訊" />
+                        </el-form-item>
+                        <el-form-item label="帳號">
+                          <el-input v-model="employeeForm.salaryAccountA.acct" placeholder="請輸入帳號" />
+                        </el-form-item>
+                      </div>
+                    </div>
+
+                    <div class="account-section">
+                      <h4 class="account-subtitle">薪資帳戶 B</h4>
+                      <div class="form-row">
+                        <el-form-item label="銀行代碼/名稱">
+                          <el-input v-model="employeeForm.salaryAccountB.bank" placeholder="請輸入銀行資訊" />
+                        </el-form-item>
+                        <el-form-item label="帳號">
+                          <el-input v-model="employeeForm.salaryAccountB.acct" placeholder="請輸入帳號" />
+                        </el-form-item>
+                      </div>
                     </div>
                   </div>
                 </div>
               </div>
-            </div>
-          </el-tab-pane>
+            </el-tab-pane>
           </el-tabs>
         </el-form>
         <template #footer>
@@ -1104,13 +871,8 @@
         </template>
       </el-dialog>
 
-      <el-dialog
-        v-model="bulkImportDialogVisible"
-        title="批量匯入員工"
-        width="720px"
-        class="bulk-import-dialog"
-        :close-on-click-modal="false"
-      >
+      <el-dialog v-model="bulkImportDialogVisible" title="批量匯入員工" width="720px" class="bulk-import-dialog"
+        :close-on-click-modal="false">
         <div class="bulk-import-header">
           <el-alert type="info" show-icon :closable="false">
             <template #title>
@@ -1118,12 +880,8 @@
             </template>
             <div class="template-link">
               <i class="el-icon-document"></i>
-              <el-button
-                type="primary"
-                link
-                data-test="bulk-import-template-download"
-                @click="downloadBulkImportTemplate"
-              >
+              <el-button type="primary" link data-test="bulk-import-template-download"
+                @click="downloadBulkImportTemplate">
                 下載匯入範本
               </el-button>
             </div>
@@ -1131,16 +889,8 @@
         </div>
 
         <div class="bulk-import-upload">
-          <el-upload
-            drag
-            action=""
-            :auto-upload="false"
-            accept=".xlsx,.xls,.csv"
-            :file-list="bulkImportUploadFileList"
-            :limit="1"
-            :on-change="handleBulkImportFileChange"
-            :on-remove="handleBulkImportFileRemove"
-          >
+          <el-upload drag action="" :auto-upload="false" accept=".xlsx,.xls,.csv" :file-list="bulkImportUploadFileList"
+            :limit="1" :on-change="handleBulkImportFileChange" :on-remove="handleBulkImportFileRemove">
             <i class="el-icon-upload"></i>
             <div class="el-upload__text">
               將檔案拖曳至此或 <em>點此選擇</em>
@@ -1159,11 +909,7 @@
             <div>若未提供必填欄位資料，匯入時將提示錯誤並中止處理。</div>
           </el-alert>
 
-          <section
-            v-for="section in bulkImportTemplateSections"
-            :key="section.title"
-            class="bulk-import-section"
-          >
+          <section v-for="section in bulkImportTemplateSections" :key="section.title" class="bulk-import-section">
             <h4 class="bulk-import-section-title">{{ section.title }}</h4>
             <el-table :data="section.fields" border size="small" class="bulk-import-table">
               <el-table-column prop="header" label="Excel 欄位 (英文)" width="220">
@@ -1189,21 +935,12 @@
           <el-form :model="bulkImportForm" label-width="150px">
             <el-form-item label="匯入預設權限" required>
               <el-select v-model="bulkImportForm.options.defaultRole" placeholder="請選擇預設權限">
-                <el-option
-                  v-for="role in ROLE_OPTIONS"
-                  :key="role.value"
-                  :label="role.label"
-                  :value="role.value"
-                />
+                <el-option v-for="role in ROLE_OPTIONS" :key="role.value" :label="role.label" :value="role.value" />
               </el-select>
             </el-form-item>
             <el-form-item label="預設登入密碼">
-              <el-input
-                v-model="bulkImportForm.options.resetPassword"
-                type="password"
-                show-password
-                placeholder="未設定則由後端自動產生"
-              />
+              <el-input v-model="bulkImportForm.options.resetPassword" type="password" show-password
+                placeholder="未設定則由後端自動產生" />
             </el-form-item>
             <el-form-item label="寄發通知信">
               <el-switch v-model="bulkImportForm.options.sendWelcomeEmail" />
@@ -1212,13 +949,7 @@
         </div>
 
         <div class="bulk-import-result" v-if="bulkImportPreview.length || bulkImportErrors.length">
-          <el-alert
-            v-if="bulkImportErrors.length"
-            type="warning"
-            :closable="false"
-            show-icon
-            class="bulk-import-error"
-          >
+          <el-alert v-if="bulkImportErrors.length" type="warning" :closable="false" show-icon class="bulk-import-error">
             <template #title>匯入時發現以下問題，請確認後重新處理：</template>
             <ul class="error-list">
               <li v-for="(error, idx) in bulkImportErrors" :key="idx">{{ error }}</li>
@@ -1239,70 +970,44 @@
 
         <template #footer>
           <el-button @click="bulkImportDialogVisible = false">取消</el-button>
-          <el-button
-            type="primary"
-            :loading="bulkImportLoading"
-            :disabled="!isBulkImportReady || bulkImportLoading"
-            @click="submitBulkImport"
-          >
+          <el-button type="primary" :loading="bulkImportLoading" :disabled="!isBulkImportReady || bulkImportLoading"
+            @click="submitBulkImport">
             開始匯入
           </el-button>
         </template>
       </el-dialog>
 
-      <el-dialog
-        v-model="referenceMappingDialogVisible"
-        :title="referenceMappingDialogMessage || '補齊參照對應'"
-        width="640px"
-        class="reference-mapping-dialog"
-        :close-on-click-modal="false"
-      >
+      <el-dialog v-model="referenceMappingDialogVisible" :title="referenceMappingDialogMessage || '補齊參照對應'"
+        width="640px" class="reference-mapping-dialog" :close-on-click-modal="false">
         <p class="reference-mapping-tip">
           請為下列資料選擇對應的既有項目，或設定忽略後重新嘗試匯入。
         </p>
-        <div
-          v-for="type in REFERENCE_MAPPING_KEYS"
-          :key="type"
-          v-if="referenceMappingPending[type]?.length"
-          class="reference-mapping-section"
-        >
+        <div v-for="type in REFERENCE_MAPPING_KEYS" :key="type" v-if="referenceMappingPending[type]?.length"
+          class="reference-mapping-section">
           <h4 class="reference-mapping-title">{{ REFERENCE_MAPPING_LABELS[type] }}對應</h4>
-          <div
-            v-for="entry in referenceMappingPending[type]"
-            :key="getReferenceEntryKey(entry)"
-            class="reference-mapping-item"
-          >
+          <div v-for="entry in referenceMappingPending[type]" :key="getReferenceEntryKey(entry)"
+            class="reference-mapping-item">
             <div class="reference-mapping-info">
               <span class="reference-mapping-value">{{ entry.value || '（空值）' }}</span>
               <span class="reference-mapping-rows">
                 出現於第 {{ (entry.rows || []).join('、') }} 列
               </span>
             </div>
-            <el-radio-group
-              v-model="referenceMappingSelections[type][getReferenceEntryKey(entry)].mode"
-              class="reference-mapping-mode"
-            >
+            <el-radio-group v-model="referenceMappingSelections[type][getReferenceEntryKey(entry)].mode"
+              class="reference-mapping-mode">
               <el-radio label="map">指定既有資料</el-radio>
               <el-radio label="ignore">忽略此次匯入</el-radio>
             </el-radio-group>
-            <el-select
-              v-if="referenceMappingSelections[type][getReferenceEntryKey(entry)]?.mode === 'map'"
-              v-model="referenceMappingSelections[type][getReferenceEntryKey(entry)].targetId"
-              placeholder="請選擇既有項目"
-              class="reference-mapping-select"
-              filterable
-              clearable
-            >
-              <el-option
-                v-for="option in referenceMappingOptions[type]"
-                :key="option.id"
-                :label="buildReferenceOptionLabel(type, option)"
-                :value="option.id"
-              />
+            <el-select v-if="referenceMappingSelections[type][getReferenceEntryKey(entry)]?.mode === 'map'"
+              v-model="referenceMappingSelections[type][getReferenceEntryKey(entry)].targetId" placeholder="請選擇既有項目"
+              class="reference-mapping-select" filterable clearable>
+              <el-option v-for="option in referenceMappingOptions[type]" :key="option.id"
+                :label="buildReferenceOptionLabel(type, option)" :value="option.id" />
             </el-select>
           </div>
         </div>
-        <div v-if="REFERENCE_MAPPING_KEYS.every(key => !referenceMappingPending[key].length)" class="reference-mapping-empty">
+        <div v-if="REFERENCE_MAPPING_KEYS.every(key => !referenceMappingPending[key].length)"
+          class="reference-mapping-empty">
           所有參照皆已處理，請重新送出匯入。
         </div>
         <template #footer>
@@ -1324,6 +1029,259 @@ import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { apiFetch, importEmployeesBulk } from '../../api'
 import { REQUIRED_FIELDS } from './requiredFields'
+
+// ========= 新增：Excel/CSV 讀取與預覽核心 =========
+
+// 動態載入，避免 SSR 場景報錯
+async function loadXLSX() {
+  // vite/webpack 皆可；若你專案是 SSR，動態 import 可避免在 Node 環境載到 window 物件
+  const mod = await import(/* @vite-ignore */ 'xlsx')
+  return mod
+}
+
+// 檔名副檔名（僅用於判斷提示，不影響解析）
+function getFileExt(file) {
+  const name = typeof file?.name === 'string' ? file.name : ''
+  const m = name.match(/\.([^.]+)$/i)
+  return m ? m[1].toLowerCase() : ''
+}
+
+// 讀取為 ArrayBuffer（給 XLSX.read 使用）
+async function fileToArrayBuffer(file) {
+  if (file.arrayBuffer) return await file.arrayBuffer()
+  // Safari 舊版 fallback
+  return await new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(reader.result)
+    reader.onerror = reject
+    reader.readAsArrayBuffer(file)
+  })
+}
+
+// 判斷「這一列」是否是你模板中的「第二行中文說明列」（需被忽略）
+function isTemplateDescriptionRow(obj) {
+  // 只要某些欄位帶有「必填」或括號說明，多半就是說明列
+  const vList = Object.values(obj || {}).map(v => (v == null ? '' : String(v)))
+  if (!vList.length) return false
+  const hit = vList.some(v => /必填|\(|\)|已婚|未婚|離婚|喪偶|TRUE|FALSE/.test(v))
+  // 中文說明列通常很多欄位都不是 email/日期/數字，這樣的粗判斷夠用
+  return hit
+}
+
+// 將 1990/3/2、1990-3-2 這類轉為 1990-03-02；非日期字串原樣回傳
+function normalizeDateLike(value) {
+  if (value == null || value === '') return ''
+  const s = String(value).trim().replace(/\./g, '-').replace(/\//g, '-')
+  // 年-月-日（寬鬆）：yyyy-m-d 或 yy-m-d（只接受4碼年做轉換）
+  const m = s.match(/^(\d{4})[-](\d{1,2})[-](\d{1,2})$/)
+  if (!m) return s
+  const yyyy = m[1]
+  const mm = String(m[2]).padStart(2, '0')
+  const dd = String(m[3]).padStart(2, '0')
+  return `${yyyy}-${mm}-${dd}`
+}
+
+// 將 TRUE/FALSE/Yes/No/1/0 等轉 JS boolean 或原字串（預覽可保留原始字樣）
+// 這裡回傳字串 'TRUE'/'FALSE' 以符合你目前 CSV 範例；若要轉 boolean 可改為 true/false
+function normalizeBoolLike(value) {
+  if (value == null || value === '') return ''
+  const s = String(value).trim().toLowerCase()
+  if (['true', 'yes', 'y', '1'].includes(s)) return 'TRUE'
+  if (['false', 'no', 'n', '0'].includes(s)) return 'FALSE'
+  return String(value) // 不動
+}
+
+// 將逗號分隔字串 -> 陣列（空白會被 trim）
+function toCommaArray(value) {
+  if (value == null || value === '') return []
+  return String(value)
+    .split(',')
+    .map(s => s.trim())
+    .filter(Boolean)
+}
+
+// ⛳ 只替換這個：把工作表轉成物件列（第1行=英文表頭，第2行=說明列要丟掉，資料從第3行開始）
+function sheetToObjects(XLSX, ws) {
+  // 用 header:1 拿「陣列」而不是物件，方便精準跳過第二行
+  const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' })
+  if (!rows || rows.length === 0) return []
+
+  // 第1行：英文表頭
+  const headerRow = (rows[0] || []).map((h) =>
+    String(h ?? '')
+      .replace(/^\ufeff/, '') // 去掉 BOM
+      .trim()
+  )
+
+  // 第2行：中文說明列，直接丟掉
+  const dataRows = rows.slice(2)
+
+  // 將每列轉成 { header[i]: value } 物件；若整列空白就跳過
+  const objects = []
+  for (const r of dataRows) {
+    const isAllEmpty = !r || r.every((v) => String(v ?? '').trim() === '')
+    if (isAllEmpty) continue
+    const obj = {}
+    for (let i = 0; i < headerRow.length; i++) {
+      const key = headerRow[i] || `col_${i}`
+      obj[key] = r[i] ?? ''
+    }
+    objects.push(obj)
+  }
+  return objects
+}
+
+
+// 將 Excel/CSV 檔案轉為「英文字段鍵值」的物件陣列（鍵名 = header 英文）
+async function parseFileToRowObjects(file) {
+  const XLSX = await loadXLSX()
+  const buf = await fileToArrayBuffer(file)
+  const wb = XLSX.read(buf, { type: 'array' })
+  const firstSheetName = wb.SheetNames[0]
+  const ws = wb.Sheets[firstSheetName]
+  if (!ws) return []
+  return sheetToObjects(XLSX, ws)
+}
+
+// 由 mapping（bulkImportForm.columnMappings）將「英文字段」→「系統內鍵名」
+// 例：employeeNo <- row[employeeId]、name <- row[name]
+function mapRowToFormShape(row, mappings) {
+  // 先把所有你在 BULK_IMPORT_FIELD_CONFIGS 宣告的 key 都走一次
+  const out = {}
+  for (const cfg of BULK_IMPORT_FIELD_CONFIGS) {
+    const sysKey = cfg.key                                   // e.g. 'employeeNo'
+    const excelHeader = mappings?.[sysKey] || cfg.header     // e.g. 'employeeId'
+    const raw = row[excelHeader]
+
+    switch (sysKey) {
+      // 日期欄位統一格式
+      case 'birthday':
+      case 'hireDate':
+      case 'appointDate':
+      case 'resignDate':
+      case 'dismissDate':
+      case 'reAppointDate':
+      case 'reDismissDate':
+        out[sysKey] = normalizeDateLike(raw)
+        break
+
+      // 布林/是非欄位
+      case 'isPartTime':
+      case 'isClocking':
+        out[sysKey] = normalizeBoolLike(raw)
+        break
+
+      // 多值欄位（逗號分隔）
+      case 'languages':
+      case 'identityCategory':
+      case 'salaryItems':
+        out[sysKey] = toCommaArray(raw)
+        break
+
+      // 純數字
+      case 'laborPensionSelf':
+      case 'employeeAdvance':
+      case 'probationDays':
+      case 'dischargeYear':
+        out[sysKey] = (raw === '' || raw == null) ? '' : String(raw).replace(/[^\d.-]/g, '')
+        break
+
+      default:
+        out[sysKey] = raw ?? ''
+        break
+    }
+  }
+  return out
+}
+
+// 驗證：檢查必填欄位有無缺漏，回傳錯誤訊息陣列
+function validateRequired(mappedRows) {
+  const errors = []
+  // 找到必填清單
+  const requiredKeys = BULK_IMPORT_FIELD_CONFIGS.filter(f => f.required).map(f => f.key)
+  mappedRows.forEach((obj, idx) => {
+    const miss = requiredKeys.filter(k => obj[k] == null || String(obj[k]).trim() === '')
+    if (miss.length) {
+      const missLabels = miss
+        .map(k => {
+          const f = BULK_IMPORT_FIELD_CONFIGS.find(x => x.key === k)
+          return f?.label || f?.description || f?.header || k
+        })
+        .join('、')
+      errors.push(`第 ${idx + 1} 列缺少必填欄位：${missLabels}`)
+    }
+  })
+  return errors
+}
+
+// 產生你畫面需要的「簡易預覽」欄位（表格目前只顯示這些）
+function buildPreviewList(mappedRows) {
+  return mappedRows.map(o => ({
+    employeeNo: o.employeeNo || o.employeeId || '',
+    name: o.name || '',
+    department: o.department || '',
+    role: o.employmentStatus || o.status || '',
+    email: o.email || ''
+  }))
+}
+
+// 主流程：解析上傳檔 → 轉 mapping → 驗證 → 丟到畫面
+async function parseAndPreviewBulkImport(file) {
+  try {
+    const ext = getFileExt(file)
+    if (!['xlsx', 'xls', 'csv'].includes(ext)) {
+      ElMessage.warning('請上傳 .xlsx/.xls/.csv 檔案')
+      return { ok: false }
+    }
+
+    const rowObjects = await parseFileToRowObjects(file) // 英文 header 的列
+    if (!rowObjects.length) {
+      ElMessage.warning('檔案內容為空，或格式不符（請使用範本）')
+      return { ok: false }
+    }
+
+    // 依使用者「欄位對應」把每一列轉成系統欄位形狀
+    const mappedRows = rowObjects.map(r => mapRowToFormShape(r, bulkImportForm.columnMappings))
+
+    // 必填檢核
+    const reqErrors = validateRequired(mappedRows)
+
+    // 建立預覽
+    const preview = buildPreviewList(mappedRows)
+
+    // 回填到 UI 狀態
+    bulkImportPreview.value = preview
+    bulkImportErrors.value = reqErrors
+    return { ok: true }
+  } catch (err) {
+    console.error('解析匯入檔失敗：', err)
+    ElMessage.error('解析匯入檔失敗，請確認檔案是否符合範本格式')
+    return { ok: false, error: err }
+  }
+}
+
+// ========= 修改：掛上到既有 on-change handler =========
+async function handleBulkImportFileChange(uploadFile) {
+  if (uploadFile?.raw) {
+    bulkImportFile.value = uploadFile.raw
+    bulkImportUploadFileList.value = [uploadFile]
+    // 每次重選檔案先清空舊結果
+    bulkImportPreview.value = []
+    bulkImportErrors.value = []
+
+    // 立即解析 → 產生預覽＋檢核
+    await parseAndPreviewBulkImport(uploadFile.raw)
+  }
+}
+
+// =========（可選）移除檔案時順便清掉預覽 =========
+function handleBulkImportFileRemove() {
+  bulkImportFile.value = null
+  bulkImportUploadFileList.value = []
+  bulkImportPreview.value = []
+  bulkImportErrors.value = []
+}
+
 
 const router = useRouter()
 
@@ -2276,10 +2234,10 @@ const CURRENT_YEAR = new Date().getFullYear()
 
 const SIGN_ROLE_ID_SET = new Set(SIGN_ROLE_OPTIONS.map(option => option.id))
 const SIGN_ROLE_LABEL_TO_ID = new Map(SIGN_ROLE_OPTIONS.map(option => [option.label, option.id]))
-;['填報人員', '覆核人員', '審核人員', '核定人員', '知會人員', '財務覆核人員', '人資覆核人員'].forEach((alias, index) => {
-  const option = SIGN_ROLE_OPTIONS[index]
-  if (option) SIGN_ROLE_LABEL_TO_ID.set(alias, option.id)
-})
+  ;['填報人員', '覆核人員', '審核人員', '核定人員', '知會人員', '財務覆核人員', '人資覆核人員'].forEach((alias, index) => {
+    const option = SIGN_ROLE_OPTIONS[index]
+    if (option) SIGN_ROLE_LABEL_TO_ID.set(alias, option.id)
+  })
 
 const SIGN_LEVEL_ID_SET = new Set(SIGN_LEVEL_OPTIONS.map(level => level.id))
 const SIGN_LEVEL_LABEL_TO_ID = new Map(SIGN_LEVEL_OPTIONS.map(level => [level.label, level.id]))
@@ -2745,13 +2703,13 @@ async function fetchEmployees() {
         ),
         reAppointDate: toDateOrEmpty(
           appointment?.reAppointDate ??
-            appointment?.rehireStartDate ??
-            e?.reAppointDate
+          appointment?.rehireStartDate ??
+          e?.reAppointDate
         ),
         reDismissDate: toDateOrEmpty(
           appointment?.reDismissDate ??
-            appointment?.rehireEndDate ??
-            e?.reDismissDate
+          appointment?.rehireEndDate ??
+          e?.reDismissDate
         ),
         employmentNote: toStringOrEmpty(
           appointment?.remark ?? e?.employmentNote ?? ''
@@ -2932,11 +2890,11 @@ const filteredSubDepartments = computed(() =>
 const supervisorList = computed(() =>
   employeeForm.value.organization && employeeForm.value.department
     ? employeeList.value.filter(
-        e =>
-          e.role === 'supervisor' &&
-          e.organization === employeeForm.value.organization &&
-          e.department === employeeForm.value.department
-      )
+      e =>
+        e.role === 'supervisor' &&
+        e.organization === employeeForm.value.organization &&
+        e.department === employeeForm.value.department
+    )
     : []
 )
 
@@ -3049,21 +3007,7 @@ function resetBulkImportState({ resetMappings = true } = {}) {
   }
 }
 
-function handleBulkImportFileChange(uploadFile) {
-  if (uploadFile?.raw) {
-    bulkImportFile.value = uploadFile.raw
-    bulkImportUploadFileList.value = [uploadFile]
-    bulkImportPreview.value = []
-    bulkImportErrors.value = []
-  }
-}
 
-function handleBulkImportFileRemove() {
-  bulkImportFile.value = null
-  bulkImportUploadFileList.value = []
-  bulkImportPreview.value = []
-  bulkImportErrors.value = []
-}
 
 function normalizeReferenceKeyClient(value) {
   if (value === null || value === undefined) return ''
@@ -3129,20 +3073,172 @@ function buildReferenceOptionLabel(type, option) {
   return option.id || ''
 }
 
+// 把後端回傳的 missingReferences 任意鍵名 → 統一成 organization/department/subDepartment
+function normalizeMissingRefPayload(raw = {}) {
+  // 常見的變體鍵名
+  const keyMap = {
+    organization: ['organization', 'org', 'organizations'],
+    department: ['department', 'dept', 'departments'],
+    subDepartment: ['subDepartment', 'subdept', 'sub_department', 'subDepartments']
+  }
+
+  const out = {
+    organization: { values: [], options: [] },
+    department: { values: [], options: [] },
+    subDepartment: { values: [], options: [] }
+  }
+
+  function pick(obj, aliases) {
+    for (const k of aliases) {
+      if (obj && Object.prototype.hasOwnProperty.call(obj, k)) return obj[k]
+    }
+    return undefined
+  }
+
+  for (const canonical of Object.keys(keyMap)) {
+    const block = pick(raw, keyMap[canonical]) || {}
+    const values = Array.isArray(block.values) ? block.values : Array.isArray(block) ? block : []
+    const options = Array.isArray(block.options) ? block.options : []
+    // values 允許是「純字串陣列」或「{value, rows}」
+    const normValues = values.map((v) => {
+      if (v && typeof v === 'object') {
+        const value = v.value ?? v.name ?? v.label ?? v.code ?? v
+        const rows = Array.isArray(v.rows) ? v.rows : []
+        return { value, rows, normalizedValue: normalizeReferenceKeyClient(value) }
+      }
+      return { value: v, rows: [], normalizedValue: normalizeReferenceKeyClient(v) }
+    }).filter(v => v.value != null && String(v.value).trim() !== '')
+    const normOptions = options.map((o) => {
+      if (o && typeof o === 'object') {
+        return {
+          id: o._id ?? o.id ?? o.value ?? o.code ?? '',
+          name: o.name ?? o.label ?? '',
+          code: o.code ?? '',
+          organization: o.organization ?? o.org ?? ''
+        }
+      }
+      return { id: String(o), name: String(o) }
+    })
+    out[canonical] = { values: normValues, options: normOptions }
+  }
+
+  return out
+}
+
+// 從目前待匯入的「映射後列」掃描未知的 org/department/subDepartment
+function buildClientMissingRefs(mappedRows = []) {
+  const knownOrg = new Set((orgList.value || []).map(o => (o._id ?? o.id ?? o.name ?? o).toString().trim().toLowerCase()))
+  const knownDept = new Set((departmentList.value || []).map(d => (d.code ?? d._id ?? d.id ?? d.name ?? d).toString().trim().toLowerCase()))
+  const knownSub = new Set((subDepartmentList.value || []).map(s => (s.code ?? s._id ?? s.id ?? s.name ?? s).toString().trim().toLowerCase()))
+
+  const miss = {
+    organization: new Map(),   // normalizedValue -> { value, rows:Set }
+    department: new Map(),
+    subDepartment: new Map()
+  }
+
+  mappedRows.forEach((row, idx) => {
+    const rowNo = idx + 3; // 你的 CSV 是第3列開始才是資料
+    const orgVal = row.organization ?? ''
+    const deptVal = row.department ?? ''
+    const subVal = row.subDepartment ?? ''
+
+    if (orgVal) {
+      const norm = normalizeReferenceKeyClient(orgVal)
+      if (norm && !knownOrg.has(norm)) {
+        if (!miss.organization.has(norm)) miss.organization.set(norm, { value: orgVal, rows: new Set() })
+        miss.organization.get(norm).rows.add(rowNo)
+      }
+    }
+    if (deptVal) {
+      const norm = normalizeReferenceKeyClient(deptVal)
+      if (norm && !knownDept.has(norm)) {
+        if (!miss.department.has(norm)) miss.department.set(norm, { value: deptVal, rows: new Set() })
+        miss.department.get(norm).rows.add(rowNo)
+      }
+    }
+    if (subVal) {
+      const norm = normalizeReferenceKeyClient(subVal)
+      if (norm && !knownSub.has(norm)) {
+        if (!miss.subDepartment.has(norm)) miss.subDepartment.set(norm, { value: subVal, rows: new Set() })
+        miss.subDepartment.get(norm).rows.add(rowNo)
+      }
+    }
+  })
+
+  const toValueArray = (m) => Array.from(m.values()).map(v => ({
+    value: v.value,
+    rows: Array.from(v.rows),
+    normalizedValue: normalizeReferenceKeyClient(v.value)
+  }))
+
+  // 用現有列表做 options
+  const orgOptions = (orgList.value || []).map(o => ({
+    id: o._id ?? o.id ?? '',
+    name: o.name ?? '',
+    orgCode: o.orgCode ?? o.code ?? '',
+    unitName: o.unitName ?? ''
+  }))
+  const deptOptions = (departmentList.value || []).map(d => ({
+    id: d._id ?? d.id ?? '',
+    name: d.name ?? '',
+    code: d.code ?? '',
+    organization: d.organization ?? ''
+  }))
+  const subOptions = (subDepartmentList.value || []).map(s => ({
+    id: s._id ?? s.id ?? '',
+    name: s.name ?? '',
+    code: s.code ?? '',
+    department: s.department ?? ''
+  }))
+
+  return {
+    organization: { values: toValueArray(miss.organization), options: orgOptions },
+    department: { values: toValueArray(miss.department), options: deptOptions },
+    subDepartment: { values: toValueArray(miss.subDepartment), options: subOptions }
+  }
+}
+
+
 function openReferenceMappingDialog(missingReferences = {}, message = '') {
   referenceMappingDialogMessage.value = message || '部分欄位需要對應既有的組織/部門資料'
   referenceMappingDialogVisible.value = true
   referenceMappingSubmitting.value = false
+
+  // 用目前清單當作保底選項
+  const fallbackOptions = {
+    organization: (orgList.value || []).map(o => ({
+      id: o._id ?? o.id ?? '',
+      name: o.name ?? '',
+      orgCode: o.orgCode ?? o.code ?? '',
+      unitName: o.unitName ?? ''
+    })),
+    department: (departmentList.value || []).map(d => ({
+      id: d._id ?? d.id ?? '',
+      name: d.name ?? '',
+      code: d.code ?? '',
+      organization: d.organization ?? ''
+    })),
+    subDepartment: (subDepartmentList.value || []).map(s => ({
+      id: s._id ?? s.id ?? '',
+      name: s.name ?? '',
+      code: s.code ?? '',
+      department: s.department ?? ''
+    }))
+  }
+
   REFERENCE_MAPPING_KEYS.forEach(key => {
     const values = Array.isArray(missingReferences?.[key]?.values)
       ? missingReferences[key].values
       : []
-    const options = Array.isArray(missingReferences?.[key]?.options)
+    const options = Array.isArray(missingReferences?.[key]?.options) && missingReferences[key].options.length
       ? missingReferences[key].options
-      : []
+      : fallbackOptions[key]
+
     referenceMappingPending[key] = values.map(item => ({ ...item }))
     referenceMappingOptions[key] = options.map(item => ({ ...item }))
     referenceMappingSelections[key] = {}
+
     values.forEach(entry => {
       const normalized = getReferenceEntryKey(entry)
       const existingIgnore = resolvedReferenceIgnores[key].includes(normalized)
@@ -3153,6 +3249,7 @@ function openReferenceMappingDialog(missingReferences = {}, message = '') {
     })
   })
 }
+
 
 async function submitBulkImport({ triggeredByMapping = false } = {}) {
   if (!bulkImportFile.value) {
@@ -3184,12 +3281,42 @@ async function submitBulkImport({ triggeredByMapping = false } = {}) {
       payload = {}
     }
 
-    if (res.status === 409 && payload?.missingReferences) {
+    if (res.status === 409) {
+      // 後端可能給，也可能沒給；都先正規化一次
+      const normalized = normalizeMissingRefPayload(payload?.missingReferences || {})
+      const allEmpty = ['organization', 'department', 'subDepartment']
+        .every(k => !normalized[k].values || normalized[k].values.length === 0)
+
+      // 如果後端沒給或是空，前端自己掃描未知值來生出互動清單
+      let finalRefs = normalized
+      if (allEmpty) {
+        // 這裡需要目前這次上傳的「映射後列」；重跑一次 map（跟預覽用的邏輯一致）
+        // 直接從檔案取資料再映射（避免依賴 preview 畫面）
+        try {
+          const rowObjects = await parseFileToRowObjects(bulkImportFile.value)
+          const mappedRows = rowObjects.map(r => mapRowToFormShape(r, bulkImportForm.columnMappings))
+          finalRefs = buildClientMissingRefs(mappedRows)
+        } catch (e) {
+          console.warn('client-side missing refs build failed:', e)
+        }
+      }
+
+      // 若仍然都是空，顯示後端訊息即可
+      const hasAny =
+        (finalRefs.organization.values?.length || 0) +
+        (finalRefs.department.values?.length || 0) +
+        (finalRefs.subDepartment.values?.length || 0) > 0
+
       bulkImportErrors.value = Array.isArray(payload?.errors) ? payload.errors : []
-      openReferenceMappingDialog(payload.missingReferences, payload?.message)
-      ElMessage.warning(payload?.message || '請完成參照對應後再試')
+      if (hasAny) {
+        openReferenceMappingDialog(finalRefs, payload?.message)
+        ElMessage.warning(payload?.message || '請完成參照對應後再試')
+      } else {
+        ElMessage.warning(payload?.message || '匯入資料存在未對應的參照，請確認')
+      }
       return
     }
+
 
     if (!res.ok) {
       bulkImportErrors.value = Array.isArray(payload?.errors) ? payload.errors : []
@@ -3324,8 +3451,8 @@ async function openEmployeeDialog(index = null) {
       employeeForm.value.militaryRank || service.rank || ''
     const dischargeYearSource =
       employeeForm.value.dischargeYear === '' ||
-      employeeForm.value.dischargeYear === null ||
-      employeeForm.value.dischargeYear === undefined
+        employeeForm.value.dischargeYear === null ||
+        employeeForm.value.dischargeYear === undefined
         ? service.dischargeYear
         : employeeForm.value.dischargeYear
     employeeForm.value.dischargeYear = toNumberOrNull(dischargeYearSource)
@@ -3508,7 +3635,7 @@ function removeTraining(i) {
 }
 
 const activeEmployees = computed(() => {
-  return employeeList.value.filter(emp => 
+  return employeeList.value.filter(emp =>
     emp.employmentStatus === '正職員工' || emp.employmentStatus === '試用期員工'
   ).length
 })
@@ -3944,7 +4071,9 @@ function getStatusTagType(status) {
   color: #10b981;
 }
 
-.title-tag, .role-tag, .status-tag {
+.title-tag,
+.role-tag,
+.status-tag {
   font-weight: 500;
   padding: 4px 8px;
   border-radius: 4px;
@@ -3975,7 +4104,8 @@ function getStatusTagType(status) {
   gap: 8px;
 }
 
-.edit-btn, .delete-btn {
+.edit-btn,
+.delete-btn {
   display: flex;
   align-items: center;
   gap: 4px;
@@ -4132,7 +4262,8 @@ function getStatusTagType(status) {
   border: 1px solid #e2e8f0;
 }
 
-.contact-subtitle, .account-subtitle {
+.contact-subtitle,
+.account-subtitle {
   font-size: 14px;
   font-weight: 600;
   color: #475569;
@@ -4222,26 +4353,26 @@ function getStatusTagType(status) {
     text-align: center;
     gap: 20px;
   }
-  
+
   .header-stats {
     gap: 20px;
   }
-  
+
   .content-header {
     flex-direction: column;
     align-items: stretch;
     gap: 16px;
   }
-  
+
   .form-row {
     grid-template-columns: 1fr;
     gap: 16px;
   }
-  
+
   .tab-content {
     padding: 16px;
   }
-  
+
   .employee-dialog {
     width: 95% !important;
   }
@@ -4252,15 +4383,15 @@ function getStatusTagType(status) {
     flex-direction: column;
     gap: 4px;
   }
-  
+
   .stat-number {
     font-size: 24px;
   }
-  
+
   .role-radio-group {
     gap: 12px;
   }
-  
+
   .role-radio {
     padding: 12px;
   }
