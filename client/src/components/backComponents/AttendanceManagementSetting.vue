@@ -25,6 +25,16 @@
             :disabled="!form.enableImport"
           />
         </el-form-item>
+        <el-form-item label="考勤資料匯入">
+          <el-button
+            type="primary"
+            :disabled="!form.enableImport"
+            data-test="attendance-import-button"
+            @click="attendanceImportVisible = true"
+          >
+            開啟匯入流程
+          </el-button>
+        </el-form-item>
   
         <!-- 2) 補打卡審核設定 -->
         <el-divider content-position="left">補打卡審核設定</el-divider>
@@ -74,12 +84,19 @@
         </el-form-item>
       </el-form>
     </div>
+    <AttendanceImportDialog
+      v-model="attendanceImportVisible"
+      @import-complete="handleAttendanceImportComplete"
+    />
   </template>
-  
+
   <script setup>
 import { ref, onMounted } from 'vue'
 import { apiFetch } from '../../api'
+import AttendanceImportDialog from './AttendanceImportDialog.vue'
   
+  const attendanceImportVisible = ref(false)
+
   const form = ref({
     // 1) 資料匯入設定
     enableImport: false,
@@ -131,6 +148,10 @@ import { apiFetch } from '../../api'
       settingId.value = saved._id || settingId.value
       alert('已儲存「考勤管理設定」')
     }
+  }
+
+  function handleAttendanceImportComplete() {
+    alert('考勤資料匯入完成')
   }
 
   onMounted(fetchSetting)
