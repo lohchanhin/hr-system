@@ -1,4 +1,4 @@
-const MAX_UPLOAD_SIZE = 8 * 1024 * 1024 // 8MB：含檔案與欄位
+const MAX_UPLOAD_SIZE = 50 * 1024 * 1024 // 8MB：含檔案與欄位
 
 function trimBufferCRLF(buffer) {
   let end = buffer.length
