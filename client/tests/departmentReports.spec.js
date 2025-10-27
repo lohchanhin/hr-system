@@ -63,6 +63,7 @@ describe('DepartmentReports.vue', () => {
     vi.clearAllMocks()
     apiFetch.mockReset()
     window.sessionStorage.setItem('employeeId', 'sup1')
+    window.sessionStorage.setItem('role', 'supervisor')
     apiFetch.mockResolvedValueOnce({
       ok: true,
       json: async () => ({
