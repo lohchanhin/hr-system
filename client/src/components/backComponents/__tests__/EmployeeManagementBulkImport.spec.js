@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { shallowMount } from '@vue/test-utils'
 import * as apiModule from '../../../api'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 
 vi.mock('xlsx', () => ({
   read: vi.fn(() => ({ SheetNames: [], Sheets: {} })),
@@ -15,6 +15,8 @@ vi.mock('element-plus', () => {
   const success = vi.fn()
   const error = vi.fn()
   const warning = vi.fn()
+  const confirm = vi.fn(() => Promise.resolve())
+  const alert = vi.fn(() => Promise.resolve())
   return {
     ElMessage: {
       success,
@@ -22,8 +24,8 @@ vi.mock('element-plus', () => {
       warning
     },
     ElMessageBox: {
-      confirm: vi.fn(),
-      alert: vi.fn()
+      confirm,
+      alert
     }
   }
 })
@@ -121,6 +123,8 @@ describe('EmployeeManagement - 批量匯入流程', () => {
     ElMessage.success.mockClear()
     ElMessage.error.mockClear()
     ElMessage.warning.mockClear()
+    ElMessageBox.confirm.mockClear()
+    ElMessageBox.alert.mockClear()
   })
 
   afterEach(() => {
@@ -251,12 +255,16 @@ describe('EmployeeManagement - 批量匯入流程', () => {
     const file = new File([csvContent], 'employee-import-template.csv', { type: 'text/csv' })
     wrapper.vm.handleBulkImportFileChange({ name: 'employee-import-template.csv', raw: file })
 
+    wrapper.vm.bulkImportPreview = samplePreview
+    ElMessage.warning.mockClear()
+
     await wrapper.vm.submitBulkImport()
     await flushPromises()
 
     expect(importEmployeesBulkMock).toHaveBeenCalledTimes(1)
     expect(wrapper.vm.bulkImportErrors).toEqual([])
-    expect(wrapper.vm.bulkImportPreview).toEqual([])
+    expect(wrapper.vm.bulkImportPreview).toEqual(samplePreview)
+    expect(wrapper.vm.bulkImportDialogVisible).toBe(true)
   })
 
   it('匯入成功後顯示成功訊息並重新載入員工列表', async () => {
@@ -275,6 +283,8 @@ describe('EmployeeManagement - 批量匯入流程', () => {
       type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
     })
     wrapper.vm.handleBulkImportFileChange({ name: 'employees.xlsx', raw: file })
+
+    ElMessage.warning.mockClear()
 
     expect(wrapper.vm.bulkImportRequiredFieldNames).toEqual(['員工編號', '姓名', '電子郵件'])
     expect(wrapper.vm.bulkImportForm.columnMappings.employeeNo).toBe('employeeId')
@@ -320,8 +330,53 @@ describe('EmployeeManagement - 批量匯入流程', () => {
       ([path]) => path === '/api/employees'
     ).length
     expect(afterEmployeeCalls).toBeGreaterThan(beforeEmployeeCalls)
-    expect(wrapper.vm.bulkImportDialogVisible).toBe(false)
+    expect(wrapper.vm.bulkImportDialogVisible).toBe(true)
+    expect(wrapper.vm.bulkImportPreview).toEqual(previewRows)
     expect(wrapper.vm.bulkImportErrors).toEqual([])
+  })
+
+  it('匯入成功後保留預覽，使用者確認關閉才會重置狀態', async () => {
+    const previewRows = [
+      { employeeNo: 'E0003', name: '李小青', department: '資訊部', role: 'employee', email: 'it@example.com' }
+    ]
+    importEmployeesBulkMock.mockResolvedValue(
+      createApiResponse({ preview: previewRows, errors: [] })
+    )
+
+    const wrapper = await mountComponent()
+    await wrapper.find('[data-test="bulk-import-button"]').trigger('click')
+
+    const file = new File(['測試匯入'], 'employees.xlsx', {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    })
+    wrapper.vm.handleBulkImportFileChange({ name: 'employees.xlsx', raw: file })
+
+    ElMessage.warning.mockClear()
+
+    await wrapper.vm.submitBulkImport()
+    await flushPromises()
+
+    expect(wrapper.vm.bulkImportDialogVisible).toBe(true)
+    expect(wrapper.vm.bulkImportPreview).toEqual(previewRows)
+
+    ElMessageBox.confirm.mockResolvedValueOnce()
+    await wrapper.vm.handleBulkImportDialogCancel()
+    await flushPromises()
+
+    expect(ElMessageBox.confirm).toHaveBeenCalledWith(
+      '關閉後將清除目前的匯入檔案、預覽與對應設定，確定要離開？',
+      '確認關閉匯入',
+      expect.objectContaining({
+        type: 'warning',
+        confirmButtonText: '確認關閉',
+        cancelButtonText: '繼續編輯'
+      })
+    )
+    expect(wrapper.vm.bulkImportDialogVisible).toBe(false)
+    expect(wrapper.vm.bulkImportPreview).toEqual([])
+    expect(wrapper.vm.bulkImportErrors).toEqual([])
+    expect(wrapper.vm.bulkImportUploadFileList).toEqual([])
+    expect(wrapper.vm.bulkImportFile).toBeNull()
   })
 
   it('匯入失敗時顯示錯誤訊息並保留錯誤清單', async () => {

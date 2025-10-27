@@ -872,7 +872,7 @@
       </el-dialog>
 
       <el-dialog v-model="bulkImportDialogVisible" title="批量匯入員工" width="720px" class="bulk-import-dialog"
-        :close-on-click-modal="false">
+        :close-on-click-modal="false" :before-close="handleBulkImportDialogBeforeClose">
         <div class="bulk-import-header">
           <el-alert type="info" show-icon :closable="false">
             <template #title>
@@ -969,7 +969,7 @@
         </div>
 
         <template #footer>
-          <el-button @click="bulkImportDialogVisible = false">取消</el-button>
+          <el-button @click="handleBulkImportDialogCancel">取消</el-button>
           <el-button type="primary" :loading="bulkImportLoading" :disabled="!isBulkImportReady || bulkImportLoading"
             @click="submitBulkImport">
             開始匯入
@@ -1272,24 +1272,48 @@ async function parseAndPreviewBulkImport(file) {
 
 // ========= 修改：掛上到既有 on-change handler =========
 async function handleBulkImportFileChange(uploadFile) {
-  if (uploadFile?.raw) {
-    bulkImportFile.value = uploadFile.raw
-    bulkImportUploadFileList.value = [uploadFile]
-    // 每次重選檔案先清空舊結果
-    bulkImportPreview.value = []
-    bulkImportErrors.value = []
+  if (!uploadFile?.raw) return
 
-    // 立即解析 → 產生預覽＋檢核
-    await parseAndPreviewBulkImport(uploadFile.raw)
+  const previousFile = bulkImportFile.value
+  const previousUploadList = bulkImportUploadFileList.value.map(file => ({ ...file }))
+  const isReplacingExistingFile = Boolean(previousFile) && previousFile !== uploadFile.raw
+
+  if (isReplacingExistingFile && hasBulkImportProgress.value) {
+    try {
+      await ElMessageBox.confirm(
+        '重新選擇檔案將清除目前的預覽資料與參照對應設定，是否繼續？',
+        '確認更換匯入檔案',
+        {
+          type: 'warning',
+          confirmButtonText: '重新選擇',
+          cancelButtonText: '保留現況'
+        }
+      )
+    } catch (error) {
+      bulkImportUploadFileList.value = previousUploadList
+      return
+    }
   }
+
+  resetBulkImportState({
+    resetMappings: false,
+    resetResolvedReferences: true,
+    referenceKeys: REFERENCE_MAPPING_DEFAULT_KEYS
+  })
+
+  bulkImportFile.value = uploadFile.raw
+  bulkImportUploadFileList.value = [uploadFile]
+
+  await parseAndPreviewBulkImport(uploadFile.raw)
 }
 
 // =========（可選）移除檔案時順便清掉預覽 =========
 function handleBulkImportFileRemove() {
-  bulkImportFile.value = null
-  bulkImportUploadFileList.value = []
-  bulkImportPreview.value = []
-  bulkImportErrors.value = []
+  resetBulkImportState({
+    resetMappings: false,
+    resetResolvedReferences: true,
+    referenceKeys: REFERENCE_MAPPING_DEFAULT_KEYS
+  })
 }
 
 
@@ -1948,6 +1972,7 @@ const salaryItemOptions = ref([])
 const defaultBulkImportRole =
   ROLE_OPTIONS.find(option => option.value === 'employee')?.value ?? ROLE_OPTIONS[0]?.value ?? ''
 const bulkImportDialogVisible = ref(false)
+const bulkImportDialogCloseOptions = ref(null)
 const bulkImportLoading = ref(false)
 const bulkImportFile = ref(null)
 const bulkImportUploadFileList = ref([])
@@ -1994,6 +2019,54 @@ const referenceMappingSelections = reactive({})
 const resolvedReferenceValueMappings = reactive({})
 const resolvedReferenceIgnores = reactive({})
 const referenceMappingSubmitting = ref(false)
+
+const hasBulkImportProgress = computed(() => {
+  const hasFile = Boolean(bulkImportFile.value)
+  const hasUploadList = (bulkImportUploadFileList.value || []).length > 0
+  const hasPreview = (bulkImportPreview.value || []).length > 0
+  const hasErrors = (bulkImportErrors.value || []).length > 0
+  const hasReferenceDialog = referenceMappingDialogVisible.value
+  const hasReferenceMessage = Boolean(referenceMappingDialogMessage.value)
+  const hasPendingReference = referenceMappingKeys.value.some(
+    key => (referenceMappingPending[key] || []).length > 0
+  )
+  const hasResolvedReference =
+    Object.values(resolvedReferenceValueMappings).some(map =>
+      Object.keys(map || {}).length > 0
+    ) ||
+    Object.values(resolvedReferenceIgnores).some(list =>
+      Array.isArray(list) && list.length > 0
+    )
+
+  const defaultMappingKeys = Object.keys(DEFAULT_BULK_IMPORT_COLUMN_MAPPINGS)
+  const mappingKeys = new Set([
+    ...defaultMappingKeys,
+    ...Object.keys(bulkImportForm.columnMappings)
+  ])
+  const hasMappingChange = Array.from(mappingKeys).some(key => {
+    const current = bulkImportForm.columnMappings[key] ?? ''
+    const baseline = DEFAULT_BULK_IMPORT_COLUMN_MAPPINGS[key] ?? ''
+    return current !== baseline
+  })
+
+  const hasOptionChange =
+    bulkImportForm.options.defaultRole !== defaultBulkImportRole ||
+    Boolean(bulkImportForm.options.resetPassword) ||
+    Boolean(bulkImportForm.options.sendWelcomeEmail)
+
+  return (
+    hasFile ||
+    hasUploadList ||
+    hasPreview ||
+    hasErrors ||
+    hasReferenceDialog ||
+    hasReferenceMessage ||
+    hasPendingReference ||
+    hasResolvedReference ||
+    hasMappingChange ||
+    hasOptionChange
+  )
+})
 
 updateReferenceMappingKeys(REFERENCE_MAPPING_DEFAULT_KEYS, {
   resetPending: true,
@@ -2988,7 +3061,12 @@ const supervisorList = computed(() =>
 
 watch(bulkImportDialogVisible, visible => {
   if (!visible) {
-    resetBulkImportState()
+    if (bulkImportDialogCloseOptions.value) {
+      resetBulkImportState(bulkImportDialogCloseOptions.value)
+      bulkImportDialogCloseOptions.value = null
+    }
+  } else {
+    bulkImportDialogCloseOptions.value = null
   }
 })
 
@@ -3062,22 +3140,92 @@ function openBulkImportDialog() {
   bulkImportDialogVisible.value = true
 }
 
-function resetBulkImportState({ resetMappings = true } = {}) {
+async function requestBulkImportDialogClose({ resetMappings = true, done } = {}) {
+  if (hasBulkImportProgress.value) {
+    try {
+      await ElMessageBox.confirm(
+        '關閉後將清除目前的匯入檔案、預覽與對應設定，確定要離開？',
+        '確認關閉匯入',
+        {
+          type: 'warning',
+          confirmButtonText: '確認關閉',
+          cancelButtonText: '繼續編輯'
+        }
+      )
+    } catch (error) {
+      return false
+    }
+  }
+
+  bulkImportDialogCloseOptions.value = {
+    resetMappings,
+    resetReferenceData: true,
+    resetResolvedReferences: true
+  }
+
+  if (typeof done === 'function') {
+    done()
+  } else {
+    bulkImportDialogVisible.value = false
+  }
+
+  return true
+}
+
+async function handleBulkImportDialogCancel() {
+  await requestBulkImportDialogClose()
+}
+
+async function handleBulkImportDialogBeforeClose(done) {
+  await requestBulkImportDialogClose({ done })
+}
+
+function resetBulkImportState({
+  resetMappings = true,
+  resetFile = true,
+  resetPreview = true,
+  resetErrors = true,
+  resetUploadList = true,
+  resetReferenceDialogs = true,
+  resetReferenceData = true,
+  resetResolvedReferences = resetMappings,
+  resetOptions = resetMappings,
+  referenceKeys
+} = {}) {
   bulkImportLoading.value = false
-  bulkImportFile.value = null
-  bulkImportUploadFileList.value = []
-  bulkImportPreview.value = []
-  bulkImportErrors.value = []
-  referenceMappingDialogVisible.value = false
-  referenceMappingDialogMessage.value = ''
-  referenceMappingSubmitting.value = false
-  const targetKeys = resetMappings ? REFERENCE_MAPPING_DEFAULT_KEYS : referenceMappingKeys.value
-  updateReferenceMappingKeys(targetKeys, {
-    resetPending: true,
-    resetOptions: true,
-    resetSelections: true,
-    resetResolved: resetMappings
-  })
+
+  if (resetFile) {
+    bulkImportFile.value = null
+  }
+  if (resetUploadList) {
+    bulkImportUploadFileList.value = []
+  }
+  if (resetPreview) {
+    bulkImportPreview.value = []
+  }
+  if (resetErrors) {
+    bulkImportErrors.value = []
+  }
+  if (resetReferenceDialogs) {
+    referenceMappingDialogVisible.value = false
+    referenceMappingDialogMessage.value = ''
+    referenceMappingSubmitting.value = false
+  }
+
+  if (resetReferenceData) {
+    const targetKeys = Array.isArray(referenceKeys)
+      ? referenceKeys
+      : resetMappings
+        ? REFERENCE_MAPPING_DEFAULT_KEYS
+        : referenceMappingKeys.value
+    updateReferenceMappingKeys(targetKeys, {
+      resetPending: true,
+      resetOptions: true,
+      resetSelections: true,
+      resetResolved: resetResolvedReferences
+    })
+  }
+
   if (resetMappings) {
     Object.keys(bulkImportForm.columnMappings).forEach(key => {
       if (!(key in DEFAULT_BULK_IMPORT_COLUMN_MAPPINGS)) {
@@ -3087,6 +3235,9 @@ function resetBulkImportState({ resetMappings = true } = {}) {
     Object.entries(DEFAULT_BULK_IMPORT_COLUMN_MAPPINGS).forEach(([key, header]) => {
       bulkImportForm.columnMappings[key] = header
     })
+  }
+
+  if (resetOptions) {
     bulkImportForm.options.defaultRole = defaultBulkImportRole
     bulkImportForm.options.resetPassword = ''
     bulkImportForm.options.sendWelcomeEmail = false
@@ -3459,7 +3610,10 @@ async function submitBulkImport({ triggeredByMapping = false } = {}) {
       throw new Error(message)
     }
 
-    bulkImportPreview.value = Array.isArray(payload?.preview) ? payload.preview : []
+    const serverPreview = Array.isArray(payload?.preview) ? payload.preview : null
+    if (Array.isArray(serverPreview) && serverPreview.length) {
+      bulkImportPreview.value = serverPreview
+    }
     bulkImportErrors.value = Array.isArray(payload?.errors) ? payload.errors : []
 
     if (bulkImportErrors.value.length) {
@@ -3470,7 +3624,6 @@ async function submitBulkImport({ triggeredByMapping = false } = {}) {
 
     await fetchEmployees()
     if (!bulkImportErrors.value.length) {
-      bulkImportDialogVisible.value = false
       referenceMappingDialogVisible.value = false
       referenceMappingDialogMessage.value = ''
     }
