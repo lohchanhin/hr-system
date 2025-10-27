@@ -424,8 +424,8 @@
         <h3 class="approval-title">待處理審批</h3>
         <div class="approval-count">{{ approvalList.length }} 項待處理</div>
       </div>
-      <el-table 
-        class="modern-approval-table" 
+      <el-table
+        class="modern-approval-table"
         :data="approvalList"
         :header-cell-style="{ backgroundColor: '#f1f5f9', color: '#164e63', fontWeight: '600' }"
       >
@@ -441,7 +441,7 @@
         </el-table-column>
         <el-table-column prop="status" label="狀態" width="100">
           <template #default="{ row }">
-            <el-tag 
+            <el-tag
               :type="row.status === 'approved' ? 'success' : row.status === 'rejected' ? 'danger' : 'warning'"
               class="status-tag"
             >
@@ -449,13 +449,68 @@
             </el-tag>
           </template>
         </el-table-column>
+        <el-table-column label="操作" width="120">
+          <template #default="{ row }">
+            <el-button size="small" @click="openDetail(row._id)" :disabled="!row._id">
+              查看
+            </el-button>
+          </template>
+        </el-table-column>
       </el-table>
     </div>
   </div>
+
+  <el-dialog v-model="detail.visible" title="申請單明細" width="760px">
+    <div v-if="detail.doc">
+      <p class="mb-2"><b>表單：</b>{{ detail.doc.form?.name }}（{{ detail.doc.form?.category }}）</p>
+      <p class="mb-2"><b>申請人：</b>{{ detail.doc.applicant_employee?.name || '-' }}</p>
+      <p class="mb-2"><b>狀態：</b>{{ getStatusText(detail.doc.status) }}</p>
+      <el-divider content-position="left">填寫內容</el-divider>
+      <el-descriptions :column="1" size="small" border>
+        <el-descriptions-item
+          v-for="fld in detail.doc.form?.fields || []"
+          :key="fld._id"
+          :label="fld.label"
+        >
+          <span>{{ renderValue(detail.doc.form_data?.[fld._id]) }}</span>
+        </el-descriptions-item>
+      </el-descriptions>
+
+      <el-divider content-position="left">流程</el-divider>
+      <el-timeline>
+        <el-timeline-item
+          v-for="(s, idx) in detail.doc.steps"
+          :key="idx"
+          :timestamp="`第 ${idx + 1} 關`"
+          :type="idx === detail.doc.current_step_index ? 'primary' : 'info'"
+        >
+          <div class="mb-1">
+            <span class="mr-2">需全員同意：{{ s.all_must_approve ? '是' : '否' }}</span>
+            <span>必簽：{{ s.is_required ? '是' : '否' }}</span>
+          </div>
+          <el-table :data="s.approvers" size="small" border>
+            <el-table-column label="審核人" width="200">
+              <template #default="{ row }">{{ approverName(row.approver) }}</template>
+            </el-table-column>
+            <el-table-column label="決議" width="120">
+              <template #default="{ row }">{{ getStatusText(row.decision) }}</template>
+            </el-table-column>
+            <el-table-column label="時間" width="200">
+              <template #default="{ row }">{{ fmt(row.decided_at) }}</template>
+            </el-table-column>
+            <el-table-column prop="comment" label="意見" />
+          </el-table>
+        </el-timeline-item>
+      </el-timeline>
+    </div>
+    <template #footer>
+      <el-button @click="detail.visible = false">關閉</el-button>
+    </template>
+  </el-dialog>
 </template>
 
 <script setup>
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, watch, reactive } from 'vue'
 import dayjs from 'dayjs'
 import { apiFetch } from '../../api'
 import { useAuthStore } from '../../stores/auth'
@@ -463,6 +518,9 @@ import { ElMessage, ElMessageBox, ElLoading } from 'element-plus'
 import { useRouter } from 'vue-router'
 import ScheduleDashboard from './ScheduleDashboard.vue'
 import { CircleCloseFilled, WarningFilled } from '@element-plus/icons-vue'
+
+const fmt = d => (d ? new Date(d).toLocaleString() : '-')
+const renderValue = v => (Array.isArray(v) ? v.join(', ') : v ?? '-')
 
 const currentMonth = ref(dayjs().format('YYYY-MM'))
 const scheduleMap = ref({})
@@ -492,6 +550,8 @@ const batchShiftId = ref('')
 const batchDepartment = ref('')
 const batchSubDepartment = ref('')
 const isApplyingBatch = ref(false)
+const detail = reactive({ visible: false, doc: null })
+const employeeNameCache = reactive({})
 
 const selectedEmployeesSet = computed(() => selectedEmployees.value)
 const selectedDaysSet = computed(() => selectedDays.value)
@@ -763,6 +823,24 @@ const callSuccess = message => {
   if (typeof globalSuccess === 'function' && globalSuccess !== moduleSuccess) {
     globalSuccess(message)
   }
+}
+
+const getStatusText = status => {
+  const map = {
+    pending: '待簽核',
+    approved: '已核可',
+    rejected: '已否決',
+    returned: '已退簽'
+  }
+  return map[status] || status || '-'
+}
+
+const approverName = emp => {
+  if (emp && typeof emp === 'object') {
+    const id = emp._id || emp.employeeId || ''
+    return emp.name || employeeNameCache[id] || id
+  }
+  return employeeNameCache[emp] || emp || '-'
 }
 
 const leaveTooltip = (empId, day) => {
@@ -1191,6 +1269,26 @@ async function fetchSchedules() {
     console.error(err)
     ElMessage.error('取得排班資料失敗')
   }
+}
+
+async function openDetail(id) {
+  if (!id) return
+  detail.visible = false
+  detail.doc = null
+  const res = await apiFetch(`/api/approvals/${id}`)
+  if (!res.ok) return
+  const data = await res.json()
+  detail.doc = data
+  detail.visible = true
+  const steps = Array.isArray(detail.doc?.steps) ? detail.doc.steps : []
+  steps.forEach(step => {
+    const approvers = Array.isArray(step?.approvers) ? step.approvers : []
+    approvers.forEach(a => {
+      if (a?.approver?._id && a?.approver?.name) {
+        employeeNameCache[a.approver._id] = a.approver.name
+      }
+    })
+  })
 }
 
 function preview(type) {

@@ -160,4 +160,38 @@ describe('attendanceImportController', () => {
       message: '考勤資料匯入完成'
     }))
   })
+
+  it('missingCount 會統計所有缺少員工的總筆數', async () => {
+    const buffer = await createWorkbookBuffer([
+      { USERID: 'unknown', CHECKTIME: '2024-01-05 09:00', CHECKTYPE: 'I' },
+      { USERID: 'unknown', CHECKTIME: '2024-01-05 18:00', CHECKTYPE: 'O' },
+      { USERID: 'unknown', CHECKTIME: '2024-01-06 09:00', CHECKTYPE: 'I' }
+    ])
+
+    mockEmployeeFindWith([])
+
+    const req = {
+      user: { role: 'admin' },
+      file: {
+        buffer,
+        mimetype: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        originalname: 'attendance.xlsx'
+      },
+      body: {
+        options: JSON.stringify({ timezone: 'Asia/Taipei', dryRun: true })
+      }
+    }
+
+    const res = createMockRes()
+
+    await importAttendanceRecords(req, res)
+
+    expect(mockAttendanceRecord.insertMany).not.toHaveBeenCalled()
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({
+        summary: expect.objectContaining({ missingCount: 3, readyCount: 0 }),
+        missingUsers: [expect.objectContaining({ identifier: 'unknown', count: 3 })]
+      })
+    )
+  })
 })
