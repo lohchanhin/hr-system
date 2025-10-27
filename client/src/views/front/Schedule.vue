@@ -19,6 +19,7 @@
           <el-date-picker
             v-model="currentMonth"
             type="month"
+            value-format="YYYY-MM"
             @change="onMonthChange"
             class="modern-date-picker"
           />
@@ -1555,7 +1556,9 @@ async function fetchSummary() {
   }
 }
 
-async function onMonthChange() {
+async function onMonthChange(value) {
+  const next = value ? dayjs(value) : dayjs()
+  currentMonth.value = next.isValid() ? next.format('YYYY-MM') : dayjs().format('YYYY-MM')
   await fetchSchedules()
   await fetchSummary()
 }
