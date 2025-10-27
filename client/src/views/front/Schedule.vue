@@ -1004,14 +1004,22 @@ async function fetchSupervisorContext() {
   }
   supervisorProfile.value = data || null
   const deptInfo = data?.department
-  const deptId =
-    typeof deptInfo === 'object'
-      ? deptInfo?._id || deptInfo?.id || deptInfo?.value
-      : deptInfo
-  const deptName =
-    typeof deptInfo === 'object'
-      ? deptInfo?.name || ''
-      : data?.departmentName || ''
+  let deptId = ''
+  let deptName = ''
+  if (deptInfo && typeof deptInfo === 'object') {
+    deptId = deptInfo?._id || deptInfo?.id || deptInfo?.value || ''
+    deptName = deptInfo?.name || data?.departmentName || ''
+  } else if (typeof deptInfo === 'string') {
+    const matchedDept = departments.value.find(
+      dept =>
+        String(dept?._id) === deptInfo ||
+        String(dept?.id ?? '') === deptInfo ||
+        dept?.code === deptInfo ||
+        dept?.name === deptInfo
+    )
+    deptId = matchedDept?._id || matchedDept?.id || deptInfo
+    deptName = matchedDept?.name || data?.departmentName || deptInfo
+  }
   supervisorDepartmentId.value = deptId ? String(deptId) : ''
   supervisorDepartmentName.value = deptName ? String(deptName) : ''
   if (supervisorDepartmentId.value) {
@@ -1020,14 +1028,22 @@ async function fetchSupervisorContext() {
     selectedDepartment.value = ''
   }
   const subInfo = data?.subDepartment
-  const subId =
-    typeof subInfo === 'object'
-      ? subInfo?._id || subInfo?.id || subInfo?.value
-      : subInfo
-  const subName =
-    typeof subInfo === 'object'
-      ? subInfo?.name || ''
-      : data?.subDepartmentName || ''
+  let subId = ''
+  let subName = ''
+  if (subInfo && typeof subInfo === 'object') {
+    subId = subInfo?._id || subInfo?.id || subInfo?.value || ''
+    subName = subInfo?.name || data?.subDepartmentName || ''
+  } else if (typeof subInfo === 'string') {
+    const matchedSub = subDepartments.value.find(
+      sub =>
+        String(sub?._id) === subInfo ||
+        String(sub?.id ?? '') === subInfo ||
+        sub?.code === subInfo ||
+        sub?.name === subInfo
+    )
+    subId = matchedSub?._id || matchedSub?.id || subInfo
+    subName = matchedSub?.name || data?.subDepartmentName || subInfo
+  }
   supervisorSubDepartmentId.value = subId ? String(subId) : ''
   supervisorSubDepartmentName.value = subName ? String(subName) : ''
   if (supervisorSubDepartmentId.value) {

@@ -498,10 +498,70 @@ export async function createEmployee(req, res) {
 /** GET /api/employees/:id */
 export async function getEmployee(req, res) {
   try {
-    const employee = await Employee.findById(req.params.id)
-      .populate('supervisor', 'name employeeId')
+    const employee = await Employee.findById(req.params.id).populate([
+      { path: 'supervisor', select: 'name employeeId' },
+      { path: 'department', select: 'name organization' },
+      { path: 'subDepartment', select: 'name' },
+    ])
     if (!employee) return res.status(404).json({ error: 'Not found' })
-    res.json(employee)
+
+    const normalizeReference = (entity, fallbackName = '') => {
+      if (!entity) return entity
+      const isObject = typeof entity === 'object'
+
+      const toIdString = (value) => {
+        if (value === null || value === undefined) return ''
+        if (typeof value === 'string') return value
+        if (typeof value === 'number') return String(value)
+        if (typeof value === 'object') {
+          if (typeof value.toString === 'function') {
+            const str = value.toString()
+            return str && str !== '[object Object]' ? str : ''
+          }
+          return ''
+        }
+        return ''
+      }
+
+      const rawId = isObject
+        ? entity._id ?? entity.id ?? entity.value ?? entity
+        : entity
+      const idString = toIdString(rawId)
+
+      if (isObject && 'name' in entity && entity.name !== undefined) {
+        return {
+          ...entity,
+          _id: idString || entity._id,
+        }
+      }
+
+      return {
+        _id: idString,
+        name: isObject && entity?.name ? entity.name : fallbackName,
+      }
+    }
+
+    const result = typeof employee.toObject === 'function'
+      ? employee.toObject({ virtuals: true })
+      : employee
+
+    if (result?.department) {
+      const fallbackName =
+        (typeof result.department === 'object' && result.department?.name) ||
+        result.departmentName ||
+        ''
+      result.department = normalizeReference(result.department, fallbackName)
+    }
+
+    if (result?.subDepartment) {
+      const fallbackName =
+        (typeof result.subDepartment === 'object' && result.subDepartment?.name) ||
+        result.subDepartmentName ||
+        ''
+      result.subDepartment = normalizeReference(result.subDepartment, fallbackName)
+    }
+
+    res.json(result)
   } catch (err) {
     res.status(400).json({ error: err.message })
   }
