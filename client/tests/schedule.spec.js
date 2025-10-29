@@ -383,6 +383,42 @@ describe('Schedule.vue', () => {
     expect(wrapper.vm.approvalList).toEqual(responses['d2|sd2'].approvals)
   })
 
+  it('顯示待處理審批的簽核類型', async () => {
+    setRoleToken('supervisor')
+    localStorage.setItem('employeeId', 'sup1')
+
+    setupSupervisorApiMock({
+      approvals: [
+        {
+          _id: 'ap1',
+          status: 'pending',
+          form: { _id: 'f1', name: '請假申請', category: 'leave' },
+          applicant_employee: { _id: 'e1', name: '王小明' }
+        },
+        {
+          _id: 'ap2',
+          status: 'pending',
+          form: { _id: 'f2', name: '加班單', category: '' },
+          applicant_employee: { _id: 'e2', name: '李小華' }
+        }
+      ],
+      leaves: []
+    })
+
+    const wrapper = mountSchedule()
+    await flush()
+    await wrapper.vm.$nextTick()
+
+    const typeColumn = wrapper.find('[data-label="申請類型"]')
+    const typeTexts = typeColumn
+      .findAll('.cell')
+      .map(cell => cell.text().trim())
+      .filter(Boolean)
+
+    expect(typeTexts).toContain('請假')
+    expect(typeTexts).toContain('加班單')
+  })
+
   it('does not append supervisor param for employee role even when id exists', async () => {
     const month = dayjs().format('YYYY-MM')
     setRoleToken('employee')

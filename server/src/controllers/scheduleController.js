@@ -110,7 +110,7 @@ export async function listLeaveApprovals(req, res) {
     if (empFilter) approvalQuery.applicant_employee = empFilter;
     const approvals = await ApprovalRequest.find(approvalQuery)
       .populate('applicant_employee')
-      .populate('form');
+      .populate({ path: 'form', select: 'name category' });
 
     const normalizeId = (value) => {
       if (!value && value !== 0) return '';

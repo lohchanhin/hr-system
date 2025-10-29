@@ -444,7 +444,9 @@
         </el-table-column>
         <el-table-column label="申請類型" width="150">
           <template #default="{ row }">
-            <div class="form-type">{{ row.form?.name || '未知類型' }}</div>
+            <div class="form-type">
+              {{ formatApprovalCategory(row.form?.category, row.form?.name) }}
+            </div>
           </template>
         </el-table-column>
         <el-table-column prop="status" label="狀態" width="100">
@@ -530,6 +532,31 @@ import { buildShiftStyle } from '../../utils/shiftColors'
 
 const fmt = d => (d ? new Date(d).toLocaleString() : '-')
 const renderValue = v => (Array.isArray(v) ? v.join(', ') : v ?? '-')
+
+const FORM_CATEGORY_LABELS = {
+  leave: '請假',
+  attendance: '出勤',
+  overtime: '加班',
+  shift: '排班',
+  reimbursement: '報銷',
+  expense: '費用',
+  travel: '出差',
+  recruitment: '招募',
+  onboarding: '入職',
+  general: '一般'
+}
+
+const formatApprovalCategory = (category, fallbackName = '') => {
+  if (category === null || category === undefined) {
+    return fallbackName || '未知類型'
+  }
+  const normalized = String(category).trim()
+  if (!normalized) {
+    return fallbackName || '未知類型'
+  }
+  const mapped = FORM_CATEGORY_LABELS[normalized.toLowerCase()]
+  return mapped || normalized
+}
 
 const currentMonth = ref(dayjs().format('YYYY-MM'))
 const scheduleMap = ref({})
