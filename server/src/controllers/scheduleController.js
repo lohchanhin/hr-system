@@ -76,13 +76,22 @@ export async function listMonthlySchedules(req, res) {
 
 export async function listLeaveApprovals(req, res) {
   try {
-    const { month, employee, supervisor, includeSelf: includeSelfRaw } = req.query;
+    const {
+      month,
+      employee,
+      supervisor,
+      includeSelf: includeSelfRaw,
+      department: departmentRaw,
+      subDepartment: subDepartmentRaw,
+    } = req.query;
     if (!month) return res.status(400).json({ error: 'month required' });
     const start = new Date(`${month}-01`);
     const end = new Date(start);
     end.setMonth(end.getMonth() + 1);
 
     const includeSelf = String(includeSelfRaw).toLowerCase() === 'true';
+    const department = departmentRaw ? String(departmentRaw) : '';
+    const subDepartment = subDepartmentRaw ? String(subDepartmentRaw) : '';
     let ids = [];
     if (supervisor) {
       const emps = await Employee.find({ supervisor }).select('_id');
@@ -103,8 +112,31 @@ export async function listLeaveApprovals(req, res) {
       .populate('applicant_employee')
       .populate('form');
 
+    const normalizeId = (value) => {
+      if (!value && value !== 0) return '';
+      if (typeof value === 'object') {
+        if (value?._id) return String(value._id);
+        if (value?.id) return String(value.id);
+      }
+      return String(value);
+    };
+
+    const filteredApprovals = approvals.filter((approval) => {
+      const matchesDepartment = (() => {
+        if (!department) return true;
+        const applicantDept = normalizeId(approval.applicant_department);
+        if (applicantDept && applicantDept === department) return true;
+        const employeeDept = normalizeId(approval.applicant_employee?.department);
+        return employeeDept === department;
+      })();
+      if (!matchesDepartment) return false;
+      if (!subDepartment) return true;
+      const employeeSub = normalizeId(approval.applicant_employee?.subDepartment);
+      return employeeSub === subDepartment;
+    });
+
     const { formId, startId, endId, typeId } = await getLeaveFieldIds();
-    const leaves = approvals
+    const leaves = filteredApprovals
       .filter(a => a.form && String(a.form._id) === formId && a.status === 'approved')
       .map(a => ({
         employee: a.applicant_employee,
@@ -114,7 +146,7 @@ export async function listLeaveApprovals(req, res) {
         status: a.status,
       }));
 
-    res.json({ leaves, approvals });
+    res.json({ leaves, approvals: filteredApprovals });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
