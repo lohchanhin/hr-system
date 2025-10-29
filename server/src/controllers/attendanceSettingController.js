@@ -1,7 +1,6 @@
 import AttendanceSetting from '../models/AttendanceSetting.js';
 
 const DEFAULT_SETTING = Object.freeze({
-  shifts: [],
   abnormalRules: {
     lateGrace: 5,
     earlyLeaveGrace: 5,
@@ -36,7 +35,6 @@ const DEFAULT_SETTING = Object.freeze({
 
 function buildDefaultSetting() {
   return {
-    shifts: [...DEFAULT_SETTING.shifts],
     abnormalRules: { ...DEFAULT_SETTING.abnormalRules },
     breakOutRules: { ...DEFAULT_SETTING.breakOutRules },
     overtimeRules: { ...DEFAULT_SETTING.overtimeRules },
@@ -47,24 +45,31 @@ function buildDefaultSetting() {
 function normalize(setting) {
   if (!setting) return buildDefaultSetting();
   const plain = typeof setting.toObject === 'function' ? setting.toObject() : setting;
+  const {
+    shifts: _unusedShifts,
+    abnormalRules,
+    breakOutRules,
+    overtimeRules,
+    management,
+    ...others
+  } = plain;
   return {
-    ...plain,
-    shifts: plain.shifts ?? [],
+    ...others,
     abnormalRules: {
       ...DEFAULT_SETTING.abnormalRules,
-      ...(plain.abnormalRules || {}),
+      ...(abnormalRules || {}),
     },
     breakOutRules: {
       ...DEFAULT_SETTING.breakOutRules,
-      ...(plain.breakOutRules || {}),
+      ...(breakOutRules || {}),
     },
     overtimeRules: {
       ...DEFAULT_SETTING.overtimeRules,
-      ...(plain.overtimeRules || {}),
+      ...(overtimeRules || {}),
     },
     management: {
       ...DEFAULT_SETTING.management,
-      ...(plain.management || {}),
+      ...(management || {}),
     },
   };
 }
@@ -72,7 +77,10 @@ function normalize(setting) {
 async function ensureAttendanceSetting() {
   let setting = await AttendanceSetting.findOne();
   if (!setting) {
-    setting = await AttendanceSetting.create(buildDefaultSetting());
+    setting = await AttendanceSetting.create({
+      ...buildDefaultSetting(),
+      shifts: [],
+    });
   }
   return setting;
 }
@@ -98,7 +106,7 @@ function mergeRuleSection(current, incoming, defaults) {
 export async function updateAttendanceSetting(req, res) {
   try {
     const setting = await ensureAttendanceSetting();
-    const { abnormalRules, breakOutRules, overtimeRules, shifts } = req.body || {};
+    const { abnormalRules, breakOutRules, overtimeRules } = req.body || {};
 
     if (abnormalRules) {
       setting.abnormalRules = mergeRuleSection(
@@ -122,10 +130,6 @@ export async function updateAttendanceSetting(req, res) {
         overtimeRules,
         DEFAULT_SETTING.overtimeRules
       );
-    }
-
-    if (Array.isArray(shifts)) {
-      setting.shifts = shifts;
     }
 
     if (req.body && req.body.management) {

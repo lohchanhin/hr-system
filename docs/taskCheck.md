@@ -5,12 +5,12 @@
 ### 系統管理員
 - **功能使用流程**
   1. 以系統管理員角色登入後台，透過選單進入「出勤管理」相關畫面（`AttendanceManagementSetting.vue`、`AttendanceSetting.vue`）。
-  2. 於「出勤管理」設定班別、打卡規則與授權人員，確認必要欄位（班別名稱、時段、容許遲到分鐘）皆完成填寫。
-  3. 透過後台測試員工帳號授權，確認可呼叫 `/api/attendance-settings`、`/api/shifts` 對應的設定 API。
+  2. 於「出勤管理」設定異常判定、分段打卡與加班規則，確認必要欄位（容許遲到分鐘、缺卡判斷時間等）皆完成填寫。
+  3. 透過後台測試員工帳號授權，確認可呼叫 `/api/attendance-settings` 取得規則設定，班別資料改由 `ShiftScheduleSetting.vue` 操作 `/api/shifts`。
 - **檢查清單**
   - [ ] 後台畫面 `AttendanceManagementSetting.vue` 成功載入 `GET /api/attendance-settings` 之設定資料。
   - [ ] 更新設定時請求 `PUT /api/attendance-settings/:id` 回傳 200，並由 `attendanceSettingController.updateSetting` 實際寫入。
-  - [ ] 新增班別透過 `POST /api/shifts` 由 `shiftController.createShift` 建立後，可在畫面重新整理後顯示於班表。
+  - [ ] 班別維護改於 `ShiftScheduleSetting.vue` 透過 `/api/shifts` 完成，確認新增後畫面重新整理即可顯示於班表。
   - [ ] 確認授權設定為管理員專屬（`authorizeRoles('admin')`），避免一般使用者誤觸。
 
 ### 主管
@@ -39,11 +39,11 @@
 
 ### 系統管理員
 - **功能使用流程**
-  1. 登入後台並進入「班表設定」畫面（`AttendanceSetting.vue`）維護班別與假別代碼。
+  1. 登入後台並進入「班表設定」畫面（`ShiftScheduleSetting.vue`）維護班別與假別代碼。
   2. 切換至前台「排班管理」頁（`Schedule.vue`），選擇部門後執行批次匯入或新增班表。
   3. 確認系統允許管理員存取所有部門，授權涵蓋 `/api/schedules`、`/api/schedules/batch`、`/api/schedules/export` 等 API。
 - **檢查清單**
-  - [ ] `AttendanceSetting.vue` 讀寫 `/api/attendance-settings` 時，由 `attendanceSettingController` 正確處理新增、更新與刪除。
+  - [ ] `AttendanceSetting.vue` 讀寫 `/api/attendance-settings` 時，由 `attendanceSettingController` 正確處理出勤規則的新增、更新與刪除。
   - [ ] 在 `Schedule.vue` 透過 `POST /api/schedules/batch`（`scheduleController.createSchedulesBatch`）建立班表後，表格呈現與資料庫一致。
   - [ ] 匯出班表時 `GET /api/schedules/export` 回傳預期格式，檔名符合月份與部門命名規則。
   - [ ] 管理員切換部門時，確認後端無權限錯誤，`authorizeRoles('supervisor', 'admin')` 設定正確。
