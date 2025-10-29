@@ -3,6 +3,7 @@ import { shallowMount } from '@vue/test-utils'
 import dayjs from 'dayjs'
 import { createPinia, setActivePinia } from 'pinia'
 import { buildShiftStyle } from '../src/utils/shiftColors'
+import { useAuthStore } from '../src/stores/auth'
 
 const elementPlusMock = vi.hoisted(() => {
   const ElMessage = { error: vi.fn(), success: vi.fn(), warning: vi.fn(), info: vi.fn() }
@@ -161,8 +162,84 @@ describe('Schedule.vue', () => {
     return new Promise(resolve => setTimeout(resolve))
   }
 
+  function setupSupervisorApiMock({
+    summary = [],
+    shifts = [],
+    departments = [{ _id: 'd1', name: 'Dept A' }],
+    subDepartments = [
+      { _id: 'sd1', name: 'Sub A', department: { _id: 'd1' } }
+    ],
+    employees = [],
+    directReports = [],
+    monthlyWithSelf = [],
+    monthlyWithoutSelf = [],
+    approvals = [],
+    leaves = [],
+    supervisorProfile = {
+      _id: 'sup1',
+      name: '主管',
+      department: { _id: 'd1', name: 'Dept A' },
+      subDepartment: { _id: 'sd1', name: 'Sub A' }
+    }
+  } = {}) {
+    apiFetch.mockImplementation(async url => {
+      const parsed = new URL(url, 'http://localhost')
+      const { pathname, searchParams } = parsed
+
+      if (pathname === '/api/schedules/summary') {
+        return { ok: true, json: async () => summary }
+      }
+
+      if (pathname === '/api/shifts') {
+        return { ok: true, json: async () => shifts }
+      }
+
+      if (pathname === `/api/employees/${supervisorProfile?._id ?? ''}`) {
+        return { ok: true, json: async () => supervisorProfile }
+      }
+
+      if (pathname === '/api/employees') {
+        const supervisorId = searchParams.get('supervisor')
+        const hasDepartment = searchParams.has('department')
+        if (supervisorId && !hasDepartment && searchParams.size === 1) {
+          return { ok: true, json: async () => directReports }
+        }
+        if (hasDepartment) {
+          return { ok: true, json: async () => employees }
+        }
+        return { ok: true, json: async () => employees }
+      }
+
+      if (pathname === '/api/departments') {
+        return { ok: true, json: async () => departments }
+      }
+
+      if (pathname === '/api/sub-departments') {
+        return { ok: true, json: async () => subDepartments }
+      }
+
+      if (pathname === '/api/schedules/monthly') {
+        const includeSelf = searchParams.get('includeSelf') === 'true'
+        return {
+          ok: true,
+          json: async () => (includeSelf ? monthlyWithSelf : monthlyWithoutSelf)
+        }
+      }
+
+      if (pathname === '/api/schedules/leave-approvals') {
+        return {
+          ok: true,
+          json: async () => ({ approvals, leaves })
+        }
+      }
+
+      return { ok: true, json: async () => [] }
+    })
+  }
+
   it('includes supervisor id in requests when present', async () => {
     const month = dayjs().format('YYYY-MM')
+    const storageKey = 'schedule-include-self:sup1'
     setRoleToken('supervisor')
     localStorage.setItem('employeeId', 'sup1')
     apiFetch
@@ -1004,6 +1081,119 @@ describe('Schedule.vue', () => {
     const stored = JSON.parse(sessionStorage.getItem('schedulePreview'))
     expect(stored.scheduleMap.e1[1].shiftId).toBe('s1')
     expect(pushMock).toHaveBeenCalledWith({ name: 'PreviewMonth' })
+  })
+
+  it('persists includeSelf preference when toggled', async () => {
+    const month = dayjs().format('YYYY-MM')
+    setRoleToken('supervisor')
+    localStorage.setItem('employeeId', 'sup1')
+    const storageKey = 'schedule-include-self:sup1'
+    setupSupervisorApiMock({
+      employees: [
+        { _id: 'e1', name: 'E1', department: 'd1', subDepartment: 'sd1' }
+      ],
+      directReports: [{ subDepartment: { _id: 'sd1' } }],
+      monthlyWithSelf: [
+        {
+          _id: 'sch-sup',
+          employee: 'sup1',
+          date: `${month}-01`,
+          shiftId: 'shift1'
+        }
+      ]
+    })
+
+    const wrapper = mountSchedule()
+    await flush()
+    await flush()
+
+    wrapper.vm.includeSelf = true
+    await wrapper.vm.$nextTick()
+    await flush()
+
+    expect(localStorage.getItem(storageKey)).toBe('true')
+    const monthlyCall = apiFetch.mock.calls.find(([url]) =>
+      url.startsWith(`/api/schedules/monthly?month=${month}`) &&
+      url.includes('includeSelf=true')
+    )
+    expect(monthlyCall).toBeTruthy()
+  })
+
+  it('restores includeSelf preference on mount', async () => {
+    const month = dayjs().format('YYYY-MM')
+    const storageKey = 'schedule-include-self:sup1'
+    setRoleToken('supervisor')
+    localStorage.setItem('employeeId', 'sup1')
+    localStorage.setItem(storageKey, 'true')
+    setupSupervisorApiMock({
+      monthlyWithSelf: [
+        {
+          _id: 'sch-sup',
+          employee: 'sup1',
+          date: `${month}-01`,
+          shiftId: 'shift1'
+        }
+      ]
+    })
+
+    const wrapper = mountSchedule()
+    await flush()
+    await flush()
+
+    expect(wrapper.vm.includeSelf).toBe(true)
+    const monthlyCall = apiFetch.mock.calls.find(([url]) =>
+      url.startsWith(`/api/schedules/monthly?month=${month}`) &&
+      url.includes('includeSelf=true')
+    )
+    expect(monthlyCall).toBeTruthy()
+    expect(localStorage.getItem(storageKey)).toBe('true')
+  })
+
+  it('resets includeSelf preference when supervisor schedule missing', async () => {
+    const storageKey = 'schedule-include-self:sup1'
+    setRoleToken('supervisor')
+    localStorage.setItem('employeeId', 'sup1')
+    localStorage.setItem(storageKey, 'true')
+    setupSupervisorApiMock()
+
+    const wrapper = mountSchedule()
+    await flush()
+    await flush()
+
+    expect(wrapper.vm.includeSelf).toBe(false)
+    expect(localStorage.getItem(storageKey)).toBe('false')
+  })
+
+  it('clears includeSelf preference when role changes', async () => {
+    const month = dayjs().format('YYYY-MM')
+    const storageKey = 'schedule-include-self:sup1'
+    setRoleToken('supervisor')
+    localStorage.setItem('employeeId', 'sup1')
+    localStorage.setItem(storageKey, 'true')
+    setupSupervisorApiMock({
+      monthlyWithSelf: [
+        {
+          _id: 'sch-sup',
+          employee: 'sup1',
+          date: `${month}-01`,
+          shiftId: 'shift1'
+        }
+      ]
+    })
+
+    const wrapper = mountSchedule()
+    await flush()
+    await flush()
+
+    expect(wrapper.vm.includeSelf).toBe(true)
+
+    const authStore = useAuthStore()
+    authStore.role = 'admin'
+    await wrapper.vm.$nextTick()
+    await flush()
+
+    expect(wrapper.vm.includeSelf).toBe(false)
+    expect(localStorage.getItem(storageKey)).toBe('false')
   })
 
   it('exports pdf and triggers download', async () => {

@@ -547,6 +547,8 @@ const supervisorSubDepartmentName = ref('')
 const supervisorAssignableSubDepartmentIds = ref([])
 const supervisorProfile = ref(null)
 const includeSelf = ref(false)
+const includeSelfStoragePrefix = 'schedule-include-self'
+let isInitializingIncludeSelf = true
 const summary = ref({ direct: 0, unscheduled: 0, onLeave: 0 })
 const employeeSearch = ref('')
 const statusFilter = ref('all')
@@ -561,6 +563,41 @@ const batchSubDepartment = ref('')
 const isApplyingBatch = ref(false)
 const detail = reactive({ visible: false, doc: null })
 const employeeNameCache = reactive({})
+
+function getSupervisorIdFromStorage() {
+  if (typeof window === 'undefined') return ''
+  const sessionId = window.sessionStorage?.getItem('employeeId')
+  if (sessionId && sessionId !== 'undefined') return sessionId
+  const localId = window.localStorage?.getItem('employeeId')
+  if (localId && localId !== 'undefined') return localId
+  return ''
+}
+
+function includeSelfStorageKey(supervisorId) {
+  if (!supervisorId) return ''
+  return `${includeSelfStoragePrefix}:${String(supervisorId)}`
+}
+
+function loadIncludeSelfPreference(supervisorId = getSupervisorIdFromStorage()) {
+  if (typeof window === 'undefined') return null
+  const key = includeSelfStorageKey(supervisorId)
+  if (!key) return null
+  const stored = window.localStorage?.getItem(key)
+  if (stored === 'true') return true
+  if (stored === 'false') return false
+  return null
+}
+
+function persistIncludeSelfPreference(value, supervisorId = getSupervisorIdFromStorage()) {
+  if (typeof window === 'undefined') return
+  const key = includeSelfStorageKey(supervisorId)
+  if (!key) return
+  try {
+    window.localStorage?.setItem(key, value ? 'true' : 'false')
+  } catch (err) {
+    console.warn('Failed to persist includeSelf preference', err)
+  }
+}
 
 const selectedEmployeesSet = computed(() => selectedEmployees.value)
 const selectedDaysSet = computed(() => selectedDays.value)
@@ -756,6 +793,9 @@ watch(batchSubDepartments, newList => {
 
 watch(includeSelf, async (val, oldVal) => {
   if (val === oldVal) return
+  const supervisorId = getStoredSupervisorId() || getSupervisorIdFromStorage()
+  persistIncludeSelfPreference(val, supervisorId)
+  if (isInitializingIncludeSelf) return
   if (!showIncludeSelfToggle.value) return
   await fetchEmployees(selectedDepartment.value, selectedSubDepartment.value)
   await fetchSchedules()
@@ -800,6 +840,23 @@ authStore.loadUser()
 const canUseSupervisorFilter = computed(() => ['supervisor', 'admin'].includes(authStore.role))
 const showIncludeSelfToggle = computed(() => authStore.role === 'supervisor')
 const canEdit = canUseSupervisorFilter
+
+watch(showIncludeSelfToggle, newVal => {
+  const supervisorId = getStoredSupervisorId() || getSupervisorIdFromStorage()
+  if (!newVal) {
+    if (includeSelf.value) {
+      includeSelf.value = false
+    }
+    persistIncludeSelfPreference(false, supervisorId)
+    return
+  }
+  const stored = loadIncludeSelfPreference(supervisorId)
+  if (stored === true) {
+    includeSelf.value = true
+  } else if (stored === false && supervisorId) {
+    persistIncludeSelfPreference(false, supervisorId)
+  }
+})
 
 const callWarning = message => {
   const moduleWarn = ElMessage?.warning
@@ -1051,14 +1108,9 @@ async function fetchOptions() {
   }
 }
 
-const getStoredSupervisorId = () => {
+function getStoredSupervisorId() {
   if (!canUseSupervisorFilter.value) return ''
-  if (typeof window === 'undefined') return ''
-  const sessionId = window.sessionStorage?.getItem('employeeId')
-  if (sessionId && sessionId !== 'undefined') return sessionId
-  const localId = window.localStorage?.getItem('employeeId')
-  if (localId && localId !== 'undefined') return localId
-  return ''
+  return getSupervisorIdFromStorage()
 }
 
 async function fetchSupervisorContext() {
@@ -1272,6 +1324,19 @@ async function fetchSchedules() {
           pointer = pointer.add(1, 'day')
         }
       })
+    }
+    const supervisorId = getStoredSupervisorId() || getSupervisorIdFromStorage()
+    if (
+      includeSelf.value &&
+      showIncludeSelfToggle.value &&
+      supervisorId &&
+      !schedules.some(s => {
+        const rawEmp = s?.employee?._id || s?.employee
+        return rawEmp && String(rawEmp) === supervisorId
+      })
+    ) {
+      includeSelf.value = false
+      persistIncludeSelfPreference(false, supervisorId)
     }
     pruneSelections()
   } catch (err) {
@@ -1668,12 +1733,21 @@ async function onMonthChange(value) {
 }
 
 onMounted(async () => {
-  await fetchSummary()
-  await fetchShiftOptions()
-  await fetchSupervisorContext()
-  await fetchOptions()
-  await fetchEmployees(selectedDepartment.value, selectedSubDepartment.value)
-  await fetchSchedules()
+  const supervisorId = getSupervisorIdFromStorage()
+  const storedPreference = loadIncludeSelfPreference(supervisorId)
+  if (storedPreference === true && showIncludeSelfToggle.value) {
+    includeSelf.value = true
+  }
+  try {
+    await fetchSummary()
+    await fetchShiftOptions()
+    await fetchSupervisorContext()
+    await fetchOptions()
+    await fetchEmployees(selectedDepartment.value, selectedSubDepartment.value)
+    await fetchSchedules()
+  } finally {
+    isInitializingIncludeSelf = false
+  }
 })
 </script>
 
