@@ -153,6 +153,7 @@ function onLogout() {
   localStorage.removeItem("role");
   localStorage.removeItem("username");
   localStorage.removeItem("employeeId");
+  sessionStorage.removeItem("role");
   sessionStorage.removeItem("employeeId");
   clearToken();
   menuStore.setMenu([]);

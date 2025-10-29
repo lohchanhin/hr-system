@@ -181,6 +181,8 @@ async function onLogin() {
       setToken(data.token)
       localStorage.setItem('role', data.user.role)
       localStorage.setItem('employeeId', data.user.employeeId || data.user.id)
+      sessionStorage.setItem('role', data.user.role)
+      sessionStorage.setItem('employeeId', data.user.employeeId || data.user.id)
       ElMessage.success(`歡迎回來，${roles[0].label}！`)
 
       await menuStore.fetchMenu()

@@ -114,4 +114,44 @@ describe('router', () => {
     expect(next).toHaveBeenCalled()
     expect(next.mock.calls[0][0]).toBeUndefined()
   })
+
+  it('allows admin to access reports after refresh using persisted role', () => {
+    const payload = btoa(JSON.stringify({ role: 'admin' }))
+    const token = `header.${payload}.signature`
+    localStorage.setItem('token', token)
+    localStorage.setItem('role', 'admin')
+    const next = vi.fn()
+    capturedGuard(
+      {
+        matched: [{ meta: { requiresAuth: true } }],
+        meta: { roles: ['admin'], warningMessage: '僅系統管理員可以存取後台報表，請確認您的權限' },
+        name: 'DepartmentReports'
+      },
+      {},
+      next
+    )
+    expect(next).toHaveBeenCalled()
+    expect(next.mock.calls[0][0]).toBeUndefined()
+    expect(sessionStorage.getItem('role')).toBe('admin')
+  })
+
+  it('decodes admin role from token when storages are empty', () => {
+    const payload = btoa(JSON.stringify({ role: 'admin' }))
+    const token = `header.${payload}.signature`
+    localStorage.setItem('token', token)
+    const next = vi.fn()
+    capturedGuard(
+      {
+        matched: [{ meta: { requiresAuth: true } }],
+        meta: { roles: ['admin'], warningMessage: '僅系統管理員可以存取後台報表，請確認您的權限' },
+        name: 'DepartmentReports'
+      },
+      {},
+      next
+    )
+    expect(next).toHaveBeenCalled()
+    expect(next.mock.calls[0][0]).toBeUndefined()
+    expect(sessionStorage.getItem('role')).toBe('admin')
+    expect(localStorage.getItem('role')).toBe('admin')
+  })
 })
