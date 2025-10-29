@@ -17,6 +17,8 @@ const logout = () => {
   clearToken()
   sessionStorage.removeItem('role')
   sessionStorage.removeItem('employeeId')
+  localStorage.removeItem('role')
+  localStorage.removeItem('employeeId')
   router.push('/')
 }
   </script>

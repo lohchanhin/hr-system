@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { getToken } from '@/utils/tokenService'
+import { resolveUserRole } from '@/utils/roleResolver'
 
 // ★ 既有的後台檔案
 const ManagerLogin = () => import('@/views/Login.vue')
@@ -155,31 +156,34 @@ const showWarningMessage = message => {
 router.beforeEach((to, from, next) => {
   const requiresAuth = to.matched.some(r => r.meta.requiresAuth)
   const frontRequiresAuth = to.matched.some(r => r.meta.frontRequiresAuth)
+  const token = getToken()
+  let cachedRole = null
 
   // 後台登入檢查
   if (requiresAuth) {
-    const token = getToken()
     if (!token) {
       return next({ name: 'ManagerLogin' })
     }
-    const userRole = sessionStorage.getItem('role') || 'employee'
-    if (!['supervisor', 'admin'].includes(userRole)) {
+    cachedRole = resolveUserRole({ token }) || 'employee'
+    if (!['supervisor', 'admin'].includes(cachedRole)) {
       return next('/login')
     }
   }
 
   // 前台登入檢查
-  if (frontRequiresAuth) {
-    const token = getToken()
-    if (!token) {
-      return next({ name: 'FrontLogin' })
-    }
+  if (frontRequiresAuth && !token) {
+    return next({ name: 'FrontLogin' })
   }
 
   // 若有角色限制 meta.roles
   if (to.meta.roles) {
-    const userRole = sessionStorage.getItem('role') || 'employee'
-    if (!to.meta.roles.includes(userRole)) {
+    if (cachedRole == null) {
+      cachedRole = resolveUserRole({ token })
+    }
+    if (!cachedRole) {
+      cachedRole = 'employee'
+    }
+    if (!to.meta.roles.includes(cachedRole)) {
       const warningMessage = to.meta.warningMessage || '您沒有權限瀏覽此頁面'
       showWarningMessage(warningMessage)
       return next({ name: 'Forbidden' })

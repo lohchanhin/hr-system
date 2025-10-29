@@ -169,6 +169,8 @@ const onLogin = async () => {
       setToken(data.token)
       sessionStorage.setItem('role', data.user.role)
       sessionStorage.setItem('employeeId', data.user.employeeId || data.user.id)
+      localStorage.setItem('role', data.user.role)
+      localStorage.setItem('employeeId', data.user.employeeId || data.user.id)
 
       await menuStore.fetchMenu()
       ElMessage.success('登入成功！')
