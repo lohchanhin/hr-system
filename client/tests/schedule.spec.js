@@ -333,6 +333,30 @@ describe('Schedule.vue', () => {
     expect(monthlyCall?.[0]).toBe(`/api/schedules/monthly?month=${month}`)
   })
 
+  it('保留包含自己設定並在主管未排班時提示且保留指派能力', async () => {
+    setRoleToken('supervisor')
+    localStorage.setItem('employeeId', 'sup1')
+    localStorage.setItem('schedule-include-self:sup1', 'true')
+    setupSupervisorApiMock({
+      employees: [
+        { _id: 'e1', name: '員工A', department: 'd1', subDepartment: 'sd1' }
+      ],
+      directReports: [{ _id: 'e1', subDepartment: { _id: 'sd1' } }],
+      monthlyWithSelf: [],
+      monthlyWithoutSelf: [],
+      approvals: [],
+      leaves: []
+    })
+
+    const wrapper = mountSchedule()
+    await flush()
+    await flush()
+
+    expect(wrapper.vm.includeSelf).toBe(true)
+    expect(wrapper.vm.employees.map(e => e._id)).toContain('sup1')
+    expect(ElMessage.info).toHaveBeenCalledWith('尚未為主管建立班表，請先建立排班。')
+  })
+
   it('refetches leave approvals when department changes', async () => {
     setRoleToken('supervisor')
     localStorage.setItem('employeeId', 'sup1')
@@ -1267,7 +1291,7 @@ describe('Schedule.vue', () => {
     expect(localStorage.getItem(storageKey)).toBe('true')
   })
 
-  it('resets includeSelf preference when supervisor schedule missing', async () => {
+  it('保留包含自己偏好於主管尚未排班時', async () => {
     const storageKey = 'schedule-include-self:sup1'
     setRoleToken('supervisor')
     localStorage.setItem('employeeId', 'sup1')
@@ -1278,8 +1302,9 @@ describe('Schedule.vue', () => {
     await flush()
     await flush()
 
-    expect(wrapper.vm.includeSelf).toBe(false)
-    expect(localStorage.getItem(storageKey)).toBe('false')
+    expect(wrapper.vm.includeSelf).toBe(true)
+    expect(localStorage.getItem(storageKey)).toBe('true')
+    expect(ElMessage.info).toHaveBeenCalledWith('尚未為主管建立班表，請先建立排班。')
   })
 
   it('clears includeSelf preference when role changes', async () => {
