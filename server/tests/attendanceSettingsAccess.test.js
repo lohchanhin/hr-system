@@ -95,6 +95,7 @@ describe('AttendanceSetting routes', () => {
     const res = await request(app).get('/api/attendance-settings');
 
     expect(res.status).toBe(200);
+    expect(res.body.shifts).toBeUndefined();
     expect(res.body.abnormalRules).toEqual({
       lateGrace: 10,
       earlyLeaveGrace: 5,
@@ -138,6 +139,7 @@ describe('AttendanceSetting routes', () => {
         management: expect.objectContaining({ enableImport: false }),
       })
     );
+    expect(res.body.shifts).toBeUndefined();
     expect(res.body.overtimeRules).toEqual({
       weekdayThreshold: 30,
       holidayRate: 2,
@@ -155,6 +157,7 @@ describe('AttendanceSetting routes', () => {
         abnormalRules: { lateGrace: 3, autoNotify: false },
         breakOutRules: { breakInterval: 90 },
         overtimeRules: { holidayRate: 2.5 },
+        shifts: [{ name: '禁用班別' }],
       });
 
     expect(res.status).toBe(200);
@@ -167,6 +170,8 @@ describe('AttendanceSetting routes', () => {
     });
     expect(doc.breakOutRules.breakInterval).toBe(90);
     expect(doc.overtimeRules.holidayRate).toBe(2.5);
+    expect(doc.shifts).toEqual([]);
+    expect(res.body.shifts).toBeUndefined();
     expect(res.body.abnormalRules.lateGrace).toBe(3);
     expect(res.body.breakOutRules.breakInterval).toBe(90);
   });

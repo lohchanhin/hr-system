@@ -19,7 +19,10 @@ function normalizeHex(color) {
     return `#${trimmed
       .slice(1)
       .split('')
-      .map((ch) => ch + ch)
+      .map((ch) => {
+        const lower = ch.toLowerCase();
+        return lower + lower;
+      })
       .join('')}`;
   }
   return trimmed.toLowerCase();
