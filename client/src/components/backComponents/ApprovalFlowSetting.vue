@@ -327,6 +327,7 @@ const API = {
   fields: (formId) => `/api/approvals/forms/${formId}/fields`,
   field: (formId, fieldId) => `/api/approvals/forms/${formId}/fields/${fieldId}`,
   employees: '/api/employees/options',
+  organizations: '/api/organizations',
   signRoles: '/api/approvals/sign-roles',
   signLevels: '/api/approvals/sign-levels',
   otherControlSettings: '/api/other-control-settings',
@@ -385,6 +386,7 @@ const formDialog = ref({ _id: '', name: '', category: firstCategoryValue.value |
 const workflowDialogVisible = ref(false)
 const workflowSteps = ref([])
 const employeeOptions = ref([])
+const organizationNameMap = ref({})
 const signRoleOptions = ref([])
 const signLevelOptions = ref([])
 const groupOptions = ref([])
@@ -441,12 +443,26 @@ const departmentOptions = computed(() => {
 })
 
 const organizationOptions = computed(() => {
-  const map = new Map()
-  employeeOptions.value.forEach((emp) => {
-    const org = emp.organization
-    if (org) map.set(org, { value: org, label: org })
+  const optionsMap = new Map()
+  const nameMap = organizationNameMap.value || {}
+
+  Object.keys(nameMap || {}).forEach((id) => {
+    if (!id) return
+    const label = resolveOrganizationLabel(id, nameMap[id])
+    optionsMap.set(id, { value: id, label })
   })
-  return Array.from(map.values()).sort((a, b) => a.label.localeCompare(b.label, 'zh-Hant'))
+
+  employeeOptions.value.forEach((emp) => {
+    const org = emp.organization || {}
+    const id = toValueString(org.id)
+    if (!id) return
+    const label = resolveOrganizationLabel(id, org.name)
+    if (!optionsMap.has(id) || (optionsMap.get(id)?.label || '') === id) {
+      optionsMap.set(id, { value: id, label })
+    }
+  })
+
+  return Array.from(optionsMap.values()).sort((a, b) => a.label.localeCompare(b.label, 'zh-Hant'))
 })
 
 const customFieldOptions = ref([])
@@ -618,6 +634,7 @@ async function loadEmployeeOptions() {
           const dept = e.department && typeof e.department === 'object'
             ? { id: e.department.id || e.department._id || e.department, name: e.department.name || '' }
             : null
+          const organization = normalizeOrganizationField(e.organization)
           return {
             id: e.id,
             name: e.name,
@@ -625,13 +642,37 @@ async function loadEmployeeOptions() {
             signRole: e.signRole ?? '',
             signLevel: e.signLevel ?? '',
             signTags: Array.isArray(e.signTags) ? e.signTags : [],
-            organization: e.organization ?? '',
+            organization,
             department: dept,
             role: e.role ?? '',
             displayName: e.displayName || (e.username ? `${e.name}（${e.username}）` : e.name),
           }
         })
     : []
+}
+
+async function loadOrganizationOptions() {
+  const res = await apiFetch(API.organizations)
+  if (!res.ok) {
+    organizationNameMap.value = {}
+    return
+  }
+  const list = await res.json()
+  if (!Array.isArray(list)) {
+    organizationNameMap.value = {}
+    return
+  }
+  const map = {}
+  list.forEach((item) => {
+    const id = toValueString(item?._id ?? item?.id ?? item?.value)
+    const normalizedId = typeof id === 'string' ? id.trim() : id
+    if (!normalizedId) return
+    const name = typeof item?.name === 'string' ? item.name.trim() : ''
+    if (!map[normalizedId] || name) {
+      map[normalizedId] = name || normalizedId
+    }
+  })
+  organizationNameMap.value = map
 }
 
 async function loadSignRoleOptions() {
@@ -679,6 +720,32 @@ function toValueString(val) {
     if (val.id != null) return toValueString(val.id)
   }
   return String(val)
+}
+
+function resolveOrganizationLabel(id, fallbackName = '') {
+  const trimmedId = typeof id === 'string' ? id.trim() : id
+  const map = organizationNameMap.value || {}
+  if (trimmedId && typeof map[trimmedId] === 'string' && map[trimmedId].trim()) {
+    return map[trimmedId].trim()
+  }
+  const trimmedFallback = typeof fallbackName === 'string' ? fallbackName.trim() : ''
+  if (trimmedFallback) return trimmedFallback
+  return trimmedId || ''
+}
+
+function normalizeOrganizationField(rawOrg) {
+  const idValue = rawOrg && typeof rawOrg === 'object'
+    ? rawOrg._id ?? rawOrg.id ?? rawOrg.value ?? rawOrg.code
+    : rawOrg
+  const rawId = toValueString(idValue)
+  const id = typeof rawId === 'string' ? rawId.trim() : rawId
+  const name = rawOrg && typeof rawOrg === 'object' && typeof rawOrg.name === 'string'
+    ? rawOrg.name.trim()
+    : ''
+  return {
+    id: id || '',
+    name: resolveOrganizationLabel(id || '', name)
+  }
 }
 
 function pickFirstValidValue(values, validSet, allowFallback = true) {
@@ -1059,6 +1126,7 @@ onMounted(async () => {
   selectedFormId.value = forms.value[0]?._id || ''
   if (selectedFormId.value) await loadWorkflow()
   await loadGroupOptions()
+  await loadOrganizationOptions()
   await loadEmployeeOptions()
   await Promise.all([loadSignRoleOptions(), loadSignLevelOptions()])
 })
