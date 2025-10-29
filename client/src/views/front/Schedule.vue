@@ -867,6 +867,7 @@ authStore.loadUser()
 const canUseSupervisorFilter = computed(() => ['supervisor', 'admin'].includes(authStore.role))
 const showIncludeSelfToggle = computed(() => authStore.role === 'supervisor')
 const canEdit = canUseSupervisorFilter
+const missingSupervisorScheduleNoticeKey = ref('')
 
 watch(showIncludeSelfToggle, newVal => {
   const supervisorId = getStoredSupervisorId() || getSupervisorIdFromStorage()
@@ -1359,17 +1360,28 @@ async function fetchSchedules() {
       })
     }
     const supervisorId = getStoredSupervisorId() || getSupervisorIdFromStorage()
-    if (
-      includeSelf.value &&
-      showIncludeSelfToggle.value &&
-      supervisorId &&
-      !schedules.some(s => {
+    const shouldCheckSupervisorSchedule =
+      includeSelf.value && showIncludeSelfToggle.value && supervisorId
+    if (shouldCheckSupervisorSchedule) {
+      const hasSupervisorSchedule = schedules.some(s => {
         const rawEmp = s?.employee?._id || s?.employee
         return rawEmp && String(rawEmp) === supervisorId
       })
-    ) {
-      includeSelf.value = false
-      persistIncludeSelfPreference(false, supervisorId)
+      const noticeKey = [
+        currentMonth.value,
+        selectedDepartment.value || '',
+        selectedSubDepartment.value || ''
+      ].join('|')
+      if (!hasSupervisorSchedule) {
+        if (missingSupervisorScheduleNoticeKey.value !== noticeKey) {
+          callInfo('尚未為主管建立班表，請先建立排班。')
+          missingSupervisorScheduleNoticeKey.value = noticeKey
+        }
+      } else if (missingSupervisorScheduleNoticeKey.value) {
+        missingSupervisorScheduleNoticeKey.value = ''
+      }
+    } else if (missingSupervisorScheduleNoticeKey.value) {
+      missingSupervisorScheduleNoticeKey.value = ''
     }
     pruneSelections()
   } catch (err) {
