@@ -1,5 +1,6 @@
 import AttendanceRecord from '../models/AttendanceRecord.js';
 import AttendanceSetting from '../models/AttendanceSetting.js';
+import Department from '../models/Department.js';
 import Employee from '../models/Employee.js';
 import ShiftSchedule from '../models/ShiftSchedule.js';
 import ApprovalRequest from '../models/approval_request.js';
@@ -122,24 +123,79 @@ function buildDateKey(date) {
   return formatDate(obj);
 }
 
-async function resolveDepartmentEmployees(departmentId, actor) {
+export async function resolveDepartmentEmployees(departmentId, actor) {
   assertRequired(departmentId, 'department required');
   const role = actor?.role;
   const actorId = actor?.id;
-  let employees;
+  const normalizedDepartmentId = normalizeId(departmentId);
+
   if (role === 'supervisor') {
     if (!actorId) {
       throw new ReportAccessError(403, 'Forbidden');
     }
-    employees = await Employee.find({ department: departmentId, supervisor: actorId });
-    if (!employees.length) {
+
+    const managedDepartments = new Set();
+    const supervisorIdentifiers = new Set();
+    supervisorIdentifiers.add(normalizeId(actorId));
+
+    const supervisorRecord = await Employee.findById(actorId);
+    if (supervisorRecord) {
+      const ownDepartmentId = normalizeId(supervisorRecord.department);
+      if (ownDepartmentId) {
+        managedDepartments.add(ownDepartmentId);
+      }
+      const employeeIdentifier = normalizeId(supervisorRecord.employeeId);
+      if (employeeIdentifier) {
+        supervisorIdentifiers.add(employeeIdentifier);
+      }
+
+      const extraDepartmentFields = [
+        supervisorRecord.managedDepartments,
+        supervisorRecord.departmentsManaged,
+        supervisorRecord.managedDeptIds,
+        supervisorRecord.departments,
+      ];
+      extraDepartmentFields.forEach((value) => {
+        if (!value) return;
+        if (Array.isArray(value)) {
+          value.forEach((dept) => {
+            const normalized = normalizeId(dept);
+            if (normalized) managedDepartments.add(normalized);
+          });
+          return;
+        }
+        const normalized = normalizeId(value);
+        if (normalized) managedDepartments.add(normalized);
+      });
+    }
+
+    let hasDepartmentAccess = managedDepartments.has(normalizedDepartmentId);
+    if (!hasDepartmentAccess) {
+      const department = await Department.findById(departmentId);
+      if (department) {
+        const deptManagerId = normalizeId(department.deptManager);
+        if (deptManagerId && supervisorIdentifiers.has(deptManagerId)) {
+          hasDepartmentAccess = true;
+        }
+      }
+    }
+
+    if (!hasDepartmentAccess) {
+      const employees = await Employee.find({ department: departmentId, supervisor: actorId });
+      if (employees.length) {
+        return employees;
+      }
       const exists = await Employee.exists({ department: departmentId });
       if (exists) throw new ReportAccessError(403, 'Forbidden');
       throw new ReportAccessError(404, 'No data');
     }
+
+    const employees = await Employee.find({ department: departmentId });
+    if (!employees.length) throw new ReportAccessError(404, 'No data');
     return employees;
   }
-  employees = await Employee.find({ department: departmentId });
+
+  const employees = await Employee.find({ department: departmentId });
   if (!employees.length) throw new ReportAccessError(404, 'No data');
   return employees;
 }
