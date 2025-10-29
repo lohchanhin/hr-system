@@ -430,12 +430,15 @@ describe('Schedule API', () => {
       form_data: { s: '2023-01-01', e: '2023-01-02', t: '病假' },
       status: 'approved'
     }];
+    const populateMock = jest.fn().mockReturnThis();
     mockApprovalRequest.find.mockReturnValue({
-      populate: jest.fn().mockReturnThis(),
+      populate: populateMock,
       then: (resolve) => resolve(approvals)
     });
     const res = await request(app).get('/api/schedules/leave-approvals?month=2023-01&employee=e1');
     expect(res.status).toBe(200);
+    expect(populateMock).toHaveBeenCalledWith('applicant_employee');
+    expect(populateMock).toHaveBeenCalledWith({ path: 'form', select: 'name category' });
     expect(res.body).toEqual({
       leaves: [{
         employee: approvals[0].applicant_employee,
@@ -483,8 +486,9 @@ describe('Schedule API', () => {
         status: 'approved'
       }
     ];
+    const populateMock = jest.fn().mockReturnThis();
     mockApprovalRequest.find.mockReturnValue({
-      populate: jest.fn().mockReturnThis(),
+      populate: populateMock,
       then: (resolve) => resolve(approvals)
     });
 
@@ -510,14 +514,17 @@ describe('Schedule API', () => {
         status: 'approved'
       }
     ]);
+    expect(populateMock).toHaveBeenCalledWith('applicant_employee');
+    expect(populateMock).toHaveBeenCalledWith({ path: 'form', select: 'name category' });
   });
 
   it('leave approvals include supervisor when includeSelf is true', async () => {
     const selectMock = jest.fn().mockResolvedValue([{ _id: 'emp1' }]);
     mockEmployee.find.mockReturnValue({ select: selectMock });
     const approvals = [];
+    const populateMock = jest.fn().mockReturnThis();
     mockApprovalRequest.find.mockReturnValue({
-      populate: jest.fn().mockReturnThis(),
+      populate: populateMock,
       then: (resolve) => resolve(approvals),
     });
 
@@ -527,6 +534,8 @@ describe('Schedule API', () => {
     expect(res.status).toBe(200);
     const queryArg = mockApprovalRequest.find.mock.calls[0][0];
     expect(queryArg.applicant_employee.$in).toEqual(expect.arrayContaining(['emp1', 'sup1']));
+    expect(populateMock).toHaveBeenCalledWith('applicant_employee');
+    expect(populateMock).toHaveBeenCalledWith({ path: 'form', select: 'name category' });
   });
 
   it('deletes old schedules', async () => {
