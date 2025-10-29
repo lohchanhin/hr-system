@@ -23,11 +23,15 @@ const employees = [
     signRole: 'R002',
     signLevel: 'U001',
     signTags: ['業務'],
-    organization: 'org2',
+    organization: { id: 'org2' },
     department: { id: 'd2', name: '業務部' },
     role: 'employee',
     displayName: 'Bob（bob）',
   },
+]
+const organizations = [
+  { _id: 'org1', name: '台北總部' },
+  { _id: 'org2', name: '新竹園區' },
 ]
 const workflowData = { steps: [{ step_order: 1, approver_type: 'user', approver_value: ['e1'] }] }
 const customFields = [
@@ -65,6 +69,7 @@ apiFetch.mockImplementation((url, opts) => {
   if (url === '/api/approvals/sign-levels') return Promise.resolve({ ok: true, json: async () => signLevels })
   if (url === '/api/sub-departments') return Promise.resolve({ ok: true, json: async () => subDepartments })
   if (url === '/api/other-control-settings') return Promise.resolve({ ok: true, json: async () => ({ customFields }) })
+  if (url === '/api/organizations') return Promise.resolve({ ok: true, json: async () => organizations })
   if (url === '/api/approvals/forms/f1/workflow' && !opts) return Promise.resolve({ ok: true, json: async () => workflowData })
   if (url === '/api/approvals/forms/f1/workflow' && opts?.method === 'PUT') return Promise.resolve({ ok: true })
   return Promise.resolve({ ok: true, json: async () => ({}) })
@@ -91,9 +96,11 @@ describe('ApprovalFlowSetting approver select', () => {
     await flushPromises()
     expect(apiFetch).toHaveBeenCalledWith('/api/sub-departments')
     expect(apiFetch).toHaveBeenCalledWith('/api/employees/options')
+    expect(apiFetch).toHaveBeenCalledWith('/api/organizations')
     expect(apiFetch).toHaveBeenCalledWith('/api/approvals/sign-roles')
     expect(apiFetch).toHaveBeenCalledWith('/api/approvals/sign-levels')
     expect(wrapper.vm.employeeOptions[0]).toMatchObject({ id: 'e1', username: 'alice', displayName: 'Alice（alice）' })
+    expect(wrapper.vm.employeeOptions[0].organization).toEqual({ id: 'org1', name: '台北總部' })
     expect(wrapper.vm.userApproverOptions[0]).toEqual({ value: 'e1', label: 'Alice（alice）' })
     await wrapper.vm.openWorkflowDialog({ _id: 'f1' })
     await flushPromises()
@@ -142,8 +149,32 @@ describe('ApprovalFlowSetting approver select', () => {
     expect(new Set(wrapper.vm.tagOptions.map((opt) => opt.value))).toEqual(new Set(['人資', '業務']))
     expect(wrapper.vm.managerApproverOptions.map((opt) => opt.value)).toEqual(['APPLICANT_SUPERVISOR', 'e1'])
     expect(new Set(wrapper.vm.departmentOptions.map((opt) => opt.value))).toEqual(new Set(['d1', 'd2']))
-    expect(new Set(wrapper.vm.organizationOptions.map((opt) => opt.value))).toEqual(new Set(['org1', 'org2']))
+    expect(wrapper.vm.organizationOptions).toEqual([
+      { value: 'org1', label: '台北總部' },
+      { value: 'org2', label: '新竹園區' },
+    ])
+    expect(wrapper.vm.departmentOptions).toEqual([
+      { value: 'd1', label: '人資部' },
+      { value: 'd2', label: '業務部' },
+    ])
+    expect(wrapper.vm.managerApproverOptions[0]).toEqual({ value: 'APPLICANT_SUPERVISOR', label: '申請者的主管' })
     expect(wrapper.vm.groupOptions.map((opt) => opt.value)).toEqual([SUB_DEPT_ID_1, SUB_DEPT_ID_2])
+  })
+
+  it('顯示機構名稱作為選項標籤', async () => {
+    const wrapper = mount(ApprovalFlowSetting, { global: { plugins: [ElementPlus] } })
+    await flushPromises()
+    await wrapper.vm.openWorkflowDialog({ _id: 'f1' })
+    await flushPromises()
+    const step = wrapper.vm.workflowSteps[0]
+    step.approver_type = 'org'
+    wrapper.vm.handleApproverTypeChange(step)
+    await flushPromises()
+    const orgOptions = wrapper.vm.organizationOptions
+    expect(orgOptions).toEqual([
+      { value: 'org1', label: '台北總部' },
+      { value: 'org2', label: '新竹園區' },
+    ])
   })
 
   it('normalizes group selections and saves ids', async () => {
