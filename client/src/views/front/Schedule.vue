@@ -1292,7 +1292,13 @@ async function fetchSchedules() {
       }
     })
 
-    const res2 = await apiFetch(`/api/schedules/leave-approvals${query}`)
+    const leaveParams = params.slice()
+    const deptId = selectedDepartment.value
+    const subId = selectedSubDepartment.value
+    if (deptId) leaveParams.push(`department=${deptId}`)
+    if (subId) leaveParams.push(`subDepartment=${subId}`)
+    const leaveQuery = `?${leaveParams.join('&')}`
+    const res2 = await apiFetch(`/api/schedules/leave-approvals${leaveQuery}`)
     if (res2.ok) {
       const extra = await res2.json()
       const approvals = Array.isArray(extra?.approvals) ? extra.approvals : []

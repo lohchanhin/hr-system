@@ -175,6 +175,7 @@ describe('Schedule.vue', () => {
     monthlyWithoutSelf = [],
     approvals = [],
     leaves = [],
+    leaveApprovalsHandler,
     supervisorProfile = {
       _id: 'sup1',
       name: '主管',
@@ -227,6 +228,10 @@ describe('Schedule.vue', () => {
       }
 
       if (pathname === '/api/schedules/leave-approvals') {
+        if (typeof leaveApprovalsHandler === 'function') {
+          const handled = await leaveApprovalsHandler({ searchParams })
+          if (handled) return handled
+        }
         return {
           ok: true,
           json: async () => ({ approvals, leaves })
@@ -280,6 +285,33 @@ describe('Schedule.vue', () => {
     expect(monthlyCall?.[0]).toBe(`/api/schedules/monthly?month=${month}&supervisor=sup1`)
   })
 
+  it('appends department filters to leave approval requests', async () => {
+    const month = dayjs().format('YYYY-MM')
+    setRoleToken('supervisor')
+    localStorage.setItem('employeeId', 'sup1')
+    const capturedParams = []
+    setupSupervisorApiMock({
+      monthlyWithSelf: [],
+      monthlyWithoutSelf: [],
+      employees: [{ _id: 'e1', name: 'E1', department: 'd1', subDepartment: 'sd1' }],
+      directReports: [{ _id: 'e1', subDepartment: { _id: 'sd1' } }],
+      leaveApprovalsHandler: async ({ searchParams }) => {
+        capturedParams.push(Object.fromEntries(searchParams.entries()))
+        return { ok: true, json: async () => ({ approvals: [], leaves: [] }) }
+      }
+    })
+
+    mountSchedule()
+    await flush()
+
+    expect(capturedParams.length).toBeGreaterThan(0)
+    expect(capturedParams[0]).toMatchObject({
+      month,
+      department: 'd1',
+      subDepartment: 'sd1'
+    })
+  })
+
   it('omits supervisor param when id missing', async () => {
     const month = dayjs().format('YYYY-MM')
     setRoleToken('employee')
@@ -299,6 +331,56 @@ describe('Schedule.vue', () => {
       url.startsWith(`/api/schedules/monthly?month=${month}`)
     )
     expect(monthlyCall?.[0]).toBe(`/api/schedules/monthly?month=${month}`)
+  })
+
+  it('refetches leave approvals when department changes', async () => {
+    setRoleToken('supervisor')
+    localStorage.setItem('employeeId', 'sup1')
+    const responses = {
+      'd1|sd1': { approvals: [{ _id: 'a1', status: 'pending' }], leaves: [] },
+      'd2|sd2': { approvals: [{ _id: 'a2', status: 'pending' }], leaves: [] }
+    }
+    const observed = []
+    setupSupervisorApiMock({
+      departments: [
+        { _id: 'd1', name: 'Dept A' },
+        { _id: 'd2', name: 'Dept B' }
+      ],
+      subDepartments: [
+        { _id: 'sd1', name: 'Sub A', department: { _id: 'd1' } },
+        { _id: 'sd2', name: 'Sub B', department: { _id: 'd2' } }
+      ],
+      employees: [
+        { _id: 'e1', name: 'E1', department: 'd1', subDepartment: 'sd1' },
+        { _id: 'e2', name: 'E2', department: 'd2', subDepartment: 'sd2' }
+      ],
+      directReports: [
+        { _id: 'e1', subDepartment: { _id: 'sd1' } },
+        { _id: 'e2', subDepartment: { _id: 'sd2' } }
+      ],
+      leaveApprovalsHandler: async ({ searchParams }) => {
+        const snapshot = Object.fromEntries(searchParams.entries())
+        observed.push(snapshot)
+        const key = `${snapshot.department || ''}|${snapshot.subDepartment || ''}`
+        const payload = responses[key] || { approvals: [], leaves: [] }
+        return { ok: true, json: async () => payload }
+      },
+      monthlyWithSelf: [],
+      monthlyWithoutSelf: []
+    })
+
+    const wrapper = mountSchedule()
+    await flush()
+
+    expect(observed[0]).toMatchObject({ department: 'd1', subDepartment: 'sd1' })
+    expect(wrapper.vm.approvalList).toEqual(responses['d1|sd1'].approvals)
+
+    wrapper.vm.selectedDepartment = 'd2'
+    await wrapper.vm.onDepartmentChange()
+    await flush()
+
+    expect(observed[observed.length - 1]).toMatchObject({ department: 'd2', subDepartment: 'sd2' })
+    expect(wrapper.vm.approvalList).toEqual(responses['d2|sd2'].approvals)
   })
 
   it('does not append supervisor param for employee role even when id exists', async () => {

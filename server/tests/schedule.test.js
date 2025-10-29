@@ -448,6 +448,70 @@ describe('Schedule API', () => {
     });
   });
 
+  it('filters leave approvals by department and subDepartment', async () => {
+    const approvals = [
+      {
+        _id: 'a1',
+        applicant_employee: { _id: 'e1', name: 'E1', department: 'd1', subDepartment: 'sd1' },
+        applicant_department: 'd1',
+        form: { _id: 'form1', name: '請假' },
+        form_data: { s: '2023-01-05', e: '2023-01-06', t: '病假' },
+        status: 'approved'
+      },
+      {
+        _id: 'a2',
+        applicant_employee: { _id: 'e2', name: 'E2', department: 'd1', subDepartment: 'sd2' },
+        applicant_department: 'd1',
+        form: { _id: 'form1', name: '請假' },
+        form_data: { s: '2023-01-03', e: '2023-01-04', t: '事假' },
+        status: 'approved'
+      },
+      {
+        _id: 'a3',
+        applicant_employee: { _id: 'e3', name: 'E3', department: 'd1', subDepartment: 'sd1' },
+        applicant_department: '',
+        form: { _id: 'form1', name: '請假' },
+        form_data: { s: '2023-01-07', e: '2023-01-08', t: '特休' },
+        status: 'approved'
+      },
+      {
+        _id: 'a4',
+        applicant_employee: { _id: 'e4', name: 'E4', department: 'd2', subDepartment: 'sd2' },
+        applicant_department: 'd2',
+        form: { _id: 'form1', name: '請假' },
+        form_data: { s: '2023-01-09', e: '2023-01-10', t: '病假' },
+        status: 'approved'
+      }
+    ];
+    mockApprovalRequest.find.mockReturnValue({
+      populate: jest.fn().mockReturnThis(),
+      then: (resolve) => resolve(approvals)
+    });
+
+    const res = await request(app)
+      .get('/api/schedules/leave-approvals?month=2023-01&department=d1&subDepartment=sd1');
+
+    expect(res.status).toBe(200);
+    expect(res.body.approvals).toHaveLength(2);
+    expect(res.body.approvals.map((a) => a._id)).toEqual(['a1', 'a3']);
+    expect(res.body.leaves).toEqual([
+      {
+        employee: approvals[0].applicant_employee,
+        leaveType: '病假',
+        startDate: '2023-01-05',
+        endDate: '2023-01-06',
+        status: 'approved'
+      },
+      {
+        employee: approvals[2].applicant_employee,
+        leaveType: '特休',
+        startDate: '2023-01-07',
+        endDate: '2023-01-08',
+        status: 'approved'
+      }
+    ]);
+  });
+
   it('leave approvals include supervisor when includeSelf is true', async () => {
     const selectMock = jest.fn().mockResolvedValue([{ _id: 'emp1' }]);
     mockEmployee.find.mockReturnValue({ select: selectMock });
