@@ -161,9 +161,13 @@ function createDateFromParts(parts, timeZone) {
 }
 
 function parseDateTimeString(value, timeZone) {
-  if (typeof value !== 'string') return null
+  if (typeof value !== 'string') {
+    return { value: null, error: 'CHECKTIME 不是字串' }
+  }
   const text = value.trim()
-  if (!text) return null
+  if (!text) {
+    return { value: null, error: 'CHECKTIME 為空字串' }
+  }
 
   const textWithoutT = text.replace('T', ' ')
 
@@ -181,30 +185,38 @@ function parseDateTimeString(value, timeZone) {
     }
 
     let hourNumber = Number(hour)
-    if (Number.isNaN(hourNumber)) return null
+    if (Number.isNaN(hourNumber)) {
+      return { value: null, error: 'CHECKTIME 時間數值無效' }
+    }
     if (normalizedIndicator === 'AM' && hourNumber === 12) {
       hourNumber = 0
     } else if (normalizedIndicator === 'PM' && hourNumber !== 12) {
       hourNumber += 12
     }
 
-    return createDateFromParts(
-      {
-        year: Number(year),
-        month: Number(month),
-        day: Number(day),
-        hour: hourNumber,
-        minute: Number(minute),
-        second: second ? Number(second) : 0
-      },
-      timeZone
-    )
+    return {
+      value: createDateFromParts(
+        {
+          year: Number(year),
+          month: Number(month),
+          day: Number(day),
+          hour: hourNumber,
+          minute: Number(minute),
+          second: second ? Number(second) : 0
+        },
+        timeZone
+      ),
+      error: null
+    }
   }
 
   const hasTimezone = /[zZ]|[+-]\d{2}:?\d{2}$/.test(text)
   if (hasTimezone) {
     const parsed = new Date(text)
-    return Number.isNaN(parsed.getTime()) ? null : parsed
+    if (Number.isNaN(parsed.getTime())) {
+      return { value: null, error: 'CHECKTIME 含時區但格式不正確' }
+    }
+    return { value: parsed, error: null }
   }
 
   const isoCandidate = text.replace(' ', 'T')
@@ -218,7 +230,10 @@ function parseDateTimeString(value, timeZone) {
       minute: parsedIso.getUTCMinutes(),
       second: parsedIso.getUTCSeconds()
     }
-    return createDateFromParts(parts, timeZone)
+    return {
+      value: createDateFromParts(parts, timeZone),
+      error: null
+    }
   }
 
   const standardMatch = text.match(
@@ -226,17 +241,20 @@ function parseDateTimeString(value, timeZone) {
   )
   if (standardMatch) {
     const [, year, month, day, hour = '0', minute = '0', second = '0'] = standardMatch
-    return createDateFromParts(
-      {
-        year: Number(year),
-        month: Number(month),
-        day: Number(day),
-        hour: Number(hour),
-        minute: Number(minute),
-        second: Number(second)
-      },
-      timeZone
-    )
+    return {
+      value: createDateFromParts(
+        {
+          year: Number(year),
+          month: Number(month),
+          day: Number(day),
+          hour: Number(hour),
+          minute: Number(minute),
+          second: Number(second)
+        },
+        timeZone
+      ),
+      error: null
+    }
   }
 
   const usMatch = text.match(
@@ -244,25 +262,33 @@ function parseDateTimeString(value, timeZone) {
   )
   if (usMatch) {
     const [, month, day, year, hour = '0', minute = '0', second = '0'] = usMatch
-    return createDateFromParts(
-      {
-        year: Number(year),
-        month: Number(month),
-        day: Number(day),
-        hour: Number(hour),
-        minute: Number(minute),
-        second: Number(second)
-      },
-      timeZone
-    )
+    return {
+      value: createDateFromParts(
+        {
+          year: Number(year),
+          month: Number(month),
+          day: Number(day),
+          hour: Number(hour),
+          minute: Number(minute),
+          second: Number(second)
+        },
+        timeZone
+      ),
+      error: null
+    }
   }
 
-  return null
+  return { value: null, error: 'CHECKTIME 格式不支援' }
 }
 
 function parseTimestamp(value, timeZone) {
-  if (!value && value !== 0) return null
+  if (value === null || value === undefined) {
+    return { value: null, error: 'CHECKTIME 缺少值' }
+  }
   if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) {
+      return { value: null, error: 'CHECKTIME Date 物件無效' }
+    }
     const parts = {
       year: value.getFullYear(),
       month: value.getMonth() + 1,
@@ -271,21 +297,32 @@ function parseTimestamp(value, timeZone) {
       minute: value.getMinutes(),
       second: value.getSeconds()
     }
-    return createDateFromParts(parts, timeZone)
+    const converted = createDateFromParts(parts, timeZone)
+    if (!converted) {
+      return { value: null, error: 'CHECKTIME 無法轉換為指定時區' }
+    }
+    return { value: converted, error: null }
   }
   if (typeof value === 'number') {
     const asDate = excelSerialToDate(value)
-    if (asDate) return parseTimestamp(asDate, timeZone)
+    if (asDate) {
+      return parseTimestamp(asDate, timeZone)
+    }
     const epochDate = new Date(value)
-    return Number.isNaN(epochDate.getTime()) ? null : epochDate
+    if (Number.isNaN(epochDate.getTime())) {
+      return { value: null, error: 'Excel serial 無效且不是有效的時間戳' }
+    }
+    return { value: epochDate, error: null }
   }
   if (typeof value === 'string') {
     const direct = parseDateTimeString(value, timeZone)
-    if (direct) return direct
+    if (direct.value) {
+      return direct
+    }
+    return { value: null, error: direct.error }
   }
-  return null
+  return { value: null, error: 'CHECKTIME 類型不支援' }
 }
-
 function normalizeAction(value) {
   if (value === null || value === undefined) return ''
   if (typeof value === 'string') {
@@ -474,7 +511,7 @@ function buildRowRecord({
 
   const identifier = normalizeIdentifier(userIdRaw)
   const action = normalizeAction(typeRaw)
-  const timestamp = parseTimestamp(timestampRaw, timezone)
+  const timestampResult = parseTimestamp(timestampRaw, timezone)
 
   return {
     rowNumber,
@@ -482,7 +519,8 @@ function buildRowRecord({
     rawUserId: userIdRaw,
     action,
     rawAction: typeRaw,
-    timestamp,
+    timestamp: timestampResult.value,
+    timestampError: timestampResult.error,
     rawTimestamp: timestampRaw,
     remark: remarkRaw ?? ''
   }
@@ -803,15 +841,19 @@ export async function importAttendanceRecords(req, res) {
     totalRows += 1
     if (record.identifier) uniqueUsers.add(record.identifier)
 
+    const timestampIso =
+      record.timestamp instanceof Date ? record.timestamp.toISOString() : null
+
     const sampleEntry = {
       rowNumber: record.rowNumber,
       userId: record.identifier,
       rawUserId: record.rawUserId,
       action: record.action,
       rawAction: record.rawAction,
-      timestamp: record.timestamp ? record.timestamp.toISOString() : null,
+      timestamp: timestampIso,
       rawTimestamp: record.rawTimestamp,
-      remark: record.remark
+      remark: record.remark,
+      timestampError: record.timestampError ?? null
     }
 
     const errors = []
@@ -819,7 +861,11 @@ export async function importAttendanceRecords(req, res) {
       errors.push('缺少 USERID')
     }
     if (!record.timestamp) {
-      errors.push('無法解析 CHECKTIME')
+      errors.push(
+        record.timestampError
+          ? `無法解析 CHECKTIME：${record.timestampError}`
+          : '無法解析 CHECKTIME'
+      )
     }
     if (!record.action) {
       errors.push('無法判斷 CHECKTYPE')
@@ -829,6 +875,15 @@ export async function importAttendanceRecords(req, res) {
       errorCount += 1
       sampleEntry.errors = errors
       sampleEntry.status = 'error'
+      console.error('attendance-import: validation failed', {
+        rowNumber: record.rowNumber,
+        userId: record.identifier || null,
+        rawUserId: record.rawUserId ?? null,
+        rawAction: record.rawAction ?? null,
+        rawTimestamp: record.rawTimestamp ?? null,
+        timestampError: record.timestampError ?? null,
+        errors
+      })
     } else if (ignoreSet.has(record.identifier)) {
       ignoredCount += 1
       sampleEntry.errors = []
@@ -868,6 +923,14 @@ export async function importAttendanceRecords(req, res) {
             })
           }
           missingUserMap.set(record.identifier, missingEntry)
+          console.warn('attendance-import: employee not found', {
+            rowNumber: record.rowNumber,
+            userId: record.identifier,
+            rawUserId: record.rawUserId ?? null,
+            rawAction: record.rawAction ?? null,
+            rawTimestamp: record.rawTimestamp ?? null,
+            reason: '找不到對應員工'
+          })
         } else {
           readyCount += 1
           sampleEntry.errors = []
