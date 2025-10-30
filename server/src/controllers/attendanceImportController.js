@@ -1,6 +1,7 @@
 import ExcelJS from 'exceljs'
 import readline from 'node:readline'
 import { Readable } from 'stream'
+import { TextDecoder } from 'util'
 import mongoose from 'mongoose'
 import AttendanceRecord from '../models/AttendanceRecord.js'
 import Employee from '../models/Employee.js'
@@ -25,6 +26,11 @@ const DEFAULT_TIMEZONE = 'Asia/Taipei'
 
 const PREVIEW_SAMPLE_LIMIT = 50
 const INSERT_BATCH_SIZE = 500
+
+const ENCODING_UTF8 = 'utf8'
+const ENCODING_UTF8_BOM = 'utf8-bom'
+const ENCODING_UTF16LE = 'utf16le'
+const ENCODING_UTF16BE = 'utf16be'
 
 class MissingColumnError extends Error {
   constructor(columns) {
@@ -71,6 +77,56 @@ function normalizeIdentifier(value) {
   if (value === null || value === undefined) return ''
   if (typeof value === 'string') return value.trim()
   return String(value).trim()
+}
+
+function detectBufferEncoding(buffer) {
+  if (!Buffer.isBuffer(buffer) || buffer.length < 2) {
+    return ENCODING_UTF8
+  }
+
+  const first = buffer[0]
+  const second = buffer[1]
+
+  if (first === 0xff && second === 0xfe) {
+    return ENCODING_UTF16LE
+  }
+  if (first === 0xfe && second === 0xff) {
+    return ENCODING_UTF16BE
+  }
+  if (buffer.length >= 3 && first === 0xef && second === 0xbb && buffer[2] === 0xbf) {
+    return ENCODING_UTF8_BOM
+  }
+
+  return ENCODING_UTF8
+}
+
+function createUploadStreamFactory(buffer, { isCsv }) {
+  if (!isCsv) {
+    return () => Readable.from(buffer)
+  }
+
+  const encoding = detectBufferEncoding(buffer)
+
+  if (encoding === ENCODING_UTF16LE || encoding === ENCODING_UTF16BE) {
+    const decoder = new TextDecoder(encoding === ENCODING_UTF16LE ? 'utf-16le' : 'utf-16be')
+    let text = decoder.decode(buffer)
+    if (text.charCodeAt(0) === 0xfeff) {
+      text = text.slice(1)
+    }
+    const normalized = text
+    return () => Readable.from([normalized])
+  }
+
+  let payload = buffer
+  if (encoding === ENCODING_UTF8_BOM) {
+    payload = buffer.slice(3)
+  }
+
+  return () => {
+    const stream = Readable.from([payload])
+    stream.setEncoding('utf8')
+    return stream
+  }
 }
 
 function createDateFromParts(parts, timeZone) {
@@ -497,7 +553,6 @@ async function iterateXlsxRecords({ createStream, headerPairs, mappings, timezon
 
 async function iterateCsvRecords({ createStream, headerPairs, mappings, timezone, onRow }) {
   const stream = createStream()
-  stream.setEncoding('utf8')
   const reader = readline.createInterface({ input: stream, crlfDelay: Infinity })
 
   let headerMap = null
@@ -604,17 +659,13 @@ export async function importAttendanceRecords(req, res) {
   const isCsv =
     req.file.mimetype === 'text/csv' || req.file.originalname?.toLowerCase().endsWith('.csv')
 
-  const streamFactory = () => Readable.from(req.file.buffer)
+  const streamFactory = createUploadStreamFactory(req.file.buffer, { isCsv })
 
   const identifiers = new Set()
   let totalRowsFirstPass = 0
   try {
     await iterateRecords({
-      createStream: () => {
-        const stream = streamFactory()
-        if (isCsv) stream.setEncoding('utf8')
-        return stream
-      },
+      createStream: streamFactory,
       isCsv,
       headerPairs,
       mappings,
@@ -850,11 +901,7 @@ export async function importAttendanceRecords(req, res) {
 
   try {
     await iterateRecords({
-      createStream: () => {
-        const stream = streamFactory()
-        if (isCsv) stream.setEncoding('utf8')
-        return stream
-      },
+      createStream: streamFactory,
       isCsv,
       headerPairs,
       mappings,
