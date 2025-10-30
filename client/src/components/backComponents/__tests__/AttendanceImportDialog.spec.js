@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { shallowMount } from '@vue/test-utils'
+import { h, defineComponent, computed, provide, inject } from 'vue'
 import AttendanceImportDialog from '../AttendanceImportDialog.vue'
 import * as apiModule from '../../../api'
 import { ElMessage } from 'element-plus'
@@ -10,6 +11,43 @@ vi.mock('element-plus', () => {
   const warning = vi.fn()
   return {
     ElMessage: { success, error, warning }
+  }
+})
+
+const ElTableStub = defineComponent({
+  name: 'ElTableStub',
+  props: {
+    data: {
+      type: Array,
+      default: () => []
+    }
+  },
+  setup(props, { slots }) {
+    const tableData = computed(() => props.data ?? [])
+    provide('tableData', tableData)
+    return () => h('div', { class: 'el-table-stub' }, slots.default ? slots.default() : [])
+  }
+})
+
+const ElTableColumnStub = defineComponent({
+  name: 'ElTableColumnStub',
+  setup(_, { slots }) {
+    const tableData = inject('tableData', computed(() => []))
+    return () =>
+      h(
+        'div',
+        { class: 'el-table-column-stub' },
+        tableData.value.flatMap((row, index) =>
+          (slots.default ? slots.default({ row, $index: index }) : []) || []
+        )
+      )
+  }
+})
+
+const ElTagStub = defineComponent({
+  name: 'ElTagStub',
+  setup(_, { slots }) {
+    return () => h('span', { class: 'el-tag-stub' }, slots.default ? slots.default() : [])
   }
 })
 
@@ -33,8 +71,9 @@ const elementStubs = {
     props: ['label', 'value'],
     template: '<option :value="value">{{ label }}</option>'
   },
-  'el-table': { template: '<div class="el-table-stub"><slot /></div>', props: ['data'] },
-  'el-table-column': { template: '<div class="el-table-column-stub"><slot :row="{}" /></div>' },
+  'el-table': ElTableStub,
+  'el-table-column': ElTableColumnStub,
+  'el-tag': ElTagStub,
   'el-input': {
     props: ['modelValue'],
     template: '<input :value="modelValue" @input="$emit(\'update:modelValue\', $event.target.value)" />'
@@ -103,6 +142,44 @@ describe('AttendanceImportDialog', () => {
     expect(parsedOptions.timezone).toBe(wrapper.vm.form.timezone)
     expect(JSON.parse(entries.mappings)).toMatchObject({ userId: 'USERID', timestamp: 'CHECKTIME', type: 'CHECKTYPE' })
     expect(ElMessage.success).toHaveBeenCalledWith('預覽完成，可直接匯入')
+  })
+
+  it('預覽表格顯示 clockIn 與 clockOut 對應中文標籤', async () => {
+    importAttendanceMock.mockResolvedValueOnce(
+      createApiResponse({
+        summary: { totalRows: 2, readyCount: 2, missingCount: 0, ignoredCount: 0, errorCount: 0 },
+        preview: [
+          {
+            rowNumber: 1,
+            userId: 'emp1',
+            action: 'clockIn',
+            timestamp: '2024-01-05T08:00:00.000Z',
+            status: 'ready'
+          },
+          {
+            rowNumber: 2,
+            userId: 'emp1',
+            action: 'clockOut',
+            timestamp: '2024-01-05T17:00:00.000Z',
+            status: 'ready'
+          }
+        ],
+        missingUsers: [],
+        message: '預覽成功'
+      })
+    )
+
+    const wrapper = mountComponent()
+    wrapper.vm.selectedFile = new File(['content'], 'records.xlsx')
+
+    await wrapper.vm.submitPreview()
+    await wrapper.vm.$nextTick()
+
+    const tags = wrapper.findAll('.el-tag-stub')
+    const tagTexts = tags.map((tag) => tag.text())
+
+    expect(tagTexts).toContain('I / 上班')
+    expect(tagTexts).toContain('O / 下班')
   })
 
   it('當存在缺少的使用者時可設定對應並進行匯入', async () => {

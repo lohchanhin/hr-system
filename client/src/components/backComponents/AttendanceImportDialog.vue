@@ -80,8 +80,13 @@
           </el-table-column>
           <el-table-column prop="action" label="動作" width="120">
             <template #default="{ row }">
-              <el-tag v-if="row.action === 'in'">I / 上班</el-tag>
-              <el-tag v-else-if="row.action === 'out'" type="warning">O / 下班</el-tag>
+              <el-tag v-if="row.action === 'in' || row.action === 'clockIn'">I / 上班</el-tag>
+              <el-tag
+                v-else-if="row.action === 'out' || row.action === 'clockOut'"
+                type="warning"
+              >
+                O / 下班
+              </el-tag>
               <span v-else>{{ row.action }}</span>
             </template>
           </el-table-column>
