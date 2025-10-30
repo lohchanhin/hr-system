@@ -201,6 +201,44 @@ describe('attendanceImportController', () => {
     }))
   })
 
+  it('可解析 UTF-16LE 編碼的 CSV 並於預覽顯示正確時間', async () => {
+    const csvContent = 'USERID,CHECKTIME,CHECKTYPE\nEMP001,2024-03-01 09:30:00,I\n'
+    const bom = Buffer.from([0xff, 0xfe])
+    const encoded = Buffer.from(csvContent, 'utf16le')
+    const buffer = Buffer.concat([bom, encoded])
+
+    mockEmployeeFindWith([{ _id: 'emp-utf16', employeeId: 'EMP001', name: 'UTF16 User' }])
+
+    const req = {
+      user: { role: 'admin' },
+      file: {
+        buffer,
+        mimetype: 'text/csv',
+        originalname: 'attendance.csv'
+      },
+      body: {
+        options: JSON.stringify({ dryRun: true, timezone: 'Asia/Taipei' })
+      }
+    }
+
+    const res = createMockRes()
+
+    await importAttendanceRecords(req, res)
+
+    expect(mockAttendanceRecord.insertMany).not.toHaveBeenCalled()
+    expect(res.json).toHaveBeenCalled()
+    const response = res.json.mock.calls[0][0]
+    expect(response.preview).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          userId: 'EMP001',
+          status: 'ready',
+          timestamp: '2024-03-01T01:30:00.000Z'
+        })
+      ])
+    )
+  })
+
   it('支援 12 小時制與中文 AM/PM 標記', async () => {
     const buffer = await createWorkbookBuffer([
       { USERID: 'C001', CHECKTIME: '2024-01-05 06:30 PM', CHECKTYPE: 'I' },
