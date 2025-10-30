@@ -187,6 +187,8 @@ function normalizeAction(value) {
   if (typeof value === 'string') {
     const text = value.trim()
     if (!text) return ''
+    if (text === '1') return 'clockIn'
+    if (text === '0') return 'clockOut'
     const upper = text.toUpperCase()
     if (TYPE_MAPPINGS[upper]) return TYPE_MAPPINGS[upper]
     if (SUPPORTED_ACTIONS.has(text)) return text

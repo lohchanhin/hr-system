@@ -93,6 +93,46 @@ describe('attendanceImportController', () => {
     }))
   })
 
+  it('會將字串 0/1 的 CHECKTYPE 轉換為 clockOut/clockIn 並成功匯入', async () => {
+    const buffer = await createWorkbookBuffer([
+      { USERID: 'B001', CHECKTIME: '2024-02-01 09:00', CHECKTYPE: '1' },
+      { USERID: 'B002', CHECKTIME: '2024-02-01 18:00', CHECKTYPE: '0' }
+    ])
+
+    mockEmployeeFindWith([
+      { _id: 'emp-clockin', employeeId: 'B001', name: 'Morning' },
+      { _id: 'emp-clockout', employeeId: 'B002', name: 'Evening' }
+    ])
+
+    const req = {
+      user: { role: 'admin' },
+      file: {
+        buffer,
+        mimetype: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        originalname: 'attendance.xlsx'
+      },
+      body: {
+        options: JSON.stringify({ timezone: 'Asia/Taipei', dryRun: false })
+      }
+    }
+
+    const res = createMockRes()
+
+    await importAttendanceRecords(req, res)
+
+    expect(mockAttendanceRecord.insertMany).toHaveBeenCalledTimes(1)
+    const inserted = mockAttendanceRecord.insertMany.mock.calls[0][0]
+    expect(inserted).toHaveLength(2)
+    expect(inserted[0]).toMatchObject({ employee: 'emp-clockin', action: 'clockIn' })
+    expect(inserted[1]).toMatchObject({ employee: 'emp-clockout', action: 'clockOut' })
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: '考勤資料匯入完成',
+        summary: expect.objectContaining({ readyCount: 2, importedCount: 2 })
+      })
+    )
+  })
+
   it('找不到員工時會回傳 missingUsers 結構並不匯入', async () => {
     const buffer = await createWorkbookBuffer([
       { USERID: 'unknown', CHECKTIME: '2024-01-05 09:00', CHECKTYPE: 'O' }
