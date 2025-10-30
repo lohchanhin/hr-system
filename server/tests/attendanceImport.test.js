@@ -89,7 +89,7 @@ describe('attendanceImportController', () => {
 
     expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
       message: '考勤資料匯入完成',
-      summary: expect.objectContaining({ readyCount: 1, importedCount: 1 })
+      summary: expect.objectContaining({ readyCount: 1, importedCount: 1, uniqueUserCount: 1 })
     }))
   })
 
@@ -128,7 +128,7 @@ describe('attendanceImportController', () => {
     expect(res.json).toHaveBeenCalledWith(
       expect.objectContaining({
         message: '考勤資料匯入完成',
-        summary: expect.objectContaining({ readyCount: 2, importedCount: 2 })
+        summary: expect.objectContaining({ readyCount: 2, importedCount: 2, uniqueUserCount: 2 })
       })
     )
   })
@@ -233,5 +233,129 @@ describe('attendanceImportController', () => {
         missingUsers: [expect.objectContaining({ identifier: 'unknown', count: 3 })]
       })
     )
+  })
+
+  it('dryRun 模擬大檔案僅回傳樣本並統計唯一使用者', async () => {
+    const totalRows = 1200
+    const uniqueUsers = 120
+    const users = Array.from({ length: uniqueUsers }, (_, index) => {
+      const employeeId = `EMP${String(index + 1).padStart(4, '0')}`
+      return {
+        employeeId,
+        employee: {
+          _id: `emp-${index + 1}`,
+          employeeId,
+          name: `User ${index + 1}`
+        }
+      }
+    })
+
+    const rows = []
+    for (let i = 0; i < totalRows; i += 1) {
+      const user = users[i % users.length]
+      rows.push({
+        USERID: user.employeeId,
+        CHECKTIME: `2024-03-${String((i % 28) + 1).padStart(2, '0')} 08:00:00`,
+        CHECKTYPE: 'I'
+      })
+    }
+
+    const buffer = await createWorkbookBuffer(rows)
+    mockEmployeeFindWith(users.map(user => user.employee))
+
+    const req = {
+      user: { role: 'admin' },
+      file: {
+        buffer,
+        mimetype: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        originalname: 'attendance.xlsx'
+      },
+      body: {
+        options: JSON.stringify({ timezone: 'Asia/Taipei', dryRun: true })
+      }
+    }
+
+    const res = createMockRes()
+
+    await importAttendanceRecords(req, res)
+
+    expect(mockAttendanceRecord.insertMany).not.toHaveBeenCalled()
+    expect(res.json).toHaveBeenCalledTimes(1)
+    const payload = res.json.mock.calls[0][0]
+    expect(payload.summary).toMatchObject({
+      totalRows,
+      readyCount: totalRows,
+      importedCount: 0,
+      uniqueUserCount: uniqueUsers
+    })
+    expect(payload.preview).toHaveLength(50)
+    expect(payload.preview.every(item => item.status === 'ready')).toBe(true)
+  })
+
+  it('正式匯入大檔案會分批 insertMany 並回傳樣本', async () => {
+    const totalRows = 1305
+    const uniqueUsers = 87
+    const users = Array.from({ length: uniqueUsers }, (_, index) => {
+      const employeeId = `EMP${String(index + 1).padStart(4, '0')}`
+      return {
+        employeeId,
+        employee: {
+          _id: `emp-${index + 1}`,
+          employeeId,
+          name: `User ${index + 1}`
+        }
+      }
+    })
+
+    const rows = []
+    for (let i = 0; i < totalRows; i += 1) {
+      const user = users[i % users.length]
+      rows.push({
+        USERID: user.employeeId,
+        CHECKTIME: `2024-04-${String((i % 28) + 1).padStart(2, '0')} 09:00:00`,
+        CHECKTYPE: i % 2 === 0 ? 'I' : 'O'
+      })
+    }
+
+    const buffer = await createWorkbookBuffer(rows)
+    mockEmployeeFindWith(users.map(user => user.employee))
+
+    const req = {
+      user: { role: 'admin' },
+      file: {
+        buffer,
+        mimetype: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        originalname: 'attendance.xlsx'
+      },
+      body: {
+        options: JSON.stringify({ timezone: 'Asia/Taipei', dryRun: false })
+      }
+    }
+
+    const res = createMockRes()
+
+    await importAttendanceRecords(req, res)
+
+    const expectedCalls = Math.ceil(totalRows / 500)
+    expect(mockAttendanceRecord.insertMany).toHaveBeenCalledTimes(expectedCalls)
+    const insertedTotal = mockAttendanceRecord.insertMany.mock.calls.reduce(
+      (sum, [batch]) => {
+        expect(batch.length).toBeLessThanOrEqual(500)
+        return sum + batch.length
+      },
+      0
+    )
+    expect(insertedTotal).toBe(totalRows)
+
+    expect(res.json).toHaveBeenCalledTimes(1)
+    const payload = res.json.mock.calls[0][0]
+    expect(payload.summary).toMatchObject({
+      totalRows,
+      readyCount: totalRows,
+      importedCount: totalRows,
+      uniqueUserCount: uniqueUsers
+    })
+    expect(payload.preview).toHaveLength(50)
+    expect(payload.preview[0].status).toBe('ready')
   })
 })

@@ -1,4 +1,5 @@
 import ExcelJS from 'exceljs'
+import readline from 'node:readline'
 import { Readable } from 'stream'
 import mongoose from 'mongoose'
 import AttendanceRecord from '../models/AttendanceRecord.js'
@@ -21,6 +22,17 @@ const TYPE_MAPPINGS = {
 const SUPPORTED_ACTIONS = new Set(['clockIn', 'clockOut', 'outing', 'breakIn'])
 
 const DEFAULT_TIMEZONE = 'Asia/Taipei'
+
+const PREVIEW_SAMPLE_LIMIT = 50
+const INSERT_BATCH_SIZE = 500
+
+class MissingColumnError extends Error {
+  constructor(columns) {
+    super('匯入檔案缺少必要欄位')
+    this.name = 'MissingColumnError'
+    this.columns = columns
+  }
+}
 
 function parseJsonField(value, fallback) {
   if (!value) return fallback
@@ -281,6 +293,229 @@ function buildEmployeeMaps(employees = []) {
   return { byEmployeeId, byEmail, byObjectId }
 }
 
+function registerHeader(headerMap, header, colNumber) {
+  if (header === null || header === undefined) return
+  const text = String(header).trim()
+  if (!text) return
+  headerMap.set(text, colNumber)
+  headerMap.set(text.toUpperCase(), colNumber)
+}
+
+function buildHeaderMapFromRow(row) {
+  const headerMap = new Map()
+  row.eachCell((cell, colNumber) => {
+    const value = toPlainCellValue(cell)
+    if (value !== undefined && value !== null) {
+      registerHeader(headerMap, value, colNumber)
+    }
+  })
+  return headerMap
+}
+
+function buildHeaderMapFromValues(values = []) {
+  const headerMap = new Map()
+  values.forEach((value, index) => {
+    if (value !== undefined && value !== null) {
+      registerHeader(headerMap, value, index + 1)
+    }
+  })
+  return headerMap
+}
+
+function findMissingColumns(headerMap, mappings) {
+  return REQUIRED_MAPPING_KEYS
+    .map(key => ({ key, header: mappings[key] }))
+    .filter(({ header }) => typeof header === 'string' && header.trim())
+    .filter(({ header }) => {
+      const original = header.trim()
+      const upper = original.toUpperCase()
+      return !headerMap.has(original) && !headerMap.has(upper)
+    })
+    .map(({ key, header }) => `${key} (${header})`)
+}
+
+function getColumnIndex(headerMap, header) {
+  if (typeof header !== 'string') return null
+  const trimmed = header.trim()
+  if (!trimmed) return null
+  if (headerMap.has(trimmed)) return headerMap.get(trimmed)
+  const upper = trimmed.toUpperCase()
+  if (headerMap.has(upper)) return headerMap.get(upper)
+  return null
+}
+
+function isMeaningfulValue(value) {
+  if (value === null || value === undefined) return false
+  if (typeof value === 'string') return value.trim().length > 0
+  if (value instanceof Date) return true
+  return true
+}
+
+function buildRowRecord({
+  rowNumber,
+  headerMap,
+  headerPairs,
+  timezone,
+  getValue
+}) {
+  const extracted = {}
+  let hasValue = false
+  headerPairs.forEach(([key, header]) => {
+    if (typeof header !== 'string' || !header.trim()) return
+    const col = getColumnIndex(headerMap, header)
+    if (!col) return
+    const value = getValue(col)
+    extracted[key] = value
+    if (!hasValue && isMeaningfulValue(value)) {
+      hasValue = true
+    }
+  })
+
+  if (!hasValue) {
+    return null
+  }
+
+  const userIdRaw = extracted.userId
+  const timestampRaw = extracted.timestamp
+  const typeRaw = extracted.type
+  const remarkRaw = extracted.remark
+
+  const identifier = normalizeIdentifier(userIdRaw)
+  const action = normalizeAction(typeRaw)
+  const timestamp = parseTimestamp(timestampRaw, timezone)
+
+  return {
+    rowNumber,
+    identifier,
+    rawUserId: userIdRaw,
+    action,
+    rawAction: typeRaw,
+    timestamp,
+    rawTimestamp: timestampRaw,
+    remark: remarkRaw ?? ''
+  }
+}
+
+function parseCsvLine(line) {
+  const result = []
+  let current = ''
+  let inQuotes = false
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index]
+    if (char === '"') {
+      if (inQuotes && line[index + 1] === '"') {
+        current += '"'
+        index += 1
+      } else {
+        inQuotes = !inQuotes
+      }
+    } else if (char === ',' && !inQuotes) {
+      result.push(current)
+      current = ''
+    } else {
+      current += char
+    }
+  }
+  result.push(current)
+  return result.map(value => (typeof value === 'string' ? value.trim() : value))
+}
+
+async function iterateXlsxRecords({ createStream, headerPairs, mappings, timezone, onRow }) {
+  const stream = createStream()
+  const workbookReader = new ExcelJS.stream.xlsx.WorkbookReader(stream, {
+    sharedStrings: 'cache',
+    hyperlinks: 'ignore',
+    worksheets: 'emit'
+  })
+
+  let processedWorksheet = false
+  for await (const worksheetReader of workbookReader) {
+    if (processedWorksheet) break
+    processedWorksheet = true
+
+    let headerMap = null
+    for await (const row of worksheetReader) {
+      if (!headerMap) {
+        headerMap = buildHeaderMapFromRow(row)
+        const missingColumns = findMissingColumns(headerMap, mappings)
+        if (missingColumns.length) {
+          throw new MissingColumnError(missingColumns)
+        }
+        continue
+      }
+
+      const getValue = col => toPlainCellValue(row.getCell(col))
+      const record = buildRowRecord({
+        rowNumber: row.number,
+        headerMap,
+        headerPairs,
+        timezone,
+        getValue
+      })
+      if (!record) continue
+      // eslint-disable-next-line no-await-in-loop
+      await onRow(record)
+    }
+  }
+}
+
+async function iterateCsvRecords({ createStream, headerPairs, mappings, timezone, onRow }) {
+  const stream = createStream()
+  stream.setEncoding('utf8')
+  const reader = readline.createInterface({ input: stream, crlfDelay: Infinity })
+
+  let headerMap = null
+  let rowNumber = 0
+  for await (const line of reader) {
+    rowNumber += 1
+    if (!headerMap) {
+      const headers = parseCsvLine(line)
+      headerMap = buildHeaderMapFromValues(headers)
+      const missingColumns = findMissingColumns(headerMap, mappings)
+      if (missingColumns.length) {
+        throw new MissingColumnError(missingColumns)
+      }
+      continue
+    }
+
+    if (!line || !line.trim()) {
+      continue
+    }
+
+    const values = parseCsvLine(line)
+    const getValue = col => {
+      const value = values[col - 1]
+      if (value === undefined || value === null) return ''
+      return typeof value === 'string' ? value : String(value)
+    }
+    const record = buildRowRecord({
+      rowNumber,
+      headerMap,
+      headerPairs,
+      timezone,
+      getValue
+    })
+    if (!record) continue
+    // eslint-disable-next-line no-await-in-loop
+    await onRow(record)
+  }
+}
+
+async function iterateRecords({
+  createStream,
+  isCsv,
+  headerPairs,
+  mappings,
+  timezone,
+  onRow
+}) {
+  if (isCsv) {
+    await iterateCsvRecords({ createStream, headerPairs, mappings, timezone, onRow })
+    return
+  }
+  await iterateXlsxRecords({ createStream, headerPairs, mappings, timezone, onRow })
+}
+
 export async function importAttendanceRecords(req, res) {
   if (!req.user || req.user.role !== 'admin') {
     res.status(403).json({ message: '僅限管理者匯入考勤資料' })
@@ -329,118 +564,45 @@ export async function importAttendanceRecords(req, res) {
       : []
   )
 
-  const workbook = new ExcelJS.Workbook()
-  let worksheet
+  const headerPairs = Object.entries(mappings)
+  const isCsv =
+    req.file.mimetype === 'text/csv' || req.file.originalname?.toLowerCase().endsWith('.csv')
+
+  const streamFactory = () => Readable.from(req.file.buffer)
+
+  const identifiers = new Set()
+  let totalRowsFirstPass = 0
   try {
-    if (req.file.mimetype === 'text/csv' || req.file.originalname?.toLowerCase().endsWith('.csv')) {
-      let csvSource
-      try {
-        const csvContent = req.file.buffer.toString('utf8')
-        csvSource = Readable.from(csvContent)
-      } catch (error) {
-        res.status(400).json({ message: 'CSV 轉換失敗', errors: [error.message] })
-        return
+    await iterateRecords({
+      createStream: () => {
+        const stream = streamFactory()
+        if (isCsv) stream.setEncoding('utf8')
+        return stream
+      },
+      isCsv,
+      headerPairs,
+      mappings,
+      timezone,
+      onRow: record => {
+        totalRowsFirstPass += 1
+        if (record.identifier) {
+          identifiers.add(record.identifier)
+        }
       }
-      await workbook.csv.read(csvSource)
-    } else {
-      await workbook.xlsx.load(req.file.buffer)
-    }
-    worksheet = workbook.worksheets[0]
+    })
   } catch (error) {
+    if (error instanceof MissingColumnError) {
+      res.status(400).json({
+        message: '匯入檔案缺少必要欄位',
+        errors: error.columns.map(name => `找不到欄位：${name}`)
+      })
+      return
+    }
     res.status(400).json({ message: '無法讀取匯入檔案', errors: [error.message] })
     return
   }
 
-  if (!worksheet) {
-    res.status(400).json({ message: '匯入檔案沒有工作表', errors: [] })
-    return
-  }
-
-  const headerRow = worksheet.getRow(1)
-  const headerMap = new Map()
-  headerRow.eachCell((cell, colNumber) => {
-    const value = toPlainCellValue(cell)
-    if (typeof value === 'string' && value.trim()) {
-      const key = value.trim()
-      headerMap.set(key, colNumber)
-      headerMap.set(key.toUpperCase(), colNumber)
-    }
-  })
-
-  const missingColumns = REQUIRED_MAPPING_KEYS
-    .map(key => ({ key, header: mappings[key] }))
-    .filter(({ header }) => typeof header === 'string' && header.trim())
-    .filter(({ header }) => {
-      const upper = header.trim().toUpperCase()
-      return !headerMap.has(header.trim()) && !headerMap.has(upper)
-    })
-    .map(({ key, header }) => `${key} (${header})`)
-
-  if (missingColumns.length) {
-    res.status(400).json({
-      message: '匯入檔案缺少必要欄位',
-      errors: missingColumns.map(name => `找不到欄位：${name}`)
-    })
-    return
-  }
-
-  const rows = []
-  const identifiers = new Set()
-  const headerKeys = Object.entries(mappings)
-  const maxRow = worksheet.actualRowCount || worksheet.rowCount
-  for (let rowNumber = 2; rowNumber <= maxRow; rowNumber += 1) {
-    const row = worksheet.getRow(rowNumber)
-    if (!row || row.cellCount === 0) continue
-
-    const extracted = {}
-    headerKeys.forEach(([key, header]) => {
-      if (typeof header !== 'string' || !header.trim()) return
-      const mapKey = headerMap.has(header) ? header : header.toUpperCase()
-      const col = headerMap.get(mapKey)
-      if (!col) return
-      extracted[key] = toPlainCellValue(row.getCell(col))
-    })
-
-    const userIdRaw = extracted.userId
-    const timestampRaw = extracted.timestamp
-    const typeRaw = extracted.type
-    const remarkRaw = extracted.remark
-
-    const identifier = normalizeIdentifier(userIdRaw)
-    const action = normalizeAction(typeRaw)
-    const timestamp = parseTimestamp(timestampRaw, timezone)
-
-    const previewRow = {
-      rowNumber,
-      userId: identifier,
-      rawUserId: userIdRaw,
-      action,
-      rawAction: typeRaw,
-      timestamp: timestamp ? timestamp.toISOString() : null,
-      rawTimestamp: timestampRaw,
-      remark: remarkRaw ?? ''
-    }
-
-    const errors = []
-    if (!identifier) {
-      errors.push('缺少 USERID')
-    }
-    if (!timestamp) {
-      errors.push('無法解析 CHECKTIME')
-    }
-    if (!action) {
-      errors.push('無法判斷 CHECKTYPE')
-    }
-
-    previewRow.errors = errors
-    rows.push(previewRow)
-
-    if (identifier) {
-      identifiers.add(identifier)
-    }
-  }
-
-  if (!rows.length) {
+  if (!totalRowsFirstPass) {
     res.status(400).json({ message: '匯入檔案沒有資料', errors: [] })
     return
   }
@@ -457,11 +619,13 @@ export async function importAttendanceRecords(req, res) {
   const emailSet = new Set()
   const objectIdSet = new Set()
 
-  identifiers.forEach(identifier => collectCandidate(identifier, null, {
-    employeeIds: employeeIdSet,
-    emails: emailSet,
-    objectIds: objectIdSet
-  }))
+  identifiers.forEach(identifier =>
+    collectCandidate(identifier, null, {
+      employeeIds: employeeIdSet,
+      emails: emailSet,
+      objectIds: objectIdSet
+    })
+  )
   mappingEntries.forEach(value => {
     if (!value) return
     if (typeof value === 'string') {
@@ -531,109 +695,170 @@ export async function importAttendanceRecords(req, res) {
   const employeeMaps = buildEmployeeMaps(employees)
 
   const missingUserMap = new Map()
-  const validRecords = []
+  const previewSamples = []
+  const uniqueUsers = new Set()
+  let readyCount = 0
+  let missingCount = 0
   let ignoredCount = 0
   let errorCount = 0
+  let importedCount = 0
+  let totalRows = 0
+  const batchRecords = []
 
-  rows.forEach(previewRow => {
-    const identifier = previewRow.userId
-    const rowErrors = [...previewRow.errors]
-    if (!identifier) {
-      errorCount += 1
-      previewRow.status = 'error'
-      previewRow.employee = null
-      return
-    }
-
-    if (rowErrors.length) {
-      errorCount += 1
-      previewRow.status = 'error'
-      previewRow.employee = null
-      return
-    }
-
-    if (ignoreSet.has(identifier)) {
-      ignoredCount += 1
-      previewRow.status = 'ignored'
-      previewRow.employee = null
-      return
-    }
-
-    const mapping = mappingEntries.get(identifier)
-    const mappedEmployee = resolveMappedEmployee(mapping, employeeMaps)
-
-    if (mappedEmployee === 'ignore') {
-      ignoredCount += 1
-      previewRow.status = 'ignored'
-      previewRow.employee = null
-      return
-    }
-
-    const employee =
-      mappedEmployee ||
-      employeeMaps.byEmployeeId.get(identifier) ||
-      employeeMaps.byEmail.get(identifier.toLowerCase()) ||
-      employeeMaps.byObjectId.get(identifier)
-
-    if (!employee) {
-      const missingEntry = missingUserMap.get(identifier) || {
-        identifier,
-        count: 0,
-        rows: [],
-        samples: []
-      }
-      missingEntry.count += 1
-      missingEntry.rows.push(previewRow.rowNumber)
-      if (missingEntry.samples.length < 5) {
-        missingEntry.samples.push({
-          timestamp: previewRow.timestamp,
-          action: previewRow.action,
-          remark: previewRow.remark
-        })
-      }
-      missingUserMap.set(identifier, missingEntry)
-      previewRow.status = 'missing'
-      previewRow.employee = null
-      return
-    }
-
-    previewRow.status = 'ready'
-    previewRow.employee = {
-      _id: String(employee._id),
-      name: employee.name || '',
-      email: employee.email || '',
-      employeeId: employee.employeeId || ''
-    }
-
-    validRecords.push({
-      employee: employee._id,
-      action: previewRow.action,
-      timestamp: new Date(previewRow.timestamp),
-      remark: previewRow.remark ?? ''
-    })
-  })
-
-  if (!dryRun && validRecords.length) {
-    await AttendanceRecord.insertMany(validRecords)
+  const flushBatch = async () => {
+    if (!batchRecords.length) return
+    const toInsert = batchRecords.splice(0, batchRecords.length)
+    await AttendanceRecord.insertMany(toInsert)
+    importedCount += toInsert.length
   }
 
-  const missingCount = Array.from(missingUserMap.values()).reduce(
-    (total, entry) => total + (entry.count || 0),
-    0
-  )
+  const processRow = async record => {
+    totalRows += 1
+    if (record.identifier) uniqueUsers.add(record.identifier)
+
+    const sampleEntry = {
+      rowNumber: record.rowNumber,
+      userId: record.identifier,
+      rawUserId: record.rawUserId,
+      action: record.action,
+      rawAction: record.rawAction,
+      timestamp: record.timestamp ? record.timestamp.toISOString() : null,
+      rawTimestamp: record.rawTimestamp,
+      remark: record.remark
+    }
+
+    const errors = []
+    if (!record.identifier) {
+      errors.push('缺少 USERID')
+    }
+    if (!record.timestamp) {
+      errors.push('無法解析 CHECKTIME')
+    }
+    if (!record.action) {
+      errors.push('無法判斷 CHECKTYPE')
+    }
+
+    if (errors.length) {
+      errorCount += 1
+      sampleEntry.errors = errors
+      sampleEntry.status = 'error'
+    } else if (ignoreSet.has(record.identifier)) {
+      ignoredCount += 1
+      sampleEntry.errors = []
+      sampleEntry.status = 'ignored'
+    } else {
+      const mapping = mappingEntries.get(record.identifier)
+      const mappedEmployee = resolveMappedEmployee(mapping, employeeMaps)
+
+      if (mappedEmployee === 'ignore') {
+        ignoredCount += 1
+        sampleEntry.errors = []
+        sampleEntry.status = 'ignored'
+      } else {
+        const employee =
+          mappedEmployee ||
+          employeeMaps.byEmployeeId.get(record.identifier) ||
+          employeeMaps.byEmail.get(record.identifier.toLowerCase()) ||
+          employeeMaps.byObjectId.get(record.identifier)
+
+        if (!employee) {
+          missingCount += 1
+          sampleEntry.errors = []
+          sampleEntry.status = 'missing'
+          const missingEntry = missingUserMap.get(record.identifier) || {
+            identifier: record.identifier,
+            count: 0,
+            rows: [],
+            samples: []
+          }
+          missingEntry.count += 1
+          missingEntry.rows.push(record.rowNumber)
+          if (missingEntry.samples.length < 5) {
+            missingEntry.samples.push({
+              timestamp: sampleEntry.timestamp,
+              action: sampleEntry.action,
+              remark: sampleEntry.remark
+            })
+          }
+          missingUserMap.set(record.identifier, missingEntry)
+        } else {
+          readyCount += 1
+          sampleEntry.errors = []
+          sampleEntry.status = 'ready'
+          sampleEntry.employee = {
+            _id: String(employee._id),
+            name: employee.name || '',
+            email: employee.email || '',
+            employeeId: employee.employeeId || ''
+          }
+
+          if (!dryRun) {
+            batchRecords.push({
+              employee: employee._id,
+              action: record.action,
+              timestamp: record.timestamp,
+              remark: record.remark ?? ''
+            })
+            if (batchRecords.length >= INSERT_BATCH_SIZE) {
+              await flushBatch()
+            }
+          }
+        }
+      }
+    }
+
+    if (previewSamples.length < PREVIEW_SAMPLE_LIMIT) {
+      previewSamples.push(sampleEntry)
+    }
+  }
+
+  try {
+    await iterateRecords({
+      createStream: () => {
+        const stream = streamFactory()
+        if (isCsv) stream.setEncoding('utf8')
+        return stream
+      },
+      isCsv,
+      headerPairs,
+      mappings,
+      timezone,
+      onRow: processRow
+    })
+  } catch (error) {
+    if (error instanceof MissingColumnError) {
+      res.status(400).json({
+        message: '匯入檔案缺少必要欄位',
+        errors: error.columns.map(name => `找不到欄位：${name}`)
+      })
+      return
+    }
+    res.status(400).json({ message: '無法讀取匯入檔案', errors: [error.message] })
+    return
+  }
+
+  if (!totalRows) {
+    res.status(400).json({ message: '匯入檔案沒有資料', errors: [] })
+    return
+  }
+
+  if (!dryRun) {
+    await flushBatch()
+  }
 
   const response = {
     dryRun,
     timezone,
     summary: {
-      totalRows: rows.length,
-      readyCount: validRecords.length,
+      totalRows,
+      readyCount,
       missingCount,
       ignoredCount,
       errorCount,
-      importedCount: dryRun ? 0 : validRecords.length
+      uniqueUserCount: uniqueUsers.size,
+      importedCount: dryRun ? 0 : importedCount
     },
-    preview: rows,
+    preview: previewSamples,
     missingUsers: Array.from(missingUserMap.values())
   }
 
