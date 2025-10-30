@@ -9,7 +9,7 @@
 | 欄位 | 說明 |
 | ---- | ---- |
 | `USERID` | 打卡資料來源的員工識別值，可對應員工編號 (`employeeId`)、Email 或資料庫 `_id`。 |
-| `CHECKTIME` | 打卡時間。支援 `yyyy-MM-dd HH:mm:ss`、`yyyy/MM/dd HH:mm`、`MM/dd/yyyy HH:mm` 等常見格式，以及 Excel 日期欄位。 |
+| `CHECKTIME` | 打卡時間。支援 `yyyy-MM-dd HH:mm:ss`、`yyyy/MM/dd HH:mm`、`MM/dd/yyyy HH:mm` 等常見格式，以及 Excel 日期欄位。亦接受 12 小時制（例如 `2024-01-05 06:30 PM`）與含中文 `上午`/`下午` 標記（例如 `2024/01/05 下午 06:30:00`），系統會自動換算為 24 小時制。 |
 | `CHECKTYPE` | 打卡動作，系統會將 `I` 轉換為 `clockIn`、`O` 轉換為 `clockOut`。亦支援直接填寫 `clockIn` / `clockOut`。 |
 | `REMARK` (選填) | 額外備註內容，將原樣寫入資料庫。 |
 

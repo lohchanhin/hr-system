@@ -201,6 +201,39 @@ describe('attendanceImportController', () => {
     }))
   })
 
+  it('支援 12 小時制與中文 AM/PM 標記', async () => {
+    const buffer = await createWorkbookBuffer([
+      { USERID: 'C001', CHECKTIME: '2024-01-05 06:30 PM', CHECKTYPE: 'I' },
+      { USERID: 'C001', CHECKTIME: '2024/01/05 下午 06:30:00', CHECKTYPE: 'O' }
+    ])
+
+    mockEmployeeFindWith([{ _id: 'emp12h', employeeId: 'C001', name: 'Twelve Hour' }])
+
+    const req = {
+      user: { role: 'admin' },
+      file: {
+        buffer,
+        mimetype: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        originalname: 'attendance.xlsx'
+      },
+      body: {
+        options: JSON.stringify({ timezone: 'Asia/Taipei', dryRun: false })
+      }
+    }
+
+    const res = createMockRes()
+
+    await importAttendanceRecords(req, res)
+
+    expect(mockAttendanceRecord.insertMany).toHaveBeenCalledTimes(1)
+    const inserted = mockAttendanceRecord.insertMany.mock.calls[0][0]
+    expect(inserted).toHaveLength(2)
+    expect(inserted[0]).toMatchObject({ action: 'clockIn', employee: 'emp12h' })
+    expect(inserted[0].timestamp.toISOString()).toBe('2024-01-05T10:30:00.000Z')
+    expect(inserted[1]).toMatchObject({ action: 'clockOut', employee: 'emp12h' })
+    expect(inserted[1].timestamp.toISOString()).toBe('2024-01-05T10:30:00.000Z')
+  })
+
   it('missingCount 會統計所有缺少員工的總筆數', async () => {
     const buffer = await createWorkbookBuffer([
       { USERID: 'unknown', CHECKTIME: '2024-01-05 09:00', CHECKTYPE: 'I' },
