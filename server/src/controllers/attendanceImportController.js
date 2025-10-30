@@ -109,6 +109,42 @@ function parseDateTimeString(value, timeZone) {
   const text = value.trim()
   if (!text) return null
 
+  const textWithoutT = text.replace('T', ' ')
+
+  const ampmMatch = textWithoutT.match(
+    /^(?<year>\d{4})[-/](?<month>\d{1,2})[-/](?<day>\d{1,2})\s*(?:(?<prefix>上午|下午)\s*)?(?<hour>\d{1,2}):(?<minute>\d{2})(?::(?<second>\d{2}))?\s*(?<suffix>上午|下午|AM|PM)?$/i
+  )
+  if (ampmMatch?.groups) {
+    const { year, month, day, hour, minute, second, prefix, suffix } = ampmMatch.groups
+    const indicator = prefix ?? suffix
+    let normalizedIndicator = null
+    if (indicator) {
+      if (indicator === '上午') normalizedIndicator = 'AM'
+      else if (indicator === '下午') normalizedIndicator = 'PM'
+      else normalizedIndicator = indicator.toUpperCase()
+    }
+
+    let hourNumber = Number(hour)
+    if (Number.isNaN(hourNumber)) return null
+    if (normalizedIndicator === 'AM' && hourNumber === 12) {
+      hourNumber = 0
+    } else if (normalizedIndicator === 'PM' && hourNumber !== 12) {
+      hourNumber += 12
+    }
+
+    return createDateFromParts(
+      {
+        year: Number(year),
+        month: Number(month),
+        day: Number(day),
+        hour: hourNumber,
+        minute: Number(minute),
+        second: second ? Number(second) : 0
+      },
+      timeZone
+    )
+  }
+
   const hasTimezone = /[zZ]|[+-]\d{2}:?\d{2}$/.test(text)
   if (hasTimezone) {
     const parsed = new Date(text)
