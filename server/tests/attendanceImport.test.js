@@ -306,6 +306,50 @@ describe('attendanceImportController', () => {
     )
   })
 
+  it('遇到無效時間戳時會回傳詳細錯誤並記錄 log', async () => {
+    const buffer = await createWorkbookBuffer([
+      { USERID: 'ERR001', CHECKTIME: 'not-a-date', CHECKTYPE: 'I' }
+    ])
+
+    mockEmployeeFindWith([])
+
+    const req = {
+      user: { role: 'admin' },
+      file: {
+        buffer,
+        mimetype: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        originalname: 'attendance.xlsx'
+      },
+      body: {
+        options: JSON.stringify({ timezone: 'Asia/Taipei', dryRun: true })
+      }
+    }
+
+    const res = createMockRes()
+    const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {})
+
+    try {
+      await importAttendanceRecords(req, res)
+
+      expect(res.json).toHaveBeenCalledTimes(1)
+      const payload = res.json.mock.calls[0][0]
+      expect(payload.summary.errorCount).toBe(1)
+      expect(payload.preview[0].errors).toContain('無法解析 CHECKTIME：CHECKTIME 格式不支援')
+      expect(payload.preview[0].timestampError).toBe('CHECKTIME 格式不支援')
+
+      expect(consoleErrorSpy).toHaveBeenCalledWith(
+        'attendance-import: validation failed',
+        expect.objectContaining({
+          userId: 'ERR001',
+          rawTimestamp: 'not-a-date',
+          errors: expect.arrayContaining(['無法解析 CHECKTIME：CHECKTIME 格式不支援'])
+        })
+      )
+    } finally {
+      consoleErrorSpy.mockRestore()
+    }
+  })
+
   it('dryRun 模擬大檔案僅回傳樣本並統計唯一使用者', async () => {
     const totalRows = 1200
     const uniqueUsers = 120
