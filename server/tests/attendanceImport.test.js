@@ -17,7 +17,7 @@ jest.unstable_mockModule('../src/models/Employee.js', () => ({
   default: mockEmployeeModel
 }))
 
-const { importAttendanceRecords } = await import('../src/controllers/attendanceImportController.js')
+const { importAttendanceRecords, parseTimestamp } = await import('../src/controllers/attendanceImportController.js')
 
 function mockEmployeeFindWith(data) {
   const lean = jest.fn().mockResolvedValue(data)
@@ -51,6 +51,15 @@ async function createWorkbookBuffer(rows) {
 beforeEach(() => {
   mockAttendanceRecord.insertMany.mockReset()
   mockEmployeeModel.find.mockReset()
+})
+
+describe('parseTimestamp', () => {
+  it('能解析純數字字串並轉換為正確日期', () => {
+    const result = parseTimestamp('45625.3362384259', 'Asia/Taipei')
+    expect(result.error).toBeNull()
+    expect(result.value).toBeInstanceOf(Date)
+    expect(result.value.toISOString()).toBe('2024-11-29T00:04:11.000Z')
+  })
 })
 
 describe('attendanceImportController', () => {
