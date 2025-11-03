@@ -281,7 +281,7 @@ function parseDateTimeString(value, timeZone) {
   return { value: null, error: 'CHECKTIME 格式不支援' }
 }
 
-function parseTimestamp(value, timeZone) {
+export function parseTimestamp(value, timeZone) {
   if (value === null || value === undefined) {
     return { value: null, error: 'CHECKTIME 缺少值' }
   }
@@ -315,6 +315,13 @@ function parseTimestamp(value, timeZone) {
     return { value: epochDate, error: null }
   }
   if (typeof value === 'string') {
+    const numericLike = value.trim()
+    if (/^[+-]?\d+(?:\.\d+)?$/.test(numericLike)) {
+      const numericValue = Number(numericLike)
+      if (!Number.isNaN(numericValue)) {
+        return parseTimestamp(numericValue, timeZone)
+      }
+    }
     const direct = parseDateTimeString(value, timeZone)
     if (direct.value) {
       return direct
