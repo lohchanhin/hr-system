@@ -32,38 +32,73 @@
             background-color="transparent"
             text-color="#ecfeff"
             active-text-color="#ffffff"
+            :default-openeds="expandedGroups"
+            @open="handleGroupOpen"
+            @close="handleGroupClose"
           >
-            <el-menu-item
-              v-for="item in menuItems"
-              :key="item.name"
-              :index="item.name"
-              @click="gotoPage(item.name)"
-              class="menu-item"
+            <el-sub-menu
+              v-for="group in menuItems"
+              :key="group.group"
+              :index="group.group"
+              class="menu-group"
             >
-              <div class="menu-item-inner" :class="{ 'is-collapsed': isCollapse }">
-                <el-tooltip
-                  v-if="isCollapse"
-                  :content="item.label"
-                  placement="right"
-                  effect="dark"
-                >
+              <template #title>
+                <div class="menu-group-title" :class="{ 'is-collapsed': isCollapse }">
+                  <el-tooltip
+                    v-if="isCollapse"
+                    :content="group.group"
+                    placement="right"
+                    effect="dark"
+                  >
+                    <img
+                      :src="resolveIcon(group.children?.[0])"
+                      class="menu-icon"
+                      :data-icon-key="availableMenuIcons[group.children?.[0]?.icon] ? group.children?.[0]?.icon : 'default'"
+                      alt=""
+                    />
+                  </el-tooltip>
                   <img
+                    v-else
+                    :src="resolveIcon(group.children?.[0])"
+                    class="menu-icon"
+                    :data-icon-key="availableMenuIcons[group.children?.[0]?.icon] ? group.children?.[0]?.icon : 'default'"
+                    alt=""
+                  />
+                  <span v-if="!isCollapse" class="menu-text">{{ group.group }}</span>
+                </div>
+              </template>
+              <el-menu-item
+                v-for="item in group.children"
+                :key="item.name"
+                :index="item.name"
+                @click="gotoPage(item.name, group.group)"
+                :class="['menu-item', { 'is-active': active === item.name }]"
+              >
+                <div class="menu-item-inner" :class="{ 'is-collapsed': isCollapse }">
+                  <el-tooltip
+                    v-if="isCollapse"
+                    :content="item.label"
+                    placement="right"
+                    effect="dark"
+                  >
+                    <img
+                      :src="resolveIcon(item)"
+                      class="menu-icon"
+                      :data-icon-key="availableMenuIcons[item.icon] ? item.icon : 'default'"
+                      alt=""
+                    />
+                  </el-tooltip>
+                  <img
+                    v-else
                     :src="resolveIcon(item)"
                     class="menu-icon"
                     :data-icon-key="availableMenuIcons[item.icon] ? item.icon : 'default'"
                     alt=""
                   />
-                </el-tooltip>
-                <img
-                  v-else
-                  :src="resolveIcon(item)"
-                  class="menu-icon"
-                  :data-icon-key="availableMenuIcons[item.icon] ? item.icon : 'default'"
-                  alt=""
-                />
-                <span v-if="!isCollapse" class="menu-text">{{ item.label }}</span>
-              </div>
-            </el-menu-item>
+                  <span v-if="!isCollapse" class="menu-text">{{ item.label }}</span>
+                </div>
+              </el-menu-item>
+            </el-sub-menu>
           </el-menu>
         </div>
       </el-aside>
@@ -86,10 +121,11 @@ import { iconMap as availableMenuIcons, resolveMenuIcon } from '../constants/men
 
 const router = useRouter()
 const menuStore = useMenuStore()
-const { items: menuItems } = storeToRefs(menuStore)
+const { items: menuItems, flattenedItems } = storeToRefs(menuStore)
 
 const active = ref('')
 const isCollapse = ref(false)
+const expandedGroups = ref([])
 
 onMounted(async () => {
   if (menuItems.value.length === 0) {
@@ -110,6 +146,24 @@ function redirectToFirstMenu(firstName) {
 
 watch(
   () => menuItems.value,
+  groups => {
+    if (!Array.isArray(groups) || groups.length === 0) {
+      expandedGroups.value = []
+      return
+    }
+    const groupNames = groups.map(group => group?.group).filter(Boolean)
+    if (expandedGroups.value.length === 0) {
+      expandedGroups.value = groupNames.slice(0, 1)
+    } else {
+      const retained = expandedGroups.value.filter(name => groupNames.includes(name))
+      expandedGroups.value = retained.length > 0 ? retained : groupNames.slice(0, 1)
+    }
+  },
+  { immediate: true }
+)
+
+watch(
+  () => flattenedItems.value,
   items => {
     if (!Array.isArray(items) || items.length === 0) return
     const firstName = items[0]?.name
@@ -118,7 +172,12 @@ watch(
     if (!currentName || currentName === 'Settings' || currentName === 'ManagerLayout') {
       redirectToFirstMenu(firstName)
     }
-    if (!active.value) {
+    const activeExists = items.some(item => item?.name === active.value)
+    if (!activeExists) {
+      active.value = currentName && items.some(item => item?.name === currentName)
+        ? currentName
+        : firstName
+    } else if (!active.value) {
       active.value = currentName && currentName !== 'Settings' ? currentName : firstName
     }
   },
@@ -128,17 +187,34 @@ watch(
 watch(
   () => router.currentRoute?.value?.name,
   name => {
-    active.value = typeof name === 'string' ? name : ''
+    if (typeof name === 'string' && flattenedItems.value.some(item => item?.name === name)) {
+      active.value = name
+    } else if (!name) {
+      active.value = ''
+    }
   },
   { immediate: true }
 )
 
-function gotoPage(name) {
+function gotoPage(name, groupName) {
   active.value = name
+  if (groupName && !expandedGroups.value.includes(groupName)) {
+    expandedGroups.value = [...expandedGroups.value, groupName]
+  }
   router.push({ name })
 }
 function toggleCollapse() {
   isCollapse.value = !isCollapse.value
+}
+
+function handleGroupOpen(index) {
+  if (!expandedGroups.value.includes(index)) {
+    expandedGroups.value = [...expandedGroups.value, index]
+  }
+}
+
+function handleGroupClose(index) {
+  expandedGroups.value = expandedGroups.value.filter(name => name !== index)
 }
 
 function resolveIcon(item) {
@@ -290,6 +366,24 @@ function logout() {
   align-items: center;
 }
 
+.menu-group-title {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  width: 100%;
+  font-weight: 600;
+  color: #ecfeff;
+  padding: 12px 16px;
+  border-radius: 12px;
+  transition: background-color 0.3s ease;
+}
+
+.menu-group-title.is-collapsed {
+  justify-content: center;
+  padding: 12px;
+  gap: 0;
+}
+
 .menu-item-inner {
   display: flex;
   align-items: center;
@@ -329,6 +423,14 @@ function logout() {
   font-weight: 500;
   font-size: 14px;
   color: #ecfeff;
+}
+
+.menu-group :deep(.el-sub-menu__title) {
+  padding: 0 !important;
+}
+
+.menu-group :deep(.el-menu-item) {
+  background-color: transparent !important;
 }
 
 .layout-main {

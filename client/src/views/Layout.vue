@@ -2,16 +2,29 @@
 <template>
   <div class="layout-container">
     <el-aside class="layout-aside" width="25%">
-      <el-menu default-active="Settings" class="el-menu-vertical-demo">
-        <el-menu-item
-          v-for="item in menuItems"
-          :key="item.name"
-          :index="item.name"
-          @click="gotoPage(item.name)"
+      <el-menu
+        default-active="Settings"
+        class="el-menu-vertical-demo"
+        :default-openeds="groups.map(group => group.group)"
+      >
+        <el-sub-menu
+          v-for="group in groups"
+          :key="group.group"
+          :index="group.group"
         >
-          <i :class="item.icon"></i>
-          <span>{{ item.label }}</span>
-        </el-menu-item>
+          <template #title>
+            <span>{{ group.group }}</span>
+          </template>
+          <el-menu-item
+            v-for="item in group.children"
+            :key="item.name"
+            :index="item.name"
+            @click="gotoPage(item.name)"
+          >
+            <i :class="item.icon"></i>
+            <span>{{ item.label }}</span>
+          </el-menu-item>
+        </el-sub-menu>
       </el-menu>
     </el-aside>
     <el-main class="layout-main" style="flex: 0 0 75%; width: 75%;">
@@ -22,12 +35,14 @@
 
 <script setup>
 import { useRouter } from "vue-router";
-import { onMounted } from "vue";
+import { onMounted, computed } from "vue";
 import { useMenuStore } from "../stores/menu";
 import { storeToRefs } from "pinia";
 const router = useRouter();
 const menuStore = useMenuStore();
 const { items: menuItems } = storeToRefs(menuStore);
+
+const groups = computed(() => (Array.isArray(menuItems.value) ? menuItems.value : []));
 
 onMounted(async () => {
   if (menuItems.value.length === 0) {

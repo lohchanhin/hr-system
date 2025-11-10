@@ -15,17 +15,42 @@ describe('menu store', () => {
     localStorage.clear()
   })
 
-  it('fetchMenu stores items', async () => {
+  it('fetchMenu stores nested items', async () => {
     fetch.mockResolvedValueOnce({
       ok: true,
-      json: async () => ([{ name: 'Approval' }, { name: 'OrgDepartmentSetting' }])
+      json: async () => ([
+        {
+          group: '簽核作業',
+          children: [{ name: 'Approval' }, { name: 'OrgDepartmentSetting' }]
+        }
+      ])
     })
     const store = useMenuStore()
     await store.fetchMenu()
     expect(fetch).toHaveBeenCalledWith('http://localhost:3000/api/menu', expect.objectContaining({
       headers: expect.objectContaining({ Authorization: 'Bearer tok' })
     }))
-    expect(store.items).toEqual([{ name: 'Approval' }, { name: 'OrgDepartmentSetting' }])
-    expect(store.items.find(i => i.name === 'Approval')).toBeDefined()
+    expect(store.items).toEqual([
+      {
+        group: '簽核作業',
+        children: [{ name: 'Approval' }, { name: 'OrgDepartmentSetting' }]
+      }
+    ])
+    expect(store.flattenedItems).toEqual([
+      { name: 'Approval' },
+      { name: 'OrgDepartmentSetting' }
+    ])
+    expect(store.flattenedItems.find(i => i.name === 'Approval')).toBeDefined()
+  })
+
+  it('setMenu gracefully handles invalid values', () => {
+    const store = useMenuStore()
+    store.setMenu(null)
+    expect(store.items).toEqual([])
+    store.setMenu([
+      { group: 'test', children: [{ name: 'Attendance' }] }
+    ])
+    expect(store.items.length).toBe(1)
+    expect(store.flattenedItems[0].name).toBe('Attendance')
   })
 })

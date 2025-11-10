@@ -10,7 +10,84 @@ defineElStubs()
 function defineElStubs() {
   globalThis.__EL_STUBS__ = {
     'el-menu': {
+      props: {
+        defaultOpeneds: {
+          type: Array,
+          default: () => [],
+        },
+      },
+      emits: ['open', 'close'],
+      data() {
+        return {
+          openeds: [...this.defaultOpeneds],
+        }
+      },
+      provide() {
+        return {
+          __EL_MENU_CONTEXT__: this,
+        }
+      },
+      watch: {
+        defaultOpeneds(val) {
+          this.openeds = [...val]
+        },
+      },
+      methods: {
+        notifyToggle(open, index) {
+          if (open) {
+            if (!this.openeds.includes(index)) {
+              this.openeds.push(index)
+            }
+            this.$emit('open', index)
+          } else {
+            this.openeds = this.openeds.filter(item => item !== index)
+            this.$emit('close', index)
+          }
+        },
+      },
       template: '<nav class="el-menu"><slot /></nav>',
+    },
+    'el-sub-menu': {
+      inject: ['__EL_MENU_CONTEXT__'],
+      props: {
+        index: {
+          type: String,
+          default: '',
+        },
+      },
+      data() {
+        const menu = this.__EL_MENU_CONTEXT__
+        const initial = Array.isArray(menu?.openeds)
+          ? menu.openeds.includes(this.index)
+          : false
+        return {
+          expanded: initial,
+        }
+      },
+      watch: {
+        '__EL_MENU_CONTEXT__.openeds': {
+          deep: true,
+          handler(val) {
+            if (Array.isArray(val)) {
+              this.expanded = val.includes(this.index)
+            }
+          },
+        },
+      },
+      methods: {
+        toggle() {
+          this.expanded = !this.expanded
+          const menu = this.__EL_MENU_CONTEXT__
+          if (menu && typeof menu.notifyToggle === 'function') {
+            menu.notifyToggle(this.expanded, this.index)
+          }
+        },
+      },
+      template:
+        '<div class="el-sub-menu" :data-index="index">' +
+        '<div class="el-sub-menu__title" @click="toggle"><slot name="title" /></div>' +
+        '<div class="el-sub-menu__content" v-show="expanded"><slot /></div>' +
+        '</div>',
     },
     'el-menu-item': {
       props: {
@@ -96,7 +173,13 @@ describe('FrontLayout manager button', () => {
     setActivePinia(createPinia())
     const menuStore = useMenuStore()
     menuStore.setMenu([
-      { name: 'MySchedule', label: '我的排班', icon: 'el-icon-calendar' },
+      {
+        group: '常用功能',
+        children: [
+          { name: 'Attendance', label: '出勤打卡', icon: 'el-icon-postcard' },
+          { name: 'MySchedule', label: '我的排班', icon: 'el-icon-calendar' },
+        ],
+      },
     ])
     vi.spyOn(menuStore, 'fetchMenu').mockResolvedValue()
 
@@ -124,11 +207,11 @@ describe('FrontLayout manager button', () => {
       history: createMemoryHistory(),
       routes: [
         { path: '/', name: 'home', component: { template: '<div />' } },
-        { path: '/attendance', name: 'attendance', component: { template: '<div />' } },
+        { path: '/attendance', name: 'Attendance', component: { template: '<div />' } },
         { path: '/myschedule', name: 'MySchedule', component: { template: '<div />' } },
       ],
     })
-    await router.push({ name: 'attendance' })
+    await router.push({ name: 'Attendance' })
     await router.isReady()
     const wrapper = mount(FrontLayout, {
       global: {
@@ -186,5 +269,20 @@ describe('FrontLayout manager button', () => {
     expect(text).toContain('測試部門')
     expect(text).toContain('測試小單位')
     expect(text).toContain('測試員工')
+  })
+
+  it('點擊群組會展開與收合子項', async () => {
+    const { wrapper } = await mountLayout()
+    const groupTitle = wrapper.find('.el-sub-menu__title')
+    const groupContent = wrapper.find('.el-sub-menu__content')
+    expect(groupTitle.exists()).toBe(true)
+    expect(groupContent.exists()).toBe(true)
+    expect(groupContent.isVisible()).toBe(true)
+    await groupTitle.trigger('click')
+    await flushPromises()
+    expect(groupContent.isVisible()).toBe(false)
+    await groupTitle.trigger('click')
+    await flushPromises()
+    expect(groupContent.isVisible()).toBe(true)
   })
 })

@@ -3,38 +3,108 @@ import ShiftSchedule from '../models/ShiftSchedule.js';
 export async function getMenu(req, res, next) {
   try {
     const role = req.user?.role || 'employee';
-    const menus = {
+    const menuTemplates = {
       employee: [
-        { name: 'Attendance', label: '出勤打卡', icon: 'el-icon-postcard' },
-        { name: 'MySchedule', label: '我的排班', icon: 'el-icon-timer' },
-        { name: 'Approval', label: '簽核流程', icon: 'el-icon-s-operation' }
+        {
+          group: '出勤與排班',
+          children: [
+            { name: 'Attendance', label: '出勤打卡', icon: 'el-icon-postcard' },
+            { name: 'MySchedule', label: '我的排班', icon: 'el-icon-timer' }
+          ]
+        },
+        {
+          group: '簽核作業',
+          children: [
+            { name: 'Approval', label: '簽核流程', icon: 'el-icon-s-operation' }
+          ]
+        }
       ],
       supervisor: [
-        { name: 'Attendance', label: '出勤打卡', icon: 'el-icon-postcard' },
-        { name: 'Schedule', label: '排班管理', icon: 'el-icon-timer' },
-        { name: 'FrontDepartmentReports', label: '部門報表', icon: 'el-icon-data-analysis' },
-        { name: 'Approval', label: '簽核流程', icon: 'el-icon-s-operation' }
+        {
+          group: '出勤管理',
+          children: [
+            { name: 'Attendance', label: '出勤打卡', icon: 'el-icon-postcard' }
+          ]
+        },
+        {
+          group: '排班管理',
+          children: [
+            { name: 'Schedule', label: '排班管理', icon: 'el-icon-timer' }
+          ]
+        },
+        {
+          group: '部門報表',
+          children: [
+            { name: 'FrontDepartmentReports', label: '部門報表', icon: 'el-icon-data-analysis' }
+          ]
+        },
+        {
+          group: '簽核作業',
+          children: [
+            { name: 'Approval', label: '簽核流程', icon: 'el-icon-s-operation' }
+          ]
+        }
       ],
       hr: [
-        { name: 'Attendance', label: '出勤打卡', icon: 'el-icon-postcard' },
-        { name: 'Schedule', label: '排班管理', icon: 'el-icon-timer' },
-        { name: 'Approval', label: '簽核流程', icon: 'el-icon-s-operation' }
+        {
+          group: '出勤與排班',
+          children: [
+            { name: 'Attendance', label: '出勤打卡', icon: 'el-icon-postcard' },
+            { name: 'Schedule', label: '排班管理', icon: 'el-icon-timer' }
+          ]
+        },
+        {
+          group: '簽核作業',
+          children: [
+            { name: 'Approval', label: '簽核流程', icon: 'el-icon-s-operation' }
+          ]
+        }
       ],
       admin: [
-        { name: 'AttendanceSetting', label: '出勤設定', icon: 'el-icon-setting' },
-        { name: 'AttendanceManagementSetting', label: '出勤管理', icon: 'el-icon-postcard' },
-        { name: 'LeaveOvertimeSetting', label: '請假加班設定', icon: 'el-icon-date' },
-        { name: 'ShiftScheduleSetting', label: '排班表設定', icon: 'el-icon-timer' },
-        { name: 'ApprovalFlowSetting', label: '簽核流程設定', icon: 'el-icon-s-operation' },
-        { name: 'SalaryManagementSetting', label: '薪資管理', icon: 'el-icon-money' },
-      { name: 'SocialInsuranceRetirementSetting', label: '社保與退休', icon: 'el-icon-s-check' },
-      { name: 'HRManagementSystemSetting', label: '人資管理', icon: 'el-icon-user-solid' },
-      { name: 'OtherControlSetting', label: '其他控制設定', icon: 'el-icon-more' },
-      { name: 'OrgDepartmentSetting', label: '權限&機構&部門設定', icon: 'el-icon-s-grid' },
-      { name: 'ScheduleOverview', label: '班表總覽', icon: 'el-icon-s-data' },
-      { name: 'DepartmentReports', label: '報表查看', icon: 'el-icon-data-analysis' }
-    ]
-  };
+        {
+          group: '出勤與假勤設定',
+          children: [
+            { name: 'AttendanceSetting', label: '出勤設定', icon: 'el-icon-setting' },
+            { name: 'AttendanceManagementSetting', label: '出勤管理', icon: 'el-icon-postcard' },
+            { name: 'LeaveOvertimeSetting', label: '請假加班設定', icon: 'el-icon-date' }
+          ]
+        },
+        {
+          group: '排班與流程',
+          children: [
+            { name: 'ShiftScheduleSetting', label: '排班表設定', icon: 'el-icon-timer' },
+            { name: 'ApprovalFlowSetting', label: '簽核流程設定', icon: 'el-icon-s-operation' }
+          ]
+        },
+        {
+          group: '薪資與福利',
+          children: [
+            { name: 'SalaryManagementSetting', label: '薪資管理', icon: 'el-icon-money' },
+            { name: 'SocialInsuranceRetirementSetting', label: '社保與退休', icon: 'el-icon-s-check' }
+          ]
+        },
+        {
+          group: '系統管理',
+          children: [
+            { name: 'HRManagementSystemSetting', label: '人資管理', icon: 'el-icon-user-solid' },
+            { name: 'OtherControlSetting', label: '其他控制設定', icon: 'el-icon-more' },
+            { name: 'OrgDepartmentSetting', label: '權限&機構&部門設定', icon: 'el-icon-s-grid' }
+          ]
+        },
+        {
+          group: '報表與分析',
+          children: [
+            { name: 'ScheduleOverview', label: '班表總覽', icon: 'el-icon-s-data' },
+            { name: 'DepartmentReports', label: '報表查看', icon: 'el-icon-data-analysis' }
+          ]
+        }
+      ]
+    };
+
+    const menus = (menuTemplates[role] || []).map(group => ({
+      ...group,
+      children: group.children.map(item => ({ ...item }))
+    }));
 
     if (role === 'supervisor' && req.user?.id) {
       const now = new Date();
@@ -47,11 +117,18 @@ export async function getMenu(req, res, next) {
       });
 
       if (includeSelf) {
-        menus.supervisor.push({ name: 'MySchedule', label: '我的排班', icon: 'el-icon-timer' });
+        const scheduleGroup = menus.find(group => group.group === '排班管理');
+        if (scheduleGroup) {
+          scheduleGroup.children.push({
+            name: 'MySchedule',
+            label: '我的排班',
+            icon: 'el-icon-timer'
+          });
+        }
       }
     }
 
-    res.json(menus[role] || []);
+    res.json(menus);
   } catch (error) {
     if (typeof next === 'function') {
       next(error);

@@ -51,22 +51,73 @@
         text-color="#cbd5e1"
         active-text-color="#ffffff"
         :collapse="isSidebarCollapsed"
+        :default-openeds="expandedGroups"
+        @open="handleGroupOpen"
+        @close="handleGroupClose"
       >
-        <el-menu-item
-          v-for="item in menuItems"
-          :key="item.name"
-          :index="item.name"
-          @click="gotoPage(item.name)"
-          class="menu-item"
+        <el-sub-menu
+          v-for="group in menuItems"
+          :key="group.group"
+          :index="group.group"
+          class="menu-group"
         >
-          <img
-            :src="resolveIcon(item)"
-            class="menu-icon"
-            :data-icon-key="availableMenuIcons[item.icon] ? item.icon : 'default'"
-            alt=""
-          />
-          <span class="menu-label">{{ item.label }}</span>
-        </el-menu-item>
+          <template #title>
+            <div class="menu-group-title" :class="{ 'is-collapsed': isSidebarCollapsed }">
+              <el-tooltip
+                v-if="isSidebarCollapsed"
+                :content="group.group"
+                placement="right"
+                effect="dark"
+              >
+                <img
+                  :src="resolveIcon(group.children?.[0])"
+                  class="menu-icon"
+                  :data-icon-key="availableMenuIcons[group.children?.[0]?.icon] ? group.children?.[0]?.icon : 'default'"
+                  alt=""
+                />
+              </el-tooltip>
+              <img
+                v-else
+                :src="resolveIcon(group.children?.[0])"
+                class="menu-icon"
+                :data-icon-key="availableMenuIcons[group.children?.[0]?.icon] ? group.children?.[0]?.icon : 'default'"
+                alt=""
+              />
+              <span v-if="!isSidebarCollapsed" class="menu-label">{{ group.group }}</span>
+            </div>
+          </template>
+          <el-menu-item
+            v-for="item in group.children"
+            :key="item.name"
+            :index="item.name"
+            @click="gotoPage(item.name, group.group)"
+            :class="['menu-item', { 'is-active': activeMenu === item.name }]"
+          >
+            <div class="menu-item-inner" :class="{ 'is-collapsed': isSidebarCollapsed }">
+              <el-tooltip
+                v-if="isSidebarCollapsed"
+                :content="item.label"
+                placement="right"
+                effect="dark"
+              >
+                <img
+                  :src="resolveIcon(item)"
+                  class="menu-icon"
+                  :data-icon-key="availableMenuIcons[item.icon] ? item.icon : 'default'"
+                  alt=""
+                />
+              </el-tooltip>
+              <img
+                v-else
+                :src="resolveIcon(item)"
+                class="menu-icon"
+                :data-icon-key="availableMenuIcons[item.icon] ? item.icon : 'default'"
+                alt=""
+              />
+              <span v-if="!isSidebarCollapsed" class="menu-label">{{ item.label }}</span>
+            </div>
+          </el-menu-item>
+        </el-sub-menu>
       </el-menu>
       <!-- 登出按鈕 -->
       <div class="logout-section">
@@ -87,7 +138,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, computed, onBeforeUnmount } from "vue";
+import { ref, onMounted, computed, onBeforeUnmount, watch } from "vue";
 import { useRouter, useRoute } from "vue-router";
 import { useMenuStore } from "../../stores/menu";
 import { useProfileStore } from "../../stores/profile";
@@ -98,13 +149,14 @@ import { iconMap as availableMenuIcons, resolveMenuIcon } from "../../constants/
 const router = useRouter();
 const route = useRoute();
 const menuStore = useMenuStore();
-const { items: menuItems } = storeToRefs(menuStore);
+const { items: menuItems, flattenedItems } = storeToRefs(menuStore);
 const profileStore = useProfileStore();
 const { profile } = storeToRefs(profileStore);
 
 const username = ref("");
-const activeMenu = computed(() => route.name || "");
+const activeMenu = ref(typeof route.name === "string" ? route.name : "");
 const isSidebarCollapsed = ref(false);
+const expandedGroups = ref([]);
 
 const fallbackText = "未提供";
 
@@ -178,7 +230,11 @@ function resolveIcon(item) {
   return resolveMenuIcon(item);
 }
 
-function gotoPage(pageName) {
+function gotoPage(pageName, groupName) {
+  if (groupName && !expandedGroups.value.includes(groupName)) {
+    expandedGroups.value = [...expandedGroups.value, groupName];
+  }
+  activeMenu.value = pageName;
   router.push({ name: pageName });
 }
 
@@ -192,6 +248,65 @@ function onLogout() {
   menuStore.setMenu([]);
   profileStore.clearProfile();
   router.push(`/`);
+}
+
+watch(
+  () => menuItems.value,
+  groups => {
+    if (!Array.isArray(groups) || groups.length === 0) {
+      expandedGroups.value = [];
+      return;
+    }
+    const groupNames = groups.map(group => group?.group).filter(Boolean);
+    if (expandedGroups.value.length === 0) {
+      expandedGroups.value = groupNames.slice(0, 1);
+    } else {
+      const retained = expandedGroups.value.filter(name => groupNames.includes(name));
+      expandedGroups.value = retained.length > 0 ? retained : groupNames.slice(0, 1);
+    }
+  },
+  { immediate: true }
+);
+
+watch(
+  () => flattenedItems.value,
+  items => {
+    if (!Array.isArray(items) || items.length === 0) {
+      return;
+    }
+    const firstName = items[0]?.name;
+    if (!firstName) {
+      return;
+    }
+    if (!items.some(item => item?.name === activeMenu.value)) {
+      activeMenu.value = firstName;
+      const currentName = router.currentRoute?.value?.name;
+      if (currentName !== firstName) {
+        router.replace({ name: firstName }).catch(() => {});
+      }
+    }
+  },
+  { immediate: true }
+);
+
+watch(
+  () => route.name,
+  name => {
+    if (typeof name === "string" && flattenedItems.value.some(item => item?.name === name)) {
+      activeMenu.value = name;
+    }
+  },
+  { immediate: true }
+);
+
+function handleGroupOpen(index) {
+  if (!expandedGroups.value.includes(index)) {
+    expandedGroups.value = [...expandedGroups.value, index];
+  }
+}
+
+function handleGroupClose(index) {
+  expandedGroups.value = expandedGroups.value.filter(name => name !== index);
 }
 </script>
 
@@ -321,6 +436,36 @@ function onLogout() {
   padding: 0 16px !important;
 }
 
+.menu-group-title {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 10px 16px;
+  border-radius: 10px;
+  color: #e2e8f0;
+  font-weight: 600;
+  transition: background-color 0.3s ease;
+}
+
+.menu-group-title.is-collapsed {
+  justify-content: center;
+  gap: 0;
+  padding: 10px;
+}
+
+.menu-item-inner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+}
+
+.menu-item-inner.is-collapsed {
+  justify-content: center;
+  gap: 0;
+}
+
 .menu-item:hover {
   background-color: rgba(203, 213, 225, 0.1) !important;
   transform: translateX(4px);
@@ -347,6 +492,14 @@ function onLogout() {
 .menu-label {
   font-weight: 500;
   font-size: 14px;
+}
+
+.menu-group :deep(.el-sub-menu__title) {
+  padding: 0 !important;
+}
+
+.menu-group :deep(.el-menu-item) {
+  background: transparent !important;
 }
 
 .sidebar.collapsed .menu-item {
