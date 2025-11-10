@@ -1,7 +1,26 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { shallowMount } from '@vue/test-utils'
+import dayjs from 'dayjs'
 import { apiFetch } from '../src/api'
 
+const elementPlusMock = vi.hoisted(() => {
+  const confirmMock = vi.fn().mockResolvedValue()
+  const messageMock = {
+    success: vi.fn(),
+    error: vi.fn(),
+    warning: vi.fn(),
+  }
+  return {
+    module: {
+      ElMessage: messageMock,
+      ElMessageBox: { confirm: confirmMock },
+    },
+    messageMock,
+    confirmMock,
+  }
+})
+
+vi.mock('element-plus', () => elementPlusMock.module)
 vi.mock('../src/api', () => ({ apiFetch: vi.fn() }))
 vi.mock('../src/utils/tokenService', () => ({ getToken: () => localStorage.getItem('token') }))
 
@@ -22,14 +41,24 @@ describe('MySchedule.vue', () => {
     localStorage.setItem('token', token)
     apiFetch
       .mockResolvedValueOnce({ ok: true, json: async () => [] })
-      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          month: dayjs().format('YYYY-MM'),
+          schedules: [],
+          meta: { state: 'draft', employeeStatuses: [] },
+        })
+      })
 
     const wrapper = shallowMount(MySchedule, {
       global: {
         stubs: {
           'el-table': { template: '<div><slot></slot></div>' },
           'el-table-column': true,
-          'el-date-picker': true
+          'el-date-picker': true,
+          'el-tag': true,
+          'el-button': true,
+          'el-input': true,
         }
       }
     })
@@ -42,7 +71,11 @@ describe('MySchedule.vue', () => {
       })
       .mockResolvedValueOnce({
         ok: true,
-        json: async () => [{ date: '2023-02-01', shiftId: '1' }]
+        json: async () => ({
+          month: '2023-02',
+          schedules: [{ date: '2023-02-01', shiftId: '1' }],
+          meta: { state: 'pending_confirmation', employeeStatuses: [] },
+        })
       })
     wrapper.vm.selectedMonth = '2023-02'
     await flush()

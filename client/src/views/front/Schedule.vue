@@ -69,6 +69,63 @@
       </div>
     </div>
 
+    <div v-if="canUseSupervisorFilter" class="publish-card">
+      <div class="publish-header">
+        <div class="publish-title">
+          <h3>發布狀態</h3>
+          <el-tag :type="publishStateTagType" effect="plain">{{ publishStateLabel }}</el-tag>
+        </div>
+        <div class="publish-meta">
+          <span>月份：{{ currentMonth }}</span>
+          <span v-if="publishedAtText">完成時間：{{ publishedAtText }}</span>
+        </div>
+      </div>
+      <div class="publish-actions">
+        <el-button
+          type="primary"
+          :loading="isPublishingSchedules"
+          class="action-btn primary"
+          @click="confirmBatchPublish"
+        >
+          批次發布待確認
+        </el-button>
+        <el-button
+          type="success"
+          :disabled="!canFinalizePublish"
+          :loading="isFinalizingSchedules"
+          class="action-btn primary"
+          @click="confirmFinalizePublish"
+        >
+          完成發布
+        </el-button>
+      </div>
+      <div class="publish-body">
+        <div class="publish-column">
+          <h4>待回覆人員</h4>
+          <p v-if="!pendingDisplay.length" class="empty">所有人皆已回覆</p>
+          <ul v-else class="status-list">
+            <li v-for="item in pendingDisplay" :key="item.employeeId" class="status-item">
+              <span class="name">{{ item.displayName }}</span>
+              <el-tag size="small" type="warning">待回覆</el-tag>
+              <span v-if="item.lastResponseAtText" class="timestamp">最後回覆：{{ item.lastResponseAtText }}</span>
+            </li>
+          </ul>
+        </div>
+        <div class="publish-column">
+          <h4>異議摘要</h4>
+          <p v-if="!disputedDisplay.length" class="empty">目前沒有異議</p>
+          <ul v-else class="status-list">
+            <li v-for="item in disputedDisplay" :key="item.employeeId" class="status-item">
+              <span class="name">{{ item.displayName }}</span>
+              <el-tag size="small" type="danger">異議</el-tag>
+              <span v-if="item.lastResponseAtText" class="timestamp">最後更新：{{ item.lastResponseAtText }}</span>
+              <p v-if="item.latestNote" class="note">{{ item.latestNote }}</p>
+            </li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
     <!-- Enhanced actions section with modern button design -->
     <div class="actions-card">
       <div class="primary-actions">
@@ -590,6 +647,15 @@ const batchSubDepartment = ref('')
 const isApplyingBatch = ref(false)
 const detail = reactive({ visible: false, doc: null })
 const employeeNameCache = reactive({})
+const publishMeta = ref({
+  state: 'draft',
+  publishedAt: null,
+  pendingEmployees: [],
+  disputedEmployees: [],
+  employeeStatuses: [],
+})
+const isPublishingSchedules = ref(false)
+const isFinalizingSchedules = ref(false)
 
 function getSupervisorIdFromStorage() {
   if (typeof window === 'undefined') return ''
@@ -629,6 +695,83 @@ function persistIncludeSelfPreference(value, supervisorId = getSupervisorIdFromS
 const selectedEmployeesSet = computed(() => selectedEmployees.value)
 const selectedDaysSet = computed(() => selectedDays.value)
 const manualSelectedCellsSet = computed(() => manualSelectedCells.value)
+
+const publishStateLabel = computed(() => {
+  const map = {
+    draft: '草稿',
+    pending_confirmation: '待確認',
+    finalized: '已完成',
+  }
+  return map[publishMeta.value.state] || '未設定'
+})
+
+const publishStateTagType = computed(() => {
+  switch (publishMeta.value.state) {
+    case 'finalized':
+      return 'success'
+    case 'pending_confirmation':
+      return 'warning'
+    default:
+      return 'info'
+  }
+})
+
+const publishedAtText = computed(() => {
+  const value = publishMeta.value.publishedAt
+  if (!value) return ''
+  const date = dayjs(value)
+  return date.isValid() ? date.format('YYYY/MM/DD HH:mm') : ''
+})
+
+const employeeStatuses = computed(() =>
+  Array.isArray(publishMeta.value.employeeStatuses)
+    ? publishMeta.value.employeeStatuses
+    : []
+)
+
+const pendingOnly = computed(() =>
+  employeeStatuses.value.filter(entry => entry.status === 'pending')
+)
+
+const disputedOnly = computed(() =>
+  employeeStatuses.value.filter(entry => entry.status === 'disputed')
+)
+
+const pendingDisplay = computed(() =>
+  pendingOnly.value.map(entry => {
+    const displayName = entry.name || employeeNameCache[entry.employeeId] || entry.employeeId
+    const lastResponseAtText = entry.lastResponseAt
+      ? dayjs(entry.lastResponseAt).format('YYYY/MM/DD HH:mm')
+      : ''
+    return {
+      ...entry,
+      displayName,
+      lastResponseAtText,
+    }
+  })
+)
+
+const disputedDisplay = computed(() =>
+  disputedOnly.value.map(entry => {
+    const displayName = entry.name || employeeNameCache[entry.employeeId] || entry.employeeId
+    const lastResponseAtText = entry.lastResponseAt
+      ? dayjs(entry.lastResponseAt).format('YYYY/MM/DD HH:mm')
+      : ''
+    const latestNote = Array.isArray(entry.notes) && entry.notes.length
+      ? entry.notes[entry.notes.length - 1]
+      : ''
+    return {
+      ...entry,
+      displayName,
+      lastResponseAtText,
+      latestNote,
+    }
+  })
+)
+
+const canFinalizePublish = computed(() =>
+  publishMeta.value.state === 'pending_confirmation' && !pendingOnly.value.length
+)
 
 const legendShifts = computed(() => {
   if (!Array.isArray(shifts.value) || !shifts.value.length) {
@@ -916,6 +1059,54 @@ const callSuccess = message => {
   const globalSuccess = typeof window !== 'undefined' ? window.ElMessage?.success : undefined
   if (typeof globalSuccess === 'function' && globalSuccess !== moduleSuccess) {
     globalSuccess(message)
+  }
+}
+
+function normalizeStatusEntry(entry = {}) {
+  const toDate = value => {
+    if (!value) return null
+    const parsed = dayjs(value)
+    return parsed.isValid() ? parsed.toDate() : null
+  }
+  return {
+    employeeId: entry.employeeId || entry.employee || '',
+    name: entry.name || '',
+    department: entry.department || '',
+    subDepartment: entry.subDepartment || '',
+    status: entry.status || 'pending',
+    notes: Array.isArray(entry.notes) ? entry.notes : [],
+    lastResponseAt: toDate(entry.lastResponseAt),
+  }
+}
+
+function applyPublishMeta(meta) {
+  if (!meta || typeof meta !== 'object') {
+    publishMeta.value = {
+      state: 'draft',
+      publishedAt: null,
+      pendingEmployees: [],
+      disputedEmployees: [],
+      employeeStatuses: [],
+    }
+    return
+  }
+  const toDate = value => {
+    if (!value) return null
+    const parsed = dayjs(value)
+    return parsed.isValid() ? parsed.toDate() : null
+  }
+  publishMeta.value = {
+    state: meta.state || 'draft',
+    publishedAt: toDate(meta.publishedAt),
+    pendingEmployees: Array.isArray(meta.pendingEmployees)
+      ? meta.pendingEmployees.map(normalizeStatusEntry)
+      : [],
+    disputedEmployees: Array.isArray(meta.disputedEmployees)
+      ? meta.disputedEmployees.map(normalizeStatusEntry)
+      : [],
+    employeeStatuses: Array.isArray(meta.employeeStatuses)
+      ? meta.employeeStatuses.map(normalizeStatusEntry)
+      : [],
   }
 }
 
@@ -1278,7 +1469,14 @@ async function fetchSchedules() {
     const res = await apiFetch(`/api/schedules/monthly${query}`)
     if (!res.ok) throw new Error('Failed to fetch schedules')
     const data = await res.json()
-    const schedules = Array.isArray(data) ? data : []
+    let schedules = []
+    if (Array.isArray(data)) {
+      schedules = data
+      applyPublishMeta(null)
+    } else {
+      schedules = Array.isArray(data?.schedules) ? data.schedules : []
+      applyPublishMeta(data?.meta)
+    }
 
     const ds = days.value
     scheduleMap.value = {}
@@ -1496,6 +1694,137 @@ async function onSelect(empId, day, value) {
       await handleScheduleError(null, '新增排班失敗', empId, day, prev)
     }
   }
+}
+
+function resolveDepartmentId() {
+  if (selectedDepartment.value) return selectedDepartment.value
+  if (supervisorDepartmentId.value) return supervisorDepartmentId.value
+  if (departments.value.length === 1) {
+    const only = departments.value[0]
+    return String(only?._id || only?.id || '')
+  }
+  return ''
+}
+
+async function publishSchedulesForMonth(departmentId) {
+  isPublishingSchedules.value = true
+  try {
+    const payload = {
+      month: currentMonth.value,
+      department: departmentId,
+    }
+    if (selectedSubDepartment.value) {
+      payload.subDepartment = selectedSubDepartment.value
+    }
+    const res = await apiFetch('/api/schedules/publish/batch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    })
+    const result = await res.json().catch(() => ({}))
+    if (!res.ok) {
+      throw new Error(result?.error || '批次發布失敗')
+    }
+    applyPublishMeta(result.meta)
+    callSuccess('已將排班發布為待確認')
+    await fetchSchedules()
+  } catch (err) {
+    callWarning(err?.message || '批次發布失敗')
+  } finally {
+    isPublishingSchedules.value = false
+  }
+}
+
+async function finalizeSchedulesForMonth(departmentId) {
+  isFinalizingSchedules.value = true
+  try {
+    const payload = {
+      month: currentMonth.value,
+      department: departmentId,
+    }
+    if (selectedSubDepartment.value) {
+      payload.subDepartment = selectedSubDepartment.value
+    }
+    const res = await apiFetch('/api/schedules/publish/finalize', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    })
+    const result = await res.json().catch(() => ({}))
+    if (!res.ok) {
+      if (Array.isArray(result?.pendingEmployees) && result.pendingEmployees.length) {
+        const names = result.pendingEmployees
+          .map(entry => entry.name || employeeNameCache[entry.employeeId] || entry.employeeId)
+          .join('、')
+        callWarning(`尚有 ${result.pendingEmployees.length} 位未回覆：${names}`)
+      } else {
+        callWarning(result?.error || '完成發布失敗')
+      }
+      await fetchSchedules()
+      return
+    }
+    applyPublishMeta(result.meta)
+    callSuccess('已完成發布')
+    await fetchSchedules()
+  } catch (err) {
+    callWarning(err?.message || '完成發布失敗')
+  } finally {
+    isFinalizingSchedules.value = false
+  }
+}
+
+async function confirmBatchPublish() {
+  const departmentId = resolveDepartmentId()
+  if (!departmentId) {
+    callWarning('請先選擇要發布的部門')
+    return
+  }
+  try {
+    await ElMessageBox.confirm(
+      '將本月份所有排班設定為待確認並清除員工回覆，是否繼續？',
+      '批次發布確認',
+      {
+        type: 'warning',
+        confirmButtonText: '確認',
+        cancelButtonText: '取消',
+      }
+    )
+  } catch (err) {
+    return
+  }
+  await publishSchedulesForMonth(departmentId)
+}
+
+async function confirmFinalizePublish() {
+  if (!canFinalizePublish.value) {
+    if (publishMeta.value.state === 'draft') {
+      callWarning('請先執行批次發布')
+    } else if (pendingDisplay.value.length) {
+      callWarning('仍有員工未回覆，請先提醒員工確認班表')
+    } else {
+      callWarning('目前無可完成發布的排班資料')
+    }
+    return
+  }
+  const departmentId = resolveDepartmentId()
+  if (!departmentId) {
+    callWarning('請先選擇要發布的部門')
+    return
+  }
+  try {
+    await ElMessageBox.confirm(
+      '確認所有員工已核對班表，完成發布後將鎖定該月份排班。',
+      '完成發布確認',
+      {
+        type: 'warning',
+        confirmButtonText: '完成',
+        cancelButtonText: '取消',
+      }
+    )
+  } catch (err) {
+    return
+  }
+  await finalizeSchedulesForMonth(departmentId)
 }
 
 async function onDepartmentChange() {
@@ -1884,6 +2213,116 @@ onMounted(async () => {
     &.is-focus {
       border-color: #10b981;
       box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.1);
+    }
+  }
+}
+
+.publish-card {
+  margin: 24px 0;
+  padding: 24px;
+  background: linear-gradient(135deg, rgba(59, 130, 246, 0.1) 0%, rgba(14, 165, 233, 0.08) 100%);
+  border-radius: 20px;
+  border: 1px solid rgba(59, 130, 246, 0.15);
+  box-shadow: 0 20px 45px -20px rgba(15, 118, 110, 0.3);
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+
+  .publish-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 12px;
+
+    .publish-title {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+
+      h3 {
+        margin: 0;
+        font-size: 1.25rem;
+        color: #0f172a;
+        font-weight: 700;
+      }
+    }
+
+    .publish-meta {
+      display: flex;
+      gap: 16px;
+      color: #0f172a;
+      font-weight: 600;
+    }
+  }
+
+  .publish-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+
+  .publish-body {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 20px;
+  }
+
+  .publish-column {
+    background: rgba(255, 255, 255, 0.7);
+    border-radius: 16px;
+    padding: 16px 20px;
+    border: 1px solid rgba(148, 163, 184, 0.25);
+    backdrop-filter: blur(6px);
+
+    h4 {
+      margin: 0 0 10px;
+      font-size: 1rem;
+      color: #0f172a;
+      font-weight: 700;
+    }
+
+    .empty {
+      margin: 0;
+      color: #64748b;
+      font-size: 0.9rem;
+    }
+
+    .status-list {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .status-item {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      padding: 10px 12px;
+      border-radius: 12px;
+      background: rgba(241, 245, 249, 0.7);
+
+      .name {
+        font-weight: 600;
+        color: #0f172a;
+      }
+
+      .timestamp {
+        font-size: 0.8rem;
+        color: #475569;
+      }
+
+      .note {
+        margin: 0;
+        font-size: 0.85rem;
+        color: #dc2626;
+        background: rgba(254, 226, 226, 0.6);
+        padding: 8px 10px;
+        border-radius: 8px;
+      }
     }
   }
 }

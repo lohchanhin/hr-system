@@ -173,6 +173,7 @@ describe('Schedule.vue', () => {
     directReports = [],
     monthlyWithSelf = [],
     monthlyWithoutSelf = [],
+    monthlyMeta = { state: 'draft', employeeStatuses: [], pendingEmployees: [], disputedEmployees: [] },
     approvals = [],
     leaves = [],
     leaveApprovalsHandler,
@@ -221,9 +222,14 @@ describe('Schedule.vue', () => {
 
       if (pathname === '/api/schedules/monthly') {
         const includeSelf = searchParams.get('includeSelf') === 'true'
+        const month = searchParams.get('month') || ''
         return {
           ok: true,
-          json: async () => (includeSelf ? monthlyWithSelf : monthlyWithoutSelf)
+          json: async () => ({
+            month,
+            schedules: includeSelf ? monthlyWithSelf : monthlyWithoutSelf,
+            meta: monthlyMeta,
+          })
         }
       }
 

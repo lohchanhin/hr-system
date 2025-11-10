@@ -134,6 +134,9 @@ app.use(
       }
       return authorizeRoles('employee', 'supervisor', 'admin')(req, res, next);
     }
+    if (req.method === 'POST' && req.path?.startsWith('/respond')) {
+      return authorizeRoles('employee', 'supervisor', 'admin')(req, res, next);
+    }
     return authorizeRoles('supervisor', 'admin')(req, res, next);
   },
   scheduleRoutes

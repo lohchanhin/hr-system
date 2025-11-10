@@ -10,7 +10,10 @@ import {
   createSchedulesBatch,
   deleteOldSchedules,
   listLeaveApprovals,
-  listSupervisorSummary
+  listSupervisorSummary,
+  publishMonthlySchedules,
+  finalizeMonthlySchedules,
+  respondMonthlySchedule,
 } from '../controllers/scheduleController.js';
 import { verifySupervisor } from '../middleware/supervisor.js';
 import { authenticate, authorizeRoles } from '../middleware/auth.js';
@@ -23,6 +26,9 @@ router.get('/leave-approvals', listLeaveApprovals);
 router.get('/summary', authenticate, authorizeRoles('supervisor'), listSupervisorSummary);
 router.get('/export', exportSchedules);
 router.post('/batch', verifySupervisor, createSchedulesBatch);
+router.post('/publish/batch', authorizeRoles('supervisor', 'admin'), publishMonthlySchedules);
+router.post('/publish/finalize', authorizeRoles('supervisor', 'admin'), finalizeMonthlySchedules);
+router.post('/respond', authorizeRoles('employee', 'supervisor', 'admin'), respondMonthlySchedule);
 router.post('/', verifySupervisor, createSchedule);
 router.get('/:id', getSchedule);
 router.put('/:id', verifySupervisor, updateSchedule);

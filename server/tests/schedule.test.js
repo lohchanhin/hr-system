@@ -5,7 +5,6 @@ import request from 'supertest';
 import express from 'express';
 import { jest } from '@jest/globals';
 import ExcelJS from 'exceljs';
-import { authorizeRoles } from '../src/middleware/auth.js';
 
 /* ----------------------------- Mocks: Models ----------------------------- */
 // 統一成物件型態，提供各端點會用到的方法
@@ -15,6 +14,8 @@ const mockShiftSchedule = {
   create: jest.fn(),
   insertMany: jest.fn(),
   deleteMany: jest.fn(),
+  updateMany: jest.fn(),
+  countDocuments: jest.fn(),
 };
 
 const mockApprovalRequest = { findOne: jest.fn(), find: jest.fn() };
@@ -32,6 +33,10 @@ const buildScheduleDoc = (data = {}) => {
     shiftId: 'old',
     department: 'd1',
     subDepartment: 'sd1',
+    state: 'draft',
+    employeeResponse: 'pending',
+    responseNote: '',
+    responseAt: null,
     ...data,
   };
   doc.save = jest.fn().mockImplementation(function save() {
@@ -42,6 +47,16 @@ const buildScheduleDoc = (data = {}) => {
 
 /* --------------------------- jest.mock 設定區 --------------------------- */
 
+const authenticateMock = jest.fn((req, res, next) => next());
+jest.unstable_mockModule('../src/middleware/auth.js', () => ({
+  authenticate: authenticateMock,
+  authorizeRoles: (...roles) => (req, res, next) => {
+    if (!req.user || !roles.includes(req.user.role)) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+    return next();
+  },
+}));
 
 jest.unstable_mockModule('../src/models/ShiftSchedule.js', () => ({ default: mockShiftSchedule }));
 jest.unstable_mockModule('../src/models/approval_request.js', () => ({ default: mockApprovalRequest }));
@@ -56,9 +71,11 @@ let currentRole = 'supervisor';
 /* --------------------------------- App --------------------------------- */
 let app;
 let scheduleRoutes;
+let authorizeRoles;
 
 beforeAll(async () => {
   scheduleRoutes = (await import('../src/routes/scheduleRoutes.js')).default;
+  ({ authorizeRoles } = await import('../src/middleware/auth.js'));
   app = express();
   app.use(express.json());
   app.use((req, res, next) => {
@@ -76,6 +93,8 @@ beforeEach(() => {
   mockShiftSchedule.create.mockReset();
   mockShiftSchedule.insertMany.mockReset();
   mockShiftSchedule.deleteMany.mockReset();
+  mockShiftSchedule.updateMany.mockReset();
+  mockShiftSchedule.countDocuments.mockReset();
 
   mockApprovalRequest.findOne.mockReset();
   mockApprovalRequest.find.mockReset();
@@ -100,16 +119,17 @@ beforeEach(() => {
       shifts: [{ _id: 's1', name: 'Morning' }]
     })
   });
+  authenticateMock.mockReset();
 });
 
 /* --------------------------------- Tests -------------------------------- */
 describe('Schedule API', () => {
-  const buildScheduleAppWithRole = (role) => {
+  const buildScheduleAppWithRole = (role, userOverrides = {}) => {
     const exportApp = express();
     exportApp.use(express.json());
     exportApp.use((req, res, next) => {
       currentRole = role;
-      req.user = { id: 'tester', role };
+      req.user = { id: 'tester', role, ...userOverrides };
       next();
     });
     exportApp.use(
@@ -119,6 +139,9 @@ describe('Schedule API', () => {
           if (req.path?.startsWith('/export')) {
             return authorizeRoles('admin', 'supervisor')(req, res, next);
           }
+          return authorizeRoles('employee', 'supervisor', 'admin')(req, res, next);
+        }
+        if (req.method === 'POST' && req.path?.startsWith('/respond')) {
           return authorizeRoles('employee', 'supervisor', 'admin')(req, res, next);
         }
         return authorizeRoles('supervisor', 'admin')(req, res, next);
@@ -216,9 +239,17 @@ describe('Schedule API', () => {
 
     expect(res.status).toBe(200);
     expect(mockShiftSchedule.find).toHaveBeenCalled();
-    expect(res.body).toEqual([
+    expect(res.body.month).toBe('2023-01');
+    expect(res.body.schedules).toEqual([
       { shiftId: 's1', date: '2023/01/02', shiftName: 'Morning' }
     ]);
+    expect(res.body.meta).toEqual({
+      state: 'draft',
+      publishedAt: null,
+      pendingEmployees: [],
+      disputedEmployees: [],
+      employeeStatuses: [],
+    });
   });
 
   it('拒絕員工使用主管篩選參數', async () => {
@@ -234,7 +265,7 @@ describe('Schedule API', () => {
   });
 
   it('允許主管使用主管篩選參數', async () => {
-    const supervisorApp = buildScheduleAppWithRole('supervisor');
+    const supervisorApp = buildScheduleAppWithRole('supervisor', { id: 'sup1' });
     const fake = [{ employee: 'emp1', shiftId: 's1', date: new Date('2023-01-02') }];
     const leanMock = jest.fn().mockResolvedValue(fake);
     mockShiftSchedule.find.mockReturnValue({
@@ -252,8 +283,18 @@ describe('Schedule API', () => {
     expect(mockShiftSchedule.find).toHaveBeenCalledWith(expect.objectContaining({
       employee: { $in: ['emp1'] }
     }));
-    expect(res.body).toEqual([
+    expect(res.body.month).toBe('2023-01');
+    expect(res.body.schedules).toEqual([
       { employee: 'emp1', shiftId: 's1', date: '2023/01/02', shiftName: 'Morning' }
+    ]);
+    expect(res.body.meta.state).toBe('draft');
+    expect(res.body.meta.publishedAt).toBeNull();
+    expect(res.body.meta.disputedEmployees).toEqual([]);
+    expect(res.body.meta.employeeStatuses).toEqual([
+      expect.objectContaining({ employeeId: 'emp1', status: 'pending' })
+    ]);
+    expect(res.body.meta.pendingEmployees).toEqual([
+      expect.objectContaining({ employeeId: 'emp1', status: 'pending' })
     ]);
   });
 
@@ -430,15 +471,14 @@ describe('Schedule API', () => {
       form_data: { s: '2023-01-01', e: '2023-01-02', t: '病假' },
       status: 'approved'
     }];
-    const populateMock = jest.fn().mockReturnThis();
-    mockApprovalRequest.find.mockReturnValue({
-      populate: populateMock,
-      then: (resolve) => resolve(approvals)
-    });
+    const query = {};
+    query.populate = jest.fn(function populate() { return query; });
+    query.then = (resolve) => resolve(approvals);
+    mockApprovalRequest.find.mockReturnValue(query);
     const res = await request(app).get('/api/schedules/leave-approvals?month=2023-01&employee=e1');
     expect(res.status).toBe(200);
-    expect(populateMock).toHaveBeenCalledWith('applicant_employee');
-    expect(populateMock).toHaveBeenCalledWith({ path: 'form', select: 'name category' });
+    expect(query.populate).toHaveBeenCalledWith('applicant_employee');
+    expect(query.populate).toHaveBeenCalledWith({ path: 'form', select: 'name category' });
     expect(res.body).toEqual({
       leaves: [{
         employee: approvals[0].applicant_employee,
@@ -486,11 +526,10 @@ describe('Schedule API', () => {
         status: 'approved'
       }
     ];
-    const populateMock = jest.fn().mockReturnThis();
-    mockApprovalRequest.find.mockReturnValue({
-      populate: populateMock,
-      then: (resolve) => resolve(approvals)
-    });
+    const query = {};
+    query.populate = jest.fn(function populate() { return query; });
+    query.then = (resolve) => resolve(approvals);
+    mockApprovalRequest.find.mockReturnValue(query);
 
     const res = await request(app)
       .get('/api/schedules/leave-approvals?month=2023-01&department=d1&subDepartment=sd1');
@@ -514,19 +553,18 @@ describe('Schedule API', () => {
         status: 'approved'
       }
     ]);
-    expect(populateMock).toHaveBeenCalledWith('applicant_employee');
-    expect(populateMock).toHaveBeenCalledWith({ path: 'form', select: 'name category' });
+    expect(query.populate).toHaveBeenCalledWith('applicant_employee');
+    expect(query.populate).toHaveBeenCalledWith({ path: 'form', select: 'name category' });
   });
 
   it('leave approvals include supervisor when includeSelf is true', async () => {
     const selectMock = jest.fn().mockResolvedValue([{ _id: 'emp1' }]);
     mockEmployee.find.mockReturnValue({ select: selectMock });
     const approvals = [];
-    const populateMock = jest.fn().mockReturnThis();
-    mockApprovalRequest.find.mockReturnValue({
-      populate: populateMock,
-      then: (resolve) => resolve(approvals),
-    });
+    const query = {};
+    query.populate = jest.fn(function populate() { return query; });
+    query.then = (resolve) => resolve(approvals);
+    mockApprovalRequest.find.mockReturnValue(query);
 
     const res = await request(app)
       .get('/api/schedules/leave-approvals?month=2023-01&supervisor=sup1&includeSelf=true');
@@ -534,8 +572,168 @@ describe('Schedule API', () => {
     expect(res.status).toBe(200);
     const queryArg = mockApprovalRequest.find.mock.calls[0][0];
     expect(queryArg.applicant_employee.$in).toEqual(expect.arrayContaining(['emp1', 'sup1']));
-    expect(populateMock).toHaveBeenCalledWith('applicant_employee');
-    expect(populateMock).toHaveBeenCalledWith({ path: 'form', select: 'name category' });
+    expect(query.populate).toHaveBeenCalledWith('applicant_employee');
+    expect(query.populate).toHaveBeenCalledWith({ path: 'form', select: 'name category' });
+  });
+
+  it('allows supervisor to batch publish schedules', async () => {
+    currentRole = 'supervisor';
+    const selectMock = jest.fn().mockResolvedValue([{ _id: 'emp1' }]);
+    mockEmployee.find.mockReturnValue({ select: selectMock });
+    mockShiftSchedule.countDocuments.mockResolvedValue(1);
+    mockShiftSchedule.updateMany.mockResolvedValue({ modifiedCount: 1 });
+
+    const refreshed = [{
+      employee: { _id: 'emp1', name: '員工1' },
+      date: new Date('2023-01-01'),
+      shiftId: 's1',
+      state: 'pending_confirmation',
+      employeeResponse: 'pending',
+    }];
+    const populateMock = jest.fn().mockReturnValue({
+      lean: jest.fn().mockResolvedValue(refreshed),
+    });
+    mockShiftSchedule.find.mockReturnValue({ populate: populateMock });
+
+    const res = await request(app)
+      .post('/api/schedules/publish/batch')
+      .send({ month: '2023-01', department: 'd1' });
+
+    expect(res.status).toBe(200);
+    expect(mockShiftSchedule.countDocuments).toHaveBeenCalledWith(expect.objectContaining({
+      department: 'd1',
+    }));
+    expect(mockShiftSchedule.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ department: 'd1' }),
+      expect.objectContaining({
+        $set: expect.objectContaining({ state: 'pending_confirmation', employeeResponse: 'pending' }),
+      }),
+    );
+    expect(res.body.meta.state).toBe('pending_confirmation');
+    expect(res.body.meta.pendingEmployees).toHaveLength(1);
+  });
+
+  it('finalizes schedules only when all employees confirmed', async () => {
+    currentRole = 'supervisor';
+    const selectMock = jest.fn().mockResolvedValue([{ _id: 'emp1' }]);
+    mockEmployee.find.mockReturnValue({ select: selectMock });
+
+    const firstLean = jest.fn().mockResolvedValue([
+      {
+        employee: { _id: 'emp1', name: '員工1' },
+        date: new Date('2023-01-01'),
+        shiftId: 's1',
+        state: 'pending_confirmation',
+        employeeResponse: 'confirmed',
+        responseAt: new Date('2023-01-05T00:00:00.000Z'),
+      },
+    ]);
+    const secondLean = jest.fn().mockResolvedValue([
+      {
+        employee: { _id: 'emp1', name: '員工1' },
+        date: new Date('2023-01-01'),
+        shiftId: 's1',
+        state: 'finalized',
+        employeeResponse: 'confirmed',
+        publishedAt: new Date('2023-01-10T00:00:00.000Z'),
+      },
+    ]);
+    mockShiftSchedule.find
+      .mockReturnValueOnce({ populate: jest.fn().mockReturnValue({ lean: firstLean }) })
+      .mockReturnValueOnce({ populate: jest.fn().mockReturnValue({ lean: secondLean }) });
+
+    mockShiftSchedule.updateMany.mockResolvedValue({ modifiedCount: 1 });
+
+    const res = await request(app)
+      .post('/api/schedules/publish/finalize')
+      .send({ month: '2023-01', department: 'd1' });
+
+    expect(res.status).toBe(200);
+    expect(mockShiftSchedule.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ department: 'd1' }),
+      expect.objectContaining({ $set: expect.objectContaining({ state: 'finalized' }) }),
+    );
+    expect(res.body.meta.state).toBe('finalized');
+    expect(res.body.meta.pendingEmployees).toHaveLength(0);
+  });
+
+  it('rejects finalization when responses pending', async () => {
+    currentRole = 'supervisor';
+    const selectMock = jest.fn().mockResolvedValue([{ _id: 'emp1' }]);
+    mockEmployee.find.mockReturnValue({ select: selectMock });
+
+    const firstLean = jest.fn().mockResolvedValue([
+      {
+        employee: { _id: 'emp1', name: '員工1' },
+        date: new Date('2023-01-01'),
+        shiftId: 's1',
+        state: 'pending_confirmation',
+        employeeResponse: 'pending',
+      },
+    ]);
+    mockShiftSchedule.find.mockReturnValueOnce({
+      populate: jest.fn().mockReturnValue({ lean: firstLean }),
+    });
+
+    const res = await request(app)
+      .post('/api/schedules/publish/finalize')
+      .send({ month: '2023-01', department: 'd1' });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('pending confirmations');
+    expect(mockShiftSchedule.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('records employee response with note trimming', async () => {
+    currentRole = 'employee';
+    const availableSchedules = [
+      {
+        _id: 's1',
+        employee: 'tester',
+        date: new Date('2023-01-01'),
+        shiftId: 's1',
+        state: 'pending_confirmation',
+        employeeResponse: 'pending',
+      },
+    ];
+    const firstChain = {
+      lean: jest.fn().mockResolvedValue(availableSchedules),
+    };
+    const secondChain = {
+      populate: jest.fn().mockReturnValue({
+        lean: jest.fn().mockResolvedValue([
+          {
+            ...availableSchedules[0],
+            employee: { _id: 'tester', name: '我' },
+            employeeResponse: 'disputed',
+            responseNote: '原因',
+            responseAt: new Date('2023-01-02T00:00:00.000Z'),
+          },
+        ]),
+      }),
+    };
+    mockShiftSchedule.find
+      .mockReturnValueOnce(firstChain)
+      .mockReturnValueOnce(secondChain);
+
+    mockShiftSchedule.updateMany.mockResolvedValue({ matchedCount: 1 });
+
+    const res = await request(app)
+      .post('/api/schedules/respond')
+      .send({ month: '2023-01', response: 'disputed', note: '   需要調整   ' });
+
+    expect(res.status).toBe(200);
+    expect(mockShiftSchedule.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ employee: 'tester' }),
+      expect.objectContaining({
+        $set: expect.objectContaining({
+          employeeResponse: 'disputed',
+          responseNote: '需要調整',
+        }),
+      }),
+    );
+    expect(res.body.note).toBe('需要調整');
+    expect(res.body.status).toBe('disputed');
   });
 
   it('deletes old schedules', async () => {

@@ -4,6 +4,143 @@ import ApprovalRequest from '../models/approval_request.js';
 import AttendanceSetting from '../models/AttendanceSetting.js';
 import { getLeaveFieldIds } from '../services/leaveFieldService.js';
 
+const MONTH_PATTERN = /^\d{4}-(0[1-9]|1[0-2])$/;
+
+function getMonthRange(month) {
+  if (!MONTH_PATTERN.test(month)) return null;
+  const start = new Date(`${month}-01T00:00:00.000Z`);
+  if (Number.isNaN(start.getTime())) return null;
+  const end = new Date(start);
+  end.setMonth(end.getMonth() + 1);
+  return { start, end };
+}
+
+function toObjectIdString(value) {
+  if (!value && value !== 0) return '';
+  if (typeof value === 'object') {
+    if (typeof value.toString === 'function' && value.toString !== Object.prototype.toString) {
+      const str = value.toString();
+      if (str && !str.startsWith('[object')) return str;
+    }
+    if (value?._id) return String(value._id);
+    if (value?.id) return String(value.id);
+    if (value?.value) return String(value.value);
+  }
+  return String(value);
+}
+
+function resetScheduleConfirmation(schedule) {
+  if (!schedule) return;
+  schedule.state = 'draft';
+  schedule.employeeResponse = 'pending';
+  schedule.responseNote = '';
+  schedule.responseAt = null;
+  schedule.publishedAt = null;
+}
+
+function collectEmployeeStatuses(rawSchedules) {
+  const map = new Map();
+  rawSchedules.forEach((schedule) => {
+    const rawEmployee = schedule.employee;
+    let employeeId = '';
+    if (rawEmployee && typeof rawEmployee === 'object' && !Array.isArray(rawEmployee)) {
+      if (rawEmployee?._id) employeeId = toObjectIdString(rawEmployee._id);
+      if (!employeeId && rawEmployee?.id) employeeId = toObjectIdString(rawEmployee.id);
+    } else if (rawEmployee) {
+      employeeId = toObjectIdString(rawEmployee);
+    }
+    if (!employeeId || employeeId === '[object Object]') return;
+    const employee = (rawEmployee && typeof rawEmployee === 'object' && !Array.isArray(rawEmployee)) ? rawEmployee : null;
+    const entry = map.get(employeeId) || {
+      employeeId,
+      name: employee?.name || employee?.fullName || employee?.displayName || '',
+      department: toObjectIdString(employee?.department) || toObjectIdString(schedule.department) || '',
+      subDepartment: toObjectIdString(employee?.subDepartment) || toObjectIdString(schedule.subDepartment) || '',
+      responses: new Set(),
+      notes: [],
+      latestResponseAt: null,
+    };
+    if (!entry.name && (employee?.name || employee?.fullName || employee?.displayName)) {
+      entry.name = employee?.name || employee?.fullName || employee?.displayName || '';
+    }
+    if (!entry.department) {
+      const dept = toObjectIdString(employee?.department) || toObjectIdString(schedule.department);
+      if (dept && dept !== '[object Object]') entry.department = dept;
+    }
+    if (!entry.subDepartment) {
+      const subDept = toObjectIdString(employee?.subDepartment) || toObjectIdString(schedule.subDepartment);
+      if (subDept && subDept !== '[object Object]') entry.subDepartment = subDept;
+    }
+    const response = schedule.employeeResponse || 'pending';
+    entry.responses.add(response);
+    if (response === 'disputed' && schedule.responseNote) {
+      entry.notes.push(schedule.responseNote);
+    }
+    if (schedule.responseAt) {
+      const responseDate = new Date(schedule.responseAt);
+      if (!Number.isNaN(responseDate) && (!entry.latestResponseAt || responseDate > entry.latestResponseAt)) {
+        entry.latestResponseAt = responseDate;
+      }
+    }
+    map.set(employeeId, entry);
+  });
+
+  return Array.from(map.values()).map((entry) => {
+    let status = 'pending';
+    if (entry.responses.has('disputed')) status = 'disputed';
+    else if (entry.responses.size === 1 && entry.responses.has('confirmed')) status = 'confirmed';
+    return {
+      employeeId: entry.employeeId,
+      name: entry.name,
+      department: entry.department,
+      subDepartment: entry.subDepartment,
+      status,
+      notes: entry.notes,
+      lastResponseAt: entry.latestResponseAt,
+    };
+  });
+}
+
+function deriveMonthMeta(rawSchedules) {
+  if (!rawSchedules.length) {
+    return {
+      state: 'draft',
+      publishedAt: null,
+      pendingEmployees: [],
+      disputedEmployees: [],
+      employeeStatuses: [],
+    };
+  }
+
+  let latestPublished = null;
+  const states = new Set();
+  rawSchedules.forEach((schedule) => {
+    if (schedule.state) states.add(schedule.state);
+    if (schedule.publishedAt) {
+      const published = new Date(schedule.publishedAt);
+      if (!Number.isNaN(published) && (!latestPublished || published > latestPublished)) {
+        latestPublished = published;
+      }
+    }
+  });
+
+  let state = 'draft';
+  if (states.has('pending_confirmation')) state = 'pending_confirmation';
+  if (states.size && states.has('finalized') && !states.has('pending_confirmation')) state = 'finalized';
+
+  const employeeStatuses = collectEmployeeStatuses(rawSchedules);
+  const pendingEmployees = employeeStatuses.filter((entry) => entry.status !== 'confirmed');
+  const disputedEmployees = employeeStatuses.filter((entry) => entry.status === 'disputed');
+
+  return {
+    state,
+    publishedAt: latestPublished,
+    pendingEmployees,
+    disputedEmployees,
+    employeeStatuses,
+  };
+}
+
 function formatDate(date) {
   const d = new Date(date);
   const yyyy = d.getFullYear();
@@ -43,32 +180,42 @@ export async function listMonthlySchedules(req, res) {
   try {
     const { month, employee, supervisor, includeSelf: includeSelfRaw } = req.query;
     if (!month) return res.status(400).json({ error: 'month required' });
-    const start = new Date(`${month}-01`);
-    const end = new Date(start);
-    end.setMonth(end.getMonth() + 1);
-    const query = { date: { $gte: start, $lt: end } };
+    const range = getMonthRange(month);
+    if (!range) return res.status(400).json({ error: 'invalid month' });
+    const { start, end } = range;
+    const query = { date: { $gte: range.start, $lt: range.end } };
     const includeSelf = String(includeSelfRaw).toLowerCase() === 'true';
 
     if (supervisor) {
+      const normalizedSupervisor = String(supervisor);
       const role = req.user?.role;
+      const requesterId = req.user?.id || req.user?.employeeId;
       const allowedRoles = ['supervisor', 'admin'];
       if (!allowedRoles.includes(role)) {
         return res.status(403).json({ error: 'forbidden' });
       }
-      const emps = await Employee.find({ supervisor }).select('_id');
+      if (role === 'supervisor' && requesterId && String(requesterId) !== normalizedSupervisor) {
+        return res.status(403).json({ error: 'forbidden' });
+      }
+      const emps = await Employee.find({ supervisor: normalizedSupervisor }).select('_id');
       const idSet = new Set(emps.map((e) => e._id.toString()));
-      if (includeSelf && supervisor) {
-        idSet.add(String(supervisor));
+      if (includeSelf && normalizedSupervisor) {
+        idSet.add(normalizedSupervisor);
       }
       query.employee = { $in: Array.from(idSet) };
     } else {
-      const empId = employee || (req.user?.role === 'employee' ? req.user.id : undefined);
+      const empId = employee || (req.user?.role === 'employee' ? (req.user?.employeeId || req.user?.id) : undefined);
       if (empId) query.employee = empId;
     }
 
     const raw = await ShiftSchedule.find(query).populate('employee').lean();
     const schedules = await attachShiftInfo(raw);
-    res.json(schedules);
+    const meta = deriveMonthMeta(raw);
+    res.json({
+      month,
+      schedules,
+      meta,
+    });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
@@ -85,9 +232,9 @@ export async function listLeaveApprovals(req, res) {
       subDepartment: subDepartmentRaw,
     } = req.query;
     if (!month) return res.status(400).json({ error: 'month required' });
-    const start = new Date(`${month}-01`);
-    const end = new Date(start);
-    end.setMonth(end.getMonth() + 1);
+    const range = getMonthRange(month);
+    if (!range) return res.status(400).json({ error: 'invalid month' });
+    const { start, end } = range;
 
     const includeSelf = String(includeSelfRaw).toLowerCase() === 'true';
     const department = departmentRaw ? String(departmentRaw) : '';
@@ -160,9 +307,9 @@ export async function listSupervisorSummary(req, res) {
     if (!supervisor) return res.status(400).json({ error: 'supervisor required' });
     const includeSelf = String(includeSelfRaw).toLowerCase() === 'true';
 
-    const start = new Date(`${month}-01`);
-    const end = new Date(start);
-    end.setMonth(end.getMonth() + 1);
+    const range = getMonthRange(month);
+    if (!range) return res.status(400).json({ error: 'invalid month' });
+    const { start, end } = range;
 
     const employees = await Employee.find({ supervisor })
       .select('_id name')
@@ -277,6 +424,191 @@ export async function listSupervisorSummary(req, res) {
   }
 }
 
+export async function publishMonthlySchedules(req, res) {
+  try {
+    const { month, department, subDepartment } = req.body || {};
+    if (!month) return res.status(400).json({ error: 'month required' });
+    if (!department) return res.status(400).json({ error: 'department required' });
+    const range = getMonthRange(month);
+    if (!range) return res.status(400).json({ error: 'invalid month' });
+
+    const role = req.user?.role;
+    const actorId = req.user?.id || req.user?.employeeId;
+    if (!['admin', 'supervisor'].includes(role)) {
+      return res.status(403).json({ error: 'forbidden' });
+    }
+
+    const query = {
+      date: { $gte: range.start, $lt: range.end },
+      department,
+    };
+    if (subDepartment) query.subDepartment = subDepartment;
+
+    if (role === 'supervisor' && actorId) {
+      const reports = await Employee.find({ supervisor: actorId }).select('_id');
+      const allowed = reports.map((emp) => emp._id.toString());
+      const actorIdStr = String(actorId);
+      if (!allowed.includes(actorIdStr)) allowed.push(actorIdStr);
+      query.employee = { $in: allowed };
+    }
+
+    const total = await ShiftSchedule.countDocuments(query);
+    if (!total) return res.status(404).json({ error: 'no schedules found' });
+
+    const result = await ShiftSchedule.updateMany(query, {
+      $set: {
+        state: 'pending_confirmation',
+        employeeResponse: 'pending',
+        responseNote: '',
+        responseAt: null,
+        publishedAt: null,
+      },
+    });
+
+    const refreshed = await ShiftSchedule.find(query).populate('employee').lean();
+    const meta = deriveMonthMeta(refreshed);
+
+    res.json({
+      updated: result.modifiedCount ?? result.nModified ?? 0,
+      total,
+      month,
+      meta,
+    });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+}
+
+export async function finalizeMonthlySchedules(req, res) {
+  try {
+    const { month, department, subDepartment } = req.body || {};
+    if (!month) return res.status(400).json({ error: 'month required' });
+    if (!department) return res.status(400).json({ error: 'department required' });
+    const range = getMonthRange(month);
+    if (!range) return res.status(400).json({ error: 'invalid month' });
+
+    const role = req.user?.role;
+    const actorId = req.user?.id || req.user?.employeeId;
+    if (!['admin', 'supervisor'].includes(role)) {
+      return res.status(403).json({ error: 'forbidden' });
+    }
+
+    const query = {
+      date: { $gte: range.start, $lt: range.end },
+      department,
+    };
+    if (subDepartment) query.subDepartment = subDepartment;
+
+    if (role === 'supervisor' && actorId) {
+      const reports = await Employee.find({ supervisor: actorId }).select('_id');
+      const allowed = reports.map((emp) => emp._id.toString());
+      const actorIdStr = String(actorId);
+      if (!allowed.includes(actorIdStr)) allowed.push(actorIdStr);
+      query.employee = { $in: allowed };
+    }
+
+    const raw = await ShiftSchedule.find(query).populate('employee').lean();
+    if (!raw.length) return res.status(404).json({ error: 'no schedules found' });
+
+    const metaBefore = deriveMonthMeta(raw);
+    if (metaBefore.pendingEmployees.length) {
+      return res.status(400).json({
+        error: 'pending confirmations',
+        pendingEmployees: metaBefore.pendingEmployees,
+        disputedEmployees: metaBefore.disputedEmployees,
+      });
+    }
+
+    const now = new Date();
+    const result = await ShiftSchedule.updateMany(query, {
+      $set: { state: 'finalized', publishedAt: now },
+    });
+
+    const refreshed = await ShiftSchedule.find(query).populate('employee').lean();
+    const meta = deriveMonthMeta(refreshed);
+
+    res.json({
+      updated: result.modifiedCount ?? result.nModified ?? 0,
+      total: raw.length,
+      month,
+      meta,
+    });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+}
+
+export async function respondMonthlySchedule(req, res) {
+  try {
+    const { month, response, note } = req.body || {};
+    if (!month) return res.status(400).json({ error: 'month required' });
+    const normalizedResponse = response === 'confirmed' ? 'confirmed' : response === 'disputed' ? 'disputed' : null;
+    if (!normalizedResponse) return res.status(400).json({ error: 'invalid response' });
+
+    const range = getMonthRange(month);
+    if (!range) return res.status(400).json({ error: 'invalid month' });
+
+    const employeeId = req.user?.employeeId || req.user?.id;
+    if (!employeeId) return res.status(403).json({ error: 'forbidden' });
+
+    const baseQuery = {
+      employee: employeeId,
+      date: { $gte: range.start, $lt: range.end },
+    };
+
+    const available = await ShiftSchedule.find(baseQuery).lean();
+    if (!available.length) {
+      return res.status(404).json({ error: 'no schedules found' });
+    }
+
+    const pending = available.filter((s) => s.state === 'pending_confirmation');
+    if (!pending.length) {
+      return res.status(400).json({ error: 'no pending schedules' });
+    }
+
+    if (available.some((s) => s.state === 'finalized')) {
+      return res.status(400).json({ error: 'schedules already finalized' });
+    }
+
+    const sanitizedNote = normalizedResponse === 'disputed' && typeof note === 'string'
+      ? note.trim().slice(0, 500)
+      : '';
+    const now = new Date();
+
+    const updateResult = await ShiftSchedule.updateMany(
+      { ...baseQuery, state: 'pending_confirmation' },
+      {
+        $set: {
+          employeeResponse: normalizedResponse,
+          responseNote: sanitizedNote,
+          responseAt: now,
+        },
+      },
+    );
+
+    if ((updateResult.matchedCount ?? updateResult.n) === 0) {
+      return res.status(400).json({ error: 'no pending schedules' });
+    }
+
+    const refreshed = await ShiftSchedule.find(baseQuery).populate('employee').lean();
+    const schedules = await attachShiftInfo(refreshed);
+    const meta = deriveMonthMeta(refreshed);
+    const selfStatus = meta.employeeStatuses.find((entry) => entry.employeeId === toObjectIdString(employeeId));
+
+    res.json({
+      month,
+      response: normalizedResponse,
+      note: sanitizedNote,
+      responseAt: now,
+      status: selfStatus?.status || normalizedResponse,
+      schedules,
+      meta,
+    });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+}
+
 export async function createSchedulesBatch(req, res) {
   try {
     const { schedules } = req.body;
@@ -322,6 +654,7 @@ export async function createSchedulesBatch(req, res) {
         existing.shiftId = sched.shiftId;
         existing.department = sched.department ?? existing.department;
         existing.subDepartment = sched.subDepartment ?? existing.subDepartment;
+        resetScheduleConfirmation(existing);
         const saved = await existing.save();
         updated.push(typeof saved?.toObject === 'function' ? saved.toObject() : saved);
       } else {
@@ -435,6 +768,7 @@ export async function updateSchedule(req, res) {
     if (shiftId !== undefined) schedule.shiftId = shiftId;
     if (department !== undefined) schedule.department = department;
     if (subDepartment !== undefined) schedule.subDepartment = subDepartment;
+    resetScheduleConfirmation(schedule);
     const saved = await schedule.save();
     res.json(saved);
   } catch (err) {

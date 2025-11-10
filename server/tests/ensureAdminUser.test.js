@@ -6,6 +6,17 @@ const mockEmployee = {
   create: jest.fn(),
 };
 
+const authenticateMock = jest.fn((req, res, next) => next());
+jest.unstable_mockModule('../src/middleware/auth.js', () => ({
+  authenticate: authenticateMock,
+  authorizeRoles: (...roles) => (req, res, next) => {
+    if (!req.user || !roles.includes(req.user.role)) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+    return next();
+  },
+}));
+
 jest.unstable_mockModule('../src/models/Employee.js', () => ({ default: mockEmployee }));
 
 let ensureAdminUser;
@@ -33,6 +44,7 @@ beforeEach(async () => {
   });
 
   ({ ensureAdminUser } = await import('../src/index.js'));
+  authenticateMock.mockReset();
 });
 
 test('creates default admin user from env variables when none exists', async () => {

@@ -7,6 +7,17 @@ jest.unstable_mockModule('../src/middleware/supervisor.js', () => ({
   verifySupervisor: (req, res, next) => next()
 }));
 
+const authenticateMock = jest.fn((req, res, next) => next());
+jest.unstable_mockModule('../src/middleware/auth.js', () => ({
+  authenticate: authenticateMock,
+  authorizeRoles: (...roles) => (req, res, next) => {
+    if (!req.user || !roles.includes(req.user.role)) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+    return next();
+  },
+}));
+
 // Mock schedule controller functions
 const listSchedules = jest.fn((req, res) => {
   res.json([{ _id: 'sch1', employee: 'emp1' }]);
@@ -29,7 +40,11 @@ jest.unstable_mockModule('../src/controllers/scheduleController.js', () => ({
   createSchedulesBatch: jest.fn(),
   deleteOldSchedules: jest.fn(),
   listLeaveApprovals: jest.fn(),
-  listSupervisorSummary: jest.fn()
+  listSupervisorSummary: jest.fn(),
+  publishMonthlySchedules: jest.fn(),
+  finalizeMonthlySchedules: jest.fn(),
+  respondToSchedule: jest.fn(),
+  respondMonthlySchedule: jest.fn(),
 }));
 
 let app;
@@ -64,6 +79,7 @@ afterEach(() => {
   listSchedules.mockClear();
   createSchedule.mockClear();
   updateSchedule.mockClear();
+  authenticateMock.mockReset();
 });
 
 describe('Employee schedule permissions', () => {

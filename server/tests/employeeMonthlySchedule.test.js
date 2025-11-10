@@ -6,6 +6,17 @@ const mockShiftSchedule = { find: jest.fn() }
 const mockEmployee = { find: jest.fn() }
 const mockAttendanceSetting = { findOne: jest.fn() }
 
+const authenticateMock = jest.fn((req, res, next) => next())
+jest.unstable_mockModule('../src/middleware/auth.js', () => ({
+  authenticate: authenticateMock,
+  authorizeRoles: (...roles) => (req, res, next) => {
+    if (!req.user || !roles.includes(req.user.role)) {
+      return res.status(403).json({ error: 'Forbidden' })
+    }
+    return next()
+  }
+}))
+
 jest.unstable_mockModule('../src/models/ShiftSchedule.js', () => ({ default: mockShiftSchedule }))
 jest.unstable_mockModule('../src/models/Employee.js', () => ({ default: mockEmployee }))
 jest.unstable_mockModule('../src/models/AttendanceSetting.js', () => ({ default: mockAttendanceSetting }))
@@ -30,6 +41,7 @@ beforeEach(() => {
   mockAttendanceSetting.findOne.mockReturnValue({
     lean: jest.fn().mockResolvedValue({ shifts: [] })
   })
+  authenticateMock.mockReset()
 })
 
 describe('Employee monthly schedules', () => {
