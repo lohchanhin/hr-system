@@ -714,6 +714,64 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
       expect(sessionMock.endSession).toHaveBeenCalledTimes(1);
     });
 
+    it('retries bulk confirmation without transaction when save fails due to replica set restrictions', async () => {
+      const buildQuery = (doc) => ({
+        session: jest.fn().mockReturnThis(),
+        populate: jest.fn().mockResolvedValue(doc),
+      });
+
+      const sessionMock = {
+        startTransaction: jest.fn().mockResolvedValue(),
+        commitTransaction: jest.fn().mockResolvedValue(),
+        abortTransaction: jest.fn().mockResolvedValue(),
+        endSession: jest.fn().mockResolvedValue(),
+      };
+
+      mockShiftSchedule.startSession.mockResolvedValue(sessionMock);
+
+      const replicaError = Object.assign(
+        new Error('Transaction numbers are only allowed on a replica set member or mongos'),
+        { code: 20 },
+      );
+
+      const doc1First = buildDoc({ _id: 'sch-save-1', employee: { _id: 'empSave', name: '員工RS' } });
+      const doc2First = buildDoc({ _id: 'sch-save-2', employee: { _id: 'empSave', name: '員工RS' } });
+      doc2First.save = jest.fn().mockRejectedValue(replicaError);
+
+      const doc1Second = buildDoc({ _id: 'sch-save-1', employee: { _id: 'empSave', name: '員工RS' } });
+      const doc2Second = buildDoc({ _id: 'sch-save-2', employee: { _id: 'empSave', name: '員工RS' } });
+
+      mockShiftSchedule.findById
+        .mockImplementationOnce(() => buildQuery(doc1First))
+        .mockImplementationOnce(() => buildQuery(doc2First))
+        .mockImplementationOnce(() => buildQuery(doc1Second))
+        .mockImplementationOnce(() => buildQuery(doc2Second));
+
+      const res = await request(app)
+        .post('/api/schedules/respond/bulk')
+        .set('Authorization', buildAuthHeader('employee', { id: 'empSave' }))
+        .send({ scheduleIds: ['sch-save-1', 'sch-save-2'], response: 'confirm' });
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({
+        success: true,
+        count: 2,
+        schedules: expect.any(Array),
+      });
+
+      expect(doc1First.save).toHaveBeenCalledTimes(1);
+      expect(doc2First.save).toHaveBeenCalledTimes(1);
+      expect(doc1Second.save).toHaveBeenCalledTimes(1);
+      expect(doc2Second.save).toHaveBeenCalledTimes(1);
+      expect(doc1Second.employeeResponse).toBe('confirmed');
+      expect(doc2Second.employeeResponse).toBe('confirmed');
+
+      expect(sessionMock.abortTransaction).toHaveBeenCalledTimes(1);
+      expect(sessionMock.commitTransaction).not.toHaveBeenCalled();
+      expect(sessionMock.endSession).toHaveBeenCalledTimes(1);
+      expect(mockShiftSchedule.findById).toHaveBeenCalledTimes(4);
+    });
+
     it('aborts bulk response when schedule not owned by employee', async () => {
       const doc = buildDoc({ _id: 'sch-b3', employee: { _id: 'empOther', name: '其他人' } });
       const sessionMock = {
