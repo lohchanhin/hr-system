@@ -2,6 +2,7 @@ import ShiftSchedule from '../models/ShiftSchedule.js';
 import Employee from '../models/Employee.js';
 import ApprovalRequest from '../models/approval_request.js';
 import AttendanceSetting from '../models/AttendanceSetting.js';
+import Department from '../models/Department.js';
 import { getLeaveFieldIds } from '../services/leaveFieldService.js';
 
 function formatDate(date) {
@@ -37,6 +38,32 @@ async function hasLeaveConflict(employeeId, date) {
   query[`form_data.${endId}`] = { $gte: date };
   const approval = await ApprovalRequest.findOne(query);
   return !!approval;
+}
+
+function buildMonthDays(startDate) {
+  const start = new Date(startDate);
+  start.setHours(0, 0, 0, 0);
+  const days = [];
+  const pointer = new Date(start);
+  const end = new Date(start);
+  end.setMonth(end.getMonth() + 1);
+  while (pointer < end) {
+    days.push(pointer.toISOString().slice(0, 10));
+    pointer.setDate(pointer.getDate() + 1);
+  }
+  return days;
+}
+
+function normalizeId(value) {
+  if (!value && value !== 0) return '';
+  if (typeof value === 'object') {
+    if (value._id) return value._id.toString();
+    if (value.id) return value.id.toString();
+    if (typeof value.toString === 'function' && value.toString !== Object.prototype.toString) {
+      return value.toString();
+    }
+  }
+  return String(value);
 }
 
 export async function listMonthlySchedules(req, res) {
@@ -272,6 +299,155 @@ export async function listSupervisorSummary(req, res) {
     });
 
     res.json(Object.values(summaryMap));
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+}
+
+export async function listScheduleOverview(req, res) {
+  try {
+    const { month, organization: organizationId, department: departmentId, subDepartment: subDepartmentId } = req.query;
+    if (!month) return res.status(400).json({ error: 'month required' });
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) {
+      return res.status(400).json({ error: 'invalid month format' });
+    }
+
+    const start = new Date(`${month}-01T00:00:00.000Z`);
+    const end = new Date(start);
+    end.setMonth(end.getMonth() + 1);
+
+    const days = buildMonthDays(start);
+    const query = {
+      date: { $gte: start, $lt: end },
+    };
+
+    if (subDepartmentId) {
+      query.subDepartment = subDepartmentId;
+    }
+
+    if (departmentId) {
+      query.department = departmentId;
+    }
+
+    if (organizationId) {
+      const deptDocs = await Department.find({ organization: organizationId }).select('_id organization name').lean();
+      const allowedIds = deptDocs.map((dept) => dept._id.toString());
+      if (!allowedIds.length) {
+        return res.json({ month, days, organizations: [] });
+      }
+      if (!departmentId) {
+        query.department = { $in: allowedIds };
+      } else if (!allowedIds.includes(String(departmentId))) {
+        return res.json({ month, days, organizations: [] });
+      }
+    }
+
+    const attendanceSetting = await AttendanceSetting.findOne().lean();
+    const shiftNameMap = {};
+    attendanceSetting?.shifts?.forEach((shift) => {
+      if (shift?._id) {
+        shiftNameMap[shift._id.toString()] = shift.name || '';
+      }
+    });
+
+    const rawSchedules = await ShiftSchedule.find(query)
+      .populate({
+        path: 'department',
+        populate: { path: 'organization' },
+      })
+      .populate('subDepartment')
+      .populate({ path: 'employee', select: 'name title department subDepartment' })
+      .lean();
+
+    const organizationMap = new Map();
+
+    rawSchedules.forEach((schedule) => {
+      const department = schedule.department || null;
+      const organization = department?.organization || null;
+      const subDepartment = schedule.subDepartment || null;
+      const employee = schedule.employee || null;
+
+      const organizationKey = normalizeId(organization?._id) || 'unassigned';
+      const departmentKey = normalizeId(department?._id) || 'unassigned';
+      const subDepartmentKey = normalizeId(subDepartment?._id) || 'unassigned';
+      const employeeKey = normalizeId(employee?._id) || 'unassigned';
+
+      if (!organizationMap.has(organizationKey)) {
+        organizationMap.set(organizationKey, {
+          id: organizationKey,
+          name: organization?.name || '未指定機構',
+          departments: new Map(),
+        });
+      }
+
+      const organizationEntry = organizationMap.get(organizationKey);
+      if (!organizationEntry.departments.has(departmentKey)) {
+        organizationEntry.departments.set(departmentKey, {
+          id: departmentKey,
+          name: department?.name || '未指定部門',
+          subDepartments: new Map(),
+        });
+      }
+
+      const departmentEntry = organizationEntry.departments.get(departmentKey);
+      if (!departmentEntry.subDepartments.has(subDepartmentKey)) {
+        departmentEntry.subDepartments.set(subDepartmentKey, {
+          id: subDepartmentKey,
+          name: subDepartment?.name || '未指定單位',
+          employees: new Map(),
+        });
+      }
+
+      const subDepartmentEntry = departmentEntry.subDepartments.get(subDepartmentKey);
+      if (!subDepartmentEntry.employees.has(employeeKey)) {
+        subDepartmentEntry.employees.set(employeeKey, {
+          id: employeeKey,
+          name: employee?.name || '未指定員工',
+          title: employee?.title || '',
+          schedules: [],
+        });
+      }
+
+      const entry = subDepartmentEntry.employees.get(employeeKey);
+      const shiftId = normalizeId(schedule.shiftId);
+      const scheduleDate = schedule.date instanceof Date
+        ? schedule.date.toISOString().slice(0, 10)
+        : new Date(schedule.date).toISOString().slice(0, 10);
+      entry.schedules.push({
+        date: scheduleDate,
+        shiftId,
+        shiftName: shiftNameMap[shiftId] || schedule.shiftName || '',
+      });
+    });
+
+    const organizations = Array.from(organizationMap.values())
+      .map((org) => ({
+        id: org.id,
+        name: org.name,
+        departments: Array.from(org.departments.values())
+          .map((dept) => ({
+            id: dept.id,
+            name: dept.name,
+            subDepartments: Array.from(dept.subDepartments.values())
+              .map((sub) => ({
+                id: sub.id,
+                name: sub.name,
+                employees: Array.from(sub.employees.values()).map((emp) => ({
+                  id: emp.id,
+                  name: emp.name,
+                  title: emp.title,
+                  schedules: emp.schedules
+                    .sort((a, b) => a.date.localeCompare(b.date)),
+                }))
+                  .sort((a, b) => a.name.localeCompare(b.name, 'zh-Hant', { sensitivity: 'base' })),
+              }))
+              .sort((a, b) => a.name.localeCompare(b.name, 'zh-Hant', { sensitivity: 'base' })),
+          }))
+          .sort((a, b) => a.name.localeCompare(b.name, 'zh-Hant', { sensitivity: 'base' })),
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name, 'zh-Hant', { sensitivity: 'base' }));
+
+    res.json({ month, days, organizations });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }

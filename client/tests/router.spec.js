@@ -72,6 +72,7 @@ describe('router', () => {
     const manager = router.getRoutes().find(r => r.name === 'ManagerLayout')
     const childRoles = manager.children.map(r => ({ name: r.name, roles: r.meta && r.meta.roles }))
     expect(childRoles.find(c => c.name === 'DepartmentReports').roles).toEqual(['admin'])
+    expect(childRoles.find(c => c.name === 'ScheduleOverview').roles).toEqual(['admin'])
   })
 
   it('forwards employees to forbidden when opening department reports', () => {

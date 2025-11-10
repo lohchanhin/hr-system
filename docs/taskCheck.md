@@ -47,6 +47,10 @@
   - [ ] 在 `Schedule.vue` 透過 `POST /api/schedules/batch`（`scheduleController.createSchedulesBatch`）建立班表後，表格呈現與資料庫一致。
   - [ ] 匯出班表時 `GET /api/schedules/export` 回傳預期格式，檔名符合月份與部門命名規則。
   - [ ] 管理員切換部門時，確認後端無權限錯誤，`authorizeRoles('supervisor', 'admin')` 設定正確。
+  - [ ] 後台「班表總覽」頁（`ScheduleOverview.vue`）載入 `GET /api/schedules/overview` 時，回傳結構須包含 `month`、`days` 與巢狀 `organizations` → `departments` → `subDepartments` → `employees`。
+  - [ ] 篩選條件（月份、機構、部門、小單位）更新後會重新呼叫 `/api/schedules/overview`，前端表格內容同步更新且呈現所有日期欄位。
+  - [ ] 以非系統管理員身分請求 `/api/schedules/overview` 應獲得 403，驗證路由 `ScheduleOverview` 與選單項目僅授權 admin。
+  - [ ] 後台選單新增「班表總覽」選項可導向 `/manager/schedule-overview`，重新整理後路由仍維持權限控制。
 
 ### 主管
 - **功能使用流程**

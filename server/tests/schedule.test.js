@@ -21,6 +21,7 @@ const mockApprovalRequest = { findOne: jest.fn(), find: jest.fn() };
 
 const mockEmployee = { find: jest.fn(), findById: jest.fn() };
 const mockAttendanceSetting = { findOne: jest.fn() };
+const mockDepartment = { find: jest.fn() };
 
 const mockGetLeaveFieldIds = jest.fn();
 
@@ -40,6 +41,16 @@ const buildScheduleDoc = (data = {}) => {
   return doc;
 };
 
+const buildPopulateChain = (value) => {
+  const chain = {
+    populate: jest.fn(function populate() {
+      return chain;
+    }),
+    lean: jest.fn().mockResolvedValue(value),
+  };
+  return chain;
+};
+
 /* --------------------------- jest.mock 設定區 --------------------------- */
 
 
@@ -47,6 +58,7 @@ jest.unstable_mockModule('../src/models/ShiftSchedule.js', () => ({ default: moc
 jest.unstable_mockModule('../src/models/approval_request.js', () => ({ default: mockApprovalRequest }));
 jest.unstable_mockModule('../src/models/Employee.js', () => ({ default: mockEmployee }));
 jest.unstable_mockModule('../src/models/AttendanceSetting.js', () => ({ default: mockAttendanceSetting }));
+jest.unstable_mockModule('../src/models/Department.js', () => ({ default: mockDepartment }));
 jest.unstable_mockModule('../src/services/leaveFieldService.js', () => ({
   getLeaveFieldIds: mockGetLeaveFieldIds,
 }));
@@ -62,7 +74,6 @@ beforeAll(async () => {
   app = express();
   app.use(express.json());
   app.use((req, res, next) => {
-    currentRole = 'supervisor';
     req.user = { id: 'tester', role: currentRole };
     next();
   });
@@ -100,6 +111,12 @@ beforeEach(() => {
       shifts: [{ _id: 's1', name: 'Morning' }]
     })
   });
+  mockDepartment.find.mockReset();
+  mockDepartment.find.mockReturnValue({
+    select: jest.fn().mockReturnThis(),
+    lean: jest.fn().mockResolvedValue([])
+  });
+
 });
 
 /* --------------------------------- Tests -------------------------------- */
@@ -657,5 +674,139 @@ describe('Schedule API', () => {
     expect(dataRow[2]).toBe('2024/05/10');
     expect(dataRow[3]).toBe('s1');
     expect(dataRow[4]).toBe('Morning');
+  });
+
+  describe('schedule overview', () => {
+    it('requires admin role to access overview', async () => {
+      currentRole = 'employee';
+
+      const res = await request(app).get('/api/schedules/overview?month=2024-05');
+
+      expect(res.status).toBe(403);
+      expect(res.body).toEqual({ error: 'Forbidden' });
+    });
+
+    it('returns hierarchical overview data for the selected month', async () => {
+      currentRole = 'admin';
+      const month = '2024-05';
+      const fakeSchedules = [
+        {
+          _id: 'sch-1',
+          shiftId: 's1',
+          date: new Date('2024-05-01T00:00:00.000Z'),
+          employee: { _id: 'emp-1', name: 'Alice', title: '護理師' },
+          department: {
+            _id: 'dept-1',
+            name: '內科部',
+            organization: { _id: 'org-1', name: '台北總院' },
+          },
+          subDepartment: { _id: 'sub-1', name: '急診一科' },
+        },
+        {
+          _id: 'sch-2',
+          shiftId: 's2',
+          date: new Date('2024-05-02T00:00:00.000Z'),
+          employee: { _id: 'emp-1', name: 'Alice', title: '護理師' },
+          department: {
+            _id: 'dept-1',
+            name: '內科部',
+            organization: { _id: 'org-1', name: '台北總院' },
+          },
+          subDepartment: { _id: 'sub-1', name: '急診一科' },
+        },
+        {
+          _id: 'sch-3',
+          shiftId: 's2',
+          date: new Date('2024-05-01T00:00:00.000Z'),
+          employee: { _id: 'emp-2', name: 'Brian', title: '護理師' },
+          department: {
+            _id: 'dept-2',
+            name: '外科部',
+            organization: { _id: 'org-1', name: '台北總院' },
+          },
+          subDepartment: { _id: 'sub-2', name: '外科病房' },
+        },
+      ];
+
+      mockAttendanceSetting.findOne.mockReturnValue({
+        lean: jest.fn().mockResolvedValue({
+          shifts: [
+            { _id: 's1', name: '早班' },
+            { _id: 's2', name: '小夜班' },
+          ],
+        }),
+      });
+      mockShiftSchedule.find.mockReturnValue(buildPopulateChain(fakeSchedules));
+
+      const res = await request(app).get(`/api/schedules/overview?month=${month}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.month).toBe(month);
+      expect(Array.isArray(res.body.days)).toBe(true);
+      expect(res.body.days[0]).toBe('2024-05-01');
+      expect(res.body.organizations).toEqual([
+        {
+          id: 'org-1',
+          name: '台北總院',
+          departments: [
+            {
+              id: 'dept-1',
+              name: '內科部',
+              subDepartments: [
+                {
+                  id: 'sub-1',
+                  name: '急診一科',
+                  employees: [
+                    {
+                      id: 'emp-1',
+                      name: 'Alice',
+                      title: '護理師',
+                      schedules: [
+                        { date: '2024-05-01', shiftId: 's1', shiftName: '早班' },
+                        { date: '2024-05-02', shiftId: 's2', shiftName: '小夜班' },
+                      ],
+                    },
+                  ],
+                },
+              ],
+            },
+            {
+              id: 'dept-2',
+              name: '外科部',
+              subDepartments: [
+                {
+                  id: 'sub-2',
+                  name: '外科病房',
+                  employees: [
+                    {
+                      id: 'emp-2',
+                      name: 'Brian',
+                      title: '護理師',
+                      schedules: [
+                        { date: '2024-05-01', shiftId: 's2', shiftName: '小夜班' },
+                      ],
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ]);
+    });
+
+    it('returns empty result when organization has no departments', async () => {
+      currentRole = 'admin';
+      mockDepartment.find.mockReturnValue({
+        select: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockResolvedValue([]),
+      });
+
+      const res = await request(app).get('/api/schedules/overview?month=2024-05&organization=org-x');
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ month: '2024-05', days: expect.any(Array), organizations: [] });
+      expect(res.body.days[0]).toBe('2024-05-01');
+    });
   });
 });

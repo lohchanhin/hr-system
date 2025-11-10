@@ -18,6 +18,7 @@ const HRManagementSystemSetting = () => import('@/components/backComponents/HRMa
 
 const OrgDepartmentSettingView = () => import('@/views/OrgDepartmentSettingView.vue')
 const OtherControlSettingView = () => import('@/views/OtherControlSettingView.vue')
+const ScheduleOverview = () => import('@/views/ScheduleOverview.vue')
 
 // ★ 錯誤頁面
 const Forbidden = () => import('@/views/Forbidden.vue')
@@ -60,6 +61,12 @@ const routes = [
         name: 'DepartmentReports',
         component: DepartmentReports,
         meta: { roles: ['admin'], warningMessage: '僅系統管理員可以存取後台報表，請確認您的權限' },
+      },
+      {
+        path: 'schedule-overview',
+        name: 'ScheduleOverview',
+        component: ScheduleOverview,
+        meta: { roles: ['admin'], warningMessage: '僅系統管理員可以檢視班表總覽' },
       },
       { path: 'leave-overtime-setting', name: 'LeaveOvertimeSetting', component: LeaveOvertimeSetting },
       { path: 'shift-schedule-setting', name: 'ShiftScheduleSetting', component: ShiftScheduleSetting },
