@@ -148,7 +148,18 @@
                   <el-tag type="success" class="code-tag">{{ row.code || '-' }}</el-tag>
                 </template>
               </el-table-column>
+              <el-table-column prop="institutionCode" label="機構代碼" width="140">
+                <template #default="{ row }">
+                  <el-tag type="warning" class="code-tag">{{ row.institutionCode || '-' }}</el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column prop="uniformNumber" label="統一編號" width="160">
+                <template #default="{ row }">
+                  <span>{{ row.uniformNumber || '-' }}</span>
+                </template>
+              </el-table-column>
               <el-table-column prop="location" label="位置" width="150" />
+              <el-table-column prop="responsiblePerson" label="負責人" width="120" />
               <el-table-column prop="manager" label="部門主管" width="120" />
               <el-table-column label="操作" width="200" fixed="right">
                 <template #default="{ $index }">
@@ -237,6 +248,16 @@
                   <el-tag type="info" class="code-tag">{{ row.code || '-' }}</el-tag>
                 </template>
               </el-table-column>
+              <el-table-column prop="institutionCode" label="機構代碼" width="140">
+                <template #default="{ row }">
+                  <span>{{ row.institutionCode || '-' }}</span>
+                </template>
+              </el-table-column>
+              <el-table-column prop="uniformNumber" label="統一編號" width="160">
+                <template #default="{ row }">
+                  <span>{{ row.uniformNumber || '-' }}</span>
+                </template>
+              </el-table-column>
               <el-table-column prop="headcount" label="人力需求" width="100">
                 <template #default="{ row }">
                   <div class="headcount-info">
@@ -245,6 +266,7 @@
                   </div>
                 </template>
               </el-table-column>
+              <el-table-column prop="responsiblePerson" label="負責人" width="120" />
               <el-table-column prop="manager" label="主管" width="120" />
               <el-table-column label="操作" width="200" fixed="right">
                 <template #default="{ $index }">
@@ -347,6 +369,28 @@
             <el-form-item label="部門主管">
               <el-input v-model="form.manager" placeholder="請輸入部門主管姓名" />
             </el-form-item>
+            <el-form-item label="負責人">
+              <el-input v-model="form.responsiblePerson" placeholder="請輸入負責人姓名" />
+            </el-form-item>
+            <el-form-item label="機構代碼">
+              <el-input v-model="form.institutionCode" placeholder="請輸入機構代碼" />
+            </el-form-item>
+          </div>
+
+          <div class="form-section">
+            <h3 class="form-section-title">法規資訊</h3>
+            <el-form-item label="統一編號">
+              <el-input v-model="form.uniformNumber" placeholder="請輸入統一編號" maxlength="8" />
+            </el-form-item>
+            <el-form-item label="勞保證號">
+              <el-input v-model="form.laborInsuranceNumber" placeholder="請輸入勞保證號" />
+            </el-form-item>
+            <el-form-item label="健保編號">
+              <el-input v-model="form.healthInsuranceNumber" placeholder="請輸入健保編號" />
+            </el-form-item>
+            <el-form-item label="稅籍編號">
+              <el-input v-model="form.taxRegistrationNumber" placeholder="請輸入稅籍編號" />
+            </el-form-item>
           </div>
 
           <div class="form-section">
@@ -448,6 +492,24 @@
             </el-form-item>
             <el-form-item label="部門主管">
               <el-input v-model="form.manager" placeholder="請輸入主管姓名" />
+            </el-form-item>
+            <el-form-item label="負責人">
+              <el-input v-model="form.responsiblePerson" placeholder="請輸入負責人姓名" />
+            </el-form-item>
+            <el-form-item label="機構代碼">
+              <el-input v-model="form.institutionCode" placeholder="請輸入機構代碼" />
+            </el-form-item>
+            <el-form-item label="統一編號">
+              <el-input v-model="form.uniformNumber" placeholder="請輸入統一編號" maxlength="8" />
+            </el-form-item>
+            <el-form-item label="勞保證號">
+              <el-input v-model="form.laborInsuranceNumber" placeholder="請輸入勞保證號" />
+            </el-form-item>
+            <el-form-item label="健保編號">
+              <el-input v-model="form.healthInsuranceNumber" placeholder="請輸入健保編號" />
+            </el-form-item>
+            <el-form-item label="稅籍編號">
+              <el-input v-model="form.taxRegistrationNumber" placeholder="請輸入稅籍編號" />
             </el-form-item>
             <el-form-item label="人力需求數">
               <el-input-number v-model="form.headcount" :min="0" placeholder="請輸入人力需求數" />
@@ -611,8 +673,14 @@ function defaultForm(type) {
       name: '',
       code: '',
       unitName: '',
+      institutionCode: '',
+      uniformNumber: '',
+      laborInsuranceNumber: '',
+      healthInsuranceNumber: '',
+      taxRegistrationNumber: '',
       location: '',
       phone: '',
+      responsiblePerson: '',
       manager: '',
       organization: '',
       defaultTwoDayOff: true,
@@ -629,8 +697,14 @@ function defaultForm(type) {
       name: '',
       code: '',
       unitName: '',
+      institutionCode: '',
+      uniformNumber: '',
+      laborInsuranceNumber: '',
+      healthInsuranceNumber: '',
+      taxRegistrationNumber: '',
       location: '',
       phone: '',
+      responsiblePerson: '',
       manager: '',
       headcount: 0,
       shiftId: '',
