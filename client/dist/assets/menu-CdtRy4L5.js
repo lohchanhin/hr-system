@@ -1,1 +1,0 @@
-import{C as o,r as s}from"./index-B1-Hvwow.js";import{a as r}from"./api-Coim478o.js";const c=o("menu",()=>{const t=s([]);async function n(){const e=await r("/api/menu");e.ok&&(t.value=await e.json())}function a(e){t.value=e}return{items:t,fetchMenu:n,setMenu:a}});export{c as u};
