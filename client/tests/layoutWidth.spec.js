@@ -35,6 +35,9 @@ const mountGlobal = {
         }
       },
       template: '<span class="el-tooltip" :data-content="content"><slot /></span>'
+    },
+    'router-view': {
+      template: '<div class="router-view-stub" />'
     }
   }
 }
@@ -90,9 +93,22 @@ describe('layout widths', () => {
     expect(tooltip.attributes('data-content')).toBe('出勤打卡')
   })
 
-  it('Layout aside and main flex to 25/75', () => {
-    const wrapper = mount(Layout, { global: { plugins: [ElementPlus] } })
-    expect(wrapper.find('.layout-aside').attributes('style')).toContain('width: 25%')
-    expect(wrapper.find('.layout-main').attributes('style')).toContain('width: 75%')
+  it('Layout toggles sidebar collapse state with matching menu', async () => {
+    const wrapper = mount(Layout, { global: mountGlobal })
+    const aside = wrapper.find('.layout-aside')
+    const menu = wrapper.find('.layout-menu')
+    const menuComponent = wrapper.findComponent({ name: 'ElMenu' })
+    expect(aside.classes()).not.toContain('collapsed')
+    expect(aside.attributes('style')).toContain('width: 25%')
+    expect(menu.classes()).not.toContain('collapsed')
+    expect(menuComponent.props('collapse')).toBe(false)
+
+    await wrapper.find('.collapse-button').trigger('click')
+    await wrapper.vm.$nextTick()
+
+    expect(aside.classes()).toContain('collapsed')
+    expect(aside.attributes('style')).toContain('width: 80px')
+    expect(menu.classes()).toContain('collapsed')
+    expect(menuComponent.props('collapse')).toBe(true)
   })
 })
