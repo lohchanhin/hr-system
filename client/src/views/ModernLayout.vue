@@ -15,13 +15,21 @@
       </div>
     </el-header>
     <el-container>
-      <el-aside class="layout-aside" :width="isCollapse ? '64px' : '280px'">
+      <el-aside
+        class="layout-aside"
+        :class="{ collapsed: isCollapse }"
+        :width="isCollapse ? '88px' : '280px'"
+      >
         <div class="sidebar-content">
-          <el-menu 
-            :default-active="active" 
+          <div class="sidebar-logo" :class="{ collapsed: isCollapse }">
+            <img src="/HR.png" alt="HR 管理系統" class="sidebar-logo-image" />
+            <span v-if="!isCollapse" class="sidebar-logo-text">HR 管理系統</span>
+          </div>
+          <el-menu
+            :default-active="active"
             :collapse="isCollapse"
             class="sidebar-menu"
-            background-color="#164e63"
+            background-color="transparent"
             text-color="#ecfeff"
             active-text-color="#ffffff"
           >
@@ -32,8 +40,29 @@
               @click="gotoPage(item.name)"
               class="menu-item"
             >
-              <el-icon><i :class="item.icon"></i></el-icon>
-              <span class="menu-text">{{ item.label }}</span>
+              <div class="menu-item-inner" :class="{ 'is-collapsed': isCollapse }">
+                <el-tooltip
+                  v-if="isCollapse"
+                  :content="item.label"
+                  placement="right"
+                  effect="dark"
+                >
+                  <img
+                    :src="resolveIcon(item)"
+                    class="menu-icon"
+                    :data-icon-key="availableMenuIcons[item.icon] ? item.icon : 'default'"
+                    alt=""
+                  />
+                </el-tooltip>
+                <img
+                  v-else
+                  :src="resolveIcon(item)"
+                  class="menu-icon"
+                  :data-icon-key="availableMenuIcons[item.icon] ? item.icon : 'default'"
+                  alt=""
+                />
+                <span v-if="!isCollapse" class="menu-text">{{ item.label }}</span>
+              </div>
             </el-menu-item>
           </el-menu>
         </div>
@@ -53,6 +82,7 @@ import { useRouter } from 'vue-router'
 import { useMenuStore } from '../stores/menu'
 import { clearToken } from '../utils/tokenService'
 import { storeToRefs } from 'pinia'
+import { iconMap as availableMenuIcons, resolveMenuIcon } from '../constants/menuIcons'
 
 const router = useRouter()
 const menuStore = useMenuStore()
@@ -109,6 +139,10 @@ function gotoPage(name) {
 }
 function toggleCollapse() {
   isCollapse.value = !isCollapse.value
+}
+
+function resolveIcon(item) {
+  return resolveMenuIcon(item)
 }
 
 function logout() {
@@ -191,29 +225,94 @@ function logout() {
 }
 
 .layout-aside {
-  background: #164e63;
+  background: linear-gradient(180deg, #0f4c75 0%, #164e63 100%);
   border-right: none;
   transition: width 0.3s ease;
   overflow: hidden;
 }
 
+.layout-aside.collapsed {
+  align-items: center;
+}
+
 .sidebar-content {
   height: 100%;
-  padding: 16px 0;
+  padding: 24px 0;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 16px;
+}
+
+.sidebar-logo {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 0 20px;
+  transition: all 0.3s ease;
+}
+
+.sidebar-logo.collapsed {
+  flex-direction: column;
+  padding: 0;
+}
+
+.sidebar-logo-image {
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  object-fit: contain;
+  box-shadow: 0 4px 12px rgba(15, 76, 117, 0.35);
+  background: rgba(255, 255, 255, 0.15);
+  padding: 6px;
+}
+
+.sidebar-logo-text {
+  color: #ecfeff;
+  font-weight: 600;
+  font-size: 16px;
+  letter-spacing: 0.5px;
 }
 
 .sidebar-menu {
   border: none !important;
   background: transparent !important;
+  flex: 1;
 }
 
 .menu-item {
   margin: 4px 12px;
-  border-radius: 8px !important;
+  border-radius: 12px !important;
   transition: all 0.3s ease;
-  min-height: 48px !important;
+  min-height: 52px !important;
   display: flex;
   align-items: center;
+}
+
+.menu-item-inner {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  width: 100%;
+  justify-content: flex-start;
+}
+
+.menu-item-inner.is-collapsed {
+  justify-content: center;
+  gap: 0;
+}
+
+.menu-icon {
+  width: 32px;
+  height: 32px;
+  object-fit: contain;
+  transition: transform 0.3s ease, filter 0.3s ease;
+}
+
+.menu-item:hover .menu-icon {
+  transform: scale(1.05);
+  filter: drop-shadow(0 4px 6px rgba(15, 76, 117, 0.35));
 }
 
 .menu-item:hover {
@@ -229,6 +328,7 @@ function logout() {
 .menu-text {
   font-weight: 500;
   font-size: 14px;
+  color: #ecfeff;
 }
 
 .layout-main {
@@ -265,11 +365,11 @@ function logout() {
     left: 0;
     box-shadow: 2px 0 8px rgba(0, 0, 0, 0.15);
   }
-  
+
   .system-title {
     display: none;
   }
-  
+
   .main-content {
     margin: 8px;
     padding: 16px;
@@ -280,7 +380,7 @@ function logout() {
   .layout-header {
     padding: 0 16px;
   }
-  
+
   .logout-btn span {
     display: none;
   }
