@@ -88,6 +88,11 @@ describe('FrontLayout manager button', () => {
   beforeEach(() => {
     localStorage.clear()
     sessionStorage.clear()
+    Object.defineProperty(window, 'innerWidth', {
+      writable: true,
+      configurable: true,
+      value: 1440,
+    })
     fetchProfileMock = undefined
     clearProfileMock = undefined
     profileData = createProfile()
@@ -172,6 +177,20 @@ describe('FrontLayout manager button', () => {
     const pushSpy = vi.spyOn(router, 'push')
     await wrapper.find('[data-index="MySchedule"]').trigger('click')
     expect(pushSpy).toHaveBeenCalledWith({ name: 'MySchedule' })
+  })
+
+  it('點擊切換按鈕後 aside 會切換 collapsed 類別', async () => {
+    const { wrapper } = await mountLayout()
+    const sidebar = () => wrapper.find('aside.sidebar')
+    expect(sidebar().classes()).not.toContain('collapsed')
+
+    await wrapper.find('[data-test="sidebar-toggle"]').trigger('click')
+    await wrapper.vm.$nextTick()
+    expect(sidebar().classes()).toContain('collapsed')
+
+    await wrapper.find('[data-test="sidebar-toggle"]').trigger('click')
+    await wrapper.vm.$nextTick()
+    expect(sidebar().classes()).not.toContain('collapsed')
   })
 
   it('載入後顯示個人資訊欄位', async () => {

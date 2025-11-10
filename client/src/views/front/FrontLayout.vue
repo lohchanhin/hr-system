@@ -4,8 +4,24 @@
     <!-- 左側導覽列 -->
     <aside :class="['sidebar', { collapsed: isSidebarCollapsed }]">
       <div class="logo-area">
-        <img :src="hrLogo" alt="HR 品牌" class="logo-image" />
-        <span class="brand-title" v-if="!isSidebarCollapsed">員工系統</span>
+        <div class="logo-brand">
+          <img :src="hrLogo" alt="HR 品牌" class="logo-image" />
+          <span class="brand-title" v-if="!isSidebarCollapsed">員工系統</span>
+        </div>
+        <el-tooltip :content="toggleTooltip" placement="right">
+          <el-button
+            type="primary"
+            plain
+            class="toggle-btn"
+            :class="{ 'is-collapsed': isSidebarCollapsed }"
+            @click="toggleSidebar"
+            :aria-label="toggleTooltip"
+            data-test="sidebar-toggle"
+          >
+            <el-icon><i :class="isSidebarCollapsed ? 'el-icon-menu' : 'el-icon-close'" /></el-icon>
+            <span v-if="!isSidebarCollapsed" class="toggle-text">{{ toggleTooltip }}</span>
+          </el-button>
+        </el-tooltip>
       </div>
       <div v-if="!isSidebarCollapsed" class="sidebar-header">
         <div class="user-info">
@@ -102,9 +118,14 @@ const { items: menuItems } = storeToRefs(menuStore);
 const profileStore = useProfileStore();
 const { profile } = storeToRefs(profileStore);
 
+const hrLogo = "/HR.png";
 const username = ref("");
 const activeMenu = computed(() => route.name || "");
 const isSidebarCollapsed = ref(false);
+const hasManualSidebarOverride = ref(false);
+const toggleTooltip = computed(() =>
+  isSidebarCollapsed.value ? "展開側欄" : "收合側欄"
+);
 
 const fallbackText = "未提供";
 
@@ -139,8 +160,11 @@ const displaySubDepartment = computed(() =>
   formatText(profile.value?.subDepartmentName)
 );
 
-function updateSidebarCollapse() {
+function updateSidebarCollapse({ ignoreManualOverride = false } = {}) {
   if (typeof window === "undefined") {
+    return;
+  }
+  if (!ignoreManualOverride && hasManualSidebarOverride.value) {
     return;
   }
   isSidebarCollapsed.value = window.innerWidth <= 1024;
@@ -162,7 +186,7 @@ onMounted(() => {
       // 取得個人資料失敗時不阻擋主畫面載入，於此靜默處理
     });
 
-  updateSidebarCollapse();
+  updateSidebarCollapse({ ignoreManualOverride: true });
   if (typeof window !== "undefined") {
     window.addEventListener("resize", updateSidebarCollapse);
   }
@@ -180,6 +204,11 @@ function resolveIcon(item) {
 
 function gotoPage(pageName) {
   router.push({ name: pageName });
+}
+
+function toggleSidebar() {
+  hasManualSidebarOverride.value = true;
+  isSidebarCollapsed.value = !isSidebarCollapsed.value;
 }
 
 function onLogout() {
@@ -220,9 +249,16 @@ function onLogout() {
 .logo-area {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 12px;
   padding: 24px 20px 16px 20px;
   border-bottom: 1px solid rgba(203, 213, 225, 0.12);
+}
+
+.logo-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
 
 .logo-image {
@@ -235,8 +271,15 @@ function onLogout() {
 }
 
 .sidebar.collapsed .logo-area {
+  flex-direction: column;
   justify-content: center;
+  align-items: center;
+  gap: 16px;
   padding: 20px 12px;
+}
+
+.sidebar.collapsed .logo-brand {
+  justify-content: center;
 }
 
 .sidebar.collapsed .logo-image {
@@ -255,6 +298,43 @@ function onLogout() {
   font-weight: 600;
   margin: 0 0 16px 0;
   letter-spacing: 0.5px;
+}
+
+.toggle-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: rgba(15, 23, 42, 0.35) !important;
+  border: 1px solid rgba(148, 163, 184, 0.35) !important;
+  color: #e2e8f0 !important;
+  border-radius: 12px;
+  padding: 10px 12px;
+  transition: all 0.3s ease;
+  min-width: 0;
+}
+
+.toggle-btn:hover {
+  background: rgba(148, 163, 184, 0.35) !important;
+  color: #ffffff !important;
+  box-shadow: 0 4px 10px rgba(15, 23, 42, 0.3);
+}
+
+.toggle-btn.is-collapsed {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  padding: 0;
+}
+
+.toggle-text {
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0.5px;
+}
+
+.sidebar.collapsed .toggle-btn {
+  background: rgba(15, 23, 42, 0.55) !important;
 }
 
 .user-info {
