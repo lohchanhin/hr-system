@@ -892,6 +892,66 @@ function sanitizeNote(note) {
   return trimmed.slice(0, 1000);
 }
 
+const CONFIRM_RESPONSES = new Set([
+  'confirm',
+  'confirmed',
+  'approve',
+  'approved',
+  'accept',
+  'accepted',
+  'ok',
+  'okay',
+  'yes',
+]);
+
+const DISPUTE_RESPONSES = new Set([
+  'dispute',
+  'disputed',
+  'reject',
+  'rejected',
+  'no',
+  'object',
+  'objection',
+  'issue',
+]);
+
+function createError(message, status = 400) {
+  const err = new Error(message);
+  err.status = status;
+  return err;
+}
+
+function applyEmployeeResponse(schedule, normalized, noteValue, now = new Date()) {
+  if (!schedule) throw createError('schedule not found', 404);
+  if (schedule.state === 'finalized') {
+    throw createError('schedule finalized');
+  }
+  if (schedule.state !== 'pending_confirmation') {
+    throw createError('schedule not awaiting confirmation');
+  }
+
+  if (CONFIRM_RESPONSES.has(normalized)) {
+    schedule.employeeResponse = 'confirmed';
+    schedule.state = 'pending_confirmation';
+    schedule.responseNote = '';
+    schedule.responseAt = now;
+    return schedule;
+  }
+
+  if (DISPUTE_RESPONSES.has(normalized)) {
+    if (!noteValue) {
+      throw createError('objection note required');
+    }
+    schedule.employeeResponse = 'disputed';
+    schedule.state = 'changes_requested';
+    schedule.responseNote = noteValue;
+    schedule.responseAt = now;
+    return schedule;
+  }
+
+  throw createError('invalid response');
+}
+
 export async function respondToSchedule(req, res) {
   try {
     const { id } = req.params;
@@ -907,32 +967,14 @@ export async function respondToSchedule(req, res) {
       return res.status(403).json({ error: 'forbidden' });
     }
 
-    if (schedule.state === 'finalized') {
-      return res.status(400).json({ error: 'schedule finalized' });
-    }
-    if (schedule.state !== 'pending_confirmation') {
-      return res.status(400).json({ error: 'schedule not awaiting confirmation' });
-    }
-
     const normalized = normalizeResponsePayload(response);
     const noteValue = sanitizeNote(note);
     const now = new Date();
 
-    if (['confirm', 'confirmed', 'approve', 'approved', 'accept', 'accepted', 'ok', 'okay', 'yes'].includes(normalized)) {
-      schedule.employeeResponse = 'confirmed';
-      schedule.state = 'pending_confirmation';
-      schedule.responseNote = '';
-      schedule.responseAt = now;
-    } else if (['dispute', 'disputed', 'reject', 'rejected', 'no', 'object', 'objection', 'issue'].includes(normalized)) {
-      if (!noteValue) {
-        return res.status(400).json({ error: 'objection note required' });
-      }
-      schedule.employeeResponse = 'disputed';
-      schedule.state = 'changes_requested';
-      schedule.responseNote = noteValue;
-      schedule.responseAt = now;
-    } else {
-      return res.status(400).json({ error: 'invalid response' });
+    try {
+      applyEmployeeResponse(schedule, normalized, noteValue, now);
+    } catch (err) {
+      return res.status(err.status || 400).json({ error: err.message });
     }
 
     const saved = await schedule.save();
@@ -940,6 +982,101 @@ export async function respondToSchedule(req, res) {
     res.json(saved);
   } catch (err) {
     res.status(400).json({ error: err.message });
+  }
+}
+
+export async function respondToSchedulesBulk(req, res) {
+  let session = null;
+  try {
+    const { scheduleIds, response, note } = req.body || {};
+    if (!Array.isArray(scheduleIds) || !scheduleIds.length) {
+      return res.status(400).json({ error: 'scheduleIds required' });
+    }
+    const userId = req.user?.id;
+    if (!userId) return res.status(401).json({ error: 'unauthorized' });
+
+    const normalized = normalizeResponsePayload(response);
+    const noteValue = sanitizeNote(note);
+
+    if (typeof ShiftSchedule.startSession === 'function') {
+      session = await ShiftSchedule.startSession();
+    }
+    const hasTransactionSupport =
+      session &&
+      typeof session.startTransaction === 'function' &&
+      typeof session.commitTransaction === 'function' &&
+      typeof session.abortTransaction === 'function';
+
+    if (!hasTransactionSupport) {
+      if (session && typeof session.endSession === 'function') {
+        await session.endSession();
+      }
+      session = null;
+      return res.status(500).json({ error: 'transaction unavailable' });
+    }
+
+    await session.startTransaction();
+    try {
+      const uniqueIds = Array.from(
+        new Set(
+          scheduleIds
+            .map((value) => normalizeId(value))
+            .filter((value) => !!value),
+        ),
+      );
+
+      if (!uniqueIds.length) {
+        throw createError('scheduleIds required');
+      }
+
+      const schedules = [];
+      for (const scheduleId of uniqueIds) {
+        const query = ShiftSchedule.findById(scheduleId);
+        let schedule;
+        if (query && typeof query.populate === 'function') {
+          schedule = await query.populate('employee');
+        } else {
+          schedule = query;
+        }
+        if (!schedule) {
+          throw createError('schedule not found', 404);
+        }
+        if (typeof schedule.$session === 'function') {
+          schedule.$session(session);
+        }
+        const employeeId = schedule.employee?._id?.toString?.() || schedule.employee?.toString?.();
+        if (!employeeId || employeeId !== String(userId)) {
+          throw createError('forbidden', 403);
+        }
+        schedules.push(schedule);
+      }
+
+      const now = new Date();
+      const updated = [];
+      for (const schedule of schedules) {
+        applyEmployeeResponse(schedule, normalized, noteValue, now);
+        const saved = await schedule.save({ session });
+        if (typeof saved.populate === 'function') {
+          await saved.populate('employee');
+        }
+        updated.push(saved);
+      }
+
+      await session.commitTransaction();
+      const payload = updated.map((item) => (
+        typeof item.toObject === 'function' ? item.toObject() : item
+      ));
+      return res.json({ success: true, count: payload.length, schedules: payload });
+    } catch (err) {
+      if (typeof session.abortTransaction === 'function') {
+        await session.abortTransaction();
+      }
+      return res.status(err.status || 400).json({ error: err.message });
+    }
+  } catch (err) {
+    return res.status(400).json({ error: err.message });
+  } finally {
+    if (session && typeof session.endSession === 'function') await session.endSession();
   }
 }
 

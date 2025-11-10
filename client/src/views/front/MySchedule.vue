@@ -6,13 +6,45 @@
     <div v-if="scheduleBanner" class="status-banner" :class="scheduleBanner.type">
       {{ scheduleBanner.message }}
     </div>
+    <div
+      v-if="confirmableRows.length"
+      class="batch-toolbar"
+    >
+      <div class="batch-info">
+        可確認班表：{{ selection.length }} / {{ confirmableRows.length }}
+      </div>
+      <div class="batch-actions">
+        <el-button
+          size="small"
+          type="primary"
+          plain
+          :disabled="!confirmableRows.length"
+          @click="handleSelectAllConfirmable"
+        >
+          {{ isAllConfirmableSelected ? '取消全選' : '全選可確認' }}
+        </el-button>
+        <el-button
+          size="small"
+          type="success"
+          :disabled="!canBulkConfirm"
+          :loading="bulkLoading"
+          @click="handleBulkConfirm"
+        >
+          批次確認
+        </el-button>
+      </div>
+    </div>
+
     <el-table
       v-if="schedules.length"
+      ref="scheduleTableRef"
       :data="schedules"
       class="schedule-table"
       border
       stripe
+      @selection-change="handleSelectionChange"
     >
+      <el-table-column type="selection" width="48" :selectable="isRowSelectable" />
       <el-table-column prop="date" label="日期" width="140" />
       <el-table-column prop="shiftName" label="班別" min-width="160" />
       <el-table-column label="狀態" width="140">
@@ -98,7 +130,10 @@ const schedules = ref([])
 const shiftMap = ref({})
 const selectedMonth = ref(dayjs().format('YYYY-MM'))
 const respondingId = ref('')
+const bulkLoading = ref(false)
 const disputeDialog = reactive({ visible: false, schedule: null, note: '' })
+const selection = ref([])
+const scheduleTableRef = ref(null)
 
 function formatShiftLabel(shift) {
   if (!shift) return ''
@@ -159,6 +194,99 @@ const canDispute = row =>
   row?.employeeResponse !== 'disputed' &&
   row?.state !== 'finalized' &&
   respondingId.value !== row?._id
+
+const confirmableRows = computed(() => schedules.value.filter(item => canConfirm(item)))
+
+const isAllConfirmableSelected = computed(() => {
+  const confirmableIds = new Set(confirmableRows.value.map(item => item._id))
+  if (!confirmableIds.size) return false
+  return confirmableRows.value.every(item =>
+    selection.value.some(sel => sel?._id === item._id)
+  )
+})
+
+const canBulkConfirm = computed(() =>
+  selection.value.length > 0 && selection.value.every(item => canConfirm(item))
+)
+
+const isRowSelectable = row => canConfirm(row)
+
+function handleSelectionChange(rows) {
+  selection.value = Array.isArray(rows) ? rows : []
+}
+
+function clearSelection() {
+  selection.value = []
+  const table = scheduleTableRef.value
+  table?.clearSelection?.()
+}
+
+function handleSelectAllConfirmable() {
+  const table = scheduleTableRef.value
+  if (!table) return
+  const rows = confirmableRows.value
+  if (!rows.length) return
+  if (isAllConfirmableSelected.value) {
+    rows.forEach(row => table.toggleRowSelection?.(row, false))
+    selection.value = []
+    return
+  }
+  table.clearSelection?.()
+  rows.forEach(row => table.toggleRowSelection?.(row, true))
+}
+
+async function respondToSchedulesBulkRequest(scheduleIds, action, note = '') {
+  if (!Array.isArray(scheduleIds) || !scheduleIds.length) return
+  bulkLoading.value = true
+  try {
+    const res = await apiFetch('/api/schedules/respond/bulk', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ scheduleIds, response: action, note })
+    })
+    const payload = await res.json().catch(() => null)
+    if (!res.ok) {
+      const message = payload?.error || '批次操作失敗'
+      throw new Error(message)
+    }
+    const count = typeof payload?.count === 'number'
+      ? payload.count
+      : scheduleIds.length
+    ElMessage.success(`已批次確認 ${count} 筆班表`)
+    clearSelection()
+    await loadSchedules()
+  } catch (err) {
+    ElMessage.error(err?.message || '批次操作失敗')
+    throw err
+  } finally {
+    bulkLoading.value = false
+  }
+}
+
+async function handleBulkConfirm() {
+  if (!selection.value.length) return
+  try {
+    await ElMessageBox.confirm(
+      `確認批次確認 ${selection.value.length} 筆班表嗎？`,
+      '批次確認',
+      {
+        type: 'success',
+        confirmButtonText: '確認',
+        cancelButtonText: '取消'
+      }
+    )
+  } catch (err) {
+    return
+  }
+
+  const ids = selection.value.map(item => item?._id).filter(Boolean)
+  if (!ids.length) return
+  try {
+    await respondToSchedulesBulkRequest(ids, 'confirm')
+  } catch (err) {
+    // 已顯示錯誤訊息
+  }
+}
 
 async function fetchShifts() {
   try {
@@ -289,6 +417,7 @@ async function loadSchedules() {
           publishedAt
         }
       })
+      clearSelection()
     }
   } catch (err) {
     console.error(err)
@@ -311,6 +440,23 @@ watch(selectedMonth, loadSchedules)
   display: flex;
   justify-content: flex-end;
   margin-bottom: 16px;
+}
+
+.batch-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 12px 16px;
+  margin-bottom: 16px;
+  color: #1e293b;
+}
+
+.batch-actions {
+  display: flex;
+  gap: 8px;
 }
 
 .status-banner {

@@ -18,6 +18,7 @@ const mockShiftSchedule = {
   updateMany: jest.fn(),
   findById: jest.fn(),
   findByIdAndDelete: jest.fn(),
+  startSession: jest.fn(),
 };
 
 const mockApprovalRequest = { findOne: jest.fn(), find: jest.fn() };
@@ -108,6 +109,7 @@ beforeEach(() => {
   mockShiftSchedule.updateMany.mockReset();
   mockShiftSchedule.findById.mockReset();
   mockShiftSchedule.findByIdAndDelete.mockReset();
+  mockShiftSchedule.startSession.mockReset();
 
   mockApprovalRequest.findOne.mockReset();
   mockApprovalRequest.find.mockReset();
@@ -534,6 +536,7 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
       populate: jest.fn().mockImplementation(function populate() {
         return Promise.resolve(this);
       }),
+      $session: jest.fn().mockReturnThis(),
       ...overrides,
     });
 
@@ -588,6 +591,85 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
       expect(res.status).toBe(400);
       expect(res.body).toEqual({ error: 'objection note required' });
       expect(doc.save).not.toHaveBeenCalled();
+    });
+
+    it('allows employee to confirm schedules in bulk', async () => {
+      const doc1 = buildDoc({ _id: 'sch-b1', employee: { _id: 'empBulk', name: '員工A' } });
+      const doc2 = buildDoc({ _id: 'sch-b2', employee: { _id: 'empBulk', name: '員工A' } });
+      const sessionMock = {
+        startTransaction: jest.fn().mockResolvedValue(),
+        commitTransaction: jest.fn().mockResolvedValue(),
+        abortTransaction: jest.fn().mockResolvedValue(),
+        endSession: jest.fn().mockResolvedValue(),
+      };
+      mockShiftSchedule.startSession.mockResolvedValue(sessionMock);
+      mockShiftSchedule.findById.mockImplementation((id) => ({
+        populate: jest.fn().mockResolvedValue(id === 'sch-b1' ? doc1 : doc2),
+      }));
+
+      const res = await request(app)
+        .post('/api/schedules/respond/bulk')
+        .set('Authorization', buildAuthHeader('employee', { id: 'empBulk' }))
+        .send({ scheduleIds: ['sch-b1', 'sch-b2'], response: 'confirm' });
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({
+        success: true,
+        count: 2,
+        schedules: expect.any(Array),
+      });
+      expect(doc1.employeeResponse).toBe('confirmed');
+      expect(doc2.employeeResponse).toBe('confirmed');
+      expect(sessionMock.startTransaction).toHaveBeenCalled();
+      expect(sessionMock.commitTransaction).toHaveBeenCalled();
+      expect(sessionMock.abortTransaction).not.toHaveBeenCalled();
+    });
+
+    it('aborts bulk response when schedule not owned by employee', async () => {
+      const doc = buildDoc({ _id: 'sch-b3', employee: { _id: 'empOther', name: '其他人' } });
+      const sessionMock = {
+        startTransaction: jest.fn().mockResolvedValue(),
+        commitTransaction: jest.fn().mockResolvedValue(),
+        abortTransaction: jest.fn().mockResolvedValue(),
+        endSession: jest.fn().mockResolvedValue(),
+      };
+      mockShiftSchedule.startSession.mockResolvedValue(sessionMock);
+      mockShiftSchedule.findById.mockReturnValue({
+        populate: jest.fn().mockResolvedValue(doc),
+      });
+
+      const res = await request(app)
+        .post('/api/schedules/respond/bulk')
+        .set('Authorization', buildAuthHeader('employee', { id: 'empBulk' }))
+        .send({ scheduleIds: ['sch-b3'], response: 'confirm' });
+
+      expect(res.status).toBe(403);
+      expect(res.body).toEqual({ error: 'forbidden' });
+      expect(sessionMock.abortTransaction).toHaveBeenCalled();
+      expect(doc.save).not.toHaveBeenCalled();
+    });
+
+    it('requires note when disputing schedules in bulk', async () => {
+      const doc = buildDoc({ _id: 'sch-b4', employee: { _id: 'empBulk', name: '員工B' } });
+      const sessionMock = {
+        startTransaction: jest.fn().mockResolvedValue(),
+        commitTransaction: jest.fn().mockResolvedValue(),
+        abortTransaction: jest.fn().mockResolvedValue(),
+        endSession: jest.fn().mockResolvedValue(),
+      };
+      mockShiftSchedule.startSession.mockResolvedValue(sessionMock);
+      mockShiftSchedule.findById.mockReturnValue({
+        populate: jest.fn().mockResolvedValue(doc),
+      });
+
+      const res = await request(app)
+        .post('/api/schedules/respond/bulk')
+        .set('Authorization', buildAuthHeader('employee', { id: 'empBulk' }))
+        .send({ scheduleIds: ['sch-b4'], response: 'dispute' });
+
+      expect(res.status).toBe(400);
+      expect(res.body).toEqual({ error: 'objection note required' });
+      expect(sessionMock.abortTransaction).toHaveBeenCalled();
     });
   });
 
