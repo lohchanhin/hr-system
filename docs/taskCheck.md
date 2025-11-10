@@ -57,22 +57,31 @@
   1. 主管登入前台並開啟「排班管理」頁（`Schedule.vue`）。
   2. 於左側部門樹選擇負責部門，設定查詢月份後載入班表與請假資訊。
   3. 透過單日編輯或拖曳方式更新部屬班別，必要資料包含員工、日期與班別代碼。
+  4. 完成排班後按下「發送待確認」，呼叫 `POST /api/schedules/publish` 將班表狀態改為待員工確認並清除舊回覆。
+  5. 確認待回覆與異議名單皆處理完畢，再執行「完成發布」呼叫 `POST /api/schedules/publish/finalize`。
 - **檢查清單**
   - [ ] `Schedule.vue` 讀取 `GET /api/schedules?month=YYYY-MM&supervisor=:id` 由 `scheduleController.listSchedules` 僅回傳所屬部門資料。
   - [ ] 編輯班表觸發 `PUT /api/schedules/:id`（`scheduleController.updateSchedule`）後，重新查詢可見最新資料。
   - [ ] `GET /api/schedules/summary` 呼叫 `scheduleController.listSupervisorSummary` 能顯示部門排班統計。
   - [ ] 更新時若遇員工請假或跨部門衝突，畫面能顯示 `scheduleController.createSchedulesBatch` 回傳之錯誤訊息。
+  - [ ] 「發送待確認」按鈕會送出 `POST /api/schedules/publish`，回傳的 `employees` 名單與畫面顯示的待回覆人員一致。
+  - [ ] 員工全部確認後，按下「完成發布」呼叫 `POST /api/schedules/publish/finalize`，再次查詢時 `state` 變為 `finalized`。
+  - [ ] 若仍有員工未回覆或提出異議，完成發布應收到 409 錯誤並顯示待處理清單。
 
 ### 一般員工
 - **功能使用流程**
   1. 員工登入前台並開啟「我的班表」頁（`MySchedule.vue`）。
   2. 選擇查詢月份後，系統自動呼叫 `/api/schedules/monthly` 取得個人班表。
-  3. 透過切換視圖或匯出功能（若被授權）下載個人班表。
+  3. 直接於列表按「確認」或「提出異議」回覆班表，系統會呼叫 `POST /api/schedules/:id/respond` 記錄結果。
+  4. 透過切換視圖或匯出功能（若被授權）下載個人班表。
 - **檢查清單**
   - [ ] `MySchedule.vue` 呼叫 `GET /api/schedules/monthly?month=YYYY-MM` 時，由 `scheduleController.listMonthlySchedules` 僅回傳登入者資料。
   - [ ] 當月份無排班時，畫面顯示友善提示而非錯誤。
   - [ ] 匯出個人班表按鈕應受權限保護，無權匯出時不顯示或禁用。
   - [ ] 月份切換後自動重新抓取資料，確保 watch 事件觸發成功。
+  - [ ] 點擊「確認」會觸發 `POST /api/schedules/:id/respond` 並回傳 `employeeResponse: confirmed`，前端顯示已確認標籤。
+  - [ ] 提出異議時需輸入備註，缺少內容應收到 400 錯誤並顯示提示文字。
+  - [ ] 發送異議後列表顯示最新備註與回覆時間，狀態標示為「已提出異議」。
 
 ## 簽核系統
 
