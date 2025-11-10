@@ -55,7 +55,12 @@
           @click="gotoPage(item.name)"
           class="menu-item"
         >
-          <el-icon class="menu-icon"><i :class="item.icon"></i></el-icon>
+          <img
+            :src="resolveIcon(item)"
+            class="menu-icon"
+            :data-icon-key="availableMenuIcons[item.icon] ? item.icon : 'default'"
+            alt=""
+          />
           <span class="menu-label">{{ item.label }}</span>
         </el-menu-item>
       </el-menu>
@@ -84,6 +89,7 @@ import { useMenuStore } from "../../stores/menu";
 import { useProfileStore } from "../../stores/profile";
 import { clearToken } from "../../utils/tokenService";
 import { storeToRefs } from "pinia";
+import { iconMap as availableMenuIcons, resolveMenuIcon } from "../../constants/menuIcons";
 
 const router = useRouter();
 const route = useRoute();
@@ -144,6 +150,10 @@ onMounted(() => {
       // 取得個人資料失敗時不阻擋主畫面載入，於此靜默處理
     });
 });
+
+function resolveIcon(item) {
+  return resolveMenuIcon(item);
+}
 
 function gotoPage(pageName) {
   router.push({ name: pageName });
@@ -264,8 +274,16 @@ function onLogout() {
 }
 
 .menu-icon {
+  width: 28px;
+  height: 28px;
   margin-right: 12px;
-  font-size: 18px;
+  object-fit: contain;
+  transition: transform 0.3s ease, filter 0.3s ease;
+}
+
+.menu-item:hover .menu-icon {
+  transform: scale(1.05);
+  filter: drop-shadow(0 4px 6px rgba(15, 76, 117, 0.35));
 }
 
 .menu-label {
