@@ -1010,6 +1010,83 @@ export async function respondToSchedule(req, res) {
 export async function respondToSchedulesBulk(req, res) {
   let session = null;
   let usingTransaction = false;
+
+  const safelyAbortAndEnd = async () => {
+    if (!session) return;
+    if (usingTransaction && typeof session.abortTransaction === 'function') {
+      try {
+        await session.abortTransaction();
+      } catch (abortErr) {
+        // ignore abort errors to avoid masking original error
+      }
+    }
+    if (typeof session.endSession === 'function') {
+      try {
+        await session.endSession();
+      } catch (endErr) {
+        // swallow end session errors as fallback will continue without a session
+      }
+    }
+    session = null;
+    usingTransaction = false;
+  };
+
+  const loadAndSaveSchedules = async (ids, userId, normalized, noteValue, options = {}) => {
+    const { session: activeSession = null, transactional = false } = options;
+    const now = new Date();
+    const updatedDocs = [];
+
+    for (const scheduleId of ids) {
+      let query = ShiftSchedule.findById(scheduleId);
+      if (!query) {
+        throw createError('schedule not found', 404);
+      }
+      if (activeSession && typeof query.session === 'function') {
+        query = query.session(activeSession);
+      }
+
+      let schedule;
+      if (query && typeof query.populate === 'function') {
+        const populated = query.populate('employee');
+        if (populated && typeof populated.then === 'function') {
+          schedule = await populated;
+        } else if (typeof populated.exec === 'function') {
+          schedule = await populated.exec();
+        } else {
+          schedule = await query;
+        }
+      } else if (query && typeof query.then === 'function') {
+        schedule = await query;
+      } else {
+        schedule = query;
+      }
+
+      if (!schedule) {
+        throw createError('schedule not found', 404);
+      }
+
+      if (transactional && activeSession && typeof schedule.$session === 'function') {
+        schedule.$session(activeSession);
+      }
+
+      const employeeId = schedule.employee?._id?.toString?.() || schedule.employee?.toString?.();
+      if (!employeeId || employeeId !== String(userId)) {
+        throw createError('forbidden', 403);
+      }
+
+      applyEmployeeResponse(schedule, normalized, noteValue, now);
+
+      const saveOptions = transactional && activeSession ? { session: activeSession } : undefined;
+      const saved = await schedule.save(saveOptions);
+      if (typeof saved.populate === 'function') {
+        await saved.populate('employee');
+      }
+      updatedDocs.push(saved);
+    }
+
+    return updatedDocs;
+  };
+
   try {
     const { scheduleIds, response, note } = req.body || {};
     if (!Array.isArray(scheduleIds) || !scheduleIds.length) {
@@ -1036,19 +1113,13 @@ export async function respondToSchedulesBulk(req, res) {
           usingTransaction = true;
         } catch (startErr) {
           if (isTransactionNotSupportedError(startErr)) {
-            if (typeof session.endSession === 'function') {
-              await session.endSession();
-            }
-            session = null;
+            await safelyAbortAndEnd();
           } else {
             throw startErr;
           }
         }
       } else {
-        if (typeof session.endSession === 'function') {
-          await session.endSession();
-        }
-        session = null;
+        await safelyAbortAndEnd();
       }
     }
 
@@ -1064,42 +1135,35 @@ export async function respondToSchedulesBulk(req, res) {
       throw createError('scheduleIds required');
     }
 
-    const schedules = [];
-    for (const scheduleId of uniqueIds) {
-      const query = ShiftSchedule.findById(scheduleId);
-      let schedule;
-      if (query && typeof query.populate === 'function') {
-        schedule = await query.populate('employee');
-      } else {
-        schedule = query;
-      }
-      if (!schedule) {
-        throw createError('schedule not found', 404);
-      }
-      if (usingTransaction && session && typeof schedule.$session === 'function') {
-        schedule.$session(session);
-      }
-      const employeeId = schedule.employee?._id?.toString?.() || schedule.employee?.toString?.();
-      if (!employeeId || employeeId !== String(userId)) {
-        throw createError('forbidden', 403);
-      }
-      schedules.push(schedule);
-    }
+    let updated = [];
+    const executeOnce = async (activeSession, transactional) =>
+      loadAndSaveSchedules(uniqueIds, userId, normalized, noteValue, {
+        session: activeSession,
+        transactional,
+      });
 
-    const now = new Date();
-    const updated = [];
-    for (const schedule of schedules) {
-      applyEmployeeResponse(schedule, normalized, noteValue, now);
-      const saveOptions = usingTransaction && session ? { session } : undefined;
-      const saved = await schedule.save(saveOptions);
-      if (typeof saved.populate === 'function') {
-        await saved.populate('employee');
+    try {
+      updated = await executeOnce(session, usingTransaction);
+    } catch (processErr) {
+      if (usingTransaction && isTransactionNotSupportedError(processErr)) {
+        await safelyAbortAndEnd();
+        updated = await executeOnce(null, false);
+      } else {
+        throw processErr;
       }
-      updated.push(saved);
     }
 
     if (usingTransaction && session && typeof session.commitTransaction === 'function') {
-      await session.commitTransaction();
+      try {
+        await session.commitTransaction();
+      } catch (commitErr) {
+        if (isTransactionNotSupportedError(commitErr)) {
+          await safelyAbortAndEnd();
+          updated = await executeOnce(null, false);
+        } else {
+          throw commitErr;
+        }
+      }
     }
 
     const payload = updated.map((item) => (
