@@ -21,6 +21,10 @@ const mockAttendanceManagementSetting = {
 jest.unstable_mockModule('../src/models/AttendanceRecord.js', () => ({ default: mockAttendanceRecord }));
 jest.unstable_mockModule('../src/models/Employee.js', () => ({ default: mockEmployee }));
 jest.unstable_mockModule('../src/models/AttendanceManagementSetting.js', () => ({ default: mockAttendanceManagementSetting }));
+const mockShiftSchedule = { find: jest.fn() };
+const mockAttendanceSetting = { findOne: jest.fn() };
+jest.unstable_mockModule('../src/models/ShiftSchedule.js', () => ({ default: mockShiftSchedule }));
+jest.unstable_mockModule('../src/models/AttendanceSetting.js', () => ({ default: mockAttendanceSetting }));
 
 let app;
 let attendanceRoutes;
@@ -54,11 +58,20 @@ beforeEach(() => {
   mockEmployee.findById.mockReset();
   mockEmployee.find.mockReset();
   mockAttendanceManagementSetting.findOne.mockReset();
+  mockShiftSchedule.find.mockReset();
+  mockAttendanceSetting.findOne.mockReset();
   mockEmployee.findById.mockResolvedValue(null);
   mockEmployee.find.mockResolvedValue([]);
   mockAttendanceManagementSetting.findOne.mockResolvedValue(null);
   currentUser = undefined;
 });
+
+function setupScheduleMocks({ schedules = [], shifts = [] } = {}) {
+  const leanSchedules = jest.fn().mockResolvedValue(schedules);
+  mockShiftSchedule.find.mockReturnValue({ lean: leanSchedules });
+  const leanSetting = jest.fn().mockResolvedValue({ shifts });
+  mockAttendanceSetting.findOne.mockReturnValue({ lean: leanSetting });
+}
 
 describe('Attendance API', () => {
   it('lists records for admins with newest first', async () => {
@@ -147,15 +160,82 @@ describe('Attendance API', () => {
     expect(res.body).toEqual({ error: 'fail' });
   });
 
-  it('creates record with remark', async () => {
-    const payload = { action: 'clockIn', employee: 'emp1', remark: 'test' };
+  it('creates record with remark when within window', async () => {
+    const scheduleDate = new Date(Date.UTC(2024, 0, 1));
+    setupScheduleMocks({
+      schedules: [{ _id: 'sched1', employee: 'emp1', date: scheduleDate, shiftId: 'shift1' }],
+      shifts: [{ _id: 'shift1', startTime: '09:00', endTime: '18:00' }]
+    });
+    const payload = {
+      action: 'clockIn',
+      employee: 'emp1',
+      remark: 'test',
+      timestamp: '2024-01-01T02:00:00.000Z'
+    };
     saveMock.mockResolvedValue();
 
     const res = await request(app).post('/api/attendance').send(payload);
 
     expect(res.status).toBe(201);
     expect(saveMock).toHaveBeenCalled();
-    expect(res.body).toMatchObject(payload);
+    expect(res.body).toMatchObject({ action: 'clockIn', employee: 'emp1', remark: 'test' });
+  });
+
+  it('rejects clockIn before allowed window', async () => {
+    const scheduleDate = new Date(Date.UTC(2024, 0, 1));
+    setupScheduleMocks({
+      schedules: [{ _id: 'sched1', employee: 'emp1', date: scheduleDate, shiftId: 'shift1' }],
+      shifts: [{ _id: 'shift1', startTime: '09:00', endTime: '18:00' }]
+    });
+    const payload = {
+      action: 'clockIn',
+      employee: 'emp1',
+      timestamp: '2023-12-31T23:30:00.000Z'
+    };
+
+    const res = await request(app).post('/api/attendance').send(payload);
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain('尚未開放');
+    expect(saveMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects clockOut after allowed window', async () => {
+    const scheduleDate = new Date(Date.UTC(2024, 0, 1));
+    setupScheduleMocks({
+      schedules: [{ _id: 'sched1', employee: 'emp1', date: scheduleDate, shiftId: 'shift1' }],
+      shifts: [{ _id: 'shift1', startTime: '09:00', endTime: '18:00' }]
+    });
+    const payload = {
+      action: 'clockOut',
+      employee: 'emp1',
+      timestamp: '2024-01-01T12:30:00.000Z'
+    };
+
+    const res = await request(app).post('/api/attendance').send(payload);
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain('時段已結束');
+    expect(saveMock).not.toHaveBeenCalled();
+  });
+
+  it('accepts clockOut during cross-day shift on following morning', async () => {
+    const scheduleDate = new Date(Date.UTC(2024, 0, 1));
+    setupScheduleMocks({
+      schedules: [{ _id: 'sched1', employee: 'emp1', date: scheduleDate, shiftId: 'shiftNight' }],
+      shifts: [{ _id: 'shiftNight', startTime: '22:00', endTime: '06:00', crossDay: true }]
+    });
+    const payload = {
+      action: 'clockOut',
+      employee: 'emp1',
+      timestamp: '2024-01-01T21:30:00.000Z'
+    };
+    saveMock.mockResolvedValue();
+
+    const res = await request(app).post('/api/attendance').send(payload);
+
+    expect(res.status).toBe(201);
+    expect(saveMock).toHaveBeenCalled();
   });
 
   it('returns 400 when employee is missing', async () => {
