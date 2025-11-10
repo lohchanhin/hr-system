@@ -11,6 +11,15 @@ const fetchMenuMock = vi.fn()
 const setMenuMock = vi.fn()
 const routerPushMock = vi.fn()
 const routerReplaceMock = vi.fn()
+const originalInnerWidth = global.innerWidth || 1024
+
+function setViewportWidth(width) {
+  Object.defineProperty(window, 'innerWidth', {
+    configurable: true,
+    writable: true,
+    value: width
+  })
+}
 
 vi.mock('vue-router', () => ({
   useRouter: () => ({ push: routerPushMock, replace: routerReplaceMock, currentRoute })
@@ -51,11 +60,13 @@ describe('layout widths', () => {
     routerPushMock.mockReset()
     routerReplaceMock.mockReset()
     vi.stubGlobal('fetch', vi.fn(() => Promise.resolve({ ok: true, json: async () => [] })))
+    setViewportWidth(1440)
   })
 
   afterEach(() => {
     vi.clearAllMocks()
     vi.unstubAllGlobals()
+    setViewportWidth(originalInnerWidth)
   })
 
   it('ModernLayout aside maintains sidebar width and flexible main content', async () => {
@@ -91,6 +102,28 @@ describe('layout widths', () => {
     const tooltip = collapsedInner.find('.el-tooltip')
     expect(tooltip.exists()).toBe(true)
     expect(tooltip.attributes('data-content')).toBe('出勤打卡')
+  })
+
+  it('opens and closes the mobile drawer via toggle button', async () => {
+    setViewportWidth(640)
+    const wrapper = mount(ModernLayout, { global: mountGlobal })
+    await wrapper.vm.$nextTick()
+
+    const aside = wrapper.find('.layout-aside')
+    expect(aside.classes()).not.toContain('collapsed')
+    expect(aside.classes()).not.toContain('is-open')
+
+    await wrapper.find('.collapse-btn').trigger('click')
+    await wrapper.vm.$nextTick()
+
+    expect(aside.classes()).toContain('is-open')
+    expect(wrapper.find('.hr-mobile-overlay').classes()).toContain('is-open')
+
+    await wrapper.find('.collapse-btn').trigger('click')
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.find('.hr-mobile-overlay').classes()).not.toContain('is-open')
+    expect(wrapper.find('.layout-aside').classes()).not.toContain('is-open')
   })
 
   it('Layout toggles sidebar collapse state with matching menu', async () => {

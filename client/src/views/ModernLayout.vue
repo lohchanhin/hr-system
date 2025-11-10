@@ -3,7 +3,7 @@
     <el-header class="layout-header">
       <div class="header-left">
         <el-button link @click="toggleCollapse" class="collapse-btn">
-          <el-icon size="20"><i :class="isCollapse ? 'el-icon-menu' : 'el-icon-close'" /></el-icon>
+          <el-icon size="20"><i :class="isSidebarCollapsed ? 'el-icon-menu' : 'el-icon-close'" /></el-icon>
         </el-button>
         <h1 class="system-title">HR 管理系統</h1>
       </div>
@@ -17,17 +17,20 @@
     <el-container>
       <el-aside
         class="layout-aside"
-        :class="{ collapsed: isCollapse }"
-        :width="isCollapse ? '88px' : '280px'"
+        :class="{
+          collapsed: !isMobile && isSidebarCollapsed,
+          'is-open': isMobile && isMobileMenuOpen
+        }"
+        :width="asideWidth"
       >
         <div class="sidebar-content">
-          <div class="sidebar-logo" :class="{ collapsed: isCollapse }">
+          <div class="sidebar-logo" :class="{ collapsed: isSidebarCollapsed }">
             <img src="/HR.png" alt="HR 管理系統" class="sidebar-logo-image" />
-            <span v-if="!isCollapse" class="sidebar-logo-text">HR 管理系統</span>
+            <span v-if="!isSidebarCollapsed" class="sidebar-logo-text">HR 管理系統</span>
           </div>
           <el-menu
             :default-active="active"
-            :collapse="isCollapse"
+            :collapse="isSidebarCollapsed"
             class="sidebar-menu"
             background-color="transparent"
             text-color="#ecfeff"
@@ -40,9 +43,9 @@
               @click="gotoPage(item.name)"
               class="menu-item"
             >
-              <div class="menu-item-inner" :class="{ 'is-collapsed': isCollapse }">
+              <div class="menu-item-inner" :class="{ 'is-collapsed': isSidebarCollapsed }">
                 <el-tooltip
-                  v-if="isCollapse"
+                  v-if="isSidebarCollapsed"
                   :content="item.label"
                   placement="right"
                   effect="dark"
@@ -61,12 +64,18 @@
                   :data-icon-key="availableMenuIcons[item.icon] ? item.icon : 'default'"
                   alt=""
                 />
-                <span v-if="!isCollapse" class="menu-text">{{ item.label }}</span>
+                <span v-if="!isSidebarCollapsed" class="menu-text">{{ item.label }}</span>
               </div>
             </el-menu-item>
           </el-menu>
         </div>
       </el-aside>
+      <div
+        v-if="isMobile"
+        class="hr-mobile-overlay"
+        :class="{ 'is-open': isMobileMenuOpen }"
+        @click="closeMobileMenu"
+      />
       <el-main class="layout-main">
         <div class="main-content">
           <router-view />
@@ -77,7 +86,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, watch } from 'vue'
+import { ref, onMounted, onBeforeUnmount, watch, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useMenuStore } from '../stores/menu'
 import { clearToken } from '../utils/tokenService'
@@ -90,10 +99,49 @@ const { items: menuItems } = storeToRefs(menuStore)
 
 const active = ref('')
 const isCollapse = ref(false)
+const isMobile = ref(false)
+const isMobileMenuOpen = ref(false)
+
+const isSidebarCollapsed = computed(() => {
+  if (isMobile.value) {
+    return !isMobileMenuOpen.value
+  }
+  return isCollapse.value
+})
+
+const asideWidth = computed(() => {
+  if (isMobile.value) {
+    return '280px'
+  }
+  return isCollapse.value ? '88px' : '280px'
+})
+
+function updateIsMobile() {
+  if (typeof window === 'undefined') return
+  const mobile = window.innerWidth < 768
+  isMobile.value = mobile
+  if (!mobile) {
+    isMobileMenuOpen.value = false
+  }
+}
+
+function closeMobileMenu() {
+  isMobileMenuOpen.value = false
+}
 
 onMounted(async () => {
+  if (typeof window !== 'undefined') {
+    updateIsMobile()
+    window.addEventListener('resize', updateIsMobile)
+  }
   if (menuItems.value.length === 0) {
     await menuStore.fetchMenu()
+  }
+})
+
+onBeforeUnmount(() => {
+  if (typeof window !== 'undefined') {
+    window.removeEventListener('resize', updateIsMobile)
   }
 })
 
@@ -129,6 +177,9 @@ watch(
   () => router.currentRoute?.value?.name,
   name => {
     active.value = typeof name === 'string' ? name : ''
+    if (isMobile.value) {
+      closeMobileMenu()
+    }
   },
   { immediate: true }
 )
@@ -136,8 +187,15 @@ watch(
 function gotoPage(name) {
   active.value = name
   router.push({ name })
+  if (isMobile.value) {
+    closeMobileMenu()
+  }
 }
 function toggleCollapse() {
+  if (isMobile.value) {
+    isMobileMenuOpen.value = !isMobileMenuOpen.value
+    return
+  }
   isCollapse.value = !isCollapse.value
 }
 
