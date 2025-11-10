@@ -921,6 +921,28 @@ function createError(message, status = 400) {
   return err;
 }
 
+function isTransactionNotSupportedError(err) {
+  if (!err) return false;
+  const { code, codeName } = err;
+  const message = typeof err.message === 'string' ? err.message.toLowerCase() : '';
+  if (message.includes('transaction numbers are only allowed')) {
+    return true;
+  }
+  if (typeof code === 'number') {
+    const unsupportedCodes = new Set([20, 303, 305]);
+    if (unsupportedCodes.has(code)) {
+      return true;
+    }
+  }
+  if (typeof codeName === 'string') {
+    const normalized = codeName.toLowerCase();
+    if (['noreplicationenabled', 'notenoughreplicasetmembers', 'notprimary'].includes(normalized)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function applyEmployeeResponse(schedule, normalized, noteValue, now = new Date()) {
   if (!schedule) throw createError('schedule not found', 404);
   if (schedule.state === 'finalized') {
@@ -987,6 +1009,7 @@ export async function respondToSchedule(req, res) {
 
 export async function respondToSchedulesBulk(req, res) {
   let session = null;
+  let usingTransaction = false;
   try {
     const { scheduleIds, response, note } = req.body || {};
     if (!Array.isArray(scheduleIds) || !scheduleIds.length) {
@@ -1001,80 +1024,97 @@ export async function respondToSchedulesBulk(req, res) {
     if (typeof ShiftSchedule.startSession === 'function') {
       session = await ShiftSchedule.startSession();
     }
-    const hasTransactionSupport =
-      session &&
-      typeof session.startTransaction === 'function' &&
-      typeof session.commitTransaction === 'function' &&
-      typeof session.abortTransaction === 'function';
+    if (session) {
+      const supportsTransactions =
+        typeof session.startTransaction === 'function' &&
+        typeof session.commitTransaction === 'function' &&
+        typeof session.abortTransaction === 'function';
 
-    if (!hasTransactionSupport) {
-      if (session && typeof session.endSession === 'function') {
-        await session.endSession();
+      if (supportsTransactions) {
+        try {
+          await session.startTransaction();
+          usingTransaction = true;
+        } catch (startErr) {
+          if (isTransactionNotSupportedError(startErr)) {
+            if (typeof session.endSession === 'function') {
+              await session.endSession();
+            }
+            session = null;
+          } else {
+            throw startErr;
+          }
+        }
+      } else {
+        if (typeof session.endSession === 'function') {
+          await session.endSession();
+        }
+        session = null;
       }
-      session = null;
-      return res.status(500).json({ error: 'transaction unavailable' });
     }
 
-    await session.startTransaction();
-    try {
-      const uniqueIds = Array.from(
-        new Set(
-          scheduleIds
-            .map((value) => normalizeId(value))
-            .filter((value) => !!value),
-        ),
-      );
+    const uniqueIds = Array.from(
+      new Set(
+        scheduleIds
+          .map((value) => normalizeId(value))
+          .filter((value) => !!value),
+      ),
+    );
 
-      if (!uniqueIds.length) {
-        throw createError('scheduleIds required');
+    if (!uniqueIds.length) {
+      throw createError('scheduleIds required');
+    }
+
+    const schedules = [];
+    for (const scheduleId of uniqueIds) {
+      const query = ShiftSchedule.findById(scheduleId);
+      let schedule;
+      if (query && typeof query.populate === 'function') {
+        schedule = await query.populate('employee');
+      } else {
+        schedule = query;
       }
-
-      const schedules = [];
-      for (const scheduleId of uniqueIds) {
-        const query = ShiftSchedule.findById(scheduleId);
-        let schedule;
-        if (query && typeof query.populate === 'function') {
-          schedule = await query.populate('employee');
-        } else {
-          schedule = query;
-        }
-        if (!schedule) {
-          throw createError('schedule not found', 404);
-        }
-        if (typeof schedule.$session === 'function') {
-          schedule.$session(session);
-        }
-        const employeeId = schedule.employee?._id?.toString?.() || schedule.employee?.toString?.();
-        if (!employeeId || employeeId !== String(userId)) {
-          throw createError('forbidden', 403);
-        }
-        schedules.push(schedule);
+      if (!schedule) {
+        throw createError('schedule not found', 404);
       }
-
-      const now = new Date();
-      const updated = [];
-      for (const schedule of schedules) {
-        applyEmployeeResponse(schedule, normalized, noteValue, now);
-        const saved = await schedule.save({ session });
-        if (typeof saved.populate === 'function') {
-          await saved.populate('employee');
-        }
-        updated.push(saved);
+      if (usingTransaction && session && typeof schedule.$session === 'function') {
+        schedule.$session(session);
       }
+      const employeeId = schedule.employee?._id?.toString?.() || schedule.employee?.toString?.();
+      if (!employeeId || employeeId !== String(userId)) {
+        throw createError('forbidden', 403);
+      }
+      schedules.push(schedule);
+    }
 
+    const now = new Date();
+    const updated = [];
+    for (const schedule of schedules) {
+      applyEmployeeResponse(schedule, normalized, noteValue, now);
+      const saveOptions = usingTransaction && session ? { session } : undefined;
+      const saved = await schedule.save(saveOptions);
+      if (typeof saved.populate === 'function') {
+        await saved.populate('employee');
+      }
+      updated.push(saved);
+    }
+
+    if (usingTransaction && session && typeof session.commitTransaction === 'function') {
       await session.commitTransaction();
-      const payload = updated.map((item) => (
-        typeof item.toObject === 'function' ? item.toObject() : item
-      ));
-      return res.json({ success: true, count: payload.length, schedules: payload });
-    } catch (err) {
-      if (typeof session.abortTransaction === 'function') {
-        await session.abortTransaction();
-      }
-      return res.status(err.status || 400).json({ error: err.message });
     }
+
+    const payload = updated.map((item) => (
+      typeof item.toObject === 'function' ? item.toObject() : item
+    ));
+    return res.json({ success: true, count: payload.length, schedules: payload });
   } catch (err) {
-    return res.status(400).json({ error: err.message });
+    if (usingTransaction && session && typeof session.abortTransaction === 'function') {
+      try {
+        await session.abortTransaction();
+      } catch (abortErr) {
+        // ignore abort errors to avoid masking original error
+      }
+    }
+    return res.status(err.status || 400).json({ error: err.message });
   } finally {
     if (session && typeof session.endSession === 'function') await session.endSession();
   }
