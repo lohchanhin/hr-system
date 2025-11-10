@@ -71,11 +71,21 @@ describe('layout widths', () => {
 
   it('ModernLayout aside maintains sidebar width and flexible main content', async () => {
     const wrapper = mount(ModernLayout, { global: mountGlobal })
-    expect(wrapper.find('.layout-aside').attributes('style')).toContain('width: 280px')
+    const aside = wrapper.find('.layout-aside')
+    const main = wrapper.find('.layout-main')
+
+    expect(aside.attributes('style')).toContain('width: 280px')
+    expect(aside.classes()).toContain('is-open')
+    expect(main.classes()).toContain('with-sidebar')
+
     wrapper.vm.toggleCollapse()
     await wrapper.vm.$nextTick()
-    expect(wrapper.find('.layout-aside').attributes('style')).toContain('width: 88px')
-    expect(wrapper.find('.layout-main').exists()).toBe(true)
+
+    expect(aside.attributes('style')).toContain('width: 88px')
+    expect(aside.classes()).toContain('is-hidden')
+    expect(aside.classes()).not.toContain('is-open')
+    expect(main.classes()).not.toContain('with-sidebar')
+    expect(main.exists()).toBe(true)
   })
 
   it('renders mapped menu icons and tooltip when collapsed', async () => {

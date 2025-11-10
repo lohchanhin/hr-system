@@ -19,7 +19,8 @@
         class="layout-aside"
         :class="{
           collapsed: !isMobile && isSidebarCollapsed,
-          'is-open': isMobile && isMobileMenuOpen
+          'is-open': !isSidebarCollapsed,
+          'is-hidden': !isMobile && isSidebarCollapsed
         }"
         :width="asideWidth"
       >
@@ -76,7 +77,10 @@
         :class="{ 'is-open': isMobileMenuOpen }"
         @click="closeMobileMenu"
       />
-      <el-main class="layout-main">
+      <el-main
+        class="layout-main"
+        :class="{ 'with-sidebar': !isMobile && !isSidebarCollapsed }"
+      >
         <div class="main-content">
           <router-view />
         </div>
@@ -285,8 +289,22 @@ function logout() {
 .layout-aside {
   background: linear-gradient(180deg, #0f4c75 0%, #164e63 100%);
   border-right: none;
-  transition: width 0.3s ease;
+  position: fixed;
+  top: 64px;
+  left: -100%;
+  height: calc(100vh - 64px);
+  box-shadow: 2px 0 8px rgba(0, 0, 0, 0.15);
+  transition: left 0.3s ease, width 0.3s ease;
   overflow: hidden;
+  z-index: 900;
+}
+
+.layout-aside.is-open {
+  left: 0;
+}
+
+.layout-aside.is-hidden {
+  left: -100%;
 }
 
 .layout-aside.collapsed {
@@ -393,6 +411,12 @@ function logout() {
   background: #f8fafc;
   padding: 0;
   overflow: hidden;
+  margin-left: 0;
+  transition: margin-left 0.3s ease;
+}
+
+.layout-main.with-sidebar {
+  margin-left: 280px;
 }
 
 .main-content {
@@ -416,18 +440,7 @@ function logout() {
 
 @media (max-width: 768px) {
   .layout-aside {
-    position: fixed;
     z-index: 1000;
-    height: calc(100vh - 64px);
-    top: 64px;
-    left: -100%;
-    box-shadow: 2px 0 8px rgba(0, 0, 0, 0.15);
-  }
-
-  .layout-aside.is-open {
-    top: 64px;
-    left: 0;
-    box-shadow: 2px 0 8px rgba(0, 0, 0, 0.15);
   }
 
   .system-title {
