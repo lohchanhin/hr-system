@@ -676,6 +676,44 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
       expect(sessionMock.abortTransaction).not.toHaveBeenCalled();
     });
 
+    it('falls back to non-transaction bulk confirmation when replica set unavailable', async () => {
+      const doc1 = buildDoc({ _id: 'sch-rs-1', employee: { _id: 'empRS', name: '員工RS' } });
+      const doc2 = buildDoc({ _id: 'sch-rs-2', employee: { _id: 'empRS', name: '員工RS' } });
+      const sessionMock = {
+        startTransaction: jest.fn().mockRejectedValue(
+          Object.assign(
+            new Error('Transaction numbers are only allowed on a replica set member or mongos'),
+            { code: 20 },
+          ),
+        ),
+        commitTransaction: jest.fn(),
+        abortTransaction: jest.fn(),
+        endSession: jest.fn().mockResolvedValue(),
+      };
+      mockShiftSchedule.startSession.mockResolvedValue(sessionMock);
+      mockShiftSchedule.findById.mockImplementation((id) => ({
+        populate: jest.fn().mockResolvedValue(id === 'sch-rs-1' ? doc1 : doc2),
+      }));
+
+      const res = await request(app)
+        .post('/api/schedules/respond/bulk')
+        .set('Authorization', buildAuthHeader('employee', { id: 'empRS' }))
+        .send({ scheduleIds: ['sch-rs-1', 'sch-rs-2'], response: 'confirm' });
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({
+        success: true,
+        count: 2,
+        schedules: expect.any(Array),
+      });
+      expect(doc1.employeeResponse).toBe('confirmed');
+      expect(doc2.employeeResponse).toBe('confirmed');
+      expect(sessionMock.startTransaction).toHaveBeenCalledTimes(1);
+      expect(sessionMock.commitTransaction).not.toHaveBeenCalled();
+      expect(sessionMock.abortTransaction).not.toHaveBeenCalled();
+      expect(sessionMock.endSession).toHaveBeenCalledTimes(1);
+    });
+
     it('aborts bulk response when schedule not owned by employee', async () => {
       const doc = buildDoc({ _id: 'sch-b3', employee: { _id: 'empOther', name: '其他人' } });
       const sessionMock = {
