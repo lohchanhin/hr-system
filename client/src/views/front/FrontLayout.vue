@@ -2,9 +2,12 @@
   <!-- 美化前台員工系統布局 -->
   <div class="front-layout">
     <!-- 左側導覽列 -->
-    <aside class="sidebar">
-      <div class="sidebar-header">
-        <h2 class="brand-title">員工系統</h2>
+    <aside :class="['sidebar', { collapsed: isSidebarCollapsed }]">
+      <div class="logo-area">
+        <img :src="hrLogo" alt="HR 品牌" class="logo-image" />
+        <span class="brand-title" v-if="!isSidebarCollapsed">員工系統</span>
+      </div>
+      <div v-if="!isSidebarCollapsed" class="sidebar-header">
         <div class="user-info">
           <el-avatar :size="40" class="user-avatar">
             <i class="el-icon-user"></i>
@@ -40,13 +43,14 @@
           </el-descriptions>
         </div>
       </div>
-      
-      <el-menu 
-        :default-active="activeMenu" 
+
+      <el-menu
+        :default-active="activeMenu"
         class="sidebar-menu"
         background-color="#0f172a"
         text-color="#cbd5e1"
         active-text-color="#ffffff"
+        :collapse="isSidebarCollapsed"
       >
         <el-menu-item
           v-for="item in menuItems"
@@ -68,7 +72,7 @@
       <div class="logout-section">
         <el-button type="danger" @click="onLogout" class="logout-btn" block>
           <el-icon><i class="el-icon-switch-button" /></el-icon>
-          登出系統
+          <span class="logout-text" v-if="!isSidebarCollapsed">登出系統</span>
         </el-button>
       </div>
     </aside>
@@ -83,7 +87,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, computed } from "vue";
+import { ref, onMounted, computed, onBeforeUnmount } from "vue";
 import { useRouter, useRoute } from "vue-router";
 import { useMenuStore } from "../../stores/menu";
 import { useProfileStore } from "../../stores/profile";
@@ -100,6 +104,7 @@ const { profile } = storeToRefs(profileStore);
 
 const username = ref("");
 const activeMenu = computed(() => route.name || "");
+const isSidebarCollapsed = ref(false);
 
 const fallbackText = "未提供";
 
@@ -134,6 +139,13 @@ const displaySubDepartment = computed(() =>
   formatText(profile.value?.subDepartmentName)
 );
 
+function updateSidebarCollapse() {
+  if (typeof window === "undefined") {
+    return;
+  }
+  isSidebarCollapsed.value = window.innerWidth <= 1024;
+}
+
 onMounted(() => {
   const savedUsername = localStorage.getItem("username");
   if (savedUsername) {
@@ -149,6 +161,17 @@ onMounted(() => {
     .catch(() => {
       // 取得個人資料失敗時不阻擋主畫面載入，於此靜默處理
     });
+
+  updateSidebarCollapse();
+  if (typeof window !== "undefined") {
+    window.addEventListener("resize", updateSidebarCollapse);
+  }
+});
+
+onBeforeUnmount(() => {
+  if (typeof window !== "undefined") {
+    window.removeEventListener("resize", updateSidebarCollapse);
+  }
 });
 
 function resolveIcon(item) {
@@ -187,6 +210,37 @@ function onLogout() {
   display: flex;
   flex-direction: column;
   box-shadow: 2px 0 8px rgba(0, 0, 0, 0.1);
+  transition: flex-basis 0.3s ease, width 0.3s ease;
+}
+
+.sidebar.collapsed {
+  flex: 0 0 88px;
+}
+
+.logo-area {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 24px 20px 16px 20px;
+  border-bottom: 1px solid rgba(203, 213, 225, 0.12);
+}
+
+.logo-image {
+  width: 40px;
+  height: 40px;
+  object-fit: contain;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.35);
+  transition: transform 0.3s ease;
+}
+
+.sidebar.collapsed .logo-area {
+  justify-content: center;
+  padding: 20px 12px;
+}
+
+.sidebar.collapsed .logo-image {
+  transform: scale(0.9);
 }
 
 .sidebar-header {
@@ -253,6 +307,10 @@ function onLogout() {
   padding: 16px 12px;
 }
 
+.sidebar-menu.el-menu--collapse {
+  padding: 16px 8px;
+}
+
 .menu-item {
   margin-bottom: 8px;
   border-radius: 8px !important;
@@ -291,6 +349,19 @@ function onLogout() {
   font-size: 14px;
 }
 
+.sidebar.collapsed .menu-item {
+  justify-content: center;
+  padding: 0 8px !important;
+}
+
+.sidebar.collapsed .menu-icon {
+  margin-right: 0;
+}
+
+.sidebar.collapsed .menu-label {
+  display: none;
+}
+
 .logout-section {
   padding: 20px;
   border-top: 1px solid rgba(203, 213, 225, 0.1);
@@ -308,6 +379,19 @@ function onLogout() {
   align-items: center;
   justify-content: center;
   gap: 8px;
+}
+
+.sidebar.collapsed .logout-section {
+  padding: 16px 12px;
+}
+
+.sidebar.collapsed .logout-btn {
+  gap: 0;
+}
+
+.logout-text {
+  display: inline-flex;
+  align-items: center;
 }
 
 .logout-btn:hover {
