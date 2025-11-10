@@ -71,15 +71,59 @@
 
     <div v-if="canEdit" class="publish-card">
       <div class="publish-header">
-        <h3 class="publish-title">發布狀態</h3>
-        <span class="status-badge" :class="`status-${publishSummary.status}`">
+        <div class="publish-header-text">
+          <h3 class="publish-title">發布狀態</h3>
+          <p class="publish-subtitle">追蹤班表送審、回覆與鎖定流程</p>
+        </div>
+        <span
+          class="status-badge"
+          :class="`status-${publishSummary.status}`"
+          data-test="publish-status-badge"
+        >
           {{ publishStatusLabel }}
         </span>
       </div>
-      <p class="publish-meta" v-if="publishSummary.publishedAt">
-        最近發布：{{ formatPublishDate(publishSummary.publishedAt) }}
-      </p>
-      <p class="publish-meta" v-else>本月尚未發布。</p>
+
+      <div class="publish-progress" data-test="publish-steps">
+        <el-steps :active="publishStepIndex" finish-status="success" align-center>
+          <el-step title="草稿" description="建立班表草稿" :status="stepStatuses.draft" />
+          <el-step
+            title="待確認"
+            :description="pendingStepDescription"
+            :status="stepStatuses.pending"
+          />
+          <el-step
+            title="異議"
+            :description="disputeStepDescription"
+            :status="stepStatuses.disputed"
+          />
+          <el-step
+            title="完成"
+            :description="finalStepDescription"
+            :status="stepStatuses.finalized"
+          />
+        </el-steps>
+      </div>
+
+      <div class="publish-meta-row">
+        <p class="publish-meta" v-if="publishSummary.publishedAt" data-test="publish-meta">
+          最近發布：{{ formatPublishDate(publishSummary.publishedAt) }}
+        </p>
+        <p class="publish-meta" v-else data-test="publish-meta">本月尚未發布。</p>
+        <div
+          v-if="publishProgress > 0 && publishSummary.status !== 'finalized'"
+          class="publish-progress-indicator"
+        >
+          <el-progress
+            :percentage="publishProgress"
+            :stroke-width="8"
+            status="success"
+            :show-text="false"
+          />
+          <span class="progress-label">{{ publishProgress }}% 完成</span>
+        </div>
+      </div>
+
       <div class="publish-actions">
         <el-button
           type="primary"
@@ -101,33 +145,78 @@
           完成發布
         </el-button>
       </div>
-      <div class="publish-summary">
-        <div v-if="publishSummary.pendingEmployees.length" class="summary-block">
-          <h4>待回覆</h4>
-          <ul>
-            <li v-for="emp in publishSummary.pendingEmployees" :key="emp.id">
-              {{ emp.name }}（{{ emp.pendingCount }} 筆）
-            </li>
-          </ul>
-        </div>
-        <div v-if="publishSummary.disputedEmployees.length" class="summary-block alert">
-          <h4>異議</h4>
-          <ul>
-            <li v-for="emp in publishSummary.disputedEmployees" :key="emp.id">
-              <div class="summary-name">{{ emp.name }}（{{ emp.disputedCount }} 筆）</div>
-              <div v-if="emp.latestNote" class="summary-note">最新意見：{{ emp.latestNote }}</div>
-            </li>
-          </ul>
-        </div>
-        <p
-          v-if="!publishSummary.pendingEmployees.length && !publishSummary.disputedEmployees.length && publishSummary.status !== 'draft' && publishSummary.status !== 'finalized'"
-          class="summary-ok"
+
+      <div class="publish-stats">
+        <div
+          v-if="pendingCount"
+          class="status-card pending"
+          data-test="pending-card"
         >
-          所有員工已完成回覆，可執行最終發布。
-        </p>
-        <p v-if="publishSummary.status === 'finalized'" class="summary-finalized">
-          班表已完成發布並鎖定。
-        </p>
+          <div class="card-header">
+            <span class="card-title">待回覆</span>
+            <span class="card-badge">{{ pendingCount }}</span>
+          </div>
+          <ul class="card-list">
+            <li
+              v-for="emp in publishSummary.pendingEmployees"
+              :key="emp.id"
+              class="card-item"
+            >
+              <span class="card-name">{{ emp.name }}</span>
+              <span class="card-count">{{ emp.pendingCount }} 筆</span>
+            </li>
+          </ul>
+        </div>
+
+        <div
+          v-if="disputedCount"
+          class="status-card disputed"
+          data-test="disputed-card"
+        >
+          <div class="card-header">
+            <span class="card-title">異議</span>
+            <span class="card-badge">{{ disputedCount }}</span>
+          </div>
+          <ul class="card-list">
+            <li
+              v-for="emp in publishSummary.disputedEmployees"
+              :key="emp.id"
+              class="card-item"
+            >
+              <div class="card-item-main">
+                <span class="card-name">{{ emp.name }}</span>
+                <span class="card-count">{{ emp.disputedCount }} 筆</span>
+              </div>
+              <div v-if="emp.latestNote" class="card-note">
+                最新意見：{{ emp.latestNote }}
+              </div>
+            </li>
+          </ul>
+        </div>
+
+        <div
+          v-if="!pendingCount && !disputedCount && publishSummary.status !== 'draft' && publishSummary.status !== 'finalized'"
+          class="status-card ready"
+          data-test="ready-card"
+        >
+          <div class="card-header">
+            <span class="card-title">回覆完成</span>
+            <span class="card-badge success">✓</span>
+          </div>
+          <p class="card-message">所有員工已完成回覆，可執行最終發布。</p>
+        </div>
+
+        <div
+          v-if="publishSummary.status === 'finalized'"
+          class="status-card finalized"
+          data-test="finalized-card"
+        >
+          <div class="card-header">
+            <span class="card-title">已鎖定</span>
+            <span class="card-badge success">100%</span>
+          </div>
+          <p class="card-message">班表已完成發布並鎖定。</p>
+        </div>
       </div>
     </div>
 
@@ -1062,6 +1151,77 @@ const publishStatusLabel = computed(() => {
     finalized: '已完成發布'
   }
   return map[publishSummary.value.status] || '尚未發布'
+})
+
+const pendingCount = computed(() =>
+  publishSummary.value.pendingEmployees.reduce(
+    (total, emp) => total + (Number(emp?.pendingCount) || 0),
+    0
+  )
+)
+
+const disputedCount = computed(() =>
+  publishSummary.value.disputedEmployees.reduce(
+    (total, emp) => total + (Number(emp?.disputedCount) || 0),
+    0
+  )
+)
+
+const publishStepIndex = computed(() => {
+  const status = publishSummary.value.status
+  if (status === 'pending') return 1
+  if (status === 'disputed') return 2
+  if (status === 'ready' || status === 'finalized') return 3
+  return 0
+})
+
+const stepStatuses = computed(() => {
+  const status = publishSummary.value.status
+  const hasPending = pendingCount.value > 0
+  const hasDisputed = disputedCount.value > 0
+  return {
+    draft: status === 'draft' ? 'process' : 'finish',
+    pending:
+      status === 'draft'
+        ? 'wait'
+        : hasPending || status === 'pending'
+          ? 'process'
+          : 'finish',
+    disputed: hasDisputed ? 'error' : status === 'draft' || status === 'pending' ? 'wait' : 'finish',
+    finalized:
+      status === 'finalized' ? 'success' : status === 'ready' ? 'process' : 'wait'
+  }
+})
+
+const pendingStepDescription = computed(() => {
+  if (!publishSummary.value.hasSchedules) return '尚未發送確認'
+  if (pendingCount.value > 0) {
+    return `${pendingCount.value} 筆待回覆`
+  }
+  return '員工已完成回覆'
+})
+
+const disputeStepDescription = computed(() => {
+  if (!publishSummary.value.hasSchedules) return '尚未進入異議流程'
+  if (disputedCount.value > 0) {
+    return `${disputedCount.value} 筆異議待處理`
+  }
+  return '無異議紀錄'
+})
+
+const finalStepDescription = computed(() => {
+  if (publishSummary.value.status === 'finalized') return '班表已鎖定'
+  if (publishSummary.value.status === 'ready') return '可執行最終發布'
+  return '等待完成發布'
+})
+
+const publishProgress = computed(() => {
+  if (publishSummary.value.status === 'finalized') return 100
+  const total = publishSummary.value.totalEmployees
+  if (!total || total <= 0) return publishSummary.value.status === 'draft' ? 0 : 20
+  const responded = Math.max(total - publishSummary.value.pendingEmployees.length, 0)
+  const percentage = Math.round((responded / total) * 100)
+  return Math.min(Math.max(percentage, 0), 100)
 })
 
 const publishDisabled = computed(
@@ -2200,6 +2360,289 @@ onMounted(async () => {
       font-size: 0.875rem;
       text-transform: uppercase;
       letter-spacing: 0.05em;
+    }
+  }
+}
+
+.publish-card {
+  padding: 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+
+  .publish-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+
+    .publish-header-text {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .publish-title {
+      font-size: 1.5rem;
+      font-weight: 700;
+      color: #0f172a;
+      margin: 0;
+    }
+
+    .publish-subtitle {
+      margin: 0;
+      color: #475569;
+      font-size: 0.95rem;
+    }
+  }
+
+  .status-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 999px;
+    padding: 8px 16px;
+    font-weight: 600;
+    font-size: 0.95rem;
+    text-transform: none;
+    letter-spacing: 0.02em;
+
+    &.status-draft {
+      background: rgba(148, 163, 184, 0.16);
+      color: #475569;
+    }
+
+    &.status-pending {
+      background: rgba(249, 115, 22, 0.18);
+      color: #c2410c;
+    }
+
+    &.status-ready {
+      background: rgba(34, 197, 94, 0.18);
+      color: #166534;
+    }
+
+    &.status-disputed {
+      background: rgba(248, 113, 113, 0.2);
+      color: #b91c1c;
+    }
+
+    &.status-finalized {
+      background: rgba(59, 130, 246, 0.18);
+      color: #1d4ed8;
+    }
+  }
+
+  .publish-progress {
+    padding: 16px 20px;
+    border-radius: 16px;
+    background: linear-gradient(135deg, rgba(14, 116, 144, 0.08), rgba(45, 212, 191, 0.08));
+
+    .el-step__title.is-success,
+    .el-step__description.is-success {
+      color: #0f172a;
+    }
+
+    .el-step__title.is-error,
+    .el-step__description.is-error {
+      color: #b91c1c;
+    }
+
+    .el-step__description {
+      font-size: 0.85rem;
+      color: #475569;
+    }
+  }
+
+  .publish-meta-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 12px 20px;
+
+    .publish-meta {
+      margin: 0;
+      color: #0f172a;
+      font-weight: 500;
+    }
+
+    .publish-progress-indicator {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-width: 160px;
+
+      .el-progress {
+        flex: 1 1 120px;
+      }
+
+      .progress-label {
+        font-size: 0.85rem;
+        color: #0f172a;
+        font-weight: 600;
+      }
+    }
+  }
+
+  .publish-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+
+    .publish-btn {
+      min-width: 140px;
+      border-radius: 999px;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+    }
+  }
+
+  .publish-stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 16px;
+  }
+
+  .status-card {
+    border-radius: 16px;
+    padding: 20px;
+    border: 1px solid transparent;
+    background: #f8fafc;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+
+    &.pending {
+      background: rgba(250, 204, 21, 0.18);
+      border-color: rgba(217, 119, 6, 0.45);
+    }
+
+    &.disputed {
+      background: rgba(248, 113, 113, 0.12);
+      border-color: rgba(220, 38, 38, 0.45);
+    }
+
+    &.ready {
+      background: rgba(134, 239, 172, 0.18);
+      border-color: rgba(34, 197, 94, 0.45);
+    }
+
+    &.finalized {
+      background: rgba(191, 219, 254, 0.28);
+      border-color: rgba(37, 99, 235, 0.4);
+    }
+
+    .card-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .card-title {
+      font-size: 1.05rem;
+      font-weight: 700;
+      color: #0f172a;
+    }
+
+    .card-badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 48px;
+      padding: 6px 12px;
+      border-radius: 999px;
+      font-weight: 700;
+      background: white;
+      color: #0f172a;
+      box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.08);
+
+      &.success {
+        background: #10b981;
+        color: white;
+        box-shadow: none;
+      }
+    }
+
+    .card-list {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .card-item {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      padding: 10px 12px;
+      border-radius: 12px;
+      background: rgba(255, 255, 255, 0.75);
+
+      .card-item-main {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+      }
+
+      .card-name {
+        font-weight: 600;
+        color: #0f172a;
+      }
+
+      .card-count {
+        font-weight: 600;
+        color: #334155;
+      }
+    }
+
+    .card-note {
+      font-size: 0.85rem;
+      color: #475569;
+      line-height: 1.4;
+    }
+
+    .card-message {
+      margin: 0;
+      color: #0f172a;
+      font-weight: 600;
+      line-height: 1.5;
+    }
+  }
+}
+
+@media (max-width: 1024px) {
+  .publish-card {
+    padding: 24px;
+
+    .publish-progress {
+      padding: 12px 16px;
+    }
+  }
+}
+
+@media (max-width: 768px) {
+  .publish-card {
+    .publish-header {
+      flex-direction: column;
+      align-items: flex-start;
+    }
+
+    .publish-actions {
+      flex-direction: column;
+      align-items: stretch;
+
+      .publish-btn {
+        width: 100%;
+      }
+    }
+
+    .publish-meta-row {
+      flex-direction: column;
+      align-items: flex-start;
     }
   }
 }

@@ -124,6 +124,17 @@ describe('Schedule.vue', () => {
       props: ['label', 'value'],
       template: '<option :value="value"><slot>{{ label }}</slot></option>'
     }
+    const StepsStub = {
+      name: 'ElSteps',
+      props: ['active'],
+      template: '<div class="steps-stub" :data-active="active"><slot></slot></div>'
+    }
+    const StepStub = {
+      name: 'ElStep',
+      props: ['title', 'description', 'status'],
+      template:
+        '<div class="step-stub" :data-title="title" :data-status="status"><slot></slot><div class="step-description">{{ description }}</div></div>'
+    }
     const CheckboxStub = {
       name: 'ElCheckbox',
       inheritAttrs: false,
@@ -139,6 +150,11 @@ describe('Schedule.vue', () => {
     }
     const TagStub = { name: 'ElTag', template: '<span v-bind="$attrs"><slot></slot></span>' }
     const ButtonStub = { name: 'ElButton', template: '<button v-bind="$attrs"><slot></slot></button>' }
+    const ProgressStub = {
+      name: 'ElProgress',
+      props: ['percentage'],
+      template: '<div class="progress-stub" :data-percentage="percentage"></div>'
+    }
     return shallowMount(Schedule, {
       global: {
         stubs: {
@@ -147,11 +163,14 @@ describe('Schedule.vue', () => {
           'el-table-column': ColumnStub,
           'el-select': SelectStub,
           'el-option': OptionStub,
+          'el-steps': StepsStub,
+          'el-step': StepStub,
           'el-checkbox': CheckboxStub,
           'el-input': InputStub,
           'el-popover': PopoverStub,
           'el-tag': TagStub,
           'el-button': ButtonStub,
+          'el-progress': ProgressStub,
           ScheduleDashboard: { name: 'ScheduleDashboard', template: '<div class="dashboard-stub"></div>', props: ['summary'] }
         }
       },
@@ -354,6 +373,82 @@ describe('Schedule.vue', () => {
     expect(wrapper.vm.publishSummary.disputedEmployees).toHaveLength(1)
     expect(wrapper.vm.publishSummary.disputedEmployees[0]).toMatchObject({ id: 'emp2' })
     expect(wrapper.vm.publishSummary.publishedAt).toBe('2024-04-20T00:00:00.000Z')
+  })
+
+  it('顯示草稿狀態的發布步驟與徽章', async () => {
+    setRoleToken('supervisor')
+    localStorage.setItem('employeeId', 'sup1')
+    setupSupervisorApiMock({
+      monthlyWithSelf: [],
+      monthlyWithoutSelf: [],
+      employees: [],
+      directReports: []
+    })
+
+    const wrapper = mountSchedule()
+    await flush()
+
+    const badge = wrapper.find('[data-test="publish-status-badge"]')
+    expect(badge.exists()).toBe(true)
+    expect(badge.text()).toContain('尚未發布')
+    const steps = wrapper.find('.steps-stub')
+    expect(steps.attributes('data-active')).toBe('0')
+    expect(wrapper.find('[data-test="pending-card"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="disputed-card"]').exists()).toBe(false)
+  })
+
+  it('以卡片呈現待回覆與異議統計並更新步驟', async () => {
+    const month = dayjs().format('YYYY-MM')
+    setRoleToken('supervisor')
+    localStorage.setItem('employeeId', 'sup1')
+    const scheduleData = [
+      {
+        _id: 'sch1',
+        employee: { _id: 'emp1', name: 'Alice' },
+        date: `${month}-01`,
+        shiftId: 'shiftA',
+        state: 'pending_confirmation',
+        employeeResponse: 'pending',
+        publishedAt: '2024-04-20T00:00:00.000Z'
+      },
+      {
+        _id: 'sch2',
+        employee: { _id: 'emp2', name: 'Bob' },
+        date: `${month}-02`,
+        shiftId: 'shiftA',
+        state: 'changes_requested',
+        employeeResponse: 'disputed',
+        responseNote: '想調整班別',
+        publishedAt: '2024-04-20T00:00:00.000Z'
+      }
+    ]
+
+    setupSupervisorApiMock({
+      monthlyWithoutSelf: scheduleData,
+      monthlyWithSelf: scheduleData,
+      shifts: [{ _id: 'shiftA', name: '白班' }],
+      departments: [{ _id: 'd1', name: 'Dept A' }],
+      subDepartments: [{ _id: 'sd1', name: 'Sub A', department: { _id: 'd1' } }],
+      directReports: [],
+      employees: []
+    })
+
+    const wrapper = mountSchedule()
+    await flush()
+
+    const steps = wrapper.find('.steps-stub')
+    expect(steps.attributes('data-active')).toBe('2')
+    const pendingCard = wrapper.find('[data-test="pending-card"]')
+    expect(pendingCard.exists()).toBe(true)
+    expect(pendingCard.find('.card-badge').text()).toBe('1')
+    expect(pendingCard.text()).toContain('Alice')
+    const disputedCard = wrapper.find('[data-test="disputed-card"]')
+    expect(disputedCard.exists()).toBe(true)
+    expect(disputedCard.find('.card-badge').text()).toBe('1')
+    expect(disputedCard.text()).toContain('Bob')
+    const progress = wrapper.find('.progress-stub')
+    expect(progress.exists()).toBe(true)
+    expect(progress.attributes('data-percentage')).toBe('50')
   })
 
   it('appends department filters to leave approval requests', async () => {
