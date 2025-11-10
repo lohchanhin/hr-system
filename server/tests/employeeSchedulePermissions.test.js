@@ -34,6 +34,7 @@ jest.unstable_mockModule('../src/controllers/scheduleController.js', () => ({
   publishSchedules: jest.fn(),
   finalizeSchedules: jest.fn(),
   respondToSchedule: jest.fn(),
+  respondToSchedulesBulk: jest.fn(),
 }));
 
 let app;
