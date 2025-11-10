@@ -69,6 +69,68 @@
       </div>
     </div>
 
+    <div v-if="canEdit" class="publish-card">
+      <div class="publish-header">
+        <h3 class="publish-title">發布狀態</h3>
+        <span class="status-badge" :class="`status-${publishSummary.status}`">
+          {{ publishStatusLabel }}
+        </span>
+      </div>
+      <p class="publish-meta" v-if="publishSummary.publishedAt">
+        最近發布：{{ formatPublishDate(publishSummary.publishedAt) }}
+      </p>
+      <p class="publish-meta" v-else>本月尚未發布。</p>
+      <div class="publish-actions">
+        <el-button
+          type="primary"
+          class="publish-btn"
+          :loading="isPublishing"
+          :disabled="publishDisabled"
+          @click="confirmPublish"
+        >
+          發送待確認
+        </el-button>
+        <el-button
+          type="success"
+          plain
+          class="publish-btn"
+          :loading="isFinalizing"
+          :disabled="finalizeDisabled"
+          @click="confirmFinalize"
+        >
+          完成發布
+        </el-button>
+      </div>
+      <div class="publish-summary">
+        <div v-if="publishSummary.pendingEmployees.length" class="summary-block">
+          <h4>待回覆</h4>
+          <ul>
+            <li v-for="emp in publishSummary.pendingEmployees" :key="emp.id">
+              {{ emp.name }}（{{ emp.pendingCount }} 筆）
+            </li>
+          </ul>
+        </div>
+        <div v-if="publishSummary.disputedEmployees.length" class="summary-block alert">
+          <h4>異議</h4>
+          <ul>
+            <li v-for="emp in publishSummary.disputedEmployees" :key="emp.id">
+              <div class="summary-name">{{ emp.name }}（{{ emp.disputedCount }} 筆）</div>
+              <div v-if="emp.latestNote" class="summary-note">最新意見：{{ emp.latestNote }}</div>
+            </li>
+          </ul>
+        </div>
+        <p
+          v-if="!publishSummary.pendingEmployees.length && !publishSummary.disputedEmployees.length && publishSummary.status !== 'draft' && publishSummary.status !== 'finalized'"
+          class="summary-ok"
+        >
+          所有員工已完成回覆，可執行最終發布。
+        </p>
+        <p v-if="publishSummary.status === 'finalized'" class="summary-finalized">
+          班表已完成發布並鎖定。
+        </p>
+      </div>
+    </div>
+
     <!-- Enhanced actions section with modern button design -->
     <div class="actions-card">
       <div class="primary-actions">
@@ -560,6 +622,7 @@ const formatApprovalCategory = (category, fallbackName = '') => {
 
 const currentMonth = ref(dayjs().format('YYYY-MM'))
 const scheduleMap = ref({})
+const rawSchedules = ref([])
 const shifts = ref([])
 const employees = ref([])
 const approvalList = ref([])
@@ -588,6 +651,8 @@ const batchShiftId = ref('')
 const batchDepartment = ref('')
 const batchSubDepartment = ref('')
 const isApplyingBatch = ref(false)
+const isPublishing = ref(false)
+const isFinalizing = ref(false)
 const detail = reactive({ visible: false, doc: null })
 const employeeNameCache = reactive({})
 
@@ -869,6 +934,149 @@ const showIncludeSelfToggle = computed(() => authStore.role === 'supervisor')
 const canEdit = canUseSupervisorFilter
 const missingSupervisorScheduleNoticeKey = ref('')
 
+const publishSummary = computed(() => {
+  const result = {
+    status: 'draft',
+    pendingEmployees: [],
+    disputedEmployees: [],
+    publishedAt: null,
+    hasSchedules: false,
+    totalEmployees: 0,
+    allEmployeesConfirmed: false
+  }
+  const list = Array.isArray(rawSchedules.value) ? rawSchedules.value : []
+  if (!list.length) return result
+
+  result.hasSchedules = true
+  const employeeMap = new Map()
+  let latestPublishedAt = null
+  let hasPublished = false
+  let hasDisputed = false
+  let hasFinalized = false
+
+  list.forEach(item => {
+    if (!item) return
+    const state = item.state || 'draft'
+    const response = item.employeeResponse || 'pending'
+    const employee = item.employee || {}
+    const rawId = employee?._id ?? employee?.id ?? item.employee
+    const id = rawId ? String(rawId) : ''
+    const name = employee?.name || item.employeeName || id
+
+    if (state !== 'draft') hasPublished = true
+    if (state === 'changes_requested' || response === 'disputed') hasDisputed = true
+    if (state === 'finalized') hasFinalized = true
+
+    if (item?.publishedAt) {
+      const published = new Date(item.publishedAt)
+      if (!Number.isNaN(published)) {
+        if (!latestPublishedAt || latestPublishedAt < published) {
+          latestPublishedAt = published
+        }
+      }
+    }
+
+    if (!id) return
+    if (!employeeMap.has(id)) {
+      employeeMap.set(id, {
+        id,
+        name: name || id,
+        pendingCount: 0,
+        disputedCount: 0,
+        latestNote: '',
+        latestResponseAt: null
+      })
+    }
+
+    const entry = employeeMap.get(id)
+    if (state === 'pending_confirmation' && response === 'pending') {
+      entry.pendingCount += 1
+    }
+    if (response === 'disputed' || state === 'changes_requested') {
+      entry.disputedCount += 1
+      if (item?.responseNote) {
+        entry.latestNote = item.responseNote
+      }
+    }
+    if (item?.responseAt) {
+      const responded = new Date(item.responseAt)
+      if (!Number.isNaN(responded)) {
+        if (!entry.latestResponseAt || entry.latestResponseAt < responded) {
+          entry.latestResponseAt = responded
+        }
+      }
+    }
+  })
+
+  const pendingEmployees = []
+  const disputedEmployees = []
+
+  employeeMap.forEach(entry => {
+    if (entry.pendingCount > 0) {
+      pendingEmployees.push({
+        id: entry.id,
+        name: entry.name,
+        pendingCount: entry.pendingCount
+      })
+    }
+    if (entry.disputedCount > 0) {
+      disputedEmployees.push({
+        id: entry.id,
+        name: entry.name,
+        disputedCount: entry.disputedCount,
+        latestNote: entry.latestNote,
+        latestResponseAt: entry.latestResponseAt
+          ? entry.latestResponseAt.toISOString()
+          : null
+      })
+    }
+  })
+
+  result.pendingEmployees = pendingEmployees
+  result.disputedEmployees = disputedEmployees
+  result.totalEmployees = employeeMap.size
+  result.publishedAt = latestPublishedAt ? latestPublishedAt.toISOString() : null
+
+  if (hasFinalized) {
+    result.status = 'finalized'
+  } else if (hasDisputed) {
+    result.status = 'disputed'
+  } else if (hasPublished) {
+    result.status = pendingEmployees.length ? 'pending' : 'ready'
+  } else {
+    result.status = 'draft'
+  }
+
+  result.allEmployeesConfirmed =
+    result.status === 'ready' && pendingEmployees.length === 0 && disputedEmployees.length === 0
+
+  return result
+})
+
+const publishStatusLabel = computed(() => {
+  const map = {
+    draft: '尚未發布',
+    pending: '待員工確認',
+    ready: '可完成發布',
+    disputed: '需處理異議',
+    finalized: '已完成發布'
+  }
+  return map[publishSummary.value.status] || '尚未發布'
+})
+
+const publishDisabled = computed(
+  () =>
+    isPublishing.value ||
+    !publishSummary.value.hasSchedules ||
+    publishSummary.value.status === 'finalized'
+)
+
+const finalizeDisabled = computed(
+  () =>
+    isFinalizing.value ||
+    publishSummary.value.status !== 'ready'
+)
+
 watch(showIncludeSelfToggle, newVal => {
   const supervisorId = getStoredSupervisorId() || getSupervisorIdFromStorage()
   if (!newVal) {
@@ -917,6 +1125,129 @@ const callSuccess = message => {
   if (typeof globalSuccess === 'function' && globalSuccess !== moduleSuccess) {
     globalSuccess(message)
   }
+}
+
+const formatPublishDate = value => {
+  if (!value) return ''
+  const parsed = dayjs(value)
+  if (!parsed.isValid()) return ''
+  return parsed.format('YYYY/MM/DD HH:mm')
+}
+
+function buildPublishPayload() {
+  const payload = { month: currentMonth.value }
+  if (selectedDepartment.value) payload.department = selectedDepartment.value
+  if (selectedSubDepartment.value) payload.subDepartment = selectedSubDepartment.value
+  if (includeSelf.value && showIncludeSelfToggle.value) payload.includeSelf = true
+  return payload
+}
+
+async function publishSchedulesForMonth() {
+  if (isPublishing.value) return
+  try {
+    isPublishing.value = true
+    const res = await apiFetch('/api/schedules/publish', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(buildPublishPayload())
+    })
+    if (!res.ok) {
+      let message = '發布失敗'
+      try {
+        const data = await res.json()
+        if (data?.error) message = data.error
+      } catch (err) {
+        // ignore
+      }
+      throw new Error(message)
+    }
+    callSuccess('已將班表發送給員工確認')
+    await fetchSchedules()
+    await fetchSummary()
+  } catch (err) {
+    callWarning(err?.message || '發布失敗')
+  } finally {
+    isPublishing.value = false
+  }
+}
+
+async function finalizeSchedulesForMonth() {
+  if (isFinalizing.value) return
+  try {
+    isFinalizing.value = true
+    const res = await apiFetch('/api/schedules/publish/finalize', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(buildPublishPayload())
+    })
+    if (res.status === 409) {
+      let message = '仍有員工未回覆'
+      try {
+        const data = await res.json()
+        if (data?.error) message = data.error
+      } catch (err) {
+        // ignore
+      }
+      callWarning(message)
+      await fetchSchedules()
+      return
+    }
+    if (!res.ok) {
+      let message = '完成發布失敗'
+      try {
+        const data = await res.json()
+        if (data?.error) message = data.error
+      } catch (err) {
+        // ignore
+      }
+      throw new Error(message)
+    }
+    callSuccess('班表已完成發布')
+    await fetchSchedules()
+    await fetchSummary()
+  } catch (err) {
+    callWarning(err?.message || '完成發布失敗')
+  } finally {
+    isFinalizing.value = false
+  }
+}
+
+async function confirmPublish() {
+  if (publishDisabled.value) {
+    callWarning('目前沒有可發布的班表')
+    return
+  }
+  try {
+    await ElMessageBox.confirm('確認要將本月班表發送給員工確認嗎？', '批次發布', {
+      type: 'warning',
+      confirmButtonText: '送出',
+      cancelButtonText: '取消'
+    })
+  } catch (err) {
+    return
+  }
+  await publishSchedulesForMonth()
+}
+
+async function confirmFinalize() {
+  if (publishSummary.value.status === 'finalized') {
+    callInfo('班表已完成發布')
+    return
+  }
+  if (finalizeDisabled.value) {
+    callWarning('仍有員工尚未回覆，請確認後再完成發布')
+    return
+  }
+  try {
+    await ElMessageBox.confirm('全部員工已確認，是否完成發布並鎖定班表？', '完成發布', {
+      type: 'success',
+      confirmButtonText: '完成',
+      cancelButtonText: '取消'
+    })
+  } catch (err) {
+    return
+  }
+  await finalizeSchedulesForMonth()
 }
 
 const getStatusText = status => {
@@ -1279,6 +1610,7 @@ async function fetchSchedules() {
     if (!res.ok) throw new Error('Failed to fetch schedules')
     const data = await res.json()
     const schedules = Array.isArray(data) ? data : []
+    rawSchedules.value = schedules
 
     const ds = days.value
     scheduleMap.value = {}
@@ -1387,6 +1719,7 @@ async function fetchSchedules() {
   } catch (err) {
     console.error(err)
     ElMessage.error('取得排班資料失敗')
+    rawSchedules.value = []
   }
 }
 
@@ -1827,7 +2160,7 @@ onMounted(async () => {
   }
 }
 
-.filters-card, .actions-card, .schedule-card, .approval-card {
+.filters-card, .publish-card, .actions-card, .schedule-card, .approval-card {
   background: white;
   border-radius: 16px;
   box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);

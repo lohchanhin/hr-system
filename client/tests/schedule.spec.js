@@ -75,6 +75,7 @@ describe('Schedule.vue', () => {
     ElMessage.info.mockReset()
     ElMessageBox.alert.mockReset()
     ElMessageBox.confirm.mockReset()
+    ElMessageBox.confirm.mockResolvedValue()
     loadingServiceMock.mockClear()
     loadingInstances.length = 0
     pushMock.mockReset()
@@ -176,6 +177,10 @@ describe('Schedule.vue', () => {
     approvals = [],
     leaves = [],
     leaveApprovalsHandler,
+    publishHandler,
+    finalizeHandler,
+    publishResult = null,
+    finalizeResult = null,
     supervisorProfile = {
       _id: 'sup1',
       name: '主管',
@@ -183,7 +188,7 @@ describe('Schedule.vue', () => {
       subDepartment: { _id: 'sd1', name: 'Sub A' }
     }
   } = {}) {
-    apiFetch.mockImplementation(async url => {
+    apiFetch.mockImplementation(async (url, options = {}) => {
       const parsed = new URL(url, 'http://localhost')
       const { pathname, searchParams } = parsed
 
@@ -238,6 +243,25 @@ describe('Schedule.vue', () => {
         }
       }
 
+      if (pathname === '/api/schedules/publish') {
+        if (typeof publishHandler === 'function') {
+          const handled = await publishHandler({ url, options })
+          if (handled) return handled
+        }
+        const resolved =
+          publishResult ?? { updated: 0, publishedAt: new Date().toISOString(), employees: [] }
+        return { ok: true, json: async () => resolved }
+      }
+
+      if (pathname === '/api/schedules/publish/finalize') {
+        if (typeof finalizeHandler === 'function') {
+          const handled = await finalizeHandler({ url, options })
+          if (handled) return handled
+        }
+        const resolved = finalizeResult ?? { finalized: 0 }
+        return { ok: true, json: async () => resolved }
+      }
+
       return { ok: true, json: async () => [] }
     })
   }
@@ -283,6 +307,53 @@ describe('Schedule.vue', () => {
       url.startsWith(`/api/schedules/monthly?month=${month}`)
     )
     expect(monthlyCall?.[0]).toBe(`/api/schedules/monthly?month=${month}&supervisor=sup1`)
+  })
+
+  it('computes publish summary with pending and disputed responses', async () => {
+    setRoleToken('supervisor')
+    localStorage.setItem('employeeId', 'sup1')
+    const month = dayjs().format('YYYY-MM')
+    const scheduleData = [
+      {
+        _id: 'sch1',
+        employee: { _id: 'emp1', name: 'Alice' },
+        date: `${month}-01`,
+        shiftId: 'shiftA',
+        state: 'pending_confirmation',
+        employeeResponse: 'pending',
+        publishedAt: '2024-04-20T00:00:00.000Z'
+      },
+      {
+        _id: 'sch2',
+        employee: { _id: 'emp2', name: 'Bob' },
+        date: `${month}-02`,
+        shiftId: 'shiftA',
+        state: 'changes_requested',
+        employeeResponse: 'disputed',
+        responseNote: '想調整班別',
+        responseAt: '2024-04-21T01:00:00.000Z',
+        publishedAt: '2024-04-20T00:00:00.000Z'
+      }
+    ]
+
+    setupSupervisorApiMock({
+      monthlyWithoutSelf: scheduleData,
+      shifts: [{ _id: 'shiftA', name: '白班' }],
+      departments: [{ _id: 'd1', name: 'Dept A' }],
+      subDepartments: [{ _id: 'sd1', name: 'Sub A', department: { _id: 'd1' } }],
+      directReports: [],
+      employees: []
+    })
+
+    const wrapper = mountSchedule()
+    await flush()
+
+    expect(wrapper.vm.publishSummary.status).toBe('disputed')
+    expect(wrapper.vm.publishSummary.pendingEmployees).toHaveLength(1)
+    expect(wrapper.vm.publishSummary.pendingEmployees[0]).toMatchObject({ id: 'emp1' })
+    expect(wrapper.vm.publishSummary.disputedEmployees).toHaveLength(1)
+    expect(wrapper.vm.publishSummary.disputedEmployees[0]).toMatchObject({ id: 'emp2' })
+    expect(wrapper.vm.publishSummary.publishedAt).toBe('2024-04-20T00:00:00.000Z')
   })
 
   it('appends department filters to leave approval requests', async () => {

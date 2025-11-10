@@ -5,7 +5,7 @@ import request from 'supertest';
 import express from 'express';
 import { jest } from '@jest/globals';
 import ExcelJS from 'exceljs';
-import { authorizeRoles } from '../src/middleware/auth.js';
+import jwt from 'jsonwebtoken';
 
 /* ----------------------------- Mocks: Models ----------------------------- */
 // 統一成物件型態，提供各端點會用到的方法
@@ -15,6 +15,9 @@ const mockShiftSchedule = {
   create: jest.fn(),
   insertMany: jest.fn(),
   deleteMany: jest.fn(),
+  updateMany: jest.fn(),
+  findById: jest.fn(),
+  findByIdAndDelete: jest.fn(),
 };
 
 const mockApprovalRequest = { findOne: jest.fn(), find: jest.fn() };
@@ -24,6 +27,16 @@ const mockAttendanceSetting = { findOne: jest.fn() };
 const mockDepartment = { find: jest.fn() };
 
 const mockGetLeaveFieldIds = jest.fn();
+const mockIsTokenBlacklisted = jest.fn();
+
+const createSelectResponse = (rows = []) => {
+  const chain = {
+    lean: jest.fn().mockResolvedValue(rows),
+  };
+  chain.then = (resolve) => Promise.resolve(rows).then(resolve);
+  chain.catch = (reject) => Promise.resolve(rows).catch(reject);
+  return chain;
+};
 
 const buildScheduleDoc = (data = {}) => {
   const doc = {
@@ -62,14 +75,19 @@ jest.unstable_mockModule('../src/models/Department.js', () => ({ default: mockDe
 jest.unstable_mockModule('../src/services/leaveFieldService.js', () => ({
   getLeaveFieldIds: mockGetLeaveFieldIds,
 }));
+jest.unstable_mockModule('../src/utils/tokenBlacklist.js', () => ({
+  isTokenBlacklisted: mockIsTokenBlacklisted,
+}));
 
 let currentRole = 'supervisor';
 
 /* --------------------------------- App --------------------------------- */
 let app;
 let scheduleRoutes;
+let authorizeRoles;
 
 beforeAll(async () => {
+  ({ authorizeRoles } = await import('../src/middleware/auth.js'));
   scheduleRoutes = (await import('../src/routes/scheduleRoutes.js')).default;
   app = express();
   app.use(express.json());
@@ -87,6 +105,9 @@ beforeEach(() => {
   mockShiftSchedule.create.mockReset();
   mockShiftSchedule.insertMany.mockReset();
   mockShiftSchedule.deleteMany.mockReset();
+  mockShiftSchedule.updateMany.mockReset();
+  mockShiftSchedule.findById.mockReset();
+  mockShiftSchedule.findByIdAndDelete.mockReset();
 
   mockApprovalRequest.findOne.mockReset();
   mockApprovalRequest.find.mockReset();
@@ -98,7 +119,13 @@ beforeEach(() => {
     typeId: 't',
     typeOptions: [],
   });
+  mockIsTokenBlacklisted.mockReset();
+  mockIsTokenBlacklisted.mockResolvedValue(false);
   mockEmployee.find.mockReset();
+  mockEmployee.find.mockReturnValue({
+    select: jest.fn().mockImplementation(() => createSelectResponse([])),
+    lean: jest.fn().mockResolvedValue([]),
+  });
   mockEmployee.findById.mockReset();
   mockEmployee.findById.mockImplementation(async (id) => {
     if (id === 'tester') return { _id: 'tester', role: currentRole };
@@ -121,7 +148,7 @@ beforeEach(() => {
 
 /* --------------------------------- Tests -------------------------------- */
 describe('Schedule API', () => {
-  const buildScheduleAppWithRole = (role) => {
+const buildScheduleAppWithRole = (role) => {
     const exportApp = express();
     exportApp.use(express.json());
     exportApp.use((req, res, next) => {
@@ -143,7 +170,13 @@ describe('Schedule API', () => {
       scheduleRoutes
     );
     return exportApp;
-  };
+};
+
+const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
+  const payload = { id: 'tester', role, ...overrides };
+  const token = jwt.sign(payload, process.env.JWT_SECRET || 'secret');
+  return `Bearer ${token}`;
+};
 
   it('lists schedules', async () => {
     const fakeSchedules = [{ shiftId: 's1', date: new Date('2023-01-01') }];
@@ -369,6 +402,193 @@ describe('Schedule API', () => {
         subDepartment: undefined
       }
     ], { ordered: false });
+  });
+
+  describe('publish and finalize workflow', () => {
+    it('publishes schedules for a supervisor', async () => {
+      const docs = [
+        {
+          _id: 'sch1',
+          employee: { _id: 'emp1', name: '王小明' },
+          state: 'draft',
+          employeeResponse: 'pending',
+          date: new Date('2024-05-01'),
+        },
+      ];
+      mockShiftSchedule.find.mockReturnValue({
+        populate: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockResolvedValue(docs),
+      });
+      mockShiftSchedule.updateMany.mockResolvedValue({ modifiedCount: 1 });
+      const selectMock = jest.fn().mockResolvedValue([{ _id: 'emp1' }]);
+      mockEmployee.find.mockReturnValue({ select: selectMock });
+
+      const res = await request(app)
+        .post('/api/schedules/publish')
+        .set('Authorization', buildAuthHeader('supervisor'))
+        .send({ month: '2024-05' });
+
+      expect(res.status).toBe(200);
+      expect(mockShiftSchedule.find).toHaveBeenCalledWith(expect.objectContaining({
+        date: expect.any(Object),
+        state: { $ne: 'finalized' },
+      }));
+      expect(mockShiftSchedule.updateMany).toHaveBeenCalledWith({
+        _id: { $in: ['sch1'] },
+      }, {
+        $set: expect.objectContaining({
+          state: 'pending_confirmation',
+          employeeResponse: 'pending',
+          responseNote: '',
+        }),
+      });
+      expect(res.body).toEqual({
+        updated: 1,
+        employees: [
+          {
+            id: 'emp1',
+            name: '王小明',
+            response: 'pending',
+            state: 'pending_confirmation',
+          },
+        ],
+        publishedAt: expect.any(String),
+      });
+    });
+
+    it('blocks finalize when employees are pending', async () => {
+      const docs = [
+        {
+          _id: 'sch1',
+          employee: { _id: 'emp1', name: '王小明' },
+          state: 'pending_confirmation',
+          employeeResponse: 'pending',
+          responseNote: '',
+          date: new Date('2024-05-02'),
+        },
+      ];
+      mockShiftSchedule.find.mockReturnValue({
+        populate: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockResolvedValue(docs),
+      });
+      const selectMock = jest.fn().mockResolvedValue([{ _id: 'emp1' }]);
+      mockEmployee.find.mockReturnValue({ select: selectMock });
+
+      const res = await request(app)
+        .post('/api/schedules/publish/finalize')
+        .set('Authorization', buildAuthHeader('supervisor'))
+        .send({ month: '2024-05' });
+
+      expect(res.status).toBe(409);
+      expect(res.body).toEqual({
+        error: 'unconfirmed employees',
+        pendingEmployees: [
+          expect.objectContaining({ id: 'emp1', name: '王小明' }),
+        ],
+        disputedEmployees: [],
+      });
+      expect(mockShiftSchedule.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('finalizes schedules when all confirmed', async () => {
+      const docs = [
+        {
+          _id: 'sch1',
+          employee: { _id: 'emp1', name: '王小明' },
+          state: 'pending_confirmation',
+          employeeResponse: 'confirmed',
+          responseNote: '',
+          date: new Date('2024-05-03'),
+        },
+      ];
+      mockShiftSchedule.find.mockReturnValue({
+        populate: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockResolvedValue(docs),
+      });
+      const selectMock = jest.fn().mockResolvedValue([{ _id: 'emp1' }]);
+      mockEmployee.find.mockReturnValue({ select: selectMock });
+
+      const res = await request(app)
+        .post('/api/schedules/publish/finalize')
+        .set('Authorization', buildAuthHeader('supervisor'))
+        .send({ month: '2024-05' });
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ finalized: 1 });
+      expect(mockShiftSchedule.updateMany).toHaveBeenCalledWith({
+        _id: { $in: ['sch1'] },
+      }, { $set: { state: 'finalized' } });
+    });
+  });
+
+  describe('employee schedule response', () => {
+    const buildDoc = (overrides = {}) => ({
+      _id: 'schX',
+      state: 'pending_confirmation',
+      employeeResponse: 'pending',
+      responseNote: '',
+      employee: { _id: 'empX', name: '回應員工' },
+      save: jest.fn().mockImplementation(function save() {
+        return Promise.resolve(this);
+      }),
+      populate: jest.fn().mockImplementation(function populate() {
+        return Promise.resolve(this);
+      }),
+      ...overrides,
+    });
+
+    it('allows employee to confirm schedule', async () => {
+      const doc = buildDoc({ _id: 'sch1', employee: { _id: 'emp1', name: '王小明' } });
+      mockShiftSchedule.findById.mockReturnValue({
+        populate: jest.fn().mockResolvedValue(doc),
+      });
+
+      const res = await request(app)
+        .post('/api/schedules/sch1/respond')
+        .set('Authorization', buildAuthHeader('employee', { id: 'emp1' }))
+        .send({ response: 'confirm' });
+
+      expect(res.status).toBe(200);
+      expect(doc.save).toHaveBeenCalled();
+      expect(res.body.employeeResponse).toBe('confirmed');
+      expect(res.body.responseNote).toBe('');
+      expect(res.body.state).toBe('pending_confirmation');
+      expect(res.body.responseAt).toBeDefined();
+    });
+
+    it('requires dispute note when rejecting schedule', async () => {
+      const doc = buildDoc({ _id: 'sch2', employee: { _id: 'emp2', name: '李小華' } });
+      mockShiftSchedule.findById.mockReturnValue({
+        populate: jest.fn().mockResolvedValue(doc),
+      });
+
+      const res = await request(app)
+        .post('/api/schedules/sch2/respond')
+        .set('Authorization', buildAuthHeader('employee', { id: 'emp2' }))
+        .send({ response: 'dispute', note: '班別與請假衝突' });
+
+      expect(res.status).toBe(200);
+      expect(res.body.employeeResponse).toBe('disputed');
+      expect(res.body.state).toBe('changes_requested');
+      expect(res.body.responseNote).toBe('班別與請假衝突');
+      expect(doc.save).toHaveBeenCalled();
+    });
+
+    it('rejects dispute without note', async () => {
+      const doc = buildDoc({ _id: 'sch3', employee: { _id: 'emp3', name: '張大成' } });
+      mockShiftSchedule.findById.mockReturnValue({
+        populate: jest.fn().mockResolvedValue(doc),
+      });
+
+      const res = await request(app)
+        .post('/api/schedules/sch3/respond')
+        .set('Authorization', buildAuthHeader('employee', { id: 'emp3' }))
+        .send({ response: 'dispute' });
+
+      expect(res.status).toBe(400);
+      expect(res.body).toEqual({ error: 'objection note required' });
+      expect(doc.save).not.toHaveBeenCalled();
+    });
   });
 
   it('rejects batch if schedule exists', async () => {

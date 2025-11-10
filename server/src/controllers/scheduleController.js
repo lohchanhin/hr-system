@@ -54,6 +54,68 @@ function buildMonthDays(startDate) {
   return days;
 }
 
+function buildMonthRange(month) {
+  if (!month) throw new Error('month required');
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) {
+    throw new Error('invalid month format');
+  }
+  const start = new Date(`${month}-01`);
+  if (Number.isNaN(start.getTime())) {
+    throw new Error('invalid month');
+  }
+  const end = new Date(start);
+  end.setMonth(end.getMonth() + 1);
+  return { start, end };
+}
+
+function normalizeScheduleField(value) {
+  if (value instanceof Date) return value.getTime();
+  if (typeof value === 'object' && value) {
+    if (value._id) return value._id.toString();
+    if (value.id) return value.id.toString();
+    if (typeof value.toString === 'function' && value.toString !== Object.prototype.toString) {
+      return value.toString();
+    }
+  }
+  if (value === null || value === undefined) return '';
+  return value.toString();
+}
+
+function resetScheduleProgress(doc) {
+  doc.state = 'draft';
+  doc.publishedAt = null;
+  doc.employeeResponse = 'pending';
+  doc.responseNote = '';
+  doc.responseAt = null;
+}
+
+function hasScheduleDiff(existing, nextData) {
+  const fields = ['employee', 'date', 'shiftId', 'department', 'subDepartment'];
+  return fields.some((field) => {
+    const prev = normalizeScheduleField(existing[field]);
+    const next = normalizeScheduleField(nextData[field]);
+    return prev !== next;
+  });
+}
+
+async function resolveScopedEmployeeIds(user, { includeSelf = false } = {}) {
+  if (!user) throw new Error('unauthorized');
+  const { role, id } = user;
+  if (['admin'].includes(role)) {
+    return null;
+  }
+  if (role === 'supervisor') {
+    const list = await Employee.find({ supervisor: id }).select('_id');
+    const ids = list.map((e) => e._id.toString());
+    if (includeSelf && id) ids.push(String(id));
+    return ids;
+  }
+  if (role === 'employee' && id) {
+    return [String(id)];
+  }
+  return [];
+}
+
 function normalizeId(value) {
   if (!value && value !== 0) return '';
   if (typeof value === 'object') {
@@ -493,11 +555,22 @@ export async function createSchedulesBatch(req, res) {
     for (const sched of uniqueSchedules) {
       const existing = await ShiftSchedule.findOne({ employee: sched.employee, date: sched.date });
       if (existing) {
-        existing.employee = sched.employee;
-        existing.date = sched.date;
-        existing.shiftId = sched.shiftId;
-        existing.department = sched.department ?? existing.department;
-        existing.subDepartment = sched.subDepartment ?? existing.subDepartment;
+        const nextData = {
+          employee: sched.employee,
+          date: sched.date,
+          shiftId: sched.shiftId,
+          department: sched.department ?? existing.department,
+          subDepartment: sched.subDepartment ?? existing.subDepartment,
+        };
+        const shouldReset = hasScheduleDiff(existing, nextData);
+        existing.employee = nextData.employee;
+        existing.date = nextData.date;
+        existing.shiftId = nextData.shiftId;
+        existing.department = nextData.department;
+        existing.subDepartment = nextData.subDepartment;
+        if (shouldReset) {
+          resetScheduleProgress(existing);
+        }
         const saved = await existing.save();
         updated.push(typeof saved?.toObject === 'function' ? saved.toObject() : saved);
       } else {
@@ -518,6 +591,183 @@ export async function createSchedulesBatch(req, res) {
     }
 
     res.status(201).json([...inserted, ...updated]);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+}
+
+function buildPublishQuery({ start, end }, { department, subDepartment }) {
+  const query = {
+    date: { $gte: start, $lt: end },
+    state: { $ne: 'finalized' },
+  };
+  if (department) query.department = department;
+  if (subDepartment) query.subDepartment = subDepartment;
+  return query;
+}
+
+function summarizeEmployees(docs) {
+  const map = new Map();
+  docs.forEach((doc) => {
+    const emp = doc.employee || {};
+    const id = emp?._id?.toString?.() || doc.employee?.toString?.();
+    if (!id) return;
+    if (!map.has(id)) {
+      map.set(id, {
+        id,
+        name: emp.name || '',
+        response: doc.employeeResponse || 'pending',
+        state: doc.state || 'draft',
+      });
+    }
+  });
+  return Array.from(map.values());
+}
+
+export async function publishSchedules(req, res) {
+  try {
+    const { month, department, subDepartment, includeSelf } = req.body || {};
+    let range;
+    try {
+      range = buildMonthRange(month);
+    } catch (err) {
+      return res.status(400).json({ error: err.message });
+    }
+
+    let scopedIds;
+    try {
+      scopedIds = await resolveScopedEmployeeIds(req.user, { includeSelf });
+    } catch (err) {
+      return res.status(401).json({ error: err.message || 'unauthorized' });
+    }
+
+    const query = buildPublishQuery(range, { department, subDepartment });
+    if (Array.isArray(scopedIds)) {
+      if (!scopedIds.length) {
+        return res.status(404).json({ error: 'no employees in scope' });
+      }
+      query.employee = { $in: scopedIds };
+    }
+
+    const docs = await ShiftSchedule.find(query).populate('employee').lean();
+    if (!docs.length) {
+      return res.status(404).json({ error: 'no schedules found' });
+    }
+
+    const now = new Date();
+    const ids = docs.map((doc) => doc._id);
+    await ShiftSchedule.updateMany({ _id: { $in: ids } }, {
+      $set: {
+        state: 'pending_confirmation',
+        publishedAt: now,
+        employeeResponse: 'pending',
+        responseNote: '',
+        responseAt: null,
+      },
+    });
+
+    const employees = summarizeEmployees(docs).map((entry) => ({
+      ...entry,
+      response: 'pending',
+      state: 'pending_confirmation',
+    }));
+
+    res.json({
+      updated: ids.length,
+      employees,
+      publishedAt: now.toISOString(),
+    });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+}
+
+export async function finalizeSchedules(req, res) {
+  try {
+    const { month, department, subDepartment, includeSelf } = req.body || {};
+    let range;
+    try {
+      range = buildMonthRange(month);
+    } catch (err) {
+      return res.status(400).json({ error: err.message });
+    }
+
+    let scopedIds;
+    try {
+      scopedIds = await resolveScopedEmployeeIds(req.user, { includeSelf });
+    } catch (err) {
+      return res.status(401).json({ error: err.message || 'unauthorized' });
+    }
+
+    const query = {
+      ...buildPublishQuery(range, { department, subDepartment }),
+    };
+    query.state = { $in: ['pending_confirmation', 'changes_requested'] };
+    if (Array.isArray(scopedIds)) {
+      if (!scopedIds.length) {
+        return res.status(404).json({ error: 'no employees in scope' });
+      }
+      query.employee = { $in: scopedIds };
+    }
+
+    const docs = await ShiftSchedule.find(query).populate('employee').lean();
+    if (!docs.length) {
+      return res.status(404).json({ error: 'no schedules found' });
+    }
+
+    const pendingMap = new Map();
+    const disputedMap = new Map();
+    const register = (collection, doc) => {
+      const emp = doc.employee || {};
+      const id = emp?._id?.toString?.() || doc.employee?.toString?.();
+      if (!id) return;
+      if (!collection.has(id)) {
+        collection.set(id, {
+          id,
+          name: emp.name || '',
+          response: doc.employeeResponse,
+          latestNote: doc.responseNote || '',
+          schedules: [],
+        });
+      }
+      const entry = collection.get(id);
+      entry.schedules.push({
+        scheduleId: doc._id?.toString?.() || String(doc._id),
+        date: doc.date instanceof Date ? doc.date.toISOString() : new Date(doc.date).toISOString(),
+        state: doc.state,
+        response: doc.employeeResponse,
+        note: doc.responseNote || '',
+      });
+    };
+
+    docs.forEach((doc) => {
+      if (doc.employeeResponse === 'confirmed') return;
+      if (doc.employeeResponse === 'disputed' || doc.state === 'changes_requested') {
+        register(disputedMap, doc);
+      } else {
+        register(pendingMap, doc);
+      }
+    });
+
+    if (pendingMap.size || disputedMap.size) {
+      return res.status(409).json({
+        error: 'unconfirmed employees',
+        pendingEmployees: Array.from(pendingMap.values()),
+        disputedEmployees: Array.from(disputedMap.values()),
+      });
+    }
+
+    const pendingDocs = docs.filter((doc) => doc.state === 'pending_confirmation');
+    if (!pendingDocs.length) {
+      return res.status(400).json({ error: 'no pending schedules to finalize' });
+    }
+
+    const ids = pendingDocs.map((doc) => doc._id);
+    await ShiftSchedule.updateMany({ _id: { $in: ids } }, {
+      $set: { state: 'finalized' },
+    });
+
+    res.json({ finalized: ids.length });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
@@ -606,12 +856,87 @@ export async function updateSchedule(req, res) {
       return res.status(400).json({ error: 'leave conflict' });
     }
 
-    schedule.employee = newEmployee;
-    schedule.date = newDate;
-    if (shiftId !== undefined) schedule.shiftId = shiftId;
-    if (department !== undefined) schedule.department = department;
-    if (subDepartment !== undefined) schedule.subDepartment = subDepartment;
+    const nextData = {
+      employee: newEmployee,
+      date: newDate,
+      shiftId: shiftId !== undefined ? shiftId : schedule.shiftId,
+      department: department !== undefined ? department : schedule.department,
+      subDepartment: subDepartment !== undefined ? subDepartment : schedule.subDepartment,
+    };
+    const shouldReset = hasScheduleDiff(schedule, nextData);
+    schedule.employee = nextData.employee;
+    schedule.date = nextData.date;
+    schedule.shiftId = nextData.shiftId;
+    schedule.department = nextData.department;
+    schedule.subDepartment = nextData.subDepartment;
+    if (shouldReset) {
+      resetScheduleProgress(schedule);
+    }
     const saved = await schedule.save();
+    res.json(saved);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+}
+
+function normalizeResponsePayload(response) {
+  const value = String(response || '').trim().toLowerCase();
+  if (!value) return '';
+  return value;
+}
+
+function sanitizeNote(note) {
+  if (typeof note !== 'string') return '';
+  const trimmed = note.trim();
+  if (!trimmed) return '';
+  return trimmed.slice(0, 1000);
+}
+
+export async function respondToSchedule(req, res) {
+  try {
+    const { id } = req.params;
+    const { response, note } = req.body || {};
+    const schedule = await ShiftSchedule.findById(id).populate('employee');
+    if (!schedule) return res.status(404).json({ error: 'Not found' });
+
+    const userId = req.user?.id;
+    if (!userId) return res.status(401).json({ error: 'unauthorized' });
+
+    const employeeId = schedule.employee?._id?.toString?.() || schedule.employee?.toString?.();
+    if (!employeeId || employeeId !== String(userId)) {
+      return res.status(403).json({ error: 'forbidden' });
+    }
+
+    if (schedule.state === 'finalized') {
+      return res.status(400).json({ error: 'schedule finalized' });
+    }
+    if (schedule.state !== 'pending_confirmation') {
+      return res.status(400).json({ error: 'schedule not awaiting confirmation' });
+    }
+
+    const normalized = normalizeResponsePayload(response);
+    const noteValue = sanitizeNote(note);
+    const now = new Date();
+
+    if (['confirm', 'confirmed', 'approve', 'approved', 'accept', 'accepted', 'ok', 'okay', 'yes'].includes(normalized)) {
+      schedule.employeeResponse = 'confirmed';
+      schedule.state = 'pending_confirmation';
+      schedule.responseNote = '';
+      schedule.responseAt = now;
+    } else if (['dispute', 'disputed', 'reject', 'rejected', 'no', 'object', 'objection', 'issue'].includes(normalized)) {
+      if (!noteValue) {
+        return res.status(400).json({ error: 'objection note required' });
+      }
+      schedule.employeeResponse = 'disputed';
+      schedule.state = 'changes_requested';
+      schedule.responseNote = noteValue;
+      schedule.responseAt = now;
+    } else {
+      return res.status(400).json({ error: 'invalid response' });
+    }
+
+    const saved = await schedule.save();
+    await saved.populate('employee');
     res.json(saved);
   } catch (err) {
     res.status(400).json({ error: err.message });

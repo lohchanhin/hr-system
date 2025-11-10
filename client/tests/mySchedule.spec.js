@@ -2,6 +2,23 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { shallowMount } from '@vue/test-utils'
 import { apiFetch } from '../src/api'
 
+const { messageMock, messageBoxMock } = vi.hoisted(() => {
+  const message = {
+    success: vi.fn(),
+    error: vi.fn(),
+    warning: vi.fn()
+  }
+  const box = {
+    confirm: vi.fn()
+  }
+  return { messageMock: message, messageBoxMock: box }
+})
+
+vi.mock('element-plus', () => ({
+  ElMessage: messageMock,
+  ElMessageBox: messageBoxMock
+}))
+
 vi.mock('../src/api', () => ({ apiFetch: vi.fn() }))
 vi.mock('../src/utils/tokenService', () => ({ getToken: () => localStorage.getItem('token') }))
 
@@ -11,6 +28,9 @@ describe('MySchedule.vue', () => {
   beforeEach(() => {
     apiFetch.mockReset()
     localStorage.clear()
+    Object.values(messageMock).forEach(fn => fn.mockReset())
+    messageBoxMock.confirm.mockReset()
+    messageBoxMock.confirm.mockResolvedValue()
   })
 
   function flush() {
@@ -29,7 +49,11 @@ describe('MySchedule.vue', () => {
         stubs: {
           'el-table': { template: '<div><slot></slot></div>' },
           'el-table-column': true,
-          'el-date-picker': true
+          'el-date-picker': true,
+          'el-tag': true,
+          'el-button': true,
+          'el-dialog': { template: '<div><slot></slot><slot name="footer"></slot></div>' },
+          'el-input': { template: '<textarea />' }
         }
       }
     })
@@ -51,5 +75,6 @@ describe('MySchedule.vue', () => {
     expect(apiFetch).toHaveBeenNthCalledWith(2, '/api/schedules/monthly?month=2023-02&employee=emp1')
     expect(wrapper.vm.schedules[0].shiftName).toBe('早班 (A1)')
     expect(wrapper.vm.schedules[0].date).toBe('2023/02/01')
+    expect(wrapper.vm.schedules[0].state).toBe('draft')
   })
 })

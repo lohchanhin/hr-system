@@ -17,6 +17,11 @@ jest.unstable_mockModule('../src/models/Employee.js', () => ({
   default: mockEmployeeModel
 }))
 
+const mockIsTokenBlacklisted = jest.fn()
+jest.unstable_mockModule('../src/utils/tokenBlacklist.js', () => ({
+  isTokenBlacklisted: mockIsTokenBlacklisted
+}))
+
 const { importAttendanceRecords, parseTimestamp } = await import('../src/controllers/attendanceImportController.js')
 
 function mockEmployeeFindWith(data) {
@@ -51,6 +56,8 @@ async function createWorkbookBuffer(rows) {
 beforeEach(() => {
   mockAttendanceRecord.insertMany.mockReset()
   mockEmployeeModel.find.mockReset()
+  mockIsTokenBlacklisted.mockReset()
+  mockIsTokenBlacklisted.mockResolvedValue(false)
 })
 
 describe('parseTimestamp', () => {

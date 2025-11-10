@@ -11,7 +11,10 @@ import {
   deleteOldSchedules,
   listLeaveApprovals,
   listSupervisorSummary,
-  listScheduleOverview
+  listScheduleOverview,
+  publishSchedules,
+  finalizeSchedules,
+  respondToSchedule,
 } from '../controllers/scheduleController.js';
 import { verifySupervisor } from '../middleware/supervisor.js';
 import { authenticate, authorizeRoles } from '../middleware/auth.js';
@@ -24,9 +27,12 @@ router.get('/leave-approvals', listLeaveApprovals);
 router.get('/summary', authenticate, authorizeRoles('supervisor'), listSupervisorSummary);
 router.get('/overview', authorizeRoles('admin'), listScheduleOverview);
 router.get('/export', exportSchedules);
+router.post('/publish', authenticate, authorizeRoles('supervisor', 'admin'), publishSchedules);
+router.post('/publish/finalize', authenticate, authorizeRoles('supervisor', 'admin'), finalizeSchedules);
 router.post('/batch', verifySupervisor, createSchedulesBatch);
 router.post('/', verifySupervisor, createSchedule);
 router.get('/:id', getSchedule);
+router.post('/:id/respond', authenticate, authorizeRoles('employee'), respondToSchedule);
 router.put('/:id', verifySupervisor, updateSchedule);
 router.delete('/older-than', verifySupervisor, deleteOldSchedules);
 router.delete('/:id', deleteSchedule);
