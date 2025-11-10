@@ -328,6 +328,23 @@ function toggleIgnore(identifier) {
   if (t.ignore) t.employeeId = ''
 }
 
+function buildFailureMessage(payload, fallbackMessage) {
+  const reasons = Array.isArray(payload?.failureReasons)
+    ? payload.failureReasons.filter(Boolean)
+    : []
+  const reasonText = reasons.length ? reasons.join('、') : ''
+  if (payload?.message && reasonText) {
+    return `${payload.message}：${reasonText}`
+  }
+  if (payload?.message) {
+    return payload.message
+  }
+  if (reasonText) {
+    return reasonText
+  }
+  return fallbackMessage
+}
+
 // 打包上傳資料（dryRun 控制預覽）
 function buildFormData({ dryRun }) {
   if (!selectedFile.value) return null
@@ -409,11 +426,20 @@ async function submitImport() {
     })()
 
     if (!res.ok) {
-      ElMessage.error(result.message || '匯入失敗，請稍後再試')
+      if (result && typeof result === 'object') {
+        previewState.value = result.summary ? result : previewState.value
+      }
+      ElMessage.error(buildFailureMessage(result, '匯入失敗，請稍後再試'))
       return
     }
 
     previewState.value = result
+    const importedCount = Number(result?.summary?.importedCount ?? 0)
+    if (importedCount <= 0) {
+      ElMessage.error(buildFailureMessage(result, '所有資料均未匯入'))
+      return
+    }
+
     ElMessage.success(result.message || '考勤資料匯入完成')
     emit('import-complete', result)
     handleClose()

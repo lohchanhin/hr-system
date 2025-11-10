@@ -210,6 +210,42 @@ describe('attendanceImportController', () => {
     }))
   })
 
+  it('非預覽模式且沒有資料成功匯入時會回傳 400 與失敗摘要', async () => {
+    const buffer = await createWorkbookBuffer([
+      { USERID: 'unknown', CHECKTIME: '2024-01-05 09:00', CHECKTYPE: 'I' }
+    ])
+
+    mockEmployeeFindWith([])
+
+    const req = {
+      user: { role: 'admin' },
+      file: {
+        buffer,
+        mimetype: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        originalname: 'attendance.xlsx'
+      },
+      body: {
+        options: JSON.stringify({ timezone: 'Asia/Taipei', dryRun: false })
+      }
+    }
+
+    const res = createMockRes()
+
+    await importAttendanceRecords(req, res)
+
+    expect(mockAttendanceRecord.insertMany).not.toHaveBeenCalled()
+    expect(res.status).toHaveBeenCalledWith(400)
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: expect.stringContaining('所有資料均未匯入'),
+        failureReasons: expect.arrayContaining([
+          expect.stringContaining('1 筆資料缺少對應員工')
+        ]),
+        summary: expect.objectContaining({ importedCount: 0, missingCount: 1 })
+      })
+    )
+  })
+
   it('可解析 UTF-16LE 編碼的 CSV 並於預覽顯示正確時間', async () => {
     const csvContent = 'USERID,CHECKTIME,CHECKTYPE\nEMP001,2024-03-01 09:30:00,I\n'
     const bom = Buffer.from([0xff, 0xfe])
