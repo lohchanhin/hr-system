@@ -134,6 +134,14 @@ app.use(
       }
       return authorizeRoles('employee', 'supervisor', 'admin')(req, res, next);
     }
+    const requestPath = req.path ?? '';
+    const pathSegments = requestPath.split('/').filter(Boolean);
+    const isRespondPost =
+      req.method === 'POST' &&
+      (pathSegments[0] === 'respond' || pathSegments[1] === 'respond');
+    if (isRespondPost) {
+      return authorizeRoles('employee', 'supervisor', 'admin')(req, res, next);
+    }
     return authorizeRoles('supervisor', 'admin')(req, res, next);
   },
   scheduleRoutes
