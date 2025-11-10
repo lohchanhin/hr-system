@@ -999,20 +999,50 @@ export async function importAttendanceRecords(req, res) {
     await flushBatch()
   }
 
+  const summary = {
+    totalRows,
+    readyCount,
+    missingCount,
+    ignoredCount,
+    errorCount,
+    uniqueUserCount: uniqueUsers.size,
+    importedCount: dryRun ? 0 : importedCount
+  }
+
   const response = {
     dryRun,
     timezone,
-    summary: {
-      totalRows,
-      readyCount,
-      missingCount,
-      ignoredCount,
-      errorCount,
-      uniqueUserCount: uniqueUsers.size,
-      importedCount: dryRun ? 0 : importedCount
-    },
+    summary,
     preview: previewSamples,
     missingUsers: Array.from(missingUserMap.values())
+  }
+
+  if (!dryRun) {
+    const failureReasons = []
+    if (errorCount) {
+      failureReasons.push(`${errorCount} 筆資料驗證失敗`)
+    }
+    if (missingCount) {
+      failureReasons.push(`${missingCount} 筆資料缺少對應員工`)
+    }
+    if (ignoredCount && !readyCount) {
+      failureReasons.push(`${ignoredCount} 筆資料被設定為忽略`)
+    }
+    if (!failureReasons.length && !readyCount) {
+      failureReasons.push('沒有任何可匯入的資料')
+    }
+
+    if (summary.importedCount === 0) {
+      const baseMessage = errorCount > 0 ? '匯入失敗' : '所有資料均未匯入'
+      const detail = failureReasons.join('、')
+      response.message = detail ? `${baseMessage}：${detail}` : baseMessage
+      if (failureReasons.length) {
+        response.failureReasons = failureReasons
+      }
+      const statusCode = errorCount > 0 || readyCount === 0 ? 400 : 200
+      res.status(statusCode).json(response)
+      return
+    }
   }
 
   if (!dryRun && missingUserMap.size) {

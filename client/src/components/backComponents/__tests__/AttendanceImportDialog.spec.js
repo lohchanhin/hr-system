@@ -226,4 +226,57 @@ describe('AttendanceImportDialog', () => {
     expect(ElMessage.success).toHaveBeenCalledWith('考勤資料匯入完成')
     expect(wrapper.emitted()['import-complete']).toBeTruthy()
   })
+
+  it('匯入 API 回傳失敗摘要時會顯示錯誤並保留對話框', async () => {
+    importAttendanceMock
+      .mockResolvedValueOnce(createApiResponse({
+        summary: { totalRows: 1, readyCount: 0, missingCount: 1, ignoredCount: 0, errorCount: 0 },
+        preview: [
+          {
+            rowNumber: 1,
+            userId: 'unknown',
+            action: 'clockIn',
+            timestamp: '2024-01-05T00:00:00.000Z',
+            status: 'missing',
+            errors: []
+          }
+        ],
+        missingUsers: [{ identifier: 'unknown', count: 1, rows: [1], samples: [] }],
+        message: '預覽成功'
+      }))
+      .mockResolvedValueOnce(
+        createApiResponse(
+          {
+            summary: {
+              totalRows: 1,
+              readyCount: 0,
+              missingCount: 1,
+              ignoredCount: 0,
+              errorCount: 0,
+              importedCount: 0
+            },
+            preview: [],
+            missingUsers: [{ identifier: 'unknown', count: 1, rows: [1], samples: [] }],
+            message: '所有資料均未匯入',
+            failureReasons: ['1 筆資料缺少對應員工']
+          },
+          400
+        )
+      )
+
+    const wrapper = mountComponent()
+    wrapper.vm.selectedFile = new File(['content'], 'records.xlsx')
+
+    await wrapper.vm.submitPreview()
+    await wrapper.vm.$nextTick()
+    wrapper.vm.missingResolutions.unknown.ignore = true
+    await wrapper.vm.submitImport()
+    await wrapper.vm.$nextTick()
+
+    expect(ElMessage.error).toHaveBeenCalledWith('所有資料均未匯入：1 筆資料缺少對應員工')
+    expect(ElMessage.success).not.toHaveBeenCalled()
+    expect(wrapper.vm.visible).toBe(true)
+    expect(wrapper.emitted()['import-complete']).toBeFalsy()
+    expect(wrapper.vm.previewState.summary.importedCount).toBe(0)
+  })
 })
