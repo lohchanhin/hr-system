@@ -559,6 +559,26 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
       expect(res.body.responseAt).toBeDefined();
     });
 
+    it('allows supervisor to confirm own schedule', async () => {
+      const doc = buildDoc({
+        _id: 'sch-sup-1',
+        employee: { _id: 'sup1', name: '主管本人' },
+      });
+      mockShiftSchedule.findById.mockReturnValue({
+        populate: jest.fn().mockResolvedValue(doc),
+      });
+
+      const res = await request(app)
+        .post('/api/schedules/sch-sup-1/respond')
+        .set('Authorization', buildAuthHeader('supervisor', { id: 'sup1' }))
+        .send({ response: 'confirm' });
+
+      expect(res.status).toBe(200);
+      expect(doc.save).toHaveBeenCalled();
+      expect(res.body.employeeResponse).toBe('confirmed');
+      expect(res.body.responseNote).toBe('');
+    });
+
     it('requires dispute note when rejecting schedule', async () => {
       const doc = buildDoc({ _id: 'sch2', employee: { _id: 'emp2', name: '李小華' } });
       mockShiftSchedule.findById.mockReturnValue({
@@ -621,6 +641,37 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
       expect(doc1.employeeResponse).toBe('confirmed');
       expect(doc2.employeeResponse).toBe('confirmed');
       expect(sessionMock.startTransaction).toHaveBeenCalled();
+      expect(sessionMock.commitTransaction).toHaveBeenCalled();
+      expect(sessionMock.abortTransaction).not.toHaveBeenCalled();
+    });
+
+    it('allows supervisor to confirm own schedules in bulk', async () => {
+      const doc1 = buildDoc({ _id: 'sch-sup-b1', employee: { _id: 'supBulk', name: '主管A' } });
+      const doc2 = buildDoc({ _id: 'sch-sup-b2', employee: { _id: 'supBulk', name: '主管A' } });
+      const sessionMock = {
+        startTransaction: jest.fn().mockResolvedValue(),
+        commitTransaction: jest.fn().mockResolvedValue(),
+        abortTransaction: jest.fn().mockResolvedValue(),
+        endSession: jest.fn().mockResolvedValue(),
+      };
+      mockShiftSchedule.startSession.mockResolvedValue(sessionMock);
+      mockShiftSchedule.findById.mockImplementation((id) => ({
+        populate: jest.fn().mockResolvedValue(id === 'sch-sup-b1' ? doc1 : doc2),
+      }));
+
+      const res = await request(app)
+        .post('/api/schedules/respond/bulk')
+        .set('Authorization', buildAuthHeader('supervisor', { id: 'supBulk' }))
+        .send({ scheduleIds: ['sch-sup-b1', 'sch-sup-b2'], response: 'confirm' });
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({
+        success: true,
+        count: 2,
+        schedules: expect.any(Array),
+      });
+      expect(doc1.employeeResponse).toBe('confirmed');
+      expect(doc2.employeeResponse).toBe('confirmed');
       expect(sessionMock.commitTransaction).toHaveBeenCalled();
       expect(sessionMock.abortTransaction).not.toHaveBeenCalled();
     });
