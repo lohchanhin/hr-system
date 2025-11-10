@@ -420,6 +420,12 @@ function logout() {
     z-index: 1000;
     height: calc(100vh - 64px);
     top: 64px;
+    left: -100%;
+    box-shadow: 2px 0 8px rgba(0, 0, 0, 0.15);
+  }
+
+  .layout-aside.is-open {
+    top: 64px;
     left: 0;
     box-shadow: 2px 0 8px rgba(0, 0, 0, 0.15);
   }
