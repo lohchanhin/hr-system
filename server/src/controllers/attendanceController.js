@@ -1,6 +1,18 @@
 import AttendanceRecord from '../models/AttendanceRecord.js';
 import Employee from '../models/Employee.js';
 import AttendanceManagementSetting from '../models/AttendanceManagementSetting.js';
+import ShiftSchedule from '../models/ShiftSchedule.js';
+import AttendanceSetting from '../models/AttendanceSetting.js';
+import {
+  buildScheduleDate,
+  computeActionWindow,
+  computeShiftSpan,
+  formatWindow,
+  getLocalDateParts,
+  getTimezone,
+  isWithinWindow,
+  createDateFromParts,
+} from '../utils/timeWindow.js';
 
 function toStringId(value) {
   if (!value) return undefined;
@@ -116,7 +128,113 @@ export async function createRecord(req, res) {
     if (!employee || !action) {
       return res.status(400).json({ error: 'employee and action are required' });
     }
-    const record = new AttendanceRecord({ employee, action, timestamp, remark });
+
+    const punchTime = (() => {
+      if (!timestamp) return new Date();
+      const date = new Date(timestamp);
+      return Number.isNaN(date.getTime()) ? null : date;
+    })();
+
+    if (!punchTime) {
+      return res.status(400).json({ error: 'invalid timestamp' });
+    }
+
+    if (action === 'clockIn' || action === 'clockOut') {
+      const timeZone = getTimezone();
+      const baseParts = getLocalDateParts(punchTime, timeZone);
+      if (!baseParts) {
+        return res.status(400).json({ error: '無法解析打卡日期' });
+      }
+
+      const todayScheduleDate = buildScheduleDate(baseParts);
+      const baseMidnight = createDateFromParts(baseParts, timeZone);
+      const previousMidnight = baseMidnight ? new Date(baseMidnight.getTime() - 24 * 60 * 60 * 1000) : null;
+      const previousParts = previousMidnight ? getLocalDateParts(previousMidnight, timeZone) : null;
+      const previousScheduleDate = previousParts ? buildScheduleDate(previousParts) : null;
+
+      const candidateDates = [todayScheduleDate, previousScheduleDate].filter(Boolean);
+
+      const schedules = candidateDates.length
+        ? await ShiftSchedule.find({ employee, date: { $in: candidateDates } }).lean()
+        : [];
+
+      if (!schedules.length) {
+        return res.status(400).json({ error: '今日未設定班表，請洽管理員' });
+      }
+
+      const attendanceSetting = await AttendanceSetting.findOne().lean();
+      const shiftMap = new Map();
+      attendanceSetting?.shifts?.forEach((shift) => {
+        if (!shift?._id) return;
+        shiftMap.set(shift._id.toString(), shift);
+      });
+
+      const contexts = schedules
+        .map((schedule) => {
+          let shiftId;
+          if (schedule.shiftId && typeof schedule.shiftId === 'object' && typeof schedule.shiftId.toString === 'function') {
+            shiftId = schedule.shiftId.toString();
+          } else if (schedule.shiftId || schedule.shiftId === 0) {
+            shiftId = String(schedule.shiftId);
+          }
+          const shift = shiftId ? shiftMap.get(shiftId) : null;
+          if (!shift) return null;
+          const span = computeShiftSpan(schedule.date, shift, timeZone);
+          if (!span) return null;
+          const scheduleDateMs = new Date(schedule.date).getTime();
+          return {
+            schedule,
+            shift,
+            shiftStart: span.start,
+            shiftEnd: span.end,
+            scheduleDateMs,
+          };
+        })
+        .filter(Boolean);
+
+      if (!contexts.length) {
+        return res.status(400).json({ error: '班別設定缺少時間資訊，請聯絡管理員' });
+      }
+
+      const todayKey = todayScheduleDate?.getTime();
+      const previousKey = previousScheduleDate?.getTime();
+
+      const nowMs = punchTime.getTime();
+      const activeContext = contexts.find((ctx) => nowMs >= ctx.shiftStart.getTime() && nowMs <= ctx.shiftEnd.getTime());
+      const todayContext = contexts.find((ctx) => todayKey !== undefined && ctx.scheduleDateMs === todayKey);
+      const previousContext = contexts.find((ctx) => previousKey !== undefined && ctx.scheduleDateMs === previousKey);
+      const selectedContext = activeContext || todayContext || previousContext || contexts[0];
+
+      const actionWindow = computeActionWindow(action, selectedContext.shiftStart, selectedContext.shiftEnd);
+      if (!actionWindow) {
+        return res.status(400).json({ error: '班別尚未設定簽到簽退時間' });
+      }
+
+      if (!isWithinWindow(punchTime, actionWindow)) {
+        const label = action === 'clockIn' ? '上班簽到' : '下班簽退';
+        const windowText = formatWindow(actionWindow, timeZone);
+        const before = nowMs < actionWindow.start.getTime();
+        const after = nowMs > actionWindow.end.getTime();
+        const hint = windowText
+          ? `${windowText.start} ~ ${windowText.end}`
+          : `${actionWindow.start.toISOString()} ~ ${actionWindow.end.toISOString()}`;
+        const reason = before
+          ? `${label}尚未開放，允許時段為 ${hint}`
+          : after
+            ? `${label}時段已結束，允許時段為 ${hint}`
+            : `${label}僅允許於 ${hint} 進行`;
+        return res.status(400).json({
+          error: reason,
+          allowedWindow: {
+            start: actionWindow.start.toISOString(),
+            end: actionWindow.end.toISOString(),
+          },
+          action,
+        });
+      }
+    }
+
+    const record = new AttendanceRecord({ employee, action, timestamp: punchTime, remark });
     await record.save();
     res.status(201).json(record);
   } catch (err) {

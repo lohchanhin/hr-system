@@ -17,21 +17,33 @@
     <div class="punch-section">
       <h2 class="section-title">快速打卡</h2>
       <div class="punch-grid">
-        <div class="punch-card" @click="onClockIn">
-          <div class="punch-icon clock-in">
-            <i class="el-icon-sunrise"></i>
+        <el-tooltip :disabled="!clockInState.reason" :content="clockInState.reason" placement="bottom">
+          <div
+            class="punch-card"
+            :class="{ disabled: clockInState.disabled }"
+            @click="onClockIn"
+          >
+            <div class="punch-icon clock-in">
+              <i class="el-icon-sunrise"></i>
+            </div>
+            <h3 class="punch-title">上班簽到</h3>
+            <p class="punch-desc">開始新的一天</p>
           </div>
-          <h3 class="punch-title">上班簽到</h3>
-          <p class="punch-desc">開始新的一天</p>
-        </div>
-        
-        <div class="punch-card" @click="onClockOut">
-          <div class="punch-icon clock-out">
-            <i class="el-icon-sunset"></i>
+        </el-tooltip>
+
+        <el-tooltip :disabled="!clockOutState.reason" :content="clockOutState.reason" placement="bottom">
+          <div
+            class="punch-card"
+            :class="{ disabled: clockOutState.disabled }"
+            @click="onClockOut"
+          >
+            <div class="punch-icon clock-out">
+              <i class="el-icon-sunset"></i>
+            </div>
+            <h3 class="punch-title">下班簽退</h3>
+            <p class="punch-desc">結束工作時間</p>
           </div>
-          <h3 class="punch-title">下班簽退</h3>
-          <p class="punch-desc">結束工作時間</p>
-        </div>
+        </el-tooltip>
         
         <div class="punch-card" @click="onOuting">
           <div class="punch-icon outing">
@@ -101,11 +113,12 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import dayjs from 'dayjs'
 import { ElMessage } from 'element-plus'
 import { apiFetch } from '../../api'
 import { getToken } from '../../utils/tokenService'
+import { determineActionAvailability, getTimezone } from '../../utils/timeWindow'
 
 // 將中文動作與後端定義的值互轉
 const actionMap = {
@@ -126,6 +139,28 @@ let timeInterval = null
 const remarkDialogVisible = ref(false)
 const remarkText = ref('')
 const pendingAction = ref('')
+const shiftDefinitions = ref([])
+const monthlySchedules = ref([])
+const actionAvailability = ref(determineActionAvailability())
+
+const clockInState = computed(() => actionAvailability.value.actions?.clockIn || {
+  disabled: true,
+  reason: '今日未設定班表，無法打卡'
+})
+
+const clockOutState = computed(() => actionAvailability.value.actions?.clockOut || {
+  disabled: true,
+  reason: '今日未設定班表，無法打卡'
+})
+
+function updateAvailability(now = new Date()) {
+  actionAvailability.value = determineActionAvailability({
+    now,
+    schedules: monthlySchedules.value,
+    shifts: shiftDefinitions.value,
+    timeZone: getTimezone()
+  })
+}
 
 async function fetchRecords() {
   const res = await apiFetch('/api/attendance')
@@ -143,10 +178,54 @@ async function fetchRecords() {
   }
 }
 
+async function fetchShifts() {
+  try {
+    const res = await apiFetch('/api/shifts')
+    if (!res.ok) throw new Error('failed')
+    const data = await res.json().catch(() => [])
+    shiftDefinitions.value = Array.isArray(data) ? data : []
+  } catch (err) {
+    console.error(err)
+    shiftDefinitions.value = []
+  }
+}
+
+async function fetchMonthlySchedule() {
+  const employeeId = getEmployeeId()
+  if (!employeeId) {
+    monthlySchedules.value = []
+    return
+  }
+  try {
+    const month = dayjs().format('YYYY-MM')
+    const params = new URLSearchParams({ month, employee: employeeId })
+    const res = await apiFetch(`/api/schedules/monthly?${params.toString()}`)
+    if (!res.ok) throw new Error('failed')
+    const data = await res.json().catch(() => [])
+    monthlySchedules.value = Array.isArray(data) ? data : []
+  } catch (err) {
+    console.error(err)
+    monthlySchedules.value = []
+  }
+}
+
+async function loadScheduleContext() {
+  await Promise.all([fetchShifts(), fetchMonthlySchedule()])
+  updateAvailability(new Date())
+}
+
 function onClockIn() {
+  if (clockInState.value.disabled) {
+    ElMessage.warning(clockInState.value.reason)
+    return
+  }
   openRemarkDialog('上班簽到')
 }
 function onClockOut() {
+  if (clockOutState.value.disabled) {
+    ElMessage.warning(clockOutState.value.reason)
+    return
+  }
   openRemarkDialog('下班簽退')
 }
 function onOuting() {
@@ -219,6 +298,7 @@ function updateTime() {
   const now = dayjs()
   currentTime.value = now.format('HH:mm:ss')
   currentDate.value = now.format('YYYY/MM/DD')
+  updateAvailability(now.toDate())
 }
 
 function getActionTagType(action) {
@@ -233,6 +313,7 @@ function getActionTagType(action) {
 
 onMounted(() => {
   fetchRecords()
+  loadScheduleContext()
   updateTime()
   timeInterval = setInterval(updateTime, 1000)
 })
@@ -328,6 +409,12 @@ onUnmounted(() => {
   transform: translateY(-4px);
   box-shadow: 0 8px 25px rgba(0, 0, 0, 0.15);
   border-color: #10b981;
+}
+
+.punch-card.disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+  border-color: #cbd5f5;
 }
 
 .punch-icon {
