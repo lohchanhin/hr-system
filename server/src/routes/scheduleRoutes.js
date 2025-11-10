@@ -33,8 +33,18 @@ router.post('/publish/finalize', authenticate, authorizeRoles('supervisor', 'adm
 router.post('/batch', verifySupervisor, createSchedulesBatch);
 router.post('/', verifySupervisor, createSchedule);
 router.get('/:id', getSchedule);
-router.post('/respond/bulk', authenticate, authorizeRoles('employee'), respondToSchedulesBulk);
-router.post('/:id/respond', authenticate, authorizeRoles('employee'), respondToSchedule);
+router.post(
+  '/respond/bulk',
+  authenticate,
+  authorizeRoles('employee', 'supervisor'),
+  respondToSchedulesBulk
+);
+router.post(
+  '/:id/respond',
+  authenticate,
+  authorizeRoles('employee', 'supervisor'),
+  respondToSchedule
+);
 router.put('/:id', verifySupervisor, updateSchedule);
 router.delete('/older-than', verifySupervisor, deleteOldSchedules);
 router.delete('/:id', deleteSchedule);
