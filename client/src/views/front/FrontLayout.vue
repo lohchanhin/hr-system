@@ -59,7 +59,12 @@
           @click="gotoPage(item.name)"
           class="menu-item"
         >
-          <img :src="iconMap[item.name] || iconMap.default" alt="" class="menu-icon" />
+          <img
+            :src="resolveIcon(item)"
+            class="menu-icon"
+            :data-icon-key="availableMenuIcons[item.icon] ? item.icon : 'default'"
+            alt=""
+          />
           <span class="menu-label">{{ item.label }}</span>
         </el-menu-item>
       </el-menu>
@@ -88,28 +93,7 @@ import { useMenuStore } from "../../stores/menu";
 import { useProfileStore } from "../../stores/profile";
 import { clearToken } from "../../utils/tokenService";
 import { storeToRefs } from "pinia";
-import hrLogo from "/HR.png";
-
-const iconMap = {
-  Attendance: "/出勤管理打卡.png",
-  MySchedule: "/排班.png",
-  Schedule: "/排班.png",
-  Approval: "/簽核.png",
-  AttendanceSetting: "/出勤設定.png",
-  AttendanceManagementSetting: "/出勤管理打卡.png",
-  LeaveOvertimeSetting: "/請假加班.png",
-  ShiftScheduleSetting: "/排班.png",
-  ApprovalFlowSetting: "/簽核.png",
-  SalaryManagementSetting: "/薪資.png",
-  SocialInsuranceRetirementSetting: "/社保.png",
-  HRManagementSystemSetting: "/人資管理.png",
-  OtherControlSetting: "/其他控制.png",
-  OrgDepartmentSetting: "/部門設定.png",
-  ScheduleOverview: "/排班.png",
-  DepartmentReports: "/報表.png",
-  FrontDepartmentReports: "/報表.png",
-  default: "/HR.png",
-};
+import { iconMap as availableMenuIcons, resolveMenuIcon } from "../../constants/menuIcons";
 
 const router = useRouter();
 const route = useRoute();
@@ -189,6 +173,10 @@ onBeforeUnmount(() => {
     window.removeEventListener("resize", updateSidebarCollapse);
   }
 });
+
+function resolveIcon(item) {
+  return resolveMenuIcon(item);
+}
 
 function gotoPage(pageName) {
   router.push({ name: pageName });
@@ -344,11 +332,16 @@ function onLogout() {
 }
 
 .menu-icon {
-  width: 24px;
-  height: 24px;
+  width: 28px;
+  height: 28px;
   margin-right: 12px;
   object-fit: contain;
-  transition: margin 0.3s ease, transform 0.3s ease, opacity 0.3s ease;
+  transition: transform 0.3s ease, filter 0.3s ease;
+}
+
+.menu-item:hover .menu-icon {
+  transform: scale(1.05);
+  filter: drop-shadow(0 4px 6px rgba(15, 76, 117, 0.35));
 }
 
 .menu-label {
