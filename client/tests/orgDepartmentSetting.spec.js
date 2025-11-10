@@ -46,6 +46,7 @@ describe('OrgDepartmentSetting.vue', () => {
     expect(wrapper.findComponent({ name: 'ElSelect' }).exists()).toBe(true)
     expect(wrapper.vm.form).toHaveProperty('organization')
     expect(wrapper.vm.form).toHaveProperty('defaultTwoDayOff', true)
+    expect(wrapper.vm.form).toHaveProperty('uniformNumber', '')
   })
 
   it('fetchList adds parent id query', async () => {
@@ -78,6 +79,7 @@ describe('OrgDepartmentSetting.vue', () => {
     expect(wrapper.vm.form.defaultTwoDayOff).toBe(false)
     expect(wrapper.vm.form.tempChangeAllowed).toBe(false)
     expect(wrapper.vm.form).toHaveProperty('deptManager', '')
+    expect(wrapper.vm.form.uniformNumber).toBe('')
   })
 
   it('saves department with schedule fields', async () => {
@@ -85,13 +87,20 @@ describe('OrgDepartmentSetting.vue', () => {
     apiFetch.mockClear()
     await wrapper.vm.openDialog('dept')
     wrapper.vm.form = {
+      ...wrapper.vm.form,
       name: '人資',
       organization: 'org1',
       code: 'D1',
       unitName: '',
+      institutionCode: 'IC-010',
+      uniformNumber: '12345678',
+      laborInsuranceNumber: 'LAB123',
+      healthInsuranceNumber: 'HEA123',
+      taxRegistrationNumber: 'TAX123',
       location: '',
       phone: '',
       manager: '',
+      responsiblePerson: '王主管',
       defaultTwoDayOff: false,
       tempChangeAllowed: true,
       deptManager: 'mgr1',
@@ -107,7 +116,9 @@ describe('OrgDepartmentSetting.vue', () => {
       defaultTwoDayOff: false,
       tempChangeAllowed: true,
       deptManager: 'mgr1',
-      scheduleNotes: '備註'
+      scheduleNotes: '備註',
+      uniformNumber: '12345678',
+      responsiblePerson: '王主管'
     })
   })
 
@@ -235,7 +246,11 @@ describe('OrgDepartmentSetting.vue', () => {
       ...wrapper.vm.form,
       name: '夜班組',
       department: 'dept1',
-      shiftId: 's1'
+      shiftId: 's1',
+      uniformNumber: '12345678',
+      laborInsuranceNumber: 'LAB001',
+      healthInsuranceNumber: 'HEA001',
+      taxRegistrationNumber: 'TAX001'
     }
     wrapper.vm.editIndex = null
     apiFetch.mockClear()
@@ -246,6 +261,7 @@ describe('OrgDepartmentSetting.vue', () => {
     const payload = JSON.parse(options.body)
     expect(payload.shiftId).toBe('s1')
     expect(payload).not.toHaveProperty('shift')
+    expect(payload.uniformNumber).toBe('12345678')
   })
 
   it('顯示選取部門的機構與部門組合', async () => {
