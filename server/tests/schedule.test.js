@@ -1367,5 +1367,56 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
         ['台北總院', '外科部', '外科病房', 'Brian', '護理師', '2024-05-01', '小夜班'],
       ]));
     });
+
+    it('exports overview without department filter when only organization is provided', async () => {
+      currentRole = 'admin';
+      const month = '2024-05';
+      const fakeSchedules = [
+        {
+          _id: 'sch-1',
+          shiftId: 's1',
+          date: new Date('2024-05-01T00:00:00.000Z'),
+          employee: { _id: 'emp-1', name: 'Alice', title: '護理師' },
+          department: {
+            _id: 'dept-1',
+            name: '內科部',
+            organization: { _id: 'org-1', name: '台北總院' },
+          },
+          subDepartment: { _id: 'sub-1', name: '急診一科' },
+        },
+      ];
+
+      mockDepartment.find.mockReturnValue({
+        select: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockResolvedValue([
+          { _id: 'dept-1', organization: 'org-1', name: '內科部' },
+          { _id: 'dept-2', organization: 'org-1', name: '外科部' },
+        ]),
+      });
+
+      mockAttendanceSetting.findOne.mockReturnValue({
+        lean: jest.fn().mockResolvedValue({
+          shifts: [
+            { _id: 's1', name: '早班' },
+            { _id: 's2', name: '小夜班' },
+          ],
+        }),
+      });
+      mockShiftSchedule.find.mockReturnValue(buildPopulateChain(fakeSchedules));
+
+      const res = await request(app)
+        .get(`/api/schedules/overview/export?month=${month}&format=excel&organization=org-1`)
+        .buffer(true)
+        .parse((response, callback) => {
+          const chunks = [];
+          response.on('data', (chunk) => chunks.push(chunk));
+          response.on('end', () => callback(null, Buffer.concat(chunks)));
+        });
+
+      expect(res.status).toBe(200);
+      expect(res.headers['content-disposition']).toBe(
+        'attachment; filename="schedule-overview-202405-org-1.xlsx"'
+      );
+    });
   });
 });
