@@ -7,7 +7,33 @@
 
     <el-card class="filters-card" shadow="never">
       <template #header>
-        <div class="filters-header">篩選條件</div>
+        <div class="filters-header">
+          <div class="filters-title">篩選條件</div>
+          <div class="export-actions">
+            <el-button-group>
+              <el-button
+                type="primary"
+                plain
+                data-test="export-excel"
+                :loading="exportLoading && exportFormat === 'excel'"
+                :disabled="isExportDisabled"
+                @click="handleExport('excel')"
+              >
+                匯出 Excel
+              </el-button>
+              <el-button
+                type="primary"
+                plain
+                data-test="export-pdf"
+                :loading="exportLoading && exportFormat === 'pdf'"
+                :disabled="isExportDisabled"
+                @click="handleExport('pdf')"
+              >
+                匯出 PDF
+              </el-button>
+            </el-button-group>
+          </div>
+        </div>
       </template>
       <div class="filters-grid">
         <div class="filter-item">
@@ -177,6 +203,8 @@ const errorMessage = ref('')
 const days = ref([])
 const overviewData = ref([])
 const referenceLoaded = ref(false)
+const exportLoading = ref(false)
+const exportFormat = ref('')
 let requestSequence = 0
 
 const toId = value => {
@@ -213,6 +241,10 @@ const hasOverviewData = computed(() => {
   return overviewData.value.some(org =>
     org.departments.some(dept => dept.subDepartments.some(unit => unit.employees.length))
   )
+})
+
+const isExportDisabled = computed(() => {
+  return !selectedMonth.value || loading.value || exportLoading.value || !referenceLoaded.value
 })
 
 const formatDayLabel = day => {
@@ -256,6 +288,20 @@ async function parseResponse(res, fallbackMessage) {
     throw new Error(message)
   }
   return res.json()
+}
+
+async function parseBlobResponse(res, fallbackMessage) {
+  if (!res.ok) {
+    let message = fallbackMessage
+    try {
+      const payload = await res.json()
+      message = payload?.error || payload?.message || message
+    } catch (error) {
+      // ignore json parse error
+    }
+    throw new Error(message)
+  }
+  return res.blob()
 }
 
 async function loadReferenceData() {
@@ -333,6 +379,53 @@ function onDepartmentChange() {
   loadOverview()
 }
 
+function findNameById(list, id) {
+  if (!id) return ''
+  const match = list.value.find(item => toId(item._id || item.id) === id)
+  return match?.name || ''
+}
+
+function buildExportFilename(format) {
+  const extension = format === 'pdf' ? 'pdf' : 'xlsx'
+  const orgName = findNameById(organizations, selectedOrganization.value) || '全部機構'
+  const deptName = findNameById(departments, selectedDepartment.value) || '全部部門'
+  const subName = findNameById(subDepartments, selectedSubDepartment.value) || '全部小單位'
+  return `班表總覽_${selectedMonth.value}_${orgName}_${deptName}_${subName}.${extension}`
+}
+
+async function handleExport(format) {
+  if (!selectedMonth.value) {
+    ElMessage.error('請先選擇月份')
+    return
+  }
+
+  exportLoading.value = true
+  exportFormat.value = format
+
+  try {
+    const params = new URLSearchParams({ month: selectedMonth.value })
+    if (selectedOrganization.value) params.set('organization', selectedOrganization.value)
+    if (selectedDepartment.value) params.set('department', selectedDepartment.value)
+    if (selectedSubDepartment.value) params.set('subDepartment', selectedSubDepartment.value)
+    params.set('format', format)
+
+    const res = await apiFetch(`/api/schedules/export?${params.toString()}`)
+    const blob = await parseBlobResponse(res, '匯出失敗')
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = buildExportFilename(format)
+    link.click()
+    URL.revokeObjectURL(url)
+  } catch (err) {
+    const message = err?.message || '匯出失敗'
+    ElMessage.error(message)
+  } finally {
+    exportLoading.value = false
+    exportFormat.value = ''
+  }
+}
+
 onMounted(async () => {
   await loadReferenceData()
   await loadOverview()
@@ -374,6 +467,20 @@ onMounted(async () => {
 .filters-header {
   font-weight: 600;
   color: #0f172a;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.filters-title {
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.export-actions {
+  display: flex;
+  align-items: center;
 }
 
 .filters-grid {

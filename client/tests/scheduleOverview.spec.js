@@ -95,6 +95,19 @@ const DatePickerStub = {
   }
 }
 
+const ButtonStub = {
+  name: 'ElButton',
+  props: ['loading', 'disabled'],
+  emits: ['click'],
+  template: `
+    <button class="button-stub" :disabled="disabled || loading" @click="$emit('click')">
+      <slot />
+    </button>
+  `
+}
+
+const ButtonGroupStub = { name: 'ElButtonGroup', template: '<div class="button-group-stub"><slot /></div>' }
+
 const CardStub = { name: 'ElCard', template: '<section class="card-stub"><slot /><slot name="header" /></section>' }
 const AlertStub = { name: 'ElAlert', template: '<div class="alert-stub"><slot /></div>' }
 const EmptyStub = { name: 'ElEmpty', template: '<div class="empty-stub"><slot /></div>' }
@@ -106,21 +119,32 @@ describe('ScheduleOverview.vue', () => {
   beforeEach(() => {
     apiFetch.mockReset()
     messageMock.ElMessage.error.mockReset()
+    if (typeof HTMLAnchorElement !== 'undefined') {
+      HTMLAnchorElement.prototype.click = vi.fn()
+    }
   })
 
-  function setupApiMocks({ overview, organizations = [], departments = [], subDepartments = [] }) {
+  function setupApiMocks({
+    overview,
+    organizations = [],
+    departments = [],
+    subDepartments = [],
+    exportResponse
+  }) {
     const responses = {
       '/api/organizations': { ok: true, json: async () => organizations },
       '/api/departments': { ok: true, json: async () => departments },
       '/api/sub-departments': { ok: true, json: async () => subDepartments },
-      '/api/schedules/overview': { ok: true, json: async () => overview }
+      '/api/schedules/overview': { ok: true, json: async () => overview },
+      '/api/schedules/export':
+        exportResponse || { ok: true, blob: async () => new Blob(['test'], { type: 'application/octet-stream' }) }
     }
 
     apiFetch.mockImplementation(async url => {
       const parsed = new URL(url, 'http://localhost')
       const { pathname } = parsed
       if (responses[pathname]) {
-        return responses[pathname]
+        return typeof responses[pathname] === 'function' ? responses[pathname](parsed) : responses[pathname]
       }
       throw new Error(`Unexpected fetch path: ${pathname}`)
     })
@@ -176,6 +200,8 @@ describe('ScheduleOverview.vue', () => {
           'el-select': SelectStub,
           'el-option': OptionStub,
           'el-date-picker': DatePickerStub,
+          'el-button': ButtonStub,
+          'el-button-group': ButtonGroupStub,
           'el-table': TableStub,
           'el-table-column': ColumnStub,
           'el-alert': AlertStub,
@@ -203,6 +229,100 @@ describe('ScheduleOverview.vue', () => {
     expect(messageMock.ElMessage.error).not.toHaveBeenCalled()
   })
 
+  it('triggers export with current filters', async () => {
+    const month = dayjs().format('YYYY-MM')
+    const createObjectURL = vi.fn(() => 'blob:url')
+    const revokeSpy = vi.fn()
+    global.URL.createObjectURL = createObjectURL
+    global.URL.revokeObjectURL = revokeSpy
+
+    setupApiMocks({
+      organizations: [{ _id: 'org-1', name: '台北總院' }],
+      departments: [{ _id: 'dept-1', name: '內科部', organization: 'org-1' }],
+      subDepartments: [{ _id: 'sub-1', name: '急診一科', department: 'dept-1' }],
+      overview: { month, days: [], organizations: [] }
+    })
+
+    const wrapper = shallowMount(ScheduleOverview, {
+      global: {
+        stubs: {
+          'el-card': CardStub,
+          'el-select': SelectStub,
+          'el-option': OptionStub,
+          'el-date-picker': DatePickerStub,
+          'el-button': ButtonStub,
+          'el-button-group': ButtonGroupStub,
+          'el-table': TableStub,
+          'el-table-column': ColumnStub,
+          'el-alert': AlertStub,
+          'el-empty': EmptyStub,
+          'el-skeleton': SkeletonStub
+        }
+      }
+    })
+
+    await flush()
+    await flush()
+
+    wrapper.vm.selectedOrganization = 'org-1'
+    wrapper.vm.selectedDepartment = 'dept-1'
+    wrapper.vm.selectedSubDepartment = 'sub-1'
+    await wrapper.vm.$nextTick()
+
+    const exportButton = wrapper.find('[data-test="export-excel"]')
+    await exportButton.trigger('click')
+    await flush()
+
+    const exportCall = apiFetch.mock.calls.find(call => call[0].includes('/api/schedules/export'))
+    expect(exportCall[0]).toContain(`month=${month}`)
+    expect(exportCall[0]).toContain('organization=org-1')
+    expect(exportCall[0]).toContain('department=dept-1')
+    expect(exportCall[0]).toContain('subDepartment=sub-1')
+    expect(exportCall[0]).toContain('format=excel')
+    expect(createObjectURL).toHaveBeenCalled()
+    expect(revokeSpy).toHaveBeenCalled()
+  })
+
+  it('shows error message when export fails', async () => {
+    const month = dayjs().format('YYYY-MM')
+    setupApiMocks({
+      organizations: [{ _id: 'org-1', name: '台北總院' }],
+      departments: [{ _id: 'dept-1', name: '內科部', organization: 'org-1' }],
+      subDepartments: [{ _id: 'sub-1', name: '急診一科', department: 'dept-1' }],
+      overview: { month, days: [], organizations: [] },
+      exportResponse: { ok: false, json: async () => ({ error: '無法匯出' }) }
+    })
+
+    const wrapper = shallowMount(ScheduleOverview, {
+      global: {
+        stubs: {
+          'el-card': CardStub,
+          'el-select': SelectStub,
+          'el-option': OptionStub,
+          'el-date-picker': DatePickerStub,
+          'el-button': ButtonStub,
+          'el-button-group': ButtonGroupStub,
+          'el-table': TableStub,
+          'el-table-column': ColumnStub,
+          'el-alert': AlertStub,
+          'el-empty': EmptyStub,
+          'el-skeleton': SkeletonStub
+        }
+      }
+    })
+
+    await flush()
+    await flush()
+
+    const exportButton = wrapper.find('[data-test="export-pdf"]')
+    await exportButton.trigger('click')
+    await flush()
+
+    expect(messageMock.ElMessage.error).toHaveBeenCalledWith('無法匯出')
+    const exportCall = apiFetch.mock.calls.find(call => call[0].includes('/api/schedules/export'))
+    expect(exportCall[0]).toContain('format=pdf')
+  })
+
   it('shows error message when overview request fails', async () => {
     const month = dayjs().format('YYYY-MM')
     apiFetch.mockImplementation(async url => {
@@ -224,6 +344,8 @@ describe('ScheduleOverview.vue', () => {
           'el-select': SelectStub,
           'el-option': OptionStub,
           'el-date-picker': DatePickerStub,
+          'el-button': ButtonStub,
+          'el-button-group': ButtonGroupStub,
           'el-table': TableStub,
           'el-table-column': ColumnStub,
           'el-alert': AlertStub,
