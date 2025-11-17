@@ -12,6 +12,7 @@ import {
   listLeaveApprovals,
   listSupervisorSummary,
   listScheduleOverview,
+  exportScheduleOverview,
   publishSchedules,
   finalizeSchedules,
   respondToSchedule,
@@ -27,6 +28,7 @@ router.get('/monthly', listMonthlySchedules);
 router.get('/leave-approvals', listLeaveApprovals);
 router.get('/summary', authenticate, authorizeRoles('supervisor'), listSupervisorSummary);
 router.get('/overview', authorizeRoles('admin'), listScheduleOverview);
+router.get('/overview/export', authorizeRoles('admin'), exportScheduleOverview);
 router.get('/export', exportSchedules);
 router.post('/publish', authenticate, authorizeRoles('supervisor', 'admin'), publishSchedules);
 router.post('/publish/finalize', authenticate, authorizeRoles('supervisor', 'admin'), finalizeSchedules);
