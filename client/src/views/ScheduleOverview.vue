@@ -409,7 +409,7 @@ async function handleExport(format) {
     if (selectedSubDepartment.value) params.set('subDepartment', selectedSubDepartment.value)
     params.set('format', format)
 
-    const res = await apiFetch(`/api/schedules/export?${params.toString()}`)
+    const res = await apiFetch(`/api/schedules/overview/export?${params.toString()}`)
     const blob = await parseBlobResponse(res, '匯出失敗')
     const url = URL.createObjectURL(blob)
     const link = document.createElement('a')
