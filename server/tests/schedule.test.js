@@ -65,6 +65,19 @@ const buildPopulateChain = (value) => {
   return chain;
 };
 
+const toBuffer = (body) => {
+  if (Buffer.isBuffer(body)) return body;
+  if (body instanceof Uint8Array) return Buffer.from(body);
+  if (Array.isArray(body)) return Buffer.from(body);
+  if (body && typeof body === 'object' && 'data' in body) {
+    return Buffer.from(body.data);
+  }
+  const type = body === null
+    ? 'null'
+    : `${typeof body}:${body.constructor?.name ?? 'unknown'}`;
+  throw new Error(`Unexpected response body type: ${type}`);
+};
+
 /* --------------------------- jest.mock 設定區 --------------------------- */
 
 
@@ -1101,19 +1114,6 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
     );
     expect(mockShiftSchedule.find).toHaveBeenCalledTimes(1);
 
-    const toBuffer = (body) => {
-      if (Buffer.isBuffer(body)) return body;
-      if (body instanceof Uint8Array) return Buffer.from(body);
-      if (Array.isArray(body)) return Buffer.from(body);
-      if (body && typeof body === 'object' && 'data' in body) {
-        return Buffer.from(body.data);
-      }
-      const type = body === null
-        ? 'null'
-        : `${typeof body}:${body.constructor?.name ?? 'unknown'}`;
-      throw new Error(`Unexpected response body type: ${type}`);
-    };
-
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.load(toBuffer(res.body));
     const worksheet = workbook.getWorksheet('Schedules');
@@ -1256,6 +1256,116 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
       expect(res.status).toBe(200);
       expect(res.body).toEqual({ month: '2024-05', days: expect.any(Array), organizations: [] });
       expect(res.body.days[0]).toBe('2024-05-01');
+    });
+
+    it('blocks non-admin when exporting overview', async () => {
+      currentRole = 'employee';
+
+      const res = await request(app)
+        .get('/api/schedules/overview/export?month=2024-05&format=excel');
+
+      expect(res.status).toBe(403);
+      expect(res.body).toEqual({ error: 'Forbidden' });
+      expect(mockShiftSchedule.find).not.toHaveBeenCalled();
+    });
+
+    it('validates month and format when exporting overview', async () => {
+      currentRole = 'admin';
+
+      const missingMonth = await request(app)
+        .get('/api/schedules/overview/export?format=excel');
+      expect(missingMonth.status).toBe(400);
+      expect(missingMonth.body).toEqual({ error: 'month required' });
+
+      const invalidFormat = await request(app)
+        .get('/api/schedules/overview/export?month=2024-05&format=csv');
+      expect(invalidFormat.status).toBe(400);
+      expect(invalidFormat.body).toEqual({ error: 'format must be pdf or excel' });
+      expect(mockShiftSchedule.find).not.toHaveBeenCalled();
+    });
+
+    it('exports overview schedules to excel', async () => {
+      currentRole = 'admin';
+      const month = '2024-05';
+      const fakeSchedules = [
+        {
+          _id: 'sch-1',
+          shiftId: 's1',
+          date: new Date('2024-05-01T00:00:00.000Z'),
+          employee: { _id: 'emp-1', name: 'Alice', title: '護理師' },
+          department: {
+            _id: 'dept-1',
+            name: '內科部',
+            organization: { _id: 'org-1', name: '台北總院' },
+          },
+          subDepartment: { _id: 'sub-1', name: '急診一科' },
+        },
+        {
+          _id: 'sch-2',
+          shiftId: 's2',
+          date: new Date('2024-05-02T00:00:00.000Z'),
+          employee: { _id: 'emp-1', name: 'Alice', title: '護理師' },
+          department: {
+            _id: 'dept-1',
+            name: '內科部',
+            organization: { _id: 'org-1', name: '台北總院' },
+          },
+          subDepartment: { _id: 'sub-1', name: '急診一科' },
+        },
+        {
+          _id: 'sch-3',
+          shiftId: 's2',
+          date: new Date('2024-05-01T00:00:00.000Z'),
+          employee: { _id: 'emp-2', name: 'Brian', title: '護理師' },
+          department: {
+            _id: 'dept-2',
+            name: '外科部',
+            organization: { _id: 'org-1', name: '台北總院' },
+          },
+          subDepartment: { _id: 'sub-2', name: '外科病房' },
+        },
+      ];
+
+      mockAttendanceSetting.findOne.mockReturnValue({
+        lean: jest.fn().mockResolvedValue({
+          shifts: [
+            { _id: 's1', name: '早班' },
+            { _id: 's2', name: '小夜班' },
+          ],
+        }),
+      });
+      mockShiftSchedule.find.mockReturnValue(buildPopulateChain(fakeSchedules));
+
+      const res = await request(app)
+        .get(`/api/schedules/overview/export?month=${month}&format=excel`)
+        .buffer(true)
+        .parse((response, callback) => {
+          const chunks = [];
+          response.on('data', (chunk) => chunks.push(chunk));
+          response.on('end', () => callback(null, Buffer.concat(chunks)));
+        });
+
+      expect(res.status).toBe(200);
+      expect(res.headers['content-disposition']).toBe(
+        'attachment; filename="schedule-overview-202405.xlsx"'
+      );
+
+      const workbook = new ExcelJS.Workbook();
+      await workbook.xlsx.load(toBuffer(res.body));
+      const worksheet = workbook.getWorksheet('Overview');
+      const dataRows = [];
+      worksheet.eachRow((row, idx) => {
+        if (idx > 1) {
+          dataRows.push(row.values.slice(1));
+        }
+      });
+
+      expect(dataRows).toHaveLength(3);
+      expect(dataRows).toEqual(expect.arrayContaining([
+        ['台北總院', '內科部', '急診一科', 'Alice', '護理師', '2024-05-01', '早班'],
+        ['台北總院', '內科部', '急診一科', 'Alice', '護理師', '2024-05-02', '小夜班'],
+        ['台北總院', '外科部', '外科病房', 'Brian', '護理師', '2024-05-01', '小夜班'],
+      ]));
     });
   });
 });
