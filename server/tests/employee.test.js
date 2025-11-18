@@ -113,6 +113,7 @@ describe('Employee API', () => {
     const newEmp = {
       name: 'Jane',
       email: 'jane@example.com',
+      employeeNo: 'E001',
       organization: 'Org',
       department: 'd1',
       subDepartment: 'sd1',
@@ -146,6 +147,7 @@ describe('Employee API', () => {
       username: 'ann',
       password: 'pass',
       role: 'employee',
+      employeeNo: 'E002',
       maritalStatus: '',
       employmentStatus: 'wrong',
       bloodType: 'X',
@@ -163,16 +165,23 @@ describe('Employee API', () => {
   });
 
   it('fails on invalid email or role', async () => {
-    const payload = { name: 'A', email: 'bad', role: 'x', username: 'a', password: 'p' };
+    const payload = { name: 'A', email: 'bad', role: 'x', username: 'a', password: 'p', employeeNo: 'E003' };
     const res = await request(app).post('/api/employees').send(payload);
     expect(res.status).toBe(400);
   });
 
   it('fails when email is missing', async () => {
-    const payload = { name: 'A', username: 'a', password: 'p' };
+    const payload = { name: 'A', username: 'a', password: 'p', employeeNo: 'E004' };
     const res = await request(app).post('/api/employees').send(payload);
     expect(res.status).toBe(400);
     expect(res.body).toEqual({ error: 'Email is required' });
+  });
+
+  it('fails when employee number is missing', async () => {
+    const payload = { name: 'A', username: 'a', password: 'p', email: 'a@example.com' };
+    const res = await request(app).post('/api/employees').send(payload);
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({ error: 'Employee number is required' });
   });
 
   it('gets employee', async () => {

@@ -1,5 +1,4 @@
 import ExcelJS from 'exceljs'
-import crypto from 'crypto'
 import { Readable } from 'stream'
 import Employee from '../models/Employee.js'
 import Organization from '../models/Organization.js'
@@ -500,28 +499,22 @@ function normalizeRowObject(normalized) {
 }
 
 function deriveUsername(row) {
-  if (typeof row.username === 'string' && row.username.trim()) {
-    return row.username.trim()
+  if (typeof row.employeeNo === 'string' && row.employeeNo.trim()) {
+    return row.employeeNo.trim()
   }
   if (typeof row.email === 'string' && row.email.includes('@')) {
     return row.email.split('@')[0].trim()
   }
-  if (typeof row.employeeNo === 'string' && row.employeeNo.trim()) {
-    return row.employeeNo.trim()
+  if (typeof row.username === 'string' && row.username.trim()) {
+    return row.username.trim()
   }
   return ''
 }
 
-function generatePassword(length = 12) {
-  let password = ''
-  while (!password) {
-    password = crypto.randomBytes(length).toString('base64').replace(/[^a-zA-Z0-9]/g, '')
-    if (password.length > length) {
-      password = password.slice(0, length)
-    }
-  }
-  return password
-}
+const DEFAULT_CREDENTIAL_RULE = Object.freeze({
+  username: '帳號優先使用員工編號，缺少時依序以 Email 帳號前綴或手動輸入帳號填入',
+  password: '預設密碼為身分證號（idNumber），缺少時將中止匯入'
+})
 
 function createPreview(row) {
   return {
@@ -529,7 +522,9 @@ function createPreview(row) {
     name: row.name ?? '',
     department: row.department ?? '',
     role: row.role ?? '',
-    email: row.email ?? ''
+    email: row.email ?? '',
+    username: row.username ?? '',
+    initialPassword: row.initialPassword ?? ''
   }
 }
 
@@ -946,6 +941,10 @@ export async function bulkImportEmployees(req, res) {
       row.errors.push('缺少員工編號')
     }
 
+    if (!row.normalized.idNumber || String(row.normalized.idNumber).trim() === '') {
+      row.errors.push('缺少身分證號')
+    }
+
     if (!row.normalized.name || String(row.normalized.name).trim() === '') {
       row.errors.push('缺少姓名')
     }
@@ -1012,7 +1011,7 @@ export async function bulkImportEmployees(req, res) {
 
     for (const row of parsedRows) {
       failedRowNumber = row.rowNumber
-      const password = resetPassword || generatePassword()
+      const password = resetPassword || String(row.normalized.idNumber).trim()
       const body = {
         ...row.normalized,
         email: row.normalized.email,
@@ -1028,7 +1027,9 @@ export async function bulkImportEmployees(req, res) {
         name: created.name,
         department: created.department || body.department,
         role: created.role || body.role,
-        email: created.email
+        email: created.email,
+        username: created.username || body.username,
+        initialPassword: password
       }))
     }
 
@@ -1040,7 +1041,8 @@ export async function bulkImportEmployees(req, res) {
       successCount: parsedRows.length,
       failureCount: 0,
       preview,
-      errors: []
+      errors: [],
+      credentialRule: DEFAULT_CREDENTIAL_RULE
     })
   } catch (error) {
     if (usingTransaction && session && typeof session.abortTransaction === 'function') {
