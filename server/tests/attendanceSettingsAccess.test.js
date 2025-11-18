@@ -31,6 +31,11 @@ function buildDoc(overrides = {}) {
       breakInterval: 60,
       outingNeedApprove: false,
     },
+    globalBreakSetting: {
+      enableGlobalBreak: false,
+      breakMinutes: 60,
+      allowMultiBreak: false,
+    },
     overtimeRules: {
       weekdayThreshold: 30,
       holidayRate: 2,
@@ -53,17 +58,18 @@ function buildDoc(overrides = {}) {
     ...overrides,
   };
 
-  doc.save = jest.fn().mockResolvedValue(doc);
-  doc.toObject = jest.fn(() => ({
-    _id: doc._id,
-    shifts: doc.shifts,
-    abnormalRules: doc.abnormalRules,
-    breakOutRules: doc.breakOutRules,
-    overtimeRules: doc.overtimeRules,
-    management: doc.management,
-  }));
-  return doc;
-}
+    doc.save = jest.fn().mockResolvedValue(doc);
+    doc.toObject = jest.fn(() => ({
+      _id: doc._id,
+      shifts: doc.shifts,
+      abnormalRules: doc.abnormalRules,
+      breakOutRules: doc.breakOutRules,
+      globalBreakSetting: doc.globalBreakSetting,
+      overtimeRules: doc.overtimeRules,
+      management: doc.management,
+    }));
+    return doc;
+  }
 
 beforeAll(async () => {
   ({ authorizeRoles } = await import('../src/middleware/auth.js'));
@@ -107,6 +113,11 @@ describe('AttendanceSetting routes', () => {
       breakInterval: 60,
       outingNeedApprove: false,
     });
+    expect(res.body.globalBreakSetting).toEqual({
+      enableGlobalBreak: false,
+      breakMinutes: 60,
+      allowMultiBreak: false,
+    });
     expect(res.body.management).toEqual({
       enableImport: false,
       importFormat: '',
@@ -136,6 +147,7 @@ describe('AttendanceSetting routes', () => {
       expect.objectContaining({
         shifts: [],
         abnormalRules: expect.objectContaining({ lateGrace: 5 }),
+        globalBreakSetting: expect.objectContaining({ breakMinutes: 60 }),
         management: expect.objectContaining({ enableImport: false }),
       })
     );
@@ -144,6 +156,11 @@ describe('AttendanceSetting routes', () => {
       weekdayThreshold: 30,
       holidayRate: 2,
       toCompRate: 1.5,
+    });
+    expect(res.body.globalBreakSetting).toEqual({
+      enableGlobalBreak: false,
+      breakMinutes: 60,
+      allowMultiBreak: false,
     });
   });
 
@@ -156,6 +173,7 @@ describe('AttendanceSetting routes', () => {
       .send({
         abnormalRules: { lateGrace: 3, autoNotify: false },
         breakOutRules: { breakInterval: 90 },
+        globalBreakSetting: { enableGlobalBreak: true, breakMinutes: 75 },
         overtimeRules: { holidayRate: 2.5 },
         shifts: [{ name: '禁用班別' }],
       });
@@ -170,10 +188,16 @@ describe('AttendanceSetting routes', () => {
     });
     expect(doc.breakOutRules.breakInterval).toBe(90);
     expect(doc.overtimeRules.holidayRate).toBe(2.5);
+    expect(doc.globalBreakSetting).toEqual({
+      enableGlobalBreak: true,
+      breakMinutes: 75,
+      allowMultiBreak: false,
+    });
     expect(doc.shifts).toEqual([]);
     expect(res.body.shifts).toBeUndefined();
     expect(res.body.abnormalRules.lateGrace).toBe(3);
     expect(res.body.breakOutRules.breakInterval).toBe(90);
+    expect(res.body.globalBreakSetting.breakMinutes).toBe(75);
   });
 
   it('updates management preferences', async () => {

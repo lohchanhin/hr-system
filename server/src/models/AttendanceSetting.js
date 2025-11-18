@@ -8,6 +8,8 @@ const attendanceSettingSchema = new mongoose.Schema({
       startTime: String,
       endTime: String,
       breakTime: String,
+      breakMinutes: Number,
+      allowMultiBreak: Boolean,
       crossDay: Boolean,
       remark: String,
       color: {
@@ -30,6 +32,11 @@ const attendanceSettingSchema = new mongoose.Schema({
     enableBreakPunch: Boolean,
     breakInterval: Number,
     outingNeedApprove: Boolean
+  },
+  globalBreakSetting: {
+    enableGlobalBreak: { type: Boolean, default: false },
+    breakMinutes: { type: Number, default: 60 },
+    allowMultiBreak: { type: Boolean, default: false },
   },
   overtimeRules: {
     weekdayThreshold: Number,

@@ -24,7 +24,6 @@ import roleRoutes from './routes/roleRoutes.js';
 import otherControlSettingRoutes from './routes/otherControlSettingRoutes.js';
 
 import salarySettingRoutes from './routes/salarySettingRoutes.js';
-import breakSettingRoutes from './routes/breakSettingRoutes.js';
 import holidayMoveSettingRoutes from './routes/holidayMoveSettingRoutes.js';
 
 import attendanceSettingRoutes from './routes/attendanceSettingRoutes.js';
@@ -205,7 +204,6 @@ app.use('/api/dept-managers', authenticate, authorizeRoles('admin'), deptManager
 app.use('/api/holidays', authenticate, authorizeRoles('admin'), holidayRoutes);
 
 app.use('/api/salary-settings', authenticate, authorizeRoles('admin'), salarySettingRoutes);
-app.use('/api/break-settings', authenticate, authorizeRoles('admin'), breakSettingRoutes);
 app.use('/api/holiday-move-settings', authenticate, authorizeRoles('admin'), holidayMoveSettingRoutes);
 
 
