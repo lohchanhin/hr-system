@@ -6,6 +6,18 @@ import { authenticate } from '../middleware/auth.js'
 
 const router = Router();
 
+function validatePasswordStrength(password) {
+  if (!password || typeof password !== 'string') return '密碼不可為空'
+  if (password.length < 8) return '密碼長度需至少 8 碼'
+  const hasUpper = /[A-Z]/.test(password)
+  const hasLower = /[a-z]/.test(password)
+  const hasNumber = /\d/.test(password)
+  if (!(hasUpper && hasLower && hasNumber)) {
+    return '密碼需包含大小寫字母與數字'
+  }
+  return null
+}
+
 function buildUserProfile(employee) {
   if (!employee) return null
 
@@ -90,6 +102,39 @@ router.post('/logout', async (req, res) => {
     await blacklistToken(token)
   }
   res.status(204).end()
+})
+
+router.post('/change-password', authenticate, async (req, res) => {
+  const { oldPassword, newPassword } = req.body || {}
+  if (!oldPassword || !newPassword) {
+    return res.status(400).json({ error: '請提供舊密碼與新密碼' })
+  }
+
+  const strengthError = validatePasswordStrength(newPassword)
+  if (strengthError) {
+    return res.status(400).json({ error: strengthError })
+  }
+
+  const employee = await Employee.findById(req.user?.id).select('+passwordHash')
+  if (!employee) {
+    return res.status(404).json({ error: '找不到使用者' })
+  }
+
+  const match = employee.verifyPassword(oldPassword)
+  if (!match) {
+    return res.status(400).json({ error: '舊密碼不正確' })
+  }
+
+  employee.setPassword(newPassword)
+  await employee.save()
+
+  const auth = req.headers.authorization
+  if (auth) {
+    const token = auth.split(' ')[1]
+    await blacklistToken(token)
+  }
+
+  res.json({ message: '密碼已更新，請重新登入' })
 })
 
 router.get('/profile', authenticate, async (req, res) => {
