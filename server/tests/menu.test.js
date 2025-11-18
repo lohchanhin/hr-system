@@ -26,6 +26,7 @@ describe('Menu API', () => {
     expect(res.body.find(i => i.name === 'Attendance')).toBeDefined();
     expect(res.body.find(i => i.name === 'MySchedule')).toBeDefined();
     expect(res.body.find(i => i.name === 'Approval')).toBeDefined();
+    expect(res.body.find(i => i.name === 'FrontChangePassword')).toBeDefined();
   });
 
   it('menu names exist in frontend routes', async () => {

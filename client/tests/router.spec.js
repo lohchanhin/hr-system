@@ -66,6 +66,7 @@ describe('router', () => {
     expect(childRoles.find(c => c.name === 'Schedule').roles).toEqual(['supervisor', 'admin'])
     expect(childRoles.find(c => c.name === 'FrontDepartmentReports').roles).toEqual(['supervisor', 'admin'])
     expect(childRoles.find(c => c.name === 'Approval').roles).toEqual(['employee', 'supervisor', 'admin'])
+    expect(childRoles.find(c => c.name === 'FrontChangePassword').roles).toEqual(['employee', 'supervisor', 'admin'])
   })
 
   it('includes admin department report route under manager layout', () => {

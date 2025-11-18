@@ -19,6 +19,7 @@ const HRManagementSystemSetting = () => import('@/components/backComponents/HRMa
 const OrgDepartmentSettingView = () => import('@/views/OrgDepartmentSettingView.vue')
 const OtherControlSettingView = () => import('@/views/OtherControlSettingView.vue')
 const ScheduleOverview = () => import('@/views/ScheduleOverview.vue')
+const ManagerChangePassword = () => import('@/views/ChangePasswordView.vue')
 
 // ★ 錯誤頁面
 const Forbidden = () => import('@/views/Forbidden.vue')
@@ -34,6 +35,7 @@ const PreviewWeek = () => import('@/views/front/PreviewWeek.vue')
 const PreviewMonth = () => import('@/views/front/PreviewMonth.vue')
 const MySchedule = () => import('@/views/front/MySchedule.vue')
 const DepartmentReports = () => import('@/views/front/DepartmentReports.vue')
+const FrontChangePassword = () => import('@/views/front/FrontChangePassword.vue')
 
 const routes = [
   // 首頁重導至前台登入
@@ -76,6 +78,7 @@ const routes = [
       { path: 'hr-management-system-setting', name: 'HRManagementSystemSetting', component: HRManagementSystemSetting },
       { path: 'org-department-setting', name: 'OrgDepartmentSetting', component: OrgDepartmentSettingView },
       { path: 'other-control-setting', name: 'OtherControlSetting', component: OtherControlSettingView },
+      { path: 'change-password', name: 'ManagerChangePassword', component: ManagerChangePassword },
     ],
   },
 
@@ -135,6 +138,12 @@ const routes = [
         name: 'Approval',
         alias: 'Approval',
         component: Approval,
+        meta: { roles: ['employee', 'supervisor', 'admin'] },
+      },
+      {
+        path: 'change-password',
+        name: 'FrontChangePassword',
+        component: FrontChangePassword,
         meta: { roles: ['employee', 'supervisor', 'admin'] },
       },
     ],

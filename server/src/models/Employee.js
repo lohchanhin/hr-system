@@ -4,6 +4,13 @@ import crypto from 'crypto'
 
 const { Schema } = mongoose
 
+function hashPassword(plain) {
+  if (!plain) return undefined
+  const salt = crypto.randomBytes(16).toString('hex')
+  const hash = crypto.pbkdf2Sync(plain, salt, 100000, 64, 'sha512').toString('hex')
+  return `${salt}:${hash}`
+}
+
 /* ----------------------------- sub-schemas ----------------------------- */
 
 const experienceSchema = new Schema(
@@ -222,9 +229,7 @@ employeeSchema
   .virtual('password')
   .set(function (plain) {
     if (!plain) return
-    const salt = crypto.randomBytes(16).toString('hex')
-    const hash = crypto.pbkdf2Sync(plain, salt, 100000, 64, 'sha512').toString('hex')
-    this.passwordHash = `${salt}:${hash}`
+    this.passwordHash = hashPassword(plain)
   })
 
 employeeSchema.methods.verifyPassword = function (plain) {
@@ -232,6 +237,13 @@ employeeSchema.methods.verifyPassword = function (plain) {
   const [salt, hash] = this.passwordHash.split(':')
   const check = crypto.pbkdf2Sync(plain, salt, 100000, 64, 'sha512').toString('hex')
   return hash === check
+}
+
+employeeSchema.methods.setPassword = function (plain) {
+  const hashed = hashPassword(plain)
+  if (hashed) {
+    this.passwordHash = hashed
+  }
 }
 
 /* -------------------------------- indexes ------------------------------- */
