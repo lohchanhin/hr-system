@@ -5,7 +5,15 @@ import { jest } from '@jest/globals'
 
 const mockEmployeeModel = {
   find: jest.fn(),
-  create: jest.fn()
+  create: jest.fn(),
+  startSession: jest.fn()
+}
+
+const mockSession = {
+  startTransaction: jest.fn(),
+  commitTransaction: jest.fn(),
+  abortTransaction: jest.fn(),
+  endSession: jest.fn()
 }
 
 const mockOrganizationModel = {
@@ -220,6 +228,12 @@ function createCsvBuffer(rows) {
 
 beforeEach(() => {
   Object.values(mockEmployeeModel).forEach(fn => fn.mockReset())
+  Object.values(mockSession).forEach(fn => fn.mockReset())
+  mockEmployeeModel.startSession.mockResolvedValue(mockSession)
+  mockSession.startTransaction.mockResolvedValue()
+  mockSession.commitTransaction.mockResolvedValue()
+  mockSession.abortTransaction.mockResolvedValue()
+  mockSession.endSession.mockResolvedValue()
   mockOrganizationModel.find.mockReset()
   mockDepartmentModel.find.mockReset()
   mockSubDepartmentModel.find.mockReset()
@@ -274,6 +288,10 @@ describe('POST /api/employees/bulk-import', () => {
       }
     ])
     expect(response.body.errors).toEqual([])
+    expect(mockEmployeeModel.startSession).toHaveBeenCalledTimes(1)
+    expect(mockSession.startTransaction).toHaveBeenCalledTimes(1)
+    expect(mockSession.commitTransaction).toHaveBeenCalledTimes(1)
+    expect(mockSession.abortTransaction).not.toHaveBeenCalled()
   })
 
   it('成功匯入資料並回傳預覽與統計', async () => {
@@ -378,10 +396,10 @@ describe('POST /api/employees/bulk-import', () => {
       .attach('file', buffer, { filename: 'import.xlsx' })
 
     expect(response.status).toBe(400)
-    expect(response.body.successCount).toBe(0)
-    expect(response.body.failureCount).toBe(1)
+    expect(response.body.rowNumber).toBe(3)
     expect(response.body.errors[0]).toMatch(/缺少姓名/)
     expect(mockEmployeeModel.create).not.toHaveBeenCalled()
+    expect(mockEmployeeModel.startSession).not.toHaveBeenCalled()
   })
 
   it('偵測檔案內重複 Email 與既有 Email', async () => {
@@ -418,13 +436,81 @@ describe('POST /api/employees/bulk-import', () => {
       .post('/api/employees/bulk-import')
       .attach('file', buffer, { filename: 'import.xlsx' })
 
-    expect(response.status).toBe(200)
-    expect(response.body.successCount).toBe(1)
-    expect(response.body.failureCount).toBe(2)
-    expect(response.body.errors).toHaveLength(2)
+    expect(response.status).toBe(400)
+    expect(response.body.rowNumber).toBe(4)
+    expect(response.body.errors).toHaveLength(1)
     expect(response.body.errors[0]).toMatch(/Email 重複/)
-    expect(response.body.errors[1]).toMatch(/Email 已存在/)
-    expect(mockEmployeeModel.create).toHaveBeenCalledTimes(1)
+    expect(mockEmployeeModel.create).not.toHaveBeenCalled()
+    expect(mockEmployeeModel.startSession).not.toHaveBeenCalled()
+  })
+
+  it('驗證失敗時不進行任何寫入', async () => {
+    const application = await setupApp()
+    const buffer = await createWorkbookBuffer([
+      {
+        employeeId: 'E1000',
+        name: '',
+        email: ''
+      },
+      {
+        employeeId: 'E1001',
+        name: '正常資料',
+        email: 'ok@example.com'
+      }
+    ])
+
+    mockEmployeeModel.find.mockResolvedValue([])
+
+    const response = await request(application)
+      .post('/api/employees/bulk-import')
+      .attach('file', buffer, { filename: 'import.xlsx' })
+
+    expect(response.status).toBe(400)
+    expect(response.body.rowNumber).toBe(3)
+    expect(response.body.errors[0]).toMatch(/缺少 Email/)
+    expect(mockEmployeeModel.create).not.toHaveBeenCalled()
+    expect(mockEmployeeModel.startSession).not.toHaveBeenCalled()
+  })
+
+  it('寫入過程出錯會回滾交易並回報列號', async () => {
+    const application = await setupApp()
+    const buffer = await createWorkbookBuffer([
+      {
+        employeeId: 'E2000',
+        name: '第一筆',
+        email: 'first@example.com'
+      },
+      {
+        employeeId: 'E2001',
+        name: '第二筆',
+        email: 'second@example.com'
+      }
+    ])
+
+    mockEmployeeModel.find.mockResolvedValue([])
+    mockEmployeeModel.create
+      .mockImplementationOnce(async (doc) => ({
+        _id: `${doc.employeeNo}-id`,
+        employeeId: doc.employeeNo,
+        name: doc.name,
+        department: doc.department,
+        role: doc.role,
+        email: doc.email
+      }))
+      .mockImplementationOnce(async () => {
+        throw new Error('DB failed')
+      })
+
+    const response = await request(application)
+      .post('/api/employees/bulk-import')
+      .attach('file', buffer, { filename: 'import.xlsx' })
+
+    expect(response.status).toBe(400)
+    expect(response.body.rowNumber).toBe(4)
+    expect(response.body.errors[0]).toMatch(/DB failed/)
+    expect(mockSession.startTransaction).toHaveBeenCalledTimes(1)
+    expect(mockSession.abortTransaction).toHaveBeenCalledTimes(1)
+    expect(mockSession.commitTransaction).not.toHaveBeenCalled()
   })
 
   it('遇到未知部門時回傳 409 並提供對應選項', async () => {

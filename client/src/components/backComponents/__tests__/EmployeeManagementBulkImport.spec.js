@@ -380,7 +380,7 @@ describe('EmployeeManagement - 批量匯入流程', () => {
   })
 
   it('匯入失敗時顯示錯誤訊息並保留錯誤清單', async () => {
-    const errorPayload = { message: '格式錯誤', errors: ['第 2 列缺少姓名'] }
+    const errorPayload = { message: '格式錯誤', errors: ['第 2 列缺少姓名'], rowNumber: 5 }
     importEmployeesBulkMock.mockResolvedValue(createApiResponse(errorPayload, 400))
 
     const wrapper = await mountComponent()
@@ -394,7 +394,7 @@ describe('EmployeeManagement - 批量匯入流程', () => {
     await wrapper.vm.submitBulkImport()
     await flushPromises()
 
-    expect(ElMessage.error).toHaveBeenCalledWith('格式錯誤')
+    expect(ElMessage.error).toHaveBeenCalledWith('格式錯誤（停在第 5 列）')
     expect(wrapper.vm.bulkImportErrors).toEqual(errorPayload.errors)
     expect(wrapper.vm.bulkImportDialogVisible).toBe(true)
   })
