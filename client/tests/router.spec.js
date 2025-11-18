@@ -20,6 +20,7 @@ vi.mock('element-plus', () => {
 })
 
 import router from '../src/router/index.js'
+import { setToken } from '../src/utils/tokenService'
 
 beforeEach(() => {
   localStorage.clear()
@@ -100,6 +101,32 @@ describe('router', () => {
     expect(next.mock.calls[0][0]).toBeUndefined()
   })
 
+  it('refreshes role after token change without re-login', () => {
+    const scheduleRoute = {
+      matched: [{ meta: { frontRequiresAuth: true } }],
+      meta: {
+        roles: ['supervisor', 'admin'],
+        warningMessage: '僅主管可以存取部門報表，請聯絡您的主管協助',
+      },
+      name: 'Schedule',
+    }
+    const employeePayload = btoa(JSON.stringify({ role: 'employee' }))
+    setToken(`h.${employeePayload}.s`)
+    const firstNext = vi.fn()
+    capturedGuard(scheduleRoute, {}, firstNext)
+    expect(firstNext).toHaveBeenCalledWith({ name: 'Forbidden' })
+    expect(warningSpy).toHaveBeenCalledWith('僅主管可以存取部門報表，請聯絡您的主管協助')
+
+    const supervisorPayload = btoa(JSON.stringify({ role: 'supervisor' }))
+    setToken(`h.${supervisorPayload}.s`)
+    const secondNext = vi.fn()
+    capturedGuard(scheduleRoute, {}, secondNext)
+    expect(secondNext).toHaveBeenCalled()
+    expect(secondNext.mock.calls[0][0]).toBeUndefined()
+    expect(sessionStorage.getItem('role')).toBe('supervisor')
+    expect(localStorage.getItem('role')).toBe('supervisor')
+  })
+
   it('backend guard redirects non-supervisor', () => {
     localStorage.setItem('token', 't')
     sessionStorage.setItem('role', 'employee')
@@ -109,7 +136,8 @@ describe('router', () => {
   })
 
   it('backend guard allows supervisor', () => {
-    localStorage.setItem('token', 't')
+    const payload = btoa(JSON.stringify({ role: 'supervisor' }))
+    localStorage.setItem('token', `h.${payload}.s`)
     sessionStorage.setItem('role', 'supervisor')
     const next = vi.fn()
     capturedGuard({ matched: [{ meta: { requiresAuth: true } }], meta: {} }, {}, next)

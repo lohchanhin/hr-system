@@ -103,13 +103,14 @@
 </template>
 
 <script setup>
-import { ref, onMounted, computed, onBeforeUnmount } from "vue";
+import { ref, onMounted, computed, onBeforeUnmount, watch } from "vue";
 import { useRouter, useRoute } from "vue-router";
 import { useMenuStore } from "../../stores/menu";
 import { useProfileStore } from "../../stores/profile";
 import { clearToken } from "../../utils/tokenService";
 import { storeToRefs } from "pinia";
 import { iconMap as availableMenuIcons, resolveMenuIcon } from "../../constants/menuIcons";
+import { useAuthStore } from "../../stores/auth";
 
 const router = useRouter();
 const route = useRoute();
@@ -117,6 +118,7 @@ const menuStore = useMenuStore();
 const { items: menuItems } = storeToRefs(menuStore);
 const profileStore = useProfileStore();
 const { profile } = storeToRefs(profileStore);
+const authStore = useAuthStore();
 
 const hrLogo = "/HR.png";
 const username = ref("");
@@ -171,6 +173,7 @@ function updateSidebarCollapse({ ignoreManualOverride = false } = {}) {
 }
 
 onMounted(() => {
+  authStore.loadUser({ forceRefresh: true });
   const savedUsername = localStorage.getItem("username");
   if (savedUsername) {
     username.value = savedUsername;
@@ -197,6 +200,15 @@ onBeforeUnmount(() => {
     window.removeEventListener("resize", updateSidebarCollapse);
   }
 });
+
+watch(
+  () => authStore.role,
+  (newRole, oldRole) => {
+    if (newRole !== oldRole) {
+      menuStore.fetchMenu();
+    }
+  }
+);
 
 function resolveIcon(item) {
   return resolveMenuIcon(item);
