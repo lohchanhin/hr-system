@@ -117,6 +117,59 @@ function hoursFromMinutes(minutes) {
   return Math.round((minutes / 60) * 100) / 100;
 }
 
+function parseTimeParts(value) {
+  if (!value || typeof value !== 'string') return null;
+  const match = value.trim().match(/^(\d{1,2}):(\d{2})$/);
+  if (!match) return null;
+  const hour = parseInt(match[1], 10);
+  const minute = parseInt(match[2], 10);
+  if (Number.isNaN(hour) || Number.isNaN(minute) || hour < 0 || hour >= 24 || minute < 0 || minute >= 60) {
+    return null;
+  }
+  return { hour, minute };
+}
+
+function buildDateWithTime(baseDate, timeString) {
+  const parts = parseTimeParts(timeString);
+  if (!parts) return null;
+  const date = new Date(baseDate);
+  date.setUTCHours(parts.hour, parts.minute, 0, 0);
+  return date;
+}
+
+function getShiftBreakMinutes(shift, date) {
+  if (!shift) return 0;
+  const base = new Date(date ?? Date.now());
+  base.setUTCHours(0, 0, 0, 0);
+
+  if (Array.isArray(shift.breakWindows) && shift.breakWindows.length) {
+    let windowMinutes = 0;
+    shift.breakWindows.forEach((win) => {
+      if (!win) return;
+      const start = buildDateWithTime(base, win.start);
+      let end = buildDateWithTime(base, win.end);
+      if (!start || !end) return;
+      if (end <= start) {
+        end = new Date(end.getTime() + 24 * 60 * 60 * 1000);
+      }
+      windowMinutes += Math.max(minutesBetween(start, end), 0);
+    });
+    if (windowMinutes > 0) return windowMinutes;
+  }
+
+  const durationCandidates = [shift.breakDuration, shift.breakMinutes];
+  for (const candidate of durationCandidates) {
+    const parsed = Number(candidate);
+    if (Number.isFinite(parsed) && parsed >= 0) return parsed;
+  }
+
+  if (shift.breakTime) {
+    const parts = parseTimeParts(shift.breakTime);
+    if (parts) return parts.hour * 60 + parts.minute;
+  }
+  return 0;
+}
+
 function buildDateKey(date) {
   const obj = new Date(date);
   if (Number.isNaN(obj.getTime())) return '';
@@ -408,13 +461,14 @@ function buildWorkHoursSummary({ schedules, recordMap, shiftMap, employees }) {
     const shift = shiftMap.get(normalizeId(schedule.shiftId));
     if (!shift) return;
     const { start, end } = computeShiftTimes(schedule.date, shift);
-    const scheduledMinutes = minutesBetween(start, end);
+    const breakMinutes = getShiftBreakMinutes(shift, schedule.date);
+    const scheduledMinutes = Math.max(minutesBetween(start, end) - breakMinutes, 0);
     const dayRecord = recordMap.get(`${employeeId}::${dateKey}`);
     let workedMinutes = 0;
     if (dayRecord && dayRecord.clockIns.length && dayRecord.clockOuts.length) {
       const first = dayRecord.clockIns[0];
       const last = dayRecord.clockOuts[dayRecord.clockOuts.length - 1];
-      workedMinutes = Math.max(minutesBetween(first, last), 0);
+      workedMinutes = Math.max(minutesBetween(first, last) - breakMinutes, 0);
     }
     totalScheduledMinutes += Math.max(scheduledMinutes, 0);
     totalWorkedMinutes += Math.max(workedMinutes, 0);
@@ -724,4 +778,11 @@ export async function getDepartmentReportData({ type, month, departmentId, actor
 export function getReportDisplayName(type) {
   return REPORT_NAME_MAP[type] || '報表';
 }
+
+export const __testUtils = {
+  computeShiftTimes,
+  getShiftBreakMinutes,
+  minutesBetween,
+  buildWorkHoursSummary,
+};
 

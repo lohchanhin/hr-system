@@ -59,6 +59,9 @@ async function migrate() {
         if (shift.breakMinutes == null && sourceSetting.breakMinutes != null) {
           shift.breakMinutes = sourceSetting.breakMinutes
         }
+        if (shift.breakDuration == null && sourceSetting.breakMinutes != null) {
+          shift.breakDuration = sourceSetting.breakMinutes
+        }
         if (shift.allowMultiBreak == null && sourceSetting.allowMultiBreak != null) {
           shift.allowMultiBreak = Boolean(sourceSetting.allowMultiBreak)
         }

@@ -9,6 +9,14 @@ const attendanceSettingSchema = new mongoose.Schema({
       endTime: String,
       breakTime: String,
       breakMinutes: Number,
+      breakDuration: { type: Number, default: 0 },
+      breakWindows: [
+        {
+          start: String,
+          end: String,
+          label: String,
+        },
+      ],
       allowMultiBreak: Boolean,
       crossDay: Boolean,
       remark: String,
