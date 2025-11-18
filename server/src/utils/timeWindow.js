@@ -3,10 +3,39 @@ const DEFAULT_TIMEZONE = process.env.ATTENDANCE_TIMEZONE || 'Asia/Taipei'
 const MS_PER_MINUTE = 60 * 1000
 const MS_PER_DAY = 24 * 60 * 60 * 1000
 
-const ACTION_BUFFERS = Object.freeze({
+export const DEFAULT_ACTION_BUFFERS = Object.freeze({
   clockIn: { earlyMinutes: 60, lateMinutes: 240 },
   clockOut: { earlyMinutes: 240, lateMinutes: 120 }
 })
+
+const BUFFER_LIMITS = Object.freeze({
+  earlyMinutes: { min: 0, max: 720 },
+  lateMinutes: { min: 0, max: 720 },
+})
+
+function clampNumber(value, { min = 0, max = Number.POSITIVE_INFINITY } = {}) {
+  const num = Number(value)
+  if (!Number.isFinite(num)) return null
+  return Math.min(Math.max(num, min), max)
+}
+
+export function normalizeActionBuffers(buffers = DEFAULT_ACTION_BUFFERS) {
+  const normalized = { clockIn: { ...DEFAULT_ACTION_BUFFERS.clockIn }, clockOut: { ...DEFAULT_ACTION_BUFFERS.clockOut } }
+  const source = typeof buffers === 'object' && buffers ? buffers : {}
+
+  ;['clockIn', 'clockOut'].forEach((action) => {
+    const target = normalized[action]
+    const incoming = source[action] || {}
+    ;['earlyMinutes', 'lateMinutes'].forEach((field) => {
+      const clamped = clampNumber(incoming[field], BUFFER_LIMITS[field])
+      if (clamped !== null) {
+        target[field] = clamped
+      }
+    })
+  })
+
+  return normalized
+}
 
 function toNumber(value) {
   const num = Number(value)
@@ -110,9 +139,9 @@ export function computeShiftSpan(scheduleDate, shift, timeZone = DEFAULT_TIMEZON
   return { start, end }
 }
 
-export function computeActionWindow(action, shiftStart, shiftEnd) {
+export function computeActionWindow(action, shiftStart, shiftEnd, actionBuffers = DEFAULT_ACTION_BUFFERS) {
   if (!shiftStart || !shiftEnd) return null
-  const buffers = ACTION_BUFFERS[action]
+  const buffers = normalizeActionBuffers(actionBuffers)[action]
   if (!buffers) return null
   const { earlyMinutes, lateMinutes } = buffers
   if (action === 'clockIn') {
@@ -156,7 +185,9 @@ export function getTimezone() {
 }
 
 export const __TESTING__ = {
-  ACTION_BUFFERS,
+  DEFAULT_ACTION_BUFFERS,
   MS_PER_DAY,
-  MS_PER_MINUTE
+  MS_PER_MINUTE,
+  BUFFER_LIMITS,
+  normalizeActionBuffers
 }

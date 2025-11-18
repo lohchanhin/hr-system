@@ -6,7 +6,8 @@ import {
   createDateFromParts,
   formatWindow,
   getLocalDateParts,
-  isWithinWindow
+  isWithinWindow,
+  __TESTING__
 } from '../src/utils/timeWindow.js'
 
 describe('timeWindow utilities', () => {
@@ -50,6 +51,32 @@ describe('timeWindow utilities', () => {
     const outside = new Date('2024-06-09T22:00:00.000Z')
     expect(isWithinWindow(inside, window)).toBe(true)
     expect(isWithinWindow(outside, window)).toBe(false)
+  })
+
+  it('uses custom action buffers from settings', () => {
+    const scheduleDate = new Date(Date.UTC(2024, 2, 15))
+    const span = computeShiftSpan(scheduleDate, { startTime: '10:00', endTime: '19:00' })
+    const buffers = {
+      clockIn: { earlyMinutes: 15, lateMinutes: 45 },
+      clockOut: { earlyMinutes: 120, lateMinutes: 240 },
+    }
+    const customIn = computeActionWindow('clockIn', span.start, span.end, buffers)
+    expect(customIn.start.toISOString()).toBe('2024-03-15T01:45:00.000Z')
+    expect(customIn.end.toISOString()).toBe('2024-03-15T02:45:00.000Z')
+    const customOut = computeActionWindow('clockOut', span.start, span.end, buffers)
+    expect(customOut.start.toISOString()).toBe('2024-03-15T09:00:00.000Z')
+    expect(customOut.end.toISOString()).toBe('2024-03-15T15:00:00.000Z')
+  })
+
+  it('clamps invalid buffer numbers to safe limits', () => {
+    const normalized = __TESTING__.normalizeActionBuffers({
+      clockIn: { earlyMinutes: -30, lateMinutes: 999 },
+      clockOut: { earlyMinutes: 'abc', lateMinutes: 1000 }
+    })
+    expect(normalized.clockIn.earlyMinutes).toBe(0)
+    expect(normalized.clockIn.lateMinutes).toBe(__TESTING__.BUFFER_LIMITS.lateMinutes.max)
+    expect(normalized.clockOut.earlyMinutes).toBe(__TESTING__.DEFAULT_ACTION_BUFFERS.clockOut.earlyMinutes)
+    expect(normalized.clockOut.lateMinutes).toBe(__TESTING__.BUFFER_LIMITS.lateMinutes.max)
   })
 
   it('builds schedule date from local parts', () => {

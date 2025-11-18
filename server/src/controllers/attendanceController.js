@@ -12,6 +12,7 @@ import {
   getTimezone,
   isWithinWindow,
   createDateFromParts,
+  normalizeActionBuffers,
 } from '../utils/timeWindow.js';
 
 function toStringId(value) {
@@ -163,6 +164,7 @@ export async function createRecord(req, res) {
       }
 
       const attendanceSetting = await AttendanceSetting.findOne().lean();
+      const actionBuffers = normalizeActionBuffers(attendanceSetting?.actionBuffers);
       const shiftMap = new Map();
       attendanceSetting?.shifts?.forEach((shift) => {
         if (!shift?._id) return;
@@ -205,7 +207,12 @@ export async function createRecord(req, res) {
       const previousContext = contexts.find((ctx) => previousKey !== undefined && ctx.scheduleDateMs === previousKey);
       const selectedContext = activeContext || todayContext || previousContext || contexts[0];
 
-      const actionWindow = computeActionWindow(action, selectedContext.shiftStart, selectedContext.shiftEnd);
+      const actionWindow = computeActionWindow(
+        action,
+        selectedContext.shiftStart,
+        selectedContext.shiftEnd,
+        actionBuffers,
+      );
       if (!actionWindow) {
         return res.status(400).json({ error: '班別尚未設定簽到簽退時間' });
       }

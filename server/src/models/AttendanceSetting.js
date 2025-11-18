@@ -51,6 +51,16 @@ const attendanceSettingSchema = new mongoose.Schema({
     holidayRate: Number,
     toCompRate: Number
   },
+  actionBuffers: {
+    clockIn: {
+      earlyMinutes: { type: Number, default: 60 },
+      lateMinutes: { type: Number, default: 240 },
+    },
+    clockOut: {
+      earlyMinutes: { type: Number, default: 240 },
+      lateMinutes: { type: Number, default: 120 },
+    },
+  },
   management: {
     enableImport: { type: Boolean, default: false },
     importFormat: String,

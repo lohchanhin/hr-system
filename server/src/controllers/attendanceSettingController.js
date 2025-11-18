@@ -1,4 +1,5 @@
 import AttendanceSetting from '../models/AttendanceSetting.js';
+import { DEFAULT_ACTION_BUFFERS, normalizeActionBuffers } from '../utils/timeWindow.js';
 
 const DEFAULT_SETTING = Object.freeze({
   abnormalRules: {
@@ -22,6 +23,7 @@ const DEFAULT_SETTING = Object.freeze({
     holidayRate: 2,
     toCompRate: 1.5,
   },
+  actionBuffers: DEFAULT_ACTION_BUFFERS,
   management: {
     enableImport: false,
     importFormat: '',
@@ -44,6 +46,7 @@ function buildDefaultSetting() {
     breakOutRules: { ...DEFAULT_SETTING.breakOutRules },
     globalBreakSetting: { ...DEFAULT_SETTING.globalBreakSetting },
     overtimeRules: { ...DEFAULT_SETTING.overtimeRules },
+    actionBuffers: normalizeActionBuffers(DEFAULT_SETTING.actionBuffers),
     management: { ...DEFAULT_SETTING.management },
   };
 }
@@ -57,6 +60,7 @@ function normalize(setting) {
     breakOutRules,
     globalBreakSetting,
     overtimeRules,
+    actionBuffers,
     management,
     ...others
   } = plain;
@@ -78,6 +82,7 @@ function normalize(setting) {
       ...DEFAULT_SETTING.overtimeRules,
       ...(overtimeRules || {}),
     },
+    actionBuffers: normalizeActionBuffers(actionBuffers || DEFAULT_SETTING.actionBuffers),
     management: {
       ...DEFAULT_SETTING.management,
       ...(management || {}),
@@ -117,7 +122,7 @@ function mergeRuleSection(current, incoming, defaults) {
 export async function updateAttendanceSetting(req, res) {
   try {
     const setting = await ensureAttendanceSetting();
-    const { abnormalRules, breakOutRules, overtimeRules, globalBreakSetting } = req.body || {};
+    const { abnormalRules, breakOutRules, overtimeRules, globalBreakSetting, actionBuffers } = req.body || {};
 
     if (abnormalRules) {
       setting.abnormalRules = mergeRuleSection(
@@ -149,6 +154,10 @@ export async function updateAttendanceSetting(req, res) {
         overtimeRules,
         DEFAULT_SETTING.overtimeRules
       );
+    }
+
+    if (req.body && Object.hasOwn(req.body, 'actionBuffers')) {
+      setting.actionBuffers = normalizeActionBuffers(actionBuffers || DEFAULT_SETTING.actionBuffers);
     }
 
     if (req.body && req.body.management) {

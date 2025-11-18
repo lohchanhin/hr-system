@@ -6,7 +6,8 @@ import {
   determineActionAvailability,
   formatWindow,
   getLocalDateParts,
-  parseScheduleDate
+  parseScheduleDate,
+  __TESTING__
 } from '../timeWindow'
 
 describe('timeWindow utilities (client)', () => {
@@ -65,6 +66,37 @@ describe('timeWindow utilities (client)', () => {
       shifts: [{ _id: 'night', startTime: '22:00', endTime: '06:00', crossDay: true }]
     })
     expect(result.actions.clockOut.disabled).toBe(false)
+  })
+
+  it('applies custom buffer rules when provided', () => {
+    const scheduleDate = new Date(Date.UTC(2024, 0, 1))
+    const shift = { startTime: '09:00', endTime: '18:00' }
+    const span = computeShiftSpan(scheduleDate, shift)
+    const buffers = {
+      clockIn: { earlyMinutes: 15, lateMinutes: 60 },
+      clockOut: { earlyMinutes: 120, lateMinutes: 300 }
+    }
+    const window = computeActionWindow('clockIn', span.start, span.end, buffers)
+    expect(window.start.toISOString()).toBe('2024-01-01T00:45:00.000Z')
+    expect(window.end.toISOString()).toBe('2024-01-01T02:00:00.000Z')
+    const availability = determineActionAvailability({
+      now: new Date('2024-01-01T02:15:00.000Z'),
+      schedules: [{ date: '2024/01/01', shiftId: 's1' }],
+      shifts: [{ _id: 's1', ...shift }],
+      actionBuffers: buffers
+    })
+    expect(availability.actions.clockIn.disabled).toBe(true)
+  })
+
+  it('clamps out-of-range buffer numbers', () => {
+    const normalized = __TESTING__.normalizeActionBuffers({
+      clockIn: { earlyMinutes: -5, lateMinutes: 800 },
+      clockOut: { earlyMinutes: null, lateMinutes: 900 }
+    })
+    expect(normalized.clockIn.earlyMinutes).toBe(0)
+    expect(normalized.clockIn.lateMinutes).toBe(__TESTING__.BUFFER_LIMITS.lateMinutes.max)
+    expect(normalized.clockOut.earlyMinutes).toBe(0)
+    expect(normalized.clockOut.lateMinutes).toBe(__TESTING__.BUFFER_LIMITS.lateMinutes.max)
   })
 
   it('builds schedule date from local parts', () => {

@@ -3,15 +3,44 @@ const DEFAULT_TIMEZONE = import.meta.env?.VITE_TIMEZONE || 'Asia/Taipei'
 const MS_PER_MINUTE = 60 * 1000
 const MS_PER_DAY = 24 * 60 * 60 * 1000
 
-const ACTION_BUFFERS = Object.freeze({
+export const DEFAULT_ACTION_BUFFERS = Object.freeze({
   clockIn: { earlyMinutes: 60, lateMinutes: 240 },
   clockOut: { earlyMinutes: 240, lateMinutes: 120 }
 })
+
+const BUFFER_LIMITS = Object.freeze({
+  earlyMinutes: { min: 0, max: 720 },
+  lateMinutes: { min: 0, max: 720 }
+})
+
+function clampNumber(value, { min = 0, max = Number.POSITIVE_INFINITY } = {}) {
+  const num = Number(value)
+  if (!Number.isFinite(num)) return null
+  return Math.min(Math.max(num, min), max)
+}
 
 const ACTION_LABELS = Object.freeze({
   clockIn: '上班簽到',
   clockOut: '下班簽退'
 })
+
+export function normalizeActionBuffers(buffers = DEFAULT_ACTION_BUFFERS) {
+  const normalized = { clockIn: { ...DEFAULT_ACTION_BUFFERS.clockIn }, clockOut: { ...DEFAULT_ACTION_BUFFERS.clockOut } }
+  const source = typeof buffers === 'object' && buffers ? buffers : {}
+
+  ;['clockIn', 'clockOut'].forEach(action => {
+    const target = normalized[action]
+    const incoming = source[action] || {}
+    ;['earlyMinutes', 'lateMinutes'].forEach(field => {
+      const clamped = clampNumber(incoming[field], BUFFER_LIMITS[field])
+      if (clamped !== null) {
+        target[field] = clamped
+      }
+    })
+  })
+
+  return normalized
+}
 
 function toNumber(value) {
   const num = Number(value)
@@ -131,9 +160,9 @@ export function computeShiftSpan(scheduleDate, shift, timeZone = DEFAULT_TIMEZON
   return { start, end }
 }
 
-export function computeActionWindow(action, shiftStart, shiftEnd) {
+export function computeActionWindow(action, shiftStart, shiftEnd, actionBuffers = DEFAULT_ACTION_BUFFERS) {
   if (!shiftStart || !shiftEnd) return null
-  const buffers = ACTION_BUFFERS[action]
+  const buffers = normalizeActionBuffers(actionBuffers)[action]
   if (!buffers) return null
   const { earlyMinutes, lateMinutes } = buffers
   if (action === 'clockIn') {
@@ -184,7 +213,8 @@ export function determineActionAvailability({
   now = new Date(),
   schedules = [],
   shifts = [],
-  timeZone = DEFAULT_TIMEZONE
+  timeZone = DEFAULT_TIMEZONE,
+  actionBuffers = DEFAULT_ACTION_BUFFERS
 } = {}) {
   const shiftMap = new Map()
   shifts.forEach(shift => {
@@ -248,8 +278,9 @@ export function determineActionAvailability({
   const selected = activeContext || todayContext || previousContext || normalized[0]
 
   const actions = {}
+  const resolvedBuffers = normalizeActionBuffers(actionBuffers)
   ;['clockIn', 'clockOut'].forEach(action => {
-    const window = computeActionWindow(action, selected.shiftStart, selected.shiftEnd)
+    const window = computeActionWindow(action, selected.shiftStart, selected.shiftEnd, resolvedBuffers)
     if (!window) {
       actions[action] = {
         disabled: true,
@@ -291,8 +322,10 @@ export function getTimezone() {
 }
 
 export const __TESTING__ = {
-  ACTION_BUFFERS,
   ACTION_LABELS,
   MS_PER_DAY,
-  MS_PER_MINUTE
+  MS_PER_MINUTE,
+  DEFAULT_ACTION_BUFFERS,
+  BUFFER_LIMITS,
+  normalizeActionBuffers
 }
