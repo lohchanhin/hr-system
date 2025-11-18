@@ -3883,7 +3883,13 @@ async function submitBulkImport({ triggeredByMapping = false } = {}) {
 
     if (!res.ok) {
       bulkImportErrors.value = Array.isArray(payload?.errors) ? payload.errors : []
-      const message = payload?.message || payload?.error || '批量匯入失敗，請稍後再試'
+      const rowInfo = typeof payload?.rowNumber === 'number'
+        ? `（停在第 ${payload.rowNumber} 列）`
+        : ''
+      const baseMessage = payload?.message || payload?.error || '批量匯入失敗，請稍後再試'
+      const message = rowInfo && !baseMessage.includes(rowInfo)
+        ? `${baseMessage}${rowInfo}`
+        : baseMessage
       throw new Error(message)
     }
 

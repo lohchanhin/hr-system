@@ -955,6 +955,15 @@ export async function bulkImportEmployees(req, res) {
     }
   })
 
+  parsedRows.forEach(row => {
+    const username = deriveUsername(row.normalized)
+    if (username) {
+      row.normalized.username = username
+    } else {
+      row.errors.push('缺少帳號或 Email')
+    }
+  })
+
   let existingEmails = []
   if (emailCandidates.size) {
     try {
@@ -966,7 +975,7 @@ export async function bulkImportEmployees(req, res) {
     }
   }
 
-  const existingEmailSet = new Set(existingEmails.map(doc => normalizeEmail(doc.email)))
+  const existingEmailSet = new Set((existingEmails || []).map(doc => normalizeEmail(doc.email)))
   parsedRows.forEach(row => {
     const email = normalizeEmail(row.normalized.email ?? row.original.email)
     if (email && existingEmailSet.has(email)) {
@@ -974,35 +983,46 @@ export async function bulkImportEmployees(req, res) {
     }
   })
 
+  const firstErrorRow = parsedRows.find(row => row.errors.length)
+  if (firstErrorRow) {
+    const formattedError = formatRowError(firstErrorRow.rowNumber, firstErrorRow.errors)
+    res.status(400).json({
+      message: `第 ${firstErrorRow.rowNumber} 列資料有誤，已停止匯入`,
+      errors: [formattedError],
+      rowNumber: firstErrorRow.rowNumber
+    })
+    return
+  }
+
   const preview = []
-  const errorMessages = []
-  let successCount = 0
+  let session = null
+  let usingTransaction = false
+  let failedRowNumber = null
 
-  for (const row of parsedRows) {
-    if (row.errors.length) {
-      errorMessages.push(formatRowError(row.rowNumber, row.errors))
-      continue
+  try {
+    if (typeof Employee.startSession === 'function') {
+      session = await Employee.startSession()
+      if (session && typeof session.startTransaction === 'function') {
+        await session.startTransaction()
+        usingTransaction = true
+      } else {
+        session = null
+      }
     }
 
-    const username = deriveUsername(row.normalized)
-    if (!username) {
-      errorMessages.push(formatRowError(row.rowNumber, '缺少帳號或 Email'))
-      continue
-    }
+    for (const row of parsedRows) {
+      failedRowNumber = row.rowNumber
+      const password = resetPassword || generatePassword()
+      const body = {
+        ...row.normalized,
+        email: row.normalized.email,
+        username: row.normalized.username
+      }
 
-    const password = resetPassword || generatePassword()
-    const body = {
-      ...row.normalized,
-      email: row.normalized.email,
-      username
-    }
+      const employeeDoc = buildEmployeeDoc(body)
+      employeeDoc.password = password
 
-    const employeeDoc = buildEmployeeDoc(body)
-    employeeDoc.password = password
-
-    try {
-      const created = await Employee.create(employeeDoc)
-      successCount += 1
+      const created = await Employee.create(employeeDoc, usingTransaction && session ? { session } : undefined)
       preview.push(createPreview({
         employeeNo: created.employeeId || created.employeeNo || body.employeeNo,
         name: created.name,
@@ -1010,20 +1030,37 @@ export async function bulkImportEmployees(req, res) {
         role: created.role || body.role,
         email: created.email
       }))
-    } catch (error) {
-      errorMessages.push(formatRowError(row.rowNumber, error.message))
+    }
+
+    if (usingTransaction && session && typeof session.commitTransaction === 'function') {
+      await session.commitTransaction()
+    }
+
+    res.status(200).json({
+      successCount: parsedRows.length,
+      failureCount: 0,
+      preview,
+      errors: []
+    })
+  } catch (error) {
+    if (usingTransaction && session && typeof session.abortTransaction === 'function') {
+      await session.abortTransaction()
+    }
+    const formattedError = failedRowNumber
+      ? formatRowError(failedRowNumber, error.message)
+      : error.message
+    res.status(400).json({
+      message: failedRowNumber
+        ? `第 ${failedRowNumber} 列資料寫入失敗，已停止匯入`
+        : '匯入資料寫入失敗',
+      errors: [formattedError],
+      rowNumber: failedRowNumber || undefined
+    })
+  } finally {
+    if (session && typeof session.endSession === 'function') {
+      await session.endSession()
     }
   }
-
-  const failureCount = parsedRows.length - successCount
-
-  const statusCode = successCount > 0 ? 200 : 400
-  res.status(statusCode).json({
-    successCount,
-    failureCount,
-    preview,
-    errors: errorMessages
-  })
 }
 
 export default bulkImportEmployees
