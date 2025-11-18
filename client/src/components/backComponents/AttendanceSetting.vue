@@ -61,7 +61,29 @@
             </el-form-item>
           </el-form>
         </el-tab-pane>
-  
+
+        <!-- 4. 打卡緩衝設定 -->
+        <el-tab-pane label="打卡緩衝" name="action-buffers">
+          <el-form :model="actionBufferForm" label-width="200px" class="rule-form">
+            <el-form-item label="上班提前可打卡 (分鐘)">
+              <el-input-number v-model="actionBufferForm.clockIn.earlyMinutes" :min="0" :max="720" />
+            </el-form-item>
+            <el-form-item label="上班最晚容許 (分鐘)">
+              <el-input-number v-model="actionBufferForm.clockIn.lateMinutes" :min="0" :max="720" />
+            </el-form-item>
+            <el-divider />
+            <el-form-item label="下班提前可打卡 (分鐘)">
+              <el-input-number v-model="actionBufferForm.clockOut.earlyMinutes" :min="0" :max="720" />
+            </el-form-item>
+            <el-form-item label="下班最晚容許 (分鐘)">
+              <el-input-number v-model="actionBufferForm.clockOut.lateMinutes" :min="0" :max="720" />
+            </el-form-item>
+            <el-form-item>
+              <el-button type="primary" @click="saveActionBuffers">儲存打卡緩衝</el-button>
+            </el-form-item>
+          </el-form>
+        </el-tab-pane>
+
       </el-tabs>
     </div>
   </template>
@@ -92,9 +114,48 @@
     toCompRate: 1.5
   }
 
+  const defaultActionBuffers = {
+    clockIn: { earlyMinutes: 60, lateMinutes: 240 },
+    clockOut: { earlyMinutes: 240, lateMinutes: 120 }
+  }
+
+  const MAX_BUFFER = 720
+
+  function cloneActionBuffers(source = defaultActionBuffers) {
+    return {
+      clockIn: { ...source.clockIn },
+      clockOut: { ...source.clockOut }
+    }
+  }
+
+  function clampBuffer(value) {
+    const num = Number(value)
+    if (!Number.isFinite(num)) return null
+    return Math.min(Math.max(num, 0), MAX_BUFFER)
+  }
+
+  function normalizeActionBuffersInput(buffers) {
+    const normalized = cloneActionBuffers()
+    const incoming = (buffers && typeof buffers === 'object') ? buffers : {}
+
+    ;['clockIn', 'clockOut'].forEach(action => {
+      const target = normalized[action]
+      const source = incoming[action] || {}
+      ;['earlyMinutes', 'lateMinutes'].forEach(field => {
+        const clamped = clampBuffer(source[field])
+        if (clamped !== null) {
+          target[field] = clamped
+        }
+      })
+    })
+
+    return normalized
+  }
+
   const abnormalForm = ref({ ...defaultAbnormalRules })
   const breakOutForm = ref({ ...defaultBreakOutRules })
   const overtimeForm = ref({ ...defaultOvertimeRules })
+  const actionBufferForm = ref(cloneActionBuffers())
 
   function applySetting(data) {
     if (!data || typeof data !== 'object') return
@@ -106,6 +167,9 @@
     }
     if (data.overtimeRules) {
       overtimeForm.value = { ...defaultOvertimeRules, ...data.overtimeRules }
+    }
+    if (data.actionBuffers) {
+      actionBufferForm.value = normalizeActionBuffersInput(data.actionBuffers)
     }
   }
 
@@ -123,7 +187,8 @@
     const payload = {
       abnormalRules: { ...abnormalForm.value },
       breakOutRules: { ...breakOutForm.value },
-      overtimeRules: { ...overtimeForm.value }
+      overtimeRules: { ...overtimeForm.value },
+      actionBuffers: normalizeActionBuffersInput(actionBufferForm.value)
     }
     const res = await apiFetch('/api/attendance-settings', {
       method: 'PUT',
@@ -162,6 +227,15 @@
     try {
       await saveSettings()
       ElMessage.success('已儲存「加班規則」設定')
+    } catch (error) {
+      ElMessage.error(error.message || '儲存失敗')
+    }
+  }
+
+  const saveActionBuffers = async () => {
+    try {
+      await saveSettings()
+      ElMessage.success('已儲存「打卡緩衝」設定')
     } catch (error) {
       ElMessage.error(error.message || '儲存失敗')
     }

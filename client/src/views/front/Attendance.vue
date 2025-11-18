@@ -141,6 +141,7 @@ const remarkText = ref('')
 const pendingAction = ref('')
 const shiftDefinitions = ref([])
 const monthlySchedules = ref([])
+const actionBuffers = ref()
 const actionAvailability = ref(determineActionAvailability())
 
 const clockInState = computed(() => actionAvailability.value.actions?.clockIn || {
@@ -158,7 +159,8 @@ function updateAvailability(now = new Date()) {
     now,
     schedules: monthlySchedules.value,
     shifts: shiftDefinitions.value,
-    timeZone: getTimezone()
+    timeZone: getTimezone(),
+    actionBuffers: actionBuffers.value
   })
 }
 
@@ -209,8 +211,20 @@ async function fetchMonthlySchedule() {
   }
 }
 
+async function fetchAttendanceSettings() {
+  try {
+    const res = await apiFetch('/api/attendance-settings')
+    if (!res?.ok) throw new Error('failed')
+    const data = await res.json().catch(() => null)
+    actionBuffers.value = data?.actionBuffers
+  } catch (err) {
+    console.error(err)
+    actionBuffers.value = undefined
+  }
+}
+
 async function loadScheduleContext() {
-  await Promise.all([fetchShifts(), fetchMonthlySchedule()])
+  await Promise.all([fetchShifts(), fetchMonthlySchedule(), fetchAttendanceSettings()])
   updateAvailability(new Date())
 }
 

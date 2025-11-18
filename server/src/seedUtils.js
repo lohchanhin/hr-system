@@ -127,6 +127,10 @@ const ATTENDANCE_SETTING_TEMPLATE = {
     breakInterval: 30,
     outingNeedApprove: false,
   },
+  actionBuffers: {
+    clockIn: { earlyMinutes: 60, lateMinutes: 240 },
+    clockOut: { earlyMinutes: 240, lateMinutes: 120 },
+  },
   overtimeRules: {
     weekdayThreshold: 30,
     holidayRate: 1.33,
@@ -150,6 +154,7 @@ function buildAttendanceSettingPayload() {
     shifts: ATTENDANCE_SETTING_TEMPLATE.shifts.map((shift) => ({ ...shift })),
     abnormalRules: { ...ATTENDANCE_SETTING_TEMPLATE.abnormalRules },
     breakOutRules: { ...ATTENDANCE_SETTING_TEMPLATE.breakOutRules },
+    actionBuffers: { ...ATTENDANCE_SETTING_TEMPLATE.actionBuffers },
     overtimeRules: { ...ATTENDANCE_SETTING_TEMPLATE.overtimeRules },
   };
 }
