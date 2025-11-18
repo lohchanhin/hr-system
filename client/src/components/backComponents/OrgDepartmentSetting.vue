@@ -436,36 +436,7 @@
             </el-form-item>
           </div>
 
-          <div class="form-section">
-            <h3 class="form-section-title">中場休息設定</h3>
-            <el-form-item label="是否啟用全局中場休息設定">
-              <el-switch
-                v-model="form.enableGlobalBreak"
-                active-text="啟用"
-                inactive-text="停用"
-                active-color="#10b981"
-              />
-            </el-form-item>
-            <el-form-item label="全局休息時間 (分鐘)">
-              <el-input-number
-                v-model="form.breakMinutes"
-                :min="0"
-                :max="240"
-                :disabled="!form.enableGlobalBreak"
-                style="width: 200px"
-              />
-            </el-form-item>
-            <el-form-item label="是否允許多段休息">
-              <el-switch
-                v-model="form.allowMultiBreak"
-                :disabled="!form.enableGlobalBreak"
-                active-text="允許"
-                inactive-text="不允許"
-                active-color="#10b981"
-              />
-            </el-form-item>
-          </div>
-        </template>
+          </template>
         
         <template v-else>
           <div class="form-section">
@@ -686,11 +657,7 @@ function defaultForm(type) {
       defaultTwoDayOff: true,
       tempChangeAllowed: false,
       deptManager: '',
-      scheduleNotes: '',
-      enableGlobalBreak: false,
-      breakMinutes: 60,
-      allowMultiBreak: false,
-      breakSettingId: ''
+      scheduleNotes: ''
     }
   } else {
     return {
@@ -730,12 +697,6 @@ async function openDialog(type, index = null) {
       form.value.shiftId = shiftValue ? shiftValue.toString() : ''
       delete form.value.shift
     }
-    if (type === 'dept') {
-      const breakSetting = await fetchBreakSettingForDepartment(item?._id)
-      if (breakSetting) {
-        form.value = { ...form.value, ...breakSetting }
-      }
-    }
   } else {
     editIndex.value = null
     form.value = defaultForm(type)
@@ -754,16 +715,6 @@ async function saveItem() {
         ? deptList
         : subList
   let payload = { ...form.value }
-  if (currentType.value === 'dept') {
-    const {
-      enableGlobalBreak,
-      breakMinutes,
-      allowMultiBreak,
-      breakSettingId,
-      ...rest
-    } = payload
-    payload = rest
-  }
   if (currentType.value === 'sub') {
     delete payload.shift
   }
@@ -782,25 +733,7 @@ async function saveItem() {
       body: JSON.stringify(payload)
     })
   }
-  let responseData = null
-  if (res && res.ok && currentType.value === 'dept') {
-    const contentType = res.headers?.get?.('content-type') || ''
-    if (contentType.includes('application/json') && typeof res.json === 'function') {
-      try {
-        responseData = await res.json()
-      } catch (err) {
-        responseData = null
-      }
-    }
-  }
   if (res && res.ok) {
-    if (currentType.value === 'dept') {
-      const departmentId =
-        form.value._id || responseData?._id || responseData?.id || list.value[editIndex.value]?._id
-      if (departmentId) {
-        await upsertBreakSetting(departmentId)
-      }
-    }
     await fetchAll()
     dialogVisible.value = false
   }
@@ -849,64 +782,6 @@ async function fetchShifts(force = false) {
   } catch (err) {
     console.error(err)
   }
-}
-
-async function fetchBreakSettingForDepartment(departmentId) {
-  if (!departmentId) return null
-  try {
-    const res = await apiFetch(`/api/break-settings?department=${departmentId}`)
-    if (res.ok) {
-      const data = await res.json()
-      const record = Array.isArray(data) ? data[0] : data
-      if (record) {
-        return {
-          breakSettingId: record._id || '',
-          enableGlobalBreak: !!record.enableGlobalBreak,
-          breakMinutes:
-            typeof record.breakMinutes === 'number' ? record.breakMinutes : 60,
-          allowMultiBreak: !!record.allowMultiBreak
-        }
-      }
-    }
-  } catch (err) {
-    console.error(err)
-  }
-  return null
-}
-
-async function upsertBreakSetting(departmentId) {
-  const payload = {
-    department: departmentId,
-    enableGlobalBreak: !!form.value.enableGlobalBreak,
-    breakMinutes: Number(form.value.breakMinutes ?? 0),
-    allowMultiBreak: !!form.value.allowMultiBreak
-  }
-  let url = '/api/break-settings'
-  let method = 'POST'
-  if (form.value.breakSettingId) {
-    url += `/${form.value.breakSettingId}`
-    method = 'PUT'
-  }
-  const res = await apiFetch(url, {
-    method,
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload)
-  })
-  if (res && res.ok) {
-    const contentType = res.headers?.get?.('content-type') || ''
-    if (contentType.includes('application/json') && typeof res.json === 'function') {
-      try {
-        const data = await res.json()
-        if (data?._id) {
-          form.value.breakSettingId = data._id
-        }
-      } catch (err) {
-        console.error(err)
-      }
-    }
-    return true
-  }
-  return false
 }
 
 onMounted(() => {

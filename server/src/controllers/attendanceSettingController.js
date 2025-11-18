@@ -12,6 +12,11 @@ const DEFAULT_SETTING = Object.freeze({
     breakInterval: 60,
     outingNeedApprove: false,
   },
+  globalBreakSetting: {
+    enableGlobalBreak: false,
+    breakMinutes: 60,
+    allowMultiBreak: false,
+  },
   overtimeRules: {
     weekdayThreshold: 30,
     holidayRate: 2,
@@ -37,6 +42,7 @@ function buildDefaultSetting() {
   return {
     abnormalRules: { ...DEFAULT_SETTING.abnormalRules },
     breakOutRules: { ...DEFAULT_SETTING.breakOutRules },
+    globalBreakSetting: { ...DEFAULT_SETTING.globalBreakSetting },
     overtimeRules: { ...DEFAULT_SETTING.overtimeRules },
     management: { ...DEFAULT_SETTING.management },
   };
@@ -49,6 +55,7 @@ function normalize(setting) {
     shifts: _unusedShifts,
     abnormalRules,
     breakOutRules,
+    globalBreakSetting,
     overtimeRules,
     management,
     ...others
@@ -62,6 +69,10 @@ function normalize(setting) {
     breakOutRules: {
       ...DEFAULT_SETTING.breakOutRules,
       ...(breakOutRules || {}),
+    },
+    globalBreakSetting: {
+      ...DEFAULT_SETTING.globalBreakSetting,
+      ...(globalBreakSetting || {}),
     },
     overtimeRules: {
       ...DEFAULT_SETTING.overtimeRules,
@@ -106,7 +117,7 @@ function mergeRuleSection(current, incoming, defaults) {
 export async function updateAttendanceSetting(req, res) {
   try {
     const setting = await ensureAttendanceSetting();
-    const { abnormalRules, breakOutRules, overtimeRules } = req.body || {};
+    const { abnormalRules, breakOutRules, overtimeRules, globalBreakSetting } = req.body || {};
 
     if (abnormalRules) {
       setting.abnormalRules = mergeRuleSection(
@@ -121,6 +132,14 @@ export async function updateAttendanceSetting(req, res) {
         setting.breakOutRules,
         breakOutRules,
         DEFAULT_SETTING.breakOutRules
+      );
+    }
+
+    if (globalBreakSetting) {
+      setting.globalBreakSetting = mergeRuleSection(
+        setting.globalBreakSetting,
+        globalBreakSetting,
+        DEFAULT_SETTING.globalBreakSetting
       );
     }
 
