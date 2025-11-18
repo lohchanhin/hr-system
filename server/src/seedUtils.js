@@ -76,6 +76,10 @@ const ATTENDANCE_SETTING_TEMPLATE = {
       startTime: '08:30',
       endTime: '17:30',
       breakTime: '01:00',
+      breakDuration: 60,
+      breakWindows: [
+        { start: '12:30', end: '13:30', label: '午休' },
+      ],
       crossDay: false,
       remark: '行政支援時段',
       color: '#1e3a8a',
@@ -87,6 +91,10 @@ const ATTENDANCE_SETTING_TEMPLATE = {
       startTime: '12:00',
       endTime: '21:00',
       breakTime: '01:00',
+      breakDuration: 60,
+      breakWindows: [
+        { start: '17:00', end: '18:00', label: '晚餐' },
+      ],
       crossDay: false,
       remark: '客服及支援時段',
       color: '#065f46',
@@ -98,6 +106,10 @@ const ATTENDANCE_SETTING_TEMPLATE = {
       startTime: '14:00',
       endTime: '23:00',
       breakTime: '01:00',
+      breakDuration: 60,
+      breakWindows: [
+        { start: '19:00', end: '20:00', label: '晚餐' },
+      ],
       crossDay: false,
       remark: '傍晚支援與延長營運',
       color: '#4c1d95',

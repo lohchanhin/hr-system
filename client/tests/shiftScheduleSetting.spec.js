@@ -28,4 +28,22 @@ describe('ShiftScheduleSetting.vue', () => {
     const calls = apiFetch.mock.calls
     expect(calls.find(c => c[0] === '/api/dept-managers')).toBeFalsy()
   })
+
+  it('送出班別時包含休息設定', async () => {
+    const wrapper = mount(ShiftScheduleSetting, { global: { plugins: [ElementPlus] } })
+
+    wrapper.vm.shiftForm.name = '測試班別'
+    wrapper.vm.shiftForm.code = 'TEST'
+    wrapper.vm.shiftForm.startTime = '09:00'
+    wrapper.vm.shiftForm.endTime = '18:00'
+    wrapper.vm.shiftForm.breakDuration = 90
+    wrapper.vm.shiftForm.breakWindows = [{ start: '12:00', end: '13:00', label: '午休' }]
+
+    await wrapper.vm.saveShift()
+
+    const createCall = apiFetch.mock.calls.find((call) => call[0] === '/api/shifts' && call[1]?.method === 'POST')
+    expect(createCall).toBeTruthy()
+    expect(createCall[1].body).toContain('breakDuration')
+    expect(createCall[1].body).toContain('午休')
+  })
 })

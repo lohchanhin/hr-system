@@ -1,4 +1,74 @@
 import AttendanceSetting from '../models/AttendanceSetting.js';
+import { parseTimeString } from '../utils/timeWindow.js';
+
+function validateTimeField(value, label) {
+  if (!value || typeof value !== 'string' || !parseTimeString(value)) {
+    throw new Error(`${label}格式不正確，請輸入 HH:mm`);
+  }
+  return value;
+}
+
+function normalizeBreakWindows(breakWindows) {
+  if (breakWindows == null) return undefined;
+  if (!Array.isArray(breakWindows)) {
+    throw new Error('breakWindows 必須是陣列');
+  }
+  return breakWindows
+    .map((item, idx) => {
+      if (!item) return null;
+      const start = item.start ? validateTimeField(item.start, `第 ${idx + 1} 筆休息開始時間`) : null;
+      const end = item.end ? validateTimeField(item.end, `第 ${idx + 1} 筆休息結束時間`) : null;
+      if (start && end && start === end) {
+        throw new Error(`第 ${idx + 1} 筆休息時段的開始與結束不得相同`);
+      }
+      if (!start && !end && !item.label) return null;
+      return {
+        start: start || '',
+        end: end || '',
+        label: item.label || '',
+      };
+    })
+    .filter(Boolean);
+}
+
+function buildShiftPayload(input, existing = {}) {
+  const merged = { ...existing, ...input };
+  const name = (merged.name || '').trim();
+  const code = (merged.code || '').trim();
+  if (!name || !code) {
+    throw new Error('班別名稱與代碼為必填');
+  }
+  const startTime = validateTimeField(merged.startTime, '上班時間');
+  const endTime = validateTimeField(merged.endTime, '下班時間');
+  const breakWindows = normalizeBreakWindows(merged.breakWindows ?? existing.breakWindows);
+
+  let breakDuration;
+  if (merged.breakDuration !== undefined) {
+    const parsed = Number(merged.breakDuration);
+    if (!Number.isFinite(parsed) || parsed < 0) {
+      throw new Error('休息時長必須是 0 或以上的數字');
+    }
+    breakDuration = parsed;
+  } else if (existing.breakDuration !== undefined) {
+    breakDuration = existing.breakDuration;
+  }
+
+  return {
+    name,
+    code,
+    startTime,
+    endTime,
+    breakTime: merged.breakTime,
+    breakMinutes: merged.breakMinutes,
+    breakDuration,
+    breakWindows: breakWindows ?? [],
+    allowMultiBreak: merged.allowMultiBreak ?? existing.allowMultiBreak ?? false,
+    crossDay: Boolean(merged.crossDay ?? existing.crossDay),
+    remark: merged.remark ?? existing.remark ?? '',
+    color: merged.color ?? existing.color ?? '',
+    bgColor: merged.bgColor ?? existing.bgColor ?? '',
+  };
+}
 
 export async function getShifts(req, res) {
   try {
@@ -15,12 +85,14 @@ export async function createShift(req, res) {
     if (!setting) {
       setting = await AttendanceSetting.create({ shifts: [] });
     }
-    setting.shifts.push(req.body);
+    const payload = buildShiftPayload(req.body);
+    setting.shifts.push(payload);
     await setting.save();
     const newShift = setting.shifts[setting.shifts.length - 1];
     res.status(201).json(newShift);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    const status = err.message?.includes('必填') || err.message?.includes('格式不正確') ? 400 : 500;
+    res.status(status).json({ error: err.message });
   }
 }
 
@@ -31,11 +103,13 @@ export async function updateShift(req, res) {
     if (!setting) return res.status(404).json({ error: 'Attendance setting not found' });
     const shift = setting.shifts.id(id);
     if (!shift) return res.status(404).json({ error: 'Shift not found' });
-    Object.assign(shift, req.body);
+    const payload = buildShiftPayload(req.body, shift.toObject ? shift.toObject() : shift);
+    Object.assign(shift, payload);
     await setting.save();
     res.json(shift);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    const status = err.message?.includes('必填') || err.message?.includes('格式不正確') ? 400 : 500;
+    res.status(status).json({ error: err.message });
   }
 }
 

@@ -171,6 +171,14 @@
                   </div>
                 </template>
               </el-table-column>
+              <el-table-column label="休息" min-width="220">
+                <template #default="{ row }">
+                  <div class="break-info">
+                    <div class="break-duration">{{ formatBreakDuration(row) }}</div>
+                    <div v-if="formatBreakWindows(row)" class="break-window">{{ formatBreakWindows(row) }}</div>
+                  </div>
+                </template>
+              </el-table-column>
               <el-table-column prop="crossDay" label="跨日班" width="100">
                 <template #default="{ row }">
                   <el-tag :type="row.crossDay ? 'warning' : 'success'" size="small">
@@ -206,7 +214,7 @@
                 <el-input v-model="shiftForm.name" placeholder="如：早班 / 夜班 / 彈性班" />
               </el-form-item>
               <el-form-item label="上班時間" required>
-                <el-time-picker 
+                <el-time-picker
                   v-model="shiftForm.startTime"
                   :format="timeFormat"
                   :value-format="timeFormat"
@@ -215,13 +223,43 @@
                 />
               </el-form-item>
               <el-form-item label="下班時間" required>
-                <el-time-picker 
+                <el-time-picker
                   v-model="shiftForm.endTime"
                   :format="timeFormat"
                   :value-format="timeFormat"
                   placeholder="選擇下班時間"
                   style="width: 100%"
                 />
+              </el-form-item>
+              <el-form-item label="休息時長(分鐘)">
+                <el-input-number v-model="shiftForm.breakDuration" :min="0" :step="15" style="width: 100%" />
+              </el-form-item>
+              <el-form-item label="休息時段">
+                <div class="break-window-list">
+                  <div v-for="(item, index) in shiftForm.breakWindows" :key="index" class="break-window-row">
+                    <el-time-picker
+                      v-model="item.start"
+                      :format="timeFormat"
+                      :value-format="timeFormat"
+                      placeholder="開始"
+                      style="width: 120px"
+                    />
+                    <span class="time-separator">~</span>
+                    <el-time-picker
+                      v-model="item.end"
+                      :format="timeFormat"
+                      :value-format="timeFormat"
+                      placeholder="結束"
+                      style="width: 120px"
+                    />
+                    <el-input v-model="item.label" placeholder="備註" style="width: 140px" />
+                    <el-button type="danger" link @click="removeBreakWindow(index)">
+                      <i class="el-icon-delete"></i>
+                    </el-button>
+                  </div>
+                  <el-button type="primary" link @click="addBreakWindow">新增時段</el-button>
+                  <div class="form-help">若未填休息時段，將以「休息時長」扣除工時計算。</div>
+                </div>
               </el-form-item>
               <el-form-item label="跨日班">
                 <el-switch
@@ -444,6 +482,8 @@ const createEmptyShiftForm = () => ({
   code: '',
   startTime: '',
   endTime: '',
+  breakDuration: 60,
+  breakWindows: [],
   crossDay: false,
   remark: '',
   color: '',
@@ -490,7 +530,36 @@ function openShiftDialog(index = null) {
     shiftEditIndex = null
     shiftForm.value = createEmptyShiftForm()
   }
+  if (!Array.isArray(shiftForm.value.breakWindows)) {
+    shiftForm.value.breakWindows = []
+  }
   shiftDialogVisible.value = true
+}
+
+function formatBreakDuration(shift) {
+  if (shift.breakDuration != null) return `${shift.breakDuration} 分鐘`
+  if (shift.breakMinutes != null) return `${shift.breakMinutes} 分鐘`
+  if (shift.breakTime) return shift.breakTime
+  return '未設定'
+}
+
+function formatBreakWindows(shift) {
+  if (!Array.isArray(shift.breakWindows) || !shift.breakWindows.length) return ''
+  return shift.breakWindows
+    .map((item) => {
+      const range = [item.start, item.end].filter(Boolean).join('~')
+      return item.label ? `${range}（${item.label}）` : range
+    })
+    .filter(Boolean)
+    .join('，')
+}
+
+function addBreakWindow() {
+  shiftForm.value.breakWindows.push({ start: '', end: '', label: '' })
+}
+
+function removeBreakWindow(index) {
+  shiftForm.value.breakWindows.splice(index, 1)
 }
   
 async function saveShift() {
@@ -720,6 +789,29 @@ function getHolidayTagType(type) {
   gap: 8px;
   font-family: 'Courier New', monospace;
   font-weight: 500;
+}
+
+.break-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: #334155;
+}
+
+.break-duration {
+  font-weight: 600;
+}
+
+.break-window-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.break-window-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .start-time {
