@@ -1,7 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { getToken } from '@/utils/tokenService'
-import { resolveUserRole } from '@/utils/roleResolver'
+import { clearRoleCache, refreshRoleFromSource, resolveUserRole } from '@/utils/roleResolver'
 
 // ★ 既有的後台檔案
 const ManagerLogin = () => import('@/views/Login.vue')
@@ -168,20 +168,42 @@ const showWarningMessage = message => {
   }
 }
 
+let roleListenersRegistered = false
+let lastResolvedToken = null
+
+function setupRoleWatchers() {
+  if (roleListenersRegistered) return
+  if (typeof window === 'undefined') return
+  window.addEventListener('storage', event => {
+    if (['token', 'role'].includes(event.key)) {
+      clearRoleCache()
+    }
+  })
+  roleListenersRegistered = true
+}
+
+function resolveActiveRole(token) {
+  setupRoleWatchers()
+  if (token !== lastResolvedToken) {
+    clearRoleCache()
+    lastResolvedToken = token || null
+  }
+  return refreshRoleFromSource({ token })
+}
+
 // ★ 路由守衛
 router.beforeEach((to, from, next) => {
+  const token = getToken()
+  const activeRole = resolveActiveRole(token)
   const requiresAuth = to.matched.some(r => r.meta.requiresAuth)
   const frontRequiresAuth = to.matched.some(r => r.meta.frontRequiresAuth)
-  const token = getToken()
-  let cachedRole = null
 
   // 後台登入檢查
   if (requiresAuth) {
     if (!token) {
       return next({ name: 'ManagerLogin' })
     }
-    cachedRole = resolveUserRole({ token }) || 'employee'
-    if (!['supervisor', 'admin'].includes(cachedRole)) {
+    if (!['supervisor', 'admin'].includes(activeRole || 'employee')) {
       return next('/login')
     }
   }
@@ -193,13 +215,8 @@ router.beforeEach((to, from, next) => {
 
   // 若有角色限制 meta.roles
   if (to.meta.roles) {
-    if (cachedRole == null) {
-      cachedRole = resolveUserRole({ token })
-    }
-    if (!cachedRole) {
-      cachedRole = 'employee'
-    }
-    if (!to.meta.roles.includes(cachedRole)) {
+    const roleForRoute = activeRole || resolveUserRole({ token }) || 'employee'
+    if (!to.meta.roles.includes(roleForRoute)) {
       const warningMessage = to.meta.warningMessage || '您沒有權限瀏覽此頁面'
       showWarningMessage(warningMessage)
       return next({ name: 'Forbidden' })

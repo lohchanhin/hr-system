@@ -976,6 +976,7 @@ watch(includeSelf, async (val, oldVal) => {
   if (val === oldVal) return
   const supervisorId = getStoredSupervisorId() || getSupervisorIdFromStorage()
   persistIncludeSelfPreference(val, supervisorId)
+  authStore.refreshRole({ forceRefresh: true })
   if (isInitializingIncludeSelf) return
   if (!showIncludeSelfToggle.value) return
   await fetchEmployees(selectedDepartment.value, selectedSubDepartment.value)

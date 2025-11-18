@@ -1,3 +1,5 @@
+import { clearRoleCache } from './roleCache'
+
 export let _expiryTimeout = null;
 
 function parseExp(token) {
@@ -23,6 +25,7 @@ function scheduleRemoval(expiresAt) {
 }
 
 export function setToken(token) {
+  clearRoleCache();
   const expiresAt = parseExp(token);
   localStorage.setItem('token', token);
   if (expiresAt) {
@@ -47,6 +50,7 @@ export function getToken() {
 
 export function clearToken() {
   clearTimeout(_expiryTimeout);
+  clearRoleCache();
   localStorage.removeItem('token');
   localStorage.removeItem('token_expires');
 }

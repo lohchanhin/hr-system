@@ -1,4 +1,5 @@
 import { getToken } from '@/utils/tokenService'
+import { clearRoleCache, persistRole, readRoleFromCache } from './roleCache'
 
 function decodePayload(token) {
   try {
@@ -21,37 +22,19 @@ export function decodeRoleFromToken(token) {
   return null
 }
 
-function persistRole(role) {
-  if (!role) return
-  if (typeof window === 'undefined') return
-  if (window.sessionStorage) {
-    window.sessionStorage.setItem('role', role)
-  }
-  if (window.localStorage) {
-    window.localStorage.setItem('role', role)
-  }
-}
-
-export function resolveUserRole({ token, defaultRole = 'employee' } = {}) {
+export function resolveUserRole({ token, defaultRole = 'employee', skipCache = false } = {}) {
   if (typeof window === 'undefined') {
     return defaultRole
   }
 
-  const sessionRole = window.sessionStorage?.getItem('role')
-  if (sessionRole) {
-    return sessionRole
-  }
-
-  const localRole = window.localStorage?.getItem('role')
-  if (localRole) {
-    if (window.sessionStorage) {
-      window.sessionStorage.setItem('role', localRole)
-    }
-    return localRole
+  const cachedRole = readRoleFromCache()
+  if (!skipCache && cachedRole) {
+    return cachedRole
   }
 
   const effectiveToken = token ?? getToken()
   if (!effectiveToken) {
+    if (cachedRole) return cachedRole
     return defaultRole
   }
 
@@ -61,5 +44,20 @@ export function resolveUserRole({ token, defaultRole = 'employee' } = {}) {
     return decodedRole
   }
 
+  if (cachedRole) {
+    persistRole(cachedRole)
+    return cachedRole
+  }
+
+  if (skipCache) {
+    clearRoleCache()
+  }
+
   return defaultRole
 }
+
+export function refreshRoleFromSource(options = {}) {
+  return resolveUserRole({ ...options, skipCache: true })
+}
+
+export { clearRoleCache }
