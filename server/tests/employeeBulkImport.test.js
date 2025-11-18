@@ -250,6 +250,7 @@ describe('POST /api/employees/bulk-import', () => {
         employeeId: 'E0101',
         name: '林宥辰',
         email: 'csv_user@example.com',
+        idNumber: 'Z123456789',
         department: 'RD',
         status: '正職員工',
         partTime: 'FALSE',
@@ -284,7 +285,9 @@ describe('POST /api/employees/bulk-import', () => {
         name: '林宥辰',
         department: 'RD',
         role: 'employee',
-        email: 'csv_user@example.com'
+        email: 'csv_user@example.com',
+        username: 'E0101',
+        initialPassword: 'Z123456789'
       }
     ])
     expect(response.body.errors).toEqual([])
@@ -301,6 +304,7 @@ describe('POST /api/employees/bulk-import', () => {
         employeeId: 'E0001',
         name: '王小明',
         gender: 'm',
+        idNumber: 'A123456789',
         email: 'user1@example.com',
         mobile: '0912345678',
         languages: '中文,英文',
@@ -325,6 +329,7 @@ describe('POST /api/employees/bulk-import', () => {
         employeeId: 'E0002',
         name: '陳美麗',
         gender: 'F',
+        idNumber: 'B223456789',
         email: 'user2@example.com',
         status: '正職員工',
         partTime: 'TRUE',
@@ -347,7 +352,7 @@ describe('POST /api/employees/bulk-import', () => {
     const response = await request(application)
       .post('/api/employees/bulk-import')
       .attach('file', buffer, { filename: 'import.xlsx' })
-      .field('options', JSON.stringify({ defaultRole: 'supervisor', resetPassword: 'Temp1234!' }))
+      .field('options', JSON.stringify({ defaultRole: 'supervisor' }))
 
     expect(response.status).toBe(200)
     expect(response.body.successCount).toBe(2)
@@ -363,11 +368,12 @@ describe('POST /api/employees/bulk-import', () => {
       name: '王小明',
       email: 'user1@example.com',
       role: 'supervisor',
-      password: 'Temp1234!',
+      password: 'A123456789',
       employmentStatus: '試用期員工',
       salaryType: '月薪',
       salaryAmount: 50000
     })
+    expect(createdDoc.username).toBe('E0001')
     expect(createdDoc.languages).toEqual(['中文', '英文'])
     expect(createdDoc.identityCategory).toEqual(['原住民', '身障'])
     expect(createdDoc.emergencyContacts[0]).toMatchObject({
@@ -378,6 +384,14 @@ describe('POST /api/employees/bulk-import', () => {
     expect(createdDoc.salaryItems).toEqual(['績效獎金', '交通補助'])
     expect(createdDoc.appointment.hireDate).toBeInstanceOf(Date)
     expect(createdDoc.appointment.hireDate.toISOString()).toContain('2024-01-01')
+    expect(response.body.credentialRule).toMatchObject({
+      username: expect.stringContaining('帳號優先使用員工編號'),
+      password: expect.stringContaining('身分證號')
+    })
+    expect(response.body.preview[0]).toMatchObject({
+      username: 'E0001',
+      initialPassword: 'A123456789'
+    })
   })
 
   it('欄位缺漏時回傳錯誤並不建立資料', async () => {
@@ -385,7 +399,8 @@ describe('POST /api/employees/bulk-import', () => {
     const buffer = await createWorkbookBuffer([
       {
         employeeId: 'E0003',
-        email: 'user3@example.com'
+        email: 'user3@example.com',
+        idNumber: 'C123456789'
       }
     ])
 
@@ -402,23 +417,47 @@ describe('POST /api/employees/bulk-import', () => {
     expect(mockEmployeeModel.startSession).not.toHaveBeenCalled()
   })
 
+  it('缺少身分證號會回報錯誤並阻擋匯入', async () => {
+    const application = await setupApp()
+    const buffer = await createWorkbookBuffer([
+      {
+        employeeId: 'E0901',
+        name: '缺少證號',
+        email: 'no-id@example.com'
+      }
+    ])
+
+    mockEmployeeModel.find.mockResolvedValue([])
+
+    const response = await request(application)
+      .post('/api/employees/bulk-import')
+      .attach('file', buffer, { filename: 'import.xlsx' })
+
+    expect(response.status).toBe(400)
+    expect(response.body.errors[0]).toMatch(/缺少身分證號/)
+    expect(mockEmployeeModel.create).not.toHaveBeenCalled()
+  })
+
   it('偵測檔案內重複 Email 與既有 Email', async () => {
     const application = await setupApp()
     const buffer = await createWorkbookBuffer([
       {
         employeeId: 'E0004',
         name: '張一',
-        email: 'dup@example.com'
+        email: 'dup@example.com',
+        idNumber: 'D123456789'
       },
       {
         employeeId: 'E0005',
         name: '張二',
-        email: 'dup@example.com'
+        email: 'dup@example.com',
+        idNumber: 'E123456789'
       },
       {
         employeeId: 'E0006',
         name: '張三',
-        email: 'taken@example.com'
+        email: 'taken@example.com',
+        idNumber: 'F123456789'
       }
     ])
 
@@ -450,12 +489,14 @@ describe('POST /api/employees/bulk-import', () => {
       {
         employeeId: 'E1000',
         name: '',
-        email: ''
+        email: '',
+        idNumber: 'G123456789'
       },
       {
         employeeId: 'E1001',
         name: '正常資料',
-        email: 'ok@example.com'
+        email: 'ok@example.com',
+        idNumber: 'H123456789'
       }
     ])
 
@@ -478,12 +519,14 @@ describe('POST /api/employees/bulk-import', () => {
       {
         employeeId: 'E2000',
         name: '第一筆',
-        email: 'first@example.com'
+        email: 'first@example.com',
+        idNumber: 'I123456789'
       },
       {
         employeeId: 'E2001',
         name: '第二筆',
-        email: 'second@example.com'
+        email: 'second@example.com',
+        idNumber: 'J123456789'
       }
     ])
 
@@ -522,7 +565,8 @@ describe('POST /api/employees/bulk-import', () => {
         email: 'unknown-ref@example.com',
         organization: '未知機構',
         department: '未知部門',
-        subDepartment: '未知單位'
+        subDepartment: '未知單位',
+        idNumber: 'K123456789'
       }
     ])
 
@@ -562,7 +606,8 @@ describe('POST /api/employees/bulk-import', () => {
         email: 'mapped-ref@example.com',
         organization: '未知機構',
         department: '未知部門',
-        subDepartment: '未知單位'
+        subDepartment: '未知單位',
+        idNumber: 'L123456789'
       }
     ])
 

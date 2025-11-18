@@ -473,8 +473,11 @@ export async function createEmployee(req, res) {
       name, email, role, username, password,
     } = body
 
+    const employeeNo = body.employeeNo ?? body.employeeId
+
     if (!name) return res.status(400).json({ error: 'Name is required' })
     if (!email) return res.status(400).json({ error: 'Email is required' })
+    if (!employeeNo || String(employeeNo).trim() === '') return res.status(400).json({ error: 'Employee number is required' })
     if (!username) return res.status(400).json({ error: 'Username is required' })
     if (!password) return res.status(400).json({ error: 'Password is required' })
     const emailRegex = /^\S+@\S+\.\S+$/
