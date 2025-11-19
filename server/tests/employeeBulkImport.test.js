@@ -34,6 +34,17 @@ function mockFindWithData(model, data) {
   }))
 }
 
+function setupEmployeeFind({ referenceData = [], emailData = [] } = {}) {
+  mockEmployeeModel.find.mockImplementation((query, projection) => {
+    if (query && query.email) {
+      return Promise.resolve(emailData)
+    }
+    return {
+      lean: jest.fn().mockResolvedValue(referenceData)
+    }
+  })
+}
+
 jest.unstable_mockModule('../src/models/Employee.js', () => ({
   default: mockEmployeeModel
 }))
@@ -234,6 +245,7 @@ beforeEach(() => {
   mockSession.commitTransaction.mockResolvedValue()
   mockSession.abortTransaction.mockResolvedValue()
   mockSession.endSession.mockResolvedValue()
+  setupEmployeeFind()
   mockOrganizationModel.find.mockReset()
   mockDepartmentModel.find.mockReset()
   mockSubDepartmentModel.find.mockReset()
@@ -262,7 +274,7 @@ describe('POST /api/employees/bulk-import', () => {
     mockFindWithData(mockDepartmentModel, [
       { _id: 'RD', code: 'RD', name: '研發部', organization: 'ORG001' }
     ])
-    mockEmployeeModel.find.mockResolvedValue([])
+    setupEmployeeFind({ emailData: [] })
     mockEmployeeModel.create.mockImplementation(async (doc) => ({
       _id: `${doc.employeeNo}-id`,
       employeeId: doc.employeeNo,
@@ -339,7 +351,7 @@ describe('POST /api/employees/bulk-import', () => {
       }
     ])
 
-    mockEmployeeModel.find.mockResolvedValue([])
+    setupEmployeeFind({ emailData: [] })
     mockEmployeeModel.create.mockImplementation(async (doc) => ({
       _id: `${doc.employeeNo}-id`,
       employeeId: doc.employeeNo,
@@ -404,7 +416,7 @@ describe('POST /api/employees/bulk-import', () => {
       }
     ])
 
-    mockEmployeeModel.find.mockResolvedValue([])
+    setupEmployeeFind({ emailData: [] })
 
     const response = await request(application)
       .post('/api/employees/bulk-import')
@@ -427,7 +439,7 @@ describe('POST /api/employees/bulk-import', () => {
       }
     ])
 
-    mockEmployeeModel.find.mockResolvedValue([])
+    setupEmployeeFind({ emailData: [] })
 
     const response = await request(application)
       .post('/api/employees/bulk-import')
@@ -461,7 +473,7 @@ describe('POST /api/employees/bulk-import', () => {
       }
     ])
 
-    mockEmployeeModel.find.mockResolvedValue([{ email: 'taken@example.com' }])
+    setupEmployeeFind({ emailData: [{ email: 'taken@example.com' }] })
     mockEmployeeModel.create.mockImplementation(async (doc) => ({
       _id: `${doc.employeeNo}-id`,
       employeeId: doc.employeeNo,
@@ -500,7 +512,7 @@ describe('POST /api/employees/bulk-import', () => {
       }
     ])
 
-    mockEmployeeModel.find.mockResolvedValue([])
+    setupEmployeeFind({ emailData: [] })
 
     const response = await request(application)
       .post('/api/employees/bulk-import')
@@ -530,7 +542,7 @@ describe('POST /api/employees/bulk-import', () => {
       }
     ])
 
-    mockEmployeeModel.find.mockResolvedValue([])
+    setupEmployeeFind({ emailData: [] })
     mockEmployeeModel.create
       .mockImplementationOnce(async (doc) => ({
         _id: `${doc.employeeNo}-id`,
@@ -579,7 +591,7 @@ describe('POST /api/employees/bulk-import', () => {
     mockFindWithData(mockSubDepartmentModel, [
       { _id: 'sub1', name: '研發一組', code: 'RD-1', department: 'dep1' }
     ])
-    mockEmployeeModel.find.mockResolvedValue([])
+    setupEmployeeFind({ emailData: [] })
 
     const response = await request(application)
       .post('/api/employees/bulk-import')
@@ -620,7 +632,7 @@ describe('POST /api/employees/bulk-import', () => {
     mockFindWithData(mockSubDepartmentModel, [
       { _id: 'sub1', name: '研發一組', code: 'RD-1', department: 'dep1' }
     ])
-    mockEmployeeModel.find.mockResolvedValue([])
+    setupEmployeeFind({ emailData: [] })
     mockEmployeeModel.create.mockImplementation(async (doc) => ({
       ...doc,
       _id: `${doc.employeeNo}-id`
@@ -641,5 +653,69 @@ describe('POST /api/employees/bulk-import', () => {
     expect(createdDoc.department).toBe('dep1')
     expect(createdDoc.subDepartment).toBe('sub1')
     expect(createdDoc.organization).toBeNull()
+  })
+
+  it('主管先存在系統時可依姓名或編號自動對應 supervisor', async () => {
+    const application = await setupApp()
+    const buffer = await createWorkbookBuffer([
+      {
+        employeeId: 'E3001',
+        name: '受聘員工A',
+        email: 'staffA@example.com',
+        idNumber: 'P123456789',
+        supervisor: '主管甲'
+      },
+      {
+        employeeId: 'E3002',
+        name: '受聘員工B',
+        email: 'staffB@example.com',
+        idNumber: 'Q123456789',
+        supervisor: 'S0001'
+      }
+    ])
+
+    setupEmployeeFind({
+      referenceData: [{ _id: 'sup-id', name: '主管甲', employeeId: 'S0001' }],
+      emailData: []
+    })
+    mockEmployeeModel.create.mockImplementation(async (doc) => ({
+      ...doc,
+      _id: `${doc.employeeNo}-id`
+    }))
+
+    const response = await request(application)
+      .post('/api/employees/bulk-import')
+      .attach('file', buffer, { filename: 'import.xlsx' })
+
+    expect(response.status).toBe(200)
+    expect(mockEmployeeModel.create).toHaveBeenCalledTimes(2)
+    const firstCreated = mockEmployeeModel.create.mock.calls[0][0]
+    const secondCreated = mockEmployeeModel.create.mock.calls[1][0]
+    expect(firstCreated.supervisor).toBe('sup-id')
+    expect(secondCreated.supervisor).toBe('sup-id')
+  })
+
+  it('主管參照缺失時回傳 409 並提供提示', async () => {
+    const application = await setupApp()
+    const buffer = await createWorkbookBuffer([
+      {
+        employeeId: 'E3003',
+        name: '無主管匹配',
+        email: 'nosup@example.com',
+        supervisor: '不存在的主管',
+        idNumber: 'R123456789'
+      }
+    ])
+
+    setupEmployeeFind({ referenceData: [], emailData: [] })
+
+    const response = await request(application)
+      .post('/api/employees/bulk-import')
+      .attach('file', buffer, { filename: 'import.xlsx' })
+
+    expect(response.status).toBe(409)
+    expect(response.body.missingReferences.supervisor.values[0]).toMatchObject({ value: '不存在的主管', rows: [3] })
+    expect(response.body.missingReferences.supervisor.options).toEqual([])
+    expect(mockEmployeeModel.create).not.toHaveBeenCalled()
   })
 })

@@ -104,7 +104,7 @@ const NUMBER_FIELDS = new Set([
 ])
 const CSV_ARRAY_FIELDS = new Set(['languages', 'identityCategory', 'salaryItems'])
 
-const REFERENCE_KEYS = ['organization', 'department', 'subDepartment']
+const REFERENCE_KEYS = ['organization', 'department', 'subDepartment', 'supervisor']
 
 const REFERENCE_CONFIGS = {
   organization: {
@@ -121,13 +121,19 @@ const REFERENCE_CONFIGS = {
     Model: SubDepartment,
     aliasFields: ['name', 'code'],
     select: '_id name code department'
+  },
+  supervisor: {
+    Model: Employee,
+    aliasFields: ['name', 'employeeId', 'employeeNo'],
+    select: '_id name employeeId employeeNo'
   }
 }
 
 const REFERENCE_LABELS = {
   organization: '機構',
   department: '部門',
-  subDepartment: '子部門'
+  subDepartment: '子部門',
+  supervisor: '主管'
 }
 
 const EMAIL_REGEX = /^\S+@\S+\.\S+$/
@@ -164,7 +170,8 @@ function collectReferenceUsage(rows) {
   const usage = {
     organization: new Map(),
     department: new Map(),
-    subDepartment: new Map()
+    subDepartment: new Map(),
+    supervisor: new Map()
   }
 
   rows.forEach(row => {
@@ -231,6 +238,13 @@ function buildReferenceOptions(type, docs) {
       name: doc?.name ?? '',
       code: doc?.code ?? '',
       department: doc?.department ? doc.department.toString() : ''
+    }))
+  }
+  if (type === 'supervisor') {
+    return docs.map(doc => ({
+      id: doc?._id?.toString?.() ?? '',
+      name: doc?.name ?? '',
+      employeeId: doc?.employeeId ?? doc?.employeeNo ?? ''
     }))
   }
   return []
@@ -796,7 +810,8 @@ export async function bulkImportEmployees(req, res) {
   const resolutionMaps = {
     organization: new Map(),
     department: new Map(),
-    subDepartment: new Map()
+    subDepartment: new Map(),
+    supervisor: new Map()
   }
   const missingReferences = {}
   const invalidMappings = []
@@ -894,7 +909,7 @@ export async function bulkImportEmployees(req, res) {
 
   if (Object.keys(missingReferences).length) {
     res.status(409).json({
-      message: '匯入資料存在未對應的組織或部門資訊，請完成對應後重新提交',
+      message: '匯入資料存在未對應的組織、部門或主管資訊，請完成對應後重新提交',
       missingReferences,
       errors: []
     })
