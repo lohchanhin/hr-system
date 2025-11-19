@@ -509,4 +509,43 @@ describe('EmployeeManagement - 批量匯入流程', () => {
     expect(ignorePayload.team).toEqual([])
     expect(wrapper.vm.referenceMappingDialogVisible).toBe(false)
   })
+
+  it('缺少標籤的 options 不應顯示 raw ObjectId', async () => {
+    const missingResponse = {
+      message: '缺少對應資料',
+      missingReferences: {
+        department: {
+          values: [{ value: '人資部', normalizedValue: '人資部', rows: [2] }],
+          options: [
+            { _id: '507f1f77bcf86cd799439011' },
+            { id: 'dep2', name: '人資部 HR', code: 'HR001' }
+          ]
+        }
+      },
+      errors: []
+    }
+
+    importEmployeesBulkMock
+      .mockResolvedValueOnce(createApiResponse(missingResponse, 409))
+      .mockResolvedValueOnce(createApiResponse({ preview: [], errors: [] }))
+
+    const wrapper = await mountComponent()
+    await wrapper.find('[data-test="bulk-import-button"]').trigger('click')
+
+    const file = new File(['mapping'], 'employees.csv', { type: 'text/csv' })
+    wrapper.vm.handleBulkImportFileChange({ name: 'employees.csv', raw: file })
+
+    await wrapper.vm.submitBulkImport()
+    await flushPromises()
+
+    expect(wrapper.vm.referenceMappingDialogVisible).toBe(true)
+    const options = wrapper.vm.referenceMappingOptions.department
+    const labels = options.map(opt => wrapper.vm.buildReferenceOptionLabel('department', opt))
+
+    expect(labels).not.toContain('507f1f77bcf86cd799439011')
+    const objectIdOption = options.find(opt => opt.id === '507f1f77bcf86cd799439011')
+    if (objectIdOption) {
+      expect(labels.some(text => text.includes('缺少可辨識的標籤'))).toBe(true)
+    }
+  })
 })
