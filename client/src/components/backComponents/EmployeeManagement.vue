@@ -3434,25 +3434,43 @@ function getReferenceEntryKey(entry) {
   return normalizeReferenceKeyClient(entry.value)
 }
 
+function isObjectIdLike(text = '') {
+  const normalized = String(text).trim()
+  return /^[a-fA-F0-9]{24}$/.test(normalized) || /^object_[a-fA-F0-9]{24}$/.test(normalized)
+}
+
 function buildReferenceOptionLabel(type, option) {
   if (!option || typeof option !== 'object') return ''
   if (type === 'organization') {
     const parts = [option.name, option.unitName, option.orgCode, option.systemCode].filter(Boolean)
-    return parts.join(' / ')
+    if (parts.length) return parts.join(' / ')
   }
   if (type === 'department') {
     const parts = [option.name, option.code].filter(Boolean)
-    if (option.organization) parts.push(`所屬：${option.organization}`)
-    return parts.join('｜')
+    if (parts.length) {
+      if (option.organization) parts.push(`所屬：${option.organization}`)
+      return parts.join('｜')
+    }
   }
   if (type === 'subDepartment') {
     const parts = [option.name, option.code].filter(Boolean)
-    if (option.department) parts.push(`部門：${option.department}`)
-    return parts.join('｜')
+    if (parts.length) {
+      if (option.department) parts.push(`部門：${option.department}`)
+      return parts.join('｜')
+    }
   }
-  const fallback = [option.label, option.name, option.title, option.code, option.value, option.id]
-    .map(x => (x == null ? '' : String(x))).find(t => t.trim())
-  return fallback || ''
+  const candidates = [option.label, option.name, option.title, option.code, option.value, option.id]
+    .map(x => (x == null ? '' : String(x).trim()))
+    .filter(Boolean)
+  const fallback = candidates.find(t => t) || ''
+  if (!fallback) return ''
+  if (isObjectIdLike(fallback)) {
+    const hasMeaningfulLabel = [option.label, option.name, option.title, option.code, option.value]
+      .map(x => (x == null ? '' : String(x).trim()))
+      .some(text => text && !isObjectIdLike(text))
+    if (!hasMeaningfulLabel) return '（缺少可辨識的標籤）'
+  }
+  return fallback
 }
 
 
@@ -3592,27 +3610,46 @@ function normalizeMissingRefPayload(raw = {}) {
       .filter(entry => entry.value != null && String(entry.value).trim() !== '')
 
     const optionSource = Array.isArray(block?.options) ? block.options : []
-    const normOptions = optionSource.map((option, index) => {
-      if (option && typeof option === 'object') {
-        const candidate =
-          option._id ??
-          option.id ??
-          option.value ??
-          option.code ??
-          option.key ??
-          option.name ??
-          option.label ??
-          ''
-        const id = String(candidate || `option-${index}`)
-        return {
-          ...option,
-          id
+    const normOptions = optionSource
+        .map((option, index) => {
+          if (option && typeof option === 'object') {
+            const candidate =
+              option._id ??
+              option.id ??
+              option.value ??
+              option.code ??
+              option.key ??
+              option.name ??
+              option.label ??
+              ''
+            const id = String(candidate || `option-${index}`)
+            const hasMeaningfulLabel = ['label', 'name', 'title', 'code']
+              .map(field => (option?.[field] == null ? '' : String(option?.[field]).trim()))
+              .some(text => text)
+            const idText = id.trim()
+            const label = hasMeaningfulLabel
+              ? (option.label ?? option.name ?? option.title ?? option.code ?? '')
+              : isObjectIdLike(idText)
+                ? '（缺少可辨識的標籤）'
+                : (option.label ?? '')
+            return {
+              ...option,
+              id,
+              label
+          }
         }
-      }
-      const text = option == null ? '' : String(option)
-      const id = text.trim() ? text : `option-${index}`
-      return { id, label: text, name: text }
-    })
+        const text = option == null ? '' : String(option)
+        const id = text.trim() ? text : `option-${index}`
+        return { id, label: text, name: text }
+      })
+      .filter(option => {
+        const hasLabel = ['label', 'name', 'title', 'code']
+          .map(field => (option?.[field] == null ? '' : String(option?.[field]).trim()))
+          .some(text => text)
+        if (hasLabel) return true
+        const idText = option?.id == null ? '' : String(option.id).trim()
+        return Boolean(idText)
+      })
 
     return { values: normValues, options: normOptions }
   }
