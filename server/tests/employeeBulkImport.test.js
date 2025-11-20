@@ -3,10 +3,16 @@ import express from 'express'
 import ExcelJS from 'exceljs'
 import { jest } from '@jest/globals'
 
-const mockEmployeeModel = {
-  find: jest.fn(),
-  create: jest.fn(),
-  startSession: jest.fn()
+const mockEmployeeModel = function (doc) {
+  Object.assign(this, doc)
+}
+mockEmployeeModel.find = jest.fn()
+mockEmployeeModel.insertMany = jest.fn()
+mockEmployeeModel.deleteMany = jest.fn()
+mockEmployeeModel.startSession = jest.fn()
+mockEmployeeModel.prototype.validate = jest.fn()
+mockEmployeeModel.prototype.toObject = function () {
+  return { ...this }
 }
 
 const mockSession = {
@@ -238,7 +244,11 @@ function createCsvBuffer(rows) {
 }
 
 beforeEach(() => {
-  Object.values(mockEmployeeModel).forEach(fn => fn.mockReset())
+  mockEmployeeModel.find.mockReset()
+  mockEmployeeModel.insertMany.mockReset()
+  mockEmployeeModel.deleteMany.mockReset()
+  mockEmployeeModel.startSession.mockReset()
+  mockEmployeeModel.prototype.validate.mockReset()
   Object.values(mockSession).forEach(fn => fn.mockReset())
   mockEmployeeModel.startSession.mockResolvedValue(mockSession)
   mockSession.startTransaction.mockResolvedValue()
@@ -252,6 +262,9 @@ beforeEach(() => {
   mockFindWithData(mockOrganizationModel, [])
   mockFindWithData(mockDepartmentModel, [])
   mockFindWithData(mockSubDepartmentModel, [])
+  mockEmployeeModel.prototype.validate.mockImplementation(async function () {})
+  mockEmployeeModel.insertMany.mockImplementation(async (docs) => docs.map(doc => ({ ...doc })))
+  mockEmployeeModel.deleteMany.mockResolvedValue()
 })
 
 describe('POST /api/employees/bulk-import', () => {
@@ -275,14 +288,15 @@ describe('POST /api/employees/bulk-import', () => {
       { _id: 'RD', code: 'RD', name: '研發部', organization: 'ORG001' }
     ])
     setupEmployeeFind({ emailData: [] })
-    mockEmployeeModel.create.mockImplementation(async (doc) => ({
+    mockEmployeeModel.insertMany.mockImplementation(async (docs) => docs.map(doc => ({
       _id: `${doc.employeeNo}-id`,
       employeeId: doc.employeeNo,
       name: doc.name,
       department: doc.department,
       role: doc.role,
-      email: doc.email
-    }))
+      email: doc.email,
+      username: doc.username
+    })))
 
     const response = await request(application)
       .post('/api/employees/bulk-import')
@@ -303,6 +317,7 @@ describe('POST /api/employees/bulk-import', () => {
       }
     ])
     expect(response.body.errors).toEqual([])
+    expect(mockEmployeeModel.insertMany).toHaveBeenCalledTimes(1)
     expect(mockEmployeeModel.startSession).toHaveBeenCalledTimes(1)
     expect(mockSession.startTransaction).toHaveBeenCalledTimes(1)
     expect(mockSession.commitTransaction).toHaveBeenCalledTimes(1)
@@ -352,14 +367,19 @@ describe('POST /api/employees/bulk-import', () => {
     ])
 
     setupEmployeeFind({ emailData: [] })
-    mockEmployeeModel.create.mockImplementation(async (doc) => ({
+    mockEmployeeModel.insertMany.mockImplementation(async (docs) => docs.map(doc => ({
       _id: `${doc.employeeNo}-id`,
       employeeId: doc.employeeNo,
       name: doc.name,
       department: doc.department,
       role: doc.role,
-      email: doc.email
-    }))
+      email: doc.email,
+      username: doc.username,
+      appointment: doc.appointment,
+      identityCategory: doc.identityCategory,
+      languages: doc.languages,
+      salaryItems: doc.salaryItems
+    })))
 
     const response = await request(application)
       .post('/api/employees/bulk-import')
@@ -372,9 +392,9 @@ describe('POST /api/employees/bulk-import', () => {
     expect(Array.isArray(response.body.preview)).toBe(true)
     expect(response.body.preview).toHaveLength(2)
     expect(response.body.errors).toEqual([])
-    expect(mockEmployeeModel.create).toHaveBeenCalledTimes(2)
+    expect(mockEmployeeModel.insertMany).toHaveBeenCalledTimes(1)
 
-    const createdDoc = mockEmployeeModel.create.mock.calls[0][0]
+    const createdDoc = mockEmployeeModel.insertMany.mock.calls[0][0][0]
     expect(createdDoc).toMatchObject({
       employeeNo: 'E0001',
       name: '王小明',
@@ -425,7 +445,7 @@ describe('POST /api/employees/bulk-import', () => {
     expect(response.status).toBe(400)
     expect(response.body.rowNumber).toBe(3)
     expect(response.body.errors[0]).toMatch(/缺少姓名/)
-    expect(mockEmployeeModel.create).not.toHaveBeenCalled()
+    expect(mockEmployeeModel.insertMany).not.toHaveBeenCalled()
     expect(mockEmployeeModel.startSession).not.toHaveBeenCalled()
   })
 
@@ -447,7 +467,7 @@ describe('POST /api/employees/bulk-import', () => {
 
     expect(response.status).toBe(400)
     expect(response.body.errors[0]).toMatch(/缺少身分證號/)
-    expect(mockEmployeeModel.create).not.toHaveBeenCalled()
+    expect(mockEmployeeModel.insertMany).not.toHaveBeenCalled()
   })
 
   it('偵測檔案內重複 Email 與既有 Email', async () => {
@@ -474,14 +494,6 @@ describe('POST /api/employees/bulk-import', () => {
     ])
 
     setupEmployeeFind({ emailData: [{ email: 'taken@example.com' }] })
-    mockEmployeeModel.create.mockImplementation(async (doc) => ({
-      _id: `${doc.employeeNo}-id`,
-      employeeId: doc.employeeNo,
-      name: doc.name,
-      department: doc.department,
-      role: doc.role,
-      email: doc.email
-    }))
 
     const response = await request(application)
       .post('/api/employees/bulk-import')
@@ -491,7 +503,7 @@ describe('POST /api/employees/bulk-import', () => {
     expect(response.body.rowNumber).toBe(4)
     expect(response.body.errors).toHaveLength(1)
     expect(response.body.errors[0]).toMatch(/Email 重複/)
-    expect(mockEmployeeModel.create).not.toHaveBeenCalled()
+    expect(mockEmployeeModel.insertMany).not.toHaveBeenCalled()
     expect(mockEmployeeModel.startSession).not.toHaveBeenCalled()
   })
 
@@ -521,7 +533,7 @@ describe('POST /api/employees/bulk-import', () => {
     expect(response.status).toBe(400)
     expect(response.body.rowNumber).toBe(3)
     expect(response.body.errors[0]).toMatch(/缺少 Email/)
-    expect(mockEmployeeModel.create).not.toHaveBeenCalled()
+    expect(mockEmployeeModel.insertMany).not.toHaveBeenCalled()
     expect(mockEmployeeModel.startSession).not.toHaveBeenCalled()
   })
 
@@ -543,18 +555,11 @@ describe('POST /api/employees/bulk-import', () => {
     ])
 
     setupEmployeeFind({ emailData: [] })
-    mockEmployeeModel.create
-      .mockImplementationOnce(async (doc) => ({
-        _id: `${doc.employeeNo}-id`,
-        employeeId: doc.employeeNo,
-        name: doc.name,
-        department: doc.department,
-        role: doc.role,
-        email: doc.email
-      }))
-      .mockImplementationOnce(async () => {
-        throw new Error('DB failed')
-      })
+    mockEmployeeModel.insertMany.mockImplementation(async (docs) => {
+      const error = new Error('DB failed')
+      error.insertedDocs = [docs[0]]
+      throw error
+    })
 
     const response = await request(application)
       .post('/api/employees/bulk-import')
@@ -566,6 +571,48 @@ describe('POST /api/employees/bulk-import', () => {
     expect(mockSession.startTransaction).toHaveBeenCalledTimes(1)
     expect(mockSession.abortTransaction).toHaveBeenCalledTimes(1)
     expect(mockSession.commitTransaction).not.toHaveBeenCalled()
+    expect(mockEmployeeModel.deleteMany).not.toHaveBeenCalled()
+  })
+
+  it('交易不可用時發生錯誤會執行補償刪除並提示環境不支援交易', async () => {
+    const application = await setupApp()
+    const buffer = await createWorkbookBuffer([
+      {
+        employeeId: 'E2100',
+        name: '第一筆',
+        email: 'first@example.com',
+        idNumber: 'T123456789'
+      },
+      {
+        employeeId: 'E2101',
+        name: '第二筆',
+        email: 'second@example.com',
+        idNumber: 'U123456789'
+      }
+    ])
+
+    setupEmployeeFind({ emailData: [] })
+    mockEmployeeModel.startSession.mockResolvedValue({
+      ...mockSession,
+      startTransaction: undefined
+    })
+    mockEmployeeModel.insertMany.mockImplementation(async (docs) => {
+      const error = new Error('validation failed')
+      error.insertedDocs = [
+        { ...docs[0], _id: 'partial-id' }
+      ]
+      throw error
+    })
+
+    const response = await request(application)
+      .post('/api/employees/bulk-import')
+      .attach('file', buffer, { filename: 'import.xlsx' })
+
+    expect(response.status).toBe(400)
+    expect(response.body.rowNumber).toBe(4)
+    expect(response.body.message).toContain('環境不支援交易')
+    expect(mockEmployeeModel.deleteMany).toHaveBeenCalledWith({ _id: { $in: ['partial-id'] } })
+    expect(mockSession.abortTransaction).not.toHaveBeenCalled()
   })
 
   it('遇到未知部門時回傳 409 並提供對應選項', async () => {
@@ -598,7 +645,7 @@ describe('POST /api/employees/bulk-import', () => {
       .attach('file', buffer, { filename: 'import.xlsx' })
 
     expect(response.status).toBe(409)
-    expect(mockEmployeeModel.create).not.toHaveBeenCalled()
+    expect(mockEmployeeModel.insertMany).not.toHaveBeenCalled()
     const { missingReferences } = response.body
     expect(missingReferences).toBeTruthy()
     expect(missingReferences.organization.values[0]).toMatchObject({ value: '未知機構', rows: [3] })
@@ -633,10 +680,10 @@ describe('POST /api/employees/bulk-import', () => {
       { _id: 'sub1', name: '研發一組', code: 'RD-1', department: 'dep1' }
     ])
     setupEmployeeFind({ emailData: [] })
-    mockEmployeeModel.create.mockImplementation(async (doc) => ({
+    mockEmployeeModel.insertMany.mockImplementation(async (docs) => docs.map(doc => ({
       ...doc,
       _id: `${doc.employeeNo}-id`
-    }))
+    })))
 
     const response = await request(application)
       .post('/api/employees/bulk-import')
@@ -648,8 +695,8 @@ describe('POST /api/employees/bulk-import', () => {
       .attach('file', buffer, { filename: 'import.xlsx' })
 
     expect(response.status).toBe(200)
-    expect(mockEmployeeModel.create).toHaveBeenCalledTimes(1)
-    const createdDoc = mockEmployeeModel.create.mock.calls[0][0]
+    expect(mockEmployeeModel.insertMany).toHaveBeenCalledTimes(1)
+    const createdDoc = mockEmployeeModel.insertMany.mock.calls[0][0][0]
     expect(createdDoc.department).toBe('dep1')
     expect(createdDoc.subDepartment).toBe('sub1')
     expect(createdDoc.organization).toBeNull()
@@ -678,19 +725,19 @@ describe('POST /api/employees/bulk-import', () => {
       referenceData: [{ _id: 'sup-id', name: '主管甲', employeeId: 'S0001' }],
       emailData: []
     })
-    mockEmployeeModel.create.mockImplementation(async (doc) => ({
+    mockEmployeeModel.insertMany.mockImplementation(async (docs) => docs.map(doc => ({
       ...doc,
       _id: `${doc.employeeNo}-id`
-    }))
+    })))
 
     const response = await request(application)
       .post('/api/employees/bulk-import')
       .attach('file', buffer, { filename: 'import.xlsx' })
 
     expect(response.status).toBe(200)
-    expect(mockEmployeeModel.create).toHaveBeenCalledTimes(2)
-    const firstCreated = mockEmployeeModel.create.mock.calls[0][0]
-    const secondCreated = mockEmployeeModel.create.mock.calls[1][0]
+    expect(mockEmployeeModel.insertMany).toHaveBeenCalledTimes(1)
+    const firstCreated = mockEmployeeModel.insertMany.mock.calls[0][0][0]
+    const secondCreated = mockEmployeeModel.insertMany.mock.calls[0][0][1]
     expect(firstCreated.supervisor).toBe('sup-id')
     expect(secondCreated.supervisor).toBe('sup-id')
   })
@@ -716,6 +763,6 @@ describe('POST /api/employees/bulk-import', () => {
     expect(response.status).toBe(409)
     expect(response.body.missingReferences.supervisor.values[0]).toMatchObject({ value: '不存在的主管', rows: [3] })
     expect(response.body.missingReferences.supervisor.options).toEqual([])
-    expect(mockEmployeeModel.create).not.toHaveBeenCalled()
+    expect(mockEmployeeModel.insertMany).not.toHaveBeenCalled()
   })
 })
