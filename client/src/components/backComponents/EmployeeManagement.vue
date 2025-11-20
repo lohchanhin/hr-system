@@ -1351,10 +1351,10 @@ function mapRowToFormShape(row, mappings) {
 }
 
 // 驗證：檢查必填欄位有無缺漏，回傳錯誤訊息陣列
-function validateRequired(mappedRows) {
+function validateRequired(mappedRows, { rowOffset = 0 } = {}) {
   const errors = []
-  // 找到必填清單
   const requiredKeys = BULK_IMPORT_FIELD_CONFIGS.filter(f => f.required).map(f => f.key)
+
   mappedRows.forEach((obj, idx) => {
     const miss = requiredKeys.filter(k => obj[k] == null || String(obj[k]).trim() === '')
     if (miss.length) {
@@ -1364,11 +1364,15 @@ function validateRequired(mappedRows) {
           return f?.label || f?.description || f?.header || k
         })
         .join('、')
-      errors.push(`第 ${idx + 1} 列缺少必填欄位：${missLabels}`)
+
+      // ✅ 真正 Excel 行號：前面有 2 行 header，所以 + 2
+      const excelRowNo = idx + 1 + rowOffset
+      errors.push(`第 ${excelRowNo} 列缺少必填欄位：${missLabels}`)
     }
   })
   return errors
 }
+
 
 // 產生你畫面需要的「簡易預覽」欄位（表格目前只顯示這些）
 function buildPreviewList(mappedRows) {
@@ -1399,8 +1403,8 @@ async function parseAndPreviewBulkImport(file) {
     // 依使用者「欄位對應」把每一列轉成系統欄位形狀
     const mappedRows = rowObjects.map(r => mapRowToFormShape(r, bulkImportForm.columnMappings))
 
-    // 必填檢核
-    const reqErrors = validateRequired(mappedRows)
+    // ✅ 指定 offset：因為第 1、2 列是表頭與說明
+    const reqErrors = validateRequired(mappedRows, { rowOffset: 2 })
 
     // 建立預覽
     const preview = buildPreviewList(mappedRows)
