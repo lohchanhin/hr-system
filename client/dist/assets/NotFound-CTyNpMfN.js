@@ -1,0 +1,1 @@
+import{_ as t,c as n,b as e,o as s}from"./index-DCVNWy_M.js";const c={},a={class:"not-found"};function d(r,o){return s(),n("div",a,o[0]||(o[0]=[e("h2",null,"404 Not Found",-1),e("p",null,"找不到頁面",-1)]))}const l=t(c,[["render",d],["__scopeId","data-v-1c255d8e"]]);export{l as default};
