@@ -1008,10 +1008,42 @@ export async function bulkImportEmployees(req, res) {
     return
   }
 
-  const preview = []
+  const preparedRows = []
+  for (const row of parsedRows) {
+    const password = resetPassword || String(row.normalized.idNumber).trim()
+    const body = {
+      ...row.normalized,
+      email: row.normalized.email,
+      username: row.normalized.username
+    }
+
+    const employeeDoc = buildEmployeeDoc(body)
+    employeeDoc.password = password
+
+    try {
+      const modelInstance = new Employee(employeeDoc)
+      await modelInstance.validate()
+      preparedRows.push({
+        doc: modelInstance.toObject(),
+        rowNumber: row.rowNumber,
+        initialPassword: password,
+        fallbackBody: body
+      })
+    } catch (validationError) {
+      const formattedError = formatRowError(row.rowNumber, validationError.message)
+      res.status(400).json({
+        message: `第 ${row.rowNumber} 列資料寫入失敗，已停止匯入`,
+        errors: [formattedError],
+        rowNumber: row.rowNumber
+      })
+      return
+    }
+  }
+
+  const createdIds = []
   let session = null
   let usingTransaction = false
-  let failedRowNumber = null
+  let transactionUnavailable = false
 
   try {
     if (typeof Employee.startSession === 'function') {
@@ -1021,32 +1053,33 @@ export async function bulkImportEmployees(req, res) {
         usingTransaction = true
       } else {
         session = null
+        transactionUnavailable = true
       }
+    } else {
+      transactionUnavailable = true
     }
 
-    for (const row of parsedRows) {
-      failedRowNumber = row.rowNumber
-      const password = resetPassword || String(row.normalized.idNumber).trim()
-      const body = {
-        ...row.normalized,
-        email: row.normalized.email,
-        username: row.normalized.username
-      }
+    const insertOptions = {
+      ordered: true,
+      runValidators: false
+    }
+    if (usingTransaction && session) {
+      insertOptions.session = session
+    }
 
-      const employeeDoc = buildEmployeeDoc(body)
-      employeeDoc.password = password
-
-      const created = await Employee.create(employeeDoc, usingTransaction && session ? { session } : undefined)
-      preview.push(createPreview({
-        employeeNo: created.employeeId || created.employeeNo || body.employeeNo,
+    const createdDocs = await Employee.insertMany(preparedRows.map(row => row.doc), insertOptions)
+    const preview = createdDocs.map((created, index) => {
+      const prepared = preparedRows[index]
+      return createPreview({
+        employeeNo: created.employeeId || created.employeeNo || prepared.fallbackBody.employeeNo,
         name: created.name,
-        department: created.department || body.department,
-        role: created.role || body.role,
+        department: created.department || prepared.fallbackBody.department,
+        role: created.role || prepared.fallbackBody.role,
         email: created.email,
-        username: created.username || body.username,
-        initialPassword: password
-      }))
-    }
+        username: created.username || prepared.fallbackBody.username,
+        initialPassword: prepared.initialPassword
+      })
+    })
 
     if (usingTransaction && session && typeof session.commitTransaction === 'function') {
       await session.commitTransaction()
@@ -1063,13 +1096,40 @@ export async function bulkImportEmployees(req, res) {
     if (usingTransaction && session && typeof session.abortTransaction === 'function') {
       await session.abortTransaction()
     }
+
+    if (!usingTransaction) {
+      if (Array.isArray(error?.insertedDocs)) {
+        createdIds.push(...error.insertedDocs.map(doc => doc._id).filter(Boolean))
+      }
+      const resultInsertedIds = error?.result?.result?.insertedIds
+      if (resultInsertedIds && typeof resultInsertedIds === 'object') {
+        createdIds.push(...Object.values(resultInsertedIds).filter(Boolean))
+      }
+      if (createdIds.length) {
+        await Employee.deleteMany({ _id: { $in: createdIds } })
+      }
+    }
+
+    const failureIndex = Array.isArray(error?.insertedDocs) ? error.insertedDocs.length : null
+    const failedRowNumber = typeof failureIndex === 'number' && preparedRows[failureIndex]
+      ? preparedRows[failureIndex].rowNumber
+      : null
+
     const formattedError = failedRowNumber
       ? formatRowError(failedRowNumber, error.message)
       : error.message
+
+    const transactionWarning = transactionUnavailable
+      ? '；環境不支援交易，無法保證全有全無'
+      : ''
+    const message = failedRowNumber
+      ? `第 ${failedRowNumber} 列資料寫入失敗，已停止匯入${transactionWarning}`
+      : transactionUnavailable
+        ? '環境不支援交易，無法保證全有全無'
+        : '匯入資料寫入失敗'
+
     res.status(400).json({
-      message: failedRowNumber
-        ? `第 ${failedRowNumber} 列資料寫入失敗，已停止匯入`
-        : '匯入資料寫入失敗',
+      message,
       errors: [formattedError],
       rowNumber: failedRowNumber || undefined
     })
