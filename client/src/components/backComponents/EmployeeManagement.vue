@@ -983,16 +983,23 @@
           請為下列資料選擇對應的既有項目，或設定忽略後重新嘗試匯入。
         </p>
 
-        <!-- ✅ 用預先算好的 sections 來畫，避免模板裡層層 ?. -->
-        <div v-if="referenceMappingDialogVisible" v-for="section in referenceMappingSectionsForUI" :key="section.type"
-          class="reference-mapping-section">
-          <template v-if="Array.isArray(section.values) && section.values.length">
-            <h4 class="reference-mapping-title">{{ getReferenceMappingLabel(section.type) }}對應</h4>
+        <!-- 外層先用 v-if 包住，裡面再單純 v-for -->
+        <div v-if="referenceMappingDialogVisible">
+          <!-- ✅ 用預先算好的 sections 來畫，避免模板裡層層 ?. -->
+          <div v-for="section in referenceMappingSectionsForUI" :key="section.type" class="reference-mapping-section"
+            v-if="Array.isArray(section.values) && section.values.length">
+            <h4 class="reference-mapping-title">
+              {{ getReferenceMappingLabel(section.type) }}對應
+            </h4>
 
             <div v-for="entry in section.values" :key="getReferenceEntryKey(entry)" class="reference-mapping-item">
               <div class="reference-mapping-info">
-                <span class="reference-mapping-value">{{ entry.value || '（空值）' }}</span>
-                <span class="reference-mapping-rows">出現於第 {{ (entry.rows || []).join('、') }} 列</span>
+                <span class="reference-mapping-value">
+                  {{ entry.value || '（空值）' }}
+                </span>
+                <span class="reference-mapping-rows">
+                  出現於第 {{ (entry.rows || []).join('、') }} 列
+                </span>
               </div>
 
               <el-radio-group v-model="getRefSel(section.type, getReferenceEntryKey(entry)).mode"
@@ -1008,17 +1015,12 @@
                   :label="buildReferenceOptionLabel(section.type, option)" :value="option.id" />
               </el-select>
             </div>
-          </template>
-        </div>
+          </div>
 
-        <div v-if="referenceMappingDialogVisible && referenceMappingSectionsForUI.every(s => !s.values.length)"
-          class="reference-mapping-empty">
-          所有參照皆已處理，請重新送出匯入。
-        </div>
-
-
-        <div v-if="referenceMappingSectionsForUI.every(s => s.values.length === 0)" class="reference-mapping-empty">
-          所有參照皆已處理，請重新送出匯入。
+          <!-- ✅ 單一空狀態邏輯，避免重複條件 -->
+          <div v-if="!hasPendingReferenceMappings" class="reference-mapping-empty">
+            所有參照皆已處理，請重新送出匯入。
+          </div>
         </div>
 
         <template #footer>
@@ -1030,6 +1032,7 @@
           </el-button>
         </template>
       </el-dialog>
+
 
     </div>
   </el-tab-pane>
@@ -1282,14 +1285,16 @@ async function parseFileToRowObjects(file) {
 }
 
 // 將 keys / pending / options 預先整理成可直接渲染的 sections
-const referenceMappingSectionsForUI = computed(() => {
-  const keys = Array.isArray(referenceMappingKeys.value) ? referenceMappingKeys.value : []
-  return keys.map(type => {
-    const values = Array.isArray(referenceMappingPending?.[type]) ? referenceMappingPending[type] : []
-    const options = Array.isArray(referenceMappingOptions?.[type]) ? referenceMappingOptions[type] : []
-    return { type, values, options }
+const referenceMappingSectionsForUI = ref([]) // 你原本的
+
+const hasPendingReferenceMappings = computed(() => {
+  if (!Array.isArray(referenceMappingSectionsForUI.value)) return false
+  return referenceMappingSectionsForUI.value.some((section) => {
+    const values = Array.isArray(section.values) ? section.values : []
+    return values.length > 0
   })
 })
+
 
 
 
@@ -3611,36 +3616,45 @@ function normalizeMissingRefPayload(raw = {}) {
 
     const optionSource = Array.isArray(block?.options) ? block.options : []
     const normOptions = optionSource
-        .map((option, index) => {
-          if (option && typeof option === 'object') {
-            const candidate =
-              option._id ??
-              option.id ??
-              option.value ??
-              option.code ??
-              option.key ??
-              option.name ??
-              option.label ??
-              ''
-            const id = String(candidate || `option-${index}`)
-            const hasMeaningfulLabel = ['label', 'name', 'title', 'code']
-              .map(field => (option?.[field] == null ? '' : String(option?.[field]).trim()))
-              .some(text => text)
-            const idText = id.trim()
-            const label = hasMeaningfulLabel
-              ? (option.label ?? option.name ?? option.title ?? option.code ?? '')
-              : isObjectIdLike(idText)
-                ? '（缺少可辨識的標籤）'
-                : (option.label ?? '')
-            return {
-              ...option,
-              id,
-              label
+      .map((option, index) => {
+        // 物件型 options：優先用 _id / id / value / code / key / name / label
+        if (option && typeof option === 'object') {
+          const candidate =
+            option._id ??
+            option.id ??
+            option.value ??
+            option.code ??
+            option.key ??
+            option.name ??
+            option.label ??
+            ''
+          const id = String(candidate || `option-${index}`)
+          const hasMeaningfulLabel = ['label', 'name', 'title', 'code']
+            .map(field => (option?.[field] == null ? '' : String(option?.[field]).trim()))
+            .some(text => text)
+          const idText = id.trim()
+          const label = hasMeaningfulLabel
+            ? (option.label ?? option.name ?? option.title ?? option.code ?? '')
+            : isObjectIdLike(idText)
+              ? '（缺少可辨識的標籤）'
+              : (option.label ?? '')
+
+          return {
+            ...option,
+            id,
+            label: label || idText || `option-${index}`,
+            name: option.name ?? label ?? idText ?? `option-${index}`
           }
         }
+
+        // 字串型 options：直接當成文字 & id
         const text = option == null ? '' : String(option)
         const id = text.trim() ? text : `option-${index}`
-        return { id, label: text, name: text }
+        return {
+          id,
+          label: text.trim() || id,
+          name: text.trim() || id
+        }
       })
       .filter(option => {
         const hasLabel = ['label', 'name', 'title', 'code']
@@ -3671,6 +3685,7 @@ function normalizeMissingRefPayload(raw = {}) {
 
   return { normalized, keys: Array.from(keySet) }
 }
+
 
 // 從目前待匯入的「映射後列」掃描未知的 org/department/subDepartment
 function buildClientMissingRefs(mappedRows = []) {
