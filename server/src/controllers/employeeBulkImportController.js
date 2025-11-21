@@ -213,7 +213,7 @@ function buildReferenceAliasMap(docs, aliasFields) {
   return map
 }
 
-function buildSubDepartmentAliasLookup(docs, departmentId) {
+function buildSubDepartmentAliasLookup(docs, departmentId, context = {}) {
   if (!departmentId) {
     return null
   }
@@ -224,7 +224,7 @@ function buildSubDepartmentAliasLookup(docs, departmentId) {
 
   return {
     aliasMap: buildReferenceAliasMap(filtered, REFERENCE_CONFIGS.subDepartment.aliasFields),
-    options: buildReferenceOptions('subDepartment', filtered)
+    options: buildReferenceOptions('subDepartment', filtered, context)
   }
 }
 
@@ -232,11 +232,21 @@ function buildSubDepartmentResolutionKey(normalizedValue, departmentId) {
   return departmentId ? `${normalizedValue}::${departmentId}` : normalizedValue
 }
 
-function buildReferenceOptions(type, docs) {
+function toIdString(id) {
+  return typeof id === 'string'
+    ? id
+    : (id && typeof id.toString === 'function')
+      ? id.toString()
+      : ''
+}
+
+function buildReferenceOptions(type, docs, context = {}) {
   if (!Array.isArray(docs)) return []
+  const organizationMap = context.organizationMap || new Map()
+  const departmentMap = context.departmentMap || new Map()
   if (type === 'organization') {
     return docs.map(doc => ({
-      id: doc?._id?.toString?.() ?? '',
+      id: toIdString(doc?._id),
       name: doc?.name ?? '',
       unitName: doc?.unitName ?? '',
       systemCode: doc?.systemCode ?? '',
@@ -245,18 +255,63 @@ function buildReferenceOptions(type, docs) {
   }
   if (type === 'department') {
     return docs.map(doc => ({
-      id: doc?._id?.toString?.() ?? '',
+      id: toIdString(doc?._id),
       name: doc?.name ?? '',
       code: doc?.code ?? '',
-      organization: doc?.organization ? doc.organization.toString() : ''
+      organization: (() => {
+        const orgId = toIdString(doc?.organization)
+        return orgId
+      })(),
+      organizationName: (() => {
+        const orgId = toIdString(doc?.organization)
+        return organizationMap.get(orgId)?.name ?? ''
+      })(),
+      organizationUnitName: (() => {
+        const orgId = toIdString(doc?.organization)
+        return organizationMap.get(orgId)?.unitName ?? ''
+      })(),
+      organizationCode: (() => {
+        const orgId = toIdString(doc?.organization)
+        return organizationMap.get(orgId)?.orgCode ?? ''
+      })()
     }))
   }
   if (type === 'subDepartment') {
     return docs.map(doc => ({
-      id: doc?._id?.toString?.() ?? '',
+      id: toIdString(doc?._id),
       name: doc?.name ?? '',
       code: doc?.code ?? '',
-      department: doc?.department ? doc.department.toString() : ''
+      department: (() => {
+        const deptId = toIdString(doc?.department)
+        return deptId
+      })(),
+      departmentName: (() => {
+        const deptId = toIdString(doc?.department)
+        return departmentMap.get(deptId)?.name ?? ''
+      })(),
+      departmentCode: (() => {
+        const deptId = toIdString(doc?.department)
+        return departmentMap.get(deptId)?.code ?? ''
+      })(),
+      organization: (() => {
+        const deptId = toIdString(doc?.department)
+        return departmentMap.get(deptId)?.organization ?? ''
+      })(),
+      organizationName: (() => {
+        const deptId = toIdString(doc?.department)
+        const orgId = departmentMap.get(deptId)?.organization
+        return orgId ? organizationMap.get(orgId)?.name ?? '' : ''
+      })(),
+      organizationUnitName: (() => {
+        const deptId = toIdString(doc?.department)
+        const orgId = departmentMap.get(deptId)?.organization
+        return orgId ? organizationMap.get(orgId)?.unitName ?? '' : ''
+      })(),
+      organizationCode: (() => {
+        const deptId = toIdString(doc?.department)
+        const orgId = departmentMap.get(deptId)?.organization
+        return orgId ? organizationMap.get(orgId)?.orgCode ?? '' : ''
+      })()
     }))
   }
   if (type === 'supervisor') {
@@ -810,15 +865,43 @@ export async function bulkImportEmployees(req, res) {
     referenceUsage[type].size > 0 || mappingMaps[type].size > 0
   )
 
+  const referenceTypeSet = new Set(requiredReferenceTypes)
+  if (referenceTypeSet.has('department') || referenceTypeSet.has('subDepartment')) {
+    referenceTypeSet.add('organization')
+  }
+  if (referenceTypeSet.has('subDepartment')) {
+    referenceTypeSet.add('department')
+  }
+
+  const fetchOrder = ['organization', 'department', 'subDepartment', 'supervisor']
+    .filter(type => referenceTypeSet.has(type))
+
+  const organizationMap = new Map()
+  const departmentMap = new Map()
+
   const referenceLookups = {}
-  for (const type of requiredReferenceTypes) {
+  for (const type of fetchOrder) {
     const config = REFERENCE_CONFIGS[type]
     try {
       const docs = await config.Model.find({}, config.select).lean()
+      if (type === 'organization') {
+        docs.forEach(doc => {
+          const id = toIdString(doc?._id)
+          if (id) organizationMap.set(id, doc)
+        })
+      }
+      if (type === 'department') {
+        docs.forEach(doc => {
+          const id = toIdString(doc?._id)
+          if (!id) return
+          const organizationId = toIdString(doc?.organization)
+          departmentMap.set(id, { ...doc, organization: organizationId })
+        })
+      }
       referenceLookups[type] = {
         docs,
         aliasMap: buildReferenceAliasMap(docs, config.aliasFields),
-        options: buildReferenceOptions(type, docs)
+        options: buildReferenceOptions(type, docs, { organizationMap, departmentMap })
       }
     } catch (error) {
       const label = REFERENCE_LABELS[type] || type
@@ -826,6 +909,7 @@ export async function bulkImportEmployees(req, res) {
       return
     }
   }
+  const referenceOptionContext = { organizationMap, departmentMap }
 
   const resolutionMaps = {
     organization: new Map(),
@@ -864,7 +948,7 @@ export async function bulkImportEmployees(req, res) {
           const row = rowByNumber.get(rowNumber)
           if (!row) return
           const departmentId = getDepartmentIdForRow(row)
-          const departmentLookup = buildSubDepartmentAliasLookup(lookup.docs, departmentId)
+          const departmentLookup = buildSubDepartmentAliasLookup(lookup.docs, departmentId, referenceOptionContext)
           const aliasMap = departmentLookup?.aliasMap || lookup.aliasMap
           const options = departmentLookup?.options || lookup.options || []
           const resolutionKey = buildSubDepartmentResolutionKey(normalizedValue, departmentId)

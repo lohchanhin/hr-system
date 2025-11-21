@@ -206,7 +206,18 @@ describe('employeeBulkImportController subDepartment resolution', () => {
     expect(res.status).toHaveBeenCalledWith(409)
     const response = res.json.mock.calls[0][0]
     expect(response.missingReferences.subDepartment.options).toEqual([
-      { id: 'sdA', name: 'Alpha', code: '', department: 'depA' }
+      {
+        id: 'sdA',
+        name: 'Alpha',
+        code: '',
+        department: 'depA',
+        departmentName: 'Dept A',
+        departmentCode: '',
+        organization: '',
+        organizationName: '',
+        organizationUnitName: '',
+        organizationCode: ''
+      }
     ])
   })
 })
