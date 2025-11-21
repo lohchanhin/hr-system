@@ -209,4 +209,52 @@ describe('employeeBulkImportController subDepartment resolution', () => {
       { id: 'sdA', name: 'Alpha', code: '', department: 'depA' }
     ])
   })
+
+  it('uses global options when department has no subDepartments', async () => {
+    workbookRows = [
+      [, 'employeeNo', 'name', 'email', 'department', 'subDepartment', 'idNumber'],
+      [, 'E005', 'Evan', 'evan@example.com', 'Dept A', 'Unknown', 'E1']
+    ]
+    departmentDocs = [{ _id: 'depA', name: 'Dept A' }]
+    subDepartmentDocs = [{ _id: 'sdB', name: 'Beta', department: 'depB' }]
+
+    const req = {
+      file: baseFile,
+      bulkImportPayload: { mappings, valueMappings: {}, ignore: {} }
+    }
+    const res = createRes()
+
+    await bulkImportEmployees(req, res)
+
+    expect(res.status).toHaveBeenCalledWith(409)
+    const response = res.json.mock.calls[0][0]
+    expect(response.missingReferences.subDepartment.options).toEqual([
+      { id: 'sdB', name: 'Beta', code: '', department: 'depB' }
+    ])
+  })
+
+  it('falls back to global alias map when department-filtered mapping misses', async () => {
+    workbookRows = [
+      [, 'employeeNo', 'name', 'email', 'department', 'subDepartment', 'idNumber'],
+      [, 'E006', 'Finn', 'finn@example.com', 'Dept A', 'Support', 'F1']
+    ]
+    departmentDocs = [{ _id: 'depA', name: 'Dept A' }]
+    subDepartmentDocs = [{ _id: 'sdGlobal', name: 'Global Support', department: 'depB' }]
+
+    const req = {
+      file: baseFile,
+      bulkImportPayload: {
+        mappings,
+        valueMappings: { subDepartment: { Support: 'Global Support' } },
+        ignore: {}
+      }
+    }
+    const res = createRes()
+
+    await bulkImportEmployees(req, res)
+
+    expect(res.status).toHaveBeenCalledWith(200)
+    const insertedDocs = mockEmployeeInsertMany.mock.calls[0][0]
+    expect(insertedDocs[0].subDepartment).toBe('sdGlobal')
+  })
 })
