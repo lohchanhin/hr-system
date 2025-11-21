@@ -948,9 +948,20 @@ export async function bulkImportEmployees(req, res) {
           const row = rowByNumber.get(rowNumber)
           if (!row) return
           const departmentId = getDepartmentIdForRow(row)
-          const departmentLookup = buildSubDepartmentAliasLookup(lookup.docs, departmentId, referenceOptionContext)
-          const aliasMap = departmentLookup?.aliasMap || lookup.aliasMap
-          const options = departmentLookup?.options || lookup.options || []
+          const departmentLookup = buildSubDepartmentAliasLookup(lookup.docs, departmentId)
+          const departmentAliasMap = departmentLookup?.aliasMap
+          const hasDepartmentAlias = departmentAliasMap && departmentAliasMap.size > 0
+          const options =
+            (departmentLookup?.options?.length ? departmentLookup.options : lookup.options) || []
+          const resolveSubDepartment = targetValue => {
+            const normalizedTarget = normalizeReferenceKey(targetValue)
+            if (!normalizedTarget) return null
+            if (hasDepartmentAlias) {
+              const doc = departmentAliasMap.get(normalizedTarget)
+              if (doc) return doc
+            }
+            return lookup.aliasMap.get(normalizedTarget)
+          }
           const resolutionKey = buildSubDepartmentResolutionKey(normalizedValue, departmentId)
 
           if (options.length) {
@@ -972,7 +983,7 @@ export async function bulkImportEmployees(req, res) {
               resolutionMaps[type].set(resolutionKey, { status: 'ignored', resolved: null })
               return
             }
-            const targetDoc = aliasMap.get(normalizeReferenceKey(target))
+            const targetDoc = resolveSubDepartment(target)
             if (!targetDoc) {
               const message = `valueMappings.${type} 中的「${entry.value}」沒有對應到有效項目`
               if (!invalidMessageSet.has(message)) {
@@ -989,7 +1000,7 @@ export async function bulkImportEmployees(req, res) {
             return
           }
 
-          const autoDoc = aliasMap.get(normalizedValue)
+          const autoDoc = resolveSubDepartment(normalizedValue)
           if (autoDoc) {
             resolutionMaps[type].set(resolutionKey, {
               status: 'auto',
