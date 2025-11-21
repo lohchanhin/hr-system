@@ -203,7 +203,7 @@ async function onLogin() {
 .front-login-container {
   display: flex;
   min-height: 100vh;
-  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+  background: linear-gradient(135deg, #a7d7a7 0%, #6f9f6f 100%);
 }
 
 .login-background {
@@ -222,8 +222,8 @@ async function onLogin() {
   left: 0;
   right: 0;
   bottom: 0;
-  background: url('data:image/svg+xml,<svg width="60" height="60" viewBox="0 0 60 60" xmlns="http://www.w3.org/2000/svg"><g fill="none" fill-rule="evenodd"><g fill="%23ffffff" fill-opacity="0.05"><circle cx="30" cy="30" r="2"/></g></g></svg>');
-  opacity: 0.3;
+  background: url('data:image/svg+xml,<svg width="60" height="60" viewBox="0 0 60 60" xmlns="http://www.w3.org/2000/svg"><g fill="none" fill-rule="evenodd"><g fill="%23e7f1e7" fill-opacity="0.4"><circle cx="30" cy="30" r="2"/></g></g></svg>');
+  opacity: 0.35;
 }
 
 .login-brand {
@@ -236,14 +236,14 @@ async function onLogin() {
 .brand-icon {
   width: 80px;
   height: 80px;
-  background: rgba(255, 255, 255, 0.1);
+  background: rgba(233, 245, 233, 0.18);
   border-radius: 20px;
   display: flex;
   align-items: center;
   justify-content: center;
   margin: 0 auto 1.5rem;
   backdrop-filter: blur(10px);
-  border: 1px solid rgba(255, 255, 255, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.28);
 }
 
 .brand-title {
@@ -251,12 +251,14 @@ async function onLogin() {
   font-weight: 700;
   margin: 0 0 0.5rem;
   text-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  color: #f6fff6;
 }
 
 .brand-subtitle {
   font-size: 1.25rem;
   opacity: 0.9;
   margin: 0;
+  color: #eef6ee;
 }
 
 .login-form-container {
@@ -265,7 +267,7 @@ async function onLogin() {
   align-items: center;
   justify-content: center;
   padding: 2rem;
-  background: rgba(255, 255, 255, 0.02);
+  background: rgba(240, 248, 240, 0.12);
   backdrop-filter: blur(10px);
 }
 
@@ -274,7 +276,7 @@ async function onLogin() {
   border: none;
   border-radius: 16px;
   overflow: hidden;
-  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 20px 40px rgba(47, 68, 50, 0.12);
 }
 
 .login-card :deep(.el-card__body) {
@@ -289,12 +291,12 @@ async function onLogin() {
 .login-title {
   font-size: 1.875rem;
   font-weight: 700;
-  color: #059669;
+  color: #3f6444;
   margin: 0 0 0.5rem;
 }
 
 .login-description {
-  color: #6b7280;
+  color: #4b5a4d;
   margin: 0;
   font-size: 0.95rem;
 }
@@ -317,35 +319,35 @@ async function onLogin() {
   align-items: center;
   gap: 0.5rem;
   margin-bottom: 0.5rem;
-  color: #374151;
+  color: #2f3f32;
   font-weight: 500;
   font-size: 0.9rem;
 }
 
 .input-label svg {
-  color: #6b7280;
+  color: #6f9f6f;
 }
 .custom-input :deep(.el-input__wrapper) {
   border-radius: 8px;
-  border: 1px solid #e5e7eb;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+  border: 1px solid #dbe7db;
+  box-shadow: 0 1px 2px rgba(47, 68, 50, 0.08);
   transition: all 0.2s ease;
 }
 
 .custom-input :deep(.el-input__wrapper:hover) {
-  border-color: #10b981;
+  border-color: #8fbc8f;
 }
 
 .custom-input :deep(.el-input__wrapper.is-focus) {
-  border-color: #10b981;
-  box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.1);
+  border-color: #6f9f6f;
+  box-shadow: 0 0 0 3px rgba(143, 188, 143, 0.2);
 }
 
 .login-button {
   width: 100%;
   height: 48px;
   border-radius: 8px;
-  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+  background: linear-gradient(135deg, #8fbc8f 0%, #6f9f6f 100%);
   border: none;
   font-weight: 600;
   font-size: 1rem;
@@ -354,7 +356,7 @@ async function onLogin() {
 
 .login-button:hover {
   transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
+  box-shadow: 0 4px 12px rgba(111, 159, 111, 0.35);
 }
 
 .manager-login-link {
@@ -369,7 +371,7 @@ async function onLogin() {
   justify-content: space-between;
   margin-top: 1.5rem;
   padding: 1rem;
-  background: #f8fafc;
+  background: #f4faf4;
   border-radius: 8px;
 }
 
@@ -377,12 +379,12 @@ async function onLogin() {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  color: #475569;
+  color: #2f3f32;
   font-size: 0.85rem;
 }
 
 .info-item svg {
-  color: #10b981;
+  color: #6f9f6f;
 }
 
 @media (max-width: 768px) {
