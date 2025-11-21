@@ -987,7 +987,7 @@
         <div v-if="referenceMappingDialogVisible">
           <!-- ✅ 用預先算好的 sections 來畫，避免模板裡層層 ?. -->
           <div v-for="section in referenceMappingSectionsForUI" :key="section.type" class="reference-mapping-section"
-            v-if="Array.isArray(section.values) && section.values.length">
+            v-if="section && Array.isArray(section.values) && section.values.length">
             <h4 class="reference-mapping-title">
               {{ getReferenceMappingLabel(section.type) }}對應
             </h4>
@@ -1285,15 +1285,17 @@ async function parseFileToRowObjects(file) {
 }
 
 // 將 keys / pending / options 預先整理成可直接渲染的 sections
-const referenceMappingSectionsForUI = ref([]) // 你原本的
+const referenceMappingSectionsForUI = computed(() =>
+  (referenceMappingKeys.value || []).map(type => ({
+    type,
+    values: Array.isArray(referenceMappingPending[type]) ? referenceMappingPending[type] : [],
+    options: Array.isArray(referenceMappingOptions[type]) ? referenceMappingOptions[type] : []
+  }))
+)
 
-const hasPendingReferenceMappings = computed(() => {
-  if (!Array.isArray(referenceMappingSectionsForUI.value)) return false
-  return referenceMappingSectionsForUI.value.some((section) => {
-    const values = Array.isArray(section.values) ? section.values : []
-    return values.length > 0
-  })
-})
+const hasPendingReferenceMappings = computed(() =>
+  referenceMappingSectionsForUI.value.some(section => section.values.length > 0)
+)
 
 
 
@@ -3455,18 +3457,30 @@ function buildReferenceOptionLabel(type, option) {
     if (parts.length) return parts.join(' / ')
   }
   if (type === 'department') {
-    const parts = [option.name, option.code].filter(Boolean)
-    if (parts.length) {
-      if (option.organization) parts.push(`所屬：${option.organization}`)
-      return parts.join('｜')
-    }
+    const orgParts = [option.organizationName, option.organizationCode, option.organizationUnitName]
+      .map(text => (text == null ? '' : String(text).trim()))
+      .filter(Boolean)
+    const deptParts = [option.name, option.code].filter(Boolean)
+    const segments = []
+    if (orgParts.length) segments.push(orgParts.join('｜'))
+    if (deptParts.length) segments.push(deptParts.join('｜'))
+    if (!segments.length && option.organization) segments.push(String(option.organization))
+    if (segments.length) return segments.join(' / ')
   }
   if (type === 'subDepartment') {
-    const parts = [option.name, option.code].filter(Boolean)
-    if (parts.length) {
-      if (option.department) parts.push(`部門：${option.department}`)
-      return parts.join('｜')
-    }
+    const orgParts = [option.organizationName, option.organizationCode, option.organizationUnitName]
+      .map(text => (text == null ? '' : String(text).trim()))
+      .filter(Boolean)
+    const deptParts = [option.departmentName, option.departmentCode]
+      .map(text => (text == null ? '' : String(text).trim()))
+      .filter(Boolean)
+    const subParts = [option.name, option.code].filter(Boolean)
+    const segments = []
+    if (orgParts.length) segments.push(orgParts.join('｜'))
+    if (deptParts.length) segments.push(deptParts.join('｜'))
+    if (subParts.length) segments.push(subParts.join('｜'))
+    if (!segments.length && option.department) segments.push(String(option.department))
+    if (segments.length) return segments.join(' / ')
   }
   const candidates = [option.label, option.name, option.title, option.code, option.value, option.id]
     .map(x => (x == null ? '' : String(x).trim()))
@@ -3508,6 +3522,16 @@ function _buildIndex(list = [], fields = ['name', 'code', 'id', 'orgCode', 'unit
 
 // 取得現有資料清單做為 options（若後端缺 options）
 function _getFallbackOptions(key) {
+  const orgMap = new Map((orgList.value || []).map(o => {
+    const id = o?._id ?? o?.id
+    const key = id == null ? '' : String(id)
+    return [key, o]
+  }))
+  const deptMap = new Map((departmentList.value || []).map(d => {
+    const id = d?._id ?? d?.id
+    const key = id == null ? '' : String(id)
+    return [key, { ...d, organization: d?.organization ?? '' }]
+  }))
   if (key === 'organization') {
     return (orgList.value || []).map(o => ({
       id: o._id ?? o.id ?? '',
@@ -3521,7 +3545,10 @@ function _getFallbackOptions(key) {
       id: d._id ?? d.id ?? '',
       name: d.name ?? '',
       code: d.code ?? '',
-      organization: d.organization ?? ''
+      organization: d.organization ?? '',
+      organizationName: orgMap.get(String(d.organization ?? ''))?.name ?? '',
+      organizationUnitName: orgMap.get(String(d.organization ?? ''))?.unitName ?? '',
+      organizationCode: orgMap.get(String(d.organization ?? ''))?.orgCode ?? ''
     }))
   }
   if (key === 'subDepartment') {
@@ -3529,7 +3556,25 @@ function _getFallbackOptions(key) {
       id: s._id ?? s.id ?? '',
       name: s.name ?? '',
       code: s.code ?? '',
-      department: s.department ?? ''
+      department: s.department ?? '',
+      departmentName: deptMap.get(String(s.department ?? ''))?.name ?? '',
+      departmentCode: deptMap.get(String(s.department ?? ''))?.code ?? '',
+      organization: deptMap.get(String(s.department ?? ''))?.organization ?? s.organization ?? '',
+      organizationName: (() => {
+        const dept = deptMap.get(String(s.department ?? ''))
+        const orgId = dept?.organization ?? s.organization ?? ''
+        return orgMap.get(String(orgId))?.name ?? ''
+      })(),
+      organizationUnitName: (() => {
+        const dept = deptMap.get(String(s.department ?? ''))
+        const orgId = dept?.organization ?? s.organization ?? ''
+        return orgMap.get(String(orgId))?.unitName ?? ''
+      })(),
+      organizationCode: (() => {
+        const dept = deptMap.get(String(s.department ?? ''))
+        const orgId = dept?.organization ?? s.organization ?? ''
+        return orgMap.get(String(orgId))?.orgCode ?? ''
+      })()
     }))
   }
   return []
@@ -3796,24 +3841,9 @@ function openReferenceMappingDialog(missingReferences = {}, message = '', keys =
 
   // 保底選項（後端沒給 options 時使用）
   const fallbackOptions = {
-    organization: (orgList.value || []).map(o => ({
-      id: o._id ?? o.id ?? '',
-      name: o.name ?? '',
-      orgCode: o.orgCode ?? o.code ?? '',
-      unitName: o.unitName ?? ''
-    })),
-    department: (departmentList.value || []).map(d => ({
-      id: d._id ?? d.id ?? '',
-      name: d.name ?? '',
-      code: d.code ?? '',
-      organization: d.organization ?? ''
-    })),
-    subDepartment: (subDepartmentList.value || []).map(s => ({
-      id: s._id ?? s.id ?? '',
-      name: s.name ?? '',
-      code: s.code ?? '',
-      department: s.department ?? ''
-    }))
+    organization: _getFallbackOptions('organization'),
+    department: _getFallbackOptions('department'),
+    subDepartment: _getFallbackOptions('subDepartment')
   }
 
   // ✅ 永遠先取 block，再讀 values/options

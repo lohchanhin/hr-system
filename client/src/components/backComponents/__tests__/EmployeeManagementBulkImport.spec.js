@@ -446,6 +446,52 @@ describe('EmployeeManagement - 批量匯入流程', () => {
     expect(wrapper.vm.referenceMappingDialogVisible).toBe(false)
   })
 
+  it('缺少選項時仍顯示完整機構/部門層級以利手動匹配', async () => {
+    DEFAULT_API_PAYLOADS['/api/organizations'] = [
+      { _id: 'org1', name: '總院', orgCode: 'ORG-001', unitName: '總部' }
+    ]
+    DEFAULT_API_PAYLOADS['/api/departments'] = [
+      { _id: 'dep1', name: '人資部', code: 'HR001', organization: 'org1' }
+    ]
+    DEFAULT_API_PAYLOADS['/api/sub-departments'] = [
+      { _id: 'sub1', name: '招募組', code: 'HR-REC', department: 'dep1' }
+    ]
+
+    const missingResponse = {
+      message: '缺少對應資料',
+      missingReferences: {
+        subDepartment: {
+          values: [{ value: '招募', normalizedValue: '招募', rows: [3] }],
+          options: []
+        }
+      },
+      errors: []
+    }
+
+    importEmployeesBulkMock.mockResolvedValueOnce(createApiResponse(missingResponse, 409))
+
+    const wrapper = await mountComponent()
+    await wrapper.find('[data-test="bulk-import-button"]').trigger('click')
+
+    const file = new File(['mapping'], 'employees.csv', { type: 'text/csv' })
+    wrapper.vm.handleBulkImportFileChange({ name: 'employees.csv', raw: file })
+
+    await wrapper.vm.submitBulkImport()
+    await flushPromises()
+
+    expect(wrapper.vm.referenceMappingDialogVisible).toBe(true)
+    const options = wrapper.vm.referenceMappingOptions.subDepartment
+    const fallbackOption = options.find(opt => opt.id === 'sub1')
+    const label = wrapper.vm.buildReferenceOptionLabel('subDepartment', fallbackOption)
+    expect(label).toContain('總院')
+    expect(label).toContain('人資部')
+    expect(label).toContain('招募組')
+
+    DEFAULT_API_PAYLOADS['/api/organizations'] = []
+    DEFAULT_API_PAYLOADS['/api/departments'] = []
+    DEFAULT_API_PAYLOADS['/api/sub-departments'] = []
+  })
+
   it('匯入時缺少多種參照類型可顯示並送出新類型的對應', async () => {
     const missingResponse = {
       message: '缺少對應資料',
