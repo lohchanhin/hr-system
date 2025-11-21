@@ -213,6 +213,25 @@ function buildReferenceAliasMap(docs, aliasFields) {
   return map
 }
 
+function buildSubDepartmentAliasLookup(docs, departmentId) {
+  if (!departmentId) {
+    return null
+  }
+
+  const filtered = Array.isArray(docs)
+    ? docs.filter(doc => doc?.department?.toString?.() === departmentId)
+    : []
+
+  return {
+    aliasMap: buildReferenceAliasMap(filtered, REFERENCE_CONFIGS.subDepartment.aliasFields),
+    options: buildReferenceOptions('subDepartment', filtered)
+  }
+}
+
+function buildSubDepartmentResolutionKey(normalizedValue, departmentId) {
+  return departmentId ? `${normalizedValue}::${departmentId}` : normalizedValue
+}
+
 function buildReferenceOptions(type, docs) {
   if (!Array.isArray(docs)) return []
   if (type === 'organization') {
@@ -771,6 +790,7 @@ export async function bulkImportEmployees(req, res) {
     return
   }
 
+  const rowByNumber = new Map(parsedRows.map(row => [row.rowNumber, row]))
   const referenceUsage = collectReferenceUsage(parsedRows)
   const mappingMaps = {}
   const ignoreSets = {}
@@ -821,6 +841,117 @@ export async function bulkImportEmployees(req, res) {
     const usageMap = referenceUsage[type]
     if (!usageMap.size && !mappingMaps[type].size && !ignoreSets[type].size) return
     const lookup = referenceLookups[type] || { aliasMap: new Map(), options: [] }
+    const pendingMap = new Map()
+    const optionMap = new Map()
+
+    const getDepartmentIdForRow = row => {
+      const normalizedDepartment = normalizeReferenceKey(getPathValue(row?.original, 'department'))
+      if (!normalizedDepartment) return null
+      const departmentResolution = resolutionMaps.department.get(normalizedDepartment)
+      if (!departmentResolution) return null
+      if (departmentResolution.status === 'ignored') return null
+      return typeof departmentResolution.resolved === 'string' && departmentResolution.resolved
+        ? departmentResolution.resolved
+        : null
+    }
+
+    if (type === 'subDepartment') {
+      usageMap.forEach(entry => {
+        const normalizedValue = entry.normalizedValue
+        if (!normalizedValue) return
+
+        entry.rows.forEach(rowNumber => {
+          const row = rowByNumber.get(rowNumber)
+          if (!row) return
+          const departmentId = getDepartmentIdForRow(row)
+          const departmentLookup = buildSubDepartmentAliasLookup(lookup.docs, departmentId)
+          const aliasMap = departmentLookup?.aliasMap || lookup.aliasMap
+          const options = departmentLookup?.options || lookup.options || []
+          const resolutionKey = buildSubDepartmentResolutionKey(normalizedValue, departmentId)
+
+          if (options.length) {
+            options.forEach(option => {
+              if (option?.id && !optionMap.has(option.id)) {
+                optionMap.set(option.id, option)
+              }
+            })
+          }
+
+          if (ignoreSets[type].has(normalizedValue)) {
+            resolutionMaps[type].set(resolutionKey, { status: 'ignored', resolved: null })
+            return
+          }
+
+          if (mappingMaps[type].has(normalizedValue)) {
+            const target = mappingMaps[type].get(normalizedValue)
+            if (target === null) {
+              resolutionMaps[type].set(resolutionKey, { status: 'ignored', resolved: null })
+              return
+            }
+            const targetDoc = aliasMap.get(normalizeReferenceKey(target))
+            if (!targetDoc) {
+              const message = `valueMappings.${type} 中的「${entry.value}」沒有對應到有效項目`
+              if (!invalidMessageSet.has(message)) {
+                invalidMessageSet.add(message)
+                invalidMappings.push(message)
+              }
+              resolutionMaps[type].set(resolutionKey, { status: 'invalid' })
+            } else {
+              resolutionMaps[type].set(resolutionKey, {
+                status: 'mapped',
+                resolved: targetDoc._id?.toString?.() ?? ''
+              })
+            }
+            return
+          }
+
+          const autoDoc = aliasMap.get(normalizedValue)
+          if (autoDoc) {
+            resolutionMaps[type].set(resolutionKey, {
+              status: 'auto',
+              resolved: autoDoc._id?.toString?.() ?? ''
+            })
+          } else {
+            const existing = pendingMap.get(resolutionKey)
+            if (existing) {
+              existing.rows.push(rowNumber)
+            } else {
+              pendingMap.set(resolutionKey, {
+                value: entry.value,
+                normalizedValue: entry.normalizedValue,
+                rows: [rowNumber]
+              })
+            }
+            resolutionMaps[type].set(resolutionKey, { status: 'missing' })
+          }
+        })
+      })
+
+      mappingMaps[type].forEach((target, sourceKey) => {
+        if (target === null) return
+        const targetDoc = lookup.aliasMap.get(normalizeReferenceKey(target))
+        if (!targetDoc) {
+          const display = usageMap.get(sourceKey)?.value || sourceKey
+          const message = `valueMappings.${type} 中的「${display}」沒有對應到有效項目`
+          if (!invalidMessageSet.has(message)) {
+            invalidMessageSet.add(message)
+            invalidMappings.push(message)
+          }
+        }
+      })
+
+      if (pendingMap.size) {
+        missingReferences[type] = {
+          values: Array.from(pendingMap.values()).map(pending => ({
+            ...pending,
+            rows: pending.rows.sort((a, b) => a - b)
+          })),
+          options: Array.from(optionMap.values())
+        }
+      }
+
+      return
+    }
 
     usageMap.forEach(entry => {
       const normalizedValue = entry.normalizedValue
@@ -920,7 +1051,16 @@ export async function bulkImportEmployees(req, res) {
     REFERENCE_KEYS.forEach(key => {
       const normalizedValue = normalizeReferenceKey(getPathValue(row.original, key))
       if (!normalizedValue) return
-      const resolution = resolutionMaps[key].get(normalizedValue)
+      let resolutionKey = normalizedValue
+      if (key === 'subDepartment') {
+        const normalizedDepartment = normalizeReferenceKey(getPathValue(row.original, 'department'))
+        const departmentResolution = resolutionMaps.department.get(normalizedDepartment)
+        const departmentId = departmentResolution && departmentResolution.status !== 'ignored'
+          ? departmentResolution.resolved
+          : null
+        resolutionKey = buildSubDepartmentResolutionKey(normalizedValue, departmentId)
+      }
+      const resolution = resolutionMaps[key].get(resolutionKey)
       if (!resolution) return
       if (resolution.status === 'ignored') {
         row.normalized[key] = null
