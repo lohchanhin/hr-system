@@ -379,7 +379,7 @@
 
       <el-table
         class="modern-schedule-table"
-        :data="filteredEmployees"
+        :data="visibleEmployees"
         :header-cell-style="{ backgroundColor: '#ecfeff', color: '#164e63', fontWeight: '600' }"
         :row-style="{ backgroundColor: '#ffffff' }"
         @row-click="row => lazyMode && toggleRow(row._id)"
@@ -575,6 +575,19 @@
           </template>
         </el-table-column>
       </el-table>
+
+      <div class="pagination-bar" v-if="filteredEmployees.length">
+        <el-pagination
+          background
+          layout="prev, pager, next, ->, sizes, total"
+          :total="filteredEmployees.length"
+          :page-size="pageSize"
+          :current-page="currentPage"
+          :page-sizes="[10, 20, 30, 50]"
+          @current-change="onPageChange"
+          @size-change="onPageSizeChange"
+        />
+      </div>
     </div>
 
     <!-- Enhanced approval list with modern card design -->
@@ -745,6 +758,11 @@ const isPublishing = ref(false)
 const isFinalizing = ref(false)
 const detail = reactive({ visible: false, doc: null })
 const employeeNameCache = reactive({})
+const pageSize = ref(20)
+const currentPage = ref(1)
+const publishSnapshot = ref(null)
+const loadedEmployeeIds = ref(new Set())
+const isFetchingSchedules = ref(false)
 
 function getSupervisorIdFromStorage() {
   if (typeof window === 'undefined') return ''
@@ -1064,9 +1082,14 @@ watch(includeSelf, async (val, oldVal) => {
   authStore.refreshRole({ forceRefresh: true })
   if (isInitializingIncludeSelf) return
   if (!showIncludeSelfToggle.value) return
+  currentPage.value = 1
   await fetchEmployees(selectedDepartment.value, selectedSubDepartment.value)
-  await fetchSchedules()
+  await fetchSchedules({ reset: true })
   await fetchSummary()
+})
+
+watch([employeeSearch, statusFilter], () => {
+  currentPage.value = 1
 })
 
 const employeeStatus = empId => {
@@ -1087,6 +1110,32 @@ const filteredEmployees = computed(() => {
     list = list.filter(e => employeeStatus(e._id) === statusFilter.value)
   }
   return list
+})
+
+const totalPages = computed(() => {
+  if (!filteredEmployees.value.length) return 1
+  return Math.max(1, Math.ceil(filteredEmployees.value.length / pageSize.value))
+})
+
+const visibleEmployees = computed(() => {
+  const start = (currentPage.value - 1) * pageSize.value
+  const end = start + pageSize.value
+  return filteredEmployees.value.slice(start, end)
+})
+
+const visibleEmployeeIds = computed(() =>
+  visibleEmployees.value.map(emp => String(emp._id))
+)
+
+watch([filteredEmployees, pageSize], () => {
+  const maxPage = totalPages.value
+  if (currentPage.value > maxPage) {
+    currentPage.value = maxPage
+  }
+})
+
+watch(visibleEmployeeIds, () => {
+  fetchSchedules()
 })
 
 const lazyMode = computed(() => employees.value.length > 50)
@@ -1110,6 +1159,19 @@ const canEdit = canUseSupervisorFilter
 const missingSupervisorScheduleNoticeKey = ref('')
 
 const publishSummary = computed(() => {
+  if (publishSnapshot.value) {
+    const snapshot = publishSnapshot.value
+    return {
+      status: snapshot.status || 'draft',
+      pendingEmployees: snapshot.pendingEmployees || [],
+      disputedEmployees: snapshot.disputedEmployees || [],
+      publishedAt: snapshot.publishedAt || null,
+      hasSchedules: snapshot.hasSchedules ?? false,
+      totalEmployees: snapshot.totalEmployees ?? 0,
+      allEmployeesConfirmed: snapshot.allEmployeesConfirmed ?? false
+    }
+  }
+
   const result = {
     status: 'draft',
     pendingEmployees: [],
@@ -1621,6 +1683,9 @@ async function fetchSubDepartments(dept = '') {
         }
       }
     }
+    if (!filtered.length && normalized.length) {
+      filtered = normalized
+    }
     if (authStore.role === 'supervisor') {
       const baseIds = supervisorAssignableSubDepartmentIds.value.length
         ? supervisorAssignableSubDepartmentIds.value
@@ -1630,8 +1695,6 @@ async function fetchSubDepartments(dept = '') {
       const allowedSet = new Set(baseIds.map(id => String(id)))
       if (allowedSet.size) {
         filtered = filtered.filter(s => allowedSet.has(String(s._id)))
-      } else {
-        filtered = []
       }
     }
     subDepartments.value = filtered
@@ -1845,9 +1908,69 @@ async function fetchSupervisorSubDepartmentScope(supervisorId = '') {
   }
 }
 
-async function fetchSchedules() {
+function ensureEmployeeSchedule(empId) {
+  const key = String(empId)
+  if (!scheduleMap.value[key]) {
+    scheduleMap.value[key] = {}
+  }
+  const employee = employees.value.find(e => String(e._id) === key) || {}
+  const defaults = {
+    shiftId: '',
+    department: employee.departmentId || '',
+    subDepartment: employee.subDepartmentId || ''
+  }
+  days.value.forEach(d => {
+    if (!scheduleMap.value[key][d.date]) {
+      scheduleMap.value[key][d.date] = { ...defaults }
+    } else {
+      scheduleMap.value[key][d.date].shiftId = scheduleMap.value[key][d.date].shiftId || ''
+      scheduleMap.value[key][d.date].department =
+        scheduleMap.value[key][d.date].department || defaults.department
+      scheduleMap.value[key][d.date].subDepartment =
+        scheduleMap.value[key][d.date].subDepartment || defaults.subDepartment
+    }
+  })
+}
+
+function resetScheduleCache() {
+  scheduleMap.value = {}
+  rawSchedules.value = []
+  publishSnapshot.value = null
+  loadedEmployeeIds.value = new Set()
+  approvalList.value = []
+}
+
+async function fetchSchedules({ reset = false } = {}) {
+  let targetEmployees = visibleEmployeeIds.value
+  if (!targetEmployees.length && employees.value.length) {
+    const start = (currentPage.value - 1) * pageSize.value
+    const end = start + pageSize.value
+    targetEmployees = employees.value.slice(start, end).map(e => String(e._id))
+  }
+  const hasVisibleEmployees = targetEmployees.length > 0
+  if (reset) {
+    resetScheduleCache()
+  }
+
+  const shouldFetch =
+    reset || !hasVisibleEmployees || targetEmployees.some(id => !loadedEmployeeIds.value.has(id))
+  if (!shouldFetch) {
+    return
+  }
+
+  if (isFetchingSchedules.value) {
+    return
+  }
+
+  isFetchingSchedules.value = true
+
   const supervisorId = getStoredSupervisorId()
   const params = [`month=${currentMonth.value}`]
+  if (hasVisibleEmployees || supervisorId) {
+    params.push(`page=${currentPage.value}`)
+    params.push(`limit=${pageSize.value}`)
+    params.push(`employeeIds=${targetEmployees.join(',')}`)
+  }
   if (supervisorId) params.push(`supervisor=${supervisorId}`)
   if (includeSelf.value && showIncludeSelfToggle.value) params.push('includeSelf=true')
   const query = `?${params.join('&')}`
@@ -1855,39 +1978,36 @@ async function fetchSchedules() {
     const res = await apiFetch(`/api/schedules/monthly${query}`)
     if (!res.ok) throw new Error('Failed to fetch schedules')
     const data = await res.json()
-    const schedules = Array.isArray(data) ? data : []
+    const schedules = Array.isArray(data)
+      ? data
+      : Array.isArray(data?.schedules)
+        ? data.schedules
+        : []
+
+    const summaryData = Array.isArray(data) ? null : data?.publishSummary
+    publishSnapshot.value = summaryData
+      ? {
+          status: summaryData.status || 'draft',
+          pendingEmployees: summaryData.pendingEmployees || [],
+          disputedEmployees: summaryData.disputedEmployees || [],
+          publishedAt: summaryData.publishedAt || null,
+          hasSchedules: summaryData.hasSchedules ?? false,
+          totalEmployees: summaryData.totalEmployees ?? 0,
+          allEmployeesConfirmed: summaryData.allEmployeesConfirmed ?? false
+        }
+      : null
+
     rawSchedules.value = schedules
 
-    const ds = days.value
-    scheduleMap.value = {}
-    if (!employees.value.length && schedules.length) {
-      await fetchEmployees(selectedDepartment.value, selectedSubDepartment.value)
-    }
-    employees.value.forEach(emp => {
-      const empKey = String(emp._id)
-      scheduleMap.value[empKey] = {}
-      ds.forEach(d => {
-        scheduleMap.value[empKey][d.date] = {
-          shiftId: '',
-          department: emp.departmentId,
-          subDepartment: emp.subDepartmentId
-        }
-      })
-    })
+    const targetSet = new Set(targetEmployees)
+    targetEmployees.forEach(empId => ensureEmployeeSchedule(empId))
+
     schedules.forEach(s => {
       const rawId = s.employee?._id || s.employee
       if (!rawId) return
       const empId = String(rawId)
-      if (!scheduleMap.value[empId]) {
-        scheduleMap.value[empId] = {}
-        ds.forEach(d => {
-          scheduleMap.value[empId][d.date] = {
-            shiftId: '',
-            department: '',
-            subDepartment: ''
-          }
-        })
-      }
+      if (!targetSet.has(empId)) return
+      ensureEmployeeSchedule(empId)
       const d = dayjs(s.date).date()
       const emp = employees.value.find(e => String(e._id) === empId) || {}
       scheduleMap.value[empId][d] = {
@@ -1898,14 +2018,21 @@ async function fetchSchedules() {
       }
     })
 
-    const leaveParams = params.slice()
+    const leaveParams = [`month=${currentMonth.value}`]
+    if (hasVisibleEmployees || supervisorId) {
+      leaveParams.push(`employeeIds=${targetEmployees.join(',')}`)
+    }
+    if (includeSelf.value && showIncludeSelfToggle.value) {
+      leaveParams.push('includeSelf=true')
+    }
+    if (supervisorId) leaveParams.push(`supervisor=${supervisorId}`)
     const deptId = selectedDepartment.value
     const subId = selectedSubDepartment.value
     if (deptId) leaveParams.push(`department=${deptId}`)
     if (subId) leaveParams.push(`subDepartment=${subId}`)
     const leaveQuery = `?${leaveParams.join('&')}`
     const res2 = await apiFetch(`/api/schedules/leave-approvals${leaveQuery}`)
-    if (res2.ok) {
+    if (res2?.ok && typeof res2.json === 'function') {
       const extra = await res2.json()
       const approvals = Array.isArray(extra?.approvals) ? extra.approvals : []
       const leaves = Array.isArray(extra?.leaves) ? extra.leaves : []
@@ -1917,6 +2044,12 @@ async function fetchSchedules() {
         const rawEmp = l.employee?._id || l.employee
         if (!rawEmp) return
         const empId = String(rawEmp)
+        const isVisibleEmployee =
+          targetSet.size > 0
+            ? targetSet.has(empId)
+            : employees.value.some(e => String(e?._id) === empId)
+        if (!isVisibleEmployee) return
+        ensureEmployeeSchedule(empId)
         const startDate = dayjs(l.startDate).startOf('day')
         const endDate = dayjs(l.endDate).startOf('day')
         if (!startDate.isValid() || !endDate.isValid()) return
@@ -1936,14 +2069,16 @@ async function fetchSchedules() {
           pointer = pointer.add(1, 'day')
         }
       })
+    } else {
+      approvalList.value = []
     }
-    const supervisorId = getStoredSupervisorId() || getSupervisorIdFromStorage()
+    const supervisorIdForCheck = getStoredSupervisorId() || getSupervisorIdFromStorage()
     const shouldCheckSupervisorSchedule =
-      includeSelf.value && showIncludeSelfToggle.value && supervisorId
+      includeSelf.value && showIncludeSelfToggle.value && supervisorIdForCheck
     if (shouldCheckSupervisorSchedule) {
       const hasSupervisorSchedule = schedules.some(s => {
         const rawEmp = s?.employee?._id || s?.employee
-        return rawEmp && String(rawEmp) === supervisorId
+        return rawEmp && String(rawEmp) === supervisorIdForCheck
       })
       const noticeKey = [
         currentMonth.value,
@@ -1961,12 +2096,28 @@ async function fetchSchedules() {
     } else if (missingSupervisorScheduleNoticeKey.value) {
       missingSupervisorScheduleNoticeKey.value = ''
     }
+    const updated = new Set(loadedEmployeeIds.value)
+    targetEmployees.forEach(id => updated.add(id))
+    loadedEmployeeIds.value = updated
     pruneSelections()
   } catch (err) {
     console.error(err)
     ElMessage.error('取得排班資料失敗')
     rawSchedules.value = []
+  } finally {
+    isFetchingSchedules.value = false
   }
+}
+
+function onPageChange(page) {
+  currentPage.value = page
+  fetchSchedules()
+}
+
+function onPageSizeChange(size) {
+  pageSize.value = size
+  currentPage.value = 1
+  fetchSchedules()
 }
 
 async function openDetail(id) {
@@ -2081,12 +2232,14 @@ async function onDepartmentChange() {
   selectedSubDepartment.value = ''
   await fetchSubDepartments(selectedDepartment.value)
   await fetchEmployees(selectedDepartment.value, '')
-  await fetchSchedules()
+  currentPage.value = 1
+  await fetchSchedules({ reset: true })
 }
 
 async function onSubDepartmentChange() {
   await fetchEmployees(selectedDepartment.value, selectedSubDepartment.value)
-  await fetchSchedules()
+  currentPage.value = 1
+  await fetchSchedules({ reset: true })
 }
 
 async function handleScheduleError(res, defaultMsg, empId, day, prev) {
@@ -2278,7 +2431,8 @@ async function fetchEmployees(department = '', subDepartment = '') {
   try {
     const empRes = await apiFetch(url)
     if (!empRes.ok) throw new Error('Failed to fetch employees')
-    const empData = await empRes.json()
+    const payload = typeof empRes.json === 'function' ? await empRes.json() : []
+    const empData = Array.isArray(payload) ? payload : []
     const deptMap = departments.value.reduce((acc, d) => {
       acc[d._id] = d.name
       return acc
@@ -2352,7 +2506,8 @@ async function fetchSummary() {
 async function onMonthChange(value) {
   const next = value ? dayjs(value) : dayjs()
   currentMonth.value = next.isValid() ? next.format('YYYY-MM') : dayjs().format('YYYY-MM')
-  await fetchSchedules()
+  currentPage.value = 1
+  await fetchSchedules({ reset: true })
   await fetchSummary()
 }
 
@@ -2368,7 +2523,7 @@ onMounted(async () => {
     await fetchSupervisorContext()
     await fetchOptions()
     await fetchEmployees(selectedDepartment.value, selectedSubDepartment.value)
-    await fetchSchedules()
+    await fetchSchedules({ reset: true })
   } finally {
     isInitializingIncludeSelf = false
   }
@@ -2926,6 +3081,12 @@ onMounted(async () => {
       background-color: #f8fafc !important;
     }
   }
+}
+
+.pagination-bar {
+  padding: 16px 0;
+  display: flex;
+  justify-content: flex-end;
 }
 
 .employee-info {

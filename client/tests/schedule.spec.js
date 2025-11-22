@@ -155,6 +155,37 @@ describe('Schedule.vue', () => {
       props: ['percentage'],
       template: '<div class="progress-stub" :data-percentage="percentage"></div>'
     }
+    const PaginationStub = {
+      name: 'ElPagination',
+      emits: ['current-change', 'size-change'],
+      template: '<div class="pagination-stub"><slot></slot></div>'
+    }
+    const SwitchStub = {
+      name: 'ElSwitch',
+      props: ['modelValue'],
+      emits: ['update:modelValue'],
+      template: '<input type="checkbox" />'
+    }
+    const DividerStub = { name: 'ElDivider', template: '<div class="divider-stub"></div>' }
+    const DescriptionsStub = {
+      name: 'ElDescriptions',
+      template: '<div class="descriptions-stub"><slot></slot></div>'
+    }
+    const DescriptionsItemStub = {
+      name: 'ElDescriptionsItem',
+      template: '<div class="descriptions-item-stub"><slot></slot></div>'
+    }
+    const DialogStub = {
+      name: 'ElDialog',
+      props: ['modelValue'],
+      emits: ['update:modelValue'],
+      template: '<div class="dialog-stub"><slot></slot></div>'
+    }
+    const TimelineStub = { name: 'ElTimeline', template: '<div class="timeline-stub"><slot></slot></div>' }
+    const TimelineItemStub = {
+      name: 'ElTimelineItem',
+      template: '<div class="timeline-item-stub"><slot></slot></div>'
+    }
     return shallowMount(Schedule, {
       global: {
         stubs: {
@@ -171,6 +202,14 @@ describe('Schedule.vue', () => {
           'el-tag': TagStub,
           'el-button': ButtonStub,
           'el-progress': ProgressStub,
+          'el-pagination': PaginationStub,
+          'el-switch': SwitchStub,
+          'el-divider': DividerStub,
+          'el-descriptions': DescriptionsStub,
+          'el-descriptions-item': DescriptionsItemStub,
+          'el-dialog': DialogStub,
+          'el-timeline': TimelineStub,
+          'el-timeline-item': TimelineItemStub,
           ScheduleDashboard: { name: 'ScheduleDashboard', template: '<div class="dashboard-stub"></div>', props: ['summary'] }
         }
       },
@@ -200,6 +239,7 @@ describe('Schedule.vue', () => {
     finalizeHandler,
     publishResult = null,
     finalizeResult = null,
+    publishSummary,
     supervisorProfile = {
       _id: 'sup1',
       name: '主管',
@@ -207,6 +247,87 @@ describe('Schedule.vue', () => {
       subDepartment: { _id: 'sd1', name: 'Sub A' }
     }
   } = {}) {
+    const buildSummaryFromSchedules = list => {
+      const employeeMap = new Map()
+      let latestPublishedAt = null
+      let hasPublished = false
+      let hasDisputed = false
+      let hasFinalized = false
+      list.forEach(item => {
+        if (!item) return
+        const state = item.state || 'draft'
+        const response = item.employeeResponse || 'pending'
+        const employee = item.employee || {}
+        const rawId = employee._id ?? employee.id ?? item.employee
+        const id = rawId ? String(rawId) : ''
+        const name = employee?.name || item.employeeName || id
+        if (state !== 'draft') hasPublished = true
+        if (state === 'changes_requested' || response === 'disputed') hasDisputed = true
+        if (state === 'finalized') hasFinalized = true
+        if (item?.publishedAt) {
+          const published = new Date(item.publishedAt)
+          if (!Number.isNaN(published)) {
+            if (!latestPublishedAt || latestPublishedAt < published) {
+              latestPublishedAt = published
+            }
+          }
+        }
+        if (!id) return
+        if (!employeeMap.has(id)) {
+          employeeMap.set(id, {
+            id,
+            name: name || id,
+            pendingCount: 0,
+            disputedCount: 0,
+            latestNote: '',
+            latestResponseAt: null
+          })
+        }
+        const entry = employeeMap.get(id)
+        if (state === 'pending_confirmation' && response === 'pending') entry.pendingCount += 1
+        if (response === 'disputed' || state === 'changes_requested') {
+          entry.disputedCount += 1
+          if (item?.responseNote) entry.latestNote = item.responseNote
+        }
+        if (item?.responseAt) {
+          const responded = new Date(item.responseAt)
+          if (!Number.isNaN(responded)) {
+            if (!entry.latestResponseAt || entry.latestResponseAt < responded) {
+              entry.latestResponseAt = responded
+            }
+          }
+        }
+      })
+      const pendingEmployees = []
+      const disputedEmployees = []
+      employeeMap.forEach(entry => {
+        if (entry.pendingCount > 0) pendingEmployees.push({ id: entry.id, name: entry.name, pendingCount: entry.pendingCount })
+        if (entry.disputedCount > 0) {
+          disputedEmployees.push({
+            id: entry.id,
+            name: entry.name,
+            disputedCount: entry.disputedCount,
+            latestNote: entry.latestNote,
+            latestResponseAt: entry.latestResponseAt ? entry.latestResponseAt.toISOString() : null
+          })
+        }
+      })
+      let status = 'draft'
+      if (hasFinalized) status = 'finalized'
+      else if (hasDisputed) status = 'disputed'
+      else if (hasPublished) status = pendingEmployees.length ? 'pending' : 'ready'
+
+      return {
+        status,
+        pendingEmployees,
+        disputedEmployees,
+        publishedAt: latestPublishedAt ? latestPublishedAt.toISOString() : null,
+        hasSchedules: list.length > 0,
+        totalEmployees: employeeMap.size,
+        allEmployeesConfirmed: status === 'ready' && pendingEmployees.length === 0 && disputedEmployees.length === 0
+      }
+    }
+
     apiFetch.mockImplementation(async (url, options = {}) => {
       const parsed = new URL(url, 'http://localhost')
       const { pathname, searchParams } = parsed
@@ -245,9 +366,38 @@ describe('Schedule.vue', () => {
 
       if (pathname === '/api/schedules/monthly') {
         const includeSelf = searchParams.get('includeSelf') === 'true'
+        const employeeIdsParam = searchParams.get('employeeIds')
+        const page = Number(searchParams.get('page') || 1)
+        const limit = Number(searchParams.get('limit') || 20)
+        const sourceList = includeSelf ? monthlyWithSelf : monthlyWithoutSelf
+        let schedules = sourceList
+        if (employeeIdsParam) {
+          const allowed = new Set(employeeIdsParam.split(',').filter(Boolean))
+          schedules = sourceList.filter(item => {
+            const rawId = item?.employee?._id || item?.employee
+            return rawId && allowed.has(String(rawId))
+          })
+        } else if (page > 0 && limit > 0) {
+          const uniqueIds = []
+          sourceList.forEach(item => {
+            const rawId = item?.employee?._id || item?.employee
+            const id = rawId ? String(rawId) : ''
+            if (id && !uniqueIds.includes(id)) uniqueIds.push(id)
+          })
+          const allowed = new Set(uniqueIds.slice((page - 1) * limit, (page - 1) * limit + limit))
+          schedules = sourceList.filter(item => {
+            const rawId = item?.employee?._id || item?.employee
+            return rawId && allowed.has(String(rawId))
+          })
+        }
+        const summaryPayload = publishSummary || buildSummaryFromSchedules(sourceList)
         return {
           ok: true,
-          json: async () => (includeSelf ? monthlyWithSelf : monthlyWithoutSelf)
+          json: async () => ({
+            schedules,
+            publishSummary: summaryPayload,
+            pagination: { page, limit, totalEmployees: summaryPayload.totalEmployees }
+          })
         }
       }
 
@@ -325,7 +475,9 @@ describe('Schedule.vue', () => {
     const monthlyCall = apiFetch.mock.calls.find(([url]) =>
       url.startsWith(`/api/schedules/monthly?month=${month}`)
     )
-    expect(monthlyCall?.[0]).toBe(`/api/schedules/monthly?month=${month}&supervisor=sup1`)
+    expect(monthlyCall?.[0]).toContain(`month=${month}`)
+    expect(monthlyCall?.[0]).toContain('supervisor=sup1')
+    expect(monthlyCall?.[0]).toContain('employeeIds=')
   })
 
   it('computes publish summary with pending and disputed responses', async () => {
@@ -496,7 +648,8 @@ describe('Schedule.vue', () => {
     const monthlyCall = apiFetch.mock.calls.find(([url]) =>
       url.startsWith(`/api/schedules/monthly?month=${month}`)
     )
-    expect(monthlyCall?.[0]).toBe(`/api/schedules/monthly?month=${month}`)
+    expect(monthlyCall?.[0]).toContain(`month=${month}`)
+    expect(monthlyCall?.[0]).not.toContain('supervisor=')
   })
 
   it('保留包含自己設定並在主管未排班時提示且保留指派能力', async () => {
@@ -1574,6 +1727,68 @@ describe('Schedule.vue', () => {
 
     expect(wrapper.vm.includeSelf).toBe(false)
     expect(localStorage.getItem(storageKey)).toBe('false')
+  })
+
+  it('分頁載入僅為可見員工建立班表並保留已載入資料', async () => {
+    const month = dayjs().format('YYYY-MM')
+    setRoleToken('supervisor')
+    localStorage.setItem('employeeId', 'sup1')
+    const employees = [
+      { _id: 'e1', name: '員工A', department: 'd1', subDepartment: 'sd1' },
+      { _id: 'e2', name: '員工B', department: 'd1', subDepartment: 'sd1' },
+      { _id: 'e3', name: '員工C', department: 'd1', subDepartment: 'sd1' }
+    ]
+    const schedules = [
+      { _id: 'sch1', employee: { _id: 'e1', name: '員工A' }, date: `${month}-01`, shiftId: 'shiftA' },
+      {
+        _id: 'sch2',
+        employee: { _id: 'e2', name: '員工B' },
+        date: `${month}-01`,
+        shiftId: 'shiftB',
+        state: 'pending_confirmation',
+        employeeResponse: 'pending'
+      },
+      { _id: 'sch3', employee: { _id: 'e3', name: '員工C' }, date: `${month}-02`, shiftId: 'shiftA' }
+    ]
+    setupSupervisorApiMock({
+      employees,
+      directReports: employees,
+      monthlyWithSelf: schedules,
+      monthlyWithoutSelf: schedules,
+      shifts: [
+        { _id: 'shiftA', name: '早班' },
+        { _id: 'shiftB', name: '晚班' }
+      ],
+      departments: [{ _id: 'd1', name: 'Dept' }],
+      subDepartments: [{ _id: 'sd1', name: 'Unit', department: { _id: 'd1' } }],
+      leaves: [
+        {
+          employee: { _id: 'e2' },
+          status: 'approved',
+          startDate: `${month}-01`,
+          endDate: `${month}-01`,
+          leaveType: 'vacation'
+        }
+      ]
+    })
+
+    const wrapper = mountSchedule()
+    await flush()
+    wrapper.vm.pageSize = 1
+    wrapper.vm.currentPage = 1
+    await wrapper.vm.fetchSchedules({ reset: true })
+    await flush()
+
+    expect(Object.keys(wrapper.vm.scheduleMap)).toEqual(expect.arrayContaining(['e1']))
+    expect(wrapper.vm.scheduleMap.e2).toBeUndefined()
+
+    wrapper.vm.onPageChange(2)
+    await flush()
+    await flush()
+
+    expect(wrapper.vm.scheduleMap.e1).toBeTruthy()
+    expect(wrapper.vm.scheduleMap.e2?.[1]?.leave).toBeTruthy()
+    expect(wrapper.vm.publishSummary.totalEmployees).toBe(3)
   })
 
   it('exports pdf and triggers download', async () => {
