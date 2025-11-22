@@ -735,6 +735,7 @@ const expandedRows = ref(new Set())
 const selectedEmployees = ref(new Set())
 const selectedDays = ref(new Set())
 const manualSelectedCells = ref(new Set())
+const selectedCellsCache = ref(new Map())
 const customRange = ref([])
 const batchShiftId = ref('')
 const batchDepartment = ref('')
@@ -818,31 +819,72 @@ const isSelectableCell = (empId, day) => {
   return !cell.leave
 }
 
-const allSelectedCells = computed(() => {
-  const result = new Set()
-  const dayList = days.value
-  const employeeList = employees.value
-  const addIfSelectable = (empId, day) => {
-    if (isSelectableCell(empId, day)) {
-      result.add(buildCellKey(empId, day))
+const allSelectedCells = computed(
+  () => new Set(selectedCellsCache.value.keys())
+)
+
+const updateSelectionCache = updater => {
+  const nextCache = new Map(selectedCellsCache.value)
+  updater(nextCache)
+  selectedCellsCache.value = nextCache
+}
+
+const applyCacheChange = (cache, empId, day, source, isSelected) => {
+  const key = buildCellKey(empId, day)
+  if (!isSelectableCell(empId, day)) {
+    cache.delete(key)
+    return
+  }
+  if (!isSelected) {
+    const existing = cache.get(key)
+    if (!existing) return
+    existing[source] = false
+    if (existing.manual || existing.employee || existing.day) {
+      cache.set(key, existing)
+    } else {
+      cache.delete(key)
     }
+    return
+  }
+
+  const existing = cache.get(key) || {
+    manual: false,
+    employee: false,
+    day: false
+  }
+  existing[source] = true
+  cache.set(key, existing)
+}
+
+const rebuildSelectionCache = () => {
+  const nextCache = new Map()
+  const add = (empId, day, source) => {
+    if (!isSelectableCell(empId, day)) return
+    const key = buildCellKey(empId, day)
+    const existing = nextCache.get(key) || {
+      manual: false,
+      employee: false,
+      day: false
+    }
+    existing[source] = true
+    nextCache.set(key, existing)
   }
 
   manualSelectedCells.value.forEach(key => {
     const { empId, day } = parseCellKey(key)
-    addIfSelectable(empId, day)
+    add(empId, day, 'manual')
   })
 
   selectedEmployees.value.forEach(empId => {
-    dayList.forEach(d => addIfSelectable(empId, d.date))
+    days.value.forEach(d => add(empId, d.date, 'employee'))
   })
 
   selectedDays.value.forEach(day => {
-    employeeList.forEach(emp => addIfSelectable(emp._id, day))
+    employees.value.forEach(emp => add(emp._id, day, 'day'))
   })
 
-  return result
-})
+  selectedCellsCache.value = nextCache
+}
 
 const hasAnySelection = computed(() => allSelectedCells.value.size > 0)
 
@@ -871,12 +913,14 @@ const pruneSelections = () => {
     }
   })
   manualSelectedCells.value = nextManual
+  rebuildSelectionCache()
 }
 
 const clearSelection = () => {
   selectedEmployees.value = new Set()
   selectedDays.value = new Set()
   manualSelectedCells.value = new Set()
+  selectedCellsCache.value = new Map()
   customRange.value = []
 }
 
@@ -890,6 +934,9 @@ const toggleEmployee = (empId, explicit) => {
     next.delete(empId)
   }
   selectedEmployees.value = next
+  updateSelectionCache(cache => {
+    days.value.forEach(d => applyCacheChange(cache, empId, d.date, 'employee', shouldSelect))
+  })
 }
 
 const toggleDay = (day, explicit) => {
@@ -902,6 +949,9 @@ const toggleDay = (day, explicit) => {
     next.delete(day)
   }
   selectedDays.value = next
+  updateSelectionCache(cache => {
+    employees.value.forEach(emp => applyCacheChange(cache, emp._id, day, 'day', shouldSelect))
+  })
 }
 
 const toggleCell = (empId, day, explicit) => {
@@ -916,14 +966,37 @@ const toggleCell = (empId, day, explicit) => {
     next.delete(key)
   }
   manualSelectedCells.value = next
+  updateSelectionCache(cache => applyCacheChange(cache, empId, day, 'manual', shouldSelect))
 }
 
 const selectAllEmployees = () => {
+  const prev = selectedEmployees.value
   selectedEmployees.value = new Set(employees.value.map(e => e._id))
+  const added = Array.from(selectedEmployees.value).filter(id => !prev.has(id))
+  const removed = Array.from(prev).filter(id => !selectedEmployees.value.has(id))
+  updateSelectionCache(cache => {
+    added.forEach(empId => {
+      days.value.forEach(d => applyCacheChange(cache, empId, d.date, 'employee', true))
+    })
+    removed.forEach(empId => {
+      days.value.forEach(d => applyCacheChange(cache, empId, d.date, 'employee', false))
+    })
+  })
 }
 
 const selectAllDays = () => {
+  const prev = selectedDays.value
   selectedDays.value = new Set(days.value.map(d => d.date))
+  const added = Array.from(selectedDays.value).filter(day => !prev.has(day))
+  const removed = Array.from(prev).filter(day => !selectedDays.value.has(day))
+  updateSelectionCache(cache => {
+    added.forEach(day => {
+      employees.value.forEach(emp => applyCacheChange(cache, emp._id, day, 'day', true))
+    })
+    removed.forEach(day => {
+      employees.value.forEach(emp => applyCacheChange(cache, emp._id, day, 'day', false))
+    })
+  })
 }
 
 const sortEmployeesByDept = list =>
@@ -954,7 +1027,19 @@ const onCustomRangeChange = range => {
     if (cursor.isSame(monthEnd, 'day')) break
     cursor = cursor.add(1, 'day')
   }
-  selectedDays.value = new Set(collected)
+  const prev = selectedDays.value
+  const nextDays = new Set(collected)
+  selectedDays.value = nextDays
+  const added = collected.filter(day => !prev.has(day))
+  const removed = Array.from(prev).filter(day => !nextDays.has(day))
+  updateSelectionCache(cache => {
+    added.forEach(day => {
+      employees.value.forEach(emp => applyCacheChange(cache, emp._id, day, 'day', true))
+    })
+    removed.forEach(day => {
+      employees.value.forEach(emp => applyCacheChange(cache, emp._id, day, 'day', false))
+    })
+  })
 }
 
 watch(batchDepartment, (newVal, oldVal) => {

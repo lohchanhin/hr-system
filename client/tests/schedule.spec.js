@@ -852,6 +852,77 @@ describe('Schedule.vue', () => {
     expect(wrapper.vm.formatShiftLabel(null)).toBe('')
   })
 
+  it('增量維護選取快取，避免不必要的全量重算', async () => {
+    const wrapper = mountSchedule()
+    await flush()
+
+    wrapper.vm.employees = [
+      { _id: 'e1', name: 'E1' },
+      { _id: 'e2', name: 'E2' }
+    ]
+    wrapper.vm.scheduleMap = {
+      e1: { 1: { shiftId: 's1' }, 2: { shiftId: 's1' } },
+      e2: { 1: { shiftId: 's1' }, 2: { shiftId: 's1' } }
+    }
+
+    await wrapper.vm.toggleDay(1, true)
+    expect(wrapper.vm.allSelectedCells.has('e1-1')).toBe(true)
+    expect(wrapper.vm.allSelectedCells.has('e2-1')).toBe(true)
+
+    await wrapper.vm.toggleEmployee('e1', true)
+    expect(wrapper.vm.allSelectedCells.has('e1-2')).toBe(true)
+
+    await wrapper.vm.toggleDay(1, false)
+    expect(wrapper.vm.allSelectedCells.has('e2-1')).toBe(false)
+    expect(wrapper.vm.allSelectedCells.has('e1-1')).toBe(true)
+
+    await wrapper.vm.toggleEmployee('e1', false)
+    expect(wrapper.vm.allSelectedCells.has('e1-1')).toBe(false)
+    expect(wrapper.vm.allSelectedCells.has('e1-2')).toBe(false)
+
+    await wrapper.vm.toggleCell('e2', 2, true)
+    expect(wrapper.vm.allSelectedCells.has('e2-2')).toBe(true)
+
+    await wrapper.vm.toggleCell('e2', 2, false)
+    expect(wrapper.vm.allSelectedCells.size).toBe(0)
+
+    await wrapper.vm.clearSelection()
+    expect(wrapper.vm.allSelectedCells.size).toBe(0)
+  })
+
+  it('裁剪與資料更新時會同步清理選取快取', async () => {
+    const wrapper = mountSchedule()
+    await flush()
+
+    wrapper.vm.employees = [
+      { _id: 'e1', name: 'E1' },
+      { _id: 'e2', name: 'E2' }
+    ]
+    wrapper.vm.scheduleMap = {
+      e1: { 1: { shiftId: 's1' }, 2: { shiftId: 's1' } },
+      e2: { 1: { shiftId: 's1' }, 2: { shiftId: 's1' } }
+    }
+
+    await wrapper.vm.toggleEmployee('e1', true)
+    await wrapper.vm.toggleDay(1, true)
+    await wrapper.vm.toggleCell('e2', 2, true)
+    expect(wrapper.vm.allSelectedCells.has('e1-1')).toBe(true)
+    expect(wrapper.vm.allSelectedCells.has('e1-2')).toBe(true)
+    expect(wrapper.vm.allSelectedCells.has('e2-1')).toBe(true)
+    expect(wrapper.vm.allSelectedCells.has('e2-2')).toBe(true)
+
+    wrapper.vm.employees = [{ _id: 'e2', name: 'E2' }]
+    wrapper.vm.scheduleMap.e1[2].leave = { approved: true }
+    wrapper.vm.pruneSelections()
+    await flush()
+
+    expect(wrapper.vm.selectedEmployees.has('e1')).toBe(false)
+    expect(wrapper.vm.allSelectedCells.has('e1-1')).toBe(false)
+    expect(wrapper.vm.allSelectedCells.has('e1-2')).toBe(false)
+    expect(wrapper.vm.allSelectedCells.has('e2-1')).toBe(true)
+    expect(wrapper.vm.allSelectedCells.has('e2-2')).toBe(true)
+  })
+
   it('renders shift legend items from API data', async () => {
     apiFetch
       .mockResolvedValueOnce({ ok: true, json: async () => [] })
