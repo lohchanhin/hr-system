@@ -306,74 +306,7 @@ async function parseBlobResponse(res, fallbackMessage) {
   return res.blob()
 }
 
-// ---------- 重點：把重複的小單位 / 員工整理乾淨 ----------
 
-function normalizeOverviewOrganizations(rawOrgs) {
-  if (!Array.isArray(rawOrgs)) return []
-
-  return rawOrgs.map(org => {
-    const normalizedDepts = Array.isArray(org.departments)
-      ? org.departments.map(dept => {
-          // 依小單位 id（沒有就 name）合併
-          const unitMap = new Map()
-          const rawUnits = Array.isArray(dept.subDepartments) ? dept.subDepartments : []
-
-          rawUnits.forEach(unit => {
-            if (!unit) return
-            const unitKey = unit.id || `name:${unit.name || ''}`
-
-            let holder = unitMap.get(unitKey)
-            if (!holder) {
-              holder = {
-                ...unit,
-                // 用 Map 暫存員工，避免重複
-                _employeesMap: new Map()
-              }
-              // 真正的 employees 之後再從 _employeesMap 轉出
-              holder.employees = []
-              unitMap.set(unitKey, holder)
-            }
-
-            const employees = Array.isArray(unit.employees) ? unit.employees : []
-            employees.forEach(emp => {
-              if (!emp) return
-              const empKey = emp.id || `name:${emp.name || ''}`
-              const empMap = holder._employeesMap
-              const existing = empMap.get(empKey)
-
-              if (!existing) {
-                empMap.set(empKey, {
-                  ...emp,
-                  schedules: Array.isArray(emp.schedules) ? [...emp.schedules] : []
-                })
-              } else if (Array.isArray(emp.schedules) && emp.schedules.length) {
-                const prev = Array.isArray(existing.schedules) ? existing.schedules : []
-                existing.schedules = prev.concat(emp.schedules)
-              }
-            })
-          })
-
-          const mergedUnits = Array.from(unitMap.values()).map(holder => {
-            const { _employeesMap, ...rest } = holder
-            return {
-              ...rest,
-              employees: Array.from(_employeesMap.values())
-            }
-          })
-
-          return {
-            ...dept,
-            subDepartments: mergedUnits
-          }
-        })
-      : []
-
-    return {
-      ...org,
-      departments: normalizedDepts
-    }
-  })
-}
 
 // ---------- 載入參考資料（機構 / 部門 / 小單位） ----------
 
@@ -402,6 +335,76 @@ async function loadReferenceData() {
   }
 }
 
+
+// ---------- 把重複的小單位 / 員工合併（避免 A 出現兩塊、主管獨立一塊） ----------
+function normalizeOverviewOrganizations(rawOrgs) {
+  if (!Array.isArray(rawOrgs)) return []
+
+  return rawOrgs.map(org => {
+    const normalizedDepts = Array.isArray(org.departments)
+      ? org.departments.map(dept => {
+          // 依小單位 id（沒有就用 name）合併
+          const unitMap = new Map()
+          const rawUnits = Array.isArray(dept.subDepartments) ? dept.subDepartments : []
+
+          rawUnits.forEach(unit => {
+            if (!unit) return
+            const unitKey = unit.id || `name:${unit.name || ''}`
+
+            let holder = unitMap.get(unitKey)
+            if (!holder) {
+              holder = {
+                ...unit,
+                // 用 Map 暫存員工，避免重複
+                _employeesMap: new Map()
+              }
+              holder.employees = []
+              unitMap.set(unitKey, holder)
+            }
+
+            const employees = Array.isArray(unit.employees) ? unit.employees : []
+            employees.forEach(emp => {
+              if (!emp) return
+              const empKey = emp.id || `name:${emp.name || ''}`
+              const empMap = holder._employeesMap
+              const existing = empMap.get(empKey)
+
+              if (!existing) {
+                empMap.set(empKey, {
+                  ...emp,
+                  schedules: Array.isArray(emp.schedules) ? [...emp.schedules] : []
+                })
+              } else if (Array.isArray(emp.schedules) && emp.schedules.length) {
+                const prev = Array.isArray(existing.schedules) ? existing.schedules : []
+                // 簡單合併班表（不特別去重日期，原本就只取第一個）
+                existing.schedules = prev.concat(emp.schedules)
+              }
+            })
+          })
+
+          const mergedUnits = Array.from(unitMap.values()).map(holder => {
+            const { _employeesMap, ...rest } = holder
+            return {
+              ...rest,
+              employees: Array.from(_employeesMap.values())
+            }
+          })
+
+          return {
+            ...dept,
+            subDepartments: mergedUnits
+          }
+        })
+      : []
+
+    return {
+      ...org,
+      departments: normalizedDepts
+    }
+  })
+}
+
+
 // ---------- 載入班表總覽 ----------
 
 async function loadOverview() {
@@ -424,7 +427,7 @@ async function loadOverview() {
     const rawOrgs = Array.isArray(data?.organizations) ? data.organizations : []
 
     days.value = rawDays
-    // ✅ 在這裡把重複的小單位 / 員工合併
+    // ✅ 這裡先把重複的小單位 / 員工合併掉
     overviewData.value = normalizeOverviewOrganizations(rawOrgs)
   } catch (err) {
     if (currentToken !== requestSequence) return
@@ -439,6 +442,7 @@ async function loadOverview() {
     }
   }
 }
+
 
 // ---------- 篩選切換 ----------
 

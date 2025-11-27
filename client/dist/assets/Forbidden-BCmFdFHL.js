@@ -1,0 +1,1 @@
+import{_ as n,c as s,b as o,o as c}from"./index-D4KTiw27.js";const d={},r={class:"forbidden"};function t(a,e){return c(),s("div",r,e[0]||(e[0]=[o("h2",null,"403 Forbidden",-1),o("p",null,"您沒有權限瀏覽此頁面",-1)]))}const f=n(d,[["render",t],["__scopeId","data-v-fedaf8cc"]]);export{f as default};
