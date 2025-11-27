@@ -414,7 +414,7 @@ async function buildScheduleOverview({ month, organizationId, departmentId, subD
     date: { $gte: start, $lt: end },
   };
 
-  // 篩選條件維持原本邏輯
+  // === 篩選條件維持原本邏輯 ===
   if (subDepartmentId) {
     query.subDepartment = subDepartmentId;
   }
@@ -458,10 +458,21 @@ async function buildScheduleOverview({ month, organizationId, departmentId, subD
   const organizationMap = new Map();
 
   rawSchedules.forEach((schedule) => {
+    // ⭐ 先取得員工，如果沒有員工，這筆就直接略過，不回傳到前端
+    const employeeDoc = schedule.employee || null;
+    const employeeId =
+      employeeDoc?._id?.toString?.() ||
+      (typeof schedule.employee === 'string'
+        ? schedule.employee
+        : schedule.employee?.toString?.());
+    if (!employeeId) {
+      // 沒有實際員工（例如用來標示全體休假之類），總覽頁不要顯示
+      return;
+    }
+
     const department = schedule.department || null;
     const organization = department?.organization || null;
     const subDepartment = schedule.subDepartment || null;
-    const employee = schedule.employee || null;
 
     const organizationKey = normalizeId(organization?._id) || 'unassigned';
     const departmentKey = normalizeId(department?._id) || 'unassigned';
@@ -469,13 +480,13 @@ async function buildScheduleOverview({ month, organizationId, departmentId, subD
     const orgName = organization?.name || '未指定機構';
     const deptName = department?.name || '未指定部門';
 
-    // ⭐ 關鍵：用「部門 + 小單位名稱」當 key，避免同名小單位拆成多塊
+    // ⭐ 同一個「部門 + 小單位名稱」視為同一個小單位，避免 A 被拆兩塊
     const subDepartmentName = subDepartment?.name || '未指定單位';
     const subDepartmentKey = `${departmentKey}::${subDepartmentName}`;
 
-    const employeeKey = normalizeId(employee?._id) || 'unassigned';
-    const employeeName = employee?.name || '未指定員工';
-    const employeeTitle = employee?.title || '';
+    const employeeKey = employeeId;
+    const employeeName = employeeDoc?.name || '未指定員工';
+    const employeeTitle = employeeDoc?.title || '';
 
     if (!organizationMap.has(organizationKey)) {
       organizationMap.set(organizationKey, {
@@ -497,10 +508,9 @@ async function buildScheduleOverview({ month, organizationId, departmentId, subD
     const departmentEntry = organizationEntry.departments.get(departmentKey);
     if (!departmentEntry.subDepartments.has(subDepartmentKey)) {
       departmentEntry.subDepartments.set(subDepartmentKey, {
-        id: subDepartmentKey, // 這是「邏輯 key」，不再是資料庫 _id
+        id: subDepartmentKey, // 邏輯 key（部門 + 小單位名稱）
         name: subDepartmentName,
-        // 純紀錄：這個邏輯小單位底下實際有哪些 subDepartment _id
-        sourceSubDepartmentIds: new Set(),
+        sourceSubDepartmentIds: new Set(), // 有需要除錯時可以看到有哪些真實 _id
         employees: new Map(),
       });
     }
@@ -545,7 +555,6 @@ async function buildScheduleOverview({ month, organizationId, departmentId, subD
             .map((sub) => ({
               id: sub.id,
               name: sub.name,
-              // 有需要除錯時可以看有哪些真實 subDepartment _id
               sourceSubDepartmentIds: Array.from(sub.sourceSubDepartmentIds || []),
               employees: Array.from(sub.employees.values())
                 .map((emp) => ({
@@ -570,6 +579,7 @@ async function buildScheduleOverview({ month, organizationId, departmentId, subD
 
   return { month, days, organizations };
 }
+
 
 
 export async function listScheduleOverview(req, res) {
