@@ -184,7 +184,7 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import dayjs from 'dayjs'
 import { ElMessage } from 'element-plus'
 import { apiFetch } from '@/api'
@@ -260,7 +260,7 @@ const buildTableRows = unit => {
       days.value.forEach(day => {
         entries[day] = ''
       })
-      emp.schedules.forEach(item => {
+      ;(emp.schedules || []).forEach(item => {
         const key = item.date
         if (!entries[key]) {
           entries[key] = item.shiftName || ''
@@ -276,6 +276,8 @@ const buildTableRows = unit => {
     .sort((a, b) => a.name.localeCompare(b.name, 'zh-Hant', { sensitivity: 'base' }))
 }
 
+// ---------- 通用 response 處理 ----------
+
 async function parseResponse(res, fallbackMessage) {
   if (!res.ok) {
     let message = fallbackMessage
@@ -283,7 +285,7 @@ async function parseResponse(res, fallbackMessage) {
       const payload = await res.json()
       message = payload?.error || payload?.message || message
     } catch (error) {
-      // ignore json parse error
+      // ignore
     }
     throw new Error(message)
   }
@@ -297,12 +299,83 @@ async function parseBlobResponse(res, fallbackMessage) {
       const payload = await res.json()
       message = payload?.error || payload?.message || message
     } catch (error) {
-      // ignore json parse error
+      // ignore
     }
     throw new Error(message)
   }
   return res.blob()
 }
+
+// ---------- 重點：把重複的小單位 / 員工整理乾淨 ----------
+
+function normalizeOverviewOrganizations(rawOrgs) {
+  if (!Array.isArray(rawOrgs)) return []
+
+  return rawOrgs.map(org => {
+    const normalizedDepts = Array.isArray(org.departments)
+      ? org.departments.map(dept => {
+          // 依小單位 id（沒有就 name）合併
+          const unitMap = new Map()
+          const rawUnits = Array.isArray(dept.subDepartments) ? dept.subDepartments : []
+
+          rawUnits.forEach(unit => {
+            if (!unit) return
+            const unitKey = unit.id || `name:${unit.name || ''}`
+
+            let holder = unitMap.get(unitKey)
+            if (!holder) {
+              holder = {
+                ...unit,
+                // 用 Map 暫存員工，避免重複
+                _employeesMap: new Map()
+              }
+              // 真正的 employees 之後再從 _employeesMap 轉出
+              holder.employees = []
+              unitMap.set(unitKey, holder)
+            }
+
+            const employees = Array.isArray(unit.employees) ? unit.employees : []
+            employees.forEach(emp => {
+              if (!emp) return
+              const empKey = emp.id || `name:${emp.name || ''}`
+              const empMap = holder._employeesMap
+              const existing = empMap.get(empKey)
+
+              if (!existing) {
+                empMap.set(empKey, {
+                  ...emp,
+                  schedules: Array.isArray(emp.schedules) ? [...emp.schedules] : []
+                })
+              } else if (Array.isArray(emp.schedules) && emp.schedules.length) {
+                const prev = Array.isArray(existing.schedules) ? existing.schedules : []
+                existing.schedules = prev.concat(emp.schedules)
+              }
+            })
+          })
+
+          const mergedUnits = Array.from(unitMap.values()).map(holder => {
+            const { _employeesMap, ...rest } = holder
+            return {
+              ...rest,
+              employees: Array.from(_employeesMap.values())
+            }
+          })
+
+          return {
+            ...dept,
+            subDepartments: mergedUnits
+          }
+        })
+      : []
+
+    return {
+      ...org,
+      departments: normalizedDepts
+    }
+  })
+}
+
+// ---------- 載入參考資料（機構 / 部門 / 小單位） ----------
 
 async function loadReferenceData() {
   try {
@@ -329,6 +402,8 @@ async function loadReferenceData() {
   }
 }
 
+// ---------- 載入班表總覽 ----------
+
 async function loadOverview() {
   if (!referenceLoaded.value || !selectedMonth.value) return
   const currentToken = ++requestSequence
@@ -344,8 +419,13 @@ async function loadOverview() {
     const res = await apiFetch(`/api/schedules/overview?${params.toString()}`)
     const data = await parseResponse(res, '無法載入班表總覽資料')
     if (currentToken !== requestSequence) return
-    days.value = Array.isArray(data?.days) ? data.days : []
-    overviewData.value = Array.isArray(data?.organizations) ? data.organizations : []
+
+    const rawDays = Array.isArray(data?.days) ? data.days : []
+    const rawOrgs = Array.isArray(data?.organizations) ? data.organizations : []
+
+    days.value = rawDays
+    // ✅ 在這裡把重複的小單位 / 員工合併
+    overviewData.value = normalizeOverviewOrganizations(rawOrgs)
   } catch (err) {
     if (currentToken !== requestSequence) return
     const message = err?.message || '載入班表總覽失敗'
@@ -359,6 +439,8 @@ async function loadOverview() {
     }
   }
 }
+
+// ---------- 篩選切換 ----------
 
 function triggerOverviewReload() {
   loadOverview()
@@ -378,6 +460,8 @@ function onDepartmentChange() {
   }
   loadOverview()
 }
+
+// ---------- 匯出相關 ----------
 
 function findNameById(list, id) {
   if (!id) return ''
@@ -426,11 +510,14 @@ async function handleExport(format) {
   }
 }
 
+// ---------- 初始化 ----------
+
 onMounted(async () => {
   await loadReferenceData()
   await loadOverview()
 })
 </script>
+
 
 <style scoped>
 .schedule-overview-page {
