@@ -414,6 +414,7 @@ async function buildScheduleOverview({ month, organizationId, departmentId, subD
     date: { $gte: start, $lt: end },
   };
 
+  // 篩選條件維持原本邏輯
   if (subDepartmentId) {
     query.subDepartment = subDepartmentId;
   }
@@ -423,7 +424,9 @@ async function buildScheduleOverview({ month, organizationId, departmentId, subD
   }
 
   if (organizationId) {
-    const deptDocs = await Department.find({ organization: organizationId }).select('_id organization name').lean();
+    const deptDocs = await Department.find({ organization: organizationId })
+      .select('_id organization name')
+      .lean();
     const allowedIds = deptDocs.map((dept) => dept._id.toString());
     if (!allowedIds.length) {
       return { month, days, organizations: [] };
@@ -462,13 +465,22 @@ async function buildScheduleOverview({ month, organizationId, departmentId, subD
 
     const organizationKey = normalizeId(organization?._id) || 'unassigned';
     const departmentKey = normalizeId(department?._id) || 'unassigned';
-    const subDepartmentKey = normalizeId(subDepartment?._id) || 'unassigned';
+
+    const orgName = organization?.name || '未指定機構';
+    const deptName = department?.name || '未指定部門';
+
+    // ⭐ 關鍵：用「部門 + 小單位名稱」當 key，避免同名小單位拆成多塊
+    const subDepartmentName = subDepartment?.name || '未指定單位';
+    const subDepartmentKey = `${departmentKey}::${subDepartmentName}`;
+
     const employeeKey = normalizeId(employee?._id) || 'unassigned';
+    const employeeName = employee?.name || '未指定員工';
+    const employeeTitle = employee?.title || '';
 
     if (!organizationMap.has(organizationKey)) {
       organizationMap.set(organizationKey, {
         id: organizationKey,
-        name: organization?.name || '未指定機構',
+        name: orgName,
         departments: new Map(),
       });
     }
@@ -477,7 +489,7 @@ async function buildScheduleOverview({ month, organizationId, departmentId, subD
     if (!organizationEntry.departments.has(departmentKey)) {
       organizationEntry.departments.set(departmentKey, {
         id: departmentKey,
-        name: department?.name || '未指定部門',
+        name: deptName,
         subDepartments: new Map(),
       });
     }
@@ -485,27 +497,35 @@ async function buildScheduleOverview({ month, organizationId, departmentId, subD
     const departmentEntry = organizationEntry.departments.get(departmentKey);
     if (!departmentEntry.subDepartments.has(subDepartmentKey)) {
       departmentEntry.subDepartments.set(subDepartmentKey, {
-        id: subDepartmentKey,
-        name: subDepartment?.name || '未指定單位',
+        id: subDepartmentKey, // 這是「邏輯 key」，不再是資料庫 _id
+        name: subDepartmentName,
+        // 純紀錄：這個邏輯小單位底下實際有哪些 subDepartment _id
+        sourceSubDepartmentIds: new Set(),
         employees: new Map(),
       });
     }
 
     const subDepartmentEntry = departmentEntry.subDepartments.get(subDepartmentKey);
+    if (subDepartment?._id) {
+      subDepartmentEntry.sourceSubDepartmentIds.add(subDepartment._id.toString());
+    }
+
     if (!subDepartmentEntry.employees.has(employeeKey)) {
       subDepartmentEntry.employees.set(employeeKey, {
         id: employeeKey,
-        name: employee?.name || '未指定員工',
-        title: employee?.title || '',
+        name: employeeName,
+        title: employeeTitle,
         schedules: [],
       });
     }
 
     const entry = subDepartmentEntry.employees.get(employeeKey);
     const shiftId = normalizeId(schedule.shiftId);
-    const scheduleDate = schedule.date instanceof Date
-      ? schedule.date.toISOString().slice(0, 10)
-      : new Date(schedule.date).toISOString().slice(0, 10);
+    const scheduleDate =
+      schedule.date instanceof Date
+        ? schedule.date.toISOString().slice(0, 10)
+        : new Date(schedule.date).toISOString().slice(0, 10);
+
     entry.schedules.push({
       date: scheduleDate,
       shiftId,
@@ -525,23 +545,32 @@ async function buildScheduleOverview({ month, organizationId, departmentId, subD
             .map((sub) => ({
               id: sub.id,
               name: sub.name,
-              employees: Array.from(sub.employees.values()).map((emp) => ({
-                id: emp.id,
-                name: emp.name,
-                title: emp.title,
-                schedules: emp.schedules
-                  .sort((a, b) => a.date.localeCompare(b.date)),
-              }))
-                .sort((a, b) => a.name.localeCompare(b.name, 'zh-Hant', { sensitivity: 'base' })),
+              // 有需要除錯時可以看有哪些真實 subDepartment _id
+              sourceSubDepartmentIds: Array.from(sub.sourceSubDepartmentIds || []),
+              employees: Array.from(sub.employees.values())
+                .map((emp) => ({
+                  id: emp.id,
+                  name: emp.name,
+                  title: emp.title,
+                  schedules: emp.schedules.sort((a, b) => a.date.localeCompare(b.date)),
+                }))
+                .sort((a, b) =>
+                  a.name.localeCompare(b.name, 'zh-Hant', { sensitivity: 'base' }),
+                ),
             }))
-            .sort((a, b) => a.name.localeCompare(b.name, 'zh-Hant', { sensitivity: 'base' })),
+            .sort((a, b) =>
+              a.name.localeCompare(b.name, 'zh-Hant', { sensitivity: 'base' }),
+            ),
         }))
-        .sort((a, b) => a.name.localeCompare(b.name, 'zh-Hant', { sensitivity: 'base' })),
+        .sort((a, b) =>
+          a.name.localeCompare(b.name, 'zh-Hant', { sensitivity: 'base' }),
+        ),
     }))
     .sort((a, b) => a.name.localeCompare(b.name, 'zh-Hant', { sensitivity: 'base' }));
 
   return { month, days, organizations };
 }
+
 
 export async function listScheduleOverview(req, res) {
   try {
