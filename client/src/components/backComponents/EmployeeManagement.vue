@@ -23,7 +23,15 @@
       <!-- 操作區域 -->
       <div class="content-header">
         <h2 class="section-title">員工列表</h2>
+
         <div class="content-actions">
+          <!-- 🔍 部門篩選 -->
+          <el-select v-model="departmentFilter" placeholder="篩選部門" clearable class="dept-filter-select"
+            style="min-width: 200px; margin-right: 12px;">
+            <el-option v-for="dept in departmentFilterOptions" :key="dept.value" :label="dept.label"
+              :value="dept.value" />
+          </el-select>
+
           <el-button type="primary" @click="openEmployeeDialog()" class="add-btn">
             <i class="el-icon-plus"></i>
             新增員工
@@ -36,11 +44,13 @@
         </div>
       </div>
 
+
       <!-- 美化員工列表表格 -->
       <div class="table-container">
-        <el-table :data="employeeList" class="employee-table"
+        <el-table :data="filteredEmployeeList" class="employee-table"
           :header-cell-style="{ background: '#f8fafc', color: '#475569', fontWeight: '600' }"
           :row-style="{ height: '64px' }">
+
           <el-table-column prop="name" label="員工資訊" min-width="200">
             <template #default="{ row }">
               <div class="employee-info">
@@ -1044,6 +1054,42 @@ import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { apiFetch, importEmployeesBulk } from '../../api'
 import { REQUIRED_FIELDS } from './requiredFields'
+
+// 👉 目前選擇的部門（下拉選單綁這個）
+const departmentFilter = ref(null)
+
+// 👉 下拉選單的部門列表
+const departmentFilterOptions = computed(() => {
+  const map = new Map()
+
+  // 依照「員工有出現過的部門」動態建立清單
+  for (const emp of employeeList.value) {
+    if (emp && emp.department) {
+      // 這裡用你在 template 已經使用的 departmentLabel() 來取顯示名稱
+      const label = departmentLabel(emp.department)
+      if (label && !map.has(emp.department)) {
+        map.set(emp.department, label)
+      }
+    }
+  }
+
+  return Array.from(map.entries()).map(([value, label]) => ({
+    value,
+    label,
+  }))
+})
+
+// 👉 真正丟給表格用的資料
+const filteredEmployeeList = computed(() => {
+  // 沒選部門 => 顯示全部
+  if (!departmentFilter.value) {
+    return employeeList.value
+  }
+
+  // 有選部門 => 只顯示該部門
+  return employeeList.value.filter(emp => emp.department === departmentFilter.value)
+})
+
 
 // ========= 新增：Excel/CSV 讀取與預覽核心 =========
 

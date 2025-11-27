@@ -247,17 +247,21 @@ export async function listSupervisorSummary(req, res) {
     const supervisor = req.user?.id;
     if (!month) return res.status(400).json({ error: 'month required' });
     if (!supervisor) return res.status(400).json({ error: 'supervisor required' });
+
     const includeSelf = String(includeSelfRaw).toLowerCase() === 'true';
 
     const start = new Date(`${month}-01`);
     const end = new Date(start);
     end.setMonth(end.getMonth() + 1);
 
+    // 1️⃣ 先抓所有「直屬部屬」
     const employees = await Employee.find({ supervisor })
       .select('_id name')
       .lean();
+
     const summaryMap = {};
     const ids = [];
+
     employees.forEach((e) => {
       const key = e._id.toString();
       ids.push(key);
@@ -270,6 +274,8 @@ export async function listSupervisorSummary(req, res) {
       };
     });
 
+    // 2️⃣ includeSelf 只在「排班範圍」使用，
+    //    但我們稍後回傳前會把主管自己排除掉
     if (includeSelf) {
       const self = await Employee.findById(supervisor).select('_id name').lean();
       if (self?._id) {
@@ -296,11 +302,13 @@ export async function listSupervisorSummary(req, res) {
       shiftMap[s._id.toString()] = s.name;
     });
 
+    // 3️⃣ 讀取該月所有排班
     const schedules = await ShiftSchedule.find({
       employee: { $in: uniqueIds },
       date: { $gte: start, $lt: end },
     }).lean();
 
+    // 4️⃣ 讀取該月所有請假天數
     const leaveDaysMap = new Map();
     const { formId, startId, endId } = await getLeaveFieldIds();
     if (formId && startId && endId && uniqueIds.length) {
@@ -312,24 +320,33 @@ export async function listSupervisorSummary(req, res) {
       leaveQuery[`form_data.${startId}`] = { $lte: end };
       leaveQuery[`form_data.${endId}`] = { $gte: start };
       const approvals = await ApprovalRequest.find(leaveQuery).lean();
+
       approvals.forEach((approval) => {
         const rawEmp = approval.applicant_employee;
         const empId = rawEmp?._id?.toString?.() || rawEmp?.toString?.();
         if (!empId) return;
+
         const rawStart = approval.form_data?.[startId];
         const rawEnd = approval.form_data?.[endId];
         const startDate = rawStart ? new Date(rawStart) : null;
         const endDate = rawEnd ? new Date(rawEnd) : null;
         if (!startDate || !endDate || Number.isNaN(startDate) || Number.isNaN(endDate)) return;
+
         startDate.setHours(0, 0, 0, 0);
         endDate.setHours(0, 0, 0, 0);
         const monthStart = new Date(start);
         const monthEnd = new Date(end);
         monthStart.setHours(0, 0, 0, 0);
         monthEnd.setHours(0, 0, 0, 0);
+
         const leaveStart = startDate < monthStart ? monthStart : new Date(startDate);
-        const leaveEnd = endDate >= monthEnd ? new Date(monthEnd.getTime() - 86400000) : new Date(endDate);
+        const leaveEnd =
+          endDate >= monthEnd
+            ? new Date(monthEnd.getTime() - 86400000)
+            : new Date(endDate);
+
         if (leaveEnd < leaveStart) return;
+
         let pointer = new Date(leaveStart);
         const bucket = leaveDaysMap.get(empId) || new Set();
         while (pointer <= leaveEnd) {
@@ -339,6 +356,8 @@ export async function listSupervisorSummary(req, res) {
         }
         leaveDaysMap.set(empId, bucket);
       });
+
+      // 把請假天數寫進 summaryMap
       leaveDaysMap.forEach((set, empId) => {
         if (summaryMap[empId]) {
           summaryMap[empId].leaveCount = set.size;
@@ -346,25 +365,39 @@ export async function listSupervisorSummary(req, res) {
       });
     }
 
+    // 5️⃣ 統計排班／缺勤
     schedules.forEach((s) => {
       const empId = s.employee?._id?.toString?.() || s.employee?.toString?.();
       if (!empId) return;
       const sum = summaryMap[empId];
       if (!sum) return;
-      const dayKey = s.date ? new Date(s.date).toISOString().slice(0, 10) : '';
+
+      const dayKey = s.date
+        ? new Date(s.date).toISOString().slice(0, 10)
+        : '';
       if (dayKey && leaveDaysMap.get(empId)?.has(dayKey)) {
+        // 該天是請假，就不要再算排班／缺勤
         return;
       }
+
       const name = shiftMap[s.shiftId?.toString()] || '';
       if (name.includes('缺')) sum.absenceCount += 1;
       else sum.shiftCount += 1;
     });
 
-    res.json(Object.values(summaryMap));
+    // 6️⃣ ❗最後這一步：把「主管本人」從結果移除
+    const supervisorIdStr = supervisor ? String(supervisor) : '';
+    const payload = Object.values(summaryMap).filter((entry) => {
+      if (!supervisorIdStr) return true;
+      return String(entry.employee) !== supervisorIdStr;
+    });
+
+    res.json(payload);
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
 }
+
 
 async function buildScheduleOverview({ month, organizationId, departmentId, subDepartmentId }) {
   if (!month) throw new Error('month required');

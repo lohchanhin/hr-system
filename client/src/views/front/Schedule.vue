@@ -16,55 +16,26 @@
       <div class="filters-content">
         <div class="filter-group">
           <label class="filter-label">選擇月份</label>
-          <el-date-picker
-            v-model="currentMonth"
-            type="month"
-            value-format="YYYY-MM"
-            @change="onMonthChange"
-            class="modern-date-picker"
-          />
+          <el-date-picker v-model="currentMonth" type="month" value-format="YYYY-MM" @change="onMonthChange"
+            class="modern-date-picker" />
         </div>
         <div class="filter-group">
           <label class="filter-label">部門</label>
-          <el-select
-            v-model="selectedDepartment"
-            placeholder="請選擇部門"
-            @change="onDepartmentChange"
-            :disabled="true"
-            class="modern-select"
-          >
-            <el-option
-              v-for="dept in departments"
-              :key="dept._id"
-              :label="dept.name"
-              :value="dept._id"
-            />
+          <el-select v-model="selectedDepartment" placeholder="請選擇部門" @change="onDepartmentChange" :disabled="true"
+            class="modern-select">
+            <el-option v-for="dept in departments" :key="dept._id" :label="dept.name" :value="dept._id" />
           </el-select>
         </div>
         <div class="filter-group">
           <label class="filter-label">單位</label>
-          <el-select
-            v-model="selectedSubDepartment"
-            placeholder="請選擇單位"
-            @change="onSubDepartmentChange"
-            class="modern-select"
-          >
-            <el-option
-              v-for="sub in filteredSubDepartments"
-              :key="sub._id"
-              :label="sub.name"
-              :value="sub._id"
-            />
+          <el-select v-model="selectedSubDepartment" placeholder="請選擇單位" @change="onSubDepartmentChange"
+            class="modern-select">
+            <el-option v-for="sub in filteredSubDepartments" :key="sub._id" :label="sub.name" :value="sub._id" />
           </el-select>
         </div>
         <div v-if="showIncludeSelfToggle" class="filter-group include-self-group">
           <label class="filter-label">包含自己</label>
-          <el-switch
-            v-model="includeSelf"
-            active-text="是"
-            inactive-text="否"
-            inline-prompt
-          />
+          <el-switch v-model="includeSelf" active-text="是" inactive-text="否" inline-prompt />
         </div>
       </div>
     </div>
@@ -75,11 +46,7 @@
           <h3 class="publish-title">發布狀態</h3>
           <p class="publish-subtitle">追蹤班表送審、回覆與鎖定流程</p>
         </div>
-        <span
-          class="status-badge"
-          :class="`status-${publishSummary.status}`"
-          data-test="publish-status-badge"
-        >
+        <span class="status-badge" :class="`status-${publishSummary.status}`" data-test="publish-status-badge">
           {{ publishStatusLabel }}
         </span>
       </div>
@@ -87,21 +54,9 @@
       <div class="publish-progress" data-test="publish-steps">
         <el-steps :active="publishStepIndex" finish-status="success" align-center>
           <el-step title="草稿" description="建立班表草稿" :status="stepStatuses.draft" />
-          <el-step
-            title="待確認"
-            :description="pendingStepDescription"
-            :status="stepStatuses.pending"
-          />
-          <el-step
-            title="異議"
-            :description="disputeStepDescription"
-            :status="stepStatuses.disputed"
-          />
-          <el-step
-            title="完成"
-            :description="finalStepDescription"
-            :status="stepStatuses.finalized"
-          />
+          <el-step title="待確認" :description="pendingStepDescription" :status="stepStatuses.pending" />
+          <el-step title="異議" :description="disputeStepDescription" :status="stepStatuses.disputed" />
+          <el-step title="完成" :description="finalStepDescription" :status="stepStatuses.finalized" />
         </el-steps>
       </div>
 
@@ -110,79 +65,44 @@
           最近發布：{{ formatPublishDate(publishSummary.publishedAt) }}
         </p>
         <p class="publish-meta" v-else data-test="publish-meta">本月尚未發布。</p>
-        <div
-          v-if="publishProgress > 0 && publishSummary.status !== 'finalized'"
-          class="publish-progress-indicator"
-        >
-          <el-progress
-            :percentage="publishProgress"
-            :stroke-width="8"
-            status="success"
-            :show-text="false"
-          />
+        <div v-if="publishProgress > 0 && publishSummary.status !== 'finalized'" class="publish-progress-indicator">
+          <el-progress :percentage="publishProgress" :stroke-width="8" status="success" :show-text="false" />
           <span class="progress-label">{{ publishProgress }}% 完成</span>
         </div>
       </div>
 
       <div class="publish-actions">
-        <el-button
-          type="primary"
-          class="publish-btn"
-          :loading="isPublishing"
-          :disabled="publishDisabled"
-          @click="confirmPublish"
-        >
+        <el-button type="primary" class="publish-btn" :loading="isPublishing" :disabled="publishDisabled"
+          @click="confirmPublish">
           發送待確認
         </el-button>
-        <el-button
-          type="success"
-          plain
-          class="publish-btn"
-          :loading="isFinalizing"
-          :disabled="finalizeDisabled"
-          @click="confirmFinalize"
-        >
+        <el-button type="success" plain class="publish-btn" :loading="isFinalizing" :disabled="finalizeDisabled"
+          @click="confirmFinalize">
           完成發布
         </el-button>
       </div>
 
       <div class="publish-stats">
-        <div
-          v-if="pendingCount"
-          class="status-card pending"
-          data-test="pending-card"
-        >
+        <div v-if="pendingCount" class="status-card pending" data-test="pending-card">
           <div class="card-header">
             <span class="card-title">待回覆</span>
             <span class="card-badge">{{ pendingCount }}</span>
           </div>
           <ul class="card-list">
-            <li
-              v-for="emp in publishSummary.pendingEmployees"
-              :key="emp.id"
-              class="card-item"
-            >
+            <li v-for="emp in publishSummary.pendingEmployees" :key="emp.id" class="card-item">
               <span class="card-name">{{ emp.name }}</span>
               <span class="card-count">{{ emp.pendingCount }} 筆</span>
             </li>
           </ul>
         </div>
 
-        <div
-          v-if="disputedCount"
-          class="status-card disputed"
-          data-test="disputed-card"
-        >
+        <div v-if="disputedCount" class="status-card disputed" data-test="disputed-card">
           <div class="card-header">
             <span class="card-title">異議</span>
             <span class="card-badge">{{ disputedCount }}</span>
           </div>
           <ul class="card-list">
-            <li
-              v-for="emp in publishSummary.disputedEmployees"
-              :key="emp.id"
-              class="card-item"
-            >
+            <li v-for="emp in publishSummary.disputedEmployees" :key="emp.id" class="card-item">
               <div class="card-item-main">
                 <span class="card-name">{{ emp.name }}</span>
                 <span class="card-count">{{ emp.disputedCount }} 筆</span>
@@ -194,11 +114,12 @@
           </ul>
         </div>
 
-        <div
-          v-if="!pendingCount && !disputedCount && publishSummary.status !== 'draft' && publishSummary.status !== 'finalized'"
-          class="status-card ready"
-          data-test="ready-card"
-        >
+        <div v-if="
+          !pendingCount &&
+          !disputedCount &&
+          publishSummary.status !== 'draft' &&
+          publishSummary.status !== 'finalized'
+        " class="status-card ready" data-test="ready-card">
           <div class="card-header">
             <span class="card-title">回覆完成</span>
             <span class="card-badge success">✓</span>
@@ -206,11 +127,7 @@
           <p class="card-message">所有員工已完成回覆，可執行最終發布。</p>
         </div>
 
-        <div
-          v-if="publishSummary.status === 'finalized'"
-          class="status-card finalized"
-          data-test="finalized-card"
-        >
+        <div v-if="publishSummary.status === 'finalized'" class="status-card finalized" data-test="finalized-card">
           <div class="card-header">
             <span class="card-title">已鎖定</span>
             <span class="card-badge success">100%</span>
@@ -223,32 +140,16 @@
     <!-- Enhanced actions section with modern button design -->
     <div class="actions-card">
       <div class="primary-actions">
-        <el-button
-          type="primary"
-          class="action-btn primary"
-          @click="clearSelection"
-          :disabled="!hasAnySelection"
-        >
+        <el-button type="primary" class="action-btn primary" @click="clearSelection" :disabled="!hasAnySelection">
           <i class="el-icon-close"></i>
           清除選取
         </el-button>
-        <el-button
-          type="primary"
-          class="action-btn primary"
-          plain
-          @click="selectAllEmployees"
-          :disabled="!employees.length"
-        >
+        <el-button type="primary" class="action-btn primary" plain @click="selectAllEmployees"
+          :disabled="!employees.length">
           <i class="el-icon-user"></i>
           全選員工
         </el-button>
-        <el-button
-          type="primary"
-          class="action-btn primary"
-          plain
-          @click="selectAllDays"
-          :disabled="!days.length"
-        >
+        <el-button type="primary" class="action-btn primary" plain @click="selectAllDays" :disabled="!days.length">
           <i class="el-icon-date"></i>
           全選日期
         </el-button>
@@ -256,17 +157,9 @@
       <div class="secondary-actions">
         <div class="range-picker-wrapper">
           <label class="range-label">自訂日期範圍</label>
-          <el-date-picker
-            v-model="customRange"
-            type="daterange"
-            start-placeholder="開始日期"
-            end-placeholder="結束日期"
-            range-separator="至"
-            unlink-panels
-            :disabled="!days.length"
-            class="modern-date-picker range-picker"
-            @change="onCustomRangeChange"
-          />
+          <el-date-picker v-model="customRange" type="daterange" start-placeholder="開始日期" end-placeholder="結束日期"
+            range-separator="至" unlink-panels :disabled="!days.length" class="modern-date-picker range-picker"
+            @change="onCustomRangeChange" />
         </div>
         <el-button @click="preview('week')" class="action-btn secondary">
           <i class="el-icon-calendar"></i>
@@ -293,13 +186,8 @@
         <h3 class="schedule-title">員工排班表</h3>
         <div class="schedule-legend" data-test="schedule-legend">
           <template v-if="legendShifts.length">
-            <span
-              v-for="legend in legendShifts"
-              :key="legend.key"
-              class="legend-item"
-              :style="legend.style"
-              data-test="shift-legend-item"
-            >
+            <span v-for="legend in legendShifts" :key="legend.key" class="legend-item" :style="legend.style"
+              data-test="shift-legend-item">
               {{ legend.label }}
             </span>
           </template>
@@ -308,12 +196,7 @@
           </span>
           <span class="legend-item leave">請假</span>
         </div>
-        <el-input
-          v-model="employeeSearch"
-          placeholder="搜尋員工"
-          clearable
-          class="employee-search"
-        />
+        <el-input v-model="employeeSearch" placeholder="搜尋員工" clearable class="employee-search" />
         <el-select v-model="statusFilter" placeholder="狀態" class="status-filter">
           <el-option label="全部" value="all" />
           <el-option label="缺班" value="unscheduled" />
@@ -322,68 +205,30 @@
       </div>
 
       <div v-if="canEdit" class="batch-toolbar">
-        <el-select
-          v-model="batchShiftId"
-          placeholder="套用班別"
-          class="modern-select batch-select"
-          filterable
-          data-test="batch-shift-select"
-        >
-          <el-option
-            v-for="opt in shifts"
-            :key="opt._id"
-            :label="formatShiftLabel(opt)"
-            :value="opt._id"
-          />
+        <el-select v-model="batchShiftId" placeholder="套用班別" class="modern-select batch-select" filterable
+          data-test="batch-shift-select">
+          <el-option v-for="opt in shifts" :key="opt._id" :label="formatShiftLabel(opt)" :value="opt._id" />
         </el-select>
-        <el-select
-          v-model="batchDepartment"
-          placeholder="套用部門"
-          clearable
-          class="modern-select batch-select"
-          data-test="batch-dept-select"
-        >
-          <el-option
-            v-for="dept in departments"
-            :key="dept._id"
-            :label="dept.name"
-            :value="dept._id"
-          />
+        <el-select v-model="batchDepartment" placeholder="套用部門" clearable class="modern-select batch-select"
+          data-test="batch-dept-select">
+          <el-option v-for="dept in departments" :key="dept._id" :label="dept.name" :value="dept._id" />
         </el-select>
-        <el-select
-          v-model="batchSubDepartment"
-          placeholder="套用單位"
-          clearable
-          class="modern-select batch-select"
-          :disabled="!batchDepartment"
-          data-test="batch-subdept-select"
-        >
-          <el-option
-            v-for="sub in batchSubDepartments"
-            :key="sub._id"
-            :label="sub.name"
-            :value="sub._id"
-          />
+        <el-select v-model="batchSubDepartment" placeholder="套用單位" clearable class="modern-select batch-select"
+          :disabled="!batchDepartment" data-test="batch-subdept-select">
+          <el-option v-for="sub in batchSubDepartments" :key="sub._id" :label="sub.name" :value="sub._id" />
         </el-select>
-        <el-button
-          type="primary"
-          class="action-btn primary apply-btn"
-          :disabled="!hasAnySelection || !batchShiftId || isApplyingBatch"
-          :loading="isApplyingBatch"
-          @click="applyBatch"
-          data-test="batch-apply-button"
-        >
+        <el-button type="primary" class="action-btn primary apply-btn"
+          :disabled="!hasAnySelection || !batchShiftId || isApplyingBatch" :loading="isApplyingBatch"
+          @click="applyBatch" data-test="batch-apply-button">
           套用至選取
         </el-button>
       </div>
 
-      <el-table
-        class="modern-schedule-table"
-        :data="visibleEmployees"
-        :header-cell-style="{ backgroundColor: '#ecfeff', color: '#164e63', fontWeight: '600' }"
-        :row-style="{ backgroundColor: '#ffffff' }"
-        @row-click="row => lazyMode && toggleRow(row._id)"
-      >
+      <el-table class="modern-schedule-table" :data="visibleEmployees" :header-cell-style="{
+        backgroundColor: '#ecfeff',
+        color: '#164e63',
+        fontWeight: '600'
+      }" :row-style="{ backgroundColor: '#ffffff' }" @row-click="row => lazyMode && toggleRow(row._id)">
         <el-table-column label="部門／單位" width="180" fixed="left">
           <template #default="{ row }">
             <div class="employee-info">
@@ -395,198 +240,160 @@
         <el-table-column prop="name" label="員工姓名" width="150" fixed="left">
           <template #default="{ row }">
             <div class="employee-name">
-              <el-checkbox
-                v-if="canEdit"
-                class="row-checkbox"
-                :model-value="selectedEmployeesSet.has(row._id)"
-                @change="val => toggleEmployee(row._id, val)"
-              />
-              <component
-                v-if="employeeStatus(row._id) === 'unscheduled'"
-                :is="CircleCloseFilled"
-                class="status-icon unscheduled"
-              />
-              <component
-                v-else-if="employeeStatus(row._id) === 'onLeave'"
-                :is="WarningFilled"
-                class="status-icon on-leave"
-              />
+              <el-checkbox v-if="canEdit" class="row-checkbox" :model-value="selectedEmployeesSet.has(row._id)"
+                @change="val => toggleEmployee(row._id, val)" />
+              <component v-if="employeeStatus(row._id) === 'unscheduled'" :is="CircleCloseFilled"
+                class="status-icon unscheduled" />
+              <component v-else-if="employeeStatus(row._id) === 'onLeave'" :is="WarningFilled"
+                class="status-icon on-leave" />
               {{ row.name }}
             </div>
           </template>
         </el-table-column>
-        <el-table-column
-          v-for="d in days"
-          :key="d.date"
-          :label="d.label"
-          width="140"
-          align="center"
-        >
+
+        <el-table-column v-for="d in days" :key="d.date" :label="d.label" width="140" align="center">
           <template #header>
             <div class="day-header">
               <span>{{ d.label }}</span>
-              <el-checkbox
-                v-if="canEdit"
-                class="day-checkbox"
-                :model-value="selectedDaysSet.has(d.date)"
-                @change="val => toggleDay(d.date, val)"
-              />
+              <el-checkbox v-if="canEdit" class="day-checkbox" :model-value="selectedDaysSet.has(d.date)"
+                @change="val => toggleDay(d.date, val)" />
             </div>
           </template>
+
           <template #default="{ row }">
-            <div
-              v-if="!lazyMode || expandedRows.has(row._id)"
-              class="modern-schedule-cell"
-              :class="[
-                {
-                  'has-leave': scheduleMap[row._id]?.[d.date]?.leave,
-                  'missing-shift':
-                    !scheduleMap[row._id]?.[d.date]?.shiftId &&
-                    !scheduleMap[row._id]?.[d.date]?.leave,
-                  'is-selected': isCellSelected(row._id, d.date),
-                  'has-shift':
-                    !scheduleMap[row._id]?.[d.date]?.leave &&
-                    !!scheduleMap[row._id]?.[d.date]?.shiftId
-                }
-              ]"
-              :style="
-                scheduleMap[row._id]?.[d.date]?.leave
+            <div v-if="!lazyMode || expandedRows.has(row._id)" class="modern-schedule-cell" :class="[
+              {
+                'has-leave': isLeaveCell(row._id, d.date),
+                'missing-shift':
+                  !scheduleMap[row._id]?.[d.date]?.shiftId &&
+                  !isLeaveCell(row._id, d.date),
+                'is-selected': isCellSelected(row._id, d.date),
+                'has-shift':
+                  !isLeaveCell(row._id, d.date) &&
+                  !!scheduleMap[row._id]?.[d.date]?.shiftId
+              }
+            ]" :style="isLeaveCell(row._id, d.date)
                   ? undefined
                   : shiftClass(scheduleMap[row._id]?.[d.date]?.shiftId)
-              "
-              :title="leaveTooltip(row._id, d.date)"
-            >
-              <div v-if="canEdit" class="cell-selection" @click.stop>
-                <el-checkbox
-                  :model-value="manualSelectedCellsSet.has(buildCellKey(row._id, d.date))"
-                  :disabled="!isSelectableCell(row._id, d.date)"
-                  @change="val => toggleCell(row._id, d.date, val)"
-                  size="small"
-                />
+                " :title="leaveTooltip(row._id, d.date)">
+              <!-- ✅ 已請假日期：禁止勾選 -->
+              <div v-if="canEdit && !isLeaveCell(row._id, d.date)" class="cell-selection" @click.stop>
+                <el-checkbox :model-value="manualSelectedCellsSet.has(buildCellKey(row._id, d.date))
+                  " @change="val => toggleCell(row._id, d.date, val)" size="small" />
               </div>
+
               <template v-if="scheduleMap[row._id]?.[d.date]">
-                <div
-                  v-if="scheduleMap[row._id][d.date].leave"
-                  class="leave-indicator"
-                  data-test="leave-indicator"
-                >
-                  <el-tag
-                    type="warning"
-                    effect="light"
-                    size="small"
-                    class="leave-tag"
-                  >
+                <div v-if="isLeaveCell(row._id, d.date)" class="leave-indicator" data-test="leave-indicator">
+                  <el-tag type="warning" effect="light" size="small" class="leave-tag">
                     休假中
                   </el-tag>
                   <span class="leave-note">已核准請假，不列入工時</span>
                 </div>
+
                 <template v-else-if="canEdit">
-                  <el-select
-                    v-model="scheduleMap[row._id][d.date].shiftId"
-                    placeholder="選擇班別"
-                    @change="val => onSelect(row._id, d.date, val)"
-                    class="cell-select shift-select"
-                    size="small"
-                  >
-                    <el-option
-                      v-for="opt in shifts"
-                      :key="opt._id"
-                      :label="formatShiftLabel(opt)"
-                      :value="opt._id"
-                    />
+                  <el-select v-model="scheduleMap[row._id][d.date].shiftId" placeholder="選擇班別"
+                    @change="val => onSelect(row._id, d.date, val)" class="cell-select shift-select" size="small">
+                    <el-option v-for="opt in shifts" :key="opt._id" :label="formatShiftLabel(opt)" :value="opt._id" />
                   </el-select>
+
                   <div class="department-selects">
-                    <el-select
-                      v-model="scheduleMap[row._id][d.date].department"
-                      placeholder="部門"
-                      size="small"
-                      @change="() => (scheduleMap[row._id][d.date].subDepartment = '')"
-                      class="cell-select dept-select"
-                    >
-                      <el-option
-                        v-for="dept in departments"
-                        :key="dept._id"
-                        :label="dept.name"
-                        :value="dept._id"
-                      />
+                    <el-select v-model="scheduleMap[row._id][d.date].department" placeholder="部門" size="small" @change="
+                      () =>
+                        (scheduleMap[row._id][d.date].subDepartment = '')
+                    " class="cell-select dept-select">
+                      <el-option v-for="dept in departments" :key="dept._id" :label="dept.name" :value="dept._id" />
                     </el-select>
-                    <el-select
-                      v-model="scheduleMap[row._id][d.date].subDepartment"
-                      placeholder="單位"
-                      size="small"
-                      class="cell-select sub-dept-select"
-                    >
-                      <el-option
-                        v-for="sub in subDepsFor(scheduleMap[row._id][d.date].department)"
-                        :key="sub._id"
-                        :label="sub.name"
-                        :value="sub._id"
-                      />
+
+                    <el-select v-model="scheduleMap[row._id][d.date].subDepartment" placeholder="單位" size="small"
+                      class="cell-select sub-dept-select">
+                      <el-option v-for="sub in subDepsFor(
+                        scheduleMap[row._id][d.date].department
+                      )" :key="sub._id" :label="sub.name" :value="sub._id" />
                     </el-select>
                   </div>
                 </template>
+
                 <template v-else>
-                  <el-popover
-                    v-if="shiftInfo(scheduleMap[row._id][d.date].shiftId)"
-                    placement="top"
-                    trigger="hover"
-                    :width="200"
-                  >
+                  <el-popover v-if="
+                    shiftInfo(scheduleMap[row._id][d.date].shiftId)
+                  " placement="top" trigger="hover" :width="200">
                     <div class="shift-details">
                       <div class="detail-row">
                         <span class="detail-label">上班時間：</span>
-                        <span class="detail-value">{{ shiftInfo(scheduleMap[row._id][d.date].shiftId).startTime }}</span>
+                        <span class="detail-value">
+                          {{
+                            shiftInfo(
+                              scheduleMap[row._id][d.date].shiftId
+                            ).startTime
+                          }}
+                        </span>
                       </div>
                       <div class="detail-row">
                         <span class="detail-label">下班時間：</span>
-                        <span class="detail-value">{{ shiftInfo(scheduleMap[row._id][d.date].shiftId).endTime }}</span>
+                        <span class="detail-value">
+                          {{
+                            shiftInfo(
+                              scheduleMap[row._id][d.date].shiftId
+                            ).endTime
+                          }}
+                        </span>
                       </div>
-                      <div
-                        v-if="shiftInfo(scheduleMap[row._id][d.date].shiftId).remark"
-                        class="detail-row"
-                      >
+                      <div v-if="
+                        shiftInfo(
+                          scheduleMap[row._id][d.date].shiftId
+                        ).remark
+                      " class="detail-row">
                         <span class="detail-label">備註：</span>
-                        <span class="detail-value">{{ shiftInfo(scheduleMap[row._id][d.date].shiftId).remark }}</span>
+                        <span class="detail-value">
+                          {{
+                            shiftInfo(
+                              scheduleMap[row._id][d.date].shiftId
+                            ).remark
+                          }}
+                        </span>
                       </div>
                     </div>
                     <template #reference>
-                      <div
-                        class="modern-shift-tag"
-                        :style="shiftClass(shiftInfo(scheduleMap[row._id][d.date].shiftId))"
-                      >
-                        {{ formatShiftLabel(shiftInfo(scheduleMap[row._id][d.date].shiftId)) }}
+                      <div class="modern-shift-tag" :style="shiftClass(
+                        shiftInfo(
+                          scheduleMap[row._id][d.date].shiftId
+                        )
+                      )
+                        ">
+                        {{
+                          formatShiftLabel(
+                            shiftInfo(
+                              scheduleMap[row._id][d.date].shiftId
+                            )
+                          )
+                        }}
                       </div>
                     </template>
                   </el-popover>
                 </template>
-                <div
-                  v-if="
-                    !scheduleMap[row._id][d.date].shiftId &&
-                    !scheduleMap[row._id][d.date].leave
-                  "
-                  class="missing-label"
-                >
+
+                <div v-if="
+                  !scheduleMap[row._id][d.date].shiftId &&
+                  !isLeaveCell(row._id, d.date)
+                " class="missing-label">
                   未排班
                 </div>
               </template>
+
               <span v-else class="empty-cell">-</span>
             </div>
-            <div v-else class="modern-schedule-cell collapsed-cell">展開班表</div>
+
+            <div v-else class="modern-schedule-cell collapsed-cell">
+              展開班表
+            </div>
           </template>
         </el-table-column>
       </el-table>
 
       <div class="pagination-bar" v-if="filteredEmployees.length">
-        <el-pagination
-          background
-          layout="prev, pager, next, ->, sizes, total"
-          :total="filteredEmployees.length"
-          :page-size="pageSize"
-          :current-page="currentPage"
-          :page-sizes="[10, 20, 30, 50]"
-          @current-change="onPageChange"
-          @size-change="onPageSizeChange"
-        />
+        <el-pagination background layout="prev, pager, next, ->, sizes, total" :total="filteredEmployees.length"
+          :page-size="pageSize" :current-page="currentPage" :page-sizes="[10, 20, 30, 50]"
+          @current-change="onPageChange" @size-change="onPageSizeChange" />
       </div>
     </div>
 
@@ -596,14 +403,16 @@
         <h3 class="approval-title">待處理審批</h3>
         <div class="approval-count">{{ approvalList.length }} 項待處理</div>
       </div>
-      <el-table
-        class="modern-approval-table"
-        :data="approvalList"
-        :header-cell-style="{ backgroundColor: '#f1f5f9', color: '#164e63', fontWeight: '600' }"
-      >
+      <el-table class="modern-approval-table" :data="approvalList" :header-cell-style="{
+        backgroundColor: '#f1f5f9',
+        color: '#164e63',
+        fontWeight: '600'
+      }">
         <el-table-column label="申請人" width="120">
           <template #default="{ row }">
-            <div class="applicant-name">{{ row.applicant_employee?.name }}</div>
+            <div class="applicant-name">
+              {{ row.applicant_employee?.name }}
+            </div>
           </template>
         </el-table-column>
         <el-table-column label="申請類型" width="150">
@@ -615,10 +424,12 @@
         </el-table-column>
         <el-table-column prop="status" label="狀態" width="100">
           <template #default="{ row }">
-            <el-tag
-              :type="row.status === 'approved' ? 'success' : row.status === 'rejected' ? 'danger' : 'warning'"
-              class="status-tag"
-            >
+            <el-tag :type="row.status === 'approved'
+                ? 'success'
+                : row.status === 'rejected'
+                  ? 'danger'
+                  : 'warning'
+              " class="status-tag">
               {{ row.status }}
             </el-tag>
           </template>
@@ -636,41 +447,44 @@
 
   <el-dialog v-model="detail.visible" title="申請單明細" width="760px">
     <div v-if="detail.doc">
-      <p class="mb-2"><b>表單：</b>{{ detail.doc.form?.name }}（{{ detail.doc.form?.category }}）</p>
-      <p class="mb-2"><b>申請人：</b>{{ detail.doc.applicant_employee?.name || '-' }}</p>
+      <p class="mb-2">
+        <b>表單：</b>{{ detail.doc.form?.name }}（{{ detail.doc.form?.category }}）
+      </p>
+      <p class="mb-2">
+        <b>申請人：</b>{{ detail.doc.applicant_employee?.name || '-' }}
+      </p>
       <p class="mb-2"><b>狀態：</b>{{ getStatusText(detail.doc.status) }}</p>
+
       <el-divider content-position="left">填寫內容</el-divider>
       <el-descriptions :column="1" size="small" border>
-        <el-descriptions-item
-          v-for="fld in detail.doc.form?.fields || []"
-          :key="fld._id"
-          :label="fld.label"
-        >
+        <el-descriptions-item v-for="fld in detail.doc.form?.fields || []" :key="fld._id" :label="fld.label">
           <span>{{ renderValue(detail.doc.form_data?.[fld._id]) }}</span>
         </el-descriptions-item>
       </el-descriptions>
 
       <el-divider content-position="left">流程</el-divider>
       <el-timeline>
-        <el-timeline-item
-          v-for="(s, idx) in detail.doc.steps"
-          :key="idx"
-          :timestamp="`第 ${idx + 1} 關`"
-          :type="idx === detail.doc.current_step_index ? 'primary' : 'info'"
-        >
+        <el-timeline-item v-for="(s, idx) in detail.doc.steps" :key="idx" :timestamp="`第 ${idx + 1} 關`"
+          :type="idx === detail.doc.current_step_index ? 'primary' : 'info'">
           <div class="mb-1">
             <span class="mr-2">需全員同意：{{ s.all_must_approve ? '是' : '否' }}</span>
             <span>必簽：{{ s.is_required ? '是' : '否' }}</span>
           </div>
           <el-table :data="s.approvers" size="small" border>
             <el-table-column label="審核人" width="200">
-              <template #default="{ row }">{{ approverName(row.approver) }}</template>
+              <template #default="{ row }">
+                {{ approverName(row.approver) }}
+              </template>
             </el-table-column>
             <el-table-column label="決議" width="120">
-              <template #default="{ row }">{{ getStatusText(row.decision) }}</template>
+              <template #default="{ row }">
+                {{ getStatusText(row.decision) }}
+              </template>
             </el-table-column>
             <el-table-column label="時間" width="200">
-              <template #default="{ row }">{{ fmt(row.decided_at) }}</template>
+              <template #default="{ row }">
+                {{ fmt(row.decided_at) }}
+              </template>
             </el-table-column>
             <el-table-column prop="comment" label="意見" />
           </el-table>
@@ -723,8 +537,12 @@ const formatApprovalCategory = (category, fallbackName = '') => {
 }
 
 const currentMonth = ref(dayjs().format('YYYY-MM'))
+
+
+
 const scheduleMap = ref({})
 const rawSchedules = ref([])
+
 const shifts = ref([])
 const employees = ref([])
 const approvalList = ref([])
@@ -764,6 +582,8 @@ const publishSnapshot = ref(null)
 const loadedEmployeeIds = ref(new Set())
 const isFetchingSchedules = ref(false)
 
+// ========= includeSelf 偏好存取 =========
+
 function getSupervisorIdFromStorage() {
   if (typeof window === 'undefined') return ''
   const sessionId = window.sessionStorage?.getItem('employeeId')
@@ -799,9 +619,44 @@ function persistIncludeSelfPreference(value, supervisorId = getSupervisorIdFromS
   }
 }
 
+// ========= 選取相關的基礎結構 =========
+
 const selectedEmployeesSet = computed(() => selectedEmployees.value)
 const selectedDaysSet = computed(() => selectedDays.value)
 const manualSelectedCellsSet = computed(() => manualSelectedCells.value)
+
+// ✅ 用 "::" 當分隔，避免 ObjectId 裡面的 "-" 把字串拆爛
+const buildCellKey = (empId, day) => `${empId}::${day}`
+
+const parseCellKey = key => {
+  const str = String(key)
+  const idx = str.lastIndexOf('::')
+  if (idx === -1) {
+    return { empId: str, day: NaN }
+  }
+  const empId = str.slice(0, idx)
+  const day = Number(str.slice(idx + 2))
+  return { empId, day }
+}
+
+// ✅ 這個月所有「已核准」請假的快取：{ [empId]: { [dayNumber]: true } }
+const leaveIndex = ref({})
+
+// 只用 leaveIndex 判斷該格是不是請假日
+const isLeaveCell = (empId, day) => {
+  const empLeaves = leaveIndex.value[String(empId)]
+  if (!empLeaves) return false
+  return !!empLeaves[Number(day)]
+}
+
+// 只能選「有 cell 且不是請假日」的格子
+const isSelectableCell = (empId, day) => {
+  const dayMap = scheduleMap.value[empId]
+  if (!dayMap) return false
+  const cell = dayMap[day]
+  if (!cell) return false
+  return !isLeaveCell(empId, day)
+}
 
 const legendShifts = computed(() => {
   if (!Array.isArray(shifts.value) || !shifts.value.length) {
@@ -823,20 +678,6 @@ const legendShifts = computed(() => {
   }, [])
 })
 
-const buildCellKey = (empId, day) => `${empId}-${day}`
-const parseCellKey = key => {
-  const [empId, day] = String(key).split('-')
-  return { empId, day: Number(day) }
-}
-
-const isSelectableCell = (empId, day) => {
-  const dayMap = scheduleMap.value[empId]
-  if (!dayMap) return false
-  const cell = dayMap[day]
-  if (!cell) return false
-  return !cell.leave
-}
-
 const allSelectedCells = computed(
   () => new Set(selectedCellsCache.value.keys())
 )
@@ -849,10 +690,13 @@ const updateSelectionCache = updater => {
 
 const applyCacheChange = (cache, empId, day, source, isSelected) => {
   const key = buildCellKey(empId, day)
+
+  // 不可選格子，強制清掉
   if (!isSelectableCell(empId, day)) {
     cache.delete(key)
     return
   }
+
   if (!isSelected) {
     const existing = cache.get(key)
     if (!existing) return
@@ -910,8 +754,11 @@ const batchSubDepartments = computed(() =>
   batchDepartment.value ? subDepsFor(batchDepartment.value) : []
 )
 
-const isCellSelected = (empId, day) =>
-  allSelectedCells.value.has(buildCellKey(empId, day))
+// ✅ UI 上是否標成「已選取」：請假格子一律 false
+const isCellSelected = (empId, day) => {
+  if (!isSelectableCell(empId, day)) return false
+  return allSelectedCells.value.has(buildCellKey(empId, day))
+}
 
 const pruneSelections = () => {
   const validEmployees = new Set(employees.value.map(e => e._id))
@@ -926,7 +773,11 @@ const pruneSelections = () => {
   const nextManual = new Set()
   manualSelectedCells.value.forEach(key => {
     const { empId, day } = parseCellKey(key)
-    if (validEmployees.has(empId) && validDays.has(day) && isSelectableCell(empId, day)) {
+    if (
+      validEmployees.has(empId) &&
+      validDays.has(day) &&
+      isSelectableCell(empId, day)
+    ) {
       nextManual.add(buildCellKey(empId, day))
     }
   })
@@ -952,8 +803,11 @@ const toggleEmployee = (empId, explicit) => {
     next.delete(empId)
   }
   selectedEmployees.value = next
+
   updateSelectionCache(cache => {
-    days.value.forEach(d => applyCacheChange(cache, empId, d.date, 'employee', shouldSelect))
+    days.value.forEach(d =>
+      applyCacheChange(cache, empId, d.date, 'employee', shouldSelect)
+    )
   })
 }
 
@@ -967,8 +821,11 @@ const toggleDay = (day, explicit) => {
     next.delete(day)
   }
   selectedDays.value = next
+
   updateSelectionCache(cache => {
-    employees.value.forEach(emp => applyCacheChange(cache, emp._id, day, 'day', shouldSelect))
+    employees.value.forEach(emp =>
+      applyCacheChange(cache, emp._id, day, 'day', shouldSelect)
+    )
   })
 }
 
@@ -984,35 +841,72 @@ const toggleCell = (empId, day, explicit) => {
     next.delete(key)
   }
   manualSelectedCells.value = next
-  updateSelectionCache(cache => applyCacheChange(cache, empId, day, 'manual', shouldSelect))
+
+  updateSelectionCache(cache =>
+    applyCacheChange(cache, empId, day, 'manual', shouldSelect)
+  )
 }
 
 const selectAllEmployees = () => {
+  const targetIds = visibleEmployees.value.map(e => e._id)
   const prev = selectedEmployees.value
-  selectedEmployees.value = new Set(employees.value.map(e => e._id))
-  const added = Array.from(selectedEmployees.value).filter(id => !prev.has(id))
-  const removed = Array.from(prev).filter(id => !selectedEmployees.value.has(id))
+
+  // 只保留「本頁 + 原本其它頁手動勾選」的邏輯
+  const next = new Set(prev)
+
+  let shouldSelectAllOnPage = false
+  // 判斷：如果本頁有任何一個沒被勾，就做「本頁全選」
+  if (targetIds.some(id => !next.has(id))) {
+    shouldSelectAllOnPage = true
+  }
+
+  if (shouldSelectAllOnPage) {
+    targetIds.forEach(id => next.add(id))
+  } else {
+    // 如果本頁都勾了，再按一次就「取消本頁的勾選」
+    targetIds.forEach(id => next.delete(id))
+  }
+
+  selectedEmployees.value = next
+
   updateSelectionCache(cache => {
-    added.forEach(empId => {
-      days.value.forEach(d => applyCacheChange(cache, empId, d.date, 'employee', true))
-    })
-    removed.forEach(empId => {
-      days.value.forEach(d => applyCacheChange(cache, empId, d.date, 'employee', false))
+    targetIds.forEach(empId => {
+      days.value.forEach(d => {
+        if (!isSelectableCell(empId, d.date)) return
+        applyCacheChange(cache, empId, d.date, 'employee', shouldSelectAllOnPage)
+      })
     })
   })
 }
 
+
 const selectAllDays = () => {
   const prev = selectedDays.value
-  selectedDays.value = new Set(days.value.map(d => d.date))
-  const added = Array.from(selectedDays.value).filter(day => !prev.has(day))
-  const removed = Array.from(prev).filter(day => !selectedDays.value.has(day))
+  const allDayValues = days.value.map(d => d.date)
+
+  // 判斷是不是「已全選」
+  const alreadyAllSelected = allDayValues.every(d => prev.has(d))
+
+  const next = new Set(prev)
+
+  if (alreadyAllSelected) {
+    // 已經是全選 → 再按一次就把所有天取消
+    allDayValues.forEach(d => next.delete(d))
+  } else {
+    // 不是全選 → 把這個月所有天都加進來
+    allDayValues.forEach(d => next.add(d))
+  }
+
+  selectedDays.value = next
+
+  const shouldSelect = !alreadyAllSelected
+
   updateSelectionCache(cache => {
-    added.forEach(day => {
-      employees.value.forEach(emp => applyCacheChange(cache, emp._id, day, 'day', true))
-    })
-    removed.forEach(day => {
-      employees.value.forEach(emp => applyCacheChange(cache, emp._id, day, 'day', false))
+    allDayValues.forEach(day => {
+      visibleEmployees.value.forEach(emp => {
+        if (!isSelectableCell(emp._id, day)) return
+        applyCacheChange(cache, emp._id, day, 'day', shouldSelect)
+      })
     })
   })
 }
@@ -1028,13 +922,16 @@ const onCustomRangeChange = range => {
   if (!Array.isArray(range) || range.length !== 2) return
   const [startRaw, endRaw] = range
   if (!startRaw || !endRaw) return
+
   const monthStart = dayjs(`${currentMonth.value}-01`)
   const start = dayjs(startRaw)
   const end = dayjs(endRaw)
   if (!start.isValid() || !end.isValid()) return
+
   const monthEnd = monthStart.endOf('month')
   let cursor = start.isBefore(monthStart) ? monthStart : start
   const collected = []
+
   while (cursor.isBefore(end) || cursor.isSame(end, 'day')) {
     if (
       cursor.year() === monthStart.year() &&
@@ -1045,20 +942,26 @@ const onCustomRangeChange = range => {
     if (cursor.isSame(monthEnd, 'day')) break
     cursor = cursor.add(1, 'day')
   }
+
   const prev = selectedDays.value
   const nextDays = new Set(collected)
   selectedDays.value = nextDays
+
   const added = collected.filter(day => !prev.has(day))
   const removed = Array.from(prev).filter(day => !nextDays.has(day))
+
   updateSelectionCache(cache => {
     added.forEach(day => {
-      employees.value.forEach(emp => applyCacheChange(cache, emp._id, day, 'day', true))
+      visibleEmployees.value.forEach(emp => applyCacheChange(cache, emp._id, day, 'day', true))
     })
     removed.forEach(day => {
-      employees.value.forEach(emp => applyCacheChange(cache, emp._id, day, 'day', false))
+      visibleEmployees.value.forEach(emp => applyCacheChange(cache, emp._id, day, 'day', false))
     })
   })
+
 }
+
+// ========= watcher：避免選取殘留 =========
 
 watch(batchDepartment, (newVal, oldVal) => {
   if (newVal !== oldVal) {
@@ -1080,8 +983,10 @@ watch(includeSelf, async (val, oldVal) => {
   const supervisorId = getStoredSupervisorId() || getSupervisorIdFromStorage()
   persistIncludeSelfPreference(val, supervisorId)
   authStore.refreshRole({ forceRefresh: true })
+
   if (isInitializingIncludeSelf) return
   if (!showIncludeSelfToggle.value) return
+
   currentPage.value = 1
   await fetchEmployees(selectedDepartment.value, selectedSubDepartment.value)
   await fetchSchedules({ reset: true })
@@ -1090,15 +995,23 @@ watch(includeSelf, async (val, oldVal) => {
 
 watch([employeeSearch, statusFilter], () => {
   currentPage.value = 1
+  fetchSchedules({ reset: true })
 })
 
+
 const employeeStatus = empId => {
-  const days = scheduleMap.value[empId] || {}
-  const values = Object.values(days)
-  const hasShift = values.some(v => v.shiftId)
-  const hasLeave = values.some(v => v.leave)
-  if (!hasShift) return 'unscheduled'
-  if (hasLeave) return 'onLeave'
+  const daysMap = scheduleMap.value[empId] || {}
+  const cells = Object.values(daysMap)
+
+  if (!cells.length) {
+    return 'unscheduled'
+  }
+
+  const hasAnyEmptyDay = cells.some(c => !c.shiftId && !c.leave && !isLeaveCell(empId, c.day))
+  const hasAnyLeave = cells.some(c => c.leave || isLeaveCell(empId, c.day))
+
+  if (hasAnyEmptyDay) return 'unscheduled'
+  if (hasAnyLeave) return 'onLeave'
   return 'scheduled'
 }
 
@@ -1138,6 +1051,15 @@ watch(visibleEmployeeIds, () => {
   fetchSchedules()
 })
 
+// 只要員工 / 天數 / 請假索引有變化，都清一次選取
+watch(employees, pruneSelections)
+
+
+watch(leaveIndex, pruneSelections)
+
+
+// ========= lazy mode =========
+
 const lazyMode = computed(() => employees.value.length > 50)
 const toggleRow = id => {
   if (expandedRows.value.has(id)) expandedRows.value.delete(id)
@@ -1153,10 +1075,14 @@ const router = useRouter()
 const authStore = useAuthStore()
 authStore.loadUser()
 
-const canUseSupervisorFilter = computed(() => ['supervisor', 'admin'].includes(authStore.role))
+const canUseSupervisorFilter = computed(() =>
+  ['supervisor', 'admin'].includes(authStore.role)
+)
 const showIncludeSelfToggle = computed(() => authStore.role === 'supervisor')
 const canEdit = canUseSupervisorFilter
 const missingSupervisorScheduleNoticeKey = ref('')
+
+// ========= 發布狀態相關 =========
 
 const publishSummary = computed(() => {
   if (publishSnapshot.value) {
@@ -1181,6 +1107,7 @@ const publishSummary = computed(() => {
     totalEmployees: 0,
     allEmployeesConfirmed: false
   }
+
   const list = Array.isArray(rawSchedules.value) ? rawSchedules.value : []
   if (!list.length) return result
 
@@ -1285,7 +1212,9 @@ const publishSummary = computed(() => {
   }
 
   result.allEmployeesConfirmed =
-    result.status === 'ready' && pendingEmployees.length === 0 && disputedEmployees.length === 0
+    result.status === 'ready' &&
+    pendingEmployees.length === 0 &&
+    disputedEmployees.length === 0
 
   return result
 })
@@ -1335,9 +1264,18 @@ const stepStatuses = computed(() => {
         : hasPending || status === 'pending'
           ? 'process'
           : 'finish',
-    disputed: hasDisputed ? 'error' : status === 'draft' || status === 'pending' ? 'wait' : 'finish',
+    disputed:
+      hasDisputed
+        ? 'error'
+        : status === 'draft' || status === 'pending'
+          ? 'wait'
+          : 'finish',
     finalized:
-      status === 'finalized' ? 'success' : status === 'ready' ? 'process' : 'wait'
+      status === 'finalized'
+        ? 'success'
+        : status === 'ready'
+          ? 'process'
+          : 'wait'
   }
 })
 
@@ -1366,8 +1304,13 @@ const finalStepDescription = computed(() => {
 const publishProgress = computed(() => {
   if (publishSummary.value.status === 'finalized') return 100
   const total = publishSummary.value.totalEmployees
-  if (!total || total <= 0) return publishSummary.value.status === 'draft' ? 0 : 20
-  const responded = Math.max(total - publishSummary.value.pendingEmployees.length, 0)
+  if (!total || total <= 0) {
+    return publishSummary.value.status === 'draft' ? 0 : 20
+  }
+  const responded = Math.max(
+    total - publishSummary.value.pendingEmployees.length,
+    0
+  )
   const percentage = Math.round((responded / total) * 100)
   return Math.min(Math.max(percentage, 0), 100)
 })
@@ -1402,12 +1345,15 @@ watch(showIncludeSelfToggle, newVal => {
   }
 })
 
+// ========= 提示工具 =========
+
 const callWarning = message => {
   const moduleWarn = ElMessage?.warning
   if (typeof moduleWarn === 'function') {
     moduleWarn(message)
   }
-  const globalWarn = typeof window !== 'undefined' ? window.ElMessage?.warning : undefined
+  const globalWarn =
+    typeof window !== 'undefined' ? window.ElMessage?.warning : undefined
   if (typeof globalWarn === 'function' && globalWarn !== moduleWarn) {
     globalWarn(message)
   }
@@ -1418,7 +1364,8 @@ const callInfo = message => {
   if (typeof moduleInfo === 'function') {
     moduleInfo(message)
   }
-  const globalInfo = typeof window !== 'undefined' ? window.ElMessage?.info : undefined
+  const globalInfo =
+    typeof window !== 'undefined' ? window.ElMessage?.info : undefined
   if (typeof globalInfo === 'function' && globalInfo !== moduleInfo) {
     globalInfo(message)
   }
@@ -1429,7 +1376,8 @@ const callSuccess = message => {
   if (typeof moduleSuccess === 'function') {
     moduleSuccess(message)
   }
-  const globalSuccess = typeof window !== 'undefined' ? window.ElMessage?.success : undefined
+  const globalSuccess =
+    typeof window !== 'undefined' ? window.ElMessage?.success : undefined
   if (typeof globalSuccess === 'function' && globalSuccess !== moduleSuccess) {
     globalSuccess(message)
   }
@@ -1449,6 +1397,8 @@ function buildPublishPayload() {
   if (includeSelf.value && showIncludeSelfToggle.value) payload.includeSelf = true
   return payload
 }
+
+// ========= 發布 / 完成 =========
 
 async function publishSchedulesForMonth() {
   if (isPublishing.value) return
@@ -1558,6 +1508,8 @@ async function confirmFinalize() {
   await finalizeSchedulesForMonth()
 }
 
+// ========= 審批明細 =========
+
 const getStatusText = status => {
   const map = {
     pending: '待簽核',
@@ -1577,8 +1529,7 @@ const approverName = emp => {
 }
 
 const leaveTooltip = (empId, day) => {
-  const cell = scheduleMap.value?.[empId]?.[day]
-  if (cell?.leave) {
+  if (isLeaveCell(empId, day)) {
     return '已核准請假，該日不列入工作時數'
   }
   return ''
@@ -1595,8 +1546,7 @@ const days = computed(() => {
   })
 })
 
-watch(employees, pruneSelections)
-watch(days, pruneSelections)
+// ========= 班別 / 部門 / 主管 context =========
 
 async function fetchShiftOptions() {
   const res = await apiFetch('/api/shifts')
@@ -1635,41 +1585,54 @@ async function fetchSubDepartments(dept = '') {
     const res = await apiFetch(url)
     if (!res.ok) throw new Error('Failed to fetch sub departments')
     const subData = await res.json()
+
     const deptMap = departments.value.reduce((acc, d) => {
       const id = String(d._id)
       acc[id] = id
       if (d.name) acc[d.name] = id
       return acc
     }, {})
+
     if (supervisorDepartmentId.value) {
       deptMap[supervisorDepartmentId.value] = supervisorDepartmentId.value
     }
     if (supervisorDepartmentName.value) {
-      deptMap[supervisorDepartmentName.value] = supervisorDepartmentId.value || supervisorDepartmentName.value
+      deptMap[supervisorDepartmentName.value] =
+        supervisorDepartmentId.value || supervisorDepartmentName.value
     }
+
     const normalized = Array.isArray(subData)
       ? subData
-          .map(s => {
-            const rawDept = s?.department
-            let deptId = ''
-            if (rawDept && typeof rawDept === 'object') {
-              deptId = rawDept?._id || rawDept?.id || deptMap[rawDept?.name] || ''
-            } else {
-              deptId = deptMap[rawDept] || rawDept || ''
-            }
-            return {
-              ...s,
-              _id: String(s?._id ?? s?.id ?? ''),
-              department: String(deptId)
-            }
-          })
-          .filter(s => s._id)
+        .map(s => {
+          const rawDept = s?.department
+          let deptId = ''
+          if (rawDept && typeof rawDept === 'object') {
+            deptId =
+              rawDept?._id ||
+              rawDept?.id ||
+              deptMap[rawDept?.name] ||
+              ''
+          } else {
+            deptId = deptMap[rawDept] || rawDept || ''
+          }
+          return {
+            ...s,
+            _id: String(s?._id ?? s?.id ?? ''),
+            department: String(deptId)
+          }
+        })
+        .filter(s => s._id)
       : []
+
     let filtered = normalized
     if (targetDept) {
-      filtered = normalized.filter(s => s.department === String(targetDept))
+      filtered = normalized.filter(
+        s => s.department === String(targetDept)
+      )
       if (!filtered.length && supervisorSubDepartmentId.value) {
-        const matched = normalized.find(s => s._id === supervisorSubDepartmentId.value)
+        const matched = normalized.find(
+          s => s._id === supervisorSubDepartmentId.value
+        )
         if (matched) {
           filtered = [matched]
         } else {
@@ -1686,6 +1649,7 @@ async function fetchSubDepartments(dept = '') {
     if (!filtered.length && normalized.length) {
       filtered = normalized
     }
+
     if (authStore.role === 'supervisor') {
       const baseIds = supervisorAssignableSubDepartmentIds.value.length
         ? supervisorAssignableSubDepartmentIds.value
@@ -1697,18 +1661,24 @@ async function fetchSubDepartments(dept = '') {
         filtered = filtered.filter(s => allowedSet.has(String(s._id)))
       }
     }
+
     subDepartments.value = filtered
+
     if (subDepartments.value.length) {
       if (
         supervisorSubDepartmentId.value &&
-        subDepartments.value.some(s => s._id === supervisorSubDepartmentId.value)
+        subDepartments.value.some(
+          s => s._id === supervisorSubDepartmentId.value
+        )
       ) {
         selectedSubDepartment.value = supervisorSubDepartmentId.value
       } else if (
         selectedSubDepartment.value &&
-        subDepartments.value.some(s => s._id === selectedSubDepartment.value)
+        subDepartments.value.some(
+          s => s._id === selectedSubDepartment.value
+        )
       ) {
-        // keep existing selection
+        // keep existing
       } else {
         selectedSubDepartment.value = subDepartments.value[0]._id
       }
@@ -1728,23 +1698,27 @@ async function fetchOptions() {
     const deptData = deptRes.ok ? await deptRes.json() : []
     const normalized = Array.isArray(deptData)
       ? deptData
-          .map(d => {
-            const id = d?._id ?? d?.id ?? d?.value ?? ''
-            return {
-              ...d,
-              _id: String(id),
-              name: d?.name ?? ''
-            }
-          })
-          .filter(d => d._id)
+        .map(d => {
+          const id = d?._id ?? d?.id ?? d?.value ?? ''
+          return {
+            ...d,
+            _id: String(id),
+            name: d?.name ?? ''
+          }
+        })
+        .filter(d => d._id)
       : []
-    const targetDeptId = selectedDepartment.value || supervisorDepartmentId.value
+
+    const targetDeptId =
+      selectedDepartment.value || supervisorDepartmentId.value
+
     let filtered = normalized
     if (targetDeptId) {
       filtered = normalized.filter(
         d =>
           d._id === targetDeptId ||
-          (supervisorDepartmentName.value && d.name === supervisorDepartmentName.value)
+          (supervisorDepartmentName.value &&
+            d.name === supervisorDepartmentName.value)
       )
       if (!filtered.length && targetDeptId) {
         filtered = [
@@ -1758,7 +1732,9 @@ async function fetchOptions() {
         ]
       }
     }
+
     departments.value = filtered.length ? filtered : normalized
+
     if (departments.value.length) {
       if (!departments.value.some(d => d._id === selectedDepartment.value)) {
         selectedDepartment.value = departments.value[0]._id
@@ -1766,6 +1742,7 @@ async function fetchOptions() {
     } else if (!selectedDepartment.value && targetDeptId) {
       selectedDepartment.value = targetDeptId
     }
+
     const deptForSubs =
       selectedDepartment.value ||
       supervisorDepartmentId.value ||
@@ -1791,6 +1768,7 @@ async function fetchSupervisorContext() {
     supervisorProfile.value = null
     return
   }
+
   const supervisorId = getStoredSupervisorId()
   if (!supervisorId) {
     supervisorDepartmentId.value = ''
@@ -1801,6 +1779,7 @@ async function fetchSupervisorContext() {
     supervisorProfile.value = null
     return
   }
+
   let data = null
   try {
     const res = await apiFetch(`/api/employees/${supervisorId}`)
@@ -1810,12 +1789,16 @@ async function fetchSupervisorContext() {
     console.error(err)
     supervisorProfile.value = null
   }
+
   supervisorProfile.value = data || null
+
+  // 部門
   const deptInfo = data?.department
   let deptId = ''
   let deptName = ''
   if (deptInfo && typeof deptInfo === 'object') {
-    deptId = deptInfo?._id || deptInfo?.id || deptInfo?.value || ''
+    deptId =
+      deptInfo?._id || deptInfo?.id || deptInfo?.value || ''
     deptName = deptInfo?.name || data?.departmentName || ''
   } else if (typeof deptInfo === 'string') {
     const matchedDept = departments.value.find(
@@ -1830,11 +1813,14 @@ async function fetchSupervisorContext() {
   }
   supervisorDepartmentId.value = deptId ? String(deptId) : ''
   supervisorDepartmentName.value = deptName ? String(deptName) : ''
+
   if (supervisorDepartmentId.value) {
     selectedDepartment.value = supervisorDepartmentId.value
   } else {
     selectedDepartment.value = ''
   }
+
+  // 單位
   const subInfo = data?.subDepartment
   let subId = ''
   let subName = ''
@@ -1854,11 +1840,13 @@ async function fetchSupervisorContext() {
   }
   supervisorSubDepartmentId.value = subId ? String(subId) : ''
   supervisorSubDepartmentName.value = subName ? String(subName) : ''
+
   if (supervisorSubDepartmentId.value) {
     selectedSubDepartment.value = supervisorSubDepartmentId.value
   } else {
     selectedSubDepartment.value = ''
   }
+
   await fetchSupervisorSubDepartmentScope(supervisorId)
 }
 
@@ -1908,12 +1896,15 @@ async function fetchSupervisorSubDepartmentScope(supervisorId = '') {
   }
 }
 
+// ========= 排班資料 =========
+
 function ensureEmployeeSchedule(empId) {
   const key = String(empId)
   if (!scheduleMap.value[key]) {
     scheduleMap.value[key] = {}
   }
-  const employee = employees.value.find(e => String(e._id) === key) || {}
+  const employee =
+    employees.value.find(e => String(e._id) === key) || {}
   const defaults = {
     shiftId: '',
     department: employee.departmentId || '',
@@ -1923,11 +1914,13 @@ function ensureEmployeeSchedule(empId) {
     if (!scheduleMap.value[key][d.date]) {
       scheduleMap.value[key][d.date] = { ...defaults }
     } else {
-      scheduleMap.value[key][d.date].shiftId = scheduleMap.value[key][d.date].shiftId || ''
+      scheduleMap.value[key][d.date].shiftId =
+        scheduleMap.value[key][d.date].shiftId || ''
       scheduleMap.value[key][d.date].department =
         scheduleMap.value[key][d.date].department || defaults.department
       scheduleMap.value[key][d.date].subDepartment =
-        scheduleMap.value[key][d.date].subDepartment || defaults.subDepartment
+        scheduleMap.value[key][d.date].subDepartment ||
+        defaults.subDepartment
     }
   })
 }
@@ -1938,6 +1931,7 @@ function resetScheduleCache() {
   publishSnapshot.value = null
   loadedEmployeeIds.value = new Set()
   approvalList.value = []
+  leaveIndex.value = {}
 }
 
 async function fetchSchedules({ reset = false } = {}) {
@@ -1945,23 +1939,24 @@ async function fetchSchedules({ reset = false } = {}) {
   if (!targetEmployees.length && employees.value.length) {
     const start = (currentPage.value - 1) * pageSize.value
     const end = start + pageSize.value
-    targetEmployees = employees.value.slice(start, end).map(e => String(e._id))
+    targetEmployees = employees.value
+      .slice(start, end)
+      .map(e => String(e._id))
   }
   const hasVisibleEmployees = targetEmployees.length > 0
+
   if (reset) {
     resetScheduleCache()
   }
 
   const shouldFetch =
-    reset || !hasVisibleEmployees || targetEmployees.some(id => !loadedEmployeeIds.value.has(id))
+    reset ||
+    !hasVisibleEmployees ||
+    targetEmployees.some(id => !loadedEmployeeIds.value.has(id))
   if (!shouldFetch) {
     return
   }
-
-  if (isFetchingSchedules.value) {
-    return
-  }
-
+  if (isFetchingSchedules.value) return
   isFetchingSchedules.value = true
 
   const supervisorId = getStoredSupervisorId()
@@ -1972,8 +1967,10 @@ async function fetchSchedules({ reset = false } = {}) {
     params.push(`employeeIds=${targetEmployees.join(',')}`)
   }
   if (supervisorId) params.push(`supervisor=${supervisorId}`)
-  if (includeSelf.value && showIncludeSelfToggle.value) params.push('includeSelf=true')
+  if (includeSelf.value && showIncludeSelfToggle.value)
+    params.push('includeSelf=true')
   const query = `?${params.join('&')}`
+
   try {
     const res = await apiFetch(`/api/schedules/monthly${query}`)
     if (!res.ok) throw new Error('Failed to fetch schedules')
@@ -1987,14 +1984,15 @@ async function fetchSchedules({ reset = false } = {}) {
     const summaryData = Array.isArray(data) ? null : data?.publishSummary
     publishSnapshot.value = summaryData
       ? {
-          status: summaryData.status || 'draft',
-          pendingEmployees: summaryData.pendingEmployees || [],
-          disputedEmployees: summaryData.disputedEmployees || [],
-          publishedAt: summaryData.publishedAt || null,
-          hasSchedules: summaryData.hasSchedules ?? false,
-          totalEmployees: summaryData.totalEmployees ?? 0,
-          allEmployeesConfirmed: summaryData.allEmployeesConfirmed ?? false
-        }
+        status: summaryData.status || 'draft',
+        pendingEmployees: summaryData.pendingEmployees || [],
+        disputedEmployees: summaryData.disputedEmployees || [],
+        publishedAt: summaryData.publishedAt || null,
+        hasSchedules: summaryData.hasSchedules ?? false,
+        totalEmployees: summaryData.totalEmployees ?? 0,
+        allEmployeesConfirmed:
+          summaryData.allEmployeesConfirmed ?? false
+      }
       : null
 
     rawSchedules.value = schedules
@@ -2009,7 +2007,8 @@ async function fetchSchedules({ reset = false } = {}) {
       if (!targetSet.has(empId)) return
       ensureEmployeeSchedule(empId)
       const d = dayjs(s.date).date()
-      const emp = employees.value.find(e => String(e._id) === empId) || {}
+      const emp =
+        employees.value.find(e => String(e._id) === empId) || {}
       scheduleMap.value[empId][d] = {
         id: s._id,
         shiftId: s.shiftId,
@@ -2017,6 +2016,8 @@ async function fetchSchedules({ reset = false } = {}) {
         subDepartment: s.subDepartment || emp.subDepartmentId
       }
     })
+
+    // ========= 取得請假資料，建立 leaveIndex =========
 
     const leaveParams = [`month=${currentMonth.value}`]
     if (hasVisibleEmployees || supervisorId) {
@@ -2031,32 +2032,62 @@ async function fetchSchedules({ reset = false } = {}) {
     if (deptId) leaveParams.push(`department=${deptId}`)
     if (subId) leaveParams.push(`subDepartment=${subId}`)
     const leaveQuery = `?${leaveParams.join('&')}`
-    const res2 = await apiFetch(`/api/schedules/leave-approvals${leaveQuery}`)
+
+    const res2 = await apiFetch(
+      `/api/schedules/leave-approvals${leaveQuery}`
+    )
     if (res2?.ok && typeof res2.json === 'function') {
       const extra = await res2.json()
-      const approvals = Array.isArray(extra?.approvals) ? extra.approvals : []
+      const approvals = Array.isArray(extra?.approvals)
+        ? extra.approvals
+        : []
       const leaves = Array.isArray(extra?.leaves) ? extra.leaves : []
+
       approvalList.value = approvals
-      const monthStart = dayjs(`${currentMonth.value}-01`).startOf('day')
+
+      const nextLeaveIndex = {}
+
+      const monthStart = dayjs(`${currentMonth.value}-01`).startOf(
+        'day'
+      )
       const monthEnd = monthStart.endOf('month').startOf('day')
+
       leaves.forEach(l => {
-        if (l.status !== 'approved') return
+        // 只把「已核准」視為請假；pending / rejected 都不算
+        const leaveStatus = String(
+          l.status || l.decision || ''
+        ).toLowerCase()
+        if (leaveStatus !== 'approved') return
+
         const rawEmp = l.employee?._id || l.employee
         if (!rawEmp) return
         const empId = String(rawEmp)
+
         const isVisibleEmployee =
           targetSet.size > 0
             ? targetSet.has(empId)
-            : employees.value.some(e => String(e?._id) === empId)
+            : employees.value.some(
+              e => String(e?._id) === empId
+            )
         if (!isVisibleEmployee) return
+
         ensureEmployeeSchedule(empId)
+
         const startDate = dayjs(l.startDate).startOf('day')
         const endDate = dayjs(l.endDate).startOf('day')
         if (!startDate.isValid() || !endDate.isValid()) return
-        let pointer = startDate.isBefore(monthStart) ? monthStart : startDate
-        const boundary = endDate.isAfter(monthEnd) ? monthEnd : endDate
+
+        let pointer =
+          startDate.isBefore(monthStart) ? monthStart : startDate
+        const boundary =
+          endDate.isAfter(monthEnd) ? monthEnd : endDate
+
         while (!pointer.isAfter(boundary)) {
           const dayNum = pointer.date()
+
+          if (!nextLeaveIndex[empId]) nextLeaveIndex[empId] = {}
+          nextLeaveIndex[empId][dayNum] = true
+
           const cell = scheduleMap.value?.[empId]?.[dayNum]
           if (cell) {
             cell.leave = {
@@ -2066,15 +2097,25 @@ async function fetchSchedules({ reset = false } = {}) {
               excludesHours: true
             }
           }
+
           pointer = pointer.add(1, 'day')
         }
       })
+
+      leaveIndex.value = nextLeaveIndex
     } else {
       approvalList.value = []
+      leaveIndex.value = {}
     }
-    const supervisorIdForCheck = getStoredSupervisorId() || getSupervisorIdFromStorage()
+
+    // ========= 主管自己是否有排班提示 =========
+
+    const supervisorIdForCheck =
+      getStoredSupervisorId() || getSupervisorIdFromStorage()
     const shouldCheckSupervisorSchedule =
-      includeSelf.value && showIncludeSelfToggle.value && supervisorIdForCheck
+      includeSelf.value &&
+      showIncludeSelfToggle.value &&
+      supervisorIdForCheck
     if (shouldCheckSupervisorSchedule) {
       const hasSupervisorSchedule = schedules.some(s => {
         const rawEmp = s?.employee?._id || s?.employee
@@ -2096,9 +2137,11 @@ async function fetchSchedules({ reset = false } = {}) {
     } else if (missingSupervisorScheduleNoticeKey.value) {
       missingSupervisorScheduleNoticeKey.value = ''
     }
+
     const updated = new Set(loadedEmployeeIds.value)
     targetEmployees.forEach(id => updated.add(id))
     loadedEmployeeIds.value = updated
+
     pruneSelections()
   } catch (err) {
     console.error(err)
@@ -2108,6 +2151,8 @@ async function fetchSchedules({ reset = false } = {}) {
     isFetchingSchedules.value = false
   }
 }
+
+// ========= 分頁 =========
 
 function onPageChange(page) {
   currentPage.value = page
@@ -2120,6 +2165,8 @@ function onPageSizeChange(size) {
   fetchSchedules()
 }
 
+// ========= 審批明細 =========
+
 async function openDetail(id) {
   if (!id) return
   detail.visible = false
@@ -2129,9 +2176,13 @@ async function openDetail(id) {
   const data = await res.json()
   detail.doc = data
   detail.visible = true
-  const steps = Array.isArray(detail.doc?.steps) ? detail.doc.steps : []
+  const steps = Array.isArray(detail.doc?.steps)
+    ? detail.doc.steps
+    : []
   steps.forEach(step => {
-    const approvers = Array.isArray(step?.approvers) ? step.approvers : []
+    const approvers = Array.isArray(step?.approvers)
+      ? step.approvers
+      : []
     approvers.forEach(a => {
       if (a?.approver?._id && a?.approver?.name) {
         employeeNameCache[a.approver._id] = a.approver.name
@@ -2139,6 +2190,8 @@ async function openDetail(id) {
     })
   })
 }
+
+// ========= 預覽 / 匯出 =========
 
 function preview(type) {
   sessionStorage.setItem(
@@ -2150,7 +2203,9 @@ function preview(type) {
       shifts: shifts.value
     })
   )
-  router.push({ name: type === 'week' ? 'PreviewWeek' : 'PreviewMonth' })
+  router.push({
+    name: type === 'week' ? 'PreviewWeek' : 'PreviewMonth'
+  })
 }
 
 async function exportSchedules(format) {
@@ -2163,9 +2218,8 @@ async function exportSchedules(format) {
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `schedules-${currentMonth.value}.${
-      format === 'excel' ? 'xlsx' : 'pdf'
-    }`
+    a.download = `schedules-${currentMonth.value}.${format === 'excel' ? 'xlsx' : 'pdf'
+      }`
     a.click()
     URL.revokeObjectURL(url)
   } catch (err) {
@@ -2173,14 +2227,21 @@ async function exportSchedules(format) {
   }
 }
 
+// ========= 單格即時排班（非批次）=========
+
 async function onSelect(empId, day, value) {
   const dateStr = `${currentMonth.value}-${String(day).padStart(2, '0')}`
   const existing = scheduleMap.value[empId][day]
-  if (existing?.leave) {
+
+  // 該格只要被視為請假，就直接擋掉
+  if (existing?.leave || isLeaveCell(empId, day)) {
     callInfo('該日已核准請假，無法調整排班')
     return
   }
+
   const prev = existing?.shiftId ?? ''
+
+  // 已有 schedule -> 更新
   if (existing && existing.id) {
     try {
       const res = await apiFetch(`/api/schedules/${existing.id}`, {
@@ -2193,12 +2254,27 @@ async function onSelect(empId, day, value) {
         })
       })
       if (!res.ok) {
-        await handleScheduleError(res, '更新排班失敗', empId, day, prev)
+        await handleScheduleError(
+          res,
+          '更新排班失敗',
+          empId,
+          day,
+          prev
+        )
+      } else {
+        await fetchSummary()
       }
     } catch (err) {
-      await handleScheduleError(null, '更新排班失敗', empId, day, prev)
+      await handleScheduleError(
+        null,
+        '更新排班失敗',
+        empId,
+        day,
+        prev
+      )
     }
   } else {
+    // 沒有 schedule -> 新增
     try {
       const res = await apiFetch('/api/schedules', {
         method: 'POST',
@@ -2219,14 +2295,29 @@ async function onSelect(empId, day, value) {
           department: existing.department,
           subDepartment: existing.subDepartment
         }
+        await fetchSummary()
       } else {
-        await handleScheduleError(res, '新增排班失敗', empId, day, prev)
+        await handleScheduleError(
+          res,
+          '新增排班失敗',
+          empId,
+          day,
+          prev
+        )
       }
     } catch (err) {
-      await handleScheduleError(null, '新增排班失敗', empId, day, prev)
+      await handleScheduleError(
+        null,
+        '新增排班失敗',
+        empId,
+        day,
+        prev
+      )
     }
   }
 }
+
+// ========= 篩選切換 =========
 
 async function onDepartmentChange() {
   selectedSubDepartment.value = ''
@@ -2234,32 +2325,48 @@ async function onDepartmentChange() {
   await fetchEmployees(selectedDepartment.value, '')
   currentPage.value = 1
   await fetchSchedules({ reset: true })
+  await fetchSummary()
 }
 
 async function onSubDepartmentChange() {
-  await fetchEmployees(selectedDepartment.value, selectedSubDepartment.value)
+  await fetchEmployees(
+    selectedDepartment.value,
+    selectedSubDepartment.value
+  )
   currentPage.value = 1
   await fetchSchedules({ reset: true })
+  await fetchSummary()
 }
 
-async function handleScheduleError(res, defaultMsg, empId, day, prev) {
+// ========= 單筆錯誤處理 =========
+
+async function handleScheduleError(
+  res,
+  defaultMsg,
+  empId,
+  day,
+  prev
+) {
   if (!scheduleMap.value[empId]) {
     scheduleMap.value[empId] = {}
   }
-  const current = scheduleMap.value[empId][day] || {
-    shiftId: '',
-    department: '',
-    subDepartment: ''
-  }
+  const current =
+    scheduleMap.value[empId][day] || {
+      shiftId: '',
+      department: '',
+      subDepartment: ''
+    }
   current.shiftId = prev
   scheduleMap.value[empId][day] = current
+
   let msg = ''
   try {
     if (res) {
       const data = await res.json()
       msg = data?.error || ''
     }
-  } catch (e) {}
+  } catch (e) { }
+
   if (msg === 'employee conflict') {
     ElMessageBox.alert('人員衝突')
   } else if (msg === 'department overlap') {
@@ -2271,6 +2378,8 @@ async function handleScheduleError(res, defaultMsg, empId, day, prev) {
   }
 }
 
+// ========= 批次套用 =========
+
 async function handleBatchApiError(res, defaultMsg = '批次套用失敗') {
   let msg = ''
   try {
@@ -2278,7 +2387,7 @@ async function handleBatchApiError(res, defaultMsg = '批次套用失敗') {
       const data = await res.json()
       msg = data?.error || ''
     }
-  } catch (err) {}
+  } catch (err) { }
   if (msg === 'employee conflict') {
     ElMessage.warning('部分員工既有排班已更新，請重新整理檢查')
   } else if (msg === 'department overlap') {
@@ -2301,18 +2410,25 @@ async function applyBatch() {
     callWarning('請選擇欲套用的班別')
     return
   }
+
   const batchPayload = []
+
   allSelectedCells.value.forEach(key => {
     const { empId, day } = parseCellKey(key)
     const info = scheduleMap.value[empId]?.[day]
-    if (!info || info.leave) return
+
+    // 沒資料或本月被視為請假 → 略過
+    if (!info || isLeaveCell(empId, day)) return
+
     const department = batchDepartment.value || info.department || ''
     let subDepartment = info.subDepartment || ''
+
     if (batchDepartment.value) {
       subDepartment = batchSubDepartment.value || ''
     } else if (batchSubDepartment.value) {
       subDepartment = batchSubDepartment.value
     }
+
     batchPayload.push({
       employee: empId,
       day,
@@ -2324,7 +2440,7 @@ async function applyBatch() {
   })
 
   if (!batchPayload.length) {
-    callInfo('選取的儲存格皆無需更新')
+    callInfo('選取的儲存格皆無需更新（或皆為請假日）')
     return
   }
 
@@ -2354,6 +2470,7 @@ async function applyBatch() {
       await handleBatchApiError(null)
       return
     }
+
     if (!res.ok) {
       await handleBatchApiError(res)
       return
@@ -2372,27 +2489,38 @@ async function applyBatch() {
       if (!scheduleMap.value[empId]) {
         scheduleMap.value[empId] = {}
       }
+
       const key = buildCellKey(empId, d)
       const payload = payloadMap.get(key) || {}
       const current = scheduleMap.value[empId][d] || {}
+
       scheduleMap.value[empId][d] = {
         ...current,
         id: entry._id || payload.id || current.id,
         shiftId: entry.shiftId || payload.shiftId || current.shiftId,
         department:
-          payload.department ?? entry.department ?? current.department ?? '',
+          payload.department ??
+          entry.department ??
+          current.department ??
+          '',
         subDepartment:
-          payload.subDepartment ?? entry.subDepartment ?? current.subDepartment ?? ''
+          payload.subDepartment ??
+          entry.subDepartment ??
+          current.subDepartment ??
+          ''
       }
-      delete scheduleMap.value[empId][d].leave
+      // leave 標記由 leaveIndex + 後端請假資料決定，這裡不主動刪掉
     })
 
     callSuccess('批次套用完成')
+    await fetchSummary()
   } finally {
     loadingInstance?.close()
     isApplyingBatch.value = false
   }
 }
+
+// ========= 共用小工具 =========
 
 function shiftInfo(id) {
   return shifts.value.find(s => s._id === id)
@@ -2419,19 +2547,27 @@ function subDepsFor(deptId) {
   return subDepartments.value.filter(s => s.department === deptId)
 }
 
-async function fetchEmployees(department = '', subDepartment = '') {
+async function fetchEmployees(
+  department = '',
+  subDepartment = ''
+) {
   const supervisorId = getStoredSupervisorId()
   const params = []
-  const deptId = department || selectedDepartment.value || supervisorDepartmentId.value
+  const deptId =
+    department ||
+    selectedDepartment.value ||
+    supervisorDepartmentId.value
   const subId = subDepartment || selectedSubDepartment.value
   if (supervisorId) params.push(`supervisor=${supervisorId}`)
   if (deptId) params.push(`department=${deptId}`)
   if (subId) params.push(`subDepartment=${subId}`)
-  const url = `/api/employees${params.length ? `?${params.join('&')}` : ''}`
+  const url = `/api/employees${params.length ? `?${params.join('&')}` : ''
+    }`
   try {
     const empRes = await apiFetch(url)
     if (!empRes.ok) throw new Error('Failed to fetch employees')
-    const payload = typeof empRes.json === 'function' ? await empRes.json() : []
+    const payload =
+      typeof empRes.json === 'function' ? await empRes.json() : []
     const empData = Array.isArray(payload) ? payload : []
     const deptMap = departments.value.reduce((acc, d) => {
       acc[d._id] = d.name
@@ -2441,40 +2577,47 @@ async function fetchEmployees(department = '', subDepartment = '') {
       acc[s._id] = s.name
       return acc
     }, {})
-    const normalized = empData
-      .map(e => {
-        const id = e?._id ?? e?.id ?? ''
-        const deptId = e?.department ?? ''
-        const subId = e?.subDepartment ?? ''
-        const normalizedId = id ? String(id) : ''
-        const normalizedDept = deptId ? String(deptId) : ''
-        const normalizedSub = subId ? String(subId) : ''
-        return {
-          _id: normalizedId,
-          name: e.name,
-          departmentId: normalizedDept,
-          subDepartmentId: normalizedSub,
-          department: deptMap[normalizedDept] || '',
-          subDepartment: subMap[normalizedSub] || ''
-        }
-      })
+    const normalized = empData.map(e => {
+      const id = e?._id ?? e?.id ?? ''
+      const deptId = e?.department ?? ''
+      const subId = e?.subDepartment ?? ''
+      const normalizedId = id ? String(id) : ''
+      const normalizedDept = deptId ? String(deptId) : ''
+      const normalizedSub = subId ? String(subId) : ''
+      return {
+        _id: normalizedId,
+        name: e.name,
+        departmentId: normalizedDept,
+        subDepartmentId: normalizedSub,
+        department: deptMap[normalizedDept] || '',
+        subDepartment: subMap[normalizedSub] || ''
+      }
+    })
+
     let next = sortEmployeesByDept(normalized)
+
     if (includeSelf.value && showIncludeSelfToggle.value) {
       const supervisorIdStr = supervisorId ? String(supervisorId) : ''
-      if (supervisorIdStr && !next.some(e => e._id === supervisorIdStr)) {
+      if (
+        supervisorIdStr &&
+        !next.some(e => e._id === supervisorIdStr)
+      ) {
         next = sortEmployeesByDept([
           ...next,
           {
             _id: supervisorIdStr,
             name: supervisorProfile.value?.name || '主管本人',
             departmentId: supervisorDepartmentId.value || '',
-            subDepartmentId: supervisorSubDepartmentId.value || '',
+            subDepartmentId:
+              supervisorSubDepartmentId.value || '',
             department: supervisorDepartmentName.value || '',
-            subDepartment: supervisorSubDepartmentName.value || ''
+            subDepartment:
+              supervisorSubDepartmentName.value || ''
           }
         ])
       }
     }
+
     employees.value = next
     pruneSelections()
   } catch (err) {
@@ -2483,33 +2626,59 @@ async function fetchEmployees(department = '', subDepartment = '') {
   }
 }
 
+// ========= Summary =========
+
 async function fetchSummary() {
   try {
     const params = [`month=${currentMonth.value}`]
+    if (selectedDepartment.value) {
+      params.push(`department=${selectedDepartment.value}`)
+    }
+    if (selectedSubDepartment.value) {
+      params.push(`subDepartment=${selectedSubDepartment.value}`)
+    }
     if (includeSelf.value && showIncludeSelfToggle.value) {
       params.push('includeSelf=true')
     }
-    const res = await apiFetch(`/api/schedules/summary?${params.join('&')}`)
-    if (res.ok) {
-      const data = await res.json()
-      summary.value = {
-        direct: data.length,
-        unscheduled: data.filter(e => e.shiftCount === 0).length,
-        onLeave: data.filter(e => e.leaveCount > 0).length
-      }
+
+    const res = await apiFetch(
+      `/api/schedules/summary?${params.join('&')}`
+    )
+    if (!res.ok) return
+
+    const data = await res.json()
+    const list = Array.isArray(data) ? data : []
+
+    const daysInMonth = dayjs(`${currentMonth.value}-01`).daysInMonth()
+
+    summary.value = {
+      direct: list.length,
+      unscheduled: list.filter(e => {
+        const shiftCount = Number(e.shiftCount || 0)
+        const leaveCount = Number(e.leaveCount || 0)
+        const filledDays = shiftCount + leaveCount
+        return filledDays < daysInMonth
+      }).length,
+      onLeave: list.filter(e => Number(e.leaveCount || 0) > 0).length
     }
   } catch (err) {
     console.error(err)
   }
 }
 
+// ========= 月份切換 =========
+
 async function onMonthChange(value) {
   const next = value ? dayjs(value) : dayjs()
-  currentMonth.value = next.isValid() ? next.format('YYYY-MM') : dayjs().format('YYYY-MM')
+  currentMonth.value = next.isValid()
+    ? next.format('YYYY-MM')
+    : dayjs().format('YYYY-MM')
   currentPage.value = 1
   await fetchSchedules({ reset: true })
   await fetchSummary()
 }
+
+// ========= 初始化 =========
 
 onMounted(async () => {
   const supervisorId = getSupervisorIdFromStorage()
@@ -2522,13 +2691,17 @@ onMounted(async () => {
     await fetchShiftOptions()
     await fetchSupervisorContext()
     await fetchOptions()
-    await fetchEmployees(selectedDepartment.value, selectedSubDepartment.value)
+    await fetchEmployees(
+      selectedDepartment.value,
+      selectedSubDepartment.value
+    )
     await fetchSchedules({ reset: true })
   } finally {
     isInitializingIncludeSelf = false
   }
 })
 </script>
+
 
 <style scoped lang="scss">
 @use "element-plus/theme-chalk/src/common/var.scss" as *;
@@ -2544,7 +2717,7 @@ onMounted(async () => {
 .page-header {
   margin-bottom: 32px;
   text-align: center;
-  
+
   .page-title {
     font-size: 2.5rem;
     font-weight: 800;
@@ -2552,7 +2725,7 @@ onMounted(async () => {
     margin: 0 0 8px 0;
     letter-spacing: -0.025em;
   }
-  
+
   .page-subtitle {
     font-size: 1.125rem;
     color: #475569;
@@ -2561,7 +2734,11 @@ onMounted(async () => {
   }
 }
 
-.filters-card, .publish-card, .actions-card, .schedule-card, .approval-card {
+.filters-card,
+.publish-card,
+.actions-card,
+.schedule-card,
+.approval-card {
   background: white;
   border-radius: 16px;
   box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
@@ -2574,7 +2751,7 @@ onMounted(async () => {
   .filters-header {
     background: linear-gradient(135deg, #164e63 0%, #0891b2 100%);
     padding: 20px 24px;
-    
+
     .filters-title {
       color: white;
       font-size: 1.25rem;
@@ -2582,19 +2759,19 @@ onMounted(async () => {
       margin: 0;
     }
   }
-  
+
   .filters-content {
     padding: 24px;
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
     gap: 20px;
   }
-  
+
   .filter-group {
     display: flex;
     flex-direction: column;
     gap: 8px;
-    
+
     .filter-label {
       font-weight: 600;
       color: #164e63;
@@ -2888,16 +3065,17 @@ onMounted(async () => {
   }
 }
 
-.modern-date-picker, .modern-select {
+.modern-date-picker,
+.modern-select {
   ::v-deep(.el-input__wrapper) {
     border-radius: 8px;
     border: 2px solid #ecfeff;
     transition: all 0.2s ease;
-    
+
     &:hover {
       border-color: #10b981;
     }
-    
+
     &.is-focus {
       border-color: #10b981;
       box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.1);
@@ -2912,8 +3090,9 @@ onMounted(async () => {
   align-items: center;
   flex-wrap: wrap;
   gap: 16px;
-  
-  .primary-actions, .secondary-actions {
+
+  .primary-actions,
+  .secondary-actions {
     display: flex;
     gap: 12px;
     flex-wrap: wrap;
@@ -2943,7 +3122,7 @@ onMounted(async () => {
   font-weight: 600;
   padding: 12px 20px;
   transition: all 0.2s ease;
-  
+
   &.primary {
     background: linear-gradient(135deg, #10b981 0%, #059669 100%);
     border: none;
@@ -2974,19 +3153,19 @@ onMounted(async () => {
     background: white;
     border: 2px solid #164e63;
     color: #164e63;
-    
+
     &:hover {
       background: #164e63;
       color: white;
       transform: translateY(-1px);
     }
   }
-  
+
   &.export {
     background: white;
     border: 2px solid #10b981;
     color: #10b981;
-    
+
     &:hover {
       background: #10b981;
       color: white;
@@ -3004,19 +3183,19 @@ onMounted(async () => {
     align-items: center;
     flex-wrap: wrap;
     gap: 16px;
-    
+
     .schedule-title {
       color: #164e63;
       font-size: 1.25rem;
       font-weight: 700;
       margin: 0;
     }
-    
+
     .schedule-legend {
       display: flex;
       gap: 12px;
       flex-wrap: wrap;
-      
+
       .legend-item {
         padding: 4px 12px;
         border-radius: 20px;
@@ -3045,6 +3224,7 @@ onMounted(async () => {
     .employee-search {
       max-width: 200px;
     }
+
     .status-filter {
       max-width: 160px;
     }
@@ -3075,7 +3255,7 @@ onMounted(async () => {
       border-bottom: 2px solid #ecfeff;
     }
   }
-  
+
   ::v-deep(.el-table__row) {
     &:hover {
       background-color: #f8fafc !important;
@@ -3095,7 +3275,7 @@ onMounted(async () => {
     color: #164e63;
     font-size: 0.875rem;
   }
-  
+
   .sub-department {
     font-size: 0.75rem;
     color: #64748b;
@@ -3117,8 +3297,14 @@ onMounted(async () => {
 
 .status-icon {
   margin-right: 4px;
-  &.unscheduled { color: #dc2626; }
-  &.on-leave { color: #f59e0b; }
+
+  &.unscheduled {
+    color: #dc2626;
+  }
+
+  &.on-leave {
+    color: #f59e0b;
+  }
 }
 
 .day-header {
@@ -3146,15 +3332,13 @@ onMounted(async () => {
   border: 1px solid rgba(203, 213, 225, 0.6);
 
   &.has-shift {
-    background: linear-gradient(
-      135deg,
-      var(--shift-cell-bg-start, #f1f5f9) 0%,
-      var(--shift-cell-bg-end, #e2e8f0) 100%
-    );
+    background: linear-gradient(135deg,
+        var(--shift-cell-bg-start, #f1f5f9) 0%,
+        var(--shift-cell-bg-end, #e2e8f0) 100%);
     border: 1px solid var(--shift-border-color, #cbd5e1);
     color: var(--shift-text-color, #0f172a);
   }
-  
+
   &.has-leave {
     background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
     border: 1px solid #fbbf24;
@@ -3226,12 +3410,12 @@ onMounted(async () => {
     display: flex;
     justify-content: space-between;
     margin-bottom: 8px;
-    
+
     .detail-label {
       font-weight: 600;
       color: #475569;
     }
-    
+
     .detail-value {
       color: #164e63;
       font-weight: 500;
@@ -3286,6 +3470,7 @@ onMounted(async () => {
   align-items: center;
   justify-content: center;
   height: 100%;
+
   &::before {
     content: '⚠';
     margin-right: 4px;
@@ -3308,14 +3493,14 @@ onMounted(async () => {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    
+
     .approval-title {
       color: white;
       font-size: 1.25rem;
       font-weight: 600;
       margin: 0;
     }
-    
+
     .approval-count {
       background: rgba(255, 255, 255, 0.2);
       color: white;
@@ -3335,7 +3520,8 @@ onMounted(async () => {
   }
 }
 
-.applicant-name, .form-type {
+.applicant-name,
+.form-type {
   font-weight: 500;
   color: #1e293b;
 }
@@ -3349,29 +3535,30 @@ onMounted(async () => {
   .schedule-page {
     padding: 16px;
   }
-  
+
   .page-header .page-title {
     font-size: 2rem;
   }
-  
+
   .filters-content {
     grid-template-columns: 1fr;
   }
-  
+
   .actions-card {
     flex-direction: column;
     align-items: stretch;
-    
-    .primary-actions, .secondary-actions {
+
+    .primary-actions,
+    .secondary-actions {
       justify-content: center;
     }
   }
-  
+
   .schedule-header {
     flex-direction: column;
     align-items: flex-start;
   }
-  
+
   .modern-schedule-table {
     ::v-deep(.el-table__fixed-column--left) {
       z-index: 10;
