@@ -60,6 +60,12 @@ async function seed() {
     salaryAccountA: user.salaryAccountA,
     salaryAccountB: user.salaryAccountB,
     salaryItems: user.salaryItems,
+    // 勞保設定
+    laborInsuranceLevel: user.laborInsuranceLevel,
+    autoDeduction: user.autoDeduction,
+    autoOvertimeCalc: user.autoOvertimeCalc,
+    lateDeductionEnabled: user.lateDeductionEnabled,
+    lateDeductionAmount: user.lateDeductionAmount,
   });
 
   supervisors.forEach((supervisor) => {
