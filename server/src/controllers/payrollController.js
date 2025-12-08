@@ -230,7 +230,7 @@ export async function getMonthlyPayrollOverview(req, res) {
     const employees = await Employee.find(employeeQuery)
       .populate('department')
       .populate('subDepartment')
-      .select('employeeId name department subDepartment organization salaryAmount salaryType laborPensionSelf employeeAdvance salaryAccountA salaryAccountB');
+      .select('employeeId name department subDepartment organization salaryAmount salaryType');
     
     if (employees.length === 0) {
       return res.json([]);
@@ -262,7 +262,7 @@ export async function getMonthlyPayrollOverview(req, res) {
           // Note: We don't save the calculated payroll automatically, just return it for preview
           payroll = calculatedPayroll;
         } catch (error) {
-          console.error(`Error calculating payroll for employee ${employeeIdStr}:`, error.message);
+          console.error(`Error calculating payroll for employee ${employeeIdStr}:`, error);
           // If calculation fails, use default values
           payroll = null;
         }

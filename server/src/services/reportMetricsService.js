@@ -797,7 +797,8 @@ export async function getDepartmentReportData({ type, month, departmentId, actor
     return data;
   }
 
-  // Return empty data structure for unknown report types
+  // Log warning for unknown report types but return empty data to avoid breaking API
+  console.warn(`Unknown report type requested: ${type}. Returning empty data.`);
   return { summary: {}, records: [] };
 }
 
