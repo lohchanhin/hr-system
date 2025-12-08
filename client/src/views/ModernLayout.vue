@@ -222,6 +222,7 @@ function logout() {
 .modern-layout {
   height: 100vh;
   background: #f8fafc;
+  padding-top: 64px;
 }
 
 .layout-header {
@@ -233,6 +234,11 @@ function logout() {
   border-bottom: none;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
   padding: 0 24px;
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 1000;
 }
 
 .header-left {
