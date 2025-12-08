@@ -7,6 +7,12 @@ import {
   savePayrollRecord,
   getEmployeePayrollRecords 
 } from '../services/payrollService.js';
+import { 
+  calculateWorkHours,
+  calculateLeaveImpact,
+  calculateOvertimePay,
+  calculateCompleteWorkData
+} from '../services/workHoursCalculationService.js';
 import { initializeLaborInsuranceRates } from '../services/laborInsuranceService.js';
 import { generatePayrollExcel } from '../services/payrollExportService.js';
 
@@ -278,6 +284,19 @@ export async function getMonthlyPayrollOverview(req, res) {
         subDepartmentId: employee.subDepartment?._id,
         organization: employee.organization || '',
         salaryType: employee.salaryType || '月薪',
+        // Work hours data
+        workDays: payroll?.workDays || 0,
+        scheduledHours: payroll?.scheduledHours || 0,
+        actualWorkHours: payroll?.actualWorkHours || 0,
+        hourlyRate: payroll?.hourlyRate || 0,
+        // Leave data
+        leaveHours: payroll?.leaveHours || 0,
+        paidLeaveHours: payroll?.paidLeaveHours || 0,
+        unpaidLeaveHours: payroll?.unpaidLeaveHours || 0,
+        leaveDeduction: payroll?.leaveDeduction || 0,
+        // Overtime data
+        overtimeHours: payroll?.overtimeHours || 0,
+        overtimePay: payroll?.overtimePay || 0,
         // Payroll data (calculated or from existing record)
         baseSalary: payroll?.baseSalary || employee.salaryAmount || 0,
         laborInsuranceFee: payroll?.laborInsuranceFee || 0,
@@ -299,5 +318,77 @@ export async function getMonthlyPayrollOverview(req, res) {
     res.json(overview);
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+}
+
+/**
+ * 獲取員工的工作時數資料
+ */
+export async function getEmployeeWorkHours(req, res) {
+  try {
+    const { employeeId, month } = req.params;
+    
+    if (!month) {
+      return res.status(400).json({ error: 'month parameter is required' });
+    }
+    
+    const workHours = await calculateWorkHours(employeeId, month);
+    res.json(workHours);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+}
+
+/**
+ * 獲取員工的請假影響資料
+ */
+export async function getEmployeeLeaveImpact(req, res) {
+  try {
+    const { employeeId, month } = req.params;
+    
+    if (!month) {
+      return res.status(400).json({ error: 'month parameter is required' });
+    }
+    
+    const leaveImpact = await calculateLeaveImpact(employeeId, month);
+    res.json(leaveImpact);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+}
+
+/**
+ * 獲取員工的加班資料
+ */
+export async function getEmployeeOvertimePay(req, res) {
+  try {
+    const { employeeId, month } = req.params;
+    
+    if (!month) {
+      return res.status(400).json({ error: 'month parameter is required' });
+    }
+    
+    const overtimePay = await calculateOvertimePay(employeeId, month);
+    res.json(overtimePay);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+}
+
+/**
+ * 獲取員工的完整工作資料
+ */
+export async function getEmployeeCompleteWorkData(req, res) {
+  try {
+    const { employeeId, month } = req.params;
+    
+    if (!month) {
+      return res.status(400).json({ error: 'month parameter is required' });
+    }
+    
+    const completeData = await calculateCompleteWorkData(employeeId, month);
+    res.json(completeData);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
   }
 }

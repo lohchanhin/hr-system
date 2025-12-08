@@ -12,7 +12,11 @@ import {
   exportPayrollExcel,
   getLaborInsuranceRates,
   initializeLaborInsuranceRatesController,
-  getMonthlyPayrollOverview
+  getMonthlyPayrollOverview,
+  getEmployeeWorkHours,
+  getEmployeeLeaveImpact,
+  getEmployeeOvertimePay,
+  getEmployeeCompleteWorkData
 } from '../controllers/payrollController.js';
 
 const router = Router();
@@ -31,6 +35,12 @@ router.post('/calculate/save', calculateAndSavePayroll);
 
 // Employee payrolls
 router.get('/employee/:employeeId', getEmployeePayrolls);
+
+// Work hours and leave impact
+router.get('/work-hours/:employeeId/:month', getEmployeeWorkHours);
+router.get('/leave-impact/:employeeId/:month', getEmployeeLeaveImpact);
+router.get('/overtime/:employeeId/:month', getEmployeeOvertimePay);
+router.get('/complete-data/:employeeId/:month', getEmployeeCompleteWorkData);
 
 // Excel export
 router.post('/export', exportPayrollExcel);

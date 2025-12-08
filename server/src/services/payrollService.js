@@ -1,6 +1,7 @@
 import PayrollRecord from '../models/PayrollRecord.js';
 import Employee from '../models/Employee.js';
 import { findInsuranceLevelBySalary } from './laborInsuranceService.js';
+import { calculateCompleteWorkData } from './workHoursCalculationService.js';
 
 /**
  * 計算單個員工的月薪資
@@ -15,8 +16,33 @@ export async function calculateEmployeePayroll(employeeId, month, customData = {
     throw new Error('Employee not found');
   }
   
-  // 基本薪資
-  const baseSalary = customData.baseSalary ?? employee.salaryAmount ?? 0;
+  // 計算工作時數和請假影響
+  let workData = null;
+  try {
+    workData = await calculateCompleteWorkData(employeeId, month);
+  } catch (error) {
+    console.error(`Error calculating work data for employee ${employeeId}:`, error);
+    // 如果計算失敗，使用預設值
+    workData = {
+      workDays: 0,
+      scheduledHours: 0,
+      actualWorkHours: 0,
+      hourlyRate: 0,
+      dailyRate: 0,
+      leaveHours: 0,
+      paidLeaveHours: 0,
+      unpaidLeaveHours: 0,
+      sickLeaveHours: 0,
+      personalLeaveHours: 0,
+      leaveDeduction: 0,
+      overtimeHours: 0,
+      overtimePay: 0,
+      baseSalary: employee.salaryAmount ?? 0
+    };
+  }
+  
+  // 基本薪資 (優先使用自定義值，否則使用工作時數計算結果)
+  const baseSalary = customData.baseSalary ?? workData.baseSalary;
   
   // 查找勞保等級
   const insuranceRate = await findInsuranceLevelBySalary(baseSalary);
@@ -47,11 +73,12 @@ export async function calculateEmployeePayroll(employeeId, month, customData = {
     console.warn(`Warning: Total deductions (${totalDeductions}) exceed base salary (${baseSalary}) for employee ${employeeId}`);
   }
   
-  // 獎金項目 (Stage B)
+  // 獎金項目 (Stage B) - 加班費加入獎金
   const nightShiftAllowance = customData.nightShiftAllowance ?? 0;
   const performanceBonus = customData.performanceBonus ?? 0;
   const otherBonuses = customData.otherBonuses ?? 0;
-  const totalBonus = nightShiftAllowance + performanceBonus + otherBonuses;
+  const overtimePay = customData.overtimePay ?? workData.overtimePay ?? 0;
+  const totalBonus = nightShiftAllowance + performanceBonus + otherBonuses + overtimePay;
   
   // 銀行帳戶資訊
   const bankAccountA = {
@@ -69,6 +96,27 @@ export async function calculateEmployeePayroll(employeeId, month, customData = {
   return {
     employee: employeeId,
     month: new Date(month),
+    
+    // 工作時數資料
+    workDays: customData.workDays ?? workData.workDays ?? 0,
+    scheduledHours: customData.scheduledHours ?? workData.scheduledHours ?? 0,
+    actualWorkHours: customData.actualWorkHours ?? workData.actualWorkHours ?? 0,
+    hourlyRate: customData.hourlyRate ?? workData.hourlyRate ?? 0,
+    dailyRate: customData.dailyRate ?? workData.dailyRate ?? 0,
+    
+    // 請假資料
+    leaveHours: customData.leaveHours ?? workData.leaveHours ?? 0,
+    paidLeaveHours: customData.paidLeaveHours ?? workData.paidLeaveHours ?? 0,
+    unpaidLeaveHours: customData.unpaidLeaveHours ?? workData.unpaidLeaveHours ?? 0,
+    sickLeaveHours: customData.sickLeaveHours ?? workData.sickLeaveHours ?? 0,
+    personalLeaveHours: customData.personalLeaveHours ?? workData.personalLeaveHours ?? 0,
+    leaveDeduction: customData.leaveDeduction ?? workData.leaveDeduction ?? 0,
+    
+    // 加班資料
+    overtimeHours: customData.overtimeHours ?? workData.overtimeHours ?? 0,
+    overtimePay,
+    
+    // 薪資計算
     baseSalary,
     laborInsuranceFee,
     healthInsuranceFee,
