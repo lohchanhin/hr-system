@@ -3,13 +3,32 @@ import express from 'express';
 import { jest } from '@jest/globals';
 
 const saveMock = jest.fn();
+const findOneAndUpdateMock = jest.fn();
 const mockPayrollRecord = jest.fn().mockImplementation((data = {}) => ({
   ...data,
   save: saveMock
 }));
-mockPayrollRecord.find = jest.fn(() => ({ populate: jest.fn().mockResolvedValue([]) }));
+mockPayrollRecord.find = jest.fn(() => ({ 
+  populate: jest.fn().mockReturnThis(),
+  sort: jest.fn().mockResolvedValue([])
+}));
+mockPayrollRecord.findOneAndUpdate = findOneAndUpdateMock;
+
+const mockEmployee = {
+  findById: jest.fn()
+};
+
+const mockLaborInsuranceRate = {
+  find: jest.fn().mockReturnThis(),
+  findOne: jest.fn().mockReturnThis(),
+  findOneAndUpdate: jest.fn(),
+  sort: jest.fn().mockReturnThis(),
+  limit: jest.fn()
+};
 
 jest.unstable_mockModule('../src/models/PayrollRecord.js', () => ({ default: mockPayrollRecord }));
+jest.unstable_mockModule('../src/models/Employee.js', () => ({ default: mockEmployee }));
+jest.unstable_mockModule('../src/models/LaborInsuranceRate.js', () => ({ default: mockLaborInsuranceRate }));
 
 let app;
 let payrollRoutes;
@@ -24,19 +43,42 @@ beforeAll(async () => {
 beforeEach(() => {
   saveMock.mockReset();
   mockPayrollRecord.find.mockReset();
+  findOneAndUpdateMock.mockReset();
+  mockEmployee.findById.mockReset();
+  mockLaborInsuranceRate.find.mockReset();
+  mockLaborInsuranceRate.findOne.mockReset();
+  mockLaborInsuranceRate.findOneAndUpdate.mockReset();
+  mockLaborInsuranceRate.sort.mockReset();
+  mockLaborInsuranceRate.limit.mockReset();
+  
+  // Reset chaining
+  mockPayrollRecord.find.mockReturnValue({
+    populate: jest.fn().mockReturnThis(),
+    sort: jest.fn().mockResolvedValue([])
+  });
+  mockLaborInsuranceRate.find.mockReturnValue(mockLaborInsuranceRate);
+  mockLaborInsuranceRate.findOne.mockReturnValue(mockLaborInsuranceRate);
+  mockLaborInsuranceRate.sort.mockReturnValue(mockLaborInsuranceRate);
+  mockLaborInsuranceRate.limit.mockReturnValue(mockLaborInsuranceRate);
 });
 
 describe('Payroll API', () => {
   it('lists payroll records', async () => {
     const fakeRecords = [{ amount: 100 }];
-    mockPayrollRecord.find.mockReturnValue({ populate: jest.fn().mockResolvedValue(fakeRecords) });
+    mockPayrollRecord.find.mockReturnValue({ 
+      populate: jest.fn().mockReturnThis(),
+      sort: jest.fn().mockResolvedValue(fakeRecords)
+    });
     const res = await request(app).get('/api/payroll');
     expect(res.status).toBe(200);
     expect(res.body).toEqual(fakeRecords);
   });
 
   it('returns 500 if listing fails', async () => {
-    mockPayrollRecord.find.mockReturnValue({ populate: jest.fn().mockRejectedValue(new Error('fail')) });
+    mockPayrollRecord.find.mockReturnValue({ 
+      populate: jest.fn().mockReturnThis(),
+      sort: jest.fn().mockRejectedValue(new Error('fail'))
+    });
     const res = await request(app).get('/api/payroll');
     expect(res.status).toBe(500);
     expect(res.body).toEqual({ error: 'fail' });
@@ -49,5 +91,135 @@ describe('Payroll API', () => {
     expect(res.status).toBe(201);
     expect(saveMock).toHaveBeenCalled();
     expect(res.body).toMatchObject(payload);
+  });
+
+  describe('Payroll Calculation', () => {
+    it('calculates payroll for an employee', async () => {
+      const employeeId = 'emp123';
+      const month = '2025-11-01';
+      
+      mockEmployee.findById.mockResolvedValue({
+        _id: employeeId,
+        name: 'Test Employee',
+        salaryAmount: 45600,
+        laborPensionSelf: 2748,
+        employeeAdvance: 0,
+        salaryAccountA: { bank: 'Taiwan Bank', acct: '12345' },
+        salaryAccountB: { bank: 'Taichung Bank', acct: '67890' }
+      });
+      
+      mockLaborInsuranceRate.limit.mockResolvedValue({
+        level: 28,
+        workerFee: 1145,
+        employerFee: 4008,
+        insuredSalary: 45800
+      });
+      
+      const res = await request(app)
+        .post('/api/payroll/calculate')
+        .send({
+          employeeId,
+          month,
+          customData: {
+            healthInsuranceFee: 710
+          }
+        });
+      
+      expect(res.status).toBe(200);
+      expect(res.body).toHaveProperty('baseSalary');
+      expect(res.body).toHaveProperty('netPay');
+      expect(res.body).toHaveProperty('laborInsuranceFee');
+    });
+
+    it('returns 400 if employeeId or month is missing', async () => {
+      const res = await request(app)
+        .post('/api/payroll/calculate')
+        .send({ employeeId: 'emp123' });
+      
+      expect(res.status).toBe(400);
+      expect(res.body).toHaveProperty('error');
+    });
+
+    it('calculates and saves payroll', async () => {
+      const employeeId = 'emp123';
+      const month = '2025-11-01';
+      
+      mockEmployee.findById.mockResolvedValue({
+        _id: employeeId,
+        name: 'Test Employee',
+        salaryAmount: 45600,
+        laborPensionSelf: 2748,
+        employeeAdvance: 0,
+        salaryAccountA: { bank: 'Taiwan Bank', acct: '12345' },
+        salaryAccountB: { bank: 'Taichung Bank', acct: '67890' }
+      });
+      
+      mockLaborInsuranceRate.limit.mockResolvedValue({
+        level: 28,
+        workerFee: 1145,
+        employerFee: 4008,
+        insuredSalary: 45800
+      });
+      
+      findOneAndUpdateMock.mockResolvedValue({
+        employee: employeeId,
+        month: new Date(month),
+        baseSalary: 45600,
+        netPay: 42142
+      });
+      
+      const res = await request(app)
+        .post('/api/payroll/calculate/save')
+        .send({
+          employeeId,
+          month,
+          customData: {
+            healthInsuranceFee: 710
+          }
+        });
+      
+      expect(res.status).toBe(201);
+      expect(findOneAndUpdateMock).toHaveBeenCalled();
+    });
+  });
+
+  describe('Labor Insurance Rates', () => {
+    it('gets labor insurance rates', async () => {
+      const rates = [
+        { level: 1, insuredSalary: 11100, workerFee: 277 },
+        { level: 2, insuredSalary: 12540, workerFee: 313 }
+      ];
+      
+      mockLaborInsuranceRate.limit.mockResolvedValue(rates);
+      
+      const res = await request(app).get('/api/payroll/insurance/rates');
+      expect(res.status).toBe(200);
+    });
+
+    it('initializes labor insurance rates', async () => {
+      const res = await request(app).post('/api/payroll/insurance/initialize');
+      expect(res.status).toBe(200);
+      expect(res.body).toHaveProperty('success', true);
+    });
+  });
+
+  describe('Excel Export', () => {
+    it('returns 400 if month is missing', async () => {
+      const res = await request(app)
+        .post('/api/payroll/export?bankType=taiwan')
+        .send({});
+      
+      expect(res.status).toBe(400);
+      expect(res.body).toHaveProperty('error');
+    });
+
+    it('returns 400 if bankType is invalid', async () => {
+      const res = await request(app)
+        .post('/api/payroll/export?month=2025-11-01&bankType=invalid')
+        .send({});
+      
+      expect(res.status).toBe(400);
+      expect(res.body).toHaveProperty('error');
+    });
   });
 });
