@@ -4,6 +4,15 @@ import AttendanceSetting from '../models/AttendanceSetting.js';
 import ApprovalRequest from '../models/approval_request.js';
 import Employee from '../models/Employee.js';
 import { getLeaveFieldIds } from './leaveFieldService.js';
+import { 
+  WORK_HOURS_CONFIG,
+  LEAVE_POLICY,
+  OVERTIME_CONFIG,
+  OVERTIME_FORM_NAMES,
+  OVERTIME_FIELDS,
+  convertToHourlyRate,
+  convertToDailyRate
+} from '../config/salaryConfig.js';
 
 /**
  * 計算兩個時間點之間的分鐘數
@@ -314,24 +323,22 @@ export async function calculateLeaveImpact(employeeId, month) {
     
     // 從表單數據取得請假天數或時數
     const days = parseFloat(approval.form_data?.days ?? approval.form_data?.duration ?? 0);
-    const hours = parseFloat(approval.form_data?.hours ?? (days * 8) ?? 0); // 假設一天8小時
+    const hours = parseFloat(approval.form_data?.hours ?? (days * WORK_HOURS_CONFIG.HOURS_PER_DAY) ?? 0);
     
     totalLeaveHours += hours;
     
-    // 根據假別分類
-    // 特休、婚假、喪假等為有薪假
-    if (['特休', '年假', '婚假', '喪假', '產假', '陪產假'].includes(leaveType)) {
+    // 根據假別分類 - 使用配置的假別類型
+    if (LEAVE_POLICY.PAID_LEAVE_TYPES.includes(leaveType)) {
       paidLeaveHours += hours;
     }
     // 病假
-    else if (['病假', '生理假'].includes(leaveType)) {
+    else if (LEAVE_POLICY.SICK_LEAVE_TYPES.includes(leaveType)) {
       sickLeaveHours += hours;
-      // 病假通常半薪或全薪(依公司政策)，這裡假設前30天半薪
-      // 簡化處理：病假計入無薪假的一半
-      unpaidLeaveHours += hours * 0.5;
+      // 病假按照配置的比率計算扣款
+      unpaidLeaveHours += hours * (1 - LEAVE_POLICY.SICK_LEAVE_PAY_RATE);
     }
     // 事假為無薪假
-    else if (['事假', '無薪假'].includes(leaveType)) {
+    else if (LEAVE_POLICY.UNPAID_LEAVE_TYPES.includes(leaveType)) {
       personalLeaveHours += hours;
       unpaidLeaveHours += hours;
     }
@@ -346,21 +353,12 @@ export async function calculateLeaveImpact(employeeId, month) {
       endDate: formatDate(approval.form_data?.[endId]),
       days,
       hours,
-      isPaid: !['事假', '無薪假'].includes(leaveType)
+      isPaid: !LEAVE_POLICY.UNPAID_LEAVE_TYPES.includes(leaveType)
     });
   });
   
-  // 計算請假扣款
-  // 根據員工薪資類型計算
-  let hourlyRate = 0;
-  if (employee.salaryType === '時薪') {
-    hourlyRate = employee.salaryAmount || 0;
-  } else if (employee.salaryType === '日薪') {
-    hourlyRate = (employee.salaryAmount || 0) / 8; // 假設一天8小時
-  } else { // 月薪
-    // 月薪換算時薪：月薪 / 30天 / 8小時
-    hourlyRate = (employee.salaryAmount || 0) / 30 / 8;
-  }
+  // 計算請假扣款 - 使用配置的轉換函數
+  const hourlyRate = convertToHourlyRate(employee.salaryAmount || 0, employee.salaryType || '月薪');
   
   const leaveDeduction = unpaidLeaveHours * hourlyRate;
   
@@ -410,40 +408,54 @@ export async function calculateOvertimePay(employeeId, month) {
     createdAt: { $gte: startDate, $lt: endDate }
   }).populate('form').lean();
   
-  // 篩選出加班表單
+  // 篩選出加班表單 - 使用配置的表單名稱
   const overtimeRecords = overtimeForms.filter(form => 
-    form.form?.name === '加班' || 
-    form.form?.name === '加班申請' || 
-    form.form?.name === '加班單'
+    OVERTIME_FORM_NAMES.includes(form.form?.name)
   );
   
   let totalOvertimeHours = 0;
   const records = [];
   
   overtimeRecords.forEach((record) => {
-    const hours = parseFloat(record.form_data?.hours ?? record.form_data?.加班時數 ?? 0);
+    // 嘗試從多個可能的欄位名稱取得加班時數
+    let hours = 0;
+    for (const fieldName of OVERTIME_FIELDS.hours) {
+      if (record.form_data?.[fieldName]) {
+        hours = parseFloat(record.form_data[fieldName]);
+        break;
+      }
+    }
+    
+    // 取得加班日期
+    let date = null;
+    for (const fieldName of OVERTIME_FIELDS.date) {
+      if (record.form_data?.[fieldName]) {
+        date = record.form_data[fieldName];
+        break;
+      }
+    }
+    
+    // 取得加班原因
+    let reason = '';
+    for (const fieldName of OVERTIME_FIELDS.reason) {
+      if (record.form_data?.[fieldName]) {
+        reason = record.form_data[fieldName];
+        break;
+      }
+    }
+    
     totalOvertimeHours += hours;
     
     records.push({
-      date: formatDate(record.form_data?.date ?? record.form_data?.加班日期 ?? record.createdAt),
+      date: formatDate(date ?? record.createdAt),
       hours,
-      reason: record.form_data?.reason ?? record.form_data?.加班原因 ?? ''
+      reason
     });
   });
   
-  // 計算加班費
-  // 根據勞基法，加班費為平日1.33倍、1.66倍，假日2倍
-  // 這裡簡化為統一1.5倍
-  let hourlyRate = 0;
-  if (employee.salaryType === '時薪') {
-    hourlyRate = employee.salaryAmount || 0;
-  } else if (employee.salaryType === '日薪') {
-    hourlyRate = (employee.salaryAmount || 0) / 8;
-  } else { // 月薪
-    hourlyRate = (employee.salaryAmount || 0) / 30 / 8;
-  }
-  
-  const overtimePay = Math.round(totalOvertimeHours * hourlyRate * 1.5);
+  // 計算加班費 - 使用配置的倍率和轉換函數
+  const hourlyRate = convertToHourlyRate(employee.salaryAmount || 0, employee.salaryType || '月薪');
+  const overtimePay = Math.round(totalOvertimeHours * hourlyRate * OVERTIME_CONFIG.DEFAULT_MULTIPLIER);
   
   return {
     overtimeHours: totalOvertimeHours,
@@ -467,22 +479,17 @@ export async function calculateCompleteWorkData(employeeId, month) {
   
   const employee = await Employee.findById(employeeId);
   
-  // 計算基本薪資
+  // 計算基本薪資 - 使用配置的轉換函數
   let baseSalary = 0;
-  let hourlyRate = 0;
-  let dailyRate = 0;
+  const hourlyRate = convertToHourlyRate(employee.salaryAmount || 0, employee.salaryType || '月薪');
+  const dailyRate = convertToDailyRate(employee.salaryAmount || 0, employee.salaryType || '月薪');
   
   if (employee.salaryType === '時薪') {
-    hourlyRate = employee.salaryAmount || 0;
     baseSalary = workHours.actualWorkHours * hourlyRate;
   } else if (employee.salaryType === '日薪') {
-    dailyRate = employee.salaryAmount || 0;
-    hourlyRate = dailyRate / 8;
     baseSalary = workHours.workDays * dailyRate;
   } else { // 月薪
     baseSalary = employee.salaryAmount || 0;
-    hourlyRate = baseSalary / 30 / 8;
-    dailyRate = baseSalary / 30;
   }
   
   // 應用請假扣款
