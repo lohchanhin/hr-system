@@ -691,7 +691,8 @@ export async function getDepartmentReportData({ type, month, departmentId, actor
       buildAttendanceSettingContext(),
     ]);
     if (!schedules.length) {
-      throw new ReportAccessError(404, 'No data');
+      // Return empty data structure instead of throwing error
+      return { summary: {}, records: [] };
     }
     const recordMap = groupAttendanceRecords(attendanceRecords);
     if (type === 'attendance') {
@@ -699,23 +700,38 @@ export async function getDepartmentReportData({ type, month, departmentId, actor
     }
     if (type === 'tardiness') {
       const data = buildTardinessSummary({ schedules, recordMap, shiftMap, employees, lateGrace });
-      if (!data.records.length) throw new ReportAccessError(404, 'No data');
+      if (!data.records.length) {
+        // Return empty data structure instead of throwing error
+        return { summary: { totalLateCount: 0, totalLateMinutes: 0, averageLateMinutes: 0 }, records: [] };
+      }
       return data;
     }
     if (type === 'earlyLeave') {
       const data = buildEarlyLeaveSummary({ schedules, recordMap, shiftMap, employees, earlyGrace });
-      if (!data.records.length) throw new ReportAccessError(404, 'No data');
+      if (!data.records.length) {
+        // Return empty data structure instead of throwing error
+        return { summary: { totalEarlyLeaveCount: 0, totalEarlyMinutes: 0, averageEarlyMinutes: 0 }, records: [] };
+      }
       return data;
     }
     if (type === 'workHours') {
       const data = buildWorkHoursSummary({ schedules, recordMap, shiftMap, employees });
-      if (!data.records.length) throw new ReportAccessError(404, 'No data');
+      if (!data.records.length) {
+        // Return empty data structure instead of throwing error
+        return { summary: { totalScheduledHours: 0, totalWorkedHours: 0, differenceHours: 0 }, records: [] };
+      }
       return data;
     }
   }
   if (type === 'leave') {
     const { formId, startId, endId, typeId, typeOptions } = await getLeaveFieldIds();
-    if (!formId) throw new ReportAccessError(404, 'No data');
+    if (!formId) {
+      // Return empty data structure if leave form is not configured
+      return {
+        records: [],
+        summary: { totalLeaves: 0, totalDays: 0, byType: [] }
+      };
+    }
     const approvals = await ApprovalRequest.find({
       form: formId,
       status: 'approved',
@@ -724,7 +740,13 @@ export async function getDepartmentReportData({ type, month, departmentId, actor
     })
       .populate('applicant_employee', 'name')
       .lean();
-    if (!approvals.length) throw new ReportAccessError(404, 'No data');
+    if (!approvals.length) {
+      // Return empty data structure instead of throwing error
+      return {
+        records: [],
+        summary: { totalLeaves: 0, totalDays: 0, byType: [] }
+      };
+    }
     const typeMap = new Map(typeOptions?.map((opt) => [String(opt.value), opt.label]));
     const records = [];
     const typeSummary = new Map();
@@ -768,11 +790,16 @@ export async function getDepartmentReportData({ type, month, departmentId, actor
 
   if (type === 'specialLeave' || type === 'overtime' || type === 'compTime' || type === 'makeUp') {
     const data = await buildApprovalRecords({ type, employeeIds, start, end, employees });
-    if (!data.records.length) throw new ReportAccessError(404, 'No data');
+    if (!data.records.length) {
+      // Return empty data structure instead of throwing error
+      return { summary: {}, records: [] };
+    }
     return data;
   }
 
-  throw new ReportAccessError(404, 'No data');
+  // Log warning for unknown report types but return empty data to avoid breaking API
+  console.warn(`Unknown report type requested: ${type}. Returning empty data.`);
+  return { summary: {}, records: [] };
 }
 
 export function getReportDisplayName(type) {
