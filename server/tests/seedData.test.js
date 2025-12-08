@@ -7,6 +7,7 @@ const mockEmployees = [];
 const mockAttendanceSettings = [];
 const mockAttendanceRecords = [];
 const mockShiftSchedules = [];
+const mockPayrollRecords = [];
 
 const MIN_WORKDAYS = 20;
 
@@ -127,6 +128,20 @@ const mockShiftSchedule = {
   }),
 };
 
+const mockPayrollRecord = {
+  deleteMany: jest.fn(async () => {
+    mockPayrollRecords.length = 0;
+  }),
+  insertMany: jest.fn(async (records) => {
+    const docs = records.map((record, index) => ({
+      _id: `payroll-${mockPayrollRecords.length + index + 1}`,
+      ...record,
+    }));
+    mockPayrollRecords.push(...docs);
+    return docs;
+  }),
+};
+
 let seedSampleData;
 let seedTestUsers;
 let seedSignConfig;
@@ -144,6 +159,7 @@ beforeAll(async () => {
   await jest.unstable_mockModule('../src/models/AttendanceSetting.js', () => ({ default: mockAttendanceSetting }));
   await jest.unstable_mockModule('../src/models/AttendanceRecord.js', () => ({ default: mockAttendanceRecord }));
   await jest.unstable_mockModule('../src/models/ShiftSchedule.js', () => ({ default: mockShiftSchedule }));
+  await jest.unstable_mockModule('../src/models/PayrollRecord.js', () => ({ default: mockPayrollRecord }));
 
   const module = await import('../src/seedUtils.js');
   seedSampleData = module.seedSampleData;
@@ -159,6 +175,7 @@ beforeEach(() => {
   mockAttendanceSettings.length = 0;
   mockAttendanceRecords.length = 0;
   mockShiftSchedules.length = 0;
+  mockPayrollRecords.length = 0;
 
   jest.clearAllMocks();
 
@@ -204,6 +221,17 @@ beforeEach(() => {
       ...schedule,
     }));
     mockShiftSchedules.push(...docs);
+    return docs;
+  });
+  mockPayrollRecord.deleteMany.mockImplementation(async () => {
+    mockPayrollRecords.length = 0;
+  });
+  mockPayrollRecord.insertMany.mockImplementation(async (records) => {
+    const docs = records.map((record, index) => ({
+      _id: `payroll-${mockPayrollRecords.length + index + 1}`,
+      ...record,
+    }));
+    mockPayrollRecords.push(...docs);
     return docs;
   });
 });
@@ -364,6 +392,41 @@ describe('seedTestUsers', () => {
     });
     employeeDayCounts.forEach((count) => {
       expect(count).toBeGreaterThanOrEqual(MIN_WORKDAYS);
+    });
+
+    // 驗證薪資記錄
+    expect(mockPayrollRecord.deleteMany).toHaveBeenCalledWith({});
+    expect(mockPayrollRecord.insertMany).toHaveBeenCalledTimes(1);
+    expect(result.payrollRecords).toBeDefined();
+    expect(result.payrollRecords.length).toBe(mockPayrollRecords.length);
+
+    // 應該有2個月的薪資記錄 (主管 + 員工)
+    const totalEmployees = result.supervisors.length + result.employees.length;
+    const expectedPayrollRecords = totalEmployees * 2; // 2 months
+    expect(mockPayrollRecords.length).toBe(expectedPayrollRecords);
+
+    // 驗證薪資記錄內容
+    mockPayrollRecords.forEach((payroll) => {
+      expect(payroll.employee).toBeDefined();
+      expect(payroll.month).toBeInstanceOf(Date);
+      expect(payroll.baseSalary).toBeGreaterThanOrEqual(0);
+      expect(payroll.netPay).toBeGreaterThanOrEqual(0);
+      expect(payroll.bankAccountA).toBeDefined();
+      expect(payroll.bankAccountA.bank).toBeTruthy();
+      expect(payroll.bankAccountA.accountNumber).toBeTruthy();
+      expect(payroll.bankAccountB).toBeDefined();
+      expect(payroll.bankAccountB.bank).toBeTruthy();
+      expect(payroll.bankAccountB.accountNumber).toBeTruthy();
+    });
+
+    // 確認所有員工都有雙銀行帳戶
+    mockEmployees.forEach((employee) => {
+      expect(employee.salaryAccountA).toBeDefined();
+      expect(employee.salaryAccountA.bank).toBeTruthy();
+      expect(employee.salaryAccountA.acct).toBeTruthy();
+      expect(employee.salaryAccountB).toBeDefined();
+      expect(employee.salaryAccountB.bank).toBeTruthy();
+      expect(employee.salaryAccountB.acct).toBeTruthy();
     });
   });
 
