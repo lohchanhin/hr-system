@@ -1,5 +1,6 @@
 import PayrollRecord from '../models/PayrollRecord.js';
 import LaborInsuranceRate from '../models/LaborInsuranceRate.js';
+import Employee from '../models/Employee.js';
 import { 
   calculateEmployeePayroll, 
   calculateBatchPayroll, 
@@ -187,6 +188,100 @@ export async function initializeLaborInsuranceRatesController(req, res) {
   try {
     const count = await initializeLaborInsuranceRates();
     res.json({ success: true, count, message: 'Labor insurance rates initialized' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+}
+
+/**
+ * 獲取月薪資總覽（支援篩選機構、部門、單位、員工）
+ */
+export async function getMonthlyPayrollOverview(req, res) {
+  try {
+    const { month, organization, department, subDepartment, employeeId } = req.query;
+    
+    if (!month) {
+      return res.status(400).json({ error: 'month parameter is required' });
+    }
+    
+    // Validate month format (should be YYYY-MM-DD)
+    const monthDate = new Date(month);
+    if (isNaN(monthDate.getTime())) {
+      return res.status(400).json({ error: 'Invalid month format. Expected YYYY-MM-DD' });
+    }
+    
+    // Build employee query based on filters
+    const employeeQuery = {};
+    if (organization) {
+      employeeQuery.organization = organization;
+    }
+    if (department) {
+      employeeQuery.department = department;
+    }
+    if (subDepartment) {
+      employeeQuery.subDepartment = subDepartment;
+    }
+    if (employeeId) {
+      employeeQuery._id = employeeId;
+    }
+    
+    // Find employees matching the criteria
+    const employees = await Employee.find(employeeQuery)
+      .populate('department')
+      .populate('subDepartment')
+      .select('employeeId name department subDepartment organization salaryAmount salaryType');
+    
+    if (employees.length === 0) {
+      return res.json([]);
+    }
+    
+    const employeeIds = employees.map(e => e._id.toString());
+    
+    // Find existing payroll records for this month
+    const payrollRecords = await PayrollRecord.find({
+      employee: { $in: employeeIds },
+      month: monthDate
+    }).populate('employee');
+    
+    // Create a map of employee ID to payroll record
+    const payrollMap = {};
+    payrollRecords.forEach(record => {
+      payrollMap[record.employee._id.toString()] = record;
+    });
+    
+    // Build the overview data
+    const overview = employees.map(employee => {
+      const payroll = payrollMap[employee._id.toString()];
+      
+      return {
+        _id: employee._id,
+        employeeId: employee.employeeId,
+        name: employee.name,
+        department: employee.department?.name || '',
+        departmentId: employee.department?._id,
+        subDepartment: employee.subDepartment?.name || '',
+        subDepartmentId: employee.subDepartment?._id,
+        organization: employee.organization || '',
+        salaryType: employee.salaryType || '月薪',
+        // Payroll data (if exists)
+        baseSalary: payroll?.baseSalary || employee.salaryAmount || 0,
+        laborInsuranceFee: payroll?.laborInsuranceFee || 0,
+        healthInsuranceFee: payroll?.healthInsuranceFee || 0,
+        laborPensionSelf: payroll?.laborPensionSelf || 0,
+        employeeAdvance: payroll?.employeeAdvance || 0,
+        debtGarnishment: payroll?.debtGarnishment || 0,
+        otherDeductions: payroll?.otherDeductions || 0,
+        netPay: payroll?.netPay || (employee.salaryAmount || 0),
+        nightShiftAllowance: payroll?.nightShiftAllowance || 0,
+        performanceBonus: payroll?.performanceBonus || 0,
+        otherBonuses: payroll?.otherBonuses || 0,
+        totalBonus: payroll?.totalBonus || 0,
+        hasPayrollRecord: !!payroll,
+        payrollRecordId: payroll?._id
+      };
+    });
+    
+    res.json(overview);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
