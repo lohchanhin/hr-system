@@ -220,16 +220,17 @@ function logout() {
 
 <style scoped>
 .modern-layout {
+  --header-height: 64px;
   height: 100vh;
   background: #f8fafc;
-  padding-top: 64px;
+  padding-top: var(--header-height);
 }
 
 .layout-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  height: 64px;
+  height: var(--header-height);
   background: linear-gradient(135deg, #164e63 0%, #0891b2 100%);
   border-bottom: none;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
@@ -296,9 +297,9 @@ function logout() {
   background: linear-gradient(180deg, #0f4c75 0%, #164e63 100%);
   border-right: none;
   position: fixed;
-  top: 64px;
+  top: var(--header-height);
   left: -100%;
-  height: calc(100vh - 64px);
+  height: calc(100vh - var(--header-height));
   box-shadow: 2px 0 8px rgba(0, 0, 0, 0.15);
   transition: left 0.3s ease, width 0.3s ease;
   overflow: hidden;
