@@ -10,6 +10,7 @@ const mockShiftSchedules = [];
 const mockPayrollRecords = [];
 
 const MIN_WORKDAYS = 20;
+const PAYROLL_MONTHS_COUNT = 2;
 
 const matchDocument = (doc, filter) =>
   Object.entries(filter).every(([key, value]) => doc[key] === value);
@@ -400,9 +401,9 @@ describe('seedTestUsers', () => {
     expect(result.payrollRecords).toBeDefined();
     expect(result.payrollRecords.length).toBe(mockPayrollRecords.length);
 
-    // 應該有2個月的薪資記錄 (主管 + 員工)
+    // 應該有PAYROLL_MONTHS_COUNT個月的薪資記錄 (主管 + 員工)
     const totalEmployees = result.supervisors.length + result.employees.length;
-    const expectedPayrollRecords = totalEmployees * 2; // 2 months
+    const expectedPayrollRecords = totalEmployees * PAYROLL_MONTHS_COUNT;
     expect(mockPayrollRecords.length).toBe(expectedPayrollRecords);
 
     // 驗證薪資記錄內容

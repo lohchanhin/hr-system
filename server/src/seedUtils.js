@@ -629,8 +629,8 @@ async function seedPayrollRecords({ supervisors = [], employees = [] } = {}) {
       const otherDeductions = Math.random() < 0.2 ? randomInRange(100, 500) : 0;
       
       // 計算實領金額 (Stage A)
-      const totalDeductions = laborInsuranceFee + healthInsuranceFee + laborPensionSelf + 
-                              employeeAdvance + otherDeductions;
+      const totalDeductions = laborInsuranceFee + healthInsuranceFee + laborPensionSelf +
+        employeeAdvance + otherDeductions;
       const netPay = Math.max(0, baseSalary - totalDeductions);
       
       // 獎金項目 (Stage B)
@@ -670,7 +670,7 @@ async function seedPayrollRecords({ supervisors = [], employees = [] } = {}) {
         bankAccountA,
         bankAccountB,
         insuranceLevel: employee.laborInsuranceLevel,
-        amount: netPay
+        amount: netPay // Legacy field for backward compatibility with existing code
       });
     }
   }
