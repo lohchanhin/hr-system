@@ -68,6 +68,166 @@ const SUPERVISOR_CONFIGS = [
 ];
 const SUPERVISOR_TITLE = '部門主管';
 
+// 薪資相關配置
+const SALARY_TYPES = ['月薪', '日薪', '時薪'];
+const SALARY_ITEMS_POOL = [
+  '本薪',
+  '職務加給',
+  '績效獎金',
+  '交通津貼',
+  '伙食津貼',
+  '全勤獎金',
+  '加班費',
+  '專業加給',
+  '主管加給',
+  '年資加給',
+];
+const BANK_NAMES = [
+  '台灣銀行',
+  '土地銀行',
+  '合作金庫',
+  '第一銀行',
+  '華南銀行',
+  '彰化銀行',
+  '台北富邦',
+  '國泰世華',
+  '中國信託',
+  '玉山銀行',
+];
+
+// 主管薪資配置（月薪為主，較高薪資）
+const SUPERVISOR_SALARY_CONFIGS = [
+  {
+    salaryType: '月薪',
+    baseRange: [65000, 85000],
+    laborPensionSelfRate: [0, 6],
+    advanceRate: 0.1,
+    itemCount: [4, 6],
+  },
+  {
+    salaryType: '月薪',
+    baseRange: [70000, 95000],
+    laborPensionSelfRate: [0, 6],
+    advanceRate: 0.05,
+    itemCount: [5, 7],
+  },
+  {
+    salaryType: '月薪',
+    baseRange: [75000, 100000],
+    laborPensionSelfRate: [0, 6],
+    advanceRate: 0,
+    itemCount: [4, 6],
+  },
+];
+
+// 員工薪資配置（多樣化：月薪、日薪、時薪）
+const EMPLOYEE_SALARY_CONFIGS = [
+  {
+    salaryType: '月薪',
+    baseRange: [32000, 45000],
+    laborPensionSelfRate: [0, 6],
+    advanceRate: 0.15,
+    itemCount: [3, 5],
+  },
+  {
+    salaryType: '月薪',
+    baseRange: [35000, 50000],
+    laborPensionSelfRate: [0, 6],
+    advanceRate: 0.1,
+    itemCount: [3, 4],
+  },
+  {
+    salaryType: '日薪',
+    baseRange: [1500, 2200],
+    laborPensionSelfRate: [0, 3],
+    advanceRate: 0.2,
+    itemCount: [2, 3],
+  },
+  {
+    salaryType: '時薪',
+    baseRange: [200, 350],
+    laborPensionSelfRate: [0, 3],
+    advanceRate: 0.05,
+    itemCount: [1, 3],
+  },
+  {
+    salaryType: '月薪',
+    baseRange: [28000, 38000],
+    laborPensionSelfRate: [0, 6],
+    advanceRate: 0,
+    itemCount: [2, 4],
+  },
+  {
+    salaryType: '日薪',
+    baseRange: [1300, 1800],
+    laborPensionSelfRate: [0, 2],
+    advanceRate: 0.1,
+    itemCount: [2, 3],
+  },
+];
+
+// 薪資生成概率配置
+const SALARY_PROBABILITIES = {
+  SELF_CONTRIBUTION_RATE: 0.6, // 60% 員工有勞退自提
+  ADVANCE_SALARY_RATE: 0.4,    // 40% 員工有預支薪資
+  DUAL_ACCOUNT_RATE: 0.3,      // 30% 員工有雙薪資帳戶
+};
+
+function randomInRange(min, max) {
+  return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+function randomSubset(array, minCount, maxCount) {
+  const count = randomInRange(minCount, Math.min(maxCount, array.length));
+  const shuffled = [...array].sort(() => Math.random() - 0.5);
+  return shuffled.slice(0, count);
+}
+
+function generateBankAccount() {
+  const bank = randomElement(BANK_NAMES);
+  const acct = randomDigits(12);
+  return { bank, acct };
+}
+
+function generateSalaryData(config, index) {
+  const salaryAmount = randomInRange(config.baseRange[0], config.baseRange[1]);
+  
+  // 計算勞退自提（0% 或隨機1-6%）
+  const selfRateMax = config.laborPensionSelfRate[1];
+  const selfRate = selfRateMax > 0 && Math.random() < SALARY_PROBABILITIES.SELF_CONTRIBUTION_RATE
+    ? randomInRange(config.laborPensionSelfRate[0] || 1, selfRateMax)
+    : 0;
+  const laborPensionSelf = selfRate > 0 ? Math.floor(salaryAmount * selfRate / 100) : 0;
+  
+  // 計算預支薪資（部分員工有預支）
+  const hasAdvance = Math.random() < SALARY_PROBABILITIES.ADVANCE_SALARY_RATE;
+  const employeeAdvance = hasAdvance && config.advanceRate > 0
+    ? Math.floor(salaryAmount * config.advanceRate)
+    : 0;
+  
+  // 生成薪資帳戶（主帳戶必有，部分員工有雙帳戶）
+  const salaryAccountA = generateBankAccount();
+  const hasDualAccount = Math.random() < SALARY_PROBABILITIES.DUAL_ACCOUNT_RATE;
+  const salaryAccountB = hasDualAccount ? generateBankAccount() : { bank: '', acct: '' };
+  
+  // 選擇薪資項目
+  const salaryItems = randomSubset(
+    SALARY_ITEMS_POOL,
+    config.itemCount[0],
+    config.itemCount[1]
+  );
+  
+  return {
+    salaryType: config.salaryType,
+    salaryAmount,
+    laborPensionSelf,
+    employeeAdvance,
+    salaryAccountA,
+    salaryAccountB,
+    salaryItems,
+  };
+}
+
 const ATTENDANCE_SETTING_TEMPLATE = {
   shifts: [
     {
@@ -487,11 +647,17 @@ export async function seedTestUsers() {
 
   const supervisors = [];
   const supervisorAssignments = new Map();
-  for (const config of SUPERVISOR_CONFIGS) {
+  for (let i = 0; i < SUPERVISOR_CONFIGS.length; i += 1) {
+    const config = SUPERVISOR_CONFIGS[i];
     const assignment = takeAssignment(hierarchy, assignmentPool);
     const usernameSeed = generateUniqueValue(config.prefix, usedUsernames).toLowerCase();
     const emailSeed = generateUniqueValue(`${config.prefix}-mail`, usedEmails).toLowerCase();
     const supervisorSignConfig = SEED_SIGN_CONFIG.supervisor;
+    
+    // 生成主管薪資資料
+    const salaryConfig = SUPERVISOR_SALARY_CONFIGS[i % SUPERVISOR_SALARY_CONFIGS.length];
+    const salaryData = generateSalaryData(salaryConfig, i);
+    
     const supervisor = await Employee.create({
       name: config.name,
       email: `${emailSeed}@example.com`,
@@ -507,6 +673,7 @@ export async function seedTestUsers() {
       title: SUPERVISOR_TITLE,
       status: '正職員工',
       signTags: config.signTags,
+      ...salaryData,
     });
     supervisors.push(supervisor);
 
@@ -529,6 +696,11 @@ export async function seedTestUsers() {
     }
 
     const employeeSignConfig = SEED_SIGN_CONFIG.employee;
+    
+    // 生成員工薪資資料
+    const salaryConfig = EMPLOYEE_SALARY_CONFIGS[i % EMPLOYEE_SALARY_CONFIGS.length];
+    const salaryData = generateSalaryData(salaryConfig, i);
+    
     const employee = await Employee.create({
       name: EMPLOYEE_NAMES[i % EMPLOYEE_NAMES.length],
       email: `${emailSeed}@example.com`,
@@ -545,6 +717,7 @@ export async function seedTestUsers() {
       title: randomElement(EMPLOYEE_TITLES),
       status: randomElement(EMPLOYEE_STATUSES),
       signTags: [],
+      ...salaryData,
     });
     employees.push(employee);
 
@@ -568,6 +741,27 @@ export async function seedTestUsers() {
     attendanceSetting,
     hierarchy,
   });
+
+  // 輸出薪資資料摘要
+  console.log('\n=== 薪資資料摘要 ===');
+  console.log(`\n主管薪資 (${supervisors.length} 人):`);
+  supervisors.forEach((sup) => {
+    console.log(
+      `  ${sup.name}: ${sup.salaryType} ${sup.salaryAmount}元` +
+      (sup.laborPensionSelf > 0 ? `, 勞退自提: ${sup.laborPensionSelf}元` : '') +
+      (sup.employeeAdvance > 0 ? `, 預支: ${sup.employeeAdvance}元` : '')
+    );
+  });
+  
+  console.log(`\n員工薪資 (${employees.length} 人):`);
+  employees.forEach((emp) => {
+    console.log(
+      `  ${emp.name}: ${emp.salaryType} ${emp.salaryAmount}元` +
+      (emp.laborPensionSelf > 0 ? `, 勞退自提: ${emp.laborPensionSelf}元` : '') +
+      (emp.employeeAdvance > 0 ? `, 預支: ${emp.employeeAdvance}元` : '')
+    );
+  });
+  console.log('\n');
 
   return { supervisors, employees, attendanceSetting, attendanceRecords, shiftSchedules };
 }
