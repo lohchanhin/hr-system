@@ -274,8 +274,7 @@ export async function listSupervisorSummary(req, res) {
       };
     });
 
-    // 2️⃣ includeSelf 只在「排班範圍」使用，
-    //    但我們稍後回傳前會把主管自己排除掉
+    // 2️⃣ includeSelf=true 時，將主管本人加入統計範圍
     if (includeSelf) {
       const self = await Employee.findById(supervisor).select('_id name').lean();
       if (self?._id) {
@@ -385,10 +384,12 @@ export async function listSupervisorSummary(req, res) {
       else sum.shiftCount += 1;
     });
 
-    // 6️⃣ ❗最後這一步：把「主管本人」從結果移除
+    // 6️⃣ 最後這一步：根據 includeSelf 決定是否包含主管本人
     const supervisorIdStr = supervisor ? String(supervisor) : '';
     const payload = Object.values(summaryMap).filter((entry) => {
       if (!supervisorIdStr) return true;
+      // 當 includeSelf=true 時，保留主管；否則過濾掉
+      if (includeSelf) return true;
       return String(entry.employee) !== supervisorIdStr;
     });
 

@@ -187,6 +187,13 @@ const employeeSchema = new Schema(
       acct: String,
     },
     salaryItems: { type: [String], default: [] }, // 多選
+
+    /* 勞保設定 */
+    laborInsuranceLevel: { type: Number, default: 0 }, // 勞保等級 (1-28)
+    autoDeduction: { type: Boolean, default: true }, // 自動扣費
+    autoOvertimeCalc: { type: Boolean, default: false }, // 自動加班計算
+    lateDeductionEnabled: { type: Boolean, default: false }, // 遲到扣款啟用
+    lateDeductionAmount: { type: Number, default: 0 }, // 遲到扣款金額
   },
   {
     timestamps: true,
