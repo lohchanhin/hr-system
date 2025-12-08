@@ -11,7 +11,8 @@ import {
   getEmployeePayrolls,
   exportPayrollExcel,
   getLaborInsuranceRates,
-  initializeLaborInsuranceRatesController
+  initializeLaborInsuranceRatesController,
+  getMonthlyPayrollOverview
 } from '../controllers/payrollController.js';
 
 const router = Router();
@@ -37,5 +38,8 @@ router.post('/export', exportPayrollExcel);
 // Labor insurance rates
 router.get('/insurance/rates', getLaborInsuranceRates);
 router.post('/insurance/initialize', initializeLaborInsuranceRatesController);
+
+// Monthly payroll overview
+router.get('/overview/monthly', getMonthlyPayrollOverview);
 
 export default router;
