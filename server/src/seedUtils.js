@@ -11,6 +11,7 @@ import ApprovalRequest from './models/approval_request.js';
 import AttendanceSetting from './models/AttendanceSetting.js';
 import AttendanceRecord from './models/AttendanceRecord.js';
 import ShiftSchedule from './models/ShiftSchedule.js';
+import PayrollRecord from './models/PayrollRecord.js';
 import { getLeaveFieldIds, resetLeaveFieldCache } from './services/leaveFieldService.js';
 
 export const SEED_TEST_PASSWORD = 'password';
@@ -170,7 +171,7 @@ const EMPLOYEE_SALARY_CONFIGS = [
 const SALARY_PROBABILITIES = {
   SELF_CONTRIBUTION_RATE: 0.6, // 60% 員工有勞退自提
   ADVANCE_SALARY_RATE: 0.4,    // 40% 員工有預支薪資
-  DUAL_ACCOUNT_RATE: 0.3,      // 30% 員工有雙薪資帳戶
+  DUAL_ACCOUNT_RATE: 1.0,      // 100% 員工有雙薪資帳戶 (A帳戶匯本薪, B帳戶匯獎金)
 };
 
 function randomInRange(min, max) {
@@ -326,7 +327,7 @@ const ATTENDANCE_SETTING_TEMPLATE = {
   },
 };
 
-const WORKDAYS_PER_EMPLOYEE = 22;
+const WORKDAYS_PER_EMPLOYEE = 60; // 至少前2個月的考勤資料
 const CLOCK_IN_VARIANCE_MINUTES = 15;
 const CLOCK_OUT_VARIANCE_MINUTES = 25;
 const APPROVAL_STATUSES = ['approved', 'pending', 'rejected', 'returned'];
@@ -585,6 +586,107 @@ async function seedAttendanceData({
   return { attendanceRecords: createdRecords, shiftSchedules: createdSchedules };
 }
 
+/**
+ * 生成最近2個月的薪資記錄
+ * @param {Array} supervisors - 主管列表
+ * @param {Array} employees - 員工列表
+ * @returns {Array} - 薪資記錄
+ */
+async function seedPayrollRecords({ supervisors = [], employees = [] } = {}) {
+  const allEmployees = [...supervisors, ...employees];
+  const payrollRecords = [];
+  
+  // 生成最近2個月的薪資記錄
+  const currentDate = new Date();
+  const months = [];
+  
+  // 上個月
+  const lastMonth = new Date(currentDate.getFullYear(), currentDate.getMonth() - 1, 1);
+  months.push(lastMonth);
+  
+  // 上上個月
+  const twoMonthsAgo = new Date(currentDate.getFullYear(), currentDate.getMonth() - 2, 1);
+  months.push(twoMonthsAgo);
+  
+  for (const month of months) {
+    for (const employee of allEmployees) {
+      // 基本薪資
+      const baseSalary = employee.salaryAmount || 0;
+      
+      // 勞保費 (簡化計算: 約薪資的2%)
+      const laborInsuranceFee = Math.round(baseSalary * 0.02);
+      
+      // 健保費 (簡化計算: 約薪資的1.5%)
+      const healthInsuranceFee = Math.round(baseSalary * 0.015);
+      
+      // 勞退個人提繳
+      const laborPensionSelf = employee.laborPensionSelf || 0;
+      
+      // 員工借支
+      const employeeAdvance = employee.employeeAdvance || 0;
+      
+      // 其他扣款 (隨機0-500)
+      const otherDeductions = Math.random() < 0.2 ? randomInRange(100, 500) : 0;
+      
+      // 計算實領金額 (Stage A)
+      const totalDeductions = laborInsuranceFee + healthInsuranceFee + laborPensionSelf + 
+                              employeeAdvance + otherDeductions;
+      const netPay = Math.max(0, baseSalary - totalDeductions);
+      
+      // 獎金項目 (Stage B)
+      const nightShiftAllowance = Math.random() < 0.3 ? randomInRange(1000, 3000) : 0;
+      const performanceBonus = Math.random() < 0.5 ? randomInRange(2000, 8000) : 0;
+      const otherBonuses = Math.random() < 0.2 ? randomInRange(1000, 5000) : 0;
+      const totalBonus = nightShiftAllowance + performanceBonus + otherBonuses;
+      
+      // 銀行帳戶資訊 (從員工資料複製)
+      const bankAccountA = {
+        bank: employee.salaryAccountA?.bank || '',
+        accountNumber: employee.salaryAccountA?.acct || '',
+        accountName: employee.name
+      };
+      
+      const bankAccountB = {
+        bank: employee.salaryAccountB?.bank || '',
+        accountNumber: employee.salaryAccountB?.acct || '',
+        accountName: employee.name
+      };
+      
+      payrollRecords.push({
+        employee: employee._id,
+        month,
+        baseSalary,
+        laborInsuranceFee,
+        healthInsuranceFee,
+        laborPensionSelf,
+        employeeAdvance,
+        debtGarnishment: 0,
+        otherDeductions,
+        netPay,
+        nightShiftAllowance,
+        performanceBonus,
+        otherBonuses,
+        totalBonus,
+        bankAccountA,
+        bankAccountB,
+        insuranceLevel: employee.laborInsuranceLevel,
+        amount: netPay
+      });
+    }
+  }
+  
+  // 清除舊的薪資記錄並插入新的
+  await PayrollRecord.deleteMany({});
+  const createdRecords = payrollRecords.length ? await PayrollRecord.insertMany(payrollRecords) : [];
+  
+  console.log(`\n=== 薪資記錄生成完成 ===`);
+  console.log(`生成 ${months.length} 個月份的薪資記錄`);
+  console.log(`每月 ${allEmployees.length} 位員工`);
+  console.log(`總計 ${createdRecords.length} 筆薪資記錄\n`);
+  
+  return createdRecords;
+}
+
 export async function seedSampleData() {
   await Promise.all([
     Organization.deleteMany({}),
@@ -770,6 +872,9 @@ export async function seedTestUsers() {
     hierarchy,
   });
 
+  // 生成薪資記錄
+  const payrollRecords = await seedPayrollRecords({ supervisors, employees });
+
   // 輸出薪資資料摘要
   console.log('\n=== 薪資資料摘要 ===');
   console.log(`\n主管薪資 (${supervisors.length} 人):`);
@@ -777,7 +882,9 @@ export async function seedTestUsers() {
     console.log(
       `  ${sup.name}: ${sup.salaryType} ${sup.salaryAmount}元` +
       (sup.laborPensionSelf > 0 ? `, 勞退自提: ${sup.laborPensionSelf}元` : '') +
-      (sup.employeeAdvance > 0 ? `, 預支: ${sup.employeeAdvance}元` : '')
+      (sup.employeeAdvance > 0 ? `, 預支: ${sup.employeeAdvance}元` : '') +
+      `\n    銀行A: ${sup.salaryAccountA?.bank || '未設定'} ${sup.salaryAccountA?.acct || ''}` +
+      `\n    銀行B: ${sup.salaryAccountB?.bank || '未設定'} ${sup.salaryAccountB?.acct || ''}`
     );
   });
   
@@ -786,12 +893,14 @@ export async function seedTestUsers() {
     console.log(
       `  ${emp.name}: ${emp.salaryType} ${emp.salaryAmount}元` +
       (emp.laborPensionSelf > 0 ? `, 勞退自提: ${emp.laborPensionSelf}元` : '') +
-      (emp.employeeAdvance > 0 ? `, 預支: ${emp.employeeAdvance}元` : '')
+      (emp.employeeAdvance > 0 ? `, 預支: ${emp.employeeAdvance}元` : '') +
+      `\n    銀行A: ${emp.salaryAccountA?.bank || '未設定'} ${emp.salaryAccountA?.acct || ''}` +
+      `\n    銀行B: ${emp.salaryAccountB?.bank || '未設定'} ${emp.salaryAccountB?.acct || ''}`
     );
   });
   console.log('\n');
 
-  return { supervisors, employees, attendanceSetting, attendanceRecords, shiftSchedules };
+  return { supervisors, employees, attendanceSetting, attendanceRecords, shiftSchedules, payrollRecords };
 }
 
 export async function seedApprovalTemplates() {
