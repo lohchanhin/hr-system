@@ -222,4 +222,47 @@ describe('Payroll API', () => {
       expect(res.body).toHaveProperty('error');
     });
   });
+
+  describe('Monthly Payroll Overview', () => {
+    it('returns 400 if month is missing', async () => {
+      const res = await request(app).get('/api/payroll/overview/monthly');
+      expect(res.status).toBe(400);
+      expect(res.body).toHaveProperty('error');
+    });
+
+    it('returns 400 if month format is invalid', async () => {
+      const res = await request(app).get('/api/payroll/overview/monthly?month=invalid-date');
+      expect(res.status).toBe(400);
+      expect(res.body).toHaveProperty('error');
+      expect(res.body.error).toContain('Invalid month format');
+    });
+
+    it('returns overview with month filter', async () => {
+      const fakeEmployees = [
+        {
+          _id: 'emp1',
+          employeeId: 'E001',
+          name: '王小明',
+          department: { _id: 'dept1', name: '人資部' },
+          subDepartment: null,
+          organization: 'org1',
+          salaryAmount: 45000,
+          salaryType: '月薪'
+        }
+      ];
+
+      mockEmployee.find = jest.fn().mockReturnValue({
+        populate: jest.fn().mockReturnThis(),
+        select: jest.fn().mockResolvedValue(fakeEmployees)
+      });
+
+      mockPayrollRecord.find.mockReturnValue({
+        populate: jest.fn().mockResolvedValue([])
+      });
+
+      const res = await request(app).get('/api/payroll/overview/monthly?month=2025-11-01');
+      expect(res.status).toBe(200);
+      expect(Array.isArray(res.body)).toBe(true);
+    });
+  });
 });

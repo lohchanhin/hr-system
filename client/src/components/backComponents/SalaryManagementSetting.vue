@@ -192,12 +192,195 @@
             </el-form>
           </div>
         </el-tab-pane>
+  
+        <!-- 6) 月薪資總覽 -->
+        <el-tab-pane label="月薪資總覽" name="monthlyOverview">
+          <div class="tab-content">
+            <!-- Filter controls -->
+            <el-form :inline="true" class="filter-form">
+              <el-form-item label="月份">
+                <el-date-picker
+                  v-model="overviewMonth"
+                  type="month"
+                  placeholder="選擇月份"
+                  format="YYYY-MM"
+                  value-format="YYYY-MM-01"
+                  @change="fetchMonthlyOverview"
+                />
+              </el-form-item>
+              <el-form-item label="機構">
+                <el-select
+                  v-model="filterOrganization"
+                  placeholder="全部機構"
+                  clearable
+                  @change="fetchMonthlyOverview"
+                >
+                  <el-option
+                    v-for="org in organizations"
+                    :key="org._id"
+                    :label="org.name"
+                    :value="org._id"
+                  />
+                </el-select>
+              </el-form-item>
+              <el-form-item label="部門">
+                <el-select
+                  v-model="filterDepartment"
+                  placeholder="全部部門"
+                  clearable
+                  @change="fetchMonthlyOverview"
+                >
+                  <el-option
+                    v-for="dept in departments"
+                    :key="dept._id"
+                    :label="dept.name"
+                    :value="dept._id"
+                  />
+                </el-select>
+              </el-form-item>
+              <el-form-item label="單位">
+                <el-select
+                  v-model="filterSubDepartment"
+                  placeholder="全部單位"
+                  clearable
+                  @change="fetchMonthlyOverview"
+                >
+                  <el-option
+                    v-for="sub in subDepartments"
+                    :key="sub._id"
+                    :label="sub.name"
+                    :value="sub._id"
+                  />
+                </el-select>
+              </el-form-item>
+              <el-form-item label="員工">
+                <el-input
+                  v-model="filterEmployeeName"
+                  placeholder="搜尋員工姓名"
+                  clearable
+                  @input="filterOverviewData"
+                  style="width: 200px"
+                />
+              </el-form-item>
+              <el-form-item>
+                <el-button type="primary" @click="fetchMonthlyOverview">查詢</el-button>
+              </el-form-item>
+            </el-form>
+
+            <!-- Summary statistics -->
+            <el-row :gutter="20" style="margin-bottom: 20px">
+              <el-col :span="6">
+                <el-card>
+                  <div class="stat-item">
+                    <div class="stat-label">總人數</div>
+                    <div class="stat-value">{{ filteredOverviewData.length }}</div>
+                  </div>
+                </el-card>
+              </el-col>
+              <el-col :span="6">
+                <el-card>
+                  <div class="stat-item">
+                    <div class="stat-label">薪資總額</div>
+                    <div class="stat-value">{{ formatCurrency(totalBaseSalary) }}</div>
+                  </div>
+                </el-card>
+              </el-col>
+              <el-col :span="6">
+                <el-card>
+                  <div class="stat-item">
+                    <div class="stat-label">實發總額</div>
+                    <div class="stat-value">{{ formatCurrency(totalNetPay) }}</div>
+                  </div>
+                </el-card>
+              </el-col>
+              <el-col :span="6">
+                <el-card>
+                  <div class="stat-item">
+                    <div class="stat-label">扣款總額</div>
+                    <div class="stat-value">{{ formatCurrency(totalDeductions) }}</div>
+                  </div>
+                </el-card>
+              </el-col>
+            </el-row>
+
+            <!-- Payroll overview table -->
+            <el-table 
+              :data="filteredOverviewData" 
+              border 
+              stripe 
+              style="width: 100%"
+              max-height="600"
+            >
+              <el-table-column prop="employeeId" label="員工編號" width="120" fixed />
+              <el-table-column prop="name" label="姓名" width="100" fixed />
+              <el-table-column prop="department" label="部門" width="120" />
+              <el-table-column prop="subDepartment" label="單位" width="120" />
+              <el-table-column prop="salaryType" label="薪資類型" width="100" />
+              <el-table-column prop="baseSalary" label="基本薪資" width="120" align="right">
+                <template #default="{ row }">
+                  {{ formatCurrency(row.baseSalary) }}
+                </template>
+              </el-table-column>
+              <el-table-column label="扣款項目" align="center">
+                <el-table-column prop="laborInsuranceFee" label="勞保費" width="100" align="right">
+                  <template #default="{ row }">
+                    {{ formatCurrency(row.laborInsuranceFee) }}
+                  </template>
+                </el-table-column>
+                <el-table-column prop="healthInsuranceFee" label="健保費" width="100" align="right">
+                  <template #default="{ row }">
+                    {{ formatCurrency(row.healthInsuranceFee) }}
+                  </template>
+                </el-table-column>
+                <el-table-column prop="laborPensionSelf" label="勞退" width="100" align="right">
+                  <template #default="{ row }">
+                    {{ formatCurrency(row.laborPensionSelf) }}
+                  </template>
+                </el-table-column>
+                <el-table-column prop="otherDeductions" label="其他扣款" width="100" align="right">
+                  <template #default="{ row }">
+                    {{ formatCurrency(row.otherDeductions) }}
+                  </template>
+                </el-table-column>
+              </el-table-column>
+              <el-table-column label="加項" align="center">
+                <el-table-column prop="nightShiftAllowance" label="夜班津貼" width="100" align="right">
+                  <template #default="{ row }">
+                    {{ formatCurrency(row.nightShiftAllowance) }}
+                  </template>
+                </el-table-column>
+                <el-table-column prop="performanceBonus" label="績效獎金" width="100" align="right">
+                  <template #default="{ row }">
+                    {{ formatCurrency(row.performanceBonus) }}
+                  </template>
+                </el-table-column>
+                <el-table-column prop="otherBonuses" label="其他獎金" width="100" align="right">
+                  <template #default="{ row }">
+                    {{ formatCurrency(row.otherBonuses) }}
+                  </template>
+                </el-table-column>
+              </el-table-column>
+              <el-table-column prop="netPay" label="實發金額" width="120" align="right" fixed="right">
+                <template #default="{ row }">
+                  <strong>{{ formatCurrency(row.netPay) }}</strong>
+                </template>
+              </el-table-column>
+              <el-table-column label="狀態" width="100" fixed="right">
+                <template #default="{ row }">
+                  <el-tag :type="row.hasPayrollRecord ? 'success' : 'info'" size="small">
+                    {{ row.hasPayrollRecord ? '已計算' : '未計算' }}
+                  </el-tag>
+                </template>
+              </el-table-column>
+            </el-table>
+          </div>
+        </el-tab-pane>
       </el-tabs>
     </div>
   </template>
   
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import { apiFetch } from '../../api'
   
   // 目前所在的Tab
@@ -370,6 +553,106 @@ const settingId = ref(null)
     persistSetting()
   }
 
+  // ============ (6) 月薪資總覽 ============
+  const overviewMonth = ref(new Date().toISOString().substring(0, 7) + '-01')
+  const overviewData = ref([])
+  const filterOrganization = ref('')
+  const filterDepartment = ref('')
+  const filterSubDepartment = ref('')
+  const filterEmployeeName = ref('')
+  const organizations = ref([])
+  const departments = ref([])
+  const subDepartments = ref([])
+
+  // Computed filtered data based on employee name search
+  const filteredOverviewData = computed(() => {
+    if (!filterEmployeeName.value) {
+      return overviewData.value
+    }
+    const searchTerm = filterEmployeeName.value.toLowerCase()
+    return overviewData.value.filter(item => 
+      item.name.toLowerCase().includes(searchTerm) ||
+      item.employeeId?.toLowerCase().includes(searchTerm)
+    )
+  })
+
+  // Computed summary statistics
+  const totalBaseSalary = computed(() => {
+    return filteredOverviewData.value.reduce((sum, item) => sum + (item.baseSalary || 0), 0)
+  })
+
+  const totalNetPay = computed(() => {
+    return filteredOverviewData.value.reduce((sum, item) => sum + (item.netPay || 0), 0)
+  })
+
+  const totalDeductions = computed(() => {
+    return filteredOverviewData.value.reduce((sum, item) => {
+      const deductions = (item.laborInsuranceFee || 0) + 
+                        (item.healthInsuranceFee || 0) + 
+                        (item.laborPensionSelf || 0) + 
+                        (item.otherDeductions || 0)
+      return sum + deductions
+    }, 0)
+  })
+
+  function formatCurrency(value) {
+    if (value == null || isNaN(value)) return 'NT$ 0'
+    return 'NT$ ' + Math.round(value).toLocaleString('zh-TW')
+  }
+
+  async function fetchMonthlyOverview() {
+    try {
+      const params = new URLSearchParams({ month: overviewMonth.value })
+      if (filterOrganization.value) params.append('organization', filterOrganization.value)
+      if (filterDepartment.value) params.append('department', filterDepartment.value)
+      if (filterSubDepartment.value) params.append('subDepartment', filterSubDepartment.value)
+      
+      const res = await apiFetch(`/api/payroll/overview/monthly?${params}`)
+      if (res.ok) {
+        overviewData.value = await res.json()
+      } else {
+        console.error('Failed to fetch monthly overview')
+        overviewData.value = []
+      }
+    } catch (error) {
+      console.error('Error fetching monthly overview:', error)
+      overviewData.value = []
+    }
+  }
+
+  async function fetchOrganizations() {
+    try {
+      const res = await apiFetch('/api/organizations')
+      if (res.ok) {
+        organizations.value = await res.json()
+      }
+    } catch (error) {
+      console.error('Error fetching organizations:', error)
+    }
+  }
+
+  async function fetchDepartments() {
+    try {
+      const res = await apiFetch('/api/departments')
+      if (res.ok) {
+        departments.value = await res.json()
+      }
+    } catch (error) {
+      console.error('Error fetching departments:', error)
+    }
+  }
+
+  async function fetchSubDepartments() {
+    try {
+      const res = await apiFetch('/api/subdepartments')
+      if (res.ok) {
+        subDepartments.value = await res.json()
+      }
+    } catch (error) {
+      console.error('Error fetching sub-departments:', error)
+    }
+  }
+
   async function fetchSetting() {
     const res = await apiFetch('/api/salary-settings')
     if (res.ok) {
@@ -411,7 +694,13 @@ const settingId = ref(null)
     }
   }
 
-  onMounted(fetchSetting)
+  onMounted(() => {
+    fetchSetting()
+    fetchOrganizations()
+    fetchDepartments()
+    fetchSubDepartments()
+    fetchMonthlyOverview()
+  })
 </script>
   
   <style scoped>
@@ -421,5 +710,29 @@ const settingId = ref(null)
   
   .tab-content {
     margin-top: 20px;
+  }
+
+  .filter-form {
+    margin-bottom: 20px;
+    padding: 15px;
+    background-color: #f5f7fa;
+    border-radius: 4px;
+  }
+
+  .stat-item {
+    text-align: center;
+    padding: 10px;
+  }
+
+  .stat-label {
+    font-size: 14px;
+    color: #909399;
+    margin-bottom: 8px;
+  }
+
+  .stat-value {
+    font-size: 24px;
+    font-weight: bold;
+    color: #303133;
   }
   </style>
