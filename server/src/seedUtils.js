@@ -166,6 +166,13 @@ const EMPLOYEE_SALARY_CONFIGS = [
   },
 ];
 
+// 薪資生成概率配置
+const SALARY_PROBABILITIES = {
+  SELF_CONTRIBUTION_RATE: 0.6, // 60% 員工有勞退自提
+  ADVANCE_SALARY_RATE: 0.4,    // 40% 員工有預支薪資
+  DUAL_ACCOUNT_RATE: 0.3,      // 30% 員工有雙薪資帳戶
+};
+
 function randomInRange(min, max) {
   return Math.floor(Math.random() * (max - min + 1)) + min;
 }
@@ -187,20 +194,20 @@ function generateSalaryData(config, index) {
   
   // 計算勞退自提（0% 或隨機1-6%）
   const selfRateMax = config.laborPensionSelfRate[1];
-  const selfRate = selfRateMax > 0 && Math.random() > 0.4
+  const selfRate = selfRateMax > 0 && Math.random() < SALARY_PROBABILITIES.SELF_CONTRIBUTION_RATE
     ? randomInRange(config.laborPensionSelfRate[0] || 1, selfRateMax)
     : 0;
   const laborPensionSelf = selfRate > 0 ? Math.floor(salaryAmount * selfRate / 100) : 0;
   
   // 計算預支薪資（部分員工有預支）
-  const hasAdvance = Math.random() > 0.6;
+  const hasAdvance = Math.random() < SALARY_PROBABILITIES.ADVANCE_SALARY_RATE;
   const employeeAdvance = hasAdvance && config.advanceRate > 0
     ? Math.floor(salaryAmount * config.advanceRate)
     : 0;
   
   // 生成薪資帳戶（主帳戶必有，部分員工有雙帳戶）
   const salaryAccountA = generateBankAccount();
-  const hasDualAccount = Math.random() > 0.7;
+  const hasDualAccount = Math.random() < SALARY_PROBABILITIES.DUAL_ACCOUNT_RATE;
   const salaryAccountB = hasDualAccount ? generateBankAccount() : { bank: '', acct: '' };
   
   // 選擇薪資項目
