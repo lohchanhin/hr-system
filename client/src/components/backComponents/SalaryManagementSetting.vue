@@ -316,11 +316,60 @@
               <el-table-column prop="department" label="部門" width="120" />
               <el-table-column prop="subDepartment" label="單位" width="120" />
               <el-table-column prop="salaryType" label="薪資類型" width="100" />
+              
+              <!-- 工作時數資料 -->
+              <el-table-column label="工作時數" align="center">
+                <el-table-column prop="workDays" label="上班天數" width="100" align="right">
+                  <template #default="{ row }">
+                    {{ row.workDays || 0 }}
+                  </template>
+                </el-table-column>
+                <el-table-column prop="actualWorkHours" label="實際工時" width="100" align="right">
+                  <template #default="{ row }">
+                    {{ (row.actualWorkHours || 0).toFixed(2) }}
+                  </template>
+                </el-table-column>
+                <el-table-column prop="hourlyRate" label="時薪" width="100" align="right">
+                  <template #default="{ row }">
+                    {{ formatCurrency(row.hourlyRate) }}
+                  </template>
+                </el-table-column>
+              </el-table-column>
+              
+              <!-- 請假資料 -->
+              <el-table-column label="請假" align="center">
+                <el-table-column prop="leaveHours" label="請假時數" width="100" align="right">
+                  <template #default="{ row }">
+                    {{ (row.leaveHours || 0).toFixed(2) }}
+                  </template>
+                </el-table-column>
+                <el-table-column prop="leaveDeduction" label="請假扣款" width="100" align="right">
+                  <template #default="{ row }">
+                    {{ formatCurrency(row.leaveDeduction) }}
+                  </template>
+                </el-table-column>
+              </el-table-column>
+              
+              <!-- 加班資料 -->
+              <el-table-column label="加班" align="center">
+                <el-table-column prop="overtimeHours" label="加班時數" width="100" align="right">
+                  <template #default="{ row }">
+                    {{ (row.overtimeHours || 0).toFixed(2) }}
+                  </template>
+                </el-table-column>
+                <el-table-column prop="overtimePay" label="加班費" width="100" align="right">
+                  <template #default="{ row }">
+                    {{ formatCurrency(row.overtimePay) }}
+                  </template>
+                </el-table-column>
+              </el-table-column>
+              
               <el-table-column prop="baseSalary" label="基本薪資" width="120" align="right">
                 <template #default="{ row }">
                   {{ formatCurrency(row.baseSalary) }}
                 </template>
               </el-table-column>
+              
               <el-table-column label="扣款項目" align="center">
                 <el-table-column prop="laborInsuranceFee" label="勞保費" width="100" align="right">
                   <template #default="{ row }">
@@ -343,6 +392,7 @@
                   </template>
                 </el-table-column>
               </el-table-column>
+              
               <el-table-column label="加項" align="center">
                 <el-table-column prop="nightShiftAllowance" label="夜班津貼" width="100" align="right">
                   <template #default="{ row }">
@@ -360,19 +410,242 @@
                   </template>
                 </el-table-column>
               </el-table-column>
+              
               <el-table-column prop="netPay" label="實發金額" width="120" align="right" fixed="right">
                 <template #default="{ row }">
                   <strong>{{ formatCurrency(row.netPay) }}</strong>
                 </template>
               </el-table-column>
-              <el-table-column label="狀態" width="100" fixed="right">
+              
+              <el-table-column label="操作" width="150" fixed="right">
                 <template #default="{ row }">
+                  <el-button type="primary" size="small" @click="showDetailDialog(row)">詳細</el-button>
                   <el-tag :type="row.hasPayrollRecord ? 'success' : 'info'" size="small">
                     {{ row.hasPayrollRecord ? '已計算' : '未計算' }}
                   </el-tag>
                 </template>
               </el-table-column>
             </el-table>
+
+            <!-- Employee Detail Dialog -->
+            <el-dialog
+              v-model="detailDialogVisible"
+              title="員工薪資詳細資料"
+              width="90%"
+              :close-on-click-modal="false"
+            >
+              <div v-if="selectedEmployee">
+                <!-- Employee Info -->
+                <el-card class="detail-card" shadow="never">
+                  <template #header>
+                    <div class="card-header">
+                      <span>基本資訊</span>
+                    </div>
+                  </template>
+                  <el-descriptions :column="3" border>
+                    <el-descriptions-item label="員工編號">{{ selectedEmployee.employeeId }}</el-descriptions-item>
+                    <el-descriptions-item label="姓名">{{ selectedEmployee.name }}</el-descriptions-item>
+                    <el-descriptions-item label="部門">{{ selectedEmployee.department }}</el-descriptions-item>
+                    <el-descriptions-item label="單位">{{ selectedEmployee.subDepartment }}</el-descriptions-item>
+                    <el-descriptions-item label="薪資類型">{{ selectedEmployee.salaryType }}</el-descriptions-item>
+                    <el-descriptions-item label="月份">{{ overviewMonth }}</el-descriptions-item>
+                  </el-descriptions>
+                </el-card>
+
+                <!-- Work Hours Breakdown -->
+                <el-card class="detail-card" shadow="never" style="margin-top: 20px">
+                  <template #header>
+                    <div class="card-header">
+                      <span>工作時數統計</span>
+                    </div>
+                  </template>
+                  <el-row :gutter="20">
+                    <el-col :span="6">
+                      <div class="stat-box">
+                        <div class="stat-label">上班天數</div>
+                        <div class="stat-value">{{ selectedEmployee.workDays || 0 }} 天</div>
+                      </div>
+                    </el-col>
+                    <el-col :span="6">
+                      <div class="stat-box">
+                        <div class="stat-label">應出勤時數</div>
+                        <div class="stat-value">{{ (selectedEmployee.scheduledHours || 0).toFixed(2) }} 小時</div>
+                      </div>
+                    </el-col>
+                    <el-col :span="6">
+                      <div class="stat-box">
+                        <div class="stat-label">實際工時</div>
+                        <div class="stat-value">{{ (selectedEmployee.actualWorkHours || 0).toFixed(2) }} 小時</div>
+                      </div>
+                    </el-col>
+                    <el-col :span="6">
+                      <div class="stat-box">
+                        <div class="stat-label">時薪</div>
+                        <div class="stat-value">{{ formatCurrency(selectedEmployee.hourlyRate) }}</div>
+                      </div>
+                    </el-col>
+                  </el-row>
+
+                  <!-- Daily Details -->
+                  <div v-if="employeeDetailData?.dailyDetails?.length" style="margin-top: 20px">
+                    <h4>每日出勤明細</h4>
+                    <el-table :data="employeeDetailData.dailyDetails" border size="small" max-height="300">
+                      <el-table-column prop="date" label="日期" width="120" />
+                      <el-table-column prop="shiftName" label="班別" width="120" />
+                      <el-table-column prop="scheduledHours" label="排班時數" width="100" align="right">
+                        <template #default="{ row }">
+                          {{ row.scheduledHours.toFixed(2) }}
+                        </template>
+                      </el-table-column>
+                      <el-table-column prop="workedHours" label="實際工時" width="100" align="right">
+                        <template #default="{ row }">
+                          {{ row.workedHours.toFixed(2) }}
+                        </template>
+                      </el-table-column>
+                      <el-table-column label="出勤狀態" width="100">
+                        <template #default="{ row }">
+                          <el-tag :type="row.hasAttendance ? 'success' : 'danger'" size="small">
+                            {{ row.hasAttendance ? '已打卡' : '缺勤' }}
+                          </el-tag>
+                        </template>
+                      </el-table-column>
+                    </el-table>
+                  </div>
+                </el-card>
+
+                <!-- Leave Impact -->
+                <el-card class="detail-card" shadow="never" style="margin-top: 20px">
+                  <template #header>
+                    <div class="card-header">
+                      <span>請假統計</span>
+                    </div>
+                  </template>
+                  <el-row :gutter="20">
+                    <el-col :span="6">
+                      <div class="stat-box">
+                        <div class="stat-label">總請假時數</div>
+                        <div class="stat-value">{{ (selectedEmployee.leaveHours || 0).toFixed(2) }} 小時</div>
+                      </div>
+                    </el-col>
+                    <el-col :span="6">
+                      <div class="stat-box">
+                        <div class="stat-label">有薪假時數</div>
+                        <div class="stat-value">{{ (selectedEmployee.paidLeaveHours || 0).toFixed(2) }} 小時</div>
+                      </div>
+                    </el-col>
+                    <el-col :span="6">
+                      <div class="stat-box">
+                        <div class="stat-label">無薪假時數</div>
+                        <div class="stat-value">{{ (selectedEmployee.unpaidLeaveHours || 0).toFixed(2) }} 小時</div>
+                      </div>
+                    </el-col>
+                    <el-col :span="6">
+                      <div class="stat-box">
+                        <div class="stat-label">請假扣款</div>
+                        <div class="stat-value">{{ formatCurrency(selectedEmployee.leaveDeduction) }}</div>
+                      </div>
+                    </el-col>
+                  </el-row>
+
+                  <!-- Leave Records -->
+                  <div v-if="employeeDetailData?.leaveRecords?.length" style="margin-top: 20px">
+                    <h4>請假記錄</h4>
+                    <el-table :data="employeeDetailData.leaveRecords" border size="small">
+                      <el-table-column prop="leaveType" label="假別" width="120" />
+                      <el-table-column prop="startDate" label="開始日期" width="120" />
+                      <el-table-column prop="endDate" label="結束日期" width="120" />
+                      <el-table-column prop="days" label="天數" width="80" align="right">
+                        <template #default="{ row }">
+                          {{ row.days.toFixed(1) }}
+                        </template>
+                      </el-table-column>
+                      <el-table-column prop="hours" label="時數" width="80" align="right">
+                        <template #default="{ row }">
+                          {{ row.hours.toFixed(2) }}
+                        </template>
+                      </el-table-column>
+                      <el-table-column label="給薪狀態" width="100">
+                        <template #default="{ row }">
+                          <el-tag :type="row.isPaid ? 'success' : 'warning'" size="small">
+                            {{ row.isPaid ? '有薪' : '無薪' }}
+                          </el-tag>
+                        </template>
+                      </el-table-column>
+                    </el-table>
+                  </div>
+                </el-card>
+
+                <!-- Overtime -->
+                <el-card class="detail-card" shadow="never" style="margin-top: 20px">
+                  <template #header>
+                    <div class="card-header">
+                      <span>加班統計</span>
+                    </div>
+                  </template>
+                  <el-row :gutter="20">
+                    <el-col :span="12">
+                      <div class="stat-box">
+                        <div class="stat-label">加班時數</div>
+                        <div class="stat-value">{{ (selectedEmployee.overtimeHours || 0).toFixed(2) }} 小時</div>
+                      </div>
+                    </el-col>
+                    <el-col :span="12">
+                      <div class="stat-box">
+                        <div class="stat-label">加班費</div>
+                        <div class="stat-value">{{ formatCurrency(selectedEmployee.overtimePay) }}</div>
+                      </div>
+                    </el-col>
+                  </el-row>
+
+                  <!-- Overtime Records -->
+                  <div v-if="employeeDetailData?.overtimeRecords?.length" style="margin-top: 20px">
+                    <h4>加班記錄</h4>
+                    <el-table :data="employeeDetailData.overtimeRecords" border size="small">
+                      <el-table-column prop="date" label="日期" width="120" />
+                      <el-table-column prop="hours" label="加班時數" width="100" align="right">
+                        <template #default="{ row }">
+                          {{ row.hours.toFixed(2) }}
+                        </template>
+                      </el-table-column>
+                      <el-table-column prop="reason" label="原因" />
+                    </el-table>
+                  </div>
+                </el-card>
+
+                <!-- Salary Calculation -->
+                <el-card class="detail-card" shadow="never" style="margin-top: 20px">
+                  <template #header>
+                    <div class="card-header">
+                      <span>薪資計算明細</span>
+                    </div>
+                  </template>
+                  <el-table :data="salaryCalculationBreakdown" border>
+                    <el-table-column prop="item" label="項目" width="200" />
+                    <el-table-column prop="description" label="說明" />
+                    <el-table-column prop="amount" label="金額" width="150" align="right">
+                      <template #default="{ row }">
+                        <span :style="{ color: row.type === 'deduction' ? 'red' : row.type === 'bonus' ? 'green' : 'inherit' }">
+                          {{ row.type === 'deduction' ? '-' : '' }}{{ formatCurrency(row.amount) }}
+                        </span>
+                      </template>
+                    </el-table-column>
+                  </el-table>
+                  <div style="margin-top: 20px; text-align: right; font-size: 18px; font-weight: bold">
+                    <el-row :gutter="20">
+                      <el-col :span="18">實發金額 (銀行A)：</el-col>
+                      <el-col :span="6">{{ formatCurrency(selectedEmployee.netPay) }}</el-col>
+                    </el-row>
+                    <el-row :gutter="20" style="margin-top: 10px">
+                      <el-col :span="18">獎金金額 (銀行B)：</el-col>
+                      <el-col :span="6">{{ formatCurrency(selectedEmployee.totalBonus) }}</el-col>
+                    </el-row>
+                  </div>
+                </el-card>
+              </div>
+              <template #footer>
+                <el-button @click="detailDialogVisible = false">關閉</el-button>
+              </template>
+            </el-dialog>
           </div>
         </el-tab-pane>
       </el-tabs>
@@ -564,6 +837,11 @@ const settingId = ref(null)
   const departments = ref([])
   const subDepartments = ref([])
 
+  // Detail dialog
+  const detailDialogVisible = ref(false)
+  const selectedEmployee = ref(null)
+  const employeeDetailData = ref(null)
+
   // Computed filtered data based on employee name search
   const filteredOverviewData = computed(() => {
     if (!filterEmployeeName.value) {
@@ -593,6 +871,135 @@ const settingId = ref(null)
                         (item.otherDeductions || 0)
       return sum + deductions
     }, 0)
+  })
+
+  // Salary calculation breakdown for detail dialog
+  const salaryCalculationBreakdown = computed(() => {
+    if (!selectedEmployee.value) return []
+    
+    const breakdown = []
+    const emp = selectedEmployee.value
+    
+    // Base salary calculation
+    if (emp.salaryType === '時薪') {
+      breakdown.push({
+        item: '基本薪資計算',
+        description: `${(emp.actualWorkHours || 0).toFixed(2)} 小時 × ${formatCurrency(emp.hourlyRate)}`,
+        amount: emp.baseSalary || 0,
+        type: 'income'
+      })
+    } else if (emp.salaryType === '日薪') {
+      const dailyRate = emp.hourlyRate * 8
+      breakdown.push({
+        item: '基本薪資計算',
+        description: `${emp.workDays || 0} 天 × ${formatCurrency(dailyRate)}`,
+        amount: emp.baseSalary || 0,
+        type: 'income'
+      })
+    } else {
+      breakdown.push({
+        item: '基本薪資',
+        description: '月薪制',
+        amount: emp.baseSalary || 0,
+        type: 'income'
+      })
+    }
+    
+    // Leave deduction
+    if (emp.leaveDeduction > 0) {
+      breakdown.push({
+        item: '請假扣款',
+        description: `無薪假 ${(emp.unpaidLeaveHours || 0).toFixed(2)} 小時`,
+        amount: emp.leaveDeduction,
+        type: 'deduction'
+      })
+    }
+    
+    // Insurance and pension deductions
+    if (emp.laborInsuranceFee > 0) {
+      breakdown.push({
+        item: '勞保費',
+        description: '員工自付額',
+        amount: emp.laborInsuranceFee,
+        type: 'deduction'
+      })
+    }
+    
+    if (emp.healthInsuranceFee > 0) {
+      breakdown.push({
+        item: '健保費',
+        description: '員工自付額',
+        amount: emp.healthInsuranceFee,
+        type: 'deduction'
+      })
+    }
+    
+    if (emp.laborPensionSelf > 0) {
+      breakdown.push({
+        item: '勞退提繳',
+        description: '個人提繳',
+        amount: emp.laborPensionSelf,
+        type: 'deduction'
+      })
+    }
+    
+    // Other deductions
+    if (emp.employeeAdvance > 0) {
+      breakdown.push({
+        item: '員工借支',
+        description: '',
+        amount: emp.employeeAdvance,
+        type: 'deduction'
+      })
+    }
+    
+    if (emp.otherDeductions > 0) {
+      breakdown.push({
+        item: '其他扣款',
+        description: '',
+        amount: emp.otherDeductions,
+        type: 'deduction'
+      })
+    }
+    
+    // Bonuses (separate - goes to Bank B)
+    if (emp.overtimePay > 0) {
+      breakdown.push({
+        item: '加班費',
+        description: `${(emp.overtimeHours || 0).toFixed(2)} 小時`,
+        amount: emp.overtimePay,
+        type: 'bonus'
+      })
+    }
+    
+    if (emp.nightShiftAllowance > 0) {
+      breakdown.push({
+        item: '夜班津貼',
+        description: '',
+        amount: emp.nightShiftAllowance,
+        type: 'bonus'
+      })
+    }
+    
+    if (emp.performanceBonus > 0) {
+      breakdown.push({
+        item: '績效獎金',
+        description: '',
+        amount: emp.performanceBonus,
+        type: 'bonus'
+      })
+    }
+    
+    if (emp.otherBonuses > 0) {
+      breakdown.push({
+        item: '其他獎金',
+        description: '',
+        amount: emp.otherBonuses,
+        type: 'bonus'
+      })
+    }
+    
+    return breakdown
   })
 
   function formatCurrency(value) {
@@ -650,6 +1057,25 @@ const settingId = ref(null)
       }
     } catch (error) {
       console.error('Error fetching sub-departments:', error)
+    }
+  }
+
+  async function showDetailDialog(employee) {
+    selectedEmployee.value = employee
+    detailDialogVisible.value = true
+    
+    // Fetch detailed work data
+    try {
+      const res = await apiFetch(`/api/payroll/complete-data/${employee._id}/${overviewMonth.value}`)
+      if (res.ok) {
+        employeeDetailData.value = await res.json()
+      } else {
+        console.error('Failed to fetch employee detail data')
+        employeeDetailData.value = null
+      }
+    } catch (error) {
+      console.error('Error fetching employee detail data:', error)
+      employeeDetailData.value = null
     }
   }
 
@@ -732,6 +1158,34 @@ const settingId = ref(null)
 
   .stat-value {
     font-size: 24px;
+    font-weight: bold;
+    color: #303133;
+  }
+
+  .detail-card {
+    margin-bottom: 15px;
+  }
+
+  .card-header {
+    font-weight: bold;
+    font-size: 16px;
+  }
+
+  .stat-box {
+    text-align: center;
+    padding: 15px;
+    background-color: #f5f7fa;
+    border-radius: 4px;
+  }
+
+  .stat-box .stat-label {
+    font-size: 14px;
+    color: #909399;
+    margin-bottom: 8px;
+  }
+
+  .stat-box .stat-value {
+    font-size: 20px;
     font-weight: bold;
     color: #303133;
   }
