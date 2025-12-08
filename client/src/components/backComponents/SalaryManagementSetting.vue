@@ -653,10 +653,6 @@ const settingId = ref(null)
     }
   }
 
-  function filterOverviewData() {
-    // This is handled by the computed property filteredOverviewData
-  }
-
   async function fetchSetting() {
     const res = await apiFetch('/api/salary-settings')
     if (res.ok) {

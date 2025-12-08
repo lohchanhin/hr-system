@@ -204,6 +204,12 @@ export async function getMonthlyPayrollOverview(req, res) {
       return res.status(400).json({ error: 'month parameter is required' });
     }
     
+    // Validate month format (should be YYYY-MM-DD)
+    const monthDate = new Date(month);
+    if (isNaN(monthDate.getTime())) {
+      return res.status(400).json({ error: 'Invalid month format. Expected YYYY-MM-DD' });
+    }
+    
     // Build employee query based on filters
     const employeeQuery = {};
     if (organization) {
@@ -229,7 +235,6 @@ export async function getMonthlyPayrollOverview(req, res) {
       return res.json([]);
     }
     
-    const monthDate = new Date(month);
     const employeeIds = employees.map(e => e._id.toString());
     
     // Find existing payroll records for this month

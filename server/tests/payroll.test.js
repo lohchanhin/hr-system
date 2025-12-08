@@ -230,6 +230,13 @@ describe('Payroll API', () => {
       expect(res.body).toHaveProperty('error');
     });
 
+    it('returns 400 if month format is invalid', async () => {
+      const res = await request(app).get('/api/payroll/overview/monthly?month=invalid-date');
+      expect(res.status).toBe(400);
+      expect(res.body).toHaveProperty('error');
+      expect(res.body.error).toContain('Invalid month format');
+    });
+
     it('returns overview with month filter', async () => {
       const fakeEmployees = [
         {
