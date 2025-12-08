@@ -52,6 +52,14 @@ async function seed() {
     role: user.role,
     signTags: Array.isArray(user.signTags) ? [...user.signTags] : [],
     ...pickSignProfile(user),
+    // 薪資資料
+    salaryType: user.salaryType,
+    salaryAmount: user.salaryAmount,
+    laborPensionSelf: user.laborPensionSelf,
+    employeeAdvance: user.employeeAdvance,
+    salaryAccountA: user.salaryAccountA,
+    salaryAccountB: user.salaryAccountB,
+    salaryItems: user.salaryItems,
   });
 
   supervisors.forEach((supervisor) => {
