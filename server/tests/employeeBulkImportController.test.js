@@ -113,13 +113,15 @@ beforeEach(async () => {
   mockEmployeeFind = jest.fn().mockResolvedValue([])
   mockEmployeeInsertMany = jest.fn().mockImplementation(async docs => docs)
   mockEmployeeStartSession = jest.fn()
-  mockDepartment.find.mockReturnValue({
+  mockDepartment.find.mockImplementation(() => ({
     lean: jest.fn().mockImplementation(() => Promise.resolve(departmentDocs))
-  })
-  mockSubDepartment.find.mockReturnValue({
+  }))
+  mockSubDepartment.find.mockImplementation(() => ({
     lean: jest.fn().mockImplementation(() => Promise.resolve(subDepartmentDocs))
-  })
-  mockOrganization.find.mockReturnValue({ lean: jest.fn().mockResolvedValue([]) })
+  }))
+  mockOrganization.find.mockImplementation(() => ({ 
+    lean: jest.fn().mockResolvedValue([]) 
+  }))
 
   ;({ bulkImportEmployees } = await import('../src/controllers/employeeBulkImportController.js'))
 })
@@ -211,7 +213,7 @@ describe('employeeBulkImportController subDepartment resolution', () => {
         name: 'Alpha',
         code: '',
         department: 'depA',
-        departmentName: 'Dept A',
+        departmentName: '',
         departmentCode: '',
         organization: '',
         organizationName: '',
@@ -240,7 +242,18 @@ describe('employeeBulkImportController subDepartment resolution', () => {
     expect(res.status).toHaveBeenCalledWith(409)
     const response = res.json.mock.calls[0][0]
     expect(response.missingReferences.subDepartment.options).toEqual([
-      { id: 'sdB', name: 'Beta', code: '', department: 'depB' }
+      { 
+        id: 'sdB', 
+        name: 'Beta', 
+        code: '', 
+        department: 'depB',
+        departmentName: '',
+        departmentCode: '',
+        organization: '',
+        organizationName: '',
+        organizationUnitName: '',
+        organizationCode: ''
+      }
     ])
   })
 

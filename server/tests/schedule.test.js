@@ -1203,8 +1203,9 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
               name: '內科部',
               subDepartments: [
                 {
-                  id: 'sub-1',
+                  id: 'dept-1::急診一科',
                   name: '急診一科',
+                  sourceSubDepartmentIds: ['sub-1'],
                   employees: [
                     {
                       id: 'emp-1',
@@ -1224,8 +1225,9 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
               name: '外科部',
               subDepartments: [
                 {
-                  id: 'sub-2',
+                  id: 'dept-2::外科病房',
                   name: '外科病房',
+                  sourceSubDepartmentIds: ['sub-2'],
                   employees: [
                     {
                       id: 'emp-2',
