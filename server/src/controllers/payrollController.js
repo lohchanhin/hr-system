@@ -195,6 +195,7 @@ export async function initializeLaborInsuranceRatesController(req, res) {
 
 /**
  * 獲取月薪資總覽（支援篩選機構、部門、單位、員工）
+ * 自動計算沒有薪資記錄的員工薪資
  */
 export async function getMonthlyPayrollOverview(req, res) {
   try {
@@ -229,7 +230,7 @@ export async function getMonthlyPayrollOverview(req, res) {
     const employees = await Employee.find(employeeQuery)
       .populate('department')
       .populate('subDepartment')
-      .select('employeeId name department subDepartment organization salaryAmount salaryType');
+      .select('employeeId name department subDepartment organization salaryAmount salaryType laborPensionSelf employeeAdvance salaryAccountA salaryAccountB');
     
     if (employees.length === 0) {
       return res.json([]);
@@ -250,8 +251,22 @@ export async function getMonthlyPayrollOverview(req, res) {
     });
     
     // Build the overview data
-    const overview = employees.map(employee => {
-      const payroll = payrollMap[employee._id.toString()];
+    const overview = await Promise.all(employees.map(async (employee) => {
+      const employeeIdStr = employee._id.toString();
+      let payroll = payrollMap[employeeIdStr];
+      
+      // If no payroll record exists, calculate it automatically based on attendance
+      if (!payroll) {
+        try {
+          const calculatedPayroll = await calculateEmployeePayroll(employeeIdStr, month, {});
+          // Note: We don't save the calculated payroll automatically, just return it for preview
+          payroll = calculatedPayroll;
+        } catch (error) {
+          console.error(`Error calculating payroll for employee ${employeeIdStr}:`, error.message);
+          // If calculation fails, use default values
+          payroll = null;
+        }
+      }
       
       return {
         _id: employee._id,
@@ -263,7 +278,7 @@ export async function getMonthlyPayrollOverview(req, res) {
         subDepartmentId: employee.subDepartment?._id,
         organization: employee.organization || '',
         salaryType: employee.salaryType || '月薪',
-        // Payroll data (if exists)
+        // Payroll data (calculated or from existing record)
         baseSalary: payroll?.baseSalary || employee.salaryAmount || 0,
         laborInsuranceFee: payroll?.laborInsuranceFee || 0,
         healthInsuranceFee: payroll?.healthInsuranceFee || 0,
@@ -276,10 +291,10 @@ export async function getMonthlyPayrollOverview(req, res) {
         performanceBonus: payroll?.performanceBonus || 0,
         otherBonuses: payroll?.otherBonuses || 0,
         totalBonus: payroll?.totalBonus || 0,
-        hasPayrollRecord: !!payroll,
-        payrollRecordId: payroll?._id
+        hasPayrollRecord: !!payrollMap[employeeIdStr],
+        payrollRecordId: payrollMap[employeeIdStr]?._id
       };
-    });
+    }));
     
     res.json(overview);
   } catch (err) {
