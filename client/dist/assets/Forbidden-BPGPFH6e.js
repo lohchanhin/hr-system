@@ -1,0 +1,1 @@
+import{_ as n,c as s,b as o,o as r}from"./index-BRi7JFWd.js";const t={},d={class:"forbidden"};function c(a,e){return r(),s("div",d,[...e[0]||(e[0]=[o("h2",null,"403 Forbidden",-1),o("p",null,"您沒有權限瀏覽此頁面",-1)])])}const l=n(t,[["render",c],["__scopeId","data-v-080262f3"]]);export{l as default};
