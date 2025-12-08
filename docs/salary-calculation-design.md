@@ -508,20 +508,23 @@ const netPay = baseSalary
 ### API 端點建議
 
 ```
-GET  /api/payroll/calculate/:employeeId/:month
-     - 計算指定員工月份薪資
+POST /api/payroll/calculate
+     - 計算指定員工月份薪資（即時計算，不儲存）
+     - Body: { employeeId, month }
 
 POST /api/payroll/batch-calculate
      - 批次計算多位員工薪資
+     - Body: { employeeIds[], month }
 
 GET  /api/attendance/summary/:employeeId/:month
      - 取得員工月度考勤彙總
 
-GET  /api/payroll/preview/:employeeId/:month
-     - 預覽薪資計算明細（用於確認）
+GET  /api/payroll/:employeeId/:month
+     - 取得已儲存的薪資記錄
 
-POST /api/payroll/finalize/:employeeId/:month
-     - 確認並儲存薪資記錄
+POST /api/payroll
+     - 計算並儲存薪資記錄
+     - Body: { employeeId, month, customData }
 ```
 
 ---

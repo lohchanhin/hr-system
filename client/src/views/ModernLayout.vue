@@ -446,7 +446,7 @@ function logout() {
 
 @media (max-width: 768px) {
   .layout-aside {
-    z-index: 1000;
+    z-index: 1001;
   }
 
   .system-title {
