@@ -217,6 +217,29 @@ function generateSalaryData(config, index) {
     config.itemCount[1]
   );
   
+  // 計算勞保等級（根據薪資金額）
+  // 簡化版：根據薪資範圍分配等級 1-28
+  let laborInsuranceLevel = 1;
+  if (config.salaryType === '月薪') {
+    if (salaryAmount >= 80000) laborInsuranceLevel = 28;
+    else if (salaryAmount >= 70000) laborInsuranceLevel = 26;
+    else if (salaryAmount >= 60000) laborInsuranceLevel = 24;
+    else if (salaryAmount >= 50000) laborInsuranceLevel = 22;
+    else if (salaryAmount >= 40000) laborInsuranceLevel = 18;
+    else if (salaryAmount >= 30000) laborInsuranceLevel = 14;
+    else laborInsuranceLevel = 10;
+  } else if (config.salaryType === '日薪') {
+    laborInsuranceLevel = randomInRange(8, 12);
+  } else {
+    laborInsuranceLevel = randomInRange(5, 10);
+  }
+  
+  // 勞保設定（大部分啟用自動扣費，部分員工啟用加班計算和遲到扣款）
+  const autoDeduction = Math.random() < 0.9; // 90%自動扣費
+  const autoOvertimeCalc = Math.random() < 0.4; // 40%自動加班計算
+  const lateDeductionEnabled = Math.random() < 0.3; // 30%啟用遲到扣款
+  const lateDeductionAmount = lateDeductionEnabled ? randomInRange(50, 200) : 0;
+  
   return {
     salaryType: config.salaryType,
     salaryAmount,
@@ -225,6 +248,11 @@ function generateSalaryData(config, index) {
     salaryAccountA,
     salaryAccountB,
     salaryItems,
+    laborInsuranceLevel,
+    autoDeduction,
+    autoOvertimeCalc,
+    lateDeductionEnabled,
+    lateDeductionAmount,
   };
 }
 
