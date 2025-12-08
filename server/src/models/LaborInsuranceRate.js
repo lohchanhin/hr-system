@@ -10,6 +10,6 @@ const laborInsuranceRateSchema = new mongoose.Schema({
 }, { timestamps: true });
 
 laborInsuranceRateSchema.index({ level: 1 }, { unique: true });
-laborInsuranceRateSchema.index({ insuredSalary: 1 });
+laborInsuranceRateSchema.index({ insuredSalary: 1, level: 1 }); // Compound index for optimized lookup
 
 export default mongoose.model('LaborInsuranceRate', laborInsuranceRateSchema);

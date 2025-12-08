@@ -210,7 +210,7 @@ export async function generateTaichungBankExcel(payrollRecords, companyInfo = {}
       record.bankAccountB?.accountNumber || '',
       '',
       '',
-      `${(record.netPay || 0).toLocaleString()} `
+      (record.netPay || 0).toLocaleString()
     ]);
   });
   

@@ -40,7 +40,12 @@ export async function calculateEmployeePayroll(employeeId, month, customData = {
   // 計算實領金額 (Stage A)
   const totalDeductions = laborInsuranceFee + healthInsuranceFee + laborPensionSelf + 
                           employeeAdvance + debtGarnishment + otherDeductions;
-  const netPay = baseSalary - totalDeductions;
+  const netPay = Math.max(0, baseSalary - totalDeductions); // Ensure non-negative net pay
+  
+  // Warning if deductions exceed base salary
+  if (totalDeductions > baseSalary) {
+    console.warn(`Warning: Total deductions (${totalDeductions}) exceed base salary (${baseSalary}) for employee ${employeeId}`);
+  }
   
   // 獎金項目 (Stage B)
   const nightShiftAllowance = customData.nightShiftAllowance ?? 0;
