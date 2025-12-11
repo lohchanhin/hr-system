@@ -382,6 +382,38 @@ function generateUniqueValue(prefix, usedSet) {
   return value;
 }
 
+function buildEmployeeIdGenerator(existingIds = []) {
+  const usedIds = new Set();
+  const prefixCounters = new Map();
+
+  existingIds
+    .filter(Boolean)
+    .forEach((id) => {
+      usedIds.add(id);
+      const match = `${id}`.match(/^([A-Za-z]+)-(\d+)$/);
+      if (!match) return;
+      const [, prefix, number] = match;
+      const upperPrefix = prefix.toUpperCase();
+      const current = prefixCounters.get(upperPrefix) ?? 0;
+      prefixCounters.set(upperPrefix, Math.max(current, Number(number)));
+    });
+
+  return (prefix = 'EMP') => {
+    const upperPrefix = prefix.toUpperCase();
+    let counter = prefixCounters.get(upperPrefix) ?? 0;
+    let candidate = '';
+
+    do {
+      counter += 1;
+      candidate = `${upperPrefix}-${String(counter).padStart(4, '0')}`;
+    } while (usedIds.has(candidate));
+
+    prefixCounters.set(upperPrefix, counter);
+    usedIds.add(candidate);
+    return candidate;
+  };
+}
+
 function buildHierarchy(organizations, departments, subDepartments) {
   const departmentsByOrg = new Map();
   departments.forEach((department) => {
@@ -934,6 +966,10 @@ export async function seedTestUsers() {
 
   const usedUsernames = new Set();
   const usedEmails = new Set();
+  const existingEmployees = await Employee.find({}, 'employeeId').lean();
+  const generateEmployeeId = buildEmployeeIdGenerator(
+    existingEmployees.map((item) => item?.employeeId),
+  );
 
   const supervisors = [];
   const supervisorAssignments = new Map();
@@ -947,9 +983,10 @@ export async function seedTestUsers() {
     // 生成主管薪資資料
     const salaryConfig = SUPERVISOR_SALARY_CONFIGS[i % SUPERVISOR_SALARY_CONFIGS.length];
     const salaryData = generateSalaryData(salaryConfig, i);
-    
+
     const supervisor = await Employee.create({
       name: config.name,
+      employeeId: generateEmployeeId('SUP'),
       email: `${emailSeed}@example.com`,
       username: usernameSeed,
       password: SEED_TEST_PASSWORD,
@@ -990,9 +1027,10 @@ export async function seedTestUsers() {
     // 生成員工薪資資料
     const salaryConfig = EMPLOYEE_SALARY_CONFIGS[i % EMPLOYEE_SALARY_CONFIGS.length];
     const salaryData = generateSalaryData(salaryConfig, i);
-    
+
     const employee = await Employee.create({
       name: EMPLOYEE_NAMES[i % EMPLOYEE_NAMES.length],
+      employeeId: generateEmployeeId('EMP'),
       email: `${emailSeed}@example.com`,
       username: usernameSeed,
       password: SEED_TEST_PASSWORD,

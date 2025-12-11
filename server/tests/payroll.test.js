@@ -26,9 +26,20 @@ const mockLaborInsuranceRate = {
   limit: jest.fn()
 };
 
+const mockCalculateEmployeePayroll = jest.fn();
+const mockCalculateBatchPayroll = jest.fn();
+const mockSavePayrollRecord = jest.fn();
+const mockGetEmployeePayrollRecords = jest.fn();
+
 jest.unstable_mockModule('../src/models/PayrollRecord.js', () => ({ default: mockPayrollRecord }));
 jest.unstable_mockModule('../src/models/Employee.js', () => ({ default: mockEmployee }));
 jest.unstable_mockModule('../src/models/LaborInsuranceRate.js', () => ({ default: mockLaborInsuranceRate }));
+jest.unstable_mockModule('../src/services/payrollService.js', () => ({
+  calculateEmployeePayroll: mockCalculateEmployeePayroll,
+  calculateBatchPayroll: mockCalculateBatchPayroll,
+  savePayrollRecord: mockSavePayrollRecord,
+  getEmployeePayrollRecords: mockGetEmployeePayrollRecords
+}));
 
 let app;
 let payrollRoutes;
@@ -50,7 +61,11 @@ beforeEach(() => {
   mockLaborInsuranceRate.findOneAndUpdate.mockReset();
   mockLaborInsuranceRate.sort.mockReset();
   mockLaborInsuranceRate.limit.mockReset();
-  
+  mockCalculateEmployeePayroll.mockReset();
+  mockCalculateBatchPayroll.mockReset();
+  mockSavePayrollRecord.mockReset();
+  mockGetEmployeePayrollRecords.mockReset();
+
   // Reset chaining
   mockPayrollRecord.find.mockReturnValue({
     populate: jest.fn().mockReturnThis(),
@@ -60,6 +75,17 @@ beforeEach(() => {
   mockLaborInsuranceRate.findOne.mockReturnValue(mockLaborInsuranceRate);
   mockLaborInsuranceRate.sort.mockReturnValue(mockLaborInsuranceRate);
   mockLaborInsuranceRate.limit.mockReturnValue(mockLaborInsuranceRate);
+
+  mockCalculateEmployeePayroll.mockResolvedValue({
+    baseSalary: 45600,
+    netPay: 42142,
+    laborInsuranceFee: 1145,
+    laborPensionSelf: 0,
+    employeeAdvance: 0
+  });
+  mockCalculateBatchPayroll.mockResolvedValue([]);
+  mockSavePayrollRecord.mockResolvedValue({ _id: 'payroll-record', netPay: 42142 });
+  mockGetEmployeePayrollRecords.mockResolvedValue([]);
 });
 
 describe('Payroll API', () => {
@@ -177,9 +203,9 @@ describe('Payroll API', () => {
             healthInsuranceFee: 710
           }
         });
-      
+
       expect(res.status).toBe(201);
-      expect(findOneAndUpdateMock).toHaveBeenCalled();
+      expect(mockSavePayrollRecord).toHaveBeenCalled();
     });
   });
 
