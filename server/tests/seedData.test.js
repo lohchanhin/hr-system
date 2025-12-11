@@ -8,6 +8,10 @@ const mockAttendanceSettings = [];
 const mockAttendanceRecords = [];
 const mockShiftSchedules = [];
 const mockPayrollRecords = [];
+const mockFormTemplates = [];
+const mockFormFields = [];
+const mockApprovalWorkflows = [];
+const mockApprovalRequests = [];
 
 const MIN_WORKDAYS = 20;
 const PAYROLL_MONTHS_COUNT = 2;
@@ -129,6 +133,33 @@ const mockShiftSchedule = {
   }),
 };
 
+const mockFormTemplate = {
+  findOne: jest.fn(async ({ name }) =>
+    mockFormTemplates.find((tpl) => tpl.name === name) ?? null),
+};
+
+const mockFormField = {
+  find: jest.fn(({ form }) => ({
+    sort: () => ({
+      lean: async () =>
+        mockFormFields.filter((field) => field.form === form).sort((a, b) => a.order - b.order),
+    }),
+  })),
+};
+
+const mockApprovalWorkflow = {
+  findOne: jest.fn(async ({ form }) =>
+    mockApprovalWorkflows.find((wf) => wf.form === form) ?? null),
+};
+
+const mockApprovalRequest = {
+  find: jest.fn(() => ({ lean: async () => mockApprovalRequests })),
+  deleteMany: jest.fn(async () => {
+    mockApprovalRequests.length = 0;
+  }),
+  insertMany: jest.fn(async (requests) => requests),
+};
+
 const mockPayrollRecord = {
   deleteMany: jest.fn(async () => {
     mockPayrollRecords.length = 0;
@@ -161,6 +192,10 @@ beforeAll(async () => {
   await jest.unstable_mockModule('../src/models/AttendanceRecord.js', () => ({ default: mockAttendanceRecord }));
   await jest.unstable_mockModule('../src/models/ShiftSchedule.js', () => ({ default: mockShiftSchedule }));
   await jest.unstable_mockModule('../src/models/PayrollRecord.js', () => ({ default: mockPayrollRecord }));
+  await jest.unstable_mockModule('../src/models/form_template.js', () => ({ default: mockFormTemplate }));
+  await jest.unstable_mockModule('../src/models/form_field.js', () => ({ default: mockFormField }));
+  await jest.unstable_mockModule('../src/models/approval_workflow.js', () => ({ default: mockApprovalWorkflow }));
+  await jest.unstable_mockModule('../src/models/approval_request.js', () => ({ default: mockApprovalRequest }));
 
   const module = await import('../src/seedUtils.js');
   seedSampleData = module.seedSampleData;
@@ -169,6 +204,7 @@ beforeAll(async () => {
 });
 
 beforeEach(() => {
+  jest.useFakeTimers().setSystemTime(new Date('2024-05-20T00:00:00Z'));
   mockOrganizations.length = 0;
   mockDepartments.length = 0;
   mockSubDepartments.length = 0;
@@ -177,6 +213,10 @@ beforeEach(() => {
   mockAttendanceRecords.length = 0;
   mockShiftSchedules.length = 0;
   mockPayrollRecords.length = 0;
+  mockFormTemplates.length = 0;
+  mockFormFields.length = 0;
+  mockApprovalWorkflows.length = 0;
+  mockApprovalRequests.length = 0;
 
   jest.clearAllMocks();
 
@@ -224,6 +264,9 @@ beforeEach(() => {
     mockShiftSchedules.push(...docs);
     return docs;
   });
+  mockApprovalRequest.deleteMany.mockImplementation(async () => {
+    mockApprovalRequests.length = 0;
+  });
   mockPayrollRecord.deleteMany.mockImplementation(async () => {
     mockPayrollRecords.length = 0;
   });
@@ -235,6 +278,99 @@ beforeEach(() => {
     mockPayrollRecords.push(...docs);
     return docs;
   });
+
+  mockFormTemplates.push(
+    { _id: 'form-leave', name: '請假' },
+    { _id: 'form-overtime', name: '加班申請' },
+    { _id: 'form-makeup', name: '補簽申請' },
+    { _id: 'form-bonus', name: '獎金申請' },
+  );
+
+  mockApprovalWorkflows.push(
+    { _id: 'wf-leave', form: 'form-leave', steps: [{ approver_type: 'manager' }] },
+    { _id: 'wf-overtime', form: 'form-overtime', steps: [{ approver_type: 'manager' }] },
+    { _id: 'wf-makeup', form: 'form-makeup', steps: [{ approver_type: 'manager' }] },
+    { _id: 'wf-bonus', form: 'form-bonus', steps: [{ approver_type: 'manager' }] },
+  );
+
+  mockFormFields.push(
+    { _id: 'leave-type', form: 'form-leave', label: '假別', order: 1 },
+    { _id: 'leave-start', form: 'form-leave', label: '開始日期', order: 2 },
+    { _id: 'leave-end', form: 'form-leave', label: '結束日期', order: 3 },
+    { _id: 'leave-reason', form: 'form-leave', label: '事由', order: 4 },
+    { _id: 'ot-start', form: 'form-overtime', label: '開始時間', order: 1 },
+    { _id: 'ot-end', form: 'form-overtime', label: '結束時間', order: 2 },
+    { _id: 'ot-reason', form: 'form-overtime', label: '事由', order: 3 },
+    { _id: 'makeup-start', form: 'form-makeup', label: '開始時間', order: 1 },
+    { _id: 'makeup-end', form: 'form-makeup', label: '結束時間', order: 2 },
+    { _id: 'makeup-reason', form: 'form-makeup', label: '事由', order: 3 },
+    { _id: 'bonus-type', form: 'form-bonus', label: '獎金類型', order: 1 },
+    { _id: 'bonus-amount', form: 'form-bonus', label: '金額', order: 2 },
+    { _id: 'bonus-reason', form: 'form-bonus', label: '事由', order: 3 },
+  );
+
+  mockApprovalRequest.find.mockImplementation((filter = {}) => ({
+    lean: async () => {
+      const employeeIds = filter?.applicant_employee?.$in ?? [];
+      if (!employeeIds.length) return [];
+      const [targetEmployee] = employeeIds;
+      return [
+        {
+          _id: 'req-leave-1',
+          form: 'form-leave',
+          applicant_employee: targetEmployee,
+          status: 'approved',
+          form_data: {
+            'leave-type': '事假',
+            'leave-start': new Date('2024-05-05T00:00:00Z'),
+            'leave-end': new Date('2024-05-05T00:00:00Z'),
+            'leave-reason': '家庭事務',
+          },
+          createdAt: new Date('2024-05-04T00:00:00Z'),
+        },
+        {
+          _id: 'req-ot-1',
+          form: 'form-overtime',
+          applicant_employee: targetEmployee,
+          status: 'approved',
+          form_data: {
+            'ot-start': new Date('2024-05-06T18:00:00Z'),
+            'ot-end': new Date('2024-05-06T22:00:00Z'),
+            'ot-reason': '專案加班',
+          },
+          createdAt: new Date('2024-05-06T18:00:00Z'),
+        },
+        {
+          _id: 'req-makeup-1',
+          form: 'form-makeup',
+          applicant_employee: targetEmployee,
+          status: 'approved',
+          form_data: {
+            'makeup-start': new Date('2024-05-03T08:00:00Z'),
+            'makeup-end': new Date('2024-05-03T10:00:00Z'),
+            'makeup-reason': '刷卡異常',
+          },
+          createdAt: new Date('2024-05-03T08:00:00Z'),
+        },
+        {
+          _id: 'req-bonus-1',
+          form: 'form-bonus',
+          applicant_employee: targetEmployee,
+          status: 'rejected',
+          form_data: {
+            'bonus-type': '專案獎金',
+            'bonus-amount': 8000,
+            'bonus-reason': '完成里程碑',
+          },
+          createdAt: new Date('2024-04-10T00:00:00Z'),
+        },
+      ];
+    },
+  }));
+});
+
+afterEach(() => {
+  jest.useRealTimers();
 });
 
 const countBy = (list, key) =>
@@ -419,6 +555,26 @@ describe('seedTestUsers', () => {
       expect(payroll.bankAccountB.bank).toBeTruthy();
       expect(payroll.bankAccountB.accountNumber).toBeTruthy();
     });
+
+    const adjustmentRecords = mockPayrollRecords.filter(
+      (record) => Array.isArray(record.adjustments) && record.adjustments.length,
+    );
+    expect(adjustmentRecords.length).toBeGreaterThan(0);
+
+    const mayRecord = adjustmentRecords.find(
+      (record) => new Date(record.month).getUTCMonth() === 4,
+    );
+    expect(mayRecord?.leaveDeduction).toBeGreaterThan(0);
+    expect(mayRecord?.overtimePay).toBeGreaterThan(0);
+    expect(mayRecord?.makeupAdjustment).toBeGreaterThan(0);
+    expect(mayRecord?.adjustments?.length).toBe(3);
+    expect(mayRecord?.notes).toMatch(/加班申請/);
+
+    const aprilRecord = adjustmentRecords.find(
+      (record) => new Date(record.month).getUTCMonth() === 3,
+    );
+    expect(aprilRecord?.adjustments.some((adj) => adj.type === 'bonus')).toBe(true);
+    expect(aprilRecord?.bonusAdjustment ?? 0).toBe(0);
 
     // 確認所有員工都有雙銀行帳戶
     mockEmployees.forEach((employee) => {
