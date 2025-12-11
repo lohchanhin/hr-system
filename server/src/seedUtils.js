@@ -1699,13 +1699,14 @@ export async function seedApprovalRequests({ supervisors = [], employees = [] } 
   ];
 
   const allApplicants = [...supervisorList, ...applicants];
+  let monthlyRecordCount = 0; // 追蹤實際生成的每月必要記錄數
   
   payrollMonths.forEach((month, monthIdx) => {
     allApplicants.forEach((applicant, empIdx) => {
       // 為每位員工生成請假申請
       if (leaveConfig) {
         const leaveDate = new Date(month);
-        leaveDate.setDate(5 + (empIdx % 10)); // 分散在月初不同日期
+        leaveDate.setDate(5 + (empIdx % 8)); // 分散在月初不同日期 (5-12日)
         const leaveEnd = new Date(leaveDate);
         leaveEnd.setDate(leaveDate.getDate() + 1); // 請1天假
         
@@ -1738,13 +1739,14 @@ export async function seedApprovalRequests({ supervisors = [], employees = [] } 
             baseSteps: leaveSteps,
           }),
         );
+        monthlyRecordCount++;
       }
 
       // 為每位員工生成加班申請
       const overtimeConfig = configMap.get('加班申請');
       if (overtimeConfig) {
         const overtimeDate = new Date(month);
-        overtimeDate.setDate(10 + (empIdx % 15)); // 分散在月中不同日期
+        overtimeDate.setDate(10 + (empIdx % 15)); // 分散在月中不同日期 (10-24日)
         overtimeDate.setHours(18, 0, 0, 0); // 18:00開始加班
         const overtimeEnd = new Date(overtimeDate);
         overtimeEnd.setHours(21, 0, 0, 0); // 21:00結束，加班3小時
@@ -1767,13 +1769,14 @@ export async function seedApprovalRequests({ supervisors = [], employees = [] } 
             baseSteps: overtimeSteps,
           }),
         );
+        monthlyRecordCount++;
       }
 
       // 為每位員工生成獎金申請
       const bonusConfig = configMap.get('獎金申請');
       if (bonusConfig) {
         const bonusDate = new Date(month);
-        bonusDate.setDate(20 + (empIdx % 8)); // 分散在月底不同日期
+        bonusDate.setDate(20 + (empIdx % 8)); // 分散在月底不同日期 (20-27日)
         
         const bonusData = {};
         if (bonusConfig.fieldMap['獎金類型']) bonusData[bonusConfig.fieldMap['獎金類型']] = BONUS_TYPE_POOL[empIdx % BONUS_TYPE_POOL.length];
@@ -1792,6 +1795,7 @@ export async function seedApprovalRequests({ supervisors = [], employees = [] } 
             baseSteps: bonusSteps,
           }),
         );
+        monthlyRecordCount++;
       }
     });
   });
@@ -1800,8 +1804,8 @@ export async function seedApprovalRequests({ supervisors = [], employees = [] } 
   const inserted = requests.length ? await ApprovalRequest.insertMany(requests) : [];
 
   console.log(`\n=== 審批記錄生成完成 ===`);
-  console.log(`原有多樣化記錄: ${requests.length - (payrollMonths.length * allApplicants.length * 3)} 筆`);
-  console.log(`每月必要記錄 (請假+加班+獎金): ${payrollMonths.length * allApplicants.length * 3} 筆`);
+  console.log(`原有多樣化記錄: ${requests.length - monthlyRecordCount} 筆`);
+  console.log(`每月必要記錄 (請假+加班+獎金): ${monthlyRecordCount} 筆`);
   console.log(`總計: ${inserted.length} 筆審批記錄\n`);
 
   return { requests: inserted };
