@@ -13,7 +13,6 @@ import AttendanceRecord from './models/AttendanceRecord.js';
 import ShiftSchedule from './models/ShiftSchedule.js';
 import PayrollRecord from './models/PayrollRecord.js';
 import { getLeaveFieldIds, resetLeaveFieldCache } from './services/leaveFieldService.js';
-
 export const SEED_TEST_PASSWORD = 'password';
 
 const CITY_OPTIONS = ['台北市', '新北市', '桃園市', '台中市', '台南市', '高雄市'];
@@ -599,19 +598,146 @@ async function seedAttendanceData({
 async function seedPayrollRecords({ supervisors = [], employees = [] } = {}) {
   const allEmployees = [...supervisors, ...employees];
   const payrollRecords = [];
-  
-  // 生成最近2個月的薪資記錄
+
   const currentDate = new Date();
   const months = [];
-  
+
+  // 當月
+  const currentMonth = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1);
+  months.push(currentMonth);
+
   // 上個月
   const lastMonth = new Date(currentDate.getFullYear(), currentDate.getMonth() - 1, 1);
   months.push(lastMonth);
-  
-  // 上上個月
-  const twoMonthsAgo = new Date(currentDate.getFullYear(), currentDate.getMonth() - 2, 1);
-  months.push(twoMonthsAgo);
-  
+
+  const formConfigs = await Promise.all([
+    loadFormConfig('請假'),
+    loadFormConfig('加班申請'),
+    loadFormConfig('補簽申請'),
+    loadFormConfig('獎金申請'),
+  ]);
+
+  const approvalForms = formConfigs.filter(Boolean);
+  const approvalFormIds = approvalForms.map((config) => config.form._id);
+  const approvalRequests = approvalFormIds.length
+    ? await ApprovalRequest.find({
+        applicant_employee: { $in: allEmployees.map((emp) => emp._id) },
+        form: { $in: approvalFormIds },
+        status: { $in: ['approved', 'rejected'] },
+      }).lean()
+    : [];
+
+  const approvalMap = new Map();
+
+  const isValidDate = (value) => value instanceof Date && !Number.isNaN(value.getTime());
+
+  const monthKey = (date) => new Date(date.getFullYear(), date.getMonth(), 1).getTime();
+
+  const getRate = (employee) => {
+    const base = employee.salaryAmount || 0;
+    if (employee.salaryType === '日薪') {
+      return { hourly: base / 8, daily: base };
+    }
+    if (employee.salaryType === '時薪') {
+      return { hourly: base, daily: base * 8 };
+    }
+    // 月薪
+    const daily = base / 22;
+    return { hourly: daily / 8, daily };
+  };
+
+  const getFieldValue = (formData, fieldMap, label) => {
+    const fieldId = fieldMap?.[label];
+    return fieldId ? formData[fieldId] : undefined;
+  };
+
+  const addAdjustment = (employeeId, date, payload) => {
+    if (!employeeId || !isValidDate(date)) return;
+    const key = `${employeeId}_${monthKey(date)}`;
+    if (!approvalMap.has(key)) approvalMap.set(key, []);
+    approvalMap.get(key).push(payload);
+  };
+
+  const leaveConfig = approvalForms.find((item) => item.form.name === '請假');
+  const overtimeConfig = approvalForms.find((item) => item.form.name === '加班申請');
+  const makeupConfig = approvalForms.find((item) => item.form.name === '補簽申請');
+  const bonusConfig = approvalForms.find((item) => item.form.name === '獎金申請');
+
+  approvalRequests.forEach((request) => {
+    const { applicant_employee: employeeId, status, form_data: formData, form } = request;
+    const basePayload = { request: request._id, status, reason: '' };
+
+    if (leaveConfig && toStringId(form) === toStringId(leaveConfig.form._id)) {
+      const { fieldMap } = leaveConfig;
+      const start = new Date(getFieldValue(formData, fieldMap, '開始日期'));
+      const end = new Date(getFieldValue(formData, fieldMap, '結束日期'));
+      const leaveType = getFieldValue(formData, fieldMap, '假別');
+      const hours = isValidDate(start) && isValidDate(end) ? ((end - start) / (1000 * 60 * 60)) + 24 : 0;
+      const amount = status === 'approved' ? hours : 0;
+      const refDate = isValidDate(start) ? start : request.createdAt;
+      addAdjustment(employeeId, refDate, {
+        ...basePayload,
+        type: 'leave',
+        hours,
+        amount,
+        reason: leaveType || '未指定假別',
+        description: `請假申請(${status}) ${leaveType || ''}`.trim(),
+      });
+      return;
+    }
+
+    if (overtimeConfig && toStringId(form) === toStringId(overtimeConfig.form._id)) {
+      const { fieldMap } = overtimeConfig;
+      const start = new Date(getFieldValue(formData, fieldMap, '開始時間'));
+      const end = new Date(getFieldValue(formData, fieldMap, '結束時間'));
+      const reason = getFieldValue(formData, fieldMap, '事由');
+      const hours = isValidDate(start) && isValidDate(end) ? (end - start) / (1000 * 60 * 60) : 0;
+      const amount = status === 'approved' ? hours : 0;
+      const refDate = isValidDate(start) ? start : request.createdAt;
+      addAdjustment(employeeId, refDate, {
+        ...basePayload,
+        type: 'overtime',
+        hours,
+        amount,
+        reason: reason || '未填寫事由',
+        description: `加班申請(${status}) ${reason || ''}`.trim(),
+      });
+      return;
+    }
+
+    if (makeupConfig && toStringId(form) === toStringId(makeupConfig.form._id)) {
+      const { fieldMap } = makeupConfig;
+      const start = new Date(getFieldValue(formData, fieldMap, '開始時間'));
+      const end = new Date(getFieldValue(formData, fieldMap, '結束時間'));
+      const reason = getFieldValue(formData, fieldMap, '事由');
+      const hours = isValidDate(start) && isValidDate(end) ? (end - start) / (1000 * 60 * 60) : 0;
+      const amount = status === 'approved' ? hours : 0;
+      const refDate = isValidDate(start) ? start : request.createdAt;
+      addAdjustment(employeeId, refDate, {
+        ...basePayload,
+        type: 'makeup',
+        hours,
+        amount,
+        reason: reason || '未填寫事由',
+        description: `補簽申請(${status}) ${reason || ''}`.trim(),
+      });
+      return;
+    }
+
+    if (bonusConfig && toStringId(form) === toStringId(bonusConfig.form._id)) {
+      const { fieldMap } = bonusConfig;
+      const bonus = Number(getFieldValue(formData, fieldMap, '金額')) || 0;
+      const bonusType = getFieldValue(formData, fieldMap, '獎金類型');
+      addAdjustment(employeeId, request.createdAt, {
+        ...basePayload,
+        type: 'bonus',
+        amount: status === 'approved' ? bonus : 0,
+        reason: bonusType || '獎金申請',
+        description: `獎金申請(${status}) ${bonusType || ''}`.trim(),
+      });
+    }
+  });
+
   for (const month of months) {
     for (const employee of allEmployees) {
       // 基本薪資
@@ -636,13 +762,37 @@ async function seedPayrollRecords({ supervisors = [], employees = [] } = {}) {
       const totalDeductions = laborInsuranceFee + healthInsuranceFee + laborPensionSelf +
         employeeAdvance + otherDeductions;
       const netPay = Math.max(0, baseSalary - totalDeductions);
-      
+
       // 獎金項目 (Stage B)
       const nightShiftAllowance = Math.random() < 0.3 ? randomInRange(1000, 3000) : 0;
       const performanceBonus = Math.random() < 0.5 ? randomInRange(2000, 8000) : 0;
       const otherBonuses = Math.random() < 0.2 ? randomInRange(1000, 5000) : 0;
-      const totalBonus = nightShiftAllowance + performanceBonus + otherBonuses;
-      
+      let totalBonus = nightShiftAllowance + performanceBonus + otherBonuses;
+
+      const employeeMonthAdjustments = approvalMap.get(`${employee._id}_${month.getTime()}`) ?? [];
+      const { hourly } = getRate(employee);
+
+      const leaveAdjustments = employeeMonthAdjustments.filter((item) => item.type === 'leave');
+      const overtimeAdjustments = employeeMonthAdjustments.filter((item) => item.type === 'overtime');
+      const makeupAdjustments = employeeMonthAdjustments.filter((item) => item.type === 'makeup');
+      const bonusAdjustments = employeeMonthAdjustments.filter((item) => item.type === 'bonus');
+
+      const leaveDeduction = leaveAdjustments.reduce((sum, adj) => sum + adj.amount * hourly, 0);
+      const overtimePay = overtimeAdjustments.reduce((sum, adj) => sum + adj.amount * hourly * 1.33, 0);
+      const makeupAdjustment = makeupAdjustments.reduce((sum, adj) => sum + adj.amount * hourly, 0);
+      const bonusAdjustment = bonusAdjustments.reduce((sum, adj) => sum + adj.amount, 0);
+
+      totalBonus += bonusAdjustment;
+
+      const finalNetPay = Math.max(
+        0,
+        baseSalary - totalDeductions - leaveDeduction + overtimePay + makeupAdjustment + totalBonus,
+      );
+
+      const adjustmentNotes = employeeMonthAdjustments
+        .map((adj) => `${adj.description || adj.type}: ${adj.status} 金額:${Math.round(adj.amount * (adj.type === 'bonus' ? 1 : hourly)).toFixed(0)}`)
+        .join(' | ');
+
       // 銀行帳戶資訊 (從員工資料複製)
       const bankAccountA = {
         bank: employee.salaryAccountA?.bank || '',
@@ -666,7 +816,11 @@ async function seedPayrollRecords({ supervisors = [], employees = [] } = {}) {
         employeeAdvance,
         debtGarnishment: 0,
         otherDeductions,
-        netPay,
+        leaveDeduction,
+        overtimePay,
+        makeupAdjustment,
+        bonusAdjustment,
+        netPay: finalNetPay,
         nightShiftAllowance,
         performanceBonus,
         otherBonuses,
@@ -674,7 +828,9 @@ async function seedPayrollRecords({ supervisors = [], employees = [] } = {}) {
         bankAccountA,
         bankAccountB,
         insuranceLevel: employee.laborInsuranceLevel,
-        amount: netPay // Legacy field for backward compatibility with existing code
+        amount: finalNetPay, // Legacy field for backward compatibility with existing code
+        adjustments: employeeMonthAdjustments,
+        notes: adjustmentNotes,
       });
     }
   }

@@ -38,6 +38,7 @@ const payrollRecordSchema = new mongoose.Schema({
   performanceBonus: { type: Number, default: 0 }, // 人力績效獎金
   otherBonuses: { type: Number, default: 0 }, // 其他獎金
   totalBonus: { type: Number, default: 0 }, // 獎金合計 (Stage B)
+  bonusAdjustment: { type: Number, default: 0 }, // 來自簽核的獎金增減
   
   // 銀行帳戶資訊 (從員工資料複製)
   bankAccountA: {
@@ -60,9 +61,22 @@ const payrollRecordSchema = new mongoose.Schema({
   
   // Legacy field for backward compatibility
   amount: { type: Number, default: 0 },
-  
-  // 備註
-  notes: String
+
+  // 備註與簽核追蹤
+  notes: String,
+  adjustments: {
+    type: [
+      {
+        type: { type: String },
+        request: { type: mongoose.Schema.Types.ObjectId, ref: 'ApprovalRequest' },
+        status: { type: String },
+        amount: { type: Number },
+        reason: { type: String },
+        description: { type: String },
+      },
+    ],
+    default: [],
+  },
 }, { timestamps: true });
 
 // 索引
