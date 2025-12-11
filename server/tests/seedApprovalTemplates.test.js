@@ -12,6 +12,51 @@ const mockGetLeaveFieldIds = jest.fn();
 
 let seedApprovalTemplates;
 
+const fieldDocsByForm = {
+  請假_id: [
+    { _id: 'leave-type', label: '假別' },
+    { _id: 'leave-start', label: '開始日期' },
+    { _id: 'leave-end', label: '結束日期' },
+    { _id: 'leave-reason', label: '事由' },
+  ],
+  支援申請_id: [
+    { _id: 'support-reason', label: '申請事由' },
+    { _id: 'support-start', label: '開始日期' },
+    { _id: 'support-end', label: '結束日期' },
+    { _id: 'support-file', label: '附件' },
+  ],
+  特休保留_id: [
+    { _id: 'retain-year', label: '年度' },
+    { _id: 'retain-days', label: '保留天數' },
+    { _id: 'retain-reason', label: '理由' },
+  ],
+  在職證明_id: [
+    { _id: 'employ-purpose', label: '用途' },
+    { _id: 'employ-date', label: '開立日期' },
+  ],
+  離職證明_id: [
+    { _id: 'resign-purpose', label: '用途' },
+    { _id: 'resign-date', label: '離職日期' },
+  ],
+  加班申請_id: [
+    { _id: 'ot-start', label: '開始時間' },
+    { _id: 'ot-end', label: '結束時間' },
+    { _id: 'ot-cross', label: '是否跨日' },
+    { _id: 'ot-reason', label: '事由' },
+  ],
+  補簽申請_id: [
+    { _id: 'makeup-start', label: '開始時間' },
+    { _id: 'makeup-end', label: '結束時間' },
+    { _id: 'makeup-cross', label: '是否跨日' },
+    { _id: 'makeup-reason', label: '事由' },
+  ],
+  獎金申請_id: [
+    { _id: 'bonus-type', label: '獎金類型' },
+    { _id: 'bonus-amount', label: '金額' },
+    { _id: 'bonus-reason', label: '事由' },
+  ],
+};
+
 beforeAll(async () => {
   process.env.PORT = '3000';
   process.env.MONGODB_URI = 'mongodb://localhost/test';
@@ -42,14 +87,10 @@ describe('seedApprovalTemplates', () => {
     mockFieldFindOne.mockResolvedValue(null);
     mockWorkflowFindOne.mockResolvedValue(null);
     mockWorkflowCreate.mockImplementation(async ({ form, steps }) => ({ _id: `${form}-wf`, steps }));
-    mockFieldFind.mockImplementation(() => {
+    mockFieldFind.mockImplementation(({ form }) => {
       const query = {
         sort: jest.fn(),
-        lean: jest.fn().mockResolvedValue([
-          { _id: 'field1', label: '假別' },
-          { _id: 'field2', label: '開始日期' },
-          { _id: 'field3', label: '結束日期' },
-        ]),
+        lean: jest.fn().mockResolvedValue(fieldDocsByForm[form] ?? []),
       };
       query.sort.mockReturnValue(query);
       return query;
@@ -66,6 +107,9 @@ describe('seedApprovalTemplates', () => {
     expect(mockTemplateCreate).toHaveBeenCalledWith(expect.objectContaining({ name: '支援申請' }));
     expect(mockTemplateCreate).toHaveBeenCalledWith(expect.objectContaining({ name: '特休保留' }));
     expect(mockTemplateCreate).toHaveBeenCalledWith(expect.objectContaining({ name: '請假' }));
+    expect(mockTemplateCreate).toHaveBeenCalledWith(expect.objectContaining({ name: '加班申請' }));
+    expect(mockTemplateCreate).toHaveBeenCalledWith(expect.objectContaining({ name: '補簽申請' }));
+    expect(mockTemplateCreate).toHaveBeenCalledWith(expect.objectContaining({ name: '獎金申請' }));
     expect(mockFieldCreate).toHaveBeenCalledWith(expect.objectContaining({ label: '附件', type_1: 'file' }));
     expect(mockWorkflowCreate).toHaveBeenCalledWith(expect.objectContaining({
       steps: expect.arrayContaining([
@@ -76,6 +120,7 @@ describe('seedApprovalTemplates', () => {
     }));
     expect(mockResetLeaveFieldCache).toHaveBeenCalled();
     expect(mockGetLeaveFieldIds).toHaveBeenCalled();
-    expect(result.templates['請假'].fields).toHaveLength(3);
+    expect(result.templates['加班申請'].fields).toHaveLength(4);
+    expect(result.templates['獎金申請'].fields).toHaveLength(3);
   });
 });
