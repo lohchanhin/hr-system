@@ -156,20 +156,21 @@ export async function getEmployeePayrolls(req, res) {
  */
 export async function exportPayrollExcel(req, res) {
   try {
-    const { month, bankType } = req.query;
+    const { month } = req.query;
+    const format = req.query.format || req.query.bankType;
     const companyInfo = req.body;
-    
+
     if (!month) {
       return res.status(400).json({ error: 'month is required' });
     }
-    
-    if (!bankType || !['taiwan', 'taichung'].includes(bankType)) {
-      return res.status(400).json({ error: 'bankType must be "taiwan" or "taichung"' });
+
+    if (!format || !['taiwan', 'taichung', 'bonusSlip'].includes(format)) {
+      return res.status(400).json({ error: 'format must be "taiwan", "taichung" or "bonusSlip"' });
     }
-    
-    const buffer = await generatePayrollExcel(month, bankType, companyInfo);
-    
-    const filename = `payroll_${month}_${bankType}.xlsx`;
+
+    const buffer = await generatePayrollExcel(month, format, companyInfo);
+
+    const filename = `payroll_${month}_${format}.xlsx`;
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.send(buffer);
