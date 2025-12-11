@@ -16,6 +16,9 @@ const formDocs = {
   特休保留: { _id: 'form-retain', name: '特休保留' },
   在職證明: { _id: 'form-employ', name: '在職證明' },
   離職證明: { _id: 'form-resign', name: '離職證明' },
+  加班申請: { _id: 'form-ot', name: '加班申請' },
+  補簽申請: { _id: 'form-makeup', name: '補簽申請' },
+  獎金申請: { _id: 'form-bonus', name: '獎金申請' },
 };
 
 const fieldDocs = {
@@ -43,6 +46,23 @@ const fieldDocs = {
   'form-resign': [
     { _id: 'resign-purpose', label: '用途' },
     { _id: 'resign-date', label: '離職日期' },
+  ],
+  'form-ot': [
+    { _id: 'ot-start', label: '開始時間' },
+    { _id: 'ot-end', label: '結束時間' },
+    { _id: 'ot-cross', label: '是否跨日' },
+    { _id: 'ot-reason', label: '事由' },
+  ],
+  'form-makeup': [
+    { _id: 'makeup-start', label: '開始時間' },
+    { _id: 'makeup-end', label: '結束時間' },
+    { _id: 'makeup-cross', label: '是否跨日' },
+    { _id: 'makeup-reason', label: '事由' },
+  ],
+  'form-bonus': [
+    { _id: 'bonus-type', label: '獎金類型' },
+    { _id: 'bonus-amount', label: '金額' },
+    { _id: 'bonus-reason', label: '事由' },
   ],
 };
 
@@ -78,6 +98,29 @@ const workflowDocs = {
     steps: [
       { step_order: 1, approver_type: 'manager' },
       { step_order: 2, approver_type: 'tag', approver_value: '人資' },
+    ],
+  },
+  'form-ot': {
+    _id: 'wf-ot',
+    steps: [
+      { step_order: 1, approver_type: 'manager' },
+      { step_order: 2, approver_type: 'tag', approver_value: '排班負責人' },
+      { step_order: 3, approver_type: 'tag', approver_value: '人資' },
+    ],
+  },
+  'form-makeup': {
+    _id: 'wf-makeup',
+    steps: [
+      { step_order: 1, approver_type: 'manager' },
+      { step_order: 2, approver_type: 'tag', approver_value: '人資' },
+    ],
+  },
+  'form-bonus': {
+    _id: 'wf-bonus',
+    steps: [
+      { step_order: 1, approver_type: 'manager' },
+      { step_order: 2, approver_type: 'tag', approver_value: '財務覆核' },
+      { step_order: 3, approver_type: 'tag', approver_value: '人資' },
     ],
   },
 };
@@ -151,10 +194,13 @@ describe('seedApprovalRequests', () => {
     const supervisors = [
       { _id: 'sup-hr', organization: 'org1', department: 'dept1', signTags: ['人資'] },
       { _id: 'sup-support', organization: 'org2', department: 'dept2', signTags: ['支援單位主管'] },
+      { _id: 'sup-schedule', organization: 'org3', department: 'dept3', signTags: ['排班負責人'] },
+      { _id: 'sup-finance', organization: 'org4', department: 'dept4', signTags: ['財務覆核'] },
     ];
     const employees = [
       { _id: 'emp-1', organization: 'org1', department: 'dept1', supervisor: 'sup-hr', signTags: [] },
       { _id: 'emp-2', organization: 'org2', department: 'dept2', supervisor: 'sup-support', signTags: [] },
+      { _id: 'emp-3', organization: 'org3', department: 'dept3', supervisor: 'sup-schedule', signTags: [] },
     ];
 
     const result = await seedApprovalRequests({ supervisors, employees });
@@ -163,7 +209,7 @@ describe('seedApprovalRequests', () => {
     expect(mockApprovalInsertMany).toHaveBeenCalledTimes(1);
 
     const inserted = mockApprovalInsertMany.mock.calls[0][0];
-    expect(inserted).toHaveLength(employees.length * 3);
+    expect(inserted).toHaveLength(Object.keys(workflowDocs).length * 4);
 
     const statuses = new Set(inserted.map((req) => req.status));
     expect(statuses).toEqual(new Set(['approved', 'pending', 'rejected', 'returned']));
@@ -178,10 +224,10 @@ describe('seedApprovalRequests', () => {
 
     const leaveRequests = inserted.filter((req) => req.form === 'form-leave');
     leaveRequests.forEach((req, index) => {
-      const employeeIndex = Math.floor(index / 2);
       const managerStep = req.steps.find((step) => step.step_order === 1);
       const tagStep = req.steps.find((step) => step.step_order === 2);
-      expect(managerStep.approvers.map((a) => a.approver)).toContain(employees[employeeIndex].supervisor);
+      const managerIds = managerStep.approvers.map((a) => a.approver);
+      expect(managerIds.some((id) => supervisors.map((s) => s._id).includes(id))).toBe(true);
       expect(tagStep.approvers.map((a) => a.approver)).toContain('sup-hr');
       expect(Object.keys(req.form_data)).toEqual(
         expect.arrayContaining(['leave-type', 'leave-start', 'leave-end', 'leave-reason']),
@@ -191,6 +237,16 @@ describe('seedApprovalRequests', () => {
     const supportRequest = inserted.find((req) => req.form === 'form-support');
     expect(Object.keys(supportRequest.form_data)).toEqual(
       expect.arrayContaining(['support-reason', 'support-start', 'support-end', 'support-file']),
+    );
+
+    const overtimeRequest = inserted.find((req) => req.form === 'form-ot');
+    expect(overtimeRequest.form_data).toEqual(
+      expect.objectContaining({ 'ot-start': expect.any(Date), 'ot-end': expect.any(Date) }),
+    );
+
+    const bonusRequest = inserted.find((req) => req.form === 'form-bonus');
+    expect(Object.keys(bonusRequest.form_data)).toEqual(
+      expect.arrayContaining(['bonus-type', 'bonus-amount', 'bonus-reason']),
     );
 
     expect(result.requests).toHaveLength(inserted.length);

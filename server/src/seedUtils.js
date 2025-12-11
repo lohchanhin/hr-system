@@ -336,6 +336,10 @@ const SUPPORT_REASON_POOL = ['部門支援需求', '專案跨部協作', '臨時
 const RETAIN_REASON_POOL = ['年度專案需求', '留任關鍵人才', '客戶專案延續'];
 const CERTIFICATE_PURPOSE_POOL = ['銀行貸款', '學校申請', '簽證辦理'];
 const RESIGNATION_PURPOSE_POOL = ['離職後保險', '移民資料', '外部審查'];
+const OVERTIME_REASON_POOL = ['專案緊急趕工', '客戶臨時需求', '系統維護'];
+const MAKEUP_REASON_POOL = ['設備故障', '外勤未能刷卡', '臨時出差'];
+const BONUS_REASON_POOL = ['季度績效達標', '專案獎金', '推薦獎金'];
+const BONUS_TYPE_POOL = ['績效獎金', '專案獎金', '推薦獎金'];
 const LEAVE_TYPE_FALLBACK = ['特休', '事假', '病假'];
 
 function buildAttendanceSettingPayload() {
@@ -970,6 +974,49 @@ export async function seedApprovalTemplates() {
         { step_order: 2, approver_type: 'tag', approver_value: '人資' },
       ],
     },
+    {
+      name: '加班申請',
+      category: '人事',
+      fields: [
+        { label: '開始時間', type_1: 'datetime', required: true, order: 1 },
+        { label: '結束時間', type_1: 'datetime', required: true, order: 2 },
+        { label: '是否跨日', type_1: 'checkbox', required: true, order: 3 },
+        { label: '事由', type_1: 'textarea', order: 4 },
+      ],
+      steps: [
+        { step_order: 1, approver_type: 'manager' },
+        { step_order: 2, approver_type: 'tag', approver_value: '排班負責人' },
+        { step_order: 3, approver_type: 'tag', approver_value: '人資' },
+      ],
+    },
+    {
+      name: '補簽申請',
+      category: '人事',
+      fields: [
+        { label: '開始時間', type_1: 'datetime', required: true, order: 1 },
+        { label: '結束時間', type_1: 'datetime', required: true, order: 2 },
+        { label: '是否跨日', type_1: 'checkbox', required: true, order: 3 },
+        { label: '事由', type_1: 'textarea', order: 4 },
+      ],
+      steps: [
+        { step_order: 1, approver_type: 'manager' },
+        { step_order: 2, approver_type: 'tag', approver_value: '人資' },
+      ],
+    },
+    {
+      name: '獎金申請',
+      category: '人事',
+      fields: [
+        { label: '獎金類型', type_1: 'text', required: true, order: 1 },
+        { label: '金額', type_1: 'number', required: true, order: 2 },
+        { label: '事由', type_1: 'textarea', order: 3 },
+      ],
+      steps: [
+        { step_order: 1, approver_type: 'manager' },
+        { step_order: 2, approver_type: 'tag', approver_value: '財務覆核' },
+        { step_order: 3, approver_type: 'tag', approver_value: '人資' },
+      ],
+    },
   ];
 
   const templateDetails = {};
@@ -1260,6 +1307,42 @@ function buildSupportFormData(fieldMap, index) {
   return { data, rangeStart: start };
 }
 
+function buildOvertimeFormData(fieldMap, index) {
+  const base = addUtcDays(startOfUtcDay(new Date()), -(index + 2));
+  const start = addUtcMinutes(base, 18 * 60 + (index % 4) * 10);
+  const isCrossDay = index % 2 === 0;
+  const end = addUtcMinutes(start, isCrossDay ? 6 * 60 : 3 * 60);
+  const data = {};
+  if (fieldMap['開始時間']) data[fieldMap['開始時間']] = start;
+  if (fieldMap['結束時間']) data[fieldMap['結束時間']] = end;
+  if (fieldMap['是否跨日']) data[fieldMap['是否跨日']] = isCrossDay;
+  if (fieldMap['事由']) data[fieldMap['事由']] = OVERTIME_REASON_POOL[index % OVERTIME_REASON_POOL.length];
+  return { data, rangeStart: start };
+}
+
+function buildMakeupFormData(fieldMap, index) {
+  const base = addUtcDays(startOfUtcDay(new Date()), -(index + 4));
+  const start = addUtcMinutes(base, 7 * 60 + (index % 3) * 15);
+  const isCrossDay = index % 3 === 0;
+  const end = addUtcMinutes(start, isCrossDay ? 26 * 60 : 2 * 60);
+  const data = {};
+  if (fieldMap['開始時間']) data[fieldMap['開始時間']] = start;
+  if (fieldMap['結束時間']) data[fieldMap['結束時間']] = end;
+  if (fieldMap['是否跨日']) data[fieldMap['是否跨日']] = isCrossDay;
+  if (fieldMap['事由']) data[fieldMap['事由']] = MAKEUP_REASON_POOL[index % MAKEUP_REASON_POOL.length];
+  return { data, rangeStart: start };
+}
+
+function buildBonusFormData(fieldMap, index) {
+  const base = addUtcDays(startOfUtcDay(new Date()), -(index + 6));
+  const start = addUtcMinutes(base, 11 * 60 + (index % 2) * 20);
+  const data = {};
+  if (fieldMap['獎金類型']) data[fieldMap['獎金類型']] = BONUS_TYPE_POOL[index % BONUS_TYPE_POOL.length];
+  if (fieldMap['金額']) data[fieldMap['金額']] = randomInRange(5000, 30000);
+  if (fieldMap['事由']) data[fieldMap['事由']] = BONUS_REASON_POOL[index % BONUS_REASON_POOL.length];
+  return { data, rangeStart: start };
+}
+
 function buildRetentionFormData(fieldMap, index) {
   const { start } = buildDateRange(index + 5);
   const data = {};
@@ -1305,6 +1388,9 @@ function createApprovalPayload({
     ...statusLogs,
   ];
 
+  const latestLogAt = logs.map((log) => log.at).filter(Boolean).sort((a, b) => a - b).pop();
+  const updatedAt = latestLogAt ? addUtcMinutes(latestLogAt, 5) : addUtcMinutes(createdAt, 10);
+
   return {
     form: form._id,
     workflow: workflow._id,
@@ -1317,7 +1403,7 @@ function createApprovalPayload({
     steps,
     logs,
     createdAt,
-    updatedAt: addUtcMinutes(createdAt, 10),
+    updatedAt,
   };
 }
 
@@ -1331,7 +1417,7 @@ async function loadFormConfig(name) {
 }
 
 export async function seedApprovalRequests({ supervisors = [], employees = [] } = {}) {
-  const formNames = ['請假', '支援申請', '特休保留', '在職證明', '離職證明'];
+  const formNames = ['請假', '支援申請', '特休保留', '在職證明', '離職證明', '加班申請', '補簽申請', '獎金申請'];
   const formConfigs = await Promise.all(formNames.map((name) => loadFormConfig(name)));
   const configMap = new Map();
   formConfigs.forEach((config, index) => {
@@ -1368,78 +1454,46 @@ export async function seedApprovalRequests({ supervisors = [], employees = [] } 
   let tagMap = buildTagMap(allEmployees);
   tagMap = await ensureTagAssignments(tagMap, [...requiredTags], supervisorList);
 
-  const leaveStatuses = APPROVAL_STATUSES;
-  let requestIndex = 0;
+  if (!applicants.length) return { requests: [] };
+
   const requests = [];
+  let baseIndex = 0;
 
-  applicants.forEach((applicant, applicantIdx) => {
-    const leaveStatus = leaveStatuses[requestIndex % leaveStatuses.length];
-    const { data: leaveData, rangeStart: leaveStart } = buildLeaveFormData(
-      leaveConfig.fieldMap,
-      leaveFieldInfo,
-      requestIndex,
-    );
-    const leaveSteps = buildBaseSteps(leaveConfig.workflow, applicant, tagMap);
-    requests.push(
-      createApprovalPayload({
-        applicant,
-        form: leaveConfig.form,
-        workflow: leaveConfig.workflow,
-        formData: leaveData,
-        status: leaveStatus,
-        createdAt: addUtcMinutes(leaveStart, 9 * 60),
-        baseSteps: leaveSteps,
-      }),
-    );
-    requestIndex += 1;
+  const builders = [
+    {
+      name: '請假',
+      config: leaveConfig,
+      builder: (fieldMap, index) => buildLeaveFormData(fieldMap, leaveFieldInfo, index),
+      offsetMinutes: 9 * 60,
+    },
+    { name: '支援申請', config: configMap.get('支援申請'), builder: buildSupportFormData, offsetMinutes: 10 * 60 },
+    { name: '特休保留', config: configMap.get('特休保留'), builder: buildRetentionFormData, offsetMinutes: 8 * 60 },
+    { name: '在職證明', config: configMap.get('在職證明'), builder: buildEmploymentCertificateData, offsetMinutes: 11 * 60 },
+    { name: '離職證明', config: configMap.get('離職證明'), builder: buildResignationCertificateData, offsetMinutes: 9 * 60 },
+    { name: '加班申請', config: configMap.get('加班申請'), builder: buildOvertimeFormData, offsetMinutes: 18 * 60 },
+    { name: '補簽申請', config: configMap.get('補簽申請'), builder: buildMakeupFormData, offsetMinutes: 7 * 60 },
+    { name: '獎金申請', config: configMap.get('獎金申請'), builder: buildBonusFormData, offsetMinutes: 15 * 60 },
+  ];
 
-    const secondStatus = leaveStatuses[requestIndex % leaveStatuses.length];
-    const { data: leaveDataSecond, rangeStart: leaveStartSecond } = buildLeaveFormData(
-      leaveConfig.fieldMap,
-      leaveFieldInfo,
-      requestIndex,
-    );
-    const leaveStepsSecond = buildBaseSteps(leaveConfig.workflow, applicant, tagMap);
-    requests.push(
-      createApprovalPayload({
-        applicant,
-        form: leaveConfig.form,
-        workflow: leaveConfig.workflow,
-        formData: leaveDataSecond,
-        status: secondStatus,
-        createdAt: addUtcMinutes(leaveStartSecond, 9 * 60 + 30),
-        baseSteps: leaveStepsSecond,
-      }),
-    );
-    requestIndex += 1;
-
-    const otherForms = ['支援申請', '特休保留', '在職證明', '離職證明'];
-    const formName = otherForms[applicantIdx % otherForms.length];
-    const config = configMap.get(formName);
-    if (!config) return;
-
-    let payloadBuilder;
-    if (formName === '支援申請') payloadBuilder = buildSupportFormData;
-    else if (formName === '特休保留') payloadBuilder = buildRetentionFormData;
-    else if (formName === '在職證明') payloadBuilder = buildEmploymentCertificateData;
-    else if (formName === '離職證明') payloadBuilder = buildResignationCertificateData;
-    else payloadBuilder = buildSupportFormData;
-
-    const { data: otherData, rangeStart: otherStart } = payloadBuilder(config.fieldMap, applicantIdx);
-    const otherStatus = leaveStatuses[requestIndex % leaveStatuses.length];
-    const otherSteps = buildBaseSteps(config.workflow, applicant, tagMap);
-    requests.push(
-      createApprovalPayload({
-        applicant,
-        form: config.form,
-        workflow: config.workflow,
-        formData: otherData,
-        status: otherStatus,
-        createdAt: addUtcMinutes(otherStart, 10 * 60),
-        baseSteps: otherSteps,
-      }),
-    );
-    requestIndex += 1;
+  builders.forEach((item, builderIdx) => {
+    if (!item.config) return;
+    APPROVAL_STATUSES.forEach((status, statusIdx) => {
+      const applicant = applicants[(builderIdx + statusIdx) % applicants.length];
+      const { data, rangeStart } = item.builder(item.config.fieldMap, baseIndex + statusIdx);
+      const baseSteps = buildBaseSteps(item.config.workflow, applicant, tagMap);
+      requests.push(
+        createApprovalPayload({
+          applicant,
+          form: item.config.form,
+          workflow: item.config.workflow,
+          formData: data,
+          status,
+          createdAt: addUtcMinutes(rangeStart, item.offsetMinutes + statusIdx * 10),
+          baseSteps,
+        }),
+      );
+    });
+    baseIndex += APPROVAL_STATUSES.length;
   });
 
   await ApprovalRequest.deleteMany({});
