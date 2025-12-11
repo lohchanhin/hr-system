@@ -267,6 +267,53 @@
               </el-form-item>
             </el-form>
 
+            <el-card class="export-card" shadow="never">
+              <template #header>
+                <div class="export-card__header">
+                  <div class="export-card__title">
+                    <span style="margin-right: 12px">匯出格式</span>
+                    <el-radio-group v-model="exportFormat" size="small">
+                      <el-radio-button label="taiwan">臺灣企銀</el-radio-button>
+                      <el-radio-button label="taichung">台中銀行</el-radio-button>
+                      <el-radio-button label="bonusSlip">個人獎金紙條</el-radio-button>
+                    </el-radio-group>
+                  </div>
+                  <div class="export-card__actions">
+                    <el-button size="small" plain type="info" @click="showFormatPreview = !showFormatPreview">
+                      {{ showFormatPreview ? '隱藏示意表格' : '顯示示意表格' }}
+                    </el-button>
+                    <el-button
+                      type="primary"
+                      size="small"
+                      :loading="exportLoading"
+                      @click="downloadPayrollExcel"
+                    >
+                      下載匯出
+                    </el-button>
+                  </div>
+                </div>
+              </template>
+
+              <div v-if="showFormatPreview">
+                <el-alert
+                  title="以下為示意表格，實際匯出內容會套用當月薪資資料"
+                  type="info"
+                  show-icon
+                  class="export-card__alert"
+                />
+                <el-table :data="currentFormatPreview" border stripe size="small" max-height="260">
+                  <el-table-column
+                    v-for="col in currentPreviewColumns"
+                    :key="col.prop"
+                    :prop="col.prop"
+                    :label="col.label"
+                    :width="col.width"
+                    :align="col.align || 'center'"
+                  />
+                </el-table>
+              </div>
+            </el-card>
+
             <!-- Summary statistics -->
             <el-row :gutter="20" style="margin-bottom: 20px">
               <el-col :span="6">
@@ -833,6 +880,9 @@ const settingId = ref(null)
   const filterDepartment = ref('')
   const filterSubDepartment = ref('')
   const filterEmployeeName = ref('')
+  const exportFormat = ref('taiwan')
+  const showFormatPreview = ref(true)
+  const exportLoading = ref(false)
   const organizations = ref([])
   const departments = ref([])
   const subDepartments = ref([])
@@ -865,18 +915,105 @@ const settingId = ref(null)
 
   const totalDeductions = computed(() => {
     return filteredOverviewData.value.reduce((sum, item) => {
-      const deductions = (item.laborInsuranceFee || 0) + 
-                        (item.healthInsuranceFee || 0) + 
-                        (item.laborPensionSelf || 0) + 
+      const deductions = (item.laborInsuranceFee || 0) +
+                        (item.healthInsuranceFee || 0) +
+                        (item.laborPensionSelf || 0) +
                         (item.otherDeductions || 0)
       return sum + deductions
     }, 0)
   })
 
+  const formatPreviewColumns = {
+    taiwan: [
+      { label: '付款代號', prop: 'code', width: 100 },
+      { label: '付款日期', prop: 'date', width: 120 },
+      { label: '付款帳號', prop: 'account', width: 160 },
+      { label: '收款戶名', prop: 'payee', width: 120 },
+      { label: '收款行代碼', prop: 'bank', width: 100 },
+      { label: '收款帳號', prop: 'payeeAccount', width: 160 },
+      { label: '備註', prop: 'note' }
+    ],
+    taichung: [
+      { label: '流水號', prop: 'serial', width: 100 },
+      { label: '姓名', prop: 'name', width: 120 },
+      { label: '轉入帳號', prop: 'account', width: 160 },
+      { label: '轉入金額', prop: 'amount', width: 120, align: 'right' },
+      { label: '核證總數', prop: 'checksum', width: 120 }
+    ],
+    bonusSlip: [
+      { label: '員工編號', prop: 'employeeId', width: 120 },
+      { label: '姓名', prop: 'name', width: 120 },
+      { label: '部門', prop: 'department', width: 140 },
+      { label: '銀行代碼', prop: 'bankCode', width: 100 },
+      { label: '帳號末四碼', prop: 'accountTail', width: 110 },
+      { label: '加班費', prop: 'overtime', width: 100, align: 'right' },
+      { label: '績效獎金', prop: 'performance', width: 110, align: 'right' },
+      { label: '其他獎金', prop: 'otherBonus', width: 110, align: 'right' },
+      { label: '簽核調整', prop: 'adjustment', width: 110, align: 'right' },
+      { label: '獎金合計', prop: 'total', width: 110, align: 'right' }
+    ]
+  }
+
+  const formatPreviewData = {
+    taiwan: [
+      {
+        code: '0001',
+        date: '2024/05/31',
+        account: '050-5206-123456789012',
+        payee: '王曉明',
+        bank: '050-5206',
+        payeeAccount: '1234-5678-9012',
+        note: '薪資'
+      },
+      {
+        code: '0002',
+        date: '2024/05/31',
+        account: '050-5206-123456789012',
+        payee: '李小華',
+        bank: '050-5206',
+        payeeAccount: '7890-1234-5678',
+        note: '薪資'
+      }
+    ],
+    taichung: [
+      { serial: '1', name: '王曉明', account: '054-123-4567890', amount: '35,000', checksum: '35,000' },
+      { serial: '2', name: '李小華', account: '054-987-6543210', amount: '32,000', checksum: '99,000' }
+    ],
+    bonusSlip: [
+      {
+        employeeId: 'E001',
+        name: '王曉明',
+        department: '工程部',
+        bankCode: '004',
+        accountTail: '9012',
+        overtime: '1,200',
+        performance: '2,000',
+        otherBonus: '800',
+        adjustment: '0',
+        total: '4,000'
+      },
+      {
+        employeeId: 'E002',
+        name: '李小華',
+        department: '行政部',
+        bankCode: '822',
+        accountTail: '4321',
+        overtime: '600',
+        performance: '1,200',
+        otherBonus: '500',
+        adjustment: '-100',
+        total: '2,200'
+      }
+    ]
+  }
+
+  const currentPreviewColumns = computed(() => formatPreviewColumns[exportFormat.value] || [])
+  const currentFormatPreview = computed(() => formatPreviewData[exportFormat.value] || [])
+
   // Salary calculation breakdown for detail dialog
   const salaryCalculationBreakdown = computed(() => {
     if (!selectedEmployee.value) return []
-    
+
     const breakdown = []
     const emp = selectedEmployee.value
     
@@ -998,9 +1135,35 @@ const settingId = ref(null)
         type: 'bonus'
       })
     }
-    
+
     return breakdown
   })
+
+  async function downloadPayrollExcel() {
+    try {
+      exportLoading.value = true
+      const params = new URLSearchParams({ month: overviewMonth.value, format: exportFormat.value })
+      const res = await apiFetch(`/api/payroll/export?${params}`, { method: 'POST' })
+
+      if (!res.ok) {
+        const error = await res.json().catch(() => ({}))
+        throw new Error(error.error || '匯出失敗，請稍後再試')
+      }
+
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = `payroll_${overviewMonth.value}_${exportFormat.value}.xlsx`
+      link.click()
+      URL.revokeObjectURL(url)
+    } catch (error) {
+      console.error('匯出薪資Excel失敗:', error)
+      alert(error.message || '匯出失敗，請稍後再試')
+    } finally {
+      exportLoading.value = false
+    }
+  }
 
   function formatCurrency(value) {
     if (value == null || isNaN(value)) return 'NT$ 0'
@@ -1188,5 +1351,33 @@ const settingId = ref(null)
     font-size: 20px;
     font-weight: bold;
     color: #303133;
+  }
+
+  .export-card {
+    margin-bottom: 20px;
+  }
+
+  .export-card__header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+
+  .export-card__title {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .export-card__actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .export-card__alert {
+    margin-bottom: 12px;
   }
   </style>

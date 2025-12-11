@@ -25,6 +25,126 @@ function formatDateSlash(date) {
 }
 
 /**
+ * 生成獎金紙條 Excel
+ * @param {Array} payrollRecords - 薪資記錄數組
+ * @param {Object} companyInfo - 公司資訊
+ * @returns {Buffer} - Excel 文件緩衝區
+ */
+export async function generateBonusSlipExcel(payrollRecords, companyInfo = {}) {
+  const workbook = new ExcelJS.Workbook();
+  const worksheet = workbook.addWorksheet('獎金紙條');
+
+  worksheet.columns = [
+    { key: 'employeeId', width: 12 },
+    { key: 'name', width: 14 },
+    { key: 'department', width: 16 },
+    { key: 'bankCode', width: 12 },
+    { key: 'accountTail', width: 12 },
+    { key: 'overtimePay', width: 12 },
+    { key: 'nightShift', width: 12 },
+    { key: 'performance', width: 12 },
+    { key: 'others', width: 12 },
+    { key: 'bonusAdjustment', width: 12 },
+    { key: 'total', width: 14 },
+    { key: 'note', width: 20 }
+  ];
+
+  const monthDate = companyInfo.monthDate || payrollRecords[0]?.month || new Date();
+  const issueMonth = `${monthDate.getFullYear()}-${String(monthDate.getMonth() + 1).padStart(2, '0')}`;
+  const title = companyInfo.companyName || '公司名稱';
+
+  worksheet.mergeCells('A1:L1');
+  worksheet.getCell('A1').value = `${title} - 個人獎金紙條`;
+  worksheet.getCell('A1').font = { bold: true, size: 14 };
+  worksheet.getCell('A1').alignment = { horizontal: 'center' };
+
+  worksheet.mergeCells('A2:L2');
+  worksheet.getCell('A2').value = `撥款月份：${issueMonth}`;
+  worksheet.getCell('A2').alignment = { horizontal: 'center' };
+
+  worksheet.addRow([]);
+
+  const headerRow = worksheet.addRow([
+    '員工編號',
+    '姓名',
+    '部門',
+    '銀行代碼',
+    '帳號末四碼',
+    '加班費',
+    '夜班津貼',
+    '績效獎金',
+    '其他獎金',
+    '簽核調整',
+    '獎金合計',
+    '備註'
+  ]);
+  headerRow.font = { bold: true };
+
+  payrollRecords.forEach(record => {
+    const employee = record.employee || {};
+    const overtimePay = record.overtimePay || 0;
+    const nightShiftAllowance = record.nightShiftAllowance || 0;
+    const performanceBonus = record.performanceBonus || 0;
+    const otherBonuses = record.otherBonuses || 0;
+    const bonusAdjustment = record.bonusAdjustment || 0;
+    const bonusTotal = overtimePay + nightShiftAllowance + performanceBonus + otherBonuses + bonusAdjustment;
+
+    const accountNumber = record.bankAccountB?.accountNumber || '';
+    const accountTail = accountNumber ? accountNumber.slice(-4).padStart(4, '*') : '';
+
+    worksheet.addRow({
+      employeeId: employee.employeeId || employee.employeeNo || '',
+      name: employee.name || '',
+      department: employee.department?.name || '',
+      bankCode: record.bankAccountB?.bankCode || record.bankAccountB?.bank || '',
+      accountTail,
+      overtimePay,
+      nightShift: nightShiftAllowance,
+      performance: performanceBonus,
+      others: otherBonuses,
+      bonusAdjustment,
+      total: bonusTotal,
+      note: '請確認獎金明細後再行撥款'
+    });
+  });
+
+  headerRow.eachCell(cell => {
+    cell.alignment = { horizontal: 'center', vertical: 'middle' };
+    cell.fill = {
+      type: 'pattern',
+      pattern: 'solid',
+      fgColor: { argb: 'FFF5F5F5' }
+    };
+    cell.border = {
+      top: { style: 'thin', color: { argb: 'FFBFBFBF' } },
+      left: { style: 'thin', color: { argb: 'FFBFBFBF' } },
+      bottom: { style: 'thin', color: { argb: 'FFBFBFBF' } },
+      right: { style: 'thin', color: { argb: 'FFBFBFBF' } }
+    };
+  });
+
+  worksheet.eachRow((row, rowNumber) => {
+    if (rowNumber > headerRow.number) {
+      row.eachCell(cell => {
+        cell.border = {
+          top: { style: 'thin', color: { argb: 'FFE5E5E5' } },
+          left: { style: 'thin', color: { argb: 'FFE5E5E5' } },
+          bottom: { style: 'thin', color: { argb: 'FFE5E5E5' } },
+          right: { style: 'thin', color: { argb: 'FFE5E5E5' } }
+        };
+      });
+    }
+  });
+
+  worksheet.addRow([]);
+  const summaryRow = worksheet.addRow({ note: '此示意表僅供確認匯出欄位與欄位順序。' });
+  worksheet.mergeCells(`A${summaryRow.number}:L${summaryRow.number}`);
+  worksheet.getCell(`A${summaryRow.number}`).alignment = { horizontal: 'left' };
+
+  return await workbook.xlsx.writeBuffer();
+}
+
+/**
  * 生成臺灣企銀匯款格式 Excel
  * @param {Array} payrollRecords - 薪資記錄數組
  * @param {Object} companyInfo - 公司資訊
@@ -229,9 +349,10 @@ export async function generateTaichungBankExcel(payrollRecords, companyInfo = {}
  * @param {Object} companyInfo - 公司資訊
  * @returns {Buffer} - Excel 文件緩衝區
  */
-export async function generatePayrollExcel(month, bankType, companyInfo = {}) {
+export async function generatePayrollExcel(month, bankTypeOrFormat, companyInfo = {}) {
   const monthDate = new Date(month);
-  
+  const format = bankTypeOrFormat || companyInfo.format;
+
   // 獲取該月的所有薪資記錄
   const payrollRecords = await PayrollRecord.find({
     month: monthDate
@@ -240,18 +361,23 @@ export async function generatePayrollExcel(month, bankType, companyInfo = {}) {
   if (payrollRecords.length === 0) {
     throw new Error('No payroll records found for this month');
   }
-  
-  if (bankType === 'taiwan') {
+
+  const enhancedCompanyInfo = { ...companyInfo, monthDate };
+
+  if (format === 'taiwan') {
     return await generateTaiwanBusinessBankExcel(payrollRecords, companyInfo);
-  } else if (bankType === 'taichung') {
+  } else if (format === 'taichung') {
     return await generateTaichungBankExcel(payrollRecords, companyInfo);
+  } else if (format === 'bonusSlip') {
+    return await generateBonusSlipExcel(payrollRecords, enhancedCompanyInfo);
   } else {
-    throw new Error('Invalid bank type. Must be "taiwan" or "taichung"');
+    throw new Error('Invalid format. Must be "taiwan", "taichung" or "bonusSlip"');
   }
 }
 
 export default {
   generateTaiwanBusinessBankExcel,
   generateTaichungBankExcel,
+  generateBonusSlipExcel,
   generatePayrollExcel
 };
