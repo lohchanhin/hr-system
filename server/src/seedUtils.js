@@ -787,18 +787,18 @@ async function seedPayrollRecords({ supervisors = [], employees = [] } = {}) {
       // 員工借支
       const employeeAdvance = employee.employeeAdvance || 0;
       
-      // 其他扣款 (隨機0-500)
-      const otherDeductions = Math.random() < 0.2 ? randomInRange(100, 500) : 0;
+      // 其他扣款 (每月都有，確保資料多元性)
+      const otherDeductions = randomInRange(100, 500);
       
       // 計算實領金額 (Stage A)
       const totalDeductions = laborInsuranceFee + healthInsuranceFee + laborPensionSelf +
         employeeAdvance + otherDeductions;
       const netPay = Math.max(0, baseSalary - totalDeductions);
 
-      // 獎金項目 (Stage B)
-      const nightShiftAllowance = Math.random() < 0.3 ? randomInRange(1000, 3000) : 0;
-      const performanceBonus = Math.random() < 0.5 ? randomInRange(2000, 8000) : 0;
-      const otherBonuses = Math.random() < 0.2 ? randomInRange(1000, 5000) : 0;
+      // 獎金項目 (Stage B) - 每月都有，確保資料多元性
+      const nightShiftAllowance = randomInRange(1000, 3000);
+      const performanceBonus = randomInRange(2000, 8000);
+      const otherBonuses = randomInRange(1000, 5000);
       let totalBonus = nightShiftAllowance + performanceBonus + otherBonuses;
 
       const employeeMonthAdjustments = approvalMap.get(`${employee._id}_${month.getTime()}`) ?? [];
@@ -1690,8 +1690,119 @@ export async function seedApprovalRequests({ supervisors = [], employees = [] } 
     baseIndex += APPROVAL_STATUSES.length;
   });
 
+  // 為每位員工在當月和上月都生成已核准的請假、加班、獎金申請
+  // 確保薪資記錄中每月都有這些項目
+  const currentDate = new Date();
+  const payrollMonths = [
+    new Date(currentDate.getFullYear(), currentDate.getMonth(), 1), // 當月
+    new Date(currentDate.getFullYear(), currentDate.getMonth() - 1, 1), // 上個月
+  ];
+
+  const allApplicants = [...supervisorList, ...applicants];
+  
+  payrollMonths.forEach((month, monthIdx) => {
+    allApplicants.forEach((applicant, empIdx) => {
+      // 為每位員工生成請假申請
+      if (leaveConfig) {
+        const leaveDate = new Date(month);
+        leaveDate.setDate(5 + (empIdx % 10)); // 分散在月初不同日期
+        const leaveEnd = new Date(leaveDate);
+        leaveEnd.setDate(leaveDate.getDate() + 1); // 請1天假
+        
+        const leaveData = {};
+        const leaveTypes = (leaveFieldInfo?.typeOptions ?? [])
+          .map((item) => item?.value)
+          .filter((value) => value !== undefined && value !== null);
+        const typeList = leaveTypes.length ? leaveTypes : LEAVE_TYPE_FALLBACK;
+        const typeValue = typeList[empIdx % typeList.length];
+        
+        const startFieldId = leaveFieldInfo?.startId ?? leaveConfig.fieldMap['開始日期'];
+        const endFieldId = leaveFieldInfo?.endId ?? leaveConfig.fieldMap['結束日期'];
+        const typeFieldId = leaveFieldInfo?.typeId ?? leaveConfig.fieldMap['假別'];
+        const reasonFieldId = leaveConfig.fieldMap['事由'];
+        
+        if (typeFieldId) leaveData[typeFieldId] = typeValue;
+        if (startFieldId) leaveData[startFieldId] = leaveDate;
+        if (endFieldId) leaveData[endFieldId] = leaveEnd;
+        if (reasonFieldId) leaveData[reasonFieldId] = LEAVE_REASON_POOL[empIdx % LEAVE_REASON_POOL.length];
+        
+        const leaveSteps = buildBaseSteps(leaveConfig.workflow, applicant, tagMap);
+        requests.push(
+          createApprovalPayload({
+            applicant,
+            form: leaveConfig.form,
+            workflow: leaveConfig.workflow,
+            formData: leaveData,
+            status: 'approved',
+            createdAt: addUtcMinutes(leaveDate, -24 * 60), // 提前一天申請
+            baseSteps: leaveSteps,
+          }),
+        );
+      }
+
+      // 為每位員工生成加班申請
+      const overtimeConfig = configMap.get('加班申請');
+      if (overtimeConfig) {
+        const overtimeDate = new Date(month);
+        overtimeDate.setDate(10 + (empIdx % 15)); // 分散在月中不同日期
+        overtimeDate.setHours(18, 0, 0, 0); // 18:00開始加班
+        const overtimeEnd = new Date(overtimeDate);
+        overtimeEnd.setHours(21, 0, 0, 0); // 21:00結束，加班3小時
+        
+        const overtimeData = {};
+        if (overtimeConfig.fieldMap['開始時間']) overtimeData[overtimeConfig.fieldMap['開始時間']] = overtimeDate;
+        if (overtimeConfig.fieldMap['結束時間']) overtimeData[overtimeConfig.fieldMap['結束時間']] = overtimeEnd;
+        if (overtimeConfig.fieldMap['是否跨日']) overtimeData[overtimeConfig.fieldMap['是否跨日']] = false;
+        if (overtimeConfig.fieldMap['事由']) overtimeData[overtimeConfig.fieldMap['事由']] = OVERTIME_REASON_POOL[empIdx % OVERTIME_REASON_POOL.length];
+        
+        const overtimeSteps = buildBaseSteps(overtimeConfig.workflow, applicant, tagMap);
+        requests.push(
+          createApprovalPayload({
+            applicant,
+            form: overtimeConfig.form,
+            workflow: overtimeConfig.workflow,
+            formData: overtimeData,
+            status: 'approved',
+            createdAt: addUtcMinutes(overtimeDate, -12 * 60), // 提前半天申請
+            baseSteps: overtimeSteps,
+          }),
+        );
+      }
+
+      // 為每位員工生成獎金申請
+      const bonusConfig = configMap.get('獎金申請');
+      if (bonusConfig) {
+        const bonusDate = new Date(month);
+        bonusDate.setDate(20 + (empIdx % 8)); // 分散在月底不同日期
+        
+        const bonusData = {};
+        if (bonusConfig.fieldMap['獎金類型']) bonusData[bonusConfig.fieldMap['獎金類型']] = BONUS_TYPE_POOL[empIdx % BONUS_TYPE_POOL.length];
+        if (bonusConfig.fieldMap['金額']) bonusData[bonusConfig.fieldMap['金額']] = randomInRange(5000, 30000);
+        if (bonusConfig.fieldMap['事由']) bonusData[bonusConfig.fieldMap['事由']] = BONUS_REASON_POOL[empIdx % BONUS_REASON_POOL.length];
+        
+        const bonusSteps = buildBaseSteps(bonusConfig.workflow, applicant, tagMap);
+        requests.push(
+          createApprovalPayload({
+            applicant,
+            form: bonusConfig.form,
+            workflow: bonusConfig.workflow,
+            formData: bonusData,
+            status: 'approved',
+            createdAt: addUtcMinutes(bonusDate, 10 * 60), // 當天上午申請
+            baseSteps: bonusSteps,
+          }),
+        );
+      }
+    });
+  });
+
   await ApprovalRequest.deleteMany({});
   const inserted = requests.length ? await ApprovalRequest.insertMany(requests) : [];
+
+  console.log(`\n=== 審批記錄生成完成 ===`);
+  console.log(`原有多樣化記錄: ${requests.length - (payrollMonths.length * allApplicants.length * 3)} 筆`);
+  console.log(`每月必要記錄 (請假+加班+獎金): ${payrollMonths.length * allApplicants.length * 3} 筆`);
+  console.log(`總計: ${inserted.length} 筆審批記錄\n`);
 
   return { requests: inserted };
 }
