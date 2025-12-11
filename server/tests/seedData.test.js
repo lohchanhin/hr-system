@@ -72,6 +72,9 @@ const mockSubDept = {
 
 const mockEmployee = {
   findOne: jest.fn(async ({ username }) => mockEmployees.find((e) => e.username === username) || null),
+  find: jest.fn(() => ({
+    lean: async () => mockEmployees.map((employee) => ({ employeeId: employee.employeeId })),
+  })),
   create: jest.fn(async (data) => {
     const employee = { _id: data.username, ...data };
     mockEmployees.push(employee);
@@ -473,6 +476,16 @@ describe('seedTestUsers', () => {
 
     const emails = mockEmployees.map((user) => user.email);
     expect(new Set(emails).size).toBe(emails.length);
+
+    expect(mockEmployee.find).toHaveBeenCalledWith({}, 'employeeId');
+
+    const employeeIds = mockEmployees.map((user) => user.employeeId);
+    expect(employeeIds.every(Boolean)).toBe(true);
+    expect(new Set(employeeIds).size).toBe(employeeIds.length);
+    expect(employeeIds.slice(0, createdSupervisors.length).every((id) => id.startsWith('SUP-')))
+      .toBe(true);
+    expect(employeeIds.slice(createdSupervisors.length).every((id) => id.startsWith('EMP-')))
+      .toBe(true);
 
     expect(mockAttendanceSetting.deleteMany).toHaveBeenCalledWith({});
     expect(mockAttendanceSetting.create).toHaveBeenCalledTimes(1);

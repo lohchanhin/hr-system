@@ -1,11 +1,13 @@
+import mongoose from 'mongoose';
 import PayrollRecord from '../models/PayrollRecord.js';
 import LaborInsuranceRate from '../models/LaborInsuranceRate.js';
 import Employee from '../models/Employee.js';
-import { 
-  calculateEmployeePayroll, 
-  calculateBatchPayroll, 
+import ApprovalRequest from '../models/approval_request.js';
+import {
+  calculateEmployeePayroll,
+  calculateBatchPayroll,
   savePayrollRecord,
-  getEmployeePayrollRecords 
+  getEmployeePayrollRecords
 } from '../services/payrollService.js';
 import { 
   calculateWorkHours,
@@ -15,6 +17,7 @@ import {
 } from '../services/workHoursCalculationService.js';
 import { initializeLaborInsuranceRates } from '../services/laborInsuranceService.js';
 import { generatePayrollExcel } from '../services/payrollExportService.js';
+import { aggregateBonusFromApprovals } from '../utils/payrollPreviewUtils.js';
 
 export async function listPayrolls(req, res) {
   try {
@@ -153,20 +156,21 @@ export async function getEmployeePayrolls(req, res) {
  */
 export async function exportPayrollExcel(req, res) {
   try {
-    const { month, bankType } = req.query;
+    const { month } = req.query;
+    const format = req.query.format || req.query.bankType;
     const companyInfo = req.body;
-    
+
     if (!month) {
       return res.status(400).json({ error: 'month is required' });
     }
-    
-    if (!bankType || !['taiwan', 'taichung'].includes(bankType)) {
-      return res.status(400).json({ error: 'bankType must be "taiwan" or "taichung"' });
+
+    if (!format || !['taiwan', 'taichung', 'bonusSlip'].includes(format)) {
+      return res.status(400).json({ error: 'format must be "taiwan", "taichung" or "bonusSlip"' });
     }
-    
-    const buffer = await generatePayrollExcel(month, bankType, companyInfo);
-    
-    const filename = `payroll_${month}_${bankType}.xlsx`;
+
+    const buffer = await generatePayrollExcel(month, format, companyInfo);
+
+    const filename = `payroll_${month}_${format}.xlsx`;
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.send(buffer);
@@ -260,11 +264,55 @@ export async function getMonthlyPayrollOverview(req, res) {
     const overview = await Promise.all(employees.map(async (employee) => {
       const employeeIdStr = employee._id.toString();
       let payroll = payrollMap[employeeIdStr];
-      
+
       // If no payroll record exists, calculate it automatically based on attendance
       if (!payroll) {
         try {
-          const calculatedPayroll = await calculateEmployeePayroll(employeeIdStr, month, {});
+          const customData = {};
+
+          try {
+            const workData = await calculateCompleteWorkData(employeeIdStr, month);
+            Object.assign(customData, {
+              workDays: workData.workDays,
+              scheduledHours: workData.scheduledHours,
+              actualWorkHours: workData.actualWorkHours,
+              hourlyRate: workData.hourlyRate,
+              dailyRate: workData.dailyRate,
+              leaveHours: workData.leaveHours,
+              paidLeaveHours: workData.paidLeaveHours,
+              unpaidLeaveHours: workData.unpaidLeaveHours,
+              sickLeaveHours: workData.sickLeaveHours,
+              personalLeaveHours: workData.personalLeaveHours,
+              leaveDeduction: workData.leaveDeduction,
+              overtimeHours: workData.overtimeHours,
+              overtimePay: workData.overtimePay,
+              baseSalary: workData.baseSalary
+            });
+          } catch (error) {
+            console.error(`Error building work data for employee ${employeeIdStr}:`, error);
+          }
+
+          try {
+            if (mongoose.Types.ObjectId.isValid(employeeIdStr)) {
+              const startDate = new Date(monthDate);
+              startDate.setUTCHours(0, 0, 0, 0);
+              const endDate = new Date(startDate);
+              endDate.setUTCMonth(endDate.getUTCMonth() + 1);
+
+              const approvals = await ApprovalRequest.find({
+                applicant_employee: employeeIdStr,
+                status: 'approved',
+                createdAt: { $gte: startDate, $lt: endDate }
+              }).populate('form').lean();
+
+              const bonusData = aggregateBonusFromApprovals(approvals);
+              Object.assign(customData, bonusData);
+            }
+          } catch (error) {
+            console.error(`Error aggregating approvals for employee ${employeeIdStr}:`, error);
+          }
+
+          const calculatedPayroll = await calculateEmployeePayroll(employeeIdStr, month, customData);
           // Note: We don't save the calculated payroll automatically, just return it for preview
           payroll = calculatedPayroll;
         } catch (error) {
