@@ -62,9 +62,13 @@ export async function calculateLateEarlyCount(employeeId, month) {
   let monthStr = month;
   if (typeof month === 'string') {
     // Validate and extract YYYY-MM from the input (handles both "YYYY-MM" and "YYYY-MM-DD")
-    // Year must be 1900-2099 and month must be between 01-12
+    // Year must be 1900-2099, month must be 01-12, day (if present) must be 01-31
+    // Note: Day validation allows 31 for all months. Invalid dates like "2024-02-31"
+    // will pass regex validation but are acceptable since we only use the YYYY-MM portion
+    // and create the date as the 1st of the month.
     if (DATE_FORMAT_REGEX.test(month)) {
       // Extract just the YYYY-MM portion (first 7 characters)
+      // Safe because regex guarantees at least "YYYY-MM" format
       monthStr = month.substring(0, 7);
     } else {
       throw new Error(`Invalid month format: ${month}. Expected ${EXPECTED_FORMATS}.`);
@@ -86,7 +90,8 @@ export async function calculateLateEarlyCount(employeeId, month) {
   }
   
   const monthStart = new Date(`${monthStr}-01T00:00:00.000Z`);
-  // Validate the created date
+  // Validate the created date as a final safety check
+  // This should never fail given previous validations, but serves as defense-in-depth
   if (isNaN(monthStart.getTime())) {
     throw new Error(`Failed to create valid date from month: ${monthStr}`);
   }
