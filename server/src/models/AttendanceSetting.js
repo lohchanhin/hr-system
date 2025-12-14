@@ -34,7 +34,12 @@ const attendanceSettingSchema = new mongoose.Schema({
     lateGrace: Number,
     earlyLeaveGrace: Number,
     missingThreshold: Number,
-    autoNotify: Boolean
+    autoNotify: Boolean,
+    // 遲到早退扣款設定
+    lateDeductionEnabled: { type: Boolean, default: false }, // 啟用遲到扣款
+    lateDeductionAmount: { type: Number, default: 0 }, // 每次遲到扣款金額
+    earlyLeaveDeductionEnabled: { type: Boolean, default: false }, // 啟用早退扣款
+    earlyLeaveDeductionAmount: { type: Number, default: 0 }, // 每次早退扣款金額
   },
   breakOutRules: {
     enableBreakPunch: Boolean,

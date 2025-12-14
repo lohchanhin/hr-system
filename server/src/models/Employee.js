@@ -117,6 +117,9 @@ const employeeSchema = new Schema(
     // 兼職/打卡
     partTime: { type: Boolean, default: false, alias: 'isPartTime' },
     needClockIn: { type: Boolean, default: true, alias: 'isClocking' },
+    
+    // 排班設定（主管可選擇是否參與排班）
+    requiresScheduling: { type: Boolean, default: true }, // 是否需要排班
 
     /* 人員狀態與試用 */
     status: {

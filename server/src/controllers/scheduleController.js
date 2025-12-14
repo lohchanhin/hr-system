@@ -4,6 +4,11 @@ import ApprovalRequest from '../models/approval_request.js';
 import AttendanceSetting from '../models/AttendanceSetting.js';
 import Department from '../models/Department.js';
 import { getLeaveFieldIds } from '../services/leaveFieldService.js';
+import { 
+  validateMonthSchedules, 
+  getIncompleteScheduleEmployees,
+  canFinalizeSchedules 
+} from '../services/scheduleValidationService.js';
 
 function formatDate(date) {
   const d = new Date(date);
@@ -872,6 +877,29 @@ export async function finalizeSchedules(req, res) {
       return res.status(400).json({ error: err.message });
     }
 
+    // 檢查排班完整性
+    try {
+      const validationOptions = {};
+      if (department) validationOptions.department = department;
+      if (subDepartment) validationOptions.subDepartment = subDepartment;
+      
+      const canFinalize = await canFinalizeSchedules(month, validationOptions);
+      if (!canFinalize.canFinalize) {
+        return res.status(400).json({
+          error: 'incomplete schedules',
+          message: canFinalize.reason,
+          incompleteEmployees: canFinalize.incompleteEmployees,
+        });
+      }
+    } catch (validationErr) {
+      console.error('Schedule validation error:', validationErr);
+      // Validation errors should halt finalization to prevent payroll issues
+      return res.status(500).json({
+        error: 'validation service error',
+        message: 'Unable to validate schedule completeness. Please contact system administrator.',
+      });
+    }
+
     let scopedIds;
     try {
       scopedIds = await resolveScopedEmployeeIds(req.user, { includeSelf });
@@ -1475,6 +1503,76 @@ export async function exportSchedules(req, res) {
       doc.pipe(res);
       doc.end();
     }
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+}
+
+/**
+ * 驗證月度排班完整性
+ */
+export async function validateScheduleCompleteness(req, res) {
+  try {
+    const { month, department, subDepartment } = req.query;
+    
+    if (!month) {
+      return res.status(400).json({ error: 'month required' });
+    }
+    
+    const options = {};
+    if (department) options.department = department;
+    if (subDepartment) options.subDepartment = subDepartment;
+    
+    const validation = await validateMonthSchedules(month, options);
+    res.json(validation);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+}
+
+/**
+ * 取得未完成排班的員工清單
+ */
+export async function getIncompleteSchedules(req, res) {
+  try {
+    const { month, department, subDepartment } = req.query;
+    
+    if (!month) {
+      return res.status(400).json({ error: 'month required' });
+    }
+    
+    const options = {};
+    if (department) options.department = department;
+    if (subDepartment) options.subDepartment = subDepartment;
+    
+    const incompleteEmployees = await getIncompleteScheduleEmployees(month, options);
+    res.json({ 
+      month,
+      count: incompleteEmployees.length,
+      employees: incompleteEmployees 
+    });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+}
+
+/**
+ * 檢查是否可以完成排班發布
+ */
+export async function checkCanFinalize(req, res) {
+  try {
+    const { month, department, subDepartment } = req.query;
+    
+    if (!month) {
+      return res.status(400).json({ error: 'month required' });
+    }
+    
+    const options = {};
+    if (department) options.department = department;
+    if (subDepartment) options.subDepartment = subDepartment;
+    
+    const result = await canFinalizeSchedules(month, options);
+    res.json(result);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
