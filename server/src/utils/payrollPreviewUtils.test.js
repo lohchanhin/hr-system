@@ -16,6 +16,10 @@ describe('payrollPreviewUtils', () => {
     expect(extractNumericAmount({ amount: 5000, startDate: testDate })).toBe(5000);
     // Mixed data should return the amount, not the date
     expect(extractNumericAmount({ date: testDate, value: '8000' })).toBe(8000);
+    // Null values should be handled gracefully
+    expect(extractNumericAmount({ nullValue: null, amount: 2000 })).toBe(2000);
+    // Objects should be skipped but primitives should work
+    expect(extractNumericAmount({ config: { nested: 'value' }, price: 1500 })).toBe(1500);
   });
 
   test('aggregateBonusFromApprovals categorizes bonuses by form name or bonus type', () => {
