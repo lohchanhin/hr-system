@@ -4,7 +4,7 @@ import Employee from '../models/Employee.js';
 import ShiftSchedule from '../models/ShiftSchedule.js';
 
 // Constants for date validation
-const DATE_FORMAT_REGEX = /^((19|20)\d{2}-(0[1-9]|1[0-2]))/;
+const DATE_FORMAT_REGEX = /^(19|20)\d{2}-(0[1-9]|1[0-2])(-\d{2})?$/;
 const EXPECTED_FORMATS = 'YYYY-MM format, YYYY-MM-DD format, or Date object';
 
 /**
@@ -59,11 +59,11 @@ export async function calculateLateEarlyCount(employeeId, month) {
   // Parse month to handle both "YYYY-MM" and "YYYY-MM-DD" formats
   let monthStr = month;
   if (typeof month === 'string') {
-    // Extract YYYY-MM from the input (handles both "YYYY-MM" and "YYYY-MM-DD")
-    // Validate that year is 1900-2099 and month is between 01-12
-    const match = month.match(DATE_FORMAT_REGEX);
-    if (match) {
-      monthStr = match[1];
+    // Validate and extract YYYY-MM from the input (handles both "YYYY-MM" and "YYYY-MM-DD")
+    // Year must be 1900-2099 and month must be between 01-12
+    if (DATE_FORMAT_REGEX.test(month)) {
+      // Extract just the YYYY-MM portion (first 7 characters)
+      monthStr = month.substring(0, 7);
     } else {
       throw new Error(`Invalid month format: ${month}. Expected ${EXPECTED_FORMATS}.`);
     }
