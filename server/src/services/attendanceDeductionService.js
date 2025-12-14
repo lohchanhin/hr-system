@@ -47,6 +47,8 @@ function isEarlyLeave(clockOutTime, scheduledEndTime, graceMinutes = 0) {
  * 計算單個員工在指定月份的遲到早退次數
  */
 export async function calculateLateEarlyCount(employeeId, month) {
+  const EXPECTED_FORMATS = 'YYYY-MM format, YYYY-MM-DD format, or Date object';
+  
   // Validate month parameter
   if (month === null || month === undefined) {
     throw new Error('Month parameter is required');
@@ -56,12 +58,12 @@ export async function calculateLateEarlyCount(employeeId, month) {
   let monthStr = month;
   if (typeof month === 'string') {
     // Extract YYYY-MM from the input (handles both "YYYY-MM" and "YYYY-MM-DD")
-    // Validate that month is between 01-12
-    const match = month.match(/^(\d{4}-(0[1-9]|1[0-2]))/);
+    // Validate that year is 1900-2099 and month is between 01-12
+    const match = month.match(/^((19|20)\d{2}-(0[1-9]|1[0-2]))/);
     if (match) {
       monthStr = match[1];
     } else {
-      throw new Error(`Invalid month format: ${month}. Expected YYYY-MM format, YYYY-MM-DD format, or Date object.`);
+      throw new Error(`Invalid month format: ${month}. Expected ${EXPECTED_FORMATS}.`);
     }
   } else if (month instanceof Date) {
     // If month is a Date object, format it as YYYY-MM
@@ -72,7 +74,7 @@ export async function calculateLateEarlyCount(employeeId, month) {
     const monthNum = String(month.getMonth() + 1).padStart(2, '0');
     monthStr = `${year}-${monthNum}`;
   } else {
-    throw new Error(`Invalid month parameter type: ${typeof month}. Expected YYYY-MM format, YYYY-MM-DD format, or Date object.`);
+    throw new Error(`Invalid month parameter type: ${typeof month}. Expected ${EXPECTED_FORMATS}.`);
   }
   
   const monthStart = new Date(`${monthStr}-01T00:00:00.000Z`);
