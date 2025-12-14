@@ -56,7 +56,8 @@ export async function calculateLateEarlyCount(employeeId, month) {
   let monthStr = month;
   if (typeof month === 'string') {
     // Extract YYYY-MM from the input (handles both "YYYY-MM" and "YYYY-MM-DD")
-    const match = month.match(/^(\d{4}-\d{2})/);
+    // Validate that month is between 01-12
+    const match = month.match(/^(\d{4}-(0[1-9]|1[0-2]))/);
     if (match) {
       monthStr = match[1];
     } else {
