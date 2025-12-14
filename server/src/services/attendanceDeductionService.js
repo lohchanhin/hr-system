@@ -47,7 +47,22 @@ function isEarlyLeave(clockOutTime, scheduledEndTime, graceMinutes = 0) {
  * 計算單個員工在指定月份的遲到早退次數
  */
 export async function calculateLateEarlyCount(employeeId, month) {
-  const monthStart = new Date(`${month}-01T00:00:00.000Z`);
+  // Parse month to handle both "YYYY-MM" and "YYYY-MM-DD" formats
+  let monthStr = month;
+  if (typeof month === 'string') {
+    // Extract YYYY-MM from the input (handles both "YYYY-MM" and "YYYY-MM-DD")
+    const match = month.match(/^(\d{4}-\d{2})/);
+    if (match) {
+      monthStr = match[1];
+    }
+  } else if (month instanceof Date) {
+    // If month is a Date object, format it as YYYY-MM
+    const year = month.getFullYear();
+    const monthNum = String(month.getMonth() + 1).padStart(2, '0');
+    monthStr = `${year}-${monthNum}`;
+  }
+  
+  const monthStart = new Date(`${monthStr}-01T00:00:00.000Z`);
   const monthEnd = new Date(monthStart);
   monthEnd.setMonth(monthEnd.getMonth() + 1);
 
