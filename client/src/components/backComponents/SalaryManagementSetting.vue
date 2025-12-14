@@ -648,6 +648,8 @@ import { ref, onMounted, computed } from 'vue'
 import { apiFetch } from '../../api'
   
   // 目前所在的Tab
+  // Changed from 'salaryItem' to 'grade' as the salary item tab was removed
+  // (salary items were not used in payroll calculations or any business logic)
 const activeTab = ref('grade')
 const settingId = ref(null)
   
@@ -1124,7 +1126,8 @@ const settingId = ref(null)
       if (data.length) {
         const s = data[0]
         settingId.value = s._id
-        // Note: salaryItems removed - no longer used
+        // Note: salaryItems removed - they were not integrated with payroll calculations 
+        // or any business logic, only stored as metadata on employee records
         gradeList.value = s.grades || []
         Object.assign(adjustForm.value, s.adjust || {})
         Object.assign(paymentForm.value, s.payment || {})
@@ -1135,7 +1138,8 @@ const settingId = ref(null)
 
   async function persistSetting() {
     const payload = {
-      // Note: salaryItems removed - no longer used
+      // Note: salaryItems removed - they were not integrated with payroll calculations 
+      // or any business logic, only stored as metadata on employee records
       grades: gradeList.value,
       adjust: adjustForm.value,
       payment: paymentForm.value,
