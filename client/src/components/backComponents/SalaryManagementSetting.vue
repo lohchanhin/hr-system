@@ -5,63 +5,7 @@
       <h2>薪資管理設定</h2>
   
       <el-tabs v-model="activeTab" type="card">
-        <!-- 1) 薪資項目設定 -->
-        <el-tab-pane label="薪資項目設定" name="salaryItem">
-          <div class="tab-content">
-            <el-button type="primary" @click="openItemDialog()">新增薪資項目</el-button>
-            <el-table :data="salaryItems" style="margin-top: 20px;">
-              <el-table-column prop="itemName" label="項目名稱" width="180" />
-              <el-table-column prop="type" label="加項/扣項" width="120" />
-              <el-table-column prop="taxable" label="是否計稅" width="100">
-                <template #default="{ row }">
-                  {{ row.taxable ? '是' : '否' }}
-                </template>
-              </el-table-column>
-              <el-table-column prop="insuranceAffect" label="是否影響投保" width="130">
-                <template #default="{ row }">
-                  {{ row.insuranceAffect ? '是' : '否' }}
-                </template>
-              </el-table-column>
-              <el-table-column prop="desc" label="說明" />
-              <el-table-column label="操作" width="180">
-                <template #default="{ row, $index }">
-                  <el-button type="primary" @click="openItemDialog($index)">編輯</el-button>
-                  <el-button type="danger" @click="deleteItem($index)">刪除</el-button>
-                </template>
-              </el-table-column>
-            </el-table>
-  
-            <!-- 新增/編輯 薪資項目 Dialog -->
-            <el-dialog v-model="itemDialogVisible" title="薪資項目設定" width="500px">
-              <el-form :model="itemForm" label-width="100px">
-                <el-form-item label="項目名稱">
-                  <el-input v-model="itemForm.itemName" placeholder="如：交通津貼、伙食補助、全勤獎金…" />
-                </el-form-item>
-                <el-form-item label="類型">
-                  <el-select v-model="itemForm.type" placeholder="加項 / 扣項">
-                    <el-option label="加項" value="加項" />
-                    <el-option label="扣項" value="扣項" />
-                  </el-select>
-                </el-form-item>
-                <el-form-item label="計稅">
-                  <el-switch v-model="itemForm.taxable" active-text="是" inactive-text="否" />
-                </el-form-item>
-                <el-form-item label="影響投保">
-                  <el-switch v-model="itemForm.insuranceAffect" active-text="是" inactive-text="否" />
-                </el-form-item>
-                <el-form-item label="說明">
-                  <el-input v-model="itemForm.desc" />
-                </el-form-item>
-              </el-form>
-              <span slot="footer" class="dialog-footer">
-                <el-button @click="itemDialogVisible = false">取消</el-button>
-                <el-button type="primary" @click="saveItem">儲存</el-button>
-              </span>
-            </el-dialog>
-          </div>
-        </el-tab-pane>
-  
-        <!-- 2) 職等與底薪 -->
+        <!-- 1) 職等與底薪 -->
         <el-tab-pane label="職等與底薪" name="grade">
           <div class="tab-content">
             <el-button type="primary" @click="openGradeDialog()">新增職等</el-button>
@@ -98,7 +42,7 @@
           </div>
         </el-tab-pane>
   
-        <!-- 3) 調薪與異動規則 -->
+        <!-- 2) 調薪與異動規則 -->
         <el-tab-pane label="調薪與異動" name="adjust">
           <div class="tab-content">
             <el-form :model="adjustForm" label-width="180px">
@@ -126,7 +70,7 @@
           </div>
         </el-tab-pane>
   
-        <!-- 4) 發放與銀行帳戶 -->
+        <!-- 3) 發放與銀行帳戶 -->
         <el-tab-pane label="發放與帳戶" name="payment">
           <div class="tab-content">
             <el-form :model="paymentForm" label-width="160px">
@@ -171,7 +115,7 @@
           </el-dialog>
         </el-tab-pane>
   
-        <!-- 5) 其他設定 (扶養親屬、法院扣押...) -->
+        <!-- 4) 其他設定 (扶養親屬、法院扣押...) -->
         <el-tab-pane label="其他設定" name="others">
           <div class="tab-content">
             <el-form :model="otherForm" label-width="180px">
@@ -193,7 +137,7 @@
           </div>
         </el-tab-pane>
   
-        <!-- 6) 月薪資總覽 -->
+        <!-- 5) 月薪資總覽 -->
         <el-tab-pane label="月薪資總覽" name="monthlyOverview">
           <div class="tab-content">
             <!-- Filter controls -->
@@ -704,79 +648,10 @@ import { ref, onMounted, computed } from 'vue'
 import { apiFetch } from '../../api'
   
   // 目前所在的Tab
-const activeTab = ref('salaryItem')
+const activeTab = ref('grade')
 const settingId = ref(null)
   
-  // ============ (1) 薪資項目設定 ============
-  const salaryItems = ref([
-    {
-      itemName: '交通津貼',
-      type: '加項',
-      taxable: true,
-      insuranceAffect: false,
-      desc: '員工交通補助'
-    },
-    {
-      itemName: '伙食補助',
-      type: '加項',
-      taxable: false,
-      insuranceAffect: false,
-      desc: ''
-    },
-    {
-      itemName: '罰款',
-      type: '扣項',
-      taxable: false,
-      insuranceAffect: false,
-      desc: '遲到/早退罰款'
-    }
-  ])
-  const itemDialogVisible = ref(false)
-  let editItemIndex = null
-  
-  const itemForm = ref({
-    itemName: '',
-    type: '加項',
-    taxable: true,
-    insuranceAffect: false,
-    desc: ''
-  })
-  
-  function openItemDialog(index = null) {
-    if (index !== null) {
-      // 編輯模式
-      editItemIndex = index
-      itemForm.value = { ...salaryItems.value[index] }
-    } else {
-      // 新增模式
-      editItemIndex = null
-      itemForm.value = {
-        itemName: '',
-        type: '加項',
-        taxable: true,
-        insuranceAffect: false,
-        desc: ''
-      }
-    }
-    itemDialogVisible.value = true
-  }
-  
-  function saveItem() {
-    if (editItemIndex === null) {
-      salaryItems.value.push({ ...itemForm.value })
-    } else {
-      salaryItems.value[editItemIndex] = { ...itemForm.value }
-    }
-    itemDialogVisible.value = false
-    persistSetting()
-  }
-  
-  function deleteItem(index) {
-    salaryItems.value.splice(index, 1)
-    persistSetting()
-  }
-  
-  // ============ (2) 職等與底薪 ============
+  // ============ (1) 職等與底薪 ============
   const gradeList = ref([
     { gradeName: '初階A', baseSalary: 28000, description: '新進職等' },
     { gradeName: '中階B', baseSalary: 35000, description: '需具2年以上經驗' },
@@ -823,7 +698,7 @@ const settingId = ref(null)
     persistSetting()
   }
   
-  // ============ (3) 調薪與異動規則 ============
+  // ============ (2) 調薪與異動規則 ============
   const adjustForm = ref({
     historyMonths: 24,         // 保留2年
     effectiveRule: 'nextMonth1',
@@ -836,7 +711,7 @@ const settingId = ref(null)
     persistSetting()
   }
   
-  // ============ (4) 發放與銀行帳戶 ============
+  // ============ (3) 發放與銀行帳戶 ============
   const paymentForm = ref({
     defaultBank: '004',
     batchFormat: 'formatA'
@@ -861,7 +736,7 @@ const settingId = ref(null)
     persistSetting()
   }
   
-  // ============ (5) 其他設定 (扶養親屬、法院扣押...) ============
+  // ============ (4) 其他設定 (扶養親屬、法院扣押...) ============
   const otherForm = ref({
     includeDependents: false,
     courtGarnishment: false,
@@ -873,7 +748,7 @@ const settingId = ref(null)
     persistSetting()
   }
 
-  // ============ (6) 月薪資總覽 ============
+  // ============ (5) 月薪資總覽 ============
   const overviewMonth = ref(new Date().toISOString().substring(0, 7) + '-01')
   const overviewData = ref([])
   const filterOrganization = ref('')
@@ -1249,7 +1124,7 @@ const settingId = ref(null)
       if (data.length) {
         const s = data[0]
         settingId.value = s._id
-        salaryItems.value = s.salaryItems || []
+        // Note: salaryItems removed - no longer used
         gradeList.value = s.grades || []
         Object.assign(adjustForm.value, s.adjust || {})
         Object.assign(paymentForm.value, s.payment || {})
@@ -1260,7 +1135,7 @@ const settingId = ref(null)
 
   async function persistSetting() {
     const payload = {
-      salaryItems: salaryItems.value,
+      // Note: salaryItems removed - no longer used
       grades: gradeList.value,
       adjust: adjustForm.value,
       payment: paymentForm.value,
