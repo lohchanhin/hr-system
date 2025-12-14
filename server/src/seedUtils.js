@@ -1804,9 +1804,14 @@ export async function seedApprovalRequests({ supervisors = [], employees = [] } 
   const inserted = requests.length ? await ApprovalRequest.insertMany(requests) : [];
 
   console.log(`\n=== 審批記錄生成完成 ===`);
-  console.log(`原有多樣化記錄: ${requests.length - monthlyRecordCount} 筆`);
-  console.log(`每月必要記錄 (請假+加班+獎金): ${monthlyRecordCount} 筆`);
-  console.log(`總計: ${inserted.length} 筆審批記錄\n`);
+  console.log(`總人數: ${allApplicants.length} 人 (主管 ${supervisorList.length} + 員工 ${applicants.length})`);
+  console.log(`月份數: ${payrollMonths.length} 個月 (上月 + 當月)`);
+  console.log(`每人每月: 請假 1 筆 + 加班 1 筆 + 獎金 1 筆 = 3 筆`);
+  console.log(`預期必要記錄: ${allApplicants.length} 人 × ${payrollMonths.length} 月 × 3 類 = ${allApplicants.length * payrollMonths.length * 3} 筆`);
+  console.log(`實際必要記錄: ${monthlyRecordCount} 筆`);
+  console.log(`其他多樣化記錄: ${requests.length - monthlyRecordCount} 筆`);
+  console.log(`總計: ${inserted.length} 筆審批記錄`);
+  console.log(`\n✓ 已確保每個人在2個月內都有請假、加班、獎金申請記錄\n`);
 
   return { requests: inserted };
 }
