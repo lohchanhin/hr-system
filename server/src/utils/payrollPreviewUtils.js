@@ -5,6 +5,21 @@ function toNumber(value) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+/**
+ * 檢查值是否應該被跳過（不視為金額）
+ * @param {any} value - 要檢查的值
+ * @returns {boolean} - 如果應該跳過則回傳 true
+ */
+function shouldSkipValue(value) {
+  // 跳過 Date 物件（會被轉換成時間戳記）
+  if (value instanceof Date) return true;
+  
+  // 跳過 null 和複雜物件（但保留數組）
+  if (typeof value === 'object' && value !== null && !Array.isArray(value)) return true;
+  
+  return false;
+}
+
 export function extractNumericAmount(formData = {}) {
   for (const field of AMOUNT_FIELDS) {
     if (formData[field] === undefined) continue;
@@ -13,8 +28,7 @@ export function extractNumericAmount(formData = {}) {
   }
   // 嘗試搜尋第一個數值型欄位 (排除 Date 物件以避免誤將時間戳記當作金額)
   for (const value of Object.values(formData)) {
-    // 跳過 Date 物件、null 和複雜物件（但允許數組）
-    if (value instanceof Date || (typeof value === 'object' && value !== null && !Array.isArray(value))) continue;
+    if (shouldSkipValue(value)) continue;
     const amount = toNumber(value);
     if (amount) return amount;
   }
