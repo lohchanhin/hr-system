@@ -200,13 +200,24 @@ curl -X DELETE http://localhost:3000/api/shifts/<id> \
 node server/scripts/seed.js
 \`\`\`
 
-此腳本會建立預設帳號（`user`、`supervisor`、`admin`，密碼皆為 `password`）以及示範機構「示範機構」（含「人力資源部」與「招聘組」）。更多詳情請參閱 [server/README.md](server/README.md)。
+此腳本會建立完整的測試資料，包括：
+- 3 位主管和 6 位員工（共 9 人）
+- 2 個機構、4 個部門、12 個小組
+- 最近 60 個工作日的考勤記錄
+- **每個人在 2 個月內都有請假、加班、獎金申請記錄**（已核准）
+- 2 個月的薪資記錄（包含請假扣款、加班費、獎金等調整項目）
 
-| 帳號         | 角色        |
-|--------------|-------------|
-| `user`       | employee    |
-| `supervisor` | supervisor  |
-| `admin`      | admin       |
+> **重要**：為了充分測試薪資計算功能，系統確保每個人都有完整的請假和加班記錄，讓測試人員可以驗證薪資計算是否正確捕捉這些項目。
+
+詳細的測試資料說明和驗證方法請參閱 **[測試資料說明文件](docs/TEST_DATA_GUIDE.md)**。
+
+### 預設測試帳號
+
+| 帳號         | 角色        | 密碼      |
+|--------------|-------------|-----------|
+| `admin`      | admin       | password  |
+
+所有主管和員工帳號的密碼都是 `password`，完整帳號列表會在執行 seed 腳本後輸出到 `server/scripts/seed-accounts.json`。
 
 ## 同時啟動前後端
 

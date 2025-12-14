@@ -36,17 +36,29 @@ This repository provides a seeding script under `scripts/seed.js` to insert samp
 node scripts/seed.js
 ```
 
-The server does not automatically insert any data. Executing the script will create the following test accounts, each paired with a matching `Employee` record:
+The server does not automatically insert any data. Executing the script will create comprehensive test data including:
 
-| Username    | Role       |
-|-------------|-----------|
-| `user`      | employee  |
-| `supervisor`| supervisor|
-| `admin`     | admin     |
+- **9 employees**: 3 supervisors and 6 regular employees with diverse salary configurations
+- **Organizational structure**: 2 organizations, 4 departments, and 12 sub-departments
+- **Attendance records**: 60 working days (approx. 2 months) with clock-in/out, breaks, and shift assignments
+- **Approval records**: **Every person has leave, overtime, and bonus applications for 2 months** (all approved)
+- **Payroll records**: 2 months of salary records with leave deductions, overtime pay, and bonuses
 
-All test accounts use the password `password`.
+> **Important for testing**: The seed script ensures that every person has approved leave and overtime applications in both months, allowing testers to verify that the payroll calculation correctly captures these adjustments.
 
-The script also creates an example organization named `示範機構` with a `人力資源部` department and a `招聘組` sub-department to provide basic reference data when needed.
+All test accounts use the password `password`. The complete list of accounts will be exported to `scripts/seed-accounts.json` after running the seed script.
+
+For detailed information about the test data structure and validation methods, see [Test Data Guide](../docs/TEST_DATA_GUIDE.md).
+
+### Verifying test data
+
+After running the seed script, you can verify that all employees have the required approval records:
+
+```bash
+node scripts/verifyTestData.js
+```
+
+This script will check that every person has leave, overtime, and bonus applications for both months and output a detailed report.
 
 透過 API 新增部門時，請在 payload 中加入 `organization` 欄位，以指定其所屬機構；
 新增小單位則需帶入 `department` 欄位對應上層部門。
