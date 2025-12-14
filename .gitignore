@@ -1,1 +1,4 @@
 node_modules
+client/dist
+server/dist
+dist
