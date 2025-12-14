@@ -388,7 +388,7 @@ export async function generateDiverseApprovalTestData() {
   
   const statuses = ['pending', 'approved', 'rejected'];
   const bonusTypes = ['績效獎金', '專案獎金', '年終獎金', '業績獎金'];
-  const amounts = [3000, 5000, 8000, 10000, 15000];
+  const amounts = [3000, 5000, 8000, 10000];
   
   for (const employee of employees) {
     // 每個員工生成2-4個獎金申請
