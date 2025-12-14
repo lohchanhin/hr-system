@@ -5,6 +5,16 @@ import ApprovalRequest from '../models/approval_request.js';
 import FormTemplate from '../models/form_template.js';
 import AttendanceSetting from '../models/AttendanceSetting.js';
 
+// Configuration constants
+const SCHEDULE_COMPLETENESS_RATIO = 0.7; // 70% completion for incomplete schedules
+const ATTENDANCE_SCENARIOS = {
+  NORMAL: 0.6,      // 60% normal attendance
+  LATE: 0.15,       // 15% late
+  EARLY_LEAVE: 0.10, // 10% early leave
+  LATE_AND_EARLY: 0.07, // 7% both late and early leave
+  MISSING: 0.08,    // 8% missing punch
+};
+
 /**
  * 生成多樣化的排班測試資料
  * 涵蓋以下場景：
@@ -40,7 +50,7 @@ export async function generateDiverseScheduleTestData(month = '2024-01') {
   // 場景2：部分缺少排班（2人）
   const incompleteEmployees = employees.slice(3, 5);
   for (const employee of incompleteEmployees) {
-    await generateIncompleteSchedule(employee._id, monthStart, monthEnd, shifts, 0.7); // 70%完成度
+    await generateIncompleteSchedule(employee._id, monthStart, monthEnd, shifts, SCHEDULE_COMPLETENESS_RATIO);
   }
 
   // 場景3：有請假的排班（2人）
@@ -78,13 +88,15 @@ async function generateCompleteSchedule(employeeId, monthStart, monthEnd, shifts
     current.setDate(current.getDate() + 1);
   }
   
-  await ShiftSchedule.insertMany(schedules, { ordered: false }).catch(() => {});
+  await ShiftSchedule.insertMany(schedules, { ordered: false }).catch((err) => {
+    console.error(`Error inserting complete schedules for employee ${employeeId}:`, err.message);
+  });
 }
 
 /**
  * 生成不完整排班（部分天數缺少）
  */
-async function generateIncompleteSchedule(employeeId, monthStart, monthEnd, shifts, completeness = 0.7) {
+async function generateIncompleteSchedule(employeeId, monthStart, monthEnd, shifts, completeness = SCHEDULE_COMPLETENESS_RATIO) {
   const schedules = [];
   let current = new Date(monthStart);
   
@@ -102,7 +114,9 @@ async function generateIncompleteSchedule(employeeId, monthStart, monthEnd, shif
     current.setDate(current.getDate() + 1);
   }
   
-  await ShiftSchedule.insertMany(schedules, { ordered: false }).catch(() => {});
+  await ShiftSchedule.insertMany(schedules, { ordered: false }).catch((err) => {
+    console.error(`Error inserting incomplete schedules for employee ${employeeId}:`, err.message);
+  });
 }
 
 /**
@@ -158,7 +172,9 @@ async function generateScheduleWithLeave(employeeId, monthStart, monthEnd, shift
     current.setDate(current.getDate() + 1);
   }
   
-  await ShiftSchedule.insertMany(schedules, { ordered: false }).catch(() => {});
+  await ShiftSchedule.insertMany(schedules, { ordered: false }).catch((err) => {
+    console.error(`Error inserting schedules with leave for employee ${employeeId}:`, err.message);
+  });
 }
 
 /**
@@ -235,7 +251,7 @@ async function generateNormalAttendance(schedule, shift) {
     clockIn,
     clockOut,
     status: 'normal',
-  }).catch(() => {});
+  }).catch((err) => { console.error('Error inserting attendance record:', err.message); });
 }
 
 /**
@@ -260,7 +276,7 @@ async function generateLateAttendance(schedule, shift, minLate, maxLate) {
     clockIn,
     clockOut,
     status: 'late',
-  }).catch(() => {});
+  }).catch((err) => { console.error('Error inserting attendance record:', err.message); });
 }
 
 /**
@@ -285,7 +301,7 @@ async function generateEarlyLeaveAttendance(schedule, shift, minEarly, maxEarly)
     clockIn,
     clockOut,
     status: 'early_leave',
-  }).catch(() => {});
+  }).catch((err) => { console.error('Error inserting attendance record:', err.message); });
 }
 
 /**
@@ -311,7 +327,7 @@ async function generateLateAndEarlyAttendance(schedule, shift) {
     clockIn,
     clockOut,
     status: 'late_and_early',
-  }).catch(() => {});
+  }).catch((err) => { console.error('Error inserting attendance record:', err.message); });
 }
 
 /**
@@ -332,7 +348,7 @@ async function generateMissingAttendance(schedule, shift) {
       date,
       clockOut,
       status: 'missing_clock_in',
-    }).catch(() => {});
+    }).catch((err) => { console.error('Error inserting attendance record:', err.message); });
   } else {
     // 缺下班卡
     const [startHour, startMin] = shift.startTime.split(':').map(Number);
@@ -344,7 +360,7 @@ async function generateMissingAttendance(schedule, shift) {
       date,
       clockIn,
       status: 'missing_clock_out',
-    }).catch(() => {});
+    }).catch((err) => { console.error('Error inserting attendance record:', err.message); });
   }
 }
 
@@ -385,7 +401,7 @@ export async function generateDiverseApprovalTestData() {
           amount,
           reason: `${bonusType}申請`,
         },
-      }).catch(() => {});
+      }).catch((err) => { console.error('Error inserting attendance record:', err.message); });
     }
   }
   

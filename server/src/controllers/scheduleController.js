@@ -883,7 +883,12 @@ export async function finalizeSchedules(req, res) {
       }
     } catch (validationErr) {
       console.error('Schedule validation error:', validationErr);
-      // 繼續執行，但記錄錯誤
+      // Validation errors should halt finalization to prevent payroll issues
+      return res.status(500).json({
+        error: 'validation service error',
+        message: 'Unable to validate schedule completeness. Please try again.',
+        details: validationErr.message,
+      });
     }
 
     let scopedIds;

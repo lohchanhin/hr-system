@@ -4,6 +4,9 @@ import ApprovalRequest from '../models/approval_request.js';
 import AttendanceSetting from '../models/AttendanceSetting.js';
 import { getLeaveFieldIds } from './leaveFieldService.js';
 
+// Constants
+const MILLISECONDS_PER_DAY = 86400000;
+
 /**
  * 取得指定月份的所有天數
  * @param {string} month - YYYY-MM 格式
@@ -65,7 +68,7 @@ async function getApprovedLeaveDays(employeeId, monthStart, monthEnd) {
       endDate.setHours(0, 0, 0, 0);
       
       const leaveStart = startDate < monthStart ? new Date(monthStart) : new Date(startDate);
-      const leaveEnd = endDate >= monthEnd ? new Date(monthEnd.getTime() - 86400000) : new Date(endDate);
+      const leaveEnd = endDate >= monthEnd ? new Date(monthEnd.getTime() - MILLISECONDS_PER_DAY) : new Date(endDate);
       
       if (leaveEnd < leaveStart) {
         return;
@@ -75,7 +78,7 @@ async function getApprovedLeaveDays(employeeId, monthStart, monthEnd) {
       while (pointer <= leaveEnd) {
         const key = pointer.toISOString().slice(0, 10);
         leaveDays.add(key);
-        pointer = new Date(pointer.getTime() + 86400000);
+        pointer = new Date(pointer.getTime() + MILLISECONDS_PER_DAY);
       }
     });
   } catch (err) {
