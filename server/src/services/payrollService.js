@@ -59,8 +59,9 @@ export async function calculateEmployeePayroll(employeeId, month, customData = {
   const insuranceRate = await findInsuranceLevelBySalary(baseSalary);
   const laborInsuranceFee = customData.laborInsuranceFee ?? (insuranceRate?.workerFee || 0);
   
-  // 健保費自付額 (這裡需要根據實際情況計算，暫時使用自定義值或默認值)
-  const healthInsuranceFee = customData.healthInsuranceFee ?? 0;
+  // 健保費自付額 (優先使用自定義值，然後使用員工設定的每月調整項目，最後默認為0)
+  const healthInsuranceFee = customData.healthInsuranceFee ?? 
+                             employee.monthlySalaryAdjustments?.healthInsuranceFee ?? 0;
   
   // 勞退個人提繳 (從員工資料獲取或自定義)
   const laborPensionSelf = customData.laborPensionSelf ?? employee.laborPensionSelf ?? 0;
@@ -68,11 +69,13 @@ export async function calculateEmployeePayroll(employeeId, month, customData = {
   // 員工借支
   const employeeAdvance = customData.employeeAdvance ?? employee.employeeAdvance ?? 0;
   
-  // 債權扣押
-  const debtGarnishment = customData.debtGarnishment ?? 0;
+  // 債權扣押 (優先使用自定義值，然後使用員工設定的每月調整項目)
+  const debtGarnishment = customData.debtGarnishment ?? 
+                          employee.monthlySalaryAdjustments?.debtGarnishment ?? 0;
   
-  // 其他扣款 (包含遲到早退自動扣款)
-  const otherDeductions = (customData.otherDeductions ?? 0) + lateEarlyDeduction;
+  // 其他扣款 (包含遲到早退自動扣款和員工設定的每月調整項目)
+  const otherDeductions = (customData.otherDeductions ?? 
+                          employee.monthlySalaryAdjustments?.otherDeductions ?? 0) + lateEarlyDeduction;
   
   // 計算實領金額 (Stage A)
   const totalDeductions = laborInsuranceFee + healthInsuranceFee + laborPensionSelf + 
@@ -85,9 +88,13 @@ export async function calculateEmployeePayroll(employeeId, month, customData = {
   }
   
   // 獎金項目 (Stage B) - 加班費加入獎金
-  const nightShiftAllowance = customData.nightShiftAllowance ?? 0;
-  const performanceBonus = customData.performanceBonus ?? 0;
-  const otherBonuses = customData.otherBonuses ?? 0;
+  // 優先使用自定義值，然後使用員工設定的每月調整項目
+  const nightShiftAllowance = customData.nightShiftAllowance ?? 
+                              employee.monthlySalaryAdjustments?.nightShiftAllowance ?? 0;
+  const performanceBonus = customData.performanceBonus ?? 
+                           employee.monthlySalaryAdjustments?.performanceBonus ?? 0;
+  const otherBonuses = customData.otherBonuses ?? 
+                       employee.monthlySalaryAdjustments?.otherBonuses ?? 0;
   const overtimePay = customData.overtimePay ?? workData.overtimePay ?? 0;
   const totalBonus = nightShiftAllowance + performanceBonus + otherBonuses + overtimePay;
   
