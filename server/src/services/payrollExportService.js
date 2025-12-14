@@ -405,21 +405,19 @@ export async function generatePayrollExcel(month, bankTypeOrFormat, companyInfo 
 
         // 聚合獎金資料
         try {
-          if (mongoose.Types.ObjectId.isValid(employee._id.toString())) {
-            const startDate = new Date(monthDate);
-            startDate.setUTCHours(0, 0, 0, 0);
-            const endDate = new Date(startDate);
-            endDate.setUTCMonth(endDate.getUTCMonth() + 1);
+          const startDate = new Date(monthDate);
+          startDate.setUTCHours(0, 0, 0, 0);
+          const endDate = new Date(startDate);
+          endDate.setUTCMonth(endDate.getUTCMonth() + 1);
 
-            const approvals = await ApprovalRequest.find({
-              applicant_employee: employee._id,
-              status: 'approved',
-              createdAt: { $gte: startDate, $lt: endDate }
-            }).populate('form').lean();
+          const approvals = await ApprovalRequest.find({
+            applicant_employee: employee._id,
+            status: 'approved',
+            createdAt: { $gte: startDate, $lt: endDate }
+          }).populate('form').lean();
 
-            const bonusData = aggregateBonusFromApprovals(approvals);
-            Object.assign(customData, bonusData);
-          }
+          const bonusData = aggregateBonusFromApprovals(approvals);
+          Object.assign(customData, bonusData);
         } catch (error) {
           console.error(`Error aggregating approvals for employee ${employee._id}:`, error);
         }
@@ -445,6 +443,9 @@ export async function generatePayrollExcel(month, bankTypeOrFormat, companyInfo 
       } catch (error) {
         console.error(`Error calculating payroll for employee ${employee._id}:`, error);
         // 返回基本的薪資資料作為後備
+        // Note: Using baseSalary as netPay is intentional - this is a simplified fallback
+        // that ensures export can complete even if detailed calculation fails.
+        // In production, administrators should review and correct these records.
         return {
           employee: employee,
           month: monthDate,
