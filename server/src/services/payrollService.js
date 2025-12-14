@@ -2,6 +2,8 @@ import PayrollRecord from '../models/PayrollRecord.js';
 import Employee from '../models/Employee.js';
 import { findInsuranceLevelBySalary } from './laborInsuranceService.js';
 import { calculateCompleteWorkData } from './workHoursCalculationService.js';
+import { calculateLateEarlyDeductions } from './attendanceDeductionService.js';
+import ApprovalRequest from '../models/approval_request.js';
 
 /**
  * 計算單個員工的月薪資
@@ -44,6 +46,15 @@ export async function calculateEmployeePayroll(employeeId, month, customData = {
   // 基本薪資 (優先使用自定義值，否則使用工作時數計算結果)
   const baseSalary = customData.baseSalary ?? workData.baseSalary;
   
+  // 計算遲到早退自動扣款
+  let lateEarlyDeduction = 0;
+  try {
+    const deductionData = await calculateLateEarlyDeductions(employeeId, month);
+    lateEarlyDeduction = deductionData.totalDeduction || 0;
+  } catch (error) {
+    console.error(`Error calculating late/early deductions for employee ${employeeId}:`, error);
+  }
+  
   // 查找勞保等級
   const insuranceRate = await findInsuranceLevelBySalary(baseSalary);
   const laborInsuranceFee = customData.laborInsuranceFee ?? (insuranceRate?.workerFee || 0);
@@ -60,8 +71,8 @@ export async function calculateEmployeePayroll(employeeId, month, customData = {
   // 債權扣押
   const debtGarnishment = customData.debtGarnishment ?? 0;
   
-  // 其他扣款
-  const otherDeductions = customData.otherDeductions ?? 0;
+  // 其他扣款 (包含遲到早退自動扣款)
+  const otherDeductions = (customData.otherDeductions ?? 0) + lateEarlyDeduction;
   
   // 計算實領金額 (Stage A)
   const totalDeductions = laborInsuranceFee + healthInsuranceFee + laborPensionSelf + 

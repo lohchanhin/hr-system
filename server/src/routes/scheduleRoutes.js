@@ -17,6 +17,9 @@ import {
   finalizeSchedules,
   respondToSchedule,
   respondToSchedulesBulk,
+  validateScheduleCompleteness,
+  getIncompleteSchedules,
+  checkCanFinalize,
 } from '../controllers/scheduleController.js';
 import { verifySupervisor } from '../middleware/supervisor.js';
 import { authenticate, authorizeRoles } from '../middleware/auth.js';
@@ -30,6 +33,9 @@ router.get('/summary', authenticate, authorizeRoles('supervisor'), listSuperviso
 router.get('/overview', authorizeRoles('admin'), listScheduleOverview);
 router.get('/overview/export', authorizeRoles('admin'), exportScheduleOverview);
 router.get('/export', exportSchedules);
+router.get('/validate', authenticate, authorizeRoles('supervisor', 'admin'), validateScheduleCompleteness);
+router.get('/incomplete', authenticate, authorizeRoles('supervisor', 'admin'), getIncompleteSchedules);
+router.get('/can-finalize', authenticate, authorizeRoles('supervisor', 'admin'), checkCanFinalize);
 router.post('/publish', authenticate, authorizeRoles('supervisor', 'admin'), publishSchedules);
 router.post('/publish/finalize', authenticate, authorizeRoles('supervisor', 'admin'), finalizeSchedules);
 router.post('/batch', verifySupervisor, createSchedulesBatch);
