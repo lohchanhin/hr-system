@@ -54,15 +54,25 @@ export async function calculateLateEarlyCount(employeeId, month) {
     const match = month.match(/^(\d{4}-\d{2})/);
     if (match) {
       monthStr = match[1];
+    } else {
+      throw new Error(`Invalid month format: ${month}. Expected YYYY-MM or YYYY-MM-DD format.`);
     }
   } else if (month instanceof Date) {
     // If month is a Date object, format it as YYYY-MM
+    if (isNaN(month.getTime())) {
+      throw new Error('Invalid Date object provided for month parameter');
+    }
     const year = month.getFullYear();
     const monthNum = String(month.getMonth() + 1).padStart(2, '0');
     monthStr = `${year}-${monthNum}`;
   }
   
   const monthStart = new Date(`${monthStr}-01T00:00:00.000Z`);
+  // Validate the created date
+  if (isNaN(monthStart.getTime())) {
+    throw new Error(`Failed to create valid date from month: ${monthStr}`);
+  }
+  
   const monthEnd = new Date(monthStart);
   monthEnd.setMonth(monthEnd.getMonth() + 1);
 
