@@ -4,8 +4,10 @@ import Employee from '../models/Employee.js';
 import ShiftSchedule from '../models/ShiftSchedule.js';
 
 // Constants for date validation
-const DATE_FORMAT_REGEX = /^(19|20)\d{2}-(0[1-9]|1[0-2])(-\d{2})?$/;
+const DATE_FORMAT_REGEX = /^(19|20)\d{2}-(0[1-9]|1[0-2])(-(0[1-9]|[12]\d|3[01]))?$/;
 const EXPECTED_FORMATS = 'YYYY-MM format, YYYY-MM-DD format, or Date object';
+const VALID_YEAR_MIN = 1900;
+const VALID_YEAR_MAX = 2099;
 
 /**
  * 計算時間差（分鐘）
@@ -73,6 +75,10 @@ export async function calculateLateEarlyCount(employeeId, month) {
       throw new Error('Invalid Date object provided for month parameter');
     }
     const year = month.getFullYear();
+    // Validate year range for Date objects
+    if (year < VALID_YEAR_MIN || year > VALID_YEAR_MAX) {
+      throw new Error(`Year ${year} is out of valid range (${VALID_YEAR_MIN}-${VALID_YEAR_MAX})`);
+    }
     const monthNum = String(month.getMonth() + 1).padStart(2, '0');
     monthStr = `${year}-${monthNum}`;
   } else {
