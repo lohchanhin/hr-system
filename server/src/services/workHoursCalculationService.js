@@ -335,10 +335,14 @@ export async function calculateLeaveImpact(employeeId, month) {
         const end = new Date(endDate);
         
         if (!isNaN(start.getTime()) && !isNaN(end.getTime())) {
-          // 計算日期差異（天數）
-          const diffTime = end.getTime() - start.getTime();
-          const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-          days = diffDays > 0 ? diffDays : 1; // 至少算 1 天
+          // 計算日期差異（天數）- 使用日期部分，忽略時間
+          const startDay = new Date(start.getFullYear(), start.getMonth(), start.getDate());
+          const endDay = new Date(end.getFullYear(), end.getMonth(), end.getDate());
+          const diffTime = endDay.getTime() - startDay.getTime();
+          const diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24));
+          
+          // 如果開始和結束是同一天，算 1 天；否則使用計算的天數（至少 1 天）
+          days = diffDays === 0 ? 1 : Math.max(diffDays, 1);
           hours = days * WORK_HOURS_CONFIG.HOURS_PER_DAY;
         }
       }
@@ -452,6 +456,7 @@ export async function calculateOvertimePay(employeeId, month) {
     if (hours === 0) {
       const startTime = record.form_data?.['開始時間'] || record.form_data?.['startTime'];
       const endTime = record.form_data?.['結束時間'] || record.form_data?.['endTime'];
+      const isCrossDay = record.form_data?.['是否跨日'] || record.form_data?.['crossDay'];
       
       if (startTime && endTime) {
         const start = new Date(startTime);
@@ -459,11 +464,19 @@ export async function calculateOvertimePay(employeeId, month) {
         
         if (!isNaN(start.getTime()) && !isNaN(end.getTime())) {
           // 計算時間差異（小時）
-          const diffMs = end.getTime() - start.getTime();
-          hours = diffMs / (1000 * 60 * 60); // 轉換為小時
+          let diffMs = end.getTime() - start.getTime();
           
-          // 如果時間為負值（可能跨日），假設是正常的加班時數
-          if (hours < 0) hours = 0;
+          // 如果時間為負值且標記為跨日，加上 24 小時
+          if (diffMs < 0 && isCrossDay) {
+            diffMs += 24 * 60 * 60 * 1000;
+          }
+          
+          hours = Math.max(0, diffMs / (1000 * 60 * 60)); // 轉換為小時，確保非負
+          
+          // 記錄異常情況
+          if (diffMs < 0) {
+            console.warn(`Overtime record has negative duration (start: ${start.toISOString()}, end: ${end.toISOString()}). Setting hours to 0.`);
+          }
         }
       }
     }
