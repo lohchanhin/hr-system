@@ -1,6 +1,8 @@
 import dotenv from 'dotenv';
+import mongoose from 'mongoose';
 import path from 'path';
 import { fileURLToPath } from 'url';
+
 import { connectDB } from '../src/config/db.js';
 import Employee from '../src/models/Employee.js';
 import ApprovalRequest from '../src/models/approval_request.js';
@@ -168,10 +170,16 @@ async function verifyTestData() {
     console.log(`❌ 有 ${issueCount} 人缺少必要的申請記錄（請假或加班）`);
   }
 
+  await mongoose.disconnect();
   process.exit(allHaveRequired ? 0 : 1);
 }
 
-verifyTestData().catch((err) => {
+verifyTestData().catch(async (err) => {
   console.error('驗證過程發生錯誤:', err);
+  try {
+    await mongoose.disconnect();
+  } catch (disconnectErr) {
+    // Ignore disconnect errors during error handling
+  }
   process.exit(1);
 });
