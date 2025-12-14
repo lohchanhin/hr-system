@@ -322,8 +322,30 @@ export async function calculateLeaveImpact(employeeId, month) {
     const leaveType = typeValue?.label ?? typeMap.get(typeCode) ?? typeCode;
     
     // 從表單數據取得請假天數或時數
-    const days = parseFloat(approval.form_data?.days ?? approval.form_data?.duration ?? 0);
-    const hours = parseFloat(approval.form_data?.hours ?? (days * WORK_HOURS_CONFIG.HOURS_PER_DAY) ?? 0);
+    let days = parseFloat(approval.form_data?.days ?? approval.form_data?.duration ?? 0);
+    let hours = parseFloat(approval.form_data?.hours ?? 0);
+    
+    // 如果沒有直接的 days/hours 欄位，嘗試從開始/結束日期計算
+    if (days === 0 && hours === 0 && startId && endId) {
+      const startDate = approval.form_data?.[startId];
+      const endDate = approval.form_data?.[endId];
+      
+      if (startDate && endDate) {
+        const start = new Date(startDate);
+        const end = new Date(endDate);
+        
+        if (!isNaN(start.getTime()) && !isNaN(end.getTime())) {
+          // 計算日期差異（天數）
+          const diffTime = end.getTime() - start.getTime();
+          const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+          days = diffDays > 0 ? diffDays : 1; // 至少算 1 天
+          hours = days * WORK_HOURS_CONFIG.HOURS_PER_DAY;
+        }
+      }
+    } else if (hours === 0 && days > 0) {
+      // 如果有天數但沒有時數，將天數轉換為時數
+      hours = days * WORK_HOURS_CONFIG.HOURS_PER_DAY;
+    }
     
     totalLeaveHours += hours;
     
@@ -426,12 +448,40 @@ export async function calculateOvertimePay(employeeId, month) {
       }
     }
     
+    // 如果沒有直接的時數欄位，嘗試從開始/結束時間計算
+    if (hours === 0) {
+      const startTime = record.form_data?.['開始時間'] || record.form_data?.['startTime'];
+      const endTime = record.form_data?.['結束時間'] || record.form_data?.['endTime'];
+      
+      if (startTime && endTime) {
+        const start = new Date(startTime);
+        const end = new Date(endTime);
+        
+        if (!isNaN(start.getTime()) && !isNaN(end.getTime())) {
+          // 計算時間差異（小時）
+          const diffMs = end.getTime() - start.getTime();
+          hours = diffMs / (1000 * 60 * 60); // 轉換為小時
+          
+          // 如果時間為負值（可能跨日），假設是正常的加班時數
+          if (hours < 0) hours = 0;
+        }
+      }
+    }
+    
     // 取得加班日期
     let date = null;
     for (const fieldName of OVERTIME_FIELDS.date) {
       if (record.form_data?.[fieldName]) {
         date = record.form_data[fieldName];
         break;
+      }
+    }
+    
+    // 如果沒有日期欄位，嘗試使用開始時間作為日期
+    if (!date) {
+      const startTime = record.form_data?.['開始時間'] || record.form_data?.['startTime'];
+      if (startTime) {
+        date = startTime;
       }
     }
     
@@ -442,6 +492,11 @@ export async function calculateOvertimePay(employeeId, month) {
         reason = record.form_data[fieldName];
         break;
       }
+    }
+    
+    // 如果沒有原因欄位，嘗試'事由'欄位
+    if (!reason && record.form_data?.['事由']) {
+      reason = record.form_data['事由'];
     }
     
     totalOvertimeHours += hours;
