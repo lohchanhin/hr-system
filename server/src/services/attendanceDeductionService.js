@@ -3,6 +3,12 @@ import AttendanceSetting from '../models/AttendanceSetting.js';
 import Employee from '../models/Employee.js';
 import ShiftSchedule from '../models/ShiftSchedule.js';
 
+// Constants for date validation
+const DATE_FORMAT_REGEX = /^(19|20)\d{2}-(0[1-9]|1[0-2])(-(0[1-9]|[12]\d|3[01]))?$/;
+const EXPECTED_FORMATS = 'YYYY-MM format, YYYY-MM-DD format, or Date object';
+const VALID_YEAR_MIN = 1900;
+const VALID_YEAR_MAX = 2099;
+
 /**
  * 計算時間差（分鐘）
  */
@@ -47,7 +53,49 @@ function isEarlyLeave(clockOutTime, scheduledEndTime, graceMinutes = 0) {
  * 計算單個員工在指定月份的遲到早退次數
  */
 export async function calculateLateEarlyCount(employeeId, month) {
-  const monthStart = new Date(`${month}-01T00:00:00.000Z`);
+  // Validate month parameter
+  if (month === null || month === undefined) {
+    throw new Error('Month parameter is required');
+  }
+  
+  // Parse month to handle both "YYYY-MM" and "YYYY-MM-DD" formats
+  let monthStr = month;
+  if (typeof month === 'string') {
+    // Validate and extract YYYY-MM from the input (handles both "YYYY-MM" and "YYYY-MM-DD")
+    // Year must be 1900-2099, month must be 01-12, day (if present) must be 01-31
+    // Note: Day validation allows 31 for all months. Invalid dates like "2024-02-31"
+    // will pass regex validation but are acceptable since we only use the YYYY-MM portion
+    // and create the date as the 1st of the month.
+    if (DATE_FORMAT_REGEX.test(month)) {
+      // Extract just the YYYY-MM portion (first 7 characters)
+      // Safe because regex guarantees at least "YYYY-MM" format
+      monthStr = month.substring(0, 7);
+    } else {
+      throw new Error(`Invalid month format: ${month}. Expected ${EXPECTED_FORMATS}.`);
+    }
+  } else if (month instanceof Date) {
+    // If month is a Date object, format it as YYYY-MM
+    if (isNaN(month.getTime())) {
+      throw new Error('Invalid Date object provided for month parameter');
+    }
+    const year = month.getFullYear();
+    // Validate year range for Date objects
+    if (year < VALID_YEAR_MIN || year > VALID_YEAR_MAX) {
+      throw new Error(`Year ${year} is out of valid range (${VALID_YEAR_MIN}-${VALID_YEAR_MAX})`);
+    }
+    const monthNum = String(month.getMonth() + 1).padStart(2, '0');
+    monthStr = `${year}-${monthNum}`;
+  } else {
+    throw new Error(`Invalid month parameter type: ${typeof month}. Expected ${EXPECTED_FORMATS}.`);
+  }
+  
+  const monthStart = new Date(`${monthStr}-01T00:00:00.000Z`);
+  // Validate the created date as a final safety check
+  // This should never fail given previous validations, but serves as defense-in-depth
+  if (isNaN(monthStart.getTime())) {
+    throw new Error(`Failed to create valid date from month: ${monthStr}`);
+  }
+  
   const monthEnd = new Date(monthStart);
   monthEnd.setMonth(monthEnd.getMonth() + 1);
 
