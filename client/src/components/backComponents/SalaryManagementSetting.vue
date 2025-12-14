@@ -402,9 +402,9 @@
                 </el-table-column>
               </el-table-column>
               
-              <el-table-column prop="netPay" label="實發金額" width="120" align="right" fixed="right">
+              <el-table-column prop="totalPayment" label="實發金額" width="120" align="right" fixed="right">
                 <template #default="{ row }">
-                  <strong>{{ formatCurrency(row.netPay) }}</strong>
+                  <strong>{{ formatCurrency(row.totalPayment) }}</strong>
                 </template>
               </el-table-column>
               
@@ -787,7 +787,7 @@ const settingId = ref(null)
   })
 
   const totalNetPay = computed(() => {
-    return filteredOverviewData.value.reduce((sum, item) => sum + (item.netPay || 0), 0)
+    return filteredOverviewData.value.reduce((sum, item) => sum + (item.totalPayment || 0), 0)
   })
 
   const totalDeductions = computed(() => {
