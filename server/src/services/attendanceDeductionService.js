@@ -47,6 +47,11 @@ function isEarlyLeave(clockOutTime, scheduledEndTime, graceMinutes = 0) {
  * 計算單個員工在指定月份的遲到早退次數
  */
 export async function calculateLateEarlyCount(employeeId, month) {
+  // Validate month parameter
+  if (month === null || month === undefined) {
+    throw new Error('Month parameter is required');
+  }
+  
   // Parse month to handle both "YYYY-MM" and "YYYY-MM-DD" formats
   let monthStr = month;
   if (typeof month === 'string') {
@@ -55,7 +60,7 @@ export async function calculateLateEarlyCount(employeeId, month) {
     if (match) {
       monthStr = match[1];
     } else {
-      throw new Error(`Invalid month format: ${month}. Expected YYYY-MM or YYYY-MM-DD format.`);
+      throw new Error(`Invalid month format: ${month}. Expected YYYY-MM format, YYYY-MM-DD format, or Date object.`);
     }
   } else if (month instanceof Date) {
     // If month is a Date object, format it as YYYY-MM
@@ -65,6 +70,8 @@ export async function calculateLateEarlyCount(employeeId, month) {
     const year = month.getFullYear();
     const monthNum = String(month.getMonth() + 1).padStart(2, '0');
     monthStr = `${year}-${monthNum}`;
+  } else {
+    throw new Error(`Invalid month parameter type: ${typeof month}. Expected YYYY-MM format, YYYY-MM-DD format, or Date object.`);
   }
   
   const monthStart = new Date(`${monthStr}-01T00:00:00.000Z`);
