@@ -1,5 +1,4 @@
 import ExcelJS from 'exceljs';
-import mongoose from 'mongoose';
 import PayrollRecord from '../models/PayrollRecord.js';
 import Employee from '../models/Employee.js';
 import ApprovalRequest from '../models/approval_request.js';
