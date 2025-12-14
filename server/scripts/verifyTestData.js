@@ -40,7 +40,11 @@ async function verifyTestData() {
   console.log(`\n表單ID:`);
   console.log(`  - 請假: ${leaveForm._id}`);
   console.log(`  - 加班申請: ${overtimeForm._id}`);
-  if (bonusForm) console.log(`  - 獎金申請: ${bonusForm._id}`);
+  if (bonusForm) {
+    console.log(`  - 獎金申請: ${bonusForm._id}`);
+  } else {
+    console.log(`  - 獎金申請: 未設定（可選）`);
+  }
 
   // 計算當月和上月的日期範圍
   const currentDate = new Date();
@@ -142,13 +146,13 @@ async function verifyTestData() {
     const status = meetRequirement ? '✓' : '✗';
     
     console.log(`${status} ${stats.name} (${stats.role}, ${stats.employeeId})`);
-    console.log(`  上月: 請假 ${stats.lastMonth.leave}, 加班 ${stats.lastMonth.overtime}, 獎金 ${stats.lastMonth.bonus}`);
-    console.log(`  當月: 請假 ${stats.currentMonth.leave}, 加班 ${stats.currentMonth.overtime}, 獎金 ${stats.currentMonth.bonus}`);
+    console.log(`  上月: 請假 ${stats.lastMonth.leave}, 加班 ${stats.lastMonth.overtime}, 獎金 ${stats.lastMonth.bonus} (可選)`);
+    console.log(`  當月: 請假 ${stats.currentMonth.leave}, 加班 ${stats.currentMonth.overtime}, 獎金 ${stats.currentMonth.bonus} (可選)`);
 
     if (!meetRequirement) {
       allHaveRequired = false;
       issueCount++;
-      console.log(`  ⚠️ 缺少必要的申請記錄`);
+      console.log(`  ⚠️ 缺少必要的申請記錄（請假或加班）`);
     }
     console.log('');
   });
@@ -156,9 +160,12 @@ async function verifyTestData() {
   // 總結
   console.log('=== 驗證結果 ===\n');
   if (allHaveRequired) {
-    console.log('✅ 所有人都有2個月的請假和加班申請記錄');
+    console.log('✅ 所有人都有2個月的請假和加班申請記錄（必要）');
+    if (bonusForm) {
+      console.log('✅ 所有人也有獎金申請記錄（額外）');
+    }
   } else {
-    console.log(`❌ 有 ${issueCount} 人缺少必要的申請記錄`);
+    console.log(`❌ 有 ${issueCount} 人缺少必要的申請記錄（請假或加班）`);
   }
 
   process.exit(allHaveRequired ? 0 : 1);
