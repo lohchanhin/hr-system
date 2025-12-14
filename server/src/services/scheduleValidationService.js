@@ -29,6 +29,28 @@ function getMonthDays(month) {
 }
 
 /**
+ * 計算留在指定範圍內的日期範圍
+ * @param {Date} startDate - 開始日期
+ * @param {Date} endDate - 結束日期
+ * @param {Date} rangeStart - 範圍開始
+ * @param {Date} rangeEnd - 範圍結束
+ * @returns {Object} 調整後的開始和結束日期，如果無交集則返回 null
+ */
+function clampDateRange(startDate, endDate, rangeStart, rangeEnd) {
+  const clampedStart = startDate < rangeStart ? new Date(rangeStart) : new Date(startDate);
+  const clampedEnd = endDate >= rangeEnd 
+    ? new Date(rangeEnd.getTime() - MILLISECONDS_PER_DAY) 
+    : new Date(endDate);
+  
+  // Check if there's any overlap
+  if (clampedEnd < clampedStart) {
+    return null;
+  }
+  
+  return { start: clampedStart, end: clampedEnd };
+}
+
+/**
  * 取得員工在指定月份的批准請假天數
  * @param {string} employeeId - 員工ID
  * @param {Date} monthStart - 月份開始日期
@@ -67,15 +89,13 @@ async function getApprovedLeaveDays(employeeId, monthStart, monthEnd) {
       startDate.setHours(0, 0, 0, 0);
       endDate.setHours(0, 0, 0, 0);
       
-      const leaveStart = startDate < monthStart ? new Date(monthStart) : new Date(startDate);
-      const leaveEnd = endDate >= monthEnd ? new Date(monthEnd.getTime() - MILLISECONDS_PER_DAY) : new Date(endDate);
-      
-      if (leaveEnd < leaveStart) {
-        return;
+      const clampedRange = clampDateRange(startDate, endDate, monthStart, monthEnd);
+      if (!clampedRange) {
+        return; // No overlap with the month
       }
       
-      let pointer = new Date(leaveStart);
-      while (pointer <= leaveEnd) {
+      let pointer = new Date(clampedRange.start);
+      while (pointer <= clampedRange.end) {
         const key = pointer.toISOString().slice(0, 10);
         leaveDays.add(key);
         pointer = new Date(pointer.getTime() + MILLISECONDS_PER_DAY);

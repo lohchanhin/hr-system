@@ -886,8 +886,7 @@ export async function finalizeSchedules(req, res) {
       // Validation errors should halt finalization to prevent payroll issues
       return res.status(500).json({
         error: 'validation service error',
-        message: 'Unable to validate schedule completeness. Please try again.',
-        details: validationErr.message,
+        message: 'Unable to validate schedule completeness. Please contact system administrator.',
       });
     }
 

@@ -204,26 +204,34 @@ export async function generateDiverseAttendanceTestData(month = '2024-01') {
     });
   }
   
+  // Calculate cumulative thresholds from ATTENDANCE_SCENARIOS
+  const thresholds = {
+    normal: ATTENDANCE_SCENARIOS.NORMAL,
+    late: ATTENDANCE_SCENARIOS.NORMAL + ATTENDANCE_SCENARIOS.LATE,
+    earlyLeave: ATTENDANCE_SCENARIOS.NORMAL + ATTENDANCE_SCENARIOS.LATE + ATTENDANCE_SCENARIOS.EARLY_LEAVE,
+    lateAndEarly: ATTENDANCE_SCENARIOS.NORMAL + ATTENDANCE_SCENARIOS.LATE + ATTENDANCE_SCENARIOS.EARLY_LEAVE + ATTENDANCE_SCENARIOS.LATE_AND_EARLY,
+  };
+  
   for (const schedule of schedules) {
     const shift = shiftMap.get(schedule.shiftId.toString());
     if (!shift || !schedule.employee) continue;
     
     const scenario = Math.random();
     
-    if (scenario < 0.6) {
-      // 60% 正常出勤
+    if (scenario < thresholds.normal) {
+      // Normal attendance
       await generateNormalAttendance(schedule, shift);
-    } else if (scenario < 0.75) {
-      // 15% 遲到
+    } else if (scenario < thresholds.late) {
+      // Late
       await generateLateAttendance(schedule, shift, 10, 30);
-    } else if (scenario < 0.85) {
-      // 10% 早退
+    } else if (scenario < thresholds.earlyLeave) {
+      // Early leave
       await generateEarlyLeaveAttendance(schedule, shift, 10, 30);
-    } else if (scenario < 0.92) {
-      // 7% 遲到又早退
+    } else if (scenario < thresholds.lateAndEarly) {
+      // Late and early leave
       await generateLateAndEarlyAttendance(schedule, shift);
     } else {
-      // 8% 缺卡
+      // Missing punch
       await generateMissingAttendance(schedule, shift);
     }
   }
