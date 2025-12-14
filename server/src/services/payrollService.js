@@ -98,6 +98,9 @@ export async function calculateEmployeePayroll(employeeId, month, customData = {
   const overtimePay = customData.overtimePay ?? workData.overtimePay ?? 0;
   const totalBonus = nightShiftAllowance + performanceBonus + otherBonuses + overtimePay;
   
+  // 計算總實發金額 (netPay + totalBonus)
+  const totalPayment = netPay + totalBonus;
+  
   // 銀行帳戶資訊
   const bankAccountA = {
     bank: employee.salaryAccountA?.bank || '',
@@ -147,6 +150,7 @@ export async function calculateEmployeePayroll(employeeId, month, customData = {
     performanceBonus,
     otherBonuses,
     totalBonus,
+    totalPayment, // Total amount employee receives (netPay + totalBonus)
     bankAccountA,
     bankAccountB,
     insuranceLevel: insuranceRate?.level,
