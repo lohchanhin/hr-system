@@ -334,15 +334,15 @@ export async function calculateLeaveImpact(employeeId, month) {
         const start = new Date(startDate);
         const end = new Date(endDate);
         
-        if (!isNaN(start.getTime()) && !isNaN(end.getTime())) {
+        if (Number.isFinite(start.getTime()) && Number.isFinite(end.getTime())) {
           // 計算日期差異（天數）- 使用日期部分，忽略時間
           const startDay = new Date(start.getFullYear(), start.getMonth(), start.getDate());
           const endDay = new Date(end.getFullYear(), end.getMonth(), end.getDate());
           const diffTime = endDay.getTime() - startDay.getTime();
           const diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24));
           
-          // 如果開始和結束是同一天，算 1 天；否則使用計算的天數（至少 1 天）
-          days = diffDays === 0 ? 1 : Math.max(diffDays, 1);
+          // 確保至少 1 天（處理同一天或負值情況）
+          days = Math.max(diffDays, 1);
           hours = days * WORK_HOURS_CONFIG.HOURS_PER_DAY;
         }
       }
@@ -462,9 +462,14 @@ export async function calculateOvertimePay(employeeId, month) {
         const start = new Date(startTime);
         const end = new Date(endTime);
         
-        if (!isNaN(start.getTime()) && !isNaN(end.getTime())) {
+        if (Number.isFinite(start.getTime()) && Number.isFinite(end.getTime())) {
           // 計算時間差異（小時）
           let diffMs = end.getTime() - start.getTime();
+          
+          // 記錄異常情況（在調整前）
+          if (diffMs < 0 && !isCrossDay) {
+            console.warn(`Overtime record has negative duration without cross-day flag (start: ${start.toISOString()}, end: ${end.toISOString()}). Setting hours to 0.`);
+          }
           
           // 如果時間為負值且標記為跨日，加上 24 小時
           if (diffMs < 0 && isCrossDay) {
@@ -472,11 +477,6 @@ export async function calculateOvertimePay(employeeId, month) {
           }
           
           hours = Math.max(0, diffMs / (1000 * 60 * 60)); // 轉換為小時，確保非負
-          
-          // 記錄異常情況
-          if (diffMs < 0) {
-            console.warn(`Overtime record has negative duration (start: ${start.toISOString()}, end: ${end.toISOString()}). Setting hours to 0.`);
-          }
         }
       }
     }
