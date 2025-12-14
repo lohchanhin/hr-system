@@ -322,6 +322,11 @@ export async function getMonthlyPayrollOverview(req, res) {
         }
       }
       
+      // Extract payroll values with fallbacks
+      const netPayValue = payroll?.netPay || (employee.salaryAmount || 0);
+      const totalBonusValue = payroll?.totalBonus || 0;
+      const totalPaymentValue = payroll?.totalPayment || (netPayValue + totalBonusValue);
+      
       return {
         _id: employee._id,
         employeeId: employee.employeeId,
@@ -353,12 +358,12 @@ export async function getMonthlyPayrollOverview(req, res) {
         employeeAdvance: payroll?.employeeAdvance || 0,
         debtGarnishment: payroll?.debtGarnishment || 0,
         otherDeductions: payroll?.otherDeductions || 0,
-        netPay: payroll?.netPay || (employee.salaryAmount || 0),
+        netPay: netPayValue,
         nightShiftAllowance: payroll?.nightShiftAllowance || 0,
         performanceBonus: payroll?.performanceBonus || 0,
         otherBonuses: payroll?.otherBonuses || 0,
-        totalBonus: payroll?.totalBonus || 0,
-        totalPayment: payroll?.totalPayment || (employee.salaryAmount || 0),
+        totalBonus: totalBonusValue,
+        totalPayment: totalPaymentValue,
         hasPayrollRecord: !!payrollMap[employeeIdStr],
         payrollRecordId: payrollMap[employeeIdStr]?._id
       };
