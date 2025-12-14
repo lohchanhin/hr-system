@@ -865,6 +865,64 @@
                       </div>
                     </div>
                   </div>
+
+                  <div class="form-group">
+                    <h3 class="form-group-title">每月薪資調整項目</h3>
+                    <el-alert type="info" :closable="false" style="margin-bottom: 16px;">
+                      <p>以下項目將作為每月薪資計算的預設值，可直接在個人資料中設定，無需每次簽核。</p>
+                    </el-alert>
+                    
+                    <div class="form-row">
+                      <el-form-item label="健保費自付額" prop="monthlySalaryAdjustments.healthInsuranceFee">
+                        <el-input-number v-model="employeeForm.monthlySalaryAdjustments.healthInsuranceFee" 
+                          :min="0" :step="50"
+                          :formatter="value => `$ ${value ?? 0}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')"
+                          :parser="value => (value ? value.replace(/\$\s?|(,*)/g, '') : '')" />
+                      </el-form-item>
+                      <el-form-item label="債權扣押" prop="monthlySalaryAdjustments.debtGarnishment">
+                        <el-input-number v-model="employeeForm.monthlySalaryAdjustments.debtGarnishment" 
+                          :min="0" :step="100"
+                          :formatter="value => `$ ${value ?? 0}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')"
+                          :parser="value => (value ? value.replace(/\$\s?|(,*)/g, '') : '')" />
+                      </el-form-item>
+                      <el-form-item label="其他扣款" prop="monthlySalaryAdjustments.otherDeductions">
+                        <el-input-number v-model="employeeForm.monthlySalaryAdjustments.otherDeductions" 
+                          :min="0" :step="100"
+                          :formatter="value => `$ ${value ?? 0}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')"
+                          :parser="value => (value ? value.replace(/\$\s?|(,*)/g, '') : '')" />
+                      </el-form-item>
+                    </div>
+                    
+                    <div class="form-row">
+                      <el-form-item label="夜班補助津貼" prop="monthlySalaryAdjustments.nightShiftAllowance">
+                        <el-input-number v-model="employeeForm.monthlySalaryAdjustments.nightShiftAllowance" 
+                          :min="0" :step="100"
+                          :formatter="value => `$ ${value ?? 0}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')"
+                          :parser="value => (value ? value.replace(/\$\s?|(,*)/g, '') : '')" />
+                      </el-form-item>
+                      <el-form-item label="人力績效獎金" prop="monthlySalaryAdjustments.performanceBonus">
+                        <el-input-number v-model="employeeForm.monthlySalaryAdjustments.performanceBonus" 
+                          :min="0" :step="100"
+                          :formatter="value => `$ ${value ?? 0}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')"
+                          :parser="value => (value ? value.replace(/\$\s?|(,*)/g, '') : '')" />
+                      </el-form-item>
+                      <el-form-item label="其他獎金" prop="monthlySalaryAdjustments.otherBonuses">
+                        <el-input-number v-model="employeeForm.monthlySalaryAdjustments.otherBonuses" 
+                          :min="0" :step="100"
+                          :formatter="value => `$ ${value ?? 0}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')"
+                          :parser="value => (value ? value.replace(/\$\s?|(,*)/g, '') : '')" />
+                      </el-form-item>
+                    </div>
+                    
+                    <div class="form-row">
+                      <el-form-item label="調整說明" class="full-width-item" prop="monthlySalaryAdjustments.notes">
+                        <el-input v-model="employeeForm.monthlySalaryAdjustments.notes" 
+                          type="textarea" 
+                          :rows="2"
+                          placeholder="請輸入薪資調整的說明或備註" />
+                      </el-form-item>
+                    </div>
+                  </div>
                 </div>
               </div>
             </el-tab-pane>
@@ -3185,7 +3243,18 @@ const emptyEmployee = {
   employeeAdvance: 0,
   salaryAccountA: { bank: '', acct: '' },
   salaryAccountB: { bank: '', acct: '' },
-  salaryItems: []
+  salaryItems: [],
+  
+  // 每月薪資調整項目
+  monthlySalaryAdjustments: {
+    healthInsuranceFee: 0,
+    debtGarnishment: 0,
+    otherDeductions: 0,
+    nightShiftAllowance: 0,
+    performanceBonus: 0,
+    otherBonuses: 0,
+    notes: ''
+  }
 }
 const employeeForm = ref({ ...emptyEmployee })
 const formRef = ref()
