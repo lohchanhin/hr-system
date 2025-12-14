@@ -280,7 +280,8 @@ describe('Schedule.vue', () => {
             pendingCount: 0,
             disputedCount: 0,
             latestNote: '',
-            latestResponseAt: null
+            latestResponseAt: null,
+            disputes: []
           })
         }
         const entry = employeeMap.get(id)
@@ -288,6 +289,11 @@ describe('Schedule.vue', () => {
         if (response === 'disputed' || state === 'changes_requested') {
           entry.disputedCount += 1
           if (item?.responseNote) entry.latestNote = item.responseNote
+          entry.disputes.push({
+            date: item.date,
+            note: item.responseNote || '',
+            responseAt: item.responseAt
+          })
         }
         if (item?.responseAt) {
           const responded = new Date(item.responseAt)
@@ -308,7 +314,8 @@ describe('Schedule.vue', () => {
             name: entry.name,
             disputedCount: entry.disputedCount,
             latestNote: entry.latestNote,
-            latestResponseAt: entry.latestResponseAt ? entry.latestResponseAt.toISOString() : null
+            latestResponseAt: entry.latestResponseAt ? entry.latestResponseAt.toISOString() : null,
+            disputes: entry.disputes
           })
         }
       })

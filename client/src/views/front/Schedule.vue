@@ -107,8 +107,18 @@
                 <span class="card-name">{{ emp.name }}</span>
                 <span class="card-count">{{ emp.disputedCount }} 筆</span>
               </div>
-              <div v-if="emp.latestNote" class="card-note">
-                最新意見：{{ emp.latestNote }}
+              <div v-if="emp.disputes && emp.disputes.length > 0" class="disputes-list">
+                <div v-for="(dispute, idx) in emp.disputes" :key="idx" class="dispute-item">
+                  <div class="dispute-date">
+                    {{ formatDisputeDate(dispute.date) }}
+                  </div>
+                  <div v-if="dispute.note" class="dispute-note">
+                    {{ dispute.note }}
+                  </div>
+                  <div v-else class="dispute-note empty">
+                    （無具體說明）
+                  </div>
+                </div>
               </div>
             </li>
           </ul>
@@ -1148,7 +1158,8 @@ const publishSummary = computed(() => {
         pendingCount: 0,
         disputedCount: 0,
         latestNote: '',
-        latestResponseAt: null
+        latestResponseAt: null,
+        disputes: []
       })
     }
 
@@ -1161,6 +1172,12 @@ const publishSummary = computed(() => {
       if (item?.responseNote) {
         entry.latestNote = item.responseNote
       }
+      // Track individual disputes with date and note
+      entry.disputes.push({
+        date: item.date,
+        note: item.responseNote || '',
+        responseAt: item.responseAt
+      })
     }
     if (item?.responseAt) {
       const responded = new Date(item.responseAt)
@@ -1191,7 +1208,8 @@ const publishSummary = computed(() => {
         latestNote: entry.latestNote,
         latestResponseAt: entry.latestResponseAt
           ? entry.latestResponseAt.toISOString()
-          : null
+          : null,
+        disputes: entry.disputes
       })
     }
   })
@@ -1388,6 +1406,13 @@ const formatPublishDate = value => {
   const parsed = dayjs(value)
   if (!parsed.isValid()) return ''
   return parsed.format('YYYY/MM/DD HH:mm')
+}
+
+const formatDisputeDate = value => {
+  if (!value) return ''
+  const parsed = dayjs(value)
+  if (!parsed.isValid()) return ''
+  return parsed.format('MM/DD')
 }
 
 function buildPublishPayload() {
@@ -3014,6 +3039,41 @@ onMounted(async () => {
       .card-count {
         font-weight: 600;
         color: #334155;
+      }
+    }
+
+    .disputes-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-top: 8px;
+    }
+
+    .dispute-item {
+      padding: 8px 10px;
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.9);
+      border-left: 3px solid #dc2626;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .dispute-date {
+      font-size: 0.8rem;
+      font-weight: 700;
+      color: #b91c1c;
+    }
+
+    .dispute-note {
+      font-size: 0.85rem;
+      color: #475569;
+      line-height: 1.4;
+      padding-left: 4px;
+
+      &.empty {
+        color: #94a3b8;
+        font-style: italic;
       }
     }
 
