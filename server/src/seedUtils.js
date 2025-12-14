@@ -1780,7 +1780,7 @@ export async function seedApprovalRequests({ supervisors = [], employees = [] } 
         
         const bonusData = {};
         if (bonusConfig.fieldMap['獎金類型']) bonusData[bonusConfig.fieldMap['獎金類型']] = BONUS_TYPE_POOL[empIdx % BONUS_TYPE_POOL.length];
-        if (bonusConfig.fieldMap['金額']) bonusData[bonusConfig.fieldMap['金額']] = randomInRange(5000, 30000);
+        if (bonusConfig.fieldMap['金額']) bonusData[bonusConfig.fieldMap['金額']] = randomInRange(5000, 20000);
         if (bonusConfig.fieldMap['事由']) bonusData[bonusConfig.fieldMap['事由']] = BONUS_REASON_POOL[empIdx % BONUS_REASON_POOL.length];
         
         const bonusSteps = buildBaseSteps(bonusConfig.workflow, applicant, tagMap);
