@@ -40,6 +40,9 @@ const payrollRecordSchema = new mongoose.Schema({
   totalBonus: { type: Number, default: 0 }, // 獎金合計 (Stage B)
   bonusAdjustment: { type: Number, default: 0 }, // 來自簽核的獎金增減
   
+  // 總實發金額 (netPay + totalBonus)
+  totalPayment: { type: Number, default: 0 }, // 總實發金額 (員工實際收到的總金額)
+  
   // 銀行帳戶資訊 (從員工資料複製)
   bankAccountA: {
     bank: String,
