@@ -11,8 +11,10 @@ export function extractNumericAmount(formData = {}) {
     const amount = toNumber(formData[field]);
     if (amount) return amount;
   }
-  // 嘗試搜尋第一個數值型欄位
+  // 嘗試搜尋第一個數值型欄位 (排除 Date 物件以避免誤將時間戳記當作金額)
   for (const value of Object.values(formData)) {
+    // 跳過 Date 物件和其他非純數值類型
+    if (value instanceof Date || typeof value === 'object') continue;
     const amount = toNumber(value);
     if (amount) return amount;
   }
