@@ -8,6 +8,20 @@ describe('payrollPreviewUtils', () => {
     expect(extractNumericAmount({})).toBe(0);
   });
 
+  test('extractNumericAmount ignores Date objects to prevent astronomical values', () => {
+    const testDate = new Date('2024-12-01');
+    // Date objects should be ignored, not converted to milliseconds
+    expect(extractNumericAmount({ startDate: testDate, endDate: new Date() })).toBe(0);
+    // But if there's a proper amount field with a date, the amount should be extracted
+    expect(extractNumericAmount({ amount: 5000, startDate: testDate })).toBe(5000);
+    // Mixed data should return the amount, not the date
+    expect(extractNumericAmount({ date: testDate, value: '8000' })).toBe(8000);
+    // Null values should be handled gracefully
+    expect(extractNumericAmount({ nullValue: null, amount: 2000 })).toBe(2000);
+    // Objects should be skipped but primitives should work
+    expect(extractNumericAmount({ config: { nested: 'value' }, price: 1500 })).toBe(1500);
+  });
+
   test('aggregateBonusFromApprovals categorizes bonuses by form name or bonus type', () => {
     const approvals = [
       {
