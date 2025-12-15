@@ -23,6 +23,15 @@ const __dirname = path.dirname(__filename);
 
 dotenv.config({ path: path.resolve(__dirname, '../.env') });
 
+/**
+ * Helper function to get the current month in YYYY-MM-DD format
+ */
+function getCurrentMonth() {
+  const currentDate = new Date();
+  return new Date(currentDate.getFullYear(), currentDate.getMonth(), 1)
+    .toISOString().split('T')[0];
+}
+
 describe('夜班員工與夜班津貼測試資料驗證', () => {
   beforeAll(async () => {
     if (!process.env.MONGODB_URI) {
@@ -133,11 +142,7 @@ describe('夜班員工與夜班津貼測試資料驗證', () => {
     }
     
     const employee = nightShiftEmployees[0];
-    
-    // 計算當月薪資
-    const currentDate = new Date();
-    const month = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1)
-      .toISOString().split('T')[0];
+    const month = getCurrentMonth();
     
     try {
       const payroll = await calculateEmployeePayroll(
@@ -187,9 +192,7 @@ describe('夜班員工與夜班津貼測試資料驗證', () => {
     }
     
     const employee = nightShiftEmployees[0];
-    const currentDate = new Date();
-    const month = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1)
-      .toISOString().split('T')[0];
+    const month = getCurrentMonth();
     
     try {
       const payroll = await calculateEmployeePayroll(
