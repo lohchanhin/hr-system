@@ -67,6 +67,10 @@ function buildShiftPayload(input, existing = {}) {
     remark: merged.remark ?? existing.remark ?? '',
     color: merged.color ?? existing.color ?? '',
     bgColor: merged.bgColor ?? existing.bgColor ?? '',
+    // 夜班津貼設定
+    isNightShift: Boolean(merged.isNightShift ?? existing.isNightShift ?? false),
+    hasAllowance: Boolean(merged.hasAllowance ?? existing.hasAllowance ?? false),
+    allowanceMultiplier: merged.allowanceMultiplier !== undefined ? Number(merged.allowanceMultiplier) : (existing.allowanceMultiplier ?? 0),
   };
 }
 
