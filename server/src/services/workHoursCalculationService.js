@@ -248,8 +248,7 @@ export async function calculateWorkHours(employeeId, month) {
       
       // For cross-day shifts, if no clock-out on same day, check next day
       if (!last && shift.crossDay) {
-        const nextDate = new Date(schedule.date);
-        nextDate.setUTCDate(nextDate.getUTCDate() + 1);
+        const nextDate = new Date(schedule.date.getTime() + 24 * 60 * 60 * 1000);
         const nextDateKey = buildDateKey(nextDate);
         const nextDayRecord = recordMap.get(`${employeeId}::${nextDateKey}`);
         

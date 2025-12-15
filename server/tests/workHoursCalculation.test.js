@@ -50,8 +50,8 @@ describe('Work Hours Calculation - Cross-Day Shifts', () => {
     
     const nov26Record = recordMap.get(`${employeeId}::2025-11-26`);
     expect(nov26Record).toBeDefined();
-    expect(nov26Record.clockIns).toHaveLength(1);
-    expect(nov26Record.clockOuts).toHaveLength(1); // Has clock-out from previous shift AND clock-in for new shift
+    expect(nov26Record.clockIns).toHaveLength(1); // New shift starts on Nov 26
+    expect(nov26Record.clockOuts).toHaveLength(1); // Clock-out from previous shift
     
     const nov27Record = recordMap.get(`${employeeId}::2025-11-27`);
     expect(nov27Record).toBeDefined();
