@@ -671,22 +671,22 @@
                     <h4>基本計算公式</h4>
                     <div class="formula-box">
                       <p><strong>實發薪資（銀行A）=</strong></p>
-                      <p style="margin-left: 20px;">基本薪資</p>
-                      <p style="margin-left: 20px;">- 請假扣款</p>
-                      <p style="margin-left: 20px;">- 勞保費（員工自付額）</p>
-                      <p style="margin-left: 20px;">- 健保費（員工自付額）</p>
-                      <p style="margin-left: 20px;">- 勞退提繳（員工自提）</p>
-                      <p style="margin-left: 20px;">- 其他扣款（債權扣押、員工借支等）</p>
+                      <p class="formula-item">基本薪資</p>
+                      <p class="formula-item">- 請假扣款</p>
+                      <p class="formula-item">- 勞保費（員工自付額）</p>
+                      <p class="formula-item">- 健保費（員工自付額）</p>
+                      <p class="formula-item">- 勞退提繳（員工自提）</p>
+                      <p class="formula-item">- 其他扣款（債權扣押、員工借支等）</p>
                     </div>
-                    <div class="formula-box" style="margin-top: 15px;">
+                    <div class="formula-box formula-box--spaced">
                       <p><strong>獎金總額（銀行B）=</strong></p>
-                      <p style="margin-left: 20px;">加班費</p>
-                      <p style="margin-left: 20px;">+ 夜班津貼</p>
-                      <p style="margin-left: 20px;">+ 績效獎金</p>
-                      <p style="margin-left: 20px;">+ 其他獎金</p>
+                      <p class="formula-item">加班費</p>
+                      <p class="formula-item">+ 夜班津貼</p>
+                      <p class="formula-item">+ 績效獎金</p>
+                      <p class="formula-item">+ 其他獎金</p>
                     </div>
                     
-                    <h4 style="margin-top: 20px;">基本薪資計算方式</h4>
+                    <h4 class="section-heading">基本薪資計算方式</h4>
                     <ul class="calculation-list">
                       <li><strong>月薪制：</strong>固定月薪金額</li>
                       <li><strong>日薪制：</strong>實際上班天數 × 日薪</li>
@@ -711,19 +711,19 @@
                       show-icon
                     />
                     
-                    <h4 style="margin-top: 15px;">設定位置</h4>
+                    <h4 class="section-heading" style="margin-top: 15px;">設定位置</h4>
                     <div class="location-box">
                       <p><el-icon><Location /></el-icon> <strong>員工管理</strong> → 選擇員工 → 編輯 → <strong>每月薪資調整項目</strong>區塊</p>
                     </div>
                     
-                    <h4 style="margin-top: 20px;">扣薪項目（減少實發金額）</h4>
+                    <h4 class="section-heading">扣薪項目（減少實發金額）</h4>
                     <ul class="item-list">
                       <li><strong>健保費自付額：</strong>員工每月固定負擔的健保費用</li>
                       <li><strong>債權扣押：</strong>法院判決需扣押的薪資金額</li>
                       <li><strong>其他扣款：</strong>其他固定扣款項目（如員工借支、制服費等）</li>
                     </ul>
                     
-                    <h4 style="margin-top: 15px;">加薪項目（增加獎金金額，匯入銀行B）</h4>
+                    <h4 class="section-heading" style="margin-top: 15px;">加薪項目（增加獎金金額，匯入銀行B）</h4>
                     <ul class="item-list">
                       <li><strong>夜班補助津貼：</strong>固定夜班津貼</li>
                       <li><strong>人力績效獎金：</strong>固定績效獎金</li>
@@ -748,7 +748,7 @@
                       show-icon
                     />
                     
-                    <h4 style="margin-top: 15px;">1. 請假扣款</h4>
+                    <h4 class="section-heading" style="margin-top: 15px;">1. 請假扣款</h4>
                     <div class="approval-item">
                       <p><strong>簽核流程：</strong></p>
                       <ol>
@@ -757,7 +757,7 @@
                         <li>審核通過後（status: approved），系統自動計算扣款</li>
                       </ol>
                       
-                      <p style="margin-top: 10px;"><strong>扣款計算：</strong></p>
+                      <p class="section-heading" style="margin-top: 10px;"><strong>扣款計算：</strong></p>
                       <ul class="calculation-list">
                         <li><strong>有薪假（不扣款）：</strong>特休、年假、婚假、喪假、產假、陪產假</li>
                         <li><strong>半薪假（扣50%）：</strong>病假、生理假</li>
@@ -772,7 +772,7 @@
                       </div>
                     </div>
                     
-                    <h4 style="margin-top: 20px;">2. 加班費</h4>
+                    <h4 class="section-heading">2. 加班費</h4>
                     <div class="approval-item">
                       <p><strong>簽核流程：</strong></p>
                       <ol>
@@ -781,22 +781,22 @@
                         <li>審核通過後，系統計算加班費（匯入銀行B）</li>
                       </ol>
                       
-                      <p style="margin-top: 10px;"><strong>計算公式：</strong></p>
+                      <p class="section-heading" style="margin-top: 10px;"><strong>計算公式：</strong></p>
                       <div class="formula-box">
                         <p>加班費 = 加班時數 × 時薪 × 1.5倍</p>
-                        <p style="margin-top: 5px; font-size: 12px; color: #909399;">
+                        <p class="formula-note">
                           註：實際應依勞基法規定（平日1.33/1.66倍、休息日1.33/1.66倍、國定假日2倍）
                         </p>
                       </div>
                       
-                      <p style="margin-top: 10px;"><strong>前置條件：</strong></p>
+                      <p class="section-heading" style="margin-top: 10px;"><strong>前置條件：</strong></p>
                       <ul class="calculation-list">
                         <li>員工必須啟用「自動加班計算」（autoOvertimeCalc = true）</li>
                         <li>加班申請必須經簽核通過</li>
                       </ul>
                     </div>
                     
-                    <h4 style="margin-top: 20px;">3. 其他動態調整</h4>
+                    <h4 class="section-heading">3. 其他動態調整</h4>
                     <div class="approval-item">
                       <p>未來可擴展其他需要簽核的薪資調整項目，如：</p>
                       <ul class="calculation-list">
@@ -863,7 +863,7 @@
                       type="info"
                       :closable="false"
                       show-icon
-                      style="margin-top: 20px;"
+                      class="info-alert-spacing"
                     />
                   </div>
                 </el-card>
@@ -884,14 +884,14 @@
                       <li><strong>班別設定：</strong>定義工作時間、休息時間等</li>
                     </ol>
                     
-                    <h4 style="margin-top: 15px;">請假資料來源</h4>
+                    <h4 class="section-heading" style="margin-top: 15px;">請假資料來源</h4>
                     <ol>
                       <li>來自簽核系統的「請假」表單</li>
                       <li>僅計算已核准（status: approved）的申請</li>
                       <li>包含假別、開始/結束日期、天數/時數</li>
                     </ol>
                     
-                    <h4 style="margin-top: 15px;">加班資料來源</h4>
+                    <h4 class="section-heading" style="margin-top: 15px;">加班資料來源</h4>
                     <ol>
                       <li>來自簽核系統的「加班」表單</li>
                       <li>僅計算已核准（status: approved）的申請</li>
@@ -923,7 +923,7 @@
                       </ul>
                     </el-alert>
                     
-                    <h4 style="margin-top: 20px;">系統限制</h4>
+                    <h4 class="section-heading">系統限制</h4>
                     <ul class="calculation-list">
                       <li><strong>一天8小時制：</strong>日薪和月薪換算時薪時，假設一天工作8小時</li>
                       <li><strong>一個月30天：</strong>月薪換算日薪/時薪時，假設一個月30天</li>
@@ -1769,5 +1769,32 @@ const showExplanationDialog = ref(false)
   .notes-section li {
     margin: 8px 0;
     line-height: 1.6;
+  }
+
+  /* Additional utility classes for explanation dialog */
+  .formula-item {
+    margin-left: 20px;
+  }
+
+  .formula-box--spaced {
+    margin-top: 15px;
+  }
+
+  .section-heading {
+    margin-top: 20px;
+  }
+
+  .section-heading:first-child {
+    margin-top: 0;
+  }
+
+  .formula-note {
+    margin-top: 5px;
+    font-size: 12px;
+    color: #909399;
+  }
+
+  .info-alert-spacing {
+    margin-top: 20px;
   }
   </style>
