@@ -27,7 +27,11 @@ const attendanceSettingSchema = new mongoose.Schema({
       bgColor: {
         type: String,
         trim: true,
-      }
+      },
+      // 夜班津貼設定
+      isNightShift: { type: Boolean, default: false }, // 是否為夜班
+      hasAllowance: { type: Boolean, default: false }, // 是否有津貼
+      allowanceMultiplier: { type: Number, default: 0 }, // 津貼倍數
     }
   ],
   abnormalRules: {
