@@ -236,12 +236,33 @@ export async function calculateWorkHours(employeeId, month) {
     let workedMinutes = 0;
     let hasAttendance = false;
     
-    if (dayRecord && dayRecord.clockIns.length && dayRecord.clockOuts.length) {
+    // For cross-day shifts, we need to check both current day and next day for clock records
+    if (dayRecord && dayRecord.clockIns.length) {
       const first = dayRecord.clockIns[0];
-      const last = dayRecord.clockOuts[dayRecord.clockOuts.length - 1];
-      workedMinutes = Math.max(minutesBetween(first, last) - breakMinutes, 0);
-      hasAttendance = true;
-      workDays++;
+      let last = null;
+      
+      // First, try to find clock-out on the same day
+      if (dayRecord.clockOuts.length) {
+        last = dayRecord.clockOuts[dayRecord.clockOuts.length - 1];
+      }
+      
+      // For cross-day shifts, if no clock-out on same day, check next day
+      if (!last && shift.crossDay) {
+        const nextDate = new Date(schedule.date);
+        nextDate.setUTCDate(nextDate.getUTCDate() + 1);
+        const nextDateKey = buildDateKey(nextDate);
+        const nextDayRecord = recordMap.get(`${employeeId}::${nextDateKey}`);
+        
+        if (nextDayRecord && nextDayRecord.clockOuts.length) {
+          last = nextDayRecord.clockOuts[0]; // Use the first clock-out of next day
+        }
+      }
+      
+      if (last) {
+        workedMinutes = Math.max(minutesBetween(first, last) - breakMinutes, 0);
+        hasAttendance = true;
+        workDays++;
+      }
     }
     
     totalScheduledMinutes += scheduledMinutes;
@@ -593,6 +614,18 @@ export async function calculateCompleteWorkData(employeeId, month) {
     overtimeRecords: overtimePay.overtimeRecords
   };
 }
+
+export const __testUtils = {
+  minutesBetween,
+  hoursFromMinutes,
+  parseTimeParts,
+  buildDateWithTime,
+  getShiftBreakMinutes,
+  computeShiftTimes,
+  formatDate,
+  buildDateKey,
+  groupAttendanceRecords
+};
 
 export default {
   calculateWorkHours,
