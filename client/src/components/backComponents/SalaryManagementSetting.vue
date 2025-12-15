@@ -140,6 +140,19 @@
         <!-- 5) 月薪資總覽 -->
         <el-tab-pane label="月薪資總覽" name="monthlyOverview">
           <div class="tab-content">
+            <!-- Title with explanation button -->
+            <div class="overview-header">
+              <h3>月薪資總覽</h3>
+              <el-button 
+                type="info" 
+                :icon="QuestionFilled" 
+                @click="showExplanationDialog = true"
+                size="small"
+              >
+                薪資計算說明
+              </el-button>
+            </div>
+
             <!-- Filter controls -->
             <el-form :inline="true" class="filter-form">
               <el-form-item label="月份">
@@ -637,6 +650,294 @@
                 <el-button @click="detailDialogVisible = false">關閉</el-button>
               </template>
             </el-dialog>
+
+            <!-- Salary Calculation Explanation Dialog -->
+            <el-dialog
+              v-model="showExplanationDialog"
+              title="薪資計算說明"
+              width="80%"
+              :close-on-click-modal="false"
+            >
+              <div class="explanation-content">
+                <!-- Section 1: Calculation Formula -->
+                <el-card class="explanation-card" shadow="never">
+                  <template #header>
+                    <div class="explanation-card-header">
+                      <el-icon><Tools /></el-icon>
+                      <span>薪資計算公式</span>
+                    </div>
+                  </template>
+                  <div class="formula-section">
+                    <h4>基本計算公式</h4>
+                    <div class="formula-box">
+                      <p><strong>實發薪資（銀行A）=</strong></p>
+                      <p class="formula-item">基本薪資</p>
+                      <p class="formula-item">- 請假扣款</p>
+                      <p class="formula-item">- 勞保費（員工自付額）</p>
+                      <p class="formula-item">- 健保費（員工自付額）</p>
+                      <p class="formula-item">- 勞退提繳（員工自提）</p>
+                      <p class="formula-item">- 其他扣款（債權扣押、員工借支等）</p>
+                    </div>
+                    <div class="formula-box formula-box--spaced">
+                      <p><strong>獎金總額（銀行B）=</strong></p>
+                      <p class="formula-item">加班費</p>
+                      <p class="formula-item">+ 夜班津貼</p>
+                      <p class="formula-item">+ 績效獎金</p>
+                      <p class="formula-item">+ 其他獎金</p>
+                    </div>
+                    
+                    <h4 class="section-heading">基本薪資計算方式</h4>
+                    <ul class="calculation-list">
+                      <li><strong>月薪制：</strong>固定月薪金額</li>
+                      <li><strong>日薪制：</strong>實際上班天數 × 日薪</li>
+                      <li><strong>時薪制：</strong>實際工作時數 × 時薪</li>
+                    </ul>
+                  </div>
+                </el-card>
+
+                <!-- Section 2: Regular Deduction/Bonus Items -->
+                <el-card class="explanation-card" shadow="never">
+                  <template #header>
+                    <div class="explanation-card-header">
+                      <el-icon><Setting /></el-icon>
+                      <span>定期扣薪/加薪項目設定</span>
+                    </div>
+                  </template>
+                  <div class="setting-section">
+                    <el-alert
+                      title="這些項目是固定的月度調整，無需每次簽核，直接在員工個人資料中設定即可"
+                      type="info"
+                      :closable="false"
+                      show-icon
+                    />
+                    
+                    <h4 class="section-heading" style="margin-top: 15px;">設定位置</h4>
+                    <div class="location-box">
+                      <p><el-icon><Location /></el-icon> <strong>員工管理</strong> → 選擇員工 → 編輯 → <strong>每月薪資調整項目</strong>區塊</p>
+                    </div>
+                    
+                    <h4 class="section-heading">扣薪項目（減少實發金額）</h4>
+                    <ul class="item-list">
+                      <li><strong>健保費自付額：</strong>員工每月固定負擔的健保費用</li>
+                      <li><strong>債權扣押：</strong>法院判決需扣押的薪資金額</li>
+                      <li><strong>其他扣款：</strong>其他固定扣款項目（如員工借支、制服費等）</li>
+                    </ul>
+                    
+                    <h4 class="section-heading" style="margin-top: 15px;">加薪項目（增加獎金金額，匯入銀行B）</h4>
+                    <ul class="item-list">
+                      <li><strong>夜班補助津貼：</strong>固定夜班津貼</li>
+                      <li><strong>人力績效獎金：</strong>固定績效獎金</li>
+                      <li><strong>其他獎金：</strong>其他固定獎金項目</li>
+                    </ul>
+                  </div>
+                </el-card>
+
+                <!-- Section 3: Dynamic Approval Items -->
+                <el-card class="explanation-card" shadow="never">
+                  <template #header>
+                    <div class="explanation-card-header">
+                      <el-icon><Document /></el-icon>
+                      <span>動態簽核項目</span>
+                    </div>
+                  </template>
+                  <div class="approval-section">
+                    <el-alert
+                      title="這些項目需要通過簽核流程審批，系統會自動計算已核准的申請並影響薪資"
+                      type="warning"
+                      :closable="false"
+                      show-icon
+                    />
+                    
+                    <h4 class="section-heading" style="margin-top: 15px;">1. 請假扣款</h4>
+                    <div class="approval-item">
+                      <p><strong>簽核流程：</strong></p>
+                      <ol>
+                        <li>員工在前台提交請假申請（填寫假別、日期、時數等）</li>
+                        <li>主管審核請假申請</li>
+                        <li>審核通過後（status: approved），系統自動計算扣款</li>
+                      </ol>
+                      
+                      <p class="section-heading" style="margin-top: 10px;"><strong>扣款計算：</strong></p>
+                      <ul class="calculation-list">
+                        <li><strong>有薪假（不扣款）：</strong>特休、年假、婚假、喪假、產假、陪產假</li>
+                        <li><strong>半薪假（扣50%）：</strong>病假、生理假</li>
+                        <li><strong>無薪假（全額扣款）：</strong>事假、其他無薪假</li>
+                      </ul>
+                      
+                      <div class="formula-box">
+                        <p><strong>扣款公式：</strong></p>
+                        <p>時薪換算 = 月薪 ÷ 30天 ÷ 8小時（月薪制）</p>
+                        <p>請假扣款 = 無薪假時數 × 時薪</p>
+                        <p>病假扣款 = 病假時數 × 時薪 × 0.5</p>
+                      </div>
+                    </div>
+                    
+                    <h4 class="section-heading">2. 加班費</h4>
+                    <div class="approval-item">
+                      <p><strong>簽核流程：</strong></p>
+                      <ol>
+                        <li>員工提交加班申請（填寫加班日期、時數、原因）</li>
+                        <li>主管審核加班申請</li>
+                        <li>審核通過後，系統計算加班費（匯入銀行B）</li>
+                      </ol>
+                      
+                      <p class="section-heading" style="margin-top: 10px;"><strong>計算公式：</strong></p>
+                      <div class="formula-box">
+                        <p>加班費 = 加班時數 × 時薪 × 1.5倍</p>
+                        <p class="formula-note">
+                          註：實際應依勞基法規定（平日1.33/1.66倍、休息日1.33/1.66倍、國定假日2倍）
+                        </p>
+                      </div>
+                      
+                      <p class="section-heading" style="margin-top: 10px;"><strong>前置條件：</strong></p>
+                      <ul class="calculation-list">
+                        <li>員工必須啟用「自動加班計算」（autoOvertimeCalc = true）</li>
+                        <li>加班申請必須經簽核通過</li>
+                      </ul>
+                    </div>
+                    
+                    <h4 class="section-heading">3. 其他動態調整</h4>
+                    <div class="approval-item">
+                      <p>未來可擴展其他需要簽核的薪資調整項目，如：</p>
+                      <ul class="calculation-list">
+                        <li>臨時性獎金（需主管核准）</li>
+                        <li>臨時性扣款（需人資核准）</li>
+                        <li>補發/補扣薪資（需簽核調整）</li>
+                      </ul>
+                    </div>
+                  </div>
+                </el-card>
+
+                <!-- Section 4: Bank Distribution -->
+                <el-card class="explanation-card" shadow="never">
+                  <template #header>
+                    <div class="explanation-card-header">
+                      <el-icon><CreditCard /></el-icon>
+                      <span>銀行帳戶分配說明</span>
+                    </div>
+                  </template>
+                  <div class="bank-section">
+                    <el-row :gutter="20">
+                      <el-col :span="12">
+                        <div class="bank-card bank-a">
+                          <h4><el-icon><Wallet /></el-icon> 銀行A（薪資帳戶）</h4>
+                          <p><strong>用途：</strong>匯入實發薪資</p>
+                          <p><strong>內容：</strong></p>
+                          <ul>
+                            <li>基本薪資（月薪/日薪/時薪）</li>
+                            <li>扣除所有扣款項目後的淨額</li>
+                          </ul>
+                          <p style="margin-top: 10px;"><strong>扣款項目包括：</strong></p>
+                          <ul>
+                            <li>請假扣款</li>
+                            <li>勞保費、健保費</li>
+                            <li>勞退自提</li>
+                            <li>債權扣押、員工借支</li>
+                            <li>其他扣款</li>
+                          </ul>
+                        </div>
+                      </el-col>
+                      <el-col :span="12">
+                        <div class="bank-card bank-b">
+                          <h4><el-icon><Money /></el-icon> 銀行B（獎金帳戶）</h4>
+                          <p><strong>用途：</strong>匯入獎金與津貼</p>
+                          <p><strong>內容：</strong></p>
+                          <ul>
+                            <li>加班費（經簽核核准）</li>
+                            <li>夜班津貼</li>
+                            <li>績效獎金</li>
+                            <li>其他獎金</li>
+                          </ul>
+                          <p style="margin-top: 10px;"><strong>特點：</strong></p>
+                          <ul>
+                            <li>不扣除任何費用</li>
+                            <li>所有獎金項目總和</li>
+                            <li>可能為零（無獎金時）</li>
+                          </ul>
+                        </div>
+                      </el-col>
+                    </el-row>
+                    
+                    <el-alert
+                      title="設定銀行帳戶：薪資管理設定 → 發放與帳戶 → 發薪帳戶維護"
+                      type="info"
+                      :closable="false"
+                      show-icon
+                      class="info-alert-spacing"
+                    />
+                  </div>
+                </el-card>
+
+                <!-- Section 5: Data Sources -->
+                <el-card class="explanation-card" shadow="never">
+                  <template #header>
+                    <div class="explanation-card-header">
+                      <el-icon><DataAnalysis /></el-icon>
+                      <span>資料來源說明</span>
+                    </div>
+                  </template>
+                  <div class="data-source-section">
+                    <h4>工作時數來源</h4>
+                    <ol>
+                      <li><strong>班表設定：</strong>排班系統（ShiftSchedule）記錄每位員工的排班</li>
+                      <li><strong>出勤打卡：</strong>出勤記錄（AttendanceRecord）記錄實際上下班時間</li>
+                      <li><strong>班別設定：</strong>定義工作時間、休息時間等</li>
+                    </ol>
+                    
+                    <h4 class="section-heading" style="margin-top: 15px;">請假資料來源</h4>
+                    <ol>
+                      <li>來自簽核系統的「請假」表單</li>
+                      <li>僅計算已核准（status: approved）的申請</li>
+                      <li>包含假別、開始/結束日期、天數/時數</li>
+                    </ol>
+                    
+                    <h4 class="section-heading" style="margin-top: 15px;">加班資料來源</h4>
+                    <ol>
+                      <li>來自簽核系統的「加班」表單</li>
+                      <li>僅計算已核准（status: approved）的申請</li>
+                      <li>包含加班日期、時數、原因</li>
+                    </ol>
+                  </div>
+                </el-card>
+
+                <!-- Section 6: Important Notes -->
+                <el-card class="explanation-card" shadow="never">
+                  <template #header>
+                    <div class="explanation-card-header">
+                      <el-icon><Warning /></el-icon>
+                      <span>注意事項</span>
+                    </div>
+                  </template>
+                  <div class="notes-section">
+                    <el-alert
+                      title="資料準確性"
+                      type="warning"
+                      :closable="false"
+                      show-icon
+                    >
+                      <ul>
+                        <li>確保班表已正確設定</li>
+                        <li>確保員工有正確打卡</li>
+                        <li>確保請假和加班申請已核准</li>
+                        <li>每位員工必須設定正確的薪資類型和金額</li>
+                      </ul>
+                    </el-alert>
+                    
+                    <h4 class="section-heading">系統限制</h4>
+                    <ul class="calculation-list">
+                      <li><strong>一天8小時制：</strong>日薪和月薪換算時薪時，假設一天工作8小時</li>
+                      <li><strong>一個月30天：</strong>月薪換算日薪/時薪時，假設一個月30天</li>
+                      <li><strong>加班費倍率：</strong>目前簡化為統一1.5倍，未完全依照勞基法分級</li>
+                      <li><strong>病假計算：</strong>簡化為0.5倍扣款，未考慮年度累計天數</li>
+                    </ul>
+                  </div>
+                </el-card>
+              </div>
+              
+              <template #footer>
+                <el-button type="primary" @click="showExplanationDialog = false">關閉</el-button>
+              </template>
+            </el-dialog>
           </div>
         </el-tab-pane>
       </el-tabs>
@@ -646,12 +947,27 @@
 <script setup>
 import { ref, onMounted, computed } from 'vue'
 import { apiFetch } from '../../api'
+import { 
+  QuestionFilled, 
+  Tools, 
+  Setting, 
+  Location, 
+  Document, 
+  CreditCard, 
+  Wallet, 
+  Money, 
+  DataAnalysis, 
+  Warning 
+} from '@element-plus/icons-vue'
   
   // 目前所在的Tab
   // Changed from 'salaryItem' to 'grade' as the salary item tab was removed
   // (salary items were not used in payroll calculations or any business logic)
 const activeTab = ref('grade')
 const settingId = ref(null)
+
+  // Explanation dialog
+const showExplanationDialog = ref(false)
   
   // ============ (1) 職等與底薪 ============
   const gradeList = ref([
@@ -1258,5 +1574,227 @@ const settingId = ref(null)
 
   .export-card__alert {
     margin-bottom: 12px;
+  }
+
+  /* Overview header with explanation button */
+  .overview-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+    padding-bottom: 10px;
+    border-bottom: 2px solid #e4e7ed;
+  }
+
+  .overview-header h3 {
+    margin: 0;
+    font-size: 20px;
+    font-weight: 600;
+    color: #303133;
+  }
+
+  /* Explanation dialog styles */
+  .explanation-content {
+    max-height: 70vh;
+    overflow-y: auto;
+  }
+
+  .explanation-card {
+    margin-bottom: 20px;
+  }
+
+  .explanation-card:last-child {
+    margin-bottom: 0;
+  }
+
+  .explanation-card-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 16px;
+    font-weight: 600;
+    color: #303133;
+  }
+
+  .formula-section,
+  .setting-section,
+  .approval-section,
+  .bank-section,
+  .data-source-section,
+  .notes-section {
+    padding: 10px 0;
+  }
+
+  .formula-box {
+    background-color: #f5f7fa;
+    padding: 15px;
+    border-radius: 4px;
+    border-left: 4px solid #409eff;
+  }
+
+  .formula-box p {
+    margin: 5px 0;
+    line-height: 1.8;
+  }
+
+  .calculation-list {
+    list-style-type: none;
+    padding-left: 0;
+  }
+
+  .calculation-list li {
+    padding: 8px 0;
+    padding-left: 20px;
+    position: relative;
+    line-height: 1.6;
+  }
+
+  .calculation-list li:before {
+    content: "•";
+    position: absolute;
+    left: 0;
+    color: #409eff;
+    font-weight: bold;
+  }
+
+  .location-box {
+    background-color: #ecf5ff;
+    padding: 12px 15px;
+    border-radius: 4px;
+    border: 1px solid #b3d8ff;
+  }
+
+  .location-box p {
+    margin: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .item-list {
+    list-style-type: none;
+    padding-left: 0;
+  }
+
+  .item-list li {
+    padding: 10px;
+    margin-bottom: 8px;
+    background-color: #f5f7fa;
+    border-radius: 4px;
+    line-height: 1.6;
+  }
+
+  .approval-item {
+    padding: 15px;
+    background-color: #fafafa;
+    border-radius: 4px;
+    margin-bottom: 15px;
+  }
+
+  .approval-item ol,
+  .approval-item ul {
+    margin: 10px 0;
+    padding-left: 25px;
+  }
+
+  .approval-item li {
+    margin: 8px 0;
+    line-height: 1.6;
+  }
+
+  .bank-card {
+    padding: 20px;
+    border-radius: 8px;
+    height: 100%;
+  }
+
+  .bank-card h4 {
+    margin-top: 0;
+    margin-bottom: 15px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 16px;
+  }
+
+  .bank-card p {
+    margin: 10px 0;
+  }
+
+  .bank-card ul {
+    margin: 5px 0;
+    padding-left: 20px;
+  }
+
+  .bank-card li {
+    margin: 5px 0;
+    line-height: 1.6;
+  }
+
+  .bank-a {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+  }
+
+  .bank-b {
+    background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+    color: white;
+  }
+
+  .data-source-section h4 {
+    margin-top: 20px;
+    margin-bottom: 10px;
+    color: #303133;
+    font-size: 15px;
+  }
+
+  .data-source-section h4:first-child {
+    margin-top: 0;
+  }
+
+  .data-source-section ol {
+    padding-left: 25px;
+  }
+
+  .data-source-section li {
+    margin: 8px 0;
+    line-height: 1.6;
+  }
+
+  .notes-section ul {
+    margin: 10px 0;
+    padding-left: 20px;
+  }
+
+  .notes-section li {
+    margin: 8px 0;
+    line-height: 1.6;
+  }
+
+  /* Additional utility classes for explanation dialog */
+  .formula-item {
+    margin-left: 20px;
+  }
+
+  .formula-box--spaced {
+    margin-top: 15px;
+  }
+
+  .section-heading {
+    margin-top: 20px;
+  }
+
+  .section-heading:first-child {
+    margin-top: 0;
+  }
+
+  .formula-note {
+    margin-top: 5px;
+    font-size: 12px;
+    color: #909399;
+  }
+
+  .info-alert-spacing {
+    margin-top: 20px;
   }
   </style>
