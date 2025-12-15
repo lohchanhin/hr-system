@@ -1,6 +1,6 @@
 import ShiftSchedule from '../models/ShiftSchedule.js';
 import AttendanceSetting from '../models/AttendanceSetting.js';
-import { convertToHourlyRate } from '../config/salaryConfig.js';
+import { convertToHourlyRate, WORK_HOURS_CONFIG } from '../config/salaryConfig.js';
 
 /**
  * 計算員工在指定月份的夜班津貼
@@ -34,6 +34,7 @@ export async function calculateNightShiftAllowance(employeeId, month, employee) 
     });
 
     // 查詢該員工在當月的排班記錄
+    // 注意：建議在 ShiftSchedule 上建立 (employee, date) 的複合索引以提升查詢效能
     const schedules = await ShiftSchedule.find({
       employee: employeeId,
       date: { $gte: monthStart, $lt: monthEnd },
@@ -125,7 +126,8 @@ function calculateShiftHours(shift) {
     return workMinutes / 60;
   } catch (error) {
     console.error('Error calculating shift hours:', error);
-    return 8; // 預設 8 小時
+    // 使用配置中的預設工作時數
+    return WORK_HOURS_CONFIG.HOURS_PER_DAY;
   }
 }
 

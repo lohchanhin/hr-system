@@ -166,7 +166,7 @@
                 <template #default="{ row }">
                   <div v-if="row.isNightShift">
                     <el-tag type="warning" size="small">
-                      <i class="el-icon-moon"></i> 夜班
+                      🌙 夜班
                     </el-tag>
                     <div v-if="row.hasAllowance" style="font-size: 11px; color: #666; margin-top: 2px;">
                       津貼 × {{ row.allowanceMultiplier || 0 }}
