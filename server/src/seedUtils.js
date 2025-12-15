@@ -272,6 +272,9 @@ const ATTENDANCE_SETTING_TEMPLATE = {
       remark: '行政支援時段',
       color: '#1e3a8a',
       bgColor: '#dbeafe',
+      isNightShift: false,
+      hasAllowance: false,
+      allowanceMultiplier: 0,
     },
     {
       name: '中班',
@@ -287,6 +290,9 @@ const ATTENDANCE_SETTING_TEMPLATE = {
       remark: '客服及支援時段',
       color: '#065f46',
       bgColor: '#ccfbf1',
+      isNightShift: false,
+      hasAllowance: false,
+      allowanceMultiplier: 0,
     },
     {
       name: '晚班',
@@ -302,6 +308,27 @@ const ATTENDANCE_SETTING_TEMPLATE = {
       remark: '傍晚支援與延長營運',
       color: '#4c1d95',
       bgColor: '#ede9fe',
+      isNightShift: false,
+      hasAllowance: false,
+      allowanceMultiplier: 0,
+    },
+    {
+      name: '夜班',
+      code: 'SHIFT-D',
+      startTime: '22:00',
+      endTime: '06:00',
+      breakTime: '01:00',
+      breakDuration: 60,
+      breakWindows: [
+        { start: '02:00', end: '03:00', label: '休息' },
+      ],
+      crossDay: true,
+      remark: '夜間值班，含夜班津貼',
+      color: '#ffffff',
+      bgColor: '#1e293b',
+      isNightShift: true,
+      hasAllowance: true,
+      allowanceMultiplier: 0.34,
     },
   ],
   abnormalRules: {
@@ -573,6 +600,11 @@ async function seedAttendanceData({
 }) {
   const workdays = generateRecentWorkdays(WORKDAYS_PER_EMPLOYEE);
   const assignmentCombos = buildAssignmentPool(hierarchy);
+  
+  // 分離夜班和其他班別
+  const nightShift = attendanceSetting.shifts.find(shift => shift.isNightShift);
+  const regularShifts = attendanceSetting.shifts.filter(shift => !shift.isNightShift);
+  
   const shiftOptions = attendanceSetting.shifts.map((shift) => ({
     shiftId: shift._id,
     data: {
@@ -580,6 +612,27 @@ async function seedAttendanceData({
       endTime: shift.endTime,
       crossDay: Boolean(shift.crossDay),
     },
+    isNightShift: shift.isNightShift,
+  }));
+  
+  const nightShiftOption = nightShift ? {
+    shiftId: nightShift._id,
+    data: {
+      startTime: nightShift.startTime,
+      endTime: nightShift.endTime,
+      crossDay: Boolean(nightShift.crossDay),
+    },
+    isNightShift: true,
+  } : null;
+  
+  const regularShiftOptions = regularShifts.map((shift) => ({
+    shiftId: shift._id,
+    data: {
+      startTime: shift.startTime,
+      endTime: shift.endTime,
+      crossDay: Boolean(shift.crossDay),
+    },
+    isNightShift: false,
   }));
 
   const schedules = [];
@@ -587,9 +640,21 @@ async function seedAttendanceData({
 
   supervisors.forEach((supervisor) => {
     const team = employeesBySupervisor.get(toStringId(supervisor._id)) ?? [];
-    team.forEach(({ employee, assignment }) => {
+    team.forEach(({ employee, assignment }, employeeIndex) => {
+      // 判斷是否為夜班員工（偶數索引的員工）
+      const isNightShiftEmployee = employeeIndex % 2 === 0;
+      
       workdays.forEach((day) => {
-        const shiftOption = randomElement(shiftOptions);
+        // 夜班員工主要分配夜班（80%），其他員工不分配夜班
+        let shiftOption;
+        if (isNightShiftEmployee && nightShiftOption && Math.random() < 0.8) {
+          shiftOption = nightShiftOption;
+        } else {
+          shiftOption = regularShiftOptions.length > 0 
+            ? randomElement(regularShiftOptions)
+            : randomElement(shiftOptions);
+        }
+        
         const randomCombo = assignmentCombos.length
           ? randomElement(assignmentCombos)
           : assignment;
@@ -1028,6 +1093,26 @@ export async function seedTestUsers() {
     const salaryConfig = EMPLOYEE_SALARY_CONFIGS[i % EMPLOYEE_SALARY_CONFIGS.length];
     const salaryData = generateSalaryData(salaryConfig, i);
 
+    // 為部分員工設定夜班津貼（員工 0, 2, 4 設定為夜班員工）
+    const isNightShiftEmployee = i % 2 === 0;
+    const monthlySalaryAdjustments = isNightShiftEmployee ? {
+      nightShiftAllowance: randomInRange(2000, 4000),
+      performanceBonus: 0,
+      otherBonuses: 0,
+      healthInsuranceFee: 0,
+      debtGarnishment: 0,
+      otherDeductions: 0,
+      notes: '夜班員工，含固定夜班津貼',
+    } : {
+      nightShiftAllowance: 0,
+      performanceBonus: 0,
+      otherBonuses: 0,
+      healthInsuranceFee: 0,
+      debtGarnishment: 0,
+      otherDeductions: 0,
+      notes: '',
+    };
+
     const employee = await Employee.create({
       name: EMPLOYEE_NAMES[i % EMPLOYEE_NAMES.length],
       employeeId: generateEmployeeId('EMP'),
@@ -1045,6 +1130,7 @@ export async function seedTestUsers() {
       title: randomElement(EMPLOYEE_TITLES),
       status: randomElement(EMPLOYEE_STATUSES),
       signTags: [],
+      monthlySalaryAdjustments,
       ...salaryData,
     });
     employees.push(employee);

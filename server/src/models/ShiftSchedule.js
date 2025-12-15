@@ -26,5 +26,7 @@ const shiftScheduleSchema = new mongoose.Schema({
 shiftScheduleSchema.index({ employee: 1, date: 1 }, { unique: true });
 shiftScheduleSchema.index({ date: 1, department: 1, subDepartment: 1 });
 shiftScheduleSchema.index({ state: 1, date: 1 });
+// Note: The (employee, date) index above also helps with night shift allowance calculations
+// by optimizing queries for employee schedules within a date range
 
 export default mongoose.model('ShiftSchedule', shiftScheduleSchema);

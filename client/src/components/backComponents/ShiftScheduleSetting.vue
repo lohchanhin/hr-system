@@ -162,6 +162,19 @@
                   </div>
                 </template>
               </el-table-column>
+              <el-table-column label="夜班" width="100">
+                <template #default="{ row }">
+                  <div v-if="row.isNightShift">
+                    <el-tag type="warning" size="small">
+                      🌙 夜班
+                    </el-tag>
+                    <div v-if="row.hasAllowance" style="font-size: 11px; color: #666; margin-top: 2px;">
+                      津貼 × {{ row.allowanceMultiplier || 0 }}
+                    </div>
+                  </div>
+                  <el-tag v-else type="info" size="small">日班</el-tag>
+                </template>
+              </el-table-column>
               <el-table-column label="工作時間" width="200">
                 <template #default="{ row }">
                   <div class="time-range">
@@ -268,6 +281,37 @@
                   inactive-text="否"
                   active-color="#10b981"
                 />
+              </el-form-item>
+              <el-form-item label="是否為夜班">
+                <el-switch
+                  v-model="shiftForm.isNightShift"
+                  active-text="是"
+                  inactive-text="否"
+                  active-color="#10b981"
+                />
+                <div class="form-help">標記此班別為夜班，用於薪資計算和津貼發放</div>
+              </el-form-item>
+              <el-form-item label="是否有夜班津貼">
+                <el-switch
+                  v-model="shiftForm.hasAllowance"
+                  :disabled="!shiftForm.isNightShift"
+                  active-text="是"
+                  inactive-text="否"
+                  active-color="#10b981"
+                />
+                <div class="form-help">啟用後將根據津貼倍數計算額外津貼</div>
+              </el-form-item>
+              <el-form-item label="津貼倍數">
+                <el-input-number 
+                  v-model="shiftForm.allowanceMultiplier" 
+                  :min="0" 
+                  :max="10"
+                  :step="0.1"
+                  :precision="2"
+                  :disabled="!shiftForm.isNightShift || !shiftForm.hasAllowance"
+                  style="width: 100%" 
+                />
+                <div class="form-help">津貼金額 = 基本時薪 × 夜班時數 × 津貼倍數</div>
               </el-form-item>
               <el-form-item label="班別底色">
                 <el-color-picker
@@ -487,7 +531,11 @@ const createEmptyShiftForm = () => ({
   crossDay: false,
   remark: '',
   color: '',
-  bgColor: ''
+  bgColor: '',
+  // 夜班津貼設定
+  isNightShift: false,
+  hasAllowance: false,
+  allowanceMultiplier: 0
 })
 
 const shiftForm = ref(createEmptyShiftForm())
