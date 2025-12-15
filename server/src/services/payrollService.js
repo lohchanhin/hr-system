@@ -3,6 +3,7 @@ import Employee from '../models/Employee.js';
 import { findInsuranceLevelBySalary } from './laborInsuranceService.js';
 import { calculateCompleteWorkData } from './workHoursCalculationService.js';
 import { calculateLateEarlyDeductions } from './attendanceDeductionService.js';
+import { calculateNightShiftAllowance } from './nightShiftAllowanceService.js';
 import ApprovalRequest from '../models/approval_request.js';
 
 /**
@@ -55,6 +56,14 @@ export async function calculateEmployeePayroll(employeeId, month, customData = {
     console.error(`Error calculating late/early deductions for employee ${employeeId}:`, error);
   }
   
+  // 計算夜班津貼（根據實際排班）
+  let nightShiftAllowanceData = null;
+  try {
+    nightShiftAllowanceData = await calculateNightShiftAllowance(employeeId, month, employee);
+  } catch (error) {
+    console.error(`Error calculating night shift allowance for employee ${employeeId}:`, error);
+  }
+  
   // 查找勞保等級
   const insuranceRate = await findInsuranceLevelBySalary(baseSalary);
   const laborInsuranceFee = customData.laborInsuranceFee ?? (insuranceRate?.workerFee || 0);
@@ -88,8 +97,9 @@ export async function calculateEmployeePayroll(employeeId, month, customData = {
   }
   
   // 獎金項目 (Stage B) - 加班費加入獎金
-  // 優先使用自定義值，然後使用員工設定的每月調整項目
+  // 優先使用自定義值，然後使用動態計算的夜班津貼，最後使用員工設定的每月調整項目
   const nightShiftAllowance = customData.nightShiftAllowance ?? 
+                              nightShiftAllowanceData?.allowanceAmount ?? 
                               employee.monthlySalaryAdjustments?.nightShiftAllowance ?? 0;
   const performanceBonus = customData.performanceBonus ?? 
                            employee.monthlySalaryAdjustments?.performanceBonus ?? 0;
@@ -136,6 +146,11 @@ export async function calculateEmployeePayroll(employeeId, month, customData = {
     // 加班資料
     overtimeHours: customData.overtimeHours ?? workData.overtimeHours ?? 0,
     overtimePay,
+    
+    // 夜班資料
+    nightShiftDays: nightShiftAllowanceData?.nightShiftDays ?? 0,
+    nightShiftHours: nightShiftAllowanceData?.nightShiftHours ?? 0,
+    nightShiftCalculationMethod: nightShiftAllowanceData?.calculationMethod ?? 'not_calculated',
     
     // 薪資計算
     baseSalary,
