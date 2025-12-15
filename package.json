@@ -4,6 +4,7 @@
   "scripts": {
     "start": "npm --prefix server start",
     "install": "npm --prefix server install && npm --prefix client install --include=dev",
+    "heroku-postbuild": "npm run build --prefix client",
     "test": "npm --prefix server test && npm --prefix client test",
     "dev": "concurrently \"npm run dev --prefix server\" \"npm run dev --prefix client\""
   },
