@@ -23,6 +23,11 @@ const payrollRecordSchema = new mongoose.Schema({
   overtimeHours: { type: Number, default: 0 }, // 加班時數
   overtimePay: { type: Number, default: 0 }, // 加班費
   
+  // 夜班資料 (Night Shift)
+  nightShiftDays: { type: Number, default: 0 }, // 夜班天數
+  nightShiftHours: { type: Number, default: 0 }, // 夜班時數
+  nightShiftCalculationMethod: { type: String, default: 'not_calculated' }, // 夜班計算方式
+  
   // Stage A: 基本薪資與扣款項目
   baseSalary: { type: Number, default: 0 }, // 基本薪資/合計
   laborInsuranceFee: { type: Number, default: 0 }, // 勞保費自付額

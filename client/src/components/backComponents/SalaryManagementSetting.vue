@@ -368,6 +368,20 @@
                 </el-table-column>
               </el-table-column>
               
+              <!-- 夜班資料 -->
+              <el-table-column label="夜班" align="center">
+                <el-table-column prop="nightShiftDays" label="夜班天數" width="100" align="right">
+                  <template #default="{ row }">
+                    {{ row.nightShiftDays || 0 }}
+                  </template>
+                </el-table-column>
+                <el-table-column prop="nightShiftHours" label="夜班時數" width="100" align="right">
+                  <template #default="{ row }">
+                    {{ (row.nightShiftHours || 0).toFixed(2) }}
+                  </template>
+                </el-table-column>
+              </el-table-column>
+              
               <el-table-column prop="baseSalary" label="基本薪資" width="120" align="right">
                 <template #default="{ row }">
                   {{ formatCurrency(row.baseSalary) }}

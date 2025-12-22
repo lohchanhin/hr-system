@@ -350,6 +350,10 @@ export async function getMonthlyPayrollOverview(req, res) {
         // Overtime data
         overtimeHours: payroll?.overtimeHours || 0,
         overtimePay: payroll?.overtimePay || 0,
+        // Night shift data
+        nightShiftDays: payroll?.nightShiftDays || 0,
+        nightShiftHours: payroll?.nightShiftHours || 0,
+        nightShiftCalculationMethod: payroll?.nightShiftCalculationMethod || 'not_calculated',
         // Payroll data (calculated or from existing record)
         baseSalary: payroll?.baseSalary || employee.salaryAmount || 0,
         laborInsuranceFee: payroll?.laborInsuranceFee || 0,
