@@ -661,6 +661,13 @@
                       <div class="stat-box">
                         <div class="stat-label">夜班津貼</div>
                         <div class="stat-value">{{ formatCurrency(selectedEmployee.nightShiftAllowance) }}</div>
+                        <div v-if="selectedEmployee.nightShiftCalculationMethod" class="stat-note">
+                          <span v-if="selectedEmployee.nightShiftCalculationMethod === 'calculated'">根據排班計算</span>
+                          <span v-else-if="selectedEmployee.nightShiftCalculationMethod === 'fixed'">固定津貼</span>
+                          <span v-else-if="selectedEmployee.nightShiftCalculationMethod === 'no_schedules'">本月無夜班排班</span>
+                          <span v-else-if="selectedEmployee.nightShiftCalculationMethod === 'no_shifts'">未設定夜班班別</span>
+                          <span v-else>{{ selectedEmployee.nightShiftCalculationMethod }}</span>
+                        </div>
                       </div>
                     </el-col>
                   </el-row>
@@ -1353,9 +1360,15 @@ const showExplanationDialog = ref(false)
     }
     
     if (emp.nightShiftAllowance > 0) {
+      let description = ''
+      if (emp.nightShiftCalculationMethod === 'calculated') {
+        description = `${emp.nightShiftDays || 0} 天夜班，共 ${(emp.nightShiftHours || 0).toFixed(2)} 小時`
+      } else if (emp.nightShiftCalculationMethod === 'fixed') {
+        description = '固定津貼'
+      }
       breakdown.push({
         item: '夜班津貼',
-        description: '',
+        description,
         amount: emp.nightShiftAllowance,
         type: 'bonus'
       })
@@ -1598,6 +1611,12 @@ const showExplanationDialog = ref(false)
     padding: 15px;
     background-color: #f5f7fa;
     border-radius: 4px;
+  }
+
+  .stat-box .stat-note {
+    font-size: 12px;
+    color: #909399;
+    margin-top: 4px;
   }
 
   .stat-box .stat-label {
