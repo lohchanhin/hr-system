@@ -59,20 +59,28 @@ export async function calculateNightShiftAllowance(employeeId, month, employee) 
       if (!shift) continue;
 
       // 只計算標記為夜班且啟用津貼的班別
-      if (shift.isNightShift && shift.hasAllowance && shift.allowanceMultiplier > 0) {
+      if (shift.isNightShift && shift.hasAllowance) {
         nightShiftDays++;
 
         // 計算夜班工作時數（考慮休息時間）
         const workHours = calculateShiftHours(shift);
         totalNightShiftHours += workHours;
 
-        // 計算該班次的津貼
-        // 津貼 = 時薪 × 工作時數 × 津貼倍數
-        const hourlyRate = convertToHourlyRate(
-          employee.salaryAmount || 0,
-          employee.salaryType || '月薪'
-        );
-        const shiftAllowance = hourlyRate * workHours * shift.allowanceMultiplier;
+        // 根據津貼類型計算該班次的津貼
+        let shiftAllowance = 0;
+        if (shift.allowanceType === 'fixed') {
+          // 固定津貼：直接使用設定的金額
+          shiftAllowance = shift.fixedAllowanceAmount || 0;
+        } else {
+          // 倍率計算：津貼 = 時薪 × 工作時數 × 津貼倍數
+          if (shift.allowanceMultiplier > 0) {
+            const hourlyRate = convertToHourlyRate(
+              employee.salaryAmount || 0,
+              employee.salaryType || '月薪'
+            );
+            shiftAllowance = hourlyRate * workHours * shift.allowanceMultiplier;
+          }
+        }
         totalAllowance += shiftAllowance;
       }
     }
