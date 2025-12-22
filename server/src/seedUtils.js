@@ -13,6 +13,7 @@ import AttendanceRecord from './models/AttendanceRecord.js';
 import ShiftSchedule from './models/ShiftSchedule.js';
 import PayrollRecord from './models/PayrollRecord.js';
 import { getLeaveFieldIds, resetLeaveFieldCache } from './services/leaveFieldService.js';
+import { calculateNightShiftAllowance } from './services/nightShiftAllowanceService.js';
 export const SEED_TEST_PASSWORD = 'password';
 
 const CITY_OPTIONS = ['台北市', '新北市', '桃園市', '台中市', '台南市', '高雄市'];
@@ -860,8 +861,34 @@ async function seedPayrollRecords({ supervisors = [], employees = [] } = {}) {
         employeeAdvance + otherDeductions;
       const netPay = Math.max(0, baseSalary - totalDeductions);
 
-      // 獎金項目 (Stage B) - 每月都有，確保資料多元性
-      const nightShiftAllowance = randomInRange(1000, 3000);
+      // 夜班津貼：依排班配置計算，確保測試資料與夜班設定一致
+      let nightShiftAllowance = 0;
+      let nightShiftDays = 0;
+      let nightShiftHours = 0;
+      let nightShiftCalculationMethod = 'not_calculated';
+      let nightShiftBreakdown = [];
+      let nightShiftConfigurationIssues = [];
+      try {
+        const monthStr = month.toISOString().split('T')[0];
+        const nightShiftData = await calculateNightShiftAllowance(
+          employee._id.toString(),
+          monthStr,
+          employee
+        );
+        nightShiftAllowance = Math.round(nightShiftData?.allowanceAmount ?? 0);
+        nightShiftDays = nightShiftData?.nightShiftDays ?? 0;
+        nightShiftHours = nightShiftData?.nightShiftHours ?? 0;
+        nightShiftCalculationMethod = nightShiftData?.calculationMethod ?? 'not_calculated';
+        nightShiftBreakdown = nightShiftData?.shiftBreakdown ?? [];
+        nightShiftConfigurationIssues = nightShiftData?.configurationIssues ?? [];
+      } catch (err) {
+        console.warn(
+          `Seed: failed to calculate night shift allowance for ${employee.employeeId}:`,
+          err.message
+        );
+      }
+
+      // 其餘獎金項目保持隨機性以涵蓋多元情境
       const performanceBonus = randomInRange(2000, 8000);
       const otherBonuses = randomInRange(1000, 5000);
       let totalBonus = nightShiftAllowance + performanceBonus + otherBonuses;
@@ -919,6 +946,11 @@ async function seedPayrollRecords({ supervisors = [], employees = [] } = {}) {
         bonusAdjustment,
         netPay: finalNetPay,
         nightShiftAllowance,
+        nightShiftDays,
+        nightShiftHours,
+        nightShiftCalculationMethod,
+        nightShiftBreakdown,
+        nightShiftConfigurationIssues,
         performanceBonus,
         otherBonuses,
         totalBonus,

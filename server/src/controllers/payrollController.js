@@ -306,7 +306,12 @@ export async function getMonthlyPayrollOverview(req, res) {
               }).populate('form').lean();
 
               const bonusData = aggregateBonusFromApprovals(approvals);
-              Object.assign(customData, bonusData);
+              ['nightShiftAllowance', 'performanceBonus', 'otherBonuses'].forEach((key) => {
+                const value = bonusData?.[key];
+                if (value > 0) {
+                  customData[key] = value;
+                }
+              });
             }
           } catch (error) {
             console.error(`Error aggregating approvals for employee ${employeeIdStr}:`, error);
