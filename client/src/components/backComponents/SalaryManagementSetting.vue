@@ -1377,10 +1377,16 @@ const showExplanationDialog = ref(false)
 
   function formatTime(isoString) {
     if (!isoString) return '-'
-    const date = new Date(isoString)
-    const hours = String(date.getHours()).padStart(2, '0')
-    const minutes = String(date.getMinutes()).padStart(2, '0')
-    return `${hours}:${minutes}`
+    try {
+      const date = new Date(isoString)
+      // Use local time for display as users expect to see their local clock-in/out times
+      const hours = String(date.getHours()).padStart(2, '0')
+      const minutes = String(date.getMinutes()).padStart(2, '0')
+      return `${hours}:${minutes}`
+    } catch (error) {
+      console.error('Error formatting time:', error)
+      return '-'
+    }
   }
 
   async function fetchMonthlyOverview() {

@@ -169,7 +169,12 @@
                       🌙 夜班
                     </el-tag>
                     <div v-if="row.hasAllowance" style="font-size: 11px; color: #666; margin-top: 2px;">
-                      津貼 × {{ row.allowanceMultiplier || 0 }}
+                      <span v-if="row.allowanceType === 'fixed'">
+                        固定 ${{ row.fixedAllowanceAmount || 0 }}
+                      </span>
+                      <span v-else>
+                        津貼 × {{ row.allowanceMultiplier || 0 }}
+                      </span>
                     </div>
                   </div>
                   <el-tag v-else type="info" size="small">日班</el-tag>

@@ -2,6 +2,12 @@ import ShiftSchedule from '../models/ShiftSchedule.js';
 import AttendanceSetting from '../models/AttendanceSetting.js';
 import { convertToHourlyRate, WORK_HOURS_CONFIG } from '../config/salaryConfig.js';
 
+// Constants for allowance types
+const ALLOWANCE_TYPES = {
+  FIXED: 'fixed',
+  MULTIPLIER: 'multiplier'
+};
+
 /**
  * 計算員工在指定月份的夜班津貼
  * @param {String} employeeId - 員工 ID
@@ -68,7 +74,7 @@ export async function calculateNightShiftAllowance(employeeId, month, employee) 
 
         // 根據津貼類型計算該班次的津貼
         let shiftAllowance = 0;
-        if (shift.allowanceType === 'fixed') {
+        if (shift.allowanceType === ALLOWANCE_TYPES.FIXED) {
           // 固定津貼：直接使用設定的金額
           shiftAllowance = shift.fixedAllowanceAmount || 0;
         } else {
