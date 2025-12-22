@@ -1353,9 +1353,15 @@ const showExplanationDialog = ref(false)
     }
     
     if (emp.nightShiftAllowance > 0) {
+      let description = ''
+      if (emp.nightShiftCalculationMethod === 'calculated') {
+        description = `${emp.nightShiftDays || 0} 天夜班，共 ${(emp.nightShiftHours || 0).toFixed(2)} 小時`
+      } else if (emp.nightShiftCalculationMethod === 'fixed') {
+        description = '固定津貼'
+      }
       breakdown.push({
         item: '夜班津貼',
-        description: '',
+        description,
         amount: emp.nightShiftAllowance,
         type: 'bonus'
       })
