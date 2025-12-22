@@ -535,6 +535,10 @@ function generateRecentWorkdays(count, referenceDate = new Date()) {
   return workdays.reverse();
 }
 
+function formatMonthStart(date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-01`;
+}
+
 function parseTimeString(time) {
   const [hours, minutes] = time.split(':').map((value) => parseInt(value, 10));
   return { hours, minutes };
@@ -869,7 +873,7 @@ async function seedPayrollRecords({ supervisors = [], employees = [] } = {}) {
       let nightShiftBreakdown = [];
       let nightShiftConfigurationIssues = [];
       try {
-        const monthStr = `${month.getFullYear()}-${String(month.getMonth() + 1).padStart(2, '0')}-01`;
+        const monthStr = formatMonthStart(month);
         const nightShiftData = await calculateNightShiftAllowance(
           employee._id.toString(),
           monthStr,
