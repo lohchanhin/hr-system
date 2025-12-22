@@ -178,8 +178,9 @@ describe('夜班員工與夜班津貼測試資料驗證', () => {
     }
   });
 
-  test('月薪資總覽應包含夜班津貼欄位', async () => {
-    // 此測試驗證 API 返回的資料結構
+  test('月薪資總覽資料應包含夜班津貼欄位', async () => {
+    // 此測試驗證 API 返回的資料結構包含 nightShiftAllowance 欄位
+    // 注意：此欄位在月薪資總覽表格中不顯示（屬於銀行B），但資料中仍需包含
     // 實際 API 測試需要啟動伺服器，這裡只驗證資料模型
     
     const nightShiftEmployees = await Employee.find({
