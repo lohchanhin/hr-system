@@ -323,7 +323,11 @@
                   :disabled="!shiftForm.isNightShift || !shiftForm.hasAllowance"
                   style="width: 100%" 
                 />
-                <div class="form-help">津貼金額 = 基本時薪 × 夜班時數 × 津貼倍數</div>
+                <div class="form-help">
+                  倍率計算：津貼金額 = 基本時薪 × 夜班時數 × 津貼倍數<br/>
+                  例如設定 0.5 表示夜班津貼為基本薪水的 50%<br/>
+                  例如設定 1.5 表示夜班津貼為基本薪水的 1.5 倍
+                </div>
               </el-form-item>
               <el-form-item label="固定津貼金額" v-if="shiftForm.allowanceType === 'fixed'">
                 <el-input-number 
@@ -334,7 +338,10 @@
                   :disabled="!shiftForm.isNightShift || !shiftForm.hasAllowance"
                   style="width: 100%" 
                 />
-                <div class="form-help">每次上夜班的固定津貼金額（元）</div>
+                <div class="form-help">
+                  固定津貼：每次上夜班可獲得固定金額的津貼<br/>
+                  例如設定 200 元，則每上一次夜班可得 200 元津貼
+                </div>
               </el-form-item>
               <el-form-item label="班別底色">
                 <el-color-picker
