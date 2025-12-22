@@ -496,6 +496,18 @@
                     <el-table :data="employeeDetailData.dailyDetails" border size="small" max-height="300">
                       <el-table-column prop="date" label="日期" width="120" />
                       <el-table-column prop="shiftName" label="班別" width="120" />
+                      <el-table-column label="上班時間" width="100" align="center">
+                        <template #default="{ row }">
+                          <span v-if="row.clockInTime">{{ formatTime(row.clockInTime) }}</span>
+                          <span v-else style="color: #999">-</span>
+                        </template>
+                      </el-table-column>
+                      <el-table-column label="下班時間" width="100" align="center">
+                        <template #default="{ row }">
+                          <span v-if="row.clockOutTime">{{ formatTime(row.clockOutTime) }}</span>
+                          <span v-else style="color: #999">-</span>
+                        </template>
+                      </el-table-column>
                       <el-table-column prop="scheduledHours" label="排班時數" width="100" align="right">
                         <template #default="{ row }">
                           {{ row.scheduledHours.toFixed(2) }}
@@ -1361,6 +1373,14 @@ const showExplanationDialog = ref(false)
   function formatCurrency(value) {
     if (value == null || isNaN(value)) return 'NT$ 0'
     return 'NT$ ' + Math.round(value).toLocaleString('zh-TW')
+  }
+
+  function formatTime(isoString) {
+    if (!isoString) return '-'
+    const date = new Date(isoString)
+    const hours = String(date.getHours()).padStart(2, '0')
+    const minutes = String(date.getMinutes()).padStart(2, '0')
+    return `${hours}:${minutes}`
   }
 
   async function fetchMonthlyOverview() {
