@@ -61,28 +61,35 @@ async function fixNightShiftAllowances() {
           console.log(`📝 Shift "${shift.name}" (${shift.code}): Setting default allowanceType to 'multiplier'`);
           shift.allowanceType = 'multiplier';
           modified = true;
-          issuesFound++;
         }
         
         // Check if the configuration is valid
         if (shift.allowanceType === 'multiplier') {
           if (!shift.allowanceMultiplier || shift.allowanceMultiplier <= 0) {
             console.log(`⚠️  Shift "${shift.name}" (${shift.code}): hasAllowance=true but allowanceMultiplier=${shift.allowanceMultiplier}`);
-            console.log(`   Suggested fix: Set allowanceMultiplier to a value > 0 (e.g., 0.34 for 34% allowance)`);
-            issuesFound++;
-            
-            // Optionally, you can set a default value here:
-            // shift.allowanceMultiplier = 0.34; // 34% default
-            // modified = true;
-            // fixedCount++;
+            console.log(`   Fixing: Set allowanceMultiplier to 0.34 (34% allowance - Taiwan standard)`);
+            shift.allowanceMultiplier = 0.34; // 34% default - standard Taiwan night shift allowance
+            modified = true;
+            fixedCount++;
           }
         } else if (shift.allowanceType === 'fixed') {
           if (!shift.fixedAllowanceAmount || shift.fixedAllowanceAmount <= 0) {
             console.log(`⚠️  Shift "${shift.name}" (${shift.code}): hasAllowance=true but fixedAllowanceAmount=${shift.fixedAllowanceAmount}`);
-            console.log(`   Suggested fix: Set fixedAllowanceAmount to a value > 0`);
-            issuesFound++;
+            console.log(`   Fixing: Set fixedAllowanceAmount to 200 (default NT$200 per night shift)`);
+            shift.fixedAllowanceAmount = 200; // Default NT$200 per night shift
+            modified = true;
+            fixedCount++;
           }
         }
+      } else if (shift.isNightShift && !shift.hasAllowance) {
+        // Night shift without allowance enabled - enable it with default settings
+        console.log(`📝 Shift "${shift.name}" (${shift.code}): isNightShift=true but hasAllowance=false`);
+        console.log(`   Fixing: Enabling allowance with 0.34 multiplier (34% - Taiwan standard)`);
+        shift.hasAllowance = true;
+        shift.allowanceType = 'multiplier';
+        shift.allowanceMultiplier = 0.34;
+        modified = true;
+        fixedCount++;
       }
     }
     
@@ -94,15 +101,16 @@ async function fixNightShiftAllowances() {
   
   console.log('\n📊 Summary:');
   console.log(`   Settings checked: ${settings.length}`);
-  console.log(`   Settings modified: ${fixedCount}`);
-  console.log(`   Issues found: ${issuesFound}`);
+  console.log(`   Shifts fixed: ${fixedCount}`);
   
-  if (issuesFound > 0) {
-    console.log('\n⚠️  Action required:');
-    console.log('   Some shifts have hasAllowance=true but invalid allowance configuration.');
-    console.log('   Please update these shifts through the UI or API to set proper allowance values.');
+  if (fixedCount > 0) {
+    console.log('\n✅ Fixed night shift allowance configurations!');
+    console.log('   Default values set:');
+    console.log('   - Multiplier type: 0.34 (34% of hourly wage - Taiwan standard)');
+    console.log('   - Fixed type: NT$200 per night shift');
+    console.log('\n   You can adjust these values through the UI if needed.');
   } else {
-    console.log('\n✅ All night shift allowance configurations are valid!');
+    console.log('\n✅ All night shift allowance configurations are already valid!');
   }
 }
 

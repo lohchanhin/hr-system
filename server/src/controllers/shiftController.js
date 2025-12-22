@@ -71,8 +71,8 @@ function buildShiftPayload(input, existing = {}) {
     isNightShift: Boolean(merged.isNightShift ?? existing.isNightShift ?? false),
     hasAllowance: Boolean(merged.hasAllowance ?? existing.hasAllowance ?? false),
     allowanceType: merged.allowanceType ?? existing.allowanceType ?? 'multiplier', // Default to multiplier
-    allowanceMultiplier: merged.allowanceMultiplier !== undefined ? Number(merged.allowanceMultiplier) : (existing.allowanceMultiplier ?? 0),
-    fixedAllowanceAmount: merged.fixedAllowanceAmount !== undefined ? Number(merged.fixedAllowanceAmount) : (existing.fixedAllowanceAmount ?? 0),
+    allowanceMultiplier: merged.allowanceMultiplier !== undefined ? Number(merged.allowanceMultiplier) : (existing.allowanceMultiplier ?? 0.34), // Default 0.34 = 34% Taiwan standard
+    fixedAllowanceAmount: merged.fixedAllowanceAmount !== undefined ? Number(merged.fixedAllowanceAmount) : (existing.fixedAllowanceAmount ?? 200), // Default NT$200
   };
 
   // 驗證夜班津貼設定
