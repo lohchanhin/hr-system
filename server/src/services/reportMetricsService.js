@@ -505,9 +505,9 @@ function buildWorkHoursSummary({ schedules, recordMap, shiftMap, employees }) {
       
       // If no clock-out found on the same day, check next day
       if (!last) {
-        const nextDate = new Date(first);
-        nextDate.setUTCDate(nextDate.getUTCDate() + 1);
-        const nextDateKey = buildDateKey(nextDate);
+        const clockInNextDay = new Date(first);
+        clockInNextDay.setUTCDate(clockInNextDay.getUTCDate() + 1);
+        const nextDateKey = buildDateKey(clockInNextDay);
         const nextDayRecord = recordMap.get(`${employeeId}::${nextDateKey}`);
         
         if (nextDayRecord && nextDayRecord.clockOuts.length) {
