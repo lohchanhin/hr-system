@@ -467,20 +467,47 @@ function buildWorkHoursSummary({ schedules, recordMap, shiftMap, employees }) {
     let workedMinutes = 0;
     
     // For cross-day shifts, we need to check both current day and next day for clock records
+    // Also check previous day for clock-in if this is a cross-day shift
+    let first = null;
+    let last = null;
+    
+    // Check for clock-in on schedule date
     if (dayRecord && dayRecord.clockIns.length) {
-      const first = dayRecord.clockIns[0];
-      let last = null;
+      first = dayRecord.clockIns[0];
+    }
+    
+    // For cross-day shifts, also check previous day for clock-in
+    if (!first && shift.crossDay) {
+      const prevDate = new Date(schedule.date);
+      prevDate.setUTCDate(prevDate.getUTCDate() - 1);
+      const prevDateKey = buildDateKey(prevDate);
+      const prevDayRecord = recordMap.get(`${employeeId}::${prevDateKey}`);
       
-      // First, try to find clock-out on the same day
-      if (dayRecord.clockOuts.length) {
-        last = dayRecord.clockOuts[dayRecord.clockOuts.length - 1];
+      if (prevDayRecord && prevDayRecord.clockIns.length) {
+        first = prevDayRecord.clockIns[prevDayRecord.clockIns.length - 1]; // Use the last clock-in of previous day
+      }
+    }
+    
+    if (first) {
+      // First, try to find clock-out on the same day as clock-in
+      const clockInDateKey = buildDateKey(first);
+      const clockInDayRecord = recordMap.get(`${employeeId}::${clockInDateKey}`);
+      
+      if (clockInDayRecord && clockInDayRecord.clockOuts.length) {
+        // Find the first clock-out after the clock-in time
+        for (const clockOut of clockInDayRecord.clockOuts) {
+          if (clockOut > first) {
+            last = clockOut;
+            break;
+          }
+        }
       }
       
-      // For cross-day shifts, if no clock-out on same day, check next day
-      if (!last && shift.crossDay) {
-        const nextDate = new Date(schedule.date);
-        nextDate.setUTCDate(nextDate.getUTCDate() + 1);
-        const nextDateKey = buildDateKey(nextDate);
+      // If no clock-out found on the same day, check next day
+      if (!last) {
+        const clockInNextDay = new Date(first);
+        clockInNextDay.setUTCDate(clockInNextDay.getUTCDate() + 1);
+        const nextDateKey = buildDateKey(clockInNextDay);
         const nextDayRecord = recordMap.get(`${employeeId}::${nextDateKey}`);
         
         if (nextDayRecord && nextDayRecord.clockOuts.length) {
