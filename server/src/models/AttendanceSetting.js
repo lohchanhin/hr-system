@@ -28,10 +28,12 @@ const attendanceSettingSchema = new mongoose.Schema({
         type: String,
         trim: true,
       },
-      // 夜班津貼設定
-      isNightShift: { type: Boolean, default: false }, // 是否為夜班
-      hasAllowance: { type: Boolean, default: false }, // 是否有津貼
-      allowanceMultiplier: { type: Number, default: 0 }, // 津貼倍數
+      // Night shift allowance settings
+      isNightShift: { type: Boolean, default: false }, // Whether this is a night shift
+      hasAllowance: { type: Boolean, default: false }, // Whether allowance is enabled
+      allowanceType: { type: String, enum: ['multiplier', 'fixed'], default: 'multiplier' }, // Allowance type: multiplier or fixed amount
+      allowanceMultiplier: { type: Number, default: 0 }, // Allowance multiplier (used when allowanceType is 'multiplier')
+      fixedAllowanceAmount: { type: Number, default: 0 }, // Fixed allowance amount (used when allowanceType is 'fixed')
     }
   ],
   abnormalRules: {

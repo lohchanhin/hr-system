@@ -235,11 +235,15 @@ export async function calculateWorkHours(employeeId, month) {
     const dayRecord = recordMap.get(`${employeeId}::${dateKey}`);
     let workedMinutes = 0;
     let hasAttendance = false;
+    let clockInTime = null;
+    let clockOutTime = null;
     
     // For cross-day shifts, we need to check both current day and next day for clock records
     if (dayRecord && dayRecord.clockIns.length) {
       const first = dayRecord.clockIns[0];
       let last = null;
+      
+      clockInTime = first;
       
       // First, try to find clock-out on the same day
       if (dayRecord.clockOuts.length) {
@@ -259,6 +263,7 @@ export async function calculateWorkHours(employeeId, month) {
       }
       
       if (last) {
+        clockOutTime = last;
         workedMinutes = Math.max(minutesBetween(first, last) - breakMinutes, 0);
         hasAttendance = true;
         workDays++;
@@ -273,7 +278,9 @@ export async function calculateWorkHours(employeeId, month) {
       scheduledHours: hoursFromMinutes(scheduledMinutes),
       workedHours: hoursFromMinutes(workedMinutes),
       hasAttendance,
-      shiftName: shift.name || '未命名班別'
+      shiftName: shift.name || '未命名班別',
+      clockInTime: clockInTime ? clockInTime.toISOString() : null,
+      clockOutTime: clockOutTime ? clockOutTime.toISOString() : null
     });
   });
   
