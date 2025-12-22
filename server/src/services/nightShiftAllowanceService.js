@@ -74,19 +74,28 @@ export async function calculateNightShiftAllowance(employeeId, month, employee) 
 
         // 根據津貼類型計算該班次的津貼
         let shiftAllowance = 0;
-        if (shift.allowanceType === ALLOWANCE_TYPES.FIXED) {
+        const allowanceType = shift.allowanceType || 'multiplier'; // Default to multiplier if not set
+        
+        if (allowanceType === ALLOWANCE_TYPES.FIXED) {
           // 固定津貼：直接使用設定的金額
           shiftAllowance = shift.fixedAllowanceAmount || 0;
+          if (shiftAllowance === 0) {
+            console.warn(`Night shift "${shift.name}" (${shift.code}) has allowance type 'fixed' but fixedAllowanceAmount is 0 or not set.`);
+          }
         } else {
           // 倍率計算：津貼 = 時薪 × 工作時數 × 津貼倍數
-          if (shift.allowanceMultiplier > 0) {
+          const multiplier = shift.allowanceMultiplier;
+          if (multiplier > 0) {
             const hourlyRate = convertToHourlyRate(
               employee.salaryAmount || 0,
               employee.salaryType || '月薪'
             );
-            shiftAllowance = hourlyRate * workHours * shift.allowanceMultiplier;
+            shiftAllowance = hourlyRate * workHours * multiplier;
+          } else {
+            console.warn(`Night shift "${shift.name}" (${shift.code}) has allowance enabled but multiplier is ${multiplier}. Please set a valid multiplier > 0 in shift settings.`);
           }
         }
+        
         totalAllowance += shiftAllowance;
       }
     }
