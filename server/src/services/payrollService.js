@@ -151,6 +151,8 @@ export async function calculateEmployeePayroll(employeeId, month, customData = {
     nightShiftDays: nightShiftAllowanceData?.nightShiftDays ?? 0,
     nightShiftHours: nightShiftAllowanceData?.nightShiftHours ?? 0,
     nightShiftCalculationMethod: nightShiftAllowanceData?.calculationMethod ?? 'not_calculated',
+    nightShiftBreakdown: nightShiftAllowanceData?.shiftBreakdown ?? [],
+    nightShiftConfigurationIssues: nightShiftAllowanceData?.configurationIssues ?? [],
     
     // 薪資計算
     baseSalary,

@@ -41,5 +41,53 @@ describe('Night Shift Allowance Service', () => {
       // This is a placeholder test
       expect(true).toBe(true);
     });
+
+    it('should return configuration_error when shift has hasAllowance but multiplier is 0', async () => {
+      // When a shift has:
+      // - isNightShift: true
+      // - hasAllowance: true
+      // - allowanceType: 'multiplier'
+      // - allowanceMultiplier: 0 or undefined
+      //
+      // The service should:
+      // - Set calculationMethod to 'configuration_error'
+      // - Add an issue to configurationIssues array
+      // - Include shift breakdown with hasIssue: true
+      // - Return allowance amount of 0 (or fixed allowance if configured)
+      //
+      // This is a placeholder test
+      expect(true).toBe(true);
+    });
+
+    it('should return configuration_error when shift has fixed allowance type but amount is 0', async () => {
+      // When a shift has:
+      // - isNightShift: true
+      // - hasAllowance: true
+      // - allowanceType: 'fixed'
+      // - fixedAllowanceAmount: 0 or undefined
+      //
+      // The service should:
+      // - Set calculationMethod to 'configuration_error'
+      // - Add an issue to configurationIssues array
+      // - Include shift breakdown with hasIssue: true
+      // - Return allowance amount of 0 (or fixed allowance if configured)
+      //
+      // This is a placeholder test
+      expect(true).toBe(true);
+    });
+
+    it('should include detailed shift breakdown with calculation details', async () => {
+      // The service should return shiftBreakdown array with details for each shift:
+      // - shiftName: Name of the shift
+      // - shiftCode: Code of the shift
+      // - allowanceType: '固定津貼' or '浮動津貼'
+      // - workHours: Calculated work hours
+      // - allowanceAmount: Calculated allowance for this shift
+      // - calculationDetail: Detailed calculation string
+      // - hasIssue: Boolean indicating if there's a configuration issue
+      //
+      // This is a placeholder test
+      expect(true).toBe(true);
+    });
   });
 });

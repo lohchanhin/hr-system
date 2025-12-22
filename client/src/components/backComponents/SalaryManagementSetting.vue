@@ -660,13 +660,41 @@
                     <el-col :span="8">
                       <div class="stat-box">
                         <div class="stat-label">夜班津貼</div>
-                        <div class="stat-value">{{ formatCurrency(selectedEmployee.nightShiftAllowance) }}</div>
+                        <div class="stat-value" :class="{ 'text-warning': selectedEmployee.nightShiftAllowance === 0 && selectedEmployee.nightShiftDays > 0 }">
+                          {{ formatCurrency(selectedEmployee.nightShiftAllowance) }}
+                        </div>
                         <div v-if="selectedEmployee.nightShiftCalculationMethod" class="stat-note">
-                          <span v-if="selectedEmployee.nightShiftCalculationMethod === 'calculated'">根據排班計算</span>
+                          <span v-if="selectedEmployee.nightShiftCalculationMethod === 'calculated'" class="text-success">根據排班計算</span>
+                          <span v-else-if="selectedEmployee.nightShiftCalculationMethod === 'configuration_error'" class="text-danger">
+                            <el-icon><WarningFilled /></el-icon> 配置錯誤
+                          </span>
+                          <span v-else-if="selectedEmployee.nightShiftCalculationMethod === 'no_allowance_configured'" class="text-warning">
+                            <el-icon><Warning /></el-icon> 未配置津貼
+                          </span>
                           <span v-else-if="selectedEmployee.nightShiftCalculationMethod === 'fixed'">固定津貼</span>
                           <span v-else-if="selectedEmployee.nightShiftCalculationMethod === 'no_schedules'">本月無夜班排班</span>
                           <span v-else-if="selectedEmployee.nightShiftCalculationMethod === 'no_shifts'">未設定夜班班別</span>
                           <span v-else>{{ selectedEmployee.nightShiftCalculationMethod }}</span>
+                        </div>
+                        <!-- 顯示配置問題 -->
+                        <div v-if="selectedEmployee.nightShiftConfigurationIssues && selectedEmployee.nightShiftConfigurationIssues.length > 0" 
+                             class="configuration-issues">
+                          <el-alert 
+                            type="error" 
+                            :closable="false"
+                            style="margin-top: 8px;">
+                            <template #title>
+                              <div style="font-size: 12px; font-weight: bold;">夜班津貼配置問題：</div>
+                            </template>
+                            <ul style="margin: 4px 0; padding-left: 20px; font-size: 11px;">
+                              <li v-for="(issue, idx) in selectedEmployee.nightShiftConfigurationIssues" :key="idx">
+                                {{ issue }}
+                              </li>
+                            </ul>
+                            <div style="font-size: 11px; margin-top: 4px; color: #666;">
+                              請至「考勤設定」頁面檢查並修正班別設定
+                            </div>
+                          </el-alert>
                         </div>
                       </div>
                     </el-col>
@@ -681,11 +709,27 @@
                     </div>
                   </template>
                   <el-table :data="salaryCalculationBreakdown" border>
-                    <el-table-column prop="item" label="項目" width="200" />
-                    <el-table-column prop="description" label="說明" />
+                    <el-table-column prop="item" label="項目" width="200">
+                      <template #default="{ row }">
+                        <span :class="{ 'text-warning': row.hasIssue }">
+                          {{ row.item }}
+                        </span>
+                        <el-icon v-if="row.hasIssue" style="margin-left: 4px; color: #f56c6c;"><Warning /></el-icon>
+                      </template>
+                    </el-table-column>
+                    <el-table-column prop="description" label="說明">
+                      <template #default="{ row }">
+                        <span :class="{ 'text-warning': row.hasIssue }" :style="{ fontSize: row.type === 'bonus-detail' ? '12px' : '14px' }">
+                          {{ row.description }}
+                        </span>
+                      </template>
+                    </el-table-column>
                     <el-table-column prop="amount" label="金額" width="150" align="right">
                       <template #default="{ row }">
-                        <span :style="{ color: row.type === 'deduction' ? 'red' : row.type === 'bonus' ? 'green' : 'inherit' }">
+                        <span :style="{ 
+                          color: row.hasIssue ? '#f56c6c' : (row.type === 'deduction' ? 'red' : row.type === 'bonus' || row.type === 'bonus-detail' ? 'green' : 'inherit'),
+                          fontSize: row.type === 'bonus-detail' ? '12px' : '14px'
+                        }">
                           {{ row.type === 'deduction' ? '-' : '' }}{{ formatCurrency(row.amount) }}
                         </span>
                       </template>
@@ -1014,7 +1058,8 @@ import {
   Wallet, 
   Money, 
   DataAnalysis, 
-  Warning 
+  Warning,
+  WarningFilled
 } from '@element-plus/icons-vue'
   
   // 目前所在的Tab
@@ -1359,19 +1404,38 @@ const showExplanationDialog = ref(false)
       })
     }
     
-    if (emp.nightShiftAllowance > 0) {
+    if (emp.nightShiftAllowance > 0 || (emp.nightShiftDays > 0 && emp.nightShiftConfigurationIssues && emp.nightShiftConfigurationIssues.length > 0)) {
       let description = ''
       if (emp.nightShiftCalculationMethod === 'calculated') {
         description = `${emp.nightShiftDays || 0} 天夜班，共 ${(emp.nightShiftHours || 0).toFixed(2)} 小時`
       } else if (emp.nightShiftCalculationMethod === 'fixed') {
         description = '固定津貼'
+      } else if (emp.nightShiftCalculationMethod === 'configuration_error') {
+        description = `配置錯誤：${emp.nightShiftDays || 0} 天夜班但津貼為 0`
+      } else if (emp.nightShiftCalculationMethod === 'no_allowance_configured') {
+        description = `${emp.nightShiftDays || 0} 天夜班但未配置津貼`
       }
+      
       breakdown.push({
         item: '夜班津貼',
         description,
         amount: emp.nightShiftAllowance,
-        type: 'bonus'
+        type: 'bonus',
+        hasIssue: emp.nightShiftAllowance === 0 && emp.nightShiftDays > 0
       })
+      
+      // 如果有班次明細，加入詳細資訊
+      if (emp.nightShiftBreakdown && emp.nightShiftBreakdown.length > 0) {
+        emp.nightShiftBreakdown.forEach((shift) => {
+          breakdown.push({
+            item: `  ↳ ${shift.shiftName} (${shift.shiftCode})`,
+            description: shift.calculationDetail || `${shift.allowanceType} - ${shift.workHours.toFixed(2)} 小時`,
+            amount: shift.allowanceAmount,
+            type: 'bonus-detail',
+            hasIssue: shift.hasIssue
+          })
+        })
+      }
     }
     
     if (emp.performanceBonus > 0) {
@@ -1879,5 +1943,22 @@ const showExplanationDialog = ref(false)
 
   .info-alert-spacing {
     margin-top: 20px;
+  }
+
+  /* Night shift allowance styling */
+  .text-warning {
+    color: #e6a23c !important;
+  }
+
+  .text-danger {
+    color: #f56c6c !important;
+  }
+
+  .text-success {
+    color: #67c23a !important;
+  }
+
+  .configuration-issues {
+    margin-top: 8px;
   }
   </style>

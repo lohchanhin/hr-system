@@ -30,6 +30,8 @@ export async function calculateNightShiftAllowance(employeeId, month, employee) 
         nightShiftHours: 0,
         allowanceAmount: 0,
         calculationMethod: 'no_shifts',
+        shiftBreakdown: [],
+        configurationIssues: [],
       };
     }
 
@@ -52,6 +54,8 @@ export async function calculateNightShiftAllowance(employeeId, month, employee) 
         nightShiftHours: 0,
         allowanceAmount: 0,
         calculationMethod: 'no_schedules',
+        shiftBreakdown: [],
+        configurationIssues: [],
       };
     }
 
@@ -59,6 +63,8 @@ export async function calculateNightShiftAllowance(employeeId, month, employee) 
     let nightShiftDays = 0;
     let totalNightShiftHours = 0;
     let totalAllowance = 0;
+    const shiftBreakdown = []; // 詳細的班次計算資訊
+    const configurationIssues = []; // 配置問題列表
 
     for (const schedule of schedules) {
       const shift = shiftMap.get(schedule.shiftId.toString());
@@ -75,12 +81,20 @@ export async function calculateNightShiftAllowance(employeeId, month, employee) 
         // 根據津貼類型計算該班次的津貼
         let shiftAllowance = 0;
         const allowanceType = shift.allowanceType || 'multiplier'; // Default to multiplier if not set
+        let calculationDetail = '';
+        let hasIssue = false;
         
         if (allowanceType === ALLOWANCE_TYPES.FIXED) {
           // 固定津貼：直接使用設定的金額
           shiftAllowance = shift.fixedAllowanceAmount || 0;
           if (shiftAllowance === 0) {
+            const issue = `班別「${shift.name}」(${shift.code}) 設定為固定津貼但金額為 0 或未設定`;
             console.warn(`Night shift "${shift.name}" (${shift.code}) has allowance type 'fixed' but fixedAllowanceAmount is 0 or not set.`);
+            configurationIssues.push(issue);
+            calculationDetail = `固定津貼未設定 (應設定 fixedAllowanceAmount > 0)`;
+            hasIssue = true;
+          } else {
+            calculationDetail = `固定津貼: NT$ ${shiftAllowance.toFixed(2)}`;
           }
         } else {
           // 倍率計算：津貼 = 時薪 × 工作時數 × 津貼倍數
@@ -91,10 +105,26 @@ export async function calculateNightShiftAllowance(employeeId, month, employee) 
               employee.salaryType || '月薪'
             );
             shiftAllowance = hourlyRate * workHours * multiplier;
+            calculationDetail = `浮動津貼: NT$ ${hourlyRate.toFixed(2)}/時 × ${workHours.toFixed(2)}時 × ${multiplier} = NT$ ${shiftAllowance.toFixed(2)}`;
           } else {
+            const issue = `班別「${shift.name}」(${shift.code}) 設定為倍率計算但倍率為 ${multiplier} 或未設定`;
             console.warn(`Night shift "${shift.name}" (${shift.code}) has allowance enabled but multiplier is ${multiplier}. Please set a valid multiplier > 0 in shift settings.`);
+            configurationIssues.push(issue);
+            calculationDetail = `倍率未設定 (應設定 allowanceMultiplier > 0，例如 0.34 表示 34% 津貼)`;
+            hasIssue = true;
           }
         }
+        
+        // 記錄班次詳情
+        shiftBreakdown.push({
+          shiftName: shift.name,
+          shiftCode: shift.code,
+          allowanceType: allowanceType === ALLOWANCE_TYPES.FIXED ? '固定津貼' : '浮動津貼',
+          workHours,
+          allowanceAmount: shiftAllowance,
+          calculationDetail,
+          hasIssue
+        });
         
         totalAllowance += shiftAllowance;
       }
@@ -105,11 +135,29 @@ export async function calculateNightShiftAllowance(employeeId, month, employee) 
       ? totalAllowance
       : (employee.monthlySalaryAdjustments?.nightShiftAllowance || 0);
 
+    // 判斷計算方式
+    let calculationMethod = 'not_calculated';
+    if (nightShiftDays > 0) {
+      if (totalAllowance > 0) {
+        calculationMethod = 'calculated';
+      } else if (configurationIssues.length > 0) {
+        calculationMethod = 'configuration_error';
+      } else if (finalAllowance > 0) {
+        calculationMethod = 'fixed';
+      } else {
+        calculationMethod = 'no_allowance_configured';
+      }
+    } else if (finalAllowance > 0) {
+      calculationMethod = 'fixed';
+    }
+
     return {
       nightShiftDays,
       nightShiftHours: totalNightShiftHours,
       allowanceAmount: Math.round(finalAllowance), // 四捨五入到整數
-      calculationMethod: totalAllowance > 0 ? 'calculated' : 'fixed',
+      calculationMethod,
+      shiftBreakdown, // 詳細的班次計算資訊
+      configurationIssues, // 配置問題列表
     };
   } catch (error) {
     console.error(`Error calculating night shift allowance for employee ${employeeId}:`, error);
@@ -119,6 +167,8 @@ export async function calculateNightShiftAllowance(employeeId, month, employee) 
       nightShiftHours: 0,
       allowanceAmount: employee.monthlySalaryAdjustments?.nightShiftAllowance || 0,
       calculationMethod: 'error_fallback',
+      shiftBreakdown: [],
+      configurationIssues: [`計算錯誤: ${error.message}`],
     };
   }
 }

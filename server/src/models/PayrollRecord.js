@@ -27,6 +27,8 @@ const payrollRecordSchema = new mongoose.Schema({
   nightShiftDays: { type: Number, default: 0 }, // 夜班天數
   nightShiftHours: { type: Number, default: 0 }, // 夜班時數
   nightShiftCalculationMethod: { type: String, default: 'not_calculated' }, // 夜班計算方式
+  nightShiftBreakdown: { type: Array, default: [] }, // 夜班計算明細
+  nightShiftConfigurationIssues: { type: Array, default: [] }, // 夜班配置問題列表
   
   // Stage A: 基本薪資與扣款項目
   baseSalary: { type: Number, default: 0 }, // 基本薪資/合計
