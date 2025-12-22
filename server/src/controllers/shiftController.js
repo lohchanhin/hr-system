@@ -53,7 +53,7 @@ function buildShiftPayload(input, existing = {}) {
     breakDuration = existing.breakDuration;
   }
 
-  return {
+  const payload = {
     name,
     code,
     startTime,
@@ -70,8 +70,22 @@ function buildShiftPayload(input, existing = {}) {
     // 夜班津貼設定
     isNightShift: Boolean(merged.isNightShift ?? existing.isNightShift ?? false),
     hasAllowance: Boolean(merged.hasAllowance ?? existing.hasAllowance ?? false),
+    allowanceType: merged.allowanceType ?? existing.allowanceType ?? 'multiplier', // Default to multiplier
     allowanceMultiplier: merged.allowanceMultiplier !== undefined ? Number(merged.allowanceMultiplier) : (existing.allowanceMultiplier ?? 0),
+    fixedAllowanceAmount: merged.fixedAllowanceAmount !== undefined ? Number(merged.fixedAllowanceAmount) : (existing.fixedAllowanceAmount ?? 0),
   };
+
+  // 驗證夜班津貼設定
+  if (payload.hasAllowance) {
+    if (payload.allowanceType === 'multiplier' && (!payload.allowanceMultiplier || payload.allowanceMultiplier <= 0)) {
+      throw new Error('啟用夜班津貼時，倍率必須大於 0');
+    }
+    if (payload.allowanceType === 'fixed' && (!payload.fixedAllowanceAmount || payload.fixedAllowanceAmount <= 0)) {
+      throw new Error('啟用夜班津貼時，固定津貼金額必須大於 0');
+    }
+  }
+
+  return payload;
 }
 
 export async function getShifts(req, res) {
