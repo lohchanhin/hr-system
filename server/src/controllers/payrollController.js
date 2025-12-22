@@ -354,6 +354,8 @@ export async function getMonthlyPayrollOverview(req, res) {
         nightShiftDays: payroll?.nightShiftDays || 0,
         nightShiftHours: payroll?.nightShiftHours || 0,
         nightShiftCalculationMethod: payroll?.nightShiftCalculationMethod || 'not_calculated',
+        nightShiftBreakdown: payroll?.nightShiftBreakdown || [],
+        nightShiftConfigurationIssues: payroll?.nightShiftConfigurationIssues || [],
         // Payroll data (calculated or from existing record)
         baseSalary: payroll?.baseSalary || employee.salaryAmount || 0,
         laborInsuranceFee: payroll?.laborInsuranceFee || 0,

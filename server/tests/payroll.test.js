@@ -290,5 +290,70 @@ describe('Payroll API', () => {
       expect(res.status).toBe(200);
       expect(Array.isArray(res.body)).toBe(true);
     });
+
+    it('includes night shift fields in overview response', async () => {
+      const fakeEmployees = [
+        {
+          _id: 'emp1',
+          employeeId: 'E001',
+          name: '王小明',
+          department: { _id: 'dept1', name: '人資部' },
+          subDepartment: null,
+          organization: 'org1',
+          salaryAmount: 45000,
+          salaryType: '月薪'
+        }
+      ];
+
+      const fakePayrollRecords = [
+        {
+          employee: {
+            _id: 'emp1',
+            employeeId: 'E001',
+            name: '王小明'
+          },
+          nightShiftDays: 8,
+          nightShiftHours: 56,
+          nightShiftAllowance: 3920,
+          nightShiftCalculationMethod: 'calculated',
+          nightShiftBreakdown: [
+            {
+              shiftName: '夜班',
+              shiftCode: 'NIGHT',
+              allowanceType: '浮動津貼',
+              workHours: 7,
+              allowanceAmount: 490,
+              calculationDetail: '浮動津貼: NT$ 166.67/時 × 7.00時 × 0.42 = NT$ 490.00',
+              hasIssue: false
+            }
+          ],
+          nightShiftConfigurationIssues: []
+        }
+      ];
+
+      mockEmployee.find = jest.fn().mockReturnValue({
+        populate: jest.fn().mockReturnThis(),
+        select: jest.fn().mockResolvedValue(fakeEmployees)
+      });
+
+      mockPayrollRecord.find.mockReturnValue({
+        populate: jest.fn().mockResolvedValue(fakePayrollRecords)
+      });
+
+      const res = await request(app).get('/api/payroll/overview/monthly?month=2025-11-01');
+      expect(res.status).toBe(200);
+      expect(Array.isArray(res.body)).toBe(true);
+      expect(res.body.length).toBeGreaterThan(0);
+      
+      const employeeData = res.body[0];
+      expect(employeeData).toHaveProperty('nightShiftDays', 8);
+      expect(employeeData).toHaveProperty('nightShiftHours', 56);
+      expect(employeeData).toHaveProperty('nightShiftAllowance', 3920);
+      expect(employeeData).toHaveProperty('nightShiftCalculationMethod', 'calculated');
+      expect(employeeData).toHaveProperty('nightShiftBreakdown');
+      expect(Array.isArray(employeeData.nightShiftBreakdown)).toBe(true);
+      expect(employeeData).toHaveProperty('nightShiftConfigurationIssues');
+      expect(Array.isArray(employeeData.nightShiftConfigurationIssues)).toBe(true);
+    });
   });
 });
