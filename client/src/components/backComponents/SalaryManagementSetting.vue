@@ -368,6 +368,20 @@
                 </el-table-column>
               </el-table-column>
               
+              <!-- 夜班資料 -->
+              <el-table-column label="夜班" align="center">
+                <el-table-column prop="nightShiftDays" label="夜班天數" width="100" align="right">
+                  <template #default="{ row }">
+                    {{ row.nightShiftDays || 0 }}
+                  </template>
+                </el-table-column>
+                <el-table-column prop="nightShiftHours" label="夜班時數" width="100" align="right">
+                  <template #default="{ row }">
+                    {{ (row.nightShiftHours || 0).toFixed(2) }}
+                  </template>
+                </el-table-column>
+              </el-table-column>
+              
               <el-table-column prop="baseSalary" label="基本薪資" width="120" align="right">
                 <template #default="{ row }">
                   {{ formatCurrency(row.baseSalary) }}
@@ -626,6 +640,35 @@
                       <el-table-column prop="reason" label="原因" />
                     </el-table>
                   </div>
+                </el-card>
+
+                <!-- Night Shift Statistics -->
+                <el-card class="detail-card" shadow="never" style="margin-top: 20px">
+                  <template #header>
+                    <div class="card-header">
+                      <span>夜班統計</span>
+                    </div>
+                  </template>
+                  <el-row :gutter="20">
+                    <el-col :span="8">
+                      <div class="stat-box">
+                        <div class="stat-label">夜班天數</div>
+                        <div class="stat-value">{{ selectedEmployee.nightShiftDays || 0 }} 天</div>
+                      </div>
+                    </el-col>
+                    <el-col :span="8">
+                      <div class="stat-box">
+                        <div class="stat-label">夜班時數</div>
+                        <div class="stat-value">{{ (selectedEmployee.nightShiftHours || 0).toFixed(2) }} 小時</div>
+                      </div>
+                    </el-col>
+                    <el-col :span="8">
+                      <div class="stat-box">
+                        <div class="stat-label">夜班津貼</div>
+                        <div class="stat-value">{{ formatCurrency(selectedEmployee.nightShiftAllowance) }}</div>
+                      </div>
+                    </el-col>
+                  </el-row>
                 </el-card>
 
                 <!-- Salary Calculation -->
