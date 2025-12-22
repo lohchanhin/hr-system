@@ -306,9 +306,8 @@ export async function getMonthlyPayrollOverview(req, res) {
               }).populate('form').lean();
 
               const bonusData = aggregateBonusFromApprovals(approvals);
-              ['nightShiftAllowance', 'performanceBonus', 'otherBonuses'].forEach((key) => {
-                const value = bonusData?.[key];
-                if (value > 0) {
+              Object.entries(bonusData || {}).forEach(([key, value]) => {
+                if (typeof value === 'number' && value > 0) {
                   customData[key] = value;
                 }
               });

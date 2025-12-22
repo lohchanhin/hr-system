@@ -869,7 +869,7 @@ async function seedPayrollRecords({ supervisors = [], employees = [] } = {}) {
       let nightShiftBreakdown = [];
       let nightShiftConfigurationIssues = [];
       try {
-        const monthStr = month.toISOString().split('T')[0];
+        const monthStr = `${month.getFullYear()}-${String(month.getMonth() + 1).padStart(2, '0')}-01`;
         const nightShiftData = await calculateNightShiftAllowance(
           employee._id.toString(),
           monthStr,
