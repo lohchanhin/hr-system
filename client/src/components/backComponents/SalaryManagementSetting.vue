@@ -706,6 +706,37 @@
                   </el-row>
                 </el-card>
 
+                <!-- Labor Insurance Information -->
+                <el-card class="detail-card" shadow="never" style="margin-top: 20px" v-if="selectedEmployee.insuranceRate">
+                  <template #header>
+                    <div class="card-header">
+                      <span>勞保級距資訊</span>
+                    </div>
+                  </template>
+                  <el-descriptions :column="2" border>
+                    <el-descriptions-item label="勞保等級">{{ selectedEmployee.insuranceRate.level }}</el-descriptions-item>
+                    <el-descriptions-item label="投保薪資">
+                      NT$ {{ selectedEmployee.insuranceRate.insuredSalary.toLocaleString() }}
+                    </el-descriptions-item>
+                    <el-descriptions-item label="員工負擔">
+                      NT$ {{ selectedEmployee.insuranceRate.workerFee.toLocaleString() }}
+                    </el-descriptions-item>
+                    <el-descriptions-item label="雇主負擔">
+                      NT$ {{ selectedEmployee.insuranceRate.employerFee.toLocaleString() }}
+                    </el-descriptions-item>
+                    <el-descriptions-item label="普通費率">
+                      {{ selectedEmployee.insuranceRate.ordinaryRate }}%
+                    </el-descriptions-item>
+                    <el-descriptions-item label="就保費率">
+                      {{ selectedEmployee.insuranceRate.employmentInsuranceRate }}%
+                    </el-descriptions-item>
+                  </el-descriptions>
+                  <div class="form-help" style="margin-top: 10px;">
+                    <el-icon><InfoFilled /></el-icon>
+                    勞保級距根據員工基本薪資自動計算
+                  </div>
+                </el-card>
+
                 <!-- Salary Calculation -->
                 <el-card class="detail-card" shadow="never" style="margin-top: 20px">
                   <template #header>
@@ -1064,7 +1095,8 @@ import {
   Money, 
   DataAnalysis, 
   Warning,
-  WarningFilled
+  WarningFilled,
+  InfoFilled
 } from '@element-plus/icons-vue'
   
   // 目前所在的Tab
@@ -1354,9 +1386,13 @@ const showExplanationDialog = ref(false)
     
     // Insurance and pension deductions
     if (emp.laborInsuranceFee > 0) {
+      let description = '員工自付額';
+      if (emp.insuranceRate) {
+        description = `等級 ${emp.insuranceRate.level}，投保薪資 NT$ ${emp.insuranceRate.insuredSalary.toLocaleString()}`;
+      }
       breakdown.push({
         item: '勞保費',
-        description: '員工自付額',
+        description,
         amount: emp.laborInsuranceFee,
         type: 'deduction'
       })
@@ -1979,5 +2015,13 @@ const showExplanationDialog = ref(false)
 
   .configuration-issues {
     margin-top: 8px;
+  }
+
+  .form-help {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 12px;
+    color: #909399;
   }
   </style>

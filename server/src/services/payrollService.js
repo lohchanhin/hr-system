@@ -170,6 +170,14 @@ export async function calculateEmployeePayroll(employeeId, month, customData = {
     bankAccountA,
     bankAccountB,
     insuranceLevel: insuranceRate?.level,
+    insuranceRate: insuranceRate ? {
+      level: insuranceRate.level,
+      insuredSalary: insuranceRate.insuredSalary,
+      workerFee: insuranceRate.workerFee,
+      employerFee: insuranceRate.employerFee,
+      ordinaryRate: insuranceRate.ordinaryRate,
+      employmentInsuranceRate: insuranceRate.employmentInsuranceRate
+    } : null,
     amount: netPay // For backward compatibility
   };
 }
