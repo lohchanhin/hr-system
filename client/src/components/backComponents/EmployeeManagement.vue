@@ -894,12 +894,6 @@
                     </div>
                     
                     <div class="form-row">
-                      <el-form-item label="夜班補助津貼" prop="monthlySalaryAdjustments.nightShiftAllowance">
-                        <el-input-number v-model="employeeForm.monthlySalaryAdjustments.nightShiftAllowance" 
-                          :min="0" :step="100"
-                          :formatter="value => `$ ${value ?? 0}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')"
-                          :parser="value => (value ? value.replace(/\$\s?|(,*)/g, '') : '')" />
-                      </el-form-item>
                       <el-form-item label="人力績效獎金" prop="monthlySalaryAdjustments.performanceBonus">
                         <el-input-number v-model="employeeForm.monthlySalaryAdjustments.performanceBonus" 
                           :min="0" :step="100"
@@ -3250,7 +3244,6 @@ const emptyEmployee = {
     healthInsuranceFee: 0,
     debtGarnishment: 0,
     otherDeductions: 0,
-    nightShiftAllowance: 0,
     performanceBonus: 0,
     otherBonuses: 0,
     notes: ''

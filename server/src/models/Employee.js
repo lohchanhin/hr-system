@@ -199,7 +199,6 @@ const employeeSchema = new Schema(
       otherDeductions: { type: Number, default: 0 }, // 其他扣款
       
       // 獎金/津貼項目
-      nightShiftAllowance: { type: Number, default: 0 }, // 夜班補助津貼
       performanceBonus: { type: Number, default: 0 }, // 人力績效獎金
       otherBonuses: { type: Number, default: 0 }, // 其他獎金
       

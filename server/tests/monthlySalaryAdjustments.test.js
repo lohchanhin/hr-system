@@ -34,7 +34,6 @@ describe('Monthly Salary Adjustments', () => {
           healthInsuranceFee: expect.any(Number),
           debtGarnishment: expect.any(Number),
           otherDeductions: expect.any(Number),
-          nightShiftAllowance: expect.any(Number),
           performanceBonus: expect.any(Number),
           otherBonuses: expect.any(Number),
         })
@@ -52,7 +51,6 @@ describe('Monthly Salary Adjustments', () => {
           healthInsuranceFee: 750,
           debtGarnishment: 1000,
           otherDeductions: 500,
-          nightShiftAllowance: 2500,
           performanceBonus: 3000,
           otherBonuses: 1500,
           notes: 'Test adjustments',
@@ -62,7 +60,6 @@ describe('Monthly Salary Adjustments', () => {
       expect(employee.monthlySalaryAdjustments.healthInsuranceFee).toBe(750);
       expect(employee.monthlySalaryAdjustments.debtGarnishment).toBe(1000);
       expect(employee.monthlySalaryAdjustments.otherDeductions).toBe(500);
-      expect(employee.monthlySalaryAdjustments.nightShiftAllowance).toBe(2500);
       expect(employee.monthlySalaryAdjustments.performanceBonus).toBe(3000);
       expect(employee.monthlySalaryAdjustments.otherBonuses).toBe(1500);
       expect(employee.monthlySalaryAdjustments.notes).toBe('Test adjustments');
@@ -77,7 +74,7 @@ describe('Monthly Salary Adjustments', () => {
         username: 'testuser3',
         monthlySalaryAdjustments: {
           healthInsuranceFee: 750,
-          nightShiftAllowance: 2500,
+          performanceBonus: 2500,
           notes: 'Monthly adjustments',
         },
       });
@@ -85,7 +82,7 @@ describe('Monthly Salary Adjustments', () => {
       const json = employee.toJSON();
       expect(json.monthlySalaryAdjustments).toBeDefined();
       expect(json.monthlySalaryAdjustments.healthInsuranceFee).toBe(750);
-      expect(json.monthlySalaryAdjustments.nightShiftAllowance).toBe(2500);
+      expect(json.monthlySalaryAdjustments.performanceBonus).toBe(2500);
       expect(json.monthlySalaryAdjustments.notes).toBe('Monthly adjustments');
     });
   });
@@ -102,14 +99,13 @@ describe('Monthly Salary Adjustments', () => {
         nightShiftAllowance: 2500, // From employee.monthlySalaryAdjustments
         performanceBonus: 3000,    // From employee.monthlySalaryAdjustments
         netPay: 42000,
-        totalBonus: 5500,
+        totalBonus: 3000,  // No longer includes nightShiftAllowance from employee settings
       });
 
       const result = await calculateEmployeePayroll('emp123', '2024-01-01', {});
       
       expect(result).toBeDefined();
       expect(result.healthInsuranceFee).toBe(750);
-      expect(result.nightShiftAllowance).toBe(2500);
       expect(result.performanceBonus).toBe(3000);
     });
 
@@ -122,7 +118,7 @@ describe('Monthly Salary Adjustments', () => {
           month: new Date(month),
           baseSalary: 45000,
           healthInsuranceFee: customData.healthInsuranceFee || 750, // customData should override
-          nightShiftAllowance: customData.nightShiftAllowance || 2500,
+          performanceBonus: customData.performanceBonus || 3000,
           netPay: 42000,
         });
       });
@@ -130,11 +126,11 @@ describe('Monthly Salary Adjustments', () => {
       // Call with custom data that should override employee settings
       const result = await calculateEmployeePayroll('emp123', '2024-01-01', {
         healthInsuranceFee: 800, // Override employee setting
-        nightShiftAllowance: 3000, // Override employee setting
+        performanceBonus: 4000, // Override employee setting
       });
       
       expect(result.healthInsuranceFee).toBe(800);
-      expect(result.nightShiftAllowance).toBe(3000);
+      expect(result.performanceBonus).toBe(4000);
     });
   });
 
@@ -144,6 +140,7 @@ describe('Monthly Salary Adjustments', () => {
       
       // Scenario: Employee has regular monthly deductions and bonuses
       // Instead of creating approval requests each month, these are set in personal info
+      // Note: Night shift allowance is now calculated from shift settings, not stored here
       const employee = new Employee({
         name: '張小明',
         email: 'zhang@example.com',
@@ -151,20 +148,18 @@ describe('Monthly Salary Adjustments', () => {
         salaryAmount: 45000,
         monthlySalaryAdjustments: {
           healthInsuranceFee: 750,        // Fixed monthly health insurance
-          nightShiftAllowance: 2500,      // Regular night shift allowance
           performanceBonus: 3000,         // Regular performance bonus
-          notes: '固定夜班津貼與績效獎金',  // Note explaining adjustments
+          notes: '固定績效獎金',           // Note explaining adjustments
         },
       });
 
       // When calculating payroll, these values are automatically used
       expect(employee.monthlySalaryAdjustments.healthInsuranceFee).toBe(750);
-      expect(employee.monthlySalaryAdjustments.nightShiftAllowance).toBe(2500);
       expect(employee.monthlySalaryAdjustments.performanceBonus).toBe(3000);
       
       // This replaces the need for monthly approval workflows
       // The adjustments are configured once in the employee profile
-      expect(employee.monthlySalaryAdjustments.notes).toBe('固定夜班津貼與績效獎金');
+      expect(employee.monthlySalaryAdjustments.notes).toBe('固定績效獎金');
     });
   });
 });
