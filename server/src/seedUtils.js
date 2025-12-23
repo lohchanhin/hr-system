@@ -275,7 +275,7 @@ const ATTENDANCE_SETTING_TEMPLATE = {
       bgColor: '#dbeafe',
       isNightShift: false,
       hasAllowance: false,
-      allowanceMultiplier: 0,
+      fixedAllowanceAmount: 0,
     },
     {
       name: '中班',
@@ -293,7 +293,7 @@ const ATTENDANCE_SETTING_TEMPLATE = {
       bgColor: '#ccfbf1',
       isNightShift: false,
       hasAllowance: false,
-      allowanceMultiplier: 0,
+      fixedAllowanceAmount: 0,
     },
     {
       name: '晚班',
@@ -311,7 +311,7 @@ const ATTENDANCE_SETTING_TEMPLATE = {
       bgColor: '#ede9fe',
       isNightShift: false,
       hasAllowance: false,
-      allowanceMultiplier: 0,
+      fixedAllowanceAmount: 0,
     },
     {
       name: '夜班',
@@ -329,7 +329,7 @@ const ATTENDANCE_SETTING_TEMPLATE = {
       bgColor: '#1e293b',
       isNightShift: true,
       hasAllowance: true,
-      allowanceMultiplier: 0.34,
+      fixedAllowanceAmount: 200,
     },
   ],
   abnormalRules: {

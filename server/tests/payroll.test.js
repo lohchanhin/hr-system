@@ -320,10 +320,10 @@ describe('Payroll API', () => {
             {
               shiftName: '夜班',
               shiftCode: 'NIGHT',
-              allowanceType: '浮動津貼',
+              allowanceType: '固定津貼',
               workHours: 7,
               allowanceAmount: 490,
-              calculationDetail: '浮動津貼: NT$ 166.67/時 × 7.00時 × 0.42 = NT$ 490.00',
+              calculationDetail: '固定津貼: NT$ 490 / 班',
               hasIssue: false
             }
           ],

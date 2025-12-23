@@ -15,18 +15,13 @@ function testBuildShiftPayload(input, existing = {}) {
     endTime: merged.endTime,
     breakDuration: merged.breakDuration || 0,
     isNightShift: Boolean(merged.isNightShift ?? existing.isNightShift ?? false),
-    hasAllowance: Boolean(merged.hasAllowance ?? existing.hasAllowance ?? false),
-    allowanceType: merged.allowanceType ?? existing.allowanceType ?? 'multiplier',
-    allowanceMultiplier: merged.allowanceMultiplier !== undefined ? Number(merged.allowanceMultiplier) : (existing.allowanceMultiplier ?? 0),
+    hasAllowance: Boolean(merged.hasAllowance ?? existing.hasAllowance ?? (merged.isNightShift ?? existing.isNightShift ?? false)),
     fixedAllowanceAmount: merged.fixedAllowanceAmount !== undefined ? Number(merged.fixedAllowanceAmount) : (existing.fixedAllowanceAmount ?? 0),
   };
 
   // Validation
-  if (payload.hasAllowance) {
-    if (payload.allowanceType === 'multiplier' && (!payload.allowanceMultiplier || payload.allowanceMultiplier <= 0)) {
-      throw new Error('啟用夜班津貼時，倍率必須大於 0');
-    }
-    if (payload.allowanceType === 'fixed' && (!payload.fixedAllowanceAmount || payload.fixedAllowanceAmount <= 0)) {
+  if (payload.isNightShift && payload.hasAllowance) {
+    if (!payload.fixedAllowanceAmount || payload.fixedAllowanceAmount <= 0) {
       throw new Error('啟用夜班津貼時，固定津貼金額必須大於 0');
     }
   }
@@ -36,7 +31,7 @@ function testBuildShiftPayload(input, existing = {}) {
 
 console.log('🧪 Testing shift allowance validation...\n');
 
-// Test 1: Valid multiplier configuration
+// Test 1: Valid fixed configuration
 try {
   const shift1 = testBuildShiftPayload({
     name: '夜班',
@@ -45,15 +40,14 @@ try {
     endTime: '06:00',
     isNightShift: true,
     hasAllowance: true,
-    allowanceType: 'multiplier',
-    allowanceMultiplier: 0.34
+    fixedAllowanceAmount: 200
   });
-  console.log('✅ Test 1 PASSED: Valid multiplier configuration');
+  console.log('✅ Test 1 PASSED: Valid fixed configuration');
 } catch (error) {
   console.log('❌ Test 1 FAILED:', error.message);
 }
 
-// Test 2: Invalid multiplier (0)
+// Test 2: Invalid fixed allowance (0)
 try {
   const shift2 = testBuildShiftPayload({
     name: '夜班',
@@ -62,16 +56,15 @@ try {
     endTime: '06:00',
     isNightShift: true,
     hasAllowance: true,
-    allowanceType: 'multiplier',
-    allowanceMultiplier: 0
+    fixedAllowanceAmount: 0
   });
-  console.log('❌ Test 2 FAILED: Should have thrown error for multiplier = 0');
+  console.log('❌ Test 2 FAILED: Should have thrown error for fixedAllowanceAmount = 0');
 } catch (error) {
-  console.log('✅ Test 2 PASSED: Correctly rejected multiplier = 0');
+  console.log('✅ Test 2 PASSED: Correctly rejected fixedAllowanceAmount = 0');
   console.log('   Error:', error.message);
 }
 
-// Test 3: Valid fixed configuration
+// Test 3: Night shift defaults to allowance enabled
 try {
   const shift3 = testBuildShiftPayload({
     name: '夜班',
@@ -79,11 +72,12 @@ try {
     startTime: '22:00',
     endTime: '06:00',
     isNightShift: true,
-    hasAllowance: true,
-    allowanceType: 'fixed',
-    fixedAllowanceAmount: 200
+    fixedAllowanceAmount: 300
   });
-  console.log('✅ Test 3 PASSED: Valid fixed configuration');
+  if (!shift3.hasAllowance) {
+    throw new Error('夜班未啟用津貼');
+  }
+  console.log('✅ Test 3 PASSED: Night shift defaults to allowance enabled with fixed amount');
 } catch (error) {
   console.log('❌ Test 3 FAILED:', error.message);
 }

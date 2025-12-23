@@ -169,12 +169,7 @@
                       🌙 夜班
                     </el-tag>
                     <div v-if="row.hasAllowance" style="font-size: 11px; color: #666; margin-top: 2px;">
-                      <span v-if="row.allowanceType === 'fixed'">
-                        固定 ${{ row.fixedAllowanceAmount || 0 }}
-                      </span>
-                      <span v-else>
-                        津貼 × {{ row.allowanceMultiplier || 0 }}
-                      </span>
+                      固定 ${{ row.fixedAllowanceAmount || 0 }}
                     </div>
                   </div>
                   <el-tag v-else type="info" size="small">日班</el-tag>
@@ -304,32 +299,9 @@
                   inactive-text="否"
                   active-color="#10b981"
                 />
-                <div class="form-help">啟用後可選擇固定津貼或倍率計算</div>
+                <div class="form-help">啟用後設定固定夜班津貼金額</div>
               </el-form-item>
-              <el-form-item label="津貼計算方式" v-if="shiftForm.hasAllowance && shiftForm.isNightShift">
-                <el-radio-group v-model="shiftForm.allowanceType">
-                  <el-radio label="multiplier">倍率計算</el-radio>
-                  <el-radio label="fixed">固定津貼</el-radio>
-                </el-radio-group>
-                <div class="form-help">選擇津貼計算方式：倍率計算或固定金額</div>
-              </el-form-item>
-              <el-form-item label="津貼倍數" v-if="shiftForm.allowanceType === 'multiplier'">
-                <el-input-number 
-                  v-model="shiftForm.allowanceMultiplier" 
-                  :min="0" 
-                  :max="10"
-                  :step="0.1"
-                  :precision="2"
-                  :disabled="!shiftForm.isNightShift || !shiftForm.hasAllowance"
-                  style="width: 100%" 
-                />
-                <div class="form-help">
-                  倍率計算：津貼金額 = 基本時薪 × 夜班時數 × 津貼倍數<br/>
-                  例如設定 0.5 表示夜班津貼為基本薪水的 50%<br/>
-                  例如設定 1.5 表示夜班津貼為基本薪水的 1.5 倍
-                </div>
-              </el-form-item>
-              <el-form-item label="固定津貼金額" v-if="shiftForm.allowanceType === 'fixed'">
+              <el-form-item label="固定津貼金額" v-if="shiftForm.hasAllowance && shiftForm.isNightShift">
                 <el-input-number 
                   v-model="shiftForm.fixedAllowanceAmount" 
                   :min="0" 
@@ -448,7 +420,7 @@
 </template>
 
 <script setup>
-import { computed, ref, onMounted } from 'vue'
+import { computed, ref, onMounted, watch } from 'vue'
 import { apiFetch } from '../../api'
 import { getToken } from '../../utils/tokenService'
 import { buildShiftStyle } from '../../utils/shiftColors'
@@ -565,12 +537,31 @@ const createEmptyShiftForm = () => ({
   // 夜班津貼設定
   isNightShift: false,
   hasAllowance: false,
-  allowanceType: 'multiplier', // 'multiplier' 或 'fixed'
-  allowanceMultiplier: 0,
   fixedAllowanceAmount: 0
 })
 
 const shiftForm = ref(createEmptyShiftForm())
+
+watch(
+  () => shiftForm.value.isNightShift,
+  (val) => {
+    if (val) {
+      shiftForm.value.hasAllowance = true
+    } else {
+      shiftForm.value.hasAllowance = false
+      shiftForm.value.fixedAllowanceAmount = 0
+    }
+  }
+)
+
+watch(
+  () => shiftForm.value.hasAllowance,
+  (val) => {
+    if (!val) {
+      shiftForm.value.fixedAllowanceAmount = 0
+    }
+  }
+)
 
 const shiftPreviewStyle = computed(() => {
   const style = buildShiftStyle(shiftForm.value)
