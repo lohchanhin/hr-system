@@ -305,8 +305,14 @@ export async function getMonthlyPayrollOverview(req, res) {
                 createdAt: { $gte: startDate, $lt: endDate }
               }).populate('form').lean();
 
-              const bonusData = aggregateBonusFromApprovals(approvals);
-              Object.assign(customData, bonusData);
+              if (approvals.length > 0) {
+                const bonusData = aggregateBonusFromApprovals(approvals);
+                Object.entries(bonusData || {}).forEach(([key, value]) => {
+                  if (typeof value === 'number') {
+                    customData[key] = value;
+                  }
+                });
+              }
             }
           } catch (error) {
             console.error(`Error aggregating approvals for employee ${employeeIdStr}:`, error);
