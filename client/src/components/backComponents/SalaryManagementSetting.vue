@@ -380,6 +380,11 @@
                     {{ (row.nightShiftHours || 0).toFixed(2) }}
                   </template>
                 </el-table-column>
+                <el-table-column prop="nightShiftAllowance" label="夜班津貼" width="100" align="right">
+                  <template #default="{ row }">
+                    {{ formatCurrency(row.nightShiftAllowance) }}
+                  </template>
+                </el-table-column>
               </el-table-column>
               
               <el-table-column prop="baseSalary" label="基本薪資" width="120" align="right">
