@@ -1129,18 +1129,16 @@ export async function seedTestUsers() {
     const salaryConfig = EMPLOYEE_SALARY_CONFIGS[i % EMPLOYEE_SALARY_CONFIGS.length];
     const salaryData = generateSalaryData(salaryConfig, i);
 
-    // 為部分員工設定夜班津貼（員工 0, 2, 4 設定為夜班員工）
+    // 移除夜班津貼的員工設定（現在由班別設定自動計算）
     const isNightShiftEmployee = i % 2 === 0;
     const monthlySalaryAdjustments = isNightShiftEmployee ? {
-      nightShiftAllowance: randomInRange(2000, 4000),
       performanceBonus: 0,
       otherBonuses: 0,
       healthInsuranceFee: 0,
       debtGarnishment: 0,
       otherDeductions: 0,
-      notes: '夜班員工，含固定夜班津貼',
+      notes: '夜班員工，夜班津貼由班別設定自動計算',
     } : {
-      nightShiftAllowance: 0,
       performanceBonus: 0,
       otherBonuses: 0,
       healthInsuranceFee: 0,
