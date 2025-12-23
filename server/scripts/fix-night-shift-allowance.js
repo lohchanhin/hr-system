@@ -64,8 +64,8 @@ async function fixNightShiftAllowances() {
 
         if (!shift.fixedAllowanceAmount || shift.fixedAllowanceAmount <= 0) {
           console.log(`⚠️  Shift "${shift.name}" (${shift.code}): hasAllowance=true but fixedAllowanceAmount=${shift.fixedAllowanceAmount}`);
-          console.log('   Fixing: Set fixedAllowanceAmount to 200 (default NT$200 per night shift)');
-          shift.fixedAllowanceAmount = 200; // Default NT$200 per night shift
+          console.log('   Fixing: Set fixedAllowanceAmount to 500 (default NT$500 per night shift)');
+          shift.fixedAllowanceAmount = 500; // Default NT$500 per night shift
           modified = true;
           fixedCount++;
         }
@@ -85,7 +85,7 @@ async function fixNightShiftAllowances() {
   if (fixedCount > 0) {
     console.log('\n✅ Fixed night shift allowance configurations!');
     console.log('   Default values set:');
-    console.log('   - Fixed allowance: NT$200 per night shift');
+    console.log('   - Fixed allowance: NT$500 per night shift');
     console.log('\n   You can adjust this value through the UI if needed.');
   } else {
     console.log('\n✅ All night shift allowance configurations are already valid!');

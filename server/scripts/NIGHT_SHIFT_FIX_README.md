@@ -3,58 +3,81 @@
 ## Problem
 Night shifts are being counted in the monthly salary overview but no allowance is being calculated. This happens when:
 - A shift has `isNightShift: true` and `hasAllowance: true`
-- But `allowanceMultiplier` is 0 or not set (for multiplier type)
-- Or `fixedAllowanceAmount` is 0 or not set (for fixed type)
+- But `fixedAllowanceAmount` is 0 or not set
 
 ## Solution
 This script checks all shift configurations and:
-1. Sets default `allowanceType: 'multiplier'` if not set
-2. Reports any shifts with invalid allowance configuration
-3. Provides guidance on how to fix them
+1. Automatically enables `hasAllowance: true` for all shifts marked as `isNightShift: true`
+2. Sets `fixedAllowanceAmount: 500` (NT$500 per night shift) for shifts with missing or zero allowance amounts
+3. Reports all fixes made
 
 ## Usage
 
-### Check for issues without fixing
+### Run the fix script
 ```bash
 cd server
 node scripts/fix-night-shift-allowance.js
 ```
 
-### Fix the issue
-To automatically set a default multiplier (e.g., 0.34 for 34% allowance), uncomment lines 76-78 in the script:
-```javascript
-// shift.allowanceMultiplier = 0.34; // 34% default
-// modified = true;
-// fixedCount++;
-```
+The script will:
+- Connect to the MongoDB database specified in `.env` file
+- Find all shifts with `isNightShift: true`
+- Enable `hasAllowance: true` if it's disabled
+- Set `fixedAllowanceAmount: 500` if it's 0 or missing
+- Save changes and report the number of shifts fixed
 
-Then run:
-```bash
-node scripts/fix-night-shift-allowance.js
+### Expected Output
+```
+✅ Connected to MongoDB
+🔍 Checking night shift allowance configurations...
+
+📝 Shift "夜班" (NIGHT): isNightShift=true but hasAllowance=false
+⚠️  Shift "夜班" (NIGHT): hasAllowance=true but fixedAllowanceAmount=0
+   Fixing: Set fixedAllowanceAmount to 500 (default NT$500 per night shift)
+
+📊 Summary:
+   Settings checked: 1
+   Shifts fixed: 1
+
+✅ Fixed night shift allowance configurations!
+   Default values set:
+   - Fixed allowance: NT$500 per night shift
+
+   You can adjust this value through the UI if needed.
+
+✅ Disconnected from MongoDB
 ```
 
 ## Manual Fix via UI
-1. Go to 考勤設定 (Attendance Settings)
-2. Find the night shift班別 (Shift)
-3. Ensure the following are set:
-   - ☑️ 是否為夜班 (Is Night Shift)
-   - ☑️ 是否有夜班津貼 (Has Allowance)
-   - If using "倍率計算" (Multiplier): Set 津貼倍數 > 0 (e.g., 0.34)
-   - If using "固定津貼" (Fixed): Set 固定津貼金額 > 0 (e.g., 200)
+If you prefer to manually configure the allowance:
+
+1. Go to **排班與班別管理設定** (Shift Schedule Settings)
+2. Click on **班別** (Shifts) tab
+3. Find the night shift and click **編輯** (Edit)
+4. Ensure the following are set:
+   - ☑️ **是否為夜班** (Is Night Shift) = Yes
+   - ☑️ **是否有夜班津貼** (Has Allowance) = Yes
+   - **固定津貼金額** (Fixed Allowance Amount) > 0 (e.g., 500)
+5. Click **儲存** (Save)
 
 ## Changes Made
 The following fixes were implemented:
 
 ### 1. nightShiftAllowanceService.js
-- Added logging when shifts have invalid configuration
-- Handle undefined `allowanceType` by defaulting to 'multiplier'
+- Calculates night shift allowance based on `fixedAllowanceAmount` per shift
+- Logs configuration issues when shifts have invalid settings
+- Returns detailed breakdown with `configurationIssues` array
 
 ### 2. shiftController.js
-- Added handling for `allowanceType` and `fixedAllowanceAmount` fields
-- Added validation: when creating/updating shifts with `hasAllowance=true`, require valid allowance configuration
+- Validates that `fixedAllowanceAmount > 0` when `hasAllowance: true`
+- Automatically enables `hasAllowance` when a shift is marked as `isNightShift`
+- Prevents saving invalid configurations
 
-### 3. Validation
+### 3. fix-night-shift-allowance.js
+- Automatically fixes all night shifts with missing allowance configuration
+- Sets default value to NT$500 per night shift (can be adjusted in the script)
+
+### 4. Validation
 Now when creating or updating a shift via API with `hasAllowance: true`:
-- If `allowanceType` is 'multiplier': `allowanceMultiplier` must be > 0
-- If `allowanceType` is 'fixed': `fixedAllowanceAmount` must be > 0
-- Otherwise, an error is returned: "啟用夜班津貼時，倍率必須大於 0" or "啟用夜班津貼時，固定津貼金額必須大於 0"
+- `fixedAllowanceAmount` must be > 0
+- Otherwise, an error is returned: "啟用夜班津貼時，固定津貼金額必須大於 0"
