@@ -43,8 +43,8 @@ async function fixNightShiftAllowances() {
     return;
   }
   
-  let fixedCount = 0;
-  let issuesFound = 0;
+  let shiftsFixed = 0;
+  let settingsSaved = 0;
   
   for (const setting of settings) {
     if (!setting.shifts || setting.shifts.length === 0) {
@@ -56,10 +56,13 @@ async function fixNightShiftAllowances() {
     for (const shift of setting.shifts) {
       // Check if this is a night shift with allowance enabled
       if (shift.isNightShift) {
+        let shiftNeedsFixing = false;
+        
         if (!shift.hasAllowance) {
           console.log(`📝 Shift "${shift.name}" (${shift.code}): isNightShift=true but hasAllowance=false`);
           shift.hasAllowance = true;
           modified = true;
+          shiftNeedsFixing = true;
         }
 
         if (!shift.fixedAllowanceAmount || shift.fixedAllowanceAmount <= 0) {
@@ -67,22 +70,27 @@ async function fixNightShiftAllowances() {
           console.log('   Fixing: Set fixedAllowanceAmount to 500 (default NT$500 per night shift)');
           shift.fixedAllowanceAmount = 500; // Default NT$500 per night shift
           modified = true;
-          fixedCount++;
+          shiftNeedsFixing = true;
+        }
+        
+        if (shiftNeedsFixing) {
+          shiftsFixed++;
         }
       }
     }
     
     if (modified) {
       await setting.save();
-      fixedCount++;
+      settingsSaved++;
     }
   }
   
   console.log('\n📊 Summary:');
   console.log(`   Settings checked: ${settings.length}`);
-  console.log(`   Shifts fixed: ${fixedCount}`);
+  console.log(`   Shifts fixed: ${shiftsFixed}`);
+  console.log(`   Settings saved: ${settingsSaved}`);
   
-  if (fixedCount > 0) {
+  if (shiftsFixed > 0) {
     console.log('\n✅ Fixed night shift allowance configurations!');
     console.log('   Default values set:');
     console.log('   - Fixed allowance: NT$500 per night shift');
