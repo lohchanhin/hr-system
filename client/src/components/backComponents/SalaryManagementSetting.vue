@@ -1571,6 +1571,20 @@ const showExplanationDialog = ref(false)
       const res = await apiFetch(`/api/payroll/complete-data/${employee._id}/${overviewMonth.value}`)
       if (res.ok) {
         employeeDetailData.value = await res.json()
+        
+        // Merge night shift data from complete-data response into selectedEmployee
+        // This ensures the detail view shows the most up-to-date night shift allowance
+        if (employeeDetailData.value) {
+          selectedEmployee.value = {
+            ...selectedEmployee.value,
+            nightShiftDays: employeeDetailData.value.nightShiftDays ?? selectedEmployee.value.nightShiftDays,
+            nightShiftHours: employeeDetailData.value.nightShiftHours ?? selectedEmployee.value.nightShiftHours,
+            nightShiftAllowance: employeeDetailData.value.nightShiftAllowance ?? selectedEmployee.value.nightShiftAllowance,
+            nightShiftCalculationMethod: employeeDetailData.value.nightShiftCalculationMethod ?? selectedEmployee.value.nightShiftCalculationMethod,
+            nightShiftBreakdown: employeeDetailData.value.nightShiftBreakdown ?? selectedEmployee.value.nightShiftBreakdown,
+            nightShiftConfigurationIssues: employeeDetailData.value.nightShiftConfigurationIssues ?? selectedEmployee.value.nightShiftConfigurationIssues
+          }
+        }
       } else {
         console.error('Failed to fetch employee detail data')
         employeeDetailData.value = null

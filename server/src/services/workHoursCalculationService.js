@@ -4,6 +4,7 @@ import AttendanceSetting from '../models/AttendanceSetting.js';
 import ApprovalRequest from '../models/approval_request.js';
 import Employee from '../models/Employee.js';
 import { getLeaveFieldIds } from './leaveFieldService.js';
+import { calculateNightShiftAllowance } from './nightShiftAllowanceService.js';
 import { 
   WORK_HOURS_CONFIG,
   LEAVE_POLICY,
@@ -594,13 +595,14 @@ export async function calculateOvertimePay(employeeId, month) {
  * @returns {Object} - 完整的工作時數和薪資計算結果
  */
 export async function calculateCompleteWorkData(employeeId, month) {
-  const [workHours, leaveImpact, overtimePay] = await Promise.all([
+  const employee = await Employee.findById(employeeId);
+  
+  const [workHours, leaveImpact, overtimePay, nightShiftAllowanceData] = await Promise.all([
     calculateWorkHours(employeeId, month),
     calculateLeaveImpact(employeeId, month),
-    calculateOvertimePay(employeeId, month)
+    calculateOvertimePay(employeeId, month),
+    calculateNightShiftAllowance(employeeId, month, employee)
   ]);
-  
-  const employee = await Employee.findById(employeeId);
   
   // 計算基本薪資 - 使用配置的轉換函數
   let baseSalary = 0;
@@ -638,6 +640,14 @@ export async function calculateCompleteWorkData(employeeId, month) {
     // 加班資料
     overtimeHours: overtimePay.overtimeHours,
     overtimePay: overtimePay.overtimePay,
+    
+    // 夜班資料
+    nightShiftDays: nightShiftAllowanceData?.nightShiftDays ?? 0,
+    nightShiftHours: nightShiftAllowanceData?.nightShiftHours ?? 0,
+    nightShiftAllowance: nightShiftAllowanceData?.allowanceAmount ?? 0,
+    nightShiftCalculationMethod: nightShiftAllowanceData?.calculationMethod ?? 'not_calculated',
+    nightShiftBreakdown: nightShiftAllowanceData?.shiftBreakdown ?? [],
+    nightShiftConfigurationIssues: nightShiftAllowanceData?.configurationIssues ?? [],
     
     // 基本薪資 (已扣除請假)
     baseSalary: Math.round(baseSalary),
