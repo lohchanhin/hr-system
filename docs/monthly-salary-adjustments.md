@@ -8,11 +8,12 @@
 
 當員工有固定的每月薪資調整項目時，例如：
 - 固定的健保費自付額
-- 固定的夜班津貼
 - 固定的績效獎金
 - 債權扣押等固定扣款
 
 可以直接在員工個人資料中設定這些項目，系統會在計算薪資時自動套用這些設定值。
+
+**注意**：夜班津貼由班別設定自動計算，不包含在此每月薪資調整項目中。
 
 ## 設定方式
 
@@ -29,9 +30,10 @@
 - **其他扣款**：其他固定扣款項目
 
 #### 獎金/津貼項目
-- **夜班補助津貼**：固定的夜班津貼
 - **人力績效獎金**：固定的績效獎金
 - **其他獎金**：其他固定獎金項目
+
+**注意**：夜班補助津貼已從此處移除，改由班別設定自動計算。
 
 #### 說明欄位
 - **調整說明**：記錄薪資調整的原因或說明
@@ -59,9 +61,8 @@
   salaryAmount: 45000,
   monthlySalaryAdjustments: {
     healthInsuranceFee: 750,      // 固定健保費
-    nightShiftAllowance: 2500,    // 固定夜班津貼
     performanceBonus: 3000,       // 固定績效獎金
-    notes: "固定夜班津貼與績效獎金"
+    notes: "固定績效獎金"
   }
 }
 ```
@@ -75,9 +76,9 @@
 實領金額: 43,105 元
 
 獎金項目:
-  - 夜班津貼: 2,500 元（來自個人設定）
   - 績效獎金: 3,000 元（來自個人設定）
-獎金合計: 5,500 元
+  - 夜班津貼: 由班別設定自動計算（非個人設定）
+獎金合計: 3,000 元（不含夜班津貼）
 ```
 
 ## API 使用方式
@@ -98,10 +99,9 @@ GET /api/employees/:id
     "healthInsuranceFee": 750,
     "debtGarnishment": 0,
     "otherDeductions": 0,
-    "nightShiftAllowance": 2500,
     "performanceBonus": 3000,
     "otherBonuses": 0,
-    "notes": "固定夜班津貼與績效獎金"
+    "notes": "固定績效獎金"
   }
 }
 ```
@@ -115,7 +115,6 @@ Content-Type: application/json
 {
   "monthlySalaryAdjustments": {
     "healthInsuranceFee": 800,
-    "nightShiftAllowance": 2700,
     "performanceBonus": 3500,
     "notes": "2024年調整"
   }
@@ -149,10 +148,12 @@ Content-Type: application/json
   "month": "2024-01-01",
   "customData": {
     "healthInsuranceFee": 850,  // 覆蓋個人設定的 750
-    "nightShiftAllowance": 3000  // 覆蓋個人設定的 2500
+    "performanceBonus": 4000     // 覆蓋個人設定的績效獎金
   }
 }
 ```
+
+**注意**：夜班津貼由班別設定與排班記錄自動計算，不在 customData 中設定。
 
 ## 資料庫結構
 
@@ -167,7 +168,7 @@ Content-Type: application/json
     otherDeductions: { type: Number, default: 0 },
     
     // 獎金/津貼項目
-    nightShiftAllowance: { type: Number, default: 0 },
+    // 注意：nightShiftAllowance 已移除，改由班別設定自動計算
     performanceBonus: { type: Number, default: 0 },
     otherBonuses: { type: Number, default: 0 },
     

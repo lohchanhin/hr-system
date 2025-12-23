@@ -97,10 +97,9 @@ export async function calculateEmployeePayroll(employeeId, month, customData = {
   }
   
   // 獎金項目 (Stage B) - 加班費加入獎金
-  // 優先使用自定義值，然後使用動態計算的夜班津貼，最後使用員工設定的每月調整項目
+  // 夜班津貼使用動態計算值或自定義值（不再使用員工個人設定）
   const nightShiftAllowance = customData.nightShiftAllowance ?? 
-                              nightShiftAllowanceData?.allowanceAmount ?? 
-                              employee.monthlySalaryAdjustments?.nightShiftAllowance ?? 0;
+                              nightShiftAllowanceData?.allowanceAmount ?? 0;
   const performanceBonus = customData.performanceBonus ?? 
                            employee.monthlySalaryAdjustments?.performanceBonus ?? 0;
   const otherBonuses = customData.otherBonuses ?? 

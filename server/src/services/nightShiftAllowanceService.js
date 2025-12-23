@@ -104,10 +104,8 @@ export async function calculateNightShiftAllowance(employeeId, month, employee) 
       }
     }
 
-    // 如果有計算出的夜班津貼，使用它；否則使用員工設定的固定津貼
-    const finalAllowance = totalAllowance > 0
-      ? totalAllowance
-      : (employee.monthlySalaryAdjustments?.nightShiftAllowance || 0);
+    // 如果有計算出的夜班津貼，使用它；否則為 0（不再使用員工設定的固定津貼）
+    const finalAllowance = totalAllowance > 0 ? totalAllowance : 0;
 
     // 判斷計算方式
     let calculationMethod = 'not_calculated';
@@ -116,13 +114,9 @@ export async function calculateNightShiftAllowance(employeeId, month, employee) 
         calculationMethod = 'calculated';
       } else if (configurationIssues.length > 0) {
         calculationMethod = 'configuration_error';
-      } else if (finalAllowance > 0) {
-        calculationMethod = 'fixed';
       } else {
         calculationMethod = 'no_allowance_configured';
       }
-    } else if (finalAllowance > 0) {
-      calculationMethod = 'fixed';
     }
 
     return {
@@ -135,11 +129,11 @@ export async function calculateNightShiftAllowance(employeeId, month, employee) 
     };
   } catch (error) {
     console.error(`Error calculating night shift allowance for employee ${employeeId}:`, error);
-    // 發生錯誤時，返回員工設定的固定津貼
+    // 發生錯誤時，返回 0（不再使用員工設定的固定津貼）
     return {
       nightShiftDays: 0,
       nightShiftHours: 0,
-      allowanceAmount: employee.monthlySalaryAdjustments?.nightShiftAllowance || 0,
+      allowanceAmount: 0,
       calculationMethod: 'error_fallback',
       shiftBreakdown: [],
       configurationIssues: [`計算錯誤: ${error.message}`],
