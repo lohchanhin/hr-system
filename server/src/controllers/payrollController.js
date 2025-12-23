@@ -15,7 +15,7 @@ import {
   calculateOvertimePay,
   calculateCompleteWorkData
 } from '../services/workHoursCalculationService.js';
-import { initializeLaborInsuranceRates } from '../services/laborInsuranceService.js';
+import { initializeLaborInsuranceRates, refreshLaborInsuranceRates } from '../services/laborInsuranceService.js';
 import { generatePayrollExcel } from '../services/payrollExportService.js';
 import { aggregateBonusFromApprovals } from '../utils/payrollPreviewUtils.js';
 
@@ -198,6 +198,19 @@ export async function initializeLaborInsuranceRatesController(req, res) {
   try {
     const count = await initializeLaborInsuranceRates();
     res.json({ success: true, count, message: 'Labor insurance rates initialized' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+}
+
+export async function refreshLaborInsuranceRatesController(req, res) {
+  try {
+    const result = await refreshLaborInsuranceRates();
+    res.json({
+      success: true,
+      ...result,
+      message: result.isUpToDate ? '勞保級距已是最新' : '已取得最新勞保級距'
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

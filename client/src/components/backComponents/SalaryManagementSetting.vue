@@ -1409,7 +1409,7 @@ const showExplanationDialog = ref(false)
       if (emp.nightShiftCalculationMethod === 'calculated') {
         description = `${emp.nightShiftDays || 0} 天夜班，共 ${(emp.nightShiftHours || 0).toFixed(2)} 小時`
       } else if (emp.nightShiftCalculationMethod === 'fixed') {
-        description = '固定津貼'
+        description = '固定津貼（每次夜班依班次固定金額）'
       } else if (emp.nightShiftCalculationMethod === 'configuration_error') {
         description = `配置錯誤：${emp.nightShiftDays || 0} 天夜班但津貼為 0`
       } else if (emp.nightShiftCalculationMethod === 'no_allowance_configured') {
@@ -1429,7 +1429,7 @@ const showExplanationDialog = ref(false)
         emp.nightShiftBreakdown.forEach((shift) => {
           breakdown.push({
             item: `  ↳ ${shift.shiftName} (${shift.shiftCode})`,
-            description: shift.calculationDetail || `${shift.allowanceType} - ${shift.workHours.toFixed(2)} 小時`,
+            description: shift.calculationDetail || `${shift.allowanceType || '固定津貼'} - ${shift.workHours.toFixed(2)} 小時`,
             amount: shift.allowanceAmount,
             type: 'bonus-detail',
             hasIssue: shift.hasIssue

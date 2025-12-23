@@ -28,12 +28,10 @@ const attendanceSettingSchema = new mongoose.Schema({
         type: String,
         trim: true,
       },
-      // Night shift allowance settings
+      // Night shift allowance settings (fixed allowance only)
       isNightShift: { type: Boolean, default: false }, // Whether this is a night shift
       hasAllowance: { type: Boolean, default: false }, // Whether allowance is enabled
-      allowanceType: { type: String, enum: ['multiplier', 'fixed'], default: 'multiplier' }, // Allowance type: multiplier or fixed amount
-      allowanceMultiplier: { type: Number, default: 0.34 }, // Allowance multiplier (used when allowanceType is 'multiplier') - 0.34 = 34% Taiwan standard
-      fixedAllowanceAmount: { type: Number, default: 200 }, // Fixed allowance amount (used when allowanceType is 'fixed') - NT$200 default
+      fixedAllowanceAmount: { type: Number, default: 0 }, // Fixed allowance amount per night shift
     }
   ],
   abnormalRules: {

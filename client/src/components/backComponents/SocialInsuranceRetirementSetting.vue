@@ -12,14 +12,21 @@
               <el-form-item label="勞保加退保流程 (新進/離職)">
                 <el-switch v-model="laborForm.enableRegisterFlow" />
               </el-form-item>
-              <el-form-item label="每年勞保費率/投保級距">
-                <el-switch v-model="laborForm.autoUpdateRate" />
-                <small>若啟用，系統可自動跟隨勞保局公告更新</small>
-              </el-form-item>
-              <el-form-item label="投保級距異動提醒(天)">
-                <el-input-number v-model="laborForm.remindDays" :min="1" />
-                <small>異動前幾天通知 HR ？</small>
-              </el-form-item>
+            <el-form-item label="每年勞保費率/投保級距">
+              <el-switch v-model="laborForm.autoUpdateRate" />
+              <small>若啟用，系統可自動跟隨勞保局公告更新</small>
+            </el-form-item>
+            <el-form-item label="取得官方最新級距">
+              <el-button type="primary" @click="refreshLaborInsuranceRates">取得最新</el-button>
+              <div class="form-help">定期與勞保局公告比對並更新級距</div>
+              <div v-if="laborRateStatus.lastFetched" class="form-help">
+                上次確認：{{ laborRateStatus.lastFetched }} ｜ {{ laborRateStatus.message }}
+              </div>
+            </el-form-item>
+            <el-form-item label="投保級距異動提醒(天)">
+              <el-input-number v-model="laborForm.remindDays" :min="1" />
+              <small>異動前幾天通知 HR ？</small>
+            </el-form-item>
               <el-form-item label="每月勞保費計算與檢核">
                 <el-switch v-model="laborForm.monthlyCalcCheck" />
               </el-form-item>
@@ -89,23 +96,47 @@
     </div>
   </template>
   
-  <script setup>
-  import { ref } from 'vue'
+<script setup>
+import { ref } from 'vue'
+import { apiFetch } from '@/api'
   
   const activeTab = ref('laborInsurance')
   
   // ==================== 勞保 ====================
-  const laborForm = ref({
-    enableRegisterFlow: true,
-    autoUpdateRate: true,
-    remindDays: 7,       // 7天前提醒
-    monthlyCalcCheck: true,
-    enableExport: true
-  })
-  function saveLaborSetting() {
-    console.log('勞保設定:', laborForm.value)
-    alert('已儲存「勞保設定」')
+const laborForm = ref({
+  enableRegisterFlow: true,
+  autoUpdateRate: true,
+  remindDays: 7,       // 7天前提醒
+  monthlyCalcCheck: true,
+  enableExport: true
+})
+const laborRateStatus = ref({
+  lastFetched: '',
+  message: ''
+})
+function saveLaborSetting() {
+  console.log('勞保設定:', laborForm.value)
+  alert('已儲存「勞保設定」')
+}
+
+async function refreshLaborInsuranceRates() {
+  try {
+    const res = await apiFetch('/api/payroll/insurance/refresh', { method: 'POST' })
+    if (res.ok) {
+      const data = await res.json()
+      laborRateStatus.value = {
+        lastFetched: new Date().toLocaleString(),
+        message: data.message || (data.isUpToDate ? '勞保級距已是最新' : '已同步最新勞保級距')
+      }
+      alert(laborRateStatus.value.message)
+    } else {
+      alert('取得最新勞保級距失敗')
+    }
+  } catch (error) {
+    console.error('refreshLaborInsuranceRates error', error)
+    alert('取得最新勞保級距失敗')
   }
+}
   
   // ==================== 健保 ====================
   const healthForm = ref({

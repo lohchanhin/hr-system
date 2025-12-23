@@ -1,12 +1,6 @@
 import ShiftSchedule from '../models/ShiftSchedule.js';
 import AttendanceSetting from '../models/AttendanceSetting.js';
-import { convertToHourlyRate, WORK_HOURS_CONFIG } from '../config/salaryConfig.js';
-
-// Constants for allowance types
-const ALLOWANCE_TYPES = {
-  FIXED: 'fixed',
-  MULTIPLIER: 'multiplier'
-};
+import { WORK_HOURS_CONFIG } from '../config/salaryConfig.js';
 
 /**
  * 計算員工在指定月份的夜班津貼
@@ -78,48 +72,28 @@ export async function calculateNightShiftAllowance(employeeId, month, employee) 
         const workHours = calculateShiftHours(shift);
         totalNightShiftHours += workHours;
 
-        // 根據津貼類型計算該班次的津貼
+        // Fixed allowance: pay a fixed amount per night shift
+        const allowanceAmount = Number(shift.fixedAllowanceAmount);
         let shiftAllowance = 0;
-        const allowanceType = shift.allowanceType || 'multiplier'; // Default to multiplier if not set
         let calculationDetail = '';
         let hasIssue = false;
-        
-        if (allowanceType === ALLOWANCE_TYPES.FIXED) {
-          // 固定津貼：直接使用設定的金額
-          shiftAllowance = shift.fixedAllowanceAmount || 0;
-          if (shiftAllowance === 0) {
-            const issue = `班別「${shift.name}」(${shift.code}) 設定為固定津貼但金額為 0 或未設定`;
-            console.warn(`Night shift "${shift.name}" (${shift.code}) has allowance type 'fixed' but fixedAllowanceAmount is 0 or not set.`);
-            configurationIssues.push(issue);
-            calculationDetail = `固定津貼未設定 (應設定 fixedAllowanceAmount > 0)`;
-            hasIssue = true;
-          } else {
-            calculationDetail = `固定津貼: NT$ ${shiftAllowance.toFixed(2)}`;
-          }
+
+        if (allowanceAmount > 0 && Number.isFinite(allowanceAmount)) {
+          shiftAllowance = allowanceAmount;
+          calculationDetail = `固定津貼: NT$ ${allowanceAmount.toFixed(0)} / 班`;
         } else {
-          // 倍率計算：津貼 = 時薪 × 工作時數 × 津貼倍數
-          const multiplier = shift.allowanceMultiplier;
-          if (multiplier > 0) {
-            const hourlyRate = convertToHourlyRate(
-              employee.salaryAmount || 0,
-              employee.salaryType || '月薪'
-            );
-            shiftAllowance = hourlyRate * workHours * multiplier;
-            calculationDetail = `浮動津貼: NT$ ${hourlyRate.toFixed(2)}/時 × ${workHours.toFixed(2)}時 × ${multiplier} = NT$ ${shiftAllowance.toFixed(2)}`;
-          } else {
-            const issue = `班別「${shift.name}」(${shift.code}) 設定為倍率計算但倍率為 ${multiplier} 或未設定`;
-            console.warn(`Night shift "${shift.name}" (${shift.code}) has allowance enabled but multiplier is ${multiplier}. Please set a valid multiplier > 0 in shift settings.`);
-            configurationIssues.push(issue);
-            calculationDetail = `倍率未設定 (應設定 allowanceMultiplier > 0，例如 0.34 表示 34% 津貼)`;
-            hasIssue = true;
-          }
+          const issue = `班別「${shift.name}」(${shift.code}) 已啟用夜班津貼但金額未設定`;
+          console.warn(`Night shift "${shift.name}" (${shift.code}) is missing fixedAllowanceAmount.`);
+          configurationIssues.push(issue);
+          calculationDetail = '固定津貼未設定 (請設定固定津貼金額)';
+          hasIssue = true;
         }
         
         // 記錄班次詳情
         shiftBreakdown.push({
           shiftName: shift.name,
           shiftCode: shift.code,
-          allowanceType: allowanceType === ALLOWANCE_TYPES.FIXED ? '固定津貼' : '浮動津貼',
+          allowanceType: '固定津貼',
           workHours,
           allowanceAmount: shiftAllowance,
           calculationDetail,

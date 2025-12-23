@@ -69,18 +69,21 @@ function buildShiftPayload(input, existing = {}) {
     bgColor: merged.bgColor ?? existing.bgColor ?? '',
     // 夜班津貼設定
     isNightShift: Boolean(merged.isNightShift ?? existing.isNightShift ?? false),
-    hasAllowance: Boolean(merged.hasAllowance ?? existing.hasAllowance ?? false),
-    allowanceType: merged.allowanceType ?? existing.allowanceType ?? 'multiplier', // Default to multiplier
-    allowanceMultiplier: merged.allowanceMultiplier !== undefined ? Number(merged.allowanceMultiplier) : (existing.allowanceMultiplier ?? 0.34), // Default 0.34 = 34% Taiwan standard
-    fixedAllowanceAmount: merged.fixedAllowanceAmount !== undefined ? Number(merged.fixedAllowanceAmount) : (existing.fixedAllowanceAmount ?? 200), // Default NT$200
+    hasAllowance: Boolean(merged.hasAllowance ?? existing.hasAllowance ?? (merged.isNightShift ?? existing.isNightShift ?? false)),
+    fixedAllowanceAmount: merged.fixedAllowanceAmount !== undefined
+      ? Number(merged.fixedAllowanceAmount)
+      : (existing.fixedAllowanceAmount ?? 0),
   };
 
+  // 非夜班班別不啟用津貼
+  if (!payload.isNightShift) {
+    payload.hasAllowance = false;
+    payload.fixedAllowanceAmount = 0;
+  }
+
   // 驗證夜班津貼設定
-  if (payload.hasAllowance) {
-    if (payload.allowanceType === 'multiplier' && (!payload.allowanceMultiplier || payload.allowanceMultiplier <= 0)) {
-      throw new Error('啟用夜班津貼時，倍率必須大於 0');
-    }
-    if (payload.allowanceType === 'fixed' && (!payload.fixedAllowanceAmount || payload.fixedAllowanceAmount <= 0)) {
+  if (payload.isNightShift && payload.hasAllowance) {
+    if (!Number.isFinite(payload.fixedAllowanceAmount) || payload.fixedAllowanceAmount <= 0) {
       throw new Error('啟用夜班津貼時，固定津貼金額必須大於 0');
     }
   }

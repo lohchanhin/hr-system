@@ -58,13 +58,13 @@ describe('夜班員工與夜班津貼測試資料驗證', () => {
     expect(nightShift.name).toContain('夜班');
     expect(nightShift.isNightShift).toBe(true);
     expect(nightShift.hasAllowance).toBe(true);
-    expect(nightShift.allowanceMultiplier).toBeGreaterThan(0);
+    expect(nightShift.fixedAllowanceAmount).toBeGreaterThan(0);
     
     console.log('✓ 夜班設定:', {
       name: nightShift.name,
       startTime: nightShift.startTime,
       endTime: nightShift.endTime,
-      allowanceMultiplier: nightShift.allowanceMultiplier,
+      fixedAllowanceAmount: nightShift.fixedAllowanceAmount,
       crossDay: nightShift.crossDay
     });
   });

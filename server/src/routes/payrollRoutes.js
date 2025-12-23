@@ -12,6 +12,7 @@ import {
   exportPayrollExcel,
   getLaborInsuranceRates,
   initializeLaborInsuranceRatesController,
+  refreshLaborInsuranceRatesController,
   getMonthlyPayrollOverview,
   getEmployeeWorkHours,
   getEmployeeLeaveImpact,
@@ -48,6 +49,7 @@ router.post('/export', exportPayrollExcel);
 // Labor insurance rates
 router.get('/insurance/rates', getLaborInsuranceRates);
 router.post('/insurance/initialize', initializeLaborInsuranceRatesController);
+router.post('/insurance/refresh', refreshLaborInsuranceRatesController);
 
 // Monthly payroll overview
 router.get('/overview/monthly', getMonthlyPayrollOverview);
