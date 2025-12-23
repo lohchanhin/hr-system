@@ -104,7 +104,7 @@ node scripts/fix-night-shift-allowance.js
 如果您希望調整預設的津貼金額（例如改為 400 元或 600 元）：
 
 1. 開啟 `server/scripts/fix-night-shift-allowance.js`
-2. 找到第 68 行：
+2. 找到包含以下內容的行：
 ```javascript
 shift.fixedAllowanceAmount = 500; // Default NT$500 per night shift
 ```
