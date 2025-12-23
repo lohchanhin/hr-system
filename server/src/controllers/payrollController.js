@@ -389,6 +389,8 @@ export async function getMonthlyPayrollOverview(req, res) {
         otherBonuses: payroll?.otherBonuses || 0,
         totalBonus: totalBonusValue,
         totalPayment: totalPaymentValue,
+        insuranceLevel: payroll?.insuranceLevel,
+        insuranceRate: payroll?.insuranceRate,
         hasPayrollRecord: !!payrollMap[employeeIdStr],
         payrollRecordId: payrollMap[employeeIdStr]?._id
       };

@@ -23,6 +23,36 @@
                 上次確認：{{ laborRateStatus.lastFetched }} ｜ {{ laborRateStatus.message }}
               </div>
             </el-form-item>
+            <el-form-item label="目前勞保級距表">
+              <el-button type="info" @click="showLaborRateTable = !showLaborRateTable">
+                {{ showLaborRateTable ? '隱藏級距表' : '顯示級距表' }}
+              </el-button>
+              <div v-if="showLaborRateTable" style="margin-top: 15px;">
+                <el-table :data="laborInsuranceRates" border stripe max-height="400">
+                  <el-table-column prop="level" label="等級" width="80" align="center" />
+                  <el-table-column prop="insuredSalary" label="投保薪資" width="120" align="right">
+                    <template #default="{ row }">
+                      NT$ {{ row.insuredSalary.toLocaleString() }}
+                    </template>
+                  </el-table-column>
+                  <el-table-column prop="workerFee" label="員工負擔" width="120" align="right">
+                    <template #default="{ row }">
+                      NT$ {{ row.workerFee.toLocaleString() }}
+                    </template>
+                  </el-table-column>
+                  <el-table-column prop="employerFee" label="雇主負擔" width="120" align="right">
+                    <template #default="{ row }">
+                      NT$ {{ row.employerFee.toLocaleString() }}
+                    </template>
+                  </el-table-column>
+                  <el-table-column prop="ordinaryRate" label="普通費率 (%)" width="120" align="center" />
+                  <el-table-column prop="employmentInsuranceRate" label="就保費率 (%)" width="120" align="center" />
+                </el-table>
+                <div class="form-help" style="margin-top: 10px;">
+                  共 {{ laborInsuranceRates.length }} 個級距
+                </div>
+              </div>
+            </el-form-item>
             <el-form-item label="投保級距異動提醒(天)">
               <el-input-number v-model="laborForm.remindDays" :min="1" />
               <small>異動前幾天通知 HR ？</small>
@@ -97,7 +127,7 @@
   </template>
   
 <script setup>
-import { ref } from 'vue'
+import { ref, onMounted } from 'vue'
 import { apiFetch } from '@/api'
   
   const activeTab = ref('laborInsurance')
@@ -114,9 +144,27 @@ const laborRateStatus = ref({
   lastFetched: '',
   message: ''
 })
+const showLaborRateTable = ref(false)
+const laborInsuranceRates = ref([])
+
 function saveLaborSetting() {
   console.log('勞保設定:', laborForm.value)
   alert('已儲存「勞保設定」')
+}
+
+async function fetchLaborInsuranceRates() {
+  try {
+    const res = await apiFetch('/api/payroll/insurance/rates')
+    if (res.ok) {
+      laborInsuranceRates.value = await res.json()
+    } else {
+      console.error('Failed to fetch labor insurance rates')
+      laborInsuranceRates.value = []
+    }
+  } catch (error) {
+    console.error('Error fetching labor insurance rates:', error)
+    laborInsuranceRates.value = []
+  }
 }
 
 async function refreshLaborInsuranceRates() {
@@ -129,6 +177,8 @@ async function refreshLaborInsuranceRates() {
         message: data.message || (data.isUpToDate ? '勞保級距已是最新' : '已同步最新勞保級距')
       }
       alert(laborRateStatus.value.message)
+      // Refresh the rate table after update
+      await fetchLaborInsuranceRates()
     } else {
       alert('取得最新勞保級距失敗')
     }
@@ -137,6 +187,10 @@ async function refreshLaborInsuranceRates() {
     alert('取得最新勞保級距失敗')
   }
 }
+
+onMounted(() => {
+  fetchLaborInsuranceRates()
+})
   
   // ==================== 健保 ====================
   const healthForm = ref({
@@ -172,5 +226,11 @@ async function refreshLaborInsuranceRates() {
   
   .tab-content {
     margin-top: 20px;
+  }
+
+  .form-help {
+    margin-top: 5px;
+    font-size: 12px;
+    color: #909399;
   }
   </style>
