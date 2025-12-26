@@ -165,6 +165,36 @@ function createDateFromParts(parts, timeZone) {
   return new Date(naiveUtc - offset)
 }
 
+function processHourWithAmPm(hour, ampmIndicator) {
+  let hourNumber = Number(hour)
+  if (Number.isNaN(hourNumber)) {
+    return null
+  }
+  if (ampmIndicator === 'AM' && hourNumber === 12) {
+    hourNumber = 0
+  } else if (ampmIndicator === 'PM' && hourNumber !== 12) {
+    hourNumber += 12
+  }
+  return hourNumber
+}
+
+function createDateResult(year, month, day, hour, minute, second, timeZone) {
+  return {
+    value: createDateFromParts(
+      {
+        year: Number(year),
+        month: Number(month),
+        day: Number(day),
+        hour,
+        minute: Number(minute),
+        second: second ? Number(second) : 0
+      },
+      timeZone
+    ),
+    error: null
+  }
+}
+
 function parseDateTimeString(value, timeZone) {
   if (typeof value !== 'string') {
     return { value: null, error: 'CHECKTIME 不是字串' }
@@ -189,30 +219,12 @@ function parseDateTimeString(value, timeZone) {
       else normalizedIndicator = indicator.toUpperCase()
     }
 
-    let hourNumber = Number(hour)
-    if (Number.isNaN(hourNumber)) {
+    const hourNumber = processHourWithAmPm(hour, normalizedIndicator)
+    if (hourNumber === null) {
       return { value: null, error: 'CHECKTIME 時間數值無效' }
     }
-    if (normalizedIndicator === 'AM' && hourNumber === 12) {
-      hourNumber = 0
-    } else if (normalizedIndicator === 'PM' && hourNumber !== 12) {
-      hourNumber += 12
-    }
 
-    return {
-      value: createDateFromParts(
-        {
-          year: Number(year),
-          month: Number(month),
-          day: Number(day),
-          hour: hourNumber,
-          minute: Number(minute),
-          second: second ? Number(second) : 0
-        },
-        timeZone
-      ),
-      error: null
-    }
+    return createDateResult(year, month, day, hourNumber, minute, second, timeZone)
   }
 
   // Flexible pattern to handle corrupted AM/PM indicators (e.g., "下��" instead of "下午")
@@ -231,7 +243,7 @@ function parseDateTimeString(value, timeZone) {
         normalizedIndicator = 'AM'
       } else if (indicator === '下午' || indicatorUpper === 'PM') {
         normalizedIndicator = 'PM'
-      } else if (indicator.includes('上') || indicator.includes('午') && !indicator.includes('下')) {
+      } else if (indicator.includes('上') || (indicator.includes('午') && !indicator.includes('下'))) {
         // Corrupted "上午" (morning)
         normalizedIndicator = 'AM'
       } else if (indicator.includes('下') || (indicator.length >= 2 && indicator.charCodeAt(0) === 0x4E0B)) {
@@ -245,30 +257,12 @@ function parseDateTimeString(value, timeZone) {
       }
     }
 
-    let hourNumber = Number(hour)
-    if (Number.isNaN(hourNumber)) {
+    const hourNumber = processHourWithAmPm(hour, normalizedIndicator)
+    if (hourNumber === null) {
       return { value: null, error: 'CHECKTIME 時間數值無效' }
     }
-    if (normalizedIndicator === 'AM' && hourNumber === 12) {
-      hourNumber = 0
-    } else if (normalizedIndicator === 'PM' && hourNumber !== 12) {
-      hourNumber += 12
-    }
 
-    return {
-      value: createDateFromParts(
-        {
-          year: Number(year),
-          month: Number(month),
-          day: Number(day),
-          hour: hourNumber,
-          minute: Number(minute),
-          second: second ? Number(second) : 0
-        },
-        timeZone
-      ),
-      error: null
-    }
+    return createDateResult(year, month, day, hourNumber, minute, second, timeZone)
   }
 
   const hasTimezone = /[zZ]|[+-]\d{2}:?\d{2}$/.test(text)
