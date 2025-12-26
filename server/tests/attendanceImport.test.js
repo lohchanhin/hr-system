@@ -746,7 +746,8 @@ describe('attendanceImportController', () => {
       employee: 'emp-e0108',
       action: 'clockIn'
     })
-    // Should be interpreted as PM (23:50:45 in 24-hour format)
+    // Should be interpreted as PM (11:50:45 PM = 23:50:45 in 24-hour)
+    // Asia/Taipei is UTC+8, so 23:50:45 Taipei - 8 hours = 15:50:45 UTC
     expect(inserted[0].timestamp.toISOString()).toBe('2025-11-02T15:50:45.000Z')
   })
 })

@@ -228,7 +228,10 @@ function parseDateTimeString(value, timeZone) {
   }
 
   // Flexible pattern to handle corrupted AM/PM indicators (e.g., "下��" instead of "下午")
-  // This pattern captures any non-digit characters between date and time
+  // Pattern explanation:
+  // - [^\d\s:]+: Captures non-digit, non-space, non-colon characters (the corrupted indicator)
+  // - Allows spaces before and after the indicator for flexibility
+  // - This catches cases where encoding issues corrupt Chinese characters
   const flexibleMatch = textWithoutT.match(
     /^(?<year>\d{4})[-/](?<month>\d{1,2})[-/](?<day>\d{1,2})\s+(?<indicator>[^\d\s:]+)?\s*(?<hour>\d{1,2}):(?<minute>\d{2})(?::(?<second>\d{2}))?$/
   )
@@ -244,10 +247,12 @@ function parseDateTimeString(value, timeZone) {
       } else if (indicator === '下午' || indicatorUpper === 'PM') {
         normalizedIndicator = 'PM'
       } else if (indicator.includes('上')) {
-        // Corrupted "上午" (morning) - detects "上"
+        // Corrupted "上午" (morning) - Use includes() to detect "上" anywhere in corrupted string
+        // e.g., "上��", "��上", "上�午" all contain "上" and likely mean AM
         normalizedIndicator = 'AM'
       } else if (indicator.includes('下')) {
-        // Corrupted "下午" (afternoon/evening) - detects "下"
+        // Corrupted "下午" (afternoon/evening) - Use includes() to detect "下" anywhere
+        // e.g., "下��", "��下", "下�午" all contain "下" and likely mean PM
         normalizedIndicator = 'PM'
       } else if (indicatorUpper.startsWith('A')) {
         normalizedIndicator = 'AM'
