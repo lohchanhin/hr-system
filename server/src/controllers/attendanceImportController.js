@@ -244,11 +244,10 @@ function parseDateTimeString(value, timeZone) {
       } else if (indicator === '下午' || indicatorUpper === 'PM') {
         normalizedIndicator = 'PM'
       } else if (indicator.includes('上') || (indicator.includes('午') && !indicator.includes('下'))) {
-        // Corrupted "上午" (morning)
+        // Corrupted "上午" (morning) - detects "上" or "午" without "下"
         normalizedIndicator = 'AM'
-      } else if (indicator.includes('下') || (indicator.length >= 2 && indicator.charCodeAt(0) === 0x4E0B)) {
-        // Corrupted "下午" (afternoon/evening)
-        // 0x4E0B is the Unicode for "下"
+      } else if (indicator.includes('下')) {
+        // Corrupted "下午" (afternoon/evening) - detects "下"
         normalizedIndicator = 'PM'
       } else if (indicatorUpper.startsWith('A')) {
         normalizedIndicator = 'AM'
