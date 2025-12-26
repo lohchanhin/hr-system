@@ -215,6 +215,62 @@ function parseDateTimeString(value, timeZone) {
     }
   }
 
+  // Flexible pattern to handle corrupted AM/PM indicators (e.g., "下��" instead of "下午")
+  // This pattern captures any non-digit characters between date and time
+  const flexibleMatch = textWithoutT.match(
+    /^(?<year>\d{4})[-/](?<month>\d{1,2})[-/](?<day>\d{1,2})\s+(?<indicator>[^\d\s:]+)?\s*(?<hour>\d{1,2}):(?<minute>\d{2})(?::(?<second>\d{2}))?$/
+  )
+  if (flexibleMatch?.groups) {
+    const { year, month, day, hour, minute, second, indicator } = flexibleMatch.groups
+    let normalizedIndicator = null
+    
+    if (indicator) {
+      const indicatorUpper = indicator.toUpperCase()
+      // Check for valid AM/PM indicators
+      if (indicator === '上午' || indicatorUpper === 'AM') {
+        normalizedIndicator = 'AM'
+      } else if (indicator === '下午' || indicatorUpper === 'PM') {
+        normalizedIndicator = 'PM'
+      } else if (indicator.includes('上') || indicator.includes('午') && !indicator.includes('下')) {
+        // Corrupted "上午" (morning)
+        normalizedIndicator = 'AM'
+      } else if (indicator.includes('下') || (indicator.length >= 2 && indicator.charCodeAt(0) === 0x4E0B)) {
+        // Corrupted "下午" (afternoon/evening)
+        // 0x4E0B is the Unicode for "下"
+        normalizedIndicator = 'PM'
+      } else if (indicatorUpper.startsWith('A')) {
+        normalizedIndicator = 'AM'
+      } else if (indicatorUpper.startsWith('P')) {
+        normalizedIndicator = 'PM'
+      }
+    }
+
+    let hourNumber = Number(hour)
+    if (Number.isNaN(hourNumber)) {
+      return { value: null, error: 'CHECKTIME 時間數值無效' }
+    }
+    if (normalizedIndicator === 'AM' && hourNumber === 12) {
+      hourNumber = 0
+    } else if (normalizedIndicator === 'PM' && hourNumber !== 12) {
+      hourNumber += 12
+    }
+
+    return {
+      value: createDateFromParts(
+        {
+          year: Number(year),
+          month: Number(month),
+          day: Number(day),
+          hour: hourNumber,
+          minute: Number(minute),
+          second: second ? Number(second) : 0
+        },
+        timeZone
+      ),
+      error: null
+    }
+  }
+
   const hasTimezone = /[zZ]|[+-]\d{2}:?\d{2}$/.test(text)
   if (hasTimezone) {
     const parsed = new Date(text)

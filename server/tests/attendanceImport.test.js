@@ -67,6 +67,24 @@ describe('parseTimestamp', () => {
     expect(result.value).toBeInstanceOf(Date)
     expect(result.value.toISOString()).toBe('2024-11-29T00:04:11.000Z')
   })
+
+  it('能解析帶有損壞中文 PM 標記的時間戳（下��）', () => {
+    const result = parseTimestamp('2025/11/2 下�� 11:50:45', 'Asia/Taipei')
+    expect(result.error).toBeNull()
+    expect(result.value).toBeInstanceOf(Date)
+    // "下��" should be interpreted as PM (下午), so 11:50:45 PM in Asia/Taipei
+    // which is 15:50:45 UTC (Taipei is UTC+8)
+    expect(result.value.toISOString()).toBe('2025-11-02T15:50:45.000Z')
+  })
+
+  it('能解析帶有損壞中文 AM 標記的時間戳', () => {
+    const result = parseTimestamp('2025/11/2 上�� 08:30:00', 'Asia/Taipei')
+    expect(result.error).toBeNull()
+    expect(result.value).toBeInstanceOf(Date)
+    // "上��" should be interpreted as AM (上午), so 08:30:00 AM in Asia/Taipei
+    // which is 00:30:00 UTC
+    expect(result.value.toISOString()).toBe('2025-11-02T00:30:00.000Z')
+  })
 })
 
 describe('attendanceImportController', () => {
@@ -689,5 +707,46 @@ describe('attendanceImportController', () => {
       employee: 'emp-li-1',
       action: 'clockIn'
     })
+  })
+
+  it('支援帶有損壞中文 AM/PM 標記的時間戳（如下��）', async () => {
+    const workbook = new ExcelJS.Workbook()
+    const worksheet = workbook.addWorksheet('Records')
+    worksheet.addRow(['USERID', 'CHECKTIME', 'CHECKTYPE', 'NAME'])
+    // Test the exact case from the error: '2025/11/2 下�� 11:50:45'
+    // We'll simulate this with a string that has the corrupted character
+    worksheet.addRow(['E0108', '2025/11/2 下�� 11:50:45', '上班簽到', ''])
+    const buffer = Buffer.from(await workbook.xlsx.writeBuffer())
+
+    mockEmployeeFindWith([
+      { _id: 'emp-e0108', employeeId: 'E0108', name: 'Test User', email: 'e0108@test.com' }
+    ])
+
+    const req = {
+      user: { role: 'admin' },
+      file: {
+        buffer,
+        mimetype: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        originalname: 'attendance.xlsx'
+      },
+      body: {
+        options: JSON.stringify({ timezone: 'Asia/Taipei', dryRun: false })
+      }
+    }
+
+    const res = createMockRes()
+
+    await importAttendanceRecords(req, res)
+
+    // Should successfully parse and import despite corrupted character
+    expect(mockAttendanceRecord.insertMany).toHaveBeenCalledTimes(1)
+    const inserted = mockAttendanceRecord.insertMany.mock.calls[0][0]
+    expect(inserted).toHaveLength(1)
+    expect(inserted[0]).toMatchObject({
+      employee: 'emp-e0108',
+      action: 'clockIn'
+    })
+    // Should be interpreted as PM (23:50:45 in 24-hour format)
+    expect(inserted[0].timestamp.toISOString()).toBe('2025-11-02T15:50:45.000Z')
   })
 })
