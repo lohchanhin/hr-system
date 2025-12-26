@@ -243,8 +243,8 @@ function parseDateTimeString(value, timeZone) {
         normalizedIndicator = 'AM'
       } else if (indicator === '下午' || indicatorUpper === 'PM') {
         normalizedIndicator = 'PM'
-      } else if (indicator.includes('上') || (indicator.includes('午') && !indicator.includes('下'))) {
-        // Corrupted "上午" (morning) - detects "上" or "午" without "下"
+      } else if (indicator.includes('上')) {
+        // Corrupted "上午" (morning) - detects "上"
         normalizedIndicator = 'AM'
       } else if (indicator.includes('下')) {
         // Corrupted "下午" (afternoon/evening) - detects "下"
