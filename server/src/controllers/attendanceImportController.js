@@ -10,14 +10,19 @@ const DEFAULT_COLUMN_MAPPINGS = Object.freeze({
   userId: 'USERID',
   timestamp: 'CHECKTIME',
   type: 'CHECKTYPE',
-  remark: 'REMARK'
+  remark: 'REMARK',
+  name: 'NAME'
 })
 
 const REQUIRED_MAPPING_KEYS = ['userId', 'timestamp', 'type']
 
 const TYPE_MAPPINGS = {
   I: 'clockIn',
-  O: 'clockOut'
+  O: 'clockOut',
+  '上班簽到': 'clockIn',
+  '下班簽退': 'clockOut',
+  '上班': 'clockIn',
+  '下班': 'clockOut'
 }
 
 const SUPPORTED_ACTIONS = new Set(['clockIn', 'clockOut', 'outing', 'breakIn'])
@@ -337,6 +342,8 @@ function normalizeAction(value) {
     if (!text) return ''
     if (text === '1') return 'clockIn'
     if (text === '0') return 'clockOut'
+    // Check for Chinese text mappings first
+    if (TYPE_MAPPINGS[text]) return TYPE_MAPPINGS[text]
     const upper = text.toUpperCase()
     if (TYPE_MAPPINGS[upper]) return TYPE_MAPPINGS[upper]
     if (SUPPORTED_ACTIONS.has(text)) return text
@@ -356,7 +363,7 @@ function collectCandidate(identifier, hints, sets) {
   if (!identifier) return
   const text = identifier.trim()
   if (!text) return
-  const { employeeIds, emails, objectIds } = sets
+  const { employeeIds, emails, objectIds, names } = sets
   if (hints === 'email' || text.includes('@')) {
     emails.add(text.toLowerCase())
   }
@@ -371,7 +378,38 @@ function collectCandidate(identifier, hints, sets) {
     employeeIds.add(text)
     return
   }
+  if (hints === 'name') {
+    names.add(text)
+    return
+  }
   employeeIds.add(text)
+}
+
+function resolveEmployeeByCompositeKey(identifier, name, employeeMaps) {
+  // First try composite key (employeeId + name)
+  if (identifier && name) {
+    const compositeKey = `${identifier}|${name}`
+    const employee = employeeMaps.byCompositeKey.get(compositeKey)
+    if (employee) return employee
+  }
+  
+  // If composite key fails, try identifier alone
+  if (identifier) {
+    const byId = employeeMaps.byEmployeeId.get(identifier) ||
+                 employeeMaps.byEmail.get(identifier.toLowerCase()) ||
+                 employeeMaps.byObjectId.get(identifier)
+    if (byId) return byId
+  }
+  
+  // If name is provided and identifier lookup failed, try name alone but only if there's exactly one match
+  if (name) {
+    const nameMatches = employeeMaps.byName.get(name)
+    if (nameMatches && nameMatches.length === 1) {
+      return nameMatches[0]
+    }
+  }
+  
+  return null
 }
 
 function resolveMappedEmployee(mapping, maps) {
@@ -414,19 +452,35 @@ function buildEmployeeMaps(employees = []) {
   const byEmployeeId = new Map()
   const byEmail = new Map()
   const byObjectId = new Map()
+  const byName = new Map()
+  const byCompositeKey = new Map()
 
   employees.forEach(employee => {
     const id = String(employee._id)
     byObjectId.set(id, employee)
     if (employee.employeeId) {
-      byEmployeeId.set(String(employee.employeeId).trim(), employee)
+      const empId = String(employee.employeeId).trim()
+      byEmployeeId.set(empId, employee)
+      // Create composite key: employeeId + name
+      if (employee.name) {
+        const compositeKey = `${empId}|${String(employee.name).trim()}`
+        byCompositeKey.set(compositeKey, employee)
+      }
     }
     if (employee.email) {
       byEmail.set(String(employee.email).trim().toLowerCase(), employee)
     }
+    if (employee.name) {
+      const name = String(employee.name).trim()
+      // Store all employees with the same name in an array
+      if (!byName.has(name)) {
+        byName.set(name, [])
+      }
+      byName.get(name).push(employee)
+    }
   })
 
-  return { byEmployeeId, byEmail, byObjectId }
+  return { byEmployeeId, byEmail, byObjectId, byName, byCompositeKey }
 }
 
 function registerHeader(headerMap, header, colNumber) {
@@ -512,18 +566,22 @@ function buildRowRecord({
   }
 
   const userIdRaw = extracted.userId
+  const nameRaw = extracted.name
   const timestampRaw = extracted.timestamp
   const typeRaw = extracted.type
   const remarkRaw = extracted.remark
 
   const identifier = normalizeIdentifier(userIdRaw)
+  const name = normalizeIdentifier(nameRaw)
   const action = normalizeAction(typeRaw)
   const timestampResult = parseTimestamp(timestampRaw, timezone)
 
   return {
     rowNumber,
     identifier,
+    name,
     rawUserId: userIdRaw,
+    rawName: nameRaw,
     action,
     rawAction: typeRaw,
     timestamp: timestampResult.value,
@@ -707,6 +765,7 @@ export async function importAttendanceRecords(req, res) {
   const streamFactory = createUploadStreamFactory(req.file.buffer, { isCsv })
 
   const identifiers = new Set()
+  const names = new Set()
   let totalRowsFirstPass = 0
   try {
     await iterateRecords({
@@ -719,6 +778,9 @@ export async function importAttendanceRecords(req, res) {
         totalRowsFirstPass += 1
         if (record.identifier) {
           identifiers.add(record.identifier)
+        }
+        if (record.name) {
+          names.add(record.name)
         }
       }
     })
@@ -750,12 +812,22 @@ export async function importAttendanceRecords(req, res) {
   const employeeIdSet = new Set()
   const emailSet = new Set()
   const objectIdSet = new Set()
+  const nameSet = new Set()
 
   identifiers.forEach(identifier =>
     collectCandidate(identifier, null, {
       employeeIds: employeeIdSet,
       emails: emailSet,
-      objectIds: objectIdSet
+      objectIds: objectIdSet,
+      names: nameSet
+    })
+  )
+  names.forEach(name =>
+    collectCandidate(name, 'name', {
+      employeeIds: employeeIdSet,
+      emails: emailSet,
+      objectIds: objectIdSet,
+      names: nameSet
     })
   )
   mappingEntries.forEach(value => {
@@ -764,7 +836,8 @@ export async function importAttendanceRecords(req, res) {
       collectCandidate(value, null, {
         employeeIds: employeeIdSet,
         emails: emailSet,
-        objectIds: objectIdSet
+        objectIds: objectIdSet,
+        names: nameSet
       })
       return
     }
@@ -773,35 +846,40 @@ export async function importAttendanceRecords(req, res) {
         collectCandidate(value._id, '_id', {
           employeeIds: employeeIdSet,
           emails: emailSet,
-          objectIds: objectIdSet
+          objectIds: objectIdSet,
+          names: nameSet
         })
       }
       if (typeof value.id === 'string') {
         collectCandidate(value.id, '_id', {
           employeeIds: employeeIdSet,
           emails: emailSet,
-          objectIds: objectIdSet
+          objectIds: objectIdSet,
+          names: nameSet
         })
       }
       if (typeof value.employeeId === 'string') {
         collectCandidate(value.employeeId, 'employeeId', {
           employeeIds: employeeIdSet,
           emails: emailSet,
-          objectIds: objectIdSet
+          objectIds: objectIdSet,
+          names: nameSet
         })
       }
       if (typeof value.email === 'string') {
         collectCandidate(value.email, 'email', {
           employeeIds: employeeIdSet,
           emails: emailSet,
-          objectIds: objectIdSet
+          objectIds: objectIdSet,
+          names: nameSet
         })
       }
       if (typeof value.value === 'string') {
         collectCandidate(value.value, null, {
           employeeIds: employeeIdSet,
           emails: emailSet,
-          objectIds: objectIdSet
+          objectIds: objectIdSet,
+          names: nameSet
         })
       }
     }
@@ -816,6 +894,9 @@ export async function importAttendanceRecords(req, res) {
   }
   if (objectIdSet.size) {
     queryConditions.push({ _id: { $in: Array.from(objectIdSet) } })
+  }
+  if (nameSet.size) {
+    queryConditions.push({ name: { $in: Array.from(nameSet) } })
   }
 
   let employees = []
@@ -906,9 +987,7 @@ export async function importAttendanceRecords(req, res) {
       } else {
         const employee =
           mappedEmployee ||
-          employeeMaps.byEmployeeId.get(record.identifier) ||
-          employeeMaps.byEmail.get(record.identifier.toLowerCase()) ||
-          employeeMaps.byObjectId.get(record.identifier)
+          resolveEmployeeByCompositeKey(record.identifier, record.name, employeeMaps)
 
         if (!employee) {
           missingCount += 1
