@@ -463,8 +463,8 @@ function buildEmployeeMaps(employees = []) {
       byEmployeeId.set(empId, employee)
       // Create composite key: employeeId + name
       if (employee.name) {
-        const compositKey = `${empId}|${String(employee.name).trim()}`
-        byCompositeKey.set(compositKey, employee)
+        const compositeKey = `${empId}|${String(employee.name).trim()}`
+        byCompositeKey.set(compositeKey, employee)
       }
     }
     if (employee.email) {
