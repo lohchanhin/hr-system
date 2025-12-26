@@ -8,7 +8,7 @@
     <div class="import-section">
       <el-alert type="info" show-icon class="import-hint">
         <template #title>上傳考勤檔案後可先預覽資料，確認欄位與員工對應再正式匯入。</template>
-        系統預設欄位為 USERID、CHECKTIME、CHECKTYPE、NAME（選填）。支援新格式考勤機匯出檔案，可將「編號」對應至 USERID、「姓名」對應至 NAME、「日期時間」對應至 CHECKTIME、「簽到/退」對應至 CHECKTYPE。
+        系統預設欄位為考勤機匯出格式：「編號」、「姓名」、「日期時間」、「簽到/退」。如您的考勤機使用不同欄位名稱（如 USERID、NAME、CHECKTIME、CHECKTYPE），請在「欄位對應」中修改對應的欄位名稱。
       </el-alert>
 
       <el-form label-width="140px" class="import-form">
@@ -23,7 +23,7 @@
             <el-button type="primary">選擇檔案</el-button>
             <template #tip>
               <div class="upload-tip">
-                {{ selectedFile ? `已選擇：${selectedFile.name}` : '支援 Excel 或 CSV 檔案。可使用 USERID/CHECKTIME/CHECKTYPE 格式或新格式（編號/姓名/日期時間/簽到退）。' }}
+                {{ selectedFile ? `已選擇：${selectedFile.name}` : '支援 Excel 或 CSV 檔案。預設使用考勤機格式（編號/姓名/日期時間/簽到退），如有不同可在下方調整欄位對應。' }}
               </div>
             </template>
           </el-upload>
@@ -191,11 +191,11 @@ const missingResolutions = reactive({})
 const form = reactive({
   timezone: 'Asia/Kuala_Lumpur',
   mappings: {
-    userId: 'USERID',
-    timestamp: 'CHECKTIME',
-    type: 'CHECKTYPE',
+    userId: '編號',
+    timestamp: '日期時間',
+    type: '簽到/退',
     remark: 'REMARK',
-    name: 'NAME',
+    name: '姓名',
   }
 })
 
@@ -265,11 +265,11 @@ function resetState() {
   loadingPreview.value = false
   importing.value = false
   Object.keys(missingResolutions).forEach(key => delete missingResolutions[key])
-  form.mappings.userId = 'USERID'
-  form.mappings.timestamp = 'CHECKTIME'
-  form.mappings.type = 'CHECKTYPE'
+  form.mappings.userId = '編號'
+  form.mappings.timestamp = '日期時間'
+  form.mappings.type = '簽到/退'
   form.mappings.remark = 'REMARK'
-  form.mappings.name = 'NAME'
+  form.mappings.name = '姓名'
   form.timezone = 'Asia/Kuala_Lumpur'
 }
 

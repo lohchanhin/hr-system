@@ -140,7 +140,7 @@ describe('AttendanceImportDialog', () => {
     const parsedOptions = JSON.parse(entries.options)
     expect(parsedOptions).toMatchObject({ dryRun: true })
     expect(parsedOptions.timezone).toBe(wrapper.vm.form.timezone)
-    expect(JSON.parse(entries.mappings)).toMatchObject({ userId: 'USERID', timestamp: 'CHECKTIME', type: 'CHECKTYPE' })
+    expect(JSON.parse(entries.mappings)).toMatchObject({ userId: '編號', timestamp: '日期時間', type: '簽到/退' })
     expect(ElMessage.success).toHaveBeenCalledWith('預覽完成，可直接匯入')
   })
 
