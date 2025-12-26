@@ -4,7 +4,7 @@
     <div class="attendance-mgmt-setting">
       <h2>考勤管理設定</h2>
   
-      <el-form :model="form" label-width="180px" class="setting-form">
+      <el-form label-width="180px" class="setting-form">
   
         <!-- 資料匯入設定 -->
         <el-divider content-position="left">資料匯入設定</el-divider>
@@ -27,14 +27,13 @@
 
   <script setup>
 import { ref } from 'vue'
+import { ElMessage } from 'element-plus'
 import AttendanceImportDialog from './AttendanceImportDialog.vue'
   
   const attendanceImportVisible = ref(false)
 
-  const form = ref({})
-
   function handleAttendanceImportComplete() {
-    alert('考勤資料匯入完成')
+    ElMessage.success('考勤資料匯入完成')
   }
   </script>
   
