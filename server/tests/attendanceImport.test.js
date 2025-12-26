@@ -525,4 +525,169 @@ describe('attendanceImportController', () => {
     expect(payload.preview).toHaveLength(50)
     expect(payload.preview[0].status).toBe('ready')
   })
+
+  it('支援中文簽到/退類型 - 上班簽到和下班簽退', async () => {
+    const buffer = await createWorkbookBuffer([
+      { USERID: 'E001', CHECKTIME: '2024-05-01 08:00:00', CHECKTYPE: '上班簽到' },
+      { USERID: 'E001', CHECKTIME: '2024-05-01 17:00:00', CHECKTYPE: '下班簽退' }
+    ])
+
+    mockEmployeeFindWith([{ _id: 'emp-chinese', employeeId: 'E001', name: 'Test User' }])
+
+    const req = {
+      user: { role: 'admin' },
+      file: {
+        buffer,
+        mimetype: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        originalname: 'attendance.xlsx'
+      },
+      body: {
+        options: JSON.stringify({ timezone: 'Asia/Taipei', dryRun: false })
+      }
+    }
+
+    const res = createMockRes()
+
+    await importAttendanceRecords(req, res)
+
+    expect(mockAttendanceRecord.insertMany).toHaveBeenCalledTimes(1)
+    const inserted = mockAttendanceRecord.insertMany.mock.calls[0][0]
+    expect(inserted).toHaveLength(2)
+    expect(inserted[0]).toMatchObject({ employee: 'emp-chinese', action: 'clockIn' })
+    expect(inserted[1]).toMatchObject({ employee: 'emp-chinese', action: 'clockOut' })
+  })
+
+  it('支援姓名欄位並使用編號+姓名組合匹配員工', async () => {
+    const workbook = new ExcelJS.Workbook()
+    const worksheet = workbook.addWorksheet('Records')
+    worksheet.addRow(['編號', '姓名', '日期時間', '簽到/退'])
+    worksheet.addRow(['D0021', '楊世任', '2025/11/1 上午 07:54:21', '上班簽到'])
+    worksheet.addRow(['D0021', '楊世任', '2025/11/1 下午 12:00:03', '下班簽退'])
+    const buffer = Buffer.from(await workbook.xlsx.writeBuffer())
+
+    mockEmployeeFindWith([
+      { _id: 'emp-yang', employeeId: 'D0021', name: '楊世任', email: 'yang@test.com' }
+    ])
+
+    const req = {
+      user: { role: 'admin' },
+      file: {
+        buffer,
+        mimetype: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        originalname: 'attendance.xlsx'
+      },
+      body: {
+        mappings: JSON.stringify({
+          userId: '編號',
+          name: '姓名',
+          timestamp: '日期時間',
+          type: '簽到/退'
+        }),
+        options: JSON.stringify({ timezone: 'Asia/Taipei', dryRun: false })
+      }
+    }
+
+    const res = createMockRes()
+
+    await importAttendanceRecords(req, res)
+
+    expect(mockAttendanceRecord.insertMany).toHaveBeenCalledTimes(1)
+    const inserted = mockAttendanceRecord.insertMany.mock.calls[0][0]
+    expect(inserted).toHaveLength(2)
+    expect(inserted[0]).toMatchObject({
+      employee: 'emp-yang',
+      action: 'clockIn'
+    })
+    expect(inserted[0].timestamp.toISOString()).toBe('2025-10-31T23:54:21.000Z')
+    expect(inserted[1]).toMatchObject({
+      employee: 'emp-yang',
+      action: 'clockOut'
+    })
+    expect(inserted[1].timestamp.toISOString()).toBe('2025-11-01T04:00:03.000Z')
+  })
+
+  it('當只有姓名匹配且僅一位員工時可正確匹配', async () => {
+    const workbook = new ExcelJS.Workbook()
+    const worksheet = workbook.addWorksheet('Records')
+    worksheet.addRow(['編號', '姓名', '日期時間', '簽到/退'])
+    worksheet.addRow(['UNKNOWN_ID', '張三', '2025/11/2 上午 09:00:00', '上班簽到'])
+    const buffer = Buffer.from(await workbook.xlsx.writeBuffer())
+
+    mockEmployeeFindWith([
+      { _id: 'emp-zhang', employeeId: 'Z001', name: '張三', email: 'zhang@test.com' }
+    ])
+
+    const req = {
+      user: { role: 'admin' },
+      file: {
+        buffer,
+        mimetype: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        originalname: 'attendance.xlsx'
+      },
+      body: {
+        mappings: JSON.stringify({
+          userId: '編號',
+          name: '姓名',
+          timestamp: '日期時間',
+          type: '簽到/退'
+        }),
+        options: JSON.stringify({ timezone: 'Asia/Taipei', dryRun: false })
+      }
+    }
+
+    const res = createMockRes()
+
+    await importAttendanceRecords(req, res)
+
+    expect(mockAttendanceRecord.insertMany).toHaveBeenCalledTimes(1)
+    const inserted = mockAttendanceRecord.insertMany.mock.calls[0][0]
+    expect(inserted).toHaveLength(1)
+    expect(inserted[0]).toMatchObject({
+      employee: 'emp-zhang',
+      action: 'clockIn'
+    })
+  })
+
+  it('當有多位同名員工但編號匹配時選擇正確的員工', async () => {
+    const workbook = new ExcelJS.Workbook()
+    const worksheet = workbook.addWorksheet('Records')
+    worksheet.addRow(['編號', '姓名', '日期時間', '簽到/退'])
+    worksheet.addRow(['L001', '李四', '2025/11/3 上午 08:30:00', '上班簽到'])
+    const buffer = Buffer.from(await workbook.xlsx.writeBuffer())
+
+    mockEmployeeFindWith([
+      { _id: 'emp-li-1', employeeId: 'L001', name: '李四', email: 'li1@test.com' },
+      { _id: 'emp-li-2', employeeId: 'L002', name: '李四', email: 'li2@test.com' }
+    ])
+
+    const req = {
+      user: { role: 'admin' },
+      file: {
+        buffer,
+        mimetype: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        originalname: 'attendance.xlsx'
+      },
+      body: {
+        mappings: JSON.stringify({
+          userId: '編號',
+          name: '姓名',
+          timestamp: '日期時間',
+          type: '簽到/退'
+        }),
+        options: JSON.stringify({ timezone: 'Asia/Taipei', dryRun: false })
+      }
+    }
+
+    const res = createMockRes()
+
+    await importAttendanceRecords(req, res)
+
+    expect(mockAttendanceRecord.insertMany).toHaveBeenCalledTimes(1)
+    const inserted = mockAttendanceRecord.insertMany.mock.calls[0][0]
+    expect(inserted).toHaveLength(1)
+    expect(inserted[0]).toMatchObject({
+      employee: 'emp-li-1',
+      action: 'clockIn'
+    })
+  })
 })
