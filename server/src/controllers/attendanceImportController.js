@@ -165,6 +165,36 @@ function createDateFromParts(parts, timeZone) {
   return new Date(naiveUtc - offset)
 }
 
+function processHourWithAmPm(hour, ampmIndicator) {
+  let hourNumber = Number(hour)
+  if (Number.isNaN(hourNumber)) {
+    return null
+  }
+  if (ampmIndicator === 'AM' && hourNumber === 12) {
+    hourNumber = 0
+  } else if (ampmIndicator === 'PM' && hourNumber !== 12) {
+    hourNumber += 12
+  }
+  return hourNumber
+}
+
+function createDateResult(year, month, day, hour, minute, second, timeZone) {
+  return {
+    value: createDateFromParts(
+      {
+        year: Number(year),
+        month: Number(month),
+        day: Number(day),
+        hour,
+        minute: Number(minute),
+        second: second ? Number(second) : 0
+      },
+      timeZone
+    ),
+    error: null
+  }
+}
+
 function parseDateTimeString(value, timeZone) {
   if (typeof value !== 'string') {
     return { value: null, error: 'CHECKTIME 不是字串' }
@@ -189,30 +219,54 @@ function parseDateTimeString(value, timeZone) {
       else normalizedIndicator = indicator.toUpperCase()
     }
 
-    let hourNumber = Number(hour)
-    if (Number.isNaN(hourNumber)) {
+    const hourNumber = processHourWithAmPm(hour, normalizedIndicator)
+    if (hourNumber === null) {
       return { value: null, error: 'CHECKTIME 時間數值無效' }
     }
-    if (normalizedIndicator === 'AM' && hourNumber === 12) {
-      hourNumber = 0
-    } else if (normalizedIndicator === 'PM' && hourNumber !== 12) {
-      hourNumber += 12
+
+    return createDateResult(year, month, day, hourNumber, minute, second, timeZone)
+  }
+
+  // Flexible pattern to handle corrupted AM/PM indicators (e.g., "下��" instead of "下午")
+  // Pattern explanation:
+  // - [^\d\s:]+: Captures non-digit, non-space, non-colon characters (the corrupted indicator)
+  // - Allows spaces before and after the indicator for flexibility
+  // - This catches cases where encoding issues corrupt Chinese characters
+  const flexibleMatch = textWithoutT.match(
+    /^(?<year>\d{4})[-/](?<month>\d{1,2})[-/](?<day>\d{1,2})\s+(?<indicator>[^\d\s:]+)?\s*(?<hour>\d{1,2}):(?<minute>\d{2})(?::(?<second>\d{2}))?$/
+  )
+  if (flexibleMatch?.groups) {
+    const { year, month, day, hour, minute, second, indicator } = flexibleMatch.groups
+    let normalizedIndicator = null
+    
+    if (indicator) {
+      const indicatorUpper = indicator.toUpperCase()
+      // Check for valid AM/PM indicators
+      if (indicator === '上午' || indicatorUpper === 'AM') {
+        normalizedIndicator = 'AM'
+      } else if (indicator === '下午' || indicatorUpper === 'PM') {
+        normalizedIndicator = 'PM'
+      } else if (indicator.includes('上')) {
+        // Corrupted "上午" (morning) - Use includes() to detect "上" anywhere in corrupted string
+        // e.g., "上��", "��上", "上�午" all contain "上" and likely mean AM
+        normalizedIndicator = 'AM'
+      } else if (indicator.includes('下')) {
+        // Corrupted "下午" (afternoon/evening) - Use includes() to detect "下" anywhere
+        // e.g., "下��", "��下", "下�午" all contain "下" and likely mean PM
+        normalizedIndicator = 'PM'
+      } else if (indicatorUpper.startsWith('A')) {
+        normalizedIndicator = 'AM'
+      } else if (indicatorUpper.startsWith('P')) {
+        normalizedIndicator = 'PM'
+      }
     }
 
-    return {
-      value: createDateFromParts(
-        {
-          year: Number(year),
-          month: Number(month),
-          day: Number(day),
-          hour: hourNumber,
-          minute: Number(minute),
-          second: second ? Number(second) : 0
-        },
-        timeZone
-      ),
-      error: null
+    const hourNumber = processHourWithAmPm(hour, normalizedIndicator)
+    if (hourNumber === null) {
+      return { value: null, error: 'CHECKTIME 時間數值無效' }
     }
+
+    return createDateResult(year, month, day, hourNumber, minute, second, timeZone)
   }
 
   const hasTimezone = /[zZ]|[+-]\d{2}:?\d{2}$/.test(text)
