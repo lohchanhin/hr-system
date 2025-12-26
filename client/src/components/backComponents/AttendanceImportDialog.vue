@@ -8,7 +8,7 @@
     <div class="import-section">
       <el-alert type="info" show-icon class="import-hint">
         <template #title>上傳考勤檔案後可先預覽資料，確認欄位與員工對應再正式匯入。</template>
-        系統預設欄位為 USERID、CHECKTIME、CHECKTYPE，若來源檔案不同可於下方調整欄位名稱。
+        系統預設欄位為 USERID、CHECKTIME、CHECKTYPE、NAME（選填）。支援新格式考勤機匯出檔案，可將「編號」對應至 USERID、「姓名」對應至 NAME、「日期時間」對應至 CHECKTIME、「簽到/退」對應至 CHECKTYPE。
       </el-alert>
 
       <el-form label-width="140px" class="import-form">
@@ -23,7 +23,7 @@
             <el-button type="primary">選擇檔案</el-button>
             <template #tip>
               <div class="upload-tip">
-                {{ selectedFile ? `已選擇：${selectedFile.name}` : '支援 Excel 或 CSV 檔案，欄位需包含 USERID、CHECKTIME、CHECKTYPE。' }}
+                {{ selectedFile ? `已選擇：${selectedFile.name}` : '支援 Excel 或 CSV 檔案。可使用 USERID/CHECKTIME/CHECKTYPE 格式或新格式（編號/姓名/日期時間/簽到退）。' }}
               </div>
             </template>
           </el-upload>
@@ -48,7 +48,7 @@
             </div>
           </div>
           <div class="mapping-suggest">
-            常見別名示例：USERID/EmpID、CHECKTIME/DateTime、CHECKTYPE/InOut/Direction、REMARK/Memo
+            常見別名示例：USERID/EmpID/編號、CHECKTIME/DateTime/日期時間、CHECKTYPE/InOut/Direction/簽到退、NAME/姓名、REMARK/Memo
           </div>
         </el-form-item>
       </el-form>
@@ -195,6 +195,7 @@ const form = reactive({
     timestamp: 'CHECKTIME',
     type: 'CHECKTYPE',
     remark: 'REMARK',
+    name: 'NAME',
   }
 })
 
@@ -214,7 +215,8 @@ const mappingLabels = {
   userId: 'USERID 欄位',
   timestamp: 'CHECKTIME 欄位',
   type: 'CHECKTYPE 欄位',
-  remark: '備註欄位 (選填)'
+  remark: '備註欄位 (選填)',
+  name: '姓名欄位 (選填)'
 }
 
 // 員工下拉
@@ -267,6 +269,7 @@ function resetState() {
   form.mappings.timestamp = 'CHECKTIME'
   form.mappings.type = 'CHECKTYPE'
   form.mappings.remark = 'REMARK'
+  form.mappings.name = 'NAME'
   form.timezone = 'Asia/Kuala_Lumpur'
 }
 
