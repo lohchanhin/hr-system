@@ -280,7 +280,7 @@
                     {{ formatCurrency(row.healthInsuranceFee) }}
                   </template>
                 </el-table-column>
-                <el-table-column prop="laborPensionSelf" label="勞退" width="100" align="right">
+                <el-table-column prop="laborPensionSelf" label="勞退自提" width="100" align="right">
                   <template #default="{ row }">
                     {{ formatCurrency(row.laborPensionSelf) }}
                   </template>
