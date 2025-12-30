@@ -1,155 +1,115 @@
 <!-- src/Components/backComponents/SocialInsuranceRetirementSetting.vue -->
 
 <template>
-    <div class="social-insurance-retirement-setting">
+  <div class="social-insurance-retirement-setting">
+    <div class="header">
       <h2>勞健保、勞退管理設定</h2>
-  
-      <el-tabs v-model="activeTab" type="card">
-        <!-- 1) 勞保設定 -->
-        <el-tab-pane label="勞保設定" name="laborInsurance">
-          <div class="tab-content">
-            <el-form :model="laborForm" label-width="180px">
-              <el-form-item label="勞保加退保流程 (新進/離職)">
-                <el-switch v-model="laborForm.enableRegisterFlow" />
-              </el-form-item>
-            <el-form-item label="每年勞保費率/投保級距">
-              <el-switch v-model="laborForm.autoUpdateRate" />
-              <small>若啟用，系統可自動跟隨勞保局公告更新</small>
-            </el-form-item>
-            <el-form-item label="取得官方最新級距">
-              <el-button type="primary" @click="refreshLaborInsuranceRates">取得最新</el-button>
-              <div class="form-help">定期與勞保局公告比對並更新級距</div>
-              <div v-if="laborRateStatus.lastFetched" class="form-help">
-                上次確認：{{ laborRateStatus.lastFetched }} ｜ {{ laborRateStatus.message }}
-              </div>
-            </el-form-item>
-            <el-form-item label="目前勞保級距表">
-              <el-button type="info" @click="showLaborRateTable = !showLaborRateTable">
-                {{ showLaborRateTable ? '隱藏級距表' : '顯示級距表' }}
-              </el-button>
-              <div v-if="showLaborRateTable" style="margin-top: 15px;">
-                <el-table :data="laborInsuranceRates" border stripe max-height="400">
-                  <el-table-column prop="level" label="等級" width="80" align="center" />
-                  <el-table-column prop="insuredSalary" label="投保薪資" width="120" align="right">
-                    <template #default="{ row }">
-                      NT$ {{ row.insuredSalary.toLocaleString() }}
-                    </template>
-                  </el-table-column>
-                  <el-table-column prop="workerFee" label="員工負擔" width="120" align="right">
-                    <template #default="{ row }">
-                      NT$ {{ row.workerFee.toLocaleString() }}
-                    </template>
-                  </el-table-column>
-                  <el-table-column prop="employerFee" label="雇主負擔" width="120" align="right">
-                    <template #default="{ row }">
-                      NT$ {{ row.employerFee.toLocaleString() }}
-                    </template>
-                  </el-table-column>
-                  <el-table-column prop="ordinaryRate" label="普通費率 (%)" width="120" align="center" />
-                  <el-table-column prop="employmentInsuranceRate" label="就保費率 (%)" width="120" align="center" />
-                </el-table>
-                <div class="form-help" style="margin-top: 10px;">
-                  共 {{ laborInsuranceRates.length }} 個級距
-                </div>
-              </div>
-            </el-form-item>
-            <el-form-item label="投保級距異動提醒(天)">
-              <el-input-number v-model="laborForm.remindDays" :min="1" />
-              <small>異動前幾天通知 HR ？</small>
-            </el-form-item>
-              <el-form-item label="每月勞保費計算與檢核">
-                <el-switch v-model="laborForm.monthlyCalcCheck" />
-              </el-form-item>
-              <el-form-item label="申報格式匯出">
-                <el-switch v-model="laborForm.enableExport" />
-              </el-form-item>
-              <el-form-item>
-                <el-button type="primary" @click="saveLaborSetting">儲存勞保設定</el-button>
-              </el-form-item>
-            </el-form>
-          </div>
-        </el-tab-pane>
-  
-        <!-- 2) 健保設定 -->
-        <el-tab-pane label="健保設定" name="healthInsurance">
-          <div class="tab-content">
-            <el-form :model="healthForm" label-width="180px">
-              <el-form-item label="健保加退保流程 (新進/離職)">
-                <el-switch v-model="healthForm.enableRegisterFlow" />
-              </el-form-item>
-              <el-form-item label="員工眷屬加退保管理">
-                <el-switch v-model="healthForm.dependentManagement" />
-              </el-form-item>
-              <el-form-item label="每年健保費率/投保級距">
-                <el-switch v-model="healthForm.autoUpdateRate" />
-              </el-form-item>
-              <el-form-item label="每月健保費計算(含眷屬)">
-                <el-switch v-model="healthForm.monthlyCalcCheck" />
-              </el-form-item>
-              <el-form-item label="健保申報格式匯出">
-                <el-switch v-model="healthForm.enableExport" />
-              </el-form-item>
-              <el-form-item>
-                <el-button type="primary" @click="saveHealthSetting">儲存健保設定</el-button>
-              </el-form-item>
-            </el-form>
-          </div>
-        </el-tab-pane>
-  
-        <!-- 3) 勞退設定 (新制退休金) -->
-        <el-tab-pane label="勞退設定" name="retirement">
-          <div class="tab-content">
-            <el-form :model="retireForm" label-width="180px">
-              <el-form-item label="勞退(新制)加退保流程">
-                <el-switch v-model="retireForm.enableRetirementFlow" />
-              </el-form-item>
-              <el-form-item label="提撥級距自動更新">
-                <el-switch v-model="retireForm.autoUpdateRate" />
-                <small>每年若勞保局公告變動，系統自動更新</small>
-              </el-form-item>
-              <el-form-item label="月提撥計算(員工自提/雇主提撥)">
-                <el-switch v-model="retireForm.monthlyCalcCheck" />
-              </el-form-item>
-              <el-form-item label="提撥紀錄異動提醒(天)">
-                <el-input-number v-model="retireForm.remindDays" :min="1" />
-              </el-form-item>
-              <el-form-item label="申報格式匯出">
-                <el-switch v-model="retireForm.enableExport" />
-              </el-form-item>
-              <el-form-item>
-                <el-button type="primary" @click="saveRetireSetting">儲存勞退設定</el-button>
-              </el-form-item>
-            </el-form>
-          </div>
-        </el-tab-pane>
-      </el-tabs>
+      <el-button type="info" plain size="small" @click="showHelp = true">說明</el-button>
     </div>
-  </template>
-  
+
+    <el-tabs v-model="activeTab" type="card">
+      <el-tab-pane label="勞保" name="laborInsurance">
+        <div class="tab-content">
+          <el-space>
+            <el-button type="primary" @click="refreshLaborInsuranceRates">手動取得最新級距</el-button>
+            <el-button @click="toggleRateTable">{{ showLaborRateTable ? '隱藏級距表' : '顯示級距表' }}</el-button>
+          </el-space>
+          <div class="form-help" v-if="laborRateStatus.lastFetched">
+            上次更新：{{ laborRateStatus.lastFetched }} ｜ {{ laborRateStatus.message }}
+          </div>
+          <div v-if="showLaborRateTable" style="margin-top: 15px;">
+            <el-table :data="laborInsuranceRates" border stripe max-height="400">
+              <el-table-column prop="level" label="等級" width="80" align="center" />
+              <el-table-column prop="insuredSalary" label="投保薪資" width="120" align="right">
+                <template #default="{ row }">NT$ {{ row.insuredSalary.toLocaleString() }}</template>
+              </el-table-column>
+              <el-table-column prop="workerFee" label="員工負擔" width="120" align="right">
+                <template #default="{ row }">NT$ {{ row.workerFee.toLocaleString() }}</template>
+              </el-table-column>
+              <el-table-column prop="employerFee" label="雇主負擔" width="120" align="right">
+                <template #default="{ row }">NT$ {{ row.employerFee.toLocaleString() }}</template>
+              </el-table-column>
+              <el-table-column prop="ordinaryRate" label="普通費率 (%)" width="120" align="center" />
+              <el-table-column prop="employmentInsuranceRate" label="就保費率 (%)" width="140" align="center" />
+            </el-table>
+          </div>
+        </div>
+      </el-tab-pane>
+
+      <el-tab-pane label="健保" name="healthInsurance">
+        <div class="tab-content">
+          <p class="hint">健保級距與更新方式與勞保一致，僅保留手動更新。</p>
+          <el-space>
+            <el-button @click="refreshLaborInsuranceRates">手動取得最新健保級距</el-button>
+            <el-button @click="toggleRateTable">{{ showLaborRateTable ? '隱藏級距表' : '顯示級距表' }}</el-button>
+          </el-space>
+          <div v-if="showLaborRateTable" style="margin-top: 15px;">
+            <el-table :data="laborInsuranceRates" border stripe max-height="400">
+              <el-table-column prop="level" label="等級" width="80" align="center" />
+              <el-table-column prop="insuredSalary" label="投保薪資" width="120" align="right">
+                <template #default="{ row }">NT$ {{ row.insuredSalary.toLocaleString() }}</template>
+              </el-table-column>
+              <el-table-column prop="workerFee" label="員工負擔" width="120" align="right">
+                <template #default="{ row }">NT$ {{ row.workerFee.toLocaleString() }}</template>
+              </el-table-column>
+              <el-table-column prop="employerFee" label="雇主負擔" width="120" align="right">
+                <template #default="{ row }">NT$ {{ row.employerFee.toLocaleString() }}</template>
+              </el-table-column>
+            </el-table>
+          </div>
+        </div>
+      </el-tab-pane>
+
+      <el-tab-pane label="勞退" name="retirement">
+        <div class="tab-content">
+          <p class="hint">勞退級距與勞保一致，僅保留手動更新；可於此查看級距資料。</p>
+          <el-space>
+            <el-button @click="refreshLaborInsuranceRates">手動取得最新勞退級距</el-button>
+            <el-button @click="toggleRateTable">{{ showLaborRateTable ? '隱藏級距表' : '顯示級距表' }}</el-button>
+          </el-space>
+          <div v-if="showLaborRateTable" style="margin-top: 15px;">
+            <el-table :data="laborInsuranceRates" border stripe max-height="400">
+              <el-table-column prop="level" label="等級" width="80" align="center" />
+              <el-table-column prop="insuredSalary" label="月提繳級距" width="140" align="right">
+                <template #default="{ row }">NT$ {{ row.insuredSalary.toLocaleString() }}</template>
+              </el-table-column>
+              <el-table-column prop="workerFee" label="員工自提 (示意)" width="140" align="right">
+                <template #default="{ row }">NT$ {{ row.workerFee.toLocaleString() }}</template>
+              </el-table-column>
+              <el-table-column prop="employerFee" label="雇主提撥 (示意)" width="160" align="right">
+                <template #default="{ row }">NT$ {{ row.employerFee.toLocaleString() }}</template>
+              </el-table-column>
+            </el-table>
+          </div>
+        </div>
+      </el-tab-pane>
+    </el-tabs>
+  </div>
+
+  <el-dialog v-model="showHelp" title="勞健保/勞退說明" width="500px">
+    <ul class="help-list">
+      <li>已移除自動加退保流程與自動更新開關，改為手動更新最新級距。</li>
+      <li>健保、勞退頁面結構與勞保一致，僅供查閱與手動更新。</li>
+      <li>更新後資料將套用於薪資計算中的保費/勞退自提計算。</li>
+    </ul>
+    <template #footer>
+      <el-button @click="showHelp = false">關閉</el-button>
+    </template>
+  </el-dialog>
+</template>
+
 <script setup>
 import { ref, onMounted } from 'vue'
 import { apiFetch } from '@/api'
-  
-  const activeTab = ref('laborInsurance')
-  
-  // ==================== 勞保 ====================
-const laborForm = ref({
-  enableRegisterFlow: true,
-  autoUpdateRate: true,
-  remindDays: 7,       // 7天前提醒
-  monthlyCalcCheck: true,
-  enableExport: true
-})
-const laborRateStatus = ref({
-  lastFetched: '',
-  message: ''
-})
+
+const activeTab = ref('laborInsurance')
+const showHelp = ref(false)
+const laborRateStatus = ref({ lastFetched: '', message: '' })
 const showLaborRateTable = ref(false)
 const laborInsuranceRates = ref([])
 
-function saveLaborSetting() {
-  console.log('勞保設定:', laborForm.value)
-  alert('已儲存「勞保設定」')
+function toggleRateTable() {
+  showLaborRateTable.value = !showLaborRateTable.value
 }
 
 async function fetchLaborInsuranceRates() {
@@ -158,7 +118,6 @@ async function fetchLaborInsuranceRates() {
     if (res.ok) {
       laborInsuranceRates.value = await res.json()
     } else {
-      console.error('Failed to fetch labor insurance rates')
       laborInsuranceRates.value = []
     }
   } catch (error) {
@@ -174,63 +133,44 @@ async function refreshLaborInsuranceRates() {
       const data = await res.json()
       laborRateStatus.value = {
         lastFetched: new Date().toLocaleString(),
-        message: data.message || (data.isUpToDate ? '勞保級距已是最新' : '已同步最新勞保級距')
+        message: data.message || (data.isUpToDate ? '級距已是最新' : '已同步最新級距')
       }
-      alert(laborRateStatus.value.message)
-      // Refresh the rate table after update
       await fetchLaborInsuranceRates()
-    } else {
-      alert('取得最新勞保級距失敗')
     }
   } catch (error) {
     console.error('refreshLaborInsuranceRates error', error)
-    alert('取得最新勞保級距失敗')
   }
 }
 
 onMounted(() => {
   fetchLaborInsuranceRates()
 })
-  
-  // ==================== 健保 ====================
-  const healthForm = ref({
-    enableRegisterFlow: true,
-    dependentManagement: true,
-    autoUpdateRate: true,
-    monthlyCalcCheck: true,
-    enableExport: true
-  })
-  function saveHealthSetting() {
-    console.log('健保設定:', healthForm.value)
-    alert('已儲存「健保設定」')
-  }
-  
-  // ==================== 勞退 ====================
-  const retireForm = ref({
-    enableRetirementFlow: true,
-    autoUpdateRate: true,
-    monthlyCalcCheck: true,
-    remindDays: 7,
-    enableExport: true
-  })
-  function saveRetireSetting() {
-    console.log('勞退設定:', retireForm.value)
-    alert('已儲存「勞退設定」')
-  }
-  </script>
-  
-  <style scoped>
-  .social-insurance-retirement-setting {
-    padding: 20px;
-  }
-  
-  .tab-content {
-    margin-top: 20px;
-  }
+</script>
 
-  .form-help {
-    margin-top: 5px;
-    font-size: 12px;
-    color: #909399;
-  }
-  </style>
+<style scoped>
+.social-insurance-retirement-setting {
+  padding: 20px;
+}
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+.tab-content {
+  margin-top: 20px;
+}
+.form-help {
+  margin-top: 5px;
+  font-size: 12px;
+  color: #909399;
+}
+.hint {
+  color: #909399;
+  margin-bottom: 10px;
+}
+.help-list {
+  padding-left: 18px;
+  line-height: 1.6;
+}
+</style>
