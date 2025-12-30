@@ -185,8 +185,21 @@
             >
               <el-table-column prop="employeeId" label="員工編號" width="120" fixed />
               <el-table-column prop="name" label="姓名" width="100" fixed />
-              <el-table-column prop="department" label="部門" width="120" />
-              <el-table-column prop="subDepartment" label="單位" width="120" />
+              <el-table-column prop="organization" label="機構" width="140">
+                <template #default="{ row }">
+                  {{ organizationName(row.organization) }}
+                </template>
+              </el-table-column>
+              <el-table-column prop="department" label="部門" width="140">
+                <template #default="{ row }">
+                  {{ departmentName(row.department) }}
+                </template>
+              </el-table-column>
+              <el-table-column prop="subDepartment" label="單位" width="140">
+                <template #default="{ row }">
+                  {{ subDepartmentName(row.subDepartment) }}
+                </template>
+              </el-table-column>
               <el-table-column prop="salaryType" label="薪資類型" width="100" />
               
               <!-- 工作時數資料 -->
@@ -331,8 +344,8 @@
                   <el-descriptions :column="3" border>
                     <el-descriptions-item label="員工編號">{{ selectedEmployee.employeeId }}</el-descriptions-item>
                     <el-descriptions-item label="姓名">{{ selectedEmployee.name }}</el-descriptions-item>
-                    <el-descriptions-item label="部門">{{ selectedEmployee.department }}</el-descriptions-item>
-                    <el-descriptions-item label="單位">{{ selectedEmployee.subDepartment }}</el-descriptions-item>
+                    <el-descriptions-item label="部門">{{ departmentName(selectedEmployee.department) }}</el-descriptions-item>
+                    <el-descriptions-item label="單位">{{ subDepartmentName(selectedEmployee.subDepartment) }}</el-descriptions-item>
                     <el-descriptions-item label="薪資類型">{{ selectedEmployee.salaryType }}</el-descriptions-item>
                     <el-descriptions-item label="月份">{{ overviewMonth }}</el-descriptions-item>
                   </el-descriptions>
@@ -1112,6 +1125,9 @@ const showExplanationDialog = ref(false)
   const organizations = ref([])
   const departments = ref([])
   const subDepartments = ref([])
+  const orgMap = computed(() => Object.fromEntries(organizations.value.map((o) => [o._id, o.name])))
+  const deptMap = computed(() => Object.fromEntries(departments.value.map((d) => [d._id, d.name])))
+  const subDeptMap = computed(() => Object.fromEntries(subDepartments.value.map((s) => [s._id, s.name])))
 
   // Detail dialog
   const detailDialogVisible = ref(false)
@@ -1129,6 +1145,19 @@ const showExplanationDialog = ref(false)
       item.employeeId?.toLowerCase().includes(searchTerm)
     )
   })
+
+  function organizationName(id) {
+    if (!id) return '-'
+    return orgMap.value[id] || id
+  }
+  function departmentName(id) {
+    if (!id) return '-'
+    return deptMap.value[id] || id
+  }
+  function subDepartmentName(id) {
+    if (!id) return '-'
+    return subDeptMap.value[id] || id
+  }
 
   // Computed summary statistics
   const totalBaseSalary = computed(() => {
