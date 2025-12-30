@@ -46,4 +46,15 @@ describe('ShiftScheduleSetting.vue', () => {
     expect(createCall[1].body).toContain('breakDuration')
     expect(createCall[1].body).toContain('午休')
   })
+
+  it('builds ROC holidays with the local current year', () => {
+    const getFullYearSpy = vi.spyOn(Date.prototype, 'getFullYear')
+    const getUTCFullYearSpy = vi.spyOn(Date.prototype, 'getUTCFullYear')
+
+    const wrapper = mount(ShiftScheduleSetting, { global: { plugins: [ElementPlus] } })
+    wrapper.vm.buildRocHolidays()
+
+    expect(getFullYearSpy).toHaveBeenCalled()
+    expect(getUTCFullYearSpy).not.toHaveBeenCalled()
+  })
 })
