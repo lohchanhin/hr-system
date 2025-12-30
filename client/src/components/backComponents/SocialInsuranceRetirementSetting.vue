@@ -119,6 +119,11 @@ const laborRateStatus = ref({
   healthInsurance: { lastFetched: '', message: '' },
   retirement: { lastFetched: '', message: '' }
 })
+const rateTypeLabel = {
+  laborInsurance: '勞保',
+  healthInsurance: '健保',
+  retirement: '勞退'
+}
 
 function toggleRateTable() {
   showLaborRateTable.value = !showLaborRateTable.value
@@ -127,7 +132,7 @@ function toggleRateTable() {
 function buildStatusPayload(type, message) {
   return {
     lastFetched: new Date().toLocaleString(),
-    message: message || '已從官網取得最新級距'
+    message: message || `${rateTypeLabel[type] || '級距'}已從官網取得最新級距`
   }
 }
 
@@ -162,8 +167,8 @@ async function refreshLaborInsuranceRates(type = activeTab.value) {
   }
 }
 
-onMounted(() => {
-  ;['laborInsurance', 'healthInsurance', 'retirement'].forEach(fetchLaborInsuranceRates)
+onMounted(async () => {
+  await Promise.all(['laborInsurance', 'healthInsurance', 'retirement'].map((type) => fetchLaborInsuranceRates(type)))
 })
 
 watch(activeTab, (tab) => {

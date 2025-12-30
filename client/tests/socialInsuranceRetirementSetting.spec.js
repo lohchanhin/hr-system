@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { mount, flushPromises } from '@vue/test-utils'
 vi.mock('../src/api', () => ({
   apiFetch: vi.fn(() => Promise.resolve({ ok: true, json: async () => [] }))
 }))
+import { mount, flushPromises } from '@vue/test-utils'
 import { apiFetch } from '../src/api'
 import SocialInsuranceRetirementSetting from '../src/components/backComponents/SocialInsuranceRetirementSetting.vue'
 
