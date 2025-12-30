@@ -2984,7 +2984,7 @@ function normalizeMonthlySalaryAdjustments(source = {}) {
     otherDeductions: toNum(adj.otherDeductions),
     performanceBonus: toNum(adj.performanceBonus),
     otherBonuses: toNum(adj.otherBonuses),
-    notes: typeof adj.notes === 'string' ? adj.notes : adj.notes ?? ''
+    notes: toStringOrEmpty(adj.notes)
   }
 }
 
