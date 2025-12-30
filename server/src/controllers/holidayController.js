@@ -5,8 +5,9 @@ const ROC_YEAR_MAX = 2100;
 
 function normalizeHolidayPayload(payload = {}) {
   const dateValue = payload.date ? new Date(payload.date) : null;
-  const desc = payload.desc ?? payload.description ?? payload.name ?? payload.remark ?? '';
-  const name = payload.name ?? desc ?? payload.type ?? '假日';
+  const descInput = payload.desc ?? payload.description ?? payload.remark ?? '';
+  const name = payload.name ?? (descInput || payload.type) ?? '假日';
+  const desc = descInput || name;
 
   return {
     name,
@@ -86,7 +87,7 @@ export async function importRocHolidays(req, res) {
     return res.status(400).json({ error: 'Year must be a number' });
   }
   const currentYear = new Date().getFullYear();
-  const year = Number.isInteger(requestedYear) ? requestedYear : currentYear;
+  const year = hasYearParam ? requestedYear : currentYear;
   if (year < ROC_YEAR_MIN || year > ROC_YEAR_MAX) {
     return res.status(400).json({ error: `Year must be between ${ROC_YEAR_MIN} and ${ROC_YEAR_MAX}` });
   }

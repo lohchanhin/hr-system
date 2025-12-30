@@ -437,7 +437,7 @@ async function saveHoliday() {
   }
   const payload = {
     ...calendarForm.value,
-    name: calendarForm.value.name || calendarForm.value.desc || calendarForm.value.type || '假日',
+    name: calendarForm.value.name,
     description: calendarForm.value.desc,
     desc: calendarForm.value.desc,
     type: calendarForm.value.type || '國定假日'
