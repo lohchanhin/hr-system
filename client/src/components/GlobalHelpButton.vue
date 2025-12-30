@@ -14,9 +14,21 @@
       <p class="help-description" data-testid="help-description">
         {{ resolvedHelp.description }}
       </p>
+      <div v-if="resolvedHelp.scenarios.length" class="help-section">
+        <h4 class="help-section-title">適用情境</h4>
+        <ul class="help-list" data-testid="help-scenarios">
+          <li v-for="scenario in resolvedHelp.scenarios" :key="scenario">{{ scenario }}</li>
+        </ul>
+      </div>
       <ul v-if="resolvedHelp.tips.length" class="help-list" data-testid="help-tips">
         <li v-for="tip in resolvedHelp.tips" :key="tip">{{ tip }}</li>
       </ul>
+      <div v-if="resolvedHelp.steps.length" class="help-section">
+        <h4 class="help-section-title">建議操作流程</h4>
+        <ol class="help-ordered-list" data-testid="help-steps">
+          <li v-for="step in resolvedHelp.steps" :key="step">{{ step }}</li>
+        </ol>
+      </div>
       <template #footer>
         <el-button @click="visible = false">關閉</el-button>
       </template>
@@ -44,7 +56,13 @@ const resolvedHelp = computed(() => {
   const tips = Array.isArray(props.help?.tips)
     ? props.help.tips.filter(tip => typeof tip === 'string' && tip.trim())
     : []
-  return { title, description, tips }
+  const scenarios = Array.isArray(props.help?.scenarios)
+    ? props.help.scenarios.filter(item => typeof item === 'string' && item.trim())
+    : []
+  const steps = Array.isArray(props.help?.steps)
+    ? props.help.steps.filter(item => typeof item === 'string' && item.trim())
+    : []
+  return { title, description, tips, scenarios, steps }
 })
 </script>
 
@@ -55,8 +73,25 @@ const resolvedHelp = computed(() => {
   line-height: 1.6;
 }
 
+.help-section {
+  margin: 12px 0;
+}
+
+.help-section-title {
+  margin: 0 0 6px;
+  font-size: 14px;
+  color: #303133;
+  font-weight: 600;
+}
+
 .help-list {
   padding-left: 18px;
+  margin: 0;
+  line-height: 1.6;
+}
+
+.help-ordered-list {
+  padding-left: 20px;
   margin: 0;
   line-height: 1.6;
 }

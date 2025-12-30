@@ -8,7 +8,6 @@
         <h1 class="system-title">HR 管理系統</h1>
       </div>
       <div class="header-right">
-        <GlobalHelpButton :help="currentHelp" />
         <el-button type="primary" @click="logout" class="logout-btn">
           <el-icon><i class="el-icon-switch-button" /></el-icon>
           登出
@@ -83,6 +82,13 @@
         :class="{ 'with-sidebar': !isMobile && !isSidebarCollapsed }"
       >
         <div class="main-content">
+          <div class="page-help-bar">
+            <GlobalHelpButton :help="currentHelp" />
+            <div class="page-help-text">
+              <div class="page-help-title">{{ currentHelp.title }}</div>
+              <div class="page-help-desc">{{ currentHelp.description }}</div>
+            </div>
+          </div>
           <router-view />
         </div>
       </el-main>
@@ -115,7 +121,9 @@ const currentHelp = computed(() => {
   return backendHelpContent[routeName] || {
     title: '後台操作說明',
     description: '使用「說明」按鈕快速查看此頁的操作重點，無需修改按鈕本身。',
-    tips: ['完成設定後記得儲存或套用', '若有表單說明，先閱讀再進行修改']
+    scenarios: ['第一次操作本頁功能，需快速了解目的與影響', '修改設定前想先確認關聯與風險'],
+    tips: ['完成設定後記得儲存或套用', '若有表單說明，先閱讀再進行修改'],
+    steps: ['點擊說明查看情境與流程', '依流程調整設定並保存', '重新整理或請同仁驗證結果']
   }
 })
 
@@ -448,6 +456,33 @@ function logout() {
   margin: 16px;
   border-radius: 12px;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.page-help-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  margin-bottom: 16px;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  background: linear-gradient(90deg, #f8fafc 0%, #f0f9ff 100%);
+}
+
+.page-help-text {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.page-help-title {
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.page-help-desc {
+  color: #475569;
+  font-size: 13px;
 }
 
 .main-content h1,

@@ -19,7 +19,9 @@ describe('GlobalHelpButton', () => {
         help: {
           title: '測試說明',
           description: '這是測試用的說明內容',
-          tips: ['第一步驟', '第二步驟']
+          scenarios: ['適用於測試情境一'],
+          tips: ['第一步驟', '第二步驟'],
+          steps: ['先點擊按鈕', '再檢查渲染']
         }
       },
       global: { stubs }
@@ -32,8 +34,11 @@ describe('GlobalHelpButton', () => {
     expect(dialog.exists()).toBe(true)
     expect(dialog.text()).toContain('測試說明')
     expect(dialog.text()).toContain('這是測試用的說明內容')
+    expect(dialog.text()).toContain('適用於測試情境一')
     expect(dialog.text()).toContain('第一步驟')
     expect(dialog.text()).toContain('第二步驟')
+    expect(dialog.text()).toContain('先點擊按鈕')
+    expect(dialog.text()).toContain('再檢查渲染')
   })
 
   it('falls back to default help copy when no props are provided', async () => {
