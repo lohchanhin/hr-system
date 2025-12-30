@@ -66,7 +66,12 @@ const ROC_CALENDAR_BASE =
   'https://cdn.jsdelivr.net/gh/ruyut/TaiwanCalendar/data';
 
 export async function importRocHolidays(req, res) {
-  const year = Number.parseInt(req.query.year, 10) || new Date().getFullYear();
+  const requestedYear = Number.parseInt(req.query.year, 10);
+  const currentYear = new Date().getFullYear();
+  const year = Number.isInteger(requestedYear) ? requestedYear : currentYear;
+  if (year < 1900 || year > 2100) {
+    return res.status(400).json({ error: 'Year must be between 1900 and 2100' });
+  }
   const url = `${ROC_CALENDAR_BASE}/${year}.json`;
   try {
     const response = await fetch(url);
@@ -85,15 +90,17 @@ export async function importRocHolidays(req, res) {
         }),
       );
 
-    const saved = [];
-    for (const holiday of holidays) {
-      const updated = await Holiday.findOneAndUpdate(
-        { date: holiday.date },
-        holiday,
-        { new: true, upsert: true, setDefaultsOnInsert: true },
-      );
-      if (updated) saved.push(updated);
-    }
+    const saved = (
+      await Promise.all(
+        holidays.map((holiday) =>
+          Holiday.findOneAndUpdate(
+            { date: holiday.date },
+            holiday,
+            { new: true, upsert: true, setDefaultsOnInsert: true },
+          ),
+        ),
+      )
+    ).filter(Boolean);
 
     res.json({ imported: saved.length, holidays: saved });
   } catch (err) {
