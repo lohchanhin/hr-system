@@ -836,6 +836,14 @@
                             :value="item.value" />
                         </el-select>
                       </el-form-item>
+                      <div v-if="selectedSalaryItemsForUI.length" class="form-row salary-item-amounts">
+                        <el-form-item v-for="item in selectedSalaryItemsForUI" :key="item.value"
+                          :label="item.label" class="salary-item-amount-item">
+                          <el-input-number v-model="employeeForm.salaryItemAmounts[item.value]" :min="0" :step="100"
+                            :formatter="value => `$ ${value ?? 0}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')"
+                            :parser="value => (value ? value.replace(/\$\s?|(,*)/g, '') : '')" />
+                        </el-form-item>
+                      </div>
                     </div>
                   </div>
 
@@ -2975,6 +2983,23 @@ function toNumberOrNull(value) {
   return Number.isFinite(num) ? num : null
 }
 
+function normalizeSalaryItemAmounts(source = {}, selected = []) {
+  const selectedValues = ensureArrayValue(selected).map(toNormalizedOptionValue).filter(Boolean)
+  const amounts = source && typeof source === 'object' ? source : {}
+  return selectedValues.reduce((acc, value) => {
+    const num = toNumberOrNull(amounts[value])
+    acc[value] = num ?? 0
+    return acc
+  }, {})
+}
+
+function areObjectsShallowEqual(a = {}, b = {}) {
+  const aKeys = Object.keys(a || {})
+  const bKeys = Object.keys(b || {})
+  if (aKeys.length !== bKeys.length) return false
+  return aKeys.every(key => a[key] === b[key])
+}
+
 function normalizeMonthlySalaryAdjustments(source = {}) {
   const adj = source && typeof source === 'object' ? source : {}
   const toNum = (v) => toNumberOrNull(v) ?? 0
@@ -3087,6 +3112,7 @@ async function fetchEmployees() {
       const monthlyAdjustments = normalizeMonthlySalaryAdjustments(
         e?.monthlySalaryAdjustments
       )
+      const filteredSalaryItems = filterValidSalaryItems(e?.salaryItems)
       return {
         ...e,
         title: extractOptionValue(e?.title),
@@ -3102,7 +3128,8 @@ async function fetchEmployees() {
         subDepartment: e.subDepartment?._id || e.subDepartment || '',
         laborPensionSelf: toNumberOrNull(e?.laborPensionSelf) ?? 0,
         employeeAdvance: toNumberOrNull(e?.employeeAdvance) ?? 0,
-        salaryItems: filterValidSalaryItems(e?.salaryItems),
+        salaryItems: filteredSalaryItems,
+        salaryItemAmounts: normalizeSalaryItemAmounts(e?.salaryItemAmounts, filteredSalaryItems),
         height: toNumberOrNull(e?.medicalCheck?.height ?? e?.height),
         weight: toNumberOrNull(e?.medicalCheck?.weight ?? e?.weight),
         medicalBloodType: e?.medicalCheck?.bloodType ?? e?.medicalBloodType ?? '',
@@ -3255,6 +3282,7 @@ const emptyEmployee = {
   salaryAccountA: { bank: '', acct: '' },
   salaryAccountB: { bank: '', acct: '' },
   salaryItems: [],
+  salaryItemAmounts: {},
   
   // 每月薪資調整項目
   monthlySalaryAdjustments: {
@@ -3337,6 +3365,42 @@ const supervisorList = computed(() =>
     : []
 )
 
+const salaryItemOptionMap = computed(() => {
+  const map = {}
+  const source = Array.isArray(salaryItemOptions.value) ? salaryItemOptions.value : []
+  source.forEach(option => {
+    const value = toNormalizedOptionValue(
+      option?.value ??
+      option?.code ??
+      option?.name ??
+      option?.label ??
+      (typeof option?.toString === 'function' ? option.toString() : '')
+    )
+    if (value) map[value] = option?.label ?? option?.name ?? value
+  })
+  return map
+})
+
+const selectedSalaryItemsForUI = computed(() =>
+  ensureArrayValue(employeeForm.value.salaryItems)
+    .map(value => {
+      const normalized = toNormalizedOptionValue(value)
+      if (!normalized) return null
+      return {
+        value: normalized,
+        label: salaryItemOptionMap.value[normalized] || normalized
+      }
+    })
+    .filter(Boolean)
+)
+
+function syncSalaryItemAmounts(selected = employeeForm.value.salaryItems) {
+  const normalized = normalizeSalaryItemAmounts(employeeForm.value.salaryItemAmounts, selected)
+  if (!areObjectsShallowEqual(employeeForm.value.salaryItemAmounts, normalized)) {
+    employeeForm.value.salaryItemAmounts = normalized
+  }
+}
+
 watch(bulkImportDialogVisible, visible => {
   if (!visible) {
     if (bulkImportDialogCloseOptions.value) {
@@ -3387,8 +3451,12 @@ watch(
     const filtered = filterValidSalaryItems(current)
     if (!areArraysShallowEqual(filtered, current)) {
       employeeForm.value.salaryItems = filtered
+      syncSalaryItemAmounts(filtered)
     } else if (!areArraysShallowEqual(current, rawArray)) {
       employeeForm.value.salaryItems = current
+      syncSalaryItemAmounts(current)
+    } else {
+      syncSalaryItemAmounts(filtered)
     }
   },
   { deep: true }
@@ -3402,8 +3470,12 @@ watch(
     const filtered = filterValidSalaryItems(current)
     if (!areArraysShallowEqual(filtered, current)) {
       employeeForm.value.salaryItems = filtered
+      syncSalaryItemAmounts(filtered)
     } else if (!areArraysShallowEqual(current, rawArray)) {
       employeeForm.value.salaryItems = current
+      syncSalaryItemAmounts(current)
+    } else {
+      syncSalaryItemAmounts(filtered)
     }
   },
   { deep: true }
@@ -4207,6 +4279,10 @@ async function openEmployeeDialog(index = null) {
     employeeForm.value.employeeAdvance =
       toNumberOrNull(employeeForm.value.employeeAdvance) ?? 0
     employeeForm.value.salaryItems = filterValidSalaryItems(employeeForm.value.salaryItems)
+    employeeForm.value.salaryItemAmounts = normalizeSalaryItemAmounts(
+      emp.salaryItemAmounts ?? employeeForm.value.salaryItemAmounts,
+      employeeForm.value.salaryItems
+    )
     employeeForm.value.monthlySalaryAdjustments = normalizeMonthlySalaryAdjustments(
       emp.monthlySalaryAdjustments ?? employeeForm.value.monthlySalaryAdjustments
     )
@@ -4311,6 +4387,10 @@ async function saveEmployee() {
   payload.laborPensionSelf = toNumberOrNull(form.laborPensionSelf) ?? 0
   payload.employeeAdvance = toNumberOrNull(form.employeeAdvance) ?? 0
   payload.salaryItems = filterValidSalaryItems(form.salaryItems)
+  payload.salaryItemAmounts = normalizeSalaryItemAmounts(
+    form.salaryItemAmounts,
+    payload.salaryItems
+  )
   payload.monthlySalaryAdjustments = normalizeMonthlySalaryAdjustments(
     form.monthlySalaryAdjustments
   )
