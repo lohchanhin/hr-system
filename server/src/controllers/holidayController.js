@@ -1,5 +1,8 @@
 import Holiday from '../models/Holiday.js';
 
+const ROC_YEAR_MIN = 1900;
+const ROC_YEAR_MAX = 2100;
+
 function normalizeHolidayPayload(payload = {}) {
   const dateValue = payload.date ? new Date(payload.date) : null;
   const desc = payload.desc ?? payload.description ?? payload.name ?? payload.remark ?? '';
@@ -69,8 +72,8 @@ export async function importRocHolidays(req, res) {
   const requestedYear = Number.parseInt(req.query.year, 10);
   const currentYear = new Date().getFullYear();
   const year = Number.isInteger(requestedYear) ? requestedYear : currentYear;
-  if (year < 1900 || year > 2100) {
-    return res.status(400).json({ error: 'Year must be between 1900 and 2100' });
+  if (year < ROC_YEAR_MIN || year > ROC_YEAR_MAX) {
+    return res.status(400).json({ error: `Year must be between ${ROC_YEAR_MIN} and ${ROC_YEAR_MAX}` });
   }
   const url = `${ROC_CALENDAR_BASE}/${year}.json`;
   try {
