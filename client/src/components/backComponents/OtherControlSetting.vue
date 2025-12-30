@@ -283,9 +283,7 @@ const dictionaryDefinitions = ref([
   { key: 'C08', label: '教育程度' },
   { key: 'C09', label: '緊急聯絡人稱謂' },
   { key: 'C10', label: '教育訓練積分類別' },
-  { key: 'C11', label: '班別設定' },
   { key: 'C12', label: '假別類別' },
-  { key: 'C13', label: '加班原因' },
   { key: 'C14', label: '津貼項目' }
 ])
 
@@ -412,17 +410,9 @@ const defaultDictionaryOptions = {
     { name: '專業課程', code: 'PROFESSIONAL' },
     { name: '基礎課程', code: 'BASIC' }
   ],
-  C11: [
-    { name: '日班', code: 'DAY' },
-    { name: '晚班', code: 'NIGHT' }
-  ],
   C12: [
     { name: '特休假', code: 'ANNUAL' },
     { name: '病假', code: 'SICK' }
-  ],
-  C13: [
-    { name: '專案需求', code: 'PROJECT' },
-    { name: '排班調整', code: 'SCHEDULE' }
   ],
   C14: [
     { name: '交通津貼', code: 'TRAFFIC' },
@@ -558,60 +548,6 @@ const defaultCustomFields = [
     description: '維護教育訓練積分類別'
   },
   {
-    label: '班別名稱 (C11)',
-    fieldKey: 'C11_name',
-    type: 'text',
-    category: 'dictionary',
-    group: '班別設定',
-    required: true,
-    description: '顯示於班別選單的名稱'
-  },
-  {
-    label: '班別說明 (C11)',
-    fieldKey: 'C11_content',
-    type: 'textarea',
-    category: 'dictionary',
-    group: '班別設定',
-    required: false,
-    description: '補充班別內容或注意事項'
-  },
-  {
-    label: '班別時段 (C11)',
-    fieldKey: 'C11_timeRange',
-    type: 'timeRange',
-    category: 'dictionary',
-    group: '班別設定',
-    required: true,
-    description: '設定班別的起訖時間'
-  },
-  {
-    label: '休息是否計薪 (C11)',
-    fieldKey: 'C11_paidBreak',
-    type: 'boolean',
-    category: 'dictionary',
-    group: '班別設定',
-    required: false,
-    description: '決定休息時間是否計薪'
-  },
-  {
-    label: '允許彈性時間 (C11)',
-    fieldKey: 'C11_allowFlexTime',
-    type: 'boolean',
-    category: 'dictionary',
-    group: '班別設定',
-    required: false,
-    description: '是否允許彈性前後時間'
-  },
-  {
-    label: '彈性區間分鐘數 (C11)',
-    fieldKey: 'C11_flexWindow',
-    type: 'number',
-    category: 'dictionary',
-    group: '班別設定',
-    required: false,
-    description: '可彈性調整的分鐘數'
-  },
-  {
     label: '假別類別 (C12)',
     fieldKey: 'C12',
     type: 'select',
@@ -619,15 +555,6 @@ const defaultCustomFields = [
     group: '假別設定',
     required: true,
     description: '維護假別類別與對應設定'
-  },
-  {
-    label: '加班原因 (C13)',
-    fieldKey: 'C13',
-    type: 'select',
-    category: 'dictionary',
-    group: '加班設定',
-    required: false,
-    description: '設定常用的加班原因'
   },
   {
     label: '津貼項目 (C14)',

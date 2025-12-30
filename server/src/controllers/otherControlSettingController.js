@@ -113,60 +113,6 @@ const defaultSettings = {
       description: '維護教育訓練積分類別'
     },
     {
-      label: '班別名稱 (C11)',
-      fieldKey: 'C11_name',
-      type: 'text',
-      category: 'dictionary',
-      group: '班別設定',
-      required: true,
-      description: '顯示於班別選單的名稱'
-    },
-    {
-      label: '班別說明 (C11)',
-      fieldKey: 'C11_content',
-      type: 'textarea',
-      category: 'dictionary',
-      group: '班別設定',
-      required: false,
-      description: '補充班別內容或注意事項'
-    },
-    {
-      label: '班別時段 (C11)',
-      fieldKey: 'C11_timeRange',
-      type: 'timeRange',
-      category: 'dictionary',
-      group: '班別設定',
-      required: true,
-      description: '設定班別的起訖時間'
-    },
-    {
-      label: '休息是否計薪 (C11)',
-      fieldKey: 'C11_paidBreak',
-      type: 'boolean',
-      category: 'dictionary',
-      group: '班別設定',
-      required: false,
-      description: '決定休息時間是否計薪'
-    },
-    {
-      label: '允許彈性時間 (C11)',
-      fieldKey: 'C11_allowFlexTime',
-      type: 'boolean',
-      category: 'dictionary',
-      group: '班別設定',
-      required: false,
-      description: '是否允許彈性前後時間'
-    },
-    {
-      label: '彈性區間分鐘數 (C11)',
-      fieldKey: 'C11_flexWindow',
-      type: 'number',
-      category: 'dictionary',
-      group: '班別設定',
-      required: false,
-      description: '可彈性調整的分鐘數'
-    },
-    {
       label: '假別類別 (C12)',
       fieldKey: 'C12',
       type: 'select',
@@ -174,15 +120,6 @@ const defaultSettings = {
       group: '假別設定',
       required: true,
       description: '維護假別類別與對應設定'
-    },
-    {
-      label: '加班原因 (C13)',
-      fieldKey: 'C13',
-      type: 'select',
-      category: 'dictionary',
-      group: '加班設定',
-      required: false,
-      description: '設定常用的加班原因'
     },
     {
       label: '津貼項目 (C14)',
@@ -206,9 +143,7 @@ const defaultSettings = {
     C08: ['高中', '大學', '碩士', '博士'],
     C09: ['父親', '母親', '配偶', '其他'],
     C10: ['新進訓練', '專業課程', '領導力'],
-    C11: ['日班', '晚班', '大夜班'],
     C12: ['特休假', '病假', '事假'],
-    C13: ['專案趕工', '系統維護', '例行支援'],
     C14: ['交通補助', '餐費補助', '職務津貼']
   },
   integration: {
