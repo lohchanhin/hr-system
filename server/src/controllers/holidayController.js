@@ -5,9 +5,14 @@ const ROC_YEAR_MAX = 2100;
 
 function normalizeHolidayPayload(payload = {}) {
   const dateValue = payload.date ? new Date(payload.date) : null;
-  const descInput = payload.desc ?? payload.description ?? payload.remark ?? '';
-  const name = payload.name ?? (descInput || payload.type) ?? '假日';
-  const desc = descInput || name;
+  const name =
+    payload.name ||
+    payload.desc ||
+    payload.description ||
+    payload.remark ||
+    payload.type ||
+    '假日';
+  const desc = payload.desc || payload.description || payload.remark || name;
 
   return {
     name,
@@ -81,8 +86,9 @@ const ROC_CALENDAR_BASE =
   'https://cdn.jsdelivr.net/gh/ruyut/TaiwanCalendar/data';
 
 export async function importRocHolidays(req, res) {
-  const hasYearParam = 'year' in req.query;
-  const requestedYear = Number.parseInt(req.query.year ?? '', 10);
+  const rawYear = req.query.year ?? '';
+  const hasYearParam = 'year' in req.query && rawYear !== '';
+  const requestedYear = Number.parseInt(rawYear, 10);
   if (hasYearParam && Number.isNaN(requestedYear)) {
     return res.status(400).json({ error: 'Year must be a number' });
   }

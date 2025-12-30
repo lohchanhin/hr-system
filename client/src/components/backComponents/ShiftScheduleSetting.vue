@@ -390,6 +390,12 @@ const calendarForm = ref({
   desc: ''
 })
 
+function formatHolidayDate(value) {
+  if (!value) return ''
+  const dt = new Date(value)
+  return Number.isNaN(dt.getTime()) ? '' : dt.toISOString().slice(0, 10).replace(/-/g, '/')
+}
+
 async function fetchHolidays() {
   const res = await apiFetch('/api/holidays', {
     headers: {
@@ -403,13 +409,7 @@ async function fetchHolidays() {
           ...item,
           type: item.type || item.holidayCategory || '國定假日',
           desc: item.desc ?? item.description ?? item.name ?? '',
-          date: (() => {
-            if (!item.date) return ''
-            const dt = new Date(item.date)
-            return Number.isNaN(dt.getTime())
-              ? ''
-              : dt.toISOString().slice(0, 10).replace(/-/g, '/')
-          })()
+          date: formatHolidayDate(item.date)
         }))
       : []
   }
