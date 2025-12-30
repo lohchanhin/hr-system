@@ -36,6 +36,7 @@
               <el-form-item label="機構">
                 <el-select
                   v-model="filterOrganization"
+                  class="filter-select"
                   placeholder="全部機構"
                   clearable
                   @change="fetchMonthlyOverview"
@@ -51,6 +52,7 @@
               <el-form-item label="部門">
                 <el-select
                   v-model="filterDepartment"
+                  class="filter-select"
                   placeholder="全部部門"
                   clearable
                   @change="fetchMonthlyOverview"
@@ -66,6 +68,7 @@
               <el-form-item label="單位">
                 <el-select
                   v-model="filterSubDepartment"
+                  class="filter-select"
                   placeholder="全部單位"
                   clearable
                   @change="fetchMonthlyOverview"
@@ -1635,6 +1638,10 @@ const showExplanationDialog = ref(false)
     padding: 15px;
     background-color: #f5f7fa;
     border-radius: 4px;
+  }
+  
+  .filter-select {
+    min-width: 220px;
   }
 
   .stat-item {
