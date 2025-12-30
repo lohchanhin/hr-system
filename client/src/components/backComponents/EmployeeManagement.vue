@@ -2975,6 +2975,19 @@ function toNumberOrNull(value) {
   return Number.isFinite(num) ? num : null
 }
 
+function normalizeMonthlySalaryAdjustments(source = {}) {
+  const adj = source && typeof source === 'object' ? source : {}
+  const toNum = (v) => toNumberOrNull(v) ?? 0
+  return {
+    healthInsuranceFee: toNum(adj.healthInsuranceFee),
+    debtGarnishment: toNum(adj.debtGarnishment),
+    otherDeductions: toNum(adj.otherDeductions),
+    performanceBonus: toNum(adj.performanceBonus),
+    otherBonuses: toNum(adj.otherBonuses),
+    notes: typeof adj.notes === 'string' ? adj.notes : adj.notes ?? ''
+  }
+}
+
 function toStringOrEmpty(value) {
   if (value === undefined || value === null) return ''
   return String(value)
@@ -3071,6 +3084,9 @@ async function fetchEmployees() {
     const list = await res.json()
     employeeList.value = list.map(e => {
       const appointment = e?.appointment ?? {}
+      const monthlyAdjustments = normalizeMonthlySalaryAdjustments(
+        e?.monthlySalaryAdjustments
+      )
       return {
         ...e,
         title: extractOptionValue(e?.title),
@@ -3125,7 +3141,8 @@ async function fetchEmployees() {
         ),
         employmentNote: toStringOrEmpty(
           appointment?.remark ?? e?.employmentNote ?? ''
-        )
+        ),
+        monthlySalaryAdjustments: monthlyAdjustments
       }
     })
   }
@@ -4190,6 +4207,9 @@ async function openEmployeeDialog(index = null) {
     employeeForm.value.employeeAdvance =
       toNumberOrNull(employeeForm.value.employeeAdvance) ?? 0
     employeeForm.value.salaryItems = filterValidSalaryItems(employeeForm.value.salaryItems)
+    employeeForm.value.monthlySalaryAdjustments = normalizeMonthlySalaryAdjustments(
+      emp.monthlySalaryAdjustments ?? employeeForm.value.monthlySalaryAdjustments
+    )
     const education = emp.education ?? {}
     if (!employeeForm.value.educationLevel && education.level) {
       employeeForm.value.educationLevel = education.level
@@ -4291,6 +4311,9 @@ async function saveEmployee() {
   payload.laborPensionSelf = toNumberOrNull(form.laborPensionSelf) ?? 0
   payload.employeeAdvance = toNumberOrNull(form.employeeAdvance) ?? 0
   payload.salaryItems = filterValidSalaryItems(form.salaryItems)
+  payload.monthlySalaryAdjustments = normalizeMonthlySalaryAdjustments(
+    form.monthlySalaryAdjustments
+  )
   payload.dischargeYear = toNumberOrNull(form.dischargeYear)
   if (payload.supervisor === '' || payload.supervisor === null) delete payload.supervisor
 

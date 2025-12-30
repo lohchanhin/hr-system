@@ -162,4 +162,49 @@ describe('Monthly Salary Adjustments', () => {
       expect(employee.monthlySalaryAdjustments.notes).toBe('固定績效獎金');
     });
   });
+
+  describe('Employee controller helpers - monthlySalaryAdjustments', () => {
+    it('buildEmployeeDoc should normalize monthlySalaryAdjustments values', async () => {
+      const { buildEmployeeDoc } = await import('../src/controllers/employeeController.js');
+
+      const doc = buildEmployeeDoc({
+        monthlySalaryAdjustments: {
+          healthInsuranceFee: '750',
+          debtGarnishment: 1000,
+          otherDeductions: null,
+          performanceBonus: '2500',
+          otherBonuses: undefined,
+          notes: 'fixed bonuses',
+        },
+      });
+
+      expect(doc.monthlySalaryAdjustments).toEqual({
+        healthInsuranceFee: 750,
+        debtGarnishment: 1000,
+        otherDeductions: 0,
+        performanceBonus: 2500,
+        otherBonuses: 0,
+        notes: 'fixed bonuses',
+      });
+    });
+
+    it('buildEmployeePatch should set monthlySalaryAdjustments fields for partial updates', async () => {
+      const { buildEmployeePatch } = await import('../src/controllers/employeeController.js');
+
+      const { $set } = buildEmployeePatch({
+        monthlySalaryAdjustments: {
+          healthInsuranceFee: 500,
+          debtGarnishment: 0,
+          notes: '',
+        },
+      });
+
+      expect($set['monthlySalaryAdjustments.healthInsuranceFee']).toBe(500);
+      expect($set['monthlySalaryAdjustments.debtGarnishment']).toBe(0);
+      expect($set['monthlySalaryAdjustments.otherDeductions']).toBe(0);
+      expect($set['monthlySalaryAdjustments.performanceBonus']).toBe(0);
+      expect($set['monthlySalaryAdjustments.otherBonuses']).toBe(0);
+      expect($set['monthlySalaryAdjustments.notes']).toBe('');
+    });
+  });
 });

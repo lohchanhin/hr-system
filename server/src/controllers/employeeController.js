@@ -238,6 +238,14 @@ export function buildEmployeeDoc(body = {}) {
       acct: body?.salaryAccountB?.acct ?? '',
     },
     salaryItems: toArray(body.salaryItems) ?? [],
+    monthlySalaryAdjustments: {
+      healthInsuranceFee: toNum(body?.monthlySalaryAdjustments?.healthInsuranceFee) ?? 0,
+      debtGarnishment: toNum(body?.monthlySalaryAdjustments?.debtGarnishment) ?? 0,
+      otherDeductions: toNum(body?.monthlySalaryAdjustments?.otherDeductions) ?? 0,
+      performanceBonus: toNum(body?.monthlySalaryAdjustments?.performanceBonus) ?? 0,
+      otherBonuses: toNum(body?.monthlySalaryAdjustments?.otherBonuses) ?? 0,
+      notes: body?.monthlySalaryAdjustments?.notes ?? '',
+    },
   }
 }
 
@@ -395,6 +403,15 @@ export function buildEmployeePatch(body = {}, existing = null) {
   if (isDefined(body.salaryAccountB?.bank)) put('salaryAccountB.bank', body.salaryAccountB.bank)
   if (isDefined(body.salaryAccountB?.acct)) put('salaryAccountB.acct', body.salaryAccountB.acct)
   if (isDefined(body.salaryItems)) put('salaryItems', toArray(body.salaryItems) ?? [])
+  if (isDefined(body.monthlySalaryAdjustments)) {
+    const m = body.monthlySalaryAdjustments || {}
+    put('monthlySalaryAdjustments.healthInsuranceFee', toNum(m.healthInsuranceFee) ?? 0)
+    put('monthlySalaryAdjustments.debtGarnishment', toNum(m.debtGarnishment) ?? 0)
+    put('monthlySalaryAdjustments.otherDeductions', toNum(m.otherDeductions) ?? 0)
+    put('monthlySalaryAdjustments.performanceBonus', toNum(m.performanceBonus) ?? 0)
+    put('monthlySalaryAdjustments.otherBonuses', toNum(m.otherBonuses) ?? 0)
+    if (isDefined(m.notes)) put('monthlySalaryAdjustments.notes', m.notes ?? '')
+  }
 
   return { $set, $unset }
 }
