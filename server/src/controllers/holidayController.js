@@ -80,7 +80,11 @@ const ROC_CALENDAR_BASE =
   'https://cdn.jsdelivr.net/gh/ruyut/TaiwanCalendar/data';
 
 export async function importRocHolidays(req, res) {
-  const requestedYear = Number.parseInt(req.query.year, 10);
+  const hasYearParam = Object.prototype.hasOwnProperty.call(req.query, 'year');
+  const requestedYear = Number.parseInt(req.query.year ?? '', 10);
+  if (hasYearParam && Number.isNaN(requestedYear)) {
+    return res.status(400).json({ error: 'Year must be a number' });
+  }
   const currentYear = new Date().getFullYear();
   const year = Number.isInteger(requestedYear) ? requestedYear : currentYear;
   if (year < ROC_YEAR_MIN || year > ROC_YEAR_MAX) {
