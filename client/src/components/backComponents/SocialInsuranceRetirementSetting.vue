@@ -11,14 +11,14 @@
       <el-tab-pane label="勞保" name="laborInsurance">
         <div class="tab-content">
           <el-space>
-            <el-button type="primary" @click="refreshLaborInsuranceRates">手動取得最新級距</el-button>
+            <el-button type="primary" @click="refreshLaborInsuranceRates('laborInsurance')">手動取得最新級距</el-button>
             <el-button @click="toggleRateTable">{{ showLaborRateTable ? '隱藏級距表' : '顯示級距表' }}</el-button>
           </el-space>
-          <div class="form-help" v-if="laborRateStatus.lastFetched">
-            上次更新：{{ laborRateStatus.lastFetched }} ｜ {{ laborRateStatus.message }}
+          <div class="form-help" v-if="laborRateStatus.laborInsurance.lastFetched">
+            上次更新：{{ laborRateStatus.laborInsurance.lastFetched }} ｜ {{ laborRateStatus.laborInsurance.message }}
           </div>
           <div v-if="showLaborRateTable" style="margin-top: 15px;">
-            <el-table :data="laborInsuranceRates" border stripe max-height="400">
+            <el-table :data="laborInsuranceRates.laborInsurance" border stripe max-height="400">
               <el-table-column prop="level" label="等級" width="80" align="center" />
               <el-table-column prop="insuredSalary" label="投保薪資" width="120" align="right">
                 <template #default="{ row }">NT$ {{ row.insuredSalary.toLocaleString() }}</template>
@@ -38,13 +38,15 @@
 
       <el-tab-pane label="健保" name="healthInsurance">
         <div class="tab-content">
-          <p class="hint">健保級距與更新方式與勞保一致，僅保留手動更新。</p>
           <el-space>
-            <el-button @click="refreshLaborInsuranceRates">手動取得最新健保級距</el-button>
+            <el-button type="primary" @click="refreshLaborInsuranceRates('healthInsurance')">手動取得最新健保級距</el-button>
             <el-button @click="toggleRateTable">{{ showLaborRateTable ? '隱藏級距表' : '顯示級距表' }}</el-button>
           </el-space>
+          <div class="form-help" v-if="laborRateStatus.healthInsurance.lastFetched">
+            上次更新：{{ laborRateStatus.healthInsurance.lastFetched }} ｜ {{ laborRateStatus.healthInsurance.message }}
+          </div>
           <div v-if="showLaborRateTable" style="margin-top: 15px;">
-            <el-table :data="laborInsuranceRates" border stripe max-height="400">
+            <el-table :data="laborInsuranceRates.healthInsurance" border stripe max-height="400">
               <el-table-column prop="level" label="等級" width="80" align="center" />
               <el-table-column prop="insuredSalary" label="投保薪資" width="120" align="right">
                 <template #default="{ row }">NT$ {{ row.insuredSalary.toLocaleString() }}</template>
@@ -62,13 +64,15 @@
 
       <el-tab-pane label="勞退" name="retirement">
         <div class="tab-content">
-          <p class="hint">勞退級距與勞保一致，僅保留手動更新；可於此查看級距資料。</p>
           <el-space>
-            <el-button @click="refreshLaborInsuranceRates">手動取得最新勞退級距</el-button>
+            <el-button type="primary" @click="refreshLaborInsuranceRates('retirement')">手動取得最新勞退級距</el-button>
             <el-button @click="toggleRateTable">{{ showLaborRateTable ? '隱藏級距表' : '顯示級距表' }}</el-button>
           </el-space>
+          <div class="form-help" v-if="laborRateStatus.retirement.lastFetched">
+            上次更新：{{ laborRateStatus.retirement.lastFetched }} ｜ {{ laborRateStatus.retirement.message }}
+          </div>
           <div v-if="showLaborRateTable" style="margin-top: 15px;">
-            <el-table :data="laborInsuranceRates" border stripe max-height="400">
+            <el-table :data="laborInsuranceRates.retirement" border stripe max-height="400">
               <el-table-column prop="level" label="等級" width="80" align="center" />
               <el-table-column prop="insuredSalary" label="月提繳級距" width="140" align="right">
                 <template #default="{ row }">NT$ {{ row.insuredSalary.toLocaleString() }}</template>
@@ -99,51 +103,78 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, watch } from 'vue'
 import { apiFetch } from '@/api'
 
 const activeTab = ref('laborInsurance')
 const showHelp = ref(false)
-const laborRateStatus = ref({ lastFetched: '', message: '' })
 const showLaborRateTable = ref(false)
-const laborInsuranceRates = ref([])
+const laborInsuranceRates = ref({
+  laborInsurance: [],
+  healthInsurance: [],
+  retirement: []
+})
+const laborRateStatus = ref({
+  laborInsurance: { lastFetched: '', message: '' },
+  healthInsurance: { lastFetched: '', message: '' },
+  retirement: { lastFetched: '', message: '' }
+})
+const rateTypeLabel = {
+  laborInsurance: '勞保',
+  healthInsurance: '健保',
+  retirement: '勞退'
+}
 
 function toggleRateTable() {
   showLaborRateTable.value = !showLaborRateTable.value
 }
 
-async function fetchLaborInsuranceRates() {
-  try {
-    const res = await apiFetch('/api/payroll/insurance/rates')
-    if (res.ok) {
-      laborInsuranceRates.value = await res.json()
-    } else {
-      laborInsuranceRates.value = []
-    }
-  } catch (error) {
-    console.error('Error fetching labor insurance rates:', error)
-    laborInsuranceRates.value = []
+function buildStatusPayload(type, message) {
+  return {
+    lastFetched: new Date().toLocaleString(),
+    message: message || `${rateTypeLabel[type] || '級距'}已從官網取得最新級距`
   }
 }
 
-async function refreshLaborInsuranceRates() {
+async function fetchLaborInsuranceRates(type = 'laborInsurance') {
   try {
-    const res = await apiFetch('/api/payroll/insurance/refresh', { method: 'POST' })
+    const res = await apiFetch(`/api/payroll/insurance/rates?type=${type}`)
+    if (res.ok) {
+      laborInsuranceRates.value[type] = await res.json()
+    } else {
+      laborInsuranceRates.value[type] = []
+    }
+  } catch (error) {
+    console.error(`Error fetching ${type} insurance rates:`, error)
+    laborInsuranceRates.value[type] = []
+  }
+}
+
+async function refreshLaborInsuranceRates(type = activeTab.value) {
+  try {
+    const res = await apiFetch(`/api/payroll/insurance/refresh?type=${type}`, { method: 'POST' })
     if (res.ok) {
       const data = await res.json()
-      laborRateStatus.value = {
-        lastFetched: new Date().toLocaleString(),
-        message: data.message || (data.isUpToDate ? '級距已是最新' : '已同步最新級距')
+      laborRateStatus.value[type] = buildStatusPayload(type, data.message || (data.isUpToDate ? '級距已是最新' : '已同步最新級距'))
+      if (Array.isArray(data.rates) && data.rates.length > 0) {
+        laborInsuranceRates.value[type] = data.rates
+      } else {
+        await fetchLaborInsuranceRates(type)
       }
-      await fetchLaborInsuranceRates()
     }
   } catch (error) {
-    console.error('refreshLaborInsuranceRates error', error)
+    console.error(`refreshLaborInsuranceRates error for ${type}`, error)
   }
 }
 
-onMounted(() => {
-  fetchLaborInsuranceRates()
+onMounted(async () => {
+  await Promise.all(['laborInsurance', 'healthInsurance', 'retirement'].map((type) => fetchLaborInsuranceRates(type)))
+})
+
+watch(activeTab, (tab) => {
+  if (!laborInsuranceRates.value[tab]?.length) {
+    fetchLaborInsuranceRates(tab)
+  }
 })
 </script>
 

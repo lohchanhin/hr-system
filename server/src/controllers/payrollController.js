@@ -9,13 +9,18 @@ import {
   savePayrollRecord,
   getEmployeePayrollRecords
 } from '../services/payrollService.js';
-import { 
+import {
   calculateWorkHours,
   calculateLeaveImpact,
   calculateOvertimePay,
   calculateCompleteWorkData
 } from '../services/workHoursCalculationService.js';
-import { initializeLaborInsuranceRates, refreshLaborInsuranceRates } from '../services/laborInsuranceService.js';
+import {
+  initializeLaborInsuranceRates,
+  refreshLaborInsuranceRates,
+  fetchInsuranceRatesByType,
+  refreshInsuranceRatesByType
+} from '../services/laborInsuranceService.js';
 import { generatePayrollExcel } from '../services/payrollExportService.js';
 import { aggregateBonusFromApprovals } from '../utils/payrollPreviewUtils.js';
 
@@ -184,7 +189,8 @@ export async function exportPayrollExcel(req, res) {
  */
 export async function getLaborInsuranceRates(req, res) {
   try {
-    const rates = await LaborInsuranceRate.find().sort({ level: 1 });
+    const type = req.query.type || 'laborInsurance';
+    const rates = await fetchInsuranceRatesByType(type);
     res.json(rates);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -205,11 +211,14 @@ export async function initializeLaborInsuranceRatesController(req, res) {
 
 export async function refreshLaborInsuranceRatesController(req, res) {
   try {
-    const result = await refreshLaborInsuranceRates();
+    const type = req.query.type || req.body?.type || 'laborInsurance';
+    const result = type === 'laborInsurance'
+      ? await refreshLaborInsuranceRates()
+      : await refreshInsuranceRatesByType(type);
     res.json({
       success: true,
       ...result,
-      message: result.isUpToDate ? '勞保級距已是最新' : '已取得最新勞保級距'
+      message: result.isUpToDate ? '級距已是最新' : '已從官網取得最新級距'
     });
   } catch (err) {
     res.status(500).json({ error: err.message });

@@ -31,6 +31,25 @@ export const DEFAULT_LABOR_INSURANCE_RATES = [
   { level: 28, insuredSalary: 45800, workerFee: 1145, employerFee: 4008 }
 ];
 
+const HEALTH_INSURANCE_WORKER_RATE = 0.015;
+const HEALTH_INSURANCE_EMPLOYER_RATE = 0.03;
+const LABOR_PENSION_EMPLOYER_RATE = 0.06;
+const fetchFn = typeof fetch === 'function' ? fetch : null;
+
+export const DEFAULT_HEALTH_INSURANCE_RATES = DEFAULT_LABOR_INSURANCE_RATES.map((rate) => ({
+  level: rate.level,
+  insuredSalary: rate.insuredSalary,
+  workerFee: Math.round(rate.insuredSalary * HEALTH_INSURANCE_WORKER_RATE),
+  employerFee: Math.round(rate.insuredSalary * HEALTH_INSURANCE_EMPLOYER_RATE)
+}));
+
+export const DEFAULT_LABOR_PENSION_RATES = DEFAULT_LABOR_INSURANCE_RATES.map((rate) => ({
+  level: rate.level,
+  insuredSalary: rate.insuredSalary,
+  workerFee: 0,
+  employerFee: Math.round(rate.insuredSalary * LABOR_PENSION_EMPLOYER_RATE)
+}));
+
 function normalizeRate(rate) {
   return {
     ...rate,
@@ -134,10 +153,106 @@ export async function refreshLaborInsuranceRates() {
   };
 }
 
+const OFFICIAL_SOURCE_CONFIG = {
+  laborInsurance: {
+    url: process.env.LABOR_INSURANCE_SOURCE_URL,
+    fallback: DEFAULT_LABOR_INSURANCE_RATES.map((rate) => ({ ...rate }))
+  },
+  healthInsurance: {
+    url: process.env.HEALTH_INSURANCE_SOURCE_URL,
+    fallback: DEFAULT_HEALTH_INSURANCE_RATES.map((rate) => ({ ...rate }))
+  },
+  laborPension: {
+    url: process.env.LABOR_PENSION_SOURCE_URL,
+    fallback: DEFAULT_LABOR_PENSION_RATES.map((rate) => ({ ...rate }))
+  }
+};
+
+const TYPE_ALIASES = {
+  retirement: 'laborPension'
+};
+
+function pickFirstNumber(source, keys, fallbackValue) {
+  for (const key of keys) {
+    const value = Number(source?.[key]);
+    if (Number.isFinite(value) && value > 0) return value;
+  }
+  return fallbackValue;
+}
+
+function mapOfficialRates(rawRates, fallback) {
+  if (!Array.isArray(rawRates)) return fallback;
+
+  const mapped = rawRates.map((item, idx) => {
+    const level = pickFirstNumber(item, ['level', 'Level', '等級'], idx + 1);
+    const insuredSalary = pickFirstNumber(item, ['insuredSalary', 'InsuredSalary', 'salary', '投保薪資', '月提繳級距'], 0);
+    const workerFee = pickFirstNumber(item, ['workerFee', 'worker_fee', '被保險人金額', 'employeeFee'], 0);
+    const employerFee = pickFirstNumber(item, ['employerFee', 'employer_fee', '投保單位金額', 'employerContribution'], 0);
+    return {
+      level,
+      insuredSalary,
+      workerFee,
+      employerFee,
+      ordinaryRate: item?.ordinaryRate ?? item?.['ordinary_rate'],
+      employmentInsuranceRate: item?.employmentInsuranceRate ?? item?.['employment_insurance_rate']
+    };
+  }).filter(rate => Number.isFinite(rate.insuredSalary) && rate.insuredSalary > 0);
+
+  return mapped.length ? mapped : fallback;
+}
+
+async function fetchRatesWithMeta(type = 'laborInsurance') {
+  const normalizedType = OFFICIAL_SOURCE_CONFIG[type] ? type : (TYPE_ALIASES[type] || 'laborInsurance');
+  const configKey = OFFICIAL_SOURCE_CONFIG[normalizedType] ? normalizedType : 'laborInsurance';
+
+  if (configKey === 'laborInsurance') {
+    const rates = await LaborInsuranceRate.find().sort({ level: 1 });
+    if (rates.length) return { rates, fromOfficial: true };
+    return { rates: DEFAULT_LABOR_INSURANCE_RATES.map(normalizeRate), fromOfficial: false };
+  }
+
+  const source = OFFICIAL_SOURCE_CONFIG[configKey];
+  if (source.url && fetchFn) {
+    try {
+      const response = await fetchFn(source.url);
+      if (response.ok) {
+        const data = await response.json();
+        return { rates: mapOfficialRates(data, source.fallback), fromOfficial: true };
+      }
+    } catch (error) {
+      console.error(`Failed to fetch official ${configKey} rates`, error);
+    }
+  }
+
+  return { rates: source.fallback, fromOfficial: false };
+}
+
+export async function fetchInsuranceRatesByType(type = 'laborInsurance') {
+  const { rates } = await fetchRatesWithMeta(type);
+  return rates;
+}
+
+export async function refreshInsuranceRatesByType(type = 'laborInsurance') {
+  if (type === 'laborInsurance') {
+    return refreshLaborInsuranceRates();
+  }
+
+  const { rates, fromOfficial } = await fetchRatesWithMeta(type);
+  return {
+    updatedLevels: rates.map((r) => r.level),
+    updatedCount: rates.length,
+    totalLevels: rates.length,
+    isUpToDate: fromOfficial && rates.length > 0,
+    rates
+  };
+}
+
 export default {
   findInsuranceLevelBySalary,
   getInsuranceRateByLevel,
   initializeLaborInsuranceRates,
   fetchLatestLaborInsuranceRates,
-  refreshLaborInsuranceRates
+  refreshLaborInsuranceRates,
+  fetchInsuranceRatesByType,
+  refreshInsuranceRatesByType
 };
