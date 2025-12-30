@@ -408,7 +408,7 @@ async function fetchHolidays() {
             const dt = new Date(item.date)
             return Number.isNaN(dt.getTime())
               ? ''
-              : dt.toISOString().slice(0, 10).replaceAll('-', '/')
+              : dt.toISOString().slice(0, 10).replace(/-/g, '/')
           })()
         }))
       : []
@@ -443,7 +443,7 @@ async function saveHoliday() {
     type: calendarForm.value.type || '國定假日'
   }
   if (payload.date?.includes('/')) {
-    payload.date = payload.date.replaceAll('/', '-')
+    payload.date = payload.date.replace(/\//g, '-')
   }
   await apiFetch(url, {
     method,
