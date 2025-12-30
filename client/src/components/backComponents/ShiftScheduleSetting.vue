@@ -437,9 +437,7 @@ async function saveHoliday() {
   }
   const payload = {
     ...calendarForm.value,
-    name: calendarForm.value.name,
     description: calendarForm.value.desc,
-    desc: calendarForm.value.desc,
     type: calendarForm.value.type || '國定假日'
   }
   if (payload.date?.includes('/')) {
@@ -495,7 +493,7 @@ async function loadRocHolidays() {
     console.error('載入國定假日失敗', e)
     const payload = buildRocHolidays().map((item) => ({
       ...item,
-      name: item.desc || item.type,
+      name: item.desc || '國定假日',
       description: item.desc,
       desc: item.desc,
       type: item.type || '國定假日'
