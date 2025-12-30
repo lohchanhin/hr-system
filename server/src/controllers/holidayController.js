@@ -18,6 +18,10 @@ function normalizeHolidayPayload(payload = {}) {
   };
 }
 
+function isValidDateValue(dateValue) {
+  return dateValue instanceof Date && !Number.isNaN(dateValue.getTime());
+}
+
 export async function listHolidays(_req, res) {
   try {
     const holidays = await Holiday.find().sort({ date: 1 });
@@ -30,7 +34,7 @@ export async function listHolidays(_req, res) {
 export async function createHoliday(req, res) {
   try {
     const payload = normalizeHolidayPayload(req.body);
-    if (!payload.date || Number.isNaN(payload.date.getTime())) {
+    if (!isValidDateValue(payload.date)) {
       return res.status(400).json({ error: 'Invalid or missing date' });
     }
     const holiday = await Holiday.create(payload);
@@ -43,6 +47,13 @@ export async function createHoliday(req, res) {
 export async function updateHoliday(req, res) {
   try {
     const payload = normalizeHolidayPayload(req.body);
+    if (
+      payload.date !== undefined &&
+      payload.date !== null &&
+      !isValidDateValue(payload.date)
+    ) {
+      return res.status(400).json({ error: 'Invalid date' });
+    }
     const holiday = await Holiday.findByIdAndUpdate(
       req.params.id,
       payload,
