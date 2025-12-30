@@ -299,7 +299,14 @@ export async function getMonthlyPayrollOverview(req, res) {
               leaveDeduction: workData.leaveDeduction,
               overtimeHours: workData.overtimeHours,
               overtimePay: workData.overtimePay,
-              baseSalary: workData.baseSalary
+              baseSalary: workData.baseSalary,
+              // Include night shift data
+              nightShiftDays: workData.nightShiftDays,
+              nightShiftHours: workData.nightShiftHours,
+              nightShiftAllowance: workData.nightShiftAllowance,
+              nightShiftCalculationMethod: workData.nightShiftCalculationMethod,
+              nightShiftBreakdown: workData.nightShiftBreakdown,
+              nightShiftConfigurationIssues: workData.nightShiftConfigurationIssues
             });
           } catch (error) {
             console.error(`Error building work data for employee ${employeeIdStr}:`, error);
