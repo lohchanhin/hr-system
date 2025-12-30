@@ -280,6 +280,11 @@
                     {{ formatCurrency(row.healthInsuranceFee) }}
                   </template>
                 </el-table-column>
+                <el-table-column prop="laborPension" label="勞退" width="100" align="right">
+                  <template #default="{ row }">
+                    {{ formatCurrency(row.laborPension) }}
+                  </template>
+                </el-table-column>
                 <el-table-column prop="laborPensionSelf" label="勞退自提" width="100" align="right">
                   <template #default="{ row }">
                     {{ formatCurrency(row.laborPensionSelf) }}
@@ -1172,6 +1177,7 @@ const showExplanationDialog = ref(false)
     return filteredOverviewData.value.reduce((sum, item) => {
       const deductions = (item.laborInsuranceFee || 0) +
                         (item.healthInsuranceFee || 0) +
+                        (item.laborPension || 0) +
                         (item.laborPensionSelf || 0) +
                         (item.otherDeductions || 0)
       return sum + deductions
@@ -1326,6 +1332,15 @@ const showExplanationDialog = ref(false)
         item: '健保費',
         description: '員工自付額',
         amount: emp.healthInsuranceFee,
+        type: 'deduction'
+      })
+    }
+    
+    if (emp.laborPension && emp.laborPension > 0) {
+      breakdown.push({
+        item: '勞退（雇主）',
+        description: '',
+        amount: emp.laborPension,
         type: 'deduction'
       })
     }
