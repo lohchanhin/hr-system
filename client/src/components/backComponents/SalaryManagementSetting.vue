@@ -380,11 +380,6 @@
                     {{ (row.nightShiftHours || 0).toFixed(2) }}
                   </template>
                 </el-table-column>
-                <el-table-column prop="nightShiftAllowance" label="夜班津貼" width="100" align="right">
-                  <template #default="{ row }">
-                    {{ formatCurrency(row.nightShiftAllowance) }}
-                  </template>
-                </el-table-column>
               </el-table-column>
               
               <el-table-column prop="baseSalary" label="基本薪資" width="120" align="right">
@@ -417,6 +412,11 @@
               </el-table-column>
               
               <el-table-column label="加項" align="center">
+                <el-table-column prop="nightShiftAllowance" label="夜班津貼" width="100" align="right">
+                  <template #default="{ row }">
+                    {{ formatCurrency(row.nightShiftAllowance) }}
+                  </template>
+                </el-table-column>
                 <el-table-column prop="performanceBonus" label="績效獎金" width="100" align="right">
                   <template #default="{ row }">
                     {{ formatCurrency(row.performanceBonus) }}
@@ -818,7 +818,7 @@
                     <div class="formula-box formula-box--spaced">
                       <p><strong>獎金總額（銀行B）=</strong></p>
                       <p class="formula-item">加班費</p>
-                      <p class="formula-item">+ 夜班津貼</p>
+                      <p class="formula-item">+ 夜班津貼（額外獎勵，非基本工資）</p>
                       <p class="formula-item">+ 績效獎金</p>
                       <p class="formula-item">+ 其他獎金</p>
                     </div>
@@ -829,6 +829,29 @@
                       <li><strong>日薪制：</strong>實際上班天數 × 日薪</li>
                       <li><strong>時薪制：</strong>實際工作時數 × 時薪</li>
                     </ul>
+                    
+                    <el-alert
+                      type="info"
+                      :closable="false"
+                      show-icon
+                      style="margin-top: 15px;"
+                    >
+                      <template #title>
+                        <div style="font-size: 13px;">
+                          <strong>重要說明：夜班工作時數 vs 夜班津貼</strong>
+                        </div>
+                      </template>
+                      <ul style="margin: 5px 0; padding-left: 20px; font-size: 12px;">
+                        <li><strong>夜班工作時數</strong>：計入基本薪資（銀行A），與日班相同按時薪/日薪/月薪計算</li>
+                        <li><strong>夜班津貼</strong>：額外的夜班獎勵（銀行B），不屬於基本薪資</li>
+                        <li>例：員工夜班工作7小時，時薪167元
+                          <ul style="margin-top: 3px;">
+                            <li>基本薪資（銀行A）= 7時 × 167元 = 1,169元</li>
+                            <li>夜班津貼（銀行B）= 依班別設定計算（如固定500元或浮動計算）</li>
+                          </ul>
+                        </li>
+                      </ul>
+                    </el-alert>
                   </div>
                 </el-card>
 
@@ -961,7 +984,7 @@
                           <p><strong>用途：</strong>匯入實發薪資</p>
                           <p><strong>內容：</strong></p>
                           <ul>
-                            <li>基本薪資（月薪/日薪/時薪）</li>
+                            <li>基本薪資（月薪/日薪/時薪，<strong>包含夜班工作時數</strong>）</li>
                             <li>扣除所有扣款項目後的淨額</li>
                           </ul>
                           <p style="margin-top: 10px;"><strong>扣款項目包括：</strong></p>
@@ -981,7 +1004,7 @@
                           <p><strong>內容：</strong></p>
                           <ul>
                             <li>加班費（經簽核核准）</li>
-                            <li>夜班津貼</li>
+                            <li><strong>夜班津貼</strong>（夜班額外獎勵）</li>
                             <li>績效獎金</li>
                             <li>其他獎金</li>
                           </ul>
@@ -990,6 +1013,11 @@
                             <li>不扣除任何費用</li>
                             <li>所有獎金項目總和</li>
                             <li>可能為零（無獎金時）</li>
+                          </ul>
+                          <p style="margin-top: 10px;"><strong>註：</strong></p>
+                          <ul>
+                            <li style="font-size: 12px;">夜班<strong>工作本身</strong>已計入基本薪資（銀行A）</li>
+                            <li style="font-size: 12px;">夜班<strong>津貼</strong>為額外獎勵（銀行B）</li>
                           </ul>
                         </div>
                       </el-col>
