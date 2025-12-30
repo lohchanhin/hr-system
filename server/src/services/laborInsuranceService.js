@@ -31,6 +31,20 @@ export const DEFAULT_LABOR_INSURANCE_RATES = [
   { level: 28, insuredSalary: 45800, workerFee: 1145, employerFee: 4008 }
 ];
 
+export const DEFAULT_HEALTH_INSURANCE_RATES = DEFAULT_LABOR_INSURANCE_RATES.map((rate) => ({
+  level: rate.level,
+  insuredSalary: rate.insuredSalary,
+  workerFee: Math.round(rate.insuredSalary * 0.015),
+  employerFee: Math.round(rate.insuredSalary * 0.03)
+}));
+
+export const DEFAULT_LABOR_PENSION_RATES = DEFAULT_LABOR_INSURANCE_RATES.map((rate) => ({
+  level: rate.level,
+  insuredSalary: rate.insuredSalary,
+  workerFee: 0,
+  employerFee: Math.round(rate.insuredSalary * 0.06)
+}));
+
 function normalizeRate(rate) {
   return {
     ...rate,
@@ -134,10 +148,82 @@ export async function refreshLaborInsuranceRates() {
   };
 }
 
+const OFFICIAL_SOURCE_CONFIG = {
+  laborInsurance: {
+    url: process.env.LABOR_INSURANCE_SOURCE_URL,
+    fallback: DEFAULT_LABOR_INSURANCE_RATES.map((rate) => ({ ...rate }))
+  },
+  healthInsurance: {
+    url: process.env.HEALTH_INSURANCE_SOURCE_URL,
+    fallback: DEFAULT_HEALTH_INSURANCE_RATES
+  },
+  retirement: {
+    url: process.env.LABOR_PENSION_SOURCE_URL,
+    fallback: DEFAULT_LABOR_PENSION_RATES
+  }
+};
+
+function mapOfficialRates(rawRates, fallback) {
+  if (!Array.isArray(rawRates)) return fallback;
+
+  const mapped = rawRates.map((item, idx) => ({
+    level: Number(item.level ?? item.Level ?? item['等級'] ?? idx + 1),
+    insuredSalary: Number(item.insuredSalary ?? item.InsuredSalary ?? item.salary ?? item['投保薪資'] ?? item['月提繳級距'] ?? 0),
+    workerFee: Number(item.workerFee ?? item.worker_fee ?? item['被保險人金額'] ?? item.employeeFee ?? 0),
+    employerFee: Number(item.employerFee ?? item.employer_fee ?? item['投保單位金額'] ?? item.employerContribution ?? 0),
+    ordinaryRate: item.ordinaryRate ?? item['ordinary_rate'],
+    employmentInsuranceRate: item.employmentInsuranceRate ?? item['employment_insurance_rate']
+  })).filter(rate => Number.isFinite(rate.insuredSalary) && rate.insuredSalary > 0);
+
+  return mapped.length ? mapped : fallback;
+}
+
+export async function fetchInsuranceRatesByType(type = 'laborInsurance') {
+  const normalizedType = OFFICIAL_SOURCE_CONFIG[type] ? type : 'laborInsurance';
+
+  if (normalizedType === 'laborInsurance') {
+    const rates = await LaborInsuranceRate.find().sort({ level: 1 });
+    if (rates.length) return rates;
+    return DEFAULT_LABOR_INSURANCE_RATES.map(normalizeRate);
+  }
+
+  const source = OFFICIAL_SOURCE_CONFIG[normalizedType];
+  if (source.url && typeof fetch === 'function') {
+    try {
+      const response = await fetch(source.url);
+      if (response.ok) {
+        const data = await response.json();
+        return mapOfficialRates(data, source.fallback);
+      }
+    } catch (error) {
+      console.warn(`Failed to fetch official ${normalizedType} rates`, error);
+    }
+  }
+
+  return source.fallback;
+}
+
+export async function refreshInsuranceRatesByType(type = 'laborInsurance') {
+  if (type === 'laborInsurance') {
+    return refreshLaborInsuranceRates();
+  }
+
+  const rates = await fetchInsuranceRatesByType(type);
+  return {
+    updatedLevels: rates.map((r) => r.level),
+    updatedCount: rates.length,
+    totalLevels: rates.length,
+    isUpToDate: false,
+    rates
+  };
+}
+
 export default {
   findInsuranceLevelBySalary,
   getInsuranceRateByLevel,
   initializeLaborInsuranceRates,
   fetchLatestLaborInsuranceRates,
-  refreshLaborInsuranceRates
+  refreshLaborInsuranceRates,
+  fetchInsuranceRatesByType,
+  refreshInsuranceRatesByType
 };
