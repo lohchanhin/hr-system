@@ -287,7 +287,7 @@ export async function getMonthlyPayrollOverview(req, res) {
     const overview = await Promise.all(employees.map(async (employee) => {
       const employeeIdStr = employee._id.toString();
       let payroll = payrollMap[employeeIdStr];
-      if (payroll?.toObject) {
+      if (payroll && typeof payroll.toObject === 'function') {
         payroll = payroll.toObject();
       }
       const { total: recurringAllowanceFromItems, breakdown: recurringAllowanceBreakdown } = extractRecurringAllowance(employee);
@@ -391,7 +391,7 @@ export async function getMonthlyPayrollOverview(req, res) {
       const recurringAllowance = payroll?.recurringAllowance ?? recurringAllowanceFromItems ?? 0;
       
       // Extract payroll values with fallbacks
-      const netPayValue = payroll?.netPay ?? (employee.salaryAmount || 0);
+      const netPayValue = payroll?.netPay ?? employee.salaryAmount ?? 0;
       const totalBonusValue = (payroll?.overtimePay || 0) + 
                               (payroll?.nightShiftAllowance || 0) + 
                               (payroll?.performanceBonus || 0) + 
