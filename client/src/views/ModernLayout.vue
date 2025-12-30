@@ -85,8 +85,8 @@
           <div class="page-help-bar">
             <GlobalHelpButton :help="currentHelp" />
             <div class="page-help-text">
-              <div class="page-help-title">{{ currentHelp.title }}</div>
-              <div class="page-help-desc">{{ currentHelp.description }}</div>
+              <div class="page-help-title">本頁操作說明</div>
+              <div class="page-help-desc">點擊「說明」按鈕檢視情境、提示與操作流程。</div>
             </div>
           </div>
           <router-view />
