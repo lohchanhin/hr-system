@@ -31,12 +31,17 @@
         </template>
         
         <div class="tab-content">
-          <div class="content-header">
+           <div class="content-header">
             <h2 class="section-title">假日管理</h2>
-            <el-button type="primary" @click="openCalendarDialog()" class="add-btn">
+            <div class="header-actions">
+              <el-button type="primary" @click="openCalendarDialog()" class="add-btn">
               <i class="el-icon-plus"></i>
               新增假日
-            </el-button>
+              </el-button>
+              <el-button plain size="small" @click="loadRocHolidays" :loading="loadingHolidays">
+                一鍵載入當年國定假日
+              </el-button>
+            </div>
           </div>
           
           <div class="table-container">
@@ -358,63 +363,6 @@
         </div>
       </el-tab-pane>
 
-      <!-- 3) 員工個人國定假日挪移/簽名 -->
-      <el-tab-pane name="holidayMove">
-        <template #label>
-          <div class="tab-label">
-            <i class="el-icon-s-promotion"></i>
-            <span>國定假日挪移</span>
-          </div>
-        </template>
-        
-        <div class="tab-content">
-          <div class="settings-card">
-            <h2 class="section-title">假日挪移規則</h2>
-            <el-form :model="holidayMoveForm" label-width="220px" class="settings-form">
-              <div class="form-group">
-                <el-form-item label="是否允許挪移國定假日">
-                  <el-switch 
-                    v-model="holidayMoveForm.enableHolidayMove"
-                    active-text="允許" 
-                    inactive-text="禁止"
-                    active-color="#10b981"
-                  />
-                  <div class="form-help">允許員工申請將國定假日挪移到其他日期</div>
-                </el-form-item>
-                
-                <el-form-item label="挪移申請是否需簽名(電子簽核)">
-                  <el-switch 
-                    v-model="holidayMoveForm.needSignature" 
-                    :disabled="!holidayMoveForm.enableHolidayMove"
-                    active-text="需要" 
-                    inactive-text="不需要"
-                    active-color="#10b981"
-                  />
-                  <div class="form-help">挪移申請是否需要經過電子簽核流程</div>
-                </el-form-item>
-                
-                <el-form-item label="挪移後是否補班">
-                  <el-switch 
-                    v-model="holidayMoveForm.needMakeup" 
-                    :disabled="!holidayMoveForm.enableHolidayMove"
-                    active-text="需要" 
-                    inactive-text="不需要"
-                    active-color="#10b981"
-                  />
-                  <div class="form-help">挪移假日後是否需要在其他日期補班</div>
-                </el-form-item>
-              </div>
-              
-              <el-form-item>
-                <el-button type="primary" @click="saveHolidayMove" class="save-settings-btn">
-                  <i class="el-icon-check"></i>
-                  儲存挪移規則
-                </el-button>
-              </el-form-item>
-            </el-form>
-          </div>
-        </div>
-      </el-tab-pane>
     </el-tabs>
   </div>
 </template>
@@ -433,6 +381,7 @@ const timeFormat = 'HH:mm'
 const holidayList = ref([])
 const calendarDialogVisible = ref(false)
 let calendarEditIndex = null
+const loadingHolidays = ref(false)
 
 const calendarForm = ref({
   date: '',
@@ -443,8 +392,7 @@ const calendarForm = ref({
 async function fetchHolidays() {
   const res = await apiFetch('/api/holidays', {
     headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${getToken()}`
+      'Content-Type': 'application/json'
     }
   })
   if (res.ok) {
@@ -475,8 +423,7 @@ async function saveHoliday() {
   await apiFetch(url, {
     method,
     headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${getToken()}`
+      'Content-Type': 'application/json'
     },
     body: JSON.stringify(calendarForm.value)
   })
@@ -489,11 +436,43 @@ async function deleteHoliday(index) {
   await apiFetch(`/api/holidays/${id}`, {
     method: 'DELETE',
     headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${getToken()}`
+      'Content-Type': 'application/json'
     }
   })
   await fetchHolidays()
+}
+
+// 一鍵載入當年國定假日（簡化：使用內建清單）
+function buildRocHolidays(year = new Date().getUTCFullYear()) {
+  return [
+    { date: `${year}-01-01`, type: '國定假日', desc: '元旦' },
+    { date: `${year}-02-28`, type: '國定假日', desc: '和平紀念日' },
+    { date: `${year}-04-04`, type: '國定假日', desc: '兒童節' },
+    { date: `${year}-04-05`, type: '國定假日', desc: '清明節' },
+    { date: `${year}-05-01`, type: '國定假日', desc: '勞動節' },
+    { date: `${year}-06-10`, type: '國定假日', desc: '端午節(示例)' },
+    { date: `${year}-09-17`, type: '國定假日', desc: '中秋節(示例)' },
+    { date: `${year}-10-10`, type: '國定假日', desc: '國慶日' }
+  ]
+}
+
+async function loadRocHolidays() {
+  loadingHolidays.value = true
+  try {
+    const payload = buildRocHolidays()
+    for (const item of payload) {
+      await apiFetch('/api/holidays', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(item)
+      })
+    }
+    await fetchHolidays()
+  } catch (e) {
+    console.error('載入國定假日失敗', e)
+  } finally {
+    loadingHolidays.value = false
+  }
 }
   
 // =========== 2) 班別管理 (排班用) ===========
@@ -664,32 +643,6 @@ async function deleteShift(index) {
   await fetchShifts()
 }
   
-// =========== 3) 員工個人國定假日挪移設定 ===========
-const holidayMoveForm = ref({
-  enableHolidayMove: false,
-  needSignature: false,
-  needMakeup: false
-})
-  
-async function saveHolidayMove() {
-  const method = holidayMoveForm.value._id ? 'PUT' : 'POST'
-  let url = '/api/holiday-move-settings'
-  if (method === 'PUT') {
-    url += `/${holidayMoveForm.value._id}`
-  }
-  const res = await apiFetch(url, {
-    method,
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${getToken()}`
-    },
-    body: JSON.stringify(holidayMoveForm.value)
-  })
-  if (res.ok) {
-    alert('已儲存「國定假日挪移」設定')
-  }
-}
-
 onMounted(() => {
   fetchHolidays()
   fetchShifts()
@@ -784,6 +737,10 @@ function getHolidayTagType(type) {
   justify-content: space-between;
   align-items: center;
   margin-bottom: 24px;
+}
+.header-actions {
+  display: flex;
+  gap: 8px;
 }
 
 .section-title {

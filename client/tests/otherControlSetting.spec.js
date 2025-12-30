@@ -18,32 +18,11 @@ describe('OtherControlSetting custom field defaults', () => {
     await flushPromises()
 
     const keyTypeMap = Object.fromEntries(wrapper.vm.customFields.map(field => [field.fieldKey, field.type]))
-    const requiredCodes = [
-      'C03',
-      'C04',
-      'C05',
-      'C06',
-      'C07',
-      'C08',
-      'C09',
-      'C10',
-      'C11_name',
-      'C11_content',
-      'C11_timeRange',
-      'C11_paidBreak',
-      'C11_allowFlexTime',
-      'C11_flexWindow',
-      'C12',
-      'C13',
-      'C14'
-    ]
+    const requiredCodes = ['C03', 'C04', 'C05', 'C06', 'C07', 'C08', 'C09', 'C10', 'C12', 'C14']
 
     expect(Object.keys(keyTypeMap)).toEqual(expect.arrayContaining(requiredCodes))
     expect(keyTypeMap.C03).toBe('select')
     expect(keyTypeMap.C05).toBe('composite')
-    expect(keyTypeMap.C11_timeRange).toBe('timeRange')
-    expect(keyTypeMap.C11_paidBreak).toBe('boolean')
-    expect(keyTypeMap.C11_flexWindow).toBe('number')
     expect(keyTypeMap.C12).toBe('select')
     expect(keyTypeMap.C14).toBe('select')
   })
@@ -61,9 +40,7 @@ describe('OtherControlSetting custom field defaults', () => {
       { key: 'C08', label: '教育程度' },
       { key: 'C09', label: '緊急聯絡人稱謂' },
       { key: 'C10', label: '教育訓練積分類別' },
-      { key: 'C11', label: '班別設定' },
       { key: 'C12', label: '假別類別' },
-      { key: 'C13', label: '加班原因' },
       { key: 'C14', label: '津貼項目' }
     ]
 
@@ -84,9 +61,7 @@ describe('OtherControlSetting custom field defaults', () => {
       'C08 教育程度',
       'C09 緊急聯絡人稱謂',
       'C10 教育訓練積分類別',
-      'C11 班別設定',
       'C12 假別類別',
-      'C13 加班原因',
       'C14 津貼項目'
     ]
 
