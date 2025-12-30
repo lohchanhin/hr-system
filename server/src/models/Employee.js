@@ -190,6 +190,7 @@ const employeeSchema = new Schema(
       acct: String,
     },
     salaryItems: { type: [String], default: [] }, // 多選
+    salaryItemAmounts: { type: Object, default: {} },
 
     /* 每月薪資調整項目（動態設定於個人資料） */
     monthlySalaryAdjustments: {

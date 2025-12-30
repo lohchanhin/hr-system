@@ -120,6 +120,53 @@ describe('EmployeeManagement.vue', () => {
     expect(wrapper.vm.employeeForm.salaryItems).toEqual([])
   })
 
+  it('允許為薪資項目填寫金額並送出', async () => {
+    const responses = {
+      '/api/departments': [],
+      '/api/organizations': [],
+      '/api/sub-departments': [],
+      '/api/employees': [],
+      '/api/other-control-settings/item-settings': {
+        itemSettings: {
+          C14: [{ label: '交通補助', value: 'transport' }]
+        }
+      }
+    }
+    apiFetch.mockImplementation(url =>
+      Promise.resolve({ ok: true, json: async () => responses[url] ?? [] })
+    )
+
+    const wrapper = mount(EmployeeManagement, { global: { stubs: elStubs } })
+    await flushPromises()
+    wrapper.vm.employeeForm = {
+      ...wrapper.vm.employeeForm,
+      name: '津貼測試',
+      username: 'user-transport',
+      password: 'pwd',
+      role: 'employee',
+      organization: 'org',
+      department: 'dept',
+      gender: 'M',
+      email: 'transport@example.com',
+      salaryItems: ['transport']
+    }
+    await flushPromises()
+    wrapper.vm.employeeForm.salaryItemAmounts.transport = 1800
+
+    const validate = vi.fn(() => Promise.resolve(true))
+    wrapper.vm.formRef = { validate }
+    apiFetch.mockClear()
+    apiFetch.mockImplementation((url, opts) =>
+      Promise.resolve({ ok: true, json: async () => (opts?.method === 'POST' ? {} : []) })
+    )
+
+    await wrapper.vm.saveEmployee()
+    const postCall = apiFetch.mock.calls.find(c => c[1]?.method === 'POST')
+    const body = JSON.parse(postCall[1].body)
+    expect(body.salaryItems).toEqual(['transport'])
+    expect(body.salaryItemAmounts).toEqual({ transport: 1800 })
+  })
+
   it('缺少畢業狀態時使用預設選項且不顯示警告', async () => {
     const dictionaryResponse = {
       itemSettings: {
@@ -190,6 +237,7 @@ describe('EmployeeManagement.vue', () => {
       dischargeYear: '2020'
     }
     wrapper.vm.editEmployeeIndex = null
+    await flushPromises()
     await wrapper.vm.saveEmployee()
     expect(validate).toHaveBeenCalled()
     const postCall = apiFetch.mock.calls.find(c => c[1]?.method === 'POST')
@@ -204,6 +252,7 @@ describe('EmployeeManagement.vue', () => {
     expect(body.laborPensionSelf).toBe(2500)
     expect(body.employeeAdvance).toBe(3600)
     expect(body.salaryItems).toEqual(['本薪'])
+    expect(body.salaryItemAmounts).toEqual({ 本薪: 0 })
     expect(body.serviceType).toBe('志願役')
     expect(body.militaryBranch).toBe('陸軍')
     expect(body.militaryRank).toBe('上兵')
@@ -284,6 +333,7 @@ describe('EmployeeManagement.vue', () => {
     expect(wrapper.vm.employeeForm.laborPensionSelf).toBe(1800)
     expect(wrapper.vm.employeeForm.employeeAdvance).toBe(0)
     expect(wrapper.vm.employeeForm.salaryItems).toEqual(['本薪', '全勤'])
+    expect(wrapper.vm.employeeForm.salaryItemAmounts).toEqual({ 本薪: 0, 全勤: 0 })
     expect(wrapper.vm.employeeForm.licenses).toHaveLength(1)
     expect(wrapper.vm.employeeForm.licenses[0].fileList[0].url).toBe('https://file.example/license.png')
     expect(wrapper.vm.employeeForm.trainings[0].category).toEqual(['院內'])

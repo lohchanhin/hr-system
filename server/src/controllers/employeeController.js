@@ -19,7 +19,20 @@ const toArray = (v) => {
   if (v === '' || v === null) return []
   return [v]
 }
+const toStr = (v) => (v === '' || v === null || v === undefined ? '' : String(v))
 const firstOr = (arr, fallback) => (Array.isArray(arr) && arr.length ? arr[0] : fallback)
+
+const normalizeSalaryItemAmounts = (map = {}, salaryItems = []) => {
+  const selected = (Array.isArray(salaryItems) ? salaryItems : [salaryItems])
+    .map(toStr)
+    .filter(Boolean)
+  const source = map && typeof map === 'object' ? map : {}
+  return selected.reduce((acc, key) => {
+    const num = toNum(source[key])
+    acc[key] = num ?? 0
+    return acc
+  }, {})
+}
 
 // 專用於 enum 欄位的值檢查
 function sanitizeEnum(value, allowed) {
@@ -132,6 +145,8 @@ export function buildEmployeeDoc(body = {}) {
     }))
   }
 
+  const salaryItems = toArray(body.salaryItems) ?? []
+
   return {
     /* 帳號/權限/簽核 */
     username: body.username,
@@ -237,7 +252,8 @@ export function buildEmployeeDoc(body = {}) {
       bank: body?.salaryAccountB?.bank ?? '',
       acct: body?.salaryAccountB?.acct ?? '',
     },
-    salaryItems: toArray(body.salaryItems) ?? [],
+    salaryItems,
+    salaryItemAmounts: normalizeSalaryItemAmounts(body.salaryItemAmounts, salaryItems),
     monthlySalaryAdjustments: {
       healthInsuranceFee: toNum(body?.monthlySalaryAdjustments?.healthInsuranceFee) ?? 0,
       debtGarnishment: toNum(body?.monthlySalaryAdjustments?.debtGarnishment) ?? 0,
@@ -402,7 +418,14 @@ export function buildEmployeePatch(body = {}, existing = null) {
   if (isDefined(body.salaryAccountA?.acct)) put('salaryAccountA.acct', body.salaryAccountA.acct)
   if (isDefined(body.salaryAccountB?.bank)) put('salaryAccountB.bank', body.salaryAccountB.bank)
   if (isDefined(body.salaryAccountB?.acct)) put('salaryAccountB.acct', body.salaryAccountB.acct)
-  if (isDefined(body.salaryItems)) put('salaryItems', toArray(body.salaryItems) ?? [])
+  if (isDefined(body.salaryItems)) {
+    const salaryItems = toArray(body.salaryItems) ?? []
+    put('salaryItems', salaryItems)
+    put('salaryItemAmounts', normalizeSalaryItemAmounts(body.salaryItemAmounts, salaryItems))
+  } else if (isDefined(body.salaryItemAmounts)) {
+    const existingItems = existing?.salaryItems ?? []
+    put('salaryItemAmounts', normalizeSalaryItemAmounts(body.salaryItemAmounts, existingItems))
+  }
   if (isDefined(body.monthlySalaryAdjustments)) {
     const m = body.monthlySalaryAdjustments || {}
     put('monthlySalaryAdjustments.healthInsuranceFee', toNum(m.healthInsuranceFee) ?? 0)
