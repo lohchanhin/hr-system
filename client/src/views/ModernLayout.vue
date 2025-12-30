@@ -8,6 +8,7 @@
         <h1 class="system-title">HR 管理系統</h1>
       </div>
       <div class="header-right">
+        <GlobalHelpButton :help="currentHelp" />
         <el-button type="primary" @click="logout" class="logout-btn">
           <el-icon><i class="el-icon-switch-button" /></el-icon>
           登出
@@ -91,13 +92,16 @@
 
 <script setup>
 import { ref, onMounted, onBeforeUnmount, watch, computed } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRouter, useRoute } from 'vue-router'
 import { useMenuStore } from '../stores/menu'
 import { clearToken } from '../utils/tokenService'
 import { storeToRefs } from 'pinia'
 import { iconMap as availableMenuIcons, resolveMenuIcon } from '../constants/menuIcons'
+import { backendHelpContent } from '../constants/backendHelpContent'
+import GlobalHelpButton from '@/components/GlobalHelpButton.vue'
 
 const router = useRouter()
+const route = useRoute()
 const menuStore = useMenuStore()
 const { items: menuItems } = storeToRefs(menuStore)
 
@@ -105,6 +109,15 @@ const active = ref('')
 const isCollapse = ref(false)
 const isMobile = ref(false)
 const isMobileMenuOpen = ref(false)
+
+const currentHelp = computed(() => {
+  const routeName = route?.name
+  return backendHelpContent[routeName] || {
+    title: '後台操作說明',
+    description: '使用「說明」按鈕快速查看此頁的操作重點，無需修改按鈕本身。',
+    tips: ['完成設定後記得儲存或套用', '若有表單說明，先閱讀再進行修改']
+  }
+})
 
 const isSidebarCollapsed = computed(() => {
   if (isMobile.value) {
@@ -251,6 +264,7 @@ function logout() {
 .header-right {
   display: flex;
   align-items: center;
+  gap: 12px;
 }
 
 .collapse-btn {
