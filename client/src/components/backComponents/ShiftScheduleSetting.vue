@@ -486,7 +486,10 @@ async function loadRocHolidays() {
   try {
     const res = await apiFetch('/api/holidays/import/roc', { method: 'POST' })
     if (!res.ok) {
-      throw new Error('Import ROC holidays failed')
+      const errorText = await res.text().catch(() => '')
+      throw new Error(
+        `Import ROC holidays failed (${res.status})${errorText ? `: ${errorText}` : ''}`
+      )
     }
   } catch (e) {
     console.error('載入國定假日失敗', e)
