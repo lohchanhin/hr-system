@@ -384,10 +384,17 @@ let calendarEditIndex = null
 const loadingHolidays = ref(false)
 
 const calendarForm = ref({
+  name: '',
   date: '',
   type: '',
   desc: ''
 })
+
+function formatHolidayDate(value) {
+  if (!value) return ''
+  const dt = new Date(value)
+  return Number.isNaN(dt.getTime()) ? '' : dt.toISOString().slice(0, 10).replace(/-/g, '/')
+}
 
 async function fetchHolidays() {
   const res = await apiFetch('/api/holidays', {
@@ -396,7 +403,15 @@ async function fetchHolidays() {
     }
   })
   if (res.ok) {
-    holidayList.value = await res.json()
+    const data = await res.json()
+    holidayList.value = Array.isArray(data)
+      ? data.map((item) => ({
+          ...item,
+          type: item.type || item.holidayCategory || '國定假日',
+          desc: item.desc ?? item.description ?? item.name ?? '',
+          date: formatHolidayDate(item.date)
+        }))
+      : []
   }
 }
   
@@ -408,7 +423,7 @@ function openCalendarDialog(index = null) {
   } else {
     // 新增模式
     calendarEditIndex = null
-    calendarForm.value = { date: '', type: '', desc: '' }
+    calendarForm.value = { name: '', date: '', type: '', desc: '' }
   }
   calendarDialogVisible.value = true
 }
@@ -420,12 +435,20 @@ async function saveHoliday() {
     const id = holidayList.value[calendarEditIndex]._id
     url += `/${id}`
   }
+  const payload = {
+    ...calendarForm.value,
+    description: calendarForm.value.desc,
+    type: calendarForm.value.type || '國定假日'
+  }
+  if (payload.date?.includes('/')) {
+    payload.date = payload.date.replace(/\//g, '-')
+  }
   await apiFetch(url, {
     method,
     headers: {
       'Content-Type': 'application/json'
     },
-    body: JSON.stringify(calendarForm.value)
+    body: JSON.stringify(payload)
   })
   await fetchHolidays()
   calendarDialogVisible.value = false
@@ -459,7 +482,22 @@ function buildRocHolidays(year = new Date().getUTCFullYear()) {
 async function loadRocHolidays() {
   loadingHolidays.value = true
   try {
-    const payload = buildRocHolidays()
+    const res = await apiFetch('/api/holidays/import/roc', { method: 'POST' })
+    if (!res.ok) {
+      const errorText = await res.text().catch(() => '')
+      throw new Error(
+        `Import ROC holidays failed (${res.status})${errorText ? `: ${errorText}` : ''}`
+      )
+    }
+  } catch (e) {
+    console.error('載入國定假日失敗', e)
+    const payload = buildRocHolidays().map((item) => ({
+      ...item,
+      name: item.desc || '國定假日',
+      description: item.desc,
+      desc: item.desc,
+      type: item.type || '國定假日'
+    }))
     for (const item of payload) {
       await apiFetch('/api/holidays', {
         method: 'POST',
@@ -467,10 +505,8 @@ async function loadRocHolidays() {
         body: JSON.stringify(item)
       })
     }
-    await fetchHolidays()
-  } catch (e) {
-    console.error('載入國定假日失敗', e)
   } finally {
+    await fetchHolidays()
     loadingHolidays.value = false
   }
 }
