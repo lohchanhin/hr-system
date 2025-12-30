@@ -7,7 +7,8 @@ import {
   calculateEmployeePayroll,
   calculateBatchPayroll,
   savePayrollRecord,
-  getEmployeePayrollRecords
+  getEmployeePayrollRecords,
+  extractRecurringAllowance
 } from '../services/payrollService.js';
 import {
   calculateWorkHours,
@@ -262,7 +263,7 @@ export async function getMonthlyPayrollOverview(req, res) {
     const employees = await Employee.find(employeeQuery)
       .populate('department')
       .populate('subDepartment')
-      .select('employeeId name department subDepartment organization salaryAmount salaryType');
+      .select('employeeId name department subDepartment organization salaryAmount salaryType salaryItems salaryItemAmounts');
     
     if (employees.length === 0) {
       return res.json([]);
@@ -286,6 +287,10 @@ export async function getMonthlyPayrollOverview(req, res) {
     const overview = await Promise.all(employees.map(async (employee) => {
       const employeeIdStr = employee._id.toString();
       let payroll = payrollMap[employeeIdStr];
+      if (payroll?.toObject) {
+        payroll = payroll.toObject();
+      }
+      const { total: recurringAllowanceFromItems, breakdown: recurringAllowanceBreakdown } = extractRecurringAllowance(employee);
 
       // Always calculate work data including night shift data dynamically to ensure accuracy
       // This fixes the issue where stored PayrollRecords may have outdated night shift allowance
@@ -383,11 +388,16 @@ export async function getMonthlyPayrollOverview(req, res) {
         // Recalculate totalPayment if totalBonus changed
         payroll.totalPayment = (payroll.netPay || 0) + payroll.totalBonus;
       }
+      const recurringAllowance = payroll?.recurringAllowance ?? recurringAllowanceFromItems ?? 0;
       
       // Extract payroll values with fallbacks
-      const netPayValue = payroll?.netPay || (employee.salaryAmount || 0);
-      const totalBonusValue = payroll?.totalBonus || 0;
-      const totalPaymentValue = payroll?.totalPayment || (netPayValue + totalBonusValue);
+      const netPayValue = payroll?.netPay ?? (employee.salaryAmount || 0);
+      const totalBonusValue = (payroll?.overtimePay || 0) + 
+                              (payroll?.nightShiftAllowance || 0) + 
+                              (payroll?.performanceBonus || 0) + 
+                              (payroll?.otherBonuses || 0) +
+                              recurringAllowance;
+      const totalPaymentValue = netPayValue + totalBonusValue;
       
       return {
         _id: employee._id,
@@ -430,6 +440,8 @@ export async function getMonthlyPayrollOverview(req, res) {
         nightShiftAllowance: payroll?.nightShiftAllowance || 0,
         performanceBonus: payroll?.performanceBonus || 0,
         otherBonuses: payroll?.otherBonuses || 0,
+        recurringAllowance,
+        recurringAllowanceBreakdown,
         totalBonus: totalBonusValue,
         totalPayment: totalPaymentValue,
         insuranceLevel: payroll?.insuranceLevel,

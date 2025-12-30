@@ -316,6 +316,11 @@
                     {{ formatCurrency(row.otherBonuses) }}
                   </template>
                 </el-table-column>
+                <el-table-column prop="recurringAllowance" label="定期津貼" width="110" align="right">
+                  <template #default="{ row }">
+                    {{ formatCurrency(row.recurringAllowance) }}
+                  </template>
+                </el-table-column>
               </el-table-column>
               
               <el-table-column prop="totalPayment" label="實發金額" width="120" align="right" fixed="right">
@@ -708,6 +713,7 @@
                       <p><strong>獎金總額（銀行B）=</strong></p>
                       <p class="formula-item">加班費</p>
                       <p class="formula-item">+ 夜班津貼（額外獎勵，非基本工資）</p>
+                      <p class="formula-item">+ 定期津貼（薪資項目金額）</p>
                       <p class="formula-item">+ 績效獎金</p>
                       <p class="formula-item">+ 其他獎金</p>
                     </div>
@@ -894,6 +900,7 @@
                           <ul>
                             <li>加班費（經簽核核准）</li>
                             <li><strong>夜班津貼</strong>（夜班額外獎勵）</li>
+                            <li>定期津貼（薪資項目設定金額）</li>
                             <li>績效獎金</li>
                             <li>其他獎金</li>
                           </ul>
@@ -1418,6 +1425,18 @@ const showExplanationDialog = ref(false)
           })
         })
       }
+    }
+    
+    if (emp.recurringAllowance > 0) {
+      const allowanceDesc = (emp.recurringAllowanceBreakdown && emp.recurringAllowanceBreakdown.length > 0)
+        ? emp.recurringAllowanceBreakdown.map((item) => `${item.item}: ${formatCurrency(item.amount)}`).join('；')
+        : '薪資項目津貼';
+      breakdown.push({
+        item: '定期津貼',
+        description: allowanceDesc,
+        amount: emp.recurringAllowance,
+        type: 'bonus'
+      })
     }
     
     if (emp.performanceBonus > 0) {
