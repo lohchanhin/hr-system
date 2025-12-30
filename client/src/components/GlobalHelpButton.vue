@@ -41,7 +41,9 @@ const resolvedHelp = computed(() => {
   const description =
     props.help?.description ||
     '使用「說明」按鈕檢視此頁的操作步驟與注意事項，無需另外修改設定。'
-  const tips = Array.isArray(props.help?.tips) ? props.help.tips.filter(Boolean) : []
+  const tips = Array.isArray(props.help?.tips)
+    ? props.help.tips.filter(tip => typeof tip === 'string' && tip.trim())
+    : []
   return { title, description, tips }
 })
 </script>
