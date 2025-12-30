@@ -278,13 +278,21 @@ export async function getMonthlyPayrollOverview(req, res) {
       const employeeIdStr = employee._id.toString();
       let payroll = payrollMap[employeeIdStr];
 
+      // Always calculate work data including night shift data dynamically to ensure accuracy
+      // This fixes the issue where stored PayrollRecords may have outdated night shift allowance
+      let workData = null;
+      try {
+        workData = await calculateCompleteWorkData(employeeIdStr, month);
+      } catch (error) {
+        console.error(`Error calculating work data for employee ${employeeIdStr}:`, error);
+      }
+
       // If no payroll record exists, calculate it automatically based on attendance
       if (!payroll) {
         try {
           const customData = {};
 
-          try {
-            const workData = await calculateCompleteWorkData(employeeIdStr, month);
+          if (workData) {
             Object.assign(customData, {
               workDays: workData.workDays,
               scheduledHours: workData.scheduledHours,
@@ -308,8 +316,6 @@ export async function getMonthlyPayrollOverview(req, res) {
               nightShiftBreakdown: workData.nightShiftBreakdown,
               nightShiftConfigurationIssues: workData.nightShiftConfigurationIssues
             });
-          } catch (error) {
-            console.error(`Error building work data for employee ${employeeIdStr}:`, error);
           }
 
           try {
@@ -346,6 +352,27 @@ export async function getMonthlyPayrollOverview(req, res) {
           // If calculation fails, use default values
           payroll = null;
         }
+      }
+      
+      // Override night shift data with dynamically calculated values if available
+      // This ensures even existing payroll records show up-to-date night shift allowances
+      if (payroll && workData) {
+        payroll = {
+          ...payroll,
+          nightShiftDays: workData.nightShiftDays,
+          nightShiftHours: workData.nightShiftHours,
+          nightShiftAllowance: workData.nightShiftAllowance,
+          nightShiftCalculationMethod: workData.nightShiftCalculationMethod,
+          nightShiftBreakdown: workData.nightShiftBreakdown,
+          nightShiftConfigurationIssues: workData.nightShiftConfigurationIssues,
+          // Recalculate totalBonus to include updated nightShiftAllowance
+          totalBonus: (payroll.overtimePay || 0) + 
+                     (workData.nightShiftAllowance || 0) + 
+                     (payroll.performanceBonus || 0) + 
+                     (payroll.otherBonuses || 0),
+        };
+        // Recalculate totalPayment if totalBonus changed
+        payroll.totalPayment = (payroll.netPay || 0) + payroll.totalBonus;
       }
       
       // Extract payroll values with fallbacks
