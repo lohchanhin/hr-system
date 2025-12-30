@@ -20,9 +20,12 @@
           <li v-for="scenario in resolvedHelp.scenarios" :key="scenario">{{ scenario }}</li>
         </ul>
       </div>
-      <ul v-if="resolvedHelp.tips.length" class="help-list" data-testid="help-tips">
-        <li v-for="tip in resolvedHelp.tips" :key="tip">{{ tip }}</li>
-      </ul>
+      <div v-if="resolvedHelp.tips.length" class="help-section">
+        <h4 class="help-section-title">操作提示</h4>
+        <ul class="help-list" data-testid="help-tips">
+          <li v-for="tip in resolvedHelp.tips" :key="tip">{{ tip }}</li>
+        </ul>
+      </div>
       <div v-if="resolvedHelp.steps.length" class="help-section">
         <h4 class="help-section-title">建議操作流程</h4>
         <ol class="help-ordered-list" data-testid="help-steps">
