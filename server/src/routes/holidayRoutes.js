@@ -3,11 +3,13 @@ import {
   listHolidays,
   createHoliday,
   updateHoliday,
-  deleteHoliday
+  deleteHoliday,
+  importRocHolidays
 } from '../controllers/holidayController.js';
 
 const router = Router();
 
+router.post('/import/roc', importRocHolidays);
 router.get('/', listHolidays);
 router.post('/', createHoliday);
 router.put('/:id', updateHoliday);
