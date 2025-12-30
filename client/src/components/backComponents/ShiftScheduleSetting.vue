@@ -393,7 +393,11 @@ const calendarForm = ref({
 function formatHolidayDate(value) {
   if (!value) return ''
   const dt = new Date(value)
-  return Number.isNaN(dt.getTime()) ? '' : dt.toISOString().slice(0, 10).replace(/-/g, '/')
+  if (Number.isNaN(dt.getTime())) return ''
+  const year = dt.getFullYear()
+  const month = String(dt.getMonth() + 1).padStart(2, '0')
+  const day = String(dt.getDate()).padStart(2, '0')
+  return `${year}/${month}/${day}`
 }
 
 async function fetchHolidays() {
@@ -466,7 +470,7 @@ async function deleteHoliday(index) {
 }
 
 // 一鍵載入當年國定假日（簡化：使用內建清單）
-function buildRocHolidays(year = new Date().getUTCFullYear()) {
+function buildRocHolidays(year = new Date().getFullYear()) {
   return [
     { date: `${year}-01-01`, type: '國定假日', desc: '元旦' },
     { date: `${year}-02-28`, type: '國定假日', desc: '和平紀念日' },
@@ -481,8 +485,9 @@ function buildRocHolidays(year = new Date().getUTCFullYear()) {
 
 async function loadRocHolidays() {
   loadingHolidays.value = true
+  const currentYear = new Date().getFullYear()
   try {
-    const res = await apiFetch('/api/holidays/import/roc', { method: 'POST' })
+    const res = await apiFetch(`/api/holidays/import/roc?year=${currentYear}`, { method: 'POST' })
     if (!res.ok) {
       const errorText = await res.text().catch(() => '')
       throw new Error(
@@ -491,7 +496,7 @@ async function loadRocHolidays() {
     }
   } catch (e) {
     console.error('載入國定假日失敗', e)
-    const payload = buildRocHolidays().map((item) => ({
+    const payload = buildRocHolidays(currentYear).map((item) => ({
       ...item,
       name: item.desc || '國定假日',
       description: item.desc,
