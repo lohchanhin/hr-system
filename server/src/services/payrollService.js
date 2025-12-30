@@ -6,6 +6,24 @@ import { calculateLateEarlyDeductions } from './attendanceDeductionService.js';
 import { calculateNightShiftAllowance } from './nightShiftAllowanceService.js';
 import ApprovalRequest from '../models/approval_request.js';
 
+export function extractRecurringAllowance(employee) {
+  const salaryItems = Array.isArray(employee?.salaryItems) ? employee.salaryItems : [];
+  const amounts = employee?.salaryItemAmounts || {};
+  const breakdown = [];
+  let total = 0;
+
+  salaryItems.forEach((item) => {
+    const value = Number(amounts[item]);
+    if (!Number.isFinite(value)) return;
+    if (value > 0) {
+      total += value;
+      breakdown.push({ item, amount: value });
+    }
+  });
+
+  return { total, breakdown };
+}
+
 /**
  * 計算單個員工的月薪資
  * @param {String} employeeId - 員工 ID
@@ -18,6 +36,8 @@ export async function calculateEmployeePayroll(employeeId, month, customData = {
   if (!employee) {
     throw new Error('Employee not found');
   }
+
+  const { total: recurringAllowanceFromItems, breakdown: recurringAllowanceBreakdown } = extractRecurringAllowance(employee);
   
   // 計算工作時數和請假影響
   let workData = null;
@@ -105,7 +125,8 @@ export async function calculateEmployeePayroll(employeeId, month, customData = {
   const otherBonuses = customData.otherBonuses ?? 
                        employee.monthlySalaryAdjustments?.otherBonuses ?? 0;
   const overtimePay = customData.overtimePay ?? workData.overtimePay ?? 0;
-  const totalBonus = nightShiftAllowance + performanceBonus + otherBonuses + overtimePay;
+  const recurringAllowance = customData.recurringAllowance ?? recurringAllowanceFromItems ?? 0;
+  const totalBonus = nightShiftAllowance + performanceBonus + otherBonuses + overtimePay + recurringAllowance;
   
   // 計算總實發金額 (netPay + totalBonus)
   const totalPayment = netPay + totalBonus;
@@ -165,6 +186,8 @@ export async function calculateEmployeePayroll(employeeId, month, customData = {
     nightShiftAllowance,
     performanceBonus,
     otherBonuses,
+    recurringAllowance,
+    recurringAllowanceBreakdown,
     totalBonus,
     totalPayment, // Total amount employee receives (netPay + totalBonus)
     bankAccountA,
@@ -244,5 +267,6 @@ export default {
   calculateEmployeePayroll,
   calculateBatchPayroll,
   savePayrollRecord,
-  getEmployeePayrollRecords
+  getEmployeePayrollRecords,
+  extractRecurringAllowance
 };

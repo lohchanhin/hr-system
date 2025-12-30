@@ -44,6 +44,7 @@ const payrollRecordSchema = new mongoose.Schema({
   nightShiftAllowance: { type: Number, default: 0 }, // 夜班補助津貼
   performanceBonus: { type: Number, default: 0 }, // 人力績效獎金
   otherBonuses: { type: Number, default: 0 }, // 其他獎金
+  recurringAllowance: { type: Number, default: 0 }, // 薪資項目定期補貼（銀行B）
   totalBonus: { type: Number, default: 0 }, // 獎金合計 (Stage B)
   bonusAdjustment: { type: Number, default: 0 }, // 來自簽核的獎金增減
   
