@@ -92,7 +92,7 @@
 
 <script setup>
 import { ref, onMounted, onBeforeUnmount, watch, computed } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRouter, useRoute } from 'vue-router'
 import { useMenuStore } from '../stores/menu'
 import { clearToken } from '../utils/tokenService'
 import { storeToRefs } from 'pinia'
@@ -100,6 +100,7 @@ import { iconMap as availableMenuIcons, resolveMenuIcon } from '../constants/men
 import GlobalHelpButton from '@/components/GlobalHelpButton.vue'
 
 const router = useRouter()
+const route = useRoute()
 const menuStore = useMenuStore()
 const { items: menuItems } = storeToRefs(menuStore)
 
@@ -172,7 +173,7 @@ const helpContentMap = {
 }
 
 const currentHelp = computed(() => {
-  const routeName = router.currentRoute?.value?.name
+  const routeName = route?.name
   return helpContentMap[routeName] || {
     title: '後台操作說明',
     description: '使用「說明」按鈕快速查看此頁的操作重點，無需修改按鈕本身。',
