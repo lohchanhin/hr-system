@@ -17,7 +17,7 @@
             action=""
             :auto-upload="false"
             :show-file-list="false"
-            accept=".xlsx,.csv"
+            accept=".xlsx,.xls,.csv"
             @change="handleFileChange"
           >
             <el-button type="primary">選擇檔案</el-button>
