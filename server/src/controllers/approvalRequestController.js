@@ -9,6 +9,7 @@ import { getLeaveFieldIds } from '../services/leaveFieldService.js'
 import { deductAnnualLeave } from '../services/annualLeaveService.js'
 
 const APPLICANT_SUPERVISOR_VALUE = 'APPLICANT_SUPERVISOR'
+const ANNUAL_LEAVE_TYPES = ['特休', '特休假'] // 特休假別類型常數
 
 /* 依流程步驟解析「此關簽核人」 */
 export async function resolveApprovers(step, applicantEmp) {
@@ -363,7 +364,7 @@ async function handleAnnualLeaveDeduction(doc) {
     }
 
     // 檢查是否為特休
-    if (!leaveTypeName || !['特休', '特休假'].includes(leaveTypeName)) {
+    if (!leaveTypeName || !ANNUAL_LEAVE_TYPES.includes(leaveTypeName)) {
       return // 不是特休，不處理
     }
 
@@ -376,9 +377,13 @@ async function handleAnnualLeaveDeduction(doc) {
     if (startDate && endDate) {
       const start = new Date(startDate)
       const end = new Date(endDate)
-      const diffTime = Math.abs(end - start)
-      const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1 // 包含起始日
-      days = diffDays
+      
+      // 確保結束日期在開始日期之後
+      if (end >= start) {
+        const diffTime = end - start
+        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1 // 包含起始日
+        days = diffDays
+      }
     }
 
     // 扣減特休

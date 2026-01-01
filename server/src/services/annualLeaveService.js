@@ -13,23 +13,31 @@ export async function deductAnnualLeave(employeeId, days, approvalRequestId = nu
     throw new Error('Invalid parameters for annual leave deduction')
   }
 
-  // 先檢查餘額是否充足
-  const employee = await Employee.findById(employeeId)
-  if (!employee) {
-    throw new Error('Employee not found')
-  }
-
-  if (!employee.canDeductAnnualLeave(days)) {
-    const remaining = employee.annualLeave?.totalDays - employee.annualLeave?.usedDays || 0
-    throw new Error(`Insufficient annual leave balance. Remaining: ${remaining} days, Requested: ${days} days`)
-  }
-
-  // 使用原子操作更新特休天數
-  const updated = await Employee.findByIdAndUpdate(
-    employeeId,
+  // 使用原子操作更新，並驗證餘額充足
+  // 使用 $expr 確保 usedDays + days <= totalDays
+  const updated = await Employee.findOneAndUpdate(
+    {
+      _id: employeeId,
+      $expr: {
+        $lte: [
+          { $add: [{ $ifNull: ['$annualLeave.usedDays', 0] }, days] },
+          { $ifNull: ['$annualLeave.totalDays', 0] }
+        ]
+      }
+    },
     { $inc: { 'annualLeave.usedDays': days } },
     { new: true, runValidators: true }
   )
+
+  if (!updated) {
+    // 查詢員工以提供詳細錯誤信息
+    const employee = await Employee.findById(employeeId)
+    if (!employee) {
+      throw new Error('Employee not found')
+    }
+    const remaining = (employee.annualLeave?.totalDays || 0) - (employee.annualLeave?.usedDays || 0)
+    throw new Error(`Insufficient annual leave balance. Remaining: ${remaining} days, Requested: ${days} days`)
+  }
 
   console.log(`[AnnualLeave] Deducted ${days} days from employee ${employeeId}. Approval: ${approvalRequestId || 'N/A'}`)
 

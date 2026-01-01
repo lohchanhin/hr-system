@@ -1154,6 +1154,9 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { apiFetch, importEmployeesBulk } from '../../api'
 import { REQUIRED_FIELDS } from './requiredFields'
 
+// 常數定義
+const CURRENT_YEAR = new Date().getFullYear()
+
 // 👉 目前選擇的部門（下拉選單綁這個）
 const departmentFilter = ref(null)
 
@@ -3337,7 +3340,7 @@ const emptyEmployee = {
   annualLeave: {
     totalDays: 0,
     usedDays: 0,
-    year: new Date().getFullYear()
+    year: CURRENT_YEAR
   }
 }
 const employeeForm = ref({ ...emptyEmployee })
