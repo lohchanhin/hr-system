@@ -5,8 +5,11 @@ import FormTemplate from '../models/form_template.js'
 import FormField from '../models/form_field.js'
 import Employee from '../models/Employee.js'
 import SubDepartment from '../models/SubDepartment.js'
+import { getLeaveFieldIds } from '../services/leaveFieldService.js'
+import { deductAnnualLeave } from '../services/annualLeaveService.js'
 
 const APPLICANT_SUPERVISOR_VALUE = 'APPLICANT_SUPERVISOR'
+const ANNUAL_LEAVE_TYPES = ['特休', '特休假'] // 特休假別類型常數
 
 /* 依流程步驟解析「此關簽核人」 */
 export async function resolveApprovers(step, applicantEmp) {
@@ -329,6 +332,76 @@ export async function historyApprovals(req, res) {
   }
 }
 
+/* 處理特休扣減（當請假審核通過時） */
+async function handleAnnualLeaveDeduction(doc) {
+  try {
+    // 取得表單資訊
+    const form = await FormTemplate.findById(doc.form).lean()
+    if (!form || form.name !== '請假') {
+      return // 不是請假表單，不處理
+    }
+
+    // 取得假別欄位設定
+    const leaveFields = await getLeaveFieldIds()
+    if (!leaveFields.typeId) {
+      console.warn('[AnnualLeave] Leave type field not found')
+      return
+    }
+
+    // 檢查假別是否為特休
+    const leaveTypeValue = doc.form_data?.[leaveFields.typeId]
+    let leaveTypeName = null
+    
+    // 處理不同格式的假別資料
+    if (typeof leaveTypeValue === 'string') {
+      leaveTypeName = leaveTypeValue
+    } else if (leaveTypeValue?.label) {
+      leaveTypeName = leaveTypeValue.label
+    } else if (leaveTypeValue?.value) {
+      // 從 typeOptions 中查找對應的 label
+      const option = leaveFields.typeOptions?.find(opt => opt.value === leaveTypeValue.value)
+      leaveTypeName = option?.label || leaveTypeValue.value
+    }
+
+    // 檢查是否為特休
+    if (!leaveTypeName || !ANNUAL_LEAVE_TYPES.includes(leaveTypeName)) {
+      return // 不是特休，不處理
+    }
+
+    // 計算請假天數
+    const startDate = doc.form_data?.[leaveFields.startId]
+    const endDate = doc.form_data?.[leaveFields.endId]
+    let days = doc.form_data?.days || 1 // 預設 1 天
+
+    // 如果有開始和結束日期，計算天數
+    if (startDate && endDate) {
+      const start = new Date(startDate)
+      const end = new Date(endDate)
+      
+      // 確保結束日期在開始日期之後
+      if (end >= start) {
+        const diffTime = end - start
+        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1 // 包含起始日
+        days = diffDays
+      }
+    }
+
+    // 扣減特休
+    if (doc.applicant_employee && days > 0) {
+      await deductAnnualLeave(doc.applicant_employee, days, doc._id.toString())
+      console.log(`[AnnualLeave] Successfully deducted ${days} days for employee ${doc.applicant_employee}`)
+    }
+  } catch (error) {
+    // 記錄錯誤但不影響審核流程
+    console.error('[AnnualLeave] Failed to deduct annual leave:', error.message)
+    doc.logs.push({
+      action: 'annual_leave_error',
+      message: `特休扣減失敗: ${error.message}`
+    })
+    await doc.save()
+  }
+}
+
 /* 進到下一關 or 結案 */
 async function tryAdvance(doc, options = {}) {
   const { notifyMessage } = options
@@ -359,6 +432,9 @@ async function tryAdvance(doc, options = {}) {
     doc.status = 'approved'
     doc.logs.push({ action: 'finish', message: '全部完成' })
     await doc.save()
+    
+    // 處理特休扣減
+    await handleAnnualLeaveDeduction(doc)
   }
   return doc
 }

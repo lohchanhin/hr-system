@@ -117,6 +117,17 @@
             </template>
           </el-table-column>
 
+          <el-table-column label="特休餘額" width="120">
+            <template #default="{ row }">
+              <div v-if="row.annualLeave" class="annual-leave-info">
+                <el-tag type="info" size="small">
+                  剩餘 {{ (row.annualLeave?.totalDays || 0) - (row.annualLeave?.usedDays || 0) }} 天
+                </el-tag>
+              </div>
+              <span v-else class="no-data">未設定</span>
+            </template>
+          </el-table-column>
+
           <el-table-column label="操作" width="200" fixed="right">
             <template #default="{ row, $index }">
               <div class="action-buttons">
@@ -925,6 +936,34 @@
                       </el-form-item>
                     </div>
                   </div>
+
+                  <div class="form-group">
+                    <h3 class="form-group-title">特休管理</h3>
+                    <el-alert type="info" :closable="false" style="margin-bottom: 16px;">
+                      <p>設定員工年度特休天數。當員工申請特休並審核通過後，系統將自動扣減剩餘天數。</p>
+                    </el-alert>
+                    <div class="form-row">
+                      <el-form-item label="年度特休總天數" prop="annualLeave.totalDays">
+                        <el-input-number v-model="employeeForm.annualLeave.totalDays" :min="0" :max="365" :step="1"
+                          placeholder="0" />
+                        <span style="margin-left: 8px; color: #909399;">天</span>
+                      </el-form-item>
+                      <el-form-item label="已使用天數" prop="annualLeave.usedDays">
+                        <el-input-number v-model="employeeForm.annualLeave.usedDays" :min="0" :step="1"
+                          placeholder="0" />
+                        <span style="margin-left: 8px; color: #909399;">天</span>
+                      </el-form-item>
+                      <el-form-item label="剩餘天數">
+                        <el-tag type="success" size="large">
+                          {{ (employeeForm.annualLeave?.totalDays || 0) - (employeeForm.annualLeave?.usedDays || 0) }} 天
+                        </el-tag>
+                      </el-form-item>
+                      <el-form-item label="年度" prop="annualLeave.year">
+                        <el-input-number v-model="employeeForm.annualLeave.year" :min="2020" :max="2050" :step="1"
+                          :placeholder="new Date().getFullYear().toString()" />
+                      </el-form-item>
+                    </div>
+                  </div>
                 </div>
               </div>
             </el-tab-pane>
@@ -1114,6 +1153,9 @@ import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { apiFetch, importEmployeesBulk } from '../../api'
 import { REQUIRED_FIELDS } from './requiredFields'
+
+// 常數定義
+const CURRENT_YEAR = new Date().getFullYear()
 
 // 👉 目前選擇的部門（下拉選單綁這個）
 const departmentFilter = ref(null)
@@ -3292,6 +3334,13 @@ const emptyEmployee = {
     performanceBonus: 0,
     otherBonuses: 0,
     notes: ''
+  },
+
+  // 特休管理
+  annualLeave: {
+    totalDays: 0,
+    usedDays: 0,
+    year: CURRENT_YEAR
   }
 }
 const employeeForm = ref({ ...emptyEmployee })

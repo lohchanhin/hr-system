@@ -681,3 +681,66 @@ export async function setSupervisors(req, res) {
     res.status(400).json({ error: err.message })
   }
 }
+
+/* ─────────────────────────────── 特休管理 API ─────────────────────────────── */
+
+import {
+  getAnnualLeaveBalance,
+  getAnnualLeaveHistory,
+  setAnnualLeaveQuota,
+  validateAnnualLeaveRequest
+} from '../services/annualLeaveService.js'
+
+/** GET /api/employees/:id/annual-leave - 查詢員工特休餘額 */
+export async function getEmployeeAnnualLeave(req, res) {
+  try {
+    const balance = await getAnnualLeaveBalance(req.params.id)
+    res.json(balance)
+  } catch (err) {
+    res.status(400).json({ error: err.message })
+  }
+}
+
+/** GET /api/employees/:id/annual-leave/history - 查詢員工特休使用記錄 */
+export async function getEmployeeAnnualLeaveHistory(req, res) {
+  try {
+    const year = req.query.year ? parseInt(req.query.year) : null
+    const history = await getAnnualLeaveHistory(req.params.id, year)
+    res.json(history)
+  } catch (err) {
+    res.status(400).json({ error: err.message })
+  }
+}
+
+/** PATCH /api/employees/:id/annual-leave - 設定員工特休天數（管理員）*/
+export async function setEmployeeAnnualLeave(req, res) {
+  try {
+    const { totalDays, year } = req.body
+    if (totalDays === undefined || totalDays < 0) {
+      return res.status(400).json({ error: 'Invalid totalDays' })
+    }
+
+    const employee = await setAnnualLeaveQuota(req.params.id, totalDays, year)
+    res.json({
+      success: true,
+      annualLeave: employee.annualLeave
+    })
+  } catch (err) {
+    res.status(400).json({ error: err.message })
+  }
+}
+
+/** POST /api/employees/:id/annual-leave/validate - 驗證特休申請 */
+export async function validateEmployeeAnnualLeave(req, res) {
+  try {
+    const { days } = req.body
+    if (!days || days <= 0) {
+      return res.status(400).json({ error: 'Invalid days' })
+    }
+
+    const result = await validateAnnualLeaveRequest(req.params.id, days)
+    res.json(result)
+  } catch (err) {
+    res.status(400).json({ error: err.message })
+  }
+}

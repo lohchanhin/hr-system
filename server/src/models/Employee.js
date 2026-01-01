@@ -213,6 +213,13 @@ const employeeSchema = new Schema(
     autoOvertimeCalc: { type: Boolean, default: false }, // 自動加班計算
     lateDeductionEnabled: { type: Boolean, default: false }, // 遲到扣款啟用
     lateDeductionAmount: { type: Number, default: 0 }, // 遲到扣款金額
+
+    /* 特休管理 */
+    annualLeave: {
+      totalDays: { type: Number, default: 0 }, // 年度特休總天數（可設定）
+      usedDays: { type: Number, default: 0 }, // 已使用的特休天數
+      year: { type: Number, default: () => new Date().getFullYear() }, // 年度標記
+    },
   },
   {
     timestamps: true,
@@ -258,6 +265,12 @@ employeeSchema
     this.passwordHash = hashPassword(plain)
   })
 
+// 特休剩餘天數虛擬欄位
+employeeSchema.virtual('annualLeave.remainingDays').get(function () {
+  if (!this.annualLeave) return 0
+  return (this.annualLeave.totalDays || 0) - (this.annualLeave.usedDays || 0)
+})
+
 employeeSchema.methods.verifyPassword = function (plain) {
   if (!this.passwordHash) return false
   const [salt, hash] = this.passwordHash.split(':')
@@ -270,6 +283,30 @@ employeeSchema.methods.setPassword = function (plain) {
   if (hashed) {
     this.passwordHash = hashed
   }
+}
+
+// 特休相關方法
+employeeSchema.methods.canDeductAnnualLeave = function (days) {
+  if (!this.annualLeave) return false
+  const remaining = (this.annualLeave.totalDays || 0) - (this.annualLeave.usedDays || 0)
+  return remaining >= days
+}
+
+employeeSchema.methods.deductAnnualLeave = function (days) {
+  if (!this.annualLeave) {
+    this.annualLeave = { totalDays: 0, usedDays: 0, year: new Date().getFullYear() }
+  }
+  this.annualLeave.usedDays = (this.annualLeave.usedDays || 0) + days
+  return this.save()
+}
+
+employeeSchema.methods.resetAnnualLeave = function (totalDays, year) {
+  this.annualLeave = {
+    totalDays: totalDays || 0,
+    usedDays: 0,
+    year: year || new Date().getFullYear()
+  }
+  return this.save()
 }
 
 /* -------------------------------- indexes ------------------------------- */
