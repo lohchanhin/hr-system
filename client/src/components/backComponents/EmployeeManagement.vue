@@ -2692,7 +2692,7 @@ const SIGN_LEVEL_OPTIONS = [
 const DEFAULT_TAGS = ['資深', '新人', '外聘', '志工']
 const SERVICE_TYPES = ['義務役', '志願役', '替代役', '免役', '尚未服役']
 const ABO_TYPES = ['A', 'B', 'O', 'AB', 'HR']                                                   // 依你的表格式
-const CURRENT_YEAR = new Date().getFullYear()
+
 
 const SIGN_ROLE_ID_SET = new Set(SIGN_ROLE_OPTIONS.map(option => option.id))
 const SIGN_ROLE_LABEL_TO_ID = new Map(SIGN_ROLE_OPTIONS.map(option => [option.label, option.id]))
