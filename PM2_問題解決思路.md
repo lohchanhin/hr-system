@@ -7,6 +7,8 @@
 3. ❓ 為什麼 port 3000 是後端 port，卻要訪問它來看前端？
 4. ❓ 前後端如何交互？
 
+> 🖥️ **虛擬機部署特別注意：** 如果您在虛擬機中部署，可能遇到網路、防火牆或訪問權限問題。請參閱 [虛擬機部署疑難排解指南](docs/PM2_VM_TROUBLESHOOTING.md)。
+
 ## 立即解答
 
 ### 問題 1：為什麼訪問後端 port 3000？
@@ -152,6 +154,19 @@ curl http://localhost:3000/api/health
 # 6. ✅ 能否取得前端首頁？
 curl http://localhost:3000/ | grep "<html"
 # 應該返回 HTML 內容
+
+# 7. 🖥️ 虛擬機特有檢查：
+# 檢查防火牆
+sudo ufw status  # Ubuntu/Debian
+sudo firewall-cmd --list-ports  # CentOS/RHEL
+
+# 檢查監聽位址
+sudo netstat -tlnp | grep :3000
+# 應該看到 0.0.0.0:3000 而非 127.0.0.1:3000
+
+# 測試網路訪問
+curl -I http://localhost:3000/
+# 如果成功，再從宿主機測試 http://[VM_IP]:3000/
 ```
 
 ## 開發 vs 生產模式對照表
@@ -218,17 +233,23 @@ npm run dev
    - 架構圖解
    - 完整的錯誤排除方法
 
-2. **[PM2 部署指南](docs/PM2_DEPLOYMENT_GUIDE.md)**
+2. **[PM2 虛擬機部署疑難排解](docs/PM2_VM_TROUBLESHOOTING.md)** 🖥️ 虛擬機專用
+   - 防火牆設定
+   - 網路模式配置
+   - SELinux 處理
+   - Nginx 反向代理設定
+
+3. **[PM2 部署指南](docs/PM2_DEPLOYMENT_GUIDE.md)**
    - PM2 部署完整流程
    - 環境變數設定
    - 常用指令說明
 
-3. **[PM2 常見問題](docs/PM2_FAQ.md)**
+4. **[PM2 常見問題](docs/PM2_FAQ.md)**
    - 快速問答
    - Port 使用說明
    - Vite 設定建議
 
-4. **[專案 README](README.md)**
+5. **[專案 README](README.md)**
    - 完整的專案說明
    - 功能介紹
    - API 使用指南

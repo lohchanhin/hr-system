@@ -1354,6 +1354,7 @@ mongorestore --uri="mongodb://localhost:27017/hr-system" --collection=employees 
 ### 部署文件
 - **[PM2 部署指南](docs/PM2_DEPLOYMENT_GUIDE.md)**：PM2 部署完整說明、訪問方式、環境變數設定
 - **[PM2 前端無法顯示解決方案](docs/PM2_FRONTEND_ACCESS_SOLUTION.md)**：PM2 啟動後前端無法顯示的診斷步驟與解決思路
+- **[PM2 虛擬機部署疑難排解](docs/PM2_VM_TROUBLESHOOTING.md)**：虛擬機環境特有的網路、防火牆和訪問問題解決方案
 - **[PM2 常見問題](docs/PM2_FAQ.md)**：PM2 使用過程中的常見問題與解答
 
 ### 功能文件
