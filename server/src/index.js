@@ -49,10 +49,12 @@ export async function ensureAdminUser() {
   console.log(`Created default admin user ${username}`);
 }
 
-dotenv.config();
-dotenv.config({override:true});
+// Load .env file from server directory (handles both dev and PM2 production scenarios)
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const serverRoot = path.resolve(__dirname, '..');
+dotenv.config({ path: path.join(serverRoot, '.env'), override: true });
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const distPath = path.join(__dirname, '..', '..', 'client', 'dist');
 
 const requiredEnv = ['PORT', 'MONGODB_URI', 'JWT_SECRET'];
