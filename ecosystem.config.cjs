@@ -1,3 +1,5 @@
+const path = require('path');
+
 module.exports = {
   apps: [
     {
@@ -12,8 +14,8 @@ module.exports = {
       env_development: {
         NODE_ENV: 'development',
       },
-      error_file: './logs/pm2-error.log',
-      out_file: './logs/pm2-out.log',
+      error_file: path.join(__dirname, 'logs', 'pm2-error.log'),
+      out_file: path.join(__dirname, 'logs', 'pm2-out.log'),
       log_date_format: 'YYYY-MM-DD HH:mm:ss Z',
       merge_logs: true,
       autorestart: true,

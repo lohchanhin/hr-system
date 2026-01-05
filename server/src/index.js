@@ -53,7 +53,6 @@ export async function ensureAdminUser() {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const serverRoot = path.resolve(__dirname, '..');
-dotenv.config({ path: path.join(serverRoot, '.env') });
 dotenv.config({ path: path.join(serverRoot, '.env'), override: true });
 
 const distPath = path.join(__dirname, '..', '..', 'client', 'dist');
