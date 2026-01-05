@@ -6,7 +6,14 @@
     "install": "npm --prefix server install && npm --prefix client install --include=dev",
     "heroku-postbuild": "npm run build --prefix client",
     "test": "npm --prefix server test && npm --prefix client test",
-    "dev": "concurrently \"npm run dev --prefix server\" \"npm run dev --prefix client\""
+    "dev": "concurrently \"npm run dev --prefix server\" \"npm run dev --prefix client\"",
+    "build": "npm run build --prefix client",
+    "pm2:start": "pm2 start ecosystem.config.cjs",
+    "pm2:stop": "pm2 stop ecosystem.config.cjs",
+    "pm2:restart": "pm2 restart ecosystem.config.cjs",
+    "pm2:delete": "pm2 delete ecosystem.config.cjs",
+    "pm2:logs": "pm2 logs hr-system",
+    "pm2:status": "pm2 status"
   },
   "engines": {
     "node": "20.x"
@@ -14,6 +21,7 @@
   "devDependencies": {
     "concurrently": "^8.0.1",
     "esbuild": "^0.25.4",
+    "pm2": "^6.0.14",
     "sass-embedded": "^1.90.0",
     "vite": "^6.3.5"
   }
