@@ -42,6 +42,7 @@ http://localhost:3000
 
 在 `client/vite.config.js` 第 28 行：
 ```javascript
+// ❌ 原本的寫法（已修改）
 const API_BASE_URL =
   env.VITE_API_BASE_URL ||
   (mode === 'development'

@@ -209,6 +209,6 @@ curl http://localhost:3000/api/health
 ## 參考文件
 
 - [PM2 部署指南（詳細版）](./PM2_DEPLOYMENT_GUIDE.md)
-- [主要 README](../README.md)
+- [專案主要說明文件](../README.md)
 - 前端環境變數範例：`client/.env.example`
 - 後端環境變數範例：`server/.env.example`
