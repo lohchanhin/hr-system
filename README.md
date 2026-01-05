@@ -862,11 +862,22 @@ npm run dev
 
 ```bash
 # 建置前端靜態檔案
-npm run build --prefix client
+npm run build
 
-# 啟動正式版伺服器
+# 方式一：使用 PM2 啟動（推薦用於正式環境）
+npm run pm2:start
+
+# 方式二：直接啟動
 npm start
 ```
+
+**使用 PM2 的優點**：
+- 自動重啟機制
+- 日誌管理
+- 進程監控
+- 開機自動啟動
+
+詳見「[使用 PM2 部署](#使用-pm2-部署推薦用於正式環境)」章節。
 
 ### 執行測試
 
@@ -964,6 +975,101 @@ web: npm start --prefix server
 ```
 
 後端會自動提供 `client/dist` 靜態檔案，所有非 `/api` 開頭的請求都會導向前端應用程式。
+
+### 使用 PM2 部署（推薦用於正式環境）
+
+本專案已配置 PM2 (Process Manager 2) 來管理 Node.js 應用程式的生命週期。PM2 提供了自動重啟、日誌管理、負載平衡等企業級功能。
+
+#### 前置準備
+
+1. **安裝依賴套件**
+   ```bash
+   npm install
+   ```
+
+2. **建置前端**
+   ```bash
+   npm run build
+   ```
+
+3. **設定環境變數**
+   
+   確保 `server/.env` 檔案存在並包含必要的環境變數：
+   ```bash
+   PORT=3000
+   MONGODB_URI=mongodb://localhost:27017/hr
+   JWT_SECRET=your-secure-jwt-secret
+   NODE_ENV=production
+   ```
+
+#### PM2 指令
+
+在專案根目錄下執行以下指令：
+
+```bash
+# 啟動應用程式
+npm run pm2:start
+
+# 查看應用程式狀態
+npm run pm2:status
+
+# 查看即時日誌
+npm run pm2:logs
+
+# 重新啟動應用程式
+npm run pm2:restart
+
+# 停止應用程式
+npm run pm2:stop
+
+# 刪除應用程式
+npm run pm2:delete
+```
+
+#### PM2 配置說明
+
+PM2 配置檔案位於 `ecosystem.config.cjs`，包含以下設定：
+
+- **應用程式名稱**：`hr-system`
+- **啟動腳本**：`./server/src/index.js`
+- **運行模式**：fork（單實例）
+- **自動重啟**：啟用
+- **日誌檔案**：
+  - 標準輸出：`./logs/pm2-out.log`
+  - 錯誤輸出：`./logs/pm2-error.log`
+
+#### PM2 進階功能
+
+**開機自動啟動**
+```bash
+# 生成啟動腳本
+npx pm2 startup
+
+# 儲存當前 PM2 進程列表
+npx pm2 save
+```
+
+**監控和管理**
+```bash
+# 即時監控 CPU 和記憶體使用
+npx pm2 monit
+
+# 查看詳細資訊
+npx pm2 describe hr-system
+
+# 清空日誌
+npx pm2 flush
+```
+
+**多實例運行（叢集模式）**
+
+如需使用叢集模式提升效能，可修改 `ecosystem.config.cjs`：
+```javascript
+{
+  instances: 4,  // 或使用 'max' 來使用所有 CPU 核心
+  exec_mode: 'cluster'
+}
+```
 
 ### 部署至其他平台
 
