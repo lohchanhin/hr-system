@@ -68,11 +68,20 @@ const app = express();
 const PORT = process.env.PORT;
 
 app.use(express.json());
+
+// 設定 CORS - 支援環境變數配置
+const allowedOrigins = [
+  "http://localhost:5173", // 開發用 Vite 伺服器
+  "http://localhost:3000"  // 生產用（PM2 等）
+];
+
+// 如果有設定 FRONTEND_URL 環境變數，加入允許清單
+if (process.env.FRONTEND_URL) {
+  allowedOrigins.push(process.env.FRONTEND_URL);
+}
+
 app.use(cors({
-  origin: [
-    "https://hr-system-d7fc5ea7aab1.herokuapp.com", // 前端 domain
-    "http://localhost:5173" // 開發用
-  ],
+  origin: allowedOrigins,
   credentials: true,
   methods: "GET,POST,PUT,DELETE,OPTIONS"
 }));

@@ -845,9 +845,15 @@ npm run dev
 
 #### 8. 存取應用程式
 
-- **前端界面**：http://localhost:5173
+**開發模式：**
+- **前端界面**：http://localhost:5173 （Vite 開發伺服器）
 - **後端 API**：http://localhost:3000
 - **API 文件**：參見 `/server/README.md` 或各 API 路由檔案
+
+**生產模式（PM2）：**
+- **統一訪問**：http://localhost:3000 （後端伺服器同時提供 API 和前端靜態檔案）
+
+> 💡 **重要提示**：使用 PM2 啟動後，請訪問 port 3000 而非 5173。詳見 [PM2 部署指南](docs/PM2_DEPLOYMENT_GUIDE.md)。
 
 使用預設管理員帳號 (`admin` / `password`) 登入系統即可開始使用。
 
@@ -876,6 +882,12 @@ npm start
 - 日誌管理
 - 進程監控
 - 開機自動啟動
+
+> 📖 **詳細說明**：請參閱 [PM2 部署指南](docs/PM2_DEPLOYMENT_GUIDE.md)，包含：
+> - PM2 啟動後的前端訪問方式
+> - 環境變數設定最佳實踐
+> - 常見問題排除
+> - 完整部署流程
 
 詳見「[使用 PM2 部署](#使用-pm2-部署推薦用於正式環境)」章節。
 
@@ -978,7 +990,14 @@ web: npm start --prefix server
 
 ### 使用 PM2 部署（推薦用於正式環境）
 
+> 📖 **完整指南**：詳細的 PM2 部署說明、訪問方式和疑難排解，請參閱 [PM2 部署指南](docs/PM2_DEPLOYMENT_GUIDE.md)。
+
 本專案已配置 PM2 (Process Manager 2) 來管理 Node.js 應用程式的生命週期。PM2 提供了自動重啟、日誌管理、負載平衡等企業級功能。
+
+**重要提醒**：
+- PM2 啟動後，請訪問 **http://localhost:3000**（後端伺服器 port）
+- 不需要訪問 port 5173（那是開發模式專用）
+- 後端伺服器會同時提供 API 和前端靜態檔案
 
 #### 前置準備
 
@@ -1331,6 +1350,9 @@ mongorestore --uri="mongodb://localhost:27017/hr-system" --collection=employees 
 
 
 ## 相關文件 (Documentation)
+
+### 部署文件
+- **[PM2 部署指南](docs/PM2_DEPLOYMENT_GUIDE.md)**：PM2 部署完整說明、訪問方式、環境變數設定
 
 ### 功能文件
 - **[員工欄位說明](docs/employee.md)**：新增員工時需填寫的完整欄位說明

@@ -20,12 +20,12 @@ function resolveSrcAlias() {
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
 
-  // 明確定義 fallback：dev 走 localhost:3000，prod 要有環境變數
+  // 明確定義 fallback：dev 走 localhost:3000，prod 使用相對路徑（與前端同源）
   const API_BASE_URL =
     env.VITE_API_BASE_URL ||
     (mode === 'development'
       ? 'http://localhost:3000'
-      : 'https://hr-system-d7fc5ea7aab1.herokuapp.com') // 確保 prod 不會是空字串
+      : '') // 生產環境使用相對路徑，部署時可透過 VITE_API_BASE_URL 環境變數指定
 
   const resolveSrc = () => {
     try {
