@@ -357,9 +357,12 @@
                 </template>
               </el-table-column>
               
-              <el-table-column label="操作" width="150" fixed="right">
+              <el-table-column label="操作" width="240" fixed="right">
                 <template #default="{ row }">
                   <el-button type="primary" size="small" @click="showDetailDialog(row)">詳細</el-button>
+                  <el-button type="success" size="small" @click="exportIndividualPayroll(row)" :loading="row._exportLoading">
+                    匯出
+                  </el-button>
                   <el-tag :type="row.hasPayrollRecord ? 'success' : 'info'" size="small">
                     {{ row.hasPayrollRecord ? '已計算' : '未計算' }}
                   </el-tag>
@@ -706,6 +709,9 @@
                 </el-card>
               </div>
               <template #footer>
+                <el-button type="success" @click="exportIndividualPayroll(selectedEmployee)" :loading="selectedEmployee._exportLoading">
+                  匯出個人薪資表
+                </el-button>
                 <el-button @click="detailDialogVisible = false">關閉</el-button>
               </template>
             </el-dialog>
@@ -1512,6 +1518,46 @@ const showExplanationDialog = ref(false)
       alert(error.message || '匯出失敗，請稍後再試')
     } finally {
       exportLoading.value = false
+    }
+  }
+
+  async function exportIndividualPayroll(employee) {
+    try {
+      // Set loading state for this specific row
+      employee._exportLoading = true
+      
+      const params = new URLSearchParams({
+        employeeId: employee._id,
+        month: overviewMonth.value
+      })
+      
+      // Add organization name if available
+      if (employee.organization) {
+        const orgName = organizationName(employee.organization)
+        if (orgName && orgName !== '-') {
+          params.append('organizationName', orgName)
+        }
+      }
+      
+      const res = await apiFetch(`/api/payroll/export/individual?${params}`)
+
+      if (!res.ok) {
+        const error = await res.json().catch(() => ({}))
+        throw new Error(error.error || '匯出個人薪資表失敗，請稍後再試')
+      }
+
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = `個人薪資表_${employee.name}_${overviewMonth.value}.xlsx`
+      link.click()
+      URL.revokeObjectURL(url)
+    } catch (error) {
+      console.error('匯出個人薪資表失敗:', error)
+      alert(error.message || '匯出個人薪資表失敗，請稍後再試')
+    } finally {
+      employee._exportLoading = false
     }
   }
 
