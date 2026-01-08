@@ -502,8 +502,14 @@ export async function generateIndividualPayrollExcel(payrollRecord, employee, op
   const rocYear = monthDate.getFullYear() - 1911;
   const month = monthDate.getMonth() + 1;
   
-  // 格式化支付日期
-  const paymentDate = options.paymentDate || new Date(monthDate.getFullYear(), monthDate.getMonth() + 1, 10);
+  // 格式化支付日期 - 預設為下個月的10號
+  let paymentDate = options.paymentDate;
+  if (!paymentDate) {
+    const nextMonth = new Date(monthDate);
+    nextMonth.setMonth(nextMonth.getMonth() + 1);
+    nextMonth.setDate(10);
+    paymentDate = nextMonth;
+  }
   const paymentRocYear = paymentDate.getFullYear() - 1911;
   const paymentMonth = paymentDate.getMonth() + 1;
   const paymentDay = paymentDate.getDate();
@@ -560,23 +566,35 @@ export async function generateIndividualPayrollExcel(payrollRecord, employee, op
   });
 
   // 數據行 - 準備數據
+  // 提取組長加給等津貼 (從 employee.salaryItems 中提取，如果有的話)
+  let supervisorAllowance = 0;
+  if (employee.salaryItems && Array.isArray(employee.salaryItems) && employee.salaryItemAmounts) {
+    const supervisorIndex = employee.salaryItems.indexOf('組長加給');
+    if (supervisorIndex !== -1 && employee.salaryItemAmounts[supervisorIndex]) {
+      supervisorAllowance = employee.salaryItemAmounts[supervisorIndex];
+    }
+  }
+
   const taxableIncomeItems = [
     { label: '本薪', value: payrollRecord.baseSalary || 0 },
-    { label: '組長加給', value: 0 }, // 可以從 employee.salaryItems 中提取
+    { label: '組長加給', value: supervisorAllowance },
     { label: '事假扣薪', value: payrollRecord.personalLeaveHours ? -(payrollRecord.personalLeaveHours * (payrollRecord.hourlyRate || 0)) : 0 },
     { label: '病假扣薪', value: payrollRecord.sickLeaveHours ? -(payrollRecord.sickLeaveHours * (payrollRecord.hourlyRate || 0) * 0.5) : 0 },
-    { label: '遲到早退扣薪', value: 0 },
-    { label: '曠職扣薪', value: 0 },
+    { label: '遲到早退扣薪', value: 0 }, // 未實作：需要從考勤系統取得遲到早退資料
+    { label: '曠職扣薪', value: 0 }, // 未實作：需要從考勤系統取得曠職資料
     { label: '其他：', value: 0 }
   ];
 
+  // 免稅所得主要包含加班費等項目
+  // 目前系統中加班費通常歸類在 overtimePay，但根據台灣稅法，
+  // 這些項目的稅務處理可能不同，此處先設置為 0，未來可根據實際需求調整
   const taxFreeIncomeItems = [
-    { label: '工作日加班', value: 0 },
-    { label: '休息日加班', value: 0 },
-    { label: '國定假日出勤', value: 0 },
-    { label: '颱風停班出勤', value: 0 },
-    { label: '選舉投票日出勤', value: 0 },
-    { label: '特休未休工資', value: 0 },
+    { label: '工作日加班', value: 0 }, // 未實作：需要細分加班類型
+    { label: '休息日加班', value: 0 }, // 未實作：需要細分加班類型
+    { label: '國定假日出勤', value: 0 }, // 未實作：需要細分加班類型
+    { label: '颱風停班出勤', value: 0 }, // 未實作：需要細分加班類型
+    { label: '選舉投票日出勤', value: 0 }, // 未實作：需要細分加班類型
+    { label: '特休未休工資', value: 0 }, // 未實作：需要從特休系統取得
     { label: '', value: 0 }
   ];
 
@@ -670,7 +688,9 @@ export async function generateIndividualPayrollExcel(payrollRecord, employee, op
   const employerPension = Math.round(insuranceLevel * 0.06);
   
   const annualLeaveHours = payrollRecord.annualLeave?.totalHours || employee.annualLeave?.totalHours || 0;
-  const overtimeCompHours = 0; // 需要從其他地方取得加班補休時數
+  // 加班補休時數：未實作，需要從考勤系統或加班補休模組取得
+  // 此欄位保留供未來實作使用
+  const overtimeCompHours = 0;
   const expiryDate = payrollRecord.annualLeave?.expiryDate || employee.annualLeave?.expiryDate;
 
   // 轉換為民國年
