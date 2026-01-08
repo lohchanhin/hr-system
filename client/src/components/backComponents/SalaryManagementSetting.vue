@@ -1523,19 +1523,19 @@ const showExplanationDialog = ref(false)
   }
 
   async function exportIndividualPayroll(employee) {
-    if (!employee) return
+    // Validate required employee properties
+    if (!employee || !employee._id || !employee.name) {
+      ElMessage.error('員工資料不完整，無法匯出薪資表')
+      return
+    }
     
-    // Store the original loading state in a local variable to ensure cleanup
+    // Store employee info in local variables to ensure cleanup
     const employeeId = employee._id
     const employeeName = employee.name
     
     try {
-      // Set loading state for this specific row using Vue's reactivity
-      if (!employee._exportLoading) {
-        employee._exportLoading = true
-      } else {
-        employee._exportLoading = true
-      }
+      // Set loading state for this specific row
+      employee._exportLoading = true
       
       const params = new URLSearchParams({
         employeeId: employeeId,
@@ -1563,7 +1563,8 @@ const showExplanationDialog = ref(false)
       link.href = url
       
       // Sanitize filename to prevent directory traversal and invalid characters
-      const sanitizedName = employeeName.replace(/[^a-zA-Z0-9\u4e00-\u9fa5_-]/g, '_')
+      // Remove hyphens to avoid potential issues with hidden files on Unix systems
+      const sanitizedName = employeeName.replace(/[^a-zA-Z0-9\u4e00-\u9fa5_]/g, '_')
       link.download = `個人薪資表_${sanitizedName}_${overviewMonth.value}.xlsx`
       link.click()
       URL.revokeObjectURL(url)
