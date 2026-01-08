@@ -1043,6 +1043,7 @@
 import { ref, onMounted, computed } from 'vue'
 import { apiFetch } from '../../api'
 import { formatDate } from '../../utils/dateFormatter'
+import { ElMessage } from 'element-plus'
 import { 
   QuestionFilled, 
   Tools, 
@@ -1522,12 +1523,22 @@ const showExplanationDialog = ref(false)
   }
 
   async function exportIndividualPayroll(employee) {
+    if (!employee) return
+    
+    // Store the original loading state in a local variable to ensure cleanup
+    const employeeId = employee._id
+    const employeeName = employee.name
+    
     try {
-      // Set loading state for this specific row
-      employee._exportLoading = true
+      // Set loading state for this specific row using Vue's reactivity
+      if (!employee._exportLoading) {
+        employee._exportLoading = true
+      } else {
+        employee._exportLoading = true
+      }
       
       const params = new URLSearchParams({
-        employeeId: employee._id,
+        employeeId: employeeId,
         month: overviewMonth.value
       })
       
@@ -1550,14 +1561,22 @@ const showExplanationDialog = ref(false)
       const url = URL.createObjectURL(blob)
       const link = document.createElement('a')
       link.href = url
-      link.download = `個人薪資表_${employee.name}_${overviewMonth.value}.xlsx`
+      
+      // Sanitize filename to prevent directory traversal and invalid characters
+      const sanitizedName = employeeName.replace(/[^a-zA-Z0-9\u4e00-\u9fa5_-]/g, '_')
+      link.download = `個人薪資表_${sanitizedName}_${overviewMonth.value}.xlsx`
       link.click()
       URL.revokeObjectURL(url)
+      
+      ElMessage.success('個人薪資表匯出成功')
     } catch (error) {
       console.error('匯出個人薪資表失敗:', error)
-      alert(error.message || '匯出個人薪資表失敗，請稍後再試')
+      ElMessage.error(error.message || '匯出個人薪資表失敗，請稍後再試')
     } finally {
-      employee._exportLoading = false
+      // Safely reset loading state with null check
+      if (employee && typeof employee === 'object') {
+        employee._exportLoading = false
+      }
     }
   }
 
