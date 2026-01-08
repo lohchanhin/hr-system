@@ -36,8 +36,21 @@
                         v-for="f in formTemplates" 
                         :key="f._id" 
                         :label="`${f.name}（${f.category}）`" 
-                        :value="f._id" 
-                      />
+                        :value="f._id"
+                        :class="{ 'payroll-connected-option': PAYROLL_CONNECTED_FORMS.includes(f.name) }"
+                      >
+                        <span class="option-content">
+                          <span class="option-label">{{ f.name }}（{{ f.category }}）</span>
+                          <el-tag 
+                            v-if="PAYROLL_CONNECTED_FORMS.includes(f.name)" 
+                            type="success" 
+                            size="small"
+                            class="payroll-tag"
+                          >
+                            💰 連接薪資
+                          </el-tag>
+                        </span>
+                      </el-option>
                     </el-select>
                     <el-button 
                       type="info" 
@@ -1299,6 +1312,36 @@ function getStatusText(status) {
 
 .mb-3 {
   margin-bottom: 16px;
+}
+
+/* 下拉式選單中的薪資連接標記 */
+.option-content {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  gap: 8px;
+}
+
+.option-label {
+  flex: 1;
+}
+
+.payroll-tag {
+  flex-shrink: 0;
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-weight: 600;
+}
+
+.payroll-connected-option {
+  background-color: #f0fdf4 !important;
+  border-left: 3px solid #10b981 !important;
+}
+
+.payroll-connected-option:hover {
+  background-color: #dcfce7 !important;
 }
 
 /* 響應式設計 */
