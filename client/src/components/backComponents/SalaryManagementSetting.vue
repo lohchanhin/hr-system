@@ -323,6 +323,34 @@
                 </el-table-column>
               </el-table-column>
               
+              <el-table-column label="特休資訊" align="center">
+                <el-table-column prop="annualLeave.totalDays" label="特休天數" width="100" align="right">
+                  <template #default="{ row }">
+                    {{ row.annualLeave?.totalDays || 0 }}
+                  </template>
+                </el-table-column>
+                <el-table-column prop="annualLeave.totalHours" label="特休時數" width="100" align="right">
+                  <template #default="{ row }">
+                    {{ row.annualLeave?.totalHours || 0 }}
+                  </template>
+                </el-table-column>
+                <el-table-column prop="annualLeave.expiryDate" label="請假期限" width="120" align="center">
+                  <template #default="{ row }">
+                    {{ row.annualLeave?.expiryDate ? formatDate(row.annualLeave.expiryDate) : '-' }}
+                  </template>
+                </el-table-column>
+                <el-table-column prop="annualLeave.accumulatedLeave" label="積假" width="100" align="right">
+                  <template #default="{ row }">
+                    {{ row.annualLeave?.accumulatedLeave || 0 }}
+                  </template>
+                </el-table-column>
+                <el-table-column prop="annualLeave.notes" label="備註" width="150">
+                  <template #default="{ row }">
+                    {{ row.annualLeave?.notes || '-' }}
+                  </template>
+                </el-table-column>
+              </el-table-column>
+              
               <el-table-column prop="totalPayment" label="實發金額" width="120" align="right" fixed="right">
                 <template #default="{ row }">
                   <strong>{{ formatCurrency(row.totalPayment) }}</strong>
@@ -1008,6 +1036,7 @@
 <script setup>
 import { ref, onMounted, computed } from 'vue'
 import { apiFetch } from '../../api'
+import { formatDate } from '../../utils/dateFormatter'
 import { 
   QuestionFilled, 
   Tools, 

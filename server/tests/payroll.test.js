@@ -355,5 +355,51 @@ describe('Payroll API', () => {
       expect(employeeData).toHaveProperty('nightShiftConfigurationIssues');
       expect(Array.isArray(employeeData.nightShiftConfigurationIssues)).toBe(true);
     });
+
+    it('includes annual leave fields in overview response', async () => {
+      const fakeEmployees = [
+        {
+          _id: 'emp1',
+          employeeId: 'E001',
+          name: '王小明',
+          department: { _id: 'dept1', name: '人資部' },
+          subDepartment: null,
+          organization: 'org1',
+          salaryAmount: 45000,
+          salaryType: '月薪',
+          annualLeave: {
+            totalDays: 14,
+            usedDays: 3,
+            year: 2025,
+            expiryDate: new Date('2025-12-31'),
+            accumulatedLeave: 2,
+            notes: '特休測試備註'
+          }
+        }
+      ];
+
+      mockEmployee.find = jest.fn().mockReturnValue({
+        populate: jest.fn().mockReturnThis(),
+        select: jest.fn().mockResolvedValue(fakeEmployees)
+      });
+
+      mockPayrollRecord.find.mockReturnValue({
+        populate: jest.fn().mockResolvedValue([])
+      });
+
+      const res = await request(app).get('/api/payroll/overview/monthly?month=2025-11-01');
+      expect(res.status).toBe(200);
+      expect(Array.isArray(res.body)).toBe(true);
+      expect(res.body.length).toBeGreaterThan(0);
+      
+      const employeeData = res.body[0];
+      expect(employeeData).toHaveProperty('annualLeave');
+      expect(employeeData.annualLeave).toHaveProperty('totalDays', 14);
+      expect(employeeData.annualLeave).toHaveProperty('totalHours', 112); // 14 days * 8 hours
+      expect(employeeData.annualLeave).toHaveProperty('usedDays', 3);
+      expect(employeeData.annualLeave).toHaveProperty('accumulatedLeave', 2);
+      expect(employeeData.annualLeave).toHaveProperty('notes', '特休測試備註');
+      expect(employeeData.annualLeave).toHaveProperty('expiryDate');
+    });
   });
 });

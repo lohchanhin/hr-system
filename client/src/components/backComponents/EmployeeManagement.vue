@@ -948,6 +948,11 @@
                           placeholder="0" />
                         <span style="margin-left: 8px; color: #909399;">天</span>
                       </el-form-item>
+                      <el-form-item label="特休時數" prop="annualLeave.totalHours">
+                        <el-tag type="info" size="large">
+                          {{ (employeeForm.annualLeave?.totalDays || 0) * 8 }} 小時
+                        </el-tag>
+                      </el-form-item>
                       <el-form-item label="已使用天數" prop="annualLeave.usedDays">
                         <el-input-number v-model="employeeForm.annualLeave.usedDays" :min="0" :step="1"
                           placeholder="0" />
@@ -958,9 +963,25 @@
                           {{ (employeeForm.annualLeave?.totalDays || 0) - (employeeForm.annualLeave?.usedDays || 0) }} 天
                         </el-tag>
                       </el-form-item>
+                    </div>
+                    <div class="form-row">
                       <el-form-item label="年度" prop="annualLeave.year">
                         <el-input-number v-model="employeeForm.annualLeave.year" :min="2020" :max="2050" :step="1"
                           :placeholder="new Date().getFullYear().toString()" />
+                      </el-form-item>
+                      <el-form-item label="請假期限" prop="annualLeave.expiryDate">
+                        <el-date-picker v-model="employeeForm.annualLeave.expiryDate" type="date" placeholder="選擇請假期限日期" />
+                      </el-form-item>
+                      <el-form-item label="積假" prop="annualLeave.accumulatedLeave">
+                        <el-input-number v-model="employeeForm.annualLeave.accumulatedLeave" :min="0" :max="365" :step="0.5"
+                          placeholder="0" />
+                        <span style="margin-left: 8px; color: #909399;">天</span>
+                      </el-form-item>
+                    </div>
+                    <div class="form-row">
+                      <el-form-item label="備註" class="full-width-item" prop="annualLeave.notes">
+                        <el-input v-model="employeeForm.annualLeave.notes" type="textarea" :rows="2"
+                          placeholder="請輸入特休相關備註" />
                       </el-form-item>
                     </div>
                   </div>

@@ -219,6 +219,9 @@ const employeeSchema = new Schema(
       totalDays: { type: Number, default: 0 }, // 年度特休總天數（可設定）
       usedDays: { type: Number, default: 0 }, // 已使用的特休天數
       year: { type: Number, default: () => new Date().getFullYear() }, // 年度標記
+      expiryDate: { type: Date }, // 請假期限
+      accumulatedLeave: { type: Number, default: 0 }, // 積假
+      notes: { type: String, default: '' }, // 備註
     },
   },
   {
