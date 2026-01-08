@@ -193,30 +193,35 @@ export async function exportIndividualPayrollExcel(req, res) {
 
     // 如果沒有薪資記錄，則計算一筆
     if (!payrollRecord) {
-      const calculatedPayroll = await calculateEmployeePayroll(employeeId, month, {});
-      
-      // 構建類似 PayrollRecord 的物件
-      payrollRecord = {
-        employee: employee._id,
-        month: monthDate,
-        baseSalary: calculatedPayroll.baseSalary || 0,
-        netPay: calculatedPayroll.netPay || 0,
-        laborInsuranceFee: calculatedPayroll.laborInsuranceFee || 0,
-        healthInsuranceFee: calculatedPayroll.healthInsuranceFee || 0,
-        laborPensionSelf: calculatedPayroll.laborPensionSelf || 0,
-        employeeAdvance: calculatedPayroll.employeeAdvance || 0,
-        debtGarnishment: calculatedPayroll.debtGarnishment || 0,
-        otherDeductions: calculatedPayroll.otherDeductions || 0,
-        overtimePay: calculatedPayroll.overtimePay || 0,
-        nightShiftAllowance: calculatedPayroll.nightShiftAllowance || 0,
-        performanceBonus: calculatedPayroll.performanceBonus || 0,
-        otherBonuses: calculatedPayroll.otherBonuses || 0,
-        insuranceLevel: calculatedPayroll.insuranceLevel,
-        hourlyRate: calculatedPayroll.hourlyRate || 0,
-        personalLeaveHours: calculatedPayroll.personalLeaveHours || 0,
-        sickLeaveHours: calculatedPayroll.sickLeaveHours || 0,
-        annualLeave: employee.annualLeave || {}
-      };
+      try {
+        const calculatedPayroll = await calculateEmployeePayroll(employeeId, month, {});
+        
+        // 構建類似 PayrollRecord 的物件
+        payrollRecord = {
+          employee: employee._id,
+          month: monthDate,
+          baseSalary: calculatedPayroll.baseSalary || 0,
+          netPay: calculatedPayroll.netPay || 0,
+          laborInsuranceFee: calculatedPayroll.laborInsuranceFee || 0,
+          healthInsuranceFee: calculatedPayroll.healthInsuranceFee || 0,
+          laborPensionSelf: calculatedPayroll.laborPensionSelf || 0,
+          employeeAdvance: calculatedPayroll.employeeAdvance || 0,
+          debtGarnishment: calculatedPayroll.debtGarnishment || 0,
+          otherDeductions: calculatedPayroll.otherDeductions || 0,
+          overtimePay: calculatedPayroll.overtimePay || 0,
+          nightShiftAllowance: calculatedPayroll.nightShiftAllowance || 0,
+          performanceBonus: calculatedPayroll.performanceBonus || 0,
+          otherBonuses: calculatedPayroll.otherBonuses || 0,
+          insuranceLevel: calculatedPayroll.insuranceLevel,
+          hourlyRate: calculatedPayroll.hourlyRate || 0,
+          personalLeaveHours: calculatedPayroll.personalLeaveHours || 0,
+          sickLeaveHours: calculatedPayroll.sickLeaveHours || 0,
+          annualLeave: employee.annualLeave || {}
+        };
+      } catch (calcError) {
+        console.error('Failed to calculate payroll for export:', calcError);
+        throw new Error(`無法計算員工薪資記錄: ${calcError.message}`);
+      }
     }
 
     // 獲取組織名稱（優先使用 query parameter，否則從員工資料取得）
