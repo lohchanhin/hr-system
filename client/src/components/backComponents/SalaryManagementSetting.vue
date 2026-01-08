@@ -1578,7 +1578,7 @@ const showExplanationDialog = ref(false)
 
   async function fetchSubDepartments() {
     try {
-      const res = await apiFetch('/api/subdepartments')
+      const res = await apiFetch('/api/sub-departments')
       if (res.ok) {
         subDepartments.value = await res.json()
       }
