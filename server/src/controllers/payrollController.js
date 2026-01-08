@@ -163,8 +163,7 @@ export async function getEmployeePayrolls(req, res) {
  */
 export async function exportIndividualPayrollExcel(req, res) {
   try {
-    const { employeeId, month } = req.query;
-    const options = req.body || {};
+    const { employeeId, month, paymentDate, organizationName } = req.query;
 
     if (!employeeId) {
       return res.status(400).json({ error: 'employeeId is required' });
@@ -219,24 +218,23 @@ export async function exportIndividualPayrollExcel(req, res) {
       };
     }
 
-    // 獲取組織名稱
-    let organizationName = '';
-    if (employee.organization) {
+    // 獲取組織名稱（優先使用 query parameter，否則從員工資料取得）
+    let orgName = organizationName || '';
+    if (!orgName && employee.organization) {
       if (typeof employee.organization === 'string') {
         // 如果是字串 ID，需要查詢
         const Organization = mongoose.model('Organization');
         const org = await Organization.findById(employee.organization);
-        organizationName = org?.name || '';
+        orgName = org?.name || '';
       } else if (employee.organization.name) {
-        organizationName = employee.organization.name;
+        orgName = employee.organization.name;
       }
     }
 
     // 設定選項
     const exportOptions = {
-      organizationName,
-      paymentDate: options.paymentDate,
-      ...options
+      organizationName: orgName,
+      paymentDate: paymentDate ? new Date(paymentDate) : undefined
     };
 
     const buffer = await generateIndividualPayrollExcel(payrollRecord, employee, exportOptions);

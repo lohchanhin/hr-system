@@ -672,7 +672,6 @@ export async function generateIndividualPayrollExcel(payrollRecord, employee, op
   const annualLeaveHours = payrollRecord.annualLeave?.totalHours || employee.annualLeave?.totalHours || 0;
   const overtimeCompHours = 0; // 需要從其他地方取得加班補休時數
   const expiryDate = payrollRecord.annualLeave?.expiryDate || employee.annualLeave?.expiryDate;
-  const expiryDateStr = expiryDate ? formatDateSlash(expiryDate) : '';
 
   // 轉換為民國年
   let expiryRocYear = '';
