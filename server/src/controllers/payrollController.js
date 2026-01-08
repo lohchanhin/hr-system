@@ -2,6 +2,7 @@ import mongoose from 'mongoose';
 import PayrollRecord from '../models/PayrollRecord.js';
 import LaborInsuranceRate from '../models/LaborInsuranceRate.js';
 import Employee from '../models/Employee.js';
+import Organization from '../models/Organization.js';
 import ApprovalRequest from '../models/approval_request.js';
 import { WORK_HOURS_CONFIG } from '../config/salaryConfig.js';
 import {
@@ -223,7 +224,6 @@ export async function exportIndividualPayrollExcel(req, res) {
     if (!orgName && employee.organization) {
       if (typeof employee.organization === 'string') {
         // 如果是字串 ID，需要查詢
-        const Organization = mongoose.model('Organization');
         const org = await Organization.findById(employee.organization);
         orgName = org?.name || '';
       } else if (employee.organization.name) {

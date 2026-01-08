@@ -505,10 +505,13 @@ export async function generateIndividualPayrollExcel(payrollRecord, employee, op
   // 格式化支付日期 - 預設為下個月的10號
   let paymentDate = options.paymentDate;
   if (!paymentDate) {
-    const nextMonth = new Date(monthDate);
-    nextMonth.setMonth(nextMonth.getMonth() + 1);
-    nextMonth.setDate(10);
-    paymentDate = nextMonth;
+    // 安全地計算下個月：使用明確的年月日值避免日期溢出問題
+    const year = monthDate.getFullYear();
+    const currentMonth = monthDate.getMonth();
+    // 如果是12月，年份+1，月份設為0(1月)；否則月份+1
+    const nextYear = currentMonth === 11 ? year + 1 : year;
+    const nextMonthNum = currentMonth === 11 ? 0 : currentMonth + 1;
+    paymentDate = new Date(nextYear, nextMonthNum, 10);
   }
   const paymentRocYear = paymentDate.getFullYear() - 1911;
   const paymentMonth = paymentDate.getMonth() + 1;
