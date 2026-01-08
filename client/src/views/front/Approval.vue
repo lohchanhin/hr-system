@@ -534,7 +534,7 @@
             <h3 class="form-help-title">
               <i class="el-icon-document"></i>
               {{ form.name }}
-              <el-tag v-if="form.name === '請假' || form.name === '加班申請' || form.name === '獎金申請'" type="success" size="small">連接薪資</el-tag>
+              <el-tag v-if="PAYROLL_CONNECTED_FORMS.includes(form.name)" type="success" size="small">連接薪資</el-tag>
             </h3>
             <el-tag type="info" size="small">{{ form.category }}</el-tag>
           </div>
@@ -568,6 +568,10 @@
 import { ref, reactive, onMounted, computed, watch } from 'vue'
 import { apiFetch } from '../../api'
 import { useAuthStore } from '../../stores/auth'
+
+/* -------------------- Constants -------------------- */
+// Forms that automatically connect to payroll system
+const PAYROLL_CONNECTED_FORMS = ['請假', '加班申請', '獎金申請']
 
 /* -------------------- Tabs -------------------- */
 const activeTab = ref('inbox')

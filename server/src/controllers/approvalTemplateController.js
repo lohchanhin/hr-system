@@ -181,6 +181,7 @@ export async function ensureLeaveForm(req, res) {
   try {
     // Check if leave form exists
     let form = await FormTemplate.findOne({ name: '請假' })
+    let wasGenerated = false
     
     if (!form) {
       // Auto-generate leave form if it doesn't exist
@@ -216,6 +217,7 @@ export async function ensureLeaveForm(req, res) {
         policy: { maxApprovalLevel: 5, allowDelegate: false, overdueDays: 3, overdueAction: 'none' }
       })
 
+      wasGenerated = true
       console.log('Auto-generated leave form template')
     }
 
@@ -227,7 +229,7 @@ export async function ensureLeaveForm(req, res) {
       form, 
       fields, 
       workflow,
-      generated: !form.createdAt || (new Date() - form.createdAt < 5000) // true if just created
+      generated: wasGenerated
     })
   } catch (e) {
     res.status(500).json({ error: e.message })

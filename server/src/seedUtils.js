@@ -16,6 +16,10 @@ import { getLeaveFieldIds, resetLeaveFieldCache } from './services/leaveFieldSer
 import { calculateNightShiftAllowance } from './services/nightShiftAllowanceService.js';
 export const SEED_TEST_PASSWORD = 'password';
 
+// Time conversion constants
+const MILLISECONDS_PER_HOUR = 1000 * 60 * 60;
+const MILLISECONDS_PER_DAY = MILLISECONDS_PER_HOUR * 24;
+
 const CITY_OPTIONS = ['台北市', '新北市', '桃園市', '台中市', '台南市', '高雄市'];
 const SIGN_ROLE_OPTIONS = [
   { value: 'R001', label: '填報' },
@@ -776,7 +780,7 @@ async function seedPayrollRecords({ supervisors = [], employees = [] } = {}) {
       const end = new Date(getFieldValue(formData, fieldMap, '結束時間') || getFieldValue(formData, fieldMap, '結束日期'));
       const leaveType = getFieldValue(formData, fieldMap, '假別');
       // Calculate hours: if both have time info, use precise calculation; otherwise assume full days
-      const hours = isValidDate(start) && isValidDate(end) ? (end - start) / (1000 * 60 * 60) : 0;
+      const hours = isValidDate(start) && isValidDate(end) ? (end - start) / MILLISECONDS_PER_HOUR : 0;
       const amount = status === 'approved' ? hours : 0;
       const refDate = isValidDate(start) ? start : request.createdAt;
       addAdjustment(employeeId, refDate, {
@@ -795,7 +799,7 @@ async function seedPayrollRecords({ supervisors = [], employees = [] } = {}) {
       const start = new Date(getFieldValue(formData, fieldMap, '開始時間'));
       const end = new Date(getFieldValue(formData, fieldMap, '結束時間'));
       const reason = getFieldValue(formData, fieldMap, '事由');
-      const hours = isValidDate(start) && isValidDate(end) ? (end - start) / (1000 * 60 * 60) : 0;
+      const hours = isValidDate(start) && isValidDate(end) ? (end - start) / MILLISECONDS_PER_HOUR : 0;
       const amount = status === 'approved' ? hours : 0;
       const refDate = isValidDate(start) ? start : request.createdAt;
       addAdjustment(employeeId, refDate, {
@@ -814,7 +818,7 @@ async function seedPayrollRecords({ supervisors = [], employees = [] } = {}) {
       const start = new Date(getFieldValue(formData, fieldMap, '開始時間'));
       const end = new Date(getFieldValue(formData, fieldMap, '結束時間'));
       const reason = getFieldValue(formData, fieldMap, '事由');
-      const hours = isValidDate(start) && isValidDate(end) ? (end - start) / (1000 * 60 * 60) : 0;
+      const hours = isValidDate(start) && isValidDate(end) ? (end - start) / MILLISECONDS_PER_HOUR : 0;
       const amount = status === 'approved' ? hours : 0;
       const refDate = isValidDate(start) ? start : request.createdAt;
       addAdjustment(employeeId, refDate, {
