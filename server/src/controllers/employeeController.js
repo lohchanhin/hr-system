@@ -657,9 +657,15 @@ export async function updateEmployee(req, res) {
 /** DELETE /api/employees/:id */
 export async function deleteEmployee(req, res) {
   try {
-    const employee = await Employee.findByIdAndDelete(req.params.id)
+    const employee = await Employee.findById(req.params.id)
     if (!employee) return res.status(404).json({ error: 'Not found' })
 
+    // Prevent deletion of admin accounts
+    if (employee.role === 'admin') {
+      return res.status(403).json({ error: '管理員帳戶不可刪除' })
+    }
+
+    await employee.deleteOne()
     res.json({ success: true })
   } catch (err) {
     res.status(400).json({ error: err.message })

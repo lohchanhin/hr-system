@@ -212,11 +212,23 @@ describe('Employee API', () => {
   });
 
   it('deletes employee', async () => {
-    mockEmployee.findByIdAndDelete.mockResolvedValue({ _id: '1' });
+    const mockDeleteOne = jest.fn().mockResolvedValue();
+    mockEmployee.findById.mockResolvedValue({ _id: '1', role: 'employee', deleteOne: mockDeleteOne });
     const res = await request(app).delete('/api/employees/1');
     expect(res.status).toBe(200);
-    expect(mockEmployee.findByIdAndDelete).toHaveBeenCalledWith('1');
+    expect(mockEmployee.findById).toHaveBeenCalledWith('1');
+    expect(mockDeleteOne).toHaveBeenCalled();
     expect(res.body).toEqual({ success: true });
+  });
+
+  it('prevents deletion of admin accounts', async () => {
+    const mockDeleteOne = jest.fn();
+    mockEmployee.findById.mockResolvedValue({ _id: '1', role: 'admin', deleteOne: mockDeleteOne });
+    const res = await request(app).delete('/api/employees/1');
+    expect(res.status).toBe(403);
+    expect(mockEmployee.findById).toHaveBeenCalledWith('1');
+    expect(mockDeleteOne).not.toHaveBeenCalled();
+    expect(res.body).toEqual({ error: '管理員帳戶不可刪除' });
   });
 
   it('sets supervisors in batch', async () => {

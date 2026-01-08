@@ -135,7 +135,7 @@
                   <i class="el-icon-edit"></i>
                   編輯
                 </el-button>
-                <el-button type="danger" size="small" @click="deleteEmployee($index)" class="delete-btn">
+                <el-button v-if="row.role !== 'admin'" type="danger" size="small" @click="deleteEmployee($index)" class="delete-btn">
                   <i class="el-icon-delete"></i>
                   刪除
                 </el-button>
@@ -4544,10 +4544,24 @@ async function saveEmployee() {
 
 async function deleteEmployee(index) {
   const emp = employeeList.value[index]
+  
+  // Prevent deleting admin accounts
+  if (emp.role === 'admin') {
+    ElMessage.warning('管理員帳戶不可刪除')
+    return
+  }
+  
   const res = await apiFetch(`/api/employees/${emp._id}`, {
     method: 'DELETE'
   })
-  if (res.ok) employeeList.value.splice(index, 1)
+  
+  if (res.ok) {
+    employeeList.value.splice(index, 1)
+    ElMessage.success('刪除成功')
+  } else {
+    const data = await res.json().catch(() => ({}))
+    ElMessage.error(data.error || '刪除失敗')
+  }
 }
 
 function addExperience() {
