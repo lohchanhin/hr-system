@@ -771,10 +771,12 @@ async function seedPayrollRecords({ supervisors = [], employees = [] } = {}) {
 
     if (leaveConfig && toStringId(form) === toStringId(leaveConfig.form._id)) {
       const { fieldMap } = leaveConfig;
-      const start = new Date(getFieldValue(formData, fieldMap, '開始日期'));
-      const end = new Date(getFieldValue(formData, fieldMap, '結束日期'));
+      // Support both old (開始日期) and new (開始時間) field names
+      const start = new Date(getFieldValue(formData, fieldMap, '開始時間') || getFieldValue(formData, fieldMap, '開始日期'));
+      const end = new Date(getFieldValue(formData, fieldMap, '結束時間') || getFieldValue(formData, fieldMap, '結束日期'));
       const leaveType = getFieldValue(formData, fieldMap, '假別');
-      const hours = isValidDate(start) && isValidDate(end) ? ((end - start) / (1000 * 60 * 60)) + 24 : 0;
+      // Calculate hours: if both have time info, use precise calculation; otherwise assume full days
+      const hours = isValidDate(start) && isValidDate(end) ? (end - start) / (1000 * 60 * 60) : 0;
       const amount = status === 'approved' ? hours : 0;
       const refDate = isValidDate(start) ? start : request.createdAt;
       addAdjustment(employeeId, refDate, {
@@ -1226,11 +1228,12 @@ export async function seedApprovalTemplates() {
     {
       name: '請假',
       category: '人事',
+      description: '用於申請各類假別（事假、病假、特休等），此表單會自動連接薪資系統計算扣薪或假勤。支援小時級別的精確請假時間。',
       fields: [
-        { label: '假別', type_1: 'text', required: true, order: 1 },
-        { label: '開始日期', type_1: 'date', required: true, order: 2 },
-        { label: '結束日期', type_1: 'date', required: true, order: 3 },
-        { label: '事由', type_1: 'textarea', order: 4 },
+        { label: '假別', type_1: 'text', required: true, order: 1, placeholder: '例如：事假、病假、特休、婚假等' },
+        { label: '開始時間', type_1: 'datetime', required: true, order: 2 },
+        { label: '結束時間', type_1: 'datetime', required: true, order: 3 },
+        { label: '事由', type_1: 'textarea', order: 4, placeholder: '請說明請假原因' },
       ],
       steps: [
         { step_order: 1, approver_type: 'manager' },
@@ -1240,6 +1243,7 @@ export async function seedApprovalTemplates() {
     {
       name: '支援申請',
       category: '人事',
+      description: '用於申請跨部門或單位支援，需經過相關單位主管與人資審核。',
       fields: [
         { label: '申請事由', type_1: 'textarea', required: true, order: 1 },
         { label: '開始日期', type_1: 'date', required: true, order: 2 },
@@ -1255,6 +1259,7 @@ export async function seedApprovalTemplates() {
     {
       name: '特休保留',
       category: '人事',
+      description: '用於申請保留當年度未使用的特別休假至次年度，需說明保留原因。',
       fields: [
         { label: '年度', type_1: 'text', required: true, order: 1 },
         { label: '保留天數', type_1: 'number', required: true, order: 2 },
@@ -1268,6 +1273,7 @@ export async function seedApprovalTemplates() {
     {
       name: '在職證明',
       category: '人事',
+      description: '用於申請在職證明文件，需說明使用目的（如：信貸、簽證等）。',
       fields: [
         { label: '用途', type_1: 'text', required: true, order: 1 },
         { label: '開立日期', type_1: 'date', required: true, order: 2 },
@@ -1279,6 +1285,7 @@ export async function seedApprovalTemplates() {
     {
       name: '離職證明',
       category: '人事',
+      description: '用於申請離職證明文件，需確認離職日期並說明使用目的。',
       fields: [
         { label: '用途', type_1: 'text', order: 1 },
         { label: '離職日期', type_1: 'date', required: true, order: 2 },
@@ -1291,6 +1298,7 @@ export async function seedApprovalTemplates() {
     {
       name: '加班申請',
       category: '人事',
+      description: '用於申請加班時數，此表單會自動連接薪資系統計算加班費。支援小時級別的精確加班時間。',
       fields: [
         { label: '開始時間', type_1: 'datetime', required: true, order: 1 },
         { label: '結束時間', type_1: 'datetime', required: true, order: 2 },
@@ -1306,6 +1314,7 @@ export async function seedApprovalTemplates() {
     {
       name: '補簽申請',
       category: '人事',
+      description: '用於申請補打卡或補簽到退，需說明原因。此表單會影響考勤記錄。',
       fields: [
         { label: '開始時間', type_1: 'datetime', required: true, order: 1 },
         { label: '結束時間', type_1: 'datetime', required: true, order: 2 },
@@ -1320,6 +1329,7 @@ export async function seedApprovalTemplates() {
     {
       name: '獎金申請',
       category: '人事',
+      description: '用於申請額外獎金或績效獎金，此表單會自動連接薪資系統計算獎金發放。需經財務與人資審核。',
       fields: [
         { label: '獎金類型', type_1: 'text', required: true, order: 1 },
         { label: '金額', type_1: 'number', required: true, order: 2 },
@@ -1598,8 +1608,10 @@ function buildLeaveFormData(fieldMap, leaveFieldInfo, index) {
     .filter((value) => value !== undefined && value !== null);
   const typeList = leaveTypes.length ? leaveTypes : LEAVE_TYPE_FALLBACK;
   const typeValue = typeList[index % typeList.length];
-  const startFieldId = leaveFieldInfo?.startId ?? fieldMap['開始日期'];
-  const endFieldId = leaveFieldInfo?.endId ?? fieldMap['結束日期'];
+  
+  // Support both old and new field names for backward compatibility
+  const startFieldId = leaveFieldInfo?.startId ?? (fieldMap['開始時間'] || fieldMap['開始日期']);
+  const endFieldId = leaveFieldInfo?.endId ?? (fieldMap['結束時間'] || fieldMap['結束日期']);
   const typeFieldId = leaveFieldInfo?.typeId ?? fieldMap['假別'];
   const reasonFieldId = fieldMap['事由'];
 

@@ -2,7 +2,7 @@ import { Router } from 'express'
 import {
   listFormTemplates, createFormTemplate, getFormTemplate, updateFormTemplate, deleteFormTemplate,
   addField, updateField, deleteField, listFields,
-  getWorkflow, setWorkflow, getSignRoles, getSignLevels,
+  getWorkflow, setWorkflow, getSignRoles, getSignLevels, ensureLeaveForm,
 } from '../controllers/approvalTemplateController.js'
 
 import {
@@ -19,6 +19,9 @@ router.post('/forms', authorizeRoles('admin'), createFormTemplate)
 router.get('/forms/:id', authorizeRoles('employee', 'supervisor', 'admin'), getFormTemplate)
 router.put('/forms/:id', authorizeRoles('admin'), updateFormTemplate)
 router.delete('/forms/:id', authorizeRoles('admin'), deleteFormTemplate)
+
+// Ensure leave form exists (auto-generate if missing)
+router.post('/ensure-leave-form', authorizeRoles('employee', 'supervisor', 'admin'), ensureLeaveForm)
 
 // Fields
 router.get('/forms/:formId/fields', authorizeRoles('employee', 'supervisor', 'admin'), listFields)
