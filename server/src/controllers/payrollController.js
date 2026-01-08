@@ -263,7 +263,7 @@ export async function getMonthlyPayrollOverview(req, res) {
     const employees = await Employee.find(employeeQuery)
       .populate('department')
       .populate('subDepartment')
-      .select('employeeId name department subDepartment organization salaryAmount salaryType salaryItems salaryItemAmounts');
+      .select('employeeId name department subDepartment organization salaryAmount salaryType salaryItems salaryItemAmounts annualLeave');
     
     if (employees.length === 0) {
       return res.json([]);
@@ -446,6 +446,15 @@ export async function getMonthlyPayrollOverview(req, res) {
         totalPayment: totalPaymentValue,
         insuranceLevel: payroll?.insuranceLevel,
         insuranceRate: payroll?.insuranceRate,
+        // Annual leave data
+        annualLeave: {
+          totalDays: employee.annualLeave?.totalDays || 0,
+          totalHours: (employee.annualLeave?.totalDays || 0) * 8,
+          usedDays: employee.annualLeave?.usedDays || 0,
+          expiryDate: employee.annualLeave?.expiryDate || null,
+          accumulatedLeave: employee.annualLeave?.accumulatedLeave || 0,
+          notes: employee.annualLeave?.notes || ''
+        },
         hasPayrollRecord: !!payrollMap[employeeIdStr],
         payrollRecordId: payrollMap[employeeIdStr]?._id
       };
