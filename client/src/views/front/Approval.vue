@@ -36,9 +36,31 @@
                         v-for="f in formTemplates" 
                         :key="f._id" 
                         :label="`${f.name}（${f.category}）`" 
-                        :value="f._id" 
-                      />
+                        :value="f._id"
+                        :class="{ 'payroll-connected-option': PAYROLL_CONNECTED_FORMS.includes(f.name) }"
+                      >
+                        <span class="option-content">
+                          <span class="option-label">{{ f.name }}（{{ f.category }}）</span>
+                          <el-tag 
+                            v-if="PAYROLL_CONNECTED_FORMS.includes(f.name)" 
+                            type="success" 
+                            size="small"
+                            class="payroll-tag"
+                          >
+                            💰 連接薪資
+                          </el-tag>
+                        </span>
+                      </el-option>
                     </el-select>
+                    <el-button 
+                      type="info" 
+                      icon="el-icon-question"
+                      @click="showFormHelp"
+                      class="help-btn"
+                      title="查看表單說明"
+                    >
+                      說明
+                    </el-button>
                     <el-button 
                       type="primary" 
                       :disabled="!applyState.formId" 
@@ -502,6 +524,44 @@
       </template>
     </el-dialog>
 
+    <!-- 表單說明 Dialog -->
+    <el-dialog v-model="helpDlg.visible" title="表單說明" width="600px">
+      <div v-if="helpDlg.forms.length" class="help-content">
+        <el-alert
+          type="info"
+          :closable="false"
+          class="mb-3"
+        >
+          <template #title>
+            <div style="font-weight: 600;">💡 如何選擇正確的表單？</div>
+          </template>
+          <div style="margin-top: 8px; line-height: 1.8;">
+            <p style="margin: 0 0 8px 0;">• <strong>請假表單</strong>會自動連接薪資系統，影響您的假勤和薪資計算</p>
+            <p style="margin: 0 0 8px 0;">• <strong>加班申請</strong>和<strong>獎金申請</strong>同樣會連接薪資系統</p>
+            <p style="margin: 0;">• 其他表單用於特定用途，請依需求選擇</p>
+          </div>
+        </el-alert>
+
+        <div v-for="form in helpDlg.forms" :key="form._id" class="form-help-item">
+          <div class="form-help-header">
+            <h3 class="form-help-title">
+              <i class="el-icon-document"></i>
+              {{ form.name }}
+              <el-tag v-if="PAYROLL_CONNECTED_FORMS.includes(form.name)" type="success" size="small">連接薪資</el-tag>
+            </h3>
+            <el-tag type="info" size="small">{{ form.category }}</el-tag>
+          </div>
+          <p class="form-help-description">
+            {{ form.description || '暫無說明' }}
+          </p>
+        </div>
+      </div>
+      <el-empty v-else description="暫無表單說明" />
+      <template #footer>
+        <el-button @click="helpDlg.visible=false">關閉</el-button>
+      </template>
+    </el-dialog>
+
     <!-- 審核動作 Dialog -->
     <el-dialog v-model="actionDlg.visible" :title="actionTitle" width="520px">
       <el-form label-width="100px">
@@ -521,6 +581,10 @@
 import { ref, reactive, onMounted, computed, watch } from 'vue'
 import { apiFetch } from '../../api'
 import { useAuthStore } from '../../stores/auth'
+
+/* -------------------- Constants -------------------- */
+// Forms that automatically connect to payroll system
+const PAYROLL_CONNECTED_FORMS = ['請假', '加班申請', '獎金申請']
 
 /* -------------------- Tabs -------------------- */
 const activeTab = ref('inbox')
@@ -853,9 +917,43 @@ async function openDetail(id) {
   }
 }
 
+/* -------------------- 表單說明 -------------------- */
+const helpDlg = reactive({ visible: false, forms: [] })
+
+function showFormHelp() {
+  helpDlg.forms = formTemplates.value.map(f => ({
+    _id: f._id,
+    name: f.name,
+    category: f.category,
+    description: f.description || ''
+  }))
+  helpDlg.visible = true
+}
+
+/* -------------------- 自動檢查並生成請假表單 -------------------- */
+async function ensureLeaveFormExists() {
+  try {
+    const res = await apiFetch('/api/approvals/ensure-leave-form', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' }
+    })
+    if (res.ok) {
+      const result = await res.json()
+      if (result.generated) {
+        console.log('Leave form was auto-generated')
+        // Reload form templates to include the new leave form
+        await loadFormTemplates()
+      }
+    }
+  } catch (err) {
+    console.warn('Failed to ensure leave form exists:', err)
+  }
+}
+
 /* -------------------- 初始化 -------------------- */
 onMounted(async () => {
   authStore.loadUser()
+  await ensureLeaveFormExists() // Auto-check and generate leave form if needed
   await Promise.all([loadFormTemplates(), fetchUsersLite(), fetchDepts(), fetchOrgs()])
   // 預設進待我簽核
   await Promise.all([fetchInbox(), fetchMyList()])
@@ -1166,6 +1264,84 @@ function getStatusText(status) {
   gap: 4px;
   border-radius: 6px;
   font-size: 12px;
+}
+
+/* 表單說明樣式 */
+.help-content {
+  max-height: 500px;
+  overflow-y: auto;
+}
+
+.form-help-item {
+  padding: 16px;
+  margin-bottom: 12px;
+  background: #f8fafc;
+  border-radius: 8px;
+  border-left: 4px solid #10b981;
+}
+
+.form-help-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.form-help-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: #1e293b;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.form-help-description {
+  font-size: 14px;
+  color: #64748b;
+  line-height: 1.6;
+  margin: 0;
+}
+
+.help-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.mb-3 {
+  margin-bottom: 16px;
+}
+
+/* 下拉式選單中的薪資連接標記 */
+.option-content {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  gap: 8px;
+}
+
+.option-label {
+  flex: 1;
+}
+
+.payroll-tag {
+  flex-shrink: 0;
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-weight: 600;
+}
+
+.payroll-connected-option {
+  background-color: #f0fdf4 !important;
+  border-left: 3px solid #10b981 !important;
+}
+
+.payroll-connected-option:hover {
+  background-color: #dcfce7 !important;
 }
 
 /* 響應式設計 */

@@ -84,8 +84,9 @@ export async function getLeaveFieldIds() {
   }
 
   const fields = await FormField.find({ form: form._id }).lean();
-  const startField = fields.find((f) => f.label === '開始日期');
-  const endField = fields.find((f) => f.label === '結束日期');
+  // Support both old (開始日期) and new (開始時間) field names for backward compatibility
+  const startField = fields.find((f) => f.label === '開始時間' || f.label === '開始日期');
+  const endField = fields.find((f) => f.label === '結束時間' || f.label === '結束日期');
   const typeField = fields.find((f) => f.label === '假別');
 
   leaveFieldCache = {
@@ -94,6 +95,9 @@ export async function getLeaveFieldIds() {
     endId: endField?._id?.toString(),
     typeId: typeField?._id?.toString(),
     typeOptions: typeField ? extractOptions(typeField) : [],
+    // Store the actual field labels for reference
+    startLabel: startField?.label,
+    endLabel: endField?.label,
   };
 
   return leaveFieldCache;
