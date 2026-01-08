@@ -665,7 +665,7 @@ export async function deleteEmployee(req, res) {
       return res.status(403).json({ error: '管理員帳戶不可刪除' })
     }
 
-    await Employee.findByIdAndDelete(req.params.id)
+    await employee.deleteOne()
     res.json({ success: true })
   } catch (err) {
     res.status(400).json({ error: err.message })
