@@ -476,9 +476,265 @@ export async function generatePayrollExcel(month, bankTypeOrFormat, companyInfo 
   }
 }
 
+/**
+ * 生成個人薪資表 Excel (Individual Payroll Statement)
+ * @param {Object} payrollRecord - 薪資記錄
+ * @param {Object} employee - 員工資訊
+ * @param {Object} options - 選項 (paymentDate, organization)
+ * @returns {Buffer} - Excel 文件緩衝區
+ */
+export async function generateIndividualPayrollExcel(payrollRecord, employee, options = {}) {
+  const workbook = new ExcelJS.Workbook();
+  const worksheet = workbook.addWorksheet('個人薪資表');
+
+  // 設定列寬
+  worksheet.columns = [
+    { width: 18 }, // A - 應稅所得項目
+    { width: 12 }, // B - 應稅所得金額
+    { width: 18 }, // C - 免稅所得項目
+    { width: 12 }, // D - 免稅所得金額
+    { width: 18 }, // E - 應扣項目
+    { width: 12 }  // F - 應扣金額
+  ];
+
+  // 格式化民國年月
+  const monthDate = new Date(payrollRecord.month);
+  const rocYear = monthDate.getFullYear() - 1911;
+  const month = monthDate.getMonth() + 1;
+  
+  // 格式化支付日期
+  const paymentDate = options.paymentDate || new Date(monthDate.getFullYear(), monthDate.getMonth() + 1, 10);
+  const paymentRocYear = paymentDate.getFullYear() - 1911;
+  const paymentMonth = paymentDate.getMonth() + 1;
+  const paymentDay = paymentDate.getDate();
+
+  // 標題列：114 年 10 月 (支付日期：114.11.10) | 機構別：和泰護理之家 | 編號：H0001 | 姓名：江玉琴
+  const titleRow = worksheet.addRow([
+    `${rocYear} 年 ${month} 月 (支付日期：${paymentRocYear}.${String(paymentMonth).padStart(2, '0')}.${String(paymentDay).padStart(2, '0')})`,
+    '',
+    `機構別：${options.organizationName || ''}`,
+    '',
+    `編號：${employee.employeeId || employee.employeeNo || ''}`,
+    `姓名：${employee.name || ''}`
+  ]);
+  
+  worksheet.mergeCells('A1:B1');
+  worksheet.mergeCells('C1:D1');
+  worksheet.getCell('A1').alignment = { horizontal: 'left', vertical: 'middle' };
+  worksheet.getCell('C1').alignment = { horizontal: 'left', vertical: 'middle' };
+  worksheet.getCell('E1').alignment = { horizontal: 'left', vertical: 'middle' };
+  worksheet.getCell('F1').alignment = { horizontal: 'left', vertical: 'middle' };
+  titleRow.height = 25;
+  titleRow.font = { bold: true };
+
+  // 空白列
+  worksheet.addRow([]);
+
+  // 表頭列
+  const headerRow = worksheet.addRow([
+    '應稅所得',
+    '金額',
+    '免稅所得',
+    '金額',
+    '應扣項目',
+    '金額'
+  ]);
+  
+  headerRow.font = { bold: true };
+  headerRow.alignment = { horizontal: 'center', vertical: 'middle' };
+  headerRow.height = 20;
+  
+  // 設定表頭背景色
+  headerRow.eachCell((cell) => {
+    cell.fill = {
+      type: 'pattern',
+      pattern: 'solid',
+      fgColor: { argb: 'FFE0E0E0' }
+    };
+    cell.border = {
+      top: { style: 'thin' },
+      left: { style: 'thin' },
+      bottom: { style: 'thin' },
+      right: { style: 'thin' }
+    };
+  });
+
+  // 數據行 - 準備數據
+  const taxableIncomeItems = [
+    { label: '本薪', value: payrollRecord.baseSalary || 0 },
+    { label: '組長加給', value: 0 }, // 可以從 employee.salaryItems 中提取
+    { label: '事假扣薪', value: payrollRecord.personalLeaveHours ? -(payrollRecord.personalLeaveHours * (payrollRecord.hourlyRate || 0)) : 0 },
+    { label: '病假扣薪', value: payrollRecord.sickLeaveHours ? -(payrollRecord.sickLeaveHours * (payrollRecord.hourlyRate || 0) * 0.5) : 0 },
+    { label: '遲到早退扣薪', value: 0 },
+    { label: '曠職扣薪', value: 0 },
+    { label: '其他：', value: 0 }
+  ];
+
+  const taxFreeIncomeItems = [
+    { label: '工作日加班', value: 0 },
+    { label: '休息日加班', value: 0 },
+    { label: '國定假日出勤', value: 0 },
+    { label: '颱風停班出勤', value: 0 },
+    { label: '選舉投票日出勤', value: 0 },
+    { label: '特休未休工資', value: 0 },
+    { label: '', value: 0 }
+  ];
+
+  const deductionItems = [
+    { label: '勞保費自付額', value: payrollRecord.laborInsuranceFee || 0 },
+    { label: '健保費自付額', value: payrollRecord.healthInsuranceFee || 0 },
+    { label: '勞退個人提繳', value: payrollRecord.laborPensionSelf || 0 },
+    { label: '員工借支', value: payrollRecord.employeeAdvance || 0 },
+    { label: '債權扣押', value: payrollRecord.debtGarnishment || 0 },
+    { label: '其他：', value: payrollRecord.otherDeductions || 0 },
+    { label: '其他：', value: 0 }
+  ];
+
+  // 計算小計
+  const taxableSubtotal = taxableIncomeItems.reduce((sum, item) => sum + item.value, 0);
+  const taxFreeTotal = taxFreeIncomeItems.reduce((sum, item) => sum + item.value, 0);
+
+  // 數據行
+  const maxRows = Math.max(taxableIncomeItems.length, taxFreeIncomeItems.length, deductionItems.length);
+  for (let i = 0; i < maxRows; i++) {
+    const row = worksheet.addRow([
+      taxableIncomeItems[i]?.label || '',
+      taxableIncomeItems[i]?.value !== undefined ? taxableIncomeItems[i].value : '',
+      taxFreeIncomeItems[i]?.label || '',
+      taxFreeIncomeItems[i]?.value !== undefined ? taxFreeIncomeItems[i].value : '',
+      deductionItems[i]?.label || '',
+      deductionItems[i]?.value !== undefined ? deductionItems[i].value : ''
+    ]);
+
+    // 設定格式
+    row.eachCell((cell, colNumber) => {
+      cell.border = {
+        top: { style: 'thin' },
+        left: { style: 'thin' },
+        bottom: { style: 'thin' },
+        right: { style: 'thin' }
+      };
+      
+      // 金額列靠右對齊
+      if (colNumber % 2 === 0) {
+        cell.alignment = { horizontal: 'right', vertical: 'middle' };
+        // 如果是數字，格式化為貨幣
+        if (typeof cell.value === 'number') {
+          cell.numFmt = '#,##0';
+        }
+      } else {
+        cell.alignment = { horizontal: 'left', vertical: 'middle' };
+      }
+    });
+  }
+
+  // 小計列
+  const subtotalRow = worksheet.addRow([
+    '小計',
+    taxableSubtotal,
+    '合計',
+    taxFreeTotal,
+    '實領金額',
+    payrollRecord.netPay || 0
+  ]);
+
+  subtotalRow.font = { bold: true };
+  subtotalRow.eachCell((cell, colNumber) => {
+    cell.border = {
+      top: { style: 'medium' },
+      left: { style: 'thin' },
+      bottom: { style: 'medium' },
+      right: { style: 'thin' }
+    };
+    cell.fill = {
+      type: 'pattern',
+      pattern: 'solid',
+      fgColor: { argb: 'FFF0F0F0' }
+    };
+    
+    if (colNumber % 2 === 0) {
+      cell.alignment = { horizontal: 'right', vertical: 'middle' };
+      if (typeof cell.value === 'number') {
+        cell.numFmt = '#,##0';
+      }
+    } else {
+      cell.alignment = { horizontal: 'center', vertical: 'middle' };
+    }
+  });
+
+  // 空白列
+  worksheet.addRow([]);
+
+  // 勞健保級距與特休資訊
+  const insuranceLevel = payrollRecord.insuranceLevel || 45800;
+  const employerPension = Math.round(insuranceLevel * 0.06);
+  
+  const annualLeaveHours = payrollRecord.annualLeave?.totalHours || employee.annualLeave?.totalHours || 0;
+  const overtimeCompHours = 0; // 需要從其他地方取得加班補休時數
+  const expiryDate = payrollRecord.annualLeave?.expiryDate || employee.annualLeave?.expiryDate;
+  const expiryDateStr = expiryDate ? formatDateSlash(expiryDate) : '';
+
+  // 轉換為民國年
+  let expiryRocYear = '';
+  let expiryMonthDay = '';
+  if (expiryDate) {
+    const expDate = new Date(expiryDate);
+    expiryRocYear = expDate.getFullYear() - 1911;
+    expiryMonthDay = `年 ${expDate.getMonth() + 1} 月 ${expDate.getDate()} 日`;
+  }
+
+  const infoRow1 = worksheet.addRow([
+    `勞健保級距：職退健 ${insuranceLevel.toLocaleString()}`,
+    '',
+    '',
+    `雇主勞退 6% 提繳：${employerPension.toLocaleString()}`,
+    '',
+    ''
+  ]);
+  
+  worksheet.mergeCells(`A${infoRow1.number}:C${infoRow1.number}`);
+  worksheet.mergeCells(`D${infoRow1.number}:F${infoRow1.number}`);
+  
+  infoRow1.eachCell((cell) => {
+    cell.border = {
+      top: { style: 'thin' },
+      left: { style: 'thin' },
+      bottom: { style: 'thin' },
+      right: { style: 'thin' }
+    };
+    cell.alignment = { horizontal: 'left', vertical: 'middle' };
+  });
+
+  const infoRow2 = worksheet.addRow([
+    `特別休假時數：${annualLeaveHours}`,
+    '',
+    `加班補休時數：${overtimeCompHours}`,
+    '',
+    expiryRocYear ? `請休期限：${expiryRocYear} ${expiryMonthDay}` : '',
+    ''
+  ]);
+  
+  worksheet.mergeCells(`A${infoRow2.number}:B${infoRow2.number}`);
+  worksheet.mergeCells(`C${infoRow2.number}:D${infoRow2.number}`);
+  worksheet.mergeCells(`E${infoRow2.number}:F${infoRow2.number}`);
+  
+  infoRow2.eachCell((cell) => {
+    cell.border = {
+      top: { style: 'thin' },
+      left: { style: 'thin' },
+      bottom: { style: 'thin' },
+      right: { style: 'thin' }
+    };
+    cell.alignment = { horizontal: 'left', vertical: 'middle' };
+  });
+
+  return await workbook.xlsx.writeBuffer();
+}
+
 export default {
   generateTaiwanBusinessBankExcel,
   generateTaichungBankExcel,
   generateBonusSlipExcel,
+  generateIndividualPayrollExcel,
   generatePayrollExcel
 };

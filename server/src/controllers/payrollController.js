@@ -23,7 +23,7 @@ import {
   fetchInsuranceRatesByType,
   refreshInsuranceRatesByType
 } from '../services/laborInsuranceService.js';
-import { generatePayrollExcel } from '../services/payrollExportService.js';
+import { generatePayrollExcel, generateIndividualPayrollExcel } from '../services/payrollExportService.js';
 import { aggregateBonusFromApprovals } from '../utils/payrollPreviewUtils.js';
 
 export async function listPayrolls(req, res) {
@@ -154,6 +154,100 @@ export async function getEmployeePayrolls(req, res) {
     const records = await getEmployeePayrollRecords(employeeId, month);
     res.json(records);
   } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+}
+
+/**
+ * 導出個人薪資表 Excel
+ */
+export async function exportIndividualPayrollExcel(req, res) {
+  try {
+    const { employeeId, month } = req.query;
+    const options = req.body || {};
+
+    if (!employeeId) {
+      return res.status(400).json({ error: 'employeeId is required' });
+    }
+
+    if (!month) {
+      return res.status(400).json({ error: 'month is required' });
+    }
+
+    // 查找員工
+    const employee = await Employee.findById(employeeId)
+      .populate('organization')
+      .populate('department')
+      .populate('subDepartment');
+    
+    if (!employee) {
+      return res.status(404).json({ error: 'Employee not found' });
+    }
+
+    // 查找薪資記錄
+    const monthDate = new Date(month);
+    let payrollRecord = await PayrollRecord.findOne({
+      employee: employeeId,
+      month: monthDate
+    });
+
+    // 如果沒有薪資記錄，則計算一筆
+    if (!payrollRecord) {
+      const calculatedPayroll = await calculateEmployeePayroll(employeeId, month, {});
+      
+      // 構建類似 PayrollRecord 的物件
+      payrollRecord = {
+        employee: employee._id,
+        month: monthDate,
+        baseSalary: calculatedPayroll.baseSalary || 0,
+        netPay: calculatedPayroll.netPay || 0,
+        laborInsuranceFee: calculatedPayroll.laborInsuranceFee || 0,
+        healthInsuranceFee: calculatedPayroll.healthInsuranceFee || 0,
+        laborPensionSelf: calculatedPayroll.laborPensionSelf || 0,
+        employeeAdvance: calculatedPayroll.employeeAdvance || 0,
+        debtGarnishment: calculatedPayroll.debtGarnishment || 0,
+        otherDeductions: calculatedPayroll.otherDeductions || 0,
+        overtimePay: calculatedPayroll.overtimePay || 0,
+        nightShiftAllowance: calculatedPayroll.nightShiftAllowance || 0,
+        performanceBonus: calculatedPayroll.performanceBonus || 0,
+        otherBonuses: calculatedPayroll.otherBonuses || 0,
+        insuranceLevel: calculatedPayroll.insuranceLevel,
+        hourlyRate: calculatedPayroll.hourlyRate || 0,
+        personalLeaveHours: calculatedPayroll.personalLeaveHours || 0,
+        sickLeaveHours: calculatedPayroll.sickLeaveHours || 0,
+        annualLeave: employee.annualLeave || {}
+      };
+    }
+
+    // 獲取組織名稱
+    let organizationName = '';
+    if (employee.organization) {
+      if (typeof employee.organization === 'string') {
+        // 如果是字串 ID，需要查詢
+        const Organization = mongoose.model('Organization');
+        const org = await Organization.findById(employee.organization);
+        organizationName = org?.name || '';
+      } else if (employee.organization.name) {
+        organizationName = employee.organization.name;
+      }
+    }
+
+    // 設定選項
+    const exportOptions = {
+      organizationName,
+      paymentDate: options.paymentDate,
+      ...options
+    };
+
+    const buffer = await generateIndividualPayrollExcel(payrollRecord, employee, exportOptions);
+
+    const filename = `個人薪資表_${employee.name}_${month}.xlsx`;
+    const encodedFilename = encodeURIComponent(filename);
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="${encodedFilename}"; filename*=UTF-8''${encodedFilename}`);
+    res.send(buffer);
+  } catch (err) {
+    console.error('Export individual payroll error:', err);
     res.status(400).json({ error: err.message });
   }
 }

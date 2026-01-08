@@ -10,6 +10,7 @@ import {
   calculateAndSavePayroll,
   getEmployeePayrolls,
   exportPayrollExcel,
+  exportIndividualPayrollExcel,
   getLaborInsuranceRates,
   initializeLaborInsuranceRatesController,
   refreshLaborInsuranceRatesController,
@@ -45,6 +46,7 @@ router.get('/complete-data/:employeeId/:month', getEmployeeCompleteWorkData);
 
 // Excel export
 router.post('/export', exportPayrollExcel);
+router.get('/export/individual', exportIndividualPayrollExcel);
 
 // Labor insurance rates
 router.get('/insurance/rates', getLaborInsuranceRates);
