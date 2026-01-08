@@ -41,7 +41,7 @@
                     </el-select>
                     <el-button 
                       type="info" 
-                      :icon="'el-icon-question'"
+                      icon="el-icon-question"
                       @click="showFormHelp"
                       class="help-btn"
                       title="查看表單說明"

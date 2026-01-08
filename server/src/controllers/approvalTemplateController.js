@@ -179,8 +179,8 @@ export async function getSignLevels(req, res) {
 /* ---------------------- Ensure Leave Form ---------------------- */
 export async function ensureLeaveForm(req, res) {
   try {
-    // Check if leave form exists
-    let form = await FormTemplate.findOne({ name: '請假' })
+    // Check if leave form exists (only active forms)
+    let form = await FormTemplate.findOne({ name: '請假', is_active: true })
     let wasGenerated = false
     
     if (!form) {

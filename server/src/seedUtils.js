@@ -779,8 +779,24 @@ async function seedPayrollRecords({ supervisors = [], employees = [] } = {}) {
       const start = new Date(getFieldValue(formData, fieldMap, '開始時間') || getFieldValue(formData, fieldMap, '開始日期'));
       const end = new Date(getFieldValue(formData, fieldMap, '結束時間') || getFieldValue(formData, fieldMap, '結束日期'));
       const leaveType = getFieldValue(formData, fieldMap, '假別');
-      // Calculate hours: if both have time info, use precise calculation; otherwise assume full days
-      const hours = isValidDate(start) && isValidDate(end) ? (end - start) / MILLISECONDS_PER_HOUR : 0;
+      
+      // Calculate hours: 
+      // For datetime fields, calculate precise hours between times
+      // For date-only fields, treat as full days (each day = 8 hours for payroll purposes)
+      let hours = 0;
+      if (isValidDate(start) && isValidDate(end)) {
+        const totalMillis = end - start;
+        const hasTimeComponent = start.getHours() !== 0 || start.getMinutes() !== 0 || end.getHours() !== 0 || end.getMinutes() !== 0;
+        if (hasTimeComponent) {
+          // Datetime fields: use precise hour calculation
+          hours = totalMillis / MILLISECONDS_PER_HOUR;
+        } else {
+          // Date-only fields: calculate working days (8 hours per day)
+          const days = Math.ceil(totalMillis / MILLISECONDS_PER_DAY);
+          hours = days * 8; // Convert days to 8-hour work days
+        }
+      }
+      
       const amount = status === 'approved' ? hours : 0;
       const refDate = isValidDate(start) ? start : request.createdAt;
       addAdjustment(employeeId, refDate, {
