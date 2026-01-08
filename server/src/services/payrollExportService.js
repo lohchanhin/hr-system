@@ -476,6 +476,10 @@ export async function generatePayrollExcel(month, bankTypeOrFormat, companyInfo 
   }
 }
 
+
+// 病假扣款比率常數（根據勞基法，病假不給薪，但勞工可選擇扣一半薪資）
+const SICK_LEAVE_DEDUCTION_RATE = 0.5;
+
 /**
  * 生成個人薪資表 Excel (Individual Payroll Statement)
  * @param {Object} payrollRecord - 薪資記錄
@@ -571,9 +575,12 @@ export async function generateIndividualPayrollExcel(payrollRecord, employee, op
   // 數據行 - 準備數據
   // 提取組長加給等津貼 (從 employee.salaryItems 中提取，如果有的話)
   let supervisorAllowance = 0;
-  if (employee.salaryItems && Array.isArray(employee.salaryItems) && employee.salaryItemAmounts) {
+  if (employee.salaryItems && Array.isArray(employee.salaryItems) && 
+      Array.isArray(employee.salaryItemAmounts)) {
     const supervisorIndex = employee.salaryItems.indexOf('組長加給');
-    if (supervisorIndex !== -1 && employee.salaryItemAmounts[supervisorIndex]) {
+    if (supervisorIndex !== -1 && 
+        supervisorIndex < employee.salaryItemAmounts.length && 
+        employee.salaryItemAmounts[supervisorIndex]) {
       supervisorAllowance = employee.salaryItemAmounts[supervisorIndex];
     }
   }
@@ -582,7 +589,7 @@ export async function generateIndividualPayrollExcel(payrollRecord, employee, op
     { label: '本薪', value: payrollRecord.baseSalary || 0 },
     { label: '組長加給', value: supervisorAllowance },
     { label: '事假扣薪', value: payrollRecord.personalLeaveHours ? -(payrollRecord.personalLeaveHours * (payrollRecord.hourlyRate || 0)) : 0 },
-    { label: '病假扣薪', value: payrollRecord.sickLeaveHours ? -(payrollRecord.sickLeaveHours * (payrollRecord.hourlyRate || 0) * 0.5) : 0 },
+    { label: '病假扣薪', value: payrollRecord.sickLeaveHours ? -(payrollRecord.sickLeaveHours * (payrollRecord.hourlyRate || 0) * SICK_LEAVE_DEDUCTION_RATE) : 0 },
     { label: '遲到早退扣薪', value: 0 }, // 未實作：需要從考勤系統取得遲到早退資料
     { label: '曠職扣薪', value: 0 }, // 未實作：需要從考勤系統取得曠職資料
     { label: '其他：', value: 0 }

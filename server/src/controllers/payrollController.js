@@ -239,7 +239,9 @@ export async function exportIndividualPayrollExcel(req, res) {
 
     const buffer = await generateIndividualPayrollExcel(payrollRecord, employee, exportOptions);
 
-    const filename = `個人薪資表_${employee.name}_${month}.xlsx`;
+    // Sanitize filename to prevent directory traversal and invalid characters
+    const sanitizedName = employee.name.replace(/[^a-zA-Z0-9\u4e00-\u9fa5_-]/g, '_');
+    const filename = `個人薪資表_${sanitizedName}_${month}.xlsx`;
     const encodedFilename = encodeURIComponent(filename);
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', `attachment; filename="${encodedFilename}"; filename*=UTF-8''${encodedFilename}`);
