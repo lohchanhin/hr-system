@@ -1514,9 +1514,11 @@ const showExplanationDialog = ref(false)
       link.download = `payroll_${overviewMonth.value}_${exportFormat.value}.xlsx`
       link.click()
       URL.revokeObjectURL(url)
+      
+      ElMessage.success('薪資表匯出成功')
     } catch (error) {
       console.error('匯出薪資Excel失敗:', error)
-      alert(error.message || '匯出失敗，請稍後再試')
+      ElMessage.error(error.message || '匯出失敗，請稍後再試')
     } finally {
       exportLoading.value = false
     }
@@ -1562,8 +1564,7 @@ const showExplanationDialog = ref(false)
       const link = document.createElement('a')
       link.href = url
       
-      // Sanitize filename to prevent directory traversal and invalid characters
-      // Remove hyphens to avoid potential issues with hidden files on Unix systems
+      // Sanitize filename to prevent directory traversal and special characters
       const sanitizedName = employeeName.replace(/[^a-zA-Z0-9\u4e00-\u9fa5_]/g, '_')
       link.download = `個人薪資表_${sanitizedName}_${overviewMonth.value}.xlsx`
       link.click()
@@ -1574,10 +1575,8 @@ const showExplanationDialog = ref(false)
       console.error('匯出個人薪資表失敗:', error)
       ElMessage.error(error.message || '匯出個人薪資表失敗，請稍後再試')
     } finally {
-      // Safely reset loading state with null check
-      if (employee && typeof employee === 'object') {
-        employee._exportLoading = false
-      }
+      // Reset loading state
+      employee._exportLoading = false
     }
   }
 
