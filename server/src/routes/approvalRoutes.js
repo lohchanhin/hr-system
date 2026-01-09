@@ -3,6 +3,7 @@ import {
   listFormTemplates, createFormTemplate, getFormTemplate, updateFormTemplate, deleteFormTemplate,
   addField, updateField, deleteField, listFields,
   getWorkflow, setWorkflow, getSignRoles, getSignLevels, ensureLeaveForm,
+  restoreDefaultTemplates,
 } from '../controllers/approvalTemplateController.js'
 
 import {
@@ -22,6 +23,9 @@ router.delete('/forms/:id', authorizeRoles('admin'), deleteFormTemplate)
 
 // Ensure leave form exists (auto-generate if missing)
 router.post('/ensure-leave-form', authorizeRoles('employee', 'supervisor', 'admin'), ensureLeaveForm)
+
+// Restore default templates
+router.post('/restore-defaults', authorizeRoles('admin'), restoreDefaultTemplates)
 
 // Fields
 router.get('/forms/:formId/fields', authorizeRoles('employee', 'supervisor', 'admin'), listFields)

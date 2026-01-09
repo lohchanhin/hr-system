@@ -200,3 +200,197 @@ describe('ApprovalFlowSetting - custom field options', () => {
     expect(wrapper.vm.formDialog.category).toBe('請假類')
   })
 })
+
+describe('ApprovalFlowSetting - restore defaults', () => {
+  let apiFetchMock
+  let ElMessageBoxMock
+  let ElMessageMock
+
+  beforeEach(async () => {
+    apiFetchMock = vi.spyOn(apiModule, 'apiFetch')
+    
+    // Get mocked ElMessage and ElMessageBox
+    const elementPlus = await import('element-plus')
+    ElMessageBoxMock = elementPlus.ElMessageBox
+    ElMessageMock = elementPlus.ElMessage
+    
+    // Reset mocks
+    ElMessageBoxMock.confirm.mockClear()
+    ElMessageMock.success.mockClear()
+    ElMessageMock.error.mockClear()
+  })
+
+  afterEach(() => {
+    apiFetchMock.mockRestore()
+  })
+
+  function mockApis(restoreResponse = null) {
+    const forms = [
+      { _id: 'form1', name: '請假單', category: '請假類', is_active: true }
+    ]
+    const categories = [
+      { id: 'cat-leave', name: '請假類', code: '請假類', description: '', builtin: true }
+    ]
+
+    apiFetchMock.mockImplementation((path, options = {}) => {
+      const method = options?.method || 'GET'
+      
+      if (path === '/api/approvals/restore-defaults' && method === 'POST') {
+        if (restoreResponse === null) {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                success: true,
+                message: '已恢復預設簽核表單',
+                count: 8,
+                forms: [
+                  { _id: 'new1', name: '請假' },
+                  { _id: 'new2', name: '支援申請' },
+                  { _id: 'new3', name: '特休保留' },
+                  { _id: 'new4', name: '在職證明' },
+                  { _id: 'new5', name: '離職證明' },
+                  { _id: 'new6', name: '加班申請' },
+                  { _id: 'new7', name: '補簽申請' },
+                  { _id: 'new8', name: '獎金申請' }
+                ]
+              }),
+              { status: 200, headers: { 'Content-Type': 'application/json' } }
+            )
+          )
+        }
+        return Promise.resolve(restoreResponse)
+      }
+
+      if (path === '/api/other-control-settings' && method === 'GET') {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({ customFields: [] }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } }
+          )
+        )
+      }
+
+      if (path === '/api/other-control-settings/form-categories' && method === 'GET') {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify(categories),
+            { status: 200, headers: { 'Content-Type': 'application/json' } }
+          )
+        )
+      }
+
+      if (path === '/api/approvals/forms' && method === 'GET') {
+        return Promise.resolve(
+          new Response(JSON.stringify(forms), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' }
+          })
+        )
+      }
+
+      if (path === `/api/approvals/forms/${forms[0]._id}/workflow` && method === 'GET') {
+        return Promise.resolve(
+          new Response(JSON.stringify({ policy: {} }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' }
+          })
+        )
+      }
+
+      if (path === `/api/approvals/forms/${forms[0]._id}/fields` && method === 'GET') {
+        return Promise.resolve(
+          new Response(JSON.stringify([]), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' }
+          })
+        )
+      }
+
+      if (path === '/api/employees/options' && method === 'GET') {
+        return Promise.resolve(new Response(JSON.stringify([]), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+      }
+
+      if (path === '/api/roles' && method === 'GET') {
+        return Promise.resolve(new Response(JSON.stringify([]), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+      }
+
+      return Promise.resolve(new Response('', { status: 404 }))
+    })
+  }
+
+  it('should show confirmation dialog when restore button is clicked', async () => {
+    mockApis()
+    ElMessageBoxMock.confirm.mockResolvedValue('confirm')
+    
+    const wrapper = await mountComponent()
+    
+    await wrapper.vm.restoreDefaults()
+    await flushPromises()
+    
+    expect(ElMessageBoxMock.confirm).toHaveBeenCalledWith(
+      '確定要恢復預設值嗎？這將清除所有現有的簽核表單並建立預設表單。此操作無法復原！',
+      '確認恢復預設值',
+      expect.objectContaining({
+        confirmButtonText: '確定',
+        cancelButtonText: '取消',
+        type: 'warning'
+      })
+    )
+  })
+
+  it('should call restore API and show success message on confirmation', async () => {
+    mockApis()
+    ElMessageBoxMock.confirm.mockResolvedValue('confirm')
+    
+    const wrapper = await mountComponent()
+    
+    await wrapper.vm.restoreDefaults()
+    await flushPromises()
+    
+    expect(apiFetchMock).toHaveBeenCalledWith(
+      '/api/approvals/restore-defaults',
+      expect.objectContaining({
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      })
+    )
+    
+    expect(ElMessageMock.success).toHaveBeenCalledWith('已恢復預設值，建立了 8 個表單樣板')
+  })
+
+  it('should not call API when user cancels confirmation', async () => {
+    mockApis()
+    ElMessageBoxMock.confirm.mockRejectedValue('cancel')
+    
+    const wrapper = await mountComponent()
+    const callCountBefore = apiFetchMock.mock.calls.filter(
+      call => call[0] === '/api/approvals/restore-defaults'
+    ).length
+    
+    await wrapper.vm.restoreDefaults()
+    await flushPromises()
+    
+    const callCountAfter = apiFetchMock.mock.calls.filter(
+      call => call[0] === '/api/approvals/restore-defaults'
+    ).length
+    
+    expect(callCountAfter).toBe(callCountBefore)
+    expect(ElMessageMock.error).not.toHaveBeenCalled()
+  })
+
+  it('should show error message when restore fails', async () => {
+    const errorResponse = new Response(
+      JSON.stringify({ error: 'Database error' }),
+      { status: 500, headers: { 'Content-Type': 'application/json' } }
+    )
+    mockApis(errorResponse)
+    ElMessageBoxMock.confirm.mockResolvedValue('confirm')
+    
+    const wrapper = await mountComponent()
+    
+    await wrapper.vm.restoreDefaults()
+    await flushPromises()
+    
+    expect(ElMessageMock.error).toHaveBeenCalledWith('恢復失敗: Database error')
+  })
+})
