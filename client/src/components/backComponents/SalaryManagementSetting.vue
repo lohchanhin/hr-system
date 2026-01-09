@@ -357,9 +357,12 @@
                 </template>
               </el-table-column>
               
-              <el-table-column label="操作" width="150" fixed="right">
+              <el-table-column label="操作" width="240" fixed="right">
                 <template #default="{ row }">
                   <el-button type="primary" size="small" @click="showDetailDialog(row)">詳細</el-button>
+                  <el-button type="success" size="small" @click="exportIndividualPayroll(row)" :loading="row._exportLoading">
+                    匯出
+                  </el-button>
                   <el-tag :type="row.hasPayrollRecord ? 'success' : 'info'" size="small">
                     {{ row.hasPayrollRecord ? '已計算' : '未計算' }}
                   </el-tag>
@@ -706,6 +709,9 @@
                 </el-card>
               </div>
               <template #footer>
+                <el-button type="success" @click="exportIndividualPayroll(selectedEmployee)" :loading="selectedEmployee._exportLoading">
+                  匯出個人薪資表
+                </el-button>
                 <el-button @click="detailDialogVisible = false">關閉</el-button>
               </template>
             </el-dialog>
@@ -1037,6 +1043,7 @@
 import { ref, onMounted, computed } from 'vue'
 import { apiFetch } from '../../api'
 import { formatDate } from '../../utils/dateFormatter'
+import { ElMessage } from 'element-plus'
 import { 
   QuestionFilled, 
   Tools, 
@@ -1507,11 +1514,69 @@ const showExplanationDialog = ref(false)
       link.download = `payroll_${overviewMonth.value}_${exportFormat.value}.xlsx`
       link.click()
       URL.revokeObjectURL(url)
+      
+      ElMessage.success('薪資表匯出成功')
     } catch (error) {
       console.error('匯出薪資Excel失敗:', error)
-      alert(error.message || '匯出失敗，請稍後再試')
+      ElMessage.error(error.message || '匯出失敗，請稍後再試')
     } finally {
       exportLoading.value = false
+    }
+  }
+
+  async function exportIndividualPayroll(employee) {
+    // Validate required employee properties
+    if (!employee || !employee._id || !employee.name) {
+      ElMessage.error('員工資料不完整，無法匯出薪資表')
+      return
+    }
+    
+    // Store employee info in local variables to ensure cleanup
+    const employeeId = employee._id
+    const employeeName = employee.name
+    
+    try {
+      // Set loading state for this specific row
+      employee._exportLoading = true
+      
+      const params = new URLSearchParams({
+        employeeId: employeeId,
+        month: overviewMonth.value
+      })
+      
+      // Add organization name if available
+      if (employee.organization) {
+        const orgName = organizationName(employee.organization)
+        if (orgName && orgName !== '-') {
+          params.append('organizationName', orgName)
+        }
+      }
+      
+      const res = await apiFetch(`/api/payroll/export/individual?${params}`)
+
+      if (!res.ok) {
+        const error = await res.json().catch(() => ({}))
+        throw new Error(error.error || '匯出個人薪資表失敗，請稍後再試')
+      }
+
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      
+      // Sanitize filename to prevent directory traversal and special characters
+      const sanitizedName = employeeName.replace(/[^a-zA-Z0-9\u4e00-\u9fa5_]/g, '_')
+      link.download = `個人薪資表_${sanitizedName}_${overviewMonth.value}.xlsx`
+      link.click()
+      URL.revokeObjectURL(url)
+      
+      ElMessage.success('個人薪資表匯出成功')
+    } catch (error) {
+      console.error('匯出個人薪資表失敗:', error)
+      ElMessage.error(error.message || '匯出個人薪資表失敗，請稍後再試')
+    } finally {
+      // Reset loading state
+      employee._exportLoading = false
     }
   }
 
