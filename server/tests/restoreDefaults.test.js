@@ -11,6 +11,7 @@ const mockFormTemplate = {
 const mockFormField = {
   find: jest.fn(),
   create: jest.fn(),
+  insertMany: jest.fn(),
   deleteMany: jest.fn()
 }
 
@@ -38,6 +39,7 @@ beforeEach(() => {
   mockFormTemplate.deleteMany.mockReset()
   mockFormField.find.mockReset()
   mockFormField.create.mockReset()
+  mockFormField.insertMany.mockReset()
   mockFormField.deleteMany.mockReset()
   mockApprovalWorkflow.findOne.mockReset()
   mockApprovalWorkflow.create.mockReset()
@@ -77,7 +79,7 @@ describe('restoreDefaultTemplates', () => {
       return Promise.resolve({ ...data, _id: `new-form-${formIdCounter++}` })
     })
     
-    mockFormField.create.mockResolvedValue({ _id: 'field123' })
+    mockFormField.insertMany.mockResolvedValue([{ _id: 'field123' }])
     mockApprovalWorkflow.create.mockResolvedValue({ _id: 'workflow123' })
     
     const req = makeReq()
@@ -85,10 +87,12 @@ describe('restoreDefaultTemplates', () => {
     
     await restoreDefaultTemplates(req, res)
     
-    // Verify deletion
+    // Verify deletion - now using $in operator for better performance
     expect(mockFormTemplate.find).toHaveBeenCalledWith({})
-    expect(mockFormField.deleteMany).toHaveBeenCalledTimes(2) // once per existing form
-    expect(mockApprovalWorkflow.deleteMany).toHaveBeenCalledTimes(2) // once per existing form
+    expect(mockFormField.deleteMany).toHaveBeenCalledTimes(1)
+    expect(mockFormField.deleteMany).toHaveBeenCalledWith({ form: { $in: ['form1', 'form2'] } })
+    expect(mockApprovalWorkflow.deleteMany).toHaveBeenCalledTimes(1)
+    expect(mockApprovalWorkflow.deleteMany).toHaveBeenCalledWith({ form: { $in: ['form1', 'form2'] } })
     expect(mockFormTemplate.deleteMany).toHaveBeenCalledWith({})
     
     // Verify creation of 8 default templates
@@ -125,6 +129,8 @@ describe('restoreDefaultTemplates', () => {
   
   it('should create all 8 default form templates', async () => {
     mockFormTemplate.find.mockResolvedValue([])
+    mockFormField.deleteMany.mockResolvedValue({ deletedCount: 0 })
+    mockApprovalWorkflow.deleteMany.mockResolvedValue({ deletedCount: 0 })
     mockFormTemplate.deleteMany.mockResolvedValue({ deletedCount: 0 })
     
     let formIdCounter = 1
@@ -132,7 +138,7 @@ describe('restoreDefaultTemplates', () => {
       return Promise.resolve({ ...data, _id: `form-${formIdCounter++}` })
     })
     
-    mockFormField.create.mockResolvedValue({ _id: 'field123' })
+    mockFormField.insertMany.mockResolvedValue([{ _id: 'field123' }])
     mockApprovalWorkflow.create.mockResolvedValue({ _id: 'workflow123' })
     
     const req = makeReq()

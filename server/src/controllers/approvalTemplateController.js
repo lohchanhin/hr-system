@@ -241,10 +241,13 @@ export async function restoreDefaultTemplates(req, res) {
   try {
     // Delete all existing form templates, fields, and workflows
     const forms = await FormTemplate.find({})
-    for (const form of forms) {
-      await FormField.deleteMany({ form: form._id })
-      await ApprovalWorkflow.deleteMany({ form: form._id })
-    }
+    const formIds = forms.map(f => f._id)
+    
+    // Parallelize deletion of fields and workflows for better performance
+    await Promise.all([
+      FormField.deleteMany({ form: { $in: formIds } }),
+      ApprovalWorkflow.deleteMany({ form: { $in: formIds } })
+    ])
     await FormTemplate.deleteMany({})
 
     // Create default templates using the same structure as seedApprovalTemplates
@@ -377,15 +380,15 @@ export async function restoreDefaultTemplates(req, res) {
         created_by: req.user?.id,
       })
 
-      for (const field of t.fields) {
-        await FormField.create({ ...field, form: form._id, is_active: true })
-      }
-
-      await ApprovalWorkflow.create({
-        form: form._id,
-        steps: t.steps,
-        policy: { maxApprovalLevel: 5, allowDelegate: false, overdueDays: 3, overdueAction: 'none' }
-      })
+      // Parallelize field and workflow creation for better performance
+      await Promise.all([
+        FormField.insertMany(t.fields.map(field => ({ ...field, form: form._id, is_active: true }))),
+        ApprovalWorkflow.create({
+          form: form._id,
+          steps: t.steps,
+          policy: { maxApprovalLevel: 5, allowDelegate: false, overdueDays: 3, overdueAction: 'none' }
+        })
+      ])
 
       createdForms.push(form)
     }
