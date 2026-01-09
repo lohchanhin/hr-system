@@ -240,15 +240,16 @@ export async function ensureLeaveForm(req, res) {
 export async function restoreDefaultTemplates(req, res) {
   try {
     // Delete all existing form templates, fields, and workflows
+    // Note: This is not transactional - in case of failure, manual cleanup may be needed
     const forms = await FormTemplate.find({})
     const formIds = forms.map(f => f._id)
     
     // Parallelize deletion of fields and workflows for better performance
     await Promise.all([
       FormField.deleteMany({ form: { $in: formIds } }),
-      ApprovalWorkflow.deleteMany({ form: { $in: formIds } })
+      ApprovalWorkflow.deleteMany({ form: { $in: formIds } }),
+      FormTemplate.deleteMany({})
     ])
-    await FormTemplate.deleteMany({})
 
     // Create default templates using the same structure as seedApprovalTemplates
     const templates = [

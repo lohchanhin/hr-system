@@ -87,7 +87,7 @@ describe('restoreDefaultTemplates', () => {
     
     await restoreDefaultTemplates(req, res)
     
-    // Verify deletion - now using $in operator for better performance
+    // Verify deletion using $in operator for better performance
     expect(mockFormTemplate.find).toHaveBeenCalledWith({})
     expect(mockFormField.deleteMany).toHaveBeenCalledTimes(1)
     expect(mockFormField.deleteMany).toHaveBeenCalledWith({ form: { $in: ['form1', 'form2'] } })
