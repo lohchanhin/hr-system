@@ -48,6 +48,7 @@
       <el-tab-pane label="申請類型 / 關卡" name="approvalLevels">
         <div class="tab-content">
           <el-button type="primary" @click="openFormDialog()">新增表單樣板</el-button>
+          <el-button type="warning" @click="restoreDefaults">恢復預設值</el-button>
           <el-table :data="forms" style="margin-top: 20px;">
             <el-table-column prop="name" label="表單名稱" width="220" />
             <el-table-column label="分類" width="160">
@@ -314,6 +315,7 @@
 
 <script setup>
 import { ref, onMounted, watch, computed } from 'vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { apiFetch } from '../../api'  // 你專案現有封裝
 import {
   normalizeCustomFieldOptions,
@@ -332,7 +334,8 @@ const API = {
   signLevels: '/api/approvals/sign-levels',
   otherControlSettings: '/api/other-control-settings',
   subDepartments: '/api/sub-departments',
-  formCategories: '/api/other-control-settings/form-categories'
+  formCategories: '/api/other-control-settings/form-categories',
+  restoreDefaults: '/api/approvals/restore-defaults'
 }
 
 const APPROVER_TYPES = [
@@ -1118,6 +1121,44 @@ async function saveWorkflow() {
   })
   workflowDialogVisible.value = false
   ElMessage.success('流程已儲存')
+}
+
+async function restoreDefaults() {
+  try {
+    await ElMessageBox.confirm(
+      '確定要恢復預設值嗎？這將清除所有現有的簽核表單並建立預設表單。此操作無法復原！',
+      '確認恢復預設值',
+      {
+        confirmButtonText: '確定',
+        cancelButtonText: '取消',
+        type: 'warning',
+      }
+    )
+    
+    const res = await apiFetch(API.restoreDefaults, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' }
+    })
+    
+    if (res.ok) {
+      const result = await res.json()
+      ElMessage.success(`已恢復預設值，建立了 ${result.count} 個表單樣板`)
+      selectedFormId.value = ''
+      await loadForms()
+      if (forms.value.length > 0) {
+        selectedFormId.value = forms.value[0]._id
+        await loadWorkflow()
+      }
+    } else {
+      const error = await res.json()
+      ElMessage.error(`恢復失敗: ${error.error || '未知錯誤'}`)
+    }
+  } catch (e) {
+    if (e !== 'cancel') {
+      console.error('恢復預設值失敗:', e)
+      ElMessage.error('恢復失敗，請稍後再試')
+    }
+  }
 }
 
 onMounted(async () => {
