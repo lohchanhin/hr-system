@@ -60,6 +60,7 @@ describe('Auth API', () => {
       role: 'employee',
       username: 'john',
       name: 'John Doe',
+      photo: '',
       organizationName: '',
       departmentName: '',
       subDepartmentName: '',
