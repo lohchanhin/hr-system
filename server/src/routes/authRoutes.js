@@ -53,6 +53,7 @@ function buildUserProfile(employee) {
     role: employee.role,
     username: employee.username,
     name: employee.name ?? '',
+    photo: employee.photo ?? '',
     organizationName,
     departmentName: getName(department),
     subDepartmentName: getName(subDepartment),

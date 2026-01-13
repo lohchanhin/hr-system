@@ -25,7 +25,7 @@
       </div>
       <div v-if="!isSidebarCollapsed" class="sidebar-header">
         <div class="user-info">
-          <el-avatar :size="40" class="user-avatar">
+          <el-avatar :size="40" :src="profile?.photo" class="user-avatar">
             <i class="el-icon-user"></i>
           </el-avatar>
           <span class="user-name">{{ displayName }}</span>
