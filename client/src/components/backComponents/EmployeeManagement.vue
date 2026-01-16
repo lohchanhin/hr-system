@@ -2880,8 +2880,9 @@ function normalizePhotoUploadList(uploadFiles = []) {
 async function handlePhotoRequest({ file, onSuccess, onError }) {
   photoUploading.value = true
   try {
-    const dataUrl = await readFileAsDataUrl(file)
-    onSuccess?.({ url: dataUrl })
+    // 不再轉換為 base64，直接存儲原始檔案物件
+    // 將原始檔案存儲在 raw 屬性中，以便後續上傳
+    onSuccess?.({ url: URL.createObjectURL(file), raw: file })
   } catch (err) {
     onError?.(err)
     ElMessage.error('照片載入失敗，請重新選擇檔案')
@@ -2891,11 +2892,15 @@ async function handlePhotoRequest({ file, onSuccess, onError }) {
 }
 
 function handlePhotoSuccess(response, uploadFile, uploadFiles) {
-  // Always use the response URL (base64 data URL) instead of the blob URL
+  // 保存原始檔案引用和預覽 URL
   if (typeof response === 'string') {
     uploadFile.url = response
   } else if (response && typeof response === 'object') {
     uploadFile.url = response.url || response?.data?.url || ''
+    // 保存原始檔案物件供後續上傳使用
+    if (response.raw) {
+      uploadFile.raw = response.raw
+    }
   }
   normalizePhotoUploadList(uploadFiles)
 }
@@ -4459,10 +4464,20 @@ async function saveEmployee() {
   const payload = { ...form }
   payload.title = extractOptionValue(form.title)
   payload.practiceTitle = extractOptionValue(form.practiceTitle)
+  
+  // 檢查是否有新上傳的照片檔案
+  let photoFile = null
   const normalizedPhotoList = extractPhotoUrls(form.photoList)
-  if (normalizedPhotoList.length) {
-    payload.photoList = normalizedPhotoList
-    payload.photo = normalizedPhotoList[0]
+  if (form.photoList && form.photoList.length > 0) {
+    const firstPhoto = form.photoList[0]
+    // 如果有原始檔案物件（新上傳的照片），使用 multipart/form-data
+    if (firstPhoto.raw && firstPhoto.raw instanceof File) {
+      photoFile = firstPhoto.raw
+    } else if (normalizedPhotoList.length) {
+      // 否則使用現有的照片 URL（編輯時未更改照片）
+      payload.photoList = normalizedPhotoList
+      payload.photo = normalizedPhotoList[0]
+    }
   } else if (editEmployeeIndex !== null) {
     payload.photoList = []
     payload.photo = ''
@@ -4542,19 +4557,57 @@ async function saveEmployee() {
   payload.trainings = normalizedTrainings
 
   let res
-  if (editEmployeeIndex === null) {
-    res = await apiFetch('/api/employees', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
+  
+  // 如果有新上傳的照片檔案，使用 multipart/form-data
+  if (photoFile) {
+    const formData = new FormData()
+    formData.append('photo', photoFile)
+    
+    // 將其他資料以 JSON 字串形式添加到 FormData
+    // 但 multer 只處理 photo 欄位，其他資料仍需要在 body 中
+    // 所以我們需要將其他欄位也加到 FormData
+    Object.keys(payload).forEach(key => {
+      if (key !== 'photo' && key !== 'photoList') {
+        const value = payload[key]
+        if (value !== undefined && value !== null) {
+          if (typeof value === 'object') {
+            formData.append(key, JSON.stringify(value))
+          } else {
+            formData.append(key, value)
+          }
+        }
+      }
     })
+    
+    if (editEmployeeIndex === null) {
+      res = await apiFetch('/api/employees', {
+        method: 'POST',
+        body: formData
+        // 不設置 Content-Type，讓瀏覽器自動設置 multipart/form-data 和 boundary
+      })
+    } else {
+      res = await apiFetch(`/api/employees/${editEmployeeId}`, {
+        method: 'PUT',
+        body: formData
+      })
+    }
   } else {
-    res = await apiFetch(`/api/employees/${editEmployeeId}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
-    })
+    // 沒有新照片，使用原來的 JSON 方式
+    if (editEmployeeIndex === null) {
+      res = await apiFetch('/api/employees', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      })
+    } else {
+      res = await apiFetch(`/api/employees/${editEmployeeId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      })
+    }
   }
+  
   if (res && res.ok) {
     await fetchEmployees()
     employeeDialogVisible.value = false
