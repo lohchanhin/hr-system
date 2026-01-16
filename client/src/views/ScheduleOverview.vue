@@ -277,7 +277,7 @@ const buildTableRows = unit => {
       // Create a shallow copy of empty entries
       const entries = { ...emptyEntries }
       
-      // Build schedule map directly without checking if key exists
+      // Build schedule map directly using pre-initialized entries
       ;(emp.schedules || []).forEach(item => {
         entries[item.date] = item.shiftName || ''
       })
@@ -454,9 +454,11 @@ async function loadOverview() {
       // Initialize department collapse states for each organization
       const newActiveDepartments = {}
       overviewData.value.forEach(org => {
-        newActiveDepartments[org.id] = org.id === firstOrg.id && org.departments.length > 0 
-          ? [org.departments[0].id] 
-          : []
+        if (org.id === firstOrg.id && org.departments.length > 0) {
+          newActiveDepartments[org.id] = [org.departments[0].id]
+        } else {
+          newActiveDepartments[org.id] = []
+        }
       })
       activeDepartments.value = newActiveDepartments
     } else {
