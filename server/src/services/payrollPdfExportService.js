@@ -1,19 +1,11 @@
 import PDFDocument from 'pdfkit';
 import PayrollRecord from '../models/PayrollRecord.js';
 import Employee from '../models/Employee.js';
-import Organization from '../models/Organization.js';
-import Department from '../models/Department.js';
 import { calculateEmployeePayroll, extractRecurringAllowance } from './payrollService.js';
 import { calculateCompleteWorkData } from './workHoursCalculationService.js';
 import { aggregateBonusFromApprovals } from '../utils/payrollPreviewUtils.js';
 import ApprovalRequest from '../models/approval_request.js';
 import mongoose from 'mongoose';
-import fs from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 
 /**
  * 格式化貨幣
@@ -241,19 +233,19 @@ export async function generateMonthlyPayrollOverviewPdf(month, filters = {}) {
     doc.on('end', () => resolve(Buffer.concat(chunks)));
     doc.on('error', reject);
 
-    // Title
-    doc.fontSize(18).text('月薪資總覽', { align: 'center' });
+    // Title (using ASCII for better compatibility)
+    doc.fontSize(18).text('Monthly Payroll Overview', { align: 'center' });
     doc.moveDown(0.5);
-    doc.fontSize(12).text(`月份：${formatDate(monthDate)}`, { align: 'center' });
+    doc.fontSize(12).text(`Period: ${formatDate(monthDate)}`, { align: 'center' });
     doc.moveDown(1);
 
     // Summary statistics
     doc.fontSize(10);
     const summaryY = doc.y;
-    doc.text(`總人數：${totalEmployees}`, 50, summaryY);
-    doc.text(`薪資總額：${formatCurrency(totalBaseSalary)}`, 200, summaryY);
-    doc.text(`實發總額：${formatCurrency(totalNetPay)}`, 400, summaryY);
-    doc.text(`扣款總額：${formatCurrency(totalDeductions)}`, 600, summaryY);
+    doc.text(`Employees: ${totalEmployees}`, 50, summaryY);
+    doc.text(`Base Salary Total: ${formatCurrency(totalBaseSalary)}`, 200, summaryY);
+    doc.text(`Net Pay Total: ${formatCurrency(totalNetPay)}`, 400, summaryY);
+    doc.text(`Deductions Total: ${formatCurrency(totalDeductions)}`, 600, summaryY);
     doc.moveDown(1.5);
 
     // Table headers
@@ -264,7 +256,7 @@ export async function generateMonthlyPayrollOverviewPdf(month, filters = {}) {
 
     // Draw header row
     doc.fontSize(8);
-    const headers = ['員工編號', '姓名', '部門', '基本薪資', '加班費', '夜班津貼', '獎金', '扣款', '實發', '總計'];
+    const headers = ['Employee ID', 'Name', 'Department', 'Base Salary', 'Overtime', 'Night Shift', 'Bonus', 'Deductions', 'Net Pay', 'Total'];
     
     headers.forEach((header, i) => {
       doc.rect(xPos, tableTop, colWidths[i], rowHeight).stroke();
@@ -313,7 +305,7 @@ export async function generateMonthlyPayrollOverviewPdf(month, filters = {}) {
     });
 
     // Footer
-    doc.fontSize(8).text(`生成時間：${new Date().toLocaleString('zh-TW')}`, 50, 560, { align: 'center' });
+    doc.fontSize(8).text(`Generated: ${new Date().toLocaleString()}`, 50, 560, { align: 'center' });
 
     doc.end();
   });
