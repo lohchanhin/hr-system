@@ -25,6 +25,14 @@
         <h2 class="section-title">員工列表</h2>
 
         <div class="content-actions">
+          <!-- 🔍 搜尋欄位 -->
+          <el-input v-model="searchQuery" placeholder="搜尋姓名、員工編號、Email" clearable class="search-input"
+            style="width: 280px; margin-right: 12px;">
+            <template #prefix>
+              <i class="el-icon-search"></i>
+            </template>
+          </el-input>
+          
           <!-- 🔍 部門篩選 -->
           <el-select v-model="departmentFilter" placeholder="篩選部門" clearable class="dept-filter-select"
             style="min-width: 200px; margin-right: 12px;">
@@ -54,8 +62,9 @@
           <el-table-column prop="name" label="員工資訊" min-width="200">
             <template #default="{ row }">
               <div class="employee-info">
-                <el-avatar :size="40" class="employee-avatar">
+                <el-avatar :size="40" :src="row.photo" class="employee-avatar">
                   {{ row.name ? row.name.charAt(0) : 'N' }}
+                </el-avatar>
                 </el-avatar>
                 <div class="employee-details">
                   <div class="employee-name">{{ row.name || '未設定' }}</div>
@@ -1178,6 +1187,9 @@ import { REQUIRED_FIELDS } from './requiredFields'
 // 常數定義
 const CURRENT_YEAR = new Date().getFullYear()
 
+// 👉 搜尋查詢字串
+const searchQuery = ref('')
+
 // 👉 目前選擇的部門（下拉選單綁這個）
 const departmentFilter = ref(null)
 
@@ -1204,13 +1216,25 @@ const departmentFilterOptions = computed(() => {
 
 // 👉 真正丟給表格用的資料
 const filteredEmployeeList = computed(() => {
-  // 沒選部門 => 顯示全部
-  if (!departmentFilter.value) {
-    return employeeList.value
+  let result = employeeList.value
+
+  // 搜尋過濾
+  if (searchQuery.value && searchQuery.value.trim()) {
+    const query = searchQuery.value.trim().toLowerCase()
+    result = result.filter(emp => {
+      const name = (emp.name || '').toLowerCase()
+      const employeeNo = (emp.employeeNo || emp.employeeId || '').toLowerCase()
+      const email = (emp.email || '').toLowerCase()
+      return name.includes(query) || employeeNo.includes(query) || email.includes(query)
+    })
   }
 
-  // 有選部門 => 只顯示該部門
-  return employeeList.value.filter(emp => emp.department === departmentFilter.value)
+  // 部門過濾
+  if (departmentFilter.value) {
+    result = result.filter(emp => emp.department === departmentFilter.value)
+  }
+
+  return result
 })
 
 
@@ -4761,6 +4785,24 @@ function getStatusTagType(status) {
   display: flex;
   align-items: center;
   gap: 12px;
+}
+
+.search-input {
+  flex-shrink: 0;
+}
+
+.search-input :deep(.el-input__wrapper) {
+  border-radius: 20px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  transition: all 0.3s ease;
+}
+
+.search-input :deep(.el-input__wrapper:hover) {
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.12);
+}
+
+.search-input :deep(.el-input__wrapper.is-focus) {
+  box-shadow: 0 2px 12px rgba(16, 185, 129, 0.3);
 }
 
 .section-title {

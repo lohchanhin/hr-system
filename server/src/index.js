@@ -56,6 +56,7 @@ const serverRoot = path.resolve(__dirname, '..');
 dotenv.config({ path: path.join(serverRoot, '.env'), override: true });
 
 const distPath = path.join(__dirname, '..', '..', 'client', 'dist');
+const uploadPath = path.join(__dirname, '..', '..', 'upload');
 
 const requiredEnv = ['PORT', 'MONGODB_URI', 'JWT_SECRET'];
 const missing = requiredEnv.filter((name) => !process.env[name]);
@@ -92,6 +93,9 @@ app.get('/env.js', (req, res) => {
   };
   res.send(`window.__APP_CONFIG__ = ${JSON.stringify(config)};`);
 });
+
+// 靜態文件服務 - /upload 目錄
+app.use('/upload', express.static(uploadPath));
 
 app.use(express.static(distPath));
 
