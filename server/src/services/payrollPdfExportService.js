@@ -6,6 +6,15 @@ import { calculateCompleteWorkData } from './workHoursCalculationService.js';
 import { aggregateBonusFromApprovals } from '../utils/payrollPreviewUtils.js';
 import ApprovalRequest from '../models/approval_request.js';
 import mongoose from 'mongoose';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+// Get directory name for ES modules
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// Path to Chinese font for PDF generation
+const CHINESE_FONT_PATH = path.join(__dirname, '../../fonts/NotoSansCJKtc-Regular.otf');
 
 /**
  * 格式化貨幣
@@ -228,27 +237,36 @@ export async function generateMonthlyPayrollOverviewPdf(month, filters = {}) {
       margins: { top: 40, bottom: 40, left: 40, right: 40 }
     });
 
+    // Register Chinese font
+    try {
+      doc.registerFont('NotoSansCJK', CHINESE_FONT_PATH);
+      doc.font('NotoSansCJK');
+    } catch (error) {
+      console.error('Failed to load Chinese font, falling back to default:', error);
+      // Fallback to default font if Chinese font fails to load
+    }
+
     // Collect chunks
     doc.on('data', chunk => chunks.push(chunk));
     doc.on('end', () => resolve(Buffer.concat(chunks)));
     doc.on('error', reject);
 
-    // Title (using ASCII for better compatibility)
-    doc.fontSize(18).text('Monthly Payroll Overview', { align: 'center' });
+    // Title in Traditional Chinese
+    doc.fontSize(18).text('月薪資總覽', { align: 'center' });
     doc.moveDown(0.5);
-    doc.fontSize(12).text(`Period: ${formatDate(monthDate)}`, { align: 'center' });
+    doc.fontSize(12).text(`期間：${formatDate(monthDate)}`, { align: 'center' });
     doc.moveDown(1);
 
-    // Summary statistics
+    // Summary statistics in Traditional Chinese
     doc.fontSize(10);
     const summaryY = doc.y;
-    doc.text(`Employees: ${totalEmployees}`, 50, summaryY);
-    doc.text(`Base Salary Total: ${formatCurrency(totalBaseSalary)}`, 200, summaryY);
-    doc.text(`Net Pay Total: ${formatCurrency(totalNetPay)}`, 400, summaryY);
-    doc.text(`Deductions Total: ${formatCurrency(totalDeductions)}`, 600, summaryY);
+    doc.text(`員工人數：${totalEmployees}`, 50, summaryY);
+    doc.text(`底薪總計：${formatCurrency(totalBaseSalary)}`, 200, summaryY);
+    doc.text(`實領總計：${formatCurrency(totalNetPay)}`, 400, summaryY);
+    doc.text(`扣款總計：${formatCurrency(totalDeductions)}`, 600, summaryY);
     doc.moveDown(1.5);
 
-    // Table headers
+    // Table headers in Traditional Chinese
     const tableTop = doc.y;
     const rowHeight = 20;
     const colWidths = [50, 60, 70, 70, 60, 60, 60, 60, 60, 70];
@@ -256,7 +274,7 @@ export async function generateMonthlyPayrollOverviewPdf(month, filters = {}) {
 
     // Draw header row
     doc.fontSize(8);
-    const headers = ['Employee ID', 'Name', 'Department', 'Base Salary', 'Overtime', 'Night Shift', 'Bonus', 'Deductions', 'Net Pay', 'Total'];
+    const headers = ['員工編號', '姓名', '部門', '底薪', '加班費', '夜班津貼', '獎金', '扣款', '實領', '總計'];
     
     headers.forEach((header, i) => {
       doc.rect(xPos, tableTop, colWidths[i], rowHeight).stroke();
@@ -286,13 +304,13 @@ export async function generateMonthlyPayrollOverviewPdf(month, filters = {}) {
         row.employeeId || '-',
         row.name || '-',
         row.department || '-',
-        Math.round(row.baseSalary).toLocaleString(),
-        Math.round(row.overtimePay).toLocaleString(),
-        Math.round(row.nightShiftAllowance).toLocaleString(),
-        Math.round((row.performanceBonus || 0) + (row.otherBonuses || 0) + (row.recurringAllowance || 0)).toLocaleString(),
-        Math.round((row.laborInsuranceFee || 0) + (row.healthInsuranceFee || 0) + (row.laborPensionSelf || 0) + (row.leaveDeduction || 0) + (row.otherDeductions || 0)).toLocaleString(),
-        Math.round(row.netPay).toLocaleString(),
-        Math.round(row.totalPayment).toLocaleString()
+        Math.round(row.baseSalary).toLocaleString('zh-TW'),
+        Math.round(row.overtimePay).toLocaleString('zh-TW'),
+        Math.round(row.nightShiftAllowance).toLocaleString('zh-TW'),
+        Math.round((row.performanceBonus || 0) + (row.otherBonuses || 0) + (row.recurringAllowance || 0)).toLocaleString('zh-TW'),
+        Math.round((row.laborInsuranceFee || 0) + (row.healthInsuranceFee || 0) + (row.laborPensionSelf || 0) + (row.leaveDeduction || 0) + (row.otherDeductions || 0)).toLocaleString('zh-TW'),
+        Math.round(row.netPay).toLocaleString('zh-TW'),
+        Math.round(row.totalPayment).toLocaleString('zh-TW')
       ];
 
       values.forEach((value, i) => {
@@ -304,8 +322,8 @@ export async function generateMonthlyPayrollOverviewPdf(month, filters = {}) {
       yPos += rowHeight;
     });
 
-    // Footer
-    doc.fontSize(8).text(`Generated: ${new Date().toLocaleString()}`, 50, 560, { align: 'center' });
+    // Footer in Traditional Chinese
+    doc.fontSize(8).text(`產生時間：${new Date().toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' })}`, 50, 560, { align: 'center' });
 
     doc.end();
   });
