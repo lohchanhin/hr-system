@@ -4,3 +4,4 @@ seed-accounts.json
 fonts/*.otf
 fonts/*.ttf
 fonts/*.ttc
+test-output-*.pdf
