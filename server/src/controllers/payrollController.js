@@ -25,6 +25,7 @@ import {
   refreshInsuranceRatesByType
 } from '../services/laborInsuranceService.js';
 import { generatePayrollExcel, generateIndividualPayrollExcel } from '../services/payrollExportService.js';
+import { generateMonthlyPayrollOverviewPdf } from '../services/payrollPdfExportService.js';
 import { aggregateBonusFromApprovals } from '../utils/payrollPreviewUtils.js';
 
 export async function listPayrolls(req, res) {
@@ -281,6 +282,35 @@ export async function exportPayrollExcel(req, res) {
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.send(buffer);
   } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+}
+
+/**
+ * 匯出月薪資總覽 PDF
+ */
+export async function exportMonthlyPayrollOverviewPdf(req, res) {
+  try {
+    const { month, organization, department, subDepartment, employeeId } = req.query;
+
+    if (!month) {
+      return res.status(400).json({ error: 'month is required' });
+    }
+
+    const filters = {};
+    if (organization) filters.organization = organization;
+    if (department) filters.department = department;
+    if (subDepartment) filters.subDepartment = subDepartment;
+    if (employeeId) filters.employeeId = employeeId;
+
+    const buffer = await generateMonthlyPayrollOverviewPdf(month, filters);
+
+    const filename = `monthly_payroll_overview_${month}.pdf`;
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(buffer);
+  } catch (err) {
+    console.error('Error exporting monthly payroll overview PDF:', err);
     res.status(400).json({ error: err.message });
   }
 }
