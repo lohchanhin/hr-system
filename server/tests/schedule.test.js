@@ -57,6 +57,9 @@ const buildScheduleDoc = (data = {}) => {
 
 const buildPopulateChain = (value) => {
   const chain = {
+    select: jest.fn(function select() {
+      return chain;
+    }),
     populate: jest.fn(function populate() {
       return chain;
     }),
