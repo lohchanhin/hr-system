@@ -23,10 +23,23 @@ const MAX_FILE_SIZE = 5 * 1024 * 1024 // 5MB
  */
 export default async function photoUploadMiddleware(req, res, next) {
   try {
-    const { photo, photoData } = req.body
+    const { photo, photoData, photoList } = req.body
+
+    // 決定要處理的照片數據
+    let photoSource = photo || photoData
+    
+    // 如果 photoList 存在且有內容，使用第一張照片
+    if (!photoSource && Array.isArray(photoList) && photoList.length > 0) {
+      photoSource = photoList[0]
+    }
 
     // 如果沒有照片數據，跳過處理
-    if (!photo && !photoData) {
+    if (!photoSource) {
+      return next()
+    }
+
+    // 如果照片已經是 /upload/ 路徑，說明已經上傳過了，跳過處理
+    if (typeof photoSource === 'string' && photoSource.startsWith('/upload/')) {
       return next()
     }
 
@@ -35,8 +48,8 @@ export default async function photoUploadMiddleware(req, res, next) {
     let extension
 
     // 處理 base64 格式的照片
-    if (photo && photo.startsWith('data:image/')) {
-      const matches = photo.match(/^data:([^;]+);base64,(.+)$/)
+    if (photoSource && photoSource.startsWith('data:image/')) {
+      const matches = photoSource.match(/^data:([^;]+);base64,(.+)$/)
       if (!matches) {
         return res.status(400).json({ error: '無效的圖片格式' })
       }
@@ -59,9 +72,9 @@ export default async function photoUploadMiddleware(req, res, next) {
       extension = mimeType.split('/')[1]
       if (extension === 'jpeg') extension = 'jpg'
     } 
-    // 處理 photoData base64 (沒有 data:image/ 前綴的情況)
-    else if (photoData) {
-      buffer = Buffer.from(photoData, 'base64')
+    // 處理純 base64 (沒有 data:image/ 前綴的情況)
+    else if (photoSource && typeof photoSource === 'string') {
+      buffer = Buffer.from(photoSource, 'base64')
       extension = 'jpg' // 預設為 jpg
       mimeType = 'image/jpeg'
 
