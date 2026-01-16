@@ -1,4 +1,5 @@
-import fs from 'fs'
+import fs from 'fs/promises'
+import fsSync from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
 
@@ -8,14 +9,37 @@ const __dirname = path.dirname(__filename)
 // 專案根目錄的 upload 資料夾
 const UPLOAD_DIR = path.join(__dirname, '../../../upload')
 
-// 確保 upload 目錄存在
-if (!fs.existsSync(UPLOAD_DIR)) {
-  fs.mkdirSync(UPLOAD_DIR, { recursive: true })
+// 確保 upload 目錄存在（同步方式，僅在啟動時執行一次）
+if (!fsSync.existsSync(UPLOAD_DIR)) {
+  fsSync.mkdirSync(UPLOAD_DIR, { recursive: true })
 }
 
-// 支援的圖片格式
-const ALLOWED_MIME_TYPES = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp']
+// 支援的圖片格式（移除無效的 image/jpg）
+const ALLOWED_MIME_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp']
 const MAX_FILE_SIZE = 5 * 1024 * 1024 // 5MB
+
+/**
+ * 驗證 base64 字符串是否為有效的圖片數據
+ * 通過檢查文件簽名（magic numbers）
+ */
+function isValidImageBuffer(buffer) {
+  if (!buffer || buffer.length < 4) return false
+  
+  // 檢查常見圖片格式的文件簽名
+  const signatures = {
+    jpeg: [0xFF, 0xD8, 0xFF],           // JPEG
+    png: [0x89, 0x50, 0x4E, 0x47],      // PNG
+    gif: [0x47, 0x49, 0x46, 0x38],      // GIF
+    webp: [0x52, 0x49, 0x46, 0x46]      // WEBP (RIFF)
+  }
+  
+  for (const [format, sig] of Object.entries(signatures)) {
+    const matches = sig.every((byte, i) => buffer[i] === byte)
+    if (matches) return true
+  }
+  
+  return false
+}
 
 /**
  * 處理照片上傳的中間件
@@ -74,12 +98,38 @@ export default async function photoUploadMiddleware(req, res, next) {
     } 
     // 處理純 base64 (沒有 data:image/ 前綴的情況)
     else if (photoSource && typeof photoSource === 'string') {
-      buffer = Buffer.from(photoSource, 'base64')
-      extension = 'jpg' // 預設為 jpg
-      mimeType = 'image/jpeg'
+      try {
+        buffer = Buffer.from(photoSource, 'base64')
+      } catch (e) {
+        return res.status(400).json({ error: '無效的 base64 格式' })
+      }
 
+      // 驗證是否為有效的圖片數據
+      if (!isValidImageBuffer(buffer)) {
+        return res.status(400).json({ error: '無效的圖片數據，無法識別圖片格式' })
+      }
+
+      // 檢查檔案大小
       if (buffer.length > MAX_FILE_SIZE) {
         return res.status(400).json({ error: '圖片檔案過大，最大 5MB' })
+      }
+
+      // 根據文件簽名決定副檔名
+      if (buffer[0] === 0xFF && buffer[1] === 0xD8) {
+        extension = 'jpg'
+        mimeType = 'image/jpeg'
+      } else if (buffer[0] === 0x89 && buffer[1] === 0x50) {
+        extension = 'png'
+        mimeType = 'image/png'
+      } else if (buffer[0] === 0x47 && buffer[1] === 0x49) {
+        extension = 'gif'
+        mimeType = 'image/gif'
+      } else if (buffer[0] === 0x52 && buffer[1] === 0x49) {
+        extension = 'webp'
+        mimeType = 'image/webp'
+      } else {
+        extension = 'jpg' // 預設
+        mimeType = 'image/jpeg'
       }
     } else {
       return next()
@@ -91,8 +141,8 @@ export default async function photoUploadMiddleware(req, res, next) {
     const filename = `employee_${timestamp}_${randomStr}.${extension}`
     const filepath = path.join(UPLOAD_DIR, filename)
 
-    // 保存檔案
-    fs.writeFileSync(filepath, buffer)
+    // 使用非同步方式保存檔案
+    await fs.writeFile(filepath, buffer)
 
     // 將檔案路徑存到 req.body.photo，格式為 /upload/filename
     req.body.photo = `/upload/${filename}`
