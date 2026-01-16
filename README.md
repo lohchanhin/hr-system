@@ -104,6 +104,12 @@
 - **薪資單生成**：
   - 員工薪資明細表
   - 可匯出 PDF 或 Excel 格式
+- **月薪資總覽**：
+  - 完整的員工薪資列表
+  - 統計資料彙總（總人數、薪資總額、實發總額、扣款總額）
+  - 支援 Excel 匯出（臺灣企銀、台中銀行、個人獎金紙條格式）
+  - 支援 PDF 匯出
+  - 支援篩選條件（機構、部門、單位、員工）
 - **銀行轉帳檔**：
   - 支援台灣銀行格式
   - 支援台中銀行格式
@@ -1364,6 +1370,7 @@ mongorestore --uri="mongodb://localhost:27017/hr-system" --collection=employees 
 - **[薪資 API 文件](docs/PAYROLL_API.md)**：薪資相關 API 詳細說明
 - **[薪資計算指南](docs/SALARY_CALCULATION_GUIDE.md)**：薪資計算邏輯與規則說明
 - **[每月薪資調整項目設定](docs/monthly-salary-adjustments.md)**：動態設定每月固定薪資調整項目
+- **[月薪資總覽 PDF 匯出](docs/MONTHLY_PAYROLL_PDF_EXPORT.md)**：月薪資總覽 PDF 匯出功能說明
 
 ### 夜班津貼相關
 - **[夜班津貼實作](docs/night-shift-allowance-implementation.md)**：夜班津貼計算實作說明
