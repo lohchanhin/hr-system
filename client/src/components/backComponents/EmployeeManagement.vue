@@ -2880,8 +2880,8 @@ function normalizePhotoUploadList(uploadFiles = []) {
 async function handlePhotoRequest({ file, onSuccess, onError }) {
   photoUploading.value = true
   try {
-    // 不再轉換為 base64，直接存儲原始檔案物件
-    // 將原始檔案存儲在 raw 屬性中，以便後續上傳
+    // 創建 Object URL 用於預覽，並保存原始檔案物件供後續上傳
+    // Object URL 用於在界面顯示，原始檔案用於實際上傳
     onSuccess?.({ url: URL.createObjectURL(file), raw: file })
   } catch (err) {
     onError?.(err)
@@ -4563,9 +4563,8 @@ async function saveEmployee() {
     const formData = new FormData()
     formData.append('photo', photoFile)
     
-    // 將其他資料以 JSON 字串形式添加到 FormData
-    // 但 multer 只處理 photo 欄位，其他資料仍需要在 body 中
-    // 所以我們需要將其他欄位也加到 FormData
+    // 將所有其他欄位也添加到 FormData
+    // 當使用 multipart/form-data 時，所有資料都必須通過 FormData 發送
     Object.keys(payload).forEach(key => {
       if (key !== 'photo' && key !== 'photoList') {
         const value = payload[key]
