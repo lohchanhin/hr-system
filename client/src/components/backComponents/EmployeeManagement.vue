@@ -65,7 +65,6 @@
                 <el-avatar :size="40" :src="row.photo" class="employee-avatar">
                   {{ row.name ? row.name.charAt(0) : 'N' }}
                 </el-avatar>
-                </el-avatar>
                 <div class="employee-details">
                   <div class="employee-name">{{ row.name || '未設定' }}</div>
                   <div class="employee-id">{{ row.employeeNo || '無編號' }}</div>

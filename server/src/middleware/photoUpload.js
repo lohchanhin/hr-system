@@ -19,26 +19,35 @@ const ALLOWED_MIME_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'
 const MAX_FILE_SIZE = 5 * 1024 * 1024 // 5MB
 
 /**
- * 驗證 base64 字符串是否為有效的圖片數據
- * 通過檢查文件簽名（magic numbers）
+ * 檢測圖片格式並返回相關信息
+ * @param {Buffer} buffer - 圖片數據緩衝區
+ * @returns {{ format: string, extension: string, mimeType: string } | null}
  */
-function isValidImageBuffer(buffer) {
-  if (!buffer || buffer.length < 4) return false
+function detectImageFormat(buffer) {
+  if (!buffer || buffer.length < 12) return null
   
-  // 檢查常見圖片格式的文件簽名
-  const signatures = {
-    jpeg: [0xFF, 0xD8, 0xFF],           // JPEG
-    png: [0x89, 0x50, 0x4E, 0x47],      // PNG
-    gif: [0x47, 0x49, 0x46, 0x38],      // GIF
-    webp: [0x52, 0x49, 0x46, 0x46]      // WEBP (RIFF)
+  // JPEG: FF D8 FF
+  if (buffer[0] === 0xFF && buffer[1] === 0xD8 && buffer[2] === 0xFF) {
+    return { format: 'jpeg', extension: 'jpg', mimeType: 'image/jpeg' }
   }
   
-  for (const [format, sig] of Object.entries(signatures)) {
-    const matches = sig.every((byte, i) => buffer[i] === byte)
-    if (matches) return true
+  // PNG: 89 50 4E 47 0D 0A 1A 0A
+  if (buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4E && buffer[3] === 0x47) {
+    return { format: 'png', extension: 'png', mimeType: 'image/png' }
   }
   
-  return false
+  // GIF: 47 49 46 38 (GIF8)
+  if (buffer[0] === 0x47 && buffer[1] === 0x49 && buffer[2] === 0x46 && buffer[3] === 0x38) {
+    return { format: 'gif', extension: 'gif', mimeType: 'image/gif' }
+  }
+  
+  // WebP: RIFF (52 49 46 46) at bytes 0-3, WEBP (57 45 42 50) at bytes 8-11
+  if (buffer[0] === 0x52 && buffer[1] === 0x49 && buffer[2] === 0x46 && buffer[3] === 0x46 &&
+      buffer[8] === 0x57 && buffer[9] === 0x45 && buffer[10] === 0x42 && buffer[11] === 0x50) {
+    return { format: 'webp', extension: 'webp', mimeType: 'image/webp' }
+  }
+  
+  return null
 }
 
 /**
@@ -104,33 +113,19 @@ export default async function photoUploadMiddleware(req, res, next) {
         return res.status(400).json({ error: '無效的 base64 格式' })
       }
 
-      // 驗證是否為有效的圖片數據
-      if (!isValidImageBuffer(buffer)) {
-        return res.status(400).json({ error: '無效的圖片數據，無法識別圖片格式' })
-      }
-
       // 檢查檔案大小
       if (buffer.length > MAX_FILE_SIZE) {
         return res.status(400).json({ error: '圖片檔案過大，最大 5MB' })
       }
 
-      // 根據文件簽名決定副檔名
-      if (buffer[0] === 0xFF && buffer[1] === 0xD8) {
-        extension = 'jpg'
-        mimeType = 'image/jpeg'
-      } else if (buffer[0] === 0x89 && buffer[1] === 0x50) {
-        extension = 'png'
-        mimeType = 'image/png'
-      } else if (buffer[0] === 0x47 && buffer[1] === 0x49) {
-        extension = 'gif'
-        mimeType = 'image/gif'
-      } else if (buffer[0] === 0x52 && buffer[1] === 0x49) {
-        extension = 'webp'
-        mimeType = 'image/webp'
-      } else {
-        extension = 'jpg' // 預設
-        mimeType = 'image/jpeg'
+      // 使用統一的格式檢測函數
+      const formatInfo = detectImageFormat(buffer)
+      if (!formatInfo) {
+        return res.status(400).json({ error: '無效的圖片數據，僅支援 JPEG, PNG, GIF, WebP 格式' })
       }
+
+      extension = formatInfo.extension
+      mimeType = formatInfo.mimeType
     } else {
       return next()
     }
