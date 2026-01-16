@@ -99,7 +99,7 @@
               <template #header>
                 <div class="export-card__header">
                   <div class="export-card__title">
-                    <span style="margin-right: 12px">匯出格式</span>
+                    <span style="margin-right: 12px">Excel 匯出格式</span>
                     <el-radio-group v-model="exportFormat" size="small">
                       <el-radio-button label="taiwan">臺灣企銀</el-radio-button>
                       <el-radio-button label="taichung">台中銀行</el-radio-button>
@@ -111,12 +111,20 @@
                       {{ showFormatPreview ? '隱藏示意表格' : '顯示示意表格' }}
                     </el-button>
                     <el-button
-                      type="primary"
+                      type="success"
                       size="small"
                       :loading="exportLoading"
                       @click="downloadPayrollExcel"
                     >
-                      下載匯出
+                      下載 Excel
+                    </el-button>
+                    <el-button
+                      type="primary"
+                      size="small"
+                      :loading="pdfExportLoading"
+                      @click="downloadPayrollPdf"
+                    >
+                      下載 PDF
                     </el-button>
                   </div>
                 </div>
@@ -1173,6 +1181,7 @@ const showExplanationDialog = ref(false)
   const exportFormat = ref('taiwan')
   const showFormatPreview = ref(true)
   const exportLoading = ref(false)
+  const pdfExportLoading = ref(false)
   const organizations = ref([])
   const departments = ref([])
   const subDepartments = ref([])
@@ -1521,6 +1530,49 @@ const showExplanationDialog = ref(false)
       ElMessage.error(error.message || '匯出失敗，請稍後再試')
     } finally {
       exportLoading.value = false
+    }
+  }
+
+  async function downloadPayrollPdf() {
+    try {
+      pdfExportLoading.value = true
+      
+      // Build query parameters with all filters
+      const params = new URLSearchParams({ 
+        month: overviewMonth.value
+      })
+      
+      if (filterOrganization.value) {
+        params.append('organization', filterOrganization.value)
+      }
+      if (filterDepartment.value) {
+        params.append('department', filterDepartment.value)
+      }
+      if (filterSubDepartment.value) {
+        params.append('subDepartment', filterSubDepartment.value)
+      }
+      
+      const res = await apiFetch(`/api/payroll/export/pdf?${params}`)
+
+      if (!res.ok) {
+        const error = await res.json().catch(() => ({}))
+        throw new Error(error.error || '匯出 PDF 失敗，請稍後再試')
+      }
+
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = `monthly_payroll_overview_${overviewMonth.value}.pdf`
+      link.click()
+      URL.revokeObjectURL(url)
+      
+      ElMessage.success('PDF 匯出成功')
+    } catch (error) {
+      console.error('匯出 PDF 失敗:', error)
+      ElMessage.error(error.message || '匯出 PDF 失敗，請稍後再試')
+    } finally {
+      pdfExportLoading.value = false
     }
   }
 

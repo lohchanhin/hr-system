@@ -11,6 +11,7 @@ import {
   getEmployeePayrolls,
   exportPayrollExcel,
   exportIndividualPayrollExcel,
+  exportMonthlyPayrollOverviewPdf,
   getLaborInsuranceRates,
   initializeLaborInsuranceRatesController,
   refreshLaborInsuranceRatesController,
@@ -47,6 +48,9 @@ router.get('/complete-data/:employeeId/:month', getEmployeeCompleteWorkData);
 // Excel export
 router.post('/export', exportPayrollExcel);
 router.get('/export/individual', exportIndividualPayrollExcel);
+
+// PDF export
+router.get('/export/pdf', exportMonthlyPayrollOverviewPdf);
 
 // Labor insurance rates
 router.get('/insurance/rates', getLaborInsuranceRates);
