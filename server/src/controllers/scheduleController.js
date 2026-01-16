@@ -453,12 +453,14 @@ async function buildScheduleOverview({ month, organizationId, departmentId, subD
   });
 
   const rawSchedules = await ShiftSchedule.find(query)
+    .select('employee date shiftId department subDepartment')
     .populate({
       path: 'department',
-      populate: { path: 'organization' },
+      select: 'name organization',
+      populate: { path: 'organization', select: 'name' },
     })
-    .populate('subDepartment')
-    .populate({ path: 'employee', select: 'name title department subDepartment' })
+    .populate('subDepartment', 'name')
+    .populate({ path: 'employee', select: 'name title' })
     .lean();
 
   const organizationMap = new Map();

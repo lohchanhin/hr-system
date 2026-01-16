@@ -120,65 +120,75 @@
     />
 
     <div v-else class="overview-results">
-      <section
-        v-for="org in overviewData"
-        :key="org.id"
-        class="organization-block"
-        data-test="organization-block"
-      >
-        <header class="organization-header">
-          <h2 class="organization-title">{{ org.name }}</h2>
-          <span class="organization-meta">{{ org.departments.length }} 個部門</span>
-        </header>
-
-        <article
-          v-for="dept in org.departments"
-          :key="dept.id"
-          class="department-block"
-          data-test="department-block"
+      <el-collapse v-model="activeOrganizations" class="organization-collapse">
+        <el-collapse-item
+          v-for="org in overviewData"
+          :key="org.id"
+          :name="org.id"
+          class="organization-block"
+          data-test="organization-block"
         >
-          <header class="department-header">
-            <h3 class="department-title">{{ dept.name }}</h3>
-            <span class="department-meta">{{ dept.subDepartments.length }} 個小單位</span>
-          </header>
+          <template #title>
+            <header class="organization-header">
+              <h2 class="organization-title">{{ org.name }}</h2>
+              <span class="organization-meta">{{ org.departments.length }} 個部門</span>
+            </header>
+          </template>
 
-          <div
-            v-for="unit in dept.subDepartments"
-            :key="unit.id"
-            class="unit-card"
-            data-test="subdepartment-block"
-          >
-            <div class="unit-header">
-              <h4 class="unit-title">{{ unit.name }}</h4>
-              <span class="unit-meta">{{ unit.employees.length }} 位人員</span>
-            </div>
-            <div class="unit-table-wrapper">
-              <el-table
-                :data="buildTableRows(unit)"
-                border
-                stripe
-                class="overview-table"
-                :key="`${unit.id}-table`"
+          <el-collapse v-model="activeDepartments[org.id]" class="department-collapse">
+            <el-collapse-item
+              v-for="dept in org.departments"
+              :key="dept.id"
+              :name="dept.id"
+              class="department-block"
+              data-test="department-block"
+            >
+              <template #title>
+                <header class="department-header">
+                  <h3 class="department-title">{{ dept.name }}</h3>
+                  <span class="department-meta">{{ dept.subDepartments.length }} 個小單位</span>
+                </header>
+              </template>
+
+              <div
+                v-for="unit in dept.subDepartments"
+                :key="unit.id"
+                class="unit-card"
+                data-test="subdepartment-block"
               >
-                <el-table-column prop="name" label="姓名" fixed="left" min-width="140" />
-                <el-table-column prop="title" label="職稱" min-width="140" />
-                <el-table-column
-                  v-for="day in days"
-                  :key="`${unit.id}-${day}`"
-                  :label="formatDayLabel(day)"
-                  :min-width="110"
-                >
-                  <template #default="{ row }">
-                    <span class="shift-label" :class="{ empty: !row.entries[day] }">
-                      {{ row.entries[day] || '—' }}
-                    </span>
-                  </template>
-                </el-table-column>
-              </el-table>
-            </div>
-          </div>
-        </article>
-      </section>
+                <div class="unit-header">
+                  <h4 class="unit-title">{{ unit.name }}</h4>
+                  <span class="unit-meta">{{ unit.employees.length }} 位人員</span>
+                </div>
+                <div class="unit-table-wrapper">
+                  <el-table
+                    :data="buildTableRows(unit)"
+                    border
+                    stripe
+                    class="overview-table"
+                    :key="`${unit.id}-table`"
+                  >
+                    <el-table-column prop="name" label="姓名" fixed="left" min-width="140" />
+                    <el-table-column prop="title" label="職稱" min-width="140" />
+                    <el-table-column
+                      v-for="day in days"
+                      :key="`${unit.id}-${day}`"
+                      :label="formatDayLabel(day)"
+                      :min-width="110"
+                    >
+                      <template #default="{ row }">
+                        <span class="shift-label" :class="{ empty: !row.entries[day] }">
+                          {{ row.entries[day] || '—' }}
+                        </span>
+                      </template>
+                    </el-table-column>
+                  </el-table>
+                </div>
+              </div>
+            </el-collapse-item>
+          </el-collapse>
+        </el-collapse-item>
+      </el-collapse>
     </div>
   </div>
 </template>
@@ -205,6 +215,8 @@ const overviewData = ref([])
 const referenceLoaded = ref(false)
 const exportLoading = ref(false)
 const exportFormat = ref('')
+const activeOrganizations = ref([])
+const activeDepartments = ref({})
 let requestSequence = 0
 
 const toId = value => {
@@ -254,18 +266,22 @@ const formatDayLabel = day => {
 }
 
 const buildTableRows = unit => {
+  // Pre-create empty entries object once
+  const emptyEntries = {}
+  days.value.forEach(day => {
+    emptyEntries[day] = ''
+  })
+  
   return unit.employees
     .map(emp => {
-      const entries = {}
-      days.value.forEach(day => {
-        entries[day] = ''
-      })
+      // Create a shallow copy of empty entries
+      const entries = { ...emptyEntries }
+      
+      // Build schedule map directly using pre-initialized entries
       ;(emp.schedules || []).forEach(item => {
-        const key = item.date
-        if (!entries[key]) {
-          entries[key] = item.shiftName || ''
-        }
+        entries[item.date] = item.shiftName || ''
       })
+      
       return {
         id: emp.id,
         name: emp.name,
@@ -429,6 +445,26 @@ async function loadOverview() {
     days.value = rawDays
     // ✅ 這裡先把重複的小單位 / 員工合併掉
     overviewData.value = normalizeOverviewOrganizations(rawOrgs)
+    
+    // Initialize collapse state - expand first organization and its first department by default
+    if (overviewData.value.length > 0) {
+      const firstOrg = overviewData.value[0]
+      activeOrganizations.value = [firstOrg.id]
+      
+      // Initialize department collapse states for each organization
+      const newActiveDepartments = {}
+      overviewData.value.forEach(org => {
+        if (org.id === firstOrg.id && org.departments.length > 0) {
+          newActiveDepartments[org.id] = [org.departments[0].id]
+        } else {
+          newActiveDepartments[org.id] = []
+        }
+      })
+      activeDepartments.value = newActiveDepartments
+    } else {
+      activeOrganizations.value = []
+      activeDepartments.value = {}
+    }
   } catch (err) {
     if (currentToken !== requestSequence) return
     const message = err?.message || '載入班表總覽失敗'
@@ -617,18 +653,40 @@ onMounted(async () => {
   gap: 24px;
 }
 
+.organization-collapse {
+  border: none;
+}
+
+.organization-collapse :deep(.el-collapse-item__header) {
+  background: transparent;
+  border: none;
+  padding: 0;
+  height: auto;
+}
+
+.organization-collapse :deep(.el-collapse-item__wrap) {
+  background: transparent;
+  border: none;
+}
+
+.organization-collapse :deep(.el-collapse-item__content) {
+  padding: 0;
+}
+
 .organization-block {
   background: #fff;
   border-radius: 16px;
   padding: 20px;
   box-shadow: 0 8px 24px rgba(15, 23, 42, 0.05);
+  margin-bottom: 16px;
 }
 
 .organization-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 12px;
+  width: 100%;
+  padding: 8px 0;
 }
 
 .organization-title {
@@ -641,19 +699,42 @@ onMounted(async () => {
   color: #64748b;
 }
 
-.department-block {
+.department-collapse {
+  border: none;
   margin-top: 12px;
+}
+
+.department-collapse :deep(.el-collapse-item__header) {
+  background: transparent;
+  border: none;
+  padding: 0;
+  height: auto;
+}
+
+.department-collapse :deep(.el-collapse-item__wrap) {
+  background: transparent;
+  border: none;
+}
+
+.department-collapse :deep(.el-collapse-item__content) {
+  padding: 0;
+}
+
+.department-block {
   padding-top: 16px;
   border-top: 1px solid #e2e8f0;
   display: flex;
   flex-direction: column;
   gap: 16px;
+  margin-bottom: 12px;
 }
 
 .department-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  width: 100%;
+  padding: 8px 0;
 }
 
 .department-title {
