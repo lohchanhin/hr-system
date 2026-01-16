@@ -68,7 +68,10 @@ if (missing.length) {
 const app = express();
 const PORT = process.env.PORT;
 
-app.use(express.json());
+// 增加 JSON payload 大小限制以支持 base64 圖片（向後兼容）
+// 但新的實作會使用 multipart/form-data 來避免此問題
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
 // 設定 CORS - 支援環境變數配置
 const allowedOrigins = [

@@ -15,13 +15,14 @@ import {
 import { bulkImportEmployees } from '../controllers/employeeBulkImportController.js';
 import uploadMiddleware from '../middleware/upload.js';
 import photoUploadMiddleware from '../middleware/photoUpload.js';
+import { uploadSingle, handleMulterError, processUploadedPhoto } from '../middleware/photoUploadMulter.js';
 import validateBulkImportPayload from '../middleware/validateBulkImportPayload.js';
 
 const router = Router();
 
 router.get('/', listEmployees);
 router.get('/options', listEmployeeOptions);
-router.post('/', photoUploadMiddleware, createEmployee);
+router.post('/', uploadSingle, handleMulterError, processUploadedPhoto, createEmployee);
 router.post('/bulk-import', uploadMiddleware, validateBulkImportPayload, bulkImportEmployees);
 router.post('/import', uploadMiddleware, validateBulkImportPayload, bulkImportEmployees);
 router.post('/set-supervisors', setSupervisors);
@@ -33,7 +34,7 @@ router.patch('/:id/annual-leave', setEmployeeAnnualLeave);
 router.post('/:id/annual-leave/validate', validateEmployeeAnnualLeave);
 
 router.get('/:id', getEmployee);
-router.put('/:id', photoUploadMiddleware, updateEmployee);
+router.put('/:id', uploadSingle, handleMulterError, processUploadedPhoto, updateEmployee);
 router.delete('/:id', deleteEmployee);
 
 export default router;
