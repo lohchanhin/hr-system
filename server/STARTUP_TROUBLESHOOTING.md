@@ -25,7 +25,9 @@ Missing required environment variables: PORT, MONGODB_URI, JWT_SECRET
    JWT_SECRET=your-super-secret-jwt-key-change-this
    ```
 
-   ⚠️ **重要**: 生產環境請務必使用強密碼作為 `JWT_SECRET`
+   ⚠️ **重要 / Important**: 
+   - In production, use a strong secret key for `JWT_SECRET`
+   - 生產環境請務必使用強密碼作為 `JWT_SECRET`
 
 ### 2. MongoDB 未啟動 / MongoDB Not Running
 
@@ -116,9 +118,9 @@ Server running on port 3000
 
 ## 相關文件 / Related Documentation
 
-- 主要 README: `../README.md`
-- 環境變數範例: `.env.example`
-- 夜班津貼修復指南: `../README_FIX_NOW.md`
+- 主要 README: `README.md` (in repository root)
+- 環境變數範例: `.env.example` (in server directory)
+- 伺服器文件: `README.md` (in server directory)
 
 ## 需要協助？ / Need Help?
 

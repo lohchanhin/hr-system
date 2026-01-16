@@ -162,7 +162,7 @@ Consider these enhancements:
 
 ## References / 參考資料
 
-- Main README: `/README.md`
-- Server README: `/server/README.md`
-- Troubleshooting Guide: `/server/STARTUP_TROUBLESHOOTING.md`
-- Environment Example: `/server/.env.example`
+- Main README: `README.md` (repository root)
+- Server README: `server/README.md`
+- Troubleshooting Guide: `server/STARTUP_TROUBLESHOOTING.md`
+- Environment Example: `server/.env.example`
