@@ -8,6 +8,22 @@ This directory contains the Express backend for the HR system.
 npm install
 \`\`\`
 
+### PDF 字型設定 / PDF Font Setup
+
+本系統的 PDF 薪資報表匯出功能需要繁體中文字型支援。請執行以下腳本安裝字型：
+
+The PDF payroll export feature requires Traditional Chinese font support. Run the following script to install the font:
+
+\`\`\`bash
+./setup-fonts.sh
+\`\`\`
+
+或者手動下載並放置字型檔案到 `fonts/` 目錄。詳細說明請參閱 [`fonts/README.md`](./fonts/README.md)。
+
+Alternatively, manually download and place the font file in the `fonts/` directory. See [`fonts/README.md`](./fonts/README.md) for details.
+
+### 環境變數 / Environment Variables
+
 Create a `.env` file based on `.env.example` and set the following variables:
 
 - `PORT` – port for the HTTP server
