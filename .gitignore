@@ -5,3 +5,5 @@ dist
 logs
 *.log
 .pm2
+upload/*
+!upload/.gitkeep
