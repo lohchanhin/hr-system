@@ -26,16 +26,14 @@
 
         <div class="content-actions">
           <!-- 🔍 搜尋欄位 -->
-          <el-input v-model="searchQuery" placeholder="搜尋姓名、員工編號、Email" clearable class="search-input"
-            style="width: 280px; margin-right: 12px;">
+          <el-input v-model="searchQuery" placeholder="搜尋姓名、員工編號、Email" clearable class="search-input">
             <template #prefix>
               <i class="el-icon-search"></i>
             </template>
           </el-input>
           
           <!-- 🔍 部門篩選 -->
-          <el-select v-model="departmentFilter" placeholder="篩選部門" clearable class="dept-filter-select"
-            style="min-width: 200px; margin-right: 12px;">
+          <el-select v-model="departmentFilter" placeholder="篩選部門" clearable class="dept-filter-select">
             <el-option v-for="dept in departmentFilterOptions" :key="dept.value" :label="dept.label"
               :value="dept.value" />
           </el-select>
@@ -4786,8 +4784,19 @@ function getStatusTagType(status) {
   gap: 12px;
 }
 
+.section-title {
+  font-size: 20px;
+  font-weight: 600;
+  color: #1e293b;
+  margin: 0;
+  padding-left: 16px;
+  border-left: 4px solid #10b981;
+}
+
 .search-input {
   flex-shrink: 0;
+  width: 280px;
+  margin-right: 12px;
 }
 
 .search-input :deep(.el-input__wrapper) {
@@ -4804,13 +4813,10 @@ function getStatusTagType(status) {
   box-shadow: 0 2px 12px rgba(16, 185, 129, 0.3);
 }
 
-.section-title {
-  font-size: 20px;
-  font-weight: 600;
-  color: #1e293b;
-  margin: 0;
-  padding-left: 16px;
-  border-left: 4px solid #10b981;
+.dept-filter-select {
+  min-width: 200px;
+  margin-right: 12px;
+  flex-shrink: 0;
 }
 
 .import-btn {

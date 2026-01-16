@@ -1,7 +1,7 @@
 import fs from 'fs/promises'
-import fsSync from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
+import crypto from 'crypto'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -9,10 +9,17 @@ const __dirname = path.dirname(__filename)
 // 專案根目錄的 upload 資料夾
 const UPLOAD_DIR = path.join(__dirname, '../../../upload')
 
-// 確保 upload 目錄存在（同步方式，僅在啟動時執行一次）
-if (!fsSync.existsSync(UPLOAD_DIR)) {
-  fsSync.mkdirSync(UPLOAD_DIR, { recursive: true })
+// 確保 upload 目錄存在（使用異步方式）
+async function ensureUploadDir() {
+  try {
+    await fs.access(UPLOAD_DIR)
+  } catch {
+    await fs.mkdir(UPLOAD_DIR, { recursive: true })
+  }
 }
+
+// 在模塊加載時確保目錄存在
+ensureUploadDir().catch(console.error)
 
 // 支援的圖片格式（移除無效的 image/jpg）
 const ALLOWED_MIME_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp']
@@ -130,10 +137,10 @@ export default async function photoUploadMiddleware(req, res, next) {
       return next()
     }
 
-    // 生成唯一的檔案名稱
+    // 生成唯一的檔案名稱（使用密碼學安全的隨機數）
     const timestamp = Date.now()
-    const randomStr = Math.random().toString(36).substring(2, 8)
-    const filename = `employee_${timestamp}_${randomStr}.${extension}`
+    const randomBytes = crypto.randomBytes(4).toString('hex')
+    const filename = `employee_${timestamp}_${randomBytes}.${extension}`
     const filepath = path.join(UPLOAD_DIR, filename)
 
     // 使用非同步方式保存檔案
