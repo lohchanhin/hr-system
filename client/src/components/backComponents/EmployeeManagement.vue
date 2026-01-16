@@ -2866,7 +2866,8 @@ function normalizePhotoUploadList(uploadFiles = []) {
 
       return {
         ...file,
-        url: file.url || responseUrl || '',
+        // Prefer responseUrl (base64 data URL) over file.url (blob URL)
+        url: responseUrl || file.url || '',
         status: 'success',
         percentage: file.percentage ?? 100
       }
@@ -2890,11 +2891,11 @@ async function handlePhotoRequest({ file, onSuccess, onError }) {
 }
 
 function handlePhotoSuccess(response, uploadFile, uploadFiles) {
-  if (!uploadFile.url) {
-    if (typeof response === 'string') uploadFile.url = response
-    else if (response && typeof response === 'object') {
-      uploadFile.url = response.url || response?.data?.url || uploadFile.url || ''
-    }
+  // Always use the response URL (base64 data URL) instead of the blob URL
+  if (typeof response === 'string') {
+    uploadFile.url = response
+  } else if (response && typeof response === 'object') {
+    uploadFile.url = response.url || response?.data?.url || ''
   }
   normalizePhotoUploadList(uploadFiles)
 }

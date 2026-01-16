@@ -114,6 +114,13 @@ export default async function photoUploadMiddleware(req, res, next) {
     } 
     // 處理純 base64 (沒有 data:image/ 前綴的情況)
     else if (photoSource && typeof photoSource === 'string') {
+      // Check for blob URLs which cannot be processed server-side
+      if (photoSource.startsWith('blob:')) {
+        return res.status(400).json({ 
+          error: '無法處理 blob URL，請確保前端已將圖片轉換為 base64 格式' 
+        })
+      }
+      
       try {
         buffer = Buffer.from(photoSource, 'base64')
       } catch (e) {
