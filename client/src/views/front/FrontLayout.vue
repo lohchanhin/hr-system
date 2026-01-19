@@ -25,7 +25,7 @@
       </div>
       <div v-if="!isSidebarCollapsed" class="sidebar-header">
         <div class="user-info">
-          <el-avatar :size="40" :src="profile?.photo" class="user-avatar">
+          <el-avatar :size="40" :src="getPhotoUrl(profile?.photo)" class="user-avatar">
             <i class="el-icon-user"></i>
           </el-avatar>
           <span class="user-name">{{ displayName }}</span>
@@ -111,6 +111,7 @@ import { clearToken } from "../../utils/tokenService";
 import { storeToRefs } from "pinia";
 import { iconMap as availableMenuIcons, resolveMenuIcon } from "../../constants/menuIcons";
 import { useAuthStore } from "../../stores/auth";
+import { getPhotoUrl } from "../../utils/photoUrl";
 
 const router = useRouter();
 const route = useRoute();

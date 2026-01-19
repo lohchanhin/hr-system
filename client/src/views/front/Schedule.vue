@@ -247,9 +247,12 @@
             </div>
           </template>
         </el-table-column>
-        <el-table-column prop="name" label="員工姓名" width="150" fixed="left">
+        <el-table-column prop="name" label="員工姓名" width="180" fixed="left">
           <template #default="{ row }">
             <div class="employee-name">
+              <el-avatar :size="32" :src="getPhotoUrl(row.photo)" class="employee-avatar-small">
+                {{ row.name ? row.name.charAt(0) : '?' }}
+              </el-avatar>
               <el-checkbox v-if="canEdit" class="row-checkbox" :model-value="selectedEmployeesSet.has(row._id)"
                 @change="val => toggleEmployee(row._id, val)" />
               <component v-if="employeeStatus(row._id) === 'unscheduled'" :is="CircleCloseFilled"
@@ -517,6 +520,7 @@ import { useRouter } from 'vue-router'
 import ScheduleDashboard from './ScheduleDashboard.vue'
 import { CircleCloseFilled, WarningFilled } from '@element-plus/icons-vue'
 import { buildShiftStyle } from '../../utils/shiftColors'
+import { getPhotoUrl } from '../../utils/photoUrl'
 
 const fmt = d => (d ? new Date(d).toLocaleString() : '-')
 const renderValue = v => (Array.isArray(v) ? v.join(', ') : v ?? '-')
@@ -3349,6 +3353,10 @@ onMounted(async () => {
   display: flex;
   align-items: center;
   gap: 6px;
+
+  .employee-avatar-small {
+    flex-shrink: 0;
+  }
 }
 
 .row-checkbox {
