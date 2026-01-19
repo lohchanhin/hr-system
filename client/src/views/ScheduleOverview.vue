@@ -775,10 +775,46 @@ onMounted(async () => {
 
 .unit-table-wrapper {
   overflow-x: auto;
+  
+  /* Enhanced scrollbar styling for better visibility */
+  &::-webkit-scrollbar {
+    height: 14px;
+  }
+  
+  &::-webkit-scrollbar-track {
+    background: #f1f5f9;
+    border-radius: 8px;
+  }
+  
+  &::-webkit-scrollbar-thumb {
+    background: #475569;
+    border-radius: 8px;
+    border: 2px solid #f1f5f9;
+    
+    &:hover {
+      background: #334155;
+    }
+    
+    &:active {
+      background: #1e293b;
+    }
+  }
 }
 
 .overview-table {
   min-width: 600px;
+  
+  /* Fixed header for better visibility when scrolling */
+  :deep(.el-table__header-wrapper) {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    background: #ecfeff;
+  }
+  
+  :deep(.el-table__fixed-header-wrapper) {
+    z-index: 11;
+  }
 }
 
 .shift-label {

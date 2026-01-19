@@ -234,11 +234,12 @@
         </el-button>
       </div>
 
-      <el-table class="modern-schedule-table" :data="visibleEmployees" :header-cell-style="{
-        backgroundColor: '#ecfeff',
-        color: '#164e63',
-        fontWeight: '600'
-      }" :row-style="{ backgroundColor: '#ffffff' }" @row-click="row => lazyMode && toggleRow(row._id)">
+      <div class="schedule-table-wrapper">
+        <el-table class="modern-schedule-table" :data="visibleEmployees" :header-cell-style="{
+          backgroundColor: '#ecfeff',
+          color: '#164e63',
+          fontWeight: '600'
+        }" :row-style="{ backgroundColor: '#ffffff' }" @row-click="row => lazyMode && toggleRow(row._id)">
         <el-table-column label="部門／單位" width="180" fixed="left">
           <template #default="{ row }">
             <div class="employee-info">
@@ -401,7 +402,8 @@
             </div>
           </template>
         </el-table-column>
-      </el-table>
+        </el-table>
+      </div>
 
       <div class="pagination-bar" v-if="filteredEmployees.length">
         <el-pagination background layout="prev, pager, next, ->, sizes, total" :total="filteredEmployees.length"
@@ -3326,7 +3328,54 @@ onMounted(async () => {
   }
 }
 
+.schedule-table-wrapper {
+  overflow-x: auto;
+  max-height: calc(100vh - 400px);
+  overflow-y: auto;
+  
+  /* Enhanced scrollbar styling for better visibility */
+  &::-webkit-scrollbar {
+    height: 14px;
+    width: 14px;
+  }
+  
+  &::-webkit-scrollbar-track {
+    background: #f1f5f9;
+    border-radius: 8px;
+  }
+  
+  &::-webkit-scrollbar-thumb {
+    background: #475569;
+    border-radius: 8px;
+    border: 2px solid #f1f5f9;
+    
+    &:hover {
+      background: #334155;
+    }
+    
+    &:active {
+      background: #1e293b;
+    }
+  }
+}
+
 .modern-schedule-table {
+  /* Fixed header for better visibility when scrolling */
+  :deep(.el-table__header-wrapper) {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    background: #ecfeff;
+  }
+  
+  :deep(.el-table__fixed) {
+    z-index: 11;
+  }
+  
+  :deep(.el-table__fixed-header-wrapper) {
+    z-index: 12;
+  }
+
   ::v-deep(.el-table__header) {
     th {
       border-bottom: 2px solid #ecfeff;
