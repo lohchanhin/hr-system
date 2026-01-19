@@ -137,11 +137,11 @@
           <el-table-column label="操作" width="200" fixed="right">
             <template #default="{ row, $index }">
               <div class="action-buttons">
-                <el-button type="primary" size="small" @click="openEmployeeDialog($index)" class="edit-btn">
+                <el-button type="primary" size="small" @click="openEmployeeDialog(row._id)" class="edit-btn">
                   <i class="el-icon-edit"></i>
                   編輯
                 </el-button>
-                <el-button v-if="row.role !== 'admin'" type="danger" size="small" @click="deleteEmployee($index)" class="delete-btn">
+                <el-button v-if="row.role !== 'admin'" type="danger" size="small" @click="deleteEmployee(row._id)" class="delete-btn">
                   <i class="el-icon-delete"></i>
                   刪除
                 </el-button>
@@ -4351,9 +4351,14 @@ async function confirmReferenceMappings() {
   }
 }
 
-async function openEmployeeDialog(index = null) {
+async function openEmployeeDialog(employeeId = null) {
   ensureDictionaryFallbacks()
-  if (index !== null) {
+  if (employeeId !== null) {
+    const index = employeeList.value.findIndex(e => e._id === employeeId)
+    if (index === -1) {
+      ElMessage.error('找不到該員工資料')
+      return
+    }
     editEmployeeIndex = index
     const emp = employeeList.value[index]
     editEmployeeId = emp._id || ''
@@ -4616,7 +4621,12 @@ async function saveEmployee() {
   }
 }
 
-async function deleteEmployee(index) {
+async function deleteEmployee(employeeId) {
+  const index = employeeList.value.findIndex(e => e._id === employeeId)
+  if (index === -1) {
+    ElMessage.error('找不到該員工資料')
+    return
+  }
   const emp = employeeList.value[index]
   
   // Prevent deleting admin accounts
