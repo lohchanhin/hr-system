@@ -3332,9 +3332,8 @@ onMounted(async () => {
 }
 
 .schedule-table-wrapper {
-  overflow-x: auto;
+  overflow: auto;
   max-height: calc(100vh - var(--table-max-height-offset));
-  overflow-y: auto;
   
   /* Enhanced scrollbar styling for better visibility */
   &::-webkit-scrollbar {
@@ -3379,13 +3378,13 @@ onMounted(async () => {
     z-index: 12;
   }
 
-  ::v-deep(.el-table__header) {
+  :deep(.el-table__header) {
     th {
       border-bottom: 2px solid #ecfeff;
     }
   }
 
-  ::v-deep(.el-table__row) {
+  :deep(.el-table__row) {
     &:hover {
       background-color: #f8fafc !important;
     }
