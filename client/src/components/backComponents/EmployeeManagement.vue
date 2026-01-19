@@ -2918,7 +2918,7 @@ function buildPhotoUploadFile(url, name = '') {
   if (!url) return null
   return {
     name: name ? `${name} 照片` : '員工照片',
-    url,
+    url: getPhotoUrl(url),
     status: 'success',
     percentage: 100
   }
