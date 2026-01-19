@@ -405,7 +405,7 @@
 
       <div class="pagination-bar" v-if="filteredEmployees.length">
         <el-pagination background layout="prev, pager, next, ->, sizes, total" :total="filteredEmployees.length"
-          :page-size="pageSize" :current-page="currentPage" :page-sizes="[10, 20, 30, 50]"
+          :page-size="pageSize" :current-page="currentPage" :page-sizes="[5, 10, 20, 30, 50, 100]"
           @current-change="onPageChange" @size-change="onPageSizeChange" />
       </div>
     </div>
@@ -590,7 +590,7 @@ const isPublishing = ref(false)
 const isFinalizing = ref(false)
 const detail = reactive({ visible: false, doc: null })
 const employeeNameCache = reactive({})
-const pageSize = ref(20)
+const pageSize = ref(5)
 const currentPage = ref(1)
 const publishSnapshot = ref(null)
 const loadedEmployeeIds = ref(new Set())
@@ -746,18 +746,31 @@ const rebuildSelectionCache = () => {
     nextCache.set(key, existing)
   }
 
+  // Process manual selections (typically small set)
   manualSelectedCells.value.forEach(key => {
     const { empId, day } = parseCellKey(key)
     add(empId, day, 'manual')
   })
 
-  selectedEmployees.value.forEach(empId => {
-    days.value.forEach(d => add(empId, d.date, 'employee'))
-  })
+  // Process selected employees x days
+  if (selectedEmployees.value.size > 0) {
+    const daysArray = days.value
+    selectedEmployees.value.forEach(empId => {
+      for (let i = 0; i < daysArray.length; i++) {
+        add(empId, daysArray[i].date, 'employee')
+      }
+    })
+  }
 
-  selectedDays.value.forEach(day => {
-    employees.value.forEach(emp => add(emp._id, day, 'day'))
-  })
+  // Process selected days x employees
+  if (selectedDays.value.size > 0) {
+    const employeesArray = employees.value
+    selectedDays.value.forEach(day => {
+      for (let i = 0; i < employeesArray.length; i++) {
+        add(employeesArray[i]._id, day, 'day')
+      }
+    })
+  }
 
   selectedCellsCache.value = nextCache
 }
@@ -1074,7 +1087,7 @@ watch(leaveIndex, pruneSelections)
 
 // ========= lazy mode =========
 
-const lazyMode = computed(() => employees.value.length > 50)
+const lazyMode = computed(() => employees.value.length > 30)
 const toggleRow = id => {
   if (expandedRows.value.has(id)) expandedRows.value.delete(id)
   else expandedRows.value.add(id)
