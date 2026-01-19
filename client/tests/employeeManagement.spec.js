@@ -325,7 +325,7 @@ describe('EmployeeManagement.vue', () => {
 
     const wrapper = mount(EmployeeManagement, { global: { stubs: elStubs } })
     await flushPromises()
-    await wrapper.vm.openEmployeeDialog(0)
+    await wrapper.vm.openEmployeeDialog('e1')
 
     expect(wrapper.vm.employeeForm.height).toBe(172.5)
     expect(wrapper.vm.employeeForm.weight).toBe(65.3)
@@ -367,7 +367,7 @@ describe('EmployeeManagement.vue', () => {
 
     const wrapper = mount(EmployeeManagement, { global: { stubs: elStubs } })
     await flushPromises()
-    await wrapper.vm.openEmployeeDialog(0)
+    await wrapper.vm.openEmployeeDialog('e2')
 
     expect(wrapper.vm.employeeForm.permissionGrade).toBe('L2')
     expect(wrapper.vm.employeeForm.signRole).toBe('R002')
@@ -477,7 +477,7 @@ describe('EmployeeManagement.vue', () => {
 
     const wrapper = mount(EmployeeManagement, { global: { stubs: elStubs } })
     await flushPromises()
-    await wrapper.vm.openEmployeeDialog(0)
+    await wrapper.vm.openEmployeeDialog('e1')
 
     expect(wrapper.vm.employeeForm.serviceType).toBe('義務役')
     expect(wrapper.vm.employeeForm.militaryBranch).toBe('海軍')
