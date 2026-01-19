@@ -23,7 +23,7 @@ ensureUploadDir().catch(console.error)
 
 // 支援的圖片格式（移除無效的 image/jpg）
 const ALLOWED_MIME_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp']
-const MAX_FILE_SIZE = 5 * 1024 * 1024 // 5MB
+const MAX_FILE_SIZE = 20 * 1024 * 1024 // 5MB
 
 /**
  * 檢測圖片格式並返回相關信息

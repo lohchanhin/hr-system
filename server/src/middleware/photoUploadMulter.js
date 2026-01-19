@@ -11,7 +11,7 @@ const UPLOAD_DIR = path.join(__dirname, '../../../upload')
 
 // 支援的圖片格式
 const ALLOWED_MIME_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp']
-const MAX_FILE_SIZE = 5 * 1024 * 1024 // 5MB
+const MAX_FILE_SIZE = 20 * 1024 * 1024 // 20MB
 
 // 配置 multer storage
 const storage = multer.diskStorage({
