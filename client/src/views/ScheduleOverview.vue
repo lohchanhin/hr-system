@@ -561,6 +561,9 @@ onMounted(async () => {
 
 <style scoped>
 .schedule-overview-page {
+  --header-bg-color: #ecfeff;
+  --table-max-height-offset: 400px;
+  
   display: flex;
   flex-direction: column;
   gap: 24px;
@@ -809,7 +812,7 @@ onMounted(async () => {
     position: sticky;
     top: 0;
     z-index: 10;
-    background: #ecfeff;
+    background: var(--header-bg-color);
   }
   
   :deep(.el-table__fixed-header-wrapper) {

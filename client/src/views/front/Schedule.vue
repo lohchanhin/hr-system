@@ -2752,6 +2752,9 @@ onMounted(async () => {
 
 /* Modern HR system styling with professional design */
 .schedule-page {
+  --header-bg-color: #ecfeff;
+  --table-max-height-offset: 400px; /* Accounts for page header, filters, actions, and pagination */
+  
   padding: 24px;
   background: linear-gradient(135deg, #f8fafc 0%, #ecfeff 100%);
   min-height: 100vh;
@@ -3330,7 +3333,7 @@ onMounted(async () => {
 
 .schedule-table-wrapper {
   overflow-x: auto;
-  max-height: calc(100vh - 400px);
+  max-height: calc(100vh - var(--table-max-height-offset));
   overflow-y: auto;
   
   /* Enhanced scrollbar styling for better visibility */
@@ -3365,7 +3368,7 @@ onMounted(async () => {
     position: sticky;
     top: 0;
     z-index: 10;
-    background: #ecfeff;
+    background: var(--header-bg-color);
   }
   
   :deep(.el-table__fixed) {
