@@ -60,7 +60,7 @@
           <el-table-column prop="name" label="員工資訊" min-width="200">
             <template #default="{ row }">
               <div class="employee-info">
-                <el-avatar :size="40" :src="row.photo" class="employee-avatar">
+                <el-avatar :size="40" :src="getPhotoUrl(row.photo)" class="employee-avatar">
                   {{ row.name ? row.name.charAt(0) : 'N' }}
                 </el-avatar>
                 <div class="employee-details">
@@ -1180,6 +1180,7 @@ import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { apiFetch, importEmployeesBulk } from '../../api'
 import { REQUIRED_FIELDS } from './requiredFields'
+import { getPhotoUrl } from '../../utils/photoUrl'
 
 // 常數定義
 const CURRENT_YEAR = new Date().getFullYear()
