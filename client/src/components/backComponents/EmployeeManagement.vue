@@ -1180,7 +1180,7 @@ import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { apiFetch, importEmployeesBulk } from '../../api'
 import { REQUIRED_FIELDS } from './requiredFields'
-import { getPhotoUrl } from '../../utils/photoUrl'
+import { getPhotoUrl, getPhotoPath } from '../../utils/photoUrl'
 
 // 常數定義
 const CURRENT_YEAR = new Date().getFullYear()
@@ -2928,13 +2928,13 @@ function extractUploadUrls(files = []) {
   return (Array.isArray(files) ? files : [files])
     .map(file => {
       if (!file) return ''
-      if (typeof file === 'string') return file
-      if (file.url) return file.url
+      if (typeof file === 'string') return getPhotoPath(file)
+      if (file.url) return getPhotoPath(file.url)
       const response = file.response
-      if (typeof response === 'string') return response
+      if (typeof response === 'string') return getPhotoPath(response)
       if (typeof response === 'object' && response !== null) {
-        if ('url' in response && response.url) return response.url
-        if ('data' in response && response.data?.url) return response.data.url
+        if ('url' in response && response.url) return getPhotoPath(response.url)
+        if ('data' in response && response.data?.url) return getPhotoPath(response.data.url)
       }
       return ''
     })
@@ -2942,7 +2942,7 @@ function extractUploadUrls(files = []) {
 }
 
 function extractPhotoUrls(files = []) {
-  return extractUploadUrls(files)
+  return extractUploadUrls(files).map(url => getPhotoPath(url)).filter(Boolean)
 }
 
 function normalizeAttachmentList(uploadFiles = [], namePrefix = '附件') {
