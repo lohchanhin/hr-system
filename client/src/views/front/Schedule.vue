@@ -3340,47 +3340,67 @@ onMounted(async () => {
 
 .schedule-table-wrapper {
   /* Element Plus table handles its own scrolling with max-height prop */
-  /* Enhanced scrollbar styling for better visibility and always-on display */
+  /* ULTRA-ENHANCED scrollbar styling for MAXIMUM visibility */
   :deep(.el-table__body-wrapper) {
     /* Force scrollbar to always be visible */
     overflow-x: scroll !important;
     overflow-y: scroll !important;
-    scrollbar-color: #0891b2 #e2e8f0; /* Firefox: thumb track */
-    scrollbar-width: auto; /* Firefox: use default width (not thin) */
+    
+    /* Firefox: THICK scrollbar with bright colors */
+    scrollbar-color: #06b6d4 #cbd5e1 !important; /* Brighter cyan thumb, darker track */
+    scrollbar-width: thick !important; /* Use thick instead of auto for Firefox */
     
     /* Webkit browsers (Chrome, Safari, Edge) */
+    /* ULTRA-LARGE scrollbar: 32px for maximum visibility */
     &::-webkit-scrollbar {
-      height: 24px; /* Increased from 18px for maximum visibility and easier dragging */
-      width: 24px;
-      /* Force always visible - prevent auto-hide */
-      -webkit-appearance: none;
+      height: 32px !important; /* MASSIVE increase from 24px to 32px */
+      width: 32px !important;
+      -webkit-appearance: none !important;
     }
     
     &::-webkit-scrollbar-track {
-      background: #e2e8f0; /* More visible track color */
-      border-radius: 10px;
-      border: 1px solid #cbd5e1; /* Add border for better definition */
+      background: #cbd5e1 !important; /* Darker, more visible track */
+      border-radius: 8px !important;
+      border: 2px solid #94a3b8 !important; /* Thicker, darker border */
+      box-shadow: inset 0 0 6px rgba(0, 0, 0, 0.1) !important; /* Add depth */
     }
     
     &::-webkit-scrollbar-thumb {
-      background: #0891b2; /* More prominent cyan color matching theme */
-      border-radius: 10px;
-      border: 1px solid #e2e8f0; /* Reduced border from 3px to 1px to make thumb appear larger */
-      min-height: 50px; /* Increased from 40px for better grabbing area */
-      min-width: 50px;
+      background: #06b6d4 !important; /* BRIGHTER cyan for maximum visibility */
+      border-radius: 8px !important;
+      border: 2px solid #ffffff !important; /* White border for contrast */
+      min-height: 60px !important; /* LARGER grabbing area: 60px */
+      min-width: 60px !important;
+      box-shadow: 0 2px 8px rgba(6, 182, 212, 0.3) !important; /* Add glow effect */
       
       &:hover {
-        background: #0e7490; /* Darker on hover for feedback */
+        background: #0891b2 !important; /* Slightly darker on hover */
+        box-shadow: 0 2px 12px rgba(6, 182, 212, 0.5) !important; /* Stronger glow */
       }
       
       &:active {
-        background: #164e63; /* Even darker when dragging */
+        background: #0e7490 !important; /* Even darker when dragging */
+        box-shadow: 0 2px 16px rgba(6, 182, 212, 0.6) !important; /* Maximum glow */
       }
     }
     
     /* Hide scrollbar arrow buttons for cleaner appearance */
     &::-webkit-scrollbar-button {
-      display: none;
+      display: none !important;
+    }
+  }
+  
+  /* Additional specificity: target the table directly */
+  :deep(.el-table) {
+    .el-table__body-wrapper::-webkit-scrollbar {
+      height: 32px !important;
+      width: 32px !important;
+    }
+    
+    .el-table__body-wrapper::-webkit-scrollbar-thumb {
+      background: #06b6d4 !important;
+      min-height: 60px !important;
+      min-width: 60px !important;
     }
   }
 }
