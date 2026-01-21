@@ -235,7 +235,7 @@
       </div>
 
       <div class="schedule-table-wrapper">
-        <el-table class="modern-schedule-table" :data="visibleEmployees" :header-cell-style="{
+        <el-table class="modern-schedule-table" :data="visibleEmployees" :max-height="tableMaxHeight" :header-cell-style="{
           backgroundColor: '#ecfeff',
           color: '#164e63',
           fontWeight: '600'
@@ -1094,6 +1094,13 @@ const toggleRow = id => {
   if (expandedRows.value.has(id)) expandedRows.value.delete(id)
   else expandedRows.value.add(id)
 }
+
+// ========= table height for sticky header =========
+const tableMaxHeight = computed(() => {
+  // Calculate max height to enable sticky header
+  // Account for page header, filters, actions, and pagination (approximately 400px)
+  return window.innerHeight - 400
+})
 
 const filteredSubDepartments = computed(() =>
   subDepartments.value.filter(s => s.department === selectedDepartment.value)
@@ -3332,50 +3339,39 @@ onMounted(async () => {
 }
 
 .schedule-table-wrapper {
-  overflow: auto;
-  max-height: calc(100vh - var(--table-max-height-offset));
-  
+  /* Element Plus table handles its own scrolling with max-height prop */
   /* Enhanced scrollbar styling for better visibility */
-  &::-webkit-scrollbar {
-    height: 14px;
-    width: 14px;
-  }
-  
-  &::-webkit-scrollbar-track {
-    background: #f1f5f9;
-    border-radius: 8px;
-  }
-  
-  &::-webkit-scrollbar-thumb {
-    background: #475569;
-    border-radius: 8px;
-    border: 2px solid #f1f5f9;
-    
-    &:hover {
-      background: #334155;
+  :deep(.el-table__body-wrapper) {
+    &::-webkit-scrollbar {
+      height: 14px;
+      width: 14px;
     }
     
-    &:active {
-      background: #1e293b;
+    &::-webkit-scrollbar-track {
+      background: #f1f5f9;
+      border-radius: 8px;
+    }
+    
+    &::-webkit-scrollbar-thumb {
+      background: #475569;
+      border-radius: 8px;
+      border: 2px solid #f1f5f9;
+      
+      &:hover {
+        background: #334155;
+      }
+      
+      &:active {
+        background: #1e293b;
+      }
     }
   }
 }
 
 .modern-schedule-table {
-  /* Fixed header for better visibility when scrolling */
+  /* Element Plus handles sticky header when max-height is set */
   :deep(.el-table__header-wrapper) {
-    position: sticky;
-    top: 0;
-    z-index: 10;
     background: var(--header-bg-color);
-  }
-  
-  :deep(.el-table__fixed) {
-    z-index: 11;
-  }
-  
-  :deep(.el-table__fixed-header-wrapper) {
-    z-index: 12;
   }
 
   :deep(.el-table__header) {
