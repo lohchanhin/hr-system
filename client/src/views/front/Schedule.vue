@@ -3664,6 +3664,56 @@ onMounted(async () => {
 }
 
 .modern-approval-table {
+  /* Enhanced scrollbar styling for better visibility and usability */
+  :deep(.el-table__body-wrapper) {
+    /* Force scrollbar to always be visible */
+    overflow-x: scroll !important;
+    overflow-y: scroll !important;
+    
+    /* Firefox: thick scrollbar with bright colors for better visibility */
+    scrollbar-color: #06b6d4 #cbd5e1 !important; /* Brighter cyan thumb, darker track */
+    scrollbar-width: thick !important; /* Use thick instead of auto for Firefox */
+    
+    /* Webkit browsers (Chrome, Safari, Edge) */
+    /* Large scrollbar: 32px for improved visibility and easier interaction */
+    &::-webkit-scrollbar {
+      height: 32px !important; /* Increased from 24px to 32px for better visibility */
+      width: 32px !important;
+      -webkit-appearance: none !important;
+    }
+    
+    &::-webkit-scrollbar-track {
+      background: #cbd5e1 !important; /* Darker track for better contrast */
+      border-radius: 8px !important;
+      border: 2px solid #94a3b8 !important; /* Border for better definition */
+      box-shadow: inset 0 0 6px rgba(0, 0, 0, 0.1) !important; /* Subtle depth effect */
+    }
+    
+    &::-webkit-scrollbar-thumb {
+      background: #06b6d4 !important; /* Bright cyan for high visibility */
+      border-radius: 8px !important;
+      border: 2px solid #ffffff !important; /* White border for contrast */
+      min-height: 60px !important; /* Larger grabbing area for easier interaction */
+      min-width: 60px !important;
+      box-shadow: 0 2px 8px rgba(6, 182, 212, 0.3) !important; /* Glow effect for prominence */
+      
+      &:hover {
+        background: #0891b2 !important; /* Slightly darker on hover for feedback */
+        box-shadow: 0 2px 12px rgba(6, 182, 212, 0.5) !important; /* Stronger glow on hover */
+      }
+      
+      &:active {
+        background: #0e7490 !important; /* Darker when actively dragging */
+        box-shadow: 0 2px 16px rgba(6, 182, 212, 0.6) !important; /* Maximum glow when active */
+      }
+    }
+    
+    /* Hide scrollbar arrow buttons for cleaner appearance */
+    &::-webkit-scrollbar-button {
+      display: none !important;
+    }
+  }
+
   ::v-deep(.el-table__row) {
     &:hover {
       background-color: #f8fafc !important;
