@@ -3350,8 +3350,8 @@ onMounted(async () => {
     
     /* Webkit browsers (Chrome, Safari, Edge) */
     &::-webkit-scrollbar {
-      height: 18px; /* Increased from 14px for easier dragging */
-      width: 18px;
+      height: 24px; /* Increased from 18px for maximum visibility and easier dragging */
+      width: 24px;
       /* Force always visible - prevent auto-hide */
       -webkit-appearance: none;
     }
@@ -3365,9 +3365,9 @@ onMounted(async () => {
     &::-webkit-scrollbar-thumb {
       background: #0891b2; /* More prominent cyan color matching theme */
       border-radius: 10px;
-      border: 3px solid #e2e8f0; /* Increased border for better visual separation */
-      min-height: 40px; /* Ensure thumb is large enough to grab */
-      min-width: 40px;
+      border: 1px solid #e2e8f0; /* Reduced border from 3px to 1px to make thumb appear larger */
+      min-height: 50px; /* Increased from 40px for better grabbing area */
+      min-width: 50px;
       
       &:hover {
         background: #0e7490; /* Darker on hover for feedback */
