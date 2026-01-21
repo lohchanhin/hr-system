@@ -227,12 +227,3 @@ body {
 .el-scrollbar__bar.is-horizontal:hover > div {
   background-color: #0891b2 !important; /* Slightly darker on hover */
 }
-
-.el-scrollbar__thumb {
-  background-color: #06b6d4 !important;
-  opacity: 1 !important;
-}
-
-.el-scrollbar__thumb:hover {
-  background-color: #0891b2 !important;
-}
