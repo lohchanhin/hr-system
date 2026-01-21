@@ -46,17 +46,17 @@
 }
 ```
 
-### 變更後
+### 變更後（2026-01-21 最新版本）
 ```css
 /* 強制滾動條始終顯示 */
 overflow-x: scroll !important;
 overflow-y: scroll !important;
-scrollbar-color: #475569 #f1f5f9; /* Firefox */
+scrollbar-color: #0891b2 #e2e8f0; /* Firefox */
 scrollbar-width: auto; /* Firefox */
 
 &::-webkit-scrollbar {
-  height: 18px; /* 增加尺寸 */
-  width: 18px;
+  height: 24px; /* 增加尺寸至 24px，比之前的 18px 更大 */
+  width: 24px;
   -webkit-appearance: none;
 }
 
@@ -69,9 +69,9 @@ scrollbar-width: auto; /* Firefox */
 &::-webkit-scrollbar-thumb {
   background: #0891b2; /* 主題青色，更顯眼 */
   border-radius: 10px;
-  border: 3px solid #e2e8f0;
-  min-height: 40px; /* 確保拖拉區域夠大 */
-  min-width: 40px;
+  border: 1px solid #e2e8f0; /* 減少邊框從 3px 至 1px，使滑塊視覺上更大 */
+  min-height: 50px; /* 增加至 50px，比之前的 40px 更大 */
+  min-width: 50px;
   
   &:hover {
     background: #0e7490; /* 懸停回饋 */
@@ -83,10 +83,20 @@ scrollbar-width: auto; /* Firefox */
 }
 ```
 
+## 最新改善（2026-01-21）
+針對客戶反映「橫向拉桿需要更明顯更大」的需求，進行以下強化：
+
+### 改善項目
+1. **滾動條高度增加**：從 18px 增加到 24px（增加 33%）
+2. **滑塊邊框優化**：從 3px 減少到 1px，使滑塊視覺上更大更飽滿
+3. **最小拖拉區域擴大**：從 40px x 40px 增加到 50px x 50px
+4. **Firefox 滾動條顏色更新**：使用主題青色 #0891b2 以匹配 Webkit 版本
+
 ## 效果
 - ✅ 滾動條永久顯示，不需要滑鼠靠近
-- ✅ 拖拉區域更大，更容易操作
-- ✅ 視覺上更明顯，採用主題色彩
+- ✅ 拖拉區域更大（24px 高度，50px 最小尺寸），極易操作
+- ✅ 滑塊更飽滿（減少邊框寬度），視覺上更突出
+- ✅ 視覺上極為明顯，採用主題色彩
 - ✅ 提供互動回饋（懸停和拖拉時顏色變化）
 
 ## 影響範圍
