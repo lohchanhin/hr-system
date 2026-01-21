@@ -1306,7 +1306,7 @@ describe('Schedule.vue', () => {
     expect(wrapper.vm.filteredEmployees.map(e => e._id)).toEqual(['e2'])
   })
 
-  it('toggles row expansion in lazy mode', async () => {
+  it('lazy mode is disabled - schedule table always expanded', async () => {
     apiFetch.mockResolvedValue({ ok: true, json: async () => [] })
     const wrapper = mountSchedule()
     await flush()
@@ -1317,9 +1317,8 @@ describe('Schedule.vue', () => {
       subDepartment: ''
     }))
     await wrapper.vm.$nextTick()
-    expect(wrapper.vm.lazyMode).toBe(true)
-    wrapper.vm.toggleRow('e1')
-    expect(wrapper.vm.expandedRows.has('e1')).toBe(true)
+    // Lazy mode is now always disabled to auto-expand schedule table
+    expect(wrapper.vm.lazyMode).toBe(false)
   })
 
   it('reverts change when update fails', async () => {
