@@ -3394,6 +3394,32 @@ onMounted(async () => {
   :deep(.el-table__body-wrapper) {
     @include enhanced-table-scrollbar;
   }
+
+  /* Element Plus Scrollbar Component Styling - Make horizontal scrollbar more visible */
+  :deep(.el-scrollbar__bar.is-horizontal) {
+    height: 12px !important; /* Make horizontal scrollbar taller */
+    opacity: 1 !important; /* Always visible */
+    z-index: 10 !important; /* Ensure it's on top */
+  }
+
+  :deep(.el-scrollbar__bar.is-horizontal > div) {
+    height: 100% !important; /* Fill the full height */
+    background-color: #06b6d4 !important; /* Bright cyan color for visibility */
+    border-radius: 6px !important;
+  }
+
+  :deep(.el-scrollbar__bar.is-horizontal:hover > div) {
+    background-color: #0891b2 !important; /* Slightly darker on hover */
+  }
+
+  :deep(.el-scrollbar__thumb) {
+    background-color: #06b6d4 !important;
+    opacity: 1 !important;
+  }
+
+  :deep(.el-scrollbar__thumb:hover) {
+    background-color: #0891b2 !important;
+  }
 }
 
 .modern-schedule-table {

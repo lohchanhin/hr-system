@@ -211,3 +211,28 @@ body {
   background-color: var(--hr-primary);
   color: var(--hr-text-inverse);
 }
+
+/* Element Plus Scrollbar Styling - Make horizontal scrollbar more visible */
+.el-scrollbar__bar.is-horizontal {
+  height: 12px !important; /* Make horizontal scrollbar taller */
+  opacity: 1 !important; /* Always visible */
+}
+
+.el-scrollbar__bar.is-horizontal > div {
+  height: 100% !important; /* Fill the full height */
+  background-color: #06b6d4 !important; /* Bright cyan color for visibility */
+  border-radius: 6px !important;
+}
+
+.el-scrollbar__bar.is-horizontal:hover > div {
+  background-color: #0891b2 !important; /* Slightly darker on hover */
+}
+
+.el-scrollbar__thumb {
+  background-color: #06b6d4 !important;
+  opacity: 1 !important;
+}
+
+.el-scrollbar__thumb:hover {
+  background-color: #0891b2 !important;
+}
