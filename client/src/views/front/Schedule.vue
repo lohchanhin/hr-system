@@ -3394,6 +3394,11 @@ onMounted(async () => {
   :deep(.el-table__body-wrapper) {
     @include enhanced-table-scrollbar;
   }
+
+  /* Additional Element Plus Scrollbar styling - z-index to ensure visibility */
+  :deep(.el-scrollbar__bar.is-horizontal) {
+    z-index: 10 !important; /* Ensure it's on top */
+  }
 }
 
 .modern-schedule-table {
