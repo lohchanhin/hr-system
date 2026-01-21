@@ -3345,7 +3345,7 @@ onMounted(async () => {
     /* Force scrollbar to always be visible */
     overflow-x: scroll !important;
     overflow-y: scroll !important;
-    scrollbar-color: #475569 #f1f5f9; /* Firefox: thumb track */
+    scrollbar-color: #0891b2 #e2e8f0; /* Firefox: thumb track */
     scrollbar-width: auto; /* Firefox: use default width (not thin) */
     
     /* Webkit browsers (Chrome, Safari, Edge) */
@@ -3378,9 +3378,9 @@ onMounted(async () => {
       }
     }
     
-    /* Force scrollbar to be always visible on webkit browsers */
+    /* Hide scrollbar arrow buttons for cleaner appearance */
     &::-webkit-scrollbar-button {
-      display: none; /* Hide scroll buttons but keep scrollbar visible */
+      display: none;
     }
   }
 }
