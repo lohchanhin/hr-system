@@ -3340,30 +3340,47 @@ onMounted(async () => {
 
 .schedule-table-wrapper {
   /* Element Plus table handles its own scrolling with max-height prop */
-  /* Enhanced scrollbar styling for better visibility */
+  /* Enhanced scrollbar styling for better visibility and always-on display */
   :deep(.el-table__body-wrapper) {
+    /* Force scrollbar to always be visible */
+    overflow-x: scroll !important;
+    overflow-y: scroll !important;
+    scrollbar-color: #0891b2 #e2e8f0; /* Firefox: thumb track */
+    scrollbar-width: auto; /* Firefox: use default width (not thin) */
+    
+    /* Webkit browsers (Chrome, Safari, Edge) */
     &::-webkit-scrollbar {
-      height: 14px;
-      width: 14px;
+      height: 18px; /* Increased from 14px for easier dragging */
+      width: 18px;
+      /* Force always visible - prevent auto-hide */
+      -webkit-appearance: none;
     }
     
     &::-webkit-scrollbar-track {
-      background: #f1f5f9;
-      border-radius: 8px;
+      background: #e2e8f0; /* More visible track color */
+      border-radius: 10px;
+      border: 1px solid #cbd5e1; /* Add border for better definition */
     }
     
     &::-webkit-scrollbar-thumb {
-      background: #475569;
-      border-radius: 8px;
-      border: 2px solid #f1f5f9;
+      background: #0891b2; /* More prominent cyan color matching theme */
+      border-radius: 10px;
+      border: 3px solid #e2e8f0; /* Increased border for better visual separation */
+      min-height: 40px; /* Ensure thumb is large enough to grab */
+      min-width: 40px;
       
       &:hover {
-        background: #334155;
+        background: #0e7490; /* Darker on hover for feedback */
       }
       
       &:active {
-        background: #1e293b;
+        background: #164e63; /* Even darker when dragging */
       }
+    }
+    
+    /* Hide scrollbar arrow buttons for cleaner appearance */
+    &::-webkit-scrollbar-button {
+      display: none;
     }
   }
 }
