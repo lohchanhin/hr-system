@@ -1089,7 +1089,7 @@ watch(leaveIndex, pruneSelections)
 
 // ========= lazy mode =========
 
-const lazyMode = computed(() => employees.value.length > 30)
+const lazyMode = computed(() => false) // Disabled: always show expanded schedule table
 const toggleRow = id => {
   if (expandedRows.value.has(id)) expandedRows.value.delete(id)
   else expandedRows.value.add(id)
