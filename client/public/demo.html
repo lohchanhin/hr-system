@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>拉桿改善視覺展示</title>
+    <style>
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            padding: 40px;
+            background: linear-gradient(135deg, #f8fafc 0%, #ecfeff 100%);
+            margin: 0;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 16px;
+            padding: 40px;
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
+        }
+        
+        h1 {
+            color: #164e63;
+            font-size: 2.5rem;
+            margin-bottom: 16px;
+            text-align: center;
+        }
+        
+        .subtitle {
+            color: #475569;
+            font-size: 1.25rem;
+            margin-bottom: 48px;
+            text-align: center;
+        }
+        
+        .comparison-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 32px;
+            margin-bottom: 48px;
+        }
+        
+        .demo-box {
+            border: 3px solid;
+            border-radius: 12px;
+            padding: 24px;
+            position: relative;
+        }
+        
+        .before {
+            border-color: #ef4444;
+            background: linear-gradient(135deg, #fee2e2 0%, #fecaca 100%);
+        }
+        
+        .after {
+            border-color: #22c55e;
+            background: linear-gradient(135deg, #dcfce7 0%, #bbf7d0 100%);
+        }
+        
+        .demo-box h2 {
+            margin-top: 0;
+            font-size: 1.75rem;
+            margin-bottom: 20px;
+        }
+        
+        .before h2 {
+            color: #b91c1c;
+        }
+        
+        .after h2 {
+            color: #166534;
+        }
+        
+        .scrollbar-visual {
+            background: #f8fafc;
+            border: 2px solid #cbd5e1;
+            border-radius: 8px;
+            padding: 20px;
+            margin: 20px 0;
+            min-height: 80px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+        }
+        
+        .scrollbar-bar {
+            width: 80%;
+            border-radius: 6px;
+            position: relative;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        }
+        
+        .before .scrollbar-bar {
+            height: 6px;
+            background: #9ca3af;
+        }
+        
+        .after .scrollbar-bar {
+            height: 12px;
+            background: #06b6d4;
+            box-shadow: 0 2px 8px rgba(6, 182, 212, 0.3);
+        }
+        
+        .dimension-label {
+            position: absolute;
+            right: -60px;
+            top: 50%;
+            transform: translateY(-50%);
+            background: white;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-weight: 700;
+            font-size: 0.9rem;
+            border: 2px solid;
+        }
+        
+        .before .dimension-label {
+            color: #b91c1c;
+            border-color: #ef4444;
+        }
+        
+        .after .dimension-label {
+            color: #166534;
+            border-color: #22c55e;
+        }
+        
+        .features {
+            margin-top: 20px;
+        }
+        
+        .features h3 {
+            font-size: 1.25rem;
+            margin-bottom: 12px;
+            color: #0f172a;
+        }
+        
+        .features ul {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+        }
+        
+        .features li {
+            padding: 8px 0;
+            font-size: 1rem;
+            line-height: 1.6;
+        }
+        
+        .features li::before {
+            content: "•";
+            margin-right: 8px;
+            font-weight: bold;
+        }
+        
+        .before .features li::before {
+            color: #ef4444;
+        }
+        
+        .after .features li::before {
+            color: #22c55e;
+        }
+        
+        .highlight {
+            background: #fef3c7;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-weight: 600;
+        }
+        
+        .improvement-section {
+            background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%);
+            border: 3px solid #3b82f6;
+            border-radius: 12px;
+            padding: 32px;
+            margin-top: 32px;
+        }
+        
+        .improvement-section h2 {
+            color: #1e40af;
+            font-size: 2rem;
+            margin-top: 0;
+            margin-bottom: 24px;
+            text-align: center;
+        }
+        
+        .improvements {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+        }
+        
+        .improvement-item {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+        
+        .improvement-item h3 {
+            color: #1e40af;
+            font-size: 1.25rem;
+            margin-top: 0;
+            margin-bottom: 12px;
+        }
+        
+        .stat {
+            font-size: 2rem;
+            font-weight: 800;
+            color: #22c55e;
+            margin: 8px 0;
+        }
+        
+        .code-section {
+            background: #1e293b;
+            color: #e2e8f0;
+            border-radius: 8px;
+            padding: 24px;
+            margin-top: 32px;
+            overflow-x: auto;
+        }
+        
+        .code-section h2 {
+            color: #06b6d4;
+            margin-top: 0;
+            margin-bottom: 16px;
+        }
+        
+        .code-section pre {
+            margin: 0;
+            font-family: 'Monaco', 'Cascadia Code', 'Courier New', monospace;
+            font-size: 0.9rem;
+            line-height: 1.6;
+        }
+        
+        .code-section .property {
+            color: #fb923c;
+        }
+        
+        .code-section .value {
+            color: #4ade80;
+        }
+        
+        .code-section .comment {
+            color: #64748b;
+            font-style: italic;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎯 Element Plus 橫向拉桿改善</h1>
+        <p class="subtitle">Horizontal Scrollbar Enhancement - Visual Comparison</p>
+        
+        <div class="comparison-grid">
+            <div class="demo-box before">
+                <h2>❌ 之前 (Before)</h2>
+                <div class="scrollbar-visual">
+                    <div class="scrollbar-bar">
+                        <div class="dimension-label">6px</div>
+                    </div>
+                </div>
+                <div class="features">
+                    <h3>問題點：</h3>
+                    <ul>
+                        <li>高度只有 <span class="highlight">6px</span>，太小不明顯</li>
+                        <li>顏色是灰色 (#9ca3af)，對比度低</li>
+                        <li>預設半透明，需要懸停才完全顯示</li>
+                        <li>使用者容易忽略或找不到</li>
+                    </ul>
+                </div>
+            </div>
+            
+            <div class="demo-box after">
+                <h2>✅ 現在 (After)</h2>
+                <div class="scrollbar-visual">
+                    <div class="scrollbar-bar">
+                        <div class="dimension-label">12px</div>
+                    </div>
+                </div>
+                <div class="features">
+                    <h3>改善項目：</h3>
+                    <ul>
+                        <li>高度增加到 <span class="highlight">12px</span>，提升 100%</li>
+                        <li>亮青色 (#06b6d4)，極為顯眼</li>
+                        <li>永久顯示 (opacity: 1)，不需懸停</li>
+                        <li>圓角設計 (border-radius: 6px)</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+        
+        <div class="improvement-section">
+            <h2>📊 改善成果</h2>
+            <div class="improvements">
+                <div class="improvement-item">
+                    <h3>高度提升</h3>
+                    <div class="stat">+100%</div>
+                    <p>從 6px 增加到 12px</p>
+                </div>
+                <div class="improvement-item">
+                    <h3>可見度</h3>
+                    <div class="stat">永久</div>
+                    <p>opacity: 1 !important</p>
+                </div>
+                <div class="improvement-item">
+                    <h3>顏色對比</h3>
+                    <div class="stat">亮青色</div>
+                    <p>使用 #06b6d4 主題色</p>
+                </div>
+                <div class="improvement-item">
+                    <h3>使用體驗</h3>
+                    <div class="stat">優秀</div>
+                    <p>加入 hover 效果回饋</p>
+                </div>
+            </div>
+        </div>
+        
+        <div class="code-section">
+            <h2>💻 實際 CSS 代碼</h2>
+            <pre><code><span class="comment">/* Element Plus Scrollbar Styling */</span>
+<span class="property">.el-scrollbar__bar.is-horizontal</span> {
+  <span class="property">height</span>: <span class="value">12px</span> !important;  <span class="comment">/* 從 6px 增加到 12px */</span>
+  <span class="property">opacity</span>: <span class="value">1</span> !important;     <span class="comment">/* 永久顯示 */</span>
+}
+
+<span class="property">.el-scrollbar__bar.is-horizontal > div</span> {
+  <span class="property">height</span>: <span class="value">100%</span> !important;
+  <span class="property">background-color</span>: <span class="value">#06b6d4</span> !important;  <span class="comment">/* 亮青色 */</span>
+  <span class="property">border-radius</span>: <span class="value">6px</span> !important;       <span class="comment">/* 圓角 */</span>
+}
+
+<span class="property">.el-scrollbar__bar.is-horizontal:hover > div</span> {
+  <span class="property">background-color</span>: <span class="value">#0891b2</span> !important;  <span class="comment">/* 懸停時更深 */</span>
+}</code></pre>
+        </div>
+        
+        <div style="margin-top: 40px; padding: 24px; background: linear-gradient(135deg, #ecfeff 0%, #cffafe 100%); border-radius: 12px; border-left: 6px solid #06b6d4;">
+            <h3 style="margin-top: 0; color: #164e63; font-size: 1.5rem;">✨ 修改檔案</h3>
+            <ul style="list-style: none; padding: 0; font-size: 1.1rem;">
+                <li style="padding: 8px 0;"><strong>📄 client/src/assets/base.css</strong> - 全域樣式</li>
+                <li style="padding: 8px 0;"><strong>📄 client/src/views/front/Schedule.vue</strong> - 排班頁面樣式</li>
+            </ul>
+        </div>
+    </div>
+</body>
+</html>
