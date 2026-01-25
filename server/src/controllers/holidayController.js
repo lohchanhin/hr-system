@@ -55,6 +55,31 @@ function isValidDateValue(dateValue) {
 // 控制器 (Controllers)
 // ------------------------------------------------------------------
 
+// 0. 列出某月份的假日 (不需要 admin 權限，供排班使用)
+export async function listHolidaysByMonth(req, res) {
+  try {
+    const { month } = req.query;
+    if (!month || !/^\d{4}-\d{2}$/.test(month)) {
+      return res.status(400).json({ error: '需要提供有效月份 (YYYY-MM)' });
+    }
+    
+    const startDate = new Date(`${month}-01`);
+    startDate.setHours(0, 0, 0, 0);
+    const endDate = new Date(startDate);
+    endDate.setMonth(endDate.getMonth() + 1);
+    
+    const holidays = await Holiday.find({
+      date: { $gte: startDate, $lt: endDate }
+    }).sort({ date: 1 });
+    
+    console.log(`[Holiday] 查詢 ${month} 假日，共 ${holidays.length} 筆`);
+    res.json(holidays);
+  } catch (err) {
+    console.error('[Holiday] 查詢失敗:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+}
+
 // 1. 列出所有假日
 export async function listHolidays(_req, res) {
   try {

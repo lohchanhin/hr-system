@@ -220,6 +220,7 @@ app.use('/api/dept-schedules', authenticate, authorizeRoles('admin'), deptSchedu
 app.use('/api/dept-managers', authenticate, authorizeRoles('admin'), deptManagerRoutes);
 
 app.use('/api/holidays', authenticate, authorizeRoles('admin'), holidayRoutes);
+app.use('/api/holidays-public', authenticate, holidayRoutes); // Public holiday access for schedules
 
 app.use('/api/salary-settings', authenticate, authorizeRoles('admin'), salarySettingRoutes);
 app.use('/api/holiday-move-settings', authenticate, authorizeRoles('admin'), holidayMoveSettingRoutes);

@@ -264,6 +264,20 @@
             </div>
           </template>
         </el-table-column>
+        
+        <el-table-column label="特休剩餘" width="120" fixed="left">
+          <template #default="{ row }">
+            <div v-if="row.annualLeave" class="annual-leave-info">
+              <el-tag size="small" type="info">
+                {{ row.annualLeave.remainingDays || 0 }}天
+              </el-tag>
+              <span class="leave-hours">
+                ({{ (row.annualLeave.remainingDays || 0) * 8 }}小時)
+              </span>
+            </div>
+            <span v-else class="no-leave-info">-</span>
+          </template>
+        </el-table-column>
 
         <el-table-column v-for="d in days" :key="d.date" :label="d.label" width="140" align="center">
           <template #header>
@@ -552,12 +566,14 @@ const formatApprovalCategory = (category, fallbackName = '') => {
   return mapped || normalized
 }
 
-const currentMonth = ref(dayjs().format('YYYY-MM'))
+const currentMonth = ref(dayjs().add(1, 'month').format('YYYY-MM'))
 
 
 
 const scheduleMap = ref({})
 const rawSchedules = ref([])
+const holidays = ref([])
+const holidayMap = ref({})
 
 const shifts = ref([])
 const employees = ref([])
@@ -1593,9 +1609,38 @@ const days = computed(() => {
   return Array.from({ length: end }, (_, i) => {
     const date = i + 1
     const wd = week[dt.date(date).day()]
-    return { date, label: `${date}(${wd})` }
+    const dateStr = `${currentMonth.value}-${String(date).padStart(2, '0')}`
+    const holiday = holidayMap.value[dateStr]
+    const label = holiday ? `${date}(${wd}) 🎊${holiday.name}` : `${date}(${wd})`
+    return { date, label, holiday }
   })
 })
+
+// ========= 假日管理 =========
+
+async function fetchHolidays() {
+  try {
+    // Fetch holidays for current month
+    const res = await apiFetch(`/api/holidays-public/by-month?month=${currentMonth.value}`)
+    if (res.ok) {
+      const data = await res.json()
+      holidays.value = Array.isArray(data) ? data : []
+      
+      // Build holiday map by date string for quick lookup
+      const map = {}
+      holidays.value.forEach(h => {
+        if (h.date) {
+          const dateStr = dayjs(h.date).format('YYYY-MM-DD')
+          map[dateStr] = h
+        }
+      })
+      holidayMap.value = map
+    }
+  } catch (err) {
+    console.warn('Failed to fetch holidays:', err)
+  }
+}
+
 
 // ========= 班別 / 部門 / 主管 context =========
 
@@ -2635,13 +2680,29 @@ async function fetchEmployees(
       const normalizedId = id ? String(id) : ''
       const normalizedDept = deptId ? String(deptId) : ''
       const normalizedSub = subId ? String(subId) : ''
+      
+      // Calculate remaining annual leave
+      let annualLeave = null
+      if (e.annualLeave) {
+        const totalDays = e.annualLeave.totalDays || 0
+        const usedDays = e.annualLeave.usedDays || 0
+        const remainingDays = Math.max(0, totalDays - usedDays)
+        annualLeave = {
+          ...e.annualLeave,
+          remainingDays,
+          remainingHours: remainingDays * 8
+        }
+      }
+      
       return {
         _id: normalizedId,
         name: e.name,
+        photo: e.photo,
         departmentId: normalizedDept,
         subDepartmentId: normalizedSub,
         department: deptMap[normalizedDept] || '',
-        subDepartment: subMap[normalizedSub] || ''
+        subDepartment: subMap[normalizedSub] || '',
+        annualLeave
       }
     })
 
@@ -2725,6 +2786,7 @@ async function onMonthChange(value) {
     ? next.format('YYYY-MM')
     : dayjs().format('YYYY-MM')
   currentPage.value = 1
+  await fetchHolidays()
   await fetchSchedules({ reset: true })
   await fetchSummary()
 }
@@ -2738,6 +2800,7 @@ onMounted(async () => {
     includeSelf.value = true
   }
   try {
+    await fetchHolidays()
     await fetchSummary()
     await fetchShiftOptions()
     await fetchSupervisorContext()
@@ -3730,5 +3793,23 @@ onMounted(async () => {
       z-index: 10;
     }
   }
+}
+
+/* Annual Leave Column Styling */
+.annual-leave-info {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  
+  .leave-hours {
+    font-size: 0.75rem;
+    color: #64748b;
+  }
+}
+
+.no-leave-info {
+  color: #94a3b8;
+  font-size: 0.875rem;
 }
 </style>
