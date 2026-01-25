@@ -25,16 +25,17 @@ export async function exportTabularReport(
       }
       
       const doc = new PDFDocument({ margin: 36 });
-      res.setHeader('Content-Type', 'application/pdf');
-      res.setHeader('Content-Disposition', `attachment; filename="${safeName}.pdf"`);
       
+      // Set up error handler before setting headers
+      let hasError = false;
       doc.on('error', (err) => {
         console.error('[Export] PDF generation error:', err);
-        if (!res.headersSent) {
-          res.status(500).json({ error: 'PDF generation failed' });
-        }
+        hasError = true;
+        // Error during PDF generation - stream will close
       });
       
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `attachment; filename="${safeName}.pdf"`);
       doc.pipe(res);
 
       if (title) {

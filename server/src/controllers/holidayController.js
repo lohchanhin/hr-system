@@ -63,10 +63,14 @@ export async function listHolidaysByMonth(req, res) {
       return res.status(400).json({ error: '需要提供有效月份 (YYYY-MM)' });
     }
     
-    const startDate = new Date(`${month}-01`);
+    const [yearStr, monthStr] = month.split('-');
+    const year = parseInt(yearStr, 10);
+    const monthNum = parseInt(monthStr, 10);
+    
+    const startDate = new Date(year, monthNum - 1, 1);
     startDate.setHours(0, 0, 0, 0);
-    const endDate = new Date(startDate);
-    endDate.setMonth(endDate.getMonth() + 1);
+    const endDate = new Date(year, monthNum, 1);
+    endDate.setHours(0, 0, 0, 0);
     
     const holidays = await Holiday.find({
       date: { $gte: startDate, $lt: endDate }
