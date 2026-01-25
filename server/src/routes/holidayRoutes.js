@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import {
   listHolidays,
+  listHolidaysByMonth,
   createHoliday,
   updateHoliday,
   deleteHoliday,
@@ -10,6 +11,7 @@ import {
 const router = Router();
 
 router.post('/import/roc', importRocHolidays);
+router.get('/by-month', listHolidaysByMonth);
 router.get('/', listHolidays);
 router.post('/', createHoliday);
 router.put('/:id', updateHoliday);
