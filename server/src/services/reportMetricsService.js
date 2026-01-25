@@ -348,7 +348,6 @@ function buildAttendanceSummary({ employees, schedules, recordMap, shiftMap }) {
     const id = normalizeId(emp._id);
     const base = { employee: id, name: emp.name ?? '', scheduled: 0, attended: 0, absent: 0 };
     attendanceCounter.set(id, base);
-    results.push(base);
   });
 
   schedules.forEach((schedule) => {
@@ -363,11 +362,15 @@ function buildAttendanceSummary({ employees, schedules, recordMap, shiftMap }) {
     }
   });
 
-  results.forEach((record) => {
-    record.absent = Math.max(record.scheduled - record.attended, 0);
-    summary.scheduled += record.scheduled;
-    summary.attended += record.attended;
-    summary.absent += record.absent;
+  // Only include employees who have schedules
+  attendanceCounter.forEach((record) => {
+    if (record.scheduled > 0) {
+      record.absent = Math.max(record.scheduled - record.attended, 0);
+      summary.scheduled += record.scheduled;
+      summary.attended += record.attended;
+      summary.absent += record.absent;
+      results.push(record);
+    }
   });
 
   return { records: results, summary };
