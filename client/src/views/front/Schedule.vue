@@ -2031,10 +2031,9 @@ function resetScheduleCache() {
 }
 
 async function fetchSchedules({ reset = false, fetchAll = false } = {}) {
-  let targetEmployees = fetchAll 
+  let targetEmployees = fetchAll
     ? employees.value.map(e => String(e._id))
     : visibleEmployeeIds.value
-  
   if (!targetEmployees.length && employees.value.length) {
     const start = (currentPage.value - 1) * pageSize.value
     const end = start + pageSize.value
@@ -2053,7 +2052,6 @@ async function fetchSchedules({ reset = false, fetchAll = false } = {}) {
     !hasVisibleEmployees ||
     targetEmployees.some(id => !loadedEmployeeIds.value.has(id)) ||
     fetchAll
-
   if (!shouldFetch) {
     return
   }
