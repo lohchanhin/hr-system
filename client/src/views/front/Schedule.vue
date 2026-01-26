@@ -2030,8 +2030,10 @@ function resetScheduleCache() {
   leaveIndex.value = {}
 }
 
-async function fetchSchedules({ reset = false } = {}) {
-  let targetEmployees = visibleEmployeeIds.value
+async function fetchSchedules({ reset = false, fetchAll = false } = {}) {
+  let targetEmployees = fetchAll
+    ? employees.value.map(e => String(e._id))
+    : visibleEmployeeIds.value
   if (!targetEmployees.length && employees.value.length) {
     const start = (currentPage.value - 1) * pageSize.value
     const end = start + pageSize.value
@@ -2048,7 +2050,8 @@ async function fetchSchedules({ reset = false } = {}) {
   const shouldFetch =
     reset ||
     !hasVisibleEmployees ||
-    targetEmployees.some(id => !loadedEmployeeIds.value.has(id))
+    targetEmployees.some(id => !loadedEmployeeIds.value.has(id)) ||
+    fetchAll
   if (!shouldFetch) {
     return
   }
@@ -2058,8 +2061,10 @@ async function fetchSchedules({ reset = false } = {}) {
   const supervisorId = getStoredSupervisorId()
   const params = [`month=${currentMonth.value}`]
   if (hasVisibleEmployees || supervisorId) {
-    params.push(`page=${currentPage.value}`)
-    params.push(`limit=${pageSize.value}`)
+    if (!fetchAll) {
+      params.push(`page=${currentPage.value}`)
+      params.push(`limit=${pageSize.value}`)
+    }
     params.push(`employeeIds=${targetEmployees.join(',')}`)
   }
   if (supervisorId) params.push(`supervisor=${supervisorId}`)
@@ -2289,19 +2294,35 @@ async function openDetail(id) {
 
 // ========= 預覽 / 匯出 =========
 
-function preview(type) {
-  sessionStorage.setItem(
-    'schedulePreview',
-    JSON.stringify({
-      scheduleMap: scheduleMap.value,
-      employees: employees.value,
-      days: days.value,
-      shifts: shifts.value
-    })
-  )
-  router.push({
-    name: type === 'week' ? 'PreviewWeek' : 'PreviewMonth'
+async function preview(type) {
+  // Fetch schedules for all employees before previewing
+  const loading = ElLoading.service({
+    lock: true,
+    text: '正在載入所有員工排班資料...',
+    background: 'rgba(0, 0, 0, 0.7)'
   })
+  
+  try {
+    await fetchSchedules({ fetchAll: true })
+    
+    sessionStorage.setItem(
+      'schedulePreview',
+      JSON.stringify({
+        scheduleMap: scheduleMap.value,
+        employees: employees.value,
+        days: days.value,
+        shifts: shifts.value
+      })
+    )
+    router.push({
+      name: type === 'week' ? 'PreviewWeek' : 'PreviewMonth'
+    })
+  } catch (err) {
+    console.error(err)
+    ElMessage.error('載入排班資料失敗')
+  } finally {
+    loading.close()
+  }
 }
 
 async function exportSchedules(format) {
