@@ -262,6 +262,16 @@ export function buildEmployeeDoc(body = {}) {
       otherBonuses: toNum(body?.monthlySalaryAdjustments?.otherBonuses) ?? 0,
       notes: body?.monthlySalaryAdjustments?.notes ?? '',
     },
+
+    /* 特休管理 (Annual Leave) */
+    annualLeave: {
+      totalDays: toNum(body?.annualLeave?.totalDays) ?? 0,
+      usedDays: toNum(body?.annualLeave?.usedDays) ?? 0,
+      year: toNum(body?.annualLeave?.year) ?? new Date().getFullYear(),
+      expiryDate: toDate(body?.annualLeave?.expiryDate),
+      accumulatedLeave: toNum(body?.annualLeave?.accumulatedLeave) ?? 0,
+      notes: body?.annualLeave?.notes ?? '',
+    },
   }
 }
 
@@ -434,6 +444,17 @@ export function buildEmployeePatch(body = {}, existing = null) {
     put('monthlySalaryAdjustments.performanceBonus', toNum(m.performanceBonus) ?? 0)
     put('monthlySalaryAdjustments.otherBonuses', toNum(m.otherBonuses) ?? 0)
     if (isDefined(m.notes)) put('monthlySalaryAdjustments.notes', m.notes ?? '')
+  }
+
+  // 特休管理 (Annual Leave)
+  if (isDefined(body.annualLeave)) {
+    const al = body.annualLeave || {}
+    if (isDefined(al.totalDays)) put('annualLeave.totalDays', toNum(al.totalDays) ?? 0)
+    if (isDefined(al.usedDays)) put('annualLeave.usedDays', toNum(al.usedDays) ?? 0)
+    if (isDefined(al.year)) put('annualLeave.year', toNum(al.year))
+    if (isDefined(al.expiryDate)) put('annualLeave.expiryDate', toDate(al.expiryDate))
+    if (isDefined(al.accumulatedLeave)) put('annualLeave.accumulatedLeave', toNum(al.accumulatedLeave) ?? 0)
+    if (isDefined(al.notes)) put('annualLeave.notes', al.notes ?? '')
   }
 
   return { $set, $unset }
