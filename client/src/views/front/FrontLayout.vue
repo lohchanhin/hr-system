@@ -398,6 +398,7 @@ function onLogout() {
   border: none !important;
   background: transparent !important;
   padding: 16px 12px;
+  overflow-y: auto;
 }
 
 .sidebar-menu.el-menu--collapse {

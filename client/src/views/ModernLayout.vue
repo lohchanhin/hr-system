@@ -384,6 +384,7 @@ function logout() {
   border: none !important;
   background: transparent !important;
   flex: 1;
+  overflow-y: auto;
 }
 
 .menu-item {

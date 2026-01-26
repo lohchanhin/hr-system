@@ -109,6 +109,7 @@ const gotoPage = (name) => {
 .layout-menu {
   flex: 1;
   transition: width 0.3s ease;
+  overflow-y: auto;
 }
 
 .layout-menu.collapsed {
