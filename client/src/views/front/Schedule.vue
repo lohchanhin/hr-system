@@ -2327,8 +2327,16 @@ async function preview(type) {
 
 async function exportSchedules(format) {
   try {
+    const params = new URLSearchParams({
+      month: currentMonth.value,
+      format: format,
+      department: selectedDepartment.value
+    })
+    if (selectedSubDepartment.value) {
+      params.append('subDepartment', selectedSubDepartment.value)
+    }
     const res = await apiFetch(
-      `/api/schedules/export?month=${currentMonth.value}&format=${format}`
+      `/api/schedules/export?${params.toString()}`
     )
     if (!res.ok) throw new Error()
     const blob = await res.blob()
