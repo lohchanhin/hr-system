@@ -46,12 +46,20 @@ try {
   doc.fontSize(16).text('排班表', { align: 'center' });
   doc.moveDown();
   doc.fontSize(10).text('月份：2024-01', { align: 'center' });
-  doc.moveDown();
+  doc.moveDown(1.5);
   
-  // Add table header
+  // Table layout with proper column positioning
+  const tableLeft = 50;
+  const colWidths = { name: 150, date: 150, shift: 150 };
+  let y = doc.y;
+  
+  // Draw header row
   doc.fontSize(10);
-  doc.text('員工姓名\t\t日期\t\t\t班別名稱', { underline: true });
-  doc.moveDown(0.5);
+  doc.text('員工姓名', tableLeft, y, { width: colWidths.name, underline: true });
+  doc.text('日期', tableLeft + colWidths.name, y, { width: colWidths.date, underline: true });
+  doc.text('班別名稱', tableLeft + colWidths.name + colWidths.date, y, { width: colWidths.shift, underline: true });
+  
+  y += 20;
   
   // Sample data
   const testData = [
@@ -62,9 +70,11 @@ try {
   ];
   
   testData.forEach((item) => {
-    doc.fontSize(10).text(
-      `${item.name}\t\t${item.date}\t\t${item.shift}`
-    );
+    doc.fontSize(10);
+    doc.text(item.name, tableLeft, y, { width: colWidths.name });
+    doc.text(item.date, tableLeft + colWidths.name, y, { width: colWidths.date });
+    doc.text(item.shift, tableLeft + colWidths.name + colWidths.date, y, { width: colWidths.shift });
+    y += 18;
   });
   
   doc.end();
