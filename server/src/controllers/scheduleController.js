@@ -9,6 +9,17 @@ import {
   getIncompleteScheduleEmployees,
   canFinalizeSchedules 
 } from '../services/scheduleValidationService.js';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import fs from 'fs';
+
+// Get directory name for ES modules
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// Path to Chinese font for PDF generation
+const DEFAULT_FONT_PATH = path.join(__dirname, '../../fonts/NotoSansCJKtc-Regular.otf');
+const CHINESE_FONT_PATH = process.env.PDF_CHINESE_FONT_PATH || DEFAULT_FONT_PATH;
 
 function formatDate(date) {
   const d = new Date(date);
@@ -1495,11 +1506,34 @@ export async function exportSchedules(req, res) {
       const doc = new PDFDocument();
       res.setHeader('Content-Type', 'application/pdf');
       res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-      doc.fontSize(16).text('Schedules', { align: 'center' });
+      
+      // Register Chinese font for Traditional Chinese support
+      try {
+        if (fs.existsSync(CHINESE_FONT_PATH)) {
+          doc.registerFont('NotoSansCJK', CHINESE_FONT_PATH);
+          doc.font('NotoSansCJK');
+        } else {
+          console.warn('警告：繁體中文字型檔案不存在 / Warning: Traditional Chinese font file not found');
+          console.warn(`路徑 / Path: ${CHINESE_FONT_PATH}`);
+        }
+      } catch (error) {
+        console.error('警告：無法載入繁體中文字型 / Warning: Failed to load Traditional Chinese font');
+        console.error(error);
+      }
+      
+      doc.fontSize(16).text('排班表', { align: 'center' });
       doc.moveDown();
+      doc.fontSize(10).text(`月份：${month}`, { align: 'center' });
+      doc.moveDown();
+      
+      // Add table header
+      doc.fontSize(10);
+      doc.text('員工姓名\t\t日期\t\t\t班別名稱', { underline: true });
+      doc.moveDown(0.5);
+      
       schedules.forEach((s) => {
-        doc.fontSize(12).text(
-          `${s.employee?.name ?? ''}\t${s.date}\t${s.shiftId}\t${s.shiftName}`
+        doc.fontSize(10).text(
+          `${s.employee?.name ?? ''}\t\t${s.date}\t\t${s.shiftName || '未指定'}`
         );
       });
       doc.pipe(res);
