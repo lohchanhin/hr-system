@@ -5,3 +5,4 @@ fonts/*.otf
 fonts/*.ttf
 fonts/*.ttc
 test-output-*.pdf
+test-schedule-export.pdf

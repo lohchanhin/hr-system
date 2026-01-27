@@ -9,6 +9,17 @@ import {
   getIncompleteScheduleEmployees,
   canFinalizeSchedules 
 } from '../services/scheduleValidationService.js';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import fs from 'fs';
+
+// Get directory name for ES modules
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// Path to Chinese font for PDF generation
+const DEFAULT_FONT_PATH = path.join(__dirname, '../../fonts/NotoSansCJKtc-Regular.otf');
+const CHINESE_FONT_PATH = process.env.PDF_CHINESE_FONT_PATH || DEFAULT_FONT_PATH;
 
 function formatDate(date) {
   const d = new Date(date);
@@ -1463,19 +1474,17 @@ export async function exportSchedules(req, res) {
         return res.status(500).json({ error: 'exceljs module not installed' });
       }
       const workbook = new ExcelJS.Workbook();
-      const ws = workbook.addWorksheet('Schedules');
+      const ws = workbook.addWorksheet('排班表');
       ws.columns = [
-        { header: 'Employee', key: 'employee' },
-        { header: 'Date', key: 'date' },
-        { header: 'Shift ID', key: 'shiftId' },
-        { header: 'Shift Name', key: 'shiftName' }
+        { header: '員工姓名', key: 'employee', width: 20 },
+        { header: '日期', key: 'date', width: 15 },
+        { header: '班別名稱', key: 'shiftName', width: 15 }
       ];
       schedules.forEach((s) => {
         ws.addRow({
           employee: s.employee?.name ?? '',
           date: s.date,
-          shiftId: s.shiftId,
-          shiftName: s.shiftName
+          shiftName: s.shiftName || '未指定'
         });
       });
       res.setHeader(
@@ -1495,12 +1504,62 @@ export async function exportSchedules(req, res) {
       const doc = new PDFDocument();
       res.setHeader('Content-Type', 'application/pdf');
       res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-      doc.fontSize(16).text('Schedules', { align: 'center' });
+      
+      // Register Chinese font for Traditional Chinese support
+      try {
+        if (fs.existsSync(CHINESE_FONT_PATH)) {
+          doc.registerFont('NotoSansCJK', CHINESE_FONT_PATH);
+          doc.font('NotoSansCJK');
+        } else {
+          // Font file not found - will use default font but Chinese may not display correctly
+          const fontMessage = `警告：繁體中文字型檔案不存在 / Warning: Traditional Chinese font file not found: ${CHINESE_FONT_PATH}`;
+          if (process.env.NODE_ENV !== 'production') {
+            console.warn(fontMessage);
+          }
+        }
+      } catch (error) {
+        const errorMessage = '警告：無法載入繁體中文字型 / Warning: Failed to load Traditional Chinese font';
+        if (process.env.NODE_ENV !== 'production') {
+          console.error(errorMessage, error);
+        }
+      }
+      
+      doc.fontSize(16).text('排班表', { align: 'center' });
       doc.moveDown();
+      doc.fontSize(10).text(`月份：${month}`, { align: 'center' });
+      doc.moveDown(1.5);
+      
+      // Table layout with proper column positioning
+      const tableLeft = 50;
+      const colWidths = { name: 150, date: 150, shift: 150 };
+      let y = doc.y;
+      
+      // Draw header row
+      doc.fontSize(10);
+      doc.text('員工姓名', tableLeft, y, { width: colWidths.name, underline: true });
+      doc.text('日期', tableLeft + colWidths.name, y, { width: colWidths.date, underline: true });
+      doc.text('班別名稱', tableLeft + colWidths.name + colWidths.date, y, { width: colWidths.shift, underline: true });
+      
+      y += 20;
+      
       schedules.forEach((s) => {
-        doc.fontSize(12).text(
-          `${s.employee?.name ?? ''}\t${s.date}\t${s.shiftId}\t${s.shiftName}`
-        );
+        doc.fontSize(10);
+        doc.text(s.employee?.name ?? '', tableLeft, y, { width: colWidths.name });
+        doc.text(s.date, tableLeft + colWidths.name, y, { width: colWidths.date });
+        doc.text(s.shiftName || '未指定', tableLeft + colWidths.name + colWidths.date, y, { width: colWidths.shift });
+        y += 18;
+        
+        // Start new page if needed
+        if (y > 700) {
+          doc.addPage();
+          y = 50;
+          // Redraw header on new page
+          doc.fontSize(10);
+          doc.text('員工姓名', tableLeft, y, { width: colWidths.name, underline: true });
+          doc.text('日期', tableLeft + colWidths.name, y, { width: colWidths.date, underline: true });
+          doc.text('班別名稱', tableLeft + colWidths.name + colWidths.date, y, { width: colWidths.shift, underline: true });
+          y += 20;
+        }
       });
       doc.pipe(res);
       doc.end();
