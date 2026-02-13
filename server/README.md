@@ -28,7 +28,7 @@ Create a `.env` file based on `.env.example` and set the following variables:
 
 - `PORT` – port for the HTTP server
 - `MONGODB_URI` – MongoDB connection string
-- `JWT_SECRET` – (optional) secret used to sign JSON Web Tokens
+- `JWT_SECRET` – (required) secret used to sign JSON Web Tokens
 
 To run the unit tests:
 
