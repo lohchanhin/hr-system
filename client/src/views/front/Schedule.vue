@@ -531,6 +531,7 @@ import { ref, computed, onMounted, watch, reactive } from 'vue'
 import dayjs from 'dayjs'
 import { apiFetch } from '../../api'
 import { useAuthStore } from '../../stores/auth'
+import { useMenuStore } from '../../stores/menu'
 import { ElMessage, ElMessageBox, ElLoading } from 'element-plus'
 import { useRouter } from 'vue-router'
 import ScheduleDashboard from './ScheduleDashboard.vue'
@@ -540,6 +541,8 @@ import { getPhotoUrl } from '../../utils/photoUrl'
 
 const fmt = d => (d ? new Date(d).toLocaleString() : '-')
 const renderValue = v => (Array.isArray(v) ? v.join(', ') : v ?? '-')
+const authStore = useAuthStore()
+const menuStore = useMenuStore()
 
 const FORM_CATEGORY_LABELS = {
   leave: '請假',
@@ -893,7 +896,7 @@ const toggleCell = (empId, day, explicit) => {
 }
 
 const selectAllEmployees = () => {
-  const targetIds = visibleEmployees.value.map(e => e._id)
+  const targetIds = filteredEmployees.value.map(e => e._id)
   const prev = selectedEmployees.value
 
   // 只保留「本頁 + 原本其它頁手動勾選」的邏輯
@@ -924,6 +927,16 @@ const selectAllEmployees = () => {
   })
 }
 
+
+
+async function refreshFrontMenu() {
+  if (authStore.role !== 'supervisor') return
+  try {
+    await menuStore.fetchMenu()
+  } catch (error) {
+    // 避免影響主流程，僅在選單更新失敗時靜默略過
+  }
+}
 
 const selectAllDays = () => {
   const prev = selectedDays.value
@@ -1124,7 +1137,6 @@ const filteredSubDepartments = computed(() =>
 
 const router = useRouter()
 
-const authStore = useAuthStore()
 authStore.loadUser()
 
 const canUseSupervisorFilter = computed(() =>
@@ -2388,6 +2400,7 @@ async function onSelect(empId, day, value) {
         )
       } else {
         await fetchSummary()
+        await refreshFrontMenu()
       }
     } catch (err) {
       await handleScheduleError(
@@ -2421,6 +2434,7 @@ async function onSelect(empId, day, value) {
           subDepartment: existing.subDepartment
         }
         await fetchSummary()
+        await refreshFrontMenu()
       } else {
         await handleScheduleError(
           res,
@@ -2639,6 +2653,8 @@ async function applyBatch() {
 
     callSuccess('批次套用完成')
     await fetchSummary()
+    clearSelection()
+    await refreshFrontMenu()
   } finally {
     loadingInstance?.close()
     isApplyingBatch.value = false
