@@ -20,6 +20,7 @@ describe('Attendance.vue availability', () => {
       .mockResolvedValueOnce({ ok: true, json: async () => [] })
       .mockResolvedValueOnce({ ok: true, json: async () => [] })
       .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ actionBuffers: { clockIn: { earlyMinutes: 60, lateMinutes: 240 }, clockOut: { earlyMinutes: 240, lateMinutes: 120 } } }) })
   })
 
   function mountComponent() {

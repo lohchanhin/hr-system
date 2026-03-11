@@ -213,7 +213,7 @@ async function fetchMonthlySchedule() {
 
 async function fetchAttendanceSettings() {
   try {
-    const res = await apiFetch('/api/attendance-settings')
+    const res = await apiFetch('/api/attendance/punch-window')
     if (!res?.ok) throw new Error('failed')
     const data = await res.json().catch(() => null)
     actionBuffers.value = data?.actionBuffers
