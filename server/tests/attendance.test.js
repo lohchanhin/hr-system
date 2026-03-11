@@ -74,6 +74,50 @@ function setupScheduleMocks({ schedules = [], shifts = [] } = {}) {
 }
 
 describe('Attendance API', () => {
+
+  it('returns punch-window settings for employee clients', async () => {
+    currentUser = { id: 'emp1', role: 'employee' };
+    mockAttendanceSetting.findOne.mockReturnValue({
+      lean: jest.fn().mockResolvedValue({
+        actionBuffers: {
+          clockIn: { earlyMinutes: 15, lateMinutes: 10 },
+          clockOut: { earlyMinutes: 30, lateMinutes: 20 },
+        },
+        abnormalRules: { lateGrace: 5 },
+      }),
+    });
+
+    const res = await request(app).get('/api/attendance/punch-window');
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      actionBuffers: {
+        clockIn: { earlyMinutes: 15, lateMinutes: 10 },
+        clockOut: { earlyMinutes: 30, lateMinutes: 20 },
+      },
+      abnormalRules: { lateGrace: 5 },
+    });
+  });
+
+  it('returns empty abnormalRules when lateGrace is not configured', async () => {
+    currentUser = { id: 'emp1', role: 'employee' };
+    mockAttendanceSetting.findOne.mockReturnValue({
+      lean: jest.fn().mockResolvedValue({
+        actionBuffers: {
+          clockIn: { earlyMinutes: 20, lateMinutes: 30 },
+          clockOut: { earlyMinutes: 30, lateMinutes: 60 },
+        },
+        abnormalRules: {},
+      }),
+    });
+
+    const res = await request(app).get('/api/attendance/punch-window');
+
+    expect(res.status).toBe(200);
+    expect(res.body.abnormalRules).toEqual({});
+    expect(res.body.actionBuffers.clockIn.earlyMinutes).toBe(20);
+  });
+
   it('lists records for admins with newest first', async () => {
     const fakeRecords = [{ action: 'clockIn' }];
     const { sortMock, populateMock } = setupFindChain({ records: fakeRecords });

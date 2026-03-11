@@ -123,6 +123,23 @@ export async function listRecords(req, res) {
   }
 }
 
+
+export async function getPunchWindowSetting(req, res) {
+  try {
+    const attendanceSetting = await AttendanceSetting.findOne().lean();
+    const actionBuffers = normalizeActionBuffers(attendanceSetting?.actionBuffers);
+    const lateGrace = Number(attendanceSetting?.abnormalRules?.lateGrace);
+    res.json({
+      actionBuffers,
+      abnormalRules: {
+        ...(Number.isFinite(lateGrace) ? { lateGrace } : {}),
+      },
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+}
+
 export async function createRecord(req, res) {
   try {
     const { employee, action, timestamp, remark } = req.body;
