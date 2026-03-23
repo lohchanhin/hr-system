@@ -74,6 +74,11 @@ describe('Login.vue', () => {
     vi.resetModules()
   })
 
+  it('defaults role to supervisor on first load', () => {
+    const wrapper = mountLogin()
+    expect(wrapper.vm.loginForm.role).toBe('supervisor')
+  })
+
   it('redirects supervisor to schedule', async () => {
     fetch.mockResolvedValueOnce({
       ok: true,
