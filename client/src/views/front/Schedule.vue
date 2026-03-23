@@ -323,22 +323,6 @@
                     @change="val => onSelect(row._id, d.date, val)" class="cell-select shift-select" size="small">
                     <el-option v-for="opt in shifts" :key="opt._id" :label="formatShiftLabel(opt)" :value="opt._id" />
                   </el-select>
-
-                  <div class="department-selects">
-                    <el-select v-model="scheduleMap[row._id][d.date].department" placeholder="部門" size="small" @change="
-                      () =>
-                        (scheduleMap[row._id][d.date].subDepartment = '')
-                    " class="cell-select dept-select">
-                      <el-option v-for="dept in departments" :key="dept._id" :label="dept.name" :value="dept._id" />
-                    </el-select>
-
-                    <el-select v-model="scheduleMap[row._id][d.date].subDepartment" placeholder="單位" size="small"
-                      class="cell-select sub-dept-select">
-                      <el-option v-for="sub in subDepsFor(
-                        scheduleMap[row._id][d.date].department
-                      )" :key="sub._id" :label="sub.name" :value="sub._id" />
-                    </el-select>
-                  </div>
                 </template>
 
                 <template v-else>
@@ -2369,6 +2353,12 @@ async function exportSchedules(format) {
 async function onSelect(empId, day, value) {
   const dateStr = `${currentMonth.value}-${String(day).padStart(2, '0')}`
   const existing = scheduleMap.value[empId][day]
+  const employee =
+    employees.value.find(e => String(e._id) === String(empId)) || {}
+  const department =
+    existing?.department || employee.departmentId || ''
+  const subDepartment =
+    existing?.subDepartment || employee.subDepartmentId || ''
 
   // 該格只要被視為請假，就直接擋掉
   if (existing?.leave || isLeaveCell(empId, day)) {
@@ -2386,8 +2376,8 @@ async function onSelect(empId, day, value) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           shiftId: value,
-          department: existing.department,
-          subDepartment: existing.subDepartment
+          department,
+          subDepartment
         })
       })
       if (!res.ok) {
@@ -2421,8 +2411,8 @@ async function onSelect(empId, day, value) {
           employee: empId,
           date: dateStr,
           shiftId: value,
-          department: existing.department,
-          subDepartment: existing.subDepartment
+          department,
+          subDepartment
         })
       })
       if (res.ok) {
@@ -2430,8 +2420,8 @@ async function onSelect(empId, day, value) {
         scheduleMap.value[empId][day] = {
           id: saved._id,
           shiftId: saved.shiftId,
-          department: existing.department,
-          subDepartment: existing.subDepartment
+          department,
+          subDepartment
         }
         await fetchSummary()
         await refreshFrontMenu()
@@ -3647,12 +3637,6 @@ onMounted(async () => {
     background: rgba(255, 255, 255, 0.9);
     backdrop-filter: blur(4px);
   }
-}
-
-.department-selects {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
 }
 
 .modern-shift-tag {

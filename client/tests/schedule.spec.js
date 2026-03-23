@@ -995,6 +995,82 @@ describe('Schedule.vue', () => {
     expect(ElMessage.info).toHaveBeenCalledWith('該日已核准請假，無法調整排班')
   })
 
+  it('editable cells only show shift selector without department/sub-department selectors', async () => {
+    const month = dayjs().format('YYYY-MM')
+    setRoleToken('supervisor')
+    localStorage.setItem('employeeId', 'sup1')
+    setupSupervisorApiMock({
+      shifts: [{ _id: 'shift1', code: 'A', name: '早班' }],
+      employees: [{ _id: 'e1', name: 'Emp1', department: 'd1', subDepartment: 'sd1' }],
+      directReports: [{ _id: 'e1', subDepartment: { _id: 'sd1', name: 'Sub A' } }],
+      monthlyWithoutSelf: [
+        {
+          _id: 'sch1',
+          employee: 'e1',
+          date: `${month}-01`,
+          shiftId: 'shift1',
+          department: 'd1',
+          subDepartment: 'sd1'
+        }
+      ]
+    })
+
+    const wrapper = mountSchedule()
+    await flush()
+
+    expect(wrapper.find('.modern-schedule-cell .shift-select').exists()).toBe(true)
+    expect(wrapper.find('.modern-schedule-cell .dept-select').exists()).toBe(false)
+    expect(wrapper.find('.modern-schedule-cell .sub-dept-select').exists()).toBe(false)
+    expect(wrapper.find('.modern-schedule-cell .department-selects').exists()).toBe(false)
+  })
+
+  it('falls back to employee department fields when cell department fields are empty on select', async () => {
+    apiFetch.mockResolvedValue({ ok: true, json: async () => [] })
+    const wrapper = mountSchedule()
+    await flush()
+
+    wrapper.vm.currentMonth = '2026-03'
+    wrapper.vm.employees = [
+      { _id: 'e1', departmentId: 'd1', subDepartmentId: 'sd1', department: '', subDepartment: '' }
+    ]
+    wrapper.vm.scheduleMap = {
+      e1: {
+        2: { shiftId: '', department: '', subDepartment: '' }
+      }
+    }
+
+    apiFetch.mockReset()
+    apiFetch.mockImplementation(async url => {
+      if (url === '/api/schedules') {
+        return { ok: true, json: async () => ({ _id: 'sch-new', shiftId: 's1' }) }
+      }
+      if (url === '/api/schedules/summary') {
+        return { ok: true, json: async () => [] }
+      }
+      return { ok: true, json: async () => [] }
+    })
+
+    await wrapper.vm.onSelect('e1', 2, 's1')
+
+    const createCall = apiFetch.mock.calls.find(([url]) => url === '/api/schedules')
+    expect(createCall).toBeTruthy()
+    expect(JSON.parse(createCall[1].body)).toEqual({
+      employee: 'e1',
+      date: '2026-03-02',
+      shiftId: 's1',
+      department: 'd1',
+      subDepartment: 'sd1'
+    })
+    expect(wrapper.vm.scheduleMap.e1[2]).toEqual(
+      expect.objectContaining({
+        id: 'sch-new',
+        shiftId: 's1',
+        department: 'd1',
+        subDepartment: 'sd1'
+      })
+    )
+  })
+
   it('formats shift label with code and name when available', async () => {
     apiFetch
       .mockResolvedValueOnce({ ok: true, json: async () => [] })
