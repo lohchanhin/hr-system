@@ -12,6 +12,7 @@ import {
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
+import { Types } from 'mongoose';
 
 // Get directory name for ES modules
 const __filename = fileURLToPath(import.meta.url);
@@ -147,13 +148,48 @@ function normalizeId(value) {
 
 export async function listMonthlySchedules(req, res) {
   try {
-    const { month, employee, supervisor, includeSelf: includeSelfRaw } = req.query;
+    const {
+      month,
+      employee,
+      employeeIds: employeeIdsRaw,
+      supervisor,
+      includeSelf: includeSelfRaw,
+      page: pageRaw,
+      limit: limitRaw,
+    } = req.query;
     if (!month) return res.status(400).json({ error: 'month required' });
     const start = new Date(`${month}-01`);
     const end = new Date(start);
     end.setMonth(end.getMonth() + 1);
     const query = { date: { $gte: start, $lt: end } };
     const includeSelf = String(includeSelfRaw).toLowerCase() === 'true';
+    const requestedPageOrLimit = pageRaw !== undefined || limitRaw !== undefined;
+
+    const pageParsed = Number.parseInt(pageRaw, 10);
+    const limitParsed = Number.parseInt(limitRaw, 10);
+    const page = Number.isFinite(pageParsed) && pageParsed > 0 ? pageParsed : 1;
+    const limit = Number.isFinite(limitParsed) && limitParsed > 0 ? Math.min(limitParsed, 200) : 50;
+
+    const parsedEmployeeIds = String(employeeIdsRaw || '')
+      .split(',')
+      .map((id) => id.trim())
+      .filter((id) => id && Types.ObjectId.isValid(id))
+      .map((id) => new Types.ObjectId(id).toString());
+
+    if (employeeIdsRaw !== undefined && parsedEmployeeIds.length === 0 && requestedPageOrLimit) {
+      return res.json({
+        schedules: [],
+        publishSummary: {
+          currentRoundPendingEmployees: [],
+          unaffectedConfirmedEmployees: [],
+        },
+        pagination: {
+          total: 0,
+          page,
+          limit,
+        },
+      });
+    }
 
     if (supervisor) {
       const role = req.user?.role;
@@ -166,13 +202,34 @@ export async function listMonthlySchedules(req, res) {
       if (includeSelf && supervisor) {
         idSet.add(String(supervisor));
       }
-      query.employee = { $in: Array.from(idSet) };
+      let scopedIds = Array.from(idSet);
+      if (parsedEmployeeIds.length > 0) {
+        const requestedSet = new Set(parsedEmployeeIds);
+        scopedIds = scopedIds.filter((id) => requestedSet.has(id));
+      }
+      query.employee = { $in: scopedIds };
     } else {
       const empId = employee || (req.user?.role === 'employee' ? req.user.id : undefined);
-      if (empId) query.employee = empId;
+      if (empId && parsedEmployeeIds.length > 0) {
+        if (parsedEmployeeIds.includes(String(empId))) {
+          query.employee = String(empId);
+        } else {
+          query.employee = { $in: [] };
+        }
+      } else if (empId) {
+        query.employee = empId;
+      } else if (parsedEmployeeIds.length > 0) {
+        query.employee = { $in: parsedEmployeeIds };
+      }
     }
 
-    const raw = await ShiftSchedule.find(query).populate('employee').lean();
+    const total = await ShiftSchedule.countDocuments(query);
+    const raw = await ShiftSchedule.find(query)
+      .select('employee date shiftId department subDepartment state employeeResponse needsReconfirm')
+      .populate({ path: 'employee', select: 'name department subDepartment photo' })
+      .skip((page - 1) * limit)
+      .limit(limit)
+      .lean();
     const schedules = await attachShiftInfo(raw);
     const employeeStatusMap = new Map();
     raw.forEach((doc) => {
@@ -205,7 +262,15 @@ export async function listMonthlySchedules(req, res) {
       }
     });
 
-    res.json({ schedules, publishSummary });
+    res.json({
+      schedules,
+      publishSummary,
+      pagination: {
+        total,
+        page,
+        limit,
+      },
+    });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
