@@ -411,45 +411,64 @@
     </div>
 
     <!-- Enhanced approval list with modern card design -->
-    <div v-if="approvalList.length" class="approval-card">
+    <div v-if="relatedApprovalRows.length" class="approval-card">
       <div class="approval-header">
-        <h3 class="approval-title">待處理審批</h3>
-        <div class="approval-count">{{ approvalList.length }} 項待處理</div>
+        <h3 class="approval-title">相關簽核</h3>
+        <div class="approval-count">{{ relatedApprovalRows.length }} 項</div>
       </div>
-      <el-table class="modern-approval-table" :data="approvalList" :header-cell-style="{
+      <el-table class="modern-approval-table" :data="relatedApprovalRows" :header-cell-style="{
         backgroundColor: '#f1f5f9',
         color: '#164e63',
         fontWeight: '600'
       }">
+        <el-table-column label="資料類型" width="120">
+          <template #default="{ row }">
+            <el-tag :type="row.sourceType === 'schedule_confirmation' ? 'primary' : 'info'" class="status-tag">
+              {{ row.sourceTypeLabel }}
+            </el-tag>
+          </template>
+        </el-table-column>
         <el-table-column label="申請人" width="120">
           <template #default="{ row }">
             <div class="applicant-name">
-              {{ row.applicant_employee?.name }}
+              {{ row.applicantName }}
             </div>
           </template>
         </el-table-column>
         <el-table-column label="申請類型" width="150">
           <template #default="{ row }">
             <div class="form-type">
-              {{ formatApprovalCategory(row.form?.category, row.form?.name) }}
+              {{ row.approvalType }}
             </div>
           </template>
         </el-table-column>
-        <el-table-column prop="status" label="狀態" width="100">
+        <el-table-column label="期間" width="210">
           <template #default="{ row }">
-            <el-tag :type="row.status === 'approved'
-                ? 'success'
-                : row.status === 'rejected'
-                  ? 'danger'
-                  : 'warning'
-              " class="status-tag">
-              {{ row.status }}
+            <div class="period-text">
+              {{ row.periodText }}
+            </div>
+          </template>
+        </el-table-column>
+        <el-table-column prop="statusLabel" label="狀態" width="110">
+          <template #default="{ row }">
+            <el-tag :type="row.statusTagType" class="status-tag">
+              {{ row.statusLabel }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="120">
+        <el-table-column label="備註摘要" min-width="180">
           <template #default="{ row }">
-            <el-button size="small" @click="openDetail(row._id)" :disabled="!row._id">
+            <el-tooltip v-if="row.noteSummary && row.noteSummary.length > 26" :content="row.noteSummary" placement="top">
+              <span>{{ row.noteSummary.slice(0, 26) }}...</span>
+            </el-tooltip>
+            <span v-else>
+              {{ row.noteSummary || '-' }}
+            </span>
+          </template>
+        </el-table-column>
+        <el-table-column label="查看詳情" width="120">
+          <template #default="{ row }">
+            <el-button size="small" @click="openDetail(row._id)" :disabled="!row._id || row.sourceType !== 'leave_approval'">
               查看
             </el-button>
           </template>
@@ -600,6 +619,22 @@ const currentPage = ref(1)
 const publishSnapshot = ref(null)
 const loadedEmployeeIds = ref(new Set())
 const isFetchingSchedules = ref(false)
+
+const APPROVAL_STATUS_LABELS = {
+  pending: '待簽核',
+  disputed: '有異議',
+  confirmed: '已確認',
+  approved: '已核准',
+  rejected: '已駁回'
+}
+
+const APPROVAL_STATUS_TAG_MAP = {
+  pending: 'warning',
+  disputed: 'danger',
+  confirmed: 'success',
+  approved: 'success',
+  rejected: 'danger'
+}
 
 // ========= includeSelf 偏好存取 =========
 
@@ -1081,6 +1116,134 @@ const visibleEmployees = computed(() => {
 const visibleEmployeeIds = computed(() =>
   visibleEmployees.value.map(emp => String(emp._id))
 )
+
+const relatedEmployeeIds = computed(() => {
+  if (selectedEmployees.value.size > 0) {
+    return new Set(Array.from(selectedEmployees.value).map(id => String(id)))
+  }
+  return new Set(visibleEmployeeIds.value)
+})
+
+const formatApprovalStatus = status => {
+  const normalized = String(status || '').trim().toLowerCase()
+  if (!normalized) return '待簽核'
+  return APPROVAL_STATUS_LABELS[normalized] || normalized
+}
+
+const approvalStatusTagType = status => {
+  const normalized = String(status || '').trim().toLowerCase()
+  return APPROVAL_STATUS_TAG_MAP[normalized] || 'info'
+}
+
+const formatApprovalPeriod = approval => {
+  const data = approval?.form_data || {}
+  const from =
+    data.startDate ||
+    data.start_date ||
+    data.fromDate ||
+    data.from_date ||
+    approval?.startDate
+  const to =
+    data.endDate ||
+    data.end_date ||
+    data.toDate ||
+    data.to_date ||
+    approval?.endDate
+  if (from && to) {
+    return `${dayjs(from).format('YYYY/MM/DD')} ~ ${dayjs(to).format('YYYY/MM/DD')}`
+  }
+  if (from) {
+    return dayjs(from).format('YYYY/MM/DD')
+  }
+  return '-'
+}
+
+const leaveApprovalRows = computed(() => {
+  const relatedSet = relatedEmployeeIds.value
+  return approvalList.value
+    .filter(approval => {
+      const id = approval?.applicant_employee?._id
+      if (!id) return false
+      return relatedSet.has(String(id))
+    })
+    .map(approval => {
+      const rawStatus = String(approval?.status || 'pending').toLowerCase()
+      return {
+        ...approval,
+        sourceType: 'leave_approval',
+        sourceTypeLabel: '請假簽核',
+        applicantName: approval?.applicant_employee?.name || '-',
+        approvalType: formatApprovalCategory(
+          approval?.form?.category,
+          approval?.form?.name
+        ),
+        periodText: formatApprovalPeriod(approval),
+        status: rawStatus,
+        statusLabel: formatApprovalStatus(rawStatus),
+        statusTagType: approvalStatusTagType(rawStatus),
+        noteSummary:
+          approval?.remark ||
+          approval?.comment ||
+          approval?.note ||
+          approval?.form_data?.reason ||
+          ''
+      }
+    })
+})
+
+const scheduleConfirmationRows = computed(() => {
+  const relatedSet = relatedEmployeeIds.value
+  if (!relatedSet.size) return []
+  const monthRange = `${currentMonth.value}-01 ~ ${dayjs(
+    `${currentMonth.value}-01`
+  ).endOf('month').format('YYYY-MM-DD')}`
+  const pendingMap = new Map(
+    publishSummary.value.pendingEmployees.map(item => [
+      String(item?.id),
+      Number(item?.pendingCount) || 0
+    ])
+  )
+  const disputedMap = new Map(
+    publishSummary.value.disputedEmployees.map(item => [
+      String(item?.id),
+      {
+        disputedCount: Number(item?.disputedCount) || 0,
+        latestNote: item?.latestNote || ''
+      }
+    ])
+  )
+
+  return employees.value
+    .filter(emp => relatedSet.has(String(emp?._id)))
+    .map(emp => {
+      const id = String(emp?._id)
+      const pendingCount = pendingMap.get(id) || 0
+      const disputedInfo = disputedMap.get(id)
+      let status = 'confirmed'
+      if (disputedInfo) {
+        status = 'disputed'
+      } else if (pendingCount > 0) {
+        status = 'pending'
+      }
+      return {
+        _id: `schedule-confirm-${id}`,
+        sourceType: 'schedule_confirmation',
+        sourceTypeLabel: '班表確認',
+        applicantName: emp?.name || '-',
+        approvalType: '班表確認簽核',
+        periodText: monthRange,
+        status,
+        statusLabel: formatApprovalStatus(status),
+        statusTagType: approvalStatusTagType(status),
+        noteSummary: disputedInfo?.latestNote || ''
+      }
+    })
+})
+
+const relatedApprovalRows = computed(() => [
+  ...scheduleConfirmationRows.value,
+  ...leaveApprovalRows.value
+])
 
 watch([filteredEmployees, pageSize], () => {
   const maxPage = totalPages.value
