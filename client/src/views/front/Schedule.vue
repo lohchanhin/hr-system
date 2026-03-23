@@ -583,6 +583,13 @@ const holidayMap = ref({})
 
 const shifts = ref([])
 const employees = ref([])
+const employeeById = computed(() =>
+  employees.value.reduce((acc, emp) => {
+    const id = String(emp?._id || '')
+    if (id) acc[id] = emp
+    return acc
+  }, {})
+)
 const approvalList = ref([])
 const departments = ref([])
 const subDepartments = ref([])
@@ -619,6 +626,18 @@ const currentPage = ref(1)
 const publishSnapshot = ref(null)
 const loadedEmployeeIds = ref(new Set())
 const isFetchingSchedules = ref(false)
+const activeScheduleRequest = {
+  key: '',
+  requestId: 0,
+  promise: null
+}
+const fetchAllCache = {
+  fulfilled: new Set(),
+  inFlight: new Map()
+}
+const invalidateFetchAllCache = () => {
+  fetchAllCache.fulfilled.clear()
+}
 
 const APPROVAL_STATUS_LABELS = {
   pending: '待簽核',
@@ -1066,8 +1085,10 @@ watch(includeSelf, async (val, oldVal) => {
 
   currentPage.value = 1
   await fetchEmployees(selectedDepartment.value, selectedSubDepartment.value)
-  await fetchSchedules({ reset: true })
-  await fetchSummary()
+  await Promise.all([
+    fetchSchedules({ reset: true }),
+    fetchSummary()
+  ])
 })
 
 watch([employeeSearch, statusFilter], () => {
@@ -1646,8 +1667,8 @@ async function publishSchedulesForMonth() {
       throw new Error(message)
     }
     callSuccess('已將班表發送給員工確認')
-    await fetchSchedules()
-    await fetchSummary()
+    invalidateFetchAllCache()
+    await Promise.all([fetchSchedules(), fetchSummary()])
   } catch (err) {
     callWarning(err?.message || '發布失敗')
   } finally {
@@ -1687,8 +1708,8 @@ async function finalizeSchedulesForMonth() {
       throw new Error(message)
     }
     callSuccess('班表已完成發布')
-    await fetchSchedules()
-    await fetchSummary()
+    invalidateFetchAllCache()
+    await Promise.all([fetchSchedules(), fetchSummary()])
   } catch (err) {
     callWarning(err?.message || '完成發布失敗')
   } finally {
@@ -1806,7 +1827,8 @@ async function fetchHolidays() {
 async function fetchShiftOptions() {
   const res = await apiFetch('/api/shifts')
   if (res.ok) {
-    const data = await res.json()
+    const data =
+      typeof res.json === 'function' ? await res.json() : []
     const list = Array.isArray(data?.shifts)
       ? data.shifts
       : Array.isArray(data)
@@ -2158,8 +2180,7 @@ function ensureEmployeeSchedule(empId) {
   if (!scheduleMap.value[key]) {
     scheduleMap.value[key] = {}
   }
-  const employee =
-    employees.value.find(e => String(e._id) === key) || {}
+  const employee = employeeById.value[key] || {}
   const defaults = {
     shiftId: '',
     department: employee.departmentId || '',
@@ -2180,13 +2201,127 @@ function ensureEmployeeSchedule(empId) {
   })
 }
 
+const createScheduleMapPatch = (targetEmployees, daysList, employeeMap, schedules) => {
+  const nextScheduleMap = { ...scheduleMap.value }
+  const targetSet = new Set(targetEmployees)
+
+  targetEmployees.forEach(empId => {
+    const key = String(empId)
+    const employee = employeeMap[key] || {}
+    const defaults = {
+      shiftId: '',
+      department: employee.departmentId || '',
+      subDepartment: employee.subDepartmentId || ''
+    }
+    const existingDayMap = nextScheduleMap[key] || {}
+    const nextDayMap = { ...existingDayMap }
+    daysList.forEach(d => {
+      const existingCell = nextDayMap[d.date]
+      nextDayMap[d.date] = existingCell
+        ? {
+          ...existingCell,
+          shiftId: existingCell.shiftId || '',
+          department: existingCell.department || defaults.department,
+          subDepartment: existingCell.subDepartment || defaults.subDepartment
+        }
+        : { ...defaults }
+    })
+    nextScheduleMap[key] = nextDayMap
+  })
+
+  schedules.forEach(s => {
+    const rawId = s.employee?._id || s.employee
+    if (!rawId) return
+    const empId = String(rawId)
+    if (!targetSet.has(empId)) return
+    const d = dayjs(s.date).date()
+    const employee = employeeMap[empId] || {}
+    const existingDayMap = nextScheduleMap[empId] || {}
+    nextScheduleMap[empId] = {
+      ...existingDayMap,
+      [d]: {
+        id: s._id,
+        shiftId: s.shiftId,
+        department: s.department || employee.departmentId,
+        subDepartment: s.subDepartment || employee.subDepartmentId
+      }
+    }
+  })
+
+  return nextScheduleMap
+}
+
+const buildLeaveIndexAndScheduleMap = ({
+  leaves,
+  targetSet,
+  month,
+  employeesList,
+  baseScheduleMap
+}) => {
+  const nextLeaveIndex = {}
+  const nextScheduleMap = { ...baseScheduleMap }
+  const monthStart = dayjs(`${month}-01`).startOf('day')
+  const monthEnd = monthStart.endOf('month').startOf('day')
+
+  leaves.forEach(l => {
+    const leaveStatus = String(l.status || l.decision || '').toLowerCase()
+    if (leaveStatus !== 'approved') return
+
+    const rawEmp = l.employee?._id || l.employee
+    if (!rawEmp) return
+    const empId = String(rawEmp)
+    const isVisibleEmployee =
+      targetSet.size > 0
+        ? targetSet.has(empId)
+        : employeesList.some(e => String(e?._id) === empId)
+    if (!isVisibleEmployee) return
+
+    const startDate = dayjs(l.startDate).startOf('day')
+    const endDate = dayjs(l.endDate).startOf('day')
+    if (!startDate.isValid() || !endDate.isValid()) return
+
+    let pointer = startDate.isBefore(monthStart) ? monthStart : startDate
+    const boundary = endDate.isAfter(monthEnd) ? monthEnd : endDate
+
+    while (!pointer.isAfter(boundary)) {
+      const dayNum = pointer.date()
+      if (!nextLeaveIndex[empId]) nextLeaveIndex[empId] = {}
+      nextLeaveIndex[empId][dayNum] = true
+
+      const employeeSchedule = nextScheduleMap[empId]
+      if (employeeSchedule?.[dayNum]) {
+        nextScheduleMap[empId] = {
+          ...employeeSchedule,
+          [dayNum]: {
+            ...employeeSchedule[dayNum],
+            leave: {
+              type: l.leaveType,
+              startDate: l.startDate,
+              endDate: l.endDate,
+              excludesHours: true
+            }
+          }
+        }
+      }
+
+      pointer = pointer.add(1, 'day')
+    }
+  })
+
+  return { nextLeaveIndex, nextScheduleMap }
+}
+
 function resetScheduleCache() {
+  activeScheduleRequest.key = ''
+  activeScheduleRequest.promise = null
   scheduleMap.value = {}
   rawSchedules.value = []
   publishSnapshot.value = null
   loadedEmployeeIds.value = new Set()
   approvalList.value = []
   leaveIndex.value = {}
+  fetchAllCache.fulfilled.clear()
+  fetchAllCache.inFlight.clear()
 }
 
 async function fetchSchedules({ reset = false, fetchAll = false } = {}) {
@@ -2214,8 +2349,6 @@ async function fetchSchedules({ reset = false, fetchAll = false } = {}) {
   if (!shouldFetch) {
     return
   }
-  if (isFetchingSchedules.value) return
-  isFetchingSchedules.value = true
 
   const supervisorId = getStoredSupervisorId()
   const params = [`month=${currentMonth.value}`]
@@ -2230,11 +2363,27 @@ async function fetchSchedules({ reset = false, fetchAll = false } = {}) {
   if (includeSelf.value && showIncludeSelfToggle.value)
     params.push('includeSelf=true')
   const query = `?${params.join('&')}`
+  const requestKey = JSON.stringify({
+    query,
+    fetchAll,
+    reset,
+    targetEmployees
+  })
 
-  try {
+  if (activeScheduleRequest.key === requestKey && activeScheduleRequest.promise) {
+    return activeScheduleRequest.promise
+  }
+
+  const requestId = activeScheduleRequest.requestId + 1
+  activeScheduleRequest.requestId = requestId
+  activeScheduleRequest.key = requestKey
+  isFetchingSchedules.value = true
+
+  const requestPromise = (async () => {
     const res = await apiFetch(`/api/schedules/monthly${query}`)
     if (!res.ok) throw new Error('Failed to fetch schedules')
-    const data = await res.json()
+    const data =
+      typeof res.json === 'function' ? await res.json() : []
     const schedules = Array.isArray(data)
       ? data
       : Array.isArray(data?.schedules)
@@ -2255,27 +2404,13 @@ async function fetchSchedules({ reset = false, fetchAll = false } = {}) {
       }
       : null
 
-    rawSchedules.value = schedules
-
     const targetSet = new Set(targetEmployees)
-    targetEmployees.forEach(empId => ensureEmployeeSchedule(empId))
-
-    schedules.forEach(s => {
-      const rawId = s.employee?._id || s.employee
-      if (!rawId) return
-      const empId = String(rawId)
-      if (!targetSet.has(empId)) return
-      ensureEmployeeSchedule(empId)
-      const d = dayjs(s.date).date()
-      const emp =
-        employees.value.find(e => String(e._id) === empId) || {}
-      scheduleMap.value[empId][d] = {
-        id: s._id,
-        shiftId: s.shiftId,
-        department: s.department || emp.departmentId,
-        subDepartment: s.subDepartment || emp.subDepartmentId
-      }
-    })
+    const patchedScheduleMap = createScheduleMapPatch(
+      targetEmployees,
+      days.value,
+      employeeById.value,
+      schedules
+    )
 
     // ========= 取得請假資料，建立 leaveIndex =========
 
@@ -2293,77 +2428,29 @@ async function fetchSchedules({ reset = false, fetchAll = false } = {}) {
     if (subId) leaveParams.push(`subDepartment=${subId}`)
     const leaveQuery = `?${leaveParams.join('&')}`
 
-    const res2 = await apiFetch(
-      `/api/schedules/leave-approvals${leaveQuery}`
-    )
+    const res2 = await apiFetch(`/api/schedules/leave-approvals${leaveQuery}`)
     if (res2?.ok && typeof res2.json === 'function') {
       const extra = await res2.json()
       const approvals = Array.isArray(extra?.approvals)
         ? extra.approvals
         : []
       const leaves = Array.isArray(extra?.leaves) ? extra.leaves : []
-
-      approvalList.value = approvals
-
-      const nextLeaveIndex = {}
-
-      const monthStart = dayjs(`${currentMonth.value}-01`).startOf(
-        'day'
-      )
-      const monthEnd = monthStart.endOf('month').startOf('day')
-
-      leaves.forEach(l => {
-        // 只把「已核准」視為請假；pending / rejected 都不算
-        const leaveStatus = String(
-          l.status || l.decision || ''
-        ).toLowerCase()
-        if (leaveStatus !== 'approved') return
-
-        const rawEmp = l.employee?._id || l.employee
-        if (!rawEmp) return
-        const empId = String(rawEmp)
-
-        const isVisibleEmployee =
-          targetSet.size > 0
-            ? targetSet.has(empId)
-            : employees.value.some(
-              e => String(e?._id) === empId
-            )
-        if (!isVisibleEmployee) return
-
-        ensureEmployeeSchedule(empId)
-
-        const startDate = dayjs(l.startDate).startOf('day')
-        const endDate = dayjs(l.endDate).startOf('day')
-        if (!startDate.isValid() || !endDate.isValid()) return
-
-        let pointer =
-          startDate.isBefore(monthStart) ? monthStart : startDate
-        const boundary =
-          endDate.isAfter(monthEnd) ? monthEnd : endDate
-
-        while (!pointer.isAfter(boundary)) {
-          const dayNum = pointer.date()
-
-          if (!nextLeaveIndex[empId]) nextLeaveIndex[empId] = {}
-          nextLeaveIndex[empId][dayNum] = true
-
-          const cell = scheduleMap.value?.[empId]?.[dayNum]
-          if (cell) {
-            cell.leave = {
-              type: l.leaveType,
-              startDate: l.startDate,
-              endDate: l.endDate,
-              excludesHours: true
-            }
-          }
-
-          pointer = pointer.add(1, 'day')
-        }
+      const { nextLeaveIndex, nextScheduleMap } = buildLeaveIndexAndScheduleMap({
+        leaves,
+        targetSet,
+        month: currentMonth.value,
+        employeesList: employees.value,
+        baseScheduleMap: patchedScheduleMap
       })
-
+      if (activeScheduleRequest.requestId !== requestId) return
+      rawSchedules.value = schedules
+      scheduleMap.value = nextScheduleMap
+      approvalList.value = approvals
       leaveIndex.value = nextLeaveIndex
     } else {
+      if (activeScheduleRequest.requestId !== requestId) return
+      rawSchedules.value = schedules
+      scheduleMap.value = patchedScheduleMap
       approvalList.value = []
       leaveIndex.value = {}
     }
@@ -2401,14 +2488,26 @@ async function fetchSchedules({ reset = false, fetchAll = false } = {}) {
     const updated = new Set(loadedEmployeeIds.value)
     targetEmployees.forEach(id => updated.add(id))
     loadedEmployeeIds.value = updated
+    if (fetchAll) {
+      fetchAllCache.fulfilled.add(buildFetchAllCacheKey())
+    }
 
     pruneSelections()
+  })()
+  activeScheduleRequest.promise = requestPromise
+
+  try {
+    await requestPromise
   } catch (err) {
     console.error(err)
     ElMessage.error('取得排班資料失敗')
     rawSchedules.value = []
   } finally {
-    isFetchingSchedules.value = false
+    if (activeScheduleRequest.requestId === requestId) {
+      isFetchingSchedules.value = false
+      activeScheduleRequest.promise = null
+      activeScheduleRequest.key = ''
+    }
   }
 }
 
@@ -2453,6 +2552,37 @@ async function openDetail(id) {
 
 // ========= 預覽 / 匯出 =========
 
+const buildFetchAllCacheKey = () =>
+  [
+    currentMonth.value,
+    selectedDepartment.value || '',
+    selectedSubDepartment.value || '',
+    includeSelf.value && showIncludeSelfToggle.value ? '1' : '0'
+  ].join('|')
+
+async function ensureFetchAllLoaded() {
+  const key = buildFetchAllCacheKey()
+  if (
+    fetchAllCache.fulfilled.has(key) &&
+    employees.value.every(emp => loadedEmployeeIds.value.has(String(emp._id)))
+  ) {
+    return
+  }
+  if (fetchAllCache.inFlight.has(key)) {
+    await fetchAllCache.inFlight.get(key)
+    return
+  }
+  const task = fetchSchedules({ fetchAll: true })
+    .then(() => {
+      fetchAllCache.fulfilled.add(key)
+    })
+    .finally(() => {
+      fetchAllCache.inFlight.delete(key)
+    })
+  fetchAllCache.inFlight.set(key, task)
+  await task
+}
+
 async function preview(type) {
   // Fetch schedules for all employees before previewing
   const loading = ElLoading.service({
@@ -2462,7 +2592,7 @@ async function preview(type) {
   })
   
   try {
-    await fetchSchedules({ fetchAll: true })
+    await ensureFetchAllLoaded()
     
     sessionStorage.setItem(
       'schedulePreview',
@@ -2516,8 +2646,7 @@ async function exportSchedules(format) {
 async function onSelect(empId, day, value) {
   const dateStr = `${currentMonth.value}-${String(day).padStart(2, '0')}`
   const existing = scheduleMap.value[empId][day]
-  const employee =
-    employees.value.find(e => String(e._id) === String(empId)) || {}
+  const employee = employeeById.value[String(empId)] || {}
   const department =
     existing?.department || employee.departmentId || ''
   const subDepartment =
@@ -2552,6 +2681,7 @@ async function onSelect(empId, day, value) {
           prev
         )
       } else {
+        invalidateFetchAllCache()
         await fetchSummary()
         await refreshFrontMenu()
       }
@@ -2586,6 +2716,7 @@ async function onSelect(empId, day, value) {
           department,
           subDepartment
         }
+        invalidateFetchAllCache()
         await fetchSummary()
         await refreshFrontMenu()
       } else {
@@ -2616,8 +2747,10 @@ async function onDepartmentChange() {
   await fetchSubDepartments(selectedDepartment.value)
   await fetchEmployees(selectedDepartment.value, '')
   currentPage.value = 1
-  await fetchSchedules({ reset: true })
-  await fetchSummary()
+  await Promise.all([
+    fetchSchedules({ reset: true }),
+    fetchSummary()
+  ])
 }
 
 async function onSubDepartmentChange() {
@@ -2626,8 +2759,10 @@ async function onSubDepartmentChange() {
     selectedSubDepartment.value
   )
   currentPage.value = 1
-  await fetchSchedules({ reset: true })
-  await fetchSummary()
+  await Promise.all([
+    fetchSchedules({ reset: true }),
+    fetchSummary()
+  ])
 }
 
 // ========= 單筆錯誤處理 =========
@@ -2805,6 +2940,7 @@ async function applyBatch() {
     })
 
     callSuccess('批次套用完成')
+    invalidateFetchAllCache()
     await fetchSummary()
     clearSelection()
     await refreshFrontMenu()
@@ -2978,8 +3114,10 @@ async function onMonthChange(value) {
     : dayjs().format('YYYY-MM')
   currentPage.value = 1
   await fetchHolidays()
-  await fetchSchedules({ reset: true })
-  await fetchSummary()
+  await Promise.all([
+    fetchSchedules({ reset: true }),
+    fetchSummary()
+  ])
 }
 
 // ========= 初始化 =========
