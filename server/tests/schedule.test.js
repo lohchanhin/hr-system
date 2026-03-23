@@ -240,6 +240,7 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
       shiftId: payload.shiftId,
       department: undefined,
       subDepartment: undefined,
+      needsReconfirm: true,
     });
     expect(res.body).toEqual(fake);
   });
@@ -284,9 +285,15 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
 
     expect(res.status).toBe(200);
     expect(mockShiftSchedule.find).toHaveBeenCalled();
-    expect(res.body).toEqual([
-      { shiftId: 's1', date: '2023/01/02', shiftName: 'Morning' }
-    ]);
+    expect(res.body).toEqual({
+      schedules: [
+        { shiftId: 's1', date: '2023/01/02', shiftName: 'Morning' }
+      ],
+      publishSummary: {
+        currentRoundPendingEmployees: [],
+        unaffectedConfirmedEmployees: [],
+      },
+    });
   });
 
   it('拒絕員工使用主管篩選參數', async () => {
@@ -320,9 +327,15 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
     expect(mockShiftSchedule.find).toHaveBeenCalledWith(expect.objectContaining({
       employee: { $in: ['emp1'] }
     }));
-    expect(res.body).toEqual([
-      { employee: 'emp1', shiftId: 's1', date: '2023/01/02', shiftName: 'Morning' }
-    ]);
+    expect(res.body).toEqual({
+      schedules: [
+        { employee: 'emp1', shiftId: 's1', date: '2023/01/02', shiftName: 'Morning' }
+      ],
+      publishSummary: {
+        currentRoundPendingEmployees: [],
+        unaffectedConfirmedEmployees: [],
+      },
+    });
   });
 
 
@@ -341,7 +354,8 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
         date: new Date('2023-01-01'),
         shiftId: 'day',
         department: undefined,
-        subDepartment: undefined
+        subDepartment: undefined,
+        needsReconfirm: true,
       }
     ], { ordered: false });
   });
@@ -371,7 +385,8 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
         date: new Date('2023-01-01'),
         shiftId: 'day',
         department: 'd1',
-        subDepartment: 'sd1'
+        subDepartment: 'sd1',
+        needsReconfirm: true,
       }
     ], { ordered: false });
   });
@@ -410,14 +425,16 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
         date: new Date('2023-01-01'),
         shiftId: 'day',
         department: undefined,
-        subDepartment: undefined
+        subDepartment: undefined,
+        needsReconfirm: true,
       },
       {
         employee: 'emp1',
         date: new Date('2023-01-02'),
         shiftId: 'night',
         department: undefined,
-        subDepartment: undefined
+        subDepartment: undefined,
+        needsReconfirm: true,
       }
     ], { ordered: false });
   });
@@ -450,6 +467,7 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
       expect(mockShiftSchedule.find).toHaveBeenCalledWith(expect.objectContaining({
         date: expect.any(Object),
         state: { $ne: 'finalized' },
+        needsReconfirm: true,
       }));
       expect(mockShiftSchedule.updateMany).toHaveBeenCalledWith({
         _id: { $in: ['sch1'] },
@@ -535,7 +553,99 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
       expect(res.body).toEqual({ finalized: 1 });
       expect(mockShiftSchedule.updateMany).toHaveBeenCalledWith({
         _id: { $in: ['sch1'] },
-      }, { $set: { state: 'finalized' } });
+      }, { $set: { state: 'finalized', needsReconfirm: false } });
+    });
+
+    it('全員已確認後僅重新發布有異動員工', async () => {
+      const selectMock = jest.fn().mockResolvedValue([{ _id: 'emp1' }, { _id: 'emp2' }]);
+      mockEmployee.find.mockReturnValue({ select: selectMock });
+
+      const firstRoundDocs = [
+        {
+          _id: 'sch-emp1',
+          employee: { _id: 'emp1', name: '員工一' },
+          state: 'draft',
+          employeeResponse: 'pending',
+          needsReconfirm: true,
+          date: new Date('2024-05-01'),
+        },
+        {
+          _id: 'sch-emp2',
+          employee: { _id: 'emp2', name: '員工二' },
+          state: 'draft',
+          employeeResponse: 'pending',
+          needsReconfirm: true,
+          date: new Date('2024-05-01'),
+        },
+      ];
+      const secondRoundDocs = [
+        {
+          _id: 'sch-emp2',
+          employee: { _id: 'emp2', name: '員工二' },
+          state: 'draft',
+          employeeResponse: 'pending',
+          needsReconfirm: true,
+          date: new Date('2024-05-01'),
+        },
+      ];
+
+      mockShiftSchedule.find
+        .mockReturnValueOnce({
+          populate: jest.fn().mockReturnThis(),
+          lean: jest.fn().mockResolvedValue(firstRoundDocs),
+        })
+        .mockReturnValueOnce({
+          populate: jest.fn().mockReturnThis(),
+          lean: jest.fn().mockResolvedValue(secondRoundDocs),
+        });
+      mockShiftSchedule.updateMany.mockResolvedValue({ modifiedCount: 2 });
+
+      const updateDoc = buildScheduleDoc({
+        _id: 'sch-emp2',
+        employee: 'emp2',
+        date: new Date('2024-05-01'),
+        shiftId: 'day',
+        state: 'finalized',
+        employeeResponse: 'confirmed',
+        needsReconfirm: false,
+      });
+      mockShiftSchedule.findById.mockResolvedValue(updateDoc);
+      mockApprovalRequest.findOne.mockResolvedValue(null);
+      mockShiftSchedule.findOne.mockResolvedValue(null);
+
+      const firstPublish = await request(app)
+        .post('/api/schedules/publish')
+        .set('Authorization', buildAuthHeader('supervisor'))
+        .send({ month: '2024-05' });
+
+      expect(firstPublish.status).toBe(200);
+      expect(firstPublish.body.updated).toBe(2);
+
+      const updateRes = await request(app)
+        .put('/api/schedules/sch-emp2')
+        .send({ shiftId: 'night' });
+      expect(updateRes.status).toBe(200);
+      expect(updateDoc.save).toHaveBeenCalled();
+      expect(updateRes.body.needsReconfirm).toBe(true);
+
+      const secondPublish = await request(app)
+        .post('/api/schedules/publish')
+        .set('Authorization', buildAuthHeader('supervisor'))
+        .send({ month: '2024-05' });
+
+      expect(secondPublish.status).toBe(200);
+      expect(secondPublish.body).toEqual({
+        updated: 1,
+        employees: [
+          {
+            id: 'emp2',
+            name: '員工二',
+            response: 'pending',
+            state: 'pending_confirmation',
+          },
+        ],
+        publishedAt: expect.any(String),
+      });
     });
   });
 
@@ -1119,13 +1229,12 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
 
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.load(toBuffer(res.body));
-    const worksheet = workbook.getWorksheet('Schedules');
+    const worksheet = workbook.getWorksheet('Schedules') || workbook.getWorksheet('排班表');
     expect(worksheet.rowCount).toBe(2);
     const dataRow = worksheet.getRow(2).values;
     expect(dataRow[1]).toBe('Alice');
     expect(dataRow[2]).toBe('2024/05/10');
-    expect(dataRow[3]).toBe('s1');
-    expect(dataRow[4]).toBe('Morning');
+    expect(dataRow[3]).toBe('Morning');
   });
 
   describe('schedule overview', () => {

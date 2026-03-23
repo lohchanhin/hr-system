@@ -105,14 +105,16 @@ describe('createSchedulesBatch validations', () => {
           date: new Date('2023-01-01'),
           shiftId: 's1',
           department: 'd1',
-          subDepartment: 'sd1'
+          subDepartment: 'sd1',
+          needsReconfirm: true,
         },
         {
           employee: 'e2',
           date: new Date('2023-01-02'),
           shiftId: 's2',
           department: 'd2',
-          subDepartment: 'sd2'
+          subDepartment: 'sd2',
+          needsReconfirm: true,
         }
       ],
       { ordered: false }

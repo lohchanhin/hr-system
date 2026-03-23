@@ -103,6 +103,7 @@ function resetScheduleProgress(doc) {
   doc.employeeResponse = 'pending';
   doc.responseNote = '';
   doc.responseAt = null;
+  doc.needsReconfirm = true;
 }
 
 function hasScheduleDiff(existing, nextData) {
@@ -173,7 +174,38 @@ export async function listMonthlySchedules(req, res) {
 
     const raw = await ShiftSchedule.find(query).populate('employee').lean();
     const schedules = await attachShiftInfo(raw);
-    res.json(schedules);
+    const employeeStatusMap = new Map();
+    raw.forEach((doc) => {
+      const emp = doc.employee || {};
+      const id = emp?._id?.toString?.() || doc.employee?.toString?.();
+      if (!id) return;
+      const prev = employeeStatusMap.get(id) || {
+        id,
+        name: emp.name || '',
+        hasCurrentRoundPending: false,
+        hasUnaffectedConfirmed: false,
+      };
+      if (doc.needsReconfirm === true && doc.state !== 'finalized') {
+        prev.hasCurrentRoundPending = true;
+      } else if (doc.employeeResponse === 'confirmed' || doc.state === 'finalized') {
+        prev.hasUnaffectedConfirmed = true;
+      }
+      employeeStatusMap.set(id, prev);
+    });
+    const publishSummary = {
+      currentRoundPendingEmployees: [],
+      unaffectedConfirmedEmployees: [],
+    };
+    employeeStatusMap.forEach((entry) => {
+      if (entry.hasCurrentRoundPending) {
+        publishSummary.currentRoundPendingEmployees.push({ id: entry.id, name: entry.name });
+      }
+      if (entry.hasUnaffectedConfirmed && !entry.hasCurrentRoundPending) {
+        publishSummary.unaffectedConfirmedEmployees.push({ id: entry.id, name: entry.name });
+      }
+    });
+
+    res.json({ schedules, publishSummary });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
@@ -778,6 +810,7 @@ export async function createSchedulesBatch(req, res) {
           shiftId: sched.shiftId,
           department: sched.department,
           subDepartment: sched.subDepartment,
+          needsReconfirm: true,
         });
       }
     }
@@ -798,6 +831,7 @@ function buildPublishQuery({ start, end }, { department, subDepartment }) {
   const query = {
     date: { $gte: start, $lt: end },
     state: { $ne: 'finalized' },
+    needsReconfirm: true,
   };
   if (department) query.department = department;
   if (subDepartment) query.subDepartment = subDepartment;
@@ -890,29 +924,6 @@ export async function finalizeSchedules(req, res) {
       return res.status(400).json({ error: err.message });
     }
 
-    // 檢查排班完整性
-    try {
-      const validationOptions = {};
-      if (department) validationOptions.department = department;
-      if (subDepartment) validationOptions.subDepartment = subDepartment;
-      
-      const canFinalize = await canFinalizeSchedules(month, validationOptions);
-      if (!canFinalize.canFinalize) {
-        return res.status(400).json({
-          error: 'incomplete schedules',
-          message: canFinalize.reason,
-          incompleteEmployees: canFinalize.incompleteEmployees,
-        });
-      }
-    } catch (validationErr) {
-      console.error('Schedule validation error:', validationErr);
-      // Validation errors should halt finalization to prevent payroll issues
-      return res.status(500).json({
-        error: 'validation service error',
-        message: 'Unable to validate schedule completeness. Please contact system administrator.',
-      });
-    }
-
     let scopedIds;
     try {
       scopedIds = await resolveScopedEmployeeIds(req.user, { includeSelf });
@@ -922,8 +933,8 @@ export async function finalizeSchedules(req, res) {
 
     const query = {
       ...buildPublishQuery(range, { department, subDepartment }),
+      state: { $in: ['pending_confirmation', 'changes_requested'] },
     };
-    query.state = { $in: ['pending_confirmation', 'changes_requested'] };
     if (Array.isArray(scopedIds)) {
       if (!scopedIds.length) {
         return res.status(404).json({ error: 'no employees in scope' });
@@ -985,7 +996,7 @@ export async function finalizeSchedules(req, res) {
 
     const ids = pendingDocs.map((doc) => doc._id);
     await ShiftSchedule.updateMany({ _id: { $in: ids } }, {
-      $set: { state: 'finalized' },
+      $set: { state: 'finalized', needsReconfirm: false },
     });
 
     res.json({ finalized: ids.length });
@@ -1030,7 +1041,8 @@ export async function createSchedule(req, res) {
       date: dt,
       shiftId,
       department,
-      subDepartment
+      subDepartment,
+      needsReconfirm: true,
     });
     res.status(201).json(schedule);
   } catch (err) {
