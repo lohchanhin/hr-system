@@ -21,6 +21,11 @@ const shiftScheduleSchema = new mongoose.Schema({
   },
   responseNote: { type: String, default: '' },
   responseAt: { type: Date },
+  needsReconfirm: {
+    type: Boolean,
+    default: false,
+    index: true,
+  },
 }, { timestamps: true });
 
 shiftScheduleSchema.index({ employee: 1, date: 1 }, { unique: true });
