@@ -118,7 +118,11 @@ describe('Supervisor schedule permissions', () => {
   it('lists supervisor employees and creates schedules batch', async () => {
     const fakeEmployees = [{ _id: 'emp1', supervisor: 'u1', name: 'Emp1' }];
     mockEmployee.find.mockReturnValue({
-      populate: jest.fn().mockReturnValue({ sort: jest.fn().mockResolvedValue(fakeEmployees) })
+      populate: jest.fn().mockReturnValue({
+        sort: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue(fakeEmployees),
+        }),
+      }),
     });
     const listRes = await request(app).get('/api/employees?supervisor=u1');
     expect(listRes.status).toBe(200);
@@ -140,6 +144,21 @@ describe('Supervisor schedule permissions', () => {
     expect(mockShiftSchedule.insertMany).toHaveBeenCalled();
   });
 
+
+  it('lists lightweight employees for schedule route', async () => {
+    const fakeEmployees = [{ _id: 'emp1', name: 'Emp1', annualLeave: { totalDays: 10, usedDays: 4 } }];
+    const leanMock = jest.fn().mockResolvedValue(fakeEmployees);
+    const sortMock = jest.fn().mockReturnValue({ lean: leanMock });
+    const selectMock = jest.fn().mockReturnValue({ sort: sortMock });
+    mockEmployee.find.mockReturnValue({ select: selectMock });
+
+    const res = await request(app).get('/api/employees/schedule?supervisor=u1');
+
+    expect(res.status).toBe(200);
+    expect(mockEmployee.find).toHaveBeenCalledWith({ supervisor: 'u1' });
+    expect(selectMock).toHaveBeenCalledWith('_id name photo department subDepartment annualLeave supervisor');
+    expect(res.body[0].annualLeave).toEqual({ remainingDays: 6 });
+  });
   it('includes supervisor schedule when includeSelf is true', async () => {
     const selectMock = jest.fn().mockResolvedValue([{ _id: 'emp1' }]);
     mockEmployee.find.mockReturnValue({ select: selectMock });

@@ -2855,7 +2855,7 @@ async function fetchEmployees(
   if (supervisorId) params.push(`supervisor=${supervisorId}`)
   if (deptId) params.push(`department=${deptId}`)
   if (subId) params.push(`subDepartment=${subId}`)
-  const url = `/api/employees${params.length ? `?${params.join('&')}` : ''
+  const url = `/api/employees/schedule${params.length ? `?${params.join('&')}` : ''
     }`
   try {
     const empRes = await apiFetch(url)
@@ -2879,19 +2879,12 @@ async function fetchEmployees(
       const normalizedDept = deptId ? String(deptId) : ''
       const normalizedSub = subId ? String(subId) : ''
       
-      // Calculate remaining annual leave
-      let annualLeave = null
-      if (e.annualLeave) {
-        const totalDays = e.annualLeave.totalDays || 0
-        const usedDays = e.annualLeave.usedDays || 0
-        const remainingDays = Math.max(0, totalDays - usedDays)
-        annualLeave = {
-          ...e.annualLeave,
-          remainingDays,
-          remainingHours: remainingDays * 8
-        }
+      const remainingDays = Number(e?.annualLeave?.remainingDays || 0)
+      const annualLeave = {
+        remainingDays,
+        remainingHours: Math.max(0, remainingDays) * 8
       }
-      
+
       return {
         _id: normalizedId,
         name: e.name,

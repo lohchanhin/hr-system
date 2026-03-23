@@ -462,10 +462,20 @@ export function buildEmployeePatch(body = {}, existing = null) {
 
 /* ─────────────────────────────── Controllers ─────────────────────────────── */
 
-/** GET /api/employees?q=...&supervisor=...&organization=...&department=...&status=...&role=... */
+const SCHEDULE_VIEW_SELECT = '_id name photo department subDepartment annualLeave supervisor'
+
+const resolveRemainingAnnualLeaveDays = (annualLeave = {}) => {
+  const remaining = toNum(annualLeave?.remainingDays)
+  if (remaining !== undefined) return Math.max(0, remaining)
+  const totalDays = toNum(annualLeave?.totalDays) ?? 0
+  const usedDays = toNum(annualLeave?.usedDays) ?? 0
+  return Math.max(0, totalDays - usedDays)
+}
+
+/** GET /api/employees?q=...&supervisor=...&organization=...&department=...&subDepartment=...&status=...&role=...&view=schedule */
 export async function listEmployees(req, res) {
   try {
-    const { q, supervisor, organization, department, subDepartment, status, role } = req.query
+    const { q, supervisor, organization, department, subDepartment, status, role, view } = req.query
     const filter = {}
 
     if (supervisor) filter.supervisor = supervisor
@@ -484,14 +494,45 @@ export async function listEmployees(req, res) {
       ]
     }
 
-    const employees = await Employee.find(filter)
-      .populate('supervisor', 'name employeeId')
-      .sort({ createdAt: -1 })
+    const isScheduleView = view === 'schedule'
+    let query = Employee.find(filter)
 
-    res.json(employees)
+    if (isScheduleView) {
+      query = query.select(SCHEDULE_VIEW_SELECT)
+    } else {
+      query = query.populate('supervisor', 'name employeeId')
+    }
+
+    const employees = await query
+      .sort({ createdAt: -1 })
+      .lean()
+
+    if (!isScheduleView) {
+      return res.json(employees)
+    }
+
+    const scheduleEmployees = employees.map((employee) => ({
+      ...employee,
+      annualLeave: {
+        remainingDays: resolveRemainingAnnualLeaveDays(employee.annualLeave),
+      },
+    }))
+
+    return res.json(scheduleEmployees)
   } catch (err) {
-    res.status(500).json({ error: err.message })
+    return res.status(500).json({ error: err.message })
   }
+}
+
+export async function listEmployeesSchedule(req, res) {
+  const scheduleReq = {
+    ...req,
+    query: {
+      ...req.query,
+      view: 'schedule',
+    },
+  }
+  return listEmployees(scheduleReq, res)
 }
 
 export async function listEmployeeOptions(req, res) {

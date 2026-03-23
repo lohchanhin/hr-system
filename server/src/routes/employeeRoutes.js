@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import {
   listEmployees,
+  listEmployeesSchedule,
   listEmployeeOptions,
   createEmployee,
   getEmployee,
@@ -21,6 +22,7 @@ import validateBulkImportPayload from '../middleware/validateBulkImportPayload.j
 const router = Router();
 
 router.get('/', listEmployees);
+router.get('/schedule', listEmployeesSchedule);
 router.get('/options', listEmployeeOptions);
 router.post('/', uploadSingle, handleMulterError, processUploadedPhoto, createEmployee);
 router.post('/bulk-import', uploadMiddleware, validateBulkImportPayload, bulkImportEmployees);
