@@ -149,6 +149,7 @@ describe('Schedule.vue', () => {
       template: '<div class="popover-stub"><slot></slot><slot name="reference"></slot></div>'
     }
     const TagStub = { name: 'ElTag', template: '<span v-bind="$attrs"><slot></slot></span>' }
+    const TooltipStub = { name: 'ElTooltip', template: '<span class="tooltip-stub"><slot></slot></span>' }
     const ButtonStub = { name: 'ElButton', template: '<button v-bind="$attrs"><slot></slot></button>' }
     const ProgressStub = {
       name: 'ElProgress',
@@ -200,6 +201,7 @@ describe('Schedule.vue', () => {
           'el-input': InputStub,
           'el-popover': PopoverStub,
           'el-tag': TagStub,
+          'el-tooltip': TooltipStub,
           'el-button': ButtonStub,
           'el-progress': ProgressStub,
           'el-pagination': PaginationStub,
@@ -733,11 +735,32 @@ describe('Schedule.vue', () => {
     expect(wrapper.vm.approvalList).toEqual(responses['d2|sd2'].approvals)
   })
 
-  it('顯示待處理審批的簽核類型', async () => {
+  it('僅顯示相關人員簽核資料，並整併班表確認與請假簽核', async () => {
     setRoleToken('supervisor')
     localStorage.setItem('employeeId', 'sup1')
 
     setupSupervisorApiMock({
+      employees: [
+        { _id: 'e1', name: '王小明', department: 'd1', subDepartment: 'sd1' },
+        { _id: 'e2', name: '李小華', department: 'd1', subDepartment: 'sd1' }
+      ],
+      monthlyWithoutSelf: [
+        {
+          _id: 'm1',
+          employee: { _id: 'e1', name: '王小明' },
+          date: `${dayjs().add(1, 'month').format('YYYY-MM')}-01`,
+          state: 'pending_confirmation',
+          employeeResponse: 'pending'
+        },
+        {
+          _id: 'm2',
+          employee: { _id: 'e2', name: '李小華' },
+          date: `${dayjs().add(1, 'month').format('YYYY-MM')}-01`,
+          state: 'changes_requested',
+          employeeResponse: 'disputed',
+          responseNote: '想調整班別'
+        }
+      ],
       approvals: [
         {
           _id: 'ap1',
@@ -749,7 +772,14 @@ describe('Schedule.vue', () => {
           _id: 'ap2',
           status: 'pending',
           form: { _id: 'f2', name: '加班單', category: '' },
-          applicant_employee: { _id: 'e2', name: '李小華' }
+          applicant_employee: { _id: 'e2', name: '李小華' },
+          form_data: { reason: '支援專案' }
+        },
+        {
+          _id: 'ap3',
+          status: 'pending',
+          form: { _id: 'f3', name: '請假申請', category: 'leave' },
+          applicant_employee: { _id: 'e999', name: '外部員工' }
         }
       ],
       leaves: []
@@ -759,14 +789,123 @@ describe('Schedule.vue', () => {
     await flush()
     await wrapper.vm.$nextTick()
 
+    const rows = wrapper.vm.relatedApprovalRows
+    expect(rows.some(row => row.applicantName === '外部員工')).toBe(false)
+    expect(rows.some(row => row.sourceType === 'leave_approval')).toBe(true)
+    expect(rows.some(row => row.sourceType === 'schedule_confirmation')).toBe(true)
+
     const typeColumn = wrapper.find('[data-label="申請類型"]')
     const typeTexts = typeColumn
       .findAll('.cell')
       .map(cell => cell.text().trim())
       .filter(Boolean)
 
+    expect(typeTexts).toContain('班表確認簽核')
     expect(typeTexts).toContain('請假')
     expect(typeTexts).toContain('加班單')
+  })
+
+  it('切換頁碼與搜尋員工後，簽核清單會同步更新', async () => {
+    setRoleToken('supervisor')
+    localStorage.setItem('employeeId', 'sup1')
+
+    const dynamicApprovals = [
+      {
+        _id: 'ap1',
+        status: 'pending',
+        form: { _id: 'f1', name: '請假申請', category: 'leave' },
+        applicant_employee: { _id: 'e1', name: '王小明' }
+      },
+      {
+        _id: 'ap2',
+        status: 'pending',
+        form: { _id: 'f2', name: '請假申請', category: 'leave' },
+        applicant_employee: { _id: 'e2', name: '李小華' }
+      }
+    ]
+    setupSupervisorApiMock({
+      employees: [
+        { _id: 'e1', name: '王小明', department: 'd1', subDepartment: 'sd1' },
+        { _id: 'e2', name: '李小華', department: 'd1', subDepartment: 'sd1' }
+      ],
+      leaveApprovalsHandler: async () => ({
+        ok: true,
+        json: async () => ({ approvals: dynamicApprovals, leaves: [] })
+      })
+    })
+
+    const wrapper = mountSchedule()
+    await flush()
+    await wrapper.vm.$nextTick()
+
+    wrapper.vm.employees = [
+      { _id: 'e1', name: '王小明', department: 'Dept A', subDepartment: 'Sub A' },
+      { _id: 'e2', name: '李小華', department: 'Dept A', subDepartment: 'Sub A' }
+    ]
+    wrapper.vm.approvalList = dynamicApprovals
+
+    wrapper.vm.pageSize = 1
+    wrapper.vm.currentPage = 1
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.visibleEmployees).toHaveLength(1)
+    expect(wrapper.vm.leaveApprovalRows).toHaveLength(1)
+    expect(wrapper.vm.leaveApprovalRows[0].applicant_employee._id).toBe(
+      wrapper.vm.visibleEmployees[0]._id
+    )
+
+    wrapper.vm.currentPage = 2
+    await flush()
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.visibleEmployees).toHaveLength(1)
+    expect(wrapper.vm.leaveApprovalRows).toHaveLength(1)
+    expect(wrapper.vm.leaveApprovalRows[0].applicant_employee._id).toBe(
+      wrapper.vm.visibleEmployees[0]._id
+    )
+
+    wrapper.vm.employeeSearch = '王'
+    await flush()
+    await wrapper.vm.$nextTick()
+    expect(
+      wrapper.vm.leaveApprovalRows.map(row => row.applicant_employee._id)
+    ).toEqual(['e1'])
+  })
+
+  it('點擊查看詳情仍可正常呼叫 openDetail', async () => {
+    setRoleToken('supervisor')
+    localStorage.setItem('employeeId', 'sup1')
+    const detailDoc = {
+      _id: 'ap1',
+      form: { name: '請假申請', category: 'leave', fields: [] },
+      applicant_employee: { _id: 'e1', name: '王小明' },
+      status: 'pending',
+      form_data: {},
+      steps: []
+    }
+
+    setupSupervisorApiMock({
+      employees: [{ _id: 'e1', name: '王小明', department: 'd1', subDepartment: 'sd1' }],
+      approvals: [
+        {
+          _id: 'ap1',
+          status: 'pending',
+          form: { _id: 'f1', name: '請假申請', category: 'leave' },
+          applicant_employee: { _id: 'e1', name: '王小明' }
+        }
+      ],
+      leaves: []
+    })
+
+    const wrapper = mountSchedule()
+    await flush()
+    await wrapper.vm.$nextTick()
+
+    apiFetch.mockResolvedValueOnce({ ok: true, json: async () => detailDoc })
+    await wrapper.vm.openDetail('ap1')
+    await flush()
+
+    expect(apiFetch).toHaveBeenCalledWith('/api/approvals/ap1')
+    expect(wrapper.vm.detail.visible).toBe(true)
+    expect(wrapper.vm.detail.doc._id).toBe('ap1')
   })
 
   it('does not append supervisor param for employee role even when id exists', async () => {
