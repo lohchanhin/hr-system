@@ -126,7 +126,7 @@ const menuStore = useMenuStore()
 const loginForm = ref({
   username: '',
   password: '',
-  role: ''
+  role: 'supervisor'
 })
 
 const loginFormRef = ref(null)
