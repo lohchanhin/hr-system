@@ -506,7 +506,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, watch, reactive } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, watch, reactive } from 'vue'
 import dayjs from 'dayjs'
 import { apiFetch } from '../../api'
 import { useAuthStore } from '../../stores/auth'
@@ -607,12 +607,27 @@ const activeScheduleRequest = {
   requestId: 0,
   promise: null
 }
+const scheduleRequestStats = {
+  started: 0,
+  deduped: 0,
+  completed: 0
+}
 const fetchAllCache = {
   fulfilled: new Set(),
   inFlight: new Map()
 }
+const FILTER_DEBOUNCE_MS = 200
+let filterRefreshTimer = null
 const invalidateFetchAllCache = () => {
   fetchAllCache.fulfilled.clear()
+}
+
+const debugScheduleRequest = (event, extra = {}) => {
+  if (!import.meta.env.DEV) return
+  console.debug('[ScheduleRequest]', event, {
+    ...scheduleRequestStats,
+    ...extra
+  })
 }
 
 const APPROVAL_STATUS_LABELS = {
@@ -1023,6 +1038,31 @@ async function refreshFrontMenu() {
   }
 }
 
+async function refreshScheduleData({
+  reset = false,
+  reason = 'unknown',
+  fetchAll = false,
+  includeSummary = true
+} = {}) {
+  const tasks = [fetchSchedules({ reset, fetchAll, reason })]
+  if (includeSummary) {
+    tasks.push(fetchSummary())
+  }
+  await Promise.all(tasks)
+}
+
+const scheduleDebouncedRefresh = ({ reset = true, reason = 'filters-change' } = {}) => {
+  if (filterRefreshTimer) {
+    clearTimeout(filterRefreshTimer)
+  }
+  filterRefreshTimer = setTimeout(() => {
+    filterRefreshTimer = null
+    refreshScheduleData({ reset, reason }).catch(err => {
+      console.error(err)
+    })
+  }, FILTER_DEBOUNCE_MS)
+}
+
 const selectAllDays = () => {
   const prev = selectedDays.value
   const allDayValues = days.value.map(d => d.date)
@@ -1132,15 +1172,12 @@ watch(includeSelf, async (val, oldVal) => {
 
   currentPage.value = 1
   await fetchEmployees(selectedDepartment.value, selectedSubDepartment.value)
-  await Promise.all([
-    fetchSchedules({ reset: true }),
-    fetchSummary()
-  ])
+  await refreshScheduleData({ reset: true, reason: 'include-self-change' })
 })
 
 watch([employeeSearch, statusFilter], () => {
   currentPage.value = 1
-  fetchSchedules({ reset: true })
+  scheduleDebouncedRefresh({ reset: true, reason: 'filter-change' })
 })
 
 
@@ -1323,11 +1360,8 @@ watch([filteredEmployees, pageSize], () => {
   const maxPage = totalPages.value
   if (currentPage.value > maxPage) {
     currentPage.value = maxPage
+    refreshScheduleData({ reason: 'page-normalized' })
   }
-})
-
-watch(visibleEmployeeIds, () => {
-  fetchSchedules()
 })
 
 // 只要員工 / 天數 / 請假索引有變化，都清一次選取
@@ -1721,7 +1755,7 @@ async function publishSchedulesForMonth() {
     }
     callSuccess('已將班表發送給員工確認')
     invalidateFetchAllCache()
-    await Promise.all([fetchSchedules(), fetchSummary()])
+    await refreshScheduleData({ reason: 'publish-success' })
   } catch (err) {
     callWarning(err?.message || '發布失敗')
   } finally {
@@ -1747,7 +1781,7 @@ async function finalizeSchedulesForMonth() {
         // ignore
       }
       callWarning(message)
-      await fetchSchedules()
+      await refreshScheduleData({ reason: 'finalize-conflict' })
       return
     }
     if (!res.ok) {
@@ -1762,7 +1796,7 @@ async function finalizeSchedulesForMonth() {
     }
     callSuccess('班表已完成發布')
     invalidateFetchAllCache()
-    await Promise.all([fetchSchedules(), fetchSummary()])
+    await refreshScheduleData({ reason: 'finalize-success' })
   } catch (err) {
     callWarning(err?.message || '完成發布失敗')
   } finally {
@@ -2254,65 +2288,65 @@ function ensureEmployeeSchedule(empId) {
   })
 }
 
-const createScheduleMapPatch = (targetEmployees, daysList, employeeMap, schedules) => {
-  const nextScheduleMap = { ...scheduleMap.value }
-  const targetSet = new Set(targetEmployees)
+const patchScheduleMapForEmployees = (targetEmployees, daysList, employeeMap, schedules) => {
+  const targetSet = new Set(targetEmployees.map(id => String(id)))
+  const incomingScheduleByEmployee = new Map()
 
-  targetEmployees.forEach(empId => {
-    const key = String(empId)
-    const employee = employeeMap[key] || {}
+  schedules.forEach(item => {
+    const rawId = item?.employee?._id || item?.employee
+    if (!rawId) return
+    const empId = String(rawId)
+    if (!targetSet.has(empId)) return
+    const list = incomingScheduleByEmployee.get(empId) || []
+    list.push(item)
+    incomingScheduleByEmployee.set(empId, list)
+  })
+
+  targetSet.forEach(empId => {
+    const employee = employeeMap[empId] || {}
     const defaults = {
       shiftId: '',
       department: employee.departmentId || '',
       subDepartment: employee.subDepartmentId || ''
     }
-    const existingDayMap = nextScheduleMap[key] || {}
-    const nextDayMap = { ...existingDayMap }
+    const currentDayMap = scheduleMap.value[empId] || {}
+    const nextDayMap = {}
+
     daysList.forEach(d => {
-      const existingCell = nextDayMap[d.date]
+      const existingCell = currentDayMap[d.date]
       nextDayMap[d.date] = existingCell
         ? {
           ...existingCell,
           shiftId: existingCell.shiftId || '',
           department: existingCell.department || defaults.department,
-          subDepartment: existingCell.subDepartment || defaults.subDepartment
+          subDepartment: existingCell.subDepartment || defaults.subDepartment,
+          leave: existingCell.leave
         }
         : { ...defaults }
     })
-    nextScheduleMap[key] = nextDayMap
-  })
 
-  schedules.forEach(s => {
-    const rawId = s.employee?._id || s.employee
-    if (!rawId) return
-    const empId = String(rawId)
-    if (!targetSet.has(empId)) return
-    const d = dayjs(s.date).date()
-    const employee = employeeMap[empId] || {}
-    const existingDayMap = nextScheduleMap[empId] || {}
-    nextScheduleMap[empId] = {
-      ...existingDayMap,
-      [d]: {
+    const incomingSchedules = incomingScheduleByEmployee.get(empId) || []
+    incomingSchedules.forEach(s => {
+      const dateNum = dayjs(s.date).date()
+      nextDayMap[dateNum] = {
         id: s._id,
         shiftId: s.shiftId,
         department: s.department || employee.departmentId,
         subDepartment: s.subDepartment || employee.subDepartmentId
       }
-    }
-  })
+    })
 
-  return nextScheduleMap
+    scheduleMap.value[empId] = nextDayMap
+  })
 }
 
 const buildLeaveIndexAndScheduleMap = ({
   leaves,
   targetSet,
   month,
-  employeesList,
-  baseScheduleMap
+  employeesList
 }) => {
   const nextLeaveIndex = {}
-  const nextScheduleMap = { ...baseScheduleMap }
   const monthStart = dayjs(`${month}-01`).startOf('day')
   const monthEnd = monthStart.endOf('month').startOf('day')
 
@@ -2341,9 +2375,9 @@ const buildLeaveIndexAndScheduleMap = ({
       if (!nextLeaveIndex[empId]) nextLeaveIndex[empId] = {}
       nextLeaveIndex[empId][dayNum] = true
 
-      const employeeSchedule = nextScheduleMap[empId]
+      const employeeSchedule = scheduleMap.value[empId]
       if (employeeSchedule?.[dayNum]) {
-        nextScheduleMap[empId] = {
+        scheduleMap.value[empId] = {
           ...employeeSchedule,
           [dayNum]: {
             ...employeeSchedule[dayNum],
@@ -2361,7 +2395,7 @@ const buildLeaveIndexAndScheduleMap = ({
     }
   })
 
-  return { nextLeaveIndex, nextScheduleMap }
+  return { nextLeaveIndex }
 }
 
 function resetScheduleCache() {
@@ -2377,7 +2411,7 @@ function resetScheduleCache() {
   fetchAllCache.inFlight.clear()
 }
 
-async function fetchSchedules({ reset = false, fetchAll = false } = {}) {
+async function fetchSchedules({ reset = false, fetchAll = false, reason = 'unknown' } = {}) {
   let targetEmployees = fetchAll
     ? employees.value.map(e => String(e._id))
     : visibleEmployeeIds.value
@@ -2424,12 +2458,16 @@ async function fetchSchedules({ reset = false, fetchAll = false } = {}) {
   })
 
   if (activeScheduleRequest.key === requestKey && activeScheduleRequest.promise) {
+    scheduleRequestStats.deduped += 1
+    debugScheduleRequest('deduped', { reason, requestKey })
     return activeScheduleRequest.promise
   }
 
   const requestId = activeScheduleRequest.requestId + 1
   activeScheduleRequest.requestId = requestId
   activeScheduleRequest.key = requestKey
+  scheduleRequestStats.started += 1
+  debugScheduleRequest('start', { reason, requestId, requestKey })
   isFetchingSchedules.value = true
 
   const requestPromise = (async () => {
@@ -2458,7 +2496,7 @@ async function fetchSchedules({ reset = false, fetchAll = false } = {}) {
       : null
 
     const targetSet = new Set(targetEmployees)
-    const patchedScheduleMap = createScheduleMapPatch(
+    patchScheduleMapForEmployees(
       targetEmployees,
       days.value,
       employeeById.value,
@@ -2488,22 +2526,19 @@ async function fetchSchedules({ reset = false, fetchAll = false } = {}) {
         ? extra.approvals
         : []
       const leaves = Array.isArray(extra?.leaves) ? extra.leaves : []
-      const { nextLeaveIndex, nextScheduleMap } = buildLeaveIndexAndScheduleMap({
+      const { nextLeaveIndex } = buildLeaveIndexAndScheduleMap({
         leaves,
         targetSet,
         month: currentMonth.value,
-        employeesList: employees.value,
-        baseScheduleMap: patchedScheduleMap
+        employeesList: employees.value
       })
       if (activeScheduleRequest.requestId !== requestId) return
       rawSchedules.value = schedules
-      scheduleMap.value = nextScheduleMap
       approvalList.value = approvals
       leaveIndex.value = nextLeaveIndex
     } else {
       if (activeScheduleRequest.requestId !== requestId) return
       rawSchedules.value = schedules
-      scheduleMap.value = patchedScheduleMap
       approvalList.value = []
       leaveIndex.value = {}
     }
@@ -2557,6 +2592,8 @@ async function fetchSchedules({ reset = false, fetchAll = false } = {}) {
     rawSchedules.value = []
   } finally {
     if (activeScheduleRequest.requestId === requestId) {
+      scheduleRequestStats.completed += 1
+      debugScheduleRequest('complete', { reason, requestId })
       isFetchingSchedules.value = false
       activeScheduleRequest.promise = null
       activeScheduleRequest.key = ''
@@ -2568,13 +2605,13 @@ async function fetchSchedules({ reset = false, fetchAll = false } = {}) {
 
 function onPageChange(page) {
   currentPage.value = page
-  fetchSchedules()
+  refreshScheduleData({ reason: 'page-change' })
 }
 
 function onPageSizeChange(size) {
   pageSize.value = size
   currentPage.value = 1
-  fetchSchedules()
+  refreshScheduleData({ reason: 'page-size-change' })
 }
 
 // ========= 審批明細 =========
@@ -2625,7 +2662,11 @@ async function ensureFetchAllLoaded() {
     await fetchAllCache.inFlight.get(key)
     return
   }
-  const task = fetchSchedules({ fetchAll: true })
+  const task = refreshScheduleData({
+    fetchAll: true,
+    includeSummary: false,
+    reason: 'ensure-fetch-all'
+  })
     .then(() => {
       fetchAllCache.fulfilled.add(key)
     })
@@ -2800,10 +2841,7 @@ async function onDepartmentChange() {
   await fetchSubDepartments(selectedDepartment.value)
   await fetchEmployees(selectedDepartment.value, '')
   currentPage.value = 1
-  await Promise.all([
-    fetchSchedules({ reset: true }),
-    fetchSummary()
-  ])
+  await refreshScheduleData({ reset: true, reason: 'department-change' })
 }
 
 async function onSubDepartmentChange() {
@@ -2812,10 +2850,7 @@ async function onSubDepartmentChange() {
     selectedSubDepartment.value
   )
   currentPage.value = 1
-  await Promise.all([
-    fetchSchedules({ reset: true }),
-    fetchSummary()
-  ])
+  await refreshScheduleData({ reset: true, reason: 'sub-department-change' })
 }
 
 // ========= 單筆錯誤處理 =========
@@ -3169,13 +3204,17 @@ async function onMonthChange(value) {
     : dayjs().format('YYYY-MM')
   currentPage.value = 1
   await fetchHolidays()
-  await Promise.all([
-    fetchSchedules({ reset: true }),
-    fetchSummary()
-  ])
+  await refreshScheduleData({ reset: true, reason: 'month-change' })
 }
 
 // ========= 初始化 =========
+
+onBeforeUnmount(() => {
+  if (filterRefreshTimer) {
+    clearTimeout(filterRefreshTimer)
+    filterRefreshTimer = null
+  }
+})
 
 onMounted(async () => {
   const supervisorId = getSupervisorIdFromStorage()
@@ -3185,7 +3224,6 @@ onMounted(async () => {
   }
   try {
     await fetchHolidays()
-    await fetchSummary()
     await fetchShiftOptions()
     await fetchSupervisorContext()
     await fetchOptions()
@@ -3193,7 +3231,7 @@ onMounted(async () => {
       selectedDepartment.value,
       selectedSubDepartment.value
     )
-    await fetchSchedules({ reset: true })
+    await refreshScheduleData({ reset: true, reason: 'mounted-init' })
   } finally {
     isInitializingIncludeSelf = false
   }
