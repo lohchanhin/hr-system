@@ -11,6 +11,7 @@ import jwt from 'jsonwebtoken';
 // 統一成物件型態，提供各端點會用到的方法
 const mockShiftSchedule = {
   find: jest.fn(() => ({ populate: jest.fn().mockResolvedValue([]) })),
+  countDocuments: jest.fn(),
   findOne: jest.fn(),
   create: jest.fn(),
   insertMany: jest.fn(),
@@ -118,6 +119,8 @@ beforeAll(async () => {
 beforeEach(() => {
   currentRole = 'supervisor';
   mockShiftSchedule.find.mockReset();
+  mockShiftSchedule.countDocuments.mockReset();
+  mockShiftSchedule.countDocuments.mockResolvedValue(0);
   mockShiftSchedule.findOne.mockReset();
   mockShiftSchedule.create.mockReset();
   mockShiftSchedule.insertMany.mockReset();
@@ -276,8 +279,12 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
 
   it('lists schedules by month (with employee filter)', async () => {
     const fake = [{ shiftId: 's1', date: new Date('2023-01-02') }];
+    mockShiftSchedule.countDocuments.mockResolvedValue(1);
     mockShiftSchedule.find.mockReturnValue({
+      select: jest.fn().mockReturnThis(),
       populate: jest.fn().mockReturnThis(),
+      skip: jest.fn().mockReturnThis(),
+      limit: jest.fn().mockReturnThis(),
       lean: jest.fn().mockResolvedValue(fake)
     });
 
@@ -292,6 +299,11 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
       publishSummary: {
         currentRoundPendingEmployees: [],
         unaffectedConfirmedEmployees: [],
+      },
+      pagination: {
+        total: 1,
+        page: 1,
+        limit: 50,
       },
     });
   });
@@ -312,8 +324,12 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
     const supervisorApp = buildScheduleAppWithRole('supervisor');
     const fake = [{ employee: 'emp1', shiftId: 's1', date: new Date('2023-01-02') }];
     const leanMock = jest.fn().mockResolvedValue(fake);
+    mockShiftSchedule.countDocuments.mockResolvedValue(1);
     mockShiftSchedule.find.mockReturnValue({
+      select: jest.fn().mockReturnThis(),
       populate: jest.fn().mockReturnThis(),
+      skip: jest.fn().mockReturnThis(),
+      limit: jest.fn().mockReturnThis(),
       lean: leanMock
     });
     const selectMock = jest.fn().mockResolvedValue([{ _id: 'emp1' }]);
@@ -334,6 +350,11 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
       publishSummary: {
         currentRoundPendingEmployees: [],
         unaffectedConfirmedEmployees: [],
+      },
+      pagination: {
+        total: 1,
+        page: 1,
+        limit: 50,
       },
     });
   });
@@ -1018,19 +1039,28 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
     const approvals = [{
       _id: 'a1',
       applicant_employee: { _id: 'e1', name: 'E1' },
-      form: { _id: 'form1', name: '請假' },
       form_data: { s: '2023-01-01', e: '2023-01-02', t: '病假' },
       status: 'approved'
     }];
     const populateMock = jest.fn().mockReturnThis();
+    const selectMock = jest.fn().mockReturnThis();
+    const leanMock = jest.fn().mockResolvedValue(approvals);
     mockApprovalRequest.find.mockReturnValue({
+      select: selectMock,
       populate: populateMock,
-      then: (resolve) => resolve(approvals)
+      lean: leanMock,
     });
     const res = await request(app).get('/api/schedules/leave-approvals?month=2023-01&employee=e1');
     expect(res.status).toBe(200);
-    expect(populateMock).toHaveBeenCalledWith('applicant_employee');
-    expect(populateMock).toHaveBeenCalledWith({ path: 'form', select: 'name category' });
+    expect(mockApprovalRequest.find).toHaveBeenCalledWith({
+      applicant_employee: { $in: ['e1'] },
+      form: 'form1',
+      status: 'approved',
+      'form_data.s': { $lt: '2023-02-01' },
+      'form_data.e': { $gte: '2023-01-01' },
+    });
+    expect(selectMock).toHaveBeenCalledWith('applicant_employee applicant_department status form_data.t form_data.s form_data.e');
+    expect(populateMock).toHaveBeenCalledWith({ path: 'applicant_employee', select: 'name department subDepartment' });
     expect(res.body).toEqual({
       leaves: [{
         employee: approvals[0].applicant_employee,
@@ -1039,57 +1069,53 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
         endDate: '2023-01-02',
         status: 'approved'
       }],
-      approvals
+      approvals: [{
+        _id: 'a1',
+        employee: approvals[0].applicant_employee,
+        leaveType: '病假',
+        startDate: '2023-01-01',
+        endDate: '2023-01-02',
+        status: 'approved'
+      }]
     });
   });
 
-  it('filters leave approvals by department and subDepartment', async () => {
+  it('filters leave approvals by department and subDepartment in Mongo query', async () => {
+    const employeeSelectMock = jest
+      .fn()
+      .mockImplementationOnce(() => createSelectResponse([{ _id: 'e1' }, { _id: 'e3' }]));
+    mockEmployee.find.mockReturnValue({ select: employeeSelectMock });
     const approvals = [
       {
         _id: 'a1',
         applicant_employee: { _id: 'e1', name: 'E1', department: 'd1', subDepartment: 'sd1' },
-        applicant_department: 'd1',
-        form: { _id: 'form1', name: '請假' },
         form_data: { s: '2023-01-05', e: '2023-01-06', t: '病假' },
-        status: 'approved'
-      },
-      {
-        _id: 'a2',
-        applicant_employee: { _id: 'e2', name: 'E2', department: 'd1', subDepartment: 'sd2' },
-        applicant_department: 'd1',
-        form: { _id: 'form1', name: '請假' },
-        form_data: { s: '2023-01-03', e: '2023-01-04', t: '事假' },
-        status: 'approved'
-      },
-      {
-        _id: 'a3',
-        applicant_employee: { _id: 'e3', name: 'E3', department: 'd1', subDepartment: 'sd1' },
-        applicant_department: '',
-        form: { _id: 'form1', name: '請假' },
-        form_data: { s: '2023-01-07', e: '2023-01-08', t: '特休' },
-        status: 'approved'
-      },
-      {
-        _id: 'a4',
-        applicant_employee: { _id: 'e4', name: 'E4', department: 'd2', subDepartment: 'sd2' },
-        applicant_department: 'd2',
-        form: { _id: 'form1', name: '請假' },
-        form_data: { s: '2023-01-09', e: '2023-01-10', t: '病假' },
         status: 'approved'
       }
     ];
     const populateMock = jest.fn().mockReturnThis();
+    const selectMock = jest.fn().mockReturnThis();
+    const leanMock = jest.fn().mockResolvedValue(approvals);
     mockApprovalRequest.find.mockReturnValue({
+      select: selectMock,
       populate: populateMock,
-      then: (resolve) => resolve(approvals)
+      lean: leanMock,
     });
 
     const res = await request(app)
       .get('/api/schedules/leave-approvals?month=2023-01&department=d1&subDepartment=sd1');
 
     expect(res.status).toBe(200);
-    expect(res.body.approvals).toHaveLength(2);
-    expect(res.body.approvals.map((a) => a._id)).toEqual(['a1', 'a3']);
+    expect(mockEmployee.find).toHaveBeenCalledWith({ department: 'd1', subDepartment: 'sd1' });
+    expect(mockApprovalRequest.find).toHaveBeenCalledWith({
+      applicant_employee: { $in: ['e1', 'e3'] },
+      form: 'form1',
+      status: 'approved',
+      'form_data.s': { $lt: '2023-02-01' },
+      'form_data.e': { $gte: '2023-01-01' },
+    });
+    expect(res.body.approvals).toHaveLength(1);
+    expect(res.body.approvals.map((a) => a._id)).toEqual(['a1']);
     expect(res.body.leaves).toEqual([
       {
         employee: approvals[0].applicant_employee,
@@ -1097,17 +1123,9 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
         startDate: '2023-01-05',
         endDate: '2023-01-06',
         status: 'approved'
-      },
-      {
-        employee: approvals[2].applicant_employee,
-        leaveType: '特休',
-        startDate: '2023-01-07',
-        endDate: '2023-01-08',
-        status: 'approved'
       }
     ]);
-    expect(populateMock).toHaveBeenCalledWith('applicant_employee');
-    expect(populateMock).toHaveBeenCalledWith({ path: 'form', select: 'name category' });
+    expect(populateMock).toHaveBeenCalledWith({ path: 'applicant_employee', select: 'name department subDepartment' });
   });
 
   it('leave approvals include supervisor when includeSelf is true', async () => {
@@ -1115,9 +1133,11 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
     mockEmployee.find.mockReturnValue({ select: selectMock });
     const approvals = [];
     const populateMock = jest.fn().mockReturnThis();
+    const approvalSelectMock = jest.fn().mockReturnThis();
     mockApprovalRequest.find.mockReturnValue({
+      select: approvalSelectMock,
       populate: populateMock,
-      then: (resolve) => resolve(approvals),
+      lean: jest.fn().mockResolvedValue(approvals),
     });
 
     const res = await request(app)
@@ -1126,8 +1146,13 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
     expect(res.status).toBe(200);
     const queryArg = mockApprovalRequest.find.mock.calls[0][0];
     expect(queryArg.applicant_employee.$in).toEqual(expect.arrayContaining(['emp1', 'sup1']));
-    expect(populateMock).toHaveBeenCalledWith('applicant_employee');
-    expect(populateMock).toHaveBeenCalledWith({ path: 'form', select: 'name category' });
+    expect(queryArg).toEqual(expect.objectContaining({
+      form: 'form1',
+      status: 'approved',
+      'form_data.s': { $lt: '2023-02-01' },
+      'form_data.e': { $gte: '2023-01-01' },
+    }));
+    expect(populateMock).toHaveBeenCalledWith({ path: 'applicant_employee', select: 'name department subDepartment' });
   });
 
   it('deletes old schedules', async () => {
