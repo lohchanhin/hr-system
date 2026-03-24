@@ -2115,4 +2115,59 @@ describe('Schedule.vue', () => {
     expect(click).toHaveBeenCalled()
     document.createElement = origCreate
   })
+
+  it('toggles fullscreen and recalculates table height', async () => {
+    const wrapper = mountSchedule()
+    await flush()
+
+    const defaultHeight = wrapper.vm.tableMaxHeight
+    expect(wrapper.vm.isTableFullscreen).toBe(false)
+    expect(wrapper.vm.dayColumnWidth).toBe(140)
+
+    wrapper.vm.toggleTableFullscreen()
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.vm.isTableFullscreen).toBe(true)
+    expect(wrapper.find('[data-test="schedule-card"]').classes()).toContain('is-fullscreen')
+    expect(wrapper.find('[data-test="schedule-table-wrapper"]').classes()).toContain('is-fullscreen')
+    expect(wrapper.vm.dayColumnWidth).toBe(92)
+    expect(wrapper.vm.tableMaxHeight).toBeGreaterThan(defaultHeight)
+
+    window.dispatchEvent(new Event('resize'))
+    await wrapper.vm.$nextTick()
+
+    wrapper.vm.toggleTableFullscreen()
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.isTableFullscreen).toBe(false)
+  })
+
+  it('keeps editable cell state after exiting fullscreen', async () => {
+    const auth = useAuthStore()
+    auth.loadUser = vi.fn(() => {
+      auth.user = { role: 'admin', id: 'admin1' }
+      auth.role = 'admin'
+    })
+    setRoleToken('admin')
+
+    const wrapper = mountSchedule()
+    await flush()
+
+    wrapper.vm.employees = [{ _id: 'e1', name: '員工A' }]
+    wrapper.vm.scheduleMap = { e1: { 1: { shiftId: '', department: 'd1', subDepartment: 'sd1' } } }
+    apiFetch.mockImplementation(async (url, options) => {
+      if (url === '/api/schedules' && options?.method === 'POST') {
+        return { ok: true, json: async () => ({ _id: 'new-sch', shiftId: 's1' }) }
+      }
+      return { ok: true, json: async () => [] }
+    })
+    await wrapper.vm.$nextTick()
+
+    wrapper.vm.toggleTableFullscreen()
+    await wrapper.vm.onSelect('e1', 1, 's1')
+    wrapper.vm.toggleTableFullscreen()
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.vm.scheduleMap.e1[1].shiftId).toBe('s1')
+    expect(wrapper.vm.isTableFullscreen).toBe(false)
+  })
 })
