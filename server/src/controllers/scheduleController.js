@@ -287,60 +287,72 @@ export async function listLeaveApprovals(req, res) {
       subDepartment: subDepartmentRaw,
     } = req.query;
     if (!month) return res.status(400).json({ error: 'month required' });
+    const { formId, startId, endId, typeId } = await getLeaveFieldIds();
+    if (!formId || !startId || !endId) {
+      return res.json({ leaves: [], approvals: [] });
+    }
     const start = new Date(`${month}-01`);
     const end = new Date(start);
     end.setMonth(end.getMonth() + 1);
+    const monthStart = `${month}-01`;
+    const monthEnd = end.toISOString().slice(0, 10);
 
     const includeSelf = String(includeSelfRaw).toLowerCase() === 'true';
     const department = departmentRaw ? String(departmentRaw) : '';
     const subDepartment = subDepartmentRaw ? String(subDepartmentRaw) : '';
-    let ids = [];
+    let scopedEmployeeIds = null;
     if (supervisor) {
       const emps = await Employee.find({ supervisor }).select('_id');
       const idSet = new Set(emps.map((e) => e._id.toString()));
       if (includeSelf && supervisor) {
         idSet.add(String(supervisor));
       }
-      ids = Array.from(idSet);
+      scopedEmployeeIds = Array.from(idSet);
     } else if (employee) {
-      ids = [employee];
+      scopedEmployeeIds = [employee];
     }
 
-    const empFilter = ids.length ? { $in: ids } : undefined;
-
-    const approvalQuery = { createdAt: { $gte: start, $lt: end } };
-    if (empFilter) approvalQuery.applicant_employee = empFilter;
-    const approvals = await ApprovalRequest.find(approvalQuery)
-      .populate('applicant_employee')
-      .populate({ path: 'form', select: 'name category' });
-
-    const normalizeId = (value) => {
-      if (!value && value !== 0) return '';
-      if (typeof value === 'object') {
-        if (value?._id) return String(value._id);
-        if (value?.id) return String(value.id);
+    let departmentEmployeeIds = null;
+    if (department || subDepartment) {
+      const employeeQuery = {};
+      if (department) employeeQuery.department = department;
+      if (subDepartment) employeeQuery.subDepartment = subDepartment;
+      if (Array.isArray(scopedEmployeeIds)) {
+        employeeQuery._id = { $in: scopedEmployeeIds };
       }
-      return String(value);
+      const matchedEmployees = await Employee.find(employeeQuery).select('_id').lean();
+      departmentEmployeeIds = matchedEmployees.map((emp) => emp._id.toString());
+    }
+
+    const approvalQuery = {
+      form: formId,
+      status: 'approved',
     };
+    approvalQuery[`form_data.${startId}`] = { $lt: monthEnd };
+    approvalQuery[`form_data.${endId}`] = { $gte: monthStart };
 
-    const filteredApprovals = approvals.filter((approval) => {
-      const matchesDepartment = (() => {
-        if (!department) return true;
-        const applicantDept = normalizeId(approval.applicant_department);
-        if (applicantDept && applicantDept === department) return true;
-        const employeeDept = normalizeId(approval.applicant_employee?.department);
-        return employeeDept === department;
-      })();
-      if (!matchesDepartment) return false;
-      if (!subDepartment) return true;
-      const employeeSub = normalizeId(approval.applicant_employee?.subDepartment);
-      return employeeSub === subDepartment;
-    });
+    if (Array.isArray(scopedEmployeeIds)) {
+      if (!scopedEmployeeIds.length) {
+        return res.json({ leaves: [], approvals: [] });
+      }
+      approvalQuery.applicant_employee = { $in: scopedEmployeeIds };
+    }
 
-    const { formId, startId, endId, typeId } = await getLeaveFieldIds();
-    const leaves = filteredApprovals
-      .filter(a => a.form && String(a.form._id) === formId && a.status === 'approved')
-      .map(a => ({
+    if (subDepartment) {
+      approvalQuery.applicant_employee = { $in: departmentEmployeeIds || [] };
+    } else if (department) {
+      approvalQuery.$or = [{ applicant_department: department }];
+      if (departmentEmployeeIds?.length) {
+        approvalQuery.$or.push({ applicant_employee: { $in: departmentEmployeeIds } });
+      }
+    }
+
+    const approvals = await ApprovalRequest.find(approvalQuery)
+      .select(`applicant_employee applicant_department status form_data.${typeId} form_data.${startId} form_data.${endId}`)
+      .populate({ path: 'applicant_employee', select: 'name department subDepartment' })
+      .lean();
+
+    const leaves = approvals.map((a) => ({
         employee: a.applicant_employee,
         leaveType: a.form_data?.[typeId],
         startDate: a.form_data?.[startId],
@@ -348,7 +360,16 @@ export async function listLeaveApprovals(req, res) {
         status: a.status,
       }));
 
-    res.json({ leaves, approvals: filteredApprovals });
+    const approvalsLite = approvals.map((a) => ({
+      _id: a._id,
+      employee: a.applicant_employee,
+      leaveType: a.form_data?.[typeId],
+      startDate: a.form_data?.[startId],
+      endDate: a.form_data?.[endId],
+      status: a.status,
+    }));
+
+    res.json({ leaves, approvals: approvalsLite });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
