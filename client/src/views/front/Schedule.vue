@@ -191,7 +191,7 @@
     </div>
 
     <!-- Enhanced schedule table with modern design -->
-    <div class="schedule-card" :class="{ 'is-fullscreen': isTableFullscreen }" data-test="schedule-card">
+    <div ref="scheduleCardRef" class="schedule-card" :class="{ 'is-fullscreen': isTableFullscreen }" data-test="schedule-card">
       <div class="schedule-header">
         <h3 class="schedule-title">員工排班表</h3>
         <el-button class="action-btn secondary fullscreen-toggle" @click="toggleTableFullscreen"
@@ -614,6 +614,7 @@ const isApplyingBatch = ref(false)
 const isPublishing = ref(false)
 const isFinalizing = ref(false)
 const isTableFullscreen = ref(false)
+const scheduleCardRef = ref(null)
 const viewportHeight = ref(
   typeof window === 'undefined' ? 900 : window.innerHeight
 )
@@ -1332,59 +1333,7 @@ const leaveApprovalRows = computed(() => {
     })
 })
 
-const scheduleConfirmationRows = computed(() => {
-  const relatedSet = relatedEmployeeIds.value
-  if (!relatedSet.size) return []
-  const monthRange = `${currentMonth.value}-01 ~ ${dayjs(
-    `${currentMonth.value}-01`
-  ).endOf('month').format('YYYY-MM-DD')}`
-  const pendingMap = new Map(
-    publishSummary.value.pendingEmployees.map(item => [
-      String(item?.id),
-      Number(item?.pendingCount) || 0
-    ])
-  )
-  const disputedMap = new Map(
-    publishSummary.value.disputedEmployees.map(item => [
-      String(item?.id),
-      {
-        disputedCount: Number(item?.disputedCount) || 0,
-        latestNote: item?.latestNote || ''
-      }
-    ])
-  )
-
-  return employees.value
-    .filter(emp => relatedSet.has(String(emp?._id)))
-    .map(emp => {
-      const id = String(emp?._id)
-      const pendingCount = pendingMap.get(id) || 0
-      const disputedInfo = disputedMap.get(id)
-      let status = 'confirmed'
-      if (disputedInfo) {
-        status = 'disputed'
-      } else if (pendingCount > 0) {
-        status = 'pending'
-      }
-      return {
-        _id: `schedule-confirm-${id}`,
-        sourceType: 'schedule_confirmation',
-        sourceTypeLabel: '班表確認',
-        applicantName: emp?.name || '-',
-        approvalType: '班表確認簽核',
-        periodText: monthRange,
-        status,
-        statusLabel: formatApprovalStatus(status),
-        statusTagType: approvalStatusTagType(status),
-        noteSummary: disputedInfo?.latestNote || ''
-      }
-    })
-})
-
-const relatedApprovalRows = computed(() => [
-  ...scheduleConfirmationRows.value,
-  ...leaveApprovalRows.value
-])
+const relatedApprovalRows = computed(() => [...leaveApprovalRows.value])
 
 watch([filteredEmployees, pageSize], () => {
   const maxPage = totalPages.value
@@ -1422,8 +1371,33 @@ const updateViewportHeight = () => {
   viewportHeight.value = window.innerHeight
 }
 
+const syncFullscreenState = () => {
+  if (typeof document === 'undefined') return
+  const target = scheduleCardRef.value
+  isTableFullscreen.value = !!target && document.fullscreenElement === target
+}
+
 const toggleTableFullscreen = () => {
-  isTableFullscreen.value = !isTableFullscreen.value
+  if (typeof document === 'undefined') return
+  const target = scheduleCardRef.value
+  if (!target || typeof target.requestFullscreen !== 'function') {
+    isTableFullscreen.value = !isTableFullscreen.value
+    updateViewportHeight()
+    return
+  }
+
+  if (document.fullscreenElement === target) {
+    document.exitFullscreen?.().catch(() => {
+      isTableFullscreen.value = false
+      updateViewportHeight()
+    })
+    return
+  }
+
+  target.requestFullscreen().catch(() => {
+    isTableFullscreen.value = true
+    updateViewportHeight()
+  })
   updateViewportHeight()
 }
 
@@ -3335,12 +3309,18 @@ onBeforeUnmount(() => {
   if (typeof window !== 'undefined') {
     window.removeEventListener('resize', updateViewportHeight)
   }
+  if (typeof document !== 'undefined') {
+    document.removeEventListener('fullscreenchange', syncFullscreenState)
+  }
 })
 
 onMounted(async () => {
   if (typeof window !== 'undefined') {
     updateViewportHeight()
     window.addEventListener('resize', updateViewportHeight)
+  }
+  if (typeof document !== 'undefined') {
+    document.addEventListener('fullscreenchange', syncFullscreenState)
   }
   const supervisorId = getSupervisorIdFromStorage()
   const storedPreference = loadIncludeSelfPreference(supervisorId)
