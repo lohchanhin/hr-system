@@ -256,9 +256,9 @@
               </el-avatar>
               <el-checkbox v-if="canEdit" class="row-checkbox" :model-value="selectedEmployeesSet.has(row._id)"
                 @change="val => toggleEmployee(row._id, val)" />
-              <component v-if="employeeStatus(row._id) === 'unscheduled'" :is="CircleCloseFilled"
+              <component v-if="(employeeStatusMap[row._id] || employeeStatus(row._id)) === 'unscheduled'" :is="CircleCloseFilled"
                 class="status-icon unscheduled" />
-              <component v-else-if="employeeStatus(row._id) === 'onLeave'" :is="WarningFilled"
+              <component v-else-if="(employeeStatusMap[row._id] || employeeStatus(row._id)) === 'onLeave'" :is="WarningFilled"
                 class="status-icon on-leave" />
               {{ row.name }}
             </div>
@@ -291,27 +291,23 @@
           <template #default="{ row }">
             <div v-if="!lazyMode || expandedRows.has(row._id)" class="modern-schedule-cell" :class="[
               {
-                'has-leave': isLeaveCell(row._id, d.date),
-                'missing-shift':
-                  !scheduleMap[row._id]?.[d.date]?.shiftId &&
-                  !isLeaveCell(row._id, d.date),
+                'has-leave': getCellMeta(row._id, d.date).isLeave,
+                'missing-shift': getCellMeta(row._id, d.date).missingShift,
                 'is-selected': isCellSelected(row._id, d.date),
-                'has-shift':
-                  !isLeaveCell(row._id, d.date) &&
-                  !!scheduleMap[row._id]?.[d.date]?.shiftId
+                'has-shift': getCellMeta(row._id, d.date).hasShift
               }
-            ]" :style="isLeaveCell(row._id, d.date)
+            ]" :style="getCellMeta(row._id, d.date).isLeave
                   ? undefined
-                  : shiftClass(scheduleMap[row._id]?.[d.date]?.shiftId)
+                  : getCellMeta(row._id, d.date).style
                 " :title="leaveTooltip(row._id, d.date)">
               <!-- ✅ 已請假日期：禁止勾選 -->
-              <div v-if="canEdit && !isLeaveCell(row._id, d.date)" class="cell-selection" @click.stop>
+              <div v-if="canEdit && !getCellMeta(row._id, d.date).isLeave" class="cell-selection" @click.stop>
                 <el-checkbox :model-value="manualSelectedCellsSet.has(buildCellKey(row._id, d.date))
                   " @change="val => toggleCell(row._id, d.date, val)" size="small" />
               </div>
 
               <template v-if="scheduleMap[row._id]?.[d.date]">
-                <div v-if="isLeaveCell(row._id, d.date)" class="leave-indicator" data-test="leave-indicator">
+                <div v-if="getCellMeta(row._id, d.date).isLeave" class="leave-indicator" data-test="leave-indicator">
                   <el-tag type="warning" effect="light" size="small" class="leave-tag">
                     休假中
                   </el-tag>
@@ -326,17 +322,13 @@
                 </template>
 
                 <template v-else>
-                  <el-popover v-if="
-                    shiftInfo(scheduleMap[row._id][d.date].shiftId)
-                  " placement="top" trigger="hover" :width="200">
+                  <el-popover v-if="getShiftInfoByCell(row._id, d.date)" placement="top" trigger="hover" :width="200">
                     <div class="shift-details">
                       <div class="detail-row">
                         <span class="detail-label">上班時間：</span>
                         <span class="detail-value">
                           {{
-                            shiftInfo(
-                              scheduleMap[row._id][d.date].shiftId
-                            ).startTime
+                            getShiftInfoByCell(row._id, d.date).startTime
                           }}
                         </span>
                       </div>
@@ -344,39 +336,24 @@
                         <span class="detail-label">下班時間：</span>
                         <span class="detail-value">
                           {{
-                            shiftInfo(
-                              scheduleMap[row._id][d.date].shiftId
-                            ).endTime
+                            getShiftInfoByCell(row._id, d.date).endTime
                           }}
                         </span>
                       </div>
-                      <div v-if="
-                        shiftInfo(
-                          scheduleMap[row._id][d.date].shiftId
-                        ).remark
-                      " class="detail-row">
+                      <div v-if="getShiftInfoByCell(row._id, d.date).remark" class="detail-row">
                         <span class="detail-label">備註：</span>
                         <span class="detail-value">
                           {{
-                            shiftInfo(
-                              scheduleMap[row._id][d.date].shiftId
-                            ).remark
+                            getShiftInfoByCell(row._id, d.date).remark
                           }}
                         </span>
                       </div>
                     </div>
                     <template #reference>
-                      <div class="modern-shift-tag" :style="shiftClass(
-                        shiftInfo(
-                          scheduleMap[row._id][d.date].shiftId
-                        )
-                      )
-                        ">
+                      <div class="modern-shift-tag" :style="getCellMeta(row._id, d.date).style">
                         {{
                           formatShiftLabel(
-                            shiftInfo(
-                              scheduleMap[row._id][d.date].shiftId
-                            )
+                            getShiftInfoByCell(row._id, d.date)
                           )
                         }}
                       </div>
@@ -385,8 +362,7 @@
                 </template>
 
                 <div v-if="
-                  !scheduleMap[row._id][d.date].shiftId &&
-                  !isLeaveCell(row._id, d.date)
+                  getCellMeta(row._id, d.date).missingShift
                 " class="missing-label">
                   未排班
                 </div>
@@ -720,6 +696,77 @@ const isLeaveCell = (empId, day) => {
   const empLeaves = leaveIndex.value[String(empId)]
   if (!empLeaves) return false
   return !!empLeaves[Number(day)]
+}
+
+const shiftInfoMap = computed(() => {
+  const map = new Map()
+  shifts.value.forEach(shift => {
+    const key = String(shift?._id || '')
+    if (key) map.set(key, shift)
+  })
+  return map
+})
+
+const employeeStatusMap = computed(() => {
+  return employees.value.reduce((acc, emp) => {
+    const empId = String(emp?._id || '')
+    if (!empId) return acc
+    const daysMap = scheduleMap.value[empId] || {}
+    const cells = Object.values(daysMap)
+    if (!cells.length) {
+      acc[empId] = 'unscheduled'
+      return acc
+    }
+    const hasAnyEmptyDay = cells.some(
+      c => !c.shiftId && !c.leave && !isLeaveCell(empId, c.day)
+    )
+    const hasAnyLeave = cells.some(c => c.leave || isLeaveCell(empId, c.day))
+    if (hasAnyEmptyDay) acc[empId] = 'unscheduled'
+    else if (hasAnyLeave) acc[empId] = 'onLeave'
+    else acc[empId] = 'scheduled'
+    return acc
+  }, {})
+})
+
+const cellMetaMap = computed(() => {
+  const map = new Map()
+  employees.value.forEach(emp => {
+    const empId = String(emp?._id || '')
+    if (!empId) return
+    days.value.forEach(d => {
+      const day = d.date
+      const shiftId = scheduleMap.value[empId]?.[day]?.shiftId
+      const isLeave = isLeaveCell(empId, day)
+      const shift = shiftId ? shiftInfoMap.value.get(String(shiftId)) : null
+      map.set(buildCellKey(empId, day), {
+        isLeave,
+        hasShift: !isLeave && !!shiftId,
+        missingShift: !isLeave && !shiftId,
+        style: !isLeave ? shiftClass(shift || shiftId) : {}
+      })
+    })
+  })
+  return map
+})
+
+const getCellMeta = (empId, day) => {
+  const key = buildCellKey(String(empId), Number(day))
+  const cached = cellMetaMap.value.get(key)
+  if (cached) return cached
+  const isLeave = isLeaveCell(empId, day)
+  const shiftId = scheduleMap.value?.[empId]?.[day]?.shiftId
+  return {
+    isLeave,
+    hasShift: !isLeave && !!shiftId,
+    missingShift: !isLeave && !shiftId,
+    style: !isLeave ? shiftClass(shiftId) : {}
+  }
+}
+
+const getShiftInfoByCell = (empId, day) => {
+  const shiftId = scheduleMap.value?.[empId]?.[day]?.shiftId
+  if (!shiftId) return null
+  return shiftInfoMap.value.get(String(shiftId)) || shiftInfo(shiftId)
 }
 
 // 只能選「有 cell 且不是請假日」的格子
@@ -1098,6 +1145,8 @@ watch([employeeSearch, statusFilter], () => {
 
 
 const employeeStatus = empId => {
+  const cachedStatus = employeeStatusMap.value[String(empId)]
+  if (cachedStatus) return cachedStatus
   const daysMap = scheduleMap.value[empId] || {}
   const cells = Object.values(daysMap)
 
@@ -1118,7 +1167,11 @@ const filteredEmployees = computed(() => {
     ? employees.value.filter(e => e.name.includes(employeeSearch.value))
     : employees.value
   if (statusFilter.value !== 'all') {
-    list = list.filter(e => employeeStatus(e._id) === statusFilter.value)
+    list = list.filter(
+      e =>
+        (employeeStatusMap.value[String(e._id)] || employeeStatus(e._id)) ===
+        statusFilter.value
+    )
   }
   return list
 })
@@ -2953,7 +3006,9 @@ async function applyBatch() {
 // ========= 共用小工具 =========
 
 function shiftInfo(id) {
-  return shifts.value.find(s => s._id === id)
+  const key = String(id || '')
+  if (!key) return undefined
+  return shiftInfoMap.value.get(key) || shifts.value.find(s => s._id === id)
 }
 
 function formatShiftLabel(shift) {

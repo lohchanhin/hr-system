@@ -1521,6 +1521,34 @@ describe('Schedule.vue', () => {
     expect(wrapper.vm.filteredEmployees.map(e => e._id)).toEqual(['e2'])
   })
 
+  it('renders cached status icons and readonly shift label without regression', async () => {
+    apiFetch.mockResolvedValue({ ok: true, json: async () => [] })
+    const wrapper = mountSchedule()
+    await flush()
+
+    wrapper.vm.shifts = [
+      { _id: 's1', code: 'A1', name: '早班', startTime: '08:00', endTime: '17:00' }
+    ]
+    wrapper.vm.employees = [
+      { _id: 'e1', name: '未排班員工', department: '', subDepartment: '' },
+      { _id: 'e2', name: '請假員工', department: '', subDepartment: '' },
+      { _id: 'e3', name: '正常員工', department: '', subDepartment: '' }
+    ]
+    wrapper.vm.scheduleMap = {
+      e1: { 1: { shiftId: '' } },
+      e2: { 1: { shiftId: '', leave: {} } },
+      e3: { 1: { shiftId: 's1' } }
+    }
+    wrapper.vm.leaveIndex = { e2: { 1: true } }
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.vm.employeeStatusMap.e1).toBe('unscheduled')
+    expect(wrapper.vm.employeeStatusMap.e2).toBe('onLeave')
+    expect(wrapper.find('.status-icon.unscheduled').exists()).toBe(true)
+    expect(wrapper.find('.status-icon.on-leave').exists()).toBe(true)
+    expect(wrapper.find('.modern-shift-tag').text()).toContain('A1(早班)')
+  })
+
   it('lazy mode is disabled - schedule table always expanded', async () => {
     apiFetch.mockResolvedValue({ ok: true, json: async () => [] })
     const wrapper = mountSchedule()
