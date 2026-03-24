@@ -191,9 +191,13 @@
     </div>
 
     <!-- Enhanced schedule table with modern design -->
-    <div class="schedule-card">
+    <div class="schedule-card" :class="{ 'is-fullscreen': isTableFullscreen }" data-test="schedule-card">
       <div class="schedule-header">
         <h3 class="schedule-title">員工排班表</h3>
+        <el-button class="action-btn secondary fullscreen-toggle" @click="toggleTableFullscreen"
+          data-test="fullscreen-toggle-button">
+          {{ isTableFullscreen ? '退出全螢幕' : '進入全螢幕' }}
+        </el-button>
         <div class="schedule-legend" data-test="schedule-legend">
           <template v-if="legendShifts.length">
             <span v-for="legend in legendShifts" :key="legend.key" class="legend-item" :style="legend.style"
@@ -252,7 +256,7 @@
         <span class="row-color-hint">列色僅暫存於目前瀏覽器 session</span>
       </div>
 
-      <div class="schedule-table-wrapper">
+      <div class="schedule-table-wrapper" :class="{ 'is-fullscreen': isTableFullscreen }" data-test="schedule-table-wrapper">
         <el-table class="modern-schedule-table" :data="visibleEmployees" :max-height="tableMaxHeight" :header-cell-style="{
           backgroundColor: '#ecfeff',
           color: '#164e63',
@@ -289,7 +293,7 @@
           </template>
         </el-table-column>
 
-        <el-table-column v-for="d in days" :key="d.date" :label="d.label" width="140" align="center">
+        <el-table-column v-for="d in days" :key="d.date" :label="d.label" :width="dayColumnWidth" align="center">
           <template #header>
             <div class="day-header">
               <span>{{ d.label }}</span>
@@ -609,6 +613,10 @@ const ROW_COLOR_SESSION_KEY = 'schedule-row-colors'
 const isApplyingBatch = ref(false)
 const isPublishing = ref(false)
 const isFinalizing = ref(false)
+const isTableFullscreen = ref(false)
+const viewportHeight = ref(
+  typeof window === 'undefined' ? 900 : window.innerHeight
+)
 const detail = reactive({ visible: false, doc: null })
 const employeeNameCache = reactive({})
 const pageSize = ref(5)
@@ -1402,11 +1410,22 @@ const toggleRow = id => {
 }
 
 // ========= table height for sticky header =========
+const dayColumnWidth = computed(() => (isTableFullscreen.value ? 92 : 140))
+
 const tableMaxHeight = computed(() => {
-  // Calculate max height to enable sticky header
-  // Account for page header, filters, actions, and pagination (approximately 400px)
-  return window.innerHeight - 400
+  const reservedHeight = isTableFullscreen.value ? 230 : 400
+  return Math.max(320, viewportHeight.value - reservedHeight)
 })
+
+const updateViewportHeight = () => {
+  if (typeof window === 'undefined') return
+  viewportHeight.value = window.innerHeight
+}
+
+const toggleTableFullscreen = () => {
+  isTableFullscreen.value = !isTableFullscreen.value
+  updateViewportHeight()
+}
 
 const filteredSubDepartments = computed(() =>
   subDepartments.value.filter(s => s.department === selectedDepartment.value)
@@ -3313,9 +3332,16 @@ onBeforeUnmount(() => {
     clearTimeout(filterRefreshTimer)
     filterRefreshTimer = null
   }
+  if (typeof window !== 'undefined') {
+    window.removeEventListener('resize', updateViewportHeight)
+  }
 })
 
 onMounted(async () => {
+  if (typeof window !== 'undefined') {
+    updateViewportHeight()
+    window.addEventListener('resize', updateViewportHeight)
+  }
   const supervisorId = getSupervisorIdFromStorage()
   const storedPreference = loadIncludeSelfPreference(supervisorId)
   if (storedPreference === true && showIncludeSelfToggle.value) {
@@ -3898,6 +3924,19 @@ onMounted(async () => {
 }
 
 .schedule-card {
+  &.is-fullscreen {
+    position: fixed;
+    inset: 0;
+    z-index: 3000;
+    margin: 0;
+    border-radius: 0;
+    border: none;
+    box-shadow: none;
+    display: flex;
+    flex-direction: column;
+    background: #fff;
+  }
+
   .schedule-header {
     background: linear-gradient(135deg, #f1f5f9 0%, #ecfeff 100%);
     padding: 20px 24px;
@@ -3992,6 +4031,13 @@ onMounted(async () => {
 }
 
 .schedule-table-wrapper {
+  overflow-x: auto;
+
+  &.is-fullscreen {
+    flex: 1;
+    min-height: 0;
+  }
+
   /* Element Plus table handles its own scrolling with max-height prop */
   /* Enhanced scrollbar styling for improved visibility and usability */
   :deep(.el-table__body-wrapper) {
@@ -4005,6 +4051,8 @@ onMounted(async () => {
 }
 
 .modern-schedule-table {
+  min-width: max-content;
+
   :deep(.el-table__body .schedule-row > td.el-table__cell) {
     background-color: var(--row-color-bg, #ffffff);
     border-bottom-color: var(--row-color-border, #e2e8f0);
@@ -4029,6 +4077,28 @@ onMounted(async () => {
     &:hover {
       background-color: var(--row-color-bg, #f8fafc) !important;
     }
+  }
+
+  :deep(.el-table__cell) {
+    font-size: 13px;
+  }
+}
+
+.schedule-card.is-fullscreen {
+  .modern-schedule-table {
+    :deep(.el-table__cell) {
+      font-size: 12px;
+    }
+
+    :deep(.day-header) {
+      font-size: 12px;
+    }
+  }
+
+  :deep(.el-table__fixed),
+  :deep(.el-table__fixed-right),
+  :deep(.el-table__fixed-column--left) {
+    z-index: 25;
   }
 }
 
