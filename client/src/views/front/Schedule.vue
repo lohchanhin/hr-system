@@ -227,11 +227,29 @@
           :disabled="!batchDepartment" data-test="batch-subdept-select">
           <el-option v-for="sub in batchSubDepartments" :key="sub._id" :label="sub.name" :value="sub._id" />
         </el-select>
+        <el-select v-model="batchRowColorIndex" placeholder="設定整列顏色" clearable class="modern-select batch-select"
+          data-test="batch-row-color-select">
+          <el-option v-for="opt in rowColorOptions" :key="opt.index" :label="opt.label" :value="opt.index">
+            <span class="row-color-option">
+              <span class="row-color-dot" :style="{ backgroundColor: opt.bg, borderColor: opt.border }"></span>
+              {{ opt.label }}
+            </span>
+          </el-option>
+        </el-select>
+        <el-button class="action-btn secondary apply-btn" :disabled="!canApplyRowColor" @click="applyRowColor"
+          data-test="batch-row-color-apply">
+          套用列色
+        </el-button>
+        <el-button class="action-btn secondary apply-btn" plain :disabled="!selectedEmployeesSet.size" @click="clearRowColor"
+          data-test="batch-row-color-clear">
+          清除列色
+        </el-button>
         <el-button type="primary" class="action-btn primary apply-btn"
           :disabled="!hasAnySelection || !batchShiftId || isApplyingBatch" :loading="isApplyingBatch"
           @click="applyBatch" data-test="batch-apply-button">
           套用至選取
         </el-button>
+        <span class="row-color-hint">列色僅暫存於目前瀏覽器 session</span>
       </div>
 
       <div class="schedule-table-wrapper">
@@ -239,15 +257,7 @@
           backgroundColor: '#ecfeff',
           color: '#164e63',
           fontWeight: '600'
-        }" :row-style="{ backgroundColor: '#ffffff' }" @row-click="row => lazyMode && toggleRow(row._id)">
-        <el-table-column label="部門／單位" width="180" fixed="left">
-          <template #default="{ row }">
-            <div class="employee-info">
-              <div class="department-name">{{ row.department }}</div>
-              <div v-if="row.subDepartment" class="sub-department">{{ row.subDepartment }}</div>
-            </div>
-          </template>
-        </el-table-column>
+        }" :row-style="scheduleRowStyle" :row-class-name="scheduleRowClassName" @row-click="row => lazyMode && toggleRow(row._id)">
         <el-table-column prop="name" label="員工姓名" width="180" fixed="left">
           <template #default="{ row }">
             <div class="employee-name">
@@ -516,6 +526,7 @@ import { useRouter } from 'vue-router'
 import ScheduleDashboard from './ScheduleDashboard.vue'
 import { CircleCloseFilled, WarningFilled } from '@element-plus/icons-vue'
 import { buildShiftStyle } from '../../utils/shiftColors'
+import { ROW_COLOR_PALETTE, normalizeRowColorIndex, resolveRowColor } from '../../utils/rowColors'
 import { getPhotoUrl } from '../../utils/photoUrl'
 
 const fmt = d => (d ? new Date(d).toLocaleString() : '-')
@@ -592,6 +603,9 @@ const customRange = ref([])
 const batchShiftId = ref('')
 const batchDepartment = ref('')
 const batchSubDepartment = ref('')
+const batchRowColorIndex = ref(null)
+const rowColorAssignments = ref({})
+const ROW_COLOR_SESSION_KEY = 'schedule-row-colors'
 const isApplyingBatch = ref(false)
 const isPublishing = ref(false)
 const isFinalizing = ref(false)
@@ -688,6 +702,14 @@ function persistIncludeSelfPreference(value, supervisorId = getSupervisorIdFromS
 const selectedEmployeesSet = computed(() => selectedEmployees.value)
 const selectedDaysSet = computed(() => selectedDays.value)
 const manualSelectedCellsSet = computed(() => manualSelectedCells.value)
+
+const rowColorOptions = computed(() => ROW_COLOR_PALETTE)
+
+const canApplyRowColor = computed(() => {
+  const hasEmployees = selectedEmployeesSet.value.size > 0
+  const index = normalizeRowColorIndex(batchRowColorIndex.value)
+  return hasEmployees && index !== null
+})
 
 // ✅ 用 "::" 當分隔，避免 ObjectId 裡面的 "-" 把字串拆爛
 const buildCellKey = (empId, day) => `${empId}::${day}`
@@ -3038,6 +3060,71 @@ async function applyBatch() {
   }
 }
 
+
+function loadRowColorsFromSession() {
+  if (typeof window === 'undefined') return {}
+  try {
+    const stored = window.sessionStorage?.getItem(ROW_COLOR_SESSION_KEY)
+    const parsed = stored ? JSON.parse(stored) : {}
+    return parsed && typeof parsed === 'object' ? parsed : {}
+  } catch (err) {
+    console.warn('Failed to parse row colors from session', err)
+    return {}
+  }
+}
+
+function persistRowColors() {
+  if (typeof window === 'undefined') return
+  try {
+    window.sessionStorage?.setItem(ROW_COLOR_SESSION_KEY, JSON.stringify(rowColorAssignments.value))
+  } catch (err) {
+    console.warn('Failed to persist row colors', err)
+  }
+}
+
+function scheduleRowClassName({ row }) {
+  const empId = String(row?._id || '')
+  if (!empId) return ''
+  if (selectedEmployeesSet.value.has(empId)) {
+    return 'schedule-row schedule-row--selected'
+  }
+  if (normalizeRowColorIndex(rowColorAssignments.value[empId]) !== null) {
+    return 'schedule-row schedule-row--colored'
+  }
+  return 'schedule-row'
+}
+
+function scheduleRowStyle({ row }) {
+  const empId = String(row?._id || '')
+  const color = resolveRowColor(rowColorAssignments.value[empId])
+  return {
+    backgroundColor: color?.bg || '#ffffff',
+    '--row-color-bg': color?.bg || '#ffffff',
+    '--row-color-border': color?.border || '#e2e8f0'
+  }
+}
+
+function applyRowColor() {
+  const nextIndex = normalizeRowColorIndex(batchRowColorIndex.value)
+  if (nextIndex === null || !selectedEmployeesSet.value.size) return
+  const next = { ...rowColorAssignments.value }
+  selectedEmployeesSet.value.forEach(empId => {
+    next[String(empId)] = nextIndex
+  })
+  rowColorAssignments.value = next
+  persistRowColors()
+}
+
+function clearRowColor() {
+  if (!selectedEmployeesSet.value.size) return
+  const next = { ...rowColorAssignments.value }
+  selectedEmployeesSet.value.forEach(empId => {
+    delete next[String(empId)]
+  })
+  rowColorAssignments.value = next
+  persistRowColors()
+}
+
 // ========= 共用小工具 =========
 
 function shiftInfo(id) {
@@ -3119,7 +3206,8 @@ async function fetchEmployees(
         subDepartmentId: normalizedSub,
         department: deptMap[normalizedDept] || '',
         subDepartment: subMap[normalizedSub] || '',
-        annualLeave
+        annualLeave,
+        scheduleRowColor: normalizeRowColorIndex(e?.scheduleRowColor)
       }
     })
 
@@ -3148,6 +3236,17 @@ async function fetchEmployees(
     }
 
     employees.value = next
+    const sessionColors = loadRowColorsFromSession()
+    rowColorAssignments.value = next.reduce((acc, emp) => {
+      const empId = String(emp?._id || '')
+      if (!empId) return acc
+      const employeeColor = normalizeRowColorIndex(emp?.scheduleRowColor)
+      const sessionColor = normalizeRowColorIndex(sessionColors[empId])
+      const resolved = employeeColor ?? sessionColor
+      if (resolved !== null) acc[empId] = resolved
+      return acc
+    }, {})
+    persistRowColors()
     pruneSelections()
   } catch (err) {
     console.error(err)
@@ -3869,7 +3968,26 @@ onMounted(async () => {
   }
 
   .apply-btn {
-    min-width: 140px;
+    min-width: 120px;
+  }
+
+  .row-color-option {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .row-color-dot {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    border: 1px solid #94a3b8;
+    display: inline-block;
+  }
+
+  .row-color-hint {
+    font-size: 12px;
+    color: #64748b;
   }
 }
 
@@ -3887,6 +4005,15 @@ onMounted(async () => {
 }
 
 .modern-schedule-table {
+  :deep(.el-table__body .schedule-row > td.el-table__cell) {
+    background-color: var(--row-color-bg, #ffffff);
+    border-bottom-color: var(--row-color-border, #e2e8f0);
+  }
+
+  :deep(.el-table__body .schedule-row--selected > td.el-table__cell) {
+    background-color: #dbeafe !important;
+  }
+
   /* Element Plus handles sticky header when max-height is set */
   :deep(.el-table__header-wrapper) {
     background: var(--header-bg-color);
@@ -3900,7 +4027,7 @@ onMounted(async () => {
 
   :deep(.el-table__row) {
     &:hover {
-      background-color: #f8fafc !important;
+      background-color: var(--row-color-bg, #f8fafc) !important;
     }
   }
 }
@@ -3909,20 +4036,6 @@ onMounted(async () => {
   padding: 16px 0;
   display: flex;
   justify-content: flex-end;
-}
-
-.employee-info {
-  .department-name {
-    font-weight: 600;
-    color: #164e63;
-    font-size: 0.875rem;
-  }
-
-  .sub-department {
-    font-size: 0.75rem;
-    color: #64748b;
-    margin-top: 2px;
-  }
 }
 
 .employee-name {

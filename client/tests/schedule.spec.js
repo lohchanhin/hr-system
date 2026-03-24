@@ -3,6 +3,7 @@ import { shallowMount } from '@vue/test-utils'
 import dayjs from 'dayjs'
 import { createPinia, setActivePinia } from 'pinia'
 import { buildShiftStyle } from '../src/utils/shiftColors'
+import { ROW_COLOR_PALETTE } from '../src/utils/rowColors'
 import { useAuthStore } from '../src/stores/auth'
 
 const elementPlusMock = vi.hoisted(() => {
@@ -1638,7 +1639,7 @@ describe('Schedule.vue', () => {
     expect(wrapper.vm.scheduleMap.e1?.[2]?.shiftId ?? '').toBe('')
   })
 
-  it('shows floor column and weekday labels', async () => {
+  it('shows name column and weekday labels', async () => {
     apiFetch
       .mockResolvedValueOnce({ ok: true, json: async () => [] })
       .mockResolvedValueOnce({ ok: true, json: async () => [{ _id: '1F', name: '1F' }] })
@@ -1651,8 +1652,8 @@ describe('Schedule.vue', () => {
     await flush()
     expect(wrapper.vm.days[0].label).toMatch(/^1\(.\)$/)
     const cols = wrapper.findAll('.col')
-    expect(cols[0].attributes('data-label')).toBe('部門／單位')
-    expect(cols[1].attributes('data-label')).toBe('員工姓名')
+    expect(cols[0].attributes('data-label')).toBe('員工姓名')
+    expect(cols[1].attributes('data-label')).toBe('特休剩餘')
     expect(cols[2].attributes('data-label')).toMatch(/^1\(.\)$/)
   })
 
@@ -1695,9 +1696,58 @@ describe('Schedule.vue', () => {
         departmentId: 'd1',
         subDepartmentId: 'sd1',
         department: 'Dept A',
-        subDepartment: 'Sub A'
+        subDepartment: 'Sub A',
+        scheduleRowColor: null,
+        annualLeave: {
+          remainingDays: 0,
+          remainingHours: 0
+        }
       }
     ])
+  })
+
+  it('provides fixed 8 row color options', async () => {
+    apiFetch
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [{ _id: 'd1', name: 'Dept A' }] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [{ _id: 'sd1', name: 'Sub A', department: 'd1' }] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [{ _id: 'e1', name: 'E1', department: 'd1', subDepartment: 'sd1' }] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ approvals: [], leaves: [] }) })
+    const wrapper = mountSchedule()
+    await flush()
+
+    expect(wrapper.vm.rowColorOptions).toHaveLength(8)
+    expect(wrapper.vm.rowColorOptions).toEqual(ROW_COLOR_PALETTE)
+  })
+
+  it('applies row color to selected employees', async () => {
+    apiFetch
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [{ _id: 'd1', name: 'Dept A' }] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [{ _id: 'sd1', name: 'Sub A', department: 'd1' }] })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => [
+          { _id: 'e1', name: 'E1', department: 'd1', subDepartment: 'sd1' },
+          { _id: 'e2', name: 'E2', department: 'd1', subDepartment: 'sd1' }
+        ]
+      })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ approvals: [], leaves: [] }) })
+    const wrapper = mountSchedule()
+    await flush()
+
+    await wrapper.vm.toggleEmployee('e1', true)
+    wrapper.vm.batchRowColorIndex = 3
+    wrapper.vm.applyRowColor()
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.vm.rowColorAssignments.e1).toBe(3)
+    const style = wrapper.vm.scheduleRowStyle({ row: { _id: 'e1' } })
+    expect(style.backgroundColor).toBe(ROW_COLOR_PALETTE[3].bg)
   })
 
   it('applies batch schedules to selected cells', async () => {
