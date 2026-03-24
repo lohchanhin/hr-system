@@ -103,4 +103,41 @@ describe('排班儀表板', () => {
     expect(wrapper.vm.filteredEmployees).toHaveLength(1)
     expect(wrapper.vm.filteredEmployees[0]._id).toBe('e2')
   })
+
+  it('建立快取後仍正確計算狀態與班別資訊', async () => {
+    apiFetch
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => [{ _id: 'e1', name: 'E1' }]
+      })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ approvals: [], leaves: [] }) })
+
+    const wrapper = mountPage()
+    await flush()
+
+    wrapper.vm.shifts = [{ _id: 's1', code: 'D1', name: '白班' }]
+    wrapper.vm.employees = [{ _id: 'e1', name: 'E1' }, { _id: 'e2', name: 'E2' }]
+    wrapper.vm.scheduleMap = {
+      e1: { 1: { shiftId: 's1' } },
+      e2: { 1: { shiftId: '' } }
+    }
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.vm.shiftInfoMap.get('s1')).toEqual(
+      expect.objectContaining({ code: 'D1', name: '白班' })
+    )
+    expect(wrapper.vm.employeeStatusMap.e1).toBe('scheduled')
+    expect(wrapper.vm.employeeStatusMap.e2).toBe('unscheduled')
+    expect(wrapper.vm.cellMetaMap.get('e1::1')).toEqual(
+      expect.objectContaining({ hasShift: true, missingShift: false })
+    )
+    expect(wrapper.vm.cellMetaMap.get('e2::1')).toEqual(
+      expect.objectContaining({ hasShift: false, missingShift: true })
+    )
+  })
 })
