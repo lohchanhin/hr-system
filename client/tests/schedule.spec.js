@@ -736,7 +736,7 @@ describe('Schedule.vue', () => {
     expect(wrapper.vm.approvalList).toEqual(responses['d2|sd2'].approvals)
   })
 
-  it('僅顯示相關人員簽核資料，並整併班表確認與請假簽核', async () => {
+  it('僅顯示相關人員簽核資料，且隱藏班表確認簽核', async () => {
     setRoleToken('supervisor')
     localStorage.setItem('employeeId', 'sup1')
 
@@ -792,18 +792,9 @@ describe('Schedule.vue', () => {
 
     const rows = wrapper.vm.relatedApprovalRows
     expect(rows.some(row => row.applicantName === '外部員工')).toBe(false)
-    expect(rows.some(row => row.sourceType === 'leave_approval')).toBe(true)
-    expect(rows.some(row => row.sourceType === 'schedule_confirmation')).toBe(true)
+    expect(rows.some(row => row.sourceType === 'schedule_confirmation')).toBe(false)
 
-    const typeColumn = wrapper.find('[data-label="申請類型"]')
-    const typeTexts = typeColumn
-      .findAll('.cell')
-      .map(cell => cell.text().trim())
-      .filter(Boolean)
-
-    expect(typeTexts).toContain('班表確認簽核')
-    expect(typeTexts).toContain('請假')
-    expect(typeTexts).toContain('加班單')
+    expect(wrapper.find('.approval-card').exists()).toBe(false)
   })
 
   it('切換頁碼與搜尋員工後，簽核清單會同步更新', async () => {
