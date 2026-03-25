@@ -1,5 +1,9 @@
 // backend/controllers/employeeController.js
 import Employee from '../models/Employee.js'   // ← 對齊你新的 model 檔名
+import ShiftSchedule from '../models/ShiftSchedule.js'
+import ApprovalRequest from '../models/approval_request.js'
+import dayjs from 'dayjs'
+import { getLeaveFieldIds } from '../services/leaveFieldService.js'
 
 /* ───────────────────────────── 小工具：型別轉換 ───────────────────────────── */
 const isDefined = (v) => v !== undefined
@@ -475,17 +479,31 @@ const resolveRemainingAnnualLeaveDays = (annualLeave = {}) => {
 /** GET /api/employees?q=...&supervisor=...&organization=...&department=...&subDepartment=...&status=...&role=...&view=schedule */
 export async function listEmployees(req, res) {
   try {
-    const { q, supervisor, organization, department, subDepartment, status, role, view } = req.query
+    const {
+      q,
+      supervisor,
+      organization,
+      department,
+      subDepartment,
+      status,
+      role,
+      view,
+      page: pageRaw,
+      pageSize: pageSizeRaw,
+      month,
+      search: searchRaw,
+    } = req.query
     const filter = {}
+    const search = searchRaw ?? q
 
     if (supervisor) filter.supervisor = supervisor
     if (organization) filter.organization = organization
     if (department) filter.department = department
     if (subDepartment) filter.subDepartment = subDepartment
-    if (status) filter.status = status
+    if (status && view !== 'schedule') filter.status = status
     if (role) filter.role = role
-    if (q) {
-      const rx = new RegExp(q, 'i')
+    if (search) {
+      const rx = new RegExp(search, 'i')
       filter.$or = [
         { name: rx },
         { employeeId: rx },
@@ -511,14 +529,106 @@ export async function listEmployees(req, res) {
       return res.json(employees)
     }
 
-    const scheduleEmployees = employees.map((employee) => ({
+    let scheduleEmployees = employees.map((employee) => ({
       ...employee,
       annualLeave: {
         remainingDays: resolveRemainingAnnualLeaveDays(employee.annualLeave),
       },
     }))
 
-    return res.json(scheduleEmployees)
+    const pageParsed = Number.parseInt(pageRaw, 10)
+    const pageSizeParsed = Number.parseInt(pageSizeRaw, 10)
+    const page = Number.isFinite(pageParsed) && pageParsed > 0 ? pageParsed : 1
+    const pageSize = Number.isFinite(pageSizeParsed) && pageSizeParsed > 0
+      ? Math.min(pageSizeParsed, 200)
+      : 50
+
+    if (status && status !== 'all') {
+      if (!month || !/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) {
+        return res.status(400).json({ error: 'month required for status filter' })
+      }
+      const monthStart = dayjs(`${month}-01`).startOf('day')
+      const monthEnd = monthStart.add(1, 'month')
+      const employeeIds = scheduleEmployees.map(item => item._id?.toString?.() || String(item._id))
+      const statusMap = new Map(
+        employeeIds.map(id => [id, { shiftDays: new Set(), leaveDays: new Set() }])
+      )
+
+      const schedules = await ShiftSchedule.find({
+        employee: { $in: employeeIds },
+        date: { $gte: monthStart.toDate(), $lt: monthEnd.toDate() },
+      })
+        .select('employee date shiftId')
+        .lean()
+
+      schedules.forEach((doc) => {
+        const empId = doc.employee?.toString?.() || ''
+        const entry = statusMap.get(empId)
+        if (!entry) return
+        if (!doc.shiftId) return
+        const dayKey = dayjs(doc.date).format('YYYY-MM-DD')
+        entry.shiftDays.add(dayKey)
+      })
+
+      const { formId, startId, endId } = await getLeaveFieldIds()
+      if (formId && startId && endId && employeeIds.length) {
+        const leaveQuery = {
+          form: formId,
+          status: 'approved',
+          applicant_employee: { $in: employeeIds },
+        }
+        leaveQuery[`form_data.${startId}`] = { $lt: monthEnd.format('YYYY-MM-DD') }
+        leaveQuery[`form_data.${endId}`] = { $gte: monthStart.format('YYYY-MM-DD') }
+        const approvals = await ApprovalRequest.find(leaveQuery)
+          .select(`applicant_employee form_data.${startId} form_data.${endId}`)
+          .lean()
+        approvals.forEach((approval) => {
+          const empId = approval.applicant_employee?.toString?.() || ''
+          const entry = statusMap.get(empId)
+          if (!entry) return
+          const approvalStart = dayjs(approval.form_data?.[startId])
+          const approvalEnd = dayjs(approval.form_data?.[endId])
+          const monthLastDay = monthEnd.subtract(1, 'day')
+          const start = approvalStart.isAfter(monthStart) ? approvalStart : monthStart
+          const end = approvalEnd.isBefore(monthLastDay) ? approvalEnd : monthLastDay
+          if (!start.isValid() || !end.isValid() || end.isBefore(start)) return
+          let pointer = start.startOf('day')
+          while (!pointer.isAfter(end, 'day')) {
+            entry.leaveDays.add(pointer.format('YYYY-MM-DD'))
+            pointer = pointer.add(1, 'day')
+          }
+        })
+      }
+
+      const daysInMonth = monthStart.daysInMonth()
+      scheduleEmployees = scheduleEmployees.filter((employee) => {
+        const empId = employee._id?.toString?.() || String(employee._id)
+        const entry = statusMap.get(empId) || { shiftDays: new Set(), leaveDays: new Set() }
+        const hasLeave = entry.leaveDays.size > 0
+        const filledDays = new Set([...entry.shiftDays, ...entry.leaveDays]).size
+        const currentStatus = hasLeave ? 'onLeave' : (filledDays < daysInMonth ? 'unscheduled' : 'scheduled')
+        return currentStatus === status
+      })
+    }
+
+    const total = scheduleEmployees.length
+    const totalPages = Math.max(1, Math.ceil(total / pageSize))
+    const safePage = Math.min(page, totalPages)
+    const pagedEmployees = scheduleEmployees.slice((safePage - 1) * pageSize, safePage * pageSize)
+
+    if (pageRaw !== undefined || pageSizeRaw !== undefined || status || searchRaw) {
+      return res.json({
+        employees: pagedEmployees,
+        pagination: {
+          total,
+          page: safePage,
+          pageSize,
+          totalPages,
+        },
+      })
+    }
+
+    return res.json(pagedEmployees)
   } catch (err) {
     return res.status(500).json({ error: err.message })
   }
