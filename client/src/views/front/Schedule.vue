@@ -261,9 +261,24 @@
         </el-button>
         <span class="row-color-hint">列色僅暫存於目前瀏覽器 session</span>
       </div>
+      <div v-if="stressScenarioEnabled" class="stress-toolbar" data-test="stress-toolbar">
+        <el-button class="action-btn secondary" @click="seedStressScenario">
+          建立壓測場景（200 員工 × 31 天）
+        </el-button>
+        <span class="stress-metric">
+          可見格數：{{ virtualVisibleEmployees.length * virtualVisibleDays.length }}
+          / 全部格數：{{ visibleEmployees.length * days.length }}
+        </span>
+        <span class="stress-metric">
+          預估 DOM 節點：{{ estimatedRenderedNodes }}
+        </span>
+        <span class="stress-metric">
+          最近互動延遲：{{ lastInteractionLatencyMs }}ms
+        </span>
+      </div>
 
-      <div class="schedule-table-wrapper" :class="{ 'is-fullscreen': isTableFullscreen }" data-test="schedule-table-wrapper">
-        <el-table class="modern-schedule-table" :data="visibleEmployees" :max-height="tableMaxHeight" :header-cell-style="{
+      <div ref="scheduleTableWrapperRef" class="schedule-table-wrapper" :class="{ 'is-fullscreen': isTableFullscreen }" data-test="schedule-table-wrapper">
+        <el-table ref="scheduleTableRef" class="modern-schedule-table" :data="virtualVisibleEmployees" :max-height="tableMaxHeight" :header-cell-style="{
           backgroundColor: '#ecfeff',
           color: '#164e63',
           fontWeight: '600'
@@ -299,7 +314,19 @@
           </template>
         </el-table-column>
 
-        <el-table-column v-for="d in days" :key="d.date" :label="d.label" :width="dayColumnWidth" align="center">
+        <el-table-column
+          v-if="virtualLeadingSpacerWidth > 0"
+          key="virtual-leading-spacer"
+          label=""
+          :width="virtualLeadingSpacerWidth"
+          align="center"
+        >
+          <template #default>
+            <div class="virtual-spacer-cell" aria-hidden="true"></div>
+          </template>
+        </el-table-column>
+
+        <el-table-column v-for="d in virtualVisibleDays" :key="d.date" :label="d.label" :width="dayColumnWidth" align="center">
           <template #header>
             <div class="day-header">
               <span>{{ d.label }}</span>
@@ -309,91 +336,36 @@
           </template>
 
           <template #default="{ row }">
-            <div v-if="!lazyMode || expandedRows.has(row._id)" class="modern-schedule-cell" :class="[
-              {
-                'has-leave': getCellMeta(row._id, d.date).isLeave,
-                'missing-shift': getCellMeta(row._id, d.date).missingShift,
-                'is-selected': isCellSelected(row._id, d.date),
-                'has-shift': getCellMeta(row._id, d.date).hasShift
-              }
-            ]" :style="getCellMeta(row._id, d.date).isLeave
-                  ? undefined
-                  : getCellMeta(row._id, d.date).style
-                " :title="leaveTooltip(row._id, d.date)">
-              <!-- ✅ 已請假日期：禁止勾選 -->
-              <div v-if="canEdit && !getCellMeta(row._id, d.date).isLeave" class="cell-selection" @click.stop>
-                <el-checkbox :model-value="manualSelectedCellsSet.has(buildCellKey(row._id, d.date))
-                  " @change="val => toggleCell(row._id, d.date, val)" size="small" />
-              </div>
+            <ScheduleGridVirtualBody
+              :row="row"
+              :day="d"
+              :lazy-mode="lazyMode"
+              :expanded-rows="expandedRows"
+              :can-edit="canEdit"
+              :cell-meta="getCellMeta(row._id, d.date)"
+              :leave-title="leaveTooltip(row._id, d.date)"
+              :is-selected="isCellSelected(row._id, d.date)"
+              :manual-selected-cells-set="manualSelectedCellsSet"
+              :cell-key="buildCellKey(row._id, d.date)"
+              :schedule-cell="scheduleMap[row._id]?.[d.date]"
+              :shifts="shifts"
+              :format-shift-label="formatShiftLabel"
+              :shift-info="getShiftInfoByCell(row._id, d.date)"
+              @toggle-cell="toggleCell"
+              @select-shift="onSelect"
+            />
+          </template>
+        </el-table-column>
 
-              <template v-if="scheduleMap[row._id]?.[d.date]">
-                <div v-if="getCellMeta(row._id, d.date).isLeave" class="leave-indicator" data-test="leave-indicator">
-                  <el-tag type="warning" effect="light" size="small" class="leave-tag">
-                    休假中
-                  </el-tag>
-                  <span class="leave-note">已核准請假，不列入工時</span>
-                </div>
-
-                <template v-else-if="canEdit">
-                  <el-select v-model="scheduleMap[row._id][d.date].shiftId" placeholder="選擇班別"
-                    @change="val => onSelect(row._id, d.date, val)" class="cell-select shift-select" size="small">
-                    <el-option v-for="opt in shifts" :key="opt._id" :label="formatShiftLabel(opt)" :value="opt._id" />
-                  </el-select>
-                </template>
-
-                <template v-else>
-                  <el-popover v-if="getShiftInfoByCell(row._id, d.date)" placement="top" trigger="hover" :width="200">
-                    <div class="shift-details">
-                      <div class="detail-row">
-                        <span class="detail-label">上班時間：</span>
-                        <span class="detail-value">
-                          {{
-                            getShiftInfoByCell(row._id, d.date).startTime
-                          }}
-                        </span>
-                      </div>
-                      <div class="detail-row">
-                        <span class="detail-label">下班時間：</span>
-                        <span class="detail-value">
-                          {{
-                            getShiftInfoByCell(row._id, d.date).endTime
-                          }}
-                        </span>
-                      </div>
-                      <div v-if="getShiftInfoByCell(row._id, d.date).remark" class="detail-row">
-                        <span class="detail-label">備註：</span>
-                        <span class="detail-value">
-                          {{
-                            getShiftInfoByCell(row._id, d.date).remark
-                          }}
-                        </span>
-                      </div>
-                    </div>
-                    <template #reference>
-                      <div class="modern-shift-tag" :style="getCellMeta(row._id, d.date).style">
-                        {{
-                          formatShiftLabel(
-                            getShiftInfoByCell(row._id, d.date)
-                          )
-                        }}
-                      </div>
-                    </template>
-                  </el-popover>
-                </template>
-
-                <div v-if="
-                  getCellMeta(row._id, d.date).missingShift
-                " class="missing-label">
-                  未排班
-                </div>
-              </template>
-
-              <span v-else class="empty-cell">-</span>
-            </div>
-
-            <div v-else class="modern-schedule-cell collapsed-cell">
-              展開班表
-            </div>
+        <el-table-column
+          v-if="virtualTrailingSpacerWidth > 0"
+          key="virtual-trailing-spacer"
+          label=""
+          :width="virtualTrailingSpacerWidth"
+          align="center"
+        >
+          <template #default>
+            <div class="virtual-spacer-cell" aria-hidden="true"></div>
           </template>
         </el-table-column>
         </el-table>
@@ -534,6 +506,7 @@ import { useMenuStore } from '../../stores/menu'
 import { ElMessage, ElMessageBox, ElLoading } from 'element-plus'
 import { useRouter } from 'vue-router'
 import ScheduleDashboard from './ScheduleDashboard.vue'
+import ScheduleGridVirtualBody from './ScheduleGridVirtualBody.vue'
 import { CircleCloseFilled, WarningFilled } from '@element-plus/icons-vue'
 import { buildShiftStyle } from '../../utils/shiftColors'
 import { ROW_COLOR_PALETTE, normalizeRowColorIndex, resolveRowColor } from '../../utils/rowColors'
@@ -625,8 +598,13 @@ const scheduleCardRef = ref(null)
 const scheduleHeaderRef = ref(null)
 const batchToolbarRef = ref(null)
 const paginationBarRef = ref(null)
+const scheduleTableWrapperRef = ref(null)
+const scheduleTableRef = ref(null)
 const measuredLayoutHeight = ref(0)
 let layoutResizeObserver = null
+let tableBodyScrollEl = null
+let tableHeaderScrollEl = null
+let tableScrollRaf = null
 const viewportHeight = ref(
   typeof window === 'undefined' ? 900 : window.innerHeight
 )
@@ -634,6 +612,15 @@ const detail = reactive({ visible: false, doc: null })
 const employeeNameCache = reactive({})
 const pageSize = ref(50)
 const currentPage = ref(1)
+const renderStrategyPreference = ref('auto')
+const rowRange = ref({ start: 0, end: 0 })
+const columnRange = ref({ start: 0, end: 0 })
+const lastInteractionLatencyMs = ref(0)
+const stressScenarioEnabled = computed(() => {
+  if (typeof window === 'undefined') return false
+  const params = new URLSearchParams(window.location.search || '')
+  return params.get('stress') === '1'
+})
 const publishSnapshot = ref(null)
 const loadedEmployeeIds = ref(new Set())
 const isFetchingSchedules = ref(false)
@@ -1267,6 +1254,63 @@ const visibleEmployees = computed(() => {
   return filteredEmployees.value.slice(start, end)
 })
 
+const overscanRows = 8
+const overscanCols = 3
+const rowApproxHeight = 76
+
+const shouldUseVirtualRender = computed(() => {
+  if (renderStrategyPreference.value === 'full') return false
+  if (renderStrategyPreference.value === 'virtual') return true
+  return visibleEmployees.value.length > 40 || days.value.length > 14
+})
+
+const lazyMode = computed(() => shouldUseVirtualRender.value)
+
+const effectiveRowRange = computed(() => {
+  if (!shouldUseVirtualRender.value) {
+    return { start: 0, end: visibleEmployees.value.length }
+  }
+  return {
+    start: Math.max(0, rowRange.value.start),
+    end: Math.min(visibleEmployees.value.length, rowRange.value.end)
+  }
+})
+
+const effectiveColumnRange = computed(() => {
+  if (!shouldUseVirtualRender.value) {
+    return { start: 0, end: days.value.length }
+  }
+  return {
+    start: Math.max(0, columnRange.value.start),
+    end: Math.min(days.value.length, columnRange.value.end)
+  }
+})
+
+const virtualVisibleEmployees = computed(() => {
+  const { start, end } = effectiveRowRange.value
+  return visibleEmployees.value.slice(start, end)
+})
+
+const virtualVisibleDays = computed(() => {
+  const { start, end } = effectiveColumnRange.value
+  return days.value.slice(start, end)
+})
+
+const virtualLeadingSpacerWidth = computed(() =>
+  effectiveColumnRange.value.start * dayColumnWidth.value
+)
+
+const virtualTrailingSpacerWidth = computed(() =>
+  Math.max(0, days.value.length - effectiveColumnRange.value.end) *
+  dayColumnWidth.value
+)
+
+const estimatedRenderedNodes = computed(() => {
+  const baseRows = virtualVisibleEmployees.value.length
+  const baseCols = virtualVisibleDays.value.length
+  return baseRows * baseCols * 6
+})
+
 const visibleEmployeeIds = computed(() =>
   visibleEmployees.value.map(emp => String(emp._id))
 )
@@ -1364,7 +1408,6 @@ watch(leaveIndex, pruneSelections)
 
 // ========= lazy mode =========
 
-const lazyMode = computed(() => false) // Disabled: always show expanded schedule table
 const toggleRow = id => {
   if (expandedRows.value.has(id)) expandedRows.value.delete(id)
   else expandedRows.value.add(id)
@@ -1388,6 +1431,125 @@ const updateViewportHeight = () => {
   if (typeof window === 'undefined') return
   viewportHeight.value = window.innerHeight
   updateFullscreenLayoutHeight()
+  recalculateViewportRanges()
+}
+
+const recalculateViewportRanges = () => {
+  if (!shouldUseVirtualRender.value) {
+    rowRange.value = { start: 0, end: visibleEmployees.value.length }
+    columnRange.value = { start: 0, end: days.value.length }
+    return
+  }
+  const body = tableBodyScrollEl
+  const header = tableHeaderScrollEl
+  const verticalEl = body || scheduleTableWrapperRef.value
+  const horizontalEl = header || body || scheduleTableWrapperRef.value
+  if (!verticalEl || !horizontalEl) {
+    rowRange.value = { start: 0, end: Math.min(visibleEmployees.value.length, 24) }
+    columnRange.value = { start: 0, end: Math.min(days.value.length, 10) }
+    return
+  }
+  const scrollTop = Number(verticalEl.scrollTop || 0)
+  const clientHeight = Number(verticalEl.clientHeight || tableMaxHeight.value || 0)
+  const rowStart = Math.max(0, Math.floor(scrollTop / rowApproxHeight) - overscanRows)
+  const rowCount = Math.max(8, Math.ceil(clientHeight / rowApproxHeight) + overscanRows * 2)
+
+  rowRange.value = {
+    start: rowStart,
+    end: Math.min(visibleEmployees.value.length, rowStart + rowCount)
+  }
+
+  const scrollLeft = Number(horizontalEl.scrollLeft || 0)
+  const clientWidth = Number(horizontalEl.clientWidth || 0)
+  const colStart = Math.max(0, Math.floor(scrollLeft / dayColumnWidth.value) - overscanCols)
+  const colCount = Math.max(
+    6,
+    Math.ceil(clientWidth / dayColumnWidth.value) + overscanCols * 2
+  )
+  columnRange.value = {
+    start: colStart,
+    end: Math.min(days.value.length, colStart + colCount)
+  }
+}
+
+const onTableScroll = () => {
+  const startAt = typeof performance !== 'undefined' ? performance.now() : Date.now()
+  if (tableScrollRaf) cancelAnimationFrame(tableScrollRaf)
+  tableScrollRaf = requestAnimationFrame(() => {
+    recalculateViewportRanges()
+    const endAt = typeof performance !== 'undefined' ? performance.now() : Date.now()
+    lastInteractionLatencyMs.value = Number((endAt - startAt).toFixed(1))
+    tableScrollRaf = null
+  })
+}
+
+const removeTableScrollListeners = () => {
+  if (tableBodyScrollEl) {
+    tableBodyScrollEl.removeEventListener('scroll', onTableScroll)
+    tableBodyScrollEl = null
+  }
+  if (tableHeaderScrollEl && tableHeaderScrollEl !== tableBodyScrollEl) {
+    tableHeaderScrollEl.removeEventListener('scroll', onTableScroll)
+    tableHeaderScrollEl = null
+  }
+}
+
+const bindTableScrollListeners = () => {
+  removeTableScrollListeners()
+  if (!scheduleTableWrapperRef.value) return
+  const body = scheduleTableWrapperRef.value.querySelector('.el-table__body-wrapper')
+  const header = scheduleTableWrapperRef.value.querySelector('.el-table__header-wrapper')
+  if (body) {
+    tableBodyScrollEl = body
+    tableBodyScrollEl.addEventListener('scroll', onTableScroll, { passive: true })
+  }
+  if (header) {
+    tableHeaderScrollEl = header
+    tableHeaderScrollEl.addEventListener('scroll', onTableScroll, { passive: true })
+  }
+  recalculateViewportRanges()
+}
+
+const seedStressScenario = () => {
+  const totalEmployees = 200
+  const monthStart = dayjs(`${currentMonth.value}-01`)
+  const dayCount = monthStart.daysInMonth()
+  shifts.value = [
+    { _id: 'stress-morning', name: '早班', startTime: '08:00', endTime: '16:00' },
+    { _id: 'stress-evening', name: '晚班', startTime: '16:00', endTime: '00:00' }
+  ]
+  employees.value = Array.from({ length: totalEmployees }, (_, idx) => ({
+    _id: `stress-emp-${idx + 1}`,
+    name: `壓測員工 ${String(idx + 1).padStart(3, '0')}`,
+    department: '壓測部門',
+    subDepartment: '壓測單位',
+    annualLeave: { remainingDays: idx % 12 }
+  }))
+  const nextMap = {}
+  const nextLeaveIndex = {}
+  employees.value.forEach((emp, idx) => {
+    const dayMap = {}
+    for (let day = 1; day <= dayCount; day += 1) {
+      dayMap[day] = {
+        employeeId: emp._id,
+        day,
+        shiftId: day % 2 === 0 ? 'stress-morning' : 'stress-evening',
+        leave: false
+      }
+    }
+    nextMap[emp._id] = dayMap
+    if (idx % 10 === 0) {
+      const leaveDay = (idx % dayCount) + 1
+      nextLeaveIndex[emp._id] = { [leaveDay]: true }
+      nextMap[emp._id][leaveDay].shiftId = ''
+    }
+  })
+  leaveIndex.value = nextLeaveIndex
+  scheduleMap.value = nextMap
+  pageSize.value = 200
+  currentPage.value = 1
+  renderStrategyPreference.value = 'virtual'
+  recalculateViewportRanges()
 }
 
 const updateFullscreenLayoutHeight = () => {
@@ -3362,6 +3524,11 @@ onBeforeUnmount(() => {
     layoutResizeObserver.disconnect()
     layoutResizeObserver = null
   }
+  removeTableScrollListeners()
+  if (tableScrollRaf) {
+    cancelAnimationFrame(tableScrollRaf)
+    tableScrollRaf = null
+  }
 })
 
 onMounted(async () => {
@@ -3381,6 +3548,7 @@ onMounted(async () => {
       .forEach(target => layoutResizeObserver.observe(target))
   }
   updateFullscreenLayoutHeight()
+  bindTableScrollListeners()
   const supervisorId = getSupervisorIdFromStorage()
   const storedPreference = loadIncludeSelfPreference(supervisorId)
   if (storedPreference === true && showIncludeSelfToggle.value) {
@@ -3403,6 +3571,20 @@ onMounted(async () => {
 
 watch(isTableFullscreen, () => {
   updateFullscreenLayoutHeight()
+  bindTableScrollListeners()
+})
+
+watch(
+  [visibleEmployees, days, shouldUseVirtualRender, dayColumnWidth],
+  () => {
+    recalculateViewportRanges()
+    bindTableScrollListeners()
+  },
+  { flush: 'post' }
+)
+
+watch(tableMaxHeight, () => {
+  bindTableScrollListeners()
 })
 
 onUpdated(() => {
@@ -4097,6 +4279,21 @@ onUpdated(() => {
   }
 }
 
+.stress-toolbar {
+  padding: 10px 24px;
+  border-bottom: 1px dashed #cbd5e1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  background: #f8fafc;
+}
+
+.stress-metric {
+  font-size: 12px;
+  color: #475569;
+}
+
 .modern-schedule-table {
   min-width: max-content;
 
@@ -4129,6 +4326,10 @@ onUpdated(() => {
   :deep(.el-table__cell) {
     font-size: 13px;
   }
+}
+
+.virtual-spacer-cell {
+  min-height: 1px;
 }
 
 .schedule-card.is-fullscreen {
