@@ -307,6 +307,14 @@
             </div>
           </template>
         </el-table-column>
+        <el-table-column label="職稱 / 職位" width="240" fixed="left" class-name="title-position-column">
+          <template #default="{ row }">
+            <div class="title-position-cell">
+              <span class="title-line">{{ row.title || '-' }}</span>
+              <span class="practice-title-line">{{ row.practiceTitle || '-' }}</span>
+            </div>
+          </template>
+        </el-table-column>
         
         <el-table-column label="特休剩餘" width="120" fixed="left">
           <template #default="{ row }">
@@ -3618,6 +3626,8 @@ async function fetchEmployees(
       return {
         _id: normalizedId,
         name: e.name,
+        title: e.title || '',
+        practiceTitle: e.practiceTitle || '',
         photo: e.photo,
         departmentId: normalizedDept,
         subDepartmentId: normalizedSub,
@@ -4593,6 +4603,10 @@ onUpdated(() => {
       font-size: 12px;
     }
 
+    :deep(.title-position-column .cell) {
+      min-width: 220px;
+    }
+
     :deep(.day-header) {
       font-size: 12px;
     }
@@ -4621,6 +4635,33 @@ onUpdated(() => {
   .employee-avatar-small {
     flex-shrink: 0;
   }
+}
+
+.title-position-cell {
+  min-height: 40px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  line-height: 1.25;
+}
+
+.title-line,
+.practice-title-line {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.title-line {
+  font-weight: 600;
+  color: #334155;
+}
+
+.practice-title-line {
+  font-size: 0.75rem;
+  color: #64748b;
 }
 
 .row-checkbox {
