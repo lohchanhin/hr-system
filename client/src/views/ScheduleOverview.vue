@@ -160,9 +160,34 @@
                   <h4 class="unit-title">{{ unit.name }}</h4>
                   <span class="unit-meta">{{ unit.employees.length }} 位人員</span>
                 </div>
+                <div class="unit-toolbar">
+                  <div class="day-window-controls">
+                    <el-button size="small" :disabled="dayWindowStart <= 0" @click="moveDayWindow(-dayWindowSize)">
+                      前 {{ dayWindowSize }} 天
+                    </el-button>
+                    <span class="day-window-range">{{ visibleDayRangeLabel }}</span>
+                    <el-button
+                      size="small"
+                      :disabled="dayWindowStart + dayWindowSize >= days.length"
+                      @click="moveDayWindow(dayWindowSize)"
+                    >
+                      後 {{ dayWindowSize }} 天
+                    </el-button>
+                  </div>
+                  <el-select
+                    :model-value="unitPageSize(unit)"
+                    size="small"
+                    class="unit-page-size"
+                    @change="size => setUnitPageSize(unit, size)"
+                  >
+                    <el-option :value="25" label="25 筆/頁" />
+                    <el-option :value="50" label="50 筆/頁" />
+                    <el-option :value="100" label="100 筆/頁" />
+                  </el-select>
+                </div>
                 <div class="unit-table-wrapper">
                   <el-table
-                    :data="buildTableRows(unit)"
+                    :data="getUnitPageRows(unit)"
                     border
                     stripe
                     class="overview-table"
@@ -171,7 +196,7 @@
                     <el-table-column prop="name" label="姓名" fixed="left" min-width="140" />
                     <el-table-column prop="title" label="職稱" min-width="140" />
                     <el-table-column
-                      v-for="day in days"
+                      v-for="day in visibleDays"
                       :key="`${unit.id}-${day}`"
                       :label="formatDayLabel(day)"
                       :min-width="110"
@@ -184,6 +209,16 @@
                     </el-table-column>
                   </el-table>
                 </div>
+                <el-pagination
+                  v-if="getUnitRows(unit).length > unitPageSize(unit)"
+                  class="unit-pagination"
+                  background
+                  layout="prev, pager, next"
+                  :page-size="unitPageSize(unit)"
+                  :current-page="unitCurrentPage(unit)"
+                  :total="getUnitRows(unit).length"
+                  @current-change="page => setUnitCurrentPage(unit, page)"
+                />
               </div>
             </el-collapse-item>
           </el-collapse>
@@ -217,6 +252,11 @@ const exportLoading = ref(false)
 const exportFormat = ref('')
 const activeOrganizations = ref([])
 const activeDepartments = ref({})
+const unitRowsMap = ref({})
+const unitPageMap = ref({})
+const unitPageSizeMap = ref({})
+const dayWindowSize = 7
+const dayWindowStart = ref(0)
 let requestSequence = 0
 
 const toId = value => {
@@ -259,6 +299,17 @@ const isExportDisabled = computed(() => {
   return !selectedMonth.value || loading.value || exportLoading.value || !referenceLoaded.value
 })
 
+const visibleDays = computed(() => {
+  return days.value.slice(dayWindowStart.value, dayWindowStart.value + dayWindowSize)
+})
+
+const visibleDayRangeLabel = computed(() => {
+  if (!visibleDays.value.length) return '無日期'
+  const first = formatDayLabel(visibleDays.value[0])
+  const last = formatDayLabel(visibleDays.value[visibleDays.value.length - 1])
+  return `${first} - ${last}`
+})
+
 const formatDayLabel = day => {
   const date = dayjs(day)
   if (!date.isValid()) return day
@@ -290,6 +341,57 @@ const buildTableRows = unit => {
       }
     })
     .sort((a, b) => a.name.localeCompare(b.name, 'zh-Hant', { sensitivity: 'base' }))
+}
+
+function rebuildUnitRowsCache() {
+  const cache = {}
+  const pageMap = { ...unitPageMap.value }
+  const pageSizeMap = { ...unitPageSizeMap.value }
+  overviewData.value.forEach(org => {
+    org.departments.forEach(dept => {
+      dept.subDepartments.forEach(unit => {
+        cache[unit.id] = buildTableRows(unit)
+        if (!pageMap[unit.id]) pageMap[unit.id] = 1
+        if (!pageSizeMap[unit.id]) pageSizeMap[unit.id] = 50
+      })
+    })
+  })
+  unitRowsMap.value = cache
+  unitPageMap.value = pageMap
+  unitPageSizeMap.value = pageSizeMap
+}
+
+const getUnitRows = unit => unitRowsMap.value[unit.id] || []
+const unitCurrentPage = unit => unitPageMap.value[unit.id] || 1
+const unitPageSize = unit => unitPageSizeMap.value[unit.id] || 50
+
+function setUnitCurrentPage(unit, page) {
+  unitPageMap.value = {
+    ...unitPageMap.value,
+    [unit.id]: page
+  }
+}
+
+function setUnitPageSize(unit, size) {
+  unitPageSizeMap.value = {
+    ...unitPageSizeMap.value,
+    [unit.id]: size
+  }
+  setUnitCurrentPage(unit, 1)
+}
+
+function getUnitPageRows(unit) {
+  const rows = getUnitRows(unit)
+  const pageSize = unitPageSize(unit)
+  const page = unitCurrentPage(unit)
+  const start = (page - 1) * pageSize
+  return rows.slice(start, start + pageSize)
+}
+
+function moveDayWindow(offset) {
+  const maxStart = Math.max(0, days.value.length - dayWindowSize)
+  const next = Math.min(maxStart, Math.max(0, dayWindowStart.value + offset))
+  dayWindowStart.value = next
 }
 
 // ---------- 通用 response 處理 ----------
@@ -445,6 +547,8 @@ async function loadOverview() {
     days.value = rawDays
     // ✅ 這裡先把重複的小單位 / 員工合併掉
     overviewData.value = normalizeOverviewOrganizations(rawOrgs)
+    dayWindowStart.value = 0
+    rebuildUnitRowsCache()
     
     // Initialize collapse state - expand first organization and its first department by default
     if (overviewData.value.length > 0) {
@@ -471,6 +575,9 @@ async function loadOverview() {
     errorMessage.value = message
     overviewData.value = []
     days.value = []
+    unitRowsMap.value = {}
+    unitPageMap.value = {}
+    unitPageSizeMap.value = {}
     ElMessage.error(message)
   } finally {
     if (currentToken === requestSequence) {
@@ -776,6 +883,30 @@ onMounted(async () => {
   color: #64748b;
 }
 
+.unit-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+
+.day-window-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.day-window-range {
+  font-size: 13px;
+  color: #475569;
+}
+
+.unit-page-size {
+  width: 120px;
+}
+
 .unit-table-wrapper {
   overflow-x: auto;
   
@@ -802,6 +933,11 @@ onMounted(async () => {
       background: #1e293b;
     }
   }
+}
+
+.unit-pagination {
+  margin-top: 12px;
+  justify-content: flex-end;
 }
 
 .overview-table {
