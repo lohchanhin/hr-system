@@ -2,6 +2,9 @@
   <div
     v-if="!lazyMode || expandedRows.has(row._id)"
     class="modern-schedule-cell"
+    data-schedule-cell="1"
+    :data-emp-id="String(row._id)"
+    :data-day="String(day.date)"
     :class="{
       'has-leave': cellView.cellMeta.isLeave,
       'missing-shift': cellView.cellMeta.missingShift,
@@ -11,10 +14,10 @@
     :style="cellView.cellMeta.isLeave ? undefined : cellView.cellMeta.style"
     :title="cellView.leaveTitle"
   >
-    <div v-if="canEdit && !cellView.cellMeta.isLeave" class="cell-selection" @click.stop>
+    <div v-if="canEdit && !cellView.cellMeta.isLeave" class="cell-selection">
       <el-checkbox
+        class="cell-manual-checkbox"
         :model-value="cellView.isManualSelected"
-        @change="val => $emit('toggle-cell', row._id, day.date, val)"
         size="small"
       />
     </div>
@@ -25,7 +28,9 @@
         :schedule-cell="cellView.scheduleCell"
         :shifts="shifts"
         :format-shift-label="formatShiftLabel"
-        @select-shift="val => $emit('select-shift', row._id, day.date, val)"
+        :emp-id="String(row._id)"
+        :day="day.date"
+        @select-shift="handleSelectShift"
       />
       <ScheduleCellDisplay
         v-else
@@ -48,7 +53,7 @@
 import ScheduleCellDisplay from './ScheduleCellDisplay.vue'
 import ScheduleCellEditor from './ScheduleCellEditor.vue'
 
-defineProps({
+const props = defineProps({
   row: { type: Object, required: true },
   day: { type: Object, required: true },
   cellView: { type: Object, required: true },
@@ -59,5 +64,9 @@ defineProps({
   formatShiftLabel: { type: Function, required: true }
 })
 
-defineEmits(['toggle-cell', 'select-shift'])
+const emit = defineEmits(['select-shift'])
+
+const handleSelectShift = value => {
+  emit('select-shift', props.row._id, props.day.date, value)
+}
 </script>
