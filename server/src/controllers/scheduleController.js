@@ -526,8 +526,28 @@ export async function listSupervisorSummary(req, res) {
       if (includeSelf) return true;
       return String(entry.employee) !== supervisorIdStr;
     });
+    const daysInMonth = new Date(end.getTime() - 86400000).getDate();
+    const stats = payload.reduce(
+      (acc, item) => {
+        const shiftCount = Number(item.shiftCount || 0);
+        const leaveCount = Number(item.leaveCount || 0);
+        const filledDays = shiftCount + leaveCount;
+        if (filledDays < daysInMonth) acc.unscheduled += 1;
+        if (leaveCount > 0) acc.onLeave += 1;
+        return acc;
+      },
+      {
+        direct: payload.length,
+        unscheduled: 0,
+        onLeave: 0,
+        daysInMonth,
+      }
+    );
 
-    res.json(payload);
+    res.json({
+      employees: payload,
+      stats,
+    });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
