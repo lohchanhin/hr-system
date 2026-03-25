@@ -1784,6 +1784,14 @@ const toggleTableFullscreen = () => {
   updateFullscreenLayoutHeight()
 }
 
+const toggleFullscreenToolbar = () => {
+  if (!isTableFullscreen.value) return
+  isFullscreenToolbarCollapsed.value = !isFullscreenToolbarCollapsed.value
+  nextTick(() => {
+    updateFullscreenLayoutHeight()
+  })
+}
+
 const registerHighFrequencyListeners = () => {
   if (typeof window === 'undefined') return
   if (!managedResizeHandler) {
