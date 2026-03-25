@@ -198,7 +198,11 @@
           data-test="fullscreen-toggle-button">
           {{ isTableFullscreen ? '退出全螢幕' : '進入全螢幕' }}
         </el-button>
-        <div class="schedule-legend" data-test="schedule-legend">
+        <el-button v-if="isTableFullscreen" class="action-btn secondary fullscreen-collapse-toggle"
+          @click="toggleFullscreenToolbar" data-test="fullscreen-toolbar-toggle-button">
+          {{ isFullscreenToolbarCollapsed ? '展開上方工具' : '隱藏上方工具' }}
+        </el-button>
+        <div v-show="!isTableFullscreen || !isFullscreenToolbarCollapsed" class="schedule-legend" data-test="schedule-legend">
           <template v-if="legendShifts.length">
             <span v-for="legend in legendShifts" :key="legend.key" class="legend-item" :style="legend.style"
               data-test="shift-legend-item">
@@ -210,8 +214,10 @@
           </span>
           <span class="legend-item leave">請假</span>
         </div>
-        <el-input v-model="employeeSearch" placeholder="搜尋員工" clearable class="employee-search" />
-        <el-select v-model="statusFilter" placeholder="狀態" class="status-filter">
+        <el-input v-show="!isTableFullscreen || !isFullscreenToolbarCollapsed" v-model="employeeSearch" placeholder="搜尋員工"
+          clearable class="employee-search" />
+        <el-select v-show="!isTableFullscreen || !isFullscreenToolbarCollapsed" v-model="statusFilter" placeholder="狀態"
+          class="status-filter">
           <el-option label="全部" value="all" />
           <el-option label="缺班" value="unscheduled" />
           <el-option label="待審核請假" value="onLeave" />
@@ -395,7 +401,7 @@
 
       <div ref="paginationBarRef" class="pagination-bar" v-if="filteredEmployees.length">
         <el-pagination background layout="prev, pager, next, ->, sizes, total" :total="filteredEmployees.length"
-          :page-size="pageSize" :current-page="currentPage" :page-sizes="[5, 10, 20, 30, 50, 100]"
+          :page-size="pageSize" :current-page="currentPage" :page-sizes="[20, 30, 50, 100]"
           @current-change="onPageChange" @size-change="onPageSizeChange" />
       </div>
     </div>
@@ -614,6 +620,7 @@ const isApplyingBatch = ref(false)
 const isPublishing = ref(false)
 const isFinalizing = ref(false)
 const isTableFullscreen = ref(false)
+const isFullscreenToolbarCollapsed = ref(false)
 const scheduleCardRef = ref(null)
 const scheduleHeaderRef = ref(null)
 const batchToolbarRef = ref(null)
@@ -625,7 +632,7 @@ const viewportHeight = ref(
 )
 const detail = reactive({ visible: false, doc: null })
 const employeeNameCache = reactive({})
-const pageSize = ref(5)
+const pageSize = ref(50)
 const currentPage = ref(1)
 const publishSnapshot = ref(null)
 const loadedEmployeeIds = ref(new Set())
@@ -1411,6 +1418,9 @@ const toggleTableFullscreen = () => {
   if (typeof document === 'undefined') return
   const target = scheduleCardRef.value
   if (!target || typeof target.requestFullscreen !== 'function') {
+    if (isTableFullscreen.value) {
+      isFullscreenToolbarCollapsed.value = false
+    }
     isTableFullscreen.value = !isTableFullscreen.value
     updateViewportHeight()
     updateFullscreenLayoutHeight()
@@ -1420,9 +1430,11 @@ const toggleTableFullscreen = () => {
   if (document.fullscreenElement === target) {
     document.exitFullscreen?.().catch(() => {
       isTableFullscreen.value = false
+      isFullscreenToolbarCollapsed.value = false
       updateViewportHeight()
       updateFullscreenLayoutHeight()
     })
+    isFullscreenToolbarCollapsed.value = false
     return
   }
 
