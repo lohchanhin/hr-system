@@ -224,7 +224,7 @@
         </el-select>
       </div>
 
-      <div ref="batchToolbarRef" v-if="canEdit && (!isTableFullscreen || !isFullscreenToolbarCollapsed)" class="batch-toolbar">
+      <div ref="batchToolbarRef" v-if="canEdit" class="batch-toolbar">
         <el-select v-model="batchShiftId" placeholder="套用班別" class="modern-select batch-select" filterable
           data-test="batch-shift-select">
           <el-option v-for="opt in shifts" :key="opt._id" :label="formatShiftLabel(opt)" :value="opt._id" />
@@ -1411,9 +1411,6 @@ const syncFullscreenState = () => {
   if (typeof document === 'undefined') return
   const target = scheduleCardRef.value
   isTableFullscreen.value = !!target && document.fullscreenElement === target
-  if (!isTableFullscreen.value) {
-    isFullscreenToolbarCollapsed.value = false
-  }
   updateFullscreenLayoutHeight()
 }
 
@@ -1447,11 +1444,6 @@ const toggleTableFullscreen = () => {
     updateFullscreenLayoutHeight()
   })
   updateViewportHeight()
-  updateFullscreenLayoutHeight()
-}
-
-const toggleFullscreenToolbar = () => {
-  isFullscreenToolbarCollapsed.value = !isFullscreenToolbarCollapsed.value
   updateFullscreenLayoutHeight()
 }
 
