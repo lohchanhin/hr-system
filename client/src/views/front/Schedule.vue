@@ -372,8 +372,8 @@
         </el-table>
       </div>
 
-      <div ref="paginationBarRef" class="pagination-bar" v-if="filteredEmployees.length">
-        <el-pagination background layout="prev, pager, next, ->, sizes, total" :total="filteredEmployees.length"
+      <div ref="paginationBarRef" class="pagination-bar" v-if="serverPaginationTotal > 0">
+        <el-pagination background layout="prev, pager, next, ->, sizes, total" :total="serverPaginationTotal"
           :page-size="pageSize" :current-page="currentPage" :page-sizes="[20, 30, 50, 100]"
           @current-change="onPageChange" @size-change="onPageSizeChange" />
       </div>
@@ -619,6 +619,7 @@ const detail = reactive({ visible: false, doc: null })
 const employeeNameCache = reactive({})
 const pageSize = ref(50)
 const currentPage = ref(1)
+const serverPaginationTotal = ref(0)
 const renderStrategyPreference = ref('auto')
 const rowRange = ref({ start: 0, end: 0 })
 const columnRange = ref({ start: 0, end: 0 })
@@ -1333,6 +1334,7 @@ watch(includeSelf, async (val, oldVal) => {
 
 watch([employeeSearch, statusFilter], () => {
   currentPage.value = 1
+  fetchEmployees(selectedDepartment.value, selectedSubDepartment.value)
   scheduleDebouncedRefresh({ reset: true, reason: 'filter-change' })
 })
 
@@ -1378,28 +1380,17 @@ const employeeStatus = empId => {
 }
 
 const filteredEmployees = computed(() => {
-  let list = employeeSearch.value
-    ? employees.value.filter(e => e.name.includes(employeeSearch.value))
-    : employees.value
-  if (statusFilter.value !== 'all') {
-    list = list.filter(
-      e =>
-        (employeeStatusMap.value[String(e._id)] || employeeStatus(e._id)) ===
-        statusFilter.value
-    )
-  }
-  return list
+  return employees.value
 })
 
 const totalPages = computed(() => {
-  if (!filteredEmployees.value.length) return 1
-  return Math.max(1, Math.ceil(filteredEmployees.value.length / pageSize.value))
+  const total = Number(serverPaginationTotal.value || 0)
+  if (!total) return 1
+  return Math.max(1, Math.ceil(total / pageSize.value))
 })
 
 const visibleEmployees = computed(() => {
-  const start = (currentPage.value - 1) * pageSize.value
-  const end = start + pageSize.value
-  return filteredEmployees.value.slice(start, end)
+  return filteredEmployees.value
 })
 
 const overscanRows = 8
@@ -2867,9 +2858,17 @@ async function fetchSchedules({ reset = false, fetchAll = false, reason = 'unkno
   if (hasVisibleEmployees || supervisorId) {
     if (!fetchAll) {
       params.push(`page=${currentPage.value}`)
-      params.push(`limit=${pageSize.value}`)
+      params.push(`pageSize=${pageSize.value}`)
     }
     params.push(`employeeIds=${targetEmployees.join(',')}`)
+  }
+  if (selectedDepartment.value) params.push(`department=${selectedDepartment.value}`)
+  if (selectedSubDepartment.value) params.push(`subDepartment=${selectedSubDepartment.value}`)
+  if (!fetchAll && statusFilter.value && statusFilter.value !== 'all') {
+    params.push(`status=${statusFilter.value}`)
+  }
+  if (!fetchAll && employeeSearch.value) {
+    params.push(`search=${encodeURIComponent(employeeSearch.value)}`)
   }
   if (supervisorId) params.push(`supervisor=${supervisorId}`)
   if (includeSelf.value && showIncludeSelfToggle.value)
@@ -3037,13 +3036,15 @@ async function fetchSchedules({ reset = false, fetchAll = false, reason = 'unkno
 
 function onPageChange(page) {
   currentPage.value = page
-  refreshScheduleData({ reason: 'page-change' })
+  fetchEmployees(selectedDepartment.value, selectedSubDepartment.value)
+    .then(() => refreshScheduleData({ reason: 'page-change' }))
 }
 
 function onPageSizeChange(size) {
   pageSize.value = size
   currentPage.value = 1
-  refreshScheduleData({ reason: 'page-size-change' })
+  fetchEmployees(selectedDepartment.value, selectedSubDepartment.value)
+    .then(() => refreshScheduleData({ reason: 'page-size-change' }))
 }
 
 // ========= 審批明細 =========
@@ -3149,6 +3150,12 @@ async function exportSchedules(format) {
     })
     if (selectedSubDepartment.value) {
       params.append('subDepartment', selectedSubDepartment.value)
+    }
+    if (statusFilter.value && statusFilter.value !== 'all') {
+      params.append('status', statusFilter.value)
+    }
+    if (employeeSearch.value) {
+      params.append('search', employeeSearch.value)
     }
     const res = await apiFetch(
       `/api/schedules/export?${params.toString()}`
@@ -3592,6 +3599,15 @@ async function fetchEmployees(
   if (supervisorId) params.push(`supervisor=${supervisorId}`)
   if (deptId) params.push(`department=${deptId}`)
   if (subId) params.push(`subDepartment=${subId}`)
+  params.push(`month=${currentMonth.value}`)
+  params.push(`page=${currentPage.value}`)
+  params.push(`pageSize=${pageSize.value}`)
+  if (statusFilter.value && statusFilter.value !== 'all') {
+    params.push(`status=${statusFilter.value}`)
+  }
+  if (employeeSearch.value) {
+    params.push(`search=${encodeURIComponent(employeeSearch.value)}`)
+  }
   const url = `/api/employees/schedule${params.length ? `?${params.join('&')}` : ''
     }`
   try {
@@ -3599,7 +3615,14 @@ async function fetchEmployees(
     if (!empRes.ok) throw new Error('Failed to fetch employees')
     const payload =
       typeof empRes.json === 'function' ? await empRes.json() : []
-    const empData = Array.isArray(payload) ? payload : []
+    const empData = Array.isArray(payload)
+      ? payload
+      : Array.isArray(payload?.employees)
+        ? payload.employees
+        : []
+    const pagination = payload?.pagination && typeof payload.pagination === 'object'
+      ? payload.pagination
+      : null
     const deptMap = departments.value.reduce((acc, d) => {
       acc[d._id] = d.name
       return acc
@@ -3660,6 +3683,12 @@ async function fetchEmployees(
     }
 
     employees.value = next
+    if (pagination) {
+      const total = Number(pagination.total || 0)
+      serverPaginationTotal.value = total
+    } else {
+      serverPaginationTotal.value = next.length
+    }
     const sessionColors = loadRowColorsFromSession()
     rowColorAssignments.value = next.reduce((acc, emp) => {
       const empId = String(emp?._id || '')

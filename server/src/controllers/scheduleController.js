@@ -13,6 +13,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
 import { Types } from 'mongoose';
+import dayjs from 'dayjs';
 
 // Get directory name for ES modules
 const __filename = fileURLToPath(import.meta.url);
@@ -155,20 +156,29 @@ export async function listMonthlySchedules(req, res) {
       supervisor,
       includeSelf: includeSelfRaw,
       page: pageRaw,
+      pageSize: pageSizeRaw,
       limit: limitRaw,
+      department: departmentRaw,
+      subDepartment: subDepartmentRaw,
+      status: statusRaw,
+      search: searchRaw,
     } = req.query;
     if (!month) return res.status(400).json({ error: 'month required' });
     const start = new Date(`${month}-01`);
     const end = new Date(start);
     end.setMonth(end.getMonth() + 1);
-    const query = { date: { $gte: start, $lt: end } };
+    const scheduleQuery = { date: { $gte: start, $lt: end } };
     const includeSelf = String(includeSelfRaw).toLowerCase() === 'true';
     const requestedPageOrLimit = pageRaw !== undefined || limitRaw !== undefined;
 
     const pageParsed = Number.parseInt(pageRaw, 10);
-    const limitParsed = Number.parseInt(limitRaw, 10);
+    const limitParsed = Number.parseInt(pageSizeRaw ?? limitRaw, 10);
     const page = Number.isFinite(pageParsed) && pageParsed > 0 ? pageParsed : 1;
-    const limit = Number.isFinite(limitParsed) && limitParsed > 0 ? Math.min(limitParsed, 200) : 50;
+    const pageSize = Number.isFinite(limitParsed) && limitParsed > 0 ? Math.min(limitParsed, 200) : 50;
+    const department = departmentRaw ? String(departmentRaw) : '';
+    const subDepartment = subDepartmentRaw ? String(subDepartmentRaw) : '';
+    const status = String(statusRaw || 'all').trim();
+    const search = String(searchRaw || '').trim();
 
     const parsedEmployeeIds = String(employeeIdsRaw || '')
       .split(',')
@@ -179,6 +189,7 @@ export async function listMonthlySchedules(req, res) {
     if (employeeIdsRaw !== undefined && parsedEmployeeIds.length === 0 && requestedPageOrLimit) {
       return res.json({
         schedules: [],
+        employees: [],
         publishSummary: {
           currentRoundPendingEmployees: [],
           unaffectedConfirmedEmployees: [],
@@ -186,11 +197,14 @@ export async function listMonthlySchedules(req, res) {
         pagination: {
           total: 0,
           page,
-          limit,
+          pageSize,
+          limit: pageSize,
+          totalPages: 1,
         },
       });
     }
 
+    let scopedIds = null;
     if (supervisor) {
       const role = req.user?.role;
       const allowedRoles = ['supervisor', 'admin'];
@@ -202,33 +216,132 @@ export async function listMonthlySchedules(req, res) {
       if (includeSelf && supervisor) {
         idSet.add(String(supervisor));
       }
-      let scopedIds = Array.from(idSet);
+      scopedIds = Array.from(idSet);
       if (parsedEmployeeIds.length > 0) {
         const requestedSet = new Set(parsedEmployeeIds);
         scopedIds = scopedIds.filter((id) => requestedSet.has(id));
       }
-      query.employee = { $in: scopedIds };
     } else {
       const empId = employee || (req.user?.role === 'employee' ? req.user.id : undefined);
       if (empId && parsedEmployeeIds.length > 0) {
         if (parsedEmployeeIds.includes(String(empId))) {
-          query.employee = String(empId);
+          scopedIds = [String(empId)];
         } else {
-          query.employee = { $in: [] };
+          scopedIds = [];
         }
       } else if (empId) {
-        query.employee = empId;
+        scopedIds = [String(empId)];
       } else if (parsedEmployeeIds.length > 0) {
-        query.employee = { $in: parsedEmployeeIds };
+        scopedIds = parsedEmployeeIds;
       }
     }
 
-    const total = await ShiftSchedule.countDocuments(query);
-    const raw = await ShiftSchedule.find(query)
+    const employeeQuery = {};
+    if (Array.isArray(scopedIds)) {
+      employeeQuery._id = { $in: scopedIds };
+    }
+    if (department) employeeQuery.department = department;
+    if (subDepartment) employeeQuery.subDepartment = subDepartment;
+    if (search) {
+      const rx = new RegExp(search, 'i');
+      employeeQuery.$or = [{ name: rx }, { employeeId: rx }];
+    }
+
+    const matchedEmployees = await Employee.find(employeeQuery)
+      .select('_id name department subDepartment photo')
+      .lean();
+
+    let filteredEmployees = matchedEmployees;
+    if (status !== 'all') {
+      const employeeIdList = matchedEmployees.map((item) => item._id.toString());
+      const statusMap = new Map();
+      employeeIdList.forEach((id) => {
+        statusMap.set(id, { shiftDays: new Set(), leaveDays: new Set() });
+      });
+
+      if (employeeIdList.length) {
+        const monthSchedules = await ShiftSchedule.find({
+          employee: { $in: employeeIdList },
+          date: { $gte: start, $lt: end },
+        })
+          .select('employee date shiftId')
+          .lean();
+
+        monthSchedules.forEach((doc) => {
+          const empId = doc.employee?.toString?.() || '';
+          const entry = statusMap.get(empId);
+          if (!entry) return;
+          const dayKey = doc.date instanceof Date
+            ? doc.date.toISOString().slice(0, 10)
+            : new Date(doc.date).toISOString().slice(0, 10);
+          if (doc.shiftId && dayKey) {
+            entry.shiftDays.add(dayKey);
+          }
+        });
+
+        const { formId, startId, endId } = await getLeaveFieldIds();
+        if (formId && startId && endId) {
+          const monthStart = `${month}-01`;
+          const monthEnd = end.toISOString().slice(0, 10);
+          const leaveQuery = {
+            form: formId,
+            status: 'approved',
+            applicant_employee: { $in: employeeIdList },
+          };
+          leaveQuery[`form_data.${startId}`] = { $lt: monthEnd };
+          leaveQuery[`form_data.${endId}`] = { $gte: monthStart };
+          const leaveApprovals = await ApprovalRequest.find(leaveQuery)
+            .select(`applicant_employee form_data.${startId} form_data.${endId}`)
+            .lean();
+          leaveApprovals.forEach((approval) => {
+            const empId = approval.applicant_employee?.toString?.() || '';
+            const entry = statusMap.get(empId);
+            if (!entry) return;
+            const approvalStart = dayjs(approval.form_data?.[startId]);
+            const approvalEnd = dayjs(approval.form_data?.[endId]);
+            const monthStart = dayjs(start);
+            const monthEnd = dayjs(end).subtract(1, 'day');
+            const leaveStart = approvalStart.isAfter(monthStart) ? approvalStart : monthStart;
+            const leaveEnd = approvalEnd.isBefore(monthEnd) ? approvalEnd : monthEnd;
+            if (!leaveStart.isValid() || !leaveEnd.isValid() || leaveEnd.isBefore(leaveStart)) return;
+            let pointer = leaveStart.startOf('day');
+            while (!pointer.isAfter(leaveEnd, 'day')) {
+              entry.leaveDays.add(pointer.format('YYYY-MM-DD'));
+              pointer = pointer.add(1, 'day');
+            }
+          });
+        }
+      }
+
+      const daysInMonth = dayjs(`${month}-01`).daysInMonth();
+      filteredEmployees = matchedEmployees.filter((emp) => {
+        const key = emp._id.toString();
+        const entry = statusMap.get(key) || { shiftDays: new Set(), leaveDays: new Set() };
+        const hasLeave = entry.leaveDays.size > 0;
+        const filledDays = new Set([...entry.shiftDays, ...entry.leaveDays]).size;
+        const resolvedStatus = hasLeave ? 'onLeave' : (filledDays < daysInMonth ? 'unscheduled' : 'scheduled');
+        return resolvedStatus === status;
+      });
+    }
+
+    filteredEmployees.sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'zh-Hant'));
+    const total = filteredEmployees.length;
+    const totalPages = Math.max(1, Math.ceil(total / pageSize));
+    const safePage = Math.min(page, totalPages);
+    const pageEmployees = filteredEmployees.slice((safePage - 1) * pageSize, safePage * pageSize);
+    const pageEmployeeIds = pageEmployees.map((emp) => emp._id.toString());
+
+    if (pageEmployeeIds.length) {
+      scheduleQuery.employee = { $in: pageEmployeeIds };
+    } else {
+      scheduleQuery.employee = { $in: [] };
+    }
+    if (department) scheduleQuery.department = department;
+    if (subDepartment) scheduleQuery.subDepartment = subDepartment;
+
+    const raw = await ShiftSchedule.find(scheduleQuery)
       .select('employee date shiftId department subDepartment state employeeResponse needsReconfirm')
       .populate({ path: 'employee', select: 'name department subDepartment photo' })
-      .skip((page - 1) * limit)
-      .limit(limit)
       .lean();
     const schedules = await attachShiftInfo(raw);
     const employeeStatusMap = new Map();
@@ -264,11 +377,20 @@ export async function listMonthlySchedules(req, res) {
 
     res.json({
       schedules,
+      employees: pageEmployees.map((emp) => ({
+        _id: emp._id?.toString?.() || String(emp._id),
+        name: emp.name || '',
+        photo: emp.photo || '',
+        department: emp.department || '',
+        subDepartment: emp.subDepartment || '',
+      })),
       publishSummary,
       pagination: {
         total,
-        page,
-        limit,
+        page: safePage,
+        pageSize,
+        limit: pageSize,
+        totalPages,
       },
     });
   } catch (err) {
@@ -1547,7 +1669,14 @@ export async function deleteOldSchedules(req, res) {
 
 export async function exportSchedules(req, res) {
   try {
-    const { month, department, subDepartment, format: formatParam } = req.query;
+    const {
+      month,
+      department,
+      subDepartment,
+      format: formatParam,
+      status: statusRaw,
+      search: searchRaw,
+    } = req.query;
     if (!month || !department) {
       return res.status(400).json({ error: 'month and department required' });
     }
@@ -1564,9 +1693,83 @@ export async function exportSchedules(req, res) {
       department,
     };
     if (subDepartment) query.subDepartment = subDepartment;
+    const status = String(statusRaw || 'all').trim();
+    const search = String(searchRaw || '').trim();
+
+    if (search || status !== 'all') {
+      const employeeQuery = { department };
+      if (subDepartment) employeeQuery.subDepartment = subDepartment;
+      if (search) {
+        const rx = new RegExp(search, 'i');
+        employeeQuery.$or = [{ name: rx }, { employeeId: rx }];
+      }
+      const employeeList = await Employee.find(employeeQuery).select('_id').lean();
+      const employeeIds = employeeList.map((item) => item._id.toString());
+      query.employee = { $in: employeeIds };
+    }
 
     const raw = await ShiftSchedule.find(query).populate('employee').lean();
-    const schedules = await attachShiftInfo(raw);
+    let schedules = await attachShiftInfo(raw);
+    if (status !== 'all') {
+      const daysInMonth = dayjs(`${month}-01`).daysInMonth();
+      const leaveDaysMap = new Map();
+      const { formId, startId, endId } = await getLeaveFieldIds();
+      if (formId && startId && endId) {
+        const employeeIds = Array.from(new Set(schedules.map(item => item?.employee?._id?.toString?.()).filter(Boolean)));
+        if (employeeIds.length) {
+          const monthStart = `${month}-01`;
+          const monthEnd = end.toISOString().slice(0, 10);
+          const leaveQuery = {
+            form: formId,
+            status: 'approved',
+            applicant_employee: { $in: employeeIds },
+          };
+          leaveQuery[`form_data.${startId}`] = { $lt: monthEnd };
+          leaveQuery[`form_data.${endId}`] = { $gte: monthStart };
+          const approvals = await ApprovalRequest.find(leaveQuery)
+            .select(`applicant_employee form_data.${startId} form_data.${endId}`)
+            .lean();
+          approvals.forEach((approval) => {
+            const empId = approval.applicant_employee?.toString?.() || '';
+            if (!empId) return;
+            if (!leaveDaysMap.has(empId)) leaveDaysMap.set(empId, new Set());
+            const entry = leaveDaysMap.get(empId);
+            const startDate = dayjs(approval.form_data?.[startId]);
+            const endDate = dayjs(approval.form_data?.[endId]);
+            const monthStartDate = dayjs(start);
+            const monthEndDate = dayjs(end).subtract(1, 'day');
+            const leaveStart = startDate.isAfter(monthStartDate) ? startDate : monthStartDate;
+            const leaveEnd = endDate.isBefore(monthEndDate) ? endDate : monthEndDate;
+            if (!leaveStart.isValid() || !leaveEnd.isValid() || leaveEnd.isBefore(leaveStart)) return;
+            let pointer = leaveStart.startOf('day');
+            while (!pointer.isAfter(leaveEnd, 'day')) {
+              entry.add(pointer.format('YYYY/MM/DD'));
+              pointer = pointer.add(1, 'day');
+            }
+          });
+        }
+      }
+      const grouped = new Map();
+      schedules.forEach((item) => {
+        const empId = item?.employee?._id?.toString?.() || '';
+        if (!empId) return;
+        if (!grouped.has(empId)) grouped.set(empId, []);
+        grouped.get(empId).push(item);
+      });
+      schedules = schedules.filter((item) => {
+        const empId = item?.employee?._id?.toString?.() || '';
+        const list = grouped.get(empId) || [];
+        const leaveDays = leaveDaysMap.get(empId)?.size || 0;
+        const hasLeave = leaveDays > 0;
+        const shiftDays = new Set(list.filter(row => !!row.shiftId).map(row => row.date)).size;
+        const filledDays = new Set([
+          ...list.filter(row => !!row.shiftId).map(row => row.date),
+          ...(leaveDaysMap.get(empId) || []),
+        ]).size;
+        const currentStatus = hasLeave ? 'onLeave' : (filledDays < daysInMonth ? 'unscheduled' : 'scheduled');
+        return currentStatus === status;
+      });
+    }
     const format = formatParam === 'excel' ? 'excel' : 'pdf';
 
     const sanitizeSegment = (value) => {
