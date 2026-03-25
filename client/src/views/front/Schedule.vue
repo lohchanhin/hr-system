@@ -192,7 +192,7 @@
 
     <!-- Enhanced schedule table with modern design -->
     <div ref="scheduleCardRef" class="schedule-card" :class="{ 'is-fullscreen': isTableFullscreen }" data-test="schedule-card">
-      <div class="schedule-header">
+      <div ref="scheduleHeaderRef" class="schedule-header">
         <h3 class="schedule-title">員工排班表</h3>
         <el-button class="action-btn secondary fullscreen-toggle" @click="toggleTableFullscreen"
           data-test="fullscreen-toggle-button">
@@ -218,7 +218,7 @@
         </el-select>
       </div>
 
-      <div v-if="canEdit" class="batch-toolbar">
+      <div ref="batchToolbarRef" v-if="canEdit" class="batch-toolbar">
         <el-select v-model="batchShiftId" placeholder="套用班別" class="modern-select batch-select" filterable
           data-test="batch-shift-select">
           <el-option v-for="opt in shifts" :key="opt._id" :label="formatShiftLabel(opt)" :value="opt._id" />
@@ -393,7 +393,7 @@
         </el-table>
       </div>
 
-      <div class="pagination-bar" v-if="filteredEmployees.length">
+      <div ref="paginationBarRef" class="pagination-bar" v-if="filteredEmployees.length">
         <el-pagination background layout="prev, pager, next, ->, sizes, total" :total="filteredEmployees.length"
           :page-size="pageSize" :current-page="currentPage" :page-sizes="[5, 10, 20, 30, 50, 100]"
           @current-change="onPageChange" @size-change="onPageSizeChange" />
@@ -520,7 +520,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onBeforeUnmount, watch, reactive } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, onUpdated, watch, reactive } from 'vue'
 import dayjs from 'dayjs'
 import { apiFetch } from '../../api'
 import { useAuthStore } from '../../stores/auth'
@@ -615,6 +615,11 @@ const isPublishing = ref(false)
 const isFinalizing = ref(false)
 const isTableFullscreen = ref(false)
 const scheduleCardRef = ref(null)
+const scheduleHeaderRef = ref(null)
+const batchToolbarRef = ref(null)
+const paginationBarRef = ref(null)
+const measuredLayoutHeight = ref(0)
+let layoutResizeObserver = null
 const viewportHeight = ref(
   typeof window === 'undefined' ? 900 : window.innerHeight
 )
@@ -1362,6 +1367,12 @@ const toggleRow = id => {
 const dayColumnWidth = computed(() => (isTableFullscreen.value ? 92 : 140))
 
 const tableMaxHeight = computed(() => {
+  if (isTableFullscreen.value) {
+    const dynamicHeight = measuredLayoutHeight.value
+    if (dynamicHeight > 0) {
+      return Math.max(320, dynamicHeight)
+    }
+  }
   const reservedHeight = isTableFullscreen.value ? 230 : 400
   return Math.max(320, viewportHeight.value - reservedHeight)
 })
@@ -1369,12 +1380,31 @@ const tableMaxHeight = computed(() => {
 const updateViewportHeight = () => {
   if (typeof window === 'undefined') return
   viewportHeight.value = window.innerHeight
+  updateFullscreenLayoutHeight()
+}
+
+const updateFullscreenLayoutHeight = () => {
+  if (!isTableFullscreen.value) {
+    measuredLayoutHeight.value = 0
+    return
+  }
+
+  const cardHeight = scheduleCardRef.value?.clientHeight || viewportHeight.value
+  const headerHeight = scheduleHeaderRef.value?.offsetHeight || 0
+  const toolbarHeight = batchToolbarRef.value?.offsetHeight || 0
+  const paginationHeight = paginationBarRef.value?.offsetHeight || 0
+  const reservedGap = 16
+  const availableHeight =
+    cardHeight - headerHeight - toolbarHeight - paginationHeight - reservedGap
+
+  measuredLayoutHeight.value = Math.max(320, availableHeight)
 }
 
 const syncFullscreenState = () => {
   if (typeof document === 'undefined') return
   const target = scheduleCardRef.value
   isTableFullscreen.value = !!target && document.fullscreenElement === target
+  updateFullscreenLayoutHeight()
 }
 
 const toggleTableFullscreen = () => {
@@ -1383,6 +1413,7 @@ const toggleTableFullscreen = () => {
   if (!target || typeof target.requestFullscreen !== 'function') {
     isTableFullscreen.value = !isTableFullscreen.value
     updateViewportHeight()
+    updateFullscreenLayoutHeight()
     return
   }
 
@@ -1390,6 +1421,7 @@ const toggleTableFullscreen = () => {
     document.exitFullscreen?.().catch(() => {
       isTableFullscreen.value = false
       updateViewportHeight()
+      updateFullscreenLayoutHeight()
     })
     return
   }
@@ -1397,8 +1429,10 @@ const toggleTableFullscreen = () => {
   target.requestFullscreen().catch(() => {
     isTableFullscreen.value = true
     updateViewportHeight()
+    updateFullscreenLayoutHeight()
   })
   updateViewportHeight()
+  updateFullscreenLayoutHeight()
 }
 
 const filteredSubDepartments = computed(() =>
@@ -3312,6 +3346,10 @@ onBeforeUnmount(() => {
   if (typeof document !== 'undefined') {
     document.removeEventListener('fullscreenchange', syncFullscreenState)
   }
+  if (layoutResizeObserver) {
+    layoutResizeObserver.disconnect()
+    layoutResizeObserver = null
+  }
 })
 
 onMounted(async () => {
@@ -3322,6 +3360,15 @@ onMounted(async () => {
   if (typeof document !== 'undefined') {
     document.addEventListener('fullscreenchange', syncFullscreenState)
   }
+  if (typeof ResizeObserver !== 'undefined') {
+    layoutResizeObserver = new ResizeObserver(() => {
+      updateFullscreenLayoutHeight()
+    })
+    ;[scheduleCardRef.value, scheduleHeaderRef.value, batchToolbarRef.value, paginationBarRef.value]
+      .filter(Boolean)
+      .forEach(target => layoutResizeObserver.observe(target))
+  }
+  updateFullscreenLayoutHeight()
   const supervisorId = getSupervisorIdFromStorage()
   const storedPreference = loadIncludeSelfPreference(supervisorId)
   if (storedPreference === true && showIncludeSelfToggle.value) {
@@ -3340,6 +3387,14 @@ onMounted(async () => {
   } finally {
     isInitializingIncludeSelf = false
   }
+})
+
+watch(isTableFullscreen, () => {
+  updateFullscreenLayoutHeight()
+})
+
+onUpdated(() => {
+  updateFullscreenLayoutHeight()
 })
 </script>
 
