@@ -1,6 +1,5 @@
 <template>
   <div
-    v-if="!lazyMode || expandedRows.has(row._id)"
     class="modern-schedule-cell"
     data-schedule-cell="1"
     :data-emp-id="String(row._id)"
@@ -44,9 +43,6 @@
     <span v-else class="empty-cell">-</span>
   </div>
 
-  <div v-else class="modern-schedule-cell collapsed-cell">
-    展開班表
-  </div>
 </template>
 
 <script setup>
@@ -57,8 +53,6 @@ const props = defineProps({
   row: { type: Object, required: true },
   day: { type: Object, required: true },
   cellView: { type: Object, required: true },
-  lazyMode: { type: Boolean, default: false },
-  expandedRows: { type: Object, required: true },
   canEdit: { type: Boolean, default: false },
   shifts: { type: Array, default: () => [] },
   formatShiftLabel: { type: Function, required: true }
