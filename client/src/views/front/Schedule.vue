@@ -275,6 +275,12 @@
         <span class="stress-metric">
           最近互動延遲：{{ lastInteractionLatencyMs }}ms
         </span>
+        <span class="stress-metric">
+          status重算：{{ perfSnapshot.employeeStatusRecomputeCount }} 次 / {{ perfSnapshot.employeeStatusAvgMs }}ms
+        </span>
+        <span class="stress-metric">
+          cellMeta計算：{{ perfSnapshot.cellMetaComputeCount }} 次 / {{ perfSnapshot.cellMetaAvgMs }}ms
+        </span>
       </div>
 
       <div ref="scheduleTableWrapperRef" class="schedule-table-wrapper" :class="{ 'is-fullscreen': isTableFullscreen }"
@@ -493,7 +499,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onBeforeUnmount, onUpdated, watch, reactive } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, onUpdated, watch, reactive, shallowRef, triggerRef } from 'vue'
 import dayjs from 'dayjs'
 import { apiFetch } from '../../api'
 import { useAuthStore } from '../../stores/auth'
@@ -541,20 +547,15 @@ const currentMonth = ref(dayjs().add(1, 'month').format('YYYY-MM'))
 
 
 
-const scheduleMap = ref({})
+const scheduleMap = shallowRef({})
 const rawSchedules = ref([])
 const holidays = ref([])
 const holidayMap = ref({})
 
 const shifts = ref([])
 const employees = ref([])
-const employeeById = computed(() =>
-  employees.value.reduce((acc, emp) => {
-    const id = String(emp?._id || '')
-    if (id) acc[id] = emp
-    return acc
-  }, {})
-)
+const employeeIndexMap = shallowRef(new Map())
+const employeeById = computed(() => Object.fromEntries(employeeIndexMap.value))
 const approvalList = ref([])
 const departments = ref([])
 const subDepartments = ref([])
@@ -570,6 +571,12 @@ const includeSelf = ref(false)
 const includeSelfStoragePrefix = 'schedule-include-self'
 let isInitializingIncludeSelf = true
 const summary = ref({ direct: 0, unscheduled: 0, onLeave: 0 })
+const perfMetrics = reactive({
+  employeeStatusRecomputeCount: 0,
+  employeeStatusTotalMs: 0,
+  cellMetaComputeCount: 0,
+  cellMetaTotalMs: 0
+})
 const employeeSearch = ref('')
 const statusFilter = ref('all')
 const expandedRows = ref(new Set())
@@ -620,6 +627,20 @@ const stressScenarioEnabled = computed(() => {
   if (typeof window === 'undefined') return false
   const params = new URLSearchParams(window.location.search || '')
   return params.get('stress') === '1'
+})
+const perfSnapshot = computed(() => {
+  const statusAvg = perfMetrics.employeeStatusRecomputeCount
+    ? perfMetrics.employeeStatusTotalMs / perfMetrics.employeeStatusRecomputeCount
+    : 0
+  const cellMetaAvg = perfMetrics.cellMetaComputeCount
+    ? perfMetrics.cellMetaTotalMs / perfMetrics.cellMetaComputeCount
+    : 0
+  return {
+    employeeStatusRecomputeCount: perfMetrics.employeeStatusRecomputeCount,
+    employeeStatusAvgMs: Number(statusAvg.toFixed(2)),
+    cellMetaComputeCount: perfMetrics.cellMetaComputeCount,
+    cellMetaAvgMs: Number(cellMetaAvg.toFixed(2))
+  }
 })
 const publishSnapshot = ref(null)
 const loadedEmployeeIds = ref(new Set())
@@ -734,7 +755,7 @@ const parseCellKey = key => {
 }
 
 // ✅ 這個月所有「已核准」請假的快取：{ [empId]: { [dayNumber]: true } }
-const leaveIndex = ref({})
+const leaveIndex = shallowRef({})
 
 // 只用 leaveIndex 判斷該格是不是請假日
 const isLeaveCell = (empId, day) => {
@@ -752,60 +773,77 @@ const shiftInfoMap = computed(() => {
   return map
 })
 
-const employeeStatusMap = computed(() => {
-  return employees.value.reduce((acc, emp) => {
-    const empId = String(emp?._id || '')
-    if (!empId) return acc
-    const daysMap = scheduleMap.value[empId] || {}
-    const cells = Object.values(daysMap)
-    if (!cells.length) {
-      acc[empId] = 'unscheduled'
-      return acc
-    }
-    const hasAnyEmptyDay = cells.some(
-      c => !c.shiftId && !c.leave && !isLeaveCell(empId, c.day)
-    )
-    const hasAnyLeave = cells.some(c => c.leave || isLeaveCell(empId, c.day))
-    if (hasAnyEmptyDay) acc[empId] = 'unscheduled'
-    else if (hasAnyLeave) acc[empId] = 'onLeave'
-    else acc[empId] = 'scheduled'
-    return acc
-  }, {})
-})
+const employeeStatusMap = shallowRef({})
+const cellMetaCache = shallowRef(new Map())
 
-const cellMetaMap = computed(() => {
-  const map = new Map()
-  employees.value.forEach(emp => {
-    const empId = String(emp?._id || '')
-    if (!empId) return
-    days.value.forEach(d => {
-      const day = d.date
-      const shiftId = scheduleMap.value[empId]?.[day]?.shiftId
-      const isLeave = isLeaveCell(empId, day)
-      const shift = shiftId ? shiftInfoMap.value.get(String(shiftId)) : null
-      map.set(buildCellKey(empId, day), {
-        isLeave,
-        hasShift: !isLeave && !!shiftId,
-        missingShift: !isLeave && !shiftId,
-        style: !isLeave ? shiftClass(shift || shiftId) : {}
-      })
-    })
-  })
-  return map
-})
+const markScheduleMapDirty = () => triggerRef(scheduleMap)
+const markLeaveIndexDirty = () => triggerRef(leaveIndex)
+
+const invalidateCellMetaCache = (empId = '', day = null) => {
+  if (!empId) {
+    cellMetaCache.value = new Map()
+    return
+  }
+  const next = new Map(cellMetaCache.value)
+  if (day === null) {
+    const prefix = `${String(empId)}::`
+    for (const key of next.keys()) {
+      if (key.startsWith(prefix)) next.delete(key)
+    }
+  } else {
+    next.delete(buildCellKey(String(empId), Number(day)))
+  }
+  cellMetaCache.value = next
+}
+
+const recomputeEmployeeStatusFor = empId => {
+  const startAt = typeof performance !== 'undefined' ? performance.now() : Date.now()
+  const safeEmpId = String(empId || '')
+  if (!safeEmpId) return
+  const daysMap = scheduleMap.value[safeEmpId] || {}
+  const cells = Object.values(daysMap)
+  let status = 'scheduled'
+  if (!cells.length) {
+    status = 'unscheduled'
+  } else {
+    const hasAnyEmptyDay = cells.some(c => !c.shiftId && !c.leave && !isLeaveCell(safeEmpId, c.day))
+    const hasAnyLeave = cells.some(c => c.leave || isLeaveCell(safeEmpId, c.day))
+    if (hasAnyEmptyDay) status = 'unscheduled'
+    else if (hasAnyLeave) status = 'onLeave'
+  }
+  employeeStatusMap.value = {
+    ...employeeStatusMap.value,
+    [safeEmpId]: status
+  }
+  const endAt = typeof performance !== 'undefined' ? performance.now() : Date.now()
+  perfMetrics.employeeStatusRecomputeCount += 1
+  perfMetrics.employeeStatusTotalMs += endAt - startAt
+}
+
+const recomputeEmployeeStatuses = empIds => {
+  ;(Array.isArray(empIds) ? empIds : []).forEach(empId => recomputeEmployeeStatusFor(empId))
+}
 
 const getCellMeta = (empId, day) => {
+  const startAt = typeof performance !== 'undefined' ? performance.now() : Date.now()
   const key = buildCellKey(String(empId), Number(day))
-  const cached = cellMetaMap.value.get(key)
+  const cached = cellMetaCache.value.get(key)
   if (cached) return cached
   const isLeave = isLeaveCell(empId, day)
   const shiftId = scheduleMap.value?.[empId]?.[day]?.shiftId
-  return {
+  const computedMeta = {
     isLeave,
     hasShift: !isLeave && !!shiftId,
     missingShift: !isLeave && !shiftId,
     style: !isLeave ? shiftClass(shiftId) : {}
   }
+  const next = new Map(cellMetaCache.value)
+  next.set(key, computedMeta)
+  cellMetaCache.value = next
+  const endAt = typeof performance !== 'undefined' ? performance.now() : Date.now()
+  perfMetrics.cellMetaComputeCount += 1
+  perfMetrics.cellMetaTotalMs += endAt - startAt
+  return computedMeta
 }
 
 const cellViewMap = computed(() => {
@@ -1298,6 +1336,28 @@ watch([employeeSearch, statusFilter], () => {
   scheduleDebouncedRefresh({ reset: true, reason: 'filter-change' })
 })
 
+watch(
+  employees,
+  newEmployees => {
+    const nextIndex = new Map()
+    const ids = []
+    ;(Array.isArray(newEmployees) ? newEmployees : []).forEach(emp => {
+      const id = String(emp?._id || '')
+      if (!id) return
+      nextIndex.set(id, emp)
+      ids.push(id)
+    })
+    employeeIndexMap.value = nextIndex
+    invalidateCellMetaCache()
+    recomputeEmployeeStatuses(ids)
+  },
+  { immediate: true }
+)
+
+watch(shifts, () => {
+  invalidateCellMetaCache()
+})
+
 
 const employeeStatus = empId => {
   const cachedStatus = employeeStatusMap.value[String(empId)]
@@ -1667,6 +1727,9 @@ const seedStressScenario = () => {
   })
   leaveIndex.value = nextLeaveIndex
   scheduleMap.value = nextMap
+  markLeaveIndexDirty()
+  recomputeEmployeeStatuses(employees.value.map(emp => emp._id))
+  invalidateCellMetaCache()
   pageSize.value = 200
   currentPage.value = 1
   renderStrategyPreference.value = 'virtual'
@@ -2639,6 +2702,9 @@ function ensureEmployeeSchedule(empId) {
         defaults.subDepartment
     }
   })
+  invalidateCellMetaCache(key)
+  recomputeEmployeeStatusFor(key)
+  markScheduleMapDirty()
 }
 
 const patchScheduleMapForEmployees = (targetEmployees, daysList, employeeMap, schedules) => {
@@ -2690,7 +2756,10 @@ const patchScheduleMapForEmployees = (targetEmployees, daysList, employeeMap, sc
     })
 
     scheduleMap.value[empId] = nextDayMap
+    invalidateCellMetaCache(empId)
   })
+  recomputeEmployeeStatuses(Array.from(targetSet))
+  markScheduleMapDirty()
 }
 
 const buildLeaveIndexAndScheduleMap = ({
@@ -2760,6 +2829,9 @@ function resetScheduleCache() {
   loadedEmployeeIds.value = new Set()
   approvalList.value = []
   leaveIndex.value = {}
+  markLeaveIndexDirty()
+  employeeStatusMap.value = {}
+  cellMetaCache.value = new Map()
   fetchAllCache.fulfilled.clear()
   fetchAllCache.inFlight.clear()
 }
@@ -2889,11 +2961,18 @@ async function fetchSchedules({ reset = false, fetchAll = false, reason = 'unkno
       rawSchedules.value = schedules
       approvalList.value = approvals
       leaveIndex.value = nextLeaveIndex
+      markLeaveIndexDirty()
+      recomputeEmployeeStatuses(targetEmployees)
+      targetEmployees.forEach(empId => invalidateCellMetaCache(empId))
+      markScheduleMapDirty()
     } else {
       if (activeScheduleRequest.requestId !== requestId) return
       rawSchedules.value = schedules
       approvalList.value = []
       leaveIndex.value = {}
+      markLeaveIndexDirty()
+      recomputeEmployeeStatuses(targetEmployees)
+      targetEmployees.forEach(empId => invalidateCellMetaCache(empId))
     }
 
     // ========= 主管自己是否有排班提示 =========
@@ -3129,6 +3208,9 @@ async function onSelect(empId, day, value) {
         )
       } else {
         invalidateFetchAllCache()
+        invalidateCellMetaCache(empId, day)
+        recomputeEmployeeStatusFor(empId)
+        markScheduleMapDirty()
         await fetchSummary()
         await refreshFrontMenu()
       }
@@ -3163,6 +3245,9 @@ async function onSelect(empId, day, value) {
           department,
           subDepartment
         }
+        invalidateCellMetaCache(empId, day)
+        recomputeEmployeeStatusFor(empId)
+        markScheduleMapDirty()
         invalidateFetchAllCache()
         await fetchSummary()
         await refreshFrontMenu()
@@ -3226,6 +3311,9 @@ async function handleScheduleError(
     }
   current.shiftId = prev
   scheduleMap.value[empId][day] = current
+  invalidateCellMetaCache(empId, day)
+  recomputeEmployeeStatusFor(empId)
+  markScheduleMapDirty()
 
   let msg = ''
   try {
@@ -3351,6 +3439,7 @@ async function applyBatch() {
       return
     }
 
+    const affectedEmployees = new Set()
     result.forEach(entry => {
       const empId = entry.employee?._id || entry.employee
       const d = dayjs(entry.date).date()
@@ -3377,8 +3466,12 @@ async function applyBatch() {
           current.subDepartment ??
           ''
       }
+      affectedEmployees.add(String(empId))
+      invalidateCellMetaCache(empId, d)
       // leave 標記由 leaveIndex + 後端請假資料決定，這裡不主動刪掉
     })
+    recomputeEmployeeStatuses(Array.from(affectedEmployees))
+    markScheduleMapDirty()
 
     callSuccess('批次套用完成')
     invalidateFetchAllCache()
@@ -3606,18 +3699,20 @@ async function fetchSummary() {
     if (!res.ok) return
 
     const data = await res.json()
+    if (data && typeof data === 'object' && data.stats) {
+      summary.value = {
+        direct: Number(data.stats.direct || 0),
+        unscheduled: Number(data.stats.unscheduled || 0),
+        onLeave: Number(data.stats.onLeave || 0)
+      }
+      return
+    }
+
     const list = Array.isArray(data) ? data : []
-
     const daysInMonth = dayjs(`${currentMonth.value}-01`).daysInMonth()
-
     summary.value = {
       direct: list.length,
-      unscheduled: list.filter(e => {
-        const shiftCount = Number(e.shiftCount || 0)
-        const leaveCount = Number(e.leaveCount || 0)
-        const filledDays = shiftCount + leaveCount
-        return filledDays < daysInMonth
-      }).length,
+      unscheduled: list.filter(e => Number(e.shiftCount || 0) + Number(e.leaveCount || 0) < daysInMonth).length,
       onLeave: list.filter(e => Number(e.leaveCount || 0) > 0).length
     }
   } catch (err) {
@@ -3720,6 +3815,10 @@ watch(
   { flush: 'post' }
 )
 
+watch(days, () => {
+  invalidateCellMetaCache()
+})
+
 watch(tableMaxHeight, () => {
   bindTableScrollListeners()
 })
@@ -3735,6 +3834,14 @@ watch([virtualVisibleEmployees, virtualVisibleDays], () => {
     })
   }
 })
+
+watch(
+  () => [perfMetrics.employeeStatusRecomputeCount, perfMetrics.cellMetaComputeCount],
+  () => {
+    if (!import.meta.env.DEV) return
+    console.info('[SchedulePerfMetrics]', perfSnapshot.value)
+  }
+)
 
 onUpdated(() => {
   updateFullscreenLayoutHeight()
