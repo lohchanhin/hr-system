@@ -115,3 +115,19 @@
 - **備註**
 
 經歷、證照與教育訓練區塊皆可透過「＋新增 / 刪除」按鈕動態維護。
+
+## 16. 排班檢視（Schedule View）員工欄位
+
+當前端以 `GET /api/employees?view=schedule`（或 `GET /api/employees/schedule`）查詢排班用員工清單時，後端回傳精簡欄位如下：
+
+- `_id`
+- `name`
+- `photo`
+- `title`
+- `practiceTitle`
+- `department`
+- `subDepartment`
+- `supervisor`
+- `annualLeave.remainingDays`（後端會依 `annualLeave.totalDays - annualLeave.usedDays` 計算並回傳）
+
+> 注意：`view=schedule` 主要提供排班畫面使用，若需完整員工資料請改用一般員工列表 API。

@@ -466,7 +466,7 @@ export function buildEmployeePatch(body = {}, existing = null) {
 
 /* ─────────────────────────────── Controllers ─────────────────────────────── */
 
-const SCHEDULE_VIEW_SELECT = '_id name photo department subDepartment annualLeave supervisor'
+const SCHEDULE_VIEW_SELECT = '_id name photo title practiceTitle department subDepartment annualLeave supervisor'
 
 const resolveRemainingAnnualLeaveDays = (annualLeave = {}) => {
   const remaining = toNum(annualLeave?.remainingDays)
