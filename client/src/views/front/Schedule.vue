@@ -179,11 +179,11 @@
           <i class="el-icon-date"></i>
           預覽月表
         </el-button>
-        <el-button @click="() => exportSchedules('pdf')" class="action-btn export">
+        <el-button @click="exportPdf" class="action-btn export">
           <i class="el-icon-download"></i>
           匯出 PDF
         </el-button>
-        <el-button @click="() => exportSchedules('excel')" class="action-btn export">
+        <el-button @click="exportExcel" class="action-btn export">
           <i class="el-icon-s-grid"></i>
           匯出 Excel
         </el-button>
@@ -277,12 +277,14 @@
         </span>
       </div>
 
-      <div ref="scheduleTableWrapperRef" class="schedule-table-wrapper" :class="{ 'is-fullscreen': isTableFullscreen }" data-test="schedule-table-wrapper">
+      <div ref="scheduleTableWrapperRef" class="schedule-table-wrapper" :class="{ 'is-fullscreen': isTableFullscreen }"
+        data-test="schedule-table-wrapper" @click.capture="handleTableDelegatedClick"
+        @change.capture="handleTableDelegatedChange">
         <el-table ref="scheduleTableRef" class="modern-schedule-table" :data="virtualVisibleEmployees" :max-height="tableMaxHeight" :header-cell-style="{
           backgroundColor: '#ecfeff',
           color: '#164e63',
           fontWeight: '600'
-        }" :row-style="scheduleRowStyle" :row-class-name="scheduleRowClassName" @row-click="row => lazyMode && toggleRow(row._id)">
+        }" :row-style="scheduleRowStyle" :row-class-name="scheduleRowClassName" @row-click="handleTableRowClick">
         <el-table-column prop="name" label="員工姓名" width="180" fixed="left">
           <template #default="{ row }">
             <div class="employee-name">
@@ -290,7 +292,7 @@
                 {{ row.name ? row.name.charAt(0) : '?' }}
               </el-avatar>
               <el-checkbox v-if="canEdit" class="row-checkbox" :model-value="selectedEmployeesSet.has(row._id)"
-                @change="val => toggleEmployee(row._id, val)" />
+                :data-schedule-action="'toggle-employee'" :data-emp-id="String(row._id)" />
               <component v-if="(employeeStatusMap[row._id] || employeeStatus(row._id)) === 'unscheduled'" :is="CircleCloseFilled"
                 class="status-icon unscheduled" />
               <component v-else-if="(employeeStatusMap[row._id] || employeeStatus(row._id)) === 'onLeave'" :is="WarningFilled"
@@ -331,7 +333,7 @@
             <div class="day-header">
               <span>{{ d.label }}</span>
               <el-checkbox v-if="canEdit" class="day-checkbox" :model-value="selectedDaysSet.has(d.date)"
-                @change="val => toggleDay(d.date, val)" />
+                :data-schedule-action="'toggle-day'" :data-day="String(d.date)" />
             </div>
           </template>
 
@@ -345,7 +347,6 @@
               :can-edit="canEdit"
               :shifts="shifts"
               :format-shift-label="formatShiftLabel"
-              @toggle-cell="toggleCell"
               @select-shift="onSelect"
             />
           </template>
@@ -595,10 +596,15 @@ const paginationBarRef = ref(null)
 const scheduleTableWrapperRef = ref(null)
 const scheduleTableRef = ref(null)
 const measuredLayoutHeight = ref(0)
+const listenerMetrics = reactive({
+  delegatedActive: 0,
+  elementLevelEstimated: 0
+})
 let layoutResizeObserver = null
 let tableBodyScrollEl = null
 let tableHeaderScrollEl = null
 let tableScrollRaf = null
+let managedResizeHandler = null
 const viewportHeight = ref(
   typeof window === 'undefined' ? 900 : window.innerHeight
 )
@@ -1064,6 +1070,49 @@ const toggleCell = (empId, day, explicit) => {
   )
 }
 
+const exportPdf = () => exportSchedules('pdf')
+const exportExcel = () => exportSchedules('excel')
+
+const parseDelegatedBoolean = target => {
+  if (!target) return undefined
+  if (typeof target.checked === 'boolean') return target.checked
+  return undefined
+}
+
+const handleTableDelegatedChange = event => {
+  const target = event?.target
+  if (!target) return
+  const actionNode = target.closest?.('[data-schedule-action]')
+  if (!actionNode) return
+  const action = actionNode.dataset.scheduleAction
+  if (action === 'toggle-employee') {
+    const empId = actionNode.dataset.empId
+    if (!empId) return
+    toggleEmployee(empId, parseDelegatedBoolean(target))
+    return
+  }
+  if (action === 'toggle-day') {
+    const day = Number(actionNode.dataset.day)
+    if (!Number.isFinite(day)) return
+    toggleDay(day, parseDelegatedBoolean(target))
+    return
+  }
+}
+
+const handleTableDelegatedClick = event => {
+  const target = event?.target
+  if (!target) return
+  const cellNode = target.closest?.('[data-schedule-cell]')
+  if (!cellNode) return
+  const checkboxNode = target.closest?.('.el-checkbox')
+  if (!checkboxNode) return
+  const empId = cellNode.dataset.empId
+  const day = Number(cellNode.dataset.day)
+  if (!empId || !Number.isFinite(day)) return
+  const input = checkboxNode.querySelector('input[type="checkbox"]')
+  toggleCell(empId, day, typeof input?.checked === 'boolean' ? input.checked : undefined)
+}
+
 const selectAllEmployees = () => {
   const targetIds = filteredEmployees.value.map(e => e._id)
   const prev = selectedEmployees.value
@@ -1473,6 +1522,30 @@ const updateViewportHeight = () => {
   recalculateViewportRanges()
 }
 
+const createThrottle = (fn, wait = 120) => {
+  let lastTime = 0
+  let timer = null
+  return (...args) => {
+    const now = Date.now()
+    const remain = wait - (now - lastTime)
+    if (remain <= 0) {
+      if (timer) {
+        clearTimeout(timer)
+        timer = null
+      }
+      lastTime = now
+      fn(...args)
+      return
+    }
+    if (timer) return
+    timer = setTimeout(() => {
+      timer = null
+      lastTime = Date.now()
+      fn(...args)
+    }, remain)
+  }
+}
+
 const recalculateViewportRanges = () => {
   if (!shouldUseVirtualRender.value) {
     rowRange.value = { start: 0, end: visibleEmployees.value.length }
@@ -1522,13 +1595,20 @@ const onTableScroll = () => {
   })
 }
 
+const handleTableRowClick = row => {
+  if (!lazyMode.value || !row?._id) return
+  toggleRow(row._id)
+}
+
 const removeTableScrollListeners = () => {
   if (tableBodyScrollEl) {
     tableBodyScrollEl.removeEventListener('scroll', onTableScroll)
+    listenerMetrics.delegatedActive = Math.max(0, listenerMetrics.delegatedActive - 1)
     tableBodyScrollEl = null
   }
   if (tableHeaderScrollEl && tableHeaderScrollEl !== tableBodyScrollEl) {
     tableHeaderScrollEl.removeEventListener('scroll', onTableScroll)
+    listenerMetrics.delegatedActive = Math.max(0, listenerMetrics.delegatedActive - 1)
     tableHeaderScrollEl = null
   }
 }
@@ -1541,10 +1621,12 @@ const bindTableScrollListeners = () => {
   if (body) {
     tableBodyScrollEl = body
     tableBodyScrollEl.addEventListener('scroll', onTableScroll, { passive: true })
+    listenerMetrics.delegatedActive += 1
   }
   if (header) {
     tableHeaderScrollEl = header
     tableHeaderScrollEl.addEventListener('scroll', onTableScroll, { passive: true })
+    listenerMetrics.delegatedActive += 1
   }
   recalculateViewportRanges()
 }
@@ -1646,6 +1728,22 @@ const toggleTableFullscreen = () => {
   })
   updateViewportHeight()
   updateFullscreenLayoutHeight()
+}
+
+const registerHighFrequencyListeners = () => {
+  if (typeof window === 'undefined') return
+  if (!managedResizeHandler) {
+    managedResizeHandler = createThrottle(updateViewportHeight, 120)
+  }
+  window.removeEventListener('resize', managedResizeHandler)
+  window.addEventListener('resize', managedResizeHandler, { passive: true })
+  listenerMetrics.delegatedActive += 1
+}
+
+const unregisterHighFrequencyListeners = () => {
+  if (typeof window === 'undefined' || !managedResizeHandler) return
+  window.removeEventListener('resize', managedResizeHandler)
+  listenerMetrics.delegatedActive = Math.max(0, listenerMetrics.delegatedActive - 1)
 }
 
 const filteredSubDepartments = computed(() =>
@@ -3546,11 +3644,10 @@ onBeforeUnmount(() => {
     clearTimeout(filterRefreshTimer)
     filterRefreshTimer = null
   }
-  if (typeof window !== 'undefined') {
-    window.removeEventListener('resize', updateViewportHeight)
-  }
+  unregisterHighFrequencyListeners()
   if (typeof document !== 'undefined') {
     document.removeEventListener('fullscreenchange', syncFullscreenState)
+    listenerMetrics.delegatedActive = Math.max(0, listenerMetrics.delegatedActive - 1)
   }
   if (layoutResizeObserver) {
     layoutResizeObserver.disconnect()
@@ -3566,10 +3663,11 @@ onBeforeUnmount(() => {
 onMounted(async () => {
   if (typeof window !== 'undefined') {
     updateViewportHeight()
-    window.addEventListener('resize', updateViewportHeight)
+    registerHighFrequencyListeners()
   }
   if (typeof document !== 'undefined') {
     document.addEventListener('fullscreenchange', syncFullscreenState)
+    listenerMetrics.delegatedActive += 1
   }
   if (typeof ResizeObserver !== 'undefined') {
     layoutResizeObserver = new ResizeObserver(() => {
@@ -3581,6 +3679,13 @@ onMounted(async () => {
   }
   updateFullscreenLayoutHeight()
   bindTableScrollListeners()
+  listenerMetrics.elementLevelEstimated = (virtualVisibleEmployees.value.length * (virtualVisibleDays.value.length + 1)) + virtualVisibleDays.value.length
+  if (import.meta.env.DEV) {
+    console.info('[ScheduleListenerMetrics]', {
+      estimatedElementLevelBeforeDelegation: listenerMetrics.elementLevelEstimated,
+      delegatedActive: listenerMetrics.delegatedActive
+    })
+  }
   const supervisorId = getSupervisorIdFromStorage()
   const storedPreference = loadIncludeSelfPreference(supervisorId)
   if (storedPreference === true && showIncludeSelfToggle.value) {
@@ -3617,6 +3722,18 @@ watch(
 
 watch(tableMaxHeight, () => {
   bindTableScrollListeners()
+})
+
+watch([virtualVisibleEmployees, virtualVisibleDays], () => {
+  listenerMetrics.elementLevelEstimated =
+    (virtualVisibleEmployees.value.length * (virtualVisibleDays.value.length + 1)) +
+    virtualVisibleDays.value.length
+  if (import.meta.env.DEV) {
+    console.info('[ScheduleListenerMetrics:update]', {
+      estimatedElementLevelBeforeDelegation: listenerMetrics.elementLevelEstimated,
+      delegatedActive: listenerMetrics.delegatedActive
+    })
+  }
 })
 
 onUpdated(() => {

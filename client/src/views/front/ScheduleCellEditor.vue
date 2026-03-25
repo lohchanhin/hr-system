@@ -4,7 +4,7 @@
     placeholder="選擇班別"
     class="cell-select shift-select"
     size="small"
-    @change="val => $emit('select-shift', val)"
+    @change="handleSelectShiftChange"
   >
     <el-option
       v-for="opt in shifts"
@@ -22,5 +22,9 @@ defineProps({
   formatShiftLabel: { type: Function, required: true }
 })
 
-defineEmits(['select-shift'])
+const emit = defineEmits(['select-shift'])
+
+const handleSelectShiftChange = value => {
+  emit('select-shift', value)
+}
 </script>
