@@ -290,7 +290,7 @@
           backgroundColor: '#ecfeff',
           color: '#164e63',
           fontWeight: '600'
-        }" :row-style="scheduleRowStyle" :row-class-name="scheduleRowClassName" @row-click="handleTableRowClick">
+        }" :row-style="scheduleRowStyle" :row-class-name="scheduleRowClassName">
         <el-table-column prop="name" label="員工姓名" width="180" fixed="left">
           <template #default="{ row }">
             <div class="employee-name">
@@ -356,8 +356,6 @@
               :row="row"
               :day="d"
               :cell-view="getRenderedCell(row._id, d.date)"
-              :lazy-mode="lazyMode"
-              :expanded-rows="expandedRows"
               :can-edit="canEdit"
               :shifts="shifts"
               :format-shift-label="formatShiftLabel"
@@ -558,7 +556,6 @@ const perfMetrics = reactive({
 })
 const employeeSearch = ref('')
 const statusFilter = ref('all')
-const expandedRows = ref(new Set())
 const selectedEmployees = ref(new Set())
 const selectedDays = ref(new Set())
 const manualSelectedCells = ref(new Set())
@@ -1385,8 +1382,6 @@ const shouldUseVirtualRender = computed(() => {
   return visibleEmployees.value.length > 40 || days.value.length > 14
 })
 
-const lazyMode = computed(() => shouldUseVirtualRender.value)
-
 const effectiveRowRange = computed(() => {
   if (!shouldUseVirtualRender.value) {
     return { start: 0, end: visibleEmployees.value.length }
@@ -1553,13 +1548,6 @@ watch(employees, pruneSelections)
 watch(leaveIndex, pruneSelections)
 
 
-// ========= lazy mode =========
-
-const toggleRow = id => {
-  if (expandedRows.value.has(id)) expandedRows.value.delete(id)
-  else expandedRows.value.add(id)
-}
-
 // ========= table height for sticky header =========
 const dayColumnWidth = computed(() => (isTableFullscreen.value ? 92 : 140))
 
@@ -1652,11 +1640,6 @@ const onTableScroll = () => {
     lastInteractionLatencyMs.value = Number((endAt - startAt).toFixed(1))
     tableScrollRaf = null
   })
-}
-
-const handleTableRowClick = row => {
-  if (!lazyMode.value || !row?._id) return
-  toggleRow(row._id)
 }
 
 const removeTableScrollListeners = () => {
