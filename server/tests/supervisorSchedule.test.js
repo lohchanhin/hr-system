@@ -146,7 +146,13 @@ describe('Supervisor schedule permissions', () => {
 
 
   it('lists lightweight employees for schedule route', async () => {
-    const fakeEmployees = [{ _id: 'emp1', name: 'Emp1', annualLeave: { totalDays: 10, usedDays: 4 } }];
+    const fakeEmployees = [{
+      _id: 'emp1',
+      name: 'Emp1',
+      title: '護理師',
+      practiceTitle: '專科護理師',
+      annualLeave: { totalDays: 10, usedDays: 4 },
+    }];
     const leanMock = jest.fn().mockResolvedValue(fakeEmployees);
     const sortMock = jest.fn().mockReturnValue({ lean: leanMock });
     const selectMock = jest.fn().mockReturnValue({ sort: sortMock });
@@ -156,7 +162,11 @@ describe('Supervisor schedule permissions', () => {
 
     expect(res.status).toBe(200);
     expect(mockEmployee.find).toHaveBeenCalledWith({ supervisor: 'u1' });
-    expect(selectMock).toHaveBeenCalledWith('_id name photo department subDepartment annualLeave supervisor');
+    expect(selectMock).toHaveBeenCalledWith('_id name photo title practiceTitle department subDepartment annualLeave supervisor');
+    expect(res.body[0]).toMatchObject({
+      title: '護理師',
+      practiceTitle: '專科護理師',
+    });
     expect(res.body[0].annualLeave).toEqual({ remainingDays: 6 });
   });
   it('includes supervisor schedule when includeSelf is true', async () => {
