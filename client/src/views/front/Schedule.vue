@@ -339,18 +339,12 @@
             <ScheduleGridVirtualBody
               :row="row"
               :day="d"
+              :cell-view="getRenderedCell(row._id, d.date)"
               :lazy-mode="lazyMode"
               :expanded-rows="expandedRows"
               :can-edit="canEdit"
-              :cell-meta="getCellMeta(row._id, d.date)"
-              :leave-title="leaveTooltip(row._id, d.date)"
-              :is-selected="isCellSelected(row._id, d.date)"
-              :manual-selected-cells-set="manualSelectedCellsSet"
-              :cell-key="buildCellKey(row._id, d.date)"
-              :schedule-cell="scheduleMap[row._id]?.[d.date]"
               :shifts="shifts"
               :format-shift-label="formatShiftLabel"
-              :shift-info="getShiftInfoByCell(row._id, d.date)"
               @toggle-cell="toggleCell"
               @select-shift="onSelect"
             />
@@ -808,10 +802,55 @@ const getCellMeta = (empId, day) => {
   }
 }
 
-const getShiftInfoByCell = (empId, day) => {
-  const shiftId = scheduleMap.value?.[empId]?.[day]?.shiftId
-  if (!shiftId) return null
-  return shiftInfoMap.value.get(String(shiftId)) || shiftInfo(shiftId)
+const cellViewMap = computed(() => {
+  const map = new Map()
+  const visibleRows = virtualVisibleEmployees.value
+  const visibleDays = virtualVisibleDays.value
+  for (let i = 0; i < visibleRows.length; i++) {
+    const row = visibleRows[i]
+    const empId = String(row?._id || '')
+    if (!empId) continue
+    for (let j = 0; j < visibleDays.length; j++) {
+      const day = visibleDays[j].date
+      const cellKey = buildCellKey(empId, day)
+      const scheduleCell = scheduleMap.value?.[empId]?.[day] || null
+      const cellMeta = getCellMeta(empId, day)
+      const shiftInfo = scheduleCell?.shiftId
+        ? shiftInfoMap.value.get(String(scheduleCell.shiftId)) || null
+        : null
+      map.set(cellKey, {
+        key: cellKey,
+        cellMeta,
+        leaveTitle: cellMeta.isLeave ? '已核准請假，該日不列入工作時數' : '',
+        isSelected: isCellSelected(empId, day),
+        isManualSelected: manualSelectedCellsSet.value.has(cellKey),
+        scheduleCell,
+        shiftInfo
+      })
+    }
+  }
+  return map
+})
+
+const getRenderedCell = (empId, day) => {
+  const cellKey = buildCellKey(String(empId), Number(day))
+  const cached = cellViewMap.value.get(cellKey)
+  if (cached) return cached
+  const safeEmpId = String(empId)
+  const safeDay = Number(day)
+  const scheduleCell = scheduleMap.value?.[safeEmpId]?.[safeDay] || null
+  const cellMeta = getCellMeta(safeEmpId, safeDay)
+  return {
+    key: cellKey,
+    cellMeta,
+    leaveTitle: cellMeta.isLeave ? '已核准請假，該日不列入工作時數' : '',
+    isSelected: isCellSelected(safeEmpId, safeDay),
+    isManualSelected: manualSelectedCellsSet.value.has(cellKey),
+    scheduleCell,
+    shiftInfo: scheduleCell?.shiftId
+      ? shiftInfoMap.value.get(String(scheduleCell.shiftId)) || null
+      : null
+  }
 }
 
 // 只能選「有 cell 且不是請假日」的格子
@@ -2083,13 +2122,6 @@ const approverName = emp => {
     return emp.name || employeeNameCache[id] || id
   }
   return employeeNameCache[emp] || emp || '-'
-}
-
-const leaveTooltip = (empId, day) => {
-  if (isLeaveCell(empId, day)) {
-    return '已核准請假，該日不列入工作時數'
-  }
-  return ''
 }
 
 const days = computed(() => {
@@ -4474,6 +4506,23 @@ onUpdated(() => {
     color: white;
     transform: scale(1.05);
   }
+
+  &.text-only {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    padding: 2px 6px;
+    background: transparent;
+    border-style: dashed;
+    transform: none;
+
+    &:hover {
+      background: rgba(14, 165, 233, 0.12);
+      color: var(--shift-text-color, #164e63);
+      transform: none;
+    }
+  }
 }
 
 .shift-details {
@@ -4509,6 +4558,13 @@ onUpdated(() => {
   font-weight: 600;
   text-align: center;
   min-height: 48px;
+}
+
+.leave-text {
+  font-size: 0.75rem;
+  color: #b45309;
+  font-weight: 600;
+  letter-spacing: 0.05em;
 }
 
 .leave-tag {
