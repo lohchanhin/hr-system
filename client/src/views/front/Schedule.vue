@@ -253,6 +253,19 @@
           @click="applyBatch" data-test="batch-apply-button">
           套用至選取
         </el-button>
+        <el-button
+          type="success"
+          class="action-btn primary apply-btn"
+          :disabled="!hasPendingScheduleChanges || isSavingSchedules"
+          :loading="isSavingSchedules"
+          @click="confirmSaveSchedules"
+          data-test="schedule-save-button"
+        >
+          保存排班
+        </el-button>
+        <span v-if="hasPendingScheduleChanges" class="pending-save-hint">
+          尚有 {{ pendingScheduleCount }} 筆未保存
+        </span>
         <span class="row-color-hint">列色僅暫存於目前瀏覽器 session</span>
       </div>
 
@@ -611,6 +624,7 @@ const batchRowColorIndex = ref(null)
 const rowColorAssignments = ref({})
 const ROW_COLOR_SESSION_KEY = 'schedule-row-colors'
 const isApplyingBatch = ref(false)
+const isSavingSchedules = ref(false)
 const isPublishing = ref(false)
 const isFinalizing = ref(false)
 const isTableFullscreen = ref(false)
@@ -639,6 +653,8 @@ const fetchAllCache = {
   fulfilled: new Set(),
   inFlight: new Map()
 }
+const pendingScheduleChanges = ref({})
+const persistedScheduleMap = ref({})
 const FILTER_DEBOUNCE_MS = 200
 let filterRefreshTimer = null
 const invalidateFetchAllCache = () => {
@@ -736,6 +752,13 @@ const parseCellKey = key => {
 
 // ✅ 這個月所有「已核准」請假的快取：{ [empId]: { [dayNumber]: true } }
 const leaveIndex = ref({})
+
+const pendingScheduleCount = computed(
+  () => Object.keys(pendingScheduleChanges.value).length
+)
+const hasPendingScheduleChanges = computed(
+  () => pendingScheduleCount.value > 0
+)
 
 // 只用 leaveIndex 判斷該格是不是請假日
 const isLeaveCell = (empId, day) => {
@@ -2303,6 +2326,32 @@ function ensureEmployeeSchedule(empId) {
   })
 }
 
+function rebuildPersistedScheduleMap(targetEmployees, schedules = []) {
+  const next = { ...persistedScheduleMap.value }
+  const targetSet = new Set((targetEmployees || []).map(id => String(id)))
+  Object.keys(next).forEach(key => {
+    const { empId } = parseCellKey(key)
+    if (targetSet.has(empId)) {
+      delete next[key]
+    }
+  })
+  schedules.forEach(item => {
+    const rawId = item?.employee?._id || item?.employee
+    if (!rawId) return
+    const empId = String(rawId)
+    if (!targetSet.has(empId)) return
+    const day = dayjs(item.date).date()
+    const key = buildCellKey(empId, day)
+    next[key] = {
+      id: item._id || '',
+      shiftId: item.shiftId || '',
+      department: item.department || '',
+      subDepartment: item.subDepartment || ''
+    }
+  })
+  persistedScheduleMap.value = next
+}
+
 const patchScheduleMapForEmployees = (targetEmployees, daysList, employeeMap, schedules) => {
   const targetSet = new Set(targetEmployees.map(id => String(id)))
   const incomingScheduleByEmployee = new Map()
@@ -2424,6 +2473,8 @@ function resetScheduleCache() {
   leaveIndex.value = {}
   fetchAllCache.fulfilled.clear()
   fetchAllCache.inFlight.clear()
+  pendingScheduleChanges.value = {}
+  persistedScheduleMap.value = {}
 }
 
 async function fetchSchedules({ reset = false, fetchAll = false, reason = 'unknown' } = {}) {
@@ -2517,6 +2568,7 @@ async function fetchSchedules({ reset = false, fetchAll = false, reason = 'unkno
       employeeById.value,
       schedules
     )
+    rebuildPersistedScheduleMap(targetEmployees, schedules)
 
     // ========= 取得請假資料，建立 leaveIndex =========
 
@@ -2755,6 +2807,9 @@ async function exportSchedules(format) {
 async function onSelect(empId, day, value) {
   const dateStr = `${currentMonth.value}-${String(day).padStart(2, '0')}`
   const existing = scheduleMap.value[empId][day]
+  const key = buildCellKey(empId, day)
+  const pending = pendingScheduleChanges.value[key]
+  const persisted = persistedScheduleMap.value[key]
   const employee = employeeById.value[String(empId)] || {}
   const department =
     existing?.department || employee.departmentId || ''
@@ -2763,90 +2818,169 @@ async function onSelect(empId, day, value) {
 
   // 該格只要被視為請假，就直接擋掉
   if (existing?.leave || isLeaveCell(empId, day)) {
+    const rollbackShiftId = pending
+      ? pending.originalShiftId
+      : persisted?.shiftId || ''
+    if (!scheduleMap.value[empId]) {
+      scheduleMap.value[empId] = {}
+    }
+    scheduleMap.value[empId][day] = {
+      ...(existing || {}),
+      shiftId: rollbackShiftId
+    }
     callInfo('該日已核准請假，無法調整排班')
     return
   }
 
-  const prev = existing?.shiftId ?? ''
+  const originalShiftId = pending
+    ? pending.originalShiftId
+    : persisted?.shiftId || ''
 
-  // 已有 schedule -> 更新
-  if (existing && existing.id) {
-    try {
-      const res = await apiFetch(`/api/schedules/${existing.id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          shiftId: value,
-          department,
-          subDepartment
-        })
-      })
-      if (!res.ok) {
-        await handleScheduleError(
-          res,
-          '更新排班失敗',
-          empId,
-          day,
-          prev
-        )
-      } else {
-        invalidateFetchAllCache()
-        await fetchSummary()
-        await refreshFrontMenu()
-      }
-    } catch (err) {
-      await handleScheduleError(
-        null,
-        '更新排班失敗',
-        empId,
-        day,
-        prev
-      )
-    }
-  } else {
-    // 沒有 schedule -> 新增
-    try {
-      const res = await apiFetch('/api/schedules', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          employee: empId,
-          date: dateStr,
-          shiftId: value,
-          department,
-          subDepartment
-        })
-      })
-      if (res.ok) {
-        const saved = await res.json()
-        scheduleMap.value[empId][day] = {
-          id: saved._id,
-          shiftId: saved.shiftId,
-          department,
-          subDepartment
-        }
-        invalidateFetchAllCache()
-        await fetchSummary()
-        await refreshFrontMenu()
-      } else {
-        await handleScheduleError(
-          res,
-          '新增排班失敗',
-          empId,
-          day,
-          prev
-        )
-      }
-    } catch (err) {
-      await handleScheduleError(
-        null,
-        '新增排班失敗',
-        empId,
-        day,
-        prev
-      )
+  if (!scheduleMap.value[empId]) {
+    scheduleMap.value[empId] = {}
+  }
+  scheduleMap.value[empId][day] = {
+    ...(existing || {}),
+    id: persisted?.id || existing?.id || '',
+    shiftId: value,
+    department,
+    subDepartment
+  }
+
+  if (value === originalShiftId) {
+    const nextPending = { ...pendingScheduleChanges.value }
+    delete nextPending[key]
+    pendingScheduleChanges.value = nextPending
+    return
+  }
+
+  pendingScheduleChanges.value = {
+    ...pendingScheduleChanges.value,
+    [key]: {
+      key,
+      empId,
+      day,
+      date: dateStr,
+      id: persisted?.id || existing?.id || '',
+      shiftId: value,
+      department,
+      subDepartment,
+      originalShiftId
     }
   }
+}
+
+async function confirmSaveSchedules() {
+  if (!hasPendingScheduleChanges.value) {
+    callInfo('目前沒有需要保存的排班變更')
+    return
+  }
+  try {
+    await ElMessageBox.confirm(
+      `確認要保存 ${pendingScheduleCount.value} 筆排班變更嗎？`,
+      '確認保存',
+      {
+        confirmButtonText: '確認保存',
+        cancelButtonText: '取消',
+        type: 'warning'
+      }
+    )
+  } catch (err) {
+    return
+  }
+  await savePendingSchedules()
+}
+
+async function savePendingSchedules() {
+  const changes = Object.values(pendingScheduleChanges.value)
+  if (!changes.length) return
+
+  isSavingSchedules.value = true
+  const successKeys = []
+  let failCount = 0
+
+  for (const change of changes) {
+    const {
+      key,
+      empId,
+      day,
+      id,
+      date,
+      shiftId,
+      department,
+      subDepartment
+    } = change
+    try {
+      let res
+      if (id) {
+        res = await apiFetch(`/api/schedules/${id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            shiftId,
+            department,
+            subDepartment
+          })
+        })
+      } else {
+        res = await apiFetch('/api/schedules', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            employee: empId,
+            date,
+            shiftId,
+            department,
+            subDepartment
+          })
+        })
+      }
+      if (!res.ok) {
+        failCount += 1
+        continue
+      }
+
+      const saved = await res.json()
+      const savedId = saved?._id || id || ''
+      if (!scheduleMap.value[empId]) {
+        scheduleMap.value[empId] = {}
+      }
+      scheduleMap.value[empId][day] = {
+        ...(scheduleMap.value[empId][day] || {}),
+        id: savedId,
+        shiftId,
+        department,
+        subDepartment
+      }
+      persistedScheduleMap.value[key] = {
+        id: savedId,
+        shiftId,
+        department,
+        subDepartment
+      }
+      successKeys.push(key)
+    } catch (err) {
+      failCount += 1
+    }
+  }
+
+  if (successKeys.length) {
+    const nextPending = { ...pendingScheduleChanges.value }
+    successKeys.forEach(key => {
+      delete nextPending[key]
+    })
+    pendingScheduleChanges.value = nextPending
+    invalidateFetchAllCache()
+    await fetchSummary()
+    await refreshFrontMenu()
+  }
+
+  if (failCount === 0) {
+    callSuccess('排班保存完成')
+  } else {
+    ElMessage.error(`仍有 ${failCount} 筆排班保存失敗，請再試一次`)
+  }
+  isSavingSchedules.value = false
 }
 
 // ========= 篩選切換 =========
@@ -4007,6 +4141,12 @@ onMounted(async () => {
   .row-color-hint {
     font-size: 12px;
     color: #64748b;
+  }
+
+  .pending-save-hint {
+    font-size: 12px;
+    color: #0f766e;
+    font-weight: 600;
   }
 }
 
