@@ -384,8 +384,11 @@
       <div class="approval-header">
         <h3 class="approval-title">相關簽核</h3>
         <div class="approval-count">{{ relatedApprovalRows.length }} 項</div>
+        <el-button text class="approval-collapse-btn" @click="approvalCollapsed = !approvalCollapsed">
+          {{ approvalCollapsed ? '展開列表' : '收合列表' }}
+        </el-button>
       </div>
-      <el-table class="modern-approval-table" :data="relatedApprovalRows" :header-cell-style="{
+      <el-table class="modern-approval-table" :data="displayedApprovalRows" :header-cell-style="{
         backgroundColor: '#f1f5f9',
         color: '#164e63',
         fontWeight: '600'
@@ -443,55 +446,24 @@
           </template>
         </el-table-column>
       </el-table>
+      <div v-if="!approvalCollapsed && relatedApprovalRows.length > approvalPageSize" class="approval-pagination">
+        <el-pagination
+          background
+          layout="prev, pager, next"
+          :total="relatedApprovalRows.length"
+          :page-size="approvalPageSize"
+          :current-page="approvalCurrentPage"
+          @current-change="onApprovalPageChange"
+        />
+      </div>
+      <p v-if="approvalCollapsed && hasMoreApprovals" class="approval-collapse-hint">
+        僅顯示前 {{ approvalCollapsedLimit }} 筆，點擊「展開列表」檢視全部。
+      </p>
     </div>
   </div>
 
-  <el-dialog v-model="detail.visible" title="申請單明細" width="760px">
-    <div v-if="detail.doc">
-      <p class="mb-2">
-        <b>表單：</b>{{ detail.doc.form?.name }}（{{ detail.doc.form?.category }}）
-      </p>
-      <p class="mb-2">
-        <b>申請人：</b>{{ detail.doc.applicant_employee?.name || '-' }}
-      </p>
-      <p class="mb-2"><b>狀態：</b>{{ getStatusText(detail.doc.status) }}</p>
-
-      <el-divider content-position="left">填寫內容</el-divider>
-      <el-descriptions :column="1" size="small" border>
-        <el-descriptions-item v-for="fld in detail.doc.form?.fields || []" :key="fld._id" :label="fld.label">
-          <span>{{ renderValue(detail.doc.form_data?.[fld._id]) }}</span>
-        </el-descriptions-item>
-      </el-descriptions>
-
-      <el-divider content-position="left">流程</el-divider>
-      <el-timeline>
-        <el-timeline-item v-for="(s, idx) in detail.doc.steps" :key="idx" :timestamp="`第 ${idx + 1} 關`"
-          :type="idx === detail.doc.current_step_index ? 'primary' : 'info'">
-          <div class="mb-1">
-            <span class="mr-2">需全員同意：{{ s.all_must_approve ? '是' : '否' }}</span>
-            <span>必簽：{{ s.is_required ? '是' : '否' }}</span>
-          </div>
-          <el-table :data="s.approvers" size="small" border>
-            <el-table-column label="審核人" width="200">
-              <template #default="{ row }">
-                {{ approverName(row.approver) }}
-              </template>
-            </el-table-column>
-            <el-table-column label="決議" width="120">
-              <template #default="{ row }">
-                {{ getStatusText(row.decision) }}
-              </template>
-            </el-table-column>
-            <el-table-column label="時間" width="200">
-              <template #default="{ row }">
-                {{ fmt(row.decided_at) }}
-              </template>
-            </el-table-column>
-            <el-table-column prop="comment" label="意見" />
-          </el-table>
-        </el-timeline-item>
-      </el-timeline>
-    </div>
+  <el-dialog v-model="detail.visible" title="申請單明細" width="760px" destroy-on-close @closed="onDetailClosed">
+    <component :is="ApprovalDetailContent" v-if="detail.visible" :approval-id="detail.approvalId" />
     <template #footer>
       <el-button @click="detail.visible = false">關閉</el-button>
     </template>
@@ -499,7 +471,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onBeforeUnmount, onUpdated, watch, reactive, shallowRef, triggerRef } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, onUpdated, watch, reactive, shallowRef, triggerRef, defineAsyncComponent } from 'vue'
 import dayjs from 'dayjs'
 import { apiFetch } from '../../api'
 import { useAuthStore } from '../../stores/auth'
@@ -513,8 +485,7 @@ import { buildShiftStyle } from '../../utils/shiftColors'
 import { ROW_COLOR_PALETTE, normalizeRowColorIndex, resolveRowColor } from '../../utils/rowColors'
 import { getPhotoUrl } from '../../utils/photoUrl'
 
-const fmt = d => (d ? new Date(d).toLocaleString() : '-')
-const renderValue = v => (Array.isArray(v) ? v.join(', ') : v ?? '-')
+const ApprovalDetailContent = defineAsyncComponent(() => import('./ApprovalDetailContent.vue'))
 const authStore = useAuthStore()
 const menuStore = useMenuStore()
 
@@ -615,8 +586,11 @@ let managedResizeHandler = null
 const viewportHeight = ref(
   typeof window === 'undefined' ? 900 : window.innerHeight
 )
-const detail = reactive({ visible: false, doc: null })
-const employeeNameCache = reactive({})
+const detail = reactive({ visible: false, approvalId: '' })
+const approvalCollapsed = ref(true)
+const approvalCollapsedLimit = 10
+const approvalPageSize = 10
+const approvalCurrentPage = ref(1)
 const pageSize = ref(50)
 const currentPage = ref(1)
 const serverPaginationTotal = ref(0)
@@ -1530,6 +1504,32 @@ const leaveApprovalRows = computed(() => {
 
 const relatedApprovalRows = computed(() => [...leaveApprovalRows.value])
 
+const hasMoreApprovals = computed(() => relatedApprovalRows.value.length > approvalCollapsedLimit)
+
+const displayedApprovalRows = computed(() => {
+  const rows = relatedApprovalRows.value
+  if (approvalCollapsed.value) {
+    return rows.slice(0, approvalCollapsedLimit)
+  }
+  const start = (approvalCurrentPage.value - 1) * approvalPageSize
+  return rows.slice(start, start + approvalPageSize)
+})
+
+watch([relatedApprovalRows, approvalCollapsed], () => {
+  const totalPages = Math.max(1, Math.ceil(relatedApprovalRows.value.length / approvalPageSize))
+  if (approvalCurrentPage.value > totalPages) {
+    approvalCurrentPage.value = totalPages
+  }
+})
+
+function onApprovalPageChange(page) {
+  approvalCurrentPage.value = page
+}
+
+function onDetailClosed() {
+  detail.approvalId = ''
+}
+
 watch([filteredEmployees, pageSize], () => {
   const maxPage = totalPages.value
   if (currentPage.value > maxPage) {
@@ -2254,26 +2254,6 @@ async function confirmFinalize() {
     return
   }
   await finalizeSchedulesForMonth()
-}
-
-// ========= 審批明細 =========
-
-const getStatusText = status => {
-  const map = {
-    pending: '待簽核',
-    approved: '已核可',
-    rejected: '已否決',
-    returned: '已退簽'
-  }
-  return map[status] || status || '-'
-}
-
-const approverName = emp => {
-  if (emp && typeof emp === 'object') {
-    const id = emp._id || emp.employeeId || ''
-    return emp.name || employeeNameCache[id] || id
-  }
-  return employeeNameCache[emp] || emp || '-'
 }
 
 const days = computed(() => {
@@ -3049,28 +3029,10 @@ function onPageSizeChange(size) {
 
 // ========= 審批明細 =========
 
-async function openDetail(id) {
+function openDetail(id) {
   if (!id) return
-  detail.visible = false
-  detail.doc = null
-  const res = await apiFetch(`/api/approvals/${id}`)
-  if (!res.ok) return
-  const data = await res.json()
-  detail.doc = data
+  detail.approvalId = String(id)
   detail.visible = true
-  const steps = Array.isArray(detail.doc?.steps)
-    ? detail.doc.steps
-    : []
-  steps.forEach(step => {
-    const approvers = Array.isArray(step?.approvers)
-      ? step.approvers
-      : []
-    approvers.forEach(a => {
-      if (a?.approver?._id && a?.approver?.name) {
-        employeeNameCache[a.approver._id] = a.approver.name
-      }
-    })
-  })
 }
 
 // ========= 預覽 / 匯出 =========
