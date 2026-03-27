@@ -40,7 +40,7 @@
       </div>
     </div>
 
-    <div v-if="canEdit" class="publish-card">
+    <div v-if="canEditSchedule" class="publish-card">
       <div class="publish-header">
         <div class="publish-header-text">
           <h3 class="publish-title">發布狀態</h3>
@@ -224,7 +224,7 @@
         </el-select>
       </div>
 
-      <div ref="batchToolbarRef" v-if="canEdit" class="batch-toolbar">
+      <div ref="batchToolbarRef" v-if="canEditSchedule" class="batch-toolbar">
         <el-select v-model="batchShiftId" placeholder="套用班別" class="modern-select batch-select" filterable
           data-test="batch-shift-select">
           <el-option v-for="opt in shifts" :key="opt._id" :label="formatShiftLabel(opt)" :value="opt._id" />
@@ -297,7 +297,7 @@
               <el-avatar :size="32" :src="getPhotoUrl(row.photo)" class="employee-avatar-small">
                 {{ row.name ? row.name.charAt(0) : '?' }}
               </el-avatar>
-              <el-checkbox v-if="canEdit" class="row-checkbox" :model-value="selectedEmployeesSet.has(row._id)"
+              <el-checkbox v-if="canEditSchedule" class="row-checkbox" :model-value="selectedEmployeesSet.has(row._id)"
                 :data-schedule-action="'toggle-employee'" :data-emp-id="String(row._id)" />
               <component v-if="(employeeStatusMap[row._id] || employeeStatus(row._id)) === 'unscheduled'" :is="CircleCloseFilled"
                 class="status-icon unscheduled" />
@@ -346,7 +346,7 @@
           <template #header>
             <div class="day-header">
               <span>{{ d.label }}</span>
-              <el-checkbox v-if="canEdit" class="day-checkbox" :model-value="selectedDaysSet.has(d.date)"
+              <el-checkbox v-if="canEditSchedule" class="day-checkbox" :model-value="selectedDaysSet.has(d.date)"
                 :data-schedule-action="'toggle-day'" :data-day="String(d.date)" />
             </div>
           </template>
@@ -356,7 +356,7 @@
               :row="row"
               :day="d"
               :cell-view="getRenderedCell(row._id, d.date)"
-              :can-edit="canEdit"
+              :can-edit="canEditSchedule"
               :shifts="shifts"
               :format-shift-label="formatShiftLabel"
               @select-shift="onSelect"
@@ -1811,7 +1811,11 @@ const canUseSupervisorFilter = computed(() =>
   ['supervisor', 'admin'].includes(authStore.role)
 )
 const showIncludeSelfToggle = computed(() => authStore.role === 'supervisor')
-const canEdit = canUseSupervisorFilter
+// 注意：可篩選(主管視角)與可編輯(排班維護)是兩種不同權限，避免共用同一判定。
+const canEditScheduleRoles = ['supervisor', 'admin', 'manager', 'scheduler']
+const canEditSchedule = computed(() =>
+  canEditScheduleRoles.includes(authStore.role)
+)
 const missingSupervisorScheduleNoticeKey = ref('')
 
 // ========= 發布狀態相關 =========
