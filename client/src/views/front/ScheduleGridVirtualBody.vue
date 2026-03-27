@@ -12,8 +12,11 @@
     }"
     :style="cellView.cellMeta.isLeave ? undefined : cellView.cellMeta.style"
     :title="cellView.leaveTitle"
+    :tabindex="isEditableCell ? 0 : -1"
+    @keydown.enter.prevent="startEditing"
+    @click="startEditing"
   >
-    <div v-if="canEdit && !cellView.cellMeta.isLeave" class="cell-selection">
+    <div v-if="canEdit && !cellView.cellMeta.isLeave" class="cell-selection" @click.stop>
       <el-checkbox
         class="cell-manual-checkbox"
         :model-value="cellView.isManualSelected"
@@ -23,21 +26,24 @@
 
     <template v-if="cellView.scheduleCell || cellView.cellMeta.isLeave">
       <ScheduleCellEditor
-        v-if="canEdit && !cellView.cellMeta.isLeave"
+        v-if="isEditing"
         :schedule-cell="cellView.scheduleCell"
         :shifts="shifts"
         :format-shift-label="formatShiftLabel"
         :emp-id="String(row._id)"
         :day="day.date"
         @select-shift="handleSelectShift"
+        @close="stopEditing"
       />
-      <ScheduleCellDisplay
-        v-else
-        :cell-meta="cellView.cellMeta"
-        :shift-info="cellView.shiftInfo"
-        :format-shift-label="formatShiftLabel"
-      />
-      <div v-if="cellView.cellMeta.missingShift" class="missing-label">未排班</div>
+      <div v-else class="cell-view-content">
+        <ScheduleCellDisplay
+          :cell-meta="cellView.cellMeta"
+          :shift-info="cellView.shiftInfo"
+          :format-shift-label="formatShiftLabel"
+        />
+        <div v-if="showEmptyHint" class="empty-hint">點擊排班</div>
+        <div v-else-if="cellView.cellMeta.missingShift" class="missing-label">未排班</div>
+      </div>
     </template>
 
     <span v-else class="empty-cell">-</span>
@@ -46,6 +52,7 @@
 </template>
 
 <script setup>
+import { computed, ref, watch } from 'vue'
 import ScheduleCellDisplay from './ScheduleCellDisplay.vue'
 import ScheduleCellEditor from './ScheduleCellEditor.vue'
 
@@ -59,8 +66,48 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['select-shift'])
+const isEditing = ref(false)
+
+const isEditableCell = computed(() => props.canEdit && !props.cellView.cellMeta.isLeave)
+const showEmptyHint = computed(() => isEditableCell.value && props.cellView.cellMeta.missingShift)
 
 const handleSelectShift = value => {
   emit('select-shift', props.row._id, props.day.date, value)
 }
+
+const startEditing = () => {
+  if (!isEditableCell.value) return
+  if (!props.cellView.scheduleCell) return
+  isEditing.value = true
+}
+
+const stopEditing = () => {
+  isEditing.value = false
+}
+
+watch(
+  () => [props.row._id, props.day.date, props.cellView.scheduleCell?.shiftId, props.canEdit],
+  () => {
+    isEditing.value = false
+  }
+)
 </script>
+
+<style scoped>
+.cell-view-content {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-height: 44px;
+}
+
+.empty-hint {
+  font-size: 12px;
+  color: #0369a1;
+  text-align: center;
+  border: 1px dashed rgba(3, 105, 161, 0.45);
+  border-radius: 6px;
+  padding: 2px 6px;
+  background: rgba(224, 242, 254, 0.7);
+}
+</style>
