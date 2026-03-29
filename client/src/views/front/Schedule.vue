@@ -81,6 +81,14 @@
           完成發布
         </el-button>
       </div>
+      <div v-if="publishDisabled || finalizeDisabled" class="publish-disable-reasons" data-test="publish-disable-reasons">
+        <p v-if="publishDisabledReason" class="publish-disable-reason">
+          發送待確認不可點：{{ publishDisabledReason }}
+        </p>
+        <p v-if="finalizeDisabledReason" class="publish-disable-reason">
+          完成發布不可點：{{ finalizeDisabledReason }}
+        </p>
+      </div>
 
       <div class="publish-stats">
         <div v-if="pendingCount" class="status-card pending" data-test="pending-card">
@@ -2076,6 +2084,24 @@ const finalizeDisabled = computed(
     isFinalizing.value ||
     publishSummary.value.status !== 'ready'
 )
+
+const publishDisabledReason = computed(() => {
+  if (!publishDisabled.value) return ''
+  if (isPublishing.value) return '系統正在送出中，請稍候。'
+  if (!publishSummary.value.hasSchedules) return '目前範圍沒有可發布班表，請先確認本月是否已完成排班。'
+  if (publishSummary.value.status === 'finalized') return '本月班表已完成發布並鎖定。'
+  return '目前不符合發送條件。'
+})
+
+const finalizeDisabledReason = computed(() => {
+  if (!finalizeDisabled.value) return ''
+  if (isFinalizing.value) return '系統正在完成發布，請稍候。'
+  if (!publishSummary.value.hasSchedules) return '尚未發送待確認，請先執行「發送待確認」。'
+  if (publishSummary.value.status === 'finalized') return '班表已完成發布。'
+  if (publishSummary.value.status === 'pending') return '仍有員工尚未回覆，請先完成確認。'
+  if (publishSummary.value.status === 'disputed') return '仍有員工提出異議，請先處理異議。'
+  return '尚未達到完成發布條件。'
+})
 
 watch(showIncludeSelfToggle, newVal => {
   const supervisorId = getStoredSupervisorId() || getSupervisorIdFromStorage()
@@ -4123,6 +4149,20 @@ onUpdated(() => {
       border-radius: 999px;
       font-weight: 600;
       letter-spacing: 0.02em;
+    }
+  }
+
+  .publish-disable-reasons {
+    margin-top: 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+
+    .publish-disable-reason {
+      margin: 0;
+      color: #92400e;
+      font-size: 0.86rem;
+      line-height: 1.45;
     }
   }
 
