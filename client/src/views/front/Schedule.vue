@@ -222,6 +222,13 @@
           <el-option label="缺班" value="unscheduled" />
           <el-option label="待審核請假" value="onLeave" />
         </el-select>
+        <p
+          v-if="shouldUseVirtualRender && visibleEmployees.length > 0"
+          class="virtual-render-hint"
+          data-test="virtual-render-hint"
+        >
+          目前共 {{ serverPaginationTotal }} 位員工，為提升效能已啟用虛擬顯示，請在表格中上下滾動查看全部資料。
+        </p>
       </div>
 
       <div ref="batchToolbarRef" v-if="canEditSchedule" class="batch-toolbar">
@@ -1379,7 +1386,7 @@ const rowApproxHeight = 76
 const shouldUseVirtualRender = computed(() => {
   if (renderStrategyPreference.value === 'full') return false
   if (renderStrategyPreference.value === 'virtual') return true
-  return visibleEmployees.value.length > 40 || days.value.length > 14
+  return visibleEmployees.value.length > 50 || days.value.length > 14
 })
 
 const effectiveRowRange = computed(() => {
@@ -4470,6 +4477,18 @@ onUpdated(() => {
 
     .status-filter {
       max-width: 160px;
+    }
+
+    .virtual-render-hint {
+      width: 100%;
+      margin: 0;
+      padding: 8px 12px;
+      border-radius: 10px;
+      background: rgba(22, 78, 99, 0.08);
+      color: #155e75;
+      font-size: 0.85rem;
+      line-height: 1.5;
+      border: 1px solid rgba(14, 116, 144, 0.2);
     }
   }
 
