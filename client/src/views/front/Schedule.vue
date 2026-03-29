@@ -81,6 +81,14 @@
           完成發布
         </el-button>
       </div>
+      <div v-if="publishDisabled || finalizeDisabled" class="publish-disable-reasons" data-test="publish-disable-reasons">
+        <p v-if="publishDisabledReason" class="publish-disable-reason">
+          發送待確認不可點：{{ publishDisabledReason }}
+        </p>
+        <p v-if="finalizeDisabledReason" class="publish-disable-reason">
+          完成發布不可點：{{ finalizeDisabledReason }}
+        </p>
+      </div>
 
       <div class="publish-stats">
         <div v-if="pendingCount" class="status-card pending" data-test="pending-card">
@@ -1377,9 +1385,7 @@ const overscanCols = 3
 const rowApproxHeight = 76
 
 const shouldUseVirtualRender = computed(() => {
-  if (renderStrategyPreference.value === 'full') return false
-  if (renderStrategyPreference.value === 'virtual') return true
-  return visibleEmployees.value.length > 40 || days.value.length > 14
+  return false
 })
 
 const effectiveRowRange = computed(() => {
@@ -2072,6 +2078,24 @@ const finalizeDisabled = computed(
     publishSummary.value.status !== 'ready'
 )
 
+const publishDisabledReason = computed(() => {
+  if (!publishDisabled.value) return ''
+  if (isPublishing.value) return '系統正在送出中，請稍候。'
+  if (!publishSummary.value.hasSchedules) return '目前範圍沒有可發布班表，請先確認本月是否已完成排班。'
+  if (publishSummary.value.status === 'finalized') return '本月班表已完成發布並鎖定。'
+  return '目前不符合發送條件。'
+})
+
+const finalizeDisabledReason = computed(() => {
+  if (!finalizeDisabled.value) return ''
+  if (isFinalizing.value) return '系統正在完成發布，請稍候。'
+  if (!publishSummary.value.hasSchedules) return '尚未發送待確認，請先執行「發送待確認」。'
+  if (publishSummary.value.status === 'finalized') return '班表已完成發布。'
+  if (publishSummary.value.status === 'pending') return '仍有員工尚未回覆，請先完成確認。'
+  if (publishSummary.value.status === 'disputed') return '仍有員工提出異議，請先處理異議。'
+  return '尚未達到完成發布條件。'
+})
+
 watch(showIncludeSelfToggle, newVal => {
   const supervisorId = getStoredSupervisorId() || getSupervisorIdFromStorage()
   if (!newVal) {
@@ -2143,8 +2167,19 @@ const formatDisputeDate = value => {
 
 function buildPublishPayload() {
   const payload = { month: currentMonth.value }
-  if (selectedDepartment.value) payload.department = selectedDepartment.value
-  if (selectedSubDepartment.value) payload.subDepartment = selectedSubDepartment.value
+  const fixedDepartment =
+    selectedDepartment.value ||
+    supervisorDepartmentId.value ||
+    employees.value[0]?.departmentId ||
+    ''
+  const fixedSubDepartment =
+    selectedSubDepartment.value ||
+    supervisorSubDepartmentId.value ||
+    employees.value[0]?.subDepartmentId ||
+    ''
+
+  if (fixedDepartment) payload.department = fixedDepartment
+  if (fixedSubDepartment) payload.subDepartment = fixedSubDepartment
   if (includeSelf.value && showIncludeSelfToggle.value) payload.includeSelf = true
   return payload
 }
@@ -2843,7 +2878,9 @@ async function fetchSchedules({ reset = false, fetchAll = false, reason = 'unkno
       params.push(`page=${currentPage.value}`)
       params.push(`pageSize=${pageSize.value}`)
     }
-    params.push(`employeeIds=${targetEmployees.join(',')}`)
+    if (targetEmployees.length > 0) {
+      params.push(`employeeIds=${targetEmployees.join(',')}`)
+    }
   }
   if (selectedDepartment.value) params.push(`department=${selectedDepartment.value}`)
   if (selectedSubDepartment.value) params.push(`subDepartment=${selectedSubDepartment.value}`)
@@ -2913,7 +2950,7 @@ async function fetchSchedules({ reset = false, fetchAll = false, reason = 'unkno
     // ========= 取得請假資料，建立 leaveIndex =========
 
     const leaveParams = [`month=${currentMonth.value}`]
-    if (hasVisibleEmployees || supervisorId) {
+    if (targetEmployees.length > 0) {
       leaveParams.push(`employeeIds=${targetEmployees.join(',')}`)
     }
     if (includeSelf.value && showIncludeSelfToggle.value) {
@@ -4110,6 +4147,20 @@ onUpdated(() => {
     }
   }
 
+  .publish-disable-reasons {
+    margin-top: 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+
+    .publish-disable-reason {
+      margin: 0;
+      color: #92400e;
+      font-size: 0.86rem;
+      line-height: 1.45;
+    }
+  }
+
   .publish-stats {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -4471,6 +4522,7 @@ onUpdated(() => {
     .status-filter {
       max-width: 160px;
     }
+
   }
 
   .batch-toolbar {
