@@ -26,6 +26,12 @@ beforeAll(async () => {
 
 beforeEach(() => {
   mockShiftSchedule.find.mockReset()
+  mockEmployee.find.mockReset()
+  mockEmployee.find.mockReturnValue({
+    select: jest.fn().mockReturnValue({
+      lean: jest.fn().mockResolvedValue([{ _id: 'emp1', name: '員工1' }])
+    })
+  })
   mockAttendanceSetting.findOne.mockReset()
   mockAttendanceSetting.findOne.mockReturnValue({
     lean: jest.fn().mockResolvedValue({ shifts: [] })
@@ -35,12 +41,13 @@ beforeEach(() => {
 describe('Employee monthly schedules', () => {
   it('defaults employee param to req.user.id when missing', async () => {
     mockShiftSchedule.find.mockReturnValue({
+      select: jest.fn().mockReturnThis(),
       populate: jest.fn().mockReturnThis(),
       lean: jest.fn().mockResolvedValue([])
     })
     const res = await request(app).get('/api/schedules/monthly?month=2023-01')
     expect(res.status).toBe(200)
     expect(mockShiftSchedule.find).toHaveBeenCalled()
-    expect(mockShiftSchedule.find.mock.calls[0][0].employee).toBe('emp1')
+    expect(mockShiftSchedule.find.mock.calls[0][0].employee).toEqual({ $in: ['emp1'] })
   })
 })
