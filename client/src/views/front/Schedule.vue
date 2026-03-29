@@ -1833,20 +1833,7 @@ const missingSupervisorScheduleNoticeKey = ref('')
 
 // ========= 發布狀態相關 =========
 
-const publishSummary = computed(() => {
-  if (publishSnapshot.value) {
-    const snapshot = publishSnapshot.value
-    return {
-      status: snapshot.status || 'draft',
-      pendingEmployees: snapshot.pendingEmployees || [],
-      disputedEmployees: snapshot.disputedEmployees || [],
-      publishedAt: snapshot.publishedAt || null,
-      hasSchedules: snapshot.hasSchedules ?? false,
-      totalEmployees: snapshot.totalEmployees ?? 0,
-      allEmployeesConfirmed: snapshot.allEmployeesConfirmed ?? false
-    }
-  }
-
+const buildPublishSummaryFromRawSchedules = () => {
   const result = {
     status: 'draft',
     pendingEmployees: [],
@@ -1911,7 +1898,6 @@ const publishSummary = computed(() => {
       if (item?.responseNote) {
         entry.latestNote = item.responseNote
       }
-      // Track individual disputes with date and note
       entry.disputes.push({
         date: item.date,
         note: item.responseNote || '',
@@ -1974,6 +1960,47 @@ const publishSummary = computed(() => {
     disputedEmployees.length === 0
 
   return result
+}
+
+const publishSummary = computed(() => {
+  const fallbackSummary = buildPublishSummaryFromRawSchedules()
+
+  if (publishSnapshot.value) {
+    const snapshot = publishSnapshot.value
+    const status =
+      typeof snapshot.status === 'string' && snapshot.status
+        ? snapshot.status
+        : fallbackSummary.status
+    const pendingEmployees = Array.isArray(snapshot.pendingEmployees)
+      ? snapshot.pendingEmployees
+      : fallbackSummary.pendingEmployees
+    const disputedEmployees = Array.isArray(snapshot.disputedEmployees)
+      ? snapshot.disputedEmployees
+      : fallbackSummary.disputedEmployees
+    const hasSchedules =
+      typeof snapshot.hasSchedules === 'boolean'
+        ? snapshot.hasSchedules
+        : fallbackSummary.hasSchedules
+    const totalEmployees = Number.isFinite(snapshot.totalEmployees)
+      ? snapshot.totalEmployees
+      : fallbackSummary.totalEmployees
+    const allEmployeesConfirmed =
+      typeof snapshot.allEmployeesConfirmed === 'boolean'
+        ? snapshot.allEmployeesConfirmed
+        : fallbackSummary.allEmployeesConfirmed
+
+    return {
+      status,
+      pendingEmployees,
+      disputedEmployees,
+      publishedAt: snapshot.publishedAt || fallbackSummary.publishedAt || null,
+      hasSchedules,
+      totalEmployees,
+      allEmployeesConfirmed
+    }
+  }
+
+  return fallbackSummary
 })
 
 const publishStatusLabel = computed(() => {
@@ -2072,10 +2099,12 @@ const publishProgress = computed(() => {
   return Math.min(Math.max(percentage, 0), 100)
 })
 
+const finalHasSchedules = computed(() => publishSummary.value.hasSchedules)
+
 const publishDisabled = computed(
   () =>
     isPublishing.value ||
-    !publishSummary.value.hasSchedules ||
+    !finalHasSchedules.value ||
     publishSummary.value.status === 'finalized'
 )
 
@@ -2088,7 +2117,7 @@ const finalizeDisabled = computed(
 const publishDisabledReason = computed(() => {
   if (!publishDisabled.value) return ''
   if (isPublishing.value) return '系統正在送出中，請稍候。'
-  if (!publishSummary.value.hasSchedules) return '目前範圍沒有可發布班表，請先確認本月是否已完成排班。'
+  if (!finalHasSchedules.value) return '目前範圍沒有可發布班表，請先確認本月是否已完成排班。'
   if (publishSummary.value.status === 'finalized') return '本月班表已完成發布並鎖定。'
   return '目前不符合發送條件。'
 })
@@ -2933,18 +2962,43 @@ async function fetchSchedules({ reset = false, fetchAll = false, reason = 'unkno
         : []
 
     const summaryData = Array.isArray(data) ? null : data?.publishSummary
-    publishSnapshot.value = summaryData
-      ? {
+    const isNewFormat = summaryData &&
+      (
+        typeof summaryData.hasSchedules === 'boolean' ||
+        Array.isArray(summaryData.pendingEmployees)
+      )
+    const isLegacyFormat = summaryData &&
+      Array.isArray(summaryData.currentRoundPendingEmployees)
+
+    if (isNewFormat) {
+      publishSnapshot.value = {
         status: summaryData.status || 'draft',
-        pendingEmployees: summaryData.pendingEmployees || [],
-        disputedEmployees: summaryData.disputedEmployees || [],
+        pendingEmployees: Array.isArray(summaryData.pendingEmployees)
+          ? summaryData.pendingEmployees
+          : [],
+        disputedEmployees: Array.isArray(summaryData.disputedEmployees)
+          ? summaryData.disputedEmployees
+          : [],
         publishedAt: summaryData.publishedAt || null,
-        hasSchedules: summaryData.hasSchedules ?? false,
+        hasSchedules: summaryData.hasSchedules ?? (schedules.length > 0),
         totalEmployees: summaryData.totalEmployees ?? 0,
         allEmployeesConfirmed:
           summaryData.allEmployeesConfirmed ?? false
       }
-      : null
+    } else if (isLegacyFormat) {
+      publishSnapshot.value = {
+        status: summaryData.status || 'draft',
+        pendingEmployees: summaryData.currentRoundPendingEmployees,
+        disputedEmployees: [],
+        publishedAt: summaryData.publishedAt || null,
+        hasSchedules: schedules.length > 0,
+        totalEmployees: summaryData.totalEmployees ?? 0,
+        allEmployeesConfirmed:
+          summaryData.allEmployeesConfirmed ?? false
+      }
+    } else {
+      publishSnapshot.value = null
+    }
 
     const targetSet = new Set(targetEmployees)
     patchScheduleMapForEmployees(
