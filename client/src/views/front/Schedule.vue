@@ -1324,6 +1324,7 @@ watch(includeSelf, async (val, oldVal) => {
   currentPage.value = 1
   await fetchEmployees(selectedDepartment.value, selectedSubDepartment.value)
   await refreshScheduleData({ reset: true, reason: 'include-self-change' })
+  await refreshFrontMenu()
 })
 
 watch([employeeSearch, statusFilter], () => {
