@@ -1189,6 +1189,20 @@ async function refreshFrontMenu() {
   }
 }
 
+async function syncIncludeSelfPreference(value) {
+  if (authStore.role !== 'supervisor') return
+  try {
+    const res = await apiFetch('/api/schedules/preferences/include-self', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ includeSelf: Boolean(value) })
+    })
+    if (!res.ok) throw new Error('Failed to sync includeSelf preference')
+  } catch (error) {
+    console.warn('Failed to sync includeSelf preference', error)
+  }
+}
+
 async function refreshScheduleData({
   reset = false,
   reason = 'unknown',
@@ -1321,10 +1335,11 @@ watch(includeSelf, async (val, oldVal) => {
   if (isInitializingIncludeSelf) return
   if (!showIncludeSelfToggle.value) return
 
+  await syncIncludeSelfPreference(val)
+  await refreshFrontMenu()
   currentPage.value = 1
   await fetchEmployees(selectedDepartment.value, selectedSubDepartment.value)
   await refreshScheduleData({ reset: true, reason: 'include-self-change' })
-  await refreshFrontMenu()
 })
 
 watch([employeeSearch, statusFilter], () => {
@@ -3878,9 +3893,22 @@ onMounted(async () => {
   }
   const supervisorId = getSupervisorIdFromStorage()
   const storedPreference = loadIncludeSelfPreference(supervisorId)
-  if (storedPreference === true && showIncludeSelfToggle.value) {
+  let resolvedIncludeSelf = storedPreference
+  if (showIncludeSelfToggle.value) {
+    try {
+      const res = await apiFetch('/api/schedules/preferences/include-self')
+      if (res.ok && typeof res.json === 'function') {
+        const data = await res.json()
+        resolvedIncludeSelf = Boolean(data?.includeSelf)
+      }
+    } catch (error) {
+      console.warn('Failed to load includeSelf preference from server', error)
+    }
+  }
+  if (resolvedIncludeSelf === true && showIncludeSelfToggle.value) {
     includeSelf.value = true
   }
+  persistIncludeSelfPreference(Boolean(includeSelf.value), supervisorId)
   try {
     await fetchHolidays()
     await fetchShiftOptions()

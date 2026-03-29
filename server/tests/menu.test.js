@@ -2,9 +2,21 @@ import request from 'supertest';
 import express from 'express';
 import { jest } from '@jest/globals';
 
+let mockUser = { role: 'employee', id: 'emp-1' };
+const findByIdMock = jest.fn();
+
 jest.unstable_mockModule('../src/middleware/auth.js', () => ({
-  authenticate: (req, res, next) => { req.user = { role: 'employee' }; next(); },
+  authenticate: (req, res, next) => {
+    req.user = { ...mockUser };
+    next();
+  },
   authorizeRoles: () => (req, res, next) => next()
+}));
+
+jest.unstable_mockModule('../src/models/Employee.js', () => ({
+  default: {
+    findById: (...args) => findByIdMock(...args)
+  }
 }));
 
 let app;
@@ -18,6 +30,11 @@ beforeAll(async () => {
   app.use('/api/menu', authenticate, menuRoutes);
 });
 
+beforeEach(() => {
+  mockUser = { role: 'employee', id: 'emp-1' };
+  findByIdMock.mockReset();
+});
+
 describe('Menu API', () => {
   it('returns menu for employee role', async () => {
     const res = await request(app).get('/api/menu');
@@ -27,6 +44,36 @@ describe('Menu API', () => {
     expect(res.body.find(i => i.name === 'MySchedule')).toBeDefined();
     expect(res.body.find(i => i.name === 'Approval')).toBeDefined();
     expect(res.body.find(i => i.name === 'FrontChangePassword')).toBeDefined();
+  });
+
+  it('supervisor includeSelf=true 時會顯示 MySchedule', async () => {
+    mockUser = { role: 'supervisor', id: 'sup-1' };
+    findByIdMock.mockReturnValue({
+      select: jest.fn().mockReturnValue({
+        lean: jest.fn().mockResolvedValue({
+          schedulePreferences: { includeSelf: true }
+        })
+      })
+    });
+
+    const res = await request(app).get('/api/menu');
+    expect(res.status).toBe(200);
+    expect(res.body.find(i => i.name === 'MySchedule')).toBeDefined();
+  });
+
+  it('supervisor includeSelf=false 時不顯示 MySchedule', async () => {
+    mockUser = { role: 'supervisor', id: 'sup-1' };
+    findByIdMock.mockReturnValue({
+      select: jest.fn().mockReturnValue({
+        lean: jest.fn().mockResolvedValue({
+          schedulePreferences: { includeSelf: false }
+        })
+      })
+    });
+
+    const res = await request(app).get('/api/menu');
+    expect(res.status).toBe(200);
+    expect(res.body.find(i => i.name === 'MySchedule')).toBeUndefined();
   });
 
   it('menu names exist in frontend routes', async () => {

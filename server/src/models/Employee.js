@@ -120,6 +120,9 @@ const employeeSchema = new Schema(
     
     // 排班設定（主管可選擇是否參與排班）
     requiresScheduling: { type: Boolean, default: true }, // 是否需要排班
+    schedulePreferences: {
+      includeSelf: { type: Boolean, default: false },
+    },
 
     /* 人員狀態與試用 */
     status: {
