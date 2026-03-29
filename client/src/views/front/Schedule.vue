@@ -1377,9 +1377,7 @@ const overscanCols = 3
 const rowApproxHeight = 76
 
 const shouldUseVirtualRender = computed(() => {
-  if (renderStrategyPreference.value === 'full') return false
-  if (renderStrategyPreference.value === 'virtual') return true
-  return visibleEmployees.value.length > 40 || days.value.length > 14
+  return false
 })
 
 const effectiveRowRange = computed(() => {
@@ -4471,6 +4469,7 @@ onUpdated(() => {
     .status-filter {
       max-width: 160px;
     }
+
   }
 
   .batch-toolbar {
