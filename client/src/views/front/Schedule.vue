@@ -2885,7 +2885,9 @@ async function fetchSchedules({ reset = false, fetchAll = false, reason = 'unkno
       params.push(`page=${currentPage.value}`)
       params.push(`pageSize=${pageSize.value}`)
     }
-    params.push(`employeeIds=${targetEmployees.join(',')}`)
+    if (targetEmployees.length > 0) {
+      params.push(`employeeIds=${targetEmployees.join(',')}`)
+    }
   }
   if (selectedDepartment.value) params.push(`department=${selectedDepartment.value}`)
   if (selectedSubDepartment.value) params.push(`subDepartment=${selectedSubDepartment.value}`)
@@ -2955,7 +2957,7 @@ async function fetchSchedules({ reset = false, fetchAll = false, reason = 'unkno
     // ========= 取得請假資料，建立 leaveIndex =========
 
     const leaveParams = [`month=${currentMonth.value}`]
-    if (hasVisibleEmployees || supervisorId) {
+    if (targetEmployees.length > 0) {
       leaveParams.push(`employeeIds=${targetEmployees.join(',')}`)
     }
     if (includeSelf.value && showIncludeSelfToggle.value) {
