@@ -2148,8 +2148,19 @@ const formatDisputeDate = value => {
 
 function buildPublishPayload() {
   const payload = { month: currentMonth.value }
-  if (selectedDepartment.value) payload.department = selectedDepartment.value
-  if (selectedSubDepartment.value) payload.subDepartment = selectedSubDepartment.value
+  const fixedDepartment =
+    selectedDepartment.value ||
+    supervisorDepartmentId.value ||
+    employees.value[0]?.departmentId ||
+    ''
+  const fixedSubDepartment =
+    selectedSubDepartment.value ||
+    supervisorSubDepartmentId.value ||
+    employees.value[0]?.subDepartmentId ||
+    ''
+
+  if (fixedDepartment) payload.department = fixedDepartment
+  if (fixedSubDepartment) payload.subDepartment = fixedSubDepartment
   if (includeSelf.value && showIncludeSelfToggle.value) payload.includeSelf = true
   return payload
 }
