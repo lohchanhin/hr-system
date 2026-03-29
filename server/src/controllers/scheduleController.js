@@ -191,6 +191,13 @@ export async function listMonthlySchedules(req, res) {
         schedules: [],
         employees: [],
         publishSummary: {
+          status: 'draft',
+          pendingEmployees: [],
+          disputedEmployees: [],
+          publishedAt: null,
+          hasSchedules: false,
+          totalEmployees: 0,
+          allEmployeesConfirmed: false,
           currentRoundPendingEmployees: [],
           unaffectedConfirmedEmployees: [],
         },
@@ -247,9 +254,11 @@ export async function listMonthlySchedules(req, res) {
       employeeQuery.$or = [{ name: rx }, { employeeId: rx }];
     }
 
-    const matchedEmployees = await Employee.find(employeeQuery)
-      .select('_id name department subDepartment photo')
-      .lean();
+    const matchedEmployeeQuery = Employee.find(employeeQuery)
+      .select('_id name department subDepartment photo');
+    const matchedEmployees = typeof matchedEmployeeQuery.lean === 'function'
+      ? await matchedEmployeeQuery.lean()
+      : await matchedEmployeeQuery;
 
     let filteredEmployees = matchedEmployees;
     if (status !== 'all') {
@@ -340,11 +349,15 @@ export async function listMonthlySchedules(req, res) {
     if (subDepartment) scheduleQuery.subDepartment = subDepartment;
 
     const raw = await ShiftSchedule.find(scheduleQuery)
-      .select('employee date shiftId department subDepartment state employeeResponse needsReconfirm')
+      .select('employee date shiftId department subDepartment state employeeResponse needsReconfirm responseNote responseAt publishedAt')
       .populate({ path: 'employee', select: 'name department subDepartment photo' })
       .lean();
     const schedules = await attachShiftInfo(raw);
     const employeeStatusMap = new Map();
+    let hasFinalized = false;
+    let hasDisputed = false;
+    let hasPublished = false;
+    let latestPublishedAt = null;
     raw.forEach((doc) => {
       const emp = doc.employee || {};
       const id = emp?._id?.toString?.() || doc.employee?.toString?.();
@@ -352,21 +365,87 @@ export async function listMonthlySchedules(req, res) {
       const prev = employeeStatusMap.get(id) || {
         id,
         name: emp.name || '',
+        pendingCount: 0,
+        disputedCount: 0,
+        latestNote: '',
+        latestResponseAt: null,
+        disputes: [],
         hasCurrentRoundPending: false,
         hasUnaffectedConfirmed: false,
       };
+      if (doc.state === 'finalized') hasFinalized = true;
+      if (doc.state === 'pending_confirmation' || doc.state === 'changes_requested' || doc.state === 'finalized') {
+        hasPublished = true;
+      }
+      if (doc.publishedAt) {
+        const published = new Date(doc.publishedAt);
+        if (!Number.isNaN(published.getTime()) && (!latestPublishedAt || latestPublishedAt < published)) {
+          latestPublishedAt = published;
+        }
+      }
+
       if (doc.needsReconfirm === true && doc.state !== 'finalized') {
         prev.hasCurrentRoundPending = true;
       } else if (doc.employeeResponse === 'confirmed' || doc.state === 'finalized') {
         prev.hasUnaffectedConfirmed = true;
       }
+
+      if (doc.employeeResponse === 'disputed' || doc.state === 'changes_requested') {
+        hasDisputed = true;
+        prev.disputedCount += 1;
+        if (doc.responseNote) {
+          prev.latestNote = doc.responseNote;
+        }
+        prev.disputes.push({
+          date: doc.date instanceof Date ? doc.date.toISOString() : new Date(doc.date).toISOString(),
+          note: doc.responseNote || '',
+          responseAt: doc.responseAt ? new Date(doc.responseAt).toISOString() : null,
+        });
+      } else if (
+        doc.state === 'pending_confirmation' &&
+        doc.needsReconfirm !== false &&
+        doc.employeeResponse !== 'confirmed'
+      ) {
+        prev.pendingCount += 1;
+      }
+
+      if (doc.responseAt) {
+        const responded = new Date(doc.responseAt);
+        if (!Number.isNaN(responded.getTime()) && (!prev.latestResponseAt || prev.latestResponseAt < responded)) {
+          prev.latestResponseAt = responded;
+        }
+      }
       employeeStatusMap.set(id, prev);
     });
     const publishSummary = {
+      status: 'draft',
+      pendingEmployees: [],
+      disputedEmployees: [],
+      publishedAt: latestPublishedAt ? latestPublishedAt.toISOString() : null,
+      hasSchedules: raw.length > 0,
+      totalEmployees: employeeStatusMap.size,
+      allEmployeesConfirmed: false,
       currentRoundPendingEmployees: [],
       unaffectedConfirmedEmployees: [],
     };
     employeeStatusMap.forEach((entry) => {
+      if (entry.pendingCount > 0) {
+        publishSummary.pendingEmployees.push({
+          id: entry.id,
+          name: entry.name,
+          pendingCount: entry.pendingCount,
+        });
+      }
+      if (entry.disputedCount > 0) {
+        publishSummary.disputedEmployees.push({
+          id: entry.id,
+          name: entry.name,
+          disputedCount: entry.disputedCount,
+          latestNote: entry.latestNote,
+          latestResponseAt: entry.latestResponseAt ? entry.latestResponseAt.toISOString() : null,
+          disputes: entry.disputes,
+        });
+      }
       if (entry.hasCurrentRoundPending) {
         publishSummary.currentRoundPendingEmployees.push({ id: entry.id, name: entry.name });
       }
@@ -374,6 +453,19 @@ export async function listMonthlySchedules(req, res) {
         publishSummary.unaffectedConfirmedEmployees.push({ id: entry.id, name: entry.name });
       }
     });
+    if (hasFinalized) {
+      publishSummary.status = 'finalized';
+    } else if (hasDisputed) {
+      publishSummary.status = 'disputed';
+    } else if (hasPublished) {
+      publishSummary.status = publishSummary.pendingEmployees.length ? 'pending' : 'ready';
+    } else {
+      publishSummary.status = 'draft';
+    }
+    publishSummary.allEmployeesConfirmed =
+      publishSummary.status === 'ready' &&
+      publishSummary.pendingEmployees.length === 0 &&
+      publishSummary.disputedEmployees.length === 0;
 
     res.json({
       schedules,

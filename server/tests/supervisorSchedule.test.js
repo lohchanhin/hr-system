@@ -170,11 +170,16 @@ describe('Supervisor schedule permissions', () => {
     expect(res.body[0].annualLeave).toEqual({ remainingDays: 6 });
   });
   it('includes supervisor schedule when includeSelf is true', async () => {
-    const selectMock = jest.fn().mockResolvedValue([{ _id: 'emp1' }]);
+    const selectMock = jest.fn()
+      .mockResolvedValueOnce([{ _id: 'emp1' }])
+      .mockReturnValueOnce({
+        lean: jest.fn().mockResolvedValue([{ _id: 'emp1', name: 'Emp1' }, { _id: 'u1', name: '主管' }]),
+      });
     mockEmployee.find.mockReturnValue({ select: selectMock });
+    const selectScheduleMock = jest.fn().mockReturnThis();
     const populateMock = jest.fn().mockReturnThis();
     const leanMock = jest.fn().mockResolvedValue([]);
-    mockShiftSchedule.find.mockReturnValue({ populate: populateMock, lean: leanMock });
+    mockShiftSchedule.find.mockReturnValue({ select: selectScheduleMock, populate: populateMock, lean: leanMock });
 
     const res = await request(app)
       .get('/api/schedules/monthly?month=2023-01&supervisor=u1&includeSelf=true');

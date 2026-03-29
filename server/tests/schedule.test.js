@@ -279,6 +279,9 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
 
   it('lists schedules by month (with employee filter)', async () => {
     const fake = [{ shiftId: 's1', date: new Date('2023-01-02') }];
+    mockEmployee.find.mockReturnValue({
+      select: jest.fn().mockImplementation(() => createSelectResponse([{ _id: 'e1', name: '員工1' }])),
+    });
     mockShiftSchedule.countDocuments.mockResolvedValue(1);
     mockShiftSchedule.find.mockReturnValue({
       select: jest.fn().mockReturnThis(),
@@ -296,14 +299,26 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
       schedules: [
         { shiftId: 's1', date: '2023/01/02', shiftName: 'Morning' }
       ],
+      employees: [
+        { _id: 'e1', name: '員工1', photo: '', department: '', subDepartment: '' },
+      ],
       publishSummary: {
+        status: 'draft',
+        pendingEmployees: [],
+        disputedEmployees: [],
+        publishedAt: null,
+        hasSchedules: true,
+        totalEmployees: 0,
+        allEmployeesConfirmed: false,
         currentRoundPendingEmployees: [],
         unaffectedConfirmedEmployees: [],
       },
       pagination: {
         total: 1,
         page: 1,
+        pageSize: 50,
         limit: 50,
+        totalPages: 1,
       },
     });
   });
@@ -347,14 +362,26 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
       schedules: [
         { employee: 'emp1', shiftId: 's1', date: '2023/01/02', shiftName: 'Morning' }
       ],
+      employees: [
+        { _id: 'emp1', name: '', photo: '', department: '', subDepartment: '' },
+      ],
       publishSummary: {
+        status: 'draft',
+        pendingEmployees: [],
+        disputedEmployees: [],
+        publishedAt: null,
+        hasSchedules: true,
+        totalEmployees: 1,
+        allEmployeesConfirmed: false,
         currentRoundPendingEmployees: [],
         unaffectedConfirmedEmployees: [],
       },
       pagination: {
         total: 1,
         page: 1,
+        pageSize: 50,
         limit: 50,
+        totalPages: 1,
       },
     });
   });
