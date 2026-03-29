@@ -1384,9 +1384,7 @@ const overscanCols = 3
 const rowApproxHeight = 76
 
 const shouldUseVirtualRender = computed(() => {
-  if (renderStrategyPreference.value === 'full') return false
-  if (renderStrategyPreference.value === 'virtual') return true
-  return visibleEmployees.value.length > 50 || days.value.length > 14
+  return false
 })
 
 const effectiveRowRange = computed(() => {
@@ -4479,17 +4477,6 @@ onUpdated(() => {
       max-width: 160px;
     }
 
-    .virtual-render-hint {
-      width: 100%;
-      margin: 0;
-      padding: 8px 12px;
-      border-radius: 10px;
-      background: rgba(22, 78, 99, 0.08);
-      color: #155e75;
-      font-size: 0.85rem;
-      line-height: 1.5;
-      border: 1px solid rgba(14, 116, 144, 0.2);
-    }
   }
 
   .batch-toolbar {
