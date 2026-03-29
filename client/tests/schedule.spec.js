@@ -248,7 +248,8 @@ describe('Schedule.vue', () => {
       name: '主管',
       department: { _id: 'd1', name: 'Dept A' },
       subDepartment: { _id: 'sd1', name: 'Sub A' }
-    }
+    },
+    includeSelfPreference = false
   } = {}) {
     const buildSummaryFromSchedules = list => {
       const employeeMap = new Map()
@@ -344,6 +345,12 @@ describe('Schedule.vue', () => {
 
       if (pathname === '/api/schedules/summary') {
         return { ok: true, json: async () => summary }
+      }
+      if (pathname === '/api/schedules/preferences/include-self') {
+        if ((options.method || 'GET').toUpperCase() === 'PUT') {
+          return { ok: true, json: async () => ({ includeSelf: includeSelfPreference }) }
+        }
+        return { ok: true, json: async () => ({ includeSelf: includeSelfPreference }) }
       }
 
       if (pathname === '/api/shifts') {
@@ -1939,6 +1946,24 @@ describe('Schedule.vue', () => {
       url.includes('includeSelf=true')
     )
     expect(monthlyCall).toBeTruthy()
+  })
+
+  it('切換 includeSelf 會立即刷新前台選單 API', async () => {
+    setRoleToken('supervisor')
+    localStorage.setItem('employeeId', 'sup1')
+    setupSupervisorApiMock({ includeSelfPreference: false })
+
+    const wrapper = mountSchedule()
+    await flush()
+    await flush()
+
+    apiFetch.mockClear()
+    wrapper.vm.includeSelf = true
+    await wrapper.vm.$nextTick()
+    await flush()
+
+    const menuCall = apiFetch.mock.calls.find(([url]) => url === '/api/menu')
+    expect(menuCall).toBeTruthy()
   })
 
   it('restores includeSelf preference on mount', async () => {

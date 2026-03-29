@@ -20,6 +20,8 @@ import {
   validateScheduleCompleteness,
   getIncompleteSchedules,
   checkCanFinalize,
+  getIncludeSelfPreference,
+  updateIncludeSelfPreference,
 } from '../controllers/scheduleController.js';
 import { verifySupervisor } from '../middleware/supervisor.js';
 import { authenticate, authorizeRoles } from '../middleware/auth.js';
@@ -29,6 +31,8 @@ const router = Router();
 router.get('/', listSchedules);
 router.get('/monthly', listMonthlySchedules);
 router.get('/leave-approvals', listLeaveApprovals);
+router.get('/preferences/include-self', authenticate, authorizeRoles('supervisor'), getIncludeSelfPreference);
+router.put('/preferences/include-self', authenticate, authorizeRoles('supervisor'), updateIncludeSelfPreference);
 router.get('/summary', authenticate, authorizeRoles('supervisor'), listSupervisorSummary);
 router.get('/overview', authorizeRoles('admin'), listScheduleOverview);
 router.get('/overview/export', authorizeRoles('admin'), exportScheduleOverview);

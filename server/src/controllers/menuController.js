@@ -1,4 +1,4 @@
-import ShiftSchedule from '../models/ShiftSchedule.js';
+import Employee from '../models/Employee.js';
 
 export async function getMenu(req, res, next) {
   try {
@@ -41,15 +41,10 @@ export async function getMenu(req, res, next) {
   };
 
     if (role === 'supervisor' && req.user?.id) {
-      const now = new Date();
-      const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-      const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
-
-      const includeSelf = await ShiftSchedule.exists({
-        employee: req.user.id,
-        date: { $gte: startOfMonth, $lte: endOfMonth }
-      });
-
+      const profile = await Employee.findById(req.user.id)
+        .select('schedulePreferences.includeSelf')
+        .lean();
+      const includeSelf = Boolean(profile?.schedulePreferences?.includeSelf);
       if (includeSelf) {
         menus.supervisor.push({ name: 'MySchedule', label: '我的排班', icon: 'el-icon-timer' });
       }
