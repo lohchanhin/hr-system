@@ -1377,9 +1377,7 @@ const overscanCols = 3
 const rowApproxHeight = 76
 
 const shouldUseVirtualRender = computed(() => {
-  if (renderStrategyPreference.value === 'full') return false
-  if (renderStrategyPreference.value === 'virtual') return true
-  return visibleEmployees.value.length > 40 || days.value.length > 14
+  return false
 })
 
 const effectiveRowRange = computed(() => {
@@ -2143,8 +2141,19 @@ const formatDisputeDate = value => {
 
 function buildPublishPayload() {
   const payload = { month: currentMonth.value }
-  if (selectedDepartment.value) payload.department = selectedDepartment.value
-  if (selectedSubDepartment.value) payload.subDepartment = selectedSubDepartment.value
+  const fixedDepartment =
+    selectedDepartment.value ||
+    supervisorDepartmentId.value ||
+    employees.value[0]?.departmentId ||
+    ''
+  const fixedSubDepartment =
+    selectedSubDepartment.value ||
+    supervisorSubDepartmentId.value ||
+    employees.value[0]?.subDepartmentId ||
+    ''
+
+  if (fixedDepartment) payload.department = fixedDepartment
+  if (fixedSubDepartment) payload.subDepartment = fixedSubDepartment
   if (includeSelf.value && showIncludeSelfToggle.value) payload.includeSelf = true
   return payload
 }
@@ -4471,6 +4480,7 @@ onUpdated(() => {
     .status-filter {
       max-width: 160px;
     }
+
   }
 
   .batch-toolbar {
