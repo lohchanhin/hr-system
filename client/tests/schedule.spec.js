@@ -2163,6 +2163,45 @@ describe('Schedule.vue', () => {
     expect(wrapper.vm.isTableFullscreen).toBe(false)
   })
 
+  it('全螢幕上方工具列收合時隱藏 batch-toolbar，展開後才顯示', async () => {
+    const auth = useAuthStore()
+    auth.loadUser = vi.fn(() => {
+      auth.user = { role: 'admin', id: 'admin1' }
+      auth.role = 'admin'
+    })
+    setRoleToken('admin')
+
+    const wrapper = mountSchedule()
+    await flush()
+
+    expect(wrapper.vm.canEditSchedule).toBe(true)
+    const batchToolbar = () => wrapper.find('.batch-toolbar')
+    const isBatchToolbarHidden = () => (batchToolbar().attributes('style') || '').includes('display: none')
+
+    expect(batchToolbar().exists()).toBe(true)
+    expect(isBatchToolbarHidden()).toBe(false)
+
+    wrapper.vm.toggleTableFullscreen()
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.vm.isTableFullscreen).toBe(true)
+    expect(wrapper.vm.isFullscreenToolbarCollapsed).toBe(true)
+    expect(batchToolbar().exists()).toBe(true)
+    expect(isBatchToolbarHidden()).toBe(true)
+
+    wrapper.vm.toggleFullscreenToolbar()
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.vm.isFullscreenToolbarCollapsed).toBe(false)
+    expect(isBatchToolbarHidden()).toBe(false)
+
+    wrapper.vm.toggleFullscreenToolbar()
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.vm.isFullscreenToolbarCollapsed).toBe(true)
+    expect(isBatchToolbarHidden()).toBe(true)
+  })
+
   it('全螢幕模式可展開班別選單並成功回寫班別', async () => {
     const auth = useAuthStore()
     auth.loadUser = vi.fn(() => {
