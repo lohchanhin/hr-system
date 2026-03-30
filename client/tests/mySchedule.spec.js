@@ -42,7 +42,10 @@ describe('MySchedule.vue', () => {
     localStorage.setItem('token', token)
     apiFetch
       .mockResolvedValueOnce({ ok: true, json: async () => [] })
-      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => [{ _id: 'init', state: 'pending_confirmation', employeeResponse: 'pending' }]
+      })
 
     const wrapper = shallowMount(MySchedule, {
       global: {
@@ -194,5 +197,49 @@ describe('MySchedule.vue', () => {
     expect(messageMock.success).toHaveBeenCalledWith('已批次確認 2 筆班表')
     expect(wrapper.vm.selection.length).toBe(0)
     expect(wrapper.vm.bulkLoading).toBe(false)
+  })
+
+  it('auto switches to next month when current month has no pending but next month has pending', async () => {
+    const token = `h.${btoa(JSON.stringify({ id: 'emp4', role: 'employee' }))}.s`
+    localStorage.setItem('token', token)
+
+    apiFetch
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => [{ _id: 'd1', date: '2026-03-02', state: 'draft', employeeResponse: 'pending' }]
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => [{ _id: 'n1', date: '2026-04-03', state: 'pending_confirmation', employeeResponse: 'pending' }]
+      })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => [{ _id: 'n1', date: '2026-04-03', state: 'pending_confirmation', employeeResponse: 'pending' }]
+      })
+
+    const wrapper = shallowMount(MySchedule, {
+      global: {
+        stubs: {
+          'el-table': { template: '<div><slot></slot></div>' },
+          'el-table-column': true,
+          'el-date-picker': true,
+          'el-tag': true,
+          'el-button': true,
+          'el-dialog': { template: '<div><slot></slot><slot name="footer"></slot></div>' },
+          'el-input': { template: '<textarea />' }
+        }
+      }
+    })
+
+    await flush()
+    await flush()
+    await flush()
+
+    expect(wrapper.vm.selectedMonth).toBe('2026-04')
+    expect(wrapper.vm.monthHint).toContain('2026-04')
+    expect(wrapper.vm.schedules).toHaveLength(1)
+    expect(wrapper.vm.schedules[0].state).toBe('pending_confirmation')
   })
 })

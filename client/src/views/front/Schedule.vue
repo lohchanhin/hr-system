@@ -639,6 +639,7 @@ const perfSnapshot = computed(() => {
   }
 })
 const publishSnapshot = ref(null)
+const PUBLISHED_MONTH_HINT_KEY = 'my-schedule:published-month-hint'
 const loadedEmployeeIds = ref(new Set())
 const isFetchingSchedules = ref(false)
 const activeScheduleRequest = {
@@ -2258,6 +2259,11 @@ async function publishSchedulesForMonth() {
         // ignore
       }
       throw new Error(message)
+    }
+    const payload = await res.json().catch(() => null)
+    const publishedMonth = payload?.publishedMonth || currentMonth.value
+    if (publishedMonth && /^\d{4}-(0[1-9]|1[0-2])$/.test(publishedMonth)) {
+      localStorage.setItem(PUBLISHED_MONTH_HINT_KEY, publishedMonth)
     }
     callSuccess('已將班表發送給員工確認')
     invalidateFetchAllCache()

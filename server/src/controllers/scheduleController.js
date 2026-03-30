@@ -1273,6 +1273,7 @@ export async function publishSchedules(req, res) {
       updated: ids.length,
       employees,
       publishedAt: now.toISOString(),
+      publishedMonth: month,
     });
   } catch (err) {
     res.status(400).json({ error: err.message });

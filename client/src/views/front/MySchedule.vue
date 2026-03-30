@@ -3,6 +3,9 @@
     <div class="toolbar">
       <el-date-picker v-model="selectedMonth" type="month" value-format="YYYY-MM" />
     </div>
+    <div v-if="monthHint" class="month-hint-banner">
+      {{ monthHint }}
+    </div>
     <div v-if="scheduleBanner" class="status-banner" :class="scheduleBanner.type">
       {{ scheduleBanner.message }}
     </div>
@@ -88,7 +91,7 @@
         </template>
       </el-table-column>
     </el-table>
-    <p v-else class="empty-text">目前無排班資料</p>
+    <p v-else class="empty-text">目前月份無資料，請切換月份查看。</p>
 
     <el-dialog
       v-model="disputeDialog.visible"
@@ -126,6 +129,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { apiFetch } from '../../api'
 import { getToken } from '../../utils/tokenService'
 
+const PUBLISHED_MONTH_HINT_KEY = 'my-schedule:published-month-hint'
 const schedules = ref([])
 const shiftMap = ref({})
 const selectedMonth = ref(dayjs().format('YYYY-MM'))
@@ -134,6 +138,8 @@ const bulkLoading = ref(false)
 const disputeDialog = reactive({ visible: false, schedule: null, note: '' })
 const selection = ref([])
 const scheduleTableRef = ref(null)
+const monthHint = ref('')
+const hasAutoSwitched = ref(false)
 
 function formatShiftLabel(shift) {
   if (!shift) return ''
@@ -308,6 +314,69 @@ async function fetchShifts() {
   }
 }
 
+function getUserIdFromToken(token) {
+  if (!token) return ''
+  try {
+    const payload = JSON.parse(atob(token.split('.')[1]))
+    return payload.employeeId || payload.id || payload._id || payload.sub || ''
+  } catch (err) {
+    return ''
+  }
+}
+
+function isPendingConfirmation(item) {
+  return item?.state === 'pending_confirmation' && item?.employeeResponse === 'pending'
+}
+
+function normalizeSchedules(rawList) {
+  const source = Array.isArray(rawList) ? rawList : rawList?.schedules
+  const list = Array.isArray(source) ? source : []
+  return list.map(s => {
+    const shift = shiftMap.value[s.shiftId]
+    const state = s.state || 'draft'
+    const employeeResponse = s.employeeResponse || 'pending'
+    const responseNote = s.responseNote || ''
+    const responseAtRaw = s.responseAt || ''
+    const responseAt = responseAtRaw
+      ? dayjs(responseAtRaw).format('YYYY/MM/DD HH:mm')
+      : ''
+    const publishedAt = s.publishedAt
+      ? dayjs(s.publishedAt).format('YYYY/MM/DD HH:mm')
+      : ''
+    return {
+      ...s,
+      date: dayjs(s.date).format('YYYY/MM/DD'),
+      shiftName: formatShiftLabel(shift) || s.shiftName || '',
+      state,
+      employeeResponse,
+      responseNote,
+      responseAt,
+      responseAtRaw,
+      publishedAt
+    }
+  })
+}
+
+function consumePublishedMonthHint() {
+  const urlHint = new URLSearchParams(window.location.search).get('publishedMonth')
+  if (urlHint && /^\d{4}-(0[1-9]|1[0-2])$/.test(urlHint)) {
+    return urlHint
+  }
+  const saved = localStorage.getItem(PUBLISHED_MONTH_HINT_KEY)
+  if (!saved) return ''
+  localStorage.removeItem(PUBLISHED_MONTH_HINT_KEY)
+  return /^\d{4}-(0[1-9]|1[0-2])$/.test(saved) ? saved : ''
+}
+
+async function fetchSchedulesByMonth(userId, month) {
+  const params = new URLSearchParams({ month })
+  params.set('employee', userId)
+  const res = await apiFetch(`/api/schedules/monthly?${params.toString()}`)
+  if (!res.ok) return []
+  const data = await res.json().catch(() => [])
+  return normalizeSchedules(data)
+}
+
 async function respondToSchedule(scheduleId, action, note = '') {
   if (!scheduleId) return
   respondingId.value = scheduleId
@@ -379,54 +448,46 @@ async function submitDispute() {
   }
 }
 
-async function loadSchedules() {
+async function loadSchedules({ allowAutoSwitch = false } = {}) {
   const token = getToken()
   if (!token) return
   try {
     await fetchShifts()
-    const payload = JSON.parse(atob(token.split('.')[1]))
-    const userId =
-      payload.employeeId || payload.id || payload._id || payload.sub
+    const userId = getUserIdFromToken(token)
     if (!userId) return
-    const params = new URLSearchParams({ month: selectedMonth.value })
-    params.set('employee', userId)
-    const res = await apiFetch(`/api/schedules/monthly?${params.toString()}`)
-    if (res.ok) {
-      const data = await res.json()
-      schedules.value = data.map(s => {
-        const shift = shiftMap.value[s.shiftId]
-        const state = s.state || 'draft'
-        const employeeResponse = s.employeeResponse || 'pending'
-        const responseNote = s.responseNote || ''
-        const responseAtRaw = s.responseAt || ''
-        const responseAt = responseAtRaw
-          ? dayjs(responseAtRaw).format('YYYY/MM/DD HH:mm')
-          : ''
-        const publishedAt = s.publishedAt
-          ? dayjs(s.publishedAt).format('YYYY/MM/DD HH:mm')
-          : ''
-        return {
-          ...s,
-          date: dayjs(s.date).format('YYYY/MM/DD'),
-          shiftName: formatShiftLabel(shift) || s.shiftName || '',
-          state,
-          employeeResponse,
-          responseNote,
-          responseAt,
-          responseAtRaw,
-          publishedAt
-        }
-      })
-      clearSelection()
+    const currentMonthSchedules = await fetchSchedulesByMonth(userId, selectedMonth.value)
+    schedules.value = currentMonthSchedules
+    clearSelection()
+
+    if (!allowAutoSwitch || hasAutoSwitched.value) return
+    const hasPending = currentMonthSchedules.some(isPendingConfirmation)
+    if (hasPending) return
+
+    const nextMonth = dayjs(`${selectedMonth.value}-01`).add(1, 'month').format('YYYY-MM')
+    const nextMonthSchedules = await fetchSchedulesByMonth(userId, nextMonth)
+    const nextMonthHasPending = nextMonthSchedules.some(isPendingConfirmation)
+    if (nextMonthHasPending) {
+      hasAutoSwitched.value = true
+      monthHint.value = `偵測到 ${nextMonth} 有待確認班表，已為您自動切換。`
+      selectedMonth.value = nextMonth
     }
   } catch (err) {
     console.error(err)
   }
 }
 
-onMounted(loadSchedules)
+onMounted(async () => {
+  const hintMonth = consumePublishedMonthHint()
+  if (hintMonth && hintMonth !== selectedMonth.value) {
+    monthHint.value = `偵測到 ${hintMonth} 有待確認班表，已優先切換。`
+    selectedMonth.value = hintMonth
+    hasAutoSwitched.value = true
+    return
+  }
+  await loadSchedules({ allowAutoSwitch: true })
+})
 
-watch(selectedMonth, loadSchedules)
+watch(selectedMonth, () => loadSchedules())
 </script>
 
 <style scoped>
@@ -489,6 +550,16 @@ watch(selectedMonth, loadSchedules)
   background: #eff6ff;
   border-color: #bfdbfe;
   color: #1d4ed8;
+}
+
+.month-hint-banner {
+  margin-bottom: 16px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  border: 1px solid #a5b4fc;
+  background: #eef2ff;
+  color: #3730a3;
+  font-weight: 600;
 }
 
 .schedule-table {

@@ -537,6 +537,7 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
           },
         ],
         publishedAt: expect.any(String),
+        publishedMonth: '2024-05',
       });
     });
 
