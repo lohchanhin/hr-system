@@ -244,7 +244,12 @@
         </p>
       </div>
 
-      <div ref="batchToolbarRef" v-if="canEditSchedule" class="batch-toolbar">
+      <div
+        ref="batchToolbarRef"
+        v-if="canEditSchedule"
+        v-show="!isTableFullscreen || !isFullscreenToolbarCollapsed"
+        class="batch-toolbar"
+      >
         <el-select v-model="batchShiftId" placeholder="套用班別" class="modern-select batch-select" filterable
           data-test="batch-shift-select">
           <el-option v-for="opt in shifts" :key="opt._id" :label="formatShiftLabel(opt)" :value="opt._id" />
@@ -281,7 +286,13 @@
         </el-button>
         <span class="row-color-hint">列色僅暫存於目前瀏覽器 session</span>
       </div>
-      <div v-if="stressScenarioEnabled" class="stress-toolbar" data-test="stress-toolbar">
+      <div
+        ref="stressToolbarRef"
+        v-if="stressScenarioEnabled"
+        v-show="!isTableFullscreen || !isFullscreenToolbarCollapsed"
+        class="stress-toolbar"
+        data-test="stress-toolbar"
+      >
         <el-button class="action-btn secondary" @click="seedStressScenario">
           建立壓測場景（200 員工 × 31 天）
         </el-button>
@@ -499,7 +510,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onBeforeUnmount, onUpdated, watch, reactive, shallowRef, triggerRef, defineAsyncComponent } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, onUpdated, watch, reactive, shallowRef, triggerRef, defineAsyncComponent, nextTick } from 'vue'
 import dayjs from 'dayjs'
 import { apiFetch } from '../../api'
 import { useAuthStore } from '../../stores/auth'
@@ -598,6 +609,7 @@ const scheduleCardRef = ref(null)
 const fullscreenPopperHostRef = ref(null)
 const scheduleHeaderRef = ref(null)
 const batchToolbarRef = ref(null)
+const stressToolbarRef = ref(null)
 const paginationBarRef = ref(null)
 const scheduleTableWrapperRef = ref(null)
 const scheduleTableRef = ref(null)
@@ -1769,10 +1781,11 @@ const updateFullscreenLayoutHeight = () => {
   const cardHeight = scheduleCardRef.value?.clientHeight || viewportHeight.value
   const headerHeight = scheduleHeaderRef.value?.offsetHeight || 0
   const toolbarHeight = batchToolbarRef.value?.offsetHeight || 0
+  const stressToolbarHeight = stressToolbarRef.value?.offsetHeight || 0
   const paginationHeight = paginationBarRef.value?.offsetHeight || 0
   const reservedGap = 16
   const availableHeight =
-    cardHeight - headerHeight - toolbarHeight - paginationHeight - reservedGap
+    cardHeight - headerHeight - toolbarHeight - stressToolbarHeight - paginationHeight - reservedGap
 
   measuredLayoutHeight.value = Math.max(320, availableHeight)
 }
@@ -3897,7 +3910,13 @@ onMounted(async () => {
     layoutResizeObserver = new ResizeObserver(() => {
       updateFullscreenLayoutHeight()
     })
-    ;[scheduleCardRef.value, scheduleHeaderRef.value, batchToolbarRef.value, paginationBarRef.value]
+    ;[
+      scheduleCardRef.value,
+      scheduleHeaderRef.value,
+      batchToolbarRef.value,
+      stressToolbarRef.value,
+      paginationBarRef.value
+    ]
       .filter(Boolean)
       .forEach(target => layoutResizeObserver.observe(target))
   }
