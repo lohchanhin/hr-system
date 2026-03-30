@@ -5,7 +5,7 @@
     placeholder="選擇班別"
     class="cell-select shift-select"
     size="small"
-    :teleported="true"
+    :teleported="!isFullscreen"
     @blur="handleBlur"
     @visible-change="handleVisibleChange"
     @change="handleSelectShiftChange"
@@ -20,29 +20,48 @@
 </template>
 
 <script setup>
-import { nextTick, onMounted, ref } from 'vue'
+import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 
 defineProps({
   scheduleCell: { type: Object, required: true },
   shifts: { type: Array, default: () => [] },
-  formatShiftLabel: { type: Function, required: true }
+  formatShiftLabel: { type: Function, required: true },
+  isFullscreen: { type: Boolean, default: false }
 })
 
 const emit = defineEmits(['select-shift', 'close'])
 const selectRef = ref(null)
+const dropdownVisible = ref(false)
+let closeTimer = null
+
+const scheduleClose = () => {
+  if (closeTimer) {
+    clearTimeout(closeTimer)
+  }
+  closeTimer = setTimeout(() => {
+    emit('close')
+    closeTimer = null
+  }, 0)
+}
 
 const handleSelectShiftChange = value => {
+  if (closeTimer) {
+    clearTimeout(closeTimer)
+    closeTimer = null
+  }
   emit('select-shift', value)
   emit('close')
 }
 
 const handleBlur = () => {
-  emit('close')
+  if (dropdownVisible.value) return
+  scheduleClose()
 }
 
 const handleVisibleChange = visible => {
+  dropdownVisible.value = visible
   if (!visible) {
-    emit('close')
+    scheduleClose()
   }
 }
 
@@ -50,5 +69,12 @@ onMounted(() => {
   nextTick(() => {
     selectRef.value?.focus?.()
   })
+})
+
+onBeforeUnmount(() => {
+  if (closeTimer) {
+    clearTimeout(closeTimer)
+    closeTimer = null
+  }
 })
 </script>
