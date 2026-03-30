@@ -188,35 +188,41 @@ describe('Schedule.vue', () => {
       name: 'ElTimelineItem',
       template: '<div class="timeline-item-stub"><slot></slot></div>'
     }
+    const baseStubs = {
+      'el-date-picker': true,
+      'el-table': TableStub,
+      'el-table-column': ColumnStub,
+      'el-select': SelectStub,
+      'el-option': OptionStub,
+      'el-steps': StepsStub,
+      'el-step': StepStub,
+      'el-checkbox': CheckboxStub,
+      'el-input': InputStub,
+      'el-popover': PopoverStub,
+      'el-tag': TagStub,
+      'el-tooltip': TooltipStub,
+      'el-button': ButtonStub,
+      'el-progress': ProgressStub,
+      'el-pagination': PaginationStub,
+      'el-switch': SwitchStub,
+      'el-divider': DividerStub,
+      'el-descriptions': DescriptionsStub,
+      'el-descriptions-item': DescriptionsItemStub,
+      'el-dialog': DialogStub,
+      'el-timeline': TimelineStub,
+      'el-timeline-item': TimelineItemStub,
+      ScheduleDashboard: { name: 'ScheduleDashboard', template: '<div class="dashboard-stub"></div>', props: ['summary'] }
+    }
+    const optionGlobal = options.global || {}
     return shallowMount(Schedule, {
+      ...options,
       global: {
+        ...optionGlobal,
         stubs: {
-          'el-date-picker': true,
-          'el-table': TableStub,
-          'el-table-column': ColumnStub,
-          'el-select': SelectStub,
-          'el-option': OptionStub,
-          'el-steps': StepsStub,
-          'el-step': StepStub,
-          'el-checkbox': CheckboxStub,
-          'el-input': InputStub,
-          'el-popover': PopoverStub,
-          'el-tag': TagStub,
-          'el-tooltip': TooltipStub,
-          'el-button': ButtonStub,
-          'el-progress': ProgressStub,
-          'el-pagination': PaginationStub,
-          'el-switch': SwitchStub,
-          'el-divider': DividerStub,
-          'el-descriptions': DescriptionsStub,
-          'el-descriptions-item': DescriptionsItemStub,
-          'el-dialog': DialogStub,
-          'el-timeline': TimelineStub,
-          'el-timeline-item': TimelineItemStub,
-          ScheduleDashboard: { name: 'ScheduleDashboard', template: '<div class="dashboard-stub"></div>', props: ['summary'] }
+          ...baseStubs,
+          ...(optionGlobal.stubs || {})
         }
-      },
-      ...options
+      }
     })
   }
 
@@ -2155,6 +2161,70 @@ describe('Schedule.vue', () => {
     wrapper.vm.toggleTableFullscreen()
     await wrapper.vm.$nextTick()
     expect(wrapper.vm.isTableFullscreen).toBe(false)
+  })
+
+  it('全螢幕模式可展開班別選單並成功回寫班別', async () => {
+    const auth = useAuthStore()
+    auth.loadUser = vi.fn(() => {
+      auth.user = { role: 'admin', id: 'admin1' }
+      auth.role = 'admin'
+    })
+    setRoleToken('admin')
+
+    const wrapper = mountSchedule({
+      global: {
+        stubs: {
+          ScheduleGridVirtualBody: {
+            name: 'ScheduleGridVirtualBody',
+            props: ['row', 'day', 'isFullscreen'],
+            emits: ['select-shift'],
+            template: `
+              <button
+                class="grid-cell-editor-stub"
+                :data-fullscreen="String(!!isFullscreen)"
+                @click="$emit('select-shift', row._id, day.date, 's1')"
+              >
+                展開班別選單
+              </button>
+            `
+          }
+        }
+      }
+    })
+    await flush()
+
+    wrapper.vm.shifts = [{ _id: 's1', code: 'A', name: '早班' }]
+    wrapper.vm.employees = [{ _id: 'e1', name: '員工A', department: 'd1', subDepartment: 'sd1' }]
+    wrapper.vm.days = [{ date: 1, label: '1' }]
+    wrapper.vm.scheduleMap = {
+      e1: {
+        1: { shiftId: '', department: 'd1', subDepartment: 'sd1' }
+      }
+    }
+    apiFetch.mockImplementation(async (url, options) => {
+      if (url === '/api/schedules' && options?.method === 'POST') {
+        return { ok: true, json: async () => ({ _id: 'created-s1', shiftId: 's1' }) }
+      }
+      return { ok: true, json: async () => [] }
+    })
+    await wrapper.vm.$nextTick()
+
+    wrapper.vm.toggleTableFullscreen()
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.isTableFullscreen).toBe(true)
+
+    const cellButton = wrapper.find('.grid-cell-editor-stub')
+    expect(cellButton.exists()).toBe(true)
+    expect(cellButton.attributes('data-fullscreen')).toBe('true')
+    await cellButton.trigger('click')
+    await flush()
+
+    expect(wrapper.vm.scheduleMap.e1[1]).toEqual(
+      expect.objectContaining({
+        id: 'created-s1',
+        shiftId: 's1'
+      })
+    )
   })
 
   it('keeps editable cell state after exiting fullscreen', async () => {

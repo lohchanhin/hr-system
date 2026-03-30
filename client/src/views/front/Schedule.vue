@@ -374,6 +374,7 @@
               :can-edit="canEditSchedule"
               :shifts="shifts"
               :format-shift-label="formatShiftLabel"
+              :is-fullscreen="isTableFullscreen"
               @select-shift="onSelect"
             />
           </template>

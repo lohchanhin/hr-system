@@ -30,6 +30,7 @@
         :schedule-cell="cellView.scheduleCell"
         :shifts="shifts"
         :format-shift-label="formatShiftLabel"
+        :is-fullscreen="isFullscreen"
         :emp-id="String(row._id)"
         :day="day.date"
         @select-shift="handleSelectShift"
@@ -62,7 +63,8 @@ const props = defineProps({
   cellView: { type: Object, required: true },
   canEdit: { type: Boolean, default: false },
   shifts: { type: Array, default: () => [] },
-  formatShiftLabel: { type: Function, required: true }
+  formatShiftLabel: { type: Function, required: true },
+  isFullscreen: { type: Boolean, default: false }
 })
 
 const emit = defineEmits(['select-shift'])
