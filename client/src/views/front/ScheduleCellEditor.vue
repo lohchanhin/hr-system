@@ -5,7 +5,9 @@
     placeholder="選擇班別"
     class="cell-select shift-select"
     size="small"
-    :teleported="!isFullscreen"
+    :teleported="isDropdownTeleported"
+    :append-to="appendTarget"
+    :popper-class="popperClassName"
     @blur="handleBlur"
     @visible-change="handleVisibleChange"
     @change="handleSelectShiftChange"
@@ -20,19 +22,30 @@
 </template>
 
 <script setup>
-import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 
-defineProps({
+const props = defineProps({
   scheduleCell: { type: Object, required: true },
   shifts: { type: Array, default: () => [] },
   formatShiftLabel: { type: Function, required: true },
-  isFullscreen: { type: Boolean, default: false }
+  isFullscreen: { type: Boolean, default: false },
+  fullscreenPopperTarget: { type: [String, Object], default: null }
 })
 
 const emit = defineEmits(['select-shift', 'close'])
 const selectRef = ref(null)
 const dropdownVisible = ref(false)
 let closeTimer = null
+
+const appendTarget = computed(() => {
+  if (!props.isFullscreen) return undefined
+  return props.fullscreenPopperTarget || undefined
+})
+
+const isDropdownTeleported = computed(() => !props.isFullscreen || !!appendTarget.value)
+const popperClassName = computed(() =>
+  props.isFullscreen ? 'schedule-cell-editor-popper schedule-cell-editor-popper--fullscreen' : 'schedule-cell-editor-popper'
+)
 
 const scheduleClose = () => {
   if (closeTimer) {

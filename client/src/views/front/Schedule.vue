@@ -200,6 +200,11 @@
 
     <!-- Enhanced schedule table with modern design -->
     <div ref="scheduleCardRef" class="schedule-card" :class="{ 'is-fullscreen': isTableFullscreen }" data-test="schedule-card">
+      <div
+        ref="fullscreenPopperHostRef"
+        class="schedule-fullscreen-popper-host"
+        data-test="fullscreen-popper-host"
+      ></div>
       <div ref="scheduleHeaderRef" class="schedule-header">
         <h3 class="schedule-title">員工排班表</h3>
         <el-button class="action-btn secondary fullscreen-toggle" @click="toggleTableFullscreen"
@@ -375,6 +380,7 @@
               :shifts="shifts"
               :format-shift-label="formatShiftLabel"
               :is-fullscreen="isTableFullscreen"
+              :fullscreen-popper-target="fullscreenPopperTarget"
               @select-shift="onSelect"
             />
           </template>
@@ -589,6 +595,7 @@ const isFinalizing = ref(false)
 const isTableFullscreen = ref(false)
 const isFullscreenToolbarCollapsed = ref(false)
 const scheduleCardRef = ref(null)
+const fullscreenPopperHostRef = ref(null)
 const scheduleHeaderRef = ref(null)
 const batchToolbarRef = ref(null)
 const paginationBarRef = ref(null)
@@ -1581,6 +1588,10 @@ watch(leaveIndex, pruneSelections)
 
 // ========= table height for sticky header =========
 const dayColumnWidth = computed(() => (isTableFullscreen.value ? 92 : 140))
+const fullscreenPopperTarget = computed(() => {
+  if (!isTableFullscreen.value) return undefined
+  return fullscreenPopperHostRef.value || '.schedule-fullscreen-popper-host'
+})
 
 const tableMaxHeight = computed(() => {
   if (isTableFullscreen.value) {
@@ -4735,6 +4746,13 @@ onUpdated(() => {
 }
 
 .schedule-card.is-fullscreen {
+  .schedule-fullscreen-popper-host {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 45;
+  }
+
   .modern-schedule-table {
     :deep(.el-table__cell) {
       font-size: 12px;
@@ -4753,6 +4771,11 @@ onUpdated(() => {
   :deep(.el-table__fixed-right),
   :deep(.el-table__fixed-column--left) {
     z-index: 25;
+  }
+
+  :deep(.schedule-cell-editor-popper--fullscreen) {
+    z-index: 45 !important;
+    pointer-events: auto;
   }
 }
 
