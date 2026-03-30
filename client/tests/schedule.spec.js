@@ -2176,12 +2176,13 @@ describe('Schedule.vue', () => {
         stubs: {
           ScheduleGridVirtualBody: {
             name: 'ScheduleGridVirtualBody',
-            props: ['row', 'day', 'isFullscreen'],
+            props: ['row', 'day', 'isFullscreen', 'fullscreenPopperTarget'],
             emits: ['select-shift'],
             template: `
               <button
                 class="grid-cell-editor-stub"
                 :data-fullscreen="String(!!isFullscreen)"
+                :data-popper-target="String(!!fullscreenPopperTarget)"
                 @click="$emit('select-shift', row._id, day.date, 's1')"
               >
                 展開班別選單
@@ -2216,9 +2217,16 @@ describe('Schedule.vue', () => {
     const cellButton = wrapper.find('.grid-cell-editor-stub')
     expect(cellButton.exists()).toBe(true)
     expect(cellButton.attributes('data-fullscreen')).toBe('true')
+    expect(cellButton.attributes('data-popper-target')).toBe('true')
+    expect(wrapper.find('[data-test="fullscreen-popper-host"]').exists()).toBe(true)
     await cellButton.trigger('click')
     await flush()
 
+    expect(
+      apiFetch.mock.calls.some(
+        ([url, options]) => url === '/api/schedules' && options?.method === 'POST'
+      )
+    ).toBe(true)
     expect(wrapper.vm.scheduleMap.e1[1]).toEqual(
       expect.objectContaining({
         id: 'created-s1',

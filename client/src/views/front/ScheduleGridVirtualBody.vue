@@ -31,6 +31,7 @@
         :shifts="shifts"
         :format-shift-label="formatShiftLabel"
         :is-fullscreen="isFullscreen"
+        :fullscreen-popper-target="fullscreenPopperTarget"
         :emp-id="String(row._id)"
         :day="day.date"
         @select-shift="handleSelectShift"
@@ -64,7 +65,8 @@ const props = defineProps({
   canEdit: { type: Boolean, default: false },
   shifts: { type: Array, default: () => [] },
   formatShiftLabel: { type: Function, required: true },
-  isFullscreen: { type: Boolean, default: false }
+  isFullscreen: { type: Boolean, default: false },
+  fullscreenPopperTarget: { type: [String, Object], default: null }
 })
 
 const emit = defineEmits(['select-shift'])
