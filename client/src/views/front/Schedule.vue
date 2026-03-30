@@ -1767,7 +1767,9 @@ const updateFullscreenLayoutHeight = () => {
 const syncFullscreenState = () => {
   if (typeof document === 'undefined') return
   const target = scheduleCardRef.value
-  isTableFullscreen.value = !!target && document.fullscreenElement === target
+  const isNowFullscreen = !!target && document.fullscreenElement === target
+  isTableFullscreen.value = isNowFullscreen
+  isFullscreenToolbarCollapsed.value = isNowFullscreen
   updateFullscreenLayoutHeight()
 }
 
@@ -1775,10 +1777,9 @@ const toggleTableFullscreen = () => {
   if (typeof document === 'undefined') return
   const target = scheduleCardRef.value
   if (!target || typeof target.requestFullscreen !== 'function') {
-    if (isTableFullscreen.value) {
-      isFullscreenToolbarCollapsed.value = false
-    }
-    isTableFullscreen.value = !isTableFullscreen.value
+    const nextIsFullscreen = !isTableFullscreen.value
+    isTableFullscreen.value = nextIsFullscreen
+    isFullscreenToolbarCollapsed.value = nextIsFullscreen
     updateViewportHeight()
     updateFullscreenLayoutHeight()
     return
@@ -1791,12 +1792,12 @@ const toggleTableFullscreen = () => {
       updateViewportHeight()
       updateFullscreenLayoutHeight()
     })
-    isFullscreenToolbarCollapsed.value = false
     return
   }
 
   target.requestFullscreen().catch(() => {
     isTableFullscreen.value = true
+    isFullscreenToolbarCollapsed.value = true
     updateViewportHeight()
     updateFullscreenLayoutHeight()
   })
