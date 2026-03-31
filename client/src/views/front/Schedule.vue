@@ -19,14 +19,14 @@
           <el-date-picker v-model="currentMonth" type="month" value-format="YYYY-MM" @change="onMonthChange"
             class="modern-date-picker" />
         </div>
-        <div class="filter-group">
+        <div class="filter-group" :class="{ 'filter-group-hidden': shouldHideDepartmentFilters }">
           <label class="filter-label">部門</label>
           <el-select v-model="selectedDepartment" placeholder="請選擇部門" @change="onDepartmentChange" :disabled="true"
             class="modern-select">
             <el-option v-for="dept in departments" :key="dept._id" :label="dept.name" :value="dept._id" />
           </el-select>
         </div>
-        <div class="filter-group">
+        <div class="filter-group" :class="{ 'filter-group-hidden': shouldHideDepartmentFilters }">
           <label class="filter-label">單位</label>
           <el-select v-model="selectedSubDepartment" placeholder="請選擇單位" @change="onSubDepartmentChange"
             class="modern-select">
@@ -206,7 +206,12 @@
         data-test="fullscreen-popper-host"
       ></div>
       <div ref="scheduleHeaderRef" class="schedule-header">
-        <h3 class="schedule-title">員工排班表</h3>
+        <div class="schedule-title-wrapper">
+          <h3 class="schedule-title">員工排班表</h3>
+          <p v-if="isTableFullscreen" class="fullscreen-filter-hint">
+            目前部門/單位：{{ fullscreenFilterHint }}
+          </p>
+        </div>
         <el-button class="action-btn secondary fullscreen-toggle" @click="toggleTableFullscreen"
           data-test="fullscreen-toggle-button">
           {{ isTableFullscreen ? '退出全螢幕' : '進入全螢幕' }}
@@ -1865,6 +1870,16 @@ authStore.loadUser()
 
 const canUseSupervisorFilter = computed(() =>
   ['supervisor', 'admin'].includes(authStore.role)
+)
+const shouldHideDepartmentFilters = computed(() => isTableFullscreen.value)
+const selectedDepartmentName = computed(() =>
+  departments.value.find(dept => dept._id === selectedDepartment.value)?.name || '全部部門'
+)
+const selectedSubDepartmentName = computed(() =>
+  subDepartments.value.find(sub => sub._id === selectedSubDepartment.value)?.name || '全部單位'
+)
+const fullscreenFilterHint = computed(() =>
+  `${selectedDepartmentName.value} / ${selectedSubDepartmentName.value}`
 )
 const showIncludeSelfToggle = computed(() => authStore.role === 'supervisor')
 // 注意：可篩選(主管視角)與可編輯(排班維護)是兩種不同權限，避免共用同一判定。
@@ -4132,6 +4147,11 @@ onUpdated(() => {
     flex-direction: column;
     gap: 8px;
 
+    &.filter-group-hidden {
+      visibility: hidden;
+      pointer-events: none;
+    }
+
     .filter-label {
       font-weight: 600;
       color: #164e63;
@@ -4605,12 +4625,28 @@ onUpdated(() => {
     align-items: center;
     flex-wrap: wrap;
     gap: 16px;
+    min-height: 96px;
+
+    .schedule-title-wrapper {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      min-height: 48px;
+      justify-content: center;
+    }
 
     .schedule-title {
       color: #164e63;
       font-size: 1.25rem;
       font-weight: 700;
       margin: 0;
+    }
+
+    .fullscreen-filter-hint {
+      margin: 0;
+      font-size: 0.85rem;
+      color: #334155;
+      font-weight: 500;
     }
 
     .schedule-legend {
