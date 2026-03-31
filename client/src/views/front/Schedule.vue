@@ -4604,7 +4604,23 @@ onUpdated(() => {
 }
 
 .schedule-card {
+  --schedule-card-margin-bottom: 24px;
+  --schedule-inline-padding: clamp(20px, 2vw, 32px);
+  --schedule-header-block-padding: 20px;
+  --schedule-batch-toolbar-block-padding: 16px;
+  --schedule-stress-toolbar-block-padding: 10px;
+  --schedule-table-wrapper-block-padding: 0;
+
+  margin: 0 0 var(--schedule-card-margin-bottom);
+
   &.is-fullscreen {
+    --schedule-card-margin-bottom: 0;
+    --schedule-inline-padding: clamp(24px, 3vw, 40px);
+    --schedule-header-block-padding: 20px;
+    --schedule-batch-toolbar-block-padding: 16px;
+    --schedule-stress-toolbar-block-padding: 10px;
+    --schedule-table-wrapper-block-padding: 0;
+
     position: fixed;
     inset: 0;
     z-index: 3000;
@@ -4619,7 +4635,7 @@ onUpdated(() => {
 
   .schedule-header {
     background: linear-gradient(135deg, #f1f5f9 0%, #ecfeff 100%);
-    padding: 20px 24px;
+    padding: var(--schedule-header-block-padding) var(--schedule-inline-padding);
     display: flex;
     justify-content: space-between;
     align-items: center;
@@ -4690,7 +4706,7 @@ onUpdated(() => {
   }
 
   .batch-toolbar {
-    padding: 16px 24px;
+    padding: var(--schedule-batch-toolbar-block-padding) var(--schedule-inline-padding);
     background: #f8fafc;
     border-bottom: 1px solid #e2e8f0;
     display: flex;
@@ -4729,6 +4745,7 @@ onUpdated(() => {
 
 .schedule-table-wrapper {
   overflow-x: auto;
+  padding: var(--schedule-table-wrapper-block-padding) var(--schedule-inline-padding);
 
   &.is-fullscreen {
     flex: 1;
@@ -4748,7 +4765,7 @@ onUpdated(() => {
 }
 
 .stress-toolbar {
-  padding: 10px 24px;
+  padding: var(--schedule-stress-toolbar-block-padding) var(--schedule-inline-padding);
   border-bottom: 1px dashed #cbd5e1;
   display: flex;
   flex-wrap: wrap;
