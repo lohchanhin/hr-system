@@ -100,9 +100,9 @@ describe('Schedule.vue', () => {
     const ColumnStub = {
       name: 'ElTableColumn',
       inject: ['tableContext'],
-      props: ['label'],
+      props: ['label', 'fixed', 'width', 'className'],
       template: `
-        <div class="col" :data-label="label">
+        <div class="col" :data-label="label" :data-fixed="fixed || ''" :data-width="width || ''" :data-class-name="className || ''">
           <div class="col-header"><slot name="header"></slot></div>
           <div
             v-for="row in (tableContext?.data || [])"
@@ -1657,8 +1657,35 @@ describe('Schedule.vue', () => {
     expect(wrapper.vm.days[0].label).toMatch(/^1\(.\)$/)
     const cols = wrapper.findAll('.col')
     expect(cols[0].attributes('data-label')).toBe('員工姓名')
-    expect(cols[1].attributes('data-label')).toBe('特休剩餘')
-    expect(cols[2].attributes('data-label')).toMatch(/^1\(.\)$/)
+    expect(cols[1].attributes('data-label')).toBe('單位')
+    expect(cols[2].attributes('data-label')).toBe('職稱 / 職位')
+    expect(cols[3].attributes('data-label')).toBe('特休剩餘')
+    expect(cols[4].attributes('data-label')).toMatch(/^1\(.\)$/)
+  })
+
+  it('keeps name and sub-department columns fixed on horizontal scroll', async () => {
+    apiFetch
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [{ _id: '1F', name: '1F' }] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [{ _id: 'HR', name: 'HR', department: '1F' }] })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => [{ _id: 'e1', name: 'E1', subDepartmentName: '急診', department: '1F', subDepartment: 'HR' }]
+      })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ approvals: [], leaves: [] }) })
+
+    const wrapper = mountSchedule()
+    await flush()
+
+    const cols = wrapper.findAll('.col')
+    expect(cols[0].attributes('data-label')).toBe('員工姓名')
+    expect(cols[0].attributes('data-fixed')).toBe('left')
+    expect(cols[1].attributes('data-label')).toBe('單位')
+    expect(cols[1].attributes('data-fixed')).toBe('left')
+    expect(cols[2].attributes('data-label')).toBe('職稱 / 職位')
+    expect(cols[2].attributes('data-class-name')).toBe('title-position-column')
+    expect(cols[3].attributes('data-label')).toBe('特休剩餘')
   })
 
   it('displays leave label when leave data exists', async () => {
