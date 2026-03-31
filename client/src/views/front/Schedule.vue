@@ -289,20 +289,59 @@
         v-show="!isTableFullscreen || !isFullscreenToolbarCollapsed"
         class="batch-toolbar"
       >
-        <el-select v-model="batchShiftId" placeholder="套用班別" class="modern-select batch-select" filterable
-          data-test="batch-shift-select">
+        <el-select
+          v-model="batchShiftId"
+          placeholder="套用班別"
+          class="modern-select batch-select"
+          filterable
+          :teleported="isToolbarDropdownTeleported"
+          :append-to="toolbarPopperAppendTarget"
+          :popper-class="toolbarPopperClassName"
+          data-test="batch-shift-select"
+        >
           <el-option v-for="opt in shifts" :key="opt._id" :label="formatShiftLabel(opt)" :value="opt._id" />
         </el-select>
-        <el-select v-model="batchDepartment" placeholder="套用部門" clearable class="modern-select batch-select"
-          data-test="batch-dept-select">
-          <el-option v-for="dept in departments" :key="dept._id" :label="dept.name" :value="dept._id" />
-        </el-select>
-        <el-select v-model="batchSubDepartment" placeholder="套用單位" clearable class="modern-select batch-select"
-          :disabled="!batchDepartment" data-test="batch-subdept-select">
-          <el-option v-for="sub in batchSubDepartments" :key="sub._id" :label="sub.name" :value="sub._id" />
-        </el-select>
-        <el-select v-model="batchRowColorIndex" placeholder="設定整列顏色" clearable class="modern-select batch-select"
-          data-test="batch-row-color-select">
+        <template v-if="isTableFullscreen">
+          <div class="batch-readonly-field" data-test="batch-dept-readonly">
+            <span class="batch-readonly-field__label">套用部門</span>
+            <span class="batch-readonly-field__value">{{ batchDepartmentDisplayName }}</span>
+          </div>
+          <div class="batch-readonly-field" data-test="batch-subdept-readonly">
+            <span class="batch-readonly-field__label">套用單位</span>
+            <span class="batch-readonly-field__value">{{ batchSubDepartmentDisplayName }}</span>
+          </div>
+        </template>
+        <template v-else>
+          <el-select
+            v-model="batchDepartment"
+            placeholder="套用部門"
+            clearable
+            class="modern-select batch-select"
+            data-test="batch-dept-select"
+          >
+            <el-option v-for="dept in departments" :key="dept._id" :label="dept.name" :value="dept._id" />
+          </el-select>
+          <el-select
+            v-model="batchSubDepartment"
+            placeholder="套用單位"
+            clearable
+            class="modern-select batch-select"
+            :disabled="!batchDepartment"
+            data-test="batch-subdept-select"
+          >
+            <el-option v-for="sub in batchSubDepartments" :key="sub._id" :label="sub.name" :value="sub._id" />
+          </el-select>
+        </template>
+        <el-select
+          v-model="batchRowColorIndex"
+          placeholder="設定整列顏色"
+          clearable
+          class="modern-select batch-select"
+          :teleported="isToolbarDropdownTeleported"
+          :append-to="toolbarPopperAppendTarget"
+          :popper-class="toolbarPopperClassName"
+          data-test="batch-row-color-select"
+        >
           <el-option v-for="opt in rowColorOptions" :key="opt.index" :label="opt.label" :value="opt.index">
             <span class="row-color-option">
               <span class="row-color-dot" :style="{ backgroundColor: opt.bg, borderColor: opt.border }"></span>
@@ -1100,6 +1139,21 @@ const hasAnySelection = computed(() => allSelectedCells.value.size > 0)
 const batchSubDepartments = computed(() =>
   batchDepartment.value ? subDepsFor(batchDepartment.value) : []
 )
+const effectiveBatchDepartment = computed(() =>
+  isTableFullscreen.value ? (batchDepartment.value || selectedDepartment.value || '') : batchDepartment.value
+)
+const effectiveBatchSubDepartment = computed(() => {
+  if (isTableFullscreen.value) {
+    return batchSubDepartment.value || selectedSubDepartment.value || ''
+  }
+  return batchSubDepartment.value
+})
+const batchDepartmentDisplayName = computed(
+  () => departments.value.find(dept => dept._id === effectiveBatchDepartment.value)?.name || '全部部門'
+)
+const batchSubDepartmentDisplayName = computed(
+  () => subDepartments.value.find(sub => sub._id === effectiveBatchSubDepartment.value)?.name || '全部單位'
+)
 const allEmployeesSelectionHint = computed(() =>
   selectedAllEmployeesAcrossPages.value
     ? `已全選 ${selectedEmployeesSet.value.size} 位員工（全部人員），切換分頁仍會維持勾選。`
@@ -1775,6 +1829,16 @@ const fullscreenPopperTarget = computed(() => {
   if (!isTableFullscreen.value) return undefined
   return fullscreenPopperHostRef.value || '.schedule-fullscreen-popper-host'
 })
+const toolbarPopperAppendTarget = computed(() => {
+  if (!isTableFullscreen.value) return undefined
+  return fullscreenPopperTarget.value || '.schedule-fullscreen-popper-host'
+})
+const isToolbarDropdownTeleported = computed(
+  () => !isTableFullscreen.value || !!toolbarPopperAppendTarget.value
+)
+const toolbarPopperClassName = computed(() =>
+  isTableFullscreen.value ? 'schedule-toolbar-popper schedule-toolbar-popper--fullscreen' : 'schedule-toolbar-popper'
+)
 
 const tableMaxHeight = computed(() => {
   if (isTableFullscreen.value) {
@@ -3679,13 +3743,13 @@ async function applyBatch() {
     // 沒資料或本月被視為請假 → 略過
     if (!info || isLeaveCell(empId, day)) return
 
-    const department = batchDepartment.value || info.department || ''
+    const department = effectiveBatchDepartment.value || info.department || ''
     let subDepartment = info.subDepartment || ''
 
-    if (batchDepartment.value) {
-      subDepartment = batchSubDepartment.value || ''
-    } else if (batchSubDepartment.value) {
-      subDepartment = batchSubDepartment.value
+    if (effectiveBatchDepartment.value) {
+      subDepartment = effectiveBatchSubDepartment.value || ''
+    } else if (effectiveBatchSubDepartment.value) {
+      subDepartment = effectiveBatchSubDepartment.value
     }
 
     batchPayload.push({
@@ -4928,6 +4992,30 @@ onUpdated(() => {
     min-width: 180px;
   }
 
+  .batch-readonly-field {
+    min-width: 180px;
+    display: inline-flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 8px 10px;
+    border: 1px solid #dbeafe;
+    border-radius: 10px;
+    background: #eff6ff;
+  }
+
+  .batch-readonly-field__label {
+    font-size: 11px;
+    color: #64748b;
+    line-height: 1;
+  }
+
+  .batch-readonly-field__value {
+    font-size: 13px;
+    color: #0f172a;
+    font-weight: 600;
+    line-height: 1.2;
+  }
+
   .apply-btn {
     min-width: 120px;
   }
@@ -5059,7 +5147,13 @@ onUpdated(() => {
     pointer-events: auto;
   }
 
+  :deep(.schedule-toolbar-popper--fullscreen) {
+    z-index: 3001 !important;
+    pointer-events: auto;
+  }
+
   :deep(.schedule-fullscreen-popper-host .schedule-cell-editor-popper--fullscreen),
+  :deep(.schedule-fullscreen-popper-host .schedule-toolbar-popper--fullscreen),
   :deep(.schedule-fullscreen-popper-host .el-select-dropdown),
   :deep(.schedule-fullscreen-popper-host .el-popper) {
     pointer-events: auto;
