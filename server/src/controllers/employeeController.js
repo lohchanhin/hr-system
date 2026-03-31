@@ -492,9 +492,11 @@ export async function listEmployees(req, res) {
       pageSize: pageSizeRaw,
       month,
       search: searchRaw,
+      jobType: jobTypeRaw,
     } = req.query
     const filter = {}
     const search = searchRaw ?? q
+    const jobType = String(jobTypeRaw || '').trim()
 
     if (supervisor) filter.supervisor = supervisor
     if (organization) filter.organization = organization
@@ -502,14 +504,32 @@ export async function listEmployees(req, res) {
     if (subDepartment) filter.subDepartment = subDepartment
     if (status && view !== 'schedule') filter.status = status
     if (role) filter.role = role
+    const andFilters = []
     if (search) {
       const rx = new RegExp(search, 'i')
-      filter.$or = [
-        { name: rx },
-        { employeeId: rx },
-        { email: rx },
-        { title: rx },
-      ]
+      andFilters.push({
+        $or: [
+          { name: rx },
+          { employeeId: rx },
+          { email: rx },
+          { title: rx },
+        ]
+      })
+    }
+    if (jobType) {
+      const rx = new RegExp(jobType, 'i')
+      andFilters.push({
+        $or: [
+          { practiceTitle: rx },
+          { title: rx },
+          { jobType: rx },
+        ]
+      })
+    }
+    if (andFilters.length === 1) {
+      Object.assign(filter, andFilters[0])
+    } else if (andFilters.length > 1) {
+      filter.$and = andFilters
     }
 
     const isScheduleView = view === 'schedule'
@@ -616,7 +636,7 @@ export async function listEmployees(req, res) {
     const safePage = Math.min(page, totalPages)
     const pagedEmployees = scheduleEmployees.slice((safePage - 1) * pageSize, safePage * pageSize)
 
-    if (pageRaw !== undefined || pageSizeRaw !== undefined || status || searchRaw) {
+    if (pageRaw !== undefined || pageSizeRaw !== undefined || status || searchRaw || jobTypeRaw) {
       return res.json({
         employees: pagedEmployees,
         pagination: {

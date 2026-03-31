@@ -386,6 +386,41 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
     });
   });
 
+  it('可使用職別 + 部門 + 狀態複合篩選月排班', async () => {
+    const matchedEmployees = [{ _id: 'e1', name: '王小明', department: 'd1', practiceTitle: '護理師' }];
+    mockEmployee.find.mockReturnValue({
+      select: jest.fn().mockImplementation(() => createSelectResponse(matchedEmployees)),
+    });
+    mockApprovalRequest.find.mockReturnValue({
+      select: jest.fn().mockReturnValue({
+        lean: jest.fn().mockResolvedValue([]),
+      }),
+    });
+    mockShiftSchedule.find
+      .mockReturnValueOnce({
+        select: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue([]),
+        }),
+      })
+      .mockReturnValueOnce({
+        select: jest.fn().mockReturnThis(),
+        populate: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockResolvedValue([]),
+      });
+
+    const res = await request(app)
+      .get('/api/schedules/monthly?month=2023-01&department=d1&status=unscheduled&jobType=%E8%AD%B7%E7%90%86&search=%E7%8E%8B');
+
+    expect(res.status).toBe(200);
+    const employeeQuery = mockEmployee.find.mock.calls[0][0];
+    expect(employeeQuery.department).toBe('d1');
+    expect(Array.isArray(employeeQuery.$and)).toBe(true);
+    expect(employeeQuery.$and).toHaveLength(2);
+    expect(res.body.employees).toEqual([
+      expect.objectContaining({ _id: 'e1', name: '王小明' }),
+    ]);
+  });
+
 
   it('creates schedules batch', async () => {
     mockShiftSchedule.findOne.mockResolvedValue(null);

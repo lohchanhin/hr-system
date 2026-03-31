@@ -249,6 +249,13 @@
           <el-option label="缺班" value="unscheduled" />
           <el-option label="待審核請假" value="onLeave" />
         </el-select>
+        <el-input
+          v-show="!isTableFullscreen || !isFullscreenToolbarCollapsed"
+          v-model="jobTypeFilter"
+          placeholder="搜尋職別"
+          clearable
+          class="employee-search"
+        />
         <p
           v-if="shouldUseVirtualRender && visibleEmployees.length > 0"
           class="virtual-render-hint"
@@ -616,6 +623,7 @@ const perfMetrics = reactive({
 })
 const employeeSearch = ref('')
 const statusFilter = ref('all')
+const jobTypeFilter = ref('')
 const selectedEmployees = ref(new Set())
 const allEmployeesForSelection = ref(new Set())
 const selectedAllEmployeesAcrossPages = ref(false)
@@ -1269,6 +1277,9 @@ const fetchAllEmployeeIdsForCurrentFilter = async () => {
     if (employeeSearch.value) {
       params.push(`search=${encodeURIComponent(employeeSearch.value)}`)
     }
+    if (jobTypeFilter.value) {
+      params.push(`jobType=${encodeURIComponent(jobTypeFilter.value)}`)
+    }
     const url = `/api/employees/schedule?${params.join('&')}`
     const res = await apiFetch(url)
     if (!res.ok) throw new Error('Failed to fetch all employee ids')
@@ -1481,7 +1492,7 @@ watch(includeSelf, async (val, oldVal) => {
   await refreshScheduleData({ reset: true, reason: 'include-self-change' })
 })
 
-watch([employeeSearch, statusFilter], () => {
+watch([employeeSearch, statusFilter, jobTypeFilter], () => {
   currentPage.value = 1
   fetchEmployees(selectedDepartment.value, selectedSubDepartment.value)
   scheduleDebouncedRefresh({ reset: true, reason: 'filter-change' })
@@ -3102,6 +3113,9 @@ async function fetchSchedules({ reset = false, fetchAll = false, reason = 'unkno
   if (!fetchAll && employeeSearch.value) {
     params.push(`search=${encodeURIComponent(employeeSearch.value)}`)
   }
+  if (jobTypeFilter.value) {
+    params.push(`jobType=${encodeURIComponent(jobTypeFilter.value)}`)
+  }
   if (supervisorId) params.push(`supervisor=${supervisorId}`)
   if (includeSelf.value && showIncludeSelfToggle.value)
     params.push('includeSelf=true')
@@ -3846,6 +3860,9 @@ async function fetchEmployees(
   }
   if (employeeSearch.value) {
     params.push(`search=${encodeURIComponent(employeeSearch.value)}`)
+  }
+  if (jobTypeFilter.value) {
+    params.push(`jobType=${encodeURIComponent(jobTypeFilter.value)}`)
   }
   const url = `/api/employees/schedule${params.length ? `?${params.join('&')}` : ''
     }`
