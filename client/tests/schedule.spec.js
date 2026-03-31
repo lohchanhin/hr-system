@@ -1079,7 +1079,6 @@ describe('Schedule.vue', () => {
   })
 
   it('shows loading state while applying batch schedules', async () => {
-    const month = dayjs().format('YYYY-MM')
     setRoleToken('admin')
     apiFetch.mockResolvedValue({ ok: true, json: async () => [] })
     const wrapper = mountSchedule()
@@ -1141,6 +1140,92 @@ describe('Schedule.vue', () => {
     expect(button.element.disabled).toBe(false)
     expect(loadingInstance.close).toHaveBeenCalled()
     expect(ElMessage.success).toHaveBeenCalledWith('批次套用完成')
+  })
+
+  it('uses fullscreen popper strategy for batch shift and row-color selects and shows readonly department fields', async () => {
+    setRoleToken('admin')
+    apiFetch.mockResolvedValue({ ok: true, json: async () => [] })
+    const wrapper = mountSchedule()
+    await flush()
+
+    wrapper.vm.batchDepartment = 'd1'
+    wrapper.vm.batchSubDepartment = 'sd1'
+    wrapper.vm.selectedDepartment = 'd1'
+    wrapper.vm.selectedSubDepartment = 'sd1'
+    wrapper.vm.departments = [{ _id: 'd1', name: '部門A' }]
+    wrapper.vm.subDepartments = [{ _id: 'sd1', name: '單位A', department: 'd1' }]
+    wrapper.vm.isTableFullscreen = true
+    wrapper.vm.isFullscreenToolbarCollapsed = false
+    await wrapper.vm.$nextTick()
+
+    const shiftSelect = wrapper.find('[data-test="batch-shift-select"]')
+    const rowColorSelect = wrapper.find('[data-test="batch-row-color-select"]')
+    expect(shiftSelect.attributes('append-to')).toBeTruthy()
+    expect(shiftSelect.attributes('popper-class')).toContain('schedule-toolbar-popper--fullscreen')
+    expect(rowColorSelect.attributes('append-to')).toBeTruthy()
+    expect(rowColorSelect.attributes('popper-class')).toContain('schedule-toolbar-popper--fullscreen')
+
+    expect(wrapper.find('[data-test="batch-dept-select"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="batch-subdept-select"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="batch-dept-readonly"]').text()).toContain('部門A')
+    expect(wrapper.find('[data-test="batch-subdept-readonly"]').text()).toContain('單位A')
+  })
+
+  it('keeps department and sub-department payload in fullscreen readonly mode when applying batch', async () => {
+    setRoleToken('admin')
+    apiFetch.mockResolvedValue({ ok: true, json: async () => [] })
+    const wrapper = mountSchedule()
+    await flush()
+
+    wrapper.vm.departments = [{ _id: 'd1', name: '部門A' }]
+    wrapper.vm.subDepartments = [{ _id: 'sd1', name: '單位A', department: 'd1' }]
+    wrapper.vm.batchDepartment = 'd1'
+    wrapper.vm.batchSubDepartment = 'sd1'
+    wrapper.vm.selectedDepartment = 'd1'
+    wrapper.vm.selectedSubDepartment = 'sd1'
+    wrapper.vm.batchShiftId = 's1'
+    wrapper.vm.isTableFullscreen = true
+    wrapper.vm.isFullscreenToolbarCollapsed = false
+    wrapper.vm.employees = [
+      { _id: 'e1', departmentId: 'd1', subDepartmentId: 'sd1', department: '', subDepartment: '' }
+    ]
+    wrapper.vm.scheduleMap = {
+      e1: {
+        1: { shiftId: '', department: 'd0', subDepartment: 'sd0' }
+      }
+    }
+    await wrapper.vm.$nextTick()
+    wrapper.vm.toggleCell('e1', 1, true)
+
+    apiFetch.mockImplementationOnce(() =>
+      Promise.resolve({
+        ok: true,
+        json: async () => [
+          {
+            _id: 'sch1',
+            employee: 'e1',
+            date: `${wrapper.vm.currentMonth}-01`,
+            shiftId: 's1',
+            department: 'd1',
+            subDepartment: 'sd1'
+          }
+        ]
+      })
+    )
+
+    await wrapper.vm.applyBatch()
+    const request = apiFetch.mock.calls.find(([url]) => url === '/api/schedules/batch')
+    expect(request).toBeTruthy()
+    const body = JSON.parse(request[1].body)
+    expect(body.schedules).toEqual([
+      {
+        employee: 'e1',
+        date: `${wrapper.vm.currentMonth}-01`,
+        shiftId: 's1',
+        department: 'd1',
+        subDepartment: 'sd1'
+      }
+    ])
   })
 
   it('renders leave indicator and prevents editing when leave exists', async () => {
