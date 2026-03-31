@@ -327,7 +327,7 @@
           color: '#164e63',
           fontWeight: '600'
         }" :row-style="scheduleRowStyle" :row-class-name="scheduleRowClassName">
-        <el-table-column prop="name" label="員工姓名" width="220" fixed="left">
+        <el-table-column prop="name" label="員工姓名" width="180" fixed="left">
           <template #default="{ row }">
             <div class="employee-name">
               <el-checkbox v-if="canEditSchedule" class="row-checkbox" :model-value="selectedEmployeesSet.has(row._id)"
@@ -350,7 +350,14 @@
             </div>
           </template>
         </el-table-column>
-        <el-table-column label="職稱 / 職位" width="240" fixed="left" class-name="title-position-column">
+        <el-table-column prop="subDepartmentName" label="單位" width="160" fixed="left" class-name="sub-department-column">
+          <template #default="{ row }">
+            <span class="sub-department-text" :title="row.subDepartmentName || row.subDepartment || '-'">
+              {{ row.subDepartmentName || row.subDepartment || '-' }}
+            </span>
+          </template>
+        </el-table-column>
+        <el-table-column label="職稱 / 職位" width="220" fixed="left" class-name="title-position-column">
           <template #default="{ row }">
             <div class="title-position-cell">
               <span class="title-line">{{ row.title || '-' }}</span>
@@ -4939,6 +4946,15 @@ onUpdated(() => {
   &.on-leave {
     color: #f59e0b;
   }
+}
+
+.sub-department-text {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #334155;
 }
 
 .day-header {
