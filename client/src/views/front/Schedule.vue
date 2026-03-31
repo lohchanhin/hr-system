@@ -327,19 +327,26 @@
           color: '#164e63',
           fontWeight: '600'
         }" :row-style="scheduleRowStyle" :row-class-name="scheduleRowClassName">
-        <el-table-column prop="name" label="員工姓名" width="180" fixed="left">
+        <el-table-column prop="name" label="員工姓名" width="220" fixed="left">
           <template #default="{ row }">
             <div class="employee-name">
-              <el-avatar :size="32" :src="getPhotoUrl(row.photo)" class="employee-avatar-small">
-                {{ row.name ? row.name.charAt(0) : '?' }}
-              </el-avatar>
               <el-checkbox v-if="canEditSchedule" class="row-checkbox" :model-value="selectedEmployeesSet.has(row._id)"
                 :data-schedule-action="'toggle-employee'" :data-emp-id="String(row._id)" />
-              <component v-if="(employeeStatusMap[row._id] || employeeStatus(row._id)) === 'unscheduled'" :is="CircleCloseFilled"
-                class="status-icon unscheduled" />
-              <component v-else-if="(employeeStatusMap[row._id] || employeeStatus(row._id)) === 'onLeave'" :is="WarningFilled"
-                class="status-icon on-leave" />
-              {{ row.name }}
+              <span class="employee-name-text" :title="row.name || '-'">
+                {{ row.name || '-' }}
+              </span>
+              <span class="employee-status-secondary" aria-label="排班狀態">
+                <component
+                  v-if="(employeeStatusMap[row._id] || employeeStatus(row._id)) === 'unscheduled'"
+                  :is="CircleCloseFilled"
+                  class="status-icon unscheduled"
+                />
+                <component
+                  v-else-if="(employeeStatusMap[row._id] || employeeStatus(row._id)) === 'onLeave'"
+                  :is="WarningFilled"
+                  class="status-icon on-leave"
+                />
+              </span>
             </div>
           </template>
         </el-table-column>
@@ -527,7 +534,6 @@ import ScheduleGridVirtualBody from './ScheduleGridVirtualBody.vue'
 import { CircleCloseFilled, WarningFilled } from '@element-plus/icons-vue'
 import { buildShiftStyle } from '../../utils/shiftColors'
 import { ROW_COLOR_PALETTE, normalizeRowColorIndex, resolveRowColor } from '../../utils/rowColors'
-import { getPhotoUrl } from '../../utils/photoUrl'
 
 const ApprovalDetailContent = defineAsyncComponent(() => import('./ApprovalDetailContent.vue'))
 const authStore = useAuthStore()
@@ -4868,11 +4874,26 @@ onUpdated(() => {
   color: #1e293b;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 10px;
+  min-width: 0;
+  font-size: 1rem;
+  line-height: 1.25;
+}
 
-  .employee-avatar-small {
-    flex-shrink: 0;
-  }
+.employee-name-text {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.employee-status-secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  flex-shrink: 0;
 }
 
 .title-position-cell {
@@ -4903,11 +4924,13 @@ onUpdated(() => {
 }
 
 .row-checkbox {
-  margin-right: 2px;
+  margin-right: 0;
+  transform: translateY(1px);
 }
 
 .status-icon {
-  margin-right: 4px;
+  font-size: 0.9rem;
+  margin-left: 2px;
 
   &.unscheduled {
     color: #dc2626;
