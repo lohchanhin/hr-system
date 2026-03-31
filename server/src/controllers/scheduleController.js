@@ -34,14 +34,53 @@ function formatDate(date) {
 async function attachShiftInfo(schedules) {
   const setting = await AttendanceSetting.findOne().lean();
   const map = {};
+  const codeMap = {};
   setting?.shifts?.forEach((s) => {
     map[s._id.toString()] = s.name;
+    codeMap[s._id.toString()] = s.code || '';
   });
   return schedules.map((s) => ({
     ...s,
     date: formatDate(s.date),
     shiftName: map[s.shiftId?.toString()] || '',
+    shiftCode: codeMap[s.shiftId?.toString()] || '',
   }));
+}
+
+async function buildLeaveDaysMapForMonth(employeeIds, month, monthStartDate, monthEndDate) {
+  const leaveDaysMap = new Map();
+  const { formId, startId, endId } = await getLeaveFieldIds();
+  if (!formId || !startId || !endId || !employeeIds.length) return leaveDaysMap;
+
+  const leaveQuery = {
+    form: formId,
+    status: 'approved',
+    applicant_employee: { $in: employeeIds },
+  };
+  leaveQuery[`form_data.${startId}`] = { $lt: monthEndDate.toISOString().slice(0, 10) };
+  leaveQuery[`form_data.${endId}`] = { $gte: `${month}-01` };
+  const approvals = await ApprovalRequest.find(leaveQuery)
+    .select(`applicant_employee form_data.${startId} form_data.${endId}`)
+    .lean();
+  approvals.forEach((approval) => {
+    const empId = approval.applicant_employee?.toString?.() || '';
+    if (!empId) return;
+    if (!leaveDaysMap.has(empId)) leaveDaysMap.set(empId, new Set());
+    const entry = leaveDaysMap.get(empId);
+    const startDate = dayjs(approval.form_data?.[startId]);
+    const endDate = dayjs(approval.form_data?.[endId]);
+    const monthStart = dayjs(monthStartDate);
+    const monthEnd = dayjs(monthEndDate).subtract(1, 'day');
+    const leaveStart = startDate.isAfter(monthStart) ? startDate : monthStart;
+    const leaveEnd = endDate.isBefore(monthEnd) ? endDate : monthEnd;
+    if (!leaveStart.isValid() || !leaveEnd.isValid() || leaveEnd.isBefore(leaveStart)) return;
+    let pointer = leaveStart.startOf('day');
+    while (!pointer.isAfter(leaveEnd, 'day')) {
+      entry.add(pointer.format('YYYY/MM/DD'));
+      pointer = pointer.add(1, 'day');
+    }
+  });
+  return leaveDaysMap;
 }
 
 async function hasLeaveConflict(employeeId, date) {
@@ -1814,6 +1853,8 @@ export async function exportSchedules(req, res) {
       format: formatParam,
       status: statusRaw,
       search: searchRaw,
+      title: titleRaw,
+      practiceTitle: practiceTitleRaw,
     } = req.query;
     if (!month || !department) {
       return res.status(400).json({ error: 'month and department required' });
@@ -1826,88 +1867,67 @@ export async function exportSchedules(req, res) {
     const end = new Date(start);
     end.setMonth(end.getMonth() + 1);
 
-    const query = {
-      date: { $gte: start, $lt: end },
-      department,
-    };
-    if (subDepartment) query.subDepartment = subDepartment;
+    const query = { date: { $gte: start, $lt: end }, department };
+    if (subDepartment) {
+      query.subDepartment = subDepartment;
+    }
     const status = String(statusRaw || 'all').trim();
     const search = String(searchRaw || '').trim();
+    const title = String(titleRaw || '').trim();
+    const practiceTitle = String(practiceTitleRaw || '').trim();
 
-    if (search || status !== 'all') {
-      const employeeQuery = { department };
-      if (subDepartment) employeeQuery.subDepartment = subDepartment;
-      if (search) {
-        const rx = new RegExp(search, 'i');
-        employeeQuery.$or = [{ name: rx }, { employeeId: rx }];
-      }
-      const employeeList = await Employee.find(employeeQuery).select('_id').lean();
-      const employeeIds = employeeList.map((item) => item._id.toString());
-      query.employee = { $in: employeeIds };
+    const employeeQuery = { department };
+    if (subDepartment) employeeQuery.subDepartment = subDepartment;
+    if (search) {
+      const rx = new RegExp(search, 'i');
+      employeeQuery.$or = [{ name: rx }, { employeeId: rx }];
     }
+    if (title) {
+      employeeQuery.title = title;
+    }
+    if (practiceTitle) {
+      employeeQuery.practiceTitle = practiceTitle;
+    }
+    const employeeList = await Employee.find(employeeQuery)
+      .select('_id name title practiceTitle subDepartment')
+      .populate({ path: 'subDepartment', select: 'name' })
+      .lean();
+    const employeeIds = employeeList.map((item) => item._id.toString());
+    query.employee = { $in: employeeIds };
 
     const raw = await ShiftSchedule.find(query).populate('employee').lean();
     let schedules = await attachShiftInfo(raw);
+    const daysInMonth = dayjs(`${month}-01`).daysInMonth();
+    const leaveDaysMap = await buildLeaveDaysMapForMonth(employeeIds, month, start, end);
+    const grouped = new Map();
+    schedules.forEach((item) => {
+      const empId = item?.employee?._id?.toString?.() || '';
+      if (!empId) return;
+      if (!grouped.has(empId)) grouped.set(empId, []);
+      grouped.get(empId).push(item);
+    });
+
+    const statusByEmployee = new Map();
+    employeeIds.forEach((empId) => {
+      const list = grouped.get(empId) || [];
+      const hasLeave = (leaveDaysMap.get(empId)?.size || 0) > 0;
+      const filledDays = new Set([
+        ...list.filter((row) => !!row.shiftId).map((row) => row.date),
+        ...(leaveDaysMap.get(empId) || []),
+      ]).size;
+      const currentStatus = hasLeave ? 'onLeave' : (filledDays < daysInMonth ? 'unscheduled' : 'scheduled');
+      statusByEmployee.set(empId, currentStatus);
+    });
+
+    let filteredEmployees = employeeList;
     if (status !== 'all') {
-      const daysInMonth = dayjs(`${month}-01`).daysInMonth();
-      const leaveDaysMap = new Map();
-      const { formId, startId, endId } = await getLeaveFieldIds();
-      if (formId && startId && endId) {
-        const employeeIds = Array.from(new Set(schedules.map(item => item?.employee?._id?.toString?.()).filter(Boolean)));
-        if (employeeIds.length) {
-          const monthStart = `${month}-01`;
-          const monthEnd = end.toISOString().slice(0, 10);
-          const leaveQuery = {
-            form: formId,
-            status: 'approved',
-            applicant_employee: { $in: employeeIds },
-          };
-          leaveQuery[`form_data.${startId}`] = { $lt: monthEnd };
-          leaveQuery[`form_data.${endId}`] = { $gte: monthStart };
-          const approvals = await ApprovalRequest.find(leaveQuery)
-            .select(`applicant_employee form_data.${startId} form_data.${endId}`)
-            .lean();
-          approvals.forEach((approval) => {
-            const empId = approval.applicant_employee?.toString?.() || '';
-            if (!empId) return;
-            if (!leaveDaysMap.has(empId)) leaveDaysMap.set(empId, new Set());
-            const entry = leaveDaysMap.get(empId);
-            const startDate = dayjs(approval.form_data?.[startId]);
-            const endDate = dayjs(approval.form_data?.[endId]);
-            const monthStartDate = dayjs(start);
-            const monthEndDate = dayjs(end).subtract(1, 'day');
-            const leaveStart = startDate.isAfter(monthStartDate) ? startDate : monthStartDate;
-            const leaveEnd = endDate.isBefore(monthEndDate) ? endDate : monthEndDate;
-            if (!leaveStart.isValid() || !leaveEnd.isValid() || leaveEnd.isBefore(leaveStart)) return;
-            let pointer = leaveStart.startOf('day');
-            while (!pointer.isAfter(leaveEnd, 'day')) {
-              entry.add(pointer.format('YYYY/MM/DD'));
-              pointer = pointer.add(1, 'day');
-            }
-          });
-        }
-      }
-      const grouped = new Map();
-      schedules.forEach((item) => {
-        const empId = item?.employee?._id?.toString?.() || '';
-        if (!empId) return;
-        if (!grouped.has(empId)) grouped.set(empId, []);
-        grouped.get(empId).push(item);
-      });
-      schedules = schedules.filter((item) => {
-        const empId = item?.employee?._id?.toString?.() || '';
-        const list = grouped.get(empId) || [];
-        const leaveDays = leaveDaysMap.get(empId)?.size || 0;
-        const hasLeave = leaveDays > 0;
-        const shiftDays = new Set(list.filter(row => !!row.shiftId).map(row => row.date)).size;
-        const filledDays = new Set([
-          ...list.filter(row => !!row.shiftId).map(row => row.date),
-          ...(leaveDaysMap.get(empId) || []),
-        ]).size;
-        const currentStatus = hasLeave ? 'onLeave' : (filledDays < daysInMonth ? 'unscheduled' : 'scheduled');
-        return currentStatus === status;
-      });
+      filteredEmployees = employeeList.filter((employee) => (
+        statusByEmployee.get(employee._id.toString()) === status
+      ));
+      const filteredIds = new Set(filteredEmployees.map((item) => item._id.toString()));
+      schedules = schedules.filter((item) => filteredIds.has(item?.employee?._id?.toString?.() || ''));
     }
+
     const format = formatParam === 'excel' ? 'excel' : 'pdf';
 
     const sanitizeSegment = (value) => {
@@ -1934,18 +1954,98 @@ export async function exportSchedules(req, res) {
       }
       const workbook = new ExcelJS.Workbook();
       const ws = workbook.addWorksheet('排班表');
+      const monthDays = Array.from({ length: daysInMonth }, (_, idx) => idx + 1);
+      const headerRow = ['姓名', '單位', '職稱/職別', ...monthDays.map((day) => String(day))];
+      ws.addRow(headerRow);
+
       ws.columns = [
-        { header: '員工姓名', key: 'employee', width: 20 },
-        { header: '日期', key: 'date', width: 15 },
-        { header: '班別名稱', key: 'shiftName', width: 15 }
+        { width: 14 },
+        { width: 16 },
+        { width: 24 },
+        ...monthDays.map(() => ({ width: 8 })),
       ];
-      schedules.forEach((s) => {
-        ws.addRow({
-          employee: s.employee?.name ?? '',
-          date: s.date,
-          shiftName: s.shiftName || '未指定'
+
+      const weekendCols = new Set();
+      monthDays.forEach((day, dayIndex) => {
+        const dateObj = dayjs(`${month}-${String(day).padStart(2, '0')}`);
+        const dayOfWeek = dateObj.day();
+        if (dayOfWeek === 0 || dayOfWeek === 6) {
+          weekendCols.add(dayIndex + 4);
+        }
+      });
+
+      const scheduleMap = new Map();
+      schedules.forEach((item) => {
+        const empId = item?.employee?._id?.toString?.() || '';
+        if (!empId) return;
+        if (!scheduleMap.has(empId)) scheduleMap.set(empId, new Map());
+        const dateKey = dayjs(item.date, 'YYYY/MM/DD').date();
+        const shiftValue = item.shiftCode || item.shiftName || '未排班';
+        scheduleMap.get(empId).set(dateKey, shiftValue);
+      });
+
+      filteredEmployees.forEach((employee) => {
+        const empId = employee._id.toString();
+        const row = [
+          employee.name || '',
+          employee.subDepartment?.name || '未指定單位',
+          [employee.title, employee.practiceTitle].filter(Boolean).join(' / ') || '-',
+        ];
+        const empScheduleMap = scheduleMap.get(empId) || new Map();
+        const leaveDays = leaveDaysMap.get(empId) || new Set();
+        monthDays.forEach((day) => {
+          const dateKey = dayjs(`${month}-${String(day).padStart(2, '0')}`).format('YYYY/MM/DD');
+          if (leaveDays.has(dateKey)) {
+            row.push('請假');
+            return;
+          }
+          row.push(empScheduleMap.get(day) || '未排班');
+        });
+        ws.addRow(row);
+      });
+
+      const headerStyle = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: 'FFDCE6F1' },
+      };
+      const weekendStyle = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: 'FFF5F5F5' },
+      };
+      const unscheduledStyle = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: 'FFFFE599' },
+      };
+      const leaveStyle = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: 'FFF8CBAD' },
+      };
+
+      ws.getRow(1).eachCell((cell) => {
+        cell.fill = headerStyle;
+        cell.font = { bold: true };
+        cell.alignment = { vertical: 'middle', horizontal: 'center' };
+      });
+
+      ws.eachRow((row, rowNumber) => {
+        if (rowNumber === 1) return;
+        row.eachCell((cell, colNumber) => {
+          if (colNumber >= 4 && weekendCols.has(colNumber)) {
+            cell.fill = weekendStyle;
+          }
+          if (cell.value === '未排班') {
+            cell.fill = unscheduledStyle;
+          } else if (cell.value === '請假') {
+            cell.fill = leaveStyle;
+          }
+          cell.alignment = { vertical: 'middle', horizontal: colNumber <= 3 ? 'left' : 'center' };
         });
       });
+
       res.setHeader(
         'Content-Type',
         'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
