@@ -39,7 +39,7 @@ let closeTimer = null
 
 const appendTarget = computed(() => {
   if (!props.isFullscreen) return undefined
-  return props.fullscreenPopperTarget || undefined
+  return props.fullscreenPopperTarget || '.schedule-fullscreen-popper-host'
 })
 
 const isDropdownTeleported = computed(() => !props.isFullscreen || !!appendTarget.value)
