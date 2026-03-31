@@ -221,6 +221,24 @@
             目前部門/單位：{{ fullscreenFilterHint }}
           </p>
         </div>
+        <div class="approval-summary-inline" data-test="approval-summary-inline">
+          <div class="approval-summary-inline-item">
+            <span class="approval-summary-inline-label">待簽核</span>
+            <strong class="approval-summary-inline-value" data-test="approval-summary-pending">{{ pendingApprovalCount }}</strong>
+          </div>
+          <div class="approval-summary-inline-item">
+            <span class="approval-summary-inline-label">異議</span>
+            <strong class="approval-summary-inline-value" data-test="approval-summary-disputed">{{ disputedApprovalCount }}</strong>
+          </div>
+          <el-button
+            class="action-btn secondary approval-jump-btn"
+            :disabled="!relatedApprovalRows.length"
+            data-test="approval-jump-button"
+            @click="jumpToApprovalSection"
+          >
+            前往簽核詳情
+          </el-button>
+        </div>
         <el-button class="action-btn secondary fullscreen-toggle" @click="toggleTableFullscreen"
           data-test="fullscreen-toggle-button">
           {{ isTableFullscreen ? '退出全螢幕' : '進入全螢幕' }}
@@ -454,7 +472,7 @@
     </div>
 
     <!-- Enhanced approval list with modern card design -->
-    <div v-if="relatedApprovalRows.length" class="approval-card">
+    <div ref="approvalCardRef" class="approval-card">
       <div class="approval-header">
         <h3 class="approval-title">相關簽核</h3>
         <div class="approval-count">{{ relatedApprovalRows.length }} 項</div>
@@ -462,11 +480,23 @@
           {{ approvalCollapsed ? '展開列表' : '收合列表' }}
         </el-button>
       </div>
+      <el-alert
+        v-if="approvalFetchError"
+        class="approval-error-alert"
+        type="warning"
+        :closable="false"
+        show-icon
+        data-test="approval-error-alert"
+        :title="approvalFetchError"
+      />
+      <p v-if="!approvalFetchError && !relatedApprovalRows.length" class="approval-empty-hint" data-test="approval-empty-hint">
+        目前沒有相關簽核資料。
+      </p>
       <el-table class="modern-approval-table" :data="displayedApprovalRows" :header-cell-style="{
         backgroundColor: '#f1f5f9',
         color: '#164e63',
         fontWeight: '600'
-      }">
+      }" v-if="relatedApprovalRows.length">
         <el-table-column label="資料類型" width="120">
           <template #default="{ row }">
             <el-tag :type="row.sourceType === 'schedule_confirmation' ? 'primary' : 'info'" class="status-tag">
@@ -644,6 +674,7 @@ const isFinalizing = ref(false)
 const isTableFullscreen = ref(false)
 const isFullscreenToolbarCollapsed = ref(false)
 const scheduleCardRef = ref(null)
+const approvalCardRef = ref(null)
 const fullscreenPopperHostRef = ref(null)
 const scheduleHeaderRef = ref(null)
 const batchToolbarRef = ref(null)
@@ -669,6 +700,7 @@ const approvalCollapsed = ref(true)
 const approvalCollapsedLimit = 10
 const approvalPageSize = 10
 const approvalCurrentPage = ref(1)
+const approvalFetchError = ref('')
 const pageSize = ref(50)
 const currentPage = ref(1)
 const serverPaginationTotal = ref(0)
@@ -1685,6 +1717,12 @@ const leaveApprovalRows = computed(() => {
 })
 
 const relatedApprovalRows = computed(() => [...leaveApprovalRows.value])
+const pendingApprovalCount = computed(() =>
+  relatedApprovalRows.value.filter(row => row.status === 'pending').length
+)
+const disputedApprovalCount = computed(() =>
+  relatedApprovalRows.value.filter(row => row.status === 'disputed').length
+)
 
 const hasMoreApprovals = computed(() => relatedApprovalRows.value.length > approvalCollapsedLimit)
 
@@ -1706,6 +1744,10 @@ watch([relatedApprovalRows, approvalCollapsed], () => {
 
 function onApprovalPageChange(page) {
   approvalCurrentPage.value = page
+}
+
+function jumpToApprovalSection() {
+  approvalCardRef.value?.scrollIntoView({ behavior: 'smooth', block: 'start' })
 }
 
 function onDetailClosed() {
@@ -3214,6 +3256,7 @@ async function fetchSchedules({ reset = false, fetchAll = false, reason = 'unkno
     if (subId) leaveParams.push(`subDepartment=${subId}`)
     const leaveQuery = `?${leaveParams.join('&')}`
 
+    approvalFetchError.value = ''
     const res2 = await apiFetch(`/api/schedules/leave-approvals${leaveQuery}`)
     if (res2?.ok && typeof res2.json === 'function') {
       const extra = await res2.json()
@@ -3238,7 +3281,7 @@ async function fetchSchedules({ reset = false, fetchAll = false, reason = 'unkno
     } else {
       if (activeScheduleRequest.requestId !== requestId) return
       rawSchedules.value = schedules
-      approvalList.value = []
+      approvalFetchError.value = '簽核資料載入失敗，已保留上一筆資料，請稍後重試。'
       leaveIndex.value = {}
       markLeaveIndexDirty()
       recomputeEmployeeStatuses(targetEmployees)
@@ -4803,6 +4846,34 @@ onUpdated(() => {
       font-weight: 500;
     }
 
+    .approval-summary-inline {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+
+      .approval-summary-inline-item {
+        display: flex;
+        align-items: baseline;
+        gap: 6px;
+        padding: 6px 12px;
+        border-radius: 999px;
+        background: #ecfeff;
+        border: 1px solid #bae6fd;
+      }
+
+      .approval-summary-inline-label {
+        font-size: 0.78rem;
+        color: #0f766e;
+        font-weight: 600;
+      }
+
+      .approval-summary-inline-value {
+        font-size: 1rem;
+        color: #0f172a;
+      }
+    }
+
     .schedule-legend {
       display: flex;
       gap: 12px;
@@ -5280,6 +5351,19 @@ onUpdated(() => {
 }
 
 .approval-card {
+  .approval-empty-hint {
+    margin: 0;
+    padding: 14px 24px;
+    font-size: 0.92rem;
+    color: #475569;
+    border-bottom: 1px solid #e2e8f0;
+    background: #f8fafc;
+  }
+
+  .approval-error-alert {
+    margin: 12px 24px 0;
+  }
+
   .approval-header {
     background: linear-gradient(135deg, #164e63 0%, #0891b2 100%);
     padding: 20px 24px;
@@ -5355,6 +5439,10 @@ onUpdated(() => {
   .schedule-header {
     flex-direction: column;
     align-items: flex-start;
+
+    .approval-summary-inline {
+      width: 100%;
+    }
   }
 
   .modern-schedule-table {
