@@ -20,7 +20,7 @@ jest.unstable_mockModule('../src/services/leaveFieldService.js', () => ({
   getLeaveFieldIds: mockGetLeaveFieldIds,
 }));
 
-const { createSchedule, createSchedulesBatch, updateSchedule, listSupervisorSummary } = await import('../src/controllers/scheduleController.js');
+const { createSchedule, createSchedulesBatch, updateSchedule, listSupervisorSummary, exportSchedules } = await import('../src/controllers/scheduleController.js');
 
 describe('createSchedule validations', () => {
   beforeEach(() => {
@@ -248,8 +248,114 @@ describe('listSupervisorSummary leave handling', () => {
     await listSupervisorSummary(req, res);
 
     expect(status).not.toHaveBeenCalled();
-    expect(json).toHaveBeenCalledWith([
-      { employee: 'emp1', name: 'Emp1', shiftCount: 1, leaveCount: 3, absenceCount: 0 },
-    ]);
+    expect(json).toHaveBeenCalledWith({
+      employees: [
+        { employee: 'emp1', name: 'Emp1', shiftCount: 1, leaveCount: 3, absenceCount: 0 },
+      ],
+      stats: expect.objectContaining({
+        onLeave: 1,
+      }),
+    });
+  });
+});
+
+describe('exportSchedules excel matrix', () => {
+  beforeEach(() => {
+    mockShiftSchedule.find.mockReset();
+    mockAttendanceSetting.findOne.mockReset();
+    mockEmployee.find.mockReset();
+    mockApprovalRequest.find.mockReset();
+    mockGetLeaveFieldIds.mockReset();
+    mockGetLeaveFieldIds.mockResolvedValue({
+      formId: 'leaveForm',
+      startId: 'start',
+      endId: 'end',
+    });
+  });
+
+  it('exports matrix headers and day value by employee/date', async () => {
+    const employeeRows = [
+      {
+        _id: 'emp1',
+        name: '王小明',
+        title: '護理師',
+        practiceTitle: 'RN',
+        subDepartment: { name: '內科' },
+      },
+      {
+        _id: 'emp2',
+        name: '李小華',
+        title: '藥師',
+        practiceTitle: '',
+        subDepartment: { name: '藥局' },
+      },
+    ];
+
+    mockEmployee.find.mockReturnValue({
+      select: jest.fn().mockReturnValue({
+        populate: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue(employeeRows),
+        }),
+      }),
+    });
+
+    mockShiftSchedule.find.mockReturnValue({
+      populate: jest.fn().mockReturnValue({
+        lean: jest.fn().mockResolvedValue([
+          { employee: { _id: 'emp1', name: '王小明' }, date: new Date('2024-02-01'), shiftId: 'shift1' },
+          { employee: { _id: 'emp1', name: '王小明' }, date: new Date('2024-02-02'), shiftId: 'shift2' },
+        ]),
+      }),
+    });
+
+    mockAttendanceSetting.findOne.mockReturnValue({
+      lean: jest.fn().mockResolvedValue({
+        shifts: [
+          { _id: 'shift1', name: '早班', code: 'D' },
+          { _id: 'shift2', name: '晚班', code: 'N' },
+        ],
+      }),
+    });
+
+    mockApprovalRequest.find.mockReturnValue({
+      select: jest.fn().mockReturnValue({
+        lean: jest.fn().mockResolvedValue([
+          { applicant_employee: 'emp1', form_data: { start: '2024-02-03', end: '2024-02-03' } },
+        ]),
+      }),
+    });
+
+    const req = {
+      query: {
+        month: '2024-02',
+        department: 'dep1',
+        subDepartment: 'sub1',
+        format: 'excel',
+      },
+    };
+    const res = {
+      headers: {},
+      setHeader: jest.fn((k, v) => { res.headers[k] = v; }),
+      send: jest.fn(),
+      status: jest.fn().mockReturnThis(),
+      json: jest.fn(),
+    };
+
+    await exportSchedules(req, res);
+    expect(res.send).toHaveBeenCalledTimes(1);
+
+    const ExcelJS = (await import('exceljs')).default;
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(res.send.mock.calls[0][0]);
+    const sheet = workbook.getWorksheet('排班表');
+
+    const headerValues = sheet.getRow(1).values.slice(1, 7);
+    expect(headerValues).toEqual(['姓名', '單位', '職稱/職別', '1', '2', '3']);
+
+    expect(sheet.columnCount).toBe(32); // 3 fixed columns + 29 days in 2024/02
+    expect(sheet.getRow(2).getCell(1).value).toBe('王小明');
+    expect(sheet.getRow(2).getCell(4).value).toBe('D');
+    expect(sheet.getRow(2).getCell(5).value).toBe('N');
+    expect(sheet.getRow(2).getCell(6).value).toBe('請假');
   });
 });
