@@ -14,7 +14,7 @@
     :title="cellView.leaveTitle"
     :tabindex="isEditableCell ? 0 : -1"
     @keydown.enter.prevent="startEditing"
-    @click="startEditing"
+    @click.stop="handleCellClick"
   >
     <div v-if="canEdit && !cellView.cellMeta.isLeave" class="cell-selection" @click.stop>
       <el-checkbox
@@ -25,18 +25,19 @@
     </div>
 
     <template v-if="cellView.scheduleCell || cellView.cellMeta.isLeave">
-      <ScheduleCellEditor
-        v-if="isEditing"
-        :schedule-cell="cellView.scheduleCell"
-        :shifts="shifts"
-        :format-shift-label="formatShiftLabel"
-        :is-fullscreen="isFullscreen"
-        :fullscreen-popper-target="fullscreenPopperTarget"
-        :emp-id="String(row._id)"
-        :day="day.date"
-        @select-shift="handleSelectShift"
-        @close="stopEditing"
-      />
+      <div v-if="isEditing" class="cell-editor-wrapper" @click.stop @mousedown.stop>
+        <ScheduleCellEditor
+          :schedule-cell="cellView.scheduleCell"
+          :shifts="shifts"
+          :format-shift-label="formatShiftLabel"
+          :is-fullscreen="isFullscreen"
+          :fullscreen-popper-target="fullscreenPopperTarget"
+          :emp-id="String(row._id)"
+          :day="day.date"
+          @select-shift="handleSelectShift"
+          @close="stopEditing"
+        />
+      </div>
       <div v-else class="cell-view-content">
         <ScheduleCellDisplay
           :cell-meta="cellView.cellMeta"
@@ -79,6 +80,10 @@ const handleSelectShift = value => {
   emit('select-shift', props.row._id, props.day.date, value)
 }
 
+const handleCellClick = () => {
+  startEditing()
+}
+
 const startEditing = () => {
   if (!isEditableCell.value) return
   if (!props.cellView.scheduleCell) return
@@ -98,6 +103,10 @@ watch(
 </script>
 
 <style scoped>
+.cell-editor-wrapper {
+  width: 100%;
+}
+
 .cell-view-content {
   display: flex;
   flex-direction: column;

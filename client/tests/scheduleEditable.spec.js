@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { mount } from '@vue/test-utils'
-import { computed, defineComponent, reactive } from 'vue'
+import { computed, defineComponent, reactive, ref } from 'vue'
 import ScheduleGridVirtualBody from '../src/views/front/ScheduleGridVirtualBody.vue'
 
 const shifts = [
@@ -15,7 +15,10 @@ const ElSelectStub = defineComponent({
   name: 'ElSelect',
   props: {
     modelValue: { type: String, default: '' },
-    disabled: { type: Boolean, default: false }
+    disabled: { type: Boolean, default: false },
+    teleported: { type: Boolean, default: true },
+    appendTo: { type: [String, Object], default: undefined },
+    popperClass: { type: String, default: '' }
   },
   emits: ['update:modelValue', 'change', 'blur', 'visible-change'],
   template: `
@@ -23,6 +26,9 @@ const ElSelectStub = defineComponent({
       class="schedule-editor-select"
       :value="modelValue"
       :disabled="disabled"
+      :data-teleported="String(teleported)"
+      :data-append-to="typeof appendTo === 'string' ? appendTo : (appendTo ? 'object' : '')"
+      :data-popper-class="popperClass"
       @change="onChange"
       @blur="$emit('blur')"
     >
@@ -308,5 +314,70 @@ describe('ScheduleGridVirtualBody 可編輯行為', () => {
 
     expect(wrapper.vm.state.scheduleMap['emp-1'][5].shiftId).toBe('s2')
     expect(wrapper.text()).toContain('晚班')
+  })
+
+  it('全螢幕模式會將班別下拉穩定掛載到 fullscreen host 並保持可互動', async () => {
+    const wrapper = mountCell({
+      canEdit: true,
+      isFullscreen: true,
+      fullscreenPopperTarget: null,
+      cellView: createCellView({ shiftId: 's1' })
+    })
+
+    await wrapper.get('[data-schedule-cell="1"]').trigger('click')
+    const select = wrapper.get('.schedule-editor-select')
+    expect(select.attributes('data-teleported')).toBe('true')
+    expect(select.attributes('data-append-to')).toBe('.schedule-fullscreen-popper-host')
+    expect(select.attributes('data-popper-class')).toContain('schedule-cell-editor-popper--fullscreen')
+  })
+
+  it('開啟編輯器後，點擊 cell 內容不會冒泡觸發外層 click 關閉流程', async () => {
+    const ClickGuardHarness = defineComponent({
+      components: { ScheduleGridVirtualBody },
+      setup() {
+        const outsideClickCount = ref(0)
+        const onOutsideClick = () => {
+          outsideClickCount.value += 1
+        }
+        return {
+          outsideClickCount,
+          onOutsideClick,
+          shifts,
+          formatShiftLabel,
+          row: { _id: 'emp-1', name: '王小明' },
+          day: { date: '2026-03-05', label: '3/5' },
+          cellView: createCellView({ shiftId: 's1' })
+        }
+      },
+      template: `
+        <div class="click-guard-shell" @click="onOutsideClick">
+          <ScheduleGridVirtualBody
+            :row="row"
+            :day="day"
+            :cell-view="cellView"
+            :can-edit="true"
+            :shifts="shifts"
+            :format-shift-label="formatShiftLabel"
+          />
+          <span class="outside-count">{{ outsideClickCount }}</span>
+        </div>
+      `
+    })
+
+    const wrapper = mount(ClickGuardHarness, {
+      global: {
+        stubs: {
+          'el-select': ElSelectStub,
+          'el-option': ElOptionStub,
+          'el-popover': ElPopoverStub,
+          'el-checkbox': ElCheckboxStub
+        }
+      }
+    })
+
+    await wrapper.get('[data-schedule-cell="1"]').trigger('click')
+    await wrapper.get('.schedule-editor-select').trigger('click')
+
+    expect(wrapper.find('.outside-count').text()).toBe('0')
   })
 })

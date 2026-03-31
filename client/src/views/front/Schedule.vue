@@ -4769,7 +4769,7 @@ onUpdated(() => {
     position: fixed;
     inset: 0;
     pointer-events: none;
-    z-index: 45;
+    z-index: 3000;
   }
 
   .modern-schedule-table {
@@ -4793,7 +4793,13 @@ onUpdated(() => {
   }
 
   :deep(.schedule-cell-editor-popper--fullscreen) {
-    z-index: 45 !important;
+    z-index: 3001 !important;
+    pointer-events: auto;
+  }
+
+  :deep(.schedule-fullscreen-popper-host .schedule-cell-editor-popper--fullscreen),
+  :deep(.schedule-fullscreen-popper-host .el-select-dropdown),
+  :deep(.schedule-fullscreen-popper-host .el-popper) {
     pointer-events: auto;
   }
 }
