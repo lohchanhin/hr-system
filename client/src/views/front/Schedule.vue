@@ -157,27 +157,17 @@
 
     <!-- Enhanced actions section with modern button design -->
     <div class="actions-card">
-      <div class="primary-actions">
-        <el-button type="primary" class="action-btn primary" @click="clearSelection" :disabled="!hasAnySelection">
-          <i class="el-icon-close"></i>
-          清除選取
-        </el-button>
-        <el-button type="primary" class="action-btn primary" plain @click="selectAllEmployeesOnPage"
-          :disabled="!employees.length">
-          <i class="el-icon-user"></i>
-          本頁全選
-        </el-button>
-        <el-button type="primary" class="action-btn primary" plain @click="selectAllEmployeesAcrossPages"
-          :loading="isSelectingAllEmployeesAcrossPages"
-          :disabled="!serverPaginationTotal || isSelectingAllEmployeesAcrossPages">
-          <i class="el-icon-user-solid"></i>
-          全部人員全選
-        </el-button>
-        <el-button type="primary" class="action-btn primary" plain @click="selectAllDays" :disabled="!days.length">
-          <i class="el-icon-date"></i>
-          全選日期
-        </el-button>
-      </div>
+      <SelectionActions
+        :has-any-selection="hasAnySelection"
+        :employees-length="employees.length"
+        :server-pagination-total="serverPaginationTotal"
+        :is-selecting-all-employees-across-pages="isSelectingAllEmployeesAcrossPages"
+        :days-length="days.length"
+        @clear-selection="clearSelection"
+        @select-all-employees-on-page="selectAllEmployeesOnPage"
+        @select-all-employees-across-pages="selectAllEmployeesAcrossPages"
+        @select-all-days="selectAllDays"
+      />
       <p v-if="selectedEmployeesSet.size > 0" class="selection-scope-hint" data-test="selection-scope-hint">
         {{ allEmployeesSelectionHint }}
       </p>
@@ -247,6 +237,20 @@
           @click="toggleFullscreenToolbar" data-test="fullscreen-toolbar-toggle-button">
           {{ isFullscreenToolbarCollapsed ? '展開上方工具' : '隱藏上方工具' }}
         </el-button>
+        <SelectionActions
+          v-if="isTableFullscreen"
+          compact
+          class="fullscreen-selection-actions"
+          :has-any-selection="hasAnySelection"
+          :employees-length="employees.length"
+          :server-pagination-total="serverPaginationTotal"
+          :is-selecting-all-employees-across-pages="isSelectingAllEmployeesAcrossPages"
+          :days-length="days.length"
+          @clear-selection="clearSelection"
+          @select-all-employees-on-page="selectAllEmployeesOnPage"
+          @select-all-employees-across-pages="selectAllEmployeesAcrossPages"
+          @select-all-days="selectAllDays"
+        />
         <div v-show="!isTableFullscreen || !isFullscreenToolbarCollapsed" class="schedule-legend" data-test="schedule-legend">
           <template v-if="legendShifts.length">
             <span v-for="legend in legendShifts" :key="legend.key" class="legend-item" :style="legend.style"
@@ -623,6 +627,7 @@ import { ElMessage, ElMessageBox, ElLoading } from 'element-plus'
 import { useRouter } from 'vue-router'
 import ScheduleDashboard from './ScheduleDashboard.vue'
 import ScheduleGridVirtualBody from './ScheduleGridVirtualBody.vue'
+import SelectionActions from './SelectionActions.vue'
 import { CircleCloseFilled, WarningFilled } from '@element-plus/icons-vue'
 import { buildShiftStyle } from '../../utils/shiftColors'
 import { ROW_COLOR_PALETTE, normalizeRowColorIndex, resolveRowColor } from '../../utils/rowColors'
@@ -4757,7 +4762,6 @@ onUpdated(() => {
   flex-wrap: wrap;
   gap: 16px;
 
-  .primary-actions,
   .secondary-actions {
     display: flex;
     gap: 12px;
@@ -4974,6 +4978,10 @@ onUpdated(() => {
 
     .status-filter {
       max-width: 160px;
+    }
+
+    .fullscreen-selection-actions {
+      margin-left: auto;
     }
 
   }
