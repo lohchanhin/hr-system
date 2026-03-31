@@ -183,6 +183,11 @@ describe('Schedule.vue', () => {
       emits: ['update:modelValue'],
       template: '<div class="dialog-stub"><slot></slot></div>'
     }
+    const AlertStub = {
+      name: 'ElAlert',
+      props: ['title', 'type'],
+      template: '<div class="alert-stub" :data-type="type">{{ title }}</div>'
+    }
     const TimelineStub = { name: 'ElTimeline', template: '<div class="timeline-stub"><slot></slot></div>' }
     const TimelineItemStub = {
       name: 'ElTimelineItem',
@@ -209,6 +214,7 @@ describe('Schedule.vue', () => {
       'el-descriptions': DescriptionsStub,
       'el-descriptions-item': DescriptionsItemStub,
       'el-dialog': DialogStub,
+      'el-alert': AlertStub,
       'el-timeline': TimelineStub,
       'el-timeline-item': TimelineItemStub,
       ScheduleDashboard: { name: 'ScheduleDashboard', template: '<div class="dashboard-stub"></div>', props: ['summary'] }
@@ -807,7 +813,8 @@ describe('Schedule.vue', () => {
     expect(rows.some(row => row.applicantName === '外部員工')).toBe(false)
     expect(rows.some(row => row.sourceType === 'schedule_confirmation')).toBe(false)
 
-    expect(wrapper.find('.approval-card').exists()).toBe(false)
+    expect(wrapper.find('.approval-card').exists()).toBe(true)
+    expect(wrapper.find('[data-test="approval-empty-hint"]').exists()).toBe(true)
   })
 
   it('切換頁碼與搜尋員工後，簽核清單會同步更新', async () => {
@@ -911,6 +918,84 @@ describe('Schedule.vue', () => {
     expect(apiFetch).toHaveBeenCalledWith('/api/approvals/ap1')
     expect(wrapper.vm.detail.visible).toBe(true)
     expect(wrapper.vm.detail.doc._id).toBe('ap1')
+  })
+
+  it('簽核資料載入失敗時保留既有資料並顯示 fallback 提示', async () => {
+    setRoleToken('supervisor')
+    localStorage.setItem('employeeId', 'sup1')
+    setupSupervisorApiMock({
+      employees: [{ _id: 'e1', name: '王小明', department: 'd1', subDepartment: 'sd1' }],
+      approvals: [
+        {
+          _id: 'ap1',
+          status: 'pending',
+          form: { _id: 'f1', name: '請假申請', category: 'leave' },
+          applicant_employee: { _id: 'e1', name: '王小明' }
+        }
+      ]
+    })
+
+    const wrapper = mountSchedule()
+    await flush()
+    wrapper.vm.selectedEmployees = new Set(['e1'])
+    wrapper.vm.approvalList = [
+      {
+        _id: 'ap1',
+        status: 'pending',
+        form: { _id: 'f1', name: '請假申請', category: 'leave' },
+        applicant_employee: { _id: 'e1', name: '王小明' }
+      }
+    ]
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.vm.relatedApprovalRows).toHaveLength(1)
+    expect(wrapper.vm.approvalFetchError).toBe('')
+
+    apiFetch.mockImplementation(async (url, options = {}) => {
+      const method = options.method || 'GET'
+      const path = String(url)
+      if (path.startsWith('/api/schedules/leave-approvals') && method === 'GET') {
+        return { ok: false, json: async () => ({ message: 'fail' }) }
+      }
+      if (path.startsWith('/api/schedules/monthly') && method === 'GET') {
+        return { ok: true, json: async () => [] }
+      }
+      if (path.startsWith('/api/shifts') && method === 'GET') {
+        return { ok: true, json: async () => [] }
+      }
+      if (path.startsWith('/api/schedules/summary') && method === 'GET') {
+        return { ok: true, json: async () => [] }
+      }
+      if (path.startsWith('/api/departments') && method === 'GET') {
+        return { ok: true, json: async () => [{ _id: 'd1', name: 'Dept A' }] }
+      }
+      if (path.startsWith('/api/subdepartments') && method === 'GET') {
+        return { ok: true, json: async () => [{ _id: 'sd1', name: 'Sub A', department: { _id: 'd1' } }] }
+      }
+      if (path.startsWith('/api/employees/direct-report-subordinates') && method === 'GET') {
+        return {
+          ok: true,
+          json: async () => [{ _id: 'e1', name: '王小明', department: 'd1', subDepartment: 'sd1' }]
+        }
+      }
+      if (path.startsWith('/api/employees/me/profile') && method === 'GET') {
+        return {
+          ok: true,
+          json: async () => ({ _id: 'sup1', department: { _id: 'd1' }, subDepartment: { _id: 'sd1' } })
+        }
+      }
+      if (path.startsWith('/api/users/me/settings') && method === 'GET') {
+        return { ok: true, json: async () => ({ scheduleIncludeSelf: false }) }
+      }
+      return { ok: true, json: async () => [] }
+    })
+
+    await wrapper.vm.fetchSchedules({ reset: false })
+    await flush()
+
+    expect(wrapper.vm.approvalList).toHaveLength(1)
+    expect(wrapper.vm.approvalFetchError).toContain('簽核資料載入失敗')
+    expect(wrapper.find('[data-test="approval-error-alert"]').exists()).toBe(true)
   })
 
   it('does not append supervisor param for employee role even when id exists', async () => {
@@ -2260,6 +2345,64 @@ describe('Schedule.vue', () => {
     wrapper.vm.toggleTableFullscreen()
     await wrapper.vm.$nextTick()
     expect(wrapper.vm.isTableFullscreen).toBe(false)
+  })
+
+  it('全螢幕模式仍可看到簽核摘要，且可展開簽核詳細列表', async () => {
+    setRoleToken('supervisor')
+    localStorage.setItem('employeeId', 'sup1')
+    setupSupervisorApiMock({
+      employees: [
+        { _id: 'e1', name: '王小明', department: 'd1', subDepartment: 'sd1' },
+        { _id: 'e2', name: '李小華', department: 'd1', subDepartment: 'sd1' }
+      ],
+      approvals: [
+        {
+          _id: 'ap1',
+          status: 'pending',
+          form: { _id: 'f1', name: '請假申請', category: 'leave' },
+          applicant_employee: { _id: 'e1', name: '王小明' }
+        },
+        {
+          _id: 'ap2',
+          status: 'disputed',
+          form: { _id: 'f2', name: '請假申請', category: 'leave' },
+          applicant_employee: { _id: 'e2', name: '李小華' }
+        }
+      ]
+    })
+
+    const wrapper = mountSchedule()
+    await flush()
+    await wrapper.vm.$nextTick()
+    wrapper.vm.selectedEmployees = new Set(['e1', 'e2'])
+    wrapper.vm.approvalList = [
+      {
+        _id: 'ap1',
+        status: 'pending',
+        form: { _id: 'f1', name: '請假申請', category: 'leave' },
+        applicant_employee: { _id: 'e1', name: '王小明' }
+      },
+      {
+        _id: 'ap2',
+        status: 'disputed',
+        form: { _id: 'f2', name: '請假申請', category: 'leave' },
+        applicant_employee: { _id: 'e2', name: '李小華' }
+      }
+    ]
+    await wrapper.vm.$nextTick()
+
+    wrapper.vm.toggleTableFullscreen()
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.vm.isTableFullscreen).toBe(true)
+    expect(wrapper.find('[data-test="approval-summary-inline"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="approval-summary-pending"]').text()).toBe('1')
+    expect(wrapper.find('[data-test="approval-summary-disputed"]').text()).toBe('1')
+
+    expect(wrapper.vm.approvalCollapsed).toBe(true)
+    wrapper.vm.approvalCollapsed = false
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.displayedApprovalRows.length).toBe(2)
   })
 
   it('全螢幕上方工具列收合時隱藏 batch-toolbar，展開後才顯示', async () => {
