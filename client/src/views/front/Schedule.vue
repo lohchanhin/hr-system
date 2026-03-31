@@ -162,16 +162,25 @@
           <i class="el-icon-close"></i>
           清除選取
         </el-button>
-        <el-button type="primary" class="action-btn primary" plain @click="selectAllEmployees"
+        <el-button type="primary" class="action-btn primary" plain @click="selectAllEmployeesOnPage"
           :disabled="!employees.length">
           <i class="el-icon-user"></i>
-          全選員工
+          本頁全選
+        </el-button>
+        <el-button type="primary" class="action-btn primary" plain @click="selectAllEmployeesAcrossPages"
+          :loading="isSelectingAllEmployeesAcrossPages"
+          :disabled="!serverPaginationTotal || isSelectingAllEmployeesAcrossPages">
+          <i class="el-icon-user-solid"></i>
+          全部人員全選
         </el-button>
         <el-button type="primary" class="action-btn primary" plain @click="selectAllDays" :disabled="!days.length">
           <i class="el-icon-date"></i>
           全選日期
         </el-button>
       </div>
+      <p v-if="selectedEmployeesSet.size > 0" class="selection-scope-hint" data-test="selection-scope-hint">
+        {{ allEmployeesSelectionHint }}
+      </p>
       <div class="secondary-actions">
         <div class="range-picker-wrapper">
           <label class="range-label">自訂日期範圍</label>
@@ -608,6 +617,9 @@ const perfMetrics = reactive({
 const employeeSearch = ref('')
 const statusFilter = ref('all')
 const selectedEmployees = ref(new Set())
+const allEmployeesForSelection = ref(new Set())
+const selectedAllEmployeesAcrossPages = ref(false)
+const isSelectingAllEmployeesAcrossPages = ref(false)
 const selectedDays = ref(new Set())
 const manualSelectedCells = ref(new Set())
 const selectedCellsCache = ref(new Map())
@@ -1048,6 +1060,11 @@ const hasAnySelection = computed(() => allSelectedCells.value.size > 0)
 const batchSubDepartments = computed(() =>
   batchDepartment.value ? subDepsFor(batchDepartment.value) : []
 )
+const allEmployeesSelectionHint = computed(() =>
+  selectedAllEmployeesAcrossPages.value
+    ? `已全選 ${selectedEmployeesSet.value.size} 位員工（全部人員），切換分頁仍會維持勾選。`
+    : `目前已選 ${selectedEmployeesSet.value.size} 位員工（本頁/手動）。`
+)
 
 // ✅ UI 上是否標成「已選取」：請假格子一律 false
 const isCellSelected = (empId, day) => {
@@ -1057,6 +1074,9 @@ const isCellSelected = (empId, day) => {
 
 const pruneSelections = () => {
   const validEmployees = new Set(employees.value.map(e => e._id))
+  if (selectedAllEmployeesAcrossPages.value) {
+    allEmployeesForSelection.value.forEach(id => validEmployees.add(id))
+  }
   const validDays = new Set(days.value.map(d => d.date))
 
   selectedEmployees.value = new Set(
@@ -1077,11 +1097,20 @@ const pruneSelections = () => {
     }
   })
   manualSelectedCells.value = nextManual
+  if (
+    selectedAllEmployeesAcrossPages.value &&
+    (selectedEmployees.value.size !== allEmployeesForSelection.value.size ||
+      Array.from(allEmployeesForSelection.value).some(id => !selectedEmployees.value.has(id)))
+  ) {
+    selectedAllEmployeesAcrossPages.value = false
+  }
   rebuildSelectionCache()
 }
 
 const clearSelection = () => {
   selectedEmployees.value = new Set()
+  allEmployeesForSelection.value = new Set()
+  selectedAllEmployeesAcrossPages.value = false
   selectedDays.value = new Set()
   manualSelectedCells.value = new Set()
   selectedCellsCache.value = new Map()
@@ -1089,6 +1118,7 @@ const clearSelection = () => {
 }
 
 const toggleEmployee = (empId, explicit) => {
+  selectedAllEmployeesAcrossPages.value = false
   const next = new Set(selectedEmployees.value)
   const shouldSelect =
     typeof explicit === 'boolean' ? explicit : !next.has(empId)
@@ -1185,7 +1215,8 @@ const handleTableDelegatedClick = event => {
   toggleCell(empId, day, typeof input?.checked === 'boolean' ? input.checked : undefined)
 }
 
-const selectAllEmployees = () => {
+const selectAllEmployeesOnPage = () => {
+  selectedAllEmployeesAcrossPages.value = false
   const targetIds = filteredEmployees.value.map(e => e._id)
   const prev = selectedEmployees.value
 
@@ -1215,6 +1246,75 @@ const selectAllEmployees = () => {
       })
     })
   })
+}
+const selectAllEmployees = selectAllEmployeesOnPage
+
+const fetchAllEmployeeIdsForCurrentFilter = async () => {
+  const maxPageSize = Math.max(Number(serverPaginationTotal.value || 0), pageSize.value, employees.value.length, 1)
+  const allIds = new Set()
+  let page = 1
+  let totalPagesToFetch = 1
+  const supervisorId = getStoredSupervisorId()
+
+  while (page <= totalPagesToFetch) {
+    const params = [`month=${currentMonth.value}`, `page=${page}`, `pageSize=${maxPageSize}`]
+    const deptId = selectedDepartment.value || supervisorDepartmentId.value
+    const subId = selectedSubDepartment.value
+    if (supervisorId) params.push(`supervisor=${supervisorId}`)
+    if (deptId) params.push(`department=${deptId}`)
+    if (subId) params.push(`subDepartment=${subId}`)
+    if (statusFilter.value && statusFilter.value !== 'all') {
+      params.push(`status=${statusFilter.value}`)
+    }
+    if (employeeSearch.value) {
+      params.push(`search=${encodeURIComponent(employeeSearch.value)}`)
+    }
+    const url = `/api/employees/schedule?${params.join('&')}`
+    const res = await apiFetch(url)
+    if (!res.ok) throw new Error('Failed to fetch all employee ids')
+    const payload = typeof res.json === 'function' ? await res.json() : []
+    const employeeList = Array.isArray(payload)
+      ? payload
+      : Array.isArray(payload?.employees)
+        ? payload.employees
+        : []
+    employeeList.forEach(emp => {
+      const id = String(emp?._id || emp?.id || '')
+      if (id) allIds.add(id)
+    })
+    const pagination = payload?.pagination && typeof payload.pagination === 'object'
+      ? payload.pagination
+      : null
+    if (pagination) {
+      const total = Number(pagination.total || allIds.size)
+      const size = Number(pagination.pageSize || maxPageSize || 1)
+      totalPagesToFetch = Math.max(1, Math.ceil(total / Math.max(size, 1)))
+    } else {
+      totalPagesToFetch = 1
+    }
+    page += 1
+  }
+
+  return Array.from(allIds)
+}
+
+const selectAllEmployeesAcrossPages = async () => {
+  if (isSelectingAllEmployeesAcrossPages.value) return
+  isSelectingAllEmployeesAcrossPages.value = true
+  try {
+    await ensureFetchAllLoaded()
+    const allIds = await fetchAllEmployeeIdsForCurrentFilter()
+    const next = new Set(allIds)
+    selectedEmployees.value = next
+    allEmployeesForSelection.value = new Set(allIds)
+    selectedAllEmployeesAcrossPages.value = allIds.length > 0
+    rebuildSelectionCache()
+  } catch (err) {
+    console.error(err)
+    ElMessage.error('全選全部人員失敗')
+  } finally {
+    isSelectingAllEmployeesAcrossPages.value = false
+  }
 }
 
 
@@ -4556,6 +4656,14 @@ onUpdated(() => {
 
   .range-picker {
     width: 240px;
+  }
+
+  .selection-scope-hint {
+    width: 100%;
+    margin: 0;
+    font-size: 0.9rem;
+    color: #0f766e;
+    font-weight: 600;
   }
 }
 

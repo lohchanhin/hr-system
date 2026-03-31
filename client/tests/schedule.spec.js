@@ -1924,6 +1924,78 @@ describe('Schedule.vue', () => {
     })
     expect(ElMessage.success).toHaveBeenCalledWith('批次套用完成')
   })
+
+  it('分頁時點擊全部人員全選後切頁仍維持勾選', async () => {
+    const allEmployees = [
+      { _id: 'e1', name: 'E1', department: 'd1', subDepartment: 'sd1' },
+      { _id: 'e2', name: 'E2', department: 'd1', subDepartment: 'sd1' },
+      { _id: 'e3', name: 'E3', department: 'd1', subDepartment: 'sd1' }
+    ]
+    const pagedEmployees = {
+      1: allEmployees.slice(0, 2),
+      2: allEmployees.slice(2)
+    }
+
+    apiFetch.mockImplementation(async url => {
+      if (url.startsWith('/api/departments')) return { ok: true, json: async () => [{ _id: 'd1', name: 'D1' }] }
+      if (url.startsWith('/api/sub-departments')) {
+        return { ok: true, json: async () => [{ _id: 'sd1', name: 'S1', department: { _id: 'd1' } }] }
+      }
+      if (url.startsWith('/api/shifts')) return { ok: true, json: async () => [] }
+      if (url.startsWith('/api/schedules/summary')) return { ok: true, json: async () => [] }
+      if (url.startsWith('/api/schedules/monthly')) return { ok: true, json: async () => [] }
+      if (url.startsWith('/api/schedules/leave-approvals')) {
+        return { ok: true, json: async () => ({ approvals: [], leaves: [] }) }
+      }
+      if (url.startsWith('/api/employees/schedule')) {
+        const query = new URLSearchParams(url.split('?')[1] || '')
+        const page = Number(query.get('page') || 1)
+        const size = Number(query.get('pageSize') || 50)
+        const list = size >= 3 ? allEmployees : (pagedEmployees[page] || [])
+        return {
+          ok: true,
+          json: async () => ({
+            employees: list,
+            pagination: { total: allEmployees.length, page, pageSize: size }
+          })
+        }
+      }
+      return { ok: true, json: async () => [] }
+    })
+
+    const wrapper = mountSchedule()
+    await flush()
+    await flush()
+
+    wrapper.vm.days = [
+      { date: 1, label: '1' },
+      { date: 2, label: '2' }
+    ]
+    wrapper.vm.scheduleMap = {
+      e1: { 1: { shiftId: 's1', day: 1 }, 2: { shiftId: 's1', day: 2 } },
+      e2: { 1: { shiftId: 's1', day: 1 }, 2: { shiftId: 's1', day: 2 } },
+      e3: { 1: { shiftId: 's1', day: 1 }, 2: { shiftId: 's1', day: 2 } }
+    }
+    wrapper.vm.serverPaginationTotal = 3
+    wrapper.vm.pageSize = 2
+    wrapper.vm.currentPage = 1
+    await wrapper.vm.$nextTick()
+
+    await wrapper.vm.selectAllEmployeesAcrossPages()
+    expect(Array.from(wrapper.vm.selectedEmployees).sort()).toEqual(['e1', 'e2', 'e3'])
+    expect(wrapper.vm.selectedAllEmployeesAcrossPages).toBe(true)
+
+    await wrapper.vm.onPageChange(2)
+    await flush()
+    await flush()
+
+    expect(wrapper.vm.currentPage).toBe(2)
+    expect(wrapper.vm.employees.map(emp => emp._id)).toEqual(['e3'])
+    expect(wrapper.vm.selectedEmployees.has('e1')).toBe(true)
+    expect(wrapper.vm.selectedEmployees.has('e2')).toBe(true)
+    expect(wrapper.vm.selectedEmployees.has('e3')).toBe(true)
+  })
+
   it('stores data and navigates when previewing month', async () => {
     apiFetch
       .mockResolvedValueOnce({ ok: true, json: async () => [] })
