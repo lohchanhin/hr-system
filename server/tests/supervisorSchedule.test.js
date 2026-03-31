@@ -169,6 +169,30 @@ describe('Supervisor schedule permissions', () => {
     });
     expect(res.body[0].annualLeave).toEqual({ remainingDays: 6 });
   });
+
+  it('passes jobType with department/status filters on employee schedule route', async () => {
+    const fakeEmployees = [{
+      _id: 'emp1',
+      name: 'Emp1',
+      title: '護理師',
+      practiceTitle: '急診護理師',
+      annualLeave: { totalDays: 8, usedDays: 1 },
+    }];
+    const leanMock = jest.fn().mockResolvedValue(fakeEmployees);
+    const sortMock = jest.fn().mockReturnValue({ lean: leanMock });
+    const selectMock = jest.fn().mockReturnValue({ sort: sortMock });
+    mockEmployee.find.mockReturnValue({ select: selectMock });
+
+    const res = await request(app)
+      .get('/api/employees/schedule?supervisor=u1&department=d1&status=all&jobType=%E8%AD%B7%E7%90%86');
+
+    expect(res.status).toBe(200);
+    const query = mockEmployee.find.mock.calls[0][0];
+    expect(query.supervisor).toBe('u1');
+    expect(query.department).toBe('d1');
+    expect(Array.isArray(query.$or)).toBe(true);
+    expect(query.$or).toHaveLength(3);
+  });
   it('includes supervisor schedule when includeSelf is true', async () => {
     const selectMock = jest.fn()
       .mockResolvedValueOnce([{ _id: 'emp1' }])

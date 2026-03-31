@@ -246,6 +246,7 @@ export async function listMonthlySchedules(req, res) {
       subDepartment: subDepartmentRaw,
       status: statusRaw,
       search: searchRaw,
+      jobType: jobTypeRaw,
     } = req.query;
     if (!month) return res.status(400).json({ error: 'month required' });
     const start = new Date(`${month}-01`);
@@ -263,6 +264,7 @@ export async function listMonthlySchedules(req, res) {
     const subDepartment = subDepartmentRaw ? String(subDepartmentRaw) : '';
     const status = String(statusRaw || 'all').trim();
     const search = String(searchRaw || '').trim();
+    const jobType = String(jobTypeRaw || '').trim();
 
     const parsedEmployeeIds = String(employeeIdsRaw || '')
       .split(',')
@@ -333,13 +335,23 @@ export async function listMonthlySchedules(req, res) {
     }
     if (department) employeeQuery.department = department;
     if (subDepartment) employeeQuery.subDepartment = subDepartment;
+    const andFilters = [];
     if (search) {
       const rx = new RegExp(search, 'i');
-      employeeQuery.$or = [{ name: rx }, { employeeId: rx }];
+      andFilters.push({ $or: [{ name: rx }, { employeeId: rx }] });
+    }
+    if (jobType) {
+      const rx = new RegExp(jobType, 'i');
+      andFilters.push({ $or: [{ practiceTitle: rx }, { title: rx }, { jobType: rx }] });
+    }
+    if (andFilters.length === 1) {
+      Object.assign(employeeQuery, andFilters[0]);
+    } else if (andFilters.length > 1) {
+      employeeQuery.$and = andFilters;
     }
 
     const matchedEmployeeQuery = Employee.find(employeeQuery)
-      .select('_id name department subDepartment photo');
+      .select('_id name department subDepartment photo practiceTitle title jobType');
     const matchedEmployees = typeof matchedEmployeeQuery.lean === 'function'
       ? await matchedEmployeeQuery.lean()
       : await matchedEmployeeQuery;
