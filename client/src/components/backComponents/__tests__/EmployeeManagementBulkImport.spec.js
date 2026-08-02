@@ -62,6 +62,7 @@ const elementStubs = {
   'el-radio': { template: '<label class="el-radio-stub"><slot /></label>' },
   'el-date-picker': { template: '<input type="date" />', props: ['modelValue'] },
   'el-input-number': { template: '<input type="number" />', props: ['modelValue'] },
+  'el-pagination': { template: '<div class="el-pagination-stub" />' },
   'el-table': {
     template: '<div class="el-table-stub"><slot :row="{}" :$index="0" /></div>'
   },
@@ -146,8 +147,8 @@ describe('EmployeeManagement - 批量匯入流程', () => {
     const wrapper = await mountComponent()
     await wrapper.find('[data-test="bulk-import-button"]').trigger('click')
 
-    const alertText = wrapper.find('.el-alert-stub').text()
-    expect(alertText).toContain('範本內建的 5 筆示範資料')
+    const alertTexts = wrapper.findAll('.el-alert-stub').map(alert => alert.text())
+    expect(alertTexts.some(text => text.includes('範本內建的 5 筆示範資料'))).toBe(true)
 
     const originalCreateObjectURL = window.URL.createObjectURL
     const originalRevokeObjectURL = window.URL.revokeObjectURL
@@ -292,7 +293,7 @@ describe('EmployeeManagement - 批量匯入流程', () => {
     expect(wrapper.vm.bulkImportForm.columnMappings.email).toBe('email')
 
     const beforeEmployeeCalls = apiFetchMock.mock.calls.filter(
-      ([path]) => path === '/api/employees'
+      ([path]) => typeof path === 'string' && path.split('?')[0] === '/api/employees'
     ).length
 
     await wrapper.vm.submitBulkImport()
@@ -327,7 +328,7 @@ describe('EmployeeManagement - 批量匯入流程', () => {
     expect(ElMessage.warning).not.toHaveBeenCalled()
 
     const afterEmployeeCalls = apiFetchMock.mock.calls.filter(
-      ([path]) => path === '/api/employees'
+      ([path]) => typeof path === 'string' && path.split('?')[0] === '/api/employees'
     ).length
     expect(afterEmployeeCalls).toBeGreaterThan(beforeEmployeeCalls)
     expect(wrapper.vm.bulkImportDialogVisible).toBe(true)

@@ -276,7 +276,7 @@ function resetState() {
 async function initializeDialog() {
   try {
     // 取得員工清單（後端回傳 _id / name / email / employeeId 等）
-    const res = await apiFetch('/api/employees')
+    const res = await apiFetch('/api/employees/attendance-import-options')
     if (res.ok) {
       employees.value = await res.json()
     } else {

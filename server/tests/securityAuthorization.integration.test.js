@@ -154,7 +154,7 @@ describeIntegration('security authorization with isolated MongoDB', () => {
 
     expect(detailResponse.status).toBe(404)
     expect(listResponse.status).toBe(200)
-    expect(listResponse.body.map((employee) => employee._id)).toEqual([attacker._id.toString()])
+    expect(listResponse.body.employees.map((employee) => employee._id)).toEqual([attacker._id.toString()])
     expect(JSON.stringify(listResponse.body)).not.toContain('SECRET-OUTSIDER')
   })
 

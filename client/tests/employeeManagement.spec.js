@@ -18,6 +18,25 @@ vi.mock('element-plus', () => ({
 
 const elStubs = ['el-table','el-table-column','el-button','el-tabs','el-tab-pane','el-form','el-form-item','el-input','el-select','el-option','el-dialog','el-avatar','el-tag','el-radio','el-radio-group','el-date-picker','el-input-number','el-upload','el-switch']
 
+function installEmployeeApiMock(responses) {
+  apiFetch.mockImplementation(url => {
+    let payload = responses[url]
+    if (url.startsWith('/api/employees?')) {
+      const employees = responses['/api/employees'] ?? []
+      payload = {
+        employees,
+        pagination: { total: employees.length, page: 1, pageSize: 20, totalPages: 1 },
+        summary: { active: employees.length },
+      }
+    } else if (url.startsWith('/api/employees/')) {
+      const employeeId = decodeURIComponent(url.split('/').pop())
+      payload = (responses['/api/employees'] ?? []).find(employee => employee._id === employeeId)
+    }
+
+    return Promise.resolve({ ok: payload !== undefined, json: async () => payload ?? [] })
+  })
+}
+
 describe('EmployeeManagement.vue', () => {
   beforeEach(() => {
     apiFetch.mockClear()
@@ -27,7 +46,7 @@ describe('EmployeeManagement.vue', () => {
   it('fetches lists on mount', () => {
     mount(EmployeeManagement, { global: { stubs: elStubs } })
     const calls = apiFetch.mock.calls.map(c => c[0])
-    expect(calls).toContain('/api/employees')
+    expect(calls.some(url => url.startsWith('/api/employees?'))).toBe(true)
     expect(calls).toContain('/api/departments')
     expect(calls).toContain('/api/organizations')
     expect(calls).toContain('/api/sub-departments')
@@ -99,9 +118,7 @@ describe('EmployeeManagement.vue', () => {
         }
       }
     }
-    apiFetch.mockImplementation(url =>
-      Promise.resolve({ ok: true, json: async () => responses[url] ?? [] })
-    )
+    installEmployeeApiMock(responses)
 
     const wrapper = mount(EmployeeManagement, { global: { stubs: elStubs } })
     await flushPromises()
@@ -132,9 +149,7 @@ describe('EmployeeManagement.vue', () => {
         }
       }
     }
-    apiFetch.mockImplementation(url =>
-      Promise.resolve({ ok: true, json: async () => responses[url] ?? [] })
-    )
+    installEmployeeApiMock(responses)
 
     const wrapper = mount(EmployeeManagement, { global: { stubs: elStubs } })
     await flushPromises()
@@ -190,9 +205,7 @@ describe('EmployeeManagement.vue', () => {
       '/api/other-control-settings/item-settings': dictionaryResponse
     }
 
-    apiFetch.mockImplementation(url =>
-      Promise.resolve({ ok: true, json: async () => responses[url] ?? [] })
-    )
+    installEmployeeApiMock(responses)
 
     const { ElMessage } = await import('element-plus')
     ElMessage.warning.mockClear()
@@ -319,9 +332,7 @@ describe('EmployeeManagement.vue', () => {
         }
       ]
     }
-    apiFetch.mockImplementation(url =>
-      Promise.resolve({ ok: true, json: async () => responses[url] ?? [] })
-    )
+    installEmployeeApiMock(responses)
 
     const wrapper = mount(EmployeeManagement, { global: { stubs: elStubs } })
     await flushPromises()
@@ -361,9 +372,7 @@ describe('EmployeeManagement.vue', () => {
         }
       ]
     }
-    apiFetch.mockImplementation(url =>
-      Promise.resolve({ ok: true, json: async () => responses[url] ?? [] })
-    )
+    installEmployeeApiMock(responses)
 
     const wrapper = mount(EmployeeManagement, { global: { stubs: elStubs } })
     await flushPromises()
@@ -471,9 +480,7 @@ describe('EmployeeManagement.vue', () => {
         }
       ]
     }
-    apiFetch.mockImplementation(url =>
-      Promise.resolve({ ok: true, json: async () => responses[url] ?? [] })
-    )
+    installEmployeeApiMock(responses)
 
     const wrapper = mount(EmployeeManagement, { global: { stubs: elStubs } })
     await flushPromises()

@@ -10,7 +10,7 @@ const mockShiftSchedule = {
 };
 const mockApprovalRequest = { findOne: jest.fn() };
 const mockGetLeaveFieldIds = jest.fn();
-const mockEmployee = { findById: jest.fn(), find: jest.fn() };
+const mockEmployee = { findById: jest.fn(), find: jest.fn(), countDocuments: jest.fn() };
 const mockAttendanceSetting = { findOne: jest.fn() };
 const mockAssertScheduleRuleCompliance = jest.fn();
 const mockIsLaborRuleValidationError = jest.fn();
@@ -60,6 +60,8 @@ beforeEach(() => {
   });
   mockEmployee.findById.mockReset();
   mockEmployee.find.mockReset();
+  mockEmployee.countDocuments.mockReset();
+  mockEmployee.countDocuments.mockResolvedValue(1);
   mockAttendanceSetting.findOne.mockReset();
   mockAttendanceSetting.findOne.mockReturnValue({
     lean: jest.fn().mockResolvedValue({ shifts: [] }),
@@ -127,21 +129,26 @@ describe('Supervisor schedule permissions', () => {
 
   it('lists supervisor employees and creates schedules batch', async () => {
     const fakeEmployees = [{ _id: 'emp1', supervisor: 'u1', name: 'Emp1' }];
-    mockEmployee.find.mockReturnValue({
-      select: jest.fn().mockReturnValue({
-        populate: jest.fn().mockReturnValue({
-          sort: jest.fn().mockReturnValue({
-            lean: jest.fn().mockResolvedValue(fakeEmployees),
-          }),
-        }),
-      }),
-    });
+    const query = {
+      select: jest.fn(),
+      populate: jest.fn(),
+      sort: jest.fn(),
+      skip: jest.fn(),
+      limit: jest.fn(),
+      lean: jest.fn().mockResolvedValue(fakeEmployees),
+    };
+    query.select.mockReturnValue(query);
+    query.populate.mockReturnValue(query);
+    query.sort.mockReturnValue(query);
+    query.skip.mockReturnValue(query);
+    query.limit.mockReturnValue(query);
+    mockEmployee.find.mockReturnValue(query);
     const listRes = await request(app).get('/api/employees?supervisor=u1');
     expect(listRes.status).toBe(200);
     expect(mockEmployee.find).toHaveBeenCalledWith({
       $or: [{ _id: 'u1' }, { supervisor: 'u1' }],
     });
-    expect(listRes.body).toEqual(fakeEmployees);
+    expect(listRes.body.employees).toEqual(fakeEmployees);
 
     mockEmployee.findById.mockImplementation((id) => {
       if (id === 'u1') return Promise.resolve({ _id: 'u1', role: 'supervisor', supervisor: 'sup1' });
@@ -189,6 +196,7 @@ describe('Supervisor schedule permissions', () => {
   });
 
   it('passes jobType with department/status filters on employee schedule route', async () => {
+    const departmentId = '507f1f77bcf86cd799439031';
     const fakeEmployees = [{
       _id: 'emp1',
       name: 'Emp1',
@@ -202,11 +210,11 @@ describe('Supervisor schedule permissions', () => {
     mockEmployee.find.mockReturnValue({ select: selectMock });
 
     const res = await request(app)
-      .get('/api/employees/schedule?supervisor=u1&department=d1&status=all&jobType=%E8%AD%B7%E7%90%86');
+      .get(`/api/employees/schedule?supervisor=u1&department=${departmentId}&status=all&jobType=%E8%AD%B7%E7%90%86`);
 
     expect(res.status).toBe(200);
     const query = mockEmployee.find.mock.calls[0][0];
-    expect(query.department).toBe('d1');
+    expect(query.department).toBe(departmentId);
     expect(query.$and[0]).toEqual({ $or: [{ _id: 'u1' }, { supervisor: 'u1' }] });
     expect(query.$and[1].$or).toHaveLength(3);
   });

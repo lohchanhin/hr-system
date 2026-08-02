@@ -20,7 +20,11 @@ beforeEach(async () => {
 });
 
 test('blacklisted token rejected after server restart', async () => {
-  const token = jwt.sign({ id: 1 }, 'secret', { expiresIn: '1h' });
+  const token = jwt.sign(
+    { id: '1', sub: '1', role: 'employee', ver: 0 },
+    'secret',
+    { expiresIn: '1h', issuer: 'hr-system', audience: 'hr-system-api' }
+  );
   mockBlacklistedToken.create.mockResolvedValue();
   await blacklistUtils.blacklistToken(token);
 

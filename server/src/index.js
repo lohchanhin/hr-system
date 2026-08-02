@@ -1,5 +1,5 @@
+import './config/env.js';
 import express from 'express';
-import dotenv from 'dotenv';
 import cors from 'cors';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -31,6 +31,51 @@ import shiftRoutes from './routes/shiftRoutes.js';
 import deptManagerRoutes from './routes/deptManagerRoutes.js';
 import { ensureDefaultSupervisorReports } from './services/supervisorReportSeed.js';
 import privateUploadGuard from './middleware/privateUploadGuard.js';
+import {
+  apiErrorHandler,
+  apiNotFound,
+  configureTrustProxy,
+  disableApiCaching,
+  requestContext,
+  secureHttpHeaders,
+} from './middleware/httpSecurity.js';
+
+const BOOTSTRAP_PASSWORD_MIN_LENGTH = 15;
+
+function getAdminBootstrapConfig() {
+  const username = process.env.DEFAULT_ADMIN_USERNAME?.trim();
+  const email = process.env.DEFAULT_ADMIN_EMAIL?.trim();
+  const password = process.env.DEFAULT_ADMIN_PASSWORD;
+  const missing = [
+    ['DEFAULT_ADMIN_USERNAME', username],
+    ['DEFAULT_ADMIN_EMAIL', email],
+    ['DEFAULT_ADMIN_PASSWORD', password],
+  ].filter(([, value]) => !value).map(([name]) => name);
+
+  if (missing.length) {
+    throw new Error(
+      `No administrator exists. Set ${missing.join(', ')} to create the first administrator securely.`
+    );
+  }
+  if (!/^\S+@\S+\.\S+$/.test(email)) {
+    throw new Error('DEFAULT_ADMIN_EMAIL must be a valid email address.');
+  }
+
+  const normalizedPassword = password.toLowerCase();
+  const commonPasswords = new Set(['password', 'password123', 'admin123', 'changeme']);
+  if (
+    password.length < BOOTSTRAP_PASSWORD_MIN_LENGTH ||
+    commonPasswords.has(normalizedPassword) ||
+    normalizedPassword.startsWith('replace-') ||
+    normalizedPassword.includes(username.toLowerCase())
+  ) {
+    throw new Error(
+      `DEFAULT_ADMIN_PASSWORD must be at least ${BOOTSTRAP_PASSWORD_MIN_LENGTH} characters and must not contain the username or a common password.`
+    );
+  }
+
+  return { username, email, password };
+}
 
 export async function ensureAdminUser() {
   const existing = await Employee.findOne({ role: 'admin' });
@@ -38,23 +83,35 @@ export async function ensureAdminUser() {
     console.log('Admin user already exists');
     return;
   }
-  const username = process.env.DEFAULT_ADMIN_USERNAME || 'admin';
-  const password = process.env.DEFAULT_ADMIN_PASSWORD || 'password';
+  const { username, email, password } = getAdminBootstrapConfig();
   await Employee.create({
     name: username,
-    email: `${username}@example.com`,
+    email,
     username,
     password,
     role: 'admin',
+    accountEnabled: true,
   });
-  console.log(`Created default admin user ${username}`);
+  console.log('Created bootstrap administrator account');
+}
+
+export function assertSecureRuntimeConfig() {
+  if (process.env.NODE_ENV === 'test') return;
+
+  const secret = process.env.JWT_SECRET ?? '';
+  const insecureValues = new Set(['secret', 'your_jwt_secret', 'password', 'changeme']);
+  if (
+    Buffer.byteLength(secret, 'utf8') < 32 ||
+    insecureValues.has(secret.toLowerCase()) ||
+    secret.toLowerCase().startsWith('replace-')
+  ) {
+    throw new Error('JWT_SECRET must be a unique secret of at least 32 bytes.');
+  }
 }
 
 // Load .env file from server directory (handles both dev and PM2 production scenarios)
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const serverRoot = path.resolve(__dirname, '..');
-dotenv.config({ path: path.join(serverRoot, '.env'), override: true });
 
 const distPath = path.join(__dirname, '..', '..', 'client', 'dist');
 const uploadPath = path.join(__dirname, '..', '..', 'upload');
@@ -66,13 +123,19 @@ if (missing.length) {
   process.exit(1);
 }
 
-const app = express();
+export const app = express();
 const PORT = process.env.PORT;
 
-// 增加 JSON payload 大小限制以支持 base64 圖片（向後兼容）
-// 但新的實作會使用 multipart/form-data 來避免此問題
-app.use(express.json({ limit: '50mb' }));
-app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+app.disable('x-powered-by');
+configureTrustProxy(app);
+app.use(requestContext);
+app.use(secureHttpHeaders);
+app.use(express.json({ limit: process.env.JSON_BODY_LIMIT || '2mb' }));
+app.use(express.urlencoded({
+  extended: true,
+  limit: process.env.URLENCODED_BODY_LIMIT || '256kb',
+  parameterLimit: 500,
+}));
 
 // 設定 CORS - 支援環境變數配置
 const allowedOrigins = [
@@ -91,6 +154,7 @@ app.use(cors({
   methods: "GET,POST,PUT,DELETE,OPTIONS"
 }));
 app.get('/env.js', (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
   res.type('application/javascript');
   const config = {
     apiBaseUrl: process.env.VITE_API_BASE_URL ?? '',
@@ -107,7 +171,7 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'OK' });
 });
 
-
+app.use('/api', disableApiCaching);
 app.use('/api', authRoutes);
 app.use(
   '/api/employees',
@@ -226,17 +290,16 @@ app.use('/api/holidays-public', authenticate, holidayRoutes); // Public holiday 
 app.use('/api/salary-settings', authenticate, authorizeRoles('admin'), salarySettingRoutes);
 app.use('/api/holiday-move-settings', authenticate, authorizeRoles('admin'), holidayMoveSettingRoutes);
 
-
+app.use('/api', apiNotFound);
 app.get('*', (req, res, next) => {
   if (req.path.startsWith('/api')) return next();
   res.sendFile(path.join(distPath, 'index.html'));
 });
 
-
-
-
+app.use(apiErrorHandler);
 async function start() {
   try {
+    assertSecureRuntimeConfig();
     await connectDB(process.env.MONGODB_URI);
     await ensureAdminUser();
     await ensureDefaultSupervisorReports();

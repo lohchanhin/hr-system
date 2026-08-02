@@ -1,10 +1,50 @@
+import '../config/env.js'
 import { Router } from 'express'
 import jwt from 'jsonwebtoken'
+import { ipKeyGenerator, rateLimit } from 'express-rate-limit'
 import Employee from '../models/Employee.js'
 import { blacklistToken } from '../utils/tokenBlacklist.js'
 import { authenticate } from '../middleware/auth.js'
 
 const router = Router();
+const JWT_OPTIONS = {
+  issuer: 'hr-system',
+  audience: 'hr-system-api',
+}
+const INACTIVE_EMPLOYMENT_STATUSES = new Set(['離職員工', '留職停薪'])
+
+const positiveInteger = (value, fallback) => {
+  const parsed = Number.parseInt(value, 10)
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback
+}
+
+const loginRateLimitResponse = (_req, res) => {
+  res.status(429).json({ error: 'Too many login attempts. Please try again later.' })
+}
+
+const loginIpRateLimiter = rateLimit({
+  windowMs: positiveInteger(process.env.LOGIN_RATE_LIMIT_WINDOW_MS, 15 * 60 * 1000),
+  limit: positiveInteger(process.env.LOGIN_RATE_LIMIT_IP_MAX, 50),
+  standardHeaders: 'draft-8',
+  legacyHeaders: false,
+  skipSuccessfulRequests: true,
+  handler: loginRateLimitResponse,
+})
+
+const loginAccountRateLimiter = rateLimit({
+  windowMs: positiveInteger(process.env.LOGIN_RATE_LIMIT_WINDOW_MS, 15 * 60 * 1000),
+  limit: positiveInteger(process.env.LOGIN_RATE_LIMIT_ACCOUNT_MAX, 5),
+  standardHeaders: 'draft-8',
+  legacyHeaders: false,
+  skipSuccessfulRequests: true,
+  keyGenerator: (req) => {
+    const username = typeof req.body?.username === 'string'
+      ? req.body.username.trim().toLowerCase().slice(0, 100)
+      : '<invalid>'
+    return `${ipKeyGenerator(req.ip)}:${username}`
+  },
+  handler: loginRateLimitResponse,
+})
 
 function validatePasswordStrength(password) {
   if (!password || typeof password !== 'string') return '密碼不可為空'
@@ -60,49 +100,81 @@ function buildUserProfile(employee) {
   }
 }
 
-router.post('/login', async (req, res) => {
-  const { username, password, role } = req.body
-  const employee = await Employee.findOne({ username }).select('+passwordHash')
-  if (!employee) return res.status(401).json({ error: 'Invalid credentials' })
-
-  const match = employee.verifyPassword(password)
-  if (!match) return res.status(401).json({ error: 'Invalid credentials' })
-
-  if (role !== employee.role) {
-    return res.status(403).json({ error: 'Forbidden' })
-  }
-
-  if (typeof employee.populate === 'function') {
-    try {
-      await employee.populate([
-        { path: 'department', populate: { path: 'organization' } },
-        { path: 'subDepartment' },
-      ])
-    } catch (err) {
-      // population 失敗時採用原始資料，避免登入流程中斷
+router.post('/login', loginIpRateLimiter, loginAccountRateLimiter, async (req, res) => {
+  try {
+    const { username, password, role } = req.body ?? {}
+    const normalizedUsername = typeof username === 'string' ? username.trim() : ''
+    const validRole = ['employee', 'supervisor', 'admin'].includes(role)
+    if (
+      !normalizedUsername ||
+      normalizedUsername.length > 100 ||
+      typeof password !== 'string' ||
+      !password ||
+      password.length > 1024 ||
+      !validRole
+    ) {
+      return res.status(401).json({ error: 'Invalid credentials' })
     }
+
+    const employee = await Employee.findOne({ username: normalizedUsername }).select('+passwordHash')
+    const activeAccount =
+      employee?.accountEnabled !== false &&
+      !INACTIVE_EMPLOYMENT_STATUSES.has(employee?.status)
+    if (!employee || !activeAccount || !employee.verifyPassword(password) || role !== employee.role) {
+      return res.status(401).json({ error: 'Invalid credentials' })
+    }
+
+    if (typeof employee.populate === 'function') {
+      try {
+        await employee.populate([
+          { path: 'department', populate: { path: 'organization' } },
+          { path: 'subDepartment' },
+        ])
+      } catch {
+        // Optional profile population must not interrupt a valid login.
+      }
+    }
+
+    const profile = buildUserProfile(employee)
+    const employeeId = employee._id?.toString?.() ?? String(employee._id)
+    const token = jwt.sign(
+      {
+        id: employeeId,
+        sub: employeeId,
+        role: employee.role,
+        ver: Number(employee.authVersion ?? 0),
+      },
+      process.env.JWT_SECRET,
+      { ...JWT_OPTIONS, expiresIn: '1h' }
+    )
+    return res.json({ token, user: profile })
+  } catch (error) {
+    console.error('Login failed', { error: error?.name ?? 'Error' })
+    return res.status(500).json({ error: 'Unable to sign in' })
   }
-
-  const profile = buildUserProfile(employee)
-
-  const token = jwt.sign(
-    { id: employee._id, role: employee.role },
-    process.env.JWT_SECRET || 'secret',
-    { expiresIn: '1h' }
-  )
-  res.json({
-    token,
-    user: profile
-  })
 })
 
 router.post('/logout', async (req, res) => {
   const auth = req.headers.authorization
-  if (auth) {
-    const token = auth.split(' ')[1]
-    await blacklistToken(token)
+  const [scheme, token, extra] = typeof auth === 'string' ? auth.trim().split(/\s+/) : []
+  if (scheme?.toLowerCase() !== 'bearer' || !token || extra) {
+    return res.status(401).json({ error: 'Unauthorized' })
   }
-  res.status(204).end()
+
+  try {
+    jwt.verify(token, process.env.JWT_SECRET, {
+      ...JWT_OPTIONS,
+      algorithms: ['HS256'],
+      clockTolerance: 5,
+    })
+    await blacklistToken(token)
+    return res.status(204).end()
+  } catch (error) {
+    if (error?.name === 'JsonWebTokenError' || error?.name === 'TokenExpiredError' || error?.name === 'NotBeforeError') {
+      return res.status(401).json({ error: 'Unauthorized' })
+    }
+    return res.status(503).json({ error: 'Authentication service unavailable' })
+  }
 })
 
 router.post('/change-password', authenticate, async (req, res) => {

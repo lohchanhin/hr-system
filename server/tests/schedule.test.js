@@ -7,6 +7,8 @@ import { jest } from '@jest/globals';
 import ExcelJS from 'exceljs';
 import jwt from 'jsonwebtoken';
 
+process.env.JWT_SECRET = 'test-only-jwt-secret-at-least-32-bytes';
+
 /* ----------------------------- Mocks: Models ----------------------------- */
 // 統一成物件型態，提供各端點會用到的方法
 const mockShiftSchedule = {
@@ -158,9 +160,8 @@ beforeEach(() => {
   });
   mockEmployee.findById.mockReset();
   mockEmployee.findById.mockImplementation(async (id) => {
-    if (id === 'tester') return { _id: 'tester', role: currentRole };
     if (!id) return null;
-    return { _id: id, supervisor: 'tester' };
+    return { _id: id, role: currentRole, supervisor: 'tester' };
   });
   mockAttendanceSetting.findOne.mockReset();
   mockAttendanceSetting.findOne.mockReturnValue({
@@ -203,8 +204,13 @@ const buildScheduleAppWithRole = (role) => {
 };
 
 const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
-  const payload = { id: 'tester', role, ...overrides };
-  const token = jwt.sign(payload, process.env.JWT_SECRET || 'secret');
+  currentRole = role;
+  const payload = { id: 'tester', role, ver: 0, ...overrides };
+  const token = jwt.sign(payload, process.env.JWT_SECRET || 'secret', {
+    algorithm: 'HS256',
+    issuer: 'hr-system',
+    audience: 'hr-system-api',
+  });
   return `Bearer ${token}`;
 };
 

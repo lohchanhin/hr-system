@@ -36,7 +36,11 @@ afterEach(() => {
 })
 
 function makeToken(role = 'employee') {
-  return jwt.sign({ id: 'emp1', role }, 'secret', { expiresIn: '1h' })
+  return jwt.sign(
+    { id: 'emp1', sub: 'emp1', role, ver: 0 },
+    'secret',
+    { expiresIn: '1h', issuer: 'hr-system', audience: 'hr-system-api' }
+  )
 }
 
 describe('change password API', () => {

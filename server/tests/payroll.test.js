@@ -15,8 +15,11 @@ mockPayrollRecord.find = jest.fn(() => ({
 mockPayrollRecord.findOneAndUpdate = findOneAndUpdateMock;
 
 const mockEmployee = {
-  findById: jest.fn()
+  findById: jest.fn(),
+  find: jest.fn(),
+  countDocuments: jest.fn(),
 };
+const mockApprovalRequest = { find: jest.fn() };
 
 const mockLaborInsuranceRate = {
   find: jest.fn().mockReturnThis(),
@@ -30,15 +33,30 @@ const mockCalculateEmployeePayroll = jest.fn();
 const mockCalculateBatchPayroll = jest.fn();
 const mockSavePayrollRecord = jest.fn();
 const mockGetEmployeePayrollRecords = jest.fn();
+const mockCalculateCompleteWorkData = jest.fn();
+const mockCalculateWorkHours = jest.fn();
+const mockCalculateLeaveImpact = jest.fn();
+const mockCalculateOvertimePay = jest.fn();
 
 jest.unstable_mockModule('../src/models/PayrollRecord.js', () => ({ default: mockPayrollRecord }));
 jest.unstable_mockModule('../src/models/Employee.js', () => ({ default: mockEmployee }));
+jest.unstable_mockModule('../src/models/approval_request.js', () => ({ default: mockApprovalRequest }));
 jest.unstable_mockModule('../src/models/LaborInsuranceRate.js', () => ({ default: mockLaborInsuranceRate }));
 jest.unstable_mockModule('../src/services/payrollService.js', () => ({
   calculateEmployeePayroll: mockCalculateEmployeePayroll,
   calculateBatchPayroll: mockCalculateBatchPayroll,
   savePayrollRecord: mockSavePayrollRecord,
-  getEmployeePayrollRecords: mockGetEmployeePayrollRecords
+  getEmployeePayrollRecords: mockGetEmployeePayrollRecords,
+  extractRecurringAllowance: (employee) => ({
+    total: 0,
+    breakdown: [],
+  }),
+}));
+jest.unstable_mockModule('../src/services/workHoursCalculationService.js', () => ({
+  calculateWorkHours: mockCalculateWorkHours,
+  calculateLeaveImpact: mockCalculateLeaveImpact,
+  calculateOvertimePay: mockCalculateOvertimePay,
+  calculateCompleteWorkData: mockCalculateCompleteWorkData,
 }));
 
 let app;
@@ -56,6 +74,9 @@ beforeEach(() => {
   mockPayrollRecord.find.mockReset();
   findOneAndUpdateMock.mockReset();
   mockEmployee.findById.mockReset();
+  mockEmployee.find.mockReset();
+  mockEmployee.countDocuments.mockReset();
+  mockApprovalRequest.find.mockReset();
   mockLaborInsuranceRate.find.mockReset();
   mockLaborInsuranceRate.findOne.mockReset();
   mockLaborInsuranceRate.findOneAndUpdate.mockReset();
@@ -65,6 +86,10 @@ beforeEach(() => {
   mockCalculateBatchPayroll.mockReset();
   mockSavePayrollRecord.mockReset();
   mockGetEmployeePayrollRecords.mockReset();
+  mockCalculateCompleteWorkData.mockReset();
+  mockCalculateWorkHours.mockReset();
+  mockCalculateLeaveImpact.mockReset();
+  mockCalculateOvertimePay.mockReset();
 
   // Reset chaining
   mockPayrollRecord.find.mockReturnValue({
@@ -86,7 +111,42 @@ beforeEach(() => {
   mockCalculateBatchPayroll.mockResolvedValue([]);
   mockSavePayrollRecord.mockResolvedValue({ _id: 'payroll-record', netPay: 42142 });
   mockGetEmployeePayrollRecords.mockResolvedValue([]);
+  mockEmployee.countDocuments.mockResolvedValue(0);
+  mockCalculateCompleteWorkData.mockResolvedValue({
+    workDays: 0,
+    scheduledHours: 0,
+    actualWorkHours: 0,
+    overtimeHours: 0,
+    overtimePay: 0,
+    baseSalary: 0,
+    nightShiftDays: 0,
+    nightShiftHours: 0,
+    nightShiftAllowance: 0,
+    nightShiftBreakdown: [],
+    nightShiftConfigurationIssues: [],
+  });
 });
+
+function makeEmployeeOverviewQuery(employees) {
+  const query = {
+    populate: jest.fn(),
+    select: jest.fn(),
+    sort: jest.fn(),
+    skip: jest.fn(),
+    limit: jest.fn(),
+    then: undefined,
+  };
+  query.populate.mockReturnValue(query);
+  query.select.mockReturnValue(query);
+  query.sort.mockReturnValue(query);
+  query.skip.mockReturnValue(query);
+  query.limit.mockResolvedValue(employees);
+  return query;
+}
+
+function makePayrollOverviewQuery(records) {
+  return { lean: jest.fn().mockResolvedValue(records) };
+}
 
 describe('Payroll API', () => {
   it('lists payroll records', async () => {
@@ -263,6 +323,52 @@ describe('Payroll API', () => {
       expect(res.body.error).toContain('Invalid month format');
     });
 
+    it('paginates employees and escapes search input before querying', async () => {
+      const employeeQuery = makeEmployeeOverviewQuery([{
+        _id: 'emp1',
+        employeeId: 'E001',
+        name: '[Payroll User]',
+        salaryAmount: 45000,
+      }]);
+      mockEmployee.find.mockReturnValue(employeeQuery);
+      mockEmployee.countDocuments.mockResolvedValue(25);
+      mockPayrollRecord.find.mockReturnValue(makePayrollOverviewQuery([]));
+
+      const res = await request(app)
+        .get('/api/payroll/overview/monthly?month=2025-11-01&q=%5B&page=2&pageSize=10');
+
+      expect(res.status).toBe(200);
+      const filter = mockEmployee.find.mock.calls[0][0];
+      expect(filter.$or[0].name.source).toBe('\\[');
+      expect(employeeQuery.skip).toHaveBeenCalledWith(10);
+      expect(employeeQuery.limit).toHaveBeenCalledWith(10);
+      expect(res.body.pagination).toEqual({ total: 25, page: 2, pageSize: 10, totalPages: 3 });
+    });
+
+    it('loads approved bonus forms once for the current employee page', async () => {
+      const employees = [
+        { _id: '507f1f77bcf86cd799439041', employeeId: 'E001', name: 'A', salaryAmount: 45000 },
+        { _id: '507f1f77bcf86cd799439042', employeeId: 'E002', name: 'B', salaryAmount: 46000 },
+      ];
+      mockEmployee.find.mockReturnValue(makeEmployeeOverviewQuery(employees));
+      mockEmployee.countDocuments.mockResolvedValue(2);
+      mockPayrollRecord.find.mockReturnValue(makePayrollOverviewQuery([]));
+      const approvalLean = jest.fn().mockResolvedValue([]);
+      const approvalPopulate = jest.fn().mockReturnValue({ lean: approvalLean });
+      mockApprovalRequest.find.mockReturnValue({ populate: approvalPopulate });
+
+      const res = await request(app).get('/api/payroll/overview/monthly?month=2025-11-01');
+
+      expect(res.status).toBe(200);
+      expect(mockApprovalRequest.find).toHaveBeenCalledTimes(1);
+      expect(approvalPopulate).toHaveBeenCalledWith('form');
+      expect(mockCalculateEmployeePayroll).toHaveBeenCalledTimes(2);
+      expect(mockCalculateEmployeePayroll.mock.calls[0][3]).toMatchObject({
+        employee: employees[0],
+        workData: expect.any(Object),
+      });
+    });
+
     it('returns overview with month filter', async () => {
       const fakeEmployees = [
         {
@@ -277,18 +383,15 @@ describe('Payroll API', () => {
         }
       ];
 
-      mockEmployee.find = jest.fn().mockReturnValue({
-        populate: jest.fn().mockReturnThis(),
-        select: jest.fn().mockResolvedValue(fakeEmployees)
-      });
+      mockEmployee.find.mockReturnValue(makeEmployeeOverviewQuery(fakeEmployees));
+      mockEmployee.countDocuments.mockResolvedValue(1);
 
-      mockPayrollRecord.find.mockReturnValue({
-        populate: jest.fn().mockResolvedValue([])
-      });
+      mockPayrollRecord.find.mockReturnValue(makePayrollOverviewQuery([]));
 
       const res = await request(app).get('/api/payroll/overview/monthly?month=2025-11-01');
       expect(res.status).toBe(200);
-      expect(Array.isArray(res.body)).toBe(true);
+      expect(Array.isArray(res.body.items)).toBe(true);
+      expect(res.body.pagination).toEqual({ total: 1, page: 1, pageSize: 20, totalPages: 1 });
     });
 
     it('includes night shift fields in overview response', async () => {
@@ -331,21 +434,25 @@ describe('Payroll API', () => {
         }
       ];
 
-      mockEmployee.find = jest.fn().mockReturnValue({
-        populate: jest.fn().mockReturnThis(),
-        select: jest.fn().mockResolvedValue(fakeEmployees)
-      });
+      mockEmployee.find.mockReturnValue(makeEmployeeOverviewQuery(fakeEmployees));
+      mockEmployee.countDocuments.mockResolvedValue(1);
 
-      mockPayrollRecord.find.mockReturnValue({
-        populate: jest.fn().mockResolvedValue(fakePayrollRecords)
+      mockPayrollRecord.find.mockReturnValue(makePayrollOverviewQuery(fakePayrollRecords));
+      mockCalculateCompleteWorkData.mockResolvedValue({
+        nightShiftDays: 8,
+        nightShiftHours: 56,
+        nightShiftAllowance: 3920,
+        nightShiftCalculationMethod: 'calculated',
+        nightShiftBreakdown: fakePayrollRecords[0].nightShiftBreakdown,
+        nightShiftConfigurationIssues: [],
       });
 
       const res = await request(app).get('/api/payroll/overview/monthly?month=2025-11-01');
       expect(res.status).toBe(200);
-      expect(Array.isArray(res.body)).toBe(true);
-      expect(res.body.length).toBeGreaterThan(0);
+      expect(Array.isArray(res.body.items)).toBe(true);
+      expect(res.body.items.length).toBeGreaterThan(0);
       
-      const employeeData = res.body[0];
+      const employeeData = res.body.items[0];
       expect(employeeData).toHaveProperty('nightShiftDays', 8);
       expect(employeeData).toHaveProperty('nightShiftHours', 56);
       expect(employeeData).toHaveProperty('nightShiftAllowance', 3920);
@@ -378,21 +485,17 @@ describe('Payroll API', () => {
         }
       ];
 
-      mockEmployee.find = jest.fn().mockReturnValue({
-        populate: jest.fn().mockReturnThis(),
-        select: jest.fn().mockResolvedValue(fakeEmployees)
-      });
+      mockEmployee.find.mockReturnValue(makeEmployeeOverviewQuery(fakeEmployees));
+      mockEmployee.countDocuments.mockResolvedValue(1);
 
-      mockPayrollRecord.find.mockReturnValue({
-        populate: jest.fn().mockResolvedValue([])
-      });
+      mockPayrollRecord.find.mockReturnValue(makePayrollOverviewQuery([]));
 
       const res = await request(app).get('/api/payroll/overview/monthly?month=2025-11-01');
       expect(res.status).toBe(200);
-      expect(Array.isArray(res.body)).toBe(true);
-      expect(res.body.length).toBeGreaterThan(0);
+      expect(Array.isArray(res.body.items)).toBe(true);
+      expect(res.body.items.length).toBeGreaterThan(0);
       
-      const employeeData = res.body[0];
+      const employeeData = res.body.items[0];
       expect(employeeData).toHaveProperty('annualLeave');
       expect(employeeData.annualLeave).toHaveProperty('totalDays', 14);
       expect(employeeData.annualLeave).toHaveProperty('totalHours', 112); // 14 days * 8 hours

@@ -356,23 +356,80 @@ export async function refreshLaborInsuranceRatesController(req, res) {
   }
 }
 
+const PAYROLL_OVERVIEW_DEFAULT_PAGE_SIZE = 20;
+const PAYROLL_OVERVIEW_MAX_PAGE_SIZE = 100;
+const PAYROLL_OVERVIEW_SEARCH_MAX_LENGTH = 100;
+
+function parsePositiveInteger(value, fallback, maximum = Number.MAX_SAFE_INTEGER) {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isInteger(parsed) || parsed < 1) return fallback;
+  return Math.min(parsed, maximum);
+}
+
+function escapeRegex(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+async function mapWithConcurrency(items, concurrency, mapper) {
+  const results = new Array(items.length);
+  let cursor = 0;
+  const worker = async () => {
+    while (cursor < items.length) {
+      const index = cursor;
+      cursor += 1;
+      results[index] = await mapper(items[index], index);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, worker));
+  return results;
+}
+
 /**
  * 獲取月薪資總覽（支援篩選機構、部門、單位、員工）
  * 自動計算沒有薪資記錄的員工薪資
  */
 export async function getMonthlyPayrollOverview(req, res) {
   try {
-    const { month, organization, department, subDepartment, employeeId } = req.query;
+    const {
+      month,
+      organization,
+      department,
+      subDepartment,
+      employeeId,
+      q,
+      page: pageRaw,
+      pageSize: pageSizeRaw,
+    } = req.query;
     
     if (!month) {
       return res.status(400).json({ error: 'month parameter is required' });
     }
     
-    // Validate month format (should be YYYY-MM-DD)
-    const monthDate = new Date(month);
-    if (isNaN(monthDate.getTime())) {
-      return res.status(400).json({ error: 'Invalid month format. Expected YYYY-MM-DD' });
+    if (typeof month !== 'string' || !/^\d{4}-(0[1-9]|1[0-2])-01$/.test(month)) {
+      return res.status(400).json({ error: 'Invalid month format. Expected YYYY-MM-01' });
     }
+    const monthDate = new Date(`${month}T00:00:00.000Z`);
+
+    const objectIdFilters = { department, subDepartment, employeeId };
+    const invalidObjectIdFilter = Object.entries(objectIdFilters)
+      .find(([, value]) => value && !mongoose.isValidObjectId(value));
+    if (invalidObjectIdFilter) {
+      return res.status(400).json({ error: `Invalid ${invalidObjectIdFilter[0]} filter` });
+    }
+    if (organization && (typeof organization !== 'string' || organization.length > 100)) {
+      return res.status(400).json({ error: 'Invalid organization filter' });
+    }
+    const search = typeof q === 'string' ? q.trim() : '';
+    if ((q !== undefined && typeof q !== 'string') || search.length > PAYROLL_OVERVIEW_SEARCH_MAX_LENGTH) {
+      return res.status(400).json({ error: 'Invalid employee search' });
+    }
+
+    const page = parsePositiveInteger(pageRaw, 1);
+    const pageSize = parsePositiveInteger(
+      pageSizeRaw,
+      PAYROLL_OVERVIEW_DEFAULT_PAGE_SIZE,
+      PAYROLL_OVERVIEW_MAX_PAGE_SIZE
+    );
     
     // Build employee query based on filters
     const employeeQuery = {};
@@ -388,15 +445,28 @@ export async function getMonthlyPayrollOverview(req, res) {
     if (employeeId) {
       employeeQuery._id = employeeId;
     }
+    if (search) {
+      const searchRegex = new RegExp(escapeRegex(search), 'i');
+      employeeQuery.$or = [{ name: searchRegex }, { employeeId: searchRegex }];
+    }
     
-    // Find employees matching the criteria
+    const total = await Employee.countDocuments(employeeQuery);
+    const totalPages = Math.max(1, Math.ceil(total / pageSize));
+    const safePage = Math.min(page, totalPages);
+
     const employees = await Employee.find(employeeQuery)
       .populate('department')
       .populate('subDepartment')
-      .select('employeeId name department subDepartment organization salaryAmount salaryType salaryItems salaryItemAmounts annualLeave');
+      .select('employeeId name department subDepartment organization salaryAmount salaryType salaryItems salaryItemAmounts annualLeave monthlySalaryAdjustments laborPensionSelf employeeAdvance salaryAccountA salaryAccountB')
+      .sort({ name: 1, employeeId: 1, _id: 1 })
+      .skip((safePage - 1) * pageSize)
+      .limit(pageSize);
     
     if (employees.length === 0) {
-      return res.json([]);
+      return res.json({
+        items: [],
+        pagination: { total, page: safePage, pageSize, totalPages },
+      });
     }
     
     const employeeIds = employees.map(e => e._id.toString());
@@ -405,16 +475,42 @@ export async function getMonthlyPayrollOverview(req, res) {
     const payrollRecords = await PayrollRecord.find({
       employee: { $in: employeeIds },
       month: monthDate
-    }).populate('employee');
+    }).lean();
     
     // Create a map of employee ID to payroll record
     const payrollMap = {};
     payrollRecords.forEach(record => {
-      payrollMap[record.employee._id.toString()] = record;
+      const recordEmployeeId = record.employee?._id ?? record.employee;
+      if (recordEmployeeId) payrollMap[recordEmployeeId.toString()] = record;
     });
+
+    const approvalsByEmployee = new Map();
+    const validEmployeeIds = employeeIds.filter((id) => mongoose.Types.ObjectId.isValid(id));
+    if (validEmployeeIds.length > 0) {
+      const approvalRangeEnd = new Date(monthDate);
+      approvalRangeEnd.setUTCMonth(approvalRangeEnd.getUTCMonth() + 1);
+      try {
+        const approvals = await ApprovalRequest.find({
+          applicant_employee: { $in: validEmployeeIds },
+          status: 'approved',
+          createdAt: { $gte: monthDate, $lt: approvalRangeEnd },
+        }).populate('form').lean();
+
+        approvals.forEach((approval) => {
+          const applicantId = approval.applicant_employee?._id ?? approval.applicant_employee;
+          if (!applicantId) return;
+          const key = applicantId.toString();
+          const employeeApprovals = approvalsByEmployee.get(key) ?? [];
+          employeeApprovals.push(approval);
+          approvalsByEmployee.set(key, employeeApprovals);
+        });
+      } catch (error) {
+        console.error('Error aggregating payroll approvals', { error: error?.name ?? 'Error' });
+      }
+    }
     
     // Build the overview data
-    const overview = await Promise.all(employees.map(async (employee) => {
+    const overview = await mapWithConcurrency(employees, 5, async (employee) => {
       const employeeIdStr = employee._id.toString();
       let payroll = payrollMap[employeeIdStr];
       if (payroll && typeof payroll.toObject === 'function') {
@@ -462,33 +558,28 @@ export async function getMonthlyPayrollOverview(req, res) {
             });
           }
 
-          try {
-            if (mongoose.Types.ObjectId.isValid(employeeIdStr)) {
-              const startDate = new Date(monthDate);
-              startDate.setUTCHours(0, 0, 0, 0);
-              const endDate = new Date(startDate);
-              endDate.setUTCMonth(endDate.getUTCMonth() + 1);
-
-              const approvals = await ApprovalRequest.find({
-                applicant_employee: employeeIdStr,
-                status: 'approved',
-                createdAt: { $gte: startDate, $lt: endDate }
-              }).populate('form').lean();
-
-              if (approvals.length > 0) {
-                const bonusData = aggregateBonusFromApprovals(approvals);
-                Object.entries(bonusData || {}).forEach(([key, value]) => {
-                  if (typeof value === 'number') {
-                    customData[key] = value;
-                  }
-                });
-              }
-            }
-          } catch (error) {
-            console.error(`Error aggregating approvals for employee ${employeeIdStr}:`, error);
+          const employeeApprovals = approvalsByEmployee.get(employeeIdStr) ?? [];
+          if (employeeApprovals.length > 0) {
+            const bonusData = aggregateBonusFromApprovals(employeeApprovals);
+            Object.entries(bonusData || {}).forEach(([key, value]) => {
+              if (typeof value === 'number') customData[key] = value;
+            });
           }
 
-          const calculatedPayroll = await calculateEmployeePayroll(employeeIdStr, month, customData);
+          const nightShiftAllowanceData = workData ? {
+            nightShiftDays: workData.nightShiftDays,
+            nightShiftHours: workData.nightShiftHours,
+            allowanceAmount: workData.nightShiftAllowance,
+            calculationMethod: workData.nightShiftCalculationMethod,
+            shiftBreakdown: workData.nightShiftBreakdown,
+            configurationIssues: workData.nightShiftConfigurationIssues,
+          } : undefined;
+          const calculatedPayroll = await calculateEmployeePayroll(
+            employeeIdStr,
+            month,
+            customData,
+            { employee, workData, nightShiftAllowanceData }
+          );
           // Note: We don't save the calculated payroll automatically, just return it for preview
           payroll = calculatedPayroll;
         } catch (error) {
@@ -588,11 +679,15 @@ export async function getMonthlyPayrollOverview(req, res) {
         hasPayrollRecord: !!payrollMap[employeeIdStr],
         payrollRecordId: payrollMap[employeeIdStr]?._id
       };
-    }));
+    });
     
-    res.json(overview);
+    return res.json({
+      items: overview,
+      pagination: { total, page: safePage, pageSize, totalPages },
+    });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error('Failed to build monthly payroll overview', { error: err?.name ?? 'Error' });
+    res.status(500).json({ error: 'Failed to build monthly payroll overview' });
   }
 }
 

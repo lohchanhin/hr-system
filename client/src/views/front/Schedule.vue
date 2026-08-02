@@ -2986,10 +2986,11 @@ async function fetchSupervisorSubDepartmentScope(supervisorId = '') {
     return
   }
   try {
-    const res = await apiFetch(`/api/employees?supervisor=${targetId}`)
+    const params = new URLSearchParams({ supervisor: targetId, pageSize: '200' })
+    const res = await apiFetch(`/api/employees/schedule?${params.toString()}`)
     if (!res.ok) throw new Error('Failed to fetch direct reports')
     const payload = await res.json()
-    const list = Array.isArray(payload) ? payload : []
+    const list = Array.isArray(payload) ? payload : (payload.employees ?? [])
     const seen = new Set()
     const allowed = []
     const add = value => {

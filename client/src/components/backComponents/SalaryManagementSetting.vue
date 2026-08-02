@@ -30,7 +30,7 @@
                   placeholder="選擇月份"
                   format="YYYY-MM"
                   value-format="YYYY-MM-01"
-                  @change="fetchMonthlyOverview"
+                  @change="applyOverviewFilters"
                 />
               </el-form-item>
               <el-form-item label="機構">
@@ -39,7 +39,7 @@
                   class="filter-select"
                   placeholder="全部機構"
                   clearable
-                  @change="fetchMonthlyOverview"
+                  @change="applyOverviewFilters"
                 >
                   <el-option
                     v-for="org in organizations"
@@ -55,7 +55,7 @@
                   class="filter-select"
                   placeholder="全部部門"
                   clearable
-                  @change="fetchMonthlyOverview"
+                  @change="applyOverviewFilters"
                 >
                   <el-option
                     v-for="dept in departments"
@@ -71,7 +71,7 @@
                   class="filter-select"
                   placeholder="全部單位"
                   clearable
-                  @change="fetchMonthlyOverview"
+                  @change="applyOverviewFilters"
                 >
                   <el-option
                     v-for="sub in subDepartments"
@@ -86,12 +86,12 @@
                   v-model="filterEmployeeName"
                   placeholder="搜尋員工姓名"
                   clearable
-                  @input="filterOverviewData"
+                  @input="scheduleOverviewSearch"
                   style="width: 200px"
                 />
               </el-form-item>
               <el-form-item>
-                <el-button type="primary" @click="fetchMonthlyOverview">查詢</el-button>
+                <el-button type="primary" @click="applyOverviewFilters">查詢</el-button>
               </el-form-item>
             </el-form>
 
@@ -156,14 +156,14 @@
                 <el-card>
                   <div class="stat-item">
                     <div class="stat-label">總人數</div>
-                    <div class="stat-value">{{ filteredOverviewData.length }}</div>
+                    <div class="stat-value">{{ overviewPagination.total }}</div>
                   </div>
                 </el-card>
               </el-col>
               <el-col :span="6">
                 <el-card>
                   <div class="stat-item">
-                    <div class="stat-label">薪資總額</div>
+                    <div class="stat-label">本頁薪資總額</div>
                     <div class="stat-value">{{ formatCurrency(totalBaseSalary) }}</div>
                   </div>
                 </el-card>
@@ -171,7 +171,7 @@
               <el-col :span="6">
                 <el-card>
                   <div class="stat-item">
-                    <div class="stat-label">實發總額</div>
+                    <div class="stat-label">本頁實發總額</div>
                     <div class="stat-value">{{ formatCurrency(totalNetPay) }}</div>
                   </div>
                 </el-card>
@@ -179,7 +179,7 @@
               <el-col :span="6">
                 <el-card>
                   <div class="stat-item">
-                    <div class="stat-label">扣款總額</div>
+                    <div class="stat-label">本頁扣款總額</div>
                     <div class="stat-value">{{ formatCurrency(totalDeductions) }}</div>
                   </div>
                 </el-card>
@@ -188,6 +188,7 @@
 
             <!-- Payroll overview table -->
             <el-table 
+              v-loading="overviewLoading"
               :data="filteredOverviewData" 
               border 
               stripe 
@@ -377,6 +378,18 @@
                 </template>
               </el-table-column>
             </el-table>
+            <div class="overview-pagination">
+              <el-pagination
+                background
+                layout="total, sizes, prev, pager, next"
+                :total="overviewPagination.total"
+                :current-page="overviewPagination.page"
+                :page-size="overviewPagination.pageSize"
+                :page-sizes="[20, 50, 100]"
+                @current-change="handleOverviewPageChange"
+                @size-change="handleOverviewPageSizeChange"
+              />
+            </div>
 
             <!-- Employee Detail Dialog -->
             <el-dialog
@@ -1048,7 +1061,7 @@
   </template>
   
 <script setup>
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, onBeforeUnmount, computed, reactive } from 'vue'
 import { apiFetch } from '../../api'
 import { formatDate } from '../../utils/dateFormatter'
 import { ElMessage } from 'element-plus'
@@ -1174,6 +1187,13 @@ const showExplanationDialog = ref(false)
   // ============ (5) 月薪資總覽 ============
   const overviewMonth = ref(new Date().toISOString().substring(0, 7) + '-01')
   const overviewData = ref([])
+  const overviewLoading = ref(false)
+  const overviewPagination = reactive({
+    total: 0,
+    page: 1,
+    pageSize: 20,
+    totalPages: 1,
+  })
   const filterOrganization = ref('')
   const filterDepartment = ref('')
   const filterSubDepartment = ref('')
@@ -1194,17 +1214,7 @@ const showExplanationDialog = ref(false)
   const selectedEmployee = ref(null)
   const employeeDetailData = ref(null)
 
-  // Computed filtered data based on employee name search
-  const filteredOverviewData = computed(() => {
-    if (!filterEmployeeName.value) {
-      return overviewData.value
-    }
-    const searchTerm = filterEmployeeName.value.toLowerCase()
-    return overviewData.value.filter(item => 
-      item.name.toLowerCase().includes(searchTerm) ||
-      item.employeeId?.toLowerCase().includes(searchTerm)
-    )
-  })
+  const filteredOverviewData = computed(() => overviewData.value)
 
   function organizationName(id) {
     if (!id) return '-'
@@ -1651,24 +1661,65 @@ const showExplanationDialog = ref(false)
     }
   }
 
+  let overviewRequestGeneration = 0
   async function fetchMonthlyOverview() {
+    if (!overviewMonth.value) return
+    const generation = ++overviewRequestGeneration
+    overviewLoading.value = true
     try {
-      const params = new URLSearchParams({ month: overviewMonth.value })
+      const params = new URLSearchParams({
+        month: overviewMonth.value,
+        page: String(overviewPagination.page),
+        pageSize: String(overviewPagination.pageSize),
+      })
       if (filterOrganization.value) params.append('organization', filterOrganization.value)
       if (filterDepartment.value) params.append('department', filterDepartment.value)
       if (filterSubDepartment.value) params.append('subDepartment', filterSubDepartment.value)
+      if (filterEmployeeName.value.trim()) params.append('q', filterEmployeeName.value.trim())
       
       const res = await apiFetch(`/api/payroll/overview/monthly?${params}`)
       if (res.ok) {
-        overviewData.value = await res.json()
+        const payload = await res.json()
+        if (generation !== overviewRequestGeneration) return
+        overviewData.value = Array.isArray(payload) ? payload : (payload.items ?? [])
+        const pagination = payload.pagination ?? {}
+        overviewPagination.total = Number(pagination.total ?? overviewData.value.length)
+        overviewPagination.page = Number(pagination.page ?? overviewPagination.page)
+        overviewPagination.pageSize = Number(pagination.pageSize ?? overviewPagination.pageSize)
+        overviewPagination.totalPages = Number(pagination.totalPages ?? 1)
       } else {
         console.error('Failed to fetch monthly overview')
-        overviewData.value = []
+        if (generation === overviewRequestGeneration) overviewData.value = []
       }
     } catch (error) {
       console.error('Error fetching monthly overview:', error)
-      overviewData.value = []
+      if (generation === overviewRequestGeneration) overviewData.value = []
+    } finally {
+      if (generation === overviewRequestGeneration) overviewLoading.value = false
     }
+  }
+
+  function applyOverviewFilters() {
+    overviewPagination.page = 1
+    fetchMonthlyOverview()
+  }
+
+  function handleOverviewPageChange(page) {
+    overviewPagination.page = page
+    fetchMonthlyOverview()
+  }
+
+  function handleOverviewPageSizeChange(pageSize) {
+    overviewPagination.pageSize = pageSize
+    overviewPagination.page = 1
+    fetchMonthlyOverview()
+  }
+
+  let overviewSearchTimer = null
+  function scheduleOverviewSearch() {
+    overviewPagination.page = 1
+    clearTimeout(overviewSearchTimer)
+    overviewSearchTimer = setTimeout(fetchMonthlyOverview, 300)
   }
 
   async function fetchOrganizations() {
@@ -1787,6 +1838,10 @@ const showExplanationDialog = ref(false)
     fetchSubDepartments()
     fetchMonthlyOverview()
   })
+
+  onBeforeUnmount(() => {
+    clearTimeout(overviewSearchTimer)
+  })
 </script>
   
   <style scoped>
@@ -1807,6 +1862,12 @@ const showExplanationDialog = ref(false)
   
   .filter-select {
     min-width: 220px;
+  }
+
+  .overview-pagination {
+    display: flex;
+    justify-content: flex-end;
+    padding: 16px 0;
   }
 
   .stat-item {

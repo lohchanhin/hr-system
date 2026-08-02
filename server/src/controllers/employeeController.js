@@ -3,6 +3,7 @@ import Employee from '../models/Employee.js'   // ← 對齊你新的 model 檔�
 import ShiftSchedule from '../models/ShiftSchedule.js'
 import ApprovalRequest from '../models/approval_request.js'
 import dayjs from 'dayjs'
+import mongoose from 'mongoose'
 import { getLeaveFieldIds } from '../services/leaveFieldService.js'
 import {
   deleteEmployeePhoto,
@@ -300,6 +301,7 @@ export function buildEmployeePatch(body = {}, existing = null) {
 
   // 帳號/權限/簽核
   put('username', body.username)
+  if (isDefined(body.accountEnabled)) put('accountEnabled', Boolean(body.accountEnabled))
   put('permissionGrade', body.permissionGrade)
   put('role', body.role)
   put('signRole', body.signRole)
@@ -473,6 +475,26 @@ export function buildEmployeePatch(body = {}, existing = null) {
 
 const SCHEDULE_VIEW_SELECT = '_id name employeeId photo title practiceTitle department subDepartment annualLeave supervisor role status requiresScheduling partTime'
 const SUPERVISOR_VIEW_SELECT = '_id name employeeId photo title practiceTitle department subDepartment annualLeave supervisor role status requiresScheduling partTime organization appointment.hireDate'
+const ADMIN_LIST_SELECT = '_id name employeeId username email mobile photo title practiceTitle department subDepartment organization supervisor role status annualLeave requiresScheduling partTime accountEnabled createdAt'
+const EMPLOYEE_LIST_PAGE_SIZE = 20
+const EMPLOYEE_LIST_MAX_PAGE_SIZE = 100
+const EMPLOYEE_SEARCH_MAX_LENGTH = 100
+const ACTIVE_EMPLOYMENT_STATUSES = ['正職員工', '試用期員工']
+
+const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
+const parsePositiveInteger = (value, fallback, maximum = Number.MAX_SAFE_INTEGER) => {
+  const parsed = Number.parseInt(value, 10)
+  if (!Number.isInteger(parsed) || parsed < 1) return fallback
+  return Math.min(parsed, maximum)
+}
+
+const readSearchTerm = (value) => {
+  if (value === undefined || value === null || value === '') return ''
+  if (typeof value !== 'string') return null
+  const normalized = value.trim()
+  return normalized.length <= EMPLOYEE_SEARCH_MAX_LENGTH ? normalized : null
+}
 
 const toEntityId = (value) => {
   if (value === null || value === undefined) return ''
@@ -538,15 +560,41 @@ export async function listEmployees(req, res) {
     const actorRole = req.user?.role
     if (!actorId) return res.status(401).json({ error: 'Invalid user' })
     const filter = {}
-    const search = searchRaw ?? q
-    const jobType = String(jobTypeRaw || '').trim()
+    const search = readSearchTerm(searchRaw ?? q)
+    const jobType = readSearchTerm(jobTypeRaw)
+    if (search === null || jobType === null) {
+      return res.status(400).json({ error: 'Invalid search query' })
+    }
+    if (
+      organization &&
+      (typeof organization !== 'string' || organization.length > EMPLOYEE_SEARCH_MAX_LENGTH)
+    ) {
+      return res.status(400).json({ error: 'Invalid organization filter' })
+    }
+
+    const objectIdFilters = {
+      ...(actorRole === 'admin' ? { supervisor } : {}),
+      department,
+      subDepartment,
+    }
+    const invalidObjectIdFilter = Object.entries(objectIdFilters)
+      .find(([, value]) => value && !mongoose.isValidObjectId(value))
+    if (invalidObjectIdFilter) {
+      return res.status(400).json({ error: `Invalid ${invalidObjectIdFilter[0]} filter` })
+    }
+    if (role && role !== 'all' && !['employee', 'supervisor', 'admin'].includes(role)) {
+      return res.status(400).json({ error: 'Invalid role filter' })
+    }
+    if (status && view !== 'schedule' && !EMPLOYMENT_STATUSES.includes(status)) {
+      return res.status(400).json({ error: 'Invalid status filter' })
+    }
 
     if (supervisor && actorRole === 'admin') filter.supervisor = supervisor
     if (organization) filter.organization = organization
     if (department) filter.department = department
     if (subDepartment) filter.subDepartment = subDepartment
     if (status && view !== 'schedule') filter.status = status
-    if (role) filter.role = role
+    if (role && role !== 'all') filter.role = role
     const andFilters = []
     if (actorRole === 'employee') {
       filter._id = actorId
@@ -554,7 +602,7 @@ export async function listEmployees(req, res) {
       andFilters.push({ $or: [{ _id: actorId }, { supervisor: actorId }] })
     }
     if (search) {
-      const rx = new RegExp(search, 'i')
+      const rx = new RegExp(escapeRegex(search), 'i')
       andFilters.push({
         $or: [
           { name: rx },
@@ -565,7 +613,7 @@ export async function listEmployees(req, res) {
       })
     }
     if (jobType) {
-      const rx = new RegExp(jobType, 'i')
+      const rx = new RegExp(escapeRegex(jobType), 'i')
       andFilters.push({
         $or: [
           { practiceTitle: rx },
@@ -581,6 +629,12 @@ export async function listEmployees(req, res) {
     }
 
     const isScheduleView = view === 'schedule'
+    const page = parsePositiveInteger(pageRaw, 1)
+    const pageSize = parsePositiveInteger(
+      pageSizeRaw,
+      isScheduleView ? 50 : EMPLOYEE_LIST_PAGE_SIZE,
+      isScheduleView ? 200 : EMPLOYEE_LIST_MAX_PAGE_SIZE
+    )
     let query = Employee.find(filter)
 
     if (isScheduleView) {
@@ -590,16 +644,41 @@ export async function listEmployees(req, res) {
         .select(SUPERVISOR_VIEW_SELECT)
         .populate('supervisor', 'name employeeId')
     } else {
-      query = query.populate('supervisor', 'name employeeId')
+      query = query
+        .select(ADMIN_LIST_SELECT)
+        .populate('supervisor', 'name employeeId')
+    }
+
+    if (!isScheduleView) {
+      const [total, active] = await Promise.all([
+        Employee.countDocuments(filter),
+        Employee.countDocuments({
+          $and: [filter, { status: { $in: ACTIVE_EMPLOYMENT_STATUSES } }],
+        }),
+      ])
+      const totalPages = Math.max(1, Math.ceil(total / pageSize))
+      const safePage = Math.min(page, totalPages)
+      const employees = await query
+        .sort({ name: 1, employeeId: 1, _id: 1 })
+        .skip((safePage - 1) * pageSize)
+        .limit(pageSize)
+        .lean()
+
+      return res.json({
+        employees,
+        pagination: {
+          total,
+          page: safePage,
+          pageSize,
+          totalPages,
+        },
+        summary: { active },
+      })
     }
 
     const employees = await query
-      .sort({ createdAt: -1 })
+      .sort({ name: 1, employeeId: 1, _id: 1 })
       .lean()
-
-    if (!isScheduleView) {
-      return res.json(employees)
-    }
 
     let scheduleEmployees = employees.map((employee) => ({
       ...employee,
@@ -607,13 +686,6 @@ export async function listEmployees(req, res) {
         remainingDays: resolveRemainingAnnualLeaveDays(employee.annualLeave),
       },
     }))
-
-    const pageParsed = Number.parseInt(pageRaw, 10)
-    const pageSizeParsed = Number.parseInt(pageSizeRaw, 10)
-    const page = Number.isFinite(pageParsed) && pageParsed > 0 ? pageParsed : 1
-    const pageSize = Number.isFinite(pageSizeParsed) && pageSizeParsed > 0
-      ? Math.min(pageSizeParsed, 200)
-      : 50
 
     if (status && status !== 'all') {
       if (!month || !/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) {
@@ -702,7 +774,11 @@ export async function listEmployees(req, res) {
 
     return res.json(pagedEmployees)
   } catch (err) {
-    return res.status(500).json({ error: err.message })
+    if (err?.name === 'CastError') {
+      return res.status(400).json({ error: 'Invalid employee query' })
+    }
+    console.error('Failed to list employees', { error: err?.name ?? 'Error' })
+    return res.status(500).json({ error: 'Failed to list employees' })
   }
 }
 
@@ -746,6 +822,22 @@ export async function listEmployeeOptions(req, res) {
     res.json(options)
   } catch (err) {
     res.status(500).json({ error: err.message })
+  }
+}
+
+export async function listAttendanceImportEmployeeOptions(req, res) {
+  try {
+    const employees = await Employee.find(
+      {},
+      '_id name email employeeId status'
+    )
+      .sort({ name: 1, employeeId: 1, _id: 1 })
+      .limit(5000)
+      .lean()
+    return res.json(employees)
+  } catch (err) {
+    console.error('Failed to list attendance import options', { error: err?.name ?? 'Error' })
+    return res.status(500).json({ error: 'Failed to list employee options' })
   }
 }
 
@@ -802,6 +894,10 @@ export async function getEmployee(req, res) {
     }
 
     const limitedSupervisorView = actorRole === 'supervisor' && targetId !== actorId
+    if (!mongoose.isValidObjectId(targetId)) {
+      return res.status(400).json({ error: 'Invalid employee id' })
+    }
+
     let employeeQuery = Employee.findById(targetId)
     if (limitedSupervisorView) employeeQuery = employeeQuery.select(SUPERVISOR_VIEW_SELECT)
 
@@ -873,7 +969,10 @@ export async function getEmployee(req, res) {
 
     res.json(result)
   } catch (err) {
-    res.status(400).json({ error: err.message })
+    if (err?.name !== 'CastError') {
+      console.error('Failed to get employee', { error: err?.name ?? 'Error' })
+    }
+    res.status(400).json({ error: 'Invalid employee id' })
   }
 }
 
@@ -931,14 +1030,43 @@ export async function updateEmployee(req, res) {
       const validRoles = ['employee', 'supervisor', 'admin']
       if (!validRoles.includes(body.role)) return rejectWithPhotoCleanup(req, res, 400, { error: 'Invalid role' })
     }
+    if (isDefined(body.accountEnabled) && typeof body.accountEnabled !== 'boolean') {
+      return rejectWithPhotoCleanup(req, res, 400, { error: 'Invalid account state' })
+    }
 
     // 建立 $set/$unset patch
     const { $set, $unset } = buildEmployeePatch(body, employee)
+
+    const nextRole = $set.role ?? employee.role
+    const nextStatus = $set.status ?? employee.status
+    const nextAccountEnabled = $set.accountEnabled ?? employee.accountEnabled
+    const removesAdminAccess =
+      employee.role === 'admin' &&
+      (
+        nextRole !== 'admin' ||
+        nextAccountEnabled === false ||
+        ['離職員工', '留職停薪'].includes(nextStatus)
+      )
+    if (removesAdminAccess) {
+      const remainingAdmins = await Employee.countDocuments({
+        _id: { $ne: employee._id },
+        role: 'admin',
+        accountEnabled: { $ne: false },
+        status: { $nin: ['離職員工', '留職停薪'] },
+      })
+      if (remainingAdmins === 0) {
+        return rejectWithPhotoCleanup(req, res, 409, { error: 'At least one active administrator is required' })
+      }
+    }
 
     // 套用更新
     const update = {}
     if (Object.keys($set).length) update.$set = $set
     if (Object.keys($unset).length) update.$unset = $unset
+    const sessionFieldsChanged = ['role', 'status', 'accountEnabled'].some(
+      (field) => isDefined($set[field]) && $set[field] !== employee[field]
+    )
+    if (sessionFieldsChanged) update.$inc = { authVersion: 1 }
     if (Object.keys(update).length) await Employee.updateOne({ _id: employee._id }, update)
     photoPersisted = true
 

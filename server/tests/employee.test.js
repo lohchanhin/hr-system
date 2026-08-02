@@ -8,6 +8,7 @@ const mockEmployee = {
   findByIdAndDelete: jest.fn(),
   create: jest.fn(),
   updateOne: jest.fn(),
+  countDocuments: jest.fn(),
 };
 
 jest.unstable_mockModule('../src/models/Employee.js', () => ({ default: mockEmployee }));
@@ -28,43 +29,93 @@ beforeAll(async () => {
 
 beforeEach(() => {
   Object.values(mockEmployee).forEach((fn) => fn.mockReset && fn.mockReset());
+  mockEmployee.countDocuments.mockResolvedValue(0);
 });
+
+function makeEmployeeListQuery(result) {
+  const query = {
+    select: jest.fn(),
+    populate: jest.fn(),
+    sort: jest.fn(),
+    skip: jest.fn(),
+    limit: jest.fn(),
+    lean: jest.fn(),
+  };
+  Object.keys(query).forEach((key) => {
+    if (key !== 'lean') query[key].mockReturnValue(query);
+  });
+  query.lean.mockImplementation(() => result);
+  return query;
+}
 
 describe('Employee API', () => {
   it('lists employees', async () => {
     const fakeEmployees = [{ name: 'John', department: 'd1', title: 'Staff', status: '正職員工' }];
-    mockEmployee.find.mockReturnValue({
-      populate: jest.fn().mockReturnValue({
-        sort: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue(fakeEmployees) }),
-      }),
-    });
+    const query = makeEmployeeListQuery(Promise.resolve(fakeEmployees));
+    mockEmployee.find.mockReturnValue(query);
+    mockEmployee.countDocuments
+      .mockResolvedValueOnce(1)
+      .mockResolvedValueOnce(1);
     const res = await request(app).get('/api/employees');
     expect(res.status).toBe(200);
-    expect(res.body).toEqual(fakeEmployees);
+    expect(query.select).toHaveBeenCalledWith(expect.not.stringContaining('salaryAmount'));
+    expect(query.skip).toHaveBeenCalledWith(0);
+    expect(query.limit).toHaveBeenCalledWith(20);
+    expect(res.body).toEqual({
+      employees: fakeEmployees,
+      pagination: { total: 1, page: 1, pageSize: 20, totalPages: 1 },
+      summary: { active: 1 },
+    });
   });
 
   it('lists employees filtered by supervisor', async () => {
     const fakeEmployees = [{ name: 'Bob' }];
-    const populate = jest.fn().mockReturnValue({
-      sort: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue(fakeEmployees) }),
-    });
-    mockEmployee.find.mockReturnValue({ populate });
-    const res = await request(app).get('/api/employees?supervisor=s1');
+    const supervisorId = '507f1f77bcf86cd799439011';
+    const query = makeEmployeeListQuery(Promise.resolve(fakeEmployees));
+    mockEmployee.find.mockReturnValue(query);
+    mockEmployee.countDocuments.mockResolvedValue(1);
+    const res = await request(app).get(`/api/employees?supervisor=${supervisorId}`);
     expect(res.status).toBe(200);
-    expect(mockEmployee.find).toHaveBeenCalledWith({ supervisor: 's1' });
-    expect(res.body).toEqual(fakeEmployees);
+    expect(mockEmployee.find).toHaveBeenCalledWith({ supervisor: supervisorId });
+    expect(res.body.employees).toEqual(fakeEmployees);
   });
 
   it('lists employees filtered by subDepartment', async () => {
     const fakeEmployees = [{ name: 'Alice' }];
-    const populate = jest.fn().mockReturnValue({
-      sort: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue(fakeEmployees) }),
-    });
-    mockEmployee.find.mockReturnValue({ populate });
-    const res = await request(app).get('/api/employees?subDepartment=sd1');
+    const subDepartmentId = '507f1f77bcf86cd799439012';
+    const query = makeEmployeeListQuery(Promise.resolve(fakeEmployees));
+    mockEmployee.find.mockReturnValue(query);
+    mockEmployee.countDocuments.mockResolvedValue(1);
+    const res = await request(app).get(`/api/employees?subDepartment=${subDepartmentId}`);
     expect(res.status).toBe(200);
-    expect(mockEmployee.find).toHaveBeenCalledWith({ subDepartment: 'sd1' });
-    expect(res.body).toEqual(fakeEmployees);
+    expect(mockEmployee.find).toHaveBeenCalledWith({ subDepartment: subDepartmentId });
+    expect(res.body.employees).toEqual(fakeEmployees);
+  });
+
+  it('escapes regex metacharacters and applies stable server pagination', async () => {
+    const query = makeEmployeeListQuery(Promise.resolve([{ name: '[Test]' }]));
+    mockEmployee.find.mockReturnValue(query);
+    mockEmployee.countDocuments
+      .mockResolvedValueOnce(25)
+      .mockResolvedValueOnce(20);
+
+    const res = await request(app).get('/api/employees?q=%5B&page=3&pageSize=10');
+
+    expect(res.status).toBe(200);
+    const filter = mockEmployee.find.mock.calls[0][0];
+    expect(filter.$or[0].name).toBeInstanceOf(RegExp);
+    expect(filter.$or[0].name.source).toBe('\\[');
+    expect(query.sort).toHaveBeenCalledWith({ name: 1, employeeId: 1, _id: 1 });
+    expect(query.skip).toHaveBeenCalledWith(20);
+    expect(query.limit).toHaveBeenCalledWith(10);
+    expect(res.body.pagination).toEqual({ total: 25, page: 3, pageSize: 10, totalPages: 3 });
+  });
+
+  it('rejects invalid object id filters before querying MongoDB', async () => {
+    const res = await request(app).get('/api/employees?department=not-an-object-id');
+
+    expect(res.status).toBe(400);
+    expect(mockEmployee.find).not.toHaveBeenCalled();
   });
 
   it('lists employee options', async () => {
@@ -107,14 +158,25 @@ describe('Employee API', () => {
   });
 
   it('returns 500 if listing fails', async () => {
-    mockEmployee.find.mockReturnValue({
-      populate: jest.fn().mockReturnValue({
-        sort: jest.fn().mockReturnValue({ lean: jest.fn().mockRejectedValue(new Error('fail')) }),
-      }),
-    });
+    const query = makeEmployeeListQuery(Promise.resolve([]));
+    query.lean.mockRejectedValue(new Error('fail'));
+    mockEmployee.find.mockReturnValue(query);
     const res = await request(app).get('/api/employees');
     expect(res.status).toBe(500);
-    expect(res.body).toEqual({ error: 'fail' });
+    expect(res.body).toEqual({ error: 'Failed to list employees' });
+  });
+
+  it('returns only minimal fields for attendance import matching', async () => {
+    const rows = [{ _id: '1', name: 'Alice', employeeId: 'E001', email: 'a@example.com' }];
+    const query = makeEmployeeListQuery(Promise.resolve(rows));
+    mockEmployee.find.mockReturnValue(query);
+
+    const res = await request(app).get('/api/employees/attendance-import-options');
+
+    expect(res.status).toBe(200);
+    expect(mockEmployee.find).toHaveBeenCalledWith({}, '_id name email employeeId status');
+    expect(query.limit).toHaveBeenCalledWith(5000);
+    expect(res.body).toEqual(rows);
   });
 
   it('creates employee', async () => {
@@ -193,11 +255,12 @@ describe('Employee API', () => {
   });
 
   it('gets employee', async () => {
-    const fake = { _id: '1', name: 'John' };
+    const employeeId = '507f1f77bcf86cd799439013';
+    const fake = { _id: employeeId, name: 'John' };
     mockEmployee.findById.mockReturnValue({ populate: jest.fn().mockResolvedValue(fake) });
-    const res = await request(app).get('/api/employees/1');
+    const res = await request(app).get(`/api/employees/${employeeId}`);
     expect(res.status).toBe(200);
-    expect(mockEmployee.findById).toHaveBeenCalledWith('1');
+    expect(mockEmployee.findById).toHaveBeenCalledWith(employeeId);
     expect(res.body).toEqual(fake);
   });
 
@@ -269,13 +332,7 @@ describe('Employee authorization middleware', () => {
       },
       employeeRoutes
     );
-    mockEmployee.find.mockReturnValue({
-      select: jest.fn().mockReturnValue({
-        populate: jest.fn().mockReturnValue({
-          sort: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue([]) }),
-        }),
-      }),
-    });
+    mockEmployee.find.mockReturnValue(makeEmployeeListQuery(Promise.resolve([])));
     const res = await request(appAuth).get('/api/employees');
     expect(res.status).toBe(200);
   });
@@ -323,11 +380,7 @@ describe('Employee authorization middleware', () => {
       employeeRoutes
     );
 
-    mockEmployee.find.mockReturnValue({
-      populate: jest.fn().mockReturnValue({
-        sort: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue([]) }),
-      }),
-    });
+    mockEmployee.find.mockReturnValue(makeEmployeeListQuery(Promise.resolve([])));
     const resList = await request(appAuth).get('/api/employees');
     expect(resList.status).toBe(200);
 

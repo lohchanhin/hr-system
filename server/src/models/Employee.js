@@ -69,6 +69,8 @@ const employeeSchema = new Schema(
     /* 帳號/權限（如有獨立 Auth 可忽略 username/passwordHash） */
     username: { type: String, unique: true, sparse: true, index: true },
     passwordHash: { type: String, select: false }, // 使用 virtual: password 設定
+    accountEnabled: { type: Boolean, default: true, index: true },
+    authVersion: { type: Number, default: 0, min: 0 },
     role: {
       type: String,
       enum: ['employee', 'supervisor', 'admin'],
@@ -279,10 +281,17 @@ employeeSchema.virtual('annualLeave.remainingDays').get(function () {
 })
 
 employeeSchema.methods.verifyPassword = function (plain) {
-  if (!this.passwordHash) return false
+  if (!this.passwordHash || typeof plain !== 'string') return false
   const [salt, hash] = this.passwordHash.split(':')
-  const check = crypto.pbkdf2Sync(plain, salt, 100000, 64, 'sha512').toString('hex')
-  return hash === check
+  if (!salt || !hash) return false
+
+  try {
+    const expected = Buffer.from(hash, 'hex')
+    const actual = crypto.pbkdf2Sync(plain, salt, 100000, expected.length, 'sha512')
+    return expected.length > 0 && crypto.timingSafeEqual(expected, actual)
+  } catch {
+    return false
+  }
 }
 
 employeeSchema.methods.setPassword = function (plain) {
@@ -291,6 +300,17 @@ employeeSchema.methods.setPassword = function (plain) {
     this.passwordHash = hashed
   }
 }
+
+employeeSchema.pre('save', function (next) {
+  const invalidatesSession =
+    !this.isNew &&
+    ['passwordHash', 'role', 'status', 'accountEnabled'].some((field) => this.isModified(field))
+
+  if (invalidatesSession) {
+    this.authVersion = (Number(this.authVersion) || 0) + 1
+  }
+  next()
+})
 
 // 特休相關方法
 employeeSchema.methods.canDeductAnnualLeave = function (days) {

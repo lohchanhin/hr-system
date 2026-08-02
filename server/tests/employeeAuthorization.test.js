@@ -4,6 +4,7 @@ const mockEmployee = {
   find: jest.fn(),
   findById: jest.fn(),
   exists: jest.fn(),
+  countDocuments: jest.fn(),
 }
 const mockReadEmployeePhoto = jest.fn()
 const mockDeleteEmployeePhoto = jest.fn()
@@ -28,6 +29,7 @@ beforeAll(async () => {
 
 beforeEach(() => {
   jest.clearAllMocks()
+  mockEmployee.countDocuments.mockResolvedValue(1)
 })
 
 function makeRes() {
@@ -48,24 +50,34 @@ function makeListQuery(rows = []) {
     select: jest.fn(),
     populate: jest.fn(),
     sort: jest.fn(),
+    skip: jest.fn(),
+    limit: jest.fn(),
     lean: jest.fn().mockResolvedValue(rows),
   }
   query.select.mockReturnValue(query)
   query.populate.mockReturnValue(query)
   query.sort.mockReturnValue(query)
+  query.skip.mockReturnValue(query)
+  query.limit.mockReturnValue(query)
   return query
 }
 
 describe('employee read authorization', () => {
   it('limits an employee list request to the authenticated employee', async () => {
-    const query = makeListQuery([{ _id: 'emp1', name: 'Self', salaryAmount: 30000 }])
+    const query = makeListQuery([{ _id: 'emp1', name: 'Self' }])
     mockEmployee.find.mockReturnValue(query)
     const res = makeRes()
 
     await listEmployees({ user: { id: 'emp1', role: 'employee' }, query: {} }, res)
 
     expect(mockEmployee.find).toHaveBeenCalledWith({ _id: 'emp1' })
-    expect(res.json).toHaveBeenCalledWith([{ _id: 'emp1', name: 'Self', salaryAmount: 30000 }])
+    const projection = query.select.mock.calls[0][0]
+    expect(projection).not.toContain('salaryAmount')
+    expect(projection).not.toContain('salaryAccount')
+    expect(projection).not.toContain('idNumber')
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+      employees: [{ _id: 'emp1', name: 'Self' }],
+    }))
   })
 
   it('limits a supervisor list to self and direct reports with a safe projection', async () => {
@@ -100,10 +112,12 @@ describe('employee read authorization', () => {
   })
 
   it('uses a safe projection when a supervisor reads a direct report', async () => {
+    const supervisorId = '507f1f77bcf86cd799439021'
+    const employeeId = '507f1f77bcf86cd799439022'
     const employee = {
-      _id: 'emp2',
+      _id: employeeId,
       name: 'Direct report',
-      supervisor: { _id: 'sup1', name: 'Supervisor' },
+      supervisor: { _id: supervisorId, name: 'Supervisor' },
       toObject() { return { ...this } },
     }
     const query = {
@@ -114,8 +128,8 @@ describe('employee read authorization', () => {
     const res = makeRes()
 
     await getEmployee({
-      user: { id: 'sup1', role: 'supervisor' },
-      params: { id: 'emp2' },
+      user: { id: supervisorId, role: 'supervisor' },
+      params: { id: employeeId },
     }, res)
 
     expect(res.status).not.toHaveBeenCalled()

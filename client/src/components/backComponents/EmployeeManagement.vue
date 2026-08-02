@@ -10,7 +10,7 @@
         </div>
         <div class="header-stats">
           <div class="stat-item">
-            <div class="stat-number">{{ employeeList.length }}</div>
+            <div class="stat-number">{{ employeePagination.total }}</div>
             <div class="stat-label">總員工數</div>
           </div>
           <div class="stat-item">
@@ -53,7 +53,7 @@
 
       <!-- 美化員工列表表格 -->
       <div class="table-container">
-        <el-table :data="filteredEmployeeList" class="employee-table"
+        <el-table v-loading="employeeListLoading" :data="filteredEmployeeList" class="employee-table"
           :header-cell-style="{ background: '#f8fafc', color: '#475569', fontWeight: '600' }"
           :row-style="{ height: '64px' }">
 
@@ -149,6 +149,18 @@
             </template>
           </el-table-column>
         </el-table>
+        <div class="employee-pagination">
+          <el-pagination
+            background
+            layout="total, sizes, prev, pager, next"
+            :total="employeePagination.total"
+            :current-page="employeePagination.page"
+            :page-size="employeePagination.pageSize"
+            :page-sizes="[20, 50, 100]"
+            @current-change="handleEmployeePageChange"
+            @size-change="handleEmployeePageSizeChange"
+          />
+        </div>
       </div>
 
       <!-- 美化員工資料對話框 -->
@@ -1198,22 +1210,9 @@ const departmentFilter = ref(null)
 
 // 👉 下拉選單的部門列表
 const departmentFilterOptions = computed(() => {
-  const map = new Map()
-
-  // 依照「員工有出現過的部門」動態建立清單
-  for (const emp of employeeList.value) {
-    if (emp && emp.department) {
-      // 這裡用你在 template 已經使用的 departmentLabel() 來取顯示名稱
-      const label = departmentLabel(emp.department)
-      if (label && !map.has(emp.department)) {
-        map.set(emp.department, label)
-      }
-    }
-  }
-
-  return Array.from(map.entries()).map(([value, label]) => ({
-    value,
-    label,
+  return departmentList.value.map(department => ({
+    value: department._id,
+    label: `${department.name}${department.code ? `(${department.code})` : ''}`,
   }))
 })
 
@@ -2813,6 +2812,14 @@ function formatSignLevelLabel(option) {
 /* 狀態 --------------------------------------------------------------------- */
 const employeeDialogTab = ref('account')
 const employeeList = ref([])
+const employeeListLoading = ref(false)
+const employeePagination = reactive({
+  total: 0,
+  active: 0,
+  page: 1,
+  pageSize: 20,
+  totalPages: 1,
+})
 const departmentList = ref([])
 const subDepartmentList = ref([])
 const orgList = ref([])
@@ -3239,81 +3246,140 @@ async function fetchOrganizations() {
   if (handle401(res)) return
   if (res.ok) orgList.value = await res.json()
 }
+
+function normalizeEmployeeRecord(e = {}) {
+  const appointment = e?.appointment ?? {}
+  const monthlyAdjustments = normalizeMonthlySalaryAdjustments(
+    e?.monthlySalaryAdjustments
+  )
+  const filteredSalaryItems = filterValidSalaryItems(e?.salaryItems)
+  return {
+    ...e,
+    employeeNo: e?.employeeNo ?? e?.employeeId ?? '',
+    employmentStatus: e?.employmentStatus ?? e?.status ?? '',
+    phone: e?.phone ?? e?.mobile ?? '',
+    title: extractOptionValue(e?.title),
+    practiceTitle: extractOptionValue(e?.practiceTitle),
+    languages: toOptionValueArray(e?.languages),
+    disabilityLevel: extractOptionValue(e?.disabilityLevel),
+    identityCategory: toOptionValueArray(e?.identityCategory),
+    permissionGrade: normalizePermissionGrade(e?.permissionGrade),
+    signRole: normalizeSignRole(e?.signRole),
+    signLevel: normalizeSignLevel(e?.signLevel),
+    organization: e.organization?._id || e.organization || '',
+    department: e.department?._id || e.department || '',
+    subDepartment: e.subDepartment?._id || e.subDepartment || '',
+    supervisor: e.supervisor?._id || e.supervisor || null,
+    laborPensionSelf: toNumberOrNull(e?.laborPensionSelf) ?? 0,
+    employeeAdvance: toNumberOrNull(e?.employeeAdvance) ?? 0,
+    salaryItems: filteredSalaryItems,
+    salaryItemAmounts: normalizeSalaryItemAmounts(e?.salaryItemAmounts, filteredSalaryItems),
+    height: toNumberOrNull(e?.medicalCheck?.height ?? e?.height),
+    weight: toNumberOrNull(e?.medicalCheck?.weight ?? e?.weight),
+    medicalBloodType: e?.medicalCheck?.bloodType ?? e?.medicalBloodType ?? '',
+    educationLevel: extractOptionValue(e?.education?.level ?? e?.educationLevel),
+    schoolName: e?.education?.school ?? e?.schoolName ?? '',
+    major: e?.education?.major ?? e?.major ?? '',
+    graduationStatus: extractOptionValue(e?.education?.status ?? e?.graduationStatus),
+    graduationYear: toStringOrEmpty(
+      e?.education?.graduationYear ?? e?.graduationYear ?? ''
+    ),
+    serviceType: e?.militaryService?.serviceType ?? e?.serviceType ?? '',
+    militaryBranch: e?.militaryService?.branch ?? e?.militaryBranch ?? '',
+    militaryRank: e?.militaryService?.rank ?? e?.militaryRank ?? '',
+    dischargeYear: toNumberOrNull(
+      e?.militaryService?.dischargeYear ?? e?.dischargeYear
+    ),
+    hireDate: toDateOrEmpty(appointment?.hireDate ?? e?.hireDate),
+    appointDate: toDateOrEmpty(
+      appointment?.appointDate ?? appointment?.startDate ?? e?.appointDate
+    ),
+    resignDate: toDateOrEmpty(
+      appointment?.resignationDate ?? e?.resignDate
+    ),
+    dismissDate: toDateOrEmpty(
+      appointment?.dismissalDate ?? e?.dismissDate
+    ),
+    reAppointDate: toDateOrEmpty(
+      appointment?.reAppointDate ?? appointment?.rehireStartDate ?? e?.reAppointDate
+    ),
+    reDismissDate: toDateOrEmpty(
+      appointment?.reDismissDate ?? appointment?.rehireEndDate ?? e?.reDismissDate
+    ),
+    employmentNote: toStringOrEmpty(
+      appointment?.remark ?? e?.employmentNote ?? ''
+    ),
+    monthlySalaryAdjustments: monthlyAdjustments,
+  }
+}
+
+let employeeListRequestGeneration = 0
 async function fetchEmployees() {
-  const res = await apiFetch('/api/employees')
-  if (handle401(res)) return
-  if (res.ok) {
-    const list = await res.json()
-    const normalizedEmployees = list.map(e => {
-      const appointment = e?.appointment ?? {}
-      const monthlyAdjustments = normalizeMonthlySalaryAdjustments(
-        e?.monthlySalaryAdjustments
-      )
-      const filteredSalaryItems = filterValidSalaryItems(e?.salaryItems)
-      return {
-        ...e,
-        title: extractOptionValue(e?.title),
-        practiceTitle: extractOptionValue(e?.practiceTitle),
-        languages: toOptionValueArray(e?.languages),
-        disabilityLevel: extractOptionValue(e?.disabilityLevel),
-        identityCategory: toOptionValueArray(e?.identityCategory),
-        permissionGrade: normalizePermissionGrade(e?.permissionGrade),
-        signRole: normalizeSignRole(e?.signRole),
-        signLevel: normalizeSignLevel(e?.signLevel),
-        organization: e.organization?._id || e.organization || '',
-        department: e.department?._id || e.department || '',
-        subDepartment: e.subDepartment?._id || e.subDepartment || '',
-        laborPensionSelf: toNumberOrNull(e?.laborPensionSelf) ?? 0,
-        employeeAdvance: toNumberOrNull(e?.employeeAdvance) ?? 0,
-        salaryItems: filteredSalaryItems,
-        salaryItemAmounts: normalizeSalaryItemAmounts(e?.salaryItemAmounts, filteredSalaryItems),
-        height: toNumberOrNull(e?.medicalCheck?.height ?? e?.height),
-        weight: toNumberOrNull(e?.medicalCheck?.weight ?? e?.weight),
-        medicalBloodType: e?.medicalCheck?.bloodType ?? e?.medicalBloodType ?? '',
-        educationLevel: extractOptionValue(e?.education?.level ?? e?.educationLevel),
-        schoolName: e?.education?.school ?? e?.schoolName ?? '',
-        major: e?.education?.major ?? e?.major ?? '',
-        graduationStatus: extractOptionValue(e?.education?.status ?? e?.graduationStatus),
-        graduationYear: toStringOrEmpty(
-          e?.education?.graduationYear ?? e?.graduationYear ?? ''
-        ),
-        serviceType: e?.militaryService?.serviceType ?? e?.serviceType ?? '',
-        militaryBranch: e?.militaryService?.branch ?? e?.militaryBranch ?? '',
-        militaryRank: e?.militaryService?.rank ?? e?.militaryRank ?? '',
-        dischargeYear: toNumberOrNull(
-          e?.militaryService?.dischargeYear ?? e?.dischargeYear
-        ),
-        hireDate: toDateOrEmpty(appointment?.hireDate ?? e?.hireDate),
-        appointDate: toDateOrEmpty(
-          appointment?.appointDate ?? appointment?.startDate ?? e?.appointDate
-        ),
-        resignDate: toDateOrEmpty(
-          appointment?.resignationDate ?? e?.resignDate
-        ),
-        dismissDate: toDateOrEmpty(
-          appointment?.dismissalDate ?? e?.dismissDate
-        ),
-        reAppointDate: toDateOrEmpty(
-          appointment?.reAppointDate ??
-          appointment?.rehireStartDate ??
-          e?.reAppointDate
-        ),
-        reDismissDate: toDateOrEmpty(
-          appointment?.reDismissDate ??
-          appointment?.rehireEndDate ??
-          e?.reDismissDate
-        ),
-        employmentNote: toStringOrEmpty(
-          appointment?.remark ?? e?.employmentNote ?? ''
-        ),
-        monthlySalaryAdjustments: monthlyAdjustments
-      }
-    })
+  const generation = ++employeeListRequestGeneration
+  const params = new URLSearchParams({
+    page: String(employeePagination.page),
+    pageSize: String(employeePagination.pageSize),
+  })
+  const search = searchQuery.value.trim()
+  if (search) params.set('q', search)
+  if (departmentFilter.value) params.set('department', departmentFilter.value)
+
+  employeeListLoading.value = true
+  try {
+    const res = await apiFetch(`/api/employees?${params.toString()}`)
+    if (handle401(res)) return
+    if (!res.ok) throw new Error('Failed to load employees')
+
+    const payload = await res.json()
+    if (generation !== employeeListRequestGeneration) return
+    const list = Array.isArray(payload) ? payload : (payload.employees ?? [])
+    const normalizedEmployees = list.map(normalizeEmployeeRecord)
+    const pagination = payload.pagination ?? {}
+    employeePagination.total = Number(pagination.total ?? normalizedEmployees.length)
+    employeePagination.page = Number(pagination.page ?? employeePagination.page)
+    employeePagination.pageSize = Number(pagination.pageSize ?? employeePagination.pageSize)
+    employeePagination.totalPages = Number(pagination.totalPages ?? 1)
+    employeePagination.active = Number(payload.summary?.active ?? normalizedEmployees.filter(
+      employee => ['正職員工', '試用期員工'].includes(employee.employmentStatus)
+    ).length)
     releaseEmployeePhotoUrls()
     employeeList.value = normalizedEmployees
     void hydrateEmployeePhotos(normalizedEmployees, photoLoadGeneration)
+  } catch (error) {
+    if (generation === employeeListRequestGeneration) {
+      console.warn('載入員工清單失敗', error)
+      ElMessage.error('載入員工清單失敗')
+    }
+  } finally {
+    if (generation === employeeListRequestGeneration) {
+      employeeListLoading.value = false
+    }
   }
 }
+
+function handleEmployeePageChange(page) {
+  employeePagination.page = page
+  fetchEmployees()
+}
+
+function handleEmployeePageSizeChange(pageSize) {
+  employeePagination.pageSize = pageSize
+  employeePagination.page = 1
+  fetchEmployees()
+}
+
+let employeeSearchTimer = null
+watch(searchQuery, () => {
+  employeePagination.page = 1
+  clearTimeout(employeeSearchTimer)
+  employeeSearchTimer = setTimeout(fetchEmployees, 300)
+})
+
+watch(departmentFilter, () => {
+  employeePagination.page = 1
+  fetchEmployees()
+})
+
 onMounted(() => {
   ensureDictionaryFallbacks({ notify: false })
   loadItemSettings()
@@ -3323,7 +3389,10 @@ onMounted(() => {
   fetchSubDepartments()
 })
 
-onBeforeUnmount(releaseEmployeePhotoUrls)
+onBeforeUnmount(() => {
+  clearTimeout(employeeSearchTimer)
+  releaseEmployeePhotoUrls()
+})
 
 /* 表單模型（完整補齊） ------------------------------------------------------ */
 const emptyEmployee = {
@@ -4411,8 +4480,23 @@ async function openEmployeeDialog(employeeId = null) {
       ElMessage.error('找不到該員工資料')
       return
     }
+    const summaryEmployee = employeeList.value[index]
+    let detailResponse
+    try {
+      detailResponse = await apiFetch(`/api/employees/${encodeURIComponent(employeeId)}`)
+    } catch (error) {
+      console.warn('載入員工完整資料失敗', error)
+      ElMessage.error('無法載入員工完整資料')
+      return
+    }
+    if (handle401(detailResponse)) return
+    if (!detailResponse.ok) {
+      ElMessage.error('無法載入員工完整資料')
+      return
+    }
+    const emp = normalizeEmployeeRecord(await detailResponse.json())
+    emp._photoObjectUrl = summaryEmployee?._photoObjectUrl || ''
     editEmployeeIndex = index
-    const emp = employeeList.value[index]
     editEmployeeId = emp._id || ''
     // 以 emptyEmployee 為基底，可避免漏欄位
     employeeForm.value = { ...structuredClone(emptyEmployee), ...emp, password: '', photoList: [] }
@@ -4696,7 +4780,7 @@ async function deleteEmployee(employeeId) {
   })
   
   if (res.ok) {
-    employeeList.value.splice(index, 1)
+    await fetchEmployees()
     ElMessage.success('刪除成功')
   } else {
     const data = await res.json().catch(() => ({}))
@@ -4731,9 +4815,7 @@ function removeTraining(i) {
 }
 
 const activeEmployees = computed(() => {
-  return employeeList.value.filter(emp =>
-    emp.employmentStatus === '正職員工' || emp.employmentStatus === '試用期員工'
-  ).length
+  return employeePagination.active
 })
 
 function getRoleTagType(role) {
@@ -5153,6 +5235,13 @@ function getStatusTagType(status) {
 
 .employee-table {
   width: 100%;
+}
+
+.employee-pagination {
+  display: flex;
+  justify-content: flex-end;
+  padding: 16px;
+  border-top: 1px solid #e5e7eb;
 }
 
 .employee-info {

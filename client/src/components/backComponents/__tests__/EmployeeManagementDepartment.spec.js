@@ -51,6 +51,7 @@ const elementStubs = {
   'el-radio': { template: '<label class="el-radio-stub"><slot /></label>' },
   'el-date-picker': { template: '<input type="date" />', props: ['modelValue'] },
   'el-input-number': { template: '<input type="number" />', props: ['modelValue'] },
+  'el-pagination': { template: '<div class="el-pagination-stub" />' },
   'el-table': {
     template: '<div class="el-table-stub"><slot :row="{}" :$index="0" /></div>'
   },
@@ -129,7 +130,15 @@ describe('EmployeeManagement - 部門與小單位聯動', () => {
       }
 
       if (pathname === '/api/employees') {
-        return Promise.resolve(createApiResponse(employees))
+        return Promise.resolve(createApiResponse({
+          employees,
+          pagination: { total: 1, page: 1, pageSize: 20, totalPages: 1 },
+          summary: { active: 1 }
+        }))
+      }
+
+      if (pathname === '/api/employees/emp-1') {
+        return Promise.resolve(createApiResponse(employees[0]))
       }
 
       if (pathname === '/api/organizations') {
@@ -151,7 +160,7 @@ describe('EmployeeManagement - 部門與小單位聯動', () => {
   it('編輯舊有員工時會保留原有的小單位', async () => {
     const wrapper = await mountComponent()
 
-    await wrapper.vm.openEmployeeDialog(0)
+    await wrapper.vm.openEmployeeDialog('emp-1')
     await flushPromises()
 
     expect(wrapper.vm.employeeForm.subDepartment).toBe('sub-1')
@@ -160,7 +169,7 @@ describe('EmployeeManagement - 部門與小單位聯動', () => {
   it('切換到無原小單位的新部門時會自動清空', async () => {
     const wrapper = await mountComponent()
 
-    await wrapper.vm.openEmployeeDialog(0)
+    await wrapper.vm.openEmployeeDialog('emp-1')
     await flushPromises()
 
     wrapper.vm.employeeForm.department = 'dept-2'

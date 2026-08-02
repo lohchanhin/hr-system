@@ -373,6 +373,32 @@ describe('Schedule.vue', () => {
         return { ok: true, json: async () => supervisorProfile }
       }
 
+      if (
+        pathname === '/api/employees/schedule'
+        && searchParams.get('supervisor')
+        && searchParams.get('pageSize') === '200'
+        && !searchParams.has('department')
+      ) {
+        return { ok: true, json: async () => ({ employees: directReports }) }
+      }
+
+      if (pathname === '/api/employees/schedule') {
+        const page = Number(searchParams.get('page') || 1)
+        const pageSize = Number(searchParams.get('pageSize') || employees.length || 20)
+        return {
+          ok: true,
+          json: async () => ({
+            employees,
+            pagination: {
+              page,
+              pageSize,
+              total: employees.length,
+              totalPages: Math.max(1, Math.ceil(employees.length / pageSize))
+            }
+          })
+        }
+      }
+
       if (pathname === '/api/employees') {
         const supervisorId = searchParams.get('supervisor')
         const hasDepartment = searchParams.has('department')
@@ -465,42 +491,31 @@ describe('Schedule.vue', () => {
   }
 
   it('includes supervisor id in requests when present', async () => {
-    const month = dayjs().format('YYYY-MM')
-    const storageKey = 'schedule-include-self:sup1'
     setRoleToken('supervisor')
     localStorage.setItem('employeeId', 'sup1')
-    apiFetch
-      .mockResolvedValueOnce({ ok: true, json: async () => [] })
-      .mockResolvedValueOnce({ ok: true, json: async () => [] })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
-          _id: 'sup1',
+    setupSupervisorApiMock({
+      directReports: [
+        { _id: 'e1', subDepartment: { _id: 'sd1', name: 'Sub A' } }
+      ],
+      employees: [
+        {
+          _id: 'e1',
+          name: 'Employee 1',
           department: { _id: 'd1', name: 'Dept A' },
           subDepartment: { _id: 'sd1', name: 'Sub A' }
-        })
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => [
-          { _id: 'e1', subDepartment: { _id: 'sd1', name: 'Sub A' } }
-        ]
-      })
-      .mockResolvedValueOnce({ ok: true, json: async () => [{ _id: 'd1', name: 'Dept A' }] })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => [{ _id: 'sd1', name: 'Sub A', department: { _id: 'd1' } }]
-      })
-      .mockResolvedValueOnce({ ok: true, json: async () => [] })
-      .mockResolvedValueOnce({ ok: true, json: async () => [] })
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ approvals: [], leaves: [] }) })
-    mountSchedule()
+        }
+      ]
+    })
+    const wrapper = mountSchedule()
     await flush()
-    expect(apiFetch).toHaveBeenCalledWith('/api/employees?supervisor=sup1')
+    const month = wrapper.vm.currentMonth
+    expect(apiFetch).toHaveBeenCalledWith('/api/employees/schedule?supervisor=sup1&pageSize=200')
     const employeesCall = apiFetch.mock.calls
       .map(([url]) => url)
-      .find(url => url.startsWith('/api/employees?') && url.includes('department='))
-    expect(employeesCall).toBe('/api/employees?supervisor=sup1&department=d1&subDepartment=sd1')
+      .find(url => url.startsWith('/api/employees/schedule?') && url.includes('department='))
+    expect(employeesCall).toContain('supervisor=sup1')
+    expect(employeesCall).toContain('department=d1')
+    expect(employeesCall).toContain('subDepartment=sd1')
     const monthlyCall = apiFetch.mock.calls.find(([url]) =>
       url.startsWith(`/api/schedules/monthly?month=${month}`)
     )
@@ -1554,43 +1569,35 @@ describe('Schedule.vue', () => {
   it('locks department options to supervisor department', async () => {
     setRoleToken('supervisor')
     localStorage.setItem('employeeId', 'sup2')
-    apiFetch
-      .mockResolvedValueOnce({ ok: true, json: async () => [] })
-      .mockResolvedValueOnce({ ok: true, json: async () => [] })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
-          _id: 'sup2',
+    setupSupervisorApiMock({
+      supervisorProfile: {
+        _id: 'sup2',
+        department: { _id: 'd1', name: 'Dept A' },
+        subDepartment: { _id: 'sd2', name: 'Sub B' }
+      },
+      directReports: [
+        { _id: 'e1', subDepartment: { _id: 'sd2', name: 'Sub B' } }
+      ],
+      departments: [
+        { _id: 'd1', name: 'Dept A' },
+        { _id: 'd2', name: 'Dept B' }
+      ],
+      subDepartments: [
+        { _id: 'sd2', name: 'Sub B', department: { _id: 'd1' } },
+        { _id: 'sd3', name: 'Sub C', department: { _id: 'd2' } }
+      ],
+      employees: [
+        {
+          _id: 'e1',
+          name: 'Employee 1',
           department: { _id: 'd1', name: 'Dept A' },
           subDepartment: { _id: 'sd2', name: 'Sub B' }
-        })
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => [
-          { _id: 'e1', subDepartment: { _id: 'sd2', name: 'Sub B' } }
-        ]
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => [
-          { _id: 'd1', name: 'Dept A' },
-          { _id: 'd2', name: 'Dept B' }
-        ]
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => [
-          { _id: 'sd2', name: 'Sub B', department: { _id: 'd1' } },
-          { _id: 'sd3', name: 'Sub C', department: { _id: 'd2' } }
-        ]
-      })
-      .mockResolvedValueOnce({ ok: true, json: async () => [] })
-      .mockResolvedValueOnce({ ok: true, json: async () => [] })
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ approvals: [], leaves: [] }) })
+        }
+      ]
+    })
     const wrapper = mountSchedule()
     await flush()
-    expect(apiFetch).toHaveBeenCalledWith('/api/employees?supervisor=sup2')
+    expect(apiFetch).toHaveBeenCalledWith('/api/employees/schedule?supervisor=sup2&pageSize=200')
     expect(wrapper.vm.departments).toEqual([{ _id: 'd1', name: 'Dept A' }])
     expect(wrapper.vm.selectedDepartment).toBe('d1')
     expect(wrapper.vm.subDepartments).toEqual([

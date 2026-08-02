@@ -3,6 +3,7 @@ import {
   listEmployees,
   listEmployeesSchedule,
   listEmployeeOptions,
+  listAttendanceImportEmployeeOptions,
   createEmployee,
   getEmployee,
   getEmployeePhoto,
@@ -14,6 +15,7 @@ import {
   setEmployeeAnnualLeave,
   validateEmployeeAnnualLeave
 } from '../controllers/employeeController.js';
+import { authorizeRoles } from '../middleware/auth.js';
 import { bulkImportEmployees } from '../controllers/employeeBulkImportController.js';
 import uploadMiddleware from '../middleware/upload.js';
 import photoUploadMiddleware from '../middleware/photoUpload.js';
@@ -25,6 +27,7 @@ const router = Router();
 router.get('/', listEmployees);
 router.get('/schedule', listEmployeesSchedule);
 router.get('/options', listEmployeeOptions);
+router.get('/attendance-import-options', authorizeRoles('admin'), listAttendanceImportEmployeeOptions);
 router.post('/', uploadSingle, handleMulterError, processUploadedPhoto, createEmployee);
 router.post('/bulk-import', uploadMiddleware, validateBulkImportPayload, bulkImportEmployees);
 router.post('/import', uploadMiddleware, validateBulkImportPayload, bulkImportEmployees);

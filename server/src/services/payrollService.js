@@ -31,8 +31,8 @@ export function extractRecurringAllowance(employee) {
  * @param {Object} customData - 自定義數據 (可選)
  * @returns {Object} - 薪資計算結果
  */
-export async function calculateEmployeePayroll(employeeId, month, customData = {}) {
-  const employee = await Employee.findById(employeeId);
+export async function calculateEmployeePayroll(employeeId, month, customData = {}, context = {}) {
+  const employee = context.employee ?? await Employee.findById(employeeId);
   if (!employee) {
     throw new Error('Employee not found');
   }
@@ -42,7 +42,7 @@ export async function calculateEmployeePayroll(employeeId, month, customData = {
   // 計算工作時數和請假影響
   let workData = null;
   try {
-    workData = await calculateCompleteWorkData(employeeId, month);
+    workData = context.workData ?? await calculateCompleteWorkData(employeeId, month);
   } catch (error) {
     console.error(`Error calculating work data for employee ${employeeId}:`, error);
     // 如果計算失敗，使用預設值
@@ -79,7 +79,8 @@ export async function calculateEmployeePayroll(employeeId, month, customData = {
   // 計算夜班津貼（根據實際排班）
   let nightShiftAllowanceData = null;
   try {
-    nightShiftAllowanceData = await calculateNightShiftAllowance(employeeId, month, employee);
+    nightShiftAllowanceData = context.nightShiftAllowanceData ??
+      await calculateNightShiftAllowance(employeeId, month, employee);
   } catch (error) {
     console.error(`Error calculating night shift allowance for employee ${employeeId}:`, error);
   }
