@@ -85,7 +85,15 @@ const storage = multer.diskStorage({
 
 const attachmentUpload = multer({
   storage,
-  limits: { fileSize: MAX_FILE_SIZE, files: MAX_FILES },
+  limits: {
+    fileSize: MAX_FILE_SIZE,
+    files: MAX_FILES,
+    fields: 10,
+    parts: MAX_FILES + 10,
+    fieldNameSize: 100,
+    fieldSize: 256 * 1024,
+    headerPairs: 100,
+  },
   fileFilter: (_req, file, callback) => {
     if (!ALLOWED_MIME_TYPES.has(file.mimetype)) {
       callback(new Error('附件格式不支援，請上傳 PDF、Word、Excel 或圖片'))

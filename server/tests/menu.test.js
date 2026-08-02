@@ -80,7 +80,8 @@ describe('Menu API', () => {
     const res = await request(app).get('/api/menu');
     const fs = await import('fs');
     const path = await import('path');
-    const __dirname = path.dirname(new URL(import.meta.url).pathname);
+    const { fileURLToPath } = await import('url');
+    const __dirname = path.dirname(fileURLToPath(import.meta.url));
     const routerPath = path.resolve(__dirname, '../../client/src/router/index.js');
     const content = fs.readFileSync(routerPath, 'utf-8');
     const matches = Array.from(content.matchAll(/name:\s*'([^']+)'/g)).map(m => m[1]);

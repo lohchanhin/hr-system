@@ -9,7 +9,15 @@ const ALLOWED_MIME_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'
 
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: EMPLOYEE_PHOTO_MAX_SIZE, files: 1 },
+  limits: {
+    fileSize: EMPLOYEE_PHOTO_MAX_SIZE,
+    files: 1,
+    fields: 100,
+    parts: 102,
+    fieldNameSize: 100,
+    fieldSize: 1024 * 1024,
+    headerPairs: 100,
+  },
   fileFilter: (_req, file, callback) => {
     if (!ALLOWED_MIME_TYPES.includes(file.mimetype)) {
       callback(new EmployeePhotoValidationError('不支援的圖片格式，僅支援 JPEG、PNG、GIF、WebP'))

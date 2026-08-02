@@ -12,32 +12,37 @@ function normalizeHolidayPayload(payload = {}) {
   let dateValue = null;
   
   if (payload.date) {
-    let dateStr = payload.date.toString();
-    
-    // 關鍵：處理 20250101 格式 -> 轉為 2025-01-01
-    if (dateStr.length === 8 && !dateStr.includes('-')) {
-      const y = dateStr.substring(0, 4);
-      const m = dateStr.substring(4, 6);
-      const d = dateStr.substring(6, 8);
-      dateStr = `${y}-${m}-${d}`;
-    }
-    
-    const d = new Date(dateStr);
-    if (!Number.isNaN(d.getTime())) {
-      // 關鍵：強制設為該日凌晨 0 點，避免資料庫時區偏差造成的重複或錯誤
-      d.setHours(0, 0, 0, 0); 
-      dateValue = d;
+    const dateStr = payload.date.toString().trim();
+    const dateOnlyMatch = dateStr.match(/^(\d{4})[-/]?(\d{2})[-/]?(\d{2})$/);
+    if (dateOnlyMatch) {
+      const [, year, month, day] = dateOnlyMatch;
+      const candidate = new Date(Date.UTC(Number(year), Number(month) - 1, Number(day)));
+      if (
+        candidate.getUTCFullYear() === Number(year) &&
+        candidate.getUTCMonth() === Number(month) - 1 &&
+        candidate.getUTCDate() === Number(day)
+      ) {
+        dateValue = candidate;
+      }
+    } else {
+      const candidate = new Date(dateStr);
+      if (!Number.isNaN(candidate.getTime())) {
+        dateValue = new Date(Date.UTC(
+          candidate.getUTCFullYear(),
+          candidate.getUTCMonth(),
+          candidate.getUTCDate()
+        ));
+      }
     }
   }
 
-  // 根據你的 JSON 範例：名稱主要在 description 欄位
-  const name = payload.description || payload.name || payload.holidayCategory || '假日';
-  const desc = payload.description || payload.remark || payload.name || '';
+  const name = payload.description || payload.name || payload.desc || payload.holidayCategory || '假日';
+  const desc = payload.description || payload.desc || payload.remark || payload.name || '';
 
   return {
     name: name.trim() || '未命名假日',
     date: dateValue,
-    type: payload.holidayCategory || (payload.isHoliday ? '國定假日' : '工作日'),
+    type: payload.type || payload.holidayCategory || (payload.isHoliday ? '國定假日' : '工作日'),
     desc: desc,
     description: desc,
     source: payload.source || 'manual',
@@ -67,10 +72,8 @@ export async function listHolidaysByMonth(req, res) {
     const year = parseInt(yearStr, 10);
     const monthNum = parseInt(monthStr, 10);
     
-    const startDate = new Date(year, monthNum - 1, 1);
-    startDate.setHours(0, 0, 0, 0);
-    const endDate = new Date(year, monthNum, 1);
-    endDate.setHours(0, 0, 0, 0);
+    const startDate = new Date(Date.UTC(year, monthNum - 1, 1));
+    const endDate = new Date(Date.UTC(year, monthNum, 1));
     
     const holidays = await Holiday.find({
       date: { $gte: startDate, $lt: endDate }
@@ -200,6 +203,7 @@ export async function importRocHolidays(req, res) {
     res.json({
       success: true,
       year,
+      imported: successfulSaves.length,
       count: successfulSaves.length,
       holidays: successfulSaves
     });

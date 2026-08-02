@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { shallowMount } from '@vue/test-utils'
 import { h, defineComponent, computed, provide, inject } from 'vue'
 import AttendanceImportDialog from '../AttendanceImportDialog.vue'
@@ -126,6 +126,26 @@ describe('AttendanceImportDialog', () => {
     ElMessage.success.mockClear()
     ElMessage.error.mockClear()
     ElMessage.warning.mockClear()
+  })
+
+  afterEach(() => {
+    apiFetchMock.mockRestore()
+    importAttendanceMock.mockRestore()
+  })
+
+  it('在前端拒絕不支援或超過 5MB 的考勤檔案', () => {
+    const wrapper = mountComponent()
+
+    wrapper.vm.handleFileChange({ raw: { name: 'records.xls', size: 100 } })
+    expect(ElMessage.warning).toHaveBeenCalledWith('請上傳 .xlsx 或 .csv 檔案')
+    expect(wrapper.vm.selectedFile).toBeNull()
+
+    ElMessage.warning.mockClear()
+    wrapper.vm.handleFileChange({
+      raw: { name: 'records.csv', size: (5 * 1024 * 1024) + 1 }
+    })
+    expect(ElMessage.warning).toHaveBeenCalledWith('匯入檔案不可超過 5MB')
+    expect(wrapper.vm.selectedFile).toBeNull()
   })
 
   it('預覽時會攜帶欄位設定與時區資訊', async () => {

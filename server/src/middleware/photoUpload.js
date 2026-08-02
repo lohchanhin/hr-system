@@ -7,6 +7,7 @@ import {
 } from '../services/employeePhotoStorage.js'
 
 const ALLOWED_MIME_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp']
+const MAX_BASE64_LENGTH = Math.ceil(EMPLOYEE_PHOTO_MAX_SIZE / 3) * 4
 
 function getPhotoSource(body = {}) {
   if (body.photo || body.photoData) return body.photo || body.photoData
@@ -23,13 +24,23 @@ function decodeBase64Photo(photoSource) {
   }
 
   if (photoSource.startsWith('data:image/')) {
-    const match = photoSource.match(/^data:([^;]+);base64,([A-Za-z0-9+/=\r\n]+)$/)
-    if (!match || !ALLOWED_MIME_TYPES.includes(match[1])) {
+    const header = photoSource.match(/^data:([^;]+);base64,/)
+    if (!header || !ALLOWED_MIME_TYPES.includes(header[1])) {
       throw new EmployeePhotoValidationError('不支援的圖片格式，僅支援 JPEG、PNG、GIF、WebP')
     }
-    return { buffer: Buffer.from(match[2], 'base64'), declaredMimeType: match[1] }
+    const encoded = photoSource.slice(header[0].length)
+    if (encoded.length > MAX_BASE64_LENGTH) {
+      throw new EmployeePhotoValidationError('圖片檔案過大，最大 5MB')
+    }
+    if (!/^[A-Za-z0-9+/=\r\n]+$/.test(encoded)) {
+      throw new EmployeePhotoValidationError('無效的 base64 格式')
+    }
+    return { buffer: Buffer.from(encoded, 'base64'), declaredMimeType: header[1] }
   }
 
+  if (photoSource.length > MAX_BASE64_LENGTH) {
+    throw new EmployeePhotoValidationError('圖片檔案過大，最大 5MB')
+  }
   if (!/^[A-Za-z0-9+/=\r\n]+$/.test(photoSource)) {
     throw new EmployeePhotoValidationError('無效的 base64 格式')
   }

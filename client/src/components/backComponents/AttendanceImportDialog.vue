@@ -17,13 +17,13 @@
             action=""
             :auto-upload="false"
             :show-file-list="false"
-            accept=".xlsx,.xls,.csv"
+            accept=".xlsx,.csv"
             @change="handleFileChange"
           >
             <el-button type="primary">選擇檔案</el-button>
             <template #tip>
               <div class="upload-tip">
-                {{ selectedFile ? `已選擇：${selectedFile.name}` : '支援 Excel 或 CSV 檔案。預設使用考勤機格式（編號/姓名/日期時間/簽到退），如有不同可在下方調整欄位對應。' }}
+                {{ selectedFile ? `已選擇：${selectedFile.name}` : '支援 .xlsx 或 .csv 檔案，最大 5MB。預設使用考勤機格式（編號/姓名/日期時間/簽到退），如有不同可在下方調整欄位對應。' }}
               </div>
             </template>
           </el-upload>
@@ -172,6 +172,9 @@ import { ElMessage } from 'element-plus'
 // 你既有的 API helper，如無請在下方「API 小幫手」區塊一起帶走
 import { apiFetch, importAttendanceRecords } from '../../api'
 
+const IMPORT_MAX_FILE_SIZE = 5 * 1024 * 1024
+const IMPORT_EXTENSIONS = new Set(['xlsx', 'csv'])
+
 // ---- Props / Emits ----
 const props = defineProps({
   modelValue: { type: Boolean, default: false }
@@ -294,9 +297,19 @@ function handleClose() {
 
 // Element Plus @change 會給 (uploadFile, uploadFiles)
 function handleFileChange(uploadFile /* , uploadFiles */) {
-  if (uploadFile?.raw) {
-    selectedFile.value = uploadFile.raw
+  const raw = uploadFile?.raw
+  if (!raw) return
+
+  const extension = String(raw.name || '').split('.').pop()?.toLowerCase()
+  if (!IMPORT_EXTENSIONS.has(extension)) {
+    ElMessage.warning('請上傳 .xlsx 或 .csv 檔案')
+    return
   }
+  if (Number(raw.size) > IMPORT_MAX_FILE_SIZE) {
+    ElMessage.warning('匯入檔案不可超過 5MB')
+    return
+  }
+  selectedFile.value = raw
 }
 
 function formatTimestamp(value, tz) {

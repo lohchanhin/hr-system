@@ -3,13 +3,20 @@ import { shallowMount } from '@vue/test-utils'
 import * as apiModule from '../../../api'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
-vi.mock('xlsx', () => ({
-  read: vi.fn(() => ({ SheetNames: [], Sheets: {} })),
-  utils: {
-    sheet_to_json: vi.fn(() => [])
-  },
-  writeFile: vi.fn()
-}), { virtual: true })
+vi.mock('xlsx', () => {
+  const xlsx = {
+    read: vi.fn(() => ({ SheetNames: ['Employees'], Sheets: { Employees: {} } })),
+    utils: {
+      sheet_to_json: vi.fn(() => [
+        ['employeeId', 'name', 'email', 'department'],
+        ['員工編號 (必填)', '姓名 (必填)', '電子郵件 (必填唯一)', '部門'],
+        ['E0001', '測試員工', 'employee@example.com', '人資部']
+      ])
+    },
+    writeFile: vi.fn()
+  }
+  return { ...xlsx, default: xlsx }
+}, { virtual: true })
 
 vi.mock('element-plus', () => {
   const success = vi.fn()
@@ -160,10 +167,13 @@ describe('EmployeeManagement - 批量匯入流程', () => {
     window.URL.revokeObjectURL = revokeObjectURLSpy
 
     const blobCalls = []
-    window.Blob = vi.fn((parts, options) => {
-      blobCalls.push({ parts, options })
-      return { size: parts.reduce((sum, part) => sum + String(part).length, 0), type: options?.type }
-    })
+    window.Blob = class MockBlob {
+      constructor(parts, options) {
+        blobCalls.push({ parts, options })
+        this.size = parts.reduce((sum, part) => sum + String(part).length, 0)
+        this.type = options?.type
+      }
+    }
 
     const anchor = document.createElement('a')
     const clickSpy = vi.spyOn(anchor, 'click').mockImplementation(() => {})
@@ -173,37 +183,39 @@ describe('EmployeeManagement - 批量匯入流程', () => {
     const appendChildSpy = vi.spyOn(document.body, 'appendChild')
     const removeChildSpy = vi.spyOn(document.body, 'removeChild')
 
-    await wrapper.vm.downloadBulkImportTemplate()
+    try {
+      await wrapper.vm.downloadBulkImportTemplate()
 
-    expect(createObjectURLSpy).toHaveBeenCalledTimes(1)
-    expect(appendChildSpy).toHaveBeenCalledWith(anchor)
-    expect(clickSpy).toHaveBeenCalledTimes(1)
-    expect(removeChildSpy).toHaveBeenCalledWith(anchor)
-    expect(revokeObjectURLSpy).toHaveBeenCalledWith('blob:template')
-    expect(blobCalls.length).toBe(1)
-    const csvContent = blobCalls[0].parts[0]
-    const rows = csvContent.trim().split('\n')
-    expect(rows.length).toBe(7)
-    const [headerRow, descriptionRow, ...sampleRows] = rows
-    expect(sampleRows.length).toBe(5)
-    expect(headerRow).toContain('employeeId')
-    expect(headerRow).toContain('email')
-    expect(descriptionRow).toContain('員工編號 (必填)')
-    expect(descriptionRow).toContain('姓名 (必填)')
-    expect(descriptionRow).toContain('電子郵件 (必填唯一)')
-    expect(descriptionRow).toContain('性別 (M=男, F=女, O=其他)')
-    expect(sampleRows[0]).toContain('EMP-0001')
-    expect(sampleRows[0]).toContain('import.hr001@example.com')
-    expect(sampleRows[4]).toContain('EMP-0005')
-    expect(sampleRows[4]).toContain('import.hr005@example.com')
-
-    createElementSpy.mockRestore()
-    appendChildSpy.mockRestore()
-    removeChildSpy.mockRestore()
-    clickSpy.mockRestore()
-    window.URL.createObjectURL = originalCreateObjectURL
-    window.URL.revokeObjectURL = originalRevokeObjectURL
-    window.Blob = originalBlob
+      expect(createObjectURLSpy).toHaveBeenCalledTimes(1)
+      expect(appendChildSpy).toHaveBeenCalledWith(anchor)
+      expect(clickSpy).toHaveBeenCalledTimes(1)
+      expect(removeChildSpy).toHaveBeenCalledWith(anchor)
+      expect(revokeObjectURLSpy).toHaveBeenCalledWith('blob:template')
+      expect(blobCalls.length).toBe(1)
+      const csvContent = blobCalls[0].parts[0]
+      const rows = csvContent.trim().split('\n')
+      expect(rows.length).toBe(7)
+      const [headerRow, descriptionRow, ...sampleRows] = rows
+      expect(sampleRows.length).toBe(5)
+      expect(headerRow).toContain('employeeId')
+      expect(headerRow).toContain('email')
+      expect(descriptionRow).toContain('員工編號 (必填)')
+      expect(descriptionRow).toContain('姓名 (必填)')
+      expect(descriptionRow).toContain('電子郵件 (必填唯一)')
+      expect(descriptionRow).toContain('性別 (M=男, F=女, O=其他)')
+      expect(sampleRows[0]).toContain('EMP-0001')
+      expect(sampleRows[0]).toContain('import.hr001@example.com')
+      expect(sampleRows[4]).toContain('EMP-0005')
+      expect(sampleRows[4]).toContain('import.hr005@example.com')
+    } finally {
+      createElementSpy.mockRestore()
+      appendChildSpy.mockRestore()
+      removeChildSpy.mockRestore()
+      clickSpy.mockRestore()
+      window.URL.createObjectURL = originalCreateObjectURL
+      window.URL.revokeObjectURL = originalRevokeObjectURL
+      window.Blob = originalBlob
+    }
   })
 
   it('使用範本示範資料可完成預覽匯入流程', async () => {
@@ -254,7 +266,7 @@ describe('EmployeeManagement - 批量匯入流程', () => {
       return response
     })
     const file = new File([csvContent], 'employee-import-template.csv', { type: 'text/csv' })
-    wrapper.vm.handleBulkImportFileChange({ name: 'employee-import-template.csv', raw: file })
+    await wrapper.vm.handleBulkImportFileChange({ name: 'employee-import-template.csv', raw: file })
 
     wrapper.vm.bulkImportPreview = samplePreview
     ElMessage.warning.mockClear()
@@ -266,6 +278,24 @@ describe('EmployeeManagement - 批量匯入流程', () => {
     expect(wrapper.vm.bulkImportErrors).toEqual([])
     expect(wrapper.vm.bulkImportPreview).toEqual(samplePreview)
     expect(wrapper.vm.bulkImportDialogVisible).toBe(true)
+  })
+
+  it('在前端拒絕超過 5MB 的匯入檔並保留既有選擇', async () => {
+    const wrapper = await mountComponent()
+    const existing = new File(['employeeId,name,email\nE1,User,user@example.com'], 'existing.csv', {
+      type: 'text/csv'
+    })
+    await wrapper.vm.handleBulkImportFileChange({ name: 'existing.csv', raw: existing })
+    ElMessage.warning.mockClear()
+
+    const oversized = {
+      name: 'oversized.csv',
+      size: (5 * 1024 * 1024) + 1
+    }
+    await wrapper.vm.handleBulkImportFileChange({ name: oversized.name, raw: oversized })
+
+    expect(ElMessage.warning).toHaveBeenCalledWith('匯入檔案不可超過 5MB')
+    expect(wrapper.vm.bulkImportFile).toBe(existing)
   })
 
   it('匯入成功後顯示成功訊息並重新載入員工列表', async () => {
@@ -283,7 +313,7 @@ describe('EmployeeManagement - 批量匯入流程', () => {
     const file = new File(['測試匯入'], 'employees.xlsx', {
       type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
     })
-    wrapper.vm.handleBulkImportFileChange({ name: 'employees.xlsx', raw: file })
+    await wrapper.vm.handleBulkImportFileChange({ name: 'employees.xlsx', raw: file })
 
     ElMessage.warning.mockClear()
 
@@ -350,7 +380,7 @@ describe('EmployeeManagement - 批量匯入流程', () => {
     const file = new File(['測試匯入'], 'employees.xlsx', {
       type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
     })
-    wrapper.vm.handleBulkImportFileChange({ name: 'employees.xlsx', raw: file })
+    await wrapper.vm.handleBulkImportFileChange({ name: 'employees.xlsx', raw: file })
 
     ElMessage.warning.mockClear()
 
@@ -390,7 +420,7 @@ describe('EmployeeManagement - 批量匯入流程', () => {
     const file = new File(['錯誤'], 'employees.xlsx', {
       type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
     })
-    wrapper.vm.handleBulkImportFileChange({ name: 'employees.xlsx', raw: file })
+    await wrapper.vm.handleBulkImportFileChange({ name: 'employees.xlsx', raw: file })
 
     await wrapper.vm.submitBulkImport()
     await flushPromises()
@@ -422,7 +452,7 @@ describe('EmployeeManagement - 批量匯入流程', () => {
     const file = new File(['mapping'], 'employees.xlsx', {
       type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
     })
-    wrapper.vm.handleBulkImportFileChange({ name: 'employees.xlsx', raw: file })
+    await wrapper.vm.handleBulkImportFileChange({ name: 'employees.xlsx', raw: file })
 
     await wrapper.vm.submitBulkImport()
     await flushPromises()
@@ -475,7 +505,7 @@ describe('EmployeeManagement - 批量匯入流程', () => {
     await wrapper.find('[data-test="bulk-import-button"]').trigger('click')
 
     const file = new File(['mapping'], 'employees.csv', { type: 'text/csv' })
-    wrapper.vm.handleBulkImportFileChange({ name: 'employees.csv', raw: file })
+    await wrapper.vm.handleBulkImportFileChange({ name: 'employees.csv', raw: file })
 
     await wrapper.vm.submitBulkImport()
     await flushPromises()
@@ -520,7 +550,7 @@ describe('EmployeeManagement - 批量匯入流程', () => {
     await wrapper.find('[data-test="bulk-import-button"]').trigger('click')
 
     const file = new File(['mapping'], 'employees.csv', { type: 'text/csv' })
-    wrapper.vm.handleBulkImportFileChange({ name: 'employees.csv', raw: file })
+    await wrapper.vm.handleBulkImportFileChange({ name: 'employees.csv', raw: file })
 
     await wrapper.vm.submitBulkImport()
     await flushPromises()
@@ -580,7 +610,7 @@ describe('EmployeeManagement - 批量匯入流程', () => {
     await wrapper.find('[data-test="bulk-import-button"]').trigger('click')
 
     const file = new File(['mapping'], 'employees.csv', { type: 'text/csv' })
-    wrapper.vm.handleBulkImportFileChange({ name: 'employees.csv', raw: file })
+    await wrapper.vm.handleBulkImportFileChange({ name: 'employees.csv', raw: file })
 
     await wrapper.vm.submitBulkImport()
     await flushPromises()

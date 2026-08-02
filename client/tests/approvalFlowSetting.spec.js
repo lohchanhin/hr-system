@@ -1,6 +1,6 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
-import ElementPlus from 'element-plus'
+import ElementPlus, { ElMessage } from 'element-plus'
 import ApprovalFlowSetting from '../src/components/backComponents/ApprovalFlowSetting.vue'
 
 const employees = [
@@ -55,11 +55,14 @@ const subDepartments = [
 
 vi.mock('../src/api', () => ({ apiFetch: vi.fn() }))
 import { apiFetch } from '../src/api'
-global.ElMessage = { success: vi.fn(), error: vi.fn() }
-
 beforeEach(() => {
   apiFetch.mockClear()
-  global.ElMessage = { success: vi.fn(), error: vi.fn() }
+  vi.spyOn(ElMessage, 'success').mockImplementation(() => {})
+  vi.spyOn(ElMessage, 'error').mockImplementation(() => {})
+})
+
+afterEach(() => {
+  vi.restoreAllMocks()
 })
 
 apiFetch.mockImplementation((url, opts) => {
@@ -210,10 +213,10 @@ describe('ApprovalFlowSetting approver select', () => {
       ([url, opts]) => url === '/api/approvals/forms/f1/workflow' && opts?.method === 'PUT'
     )
 
-    expect(global.ElMessage.error).toHaveBeenCalledTimes(1)
-    expect(global.ElMessage.error.mock.calls[0][0]).toContain('第1關')
+    expect(ElMessage.error).toHaveBeenCalledTimes(1)
+    expect(ElMessage.error.mock.calls[0][0]).toContain('第1關')
     expect(putCalls.length).toBe(0)
-    expect(global.ElMessage.success).not.toHaveBeenCalled()
+    expect(ElMessage.success).not.toHaveBeenCalled()
   })
 
   it('normalizes role selections using sign role dictionary', async () => {

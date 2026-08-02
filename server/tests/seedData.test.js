@@ -518,30 +518,30 @@ describe('seedTestUsers', () => {
       expect(subDeptIds.has(schedule.subDepartment.toString())).toBe(true);
     });
 
-    const attendanceByDay = new Map();
+    const attendanceByEmployee = new Map();
     mockAttendanceRecords.forEach((record) => {
-      const dayKey = new Date(record.timestamp).toISOString().slice(0, 10);
-      const key = `${record.employee}|${dayKey}`;
-      if (!attendanceByDay.has(key)) {
-        attendanceByDay.set(key, []);
+      if (!attendanceByEmployee.has(record.employee)) {
+        attendanceByEmployee.set(record.employee, []);
       }
-      attendanceByDay.get(key).push(record.action);
+      attendanceByEmployee.get(record.employee).push(record);
     });
 
-    attendanceByDay.forEach((actions) => {
-      expect(actions.filter((action) => action === 'clockIn')).toHaveLength(1);
-      expect(actions.filter((action) => action === 'clockOut')).toHaveLength(1);
-    });
+    attendanceByEmployee.forEach((records, employeeId) => {
+      const clockIns = records
+        .filter((record) => record.action === 'clockIn')
+        .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+      const clockOuts = records
+        .filter((record) => record.action === 'clockOut')
+        .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+      const scheduleCount = mockShiftSchedules.filter((schedule) => schedule.employee === employeeId).length;
 
-    expect(attendanceByDay.size).toBe(scheduleKeySet.size);
-
-    const employeeDayCounts = new Map();
-    attendanceByDay.forEach((_, key) => {
-      const [employeeId] = key.split('|');
-      employeeDayCounts.set(employeeId, (employeeDayCounts.get(employeeId) ?? 0) + 1);
-    });
-    employeeDayCounts.forEach((count) => {
-      expect(count).toBeGreaterThanOrEqual(MIN_WORKDAYS);
+      expect(clockIns).toHaveLength(scheduleCount);
+      expect(clockOuts).toHaveLength(scheduleCount);
+      expect(scheduleCount).toBeGreaterThanOrEqual(MIN_WORKDAYS);
+      clockIns.forEach((clockIn, index) => {
+        expect(new Date(clockOuts[index].timestamp).getTime())
+          .toBeGreaterThan(new Date(clockIn.timestamp).getTime());
+      });
     });
 
     // 驗證薪資記錄

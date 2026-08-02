@@ -540,7 +540,7 @@ function generateRecentWorkdays(count, referenceDate = new Date()) {
 }
 
 function formatMonthStart(date) {
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-01`;
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}-01`;
 }
 
 function parseTimeString(time) {
@@ -709,11 +709,11 @@ async function seedPayrollRecords({ supervisors = [], employees = [] } = {}) {
   const months = [];
 
   // 當月
-  const currentMonth = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1);
+  const currentMonth = new Date(Date.UTC(currentDate.getUTCFullYear(), currentDate.getUTCMonth(), 1));
   months.push(currentMonth);
 
   // 上個月
-  const lastMonth = new Date(currentDate.getFullYear(), currentDate.getMonth() - 1, 1);
+  const lastMonth = new Date(Date.UTC(currentDate.getUTCFullYear(), currentDate.getUTCMonth() - 1, 1));
   months.push(lastMonth);
 
   const formConfigs = await Promise.all([
@@ -737,7 +737,7 @@ async function seedPayrollRecords({ supervisors = [], employees = [] } = {}) {
 
   const isValidDate = (value) => value instanceof Date && !Number.isNaN(value.getTime());
 
-  const monthKey = (date) => new Date(date.getFullYear(), date.getMonth(), 1).getTime();
+  const monthKey = (date) => Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1);
 
   const getRate = (employee) => {
     const base = employee.salaryAmount || 0;
@@ -786,13 +786,16 @@ async function seedPayrollRecords({ supervisors = [], employees = [] } = {}) {
       let hours = 0;
       if (isValidDate(start) && isValidDate(end)) {
         const totalMillis = end - start;
-        const hasTimeComponent = start.getHours() !== 0 || start.getMinutes() !== 0 || end.getHours() !== 0 || end.getMinutes() !== 0;
+        const hasTimeComponent = start.getUTCHours() !== 0 || start.getUTCMinutes() !== 0 ||
+          end.getUTCHours() !== 0 || end.getUTCMinutes() !== 0;
         if (hasTimeComponent) {
           // Datetime fields: use precise hour calculation
           hours = totalMillis / MILLISECONDS_PER_HOUR;
         } else {
           // Date-only fields: calculate working days (8 hours per day)
-          const days = Math.ceil(totalMillis / MILLISECONDS_PER_DAY);
+          const days = totalMillis < 0
+            ? 0
+            : Math.max(1, Math.ceil(totalMillis / MILLISECONDS_PER_DAY));
           hours = days * 8; // Convert days to 8-hour work days
         }
       }
@@ -1446,10 +1449,14 @@ async function ensureTagAssignments(tagMap, requiredTags, supervisors) {
   return tagMap;
 }
 
-function resolveApproverIds(step, applicant, tagMap) {
+function resolveApproverIds(step, applicant, tagMap, supervisors = []) {
   const type = step?.approver_type;
   if (type === 'manager') {
-    return applicant?.supervisor ? [applicant.supervisor] : [];
+    if (applicant?.supervisor) return [applicant.supervisor];
+    const applicantId = toStringId(applicant?._id);
+    const fallback = supervisors.find((supervisor) => toStringId(supervisor?._id) !== applicantId)
+      ?? supervisors[0];
+    return fallback?._id ? [fallback._id] : [];
   }
   if (type === 'tag') {
     const tagName = String(step?.approver_value ?? '');
@@ -1464,13 +1471,13 @@ function resolveApproverIds(step, applicant, tagMap) {
   return [];
 }
 
-function buildBaseSteps(workflow, applicant, tagMap) {
+function buildBaseSteps(workflow, applicant, tagMap, supervisors = []) {
   const steps = workflow?.steps ?? [];
   return steps
     .slice()
     .sort((a, b) => (a.step_order ?? 0) - (b.step_order ?? 0))
     .map((step) => {
-      const approverIds = resolveApproverIds(step, applicant, tagMap);
+      const approverIds = resolveApproverIds(step, applicant, tagMap, supervisors);
       return {
         step_order: step.step_order,
         approvers: approverIds.map((id) => ({ approver: id, decision: 'pending' })),
@@ -1827,7 +1834,7 @@ export async function seedApprovalRequests({ supervisors = [], employees = [] } 
     APPROVAL_STATUSES.forEach((status, statusIdx) => {
       const applicant = applicants[(builderIdx + statusIdx) % applicants.length];
       const { data, rangeStart } = item.builder(item.config.fieldMap, baseIndex + statusIdx);
-      const baseSteps = buildBaseSteps(item.config.workflow, applicant, tagMap);
+      const baseSteps = buildBaseSteps(item.config.workflow, applicant, tagMap, supervisorList);
       requests.push(
         createApprovalPayload({
           applicant,
@@ -1847,8 +1854,8 @@ export async function seedApprovalRequests({ supervisors = [], employees = [] } 
   // 確保薪資記錄中每月都有這些項目
   const currentDate = new Date();
   const payrollMonths = [
-    new Date(currentDate.getFullYear(), currentDate.getMonth(), 1), // 當月
-    new Date(currentDate.getFullYear(), currentDate.getMonth() - 1, 1), // 上個月
+    new Date(Date.UTC(currentDate.getUTCFullYear(), currentDate.getUTCMonth(), 1)), // 當月
+    new Date(Date.UTC(currentDate.getUTCFullYear(), currentDate.getUTCMonth() - 1, 1)), // 上個月
   ];
 
   const allApplicants = [...supervisorList, ...applicants];
@@ -1859,9 +1866,9 @@ export async function seedApprovalRequests({ supervisors = [], employees = [] } 
       // 為每位員工生成請假申請
       if (leaveConfig) {
         const leaveDate = new Date(month);
-        leaveDate.setDate(5 + (empIdx % 8)); // 分散在月初不同日期 (5-12日)
+        leaveDate.setUTCDate(5 + (empIdx % 8)); // 分散在月初不同日期 (5-12日)
         const leaveEnd = new Date(leaveDate);
-        leaveEnd.setDate(leaveDate.getDate() + 1); // 請1天假
+        leaveEnd.setUTCDate(leaveDate.getUTCDate() + 1); // 請1天假
         
         const leaveData = {};
         const leaveTypes = (leaveFieldInfo?.typeOptions ?? [])
@@ -1880,7 +1887,7 @@ export async function seedApprovalRequests({ supervisors = [], employees = [] } 
         if (endFieldId) leaveData[endFieldId] = leaveEnd;
         if (reasonFieldId) leaveData[reasonFieldId] = LEAVE_REASON_POOL[empIdx % LEAVE_REASON_POOL.length];
         
-        const leaveSteps = buildBaseSteps(leaveConfig.workflow, applicant, tagMap);
+        const leaveSteps = buildBaseSteps(leaveConfig.workflow, applicant, tagMap, supervisorList);
         requests.push(
           createApprovalPayload({
             applicant,
@@ -1899,10 +1906,10 @@ export async function seedApprovalRequests({ supervisors = [], employees = [] } 
       const overtimeConfig = configMap.get('加班申請');
       if (overtimeConfig) {
         const overtimeDate = new Date(month);
-        overtimeDate.setDate(10 + (empIdx % 15)); // 分散在月中不同日期 (10-24日)
-        overtimeDate.setHours(18, 0, 0, 0); // 18:00開始加班
+        overtimeDate.setUTCDate(10 + (empIdx % 15)); // 分散在月中不同日期 (10-24日)
+        overtimeDate.setUTCHours(18, 0, 0, 0); // 18:00開始加班
         const overtimeEnd = new Date(overtimeDate);
-        overtimeEnd.setHours(21, 0, 0, 0); // 21:00結束，加班3小時
+        overtimeEnd.setUTCHours(21, 0, 0, 0); // 21:00結束，加班3小時
         
         const overtimeData = {};
         if (overtimeConfig.fieldMap['開始時間']) overtimeData[overtimeConfig.fieldMap['開始時間']] = overtimeDate;
@@ -1910,7 +1917,7 @@ export async function seedApprovalRequests({ supervisors = [], employees = [] } 
         if (overtimeConfig.fieldMap['是否跨日']) overtimeData[overtimeConfig.fieldMap['是否跨日']] = false;
         if (overtimeConfig.fieldMap['事由']) overtimeData[overtimeConfig.fieldMap['事由']] = OVERTIME_REASON_POOL[empIdx % OVERTIME_REASON_POOL.length];
         
-        const overtimeSteps = buildBaseSteps(overtimeConfig.workflow, applicant, tagMap);
+        const overtimeSteps = buildBaseSteps(overtimeConfig.workflow, applicant, tagMap, supervisorList);
         requests.push(
           createApprovalPayload({
             applicant,
@@ -1929,14 +1936,14 @@ export async function seedApprovalRequests({ supervisors = [], employees = [] } 
       const bonusConfig = configMap.get('獎金申請');
       if (bonusConfig) {
         const bonusDate = new Date(month);
-        bonusDate.setDate(20 + (empIdx % 8)); // 分散在月底不同日期 (20-27日)
+        bonusDate.setUTCDate(20 + (empIdx % 8)); // 分散在月底不同日期 (20-27日)
         
         const bonusData = {};
         if (bonusConfig.fieldMap['獎金類型']) bonusData[bonusConfig.fieldMap['獎金類型']] = BONUS_TYPE_POOL[empIdx % BONUS_TYPE_POOL.length];
         if (bonusConfig.fieldMap['金額']) bonusData[bonusConfig.fieldMap['金額']] = randomInRange(5000, 20000);
         if (bonusConfig.fieldMap['事由']) bonusData[bonusConfig.fieldMap['事由']] = BONUS_REASON_POOL[empIdx % BONUS_REASON_POOL.length];
         
-        const bonusSteps = buildBaseSteps(bonusConfig.workflow, applicant, tagMap);
+        const bonusSteps = buildBaseSteps(bonusConfig.workflow, applicant, tagMap, supervisorList);
         requests.push(
           createApprovalPayload({
             applicant,

@@ -32,7 +32,9 @@ function getCurrentMonth() {
     .toISOString().split('T')[0];
 }
 
-describe('夜班員工與夜班津貼測試資料驗證', () => {
+const describeWithDatabase = process.env.RUN_DB_INTEGRATION_TESTS === 'true' ? describe : describe.skip;
+
+describeWithDatabase('夜班員工與夜班津貼測試資料驗證', () => {
   beforeAll(async () => {
     if (!process.env.MONGODB_URI) {
       throw new Error('MONGODB_URI is not defined in the environment');

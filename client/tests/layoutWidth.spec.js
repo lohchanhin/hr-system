@@ -22,7 +22,8 @@ function setViewportWidth(width) {
 }
 
 vi.mock('vue-router', () => ({
-  useRouter: () => ({ push: routerPushMock, replace: routerReplaceMock, currentRoute })
+  useRouter: () => ({ push: routerPushMock, replace: routerReplaceMock, currentRoute }),
+  useRoute: () => currentRoute.value
 }))
 
 vi.mock('../src/stores/menu', () => ({

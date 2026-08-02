@@ -26,7 +26,7 @@
       >
         <div class="sidebar-content">
           <div class="sidebar-logo" :class="{ collapsed: isSidebarCollapsed }">
-            <img src="/HR.png" alt="HR 管理系統" class="sidebar-logo-image" />
+            <img :src="DEFAULT_MENU_ICON" alt="HR 管理系統" class="sidebar-logo-image" />
             <span v-if="!isSidebarCollapsed" class="sidebar-logo-text">HR 管理系統</span>
           </div>
           <el-menu
@@ -102,7 +102,11 @@ import { useRouter, useRoute } from 'vue-router'
 import { useMenuStore } from '../stores/menu'
 import { clearToken } from '../utils/tokenService'
 import { storeToRefs } from 'pinia'
-import { iconMap as availableMenuIcons, resolveMenuIcon } from '../constants/menuIcons'
+import {
+  DEFAULT_MENU_ICON,
+  iconMap as availableMenuIcons,
+  resolveMenuIcon
+} from '../constants/menuIcons'
 import { backendHelpContent } from '../constants/backendHelpContent'
 import GlobalHelpButton from '@/components/GlobalHelpButton.vue'
 

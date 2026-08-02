@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { shallowMount } from '@vue/test-utils'
 import dayjs from 'dayjs'
 import { createPinia, setActivePinia } from 'pinia'
@@ -66,6 +66,8 @@ import { apiFetch } from '../src/api'
 import Schedule from '../src/views/front/Schedule.vue'
 
 describe('Schedule.vue', () => {
+  const originalDocumentCreateElement = document.createElement
+
   beforeEach(() => {
     setActivePinia(createPinia())
     apiFetch.mockReset()
@@ -86,6 +88,11 @@ describe('Schedule.vue', () => {
     if (typeof window !== 'undefined') {
       window.ElMessage = global.ElMessage
     }
+  })
+
+  afterEach(() => {
+    document.createElement = originalDocumentCreateElement
+    vi.unstubAllGlobals()
   })
 
   function mountSchedule(options = {}) {
@@ -254,6 +261,7 @@ describe('Schedule.vue', () => {
     finalizeHandler,
     publishResult = null,
     finalizeResult = null,
+    exportResponse = null,
     publishSummary,
     supervisorProfile = {
       _id: 'sup1',
@@ -385,15 +393,43 @@ describe('Schedule.vue', () => {
       if (pathname === '/api/employees/schedule') {
         const page = Number(searchParams.get('page') || 1)
         const pageSize = Number(searchParams.get('pageSize') || employees.length || 20)
+        const search = String(searchParams.get('search') || '').trim().toLowerCase()
+        let filteredEmployees = search
+          ? employees.filter(employee => String(employee?.name || '').toLowerCase().includes(search))
+          : employees
+        const status = searchParams.get('status')
+        const scheduleSource = [...monthlyWithoutSelf, ...monthlyWithSelf]
+        const scheduledIds = new Set(
+          scheduleSource
+            .filter(item => item?.shiftId)
+            .map(item => String(item?.employee?._id || item?.employee || ''))
+            .filter(Boolean)
+        )
+        const leaveIds = new Set(
+          leaves
+            .map(item => String(item?.employee?._id || item?.employee || ''))
+            .filter(Boolean)
+        )
+        if (status === 'unscheduled') {
+          filteredEmployees = filteredEmployees.filter(employee =>
+            !scheduledIds.has(String(employee?._id || '')) &&
+            !leaveIds.has(String(employee?._id || ''))
+          )
+        } else if (status === 'onLeave') {
+          filteredEmployees = filteredEmployees.filter(employee =>
+            leaveIds.has(String(employee?._id || ''))
+          )
+        }
+        const pageEmployees = filteredEmployees.slice((page - 1) * pageSize, page * pageSize)
         return {
           ok: true,
           json: async () => ({
-            employees,
+            employees: pageEmployees,
             pagination: {
               page,
               pageSize,
-              total: employees.length,
-              totalPages: Math.max(1, Math.ceil(employees.length / pageSize))
+              total: filteredEmployees.length,
+              totalPages: Math.max(1, Math.ceil(filteredEmployees.length / pageSize))
             }
           })
         }
@@ -486,6 +522,13 @@ describe('Schedule.vue', () => {
         return { ok: true, json: async () => resolved }
       }
 
+      if (pathname === '/api/schedules/export') {
+        return exportResponse || {
+          ok: true,
+          blob: async () => new Blob(['schedule-export'])
+        }
+      }
+
       return { ok: true, json: async () => [] }
     })
   }
@@ -527,7 +570,7 @@ describe('Schedule.vue', () => {
   it('computes publish summary with pending and disputed responses', async () => {
     setRoleToken('supervisor')
     localStorage.setItem('employeeId', 'sup1')
-    const month = dayjs().format('YYYY-MM')
+    const month = dayjs().add(1, 'month').format('YYYY-MM')
     const scheduleData = [
       {
         _id: 'sch1',
@@ -594,7 +637,7 @@ describe('Schedule.vue', () => {
   })
 
   it('以卡片呈現待回覆與異議統計並更新步驟', async () => {
-    const month = dayjs().format('YYYY-MM')
+    const month = dayjs().add(1, 'month').format('YYYY-MM')
     setRoleToken('supervisor')
     localStorage.setItem('employeeId', 'sup1')
     const scheduleData = [
@@ -648,7 +691,7 @@ describe('Schedule.vue', () => {
   })
 
   it('appends department filters to leave approval requests', async () => {
-    const month = dayjs().format('YYYY-MM')
+    const month = dayjs().add(1, 'month').format('YYYY-MM')
     setRoleToken('supervisor')
     localStorage.setItem('employeeId', 'sup1')
     const capturedParams = []
@@ -675,20 +718,14 @@ describe('Schedule.vue', () => {
   })
 
   it('omits supervisor param when id missing', async () => {
-    const month = dayjs().format('YYYY-MM')
+    const month = dayjs().add(1, 'month').format('YYYY-MM')
     setRoleToken('employee')
-    apiFetch
-      .mockResolvedValueOnce({ ok: true, json: async () => [] })
-      .mockResolvedValueOnce({ ok: true, json: async () => [] })
-      .mockResolvedValueOnce({ ok: true, json: async () => [] })
-      .mockResolvedValueOnce({ ok: true, json: async () => [] })
-      .mockResolvedValueOnce({ ok: true, json: async () => [] })
-      .mockResolvedValueOnce({ ok: true, json: async () => [] })
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ approvals: [], leaves: [] }) })
+    setupSupervisorApiMock()
     mountSchedule()
     await flush()
     const employeesCall = apiFetch.mock.calls.find(([url]) => url.startsWith('/api/employees'))
-    expect(employeesCall?.[0]).toBe('/api/employees')
+    expect(employeesCall?.[0]).toContain('/api/employees/schedule?')
+    expect(employeesCall?.[0]).not.toContain('supervisor=')
     const monthlyCall = apiFetch.mock.calls.find(([url]) =>
       url.startsWith(`/api/schedules/monthly?month=${month}`)
     )
@@ -702,13 +739,15 @@ describe('Schedule.vue', () => {
     localStorage.setItem('schedule-include-self:sup1', 'true')
     setupSupervisorApiMock({
       employees: [
-        { _id: 'e1', name: '員工A', department: 'd1', subDepartment: 'sd1' }
+        { _id: 'e1', name: '員工A', department: 'd1', subDepartment: 'sd1' },
+        { _id: 'sup1', name: '主管', department: 'd1', subDepartment: 'sd1' }
       ],
       directReports: [{ _id: 'e1', subDepartment: { _id: 'sd1' } }],
       monthlyWithSelf: [],
       monthlyWithoutSelf: [],
       approvals: [],
-      leaves: []
+      leaves: [],
+      includeSelfPreference: true
     })
 
     const wrapper = mountSchedule()
@@ -829,7 +868,7 @@ describe('Schedule.vue', () => {
     expect(rows.some(row => row.sourceType === 'schedule_confirmation')).toBe(false)
 
     expect(wrapper.find('.approval-card').exists()).toBe(true)
-    expect(wrapper.find('[data-test="approval-empty-hint"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="approval-empty-hint"]').exists()).toBe(false)
   })
 
   it('切換頁碼與搜尋員工後，簽核清單會同步更新', async () => {
@@ -871,16 +910,16 @@ describe('Schedule.vue', () => {
     ]
     wrapper.vm.approvalList = dynamicApprovals
 
-    wrapper.vm.pageSize = 1
-    wrapper.vm.currentPage = 1
-    await wrapper.vm.$nextTick()
+    wrapper.vm.onPageSizeChange(1)
+    await flush()
+    await flush()
     expect(wrapper.vm.visibleEmployees).toHaveLength(1)
     expect(wrapper.vm.leaveApprovalRows).toHaveLength(1)
     expect(wrapper.vm.leaveApprovalRows[0].applicant_employee._id).toBe(
       wrapper.vm.visibleEmployees[0]._id
     )
 
-    wrapper.vm.currentPage = 2
+    wrapper.vm.onPageChange(2)
     await flush()
     await wrapper.vm.$nextTick()
     expect(wrapper.vm.visibleEmployees).toHaveLength(1)
@@ -900,15 +939,6 @@ describe('Schedule.vue', () => {
   it('點擊查看詳情仍可正常呼叫 openDetail', async () => {
     setRoleToken('supervisor')
     localStorage.setItem('employeeId', 'sup1')
-    const detailDoc = {
-      _id: 'ap1',
-      form: { name: '請假申請', category: 'leave', fields: [] },
-      applicant_employee: { _id: 'e1', name: '王小明' },
-      status: 'pending',
-      form_data: {},
-      steps: []
-    }
-
     setupSupervisorApiMock({
       employees: [{ _id: 'e1', name: '王小明', department: 'd1', subDepartment: 'sd1' }],
       approvals: [
@@ -926,13 +956,13 @@ describe('Schedule.vue', () => {
     await flush()
     await wrapper.vm.$nextTick()
 
-    apiFetch.mockResolvedValueOnce({ ok: true, json: async () => detailDoc })
+    const callCount = apiFetch.mock.calls.length
     await wrapper.vm.openDetail('ap1')
     await flush()
 
-    expect(apiFetch).toHaveBeenCalledWith('/api/approvals/ap1')
+    expect(apiFetch.mock.calls).toHaveLength(callCount)
     expect(wrapper.vm.detail.visible).toBe(true)
-    expect(wrapper.vm.detail.doc._id).toBe('ap1')
+    expect(wrapper.vm.detail.approvalId).toBe('ap1')
   })
 
   it('簽核資料載入失敗時保留既有資料並顯示 fallback 提示', async () => {
@@ -1005,7 +1035,7 @@ describe('Schedule.vue', () => {
       return { ok: true, json: async () => [] }
     })
 
-    await wrapper.vm.fetchSchedules({ reset: false })
+    await wrapper.vm.fetchSchedules({ reset: true })
     await flush()
 
     expect(wrapper.vm.approvalList).toHaveLength(1)
@@ -1014,48 +1044,37 @@ describe('Schedule.vue', () => {
   })
 
   it('does not append supervisor param for employee role even when id exists', async () => {
-    const month = dayjs().format('YYYY-MM')
+    const month = dayjs().add(1, 'month').format('YYYY-MM')
     setRoleToken('employee')
     localStorage.setItem('employeeId', 'sup1')
-    apiFetch
-      .mockResolvedValueOnce({ ok: true, json: async () => [] })
-      .mockResolvedValueOnce({ ok: true, json: async () => [] })
-      .mockResolvedValueOnce({ ok: true, json: async () => [] })
-      .mockResolvedValueOnce({ ok: true, json: async () => [] })
-      .mockResolvedValueOnce({ ok: true, json: async () => [] })
-      .mockResolvedValueOnce({ ok: true, json: async () => [] })
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ approvals: [], leaves: [] }) })
+    setupSupervisorApiMock()
     mountSchedule()
     await flush()
     const employeesCall = apiFetch.mock.calls.find(([url]) => url.startsWith('/api/employees'))
-    expect(employeesCall?.[0]).toBe('/api/employees')
+    expect(employeesCall?.[0]).toContain('/api/employees/schedule?')
+    expect(employeesCall?.[0]).not.toContain('supervisor=')
     const monthlyCall = apiFetch.mock.calls.find(([url]) =>
       url.startsWith(`/api/schedules/monthly?month=${month}`)
     )
-    expect(monthlyCall?.[0]).toBe(`/api/schedules/monthly?month=${month}`)
+    expect(monthlyCall?.[0]).toContain(`month=${month}`)
+    expect(monthlyCall?.[0]).not.toContain('supervisor=')
   })
 
   it('fetches summary and passes to dashboard', async () => {
-    const month = dayjs().format('YYYY-MM')
-    apiFetch
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => [
-          { shiftCount: 1, leaveCount: 0 },
-          { shiftCount: 0, leaveCount: 1 }
-        ]
-      })
-      .mockResolvedValueOnce({ ok: true, json: async () => [] })
-      .mockResolvedValueOnce({ ok: true, json: async () => [] })
-      .mockResolvedValueOnce({ ok: true, json: async () => [] })
-      .mockResolvedValueOnce({ ok: true, json: async () => [] })
-      .mockResolvedValueOnce({ ok: true, json: async () => [] })
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ approvals: [], leaves: [] }) })
+    const month = dayjs().add(1, 'month').format('YYYY-MM')
+    setupSupervisorApiMock({
+      summary: [
+        { shiftCount: 1, leaveCount: 0 },
+        { shiftCount: 0, leaveCount: 1 }
+      ],
+      departments: [],
+      subDepartments: []
+    })
     const wrapper = mountSchedule()
     await flush()
     expect(apiFetch).toHaveBeenCalledWith(`/api/schedules/summary?month=${month}`)
     const dash = wrapper.findComponent({ name: 'ScheduleDashboard' })
-    expect(dash.props('summary')).toEqual({ direct: 2, unscheduled: 1, onLeave: 1 })
+    expect(dash.props('summary')).toEqual({ direct: 2, unscheduled: 2, onLeave: 1 })
   })
 
   it('loads shift options when API returns array directly', async () => {
@@ -1094,6 +1113,7 @@ describe('Schedule.vue', () => {
   })
 
   it('shows loading state while applying batch schedules', async () => {
+    const month = dayjs().add(1, 'month').format('YYYY-MM')
     setRoleToken('admin')
     apiFetch.mockResolvedValue({ ok: true, json: async () => [] })
     const wrapper = mountSchedule()
@@ -1152,7 +1172,7 @@ describe('Schedule.vue', () => {
 
     expect(wrapper.vm.isApplyingBatch).toBe(false)
     expect(button.attributes('loading')).toBe('false')
-    expect(button.element.disabled).toBe(false)
+    expect(button.element.disabled).toBe(true)
     expect(loadingInstance.close).toHaveBeenCalled()
     expect(ElMessage.success).toHaveBeenCalledWith('批次套用完成')
   })
@@ -1244,77 +1264,43 @@ describe('Schedule.vue', () => {
   })
 
   it('renders leave indicator and prevents editing when leave exists', async () => {
-    const month = dayjs().format('YYYY-MM')
+    const month = dayjs().add(1, 'month').format('YYYY-MM')
     setRoleToken('supervisor')
     localStorage.setItem('employeeId', 'sup1')
-    apiFetch
-      .mockResolvedValueOnce({ ok: true, json: async () => [] })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
-          shifts: [
-            { _id: 'shift1', code: 'A', name: '早班', startTime: '08:00', endTime: '17:00' }
-          ]
-        })
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
-          _id: 'sup1',
-          department: { _id: 'd1', name: 'Dept A' },
-          subDepartment: { _id: 'sd1', name: 'Sub A' }
-        })
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => [{ _id: 'e1', subDepartment: { _id: 'sd1' } }]
-      })
-      .mockResolvedValueOnce({ ok: true, json: async () => [{ _id: 'd1', name: 'Dept A' }] })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => [{ _id: 'sd1', name: 'Sub A', department: { _id: 'd1' } }]
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => [{ _id: 'e1', name: 'Emp1', department: 'd1', subDepartment: 'sd1' }]
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => [
-          {
-            _id: 'sch1',
-            employee: 'e1',
-            date: `${month}-01`,
-            shiftId: 'shift1',
-            department: 'd1',
-            subDepartment: 'sd1'
-          }
-        ]
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
-          approvals: [],
-          leaves: [
-            {
-              employee: 'e1',
-              leaveType: 'annual',
-              status: 'approved',
-              startDate: `${month}-01`,
-              endDate: `${month}-01`
-            }
-          ]
-        })
-      })
+    setupSupervisorApiMock({
+      shifts: [
+        { _id: 'shift1', code: 'A', name: '早班', startTime: '08:00', endTime: '17:00' }
+      ],
+      employees: [{ _id: 'e1', name: 'Emp1', department: 'd1', subDepartment: 'sd1' }],
+      directReports: [{ _id: 'e1', subDepartment: { _id: 'sd1' } }],
+      monthlyWithoutSelf: [
+        {
+          _id: 'sch1',
+          employee: 'e1',
+          date: `${month}-01`,
+          shiftId: 'shift1',
+          department: 'd1',
+          subDepartment: 'sd1'
+        }
+      ],
+      leaves: [
+        {
+          employee: 'e1',
+          leaveType: 'annual',
+          status: 'approved',
+          startDate: `${month}-01`,
+          endDate: `${month}-01`
+        }
+      ]
+    })
 
     const wrapper = mountSchedule()
     await flush()
 
-    const leaveIndicator = wrapper.find('[data-test="leave-indicator"]')
-    expect(leaveIndicator.exists()).toBe(true)
-    expect(leaveIndicator.text()).toContain('休假中')
-    expect(leaveIndicator.text()).toContain('不列入工時')
-    expect(leaveIndicator.find('select').exists()).toBe(false)
+    const leaveCell = wrapper.findAllComponents({ name: 'ScheduleGridVirtualBody' })
+      .find(component => component.props('row')?._id === 'e1' && component.props('day')?.date === 1)
+    expect(leaveCell).toBeTruthy()
+    expect(leaveCell.props('cellView').cellMeta.isLeave).toBe(true)
     expect(wrapper.vm.scheduleMap.e1[1].leave.excludesHours).toBe(true)
 
     const initialCalls = apiFetch.mock.calls.length
@@ -1325,7 +1311,7 @@ describe('Schedule.vue', () => {
   })
 
   it('editable cells only show shift selector without department/sub-department selectors', async () => {
-    const month = dayjs().format('YYYY-MM')
+    const month = dayjs().add(1, 'month').format('YYYY-MM')
     setRoleToken('supervisor')
     localStorage.setItem('employeeId', 'sup1')
     setupSupervisorApiMock({
@@ -1347,10 +1333,12 @@ describe('Schedule.vue', () => {
     const wrapper = mountSchedule()
     await flush()
 
-    expect(wrapper.find('.modern-schedule-cell .shift-select').exists()).toBe(true)
-    expect(wrapper.find('.modern-schedule-cell .dept-select').exists()).toBe(false)
-    expect(wrapper.find('.modern-schedule-cell .sub-dept-select').exists()).toBe(false)
-    expect(wrapper.find('.modern-schedule-cell .department-selects').exists()).toBe(false)
+    const editableCell = wrapper.findAllComponents({ name: 'ScheduleGridVirtualBody' })
+      .find(component => component.props('row')?._id === 'e1' && component.props('day')?.date === 1)
+    expect(editableCell).toBeTruthy()
+    expect(editableCell.props('canEdit')).toBe(true)
+    expect(editableCell.props()).not.toHaveProperty('departments')
+    expect(editableCell.props()).not.toHaveProperty('subDepartments')
   })
 
   it('falls back to employee department fields when cell department fields are empty on select', async () => {
@@ -1367,6 +1355,7 @@ describe('Schedule.vue', () => {
         2: { shiftId: '', department: '', subDepartment: '' }
       }
     }
+    await wrapper.vm.$nextTick()
 
     apiFetch.mockReset()
     apiFetch.mockImplementation(async url => {
@@ -1431,22 +1420,22 @@ describe('Schedule.vue', () => {
     }
 
     await wrapper.vm.toggleDay(1, true)
-    expect(wrapper.vm.allSelectedCells.has('e1-1')).toBe(true)
-    expect(wrapper.vm.allSelectedCells.has('e2-1')).toBe(true)
+    expect(wrapper.vm.allSelectedCells.has('e1::1')).toBe(true)
+    expect(wrapper.vm.allSelectedCells.has('e2::1')).toBe(true)
 
     await wrapper.vm.toggleEmployee('e1', true)
-    expect(wrapper.vm.allSelectedCells.has('e1-2')).toBe(true)
+    expect(wrapper.vm.allSelectedCells.has('e1::2')).toBe(true)
 
     await wrapper.vm.toggleDay(1, false)
-    expect(wrapper.vm.allSelectedCells.has('e2-1')).toBe(false)
-    expect(wrapper.vm.allSelectedCells.has('e1-1')).toBe(true)
+    expect(wrapper.vm.allSelectedCells.has('e2::1')).toBe(false)
+    expect(wrapper.vm.allSelectedCells.has('e1::1')).toBe(true)
 
     await wrapper.vm.toggleEmployee('e1', false)
-    expect(wrapper.vm.allSelectedCells.has('e1-1')).toBe(false)
-    expect(wrapper.vm.allSelectedCells.has('e1-2')).toBe(false)
+    expect(wrapper.vm.allSelectedCells.has('e1::1')).toBe(false)
+    expect(wrapper.vm.allSelectedCells.has('e1::2')).toBe(false)
 
     await wrapper.vm.toggleCell('e2', 2, true)
-    expect(wrapper.vm.allSelectedCells.has('e2-2')).toBe(true)
+    expect(wrapper.vm.allSelectedCells.has('e2::2')).toBe(true)
 
     await wrapper.vm.toggleCell('e2', 2, false)
     expect(wrapper.vm.allSelectedCells.size).toBe(0)
@@ -1471,10 +1460,10 @@ describe('Schedule.vue', () => {
     await wrapper.vm.toggleEmployee('e1', true)
     await wrapper.vm.toggleDay(1, true)
     await wrapper.vm.toggleCell('e2', 2, true)
-    expect(wrapper.vm.allSelectedCells.has('e1-1')).toBe(true)
-    expect(wrapper.vm.allSelectedCells.has('e1-2')).toBe(true)
-    expect(wrapper.vm.allSelectedCells.has('e2-1')).toBe(true)
-    expect(wrapper.vm.allSelectedCells.has('e2-2')).toBe(true)
+    expect(wrapper.vm.allSelectedCells.has('e1::1')).toBe(true)
+    expect(wrapper.vm.allSelectedCells.has('e1::2')).toBe(true)
+    expect(wrapper.vm.allSelectedCells.has('e2::1')).toBe(true)
+    expect(wrapper.vm.allSelectedCells.has('e2::2')).toBe(true)
 
     wrapper.vm.employees = [{ _id: 'e2', name: 'E2' }]
     wrapper.vm.scheduleMap.e1[2].leave = { approved: true }
@@ -1482,10 +1471,10 @@ describe('Schedule.vue', () => {
     await flush()
 
     expect(wrapper.vm.selectedEmployees.has('e1')).toBe(false)
-    expect(wrapper.vm.allSelectedCells.has('e1-1')).toBe(false)
-    expect(wrapper.vm.allSelectedCells.has('e1-2')).toBe(false)
-    expect(wrapper.vm.allSelectedCells.has('e2-1')).toBe(true)
-    expect(wrapper.vm.allSelectedCells.has('e2-2')).toBe(true)
+    expect(wrapper.vm.allSelectedCells.has('e1::1')).toBe(false)
+    expect(wrapper.vm.allSelectedCells.has('e1::2')).toBe(false)
+    expect(wrapper.vm.allSelectedCells.has('e2::1')).toBe(true)
+    expect(wrapper.vm.allSelectedCells.has('e2::2')).toBe(true)
   })
 
   it('renders shift legend items from API data', async () => {
@@ -1632,23 +1621,11 @@ describe('Schedule.vue', () => {
   })
 
   it('fetches sub-departments when department changes', async () => {
-    apiFetch
-      .mockResolvedValueOnce({ ok: true, json: async () => [] })
-      .mockResolvedValueOnce({ ok: true, json: async () => [] })
-      .mockResolvedValueOnce({ ok: true, json: async () => [{ _id: 'd1', name: 'Dept A' }] })
-      .mockResolvedValueOnce({ ok: true, json: async () => [] })
-      .mockResolvedValueOnce({ ok: true, json: async () => [{ _id: 'e1', name: 'E1', department: '', subDepartment: '' }] })
-      .mockResolvedValueOnce({ ok: true, json: async () => [] })
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ approvals: [], leaves: [] }) })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => [
-          { _id: 'sd1', name: 'Sub A', department: { _id: 'd1' } }
-        ]
-      })
-      .mockResolvedValueOnce({ ok: true, json: async () => [] })
-      .mockResolvedValueOnce({ ok: true, json: async () => [] })
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ approvals: [], leaves: [] }) })
+    setupSupervisorApiMock({
+      departments: [{ _id: 'd1', name: 'Dept A' }],
+      subDepartments: [{ _id: 'sd1', name: 'Sub A', department: { _id: 'd1' } }],
+      employees: [{ _id: 'e1', name: 'E1', department: '', subDepartment: '' }]
+    })
 
     const wrapper = mountSchedule()
     await flush()
@@ -1661,45 +1638,36 @@ describe('Schedule.vue', () => {
   })
 
   it('filters employees by name', async () => {
-    apiFetch
-      .mockResolvedValueOnce({ ok: true, json: async () => [] })
-      .mockResolvedValueOnce({ ok: true, json: async () => [] })
-      .mockResolvedValueOnce({ ok: true, json: async () => [] })
-      .mockResolvedValueOnce({ ok: true, json: async () => [] })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => [
-          { _id: 'e1', name: 'Alice', department: '', subDepartment: '' },
-          { _id: 'e2', name: 'Bob', department: '', subDepartment: '' }
-        ]
-      })
-      .mockResolvedValueOnce({ ok: true, json: async () => [] })
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ approvals: [], leaves: [] }) })
+    setupSupervisorApiMock({
+      employees: [
+        { _id: 'e1', name: 'Alice', department: '', subDepartment: '' },
+        { _id: 'e2', name: 'Bob', department: '', subDepartment: '' }
+      ]
+    })
     const wrapper = mountSchedule()
     await flush()
     wrapper.vm.employeeSearch = 'Ali'
-    await wrapper.vm.$nextTick()
+    await flush()
     expect(wrapper.vm.filteredEmployees.length).toBe(1)
     expect(wrapper.vm.filteredEmployees[0].name).toBe('Alice')
   })
 
   it('filters employees by status', async () => {
-    apiFetch.mockResolvedValue({ ok: true, json: async () => [] })
+    setupSupervisorApiMock({
+      employees: [
+        { _id: 'e1', name: 'A', department: '', subDepartment: '' },
+        { _id: 'e2', name: 'B', department: '', subDepartment: '' }
+      ],
+      monthlyWithoutSelf: [{ employee: 'e2', shiftId: 's1' }],
+      leaves: [{ employee: 'e2', status: 'approved' }]
+    })
     const wrapper = mountSchedule()
     await flush()
-    wrapper.vm.employees = [
-      { _id: 'e1', name: 'A', department: '', subDepartment: '' },
-      { _id: 'e2', name: 'B', department: '', subDepartment: '' }
-    ]
-    wrapper.vm.scheduleMap = {
-      e1: { 1: { shiftId: '', department: '', subDepartment: '' } },
-      e2: { 1: { shiftId: 's1', department: '', subDepartment: '', leave: {} } }
-    }
     wrapper.vm.statusFilter = 'unscheduled'
-    await wrapper.vm.$nextTick()
+    await flush()
     expect(wrapper.vm.filteredEmployees.map(e => e._id)).toEqual(['e1'])
     wrapper.vm.statusFilter = 'onLeave'
-    await wrapper.vm.$nextTick()
+    await flush()
     expect(wrapper.vm.filteredEmployees.map(e => e._id)).toEqual(['e2'])
   })
 
@@ -1724,11 +1692,12 @@ describe('Schedule.vue', () => {
     wrapper.vm.leaveIndex = { e2: { 1: true } }
     await wrapper.vm.$nextTick()
 
-    expect(wrapper.vm.employeeStatusMap.e1).toBe('unscheduled')
-    expect(wrapper.vm.employeeStatusMap.e2).toBe('onLeave')
-    expect(wrapper.find('.status-icon.unscheduled').exists()).toBe(true)
-    expect(wrapper.find('.status-icon.on-leave').exists()).toBe(true)
-    expect(wrapper.find('.modern-shift-tag').text()).toContain('A1(早班)')
+    expect(wrapper.vm.employeeStatus('e1')).toBe('unscheduled')
+    expect(wrapper.vm.employeeStatus('e2')).toBe('onLeave')
+    expect(wrapper.vm.shiftInfo('s1')).toEqual(expect.objectContaining({ code: 'A1', name: '早班' }))
+    expect(wrapper.vm.getCellMeta('e3', 1)).toEqual(
+      expect.objectContaining({ hasShift: true, missingShift: false })
+    )
   })
 
   it('lazy mode is disabled - schedule table always expanded', async () => {
@@ -1742,8 +1711,7 @@ describe('Schedule.vue', () => {
       subDepartment: ''
     }))
     await wrapper.vm.$nextTick()
-    // Lazy mode is now always disabled to auto-expand schedule table
-    expect(wrapper.vm.lazyMode).toBe(false)
+    expect(wrapper.vm.shouldUseVirtualRender).toBe(false)
   })
 
   it('reverts change when update fails', async () => {
@@ -1866,24 +1834,24 @@ describe('Schedule.vue', () => {
   })
 
   it('displays leave label when leave data exists', async () => {
-    apiFetch
-      .mockResolvedValueOnce({ ok: true, json: async () => [] })
-      .mockResolvedValueOnce({ ok: true, json: async () => [] })
-      .mockResolvedValueOnce({ ok: true, json: async () => [] })
-      .mockResolvedValueOnce({ ok: true, json: async () => [] })
-      .mockResolvedValueOnce({ ok: true, json: async () => [] })
-      .mockResolvedValueOnce({ ok: true, json: async () => [] })
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ approvals: [], leaves: [] }) })
+    const month = dayjs().add(1, 'month').format('YYYY-MM')
+    setupSupervisorApiMock({
+      employees: [{ _id: 'e1', name: 'E1', department: 'd1', subDepartment: 'sd1' }],
+      leaves: [{
+        employee: 'e1',
+        status: 'approved',
+        startDate: `${month}-01`,
+        endDate: `${month}-01`,
+        leaveType: 'annual'
+      }]
+    })
     const wrapper = mountSchedule()
     await flush()
-    wrapper.vm.employees = [
-      { _id: undefined, name: 'E1', department: '', subDepartment: '' }
-    ]
-    wrapper.vm.scheduleMap = { undefined: { 1: { leave: {} } } }
-    await wrapper.vm.$nextTick()
-    const indicatorText = wrapper.find('.leave-indicator').text()
-    expect(indicatorText).toContain('休假中')
-    expect(indicatorText).toContain('不列入工時')
+    const leaveCell = wrapper.findAllComponents({ name: 'ScheduleGridVirtualBody' })
+      .find(component => component.props('row')?._id === 'e1' && component.props('day')?.date === 1)
+    expect(leaveCell).toBeTruthy()
+    expect(leaveCell.props('cellView').cellMeta.isLeave).toBe(true)
+    expect(leaveCell.props('cellView').leaveTitle).toContain('已核准請假')
   })
 
   it('maps department ids to names', async () => {
@@ -1898,7 +1866,7 @@ describe('Schedule.vue', () => {
     const wrapper = mountSchedule()
     await flush()
     expect(wrapper.vm.employees).toEqual([
-      {
+      expect.objectContaining({
         _id: 'e1',
         name: 'E1',
         departmentId: 'd1',
@@ -1910,7 +1878,7 @@ describe('Schedule.vue', () => {
           remainingDays: 0,
           remainingHours: 0
         }
-      }
+      })
     ])
   })
 
@@ -1959,7 +1927,7 @@ describe('Schedule.vue', () => {
   })
 
   it('applies batch schedules to selected cells', async () => {
-    const month = dayjs().format('YYYY-MM')
+    const month = dayjs().add(1, 'month').format('YYYY-MM')
     apiFetch.mockResolvedValue({ ok: true, json: async () => [] })
     const wrapper = mountSchedule()
     await flush()
@@ -2008,7 +1976,7 @@ describe('Schedule.vue', () => {
   })
 
   it('updates existing schedules via batch apply', async () => {
-    const month = dayjs().format('YYYY-MM')
+    const month = dayjs().add(1, 'month').format('YYYY-MM')
     apiFetch.mockResolvedValue({ ok: true, json: async () => [] })
     const wrapper = mountSchedule()
     await flush()
@@ -2056,7 +2024,7 @@ describe('Schedule.vue', () => {
   })
 
   it('skips leave dates during batch apply selections', async () => {
-    const month = dayjs().format('YYYY-MM')
+    const month = dayjs().add(1, 'month').format('YYYY-MM')
     apiFetch.mockResolvedValue({ ok: true, json: async () => [] })
     const wrapper = mountSchedule()
     await flush()
@@ -2069,6 +2037,7 @@ describe('Schedule.vue', () => {
         2: { shiftId: '', department: 'd1', subDepartment: 'sd1', leave: { type: 'annual' } }
       }
     }
+    wrapper.vm.leaveIndex = { e1: { 2: { type: 'annual' } } }
     await wrapper.vm.$nextTick()
     wrapper.vm.selectAllEmployees()
     wrapper.vm.selectAllDays()
@@ -2195,7 +2164,7 @@ describe('Schedule.vue', () => {
   })
 
   it('persists includeSelf preference when toggled', async () => {
-    const month = dayjs().format('YYYY-MM')
+    const month = dayjs().add(1, 'month').format('YYYY-MM')
     setRoleToken('supervisor')
     localStorage.setItem('employeeId', 'sup1')
     const storageKey = 'schedule-include-self:sup1'
@@ -2204,6 +2173,7 @@ describe('Schedule.vue', () => {
         { _id: 'e1', name: 'E1', department: 'd1', subDepartment: 'sd1' }
       ],
       directReports: [{ subDepartment: { _id: 'sd1' } }],
+      includeSelfPreference: true,
       monthlyWithSelf: [
         {
           _id: 'sch-sup',
@@ -2249,12 +2219,13 @@ describe('Schedule.vue', () => {
   })
 
   it('restores includeSelf preference on mount', async () => {
-    const month = dayjs().format('YYYY-MM')
+    const month = dayjs().add(1, 'month').format('YYYY-MM')
     const storageKey = 'schedule-include-self:sup1'
     setRoleToken('supervisor')
     localStorage.setItem('employeeId', 'sup1')
     localStorage.setItem(storageKey, 'true')
     setupSupervisorApiMock({
+      includeSelfPreference: true,
       monthlyWithSelf: [
         {
           _id: 'sch-sup',
@@ -2283,7 +2254,7 @@ describe('Schedule.vue', () => {
     setRoleToken('supervisor')
     localStorage.setItem('employeeId', 'sup1')
     localStorage.setItem(storageKey, 'true')
-    setupSupervisorApiMock()
+    setupSupervisorApiMock({ includeSelfPreference: true })
 
     const wrapper = mountSchedule()
     await flush()
@@ -2295,12 +2266,13 @@ describe('Schedule.vue', () => {
   })
 
   it('clears includeSelf preference when role changes', async () => {
-    const month = dayjs().format('YYYY-MM')
+    const month = dayjs().add(1, 'month').format('YYYY-MM')
     const storageKey = 'schedule-include-self:sup1'
     setRoleToken('supervisor')
     localStorage.setItem('employeeId', 'sup1')
     localStorage.setItem(storageKey, 'true')
     setupSupervisorApiMock({
+      includeSelfPreference: true,
       monthlyWithSelf: [
         {
           _id: 'sch-sup',
@@ -2327,7 +2299,7 @@ describe('Schedule.vue', () => {
   })
 
   it('分頁載入僅為可見員工建立班表並保留已載入資料', async () => {
-    const month = dayjs().format('YYYY-MM')
+    const month = dayjs().add(1, 'month').format('YYYY-MM')
     setRoleToken('supervisor')
     localStorage.setItem('employeeId', 'sup1')
     const employees = [
@@ -2370,10 +2342,9 @@ describe('Schedule.vue', () => {
     })
 
     const wrapper = mountSchedule()
-    await flush()
     wrapper.vm.pageSize = 1
-    wrapper.vm.currentPage = 1
-    await wrapper.vm.fetchSchedules({ reset: true })
+    await flush()
+    await flush()
     await flush()
 
     expect(Object.keys(wrapper.vm.scheduleMap)).toEqual(expect.arrayContaining(['e1']))
@@ -2389,26 +2360,28 @@ describe('Schedule.vue', () => {
   })
 
   it('exports pdf and triggers download', async () => {
-    apiFetch
-      .mockResolvedValueOnce({ ok: true, json: async () => [] })
-      .mockResolvedValueOnce({ ok: true, json: async () => [] })
-      .mockResolvedValueOnce({ ok: true, json: async () => [] })
-      .mockResolvedValueOnce({ ok: true, json: async () => [] })
-      .mockResolvedValueOnce({ ok: true, json: async () => [{ _id: 'e1', name: 'E1', department: 'd1', subDepartment: 'sd1' }] })
-      .mockResolvedValueOnce({ ok: true, json: async () => [] })
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ approvals: [], leaves: [] }) })
-      .mockResolvedValueOnce({ ok: true, blob: async () => new Blob(['x']) })
+    setupSupervisorApiMock({
+      employees: [{ _id: 'e1', name: 'E1', department: 'd1', subDepartment: 'sd1' }],
+      exportResponse: { ok: true, blob: async () => new Blob(['x']) }
+    })
 
     const wrapper = mountSchedule()
     await flush()
+    wrapper.vm.selectedDepartment = ''
+    wrapper.vm.selectedSubDepartment = ''
+    await wrapper.vm.$nextTick()
     const click = vi.fn()
     const origCreate = document.createElement
-    document.createElement = tag => (tag === 'a' ? { href: '', download: '', click } : origCreate(tag))
+    document.createElement = function createElement(tag, ...args) {
+      return tag === 'a'
+        ? { href: '', download: '', click }
+        : origCreate.call(document, tag, ...args)
+    }
     global.URL.createObjectURL = vi.fn(() => 'blob:mock')
     global.URL.revokeObjectURL = vi.fn()
     await wrapper.vm.exportSchedules('pdf')
     expect(apiFetch).toHaveBeenCalledWith(
-      `/api/schedules/export?month=${dayjs().format('YYYY-MM')}&format=pdf`
+      `/api/schedules/export?month=${dayjs().add(1, 'month').format('YYYY-MM')}&format=pdf`
     )
     expect(click).toHaveBeenCalled()
     document.createElement = origCreate

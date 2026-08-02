@@ -1037,13 +1037,13 @@
         </div>
 
         <div class="bulk-import-upload">
-          <el-upload drag action="" :auto-upload="false" accept=".xlsx,.xls,.csv" :file-list="bulkImportUploadFileList"
+          <el-upload drag action="" :auto-upload="false" accept=".xlsx,.csv" :file-list="bulkImportUploadFileList"
             :limit="1" :on-change="handleBulkImportFileChange" :on-remove="handleBulkImportFileRemove">
             <i class="el-icon-upload"></i>
             <div class="el-upload__text">
               將檔案拖曳至此或 <em>點此選擇</em>
             </div>
-            <div class="el-upload__tip">支援 .xlsx、.xls、.csv 檔案格式，檔案大小請勿超過 5MB</div>
+            <div class="el-upload__tip">支援 .xlsx、.csv 檔案格式，檔案大小請勿超過 5MB</div>
           </el-upload>
         </div>
 
@@ -1242,42 +1242,17 @@ const filteredEmployeeList = computed(() => {
 
 // ========= 新增：Excel/CSV 讀取與預覽核心 =========
 
-// --- 取代 loadXLSX：三段式保底載入（window -> import -> CDN） ---
+const BULK_IMPORT_MAX_FILE_SIZE = 5 * 1024 * 1024
+
+// Prefer the bundled dependency; a preloaded self-hosted build remains compatible.
 async function loadXLSX() {
-  // 1) 若全域已存在（例如你用 <script> 先載），直接用
   if (typeof window !== 'undefined' && window && window.XLSX && window.XLSX.utils) {
     return window.XLSX
   }
 
-  // 2) 嘗試 ESM/CJS 動態載入（SSR / Vite / Webpack 正常路）
-  try {
-    const mod = await import(/* @vite-ignore */ 'xlsx')
-    const XLSX = (mod && (mod.default || mod.XLSX)) ? (mod.default || mod.XLSX) : mod
-    if (XLSX && XLSX.utils && XLSX.read) return XLSX
-  } catch (_) {
-    // 忽略，繼續走 CDN
-  }
-
-  // 3) 最後手動插入 CDN 腳本（僅限瀏覽器環境）
-  if (typeof window !== 'undefined' && typeof document !== 'undefined') {
-    await new Promise((resolve, reject) => {
-      const existed = document.querySelector('script[data-xlsx-cdn]')
-      if (existed) {
-        existed.addEventListener('load', () => resolve(null), { once: true })
-        existed.addEventListener('error', () => reject(new Error('XLSX_CDN_FAIL')), { once: true })
-        return
-      }
-      const s = document.createElement('script')
-      s.src = 'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js'
-      s.async = true
-      s.defer = true
-      s.setAttribute('data-xlsx-cdn', '1')
-      s.onload = () => resolve(null)
-      s.onerror = () => reject(new Error('XLSX_CDN_FAIL'))
-      document.head.appendChild(s)
-    })
-    if (window.XLSX && window.XLSX.utils && window.XLSX.read) return window.XLSX
-  }
+  const mod = await import('xlsx')
+  const XLSX = mod?.default || mod?.XLSX || mod
+  if (XLSX?.utils && XLSX?.read) return XLSX
 
   throw new Error('XLSX_MODULE_INVALID_OR_NOT_FOUND')
 }
@@ -1586,8 +1561,8 @@ function buildPreviewList(mappedRows) {
 async function parseAndPreviewBulkImport(file) {
   try {
     const ext = getFileExt(file)
-    if (!['xlsx', 'xls', 'csv'].includes(ext)) {
-      ElMessage.warning('請上傳 .xlsx/.xls/.csv 檔案')
+    if (!['xlsx', 'csv'].includes(ext)) {
+      ElMessage.warning('請上傳 .xlsx/.csv 檔案')
       return { ok: false }
     }
 
@@ -1624,7 +1599,19 @@ async function handleBulkImportFileChange(uploadFile) {
 
   const previousFile = bulkImportFile.value
   const previousUploadList = bulkImportUploadFileList.value.map(file => ({ ...file }))
-  const isReplacingExistingFile = Boolean(previousFile) && previousFile !== uploadFile.raw
+  const extension = getFileExt(raw)
+  if (!['xlsx', 'csv'].includes(extension)) {
+    bulkImportUploadFileList.value = previousUploadList
+    ElMessage.warning('請上傳 .xlsx/.csv 檔案')
+    return
+  }
+  if (Number(raw.size) > BULK_IMPORT_MAX_FILE_SIZE) {
+    bulkImportUploadFileList.value = previousUploadList
+    ElMessage.warning('匯入檔案不可超過 5MB')
+    return
+  }
+
+  const isReplacingExistingFile = Boolean(previousFile) && previousFile !== raw
 
   if (isReplacingExistingFile && hasBulkImportProgress.value) {
     try {
@@ -1649,10 +1636,10 @@ async function handleBulkImportFileChange(uploadFile) {
     referenceKeys: REFERENCE_MAPPING_DEFAULT_KEYS
   })
 
-  bulkImportFile.value = uploadFile.raw
+  bulkImportFile.value = raw
   bulkImportUploadFileList.value = [uploadFile]
 
-  await parseAndPreviewBulkImport(uploadFile.raw)
+  await parseAndPreviewBulkImport(raw)
 }
 
 // =========（可選）移除檔案時順便清掉預覽 =========

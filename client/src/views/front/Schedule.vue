@@ -3181,6 +3181,7 @@ function resetScheduleCache() {
 }
 
 async function fetchSchedules({ reset = false, fetchAll = false, reason = 'unknown' } = {}) {
+  const previousApprovalList = approvalList.value
   let targetEmployees = fetchAll
     ? employees.value.map(e => String(e._id))
     : visibleEmployeeIds.value
@@ -3351,6 +3352,7 @@ async function fetchSchedules({ reset = false, fetchAll = false, reason = 'unkno
     } else {
       if (activeScheduleRequest.requestId !== requestId) return
       rawSchedules.value = schedules
+      approvalList.value = previousApprovalList
       approvalFetchError.value = '簽核資料載入失敗，已保留上一筆資料，請稍後重試。'
       leaveIndex.value = {}
       markLeaveIndexDirty()
@@ -3511,9 +3513,11 @@ async function exportSchedules(format) {
   try {
     const params = new URLSearchParams({
       month: currentMonth.value,
-      format: format,
-      department: selectedDepartment.value
+      format: format
     })
+    if (selectedDepartment.value) {
+      params.append('department', selectedDepartment.value)
+    }
     if (selectedSubDepartment.value) {
       params.append('subDepartment', selectedSubDepartment.value)
     }

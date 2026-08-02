@@ -3,7 +3,7 @@
   "private": true,
   "scripts": {
     "start": "npm --prefix server start",
-    "install": "npm --prefix server install && npm --prefix client install --include=dev",
+    "postinstall": "npm --prefix server ci && npm --prefix client ci --include=dev",
     "heroku-postbuild": "npm run build --prefix client",
     "test": "npm --prefix server test && npm --prefix client test",
     "dev": "concurrently \"npm run dev --prefix server\" \"npm run dev --prefix client\"",
@@ -16,13 +16,13 @@
     "pm2:status": "pm2 status"
   },
   "engines": {
-    "node": "20.x"
+    "node": ">=20.19.0"
   },
   "devDependencies": {
-    "concurrently": "^8.0.1",
-    "esbuild": "^0.25.4",
-    "pm2": "^6.0.14",
-    "sass-embedded": "^1.90.0",
-    "vite": "^6.3.5"
+    "concurrently": "^9.2.4",
+    "pm2": "^7.0.3"
+  },
+  "overrides": {
+    "picomatch": "2.3.2"
   }
 }

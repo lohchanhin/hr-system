@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
 import ElementPlus from 'element-plus'
 import OrgDepartmentSetting from '../src/components/backComponents/OrgDepartmentSetting.vue'
 import { apiFetch } from '../src/api'
@@ -10,6 +10,7 @@ vi.mock('../src/api', () => ({
 
 describe('OrgDepartmentSetting.vue', () => {
   beforeEach(() => {
+    apiFetch.mockClear()
     vi.stubGlobal('fetch', vi.fn())
     vi.stubGlobal('alert', vi.fn())
     apiFetch.mockImplementation(() => Promise.resolve({ ok: true, json: async () => [] }))
@@ -188,6 +189,7 @@ describe('OrgDepartmentSetting.vue', () => {
 
   it('顯示選取部門的機構與部門組合', async () => {
     const wrapper = mount(OrgDepartmentSetting, { global: { plugins: [ElementPlus] } })
+    await flushPromises()
     wrapper.vm.orgList = [
       { _id: 'org1', name: '總公司' },
       { _id: 'org2', name: '分公司' }
@@ -212,6 +214,7 @@ describe('OrgDepartmentSetting.vue', () => {
 
   it('選取部門時顯示名稱會更新', async () => {
     const wrapper = mount(OrgDepartmentSetting, { global: { plugins: [ElementPlus] } })
+    await flushPromises()
     wrapper.vm.deptList = [
       { _id: 'd1', name: '人資部' },
       { _id: 'd2', name: '財務部' }

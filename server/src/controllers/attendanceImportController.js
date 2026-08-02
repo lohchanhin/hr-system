@@ -107,7 +107,7 @@ function detectBufferEncoding(buffer) {
 
 function createUploadStreamFactory(buffer, { isCsv }) {
   if (!isCsv) {
-    return () => Readable.from(buffer)
+    return () => Readable.from([buffer])
   }
 
   const encoding = detectBufferEncoding(buffer)
@@ -349,12 +349,12 @@ export function parseTimestamp(value, timeZone) {
       return { value: null, error: 'CHECKTIME Date 物件無效' }
     }
     const parts = {
-      year: value.getFullYear(),
-      month: value.getMonth() + 1,
-      day: value.getDate(),
-      hour: value.getHours(),
-      minute: value.getMinutes(),
-      second: value.getSeconds()
+      year: value.getUTCFullYear(),
+      month: value.getUTCMonth() + 1,
+      day: value.getUTCDate(),
+      hour: value.getUTCHours(),
+      minute: value.getUTCMinutes(),
+      second: value.getUTCSeconds()
     }
     const converted = createDateFromParts(parts, timeZone)
     if (!converted) {
@@ -670,41 +670,31 @@ function parseCsvLine(line) {
 }
 
 async function iterateXlsxRecords({ createStream, headerPairs, mappings, timezone, onRow }) {
-  const stream = createStream()
-  const workbookReader = new ExcelJS.stream.xlsx.WorkbookReader(stream, {
-    sharedStrings: 'cache',
-    hyperlinks: 'ignore',
-    worksheets: 'emit'
-  })
+  const workbook = new ExcelJS.Workbook()
+  await workbook.xlsx.read(createStream())
+  const worksheet = workbook.worksheets[0]
+  if (!worksheet) return
 
-  let processedWorksheet = false
-  for await (const worksheetReader of workbookReader) {
-    if (processedWorksheet) break
-    processedWorksheet = true
+  const headerMap = buildHeaderMapFromRow(worksheet.getRow(1))
+  const missingColumns = findMissingColumns(headerMap, mappings)
+  if (missingColumns.length) {
+    throw new MissingColumnError(missingColumns)
+  }
 
-    let headerMap = null
-    for await (const row of worksheetReader) {
-      if (!headerMap) {
-        headerMap = buildHeaderMapFromRow(row)
-        const missingColumns = findMissingColumns(headerMap, mappings)
-        if (missingColumns.length) {
-          throw new MissingColumnError(missingColumns)
-        }
-        continue
-      }
-
-      const getValue = col => toPlainCellValue(row.getCell(col))
-      const record = buildRowRecord({
-        rowNumber: row.number,
-        headerMap,
-        headerPairs,
-        timezone,
-        getValue
-      })
-      if (!record) continue
-      // eslint-disable-next-line no-await-in-loop
-      await onRow(record)
-    }
+  const maxRow = worksheet.actualRowCount || worksheet.rowCount
+  for (let rowNumber = 2; rowNumber <= maxRow; rowNumber += 1) {
+    const row = worksheet.getRow(rowNumber)
+    const getValue = col => toPlainCellValue(row.getCell(col))
+    const record = buildRowRecord({
+      rowNumber,
+      headerMap,
+      headerPairs,
+      timezone,
+      getValue
+    })
+    if (!record) continue
+    // eslint-disable-next-line no-await-in-loop
+    await onRow(record)
   }
 }
 

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { shallowMount } from '@vue/test-utils'
+import dayjs from 'dayjs'
 import { apiFetch } from '../src/api'
 
 const { messageMock, messageBoxMock } = vi.hoisted(() => {
@@ -202,21 +203,23 @@ describe('MySchedule.vue', () => {
   it('auto switches to next month when current month has no pending but next month has pending', async () => {
     const token = `h.${btoa(JSON.stringify({ id: 'emp4', role: 'employee' }))}.s`
     localStorage.setItem('token', token)
+    const currentMonth = dayjs().format('YYYY-MM')
+    const nextMonth = dayjs().add(1, 'month').format('YYYY-MM')
 
     apiFetch
       .mockResolvedValueOnce({ ok: true, json: async () => [] })
       .mockResolvedValueOnce({
         ok: true,
-        json: async () => [{ _id: 'd1', date: '2026-03-02', state: 'draft', employeeResponse: 'pending' }]
+        json: async () => [{ _id: 'd1', date: `${currentMonth}-02`, state: 'draft', employeeResponse: 'pending' }]
       })
       .mockResolvedValueOnce({
         ok: true,
-        json: async () => [{ _id: 'n1', date: '2026-04-03', state: 'pending_confirmation', employeeResponse: 'pending' }]
+        json: async () => [{ _id: 'n1', date: `${nextMonth}-03`, state: 'pending_confirmation', employeeResponse: 'pending' }]
       })
       .mockResolvedValueOnce({ ok: true, json: async () => [] })
       .mockResolvedValueOnce({
         ok: true,
-        json: async () => [{ _id: 'n1', date: '2026-04-03', state: 'pending_confirmation', employeeResponse: 'pending' }]
+        json: async () => [{ _id: 'n1', date: `${nextMonth}-03`, state: 'pending_confirmation', employeeResponse: 'pending' }]
       })
 
     const wrapper = shallowMount(MySchedule, {
@@ -237,8 +240,8 @@ describe('MySchedule.vue', () => {
     await flush()
     await flush()
 
-    expect(wrapper.vm.selectedMonth).toBe('2026-04')
-    expect(wrapper.vm.monthHint).toContain('2026-04')
+    expect(wrapper.vm.selectedMonth).toBe(nextMonth)
+    expect(wrapper.vm.monthHint).toContain(nextMonth)
     expect(wrapper.vm.schedules).toHaveLength(1)
     expect(wrapper.vm.schedules[0].state).toBe('pending_confirmation')
   })

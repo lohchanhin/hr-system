@@ -11,6 +11,7 @@ describe('apiFetch', () => {
   const originalLocation = window.location
 
   beforeEach(() => {
+    vi.clearAllMocks()
     vi.stubGlobal('fetch', vi.fn())
     Object.defineProperty(window, 'location', {
       writable: true,

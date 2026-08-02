@@ -112,6 +112,11 @@ const CardStub = { name: 'ElCard', template: '<section class="card-stub"><slot /
 const AlertStub = { name: 'ElAlert', template: '<div class="alert-stub"><slot /></div>' }
 const EmptyStub = { name: 'ElEmpty', template: '<div class="empty-stub"><slot /></div>' }
 const SkeletonStub = { name: 'ElSkeleton', template: '<div class="skeleton-stub"></div>' }
+const CollapseStub = { name: 'ElCollapse', template: '<div><slot /></div>' }
+const CollapseItemStub = {
+  name: 'ElCollapseItem',
+  template: '<section><slot name="title" /><slot /></section>'
+}
 
 const flush = () => new Promise(resolve => setTimeout(resolve))
 
@@ -206,7 +211,9 @@ describe('ScheduleOverview.vue', () => {
           'el-table-column': ColumnStub,
           'el-alert': AlertStub,
           'el-empty': EmptyStub,
-          'el-skeleton': SkeletonStub
+          'el-skeleton': SkeletonStub,
+          'el-collapse': CollapseStub,
+          'el-collapse-item': CollapseItemStub
         }
       }
     })
@@ -256,7 +263,9 @@ describe('ScheduleOverview.vue', () => {
           'el-table-column': ColumnStub,
           'el-alert': AlertStub,
           'el-empty': EmptyStub,
-          'el-skeleton': SkeletonStub
+          'el-skeleton': SkeletonStub,
+          'el-collapse': CollapseStub,
+          'el-collapse-item': CollapseItemStub
         }
       }
     })
@@ -306,7 +315,9 @@ describe('ScheduleOverview.vue', () => {
           'el-table-column': ColumnStub,
           'el-alert': AlertStub,
           'el-empty': EmptyStub,
-          'el-skeleton': SkeletonStub
+          'el-skeleton': SkeletonStub,
+          'el-collapse': CollapseStub,
+          'el-collapse-item': CollapseItemStub
         }
       }
     })
@@ -359,7 +370,9 @@ describe('ScheduleOverview.vue', () => {
           'el-table-column': ColumnStub,
           'el-alert': AlertStub,
           'el-empty': EmptyStub,
-          'el-skeleton': SkeletonStub
+          'el-skeleton': SkeletonStub,
+          'el-collapse': CollapseStub,
+          'el-collapse-item': CollapseItemStub
         }
       }
     })
@@ -415,7 +428,9 @@ describe('ScheduleOverview.vue', () => {
           'el-table-column': ColumnStub,
           'el-alert': AlertStub,
           'el-empty': EmptyStub,
-          'el-skeleton': SkeletonStub
+          'el-skeleton': SkeletonStub,
+          'el-collapse': CollapseStub,
+          'el-collapse-item': CollapseItemStub
         }
       }
     })
