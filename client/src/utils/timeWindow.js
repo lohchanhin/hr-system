@@ -83,17 +83,18 @@ export function createDateFromParts(parts, timeZone = DEFAULT_TIMEZONE) {
     hour: '2-digit',
     minute: '2-digit',
     second: '2-digit',
-    hour12: false
+    hourCycle: 'h23'
   })
   const mapped = formatter.formatToParts(baseDate).reduce((acc, part) => {
     if (part.type !== 'literal') acc[part.type] = part.value
     return acc
   }, {})
+  const mappedHour = Number(mapped.hour) === 24 ? 0 : Number(mapped.hour)
   const tzUtc = Date.UTC(
     Number(mapped.year),
     Number(mapped.month) - 1,
     Number(mapped.day),
-    Number(mapped.hour),
+    mappedHour,
     Number(mapped.minute),
     Number(mapped.second)
   )
@@ -111,7 +112,7 @@ export function getLocalDateParts(date, timeZone = DEFAULT_TIMEZONE) {
     hour: '2-digit',
     minute: '2-digit',
     second: '2-digit',
-    hour12: false
+    hourCycle: 'h23'
   })
   const parts = formatter.formatToParts(new Date(date)).reduce((acc, part) => {
     if (part.type !== 'literal') acc[part.type] = part.value
@@ -193,7 +194,7 @@ export function formatWindow(window, timeZone = DEFAULT_TIMEZONE) {
     timeZone,
     hour: '2-digit',
     minute: '2-digit',
-    hour12: false
+    hourCycle: 'h23'
   })
   return {
     start: formatter.format(window.start),

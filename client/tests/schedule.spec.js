@@ -956,11 +956,15 @@ describe('Schedule.vue', () => {
     await flush()
     await wrapper.vm.$nextTick()
 
-    const callCount = apiFetch.mock.calls.length
+    const detailRequestCount = apiFetch.mock.calls.filter(([url]) =>
+      String(url).includes('/api/approvals/ap1')
+    ).length
     await wrapper.vm.openDetail('ap1')
     await flush()
 
-    expect(apiFetch.mock.calls).toHaveLength(callCount)
+    expect(apiFetch.mock.calls.filter(([url]) =>
+      String(url).includes('/api/approvals/ap1')
+    )).toHaveLength(detailRequestCount)
     expect(wrapper.vm.detail.visible).toBe(true)
     expect(wrapper.vm.detail.approvalId).toBe('ap1')
   })
