@@ -1,4 +1,23 @@
-import { API_BASE_URL } from '../api'
+import { API_BASE_URL, apiFetch } from '../api'
+
+export async function fetchEmployeePhotoUrl(employeeId, photoPath) {
+  if (!employeeId || !photoPath) return null
+  if (photoPath.startsWith('blob:') || photoPath.startsWith('data:')) return photoPath
+
+  const response = await apiFetch(
+    `/api/employees/${encodeURIComponent(employeeId)}/photo`,
+    {},
+    { autoRedirect: false },
+  )
+  if (!response.ok) return null
+  const blob = await response.blob()
+  if (!blob.type.startsWith('image/')) return null
+  return URL.createObjectURL(blob)
+}
+
+export function revokeEmployeePhotoUrl(url) {
+  if (typeof url === 'string' && url.startsWith('blob:')) URL.revokeObjectURL(url)
+}
 
 /**
  * Convert a photo path to a full URL

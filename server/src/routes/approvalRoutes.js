@@ -8,9 +8,11 @@ import {
 
 import {
   createApprovalRequest, getApprovalRequest, myApprovalRequests, inboxApprovals, actOnApproval, historyApprovals,
+  uploadApprovalAttachments, downloadApprovalAttachment, cancelApprovalRequest, resubmitApprovalRequest,
 } from '../controllers/approvalRequestController.js'
 
 import { authorizeRoles } from '../middleware/auth.js'
+import { uploadApprovalAttachmentFiles } from '../middleware/approvalAttachmentUpload.js'
 
 const router = Router()
 
@@ -40,9 +42,18 @@ router.get('/sign-roles', authorizeRoles('employee', 'supervisor', 'admin'), get
 router.get('/sign-levels', authorizeRoles('employee', 'supervisor', 'admin'), getSignLevels)
 
 // Requests
+router.post(
+  '/attachments',
+  authorizeRoles('employee', 'supervisor', 'admin'),
+  uploadApprovalAttachmentFiles,
+  uploadApprovalAttachments,
+)
 router.post('/', authorizeRoles('employee', 'supervisor', 'admin'), createApprovalRequest)
 router.get('/inbox', authorizeRoles('employee', 'supervisor', 'admin'), inboxApprovals)
 router.get('/history', authorizeRoles('supervisor', 'admin'), historyApprovals)
+router.get('/:id/attachments/:filename', authorizeRoles('employee', 'supervisor', 'admin'), downloadApprovalAttachment)
+router.post('/:id/cancel', authorizeRoles('employee', 'supervisor', 'admin'), cancelApprovalRequest)
+router.post('/:id/resubmit', authorizeRoles('employee', 'supervisor', 'admin'), resubmitApprovalRequest)
 router.get('/:id', authorizeRoles('employee', 'supervisor', 'admin'), getApprovalRequest)
 router.get('/', authorizeRoles('employee', 'supervisor', 'admin'), myApprovalRequests)
 router.post('/:id/act', authorizeRoles('employee', 'supervisor', 'admin'), actOnApproval)

@@ -118,24 +118,61 @@ describe('Approval.vue', () => {
   })
 
   it('submits form with file upload without error', async () => {
-    vi.spyOn(window, 'fetch').mockImplementation(() => Promise.resolve({ ok: true, json: () => Promise.resolve([]) }))
+    vi.spyOn(window, 'fetch').mockImplementation((url) => {
+      if (url.includes('/api/approvals/attachments')) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            files: [{ name: 'a.pdf', url: '/upload/approvals/generated.pdf' }]
+          })
+        })
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve([]) })
+    })
     const alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => {})
     const wrapper = shallowMount(Approval, { global: { stubs } })
     await flushPromises()
 
     wrapper.vm.applyState.formId = 'f1'
     wrapper.vm.applyState.formData = { f2: 'text' }
-    wrapper.vm.fileBuffers = { f3: [{ name: 'a.txt' }] }
+    wrapper.vm.fileBuffers = { f3: [new File(['%PDF-1.7'], 'a.pdf', { type: 'application/pdf' })] }
 
     await wrapper.vm.submitApply()
     await flushPromises()
 
-    const postCall = window.fetch.mock.calls.find(([url, opt]) => url.includes('/api/approvals') && opt?.method === 'POST')
+    const postCall = window.fetch.mock.calls.find(([url, opt]) => url.endsWith('/api/approvals') && opt?.method === 'POST')
     expect(postCall).toBeTruthy()
-    expect(postCall[1].body).toContain('"f3":["a.txt"]')
+    expect(postCall[1].headers['Idempotency-Key']).toEqual(expect.any(String))
+    expect(postCall[1].headers['Idempotency-Key'].length).toBeGreaterThan(8)
+    expect(postCall[1].body).toContain('"url":"/upload/approvals/generated.pdf"')
     expect(wrapper.vm.applyError).toBe('')
     window.fetch.mockRestore()
     alertSpy.mockRestore()
+  })
+
+  it('lets the applicant cancel a pending request through the protected action endpoint', async () => {
+    vi.spyOn(window, 'fetch').mockImplementation((url) => {
+      if (url.includes('/api/approvals/a1/cancel')) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ _id: 'a1', status: 'canceled' }),
+        })
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve([]) })
+    })
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const wrapper = shallowMount(Approval, { global: { stubs } })
+    await flushPromises()
+
+    await wrapper.vm.cancelMyRequest({ _id: 'a1', status: 'pending' })
+    await flushPromises()
+
+    expect(window.fetch).toHaveBeenCalledWith(
+      expect.stringContaining('/api/approvals/a1/cancel'),
+      expect.objectContaining({ method: 'POST' }),
+    )
+    confirmSpy.mockRestore()
+    window.fetch.mockRestore()
   })
 
   it('shows detail dialog after viewing', async () => {

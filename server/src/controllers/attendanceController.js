@@ -143,9 +143,18 @@ export async function getPunchWindowSetting(req, res) {
 export async function createRecord(req, res) {
   try {
     const { employee, action, timestamp, remark } = req.body;
+    const actorId = toStringId(req.user?.id);
+    if (!actorId) {
+      return res.status(401).json({ error: 'Invalid user' });
+    }
     if (!employee || !action) {
       return res.status(400).json({ error: 'employee and action are required' });
     }
+    if (toStringId(employee) !== actorId) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+
+    const targetEmployeeId = actorId;
 
     const punchTime = (() => {
       if (!timestamp) return new Date();
@@ -173,7 +182,7 @@ export async function createRecord(req, res) {
       const candidateDates = [todayScheduleDate, previousScheduleDate].filter(Boolean);
 
       const schedules = candidateDates.length
-        ? await ShiftSchedule.find({ employee, date: { $in: candidateDates } }).lean()
+        ? await ShiftSchedule.find({ employee: targetEmployeeId, date: { $in: candidateDates } }).lean()
         : [];
 
       if (!schedules.length) {
@@ -258,7 +267,7 @@ export async function createRecord(req, res) {
       }
     }
 
-    const record = new AttendanceRecord({ employee, action, timestamp: punchTime, remark });
+    const record = new AttendanceRecord({ employee: targetEmployeeId, action, timestamp: punchTime, remark });
     await record.save();
     res.status(201).json(record);
   } catch (err) {

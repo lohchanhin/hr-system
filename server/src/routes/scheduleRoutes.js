@@ -59,6 +59,6 @@ router.post(
 );
 router.put('/:id', verifySupervisor, updateSchedule);
 router.delete('/older-than', verifySupervisor, deleteOldSchedules);
-router.delete('/:id', deleteSchedule);
+router.delete('/:id', verifySupervisor, deleteSchedule);
 
 export default router;

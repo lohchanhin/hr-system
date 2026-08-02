@@ -116,4 +116,14 @@ describe('GET /api/approvals/history', () => {
     expect(res.body).toEqual({ error: 'Forbidden' })
     expect(mockApprovalRequest.find).not.toHaveBeenCalled()
   })
+
+  it('rejects querying another approver history', async () => {
+    const res = await request(app)
+      .get('/api/approvals/history?employee_id=sup2')
+      .set('x-test-employee', 'sup1')
+
+    expect(res.status).toBe(403)
+    expect(res.body).toEqual({ error: 'Forbidden' })
+    expect(mockApprovalRequest.find).not.toHaveBeenCalled()
+  })
 })

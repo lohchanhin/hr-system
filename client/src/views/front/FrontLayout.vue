@@ -25,7 +25,7 @@
       </div>
       <div v-if="!isSidebarCollapsed" class="sidebar-header">
         <div class="user-info">
-          <el-avatar :size="40" :src="getPhotoUrl(profile?.photo)" class="user-avatar">
+          <el-avatar :size="40" :src="profilePhotoUrl || ''" class="user-avatar">
             <i class="el-icon-user"></i>
           </el-avatar>
           <span class="user-name">{{ displayName }}</span>
@@ -111,7 +111,7 @@ import { clearToken } from "../../utils/tokenService";
 import { storeToRefs } from "pinia";
 import { iconMap as availableMenuIcons, resolveMenuIcon } from "../../constants/menuIcons";
 import { useAuthStore } from "../../stores/auth";
-import { getPhotoUrl } from "../../utils/photoUrl";
+import { fetchEmployeePhotoUrl, revokeEmployeePhotoUrl } from "../../utils/photoUrl";
 
 const router = useRouter();
 const route = useRoute();
@@ -120,6 +120,8 @@ const { items: menuItems } = storeToRefs(menuStore);
 const profileStore = useProfileStore();
 const { profile } = storeToRefs(profileStore);
 const authStore = useAuthStore();
+const profilePhotoUrl = ref(null);
+let profilePhotoGeneration = 0;
 
 const hrLogo = "/HR.png";
 const username = ref("");
@@ -197,10 +199,33 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  profilePhotoGeneration += 1;
+  revokeEmployeePhotoUrl(profilePhotoUrl.value);
   if (typeof window !== "undefined") {
     window.removeEventListener("resize", updateSidebarCollapse);
   }
 });
+
+watch(
+  () => [profile.value?._id || profile.value?.id, profile.value?.photo],
+  async ([employeeId, photoPath]) => {
+    const generation = ++profilePhotoGeneration;
+    revokeEmployeePhotoUrl(profilePhotoUrl.value);
+    profilePhotoUrl.value = null;
+    if (!employeeId || !photoPath) return;
+    try {
+      const objectUrl = await fetchEmployeePhotoUrl(employeeId, photoPath);
+      if (generation !== profilePhotoGeneration) {
+        revokeEmployeePhotoUrl(objectUrl);
+        return;
+      }
+      profilePhotoUrl.value = objectUrl;
+    } catch {
+      profilePhotoUrl.value = null;
+    }
+  },
+  { immediate: true },
+);
 
 watch(
   () => authStore.role,

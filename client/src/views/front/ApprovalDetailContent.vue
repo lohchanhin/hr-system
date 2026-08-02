@@ -13,7 +13,18 @@
       <el-divider content-position="left">填寫內容</el-divider>
       <el-descriptions :column="1" size="small" border>
         <el-descriptions-item v-for="fld in doc.form?.fields || []" :key="fld._id" :label="fld.label">
-          <span>{{ renderValue(doc.form_data?.[fld._id]) }}</span>
+          <div v-if="attachmentFiles(doc.form_data?.[fld._id]).length" class="attachment-list">
+            <el-link
+              v-for="file in attachmentFiles(doc.form_data?.[fld._id])"
+              :key="file.url"
+              href="#"
+              type="primary"
+              @click.prevent="downloadAttachment(file)"
+            >
+              {{ file.name }}
+            </el-link>
+          </div>
+          <span v-else>{{ renderValue(doc.form_data?.[fld._id]) }}</span>
         </el-descriptions-item>
       </el-descriptions>
 
@@ -55,6 +66,7 @@
 
 <script setup>
 import { onBeforeUnmount, ref, watch } from 'vue'
+import { ElMessage } from 'element-plus'
 import { apiFetch } from '../../api'
 
 const props = defineProps({
@@ -71,14 +83,41 @@ const employeeNameCache = ref({})
 let activeRequestController = null
 
 const fmt = d => (d ? new Date(d).toLocaleString() : '-')
-const renderValue = v => (Array.isArray(v) ? v.join(', ') : v ?? '-')
+const renderValue = v => {
+  if (Array.isArray(v)) return v.map(item => renderValue(item)).join(', ')
+  if (v && typeof v === 'object') return v.label || v.name || v.value || '-'
+  return v ?? '-'
+}
+const attachmentFiles = value => {
+  const list = Array.isArray(value) ? value : [value]
+  return list
+    .filter(item => item && typeof item === 'object' && (item.url || item.path))
+    .map(item => ({ name: item.name || '附件', url: item.url || item.path }))
+    .filter(item => /^\/upload\/approvals\/[^/?#]+$/.test(item.url))
+}
+const downloadAttachment = async file => {
+  const filename = file?.url?.split('/').pop()
+  if (!filename || !doc.value?._id) return
+  try {
+    const res = await apiFetch(
+      `/api/approvals/${doc.value._id}/attachments/${encodeURIComponent(filename)}`
+    )
+    if (!res.ok) throw new Error('download failed')
+    const blobUrl = URL.createObjectURL(await res.blob())
+    window.open(blobUrl, '_blank', 'noopener,noreferrer')
+    window.setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000)
+  } catch {
+    ElMessage.error('附件下載失敗或您沒有存取權限')
+  }
+}
 
 const getStatusText = status => {
   const map = {
     pending: '待簽核',
     approved: '已核可',
     rejected: '已否決',
-    returned: '已退簽'
+    returned: '已退簽',
+    canceled: '已撤回'
   }
   return map[status] || status || '-'
 }
@@ -154,5 +193,12 @@ onBeforeUnmount(() => {
 <style scoped>
 .detail-error {
   color: #dc2626;
+}
+
+.attachment-list {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
 }
 </style>

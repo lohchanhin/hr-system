@@ -4,6 +4,11 @@ import ShiftSchedule from '../models/ShiftSchedule.js'
 import ApprovalRequest from '../models/approval_request.js'
 import dayjs from 'dayjs'
 import { getLeaveFieldIds } from '../services/leaveFieldService.js'
+import {
+  deleteEmployeePhoto,
+  isManagedEmployeePhotoPath,
+  readEmployeePhoto,
+} from '../services/employeePhotoStorage.js'
 
 /* ───────────────────────────── 小工具：型別轉換 ───────────────────────────── */
 const isDefined = (v) => v !== undefined
@@ -466,7 +471,42 @@ export function buildEmployeePatch(body = {}, existing = null) {
 
 /* ─────────────────────────────── Controllers ─────────────────────────────── */
 
-const SCHEDULE_VIEW_SELECT = '_id name photo title practiceTitle department subDepartment annualLeave supervisor'
+const SCHEDULE_VIEW_SELECT = '_id name employeeId photo title practiceTitle department subDepartment annualLeave supervisor role status requiresScheduling partTime'
+const SUPERVISOR_VIEW_SELECT = '_id name employeeId photo title practiceTitle department subDepartment annualLeave supervisor role status requiresScheduling partTime organization appointment.hireDate'
+
+const toEntityId = (value) => {
+  if (value === null || value === undefined) return ''
+  if (typeof value === 'object' && value._id !== undefined && value._id !== value) {
+    return toEntityId(value._id)
+  }
+  return typeof value.toString === 'function' ? value.toString() : String(value)
+}
+
+async function canReadEmployeeResource(req, employeeId) {
+  const actorId = toEntityId(req.user?.id)
+  const targetId = toEntityId(employeeId)
+  if (!actorId || !targetId) return false
+  if (req.user?.role === 'admin' || actorId === targetId) return true
+  if (req.user?.role !== 'supervisor') return false
+  return Boolean(await Employee.exists({ _id: targetId, supervisor: actorId }))
+}
+
+async function deleteEmployeePhotoIfUnreferenced(photoPath, excludedEmployeeId) {
+  if (!isManagedEmployeePhotoPath(photoPath)) return
+  const filter = { photo: photoPath }
+  if (excludedEmployeeId) filter._id = { $ne: excludedEmployeeId }
+  if (await Employee.exists(filter)) return
+  await deleteEmployeePhoto(photoPath)
+}
+
+async function cleanupUnpersistedPhoto(req) {
+  if (req.uploadedPhotoPath) await deleteEmployeePhoto(req.uploadedPhotoPath)
+}
+
+async function rejectWithPhotoCleanup(req, res, status, payload) {
+  await cleanupUnpersistedPhoto(req).catch(() => {})
+  return res.status(status).json(payload)
+}
 
 const resolveRemainingAnnualLeaveDays = (annualLeave = {}) => {
   const remaining = toNum(annualLeave?.remainingDays)
@@ -494,17 +534,25 @@ export async function listEmployees(req, res) {
       search: searchRaw,
       jobType: jobTypeRaw,
     } = req.query
+    const actorId = toEntityId(req.user?.id)
+    const actorRole = req.user?.role
+    if (!actorId) return res.status(401).json({ error: 'Invalid user' })
     const filter = {}
     const search = searchRaw ?? q
     const jobType = String(jobTypeRaw || '').trim()
 
-    if (supervisor) filter.supervisor = supervisor
+    if (supervisor && actorRole === 'admin') filter.supervisor = supervisor
     if (organization) filter.organization = organization
     if (department) filter.department = department
     if (subDepartment) filter.subDepartment = subDepartment
     if (status && view !== 'schedule') filter.status = status
     if (role) filter.role = role
     const andFilters = []
+    if (actorRole === 'employee') {
+      filter._id = actorId
+    } else if (actorRole === 'supervisor') {
+      andFilters.push({ $or: [{ _id: actorId }, { supervisor: actorId }] })
+    }
     if (search) {
       const rx = new RegExp(search, 'i')
       andFilters.push({
@@ -537,6 +585,10 @@ export async function listEmployees(req, res) {
 
     if (isScheduleView) {
       query = query.select(SCHEDULE_VIEW_SELECT)
+    } else if (actorRole === 'supervisor') {
+      query = query
+        .select(SUPERVISOR_VIEW_SELECT)
+        .populate('supervisor', 'name employeeId')
     } else {
       query = query.populate('supervisor', 'name employeeId')
     }
@@ -699,6 +751,7 @@ export async function listEmployeeOptions(req, res) {
 
 /** POST /api/employees */
 export async function createEmployee(req, res) {
+  let photoPersisted = false
   try {
     const body = req.body ?? {}
     const {
@@ -707,25 +760,32 @@ export async function createEmployee(req, res) {
 
     const employeeNo = body.employeeNo ?? body.employeeId
 
-    if (!name) return res.status(400).json({ error: 'Name is required' })
-    if (!email) return res.status(400).json({ error: 'Email is required' })
-    if (!employeeNo || String(employeeNo).trim() === '') return res.status(400).json({ error: 'Employee number is required' })
-    if (!username) return res.status(400).json({ error: 'Username is required' })
-    if (!password) return res.status(400).json({ error: 'Password is required' })
+    if (!name) return rejectWithPhotoCleanup(req, res, 400, { error: 'Name is required' })
+    if (!email) return rejectWithPhotoCleanup(req, res, 400, { error: 'Email is required' })
+    if (!employeeNo || String(employeeNo).trim() === '') {
+      return rejectWithPhotoCleanup(req, res, 400, { error: 'Employee number is required' })
+    }
+    if (!username) return rejectWithPhotoCleanup(req, res, 400, { error: 'Username is required' })
+    if (!password) return rejectWithPhotoCleanup(req, res, 400, { error: 'Password is required' })
     const emailRegex = /^\S+@\S+\.\S+$/
-    if (!emailRegex.test(email)) return res.status(400).json({ error: 'Invalid email' })
+    if (!emailRegex.test(email)) return rejectWithPhotoCleanup(req, res, 400, { error: 'Invalid email' })
     if (role !== undefined) {
       const validRoles = ['employee', 'supervisor', 'admin']
-      if (!validRoles.includes(role)) return res.status(400).json({ error: 'Invalid role' })
+      if (!validRoles.includes(role)) return rejectWithPhotoCleanup(req, res, 400, { error: 'Invalid role' })
+    }
+    if (body.photo && !req.uploadedPhotoPath) {
+      return rejectWithPhotoCleanup(req, res, 400, { error: '新員工照片必須直接上傳' })
     }
 
     const employeeDoc = buildEmployeeDoc(body)
     employeeDoc.password = password
 
     const employee = await Employee.create(employeeDoc)
+    photoPersisted = true
 
     res.status(201).json(employee)
   } catch (err) {
+    if (!photoPersisted) await cleanupUnpersistedPhoto(req).catch(() => {})
     res.status(400).json({ error: err.message })
   }
 }
@@ -733,12 +793,27 @@ export async function createEmployee(req, res) {
 /** GET /api/employees/:id */
 export async function getEmployee(req, res) {
   try {
-    const employee = await Employee.findById(req.params.id).populate([
+    const actorId = toEntityId(req.user?.id)
+    const targetId = toEntityId(req.params.id)
+    const actorRole = req.user?.role
+    if (!actorId) return res.status(401).json({ error: 'Invalid user' })
+    if (actorRole === 'employee' && targetId !== actorId) {
+      return res.status(404).json({ error: 'Not found' })
+    }
+
+    const limitedSupervisorView = actorRole === 'supervisor' && targetId !== actorId
+    let employeeQuery = Employee.findById(targetId)
+    if (limitedSupervisorView) employeeQuery = employeeQuery.select(SUPERVISOR_VIEW_SELECT)
+
+    const employee = await employeeQuery.populate([
       { path: 'supervisor', select: 'name employeeId' },
       { path: 'department', select: 'name organization' },
       { path: 'subDepartment', select: 'name' },
     ])
     if (!employee) return res.status(404).json({ error: 'Not found' })
+    if (limitedSupervisorView && toEntityId(employee.supervisor) !== actorId) {
+      return res.status(404).json({ error: 'Not found' })
+    }
 
     const normalizeReference = (entity, fallbackName = '') => {
       if (!entity) return entity
@@ -802,35 +877,70 @@ export async function getEmployee(req, res) {
   }
 }
 
+/** GET /api/employees/:id/photo */
+export async function getEmployeePhoto(req, res) {
+  try {
+    if (!await canReadEmployeeResource(req, req.params.id)) {
+      return res.status(404).json({ error: 'Not found' })
+    }
+
+    const employee = await Employee.findById(req.params.id).select('photo')
+    if (!employee?.photo) return res.status(404).json({ error: 'Not found' })
+
+    const photo = await readEmployeePhoto(employee.photo)
+    if (!photo) return res.status(404).json({ error: 'Not found' })
+
+    res.set({
+      'Cache-Control': 'private, max-age=300',
+      'Content-Security-Policy': "default-src 'none'; sandbox",
+      'Content-Type': photo.mimeType,
+      'X-Content-Type-Options': 'nosniff',
+    })
+    return res.send(photo.buffer)
+  } catch (err) {
+    return res.status(400).json({ error: err.message })
+  }
+}
+
 /** PUT /api/employees/:id */
 export async function updateEmployee(req, res) {
+  let photoPersisted = false
   try {
     const employee = await Employee.findById(req.params.id)
-    if (!employee) return res.status(404).json({ error: 'Not found' })
+    if (!employee) {
+      await cleanupUnpersistedPhoto(req).catch(() => {})
+      return res.status(404).json({ error: 'Not found' })
+    }
 
     const body = req.body ?? {}
+    const previousPhoto = employee.photo
+    if (
+      isDefined(body.photo) && body.photo && body.photo !== previousPhoto &&
+      !req.uploadedPhotoPath
+    ) {
+      return res.status(400).json({ error: '員工照片必須直接上傳' })
+    }
 
     // 若有驗證需求，沿用你原本的 email/role 檢核
     if (isDefined(body.email)) {
-      if (!body.email) return res.status(400).json({ error: 'Email is required' })
+      if (!body.email) return rejectWithPhotoCleanup(req, res, 400, { error: 'Email is required' })
       const emailRegex = /^\S+@\S+\.\S+$/
-      if (!emailRegex.test(body.email)) return res.status(400).json({ error: 'Invalid email' })
+      if (!emailRegex.test(body.email)) return rejectWithPhotoCleanup(req, res, 400, { error: 'Invalid email' })
     }
     if (isDefined(body.role)) {
       const validRoles = ['employee', 'supervisor', 'admin']
-      if (!validRoles.includes(body.role)) return res.status(400).json({ error: 'Invalid role' })
+      if (!validRoles.includes(body.role)) return rejectWithPhotoCleanup(req, res, 400, { error: 'Invalid role' })
     }
 
     // 建立 $set/$unset patch
     const { $set, $unset } = buildEmployeePatch(body, employee)
 
     // 套用更新
-    if (Object.keys($unset).length) {
-      await Employee.updateOne({ _id: employee._id }, { $unset })
-    }
-    if (Object.keys($set).length) {
-      await Employee.updateOne({ _id: employee._id }, { $set })
-    }
+    const update = {}
+    if (Object.keys($set).length) update.$set = $set
+    if (Object.keys($unset).length) update.$unset = $unset
+    if (Object.keys(update).length) await Employee.updateOne({ _id: employee._id }, update)
+    photoPersisted = true
 
     // 取回最新
     const updated = await Employee.findById(employee._id)
@@ -840,8 +950,13 @@ export async function updateEmployee(req, res) {
       await updated.save()
     }
 
+    if (isDefined(body.photo) && previousPhoto && previousPhoto !== updated.photo) {
+      await deleteEmployeePhotoIfUnreferenced(previousPhoto, employee._id)
+    }
+
     res.json(updated)
   } catch (err) {
+    if (!photoPersisted) await cleanupUnpersistedPhoto(req).catch(() => {})
     res.status(400).json({ error: err.message })
   }
 }
@@ -857,7 +972,11 @@ export async function deleteEmployee(req, res) {
       return res.status(403).json({ error: '管理員帳戶不可刪除' })
     }
 
+    const previousPhoto = employee.photo
     await employee.deleteOne()
+    if (previousPhoto) {
+      await deleteEmployeePhotoIfUnreferenced(previousPhoto, employee._id)
+    }
     res.json({ success: true })
   } catch (err) {
     res.status(400).json({ error: err.message })
@@ -892,6 +1011,9 @@ import {
 /** GET /api/employees/:id/annual-leave - 查詢員工特休餘額 */
 export async function getEmployeeAnnualLeave(req, res) {
   try {
+    if (!await canReadEmployeeResource(req, req.params.id)) {
+      return res.status(404).json({ error: 'Not found' })
+    }
     const balance = await getAnnualLeaveBalance(req.params.id)
     res.json(balance)
   } catch (err) {
@@ -902,6 +1024,9 @@ export async function getEmployeeAnnualLeave(req, res) {
 /** GET /api/employees/:id/annual-leave/history - 查詢員工特休使用記錄 */
 export async function getEmployeeAnnualLeaveHistory(req, res) {
   try {
+    if (!await canReadEmployeeResource(req, req.params.id)) {
+      return res.status(404).json({ error: 'Not found' })
+    }
     const year = req.query.year ? parseInt(req.query.year) : null
     const history = await getAnnualLeaveHistory(req.params.id, year)
     res.json(history)

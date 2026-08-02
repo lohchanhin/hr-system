@@ -13,34 +13,39 @@ export async function deductAnnualLeave(employeeId, days, approvalRequestId = nu
     throw new Error('Invalid parameters for annual leave deduction')
   }
 
-  // 使用原子操作更新，並驗證餘額充足
-  // 使用 $expr 確保 usedDays + days <= totalDays
+  const requestKey = approvalRequestId ? String(approvalRequestId) : null
+  const filter = {
+    _id: employeeId,
+    $expr: {
+      $lte: [
+        { $add: [{ $ifNull: ['$annualLeave.usedDays', 0] }, days] },
+        { $ifNull: ['$annualLeave.totalDays', 0] }
+      ]
+    }
+  }
+  if (requestKey) filter['annualLeave.appliedApprovalRequestIds'] = { $ne: requestKey }
+
+  const update = { $inc: { 'annualLeave.usedDays': days } }
+  if (requestKey) update.$addToSet = { 'annualLeave.appliedApprovalRequestIds': requestKey }
+
   const updated = await Employee.findOneAndUpdate(
-    {
-      _id: employeeId,
-      $expr: {
-        $lte: [
-          { $add: [{ $ifNull: ['$annualLeave.usedDays', 0] }, days] },
-          { $ifNull: ['$annualLeave.totalDays', 0] }
-        ]
-      }
-    },
-    { $inc: { 'annualLeave.usedDays': days } },
+    filter,
+    update,
     { new: true, runValidators: true }
   )
 
   if (!updated) {
-    // 查詢員工以提供詳細錯誤信息
     const employee = await Employee.findById(employeeId)
-    if (!employee) {
-      throw new Error('Employee not found')
+      .select('+annualLeave.appliedApprovalRequestIds')
+    if (!employee) throw new Error('Employee not found')
+    if (requestKey && employee.annualLeave?.appliedApprovalRequestIds?.includes(requestKey)) {
+      return employee
     }
     const remaining = (employee.annualLeave?.totalDays || 0) - (employee.annualLeave?.usedDays || 0)
     throw new Error(`Insufficient annual leave balance. Remaining: ${remaining} days, Requested: ${days} days`)
   }
 
   console.log(`[AnnualLeave] Deducted ${days} days from employee ${employeeId}. Approval: ${approvalRequestId || 'N/A'}`)
-
   return updated
 }
 
@@ -157,7 +162,8 @@ export async function setAnnualLeaveQuota(employeeId, totalDays, year = null) {
     employee.annualLeave = {
       totalDays,
       usedDays: 0,
-      year: targetYear
+      year: targetYear,
+      appliedApprovalRequestIds: [],
     }
   } else {
     // 同年度只更新總天數

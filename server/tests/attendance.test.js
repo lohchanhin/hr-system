@@ -205,6 +205,7 @@ describe('Attendance API', () => {
   });
 
   it('creates record with remark when within window', async () => {
+    currentUser = { id: 'emp1', role: 'employee' };
     const scheduleDate = new Date(Date.UTC(2024, 0, 1));
     setupScheduleMocks({
       schedules: [{ _id: 'sched1', employee: 'emp1', date: scheduleDate, shiftId: 'shift1' }],
@@ -226,6 +227,7 @@ describe('Attendance API', () => {
   });
 
   it('rejects clockIn before allowed window', async () => {
+    currentUser = { id: 'emp1', role: 'employee' };
     const scheduleDate = new Date(Date.UTC(2024, 0, 1));
     setupScheduleMocks({
       schedules: [{ _id: 'sched1', employee: 'emp1', date: scheduleDate, shiftId: 'shift1' }],
@@ -245,6 +247,7 @@ describe('Attendance API', () => {
   });
 
   it('rejects clockOut after allowed window', async () => {
+    currentUser = { id: 'emp1', role: 'employee' };
     const scheduleDate = new Date(Date.UTC(2024, 0, 1));
     setupScheduleMocks({
       schedules: [{ _id: 'sched1', employee: 'emp1', date: scheduleDate, shiftId: 'shift1' }],
@@ -264,6 +267,7 @@ describe('Attendance API', () => {
   });
 
   it('accepts clockOut during cross-day shift on following morning', async () => {
+    currentUser = { id: 'emp1', role: 'employee' };
     const scheduleDate = new Date(Date.UTC(2024, 0, 1));
     setupScheduleMocks({
       schedules: [{ _id: 'sched1', employee: 'emp1', date: scheduleDate, shiftId: 'shiftNight' }],
@@ -283,11 +287,26 @@ describe('Attendance API', () => {
   });
 
   it('returns 400 when employee is missing', async () => {
+    currentUser = { id: 'emp1', role: 'employee' };
     const payload = { action: 'clockIn' };
 
     const res = await request(app).post('/api/attendance').send(payload);
 
     expect(res.status).toBe(400);
+    expect(saveMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects writing an attendance record for another employee', async () => {
+    currentUser = { id: 'emp1', role: 'employee' };
+
+    const res = await request(app).post('/api/attendance').send({
+      employee: 'admin1',
+      action: 'outing',
+      timestamp: '2024-01-01T02:00:00.000Z',
+    });
+
+    expect(res.status).toBe(403);
+    expect(res.body).toEqual({ error: 'Forbidden' });
     expect(saveMock).not.toHaveBeenCalled();
   });
 });

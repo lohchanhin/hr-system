@@ -30,6 +30,8 @@ const mockDepartment = { find: jest.fn() };
 
 const mockGetLeaveFieldIds = jest.fn();
 const mockIsTokenBlacklisted = jest.fn();
+const mockAssertScheduleRuleCompliance = jest.fn();
+const mockIsLaborRuleValidationError = jest.fn((error) => Array.isArray(error?.violations));
 
 const createSelectResponse = (rows = []) => {
   const chain = {
@@ -93,6 +95,10 @@ jest.unstable_mockModule('../src/models/Department.js', () => ({ default: mockDe
 jest.unstable_mockModule('../src/services/leaveFieldService.js', () => ({
   getLeaveFieldIds: mockGetLeaveFieldIds,
 }));
+jest.unstable_mockModule('../src/services/laborRuleValidationService.js', () => ({
+  assertScheduleRuleCompliance: mockAssertScheduleRuleCompliance,
+  isLaborRuleValidationError: mockIsLaborRuleValidationError,
+}));
 jest.unstable_mockModule('../src/utils/tokenBlacklist.js', () => ({
   isTokenBlacklisted: mockIsTokenBlacklisted,
 }));
@@ -142,6 +148,9 @@ beforeEach(() => {
   });
   mockIsTokenBlacklisted.mockReset();
   mockIsTokenBlacklisted.mockResolvedValue(false);
+  mockAssertScheduleRuleCompliance.mockReset();
+  mockAssertScheduleRuleCompliance.mockResolvedValue({ ok: true, violations: [] });
+  mockIsLaborRuleValidationError.mockClear();
   mockEmployee.find.mockReset();
   mockEmployee.find.mockReturnValue({
     select: jest.fn().mockImplementation(() => createSelectResponse([])),
@@ -210,7 +219,7 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
 
     expect(res.status).toBe(200);
     expect(res.body).toEqual([
-      { shiftId: 's1', date: '2023/01/01', shiftName: 'Morning' }
+      { shiftId: 's1', date: '2023/01/01', shiftName: 'Morning', shiftCode: '' }
     ]);
   });
 
@@ -297,7 +306,7 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
     expect(mockShiftSchedule.find).toHaveBeenCalled();
     expect(res.body).toEqual({
       schedules: [
-        { shiftId: 's1', date: '2023/01/02', shiftName: 'Morning' }
+        { shiftId: 's1', date: '2023/01/02', shiftName: 'Morning', shiftCode: '' }
       ],
       employees: [
         { _id: 'e1', name: '員工1', photo: '', department: '', subDepartment: '' },
@@ -351,7 +360,7 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
     mockEmployee.find.mockReturnValue({ select: selectMock });
 
     const res = await request(supervisorApp)
-      .get('/api/schedules/monthly?month=2023-01&supervisor=sup1');
+      .get('/api/schedules/monthly?month=2023-01&supervisor=tester');
 
     expect(res.status).toBe(200);
     expect(selectMock).toHaveBeenCalledWith('_id');
@@ -360,7 +369,7 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
     }));
     expect(res.body).toEqual({
       schedules: [
-        { employee: 'emp1', shiftId: 's1', date: '2023/01/02', shiftName: 'Morning' }
+        { employee: 'emp1', shiftId: 's1', date: '2023/01/02', shiftName: 'Morning', shiftCode: '' }
       ],
       employees: [
         { _id: 'emp1', name: '', photo: '', department: '', subDepartment: '' },
@@ -412,7 +421,7 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
       .get('/api/schedules/monthly?month=2023-01&department=d1&status=unscheduled&jobType=%E8%AD%B7%E7%90%86&search=%E7%8E%8B');
 
     expect(res.status).toBe(200);
-    const employeeQuery = mockEmployee.find.mock.calls[0][0];
+    const employeeQuery = mockEmployee.find.mock.calls.at(-1)[0];
     expect(employeeQuery.department).toBe('d1');
     expect(Array.isArray(employeeQuery.$and)).toBe(true);
     expect(employeeQuery.$and).toHaveLength(2);
@@ -729,6 +738,7 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
           },
         ],
         publishedAt: expect.any(String),
+        publishedMonth: '2024-05',
       });
     });
   });
@@ -1099,6 +1109,9 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
   });
 
   it('lists leave approvals', async () => {
+    mockEmployee.find.mockReturnValue({
+      select: jest.fn().mockReturnValue(createSelectResponse([{ _id: 'e1' }])),
+    });
     const approvals = [{
       _id: 'a1',
       applicant_employee: { _id: 'e1', name: 'E1' },
@@ -1146,6 +1159,7 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
   it('filters leave approvals by department and subDepartment in Mongo query', async () => {
     const employeeSelectMock = jest
       .fn()
+      .mockImplementationOnce(() => createSelectResponse([{ _id: 'e1' }, { _id: 'e3' }]))
       .mockImplementationOnce(() => createSelectResponse([{ _id: 'e1' }, { _id: 'e3' }]));
     mockEmployee.find.mockReturnValue({ select: employeeSelectMock });
     const approvals = [
@@ -1169,7 +1183,11 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
       .get('/api/schedules/leave-approvals?month=2023-01&department=d1&subDepartment=sd1');
 
     expect(res.status).toBe(200);
-    expect(mockEmployee.find).toHaveBeenCalledWith({ department: 'd1', subDepartment: 'sd1' });
+    expect(mockEmployee.find).toHaveBeenNthCalledWith(2, {
+      _id: { $in: ['tester', 'e1', 'e3'] },
+      department: 'd1',
+      subDepartment: 'sd1',
+    });
     expect(mockApprovalRequest.find).toHaveBeenCalledWith({
       applicant_employee: { $in: ['e1', 'e3'] },
       form: 'form1',
@@ -1204,11 +1222,11 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
     });
 
     const res = await request(app)
-      .get('/api/schedules/leave-approvals?month=2023-01&supervisor=sup1&includeSelf=true');
+      .get('/api/schedules/leave-approvals?month=2023-01&supervisor=tester&includeSelf=true');
 
     expect(res.status).toBe(200);
     const queryArg = mockApprovalRequest.find.mock.calls[0][0];
-    expect(queryArg.applicant_employee.$in).toEqual(expect.arrayContaining(['emp1', 'sup1']));
+    expect(queryArg.applicant_employee.$in).toEqual(expect.arrayContaining(['emp1', 'tester']));
     expect(queryArg).toEqual(expect.objectContaining({
       form: 'form1',
       status: 'approved',
@@ -1216,6 +1234,15 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
       'form_data.e': { $gte: '2023-01-01' },
     }));
     expect(populateMock).toHaveBeenCalledWith({ path: 'applicant_employee', select: 'name department subDepartment' });
+  });
+
+  it('rejects leave approval queries for another supervisor scope', async () => {
+    const res = await request(app)
+      .get('/api/schedules/leave-approvals?month=2023-01&supervisor=other-supervisor');
+
+    expect(res.status).toBe(403);
+    expect(res.body).toEqual({ error: 'forbidden' });
+    expect(mockApprovalRequest.find).not.toHaveBeenCalled();
   });
 
   it('deletes old schedules', async () => {
@@ -1244,6 +1271,51 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
     expect(data[0]._id).toBe('2');
   });
 
+  it('rejects deleting a schedule outside the supervisor scope', async () => {
+    mockShiftSchedule.findById.mockResolvedValue({ _id: 'sch-outside', employee: 'emp-outside' });
+    mockEmployee.findById.mockImplementation(async (id) => {
+      if (id === 'tester') return { _id: 'tester', role: 'supervisor' };
+      if (id === 'emp-outside') return { _id: 'emp-outside', supervisor: 'another-supervisor' };
+      return null;
+    });
+
+    const res = await request(app).delete('/api/schedules/sch-outside');
+
+    expect(res.status).toBe(403);
+    expect(res.body).toEqual({ error: 'Forbidden' });
+    expect(mockShiftSchedule.findByIdAndDelete).not.toHaveBeenCalled();
+  });
+
+  it('scopes the general schedule list to the current employee', async () => {
+    currentRole = 'employee';
+    const populate = jest.fn().mockReturnThis();
+    const lean = jest.fn().mockResolvedValue([]);
+    mockShiftSchedule.find.mockReturnValue({ populate, lean });
+
+    const res = await request(app).get('/api/schedules');
+
+    expect(res.status).toBe(200);
+    expect(mockShiftSchedule.find).toHaveBeenCalledWith({ employee: { $in: ['tester'] } });
+    expect(populate).toHaveBeenCalledWith(expect.objectContaining({
+      path: 'employee',
+      select: expect.not.stringContaining('salary'),
+    }));
+  });
+
+  it('hides a schedule owned by another employee', async () => {
+    currentRole = 'employee';
+    const populate = jest.fn().mockResolvedValue({
+      _id: 'sch-other',
+      employee: { _id: 'someone-else', name: 'Other' },
+    });
+    mockShiftSchedule.findById.mockReturnValue({ populate });
+
+    const res = await request(app).get('/api/schedules/sch-other');
+
+    expect(res.status).toBe(404);
+    expect(res.body).toEqual({ error: 'Not found' });
+  });
+
   it('rejects export when employee calls endpoint', async () => {
     const exportApp = buildScheduleAppWithRole('employee');
     const res = await request(exportApp)
@@ -1254,11 +1326,41 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
     expect(mockShiftSchedule.find).not.toHaveBeenCalled();
   });
 
+  it('scopes supervisor export to self and direct reports', async () => {
+    const directReportSelect = jest.fn().mockReturnValue(createSelectResponse([{ _id: 'empA' }]));
+    const exportEmployeeQuery = {
+      select: jest.fn().mockReturnThis(),
+      populate: jest.fn().mockReturnThis(),
+      lean: jest.fn().mockResolvedValue([]),
+    };
+    mockEmployee.find
+      .mockReturnValueOnce({ select: directReportSelect })
+      .mockReturnValueOnce(exportEmployeeQuery);
+    mockShiftSchedule.find.mockReturnValue({
+      populate: jest.fn().mockReturnThis(),
+      lean: jest.fn().mockResolvedValue([]),
+    });
+    mockApprovalRequest.find.mockReturnValue({
+      select: jest.fn().mockReturnThis(),
+      lean: jest.fn().mockResolvedValue([]),
+    });
+
+    const exportApp = buildScheduleAppWithRole('supervisor');
+    const res = await request(exportApp)
+      .get('/api/schedules/export?month=2024-05&department=deptA&format=excel');
+
+    expect(res.status).toBe(200);
+    expect(mockEmployee.find).toHaveBeenNthCalledWith(2, {
+      department: 'deptA',
+      _id: { $in: ['tester', 'empA'] },
+    });
+  });
+
   it('exports filtered excel with custom filename', async () => {
     const exportApp = buildScheduleAppWithRole('admin');
     const allSchedules = [
       {
-        employee: { name: 'Alice' },
+        employee: { _id: 'empA', name: 'Alice' },
         date: new Date('2024-05-10T00:00:00.000Z'),
         shiftId: 's1',
         department: 'deptA',
@@ -1276,6 +1378,17 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
         department: 'deptB',
       },
     ];
+    mockEmployee.find.mockReturnValue({
+      select: jest.fn().mockReturnThis(),
+      populate: jest.fn().mockReturnThis(),
+      lean: jest.fn().mockResolvedValue([
+        { _id: { toString: () => 'empA' }, name: 'Alice', title: '', practiceTitle: '', subDepartment: { name: 'A單位' } },
+      ]),
+    });
+    mockApprovalRequest.find.mockReturnValue({
+      select: jest.fn().mockReturnThis(),
+      lean: jest.fn().mockResolvedValue([]),
+    });
 
     mockShiftSchedule.find.mockImplementation((query) => {
       expect(query.department).toBe('deptA');
@@ -1321,8 +1434,9 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
     expect(worksheet.rowCount).toBe(2);
     const dataRow = worksheet.getRow(2).values;
     expect(dataRow[1]).toBe('Alice');
-    expect(dataRow[2]).toBe('2024/05/10');
-    expect(dataRow[3]).toBe('Morning');
+    expect(dataRow[2]).toBe('A單位');
+    expect(dataRow[3]).toBe('-');
+    expect(dataRow[13]).toBe('Morning');
   });
 
   describe('schedule overview', () => {

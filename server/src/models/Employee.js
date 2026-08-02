@@ -225,6 +225,7 @@ const employeeSchema = new Schema(
       expiryDate: { type: Date }, // 請假期限
       accumulatedLeave: { type: Number, default: 0 }, // 積假
       notes: { type: String, default: '' }, // 備註
+      appliedApprovalRequestIds: { type: [String], default: [], select: false },
     },
   },
   {
@@ -310,7 +311,8 @@ employeeSchema.methods.resetAnnualLeave = function (totalDays, year) {
   this.annualLeave = {
     totalDays: totalDays || 0,
     usedDays: 0,
-    year: year || new Date().getFullYear()
+    year: year || new Date().getFullYear(),
+    appliedApprovalRequestIds: [],
   }
   return this.save()
 }

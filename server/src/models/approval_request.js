@@ -44,16 +44,24 @@ const approvalRequestSchema = new Schema(
     applicant_employee: { type: Schema.Types.ObjectId, ref: 'Employee' },
     applicant_org: String,
     applicant_department: String,
+    idempotency_key: { type: String, trim: true, maxlength: 128 },
 
     status: { type: String, enum: ['pending','approved','rejected','returned','canceled'], default: 'pending' },
     current_step_index: { type: Number, default: 0 },               // 0-based
     steps: { type: [requestStepSchema], default: [] },
     logs: { type: [logSchema], default: [] },
   },
-  { timestamps: true }
+  { timestamps: true, optimisticConcurrency: true }
 )
 
 approvalRequestSchema.index({ status: 1, 'steps.approvers.approver': 1 })
 approvalRequestSchema.index({ applicant_employee: 1, createdAt: -1 })
+approvalRequestSchema.index(
+  { applicant_employee: 1, idempotency_key: 1 },
+  {
+    unique: true,
+    partialFilterExpression: { idempotency_key: { $type: 'string' } },
+  },
+)
 
 export default mongoose.model('ApprovalRequest', approvalRequestSchema)

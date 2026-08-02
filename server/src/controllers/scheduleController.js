@@ -4,6 +4,10 @@ import ApprovalRequest from '../models/approval_request.js';
 import AttendanceSetting from '../models/AttendanceSetting.js';
 import Department from '../models/Department.js';
 import { getLeaveFieldIds } from '../services/leaveFieldService.js';
+import {
+  assertScheduleRuleCompliance,
+  isLaborRuleValidationError,
+} from '../services/laborRuleValidationService.js';
 import { 
   validateMonthSchedules, 
   getIncompleteScheduleEmployees,
@@ -22,12 +26,36 @@ const __dirname = path.dirname(__filename);
 // Path to Chinese font for PDF generation
 const DEFAULT_FONT_PATH = path.join(__dirname, '../../fonts/NotoSansCJKtc-Regular.otf');
 const CHINESE_FONT_PATH = process.env.PDF_CHINESE_FONT_PATH || DEFAULT_FONT_PATH;
+const SCHEDULE_EMPLOYEE_SELECT = 'name employeeId photo title practiceTitle department subDepartment supervisor role status';
+
+function toEntityId(value) {
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'object' && value._id !== undefined && value._id !== value) {
+    return toEntityId(value._id);
+  }
+  return typeof value.toString === 'function' ? value.toString() : String(value);
+}
+
+async function getAllowedScheduleEmployeeIds(req) {
+  const actorId = toEntityId(req.user?.id);
+  if (!actorId) return [];
+  if (req.user?.role === 'admin') return null;
+  if (req.user?.role === 'employee') return [actorId];
+  if (req.user?.role !== 'supervisor') return [];
+
+  const query = Employee.find({ supervisor: actorId }).select('_id');
+  const directReports = typeof query.lean === 'function' ? await query.lean() : await query;
+  return Array.from(new Set([
+    actorId,
+    ...(directReports || []).map((employee) => toEntityId(employee?._id)).filter(Boolean),
+  ]));
+}
 
 function formatDate(date) {
   const d = new Date(date);
-  const yyyy = d.getFullYear();
-  const mm = String(d.getMonth() + 1).padStart(2, '0');
-  const dd = String(d.getDate()).padStart(2, '0');
+  const yyyy = d.getUTCFullYear();
+  const mm = String(d.getUTCMonth() + 1).padStart(2, '0');
+  const dd = String(d.getUTCDate()).padStart(2, '0');
   return `${yyyy}/${mm}/${dd}`;
 }
 
@@ -99,14 +127,14 @@ async function hasLeaveConflict(employeeId, date) {
 
 function buildMonthDays(startDate) {
   const start = new Date(startDate);
-  start.setHours(0, 0, 0, 0);
+  start.setUTCHours(0, 0, 0, 0);
   const days = [];
   const pointer = new Date(start);
   const end = new Date(start);
-  end.setMonth(end.getMonth() + 1);
+  end.setUTCMonth(end.getUTCMonth() + 1);
   while (pointer < end) {
     days.push(pointer.toISOString().slice(0, 10));
-    pointer.setDate(pointer.getDate() + 1);
+    pointer.setUTCDate(pointer.getUTCDate() + 1);
   }
   return days;
 }
@@ -116,12 +144,12 @@ function buildMonthRange(month) {
   if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) {
     throw new Error('invalid month format');
   }
-  const start = new Date(`${month}-01`);
+  const start = new Date(`${month}-01T00:00:00.000Z`);
   if (Number.isNaN(start.getTime())) {
     throw new Error('invalid month');
   }
   const end = new Date(start);
-  end.setMonth(end.getMonth() + 1);
+  end.setUTCMonth(end.getUTCMonth() + 1);
   return { start, end };
 }
 
@@ -184,6 +212,15 @@ function normalizeId(value) {
     }
   }
   return String(value);
+}
+
+function respondLaborRuleError(res, err) {
+  if (!isLaborRuleValidationError(err)) return false;
+  res.status(err.status || 400).json({
+    error: err.message,
+    violations: err.violations || [],
+  });
+  return true;
 }
 
 export async function getIncludeSelfPreference(req, res) {
@@ -249,9 +286,9 @@ export async function listMonthlySchedules(req, res) {
       jobType: jobTypeRaw,
     } = req.query;
     if (!month) return res.status(400).json({ error: 'month required' });
-    const start = new Date(`${month}-01`);
+    const start = new Date(`${month}-01T00:00:00.000Z`);
     const end = new Date(start);
-    end.setMonth(end.getMonth() + 1);
+    end.setUTCMonth(end.getUTCMonth() + 1);
     const scheduleQuery = { date: { $gte: start, $lt: end } };
     const includeSelf = String(includeSelfRaw).toLowerCase() === 'true';
     const requestedPageOrLimit = pageRaw !== undefined || limitRaw !== undefined;
@@ -297,13 +334,38 @@ export async function listMonthlySchedules(req, res) {
       });
     }
 
+    const actorId = toEntityId(req.user?.id);
+    const actorRole = req.user?.role;
+    if (!actorId) return res.status(401).json({ error: 'Invalid user' });
+
     let scopedIds = null;
-    if (supervisor) {
-      const role = req.user?.role;
-      const allowedRoles = ['supervisor', 'admin'];
-      if (!allowedRoles.includes(role)) {
+    if (actorRole === 'employee') {
+      if ((employee && toEntityId(employee) !== actorId) || (supervisor && toEntityId(supervisor) !== actorId)) {
         return res.status(403).json({ error: 'forbidden' });
       }
+      if (parsedEmployeeIds.some((id) => id !== actorId)) {
+        return res.status(403).json({ error: 'forbidden' });
+      }
+      scopedIds = [actorId];
+    } else if (actorRole === 'supervisor') {
+      if (supervisor && toEntityId(supervisor) !== actorId) {
+        return res.status(403).json({ error: 'forbidden' });
+      }
+      const allowedIds = await getAllowedScheduleEmployeeIds(req);
+      if (employee && !allowedIds.includes(toEntityId(employee))) {
+        return res.status(403).json({ error: 'forbidden' });
+      }
+      if (parsedEmployeeIds.some((id) => !allowedIds.includes(id))) {
+        return res.status(403).json({ error: 'forbidden' });
+      }
+      if (employee) {
+        scopedIds = [toEntityId(employee)];
+      } else if (parsedEmployeeIds.length > 0) {
+        scopedIds = parsedEmployeeIds;
+      } else {
+        scopedIds = includeSelf ? allowedIds : allowedIds.filter((id) => id !== actorId);
+      }
+    } else if (supervisor) {
       const emps = await Employee.find({ supervisor }).select('_id');
       const idSet = new Set(emps.map((e) => e._id.toString()));
       if (includeSelf && supervisor) {
@@ -315,7 +377,7 @@ export async function listMonthlySchedules(req, res) {
         scopedIds = scopedIds.filter((id) => requestedSet.has(id));
       }
     } else {
-      const empId = employee || (req.user?.role === 'employee' ? req.user.id : undefined);
+      const empId = employee;
       if (empId && parsedEmployeeIds.length > 0) {
         if (parsedEmployeeIds.includes(String(empId))) {
           scopedIds = [String(empId)];
@@ -597,21 +659,30 @@ export async function listLeaveApprovals(req, res) {
       subDepartment: subDepartmentRaw,
     } = req.query;
     if (!month) return res.status(400).json({ error: 'month required' });
-    const { formId, startId, endId, typeId } = await getLeaveFieldIds();
-    if (!formId || !startId || !endId) {
-      return res.json({ leaves: [], approvals: [] });
-    }
-    const start = new Date(`${month}-01`);
-    const end = new Date(start);
-    end.setMonth(end.getMonth() + 1);
-    const monthStart = `${month}-01`;
-    const monthEnd = end.toISOString().slice(0, 10);
-
+    const actorId = toEntityId(req.user?.id);
+    if (!actorId) return res.status(401).json({ error: 'Invalid user' });
     const includeSelf = String(includeSelfRaw).toLowerCase() === 'true';
     const department = departmentRaw ? String(departmentRaw) : '';
     const subDepartment = subDepartmentRaw ? String(subDepartmentRaw) : '';
     let scopedEmployeeIds = null;
-    if (supervisor) {
+    const allowedEmployeeIds = await getAllowedScheduleEmployeeIds(req);
+    if (allowedEmployeeIds !== null) {
+      if (supervisor && toEntityId(supervisor) !== actorId) {
+        return res.status(403).json({ error: 'forbidden' });
+      }
+      if (employee && !allowedEmployeeIds.includes(toEntityId(employee))) {
+        return res.status(403).json({ error: 'forbidden' });
+      }
+      if (employee) {
+        scopedEmployeeIds = [toEntityId(employee)];
+      } else if (supervisor) {
+        scopedEmployeeIds = includeSelf
+          ? allowedEmployeeIds
+          : allowedEmployeeIds.filter((id) => id !== actorId);
+      } else {
+        scopedEmployeeIds = allowedEmployeeIds;
+      }
+    } else if (supervisor) {
       const emps = await Employee.find({ supervisor }).select('_id');
       const idSet = new Set(emps.map((e) => e._id.toString()));
       if (includeSelf && supervisor) {
@@ -621,6 +692,16 @@ export async function listLeaveApprovals(req, res) {
     } else if (employee) {
       scopedEmployeeIds = [employee];
     }
+
+    const { formId, startId, endId, typeId } = await getLeaveFieldIds();
+    if (!formId || !startId || !endId) {
+      return res.json({ leaves: [], approvals: [] });
+    }
+    const start = new Date(`${month}-01T00:00:00.000Z`);
+    const end = new Date(start);
+    end.setUTCMonth(end.getUTCMonth() + 1);
+    const monthStart = `${month}-01`;
+    const monthEnd = end.toISOString().slice(0, 10);
 
     let departmentEmployeeIds = null;
     if (department || subDepartment) {
@@ -694,9 +775,9 @@ export async function listSupervisorSummary(req, res) {
 
     const includeSelf = String(includeSelfRaw).toLowerCase() === 'true';
 
-    const start = new Date(`${month}-01`);
+    const start = new Date(`${month}-01T00:00:00.000Z`);
     const end = new Date(start);
-    end.setMonth(end.getMonth() + 1);
+    end.setUTCMonth(end.getUTCMonth() + 1);
 
     // 1️⃣ 先抓所有「直屬部屬」
     const employees = await Employee.find({ supervisor })
@@ -775,12 +856,12 @@ export async function listSupervisorSummary(req, res) {
         const endDate = rawEnd ? new Date(rawEnd) : null;
         if (!startDate || !endDate || Number.isNaN(startDate) || Number.isNaN(endDate)) return;
 
-        startDate.setHours(0, 0, 0, 0);
-        endDate.setHours(0, 0, 0, 0);
+        startDate.setUTCHours(0, 0, 0, 0);
+        endDate.setUTCHours(0, 0, 0, 0);
         const monthStart = new Date(start);
         const monthEnd = new Date(end);
-        monthStart.setHours(0, 0, 0, 0);
-        monthEnd.setHours(0, 0, 0, 0);
+        monthStart.setUTCHours(0, 0, 0, 0);
+        monthEnd.setUTCHours(0, 0, 0, 0);
 
         const leaveStart = startDate < monthStart ? monthStart : new Date(startDate);
         const leaveEnd =
@@ -836,7 +917,7 @@ export async function listSupervisorSummary(req, res) {
       if (includeSelf) return true;
       return String(entry.employee) !== supervisorIdStr;
     });
-    const daysInMonth = new Date(end.getTime() - 86400000).getDate();
+    const daysInMonth = new Date(end.getTime() - 86400000).getUTCDate();
     const stats = payload.reduce(
       (acc, item) => {
         const shiftCount = Number(item.shiftCount || 0);
@@ -872,7 +953,7 @@ async function buildScheduleOverview({ month, organizationId, departmentId, subD
 
   const start = new Date(`${month}-01T00:00:00.000Z`);
   const end = new Date(start);
-  end.setMonth(end.getMonth() + 1);
+  end.setUTCMonth(end.getUTCMonth() + 1);
 
   const days = buildMonthDays(start);
   const query = {
@@ -1176,7 +1257,7 @@ export async function createSchedulesBatch(req, res) {
       if (Number.isNaN(dt?.getTime?.())) {
         return res.status(400).json({ error: 'invalid date' });
       }
-      dt.setHours(0, 0, 0, 0);
+      dt.setUTCHours(0, 0, 0, 0);
       const key = `${raw.employee}-${dt.getTime()}`;
       scheduleMap.set(key, {
         employee: raw.employee,
@@ -1194,6 +1275,10 @@ export async function createSchedulesBatch(req, res) {
         return res.status(400).json({ error: 'leave conflict' });
       }
     }
+
+    await assertScheduleRuleCompliance({
+      candidateSchedules: uniqueSchedules,
+    });
 
     const updated = [];
     const toInsert = [];
@@ -1239,6 +1324,7 @@ export async function createSchedulesBatch(req, res) {
 
     res.status(201).json([...inserted, ...updated]);
   } catch (err) {
+    if (respondLaborRuleError(res, err)) return;
     res.status(400).json({ error: err.message });
   }
 }
@@ -1302,6 +1388,19 @@ export async function publishSchedules(req, res) {
       return res.status(404).json({ error: 'no schedules found' });
     }
 
+    await assertScheduleRuleCompliance({
+      candidateSchedules: docs.map((doc) => ({
+        _id: doc._id,
+        employee: doc.employee?._id || doc.employee,
+        date: doc.date,
+        shiftId: doc.shiftId,
+        department: doc.department,
+        subDepartment: doc.subDepartment,
+      })),
+      range,
+      strictWeeklyRest: true,
+    });
+
     const now = new Date();
     const ids = docs.map((doc) => doc._id);
     await ShiftSchedule.updateMany({ _id: { $in: ids } }, {
@@ -1327,6 +1426,7 @@ export async function publishSchedules(req, res) {
       publishedMonth: month,
     });
   } catch (err) {
+    if (respondLaborRuleError(res, err)) return;
     res.status(400).json({ error: err.message });
   }
 }
@@ -1424,7 +1524,14 @@ export async function finalizeSchedules(req, res) {
 
 export async function listSchedules(req, res) {
   try {
-    const raw = await ShiftSchedule.find().populate('employee').lean();
+    const allowedEmployeeIds = await getAllowedScheduleEmployeeIds(req);
+    if (allowedEmployeeIds !== null && allowedEmployeeIds.length === 0) {
+      return res.status(403).json({ error: 'forbidden' });
+    }
+    const query = allowedEmployeeIds === null ? {} : { employee: { $in: allowedEmployeeIds } };
+    const raw = await ShiftSchedule.find(query)
+      .populate({ path: 'employee', select: SCHEDULE_EMPLOYEE_SELECT })
+      .lean();
     const schedules = await attachShiftInfo(raw);
     res.json(schedules);
   } catch (err) {
@@ -1453,6 +1560,10 @@ export async function createSchedule(req, res) {
       return res.status(400).json({ error: 'leave conflict' });
     }
 
+    await assertScheduleRuleCompliance({
+      candidateSchedules: [{ employee, date: dt, shiftId, department, subDepartment }],
+    });
+
     const schedule = await ShiftSchedule.create({
       employee,
       date: dt,
@@ -1463,14 +1574,23 @@ export async function createSchedule(req, res) {
     });
     res.status(201).json(schedule);
   } catch (err) {
+    if (respondLaborRuleError(res, err)) return;
     res.status(400).json({ error: err.message });
   }
 }
 
 export async function getSchedule(req, res) {
   try {
-    const schedule = await ShiftSchedule.findById(req.params.id).populate('employee');
+    const allowedEmployeeIds = await getAllowedScheduleEmployeeIds(req);
+    if (allowedEmployeeIds !== null && allowedEmployeeIds.length === 0) {
+      return res.status(404).json({ error: 'Not found' });
+    }
+    const schedule = await ShiftSchedule.findById(req.params.id)
+      .populate({ path: 'employee', select: SCHEDULE_EMPLOYEE_SELECT });
     if (!schedule) return res.status(404).json({ error: 'Not found' });
+    if (allowedEmployeeIds !== null && !allowedEmployeeIds.includes(toEntityId(schedule.employee))) {
+      return res.status(404).json({ error: 'Not found' });
+    }
     res.json(schedule);
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -1513,6 +1633,11 @@ export async function updateSchedule(req, res) {
       department: department !== undefined ? department : schedule.department,
       subDepartment: subDepartment !== undefined ? subDepartment : schedule.subDepartment,
     };
+    await assertScheduleRuleCompliance({
+      candidateSchedules: [nextData],
+      ignoredScheduleIds: [schedule._id],
+    });
+
     const shouldReset = hasScheduleDiff(schedule, nextData);
     schedule.employee = nextData.employee;
     schedule.date = nextData.date;
@@ -1525,6 +1650,7 @@ export async function updateSchedule(req, res) {
     const saved = await schedule.save();
     res.json(saved);
   } catch (err) {
+    if (respondLaborRuleError(res, err)) return;
     res.status(400).json({ error: err.message });
   }
 }
@@ -1874,10 +2000,16 @@ export async function exportSchedules(req, res) {
     if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) {
       return res.status(400).json({ error: 'invalid month format' });
     }
+    const actorId = toEntityId(req.user?.id);
+    if (!actorId) return res.status(401).json({ error: 'Invalid user' });
+    const allowedEmployeeIds = await getAllowedScheduleEmployeeIds(req);
+    if (allowedEmployeeIds !== null && allowedEmployeeIds.length === 0) {
+      return res.status(403).json({ error: 'forbidden' });
+    }
 
-    const start = new Date(`${month}-01`);
+    const start = new Date(`${month}-01T00:00:00.000Z`);
     const end = new Date(start);
-    end.setMonth(end.getMonth() + 1);
+    end.setUTCMonth(end.getUTCMonth() + 1);
 
     const query = { date: { $gte: start, $lt: end }, department };
     if (subDepartment) {
@@ -1889,6 +2021,7 @@ export async function exportSchedules(req, res) {
     const practiceTitle = String(practiceTitleRaw || '').trim();
 
     const employeeQuery = { department };
+    if (allowedEmployeeIds !== null) employeeQuery._id = { $in: allowedEmployeeIds };
     if (subDepartment) employeeQuery.subDepartment = subDepartment;
     if (search) {
       const rx = new RegExp(search, 'i');
@@ -1907,7 +2040,9 @@ export async function exportSchedules(req, res) {
     const employeeIds = employeeList.map((item) => item._id.toString());
     query.employee = { $in: employeeIds };
 
-    const raw = await ShiftSchedule.find(query).populate('employee').lean();
+    const raw = await ShiftSchedule.find(query)
+      .populate({ path: 'employee', select: SCHEDULE_EMPLOYEE_SELECT })
+      .lean();
     let schedules = await attachShiftInfo(raw);
     const daysInMonth = dayjs(`${month}-01`).daysInMonth();
     const leaveDaysMap = await buildLeaveDaysMapForMonth(employeeIds, month, start, end);

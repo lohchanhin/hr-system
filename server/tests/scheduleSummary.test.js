@@ -93,11 +93,17 @@ describe('Supervisor schedule summary', () => {
     const res = await request(app).get('/api/schedules/summary?month=2023-05');
 
     expect(res.status).toBe(200);
-    expect(res.body).toEqual([
+    expect(res.body.employees).toEqual([
       { employee: 'emp1', name: 'Emp1', shiftCount: 1, leaveCount: 2, absenceCount: 0 },
       { employee: 'emp2', name: 'Emp2', shiftCount: 0, leaveCount: 0, absenceCount: 0 },
     ]);
-    expect(res.body.find(e => e.employee === 'emp3')).toBeUndefined();
+    expect(res.body.stats).toEqual({
+      direct: 2,
+      unscheduled: 2,
+      onLeave: 1,
+      daysInMonth: 31,
+    });
+    expect(res.body.employees.find(e => e.employee === 'emp3')).toBeUndefined();
   });
 
   it('拒絕非主管角色', async () => {
@@ -142,7 +148,7 @@ describe('Supervisor schedule summary', () => {
     const res = await request(app).get('/api/schedules/summary?month=2023-05&includeSelf=true');
 
     expect(res.status).toBe(200);
-    const summaryRows = res.body;
+    const summaryRows = res.body.employees;
     expect(summaryRows.some((row) => row.employee === 'sup1')).toBe(true);
   });
 });

@@ -1254,6 +1254,7 @@ export async function seedApprovalTemplates() {
         { label: '開始時間', type_1: 'datetime', required: true, order: 2 },
         { label: '結束時間', type_1: 'datetime', required: true, order: 3 },
         { label: '事由', type_1: 'textarea', order: 4, placeholder: '請說明請假原因' },
+        { label: '相關證明', type_1: 'file', required: true, order: 5 },
       ],
       steps: [
         { step_order: 1, approver_type: 'manager' },

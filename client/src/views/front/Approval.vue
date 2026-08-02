@@ -156,12 +156,14 @@
                           style="width: 260px"
                         />
 
-                        <!-- file（僅存檔名，實際上傳可改為你的檔案上傳 API） -->
                         <el-upload
                           v-else-if="fld.type_1==='file'"
                           :auto-upload="false"
                           v-model:file-list="fileBuffers[fld._id]"
                           list-type="text"
+                          multiple
+                          :limit="5"
+                          accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png,.gif,.webp"
                         >
                           <el-button>選擇檔案</el-button>
                         </el-upload>
@@ -454,6 +456,7 @@
                     <el-tag type="success" v-else-if="row.status==='approved'">已核可</el-tag>
                     <el-tag type="danger" v-else-if="row.status==='rejected'">已否決</el-tag>
                     <el-tag v-else-if="row.status==='returned'">已退簽</el-tag>
+                    <el-tag type="info" v-else-if="row.status==='canceled'">已撤回</el-tag>
                     <span v-else>{{ row.status }}</span>
                   </template>
                 </el-table-column>
@@ -463,9 +466,24 @@
                 <el-table-column label="建立時間" width="180">
                   <template #default="{ row }">{{ fmt(row.createdAt) }}</template>
                 </el-table-column>
-                <el-table-column label="操作" width="140">
+                <el-table-column label="操作" width="260">
                   <template #default="{ row }">
                     <el-button size="small" @click="openDetail(row._id)">查看</el-button>
+                    <el-button
+                      v-if="row.status === 'returned'"
+                      size="small"
+                      type="primary"
+                      :loading="myActionLoading[row._id]"
+                      @click="resubmitMyRequest(row)"
+                    >重新送出</el-button>
+                    <el-button
+                      v-if="row.status === 'pending' || row.status === 'returned'"
+                      size="small"
+                      type="danger"
+                      plain
+                      :loading="myActionLoading[row._id]"
+                      @click="cancelMyRequest(row)"
+                    >撤回</el-button>
                   </template>
                 </el-table-column>
               </el-table>
@@ -597,6 +615,7 @@ const renderValue = (v) => Array.isArray(v) ? v.join(', ') : (v ?? '-')
 
 /* 人名快取（顯示審核人用） */
 const employeeNameCache = reactive({})
+const myActionLoading = reactive({})
 function approverName(emp) {
   if (emp && typeof emp === 'object') {
     const id = emp._id || emp.employeeId || ''
@@ -611,6 +630,10 @@ const applyState = reactive({
   formId: '',
   formData: {},
 })
+const createSubmissionKey = () => (
+  globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`
+)
+let approvalSubmissionKey = createSubmissionKey()
 const leaveFormId = computed(() => {
   const f = formTemplates.value.find(t => t.name === '請假')
   return f?._id || ''
@@ -633,11 +656,17 @@ const deptOptions = ref([])
 const orgOptions = ref([])
 
 async function fetchUsersLite() {
-  const res = await apiFetch('/api/employees')
+  const res = await apiFetch('/api/employees/options')
   if (res.ok) {
     const arr = await res.json()
-    userOptions.value = arr.map(e => ({ value: e._id, label: `${e.name}${e.employeeId ? ' ('+e.employeeId+')' : ''}` }))
-    arr.forEach(e => { employeeNameCache[e._id] = e.name })
+    userOptions.value = arr.map(e => {
+      const id = e.id || e._id
+      return { value: id, label: `${e.name}${e.username ? ' ('+e.username+')' : ''}` }
+    })
+    arr.forEach(e => {
+      const id = e.id || e._id
+      if (id) employeeNameCache[id] = e.name
+    })
   }
 }
 async function fetchDepts() {
@@ -664,10 +693,13 @@ async function ensureEmployeeCache(ids) {
   const arr = Array.isArray(ids) ? ids : [ids]
   const missing = arr.filter(id => !employeeNameCache[id])
   if (!missing.length) return
-  const res = await apiFetch('/api/employees')
+  const res = await apiFetch('/api/employees/options')
   if (res.ok) {
     const emps = await res.json()
-    emps.forEach(e => { employeeNameCache[e._id] = e.name })
+    emps.forEach(e => {
+      const id = e.id || e._id
+      if (id) employeeNameCache[id] = e.name
+    })
   }
 }
 
@@ -727,31 +759,62 @@ async function submitApply() {
   }
   submitting.value = true
   try {
-    // 先把 fileBuffers 轉成檔名陣列（或在這裡改為實際上傳並回寫檔案 URL）
-    const payloadData = { ...applyState.formData }
-    Object.keys(fileBuffers.value).forEach(fid => {
-      const files = fileBuffers.value[fid] || []
-      payloadData[fid] = Array.isArray(files) ? files.map(f => f.name) : []
-    })
-
     applyError.value = ''
+    for (const field of fieldList.value) {
+      if (!field.required || field.type_1 === 'checkbox') continue
+      const value = field.type_1 === 'file'
+        ? fileBuffers.value[field._id]
+        : applyState.formData[field._id]
+      const empty = value == null
+        || (typeof value === 'string' && value.trim() === '')
+        || (Array.isArray(value) && value.length === 0)
+      if (empty) throw new Error(`請填寫必填欄位：${field.label}`)
+    }
+
+    const payloadData = { ...applyState.formData }
+    for (const fid of Object.keys(fileBuffers.value)) {
+      const files = fileBuffers.value[fid] || []
+      if (!Array.isArray(files) || !files.length) {
+        payloadData[fid] = []
+        continue
+      }
+      const uploadBody = new FormData()
+      files.forEach(file => {
+        const rawFile = file?.raw || file
+        if (rawFile instanceof File) uploadBody.append('files', rawFile)
+      })
+      const uploadRes = await apiFetch('/api/approvals/attachments', {
+        method: 'POST',
+        body: uploadBody
+      })
+      const uploadResult = await uploadRes.json().catch(() => ({}))
+      if (!uploadRes.ok) throw new Error(uploadResult.error || '附件上傳失敗')
+      payloadData[fid] = uploadResult.files || []
+    }
+
     const res = await apiFetch('/api/approvals', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'Idempotency-Key': approvalSubmissionKey,
+      },
       body: JSON.stringify({
         form_id: applyState.formId,
         form_data: payloadData
       })
     })
     if (res.ok) {
+      approvalSubmissionKey = createSubmissionKey()
       alert('送出申請成功！')
       activeTab.value = 'mine'
       await fetchMyList()
     } else {
       const e = await res.json().catch(()=> ({}))
-      applyError.value = e.error || `HTTP ${res.status}`
-      alert(`送出失敗：${applyError.value}`)
+      throw new Error(e.error || `HTTP ${res.status}`)
     }
+  } catch (error) {
+    applyError.value = error?.message || '送出失敗'
+    alert(`送出失敗：${applyError.value}`)
   } finally {
     submitting.value = false
   }
@@ -895,6 +958,34 @@ async function fetchMyList() {
   }
 }
 
+async function runMyRequestAction(row, action) {
+  if (!row?._id || myActionLoading[row._id]) return
+  myActionLoading[row._id] = true
+  try {
+    const response = await apiFetch(`/api/approvals/${row._id}/${action}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    })
+    const result = await response.json().catch(() => ({}))
+    if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`)
+    await fetchMyList()
+  } catch (error) {
+    alert(error?.message || '操作失敗')
+  } finally {
+    myActionLoading[row._id] = false
+  }
+}
+
+function resubmitMyRequest(row) {
+  return runMyRequestAction(row, 'resubmit')
+}
+
+function cancelMyRequest(row) {
+  if (typeof window !== 'undefined' && !window.confirm('確定撤回這筆申請？')) return
+  return runMyRequestAction(row, 'cancel')
+}
+
 /* -------------------- 詳細 Dialog -------------------- */
 const detail = reactive({ visible: false, doc: null })
 
@@ -983,7 +1074,8 @@ function getStatusTagType(status) {
     'pending': 'warning',
     'approved': 'success', 
     'rejected': 'danger',
-    'returned': 'info'
+    'returned': 'info',
+    'canceled': 'info'
   }
   return typeMap[status] || 'default'
 }
@@ -993,7 +1085,8 @@ function getStatusText(status) {
     'pending': '待簽核',
     'approved': '已核可',
     'rejected': '已否決', 
-    'returned': '已退簽'
+    'returned': '已退簽',
+    'canceled': '已撤回'
   }
   return textMap[status] || status
 }

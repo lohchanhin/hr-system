@@ -12,6 +12,8 @@ const mockApprovalRequest = { findOne: jest.fn() };
 const mockGetLeaveFieldIds = jest.fn();
 const mockEmployee = { findById: jest.fn(), find: jest.fn() };
 const mockAttendanceSetting = { findOne: jest.fn() };
+const mockAssertScheduleRuleCompliance = jest.fn();
+const mockIsLaborRuleValidationError = jest.fn();
 
 jest.unstable_mockModule('../src/models/ShiftSchedule.js', () => ({ default: mockShiftSchedule }));
 jest.unstable_mockModule('../src/models/approval_request.js', () => ({ default: mockApprovalRequest }));
@@ -20,6 +22,10 @@ jest.unstable_mockModule('../src/services/leaveFieldService.js', () => ({
   getLeaveFieldIds: mockGetLeaveFieldIds,
 }));
 jest.unstable_mockModule('../src/models/AttendanceSetting.js', () => ({ default: mockAttendanceSetting }));
+jest.unstable_mockModule('../src/services/laborRuleValidationService.js', () => ({
+  assertScheduleRuleCompliance: mockAssertScheduleRuleCompliance,
+  isLaborRuleValidationError: mockIsLaborRuleValidationError,
+}));
 
 let app;
 let scheduleRoutes;
@@ -58,6 +64,10 @@ beforeEach(() => {
   mockAttendanceSetting.findOne.mockReturnValue({
     lean: jest.fn().mockResolvedValue({ shifts: [] }),
   });
+  mockAssertScheduleRuleCompliance.mockReset();
+  mockAssertScheduleRuleCompliance.mockResolvedValue(undefined);
+  mockIsLaborRuleValidationError.mockReset();
+  mockIsLaborRuleValidationError.mockReturnValue(false);
 });
 
 describe('Supervisor schedule permissions', () => {
@@ -118,15 +128,19 @@ describe('Supervisor schedule permissions', () => {
   it('lists supervisor employees and creates schedules batch', async () => {
     const fakeEmployees = [{ _id: 'emp1', supervisor: 'u1', name: 'Emp1' }];
     mockEmployee.find.mockReturnValue({
-      populate: jest.fn().mockReturnValue({
-        sort: jest.fn().mockReturnValue({
-          lean: jest.fn().mockResolvedValue(fakeEmployees),
+      select: jest.fn().mockReturnValue({
+        populate: jest.fn().mockReturnValue({
+          sort: jest.fn().mockReturnValue({
+            lean: jest.fn().mockResolvedValue(fakeEmployees),
+          }),
         }),
       }),
     });
     const listRes = await request(app).get('/api/employees?supervisor=u1');
     expect(listRes.status).toBe(200);
-    expect(mockEmployee.find).toHaveBeenCalledWith({ supervisor: 'u1' });
+    expect(mockEmployee.find).toHaveBeenCalledWith({
+      $or: [{ _id: 'u1' }, { supervisor: 'u1' }],
+    });
     expect(listRes.body).toEqual(fakeEmployees);
 
     mockEmployee.findById.mockImplementation((id) => {
@@ -161,8 +175,12 @@ describe('Supervisor schedule permissions', () => {
     const res = await request(app).get('/api/employees/schedule?supervisor=u1');
 
     expect(res.status).toBe(200);
-    expect(mockEmployee.find).toHaveBeenCalledWith({ supervisor: 'u1' });
-    expect(selectMock).toHaveBeenCalledWith('_id name photo title practiceTitle department subDepartment annualLeave supervisor');
+    expect(mockEmployee.find).toHaveBeenCalledWith({
+      $or: [{ _id: 'u1' }, { supervisor: 'u1' }],
+    });
+    expect(selectMock).toHaveBeenCalledWith(
+      '_id name employeeId photo title practiceTitle department subDepartment annualLeave supervisor role status requiresScheduling partTime'
+    );
     expect(res.body[0]).toMatchObject({
       title: '護理師',
       practiceTitle: '專科護理師',
@@ -188,10 +206,9 @@ describe('Supervisor schedule permissions', () => {
 
     expect(res.status).toBe(200);
     const query = mockEmployee.find.mock.calls[0][0];
-    expect(query.supervisor).toBe('u1');
     expect(query.department).toBe('d1');
-    expect(Array.isArray(query.$or)).toBe(true);
-    expect(query.$or).toHaveLength(3);
+    expect(query.$and[0]).toEqual({ $or: [{ _id: 'u1' }, { supervisor: 'u1' }] });
+    expect(query.$and[1].$or).toHaveLength(3);
   });
   it('includes supervisor schedule when includeSelf is true', async () => {
     const selectMock = jest.fn()

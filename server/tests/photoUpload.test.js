@@ -8,6 +8,12 @@ const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 const UPLOAD_DIR = path.join(__dirname, '../../upload')
 
+async function cleanupPhoto(storedPath) {
+  if (!storedPath?.startsWith('/upload/')) return
+  const relativePath = storedPath.slice('/upload/'.length).replaceAll('/', path.sep)
+  await fs.unlink(path.join(UPLOAD_DIR, relativePath)).catch(() => {})
+}
+
 describe('photoUpload middleware', () => {
   let req, res, next
 
@@ -35,7 +41,7 @@ describe('photoUpload middleware', () => {
 
   describe('when photo is already uploaded (starts with /upload/)', () => {
     it('should call next without processing', async () => {
-      req.body.photo = '/upload/existing_photo.jpg'
+      req.body.photo = '/upload/employee_existing_photo.jpg'
       await photoUploadMiddleware(req, res, next)
       expect(res.nextCalled).toBe(true)
     })
@@ -66,12 +72,11 @@ describe('photoUpload middleware', () => {
       await photoUploadMiddleware(req, res, next)
       
       expect(res.nextCalled).toBe(true)
-      expect(req.body.photo).toMatch(/^\/upload\/employee_\d+_[a-f0-9]+\.png$/)
+      expect(req.body.photo).toMatch(/^\/upload\/employees\/employee_[a-f0-9-]+\.png$/)
       
       // Clean up - delete the created file
       if (req.body.photo) {
-        const filepath = path.join(UPLOAD_DIR, path.basename(req.body.photo))
-        await fs.unlink(filepath).catch(() => {})
+        await cleanupPhoto(req.body.photo)
       }
     })
   })
@@ -85,12 +90,11 @@ describe('photoUpload middleware', () => {
       await photoUploadMiddleware(req, res, next)
       
       expect(res.nextCalled).toBe(true)
-      expect(req.body.photo).toMatch(/^\/upload\/employee_\d+_[a-f0-9]+\.jpg$/)
+      expect(req.body.photo).toMatch(/^\/upload\/employees\/employee_[a-f0-9-]+\.jpg$/)
       
       // Clean up
       if (req.body.photo) {
-        const filepath = path.join(UPLOAD_DIR, path.basename(req.body.photo))
-        await fs.unlink(filepath).catch(() => {})
+        await cleanupPhoto(req.body.photo)
       }
     })
   })
@@ -104,12 +108,11 @@ describe('photoUpload middleware', () => {
       await photoUploadMiddleware(req, res, next)
       
       expect(res.nextCalled).toBe(true)
-      expect(req.body.photo).toMatch(/^\/upload\/employee_\d+_[a-f0-9]+\.png$/)
+      expect(req.body.photo).toMatch(/^\/upload\/employees\/employee_[a-f0-9-]+\.png$/)
       
       // Clean up
       if (req.body.photo) {
-        const filepath = path.join(UPLOAD_DIR, path.basename(req.body.photo))
-        await fs.unlink(filepath).catch(() => {})
+        await cleanupPhoto(req.body.photo)
       }
     })
   })
@@ -122,12 +125,11 @@ describe('photoUpload middleware', () => {
       await photoUploadMiddleware(req, res, next)
       
       expect(res.nextCalled).toBe(true)
-      expect(req.body.photo).toMatch(/^\/upload\/employee_\d+_[a-f0-9]+\.png$/)
+      expect(req.body.photo).toMatch(/^\/upload\/employees\/employee_[a-f0-9-]+\.png$/)
       
       // Clean up
       if (req.body.photo) {
-        const filepath = path.join(UPLOAD_DIR, path.basename(req.body.photo))
-        await fs.unlink(filepath).catch(() => {})
+        await cleanupPhoto(req.body.photo)
       }
     })
   })
@@ -178,12 +180,11 @@ describe('photoUpload middleware', () => {
       await photoUploadMiddleware(req, res, next)
       
       expect(res.nextCalled).toBe(true)
-      expect(req.body.photo).toMatch(/^\/upload\/employee_\d+_[a-f0-9]+\.png$/)
+      expect(req.body.photo).toMatch(/^\/upload\/employees\/employee_[a-f0-9-]+\.png$/)
       
       // Clean up
       if (req.body.photo) {
-        const filepath = path.join(UPLOAD_DIR, path.basename(req.body.photo))
-        await fs.unlink(filepath).catch(() => {})
+        await cleanupPhoto(req.body.photo)
       }
     })
   })

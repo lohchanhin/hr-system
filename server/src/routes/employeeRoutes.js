@@ -5,6 +5,7 @@ import {
   listEmployeeOptions,
   createEmployee,
   getEmployee,
+  getEmployeePhoto,
   updateEmployee,
   deleteEmployee,
   setSupervisors,
@@ -35,6 +36,7 @@ router.get('/:id/annual-leave/history', getEmployeeAnnualLeaveHistory);
 router.patch('/:id/annual-leave', setEmployeeAnnualLeave);
 router.post('/:id/annual-leave/validate', validateEmployeeAnnualLeave);
 
+router.get('/:id/photo', getEmployeePhoto);
 router.get('/:id', getEmployee);
 router.put('/:id', uploadSingle, handleMulterError, processUploadedPhoto, updateEmployee);
 router.delete('/:id', deleteEmployee);

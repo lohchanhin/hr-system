@@ -30,6 +30,7 @@ import attendanceSettingRoutes from './routes/attendanceSettingRoutes.js';
 import shiftRoutes from './routes/shiftRoutes.js';
 import deptManagerRoutes from './routes/deptManagerRoutes.js';
 import { ensureDefaultSupervisorReports } from './services/supervisorReportSeed.js';
+import privateUploadGuard from './middleware/privateUploadGuard.js';
 
 export async function ensureAdminUser() {
   const existing = await Employee.findOne({ role: 'admin' });
@@ -97,8 +98,8 @@ app.get('/env.js', (req, res) => {
   res.send(`window.__APP_CONFIG__ = ${JSON.stringify(config)};`);
 });
 
-// 靜態文件服務 - /upload 目錄
-app.use('/upload', express.static(uploadPath));
+// 私密附件與員工照片必須經過物件層授權，不可由靜態目錄直接讀取。
+app.use('/upload', privateUploadGuard, express.static(uploadPath));
 
 app.use(express.static(distPath));
 

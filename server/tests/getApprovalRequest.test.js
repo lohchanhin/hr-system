@@ -12,8 +12,8 @@ beforeAll(async () => {
   await jest.unstable_mockModule('../src/models/approval_request.js', () => ({ default: mockApprovalRequest }))
   await jest.unstable_mockModule('../src/models/form_field.js', () => ({ default: mockFormField }))
   await jest.unstable_mockModule('../src/middleware/auth.js', () => ({
-    authenticate: (req, res, next) => { req.user = { role: 'employee' }; next() },
-    authorizeRoles: () => (req, res, next) => next()
+    authenticate: (req, res, next) => { req.user = { id: 'emp1', role: 'employee' }; next() },
+    authorizeRoles: () => (req, res, next) => { req.user = { id: 'emp1', role: 'employee' }; next() }
   }))
   approvalRoutes = (await import('../src/routes/approvalRoutes.js')).default
   app = express()
@@ -30,6 +30,7 @@ describe('GET /api/approvals/:id', () => {
   it('returns approval request with form fields', async () => {
     const doc = {
       _id: 'req1',
+      applicant_employee: { _id: 'emp1', name: 'Employee' },
       form: { _id: 'form1', name: 'F', category: 'C' },
       form_data: { field1: 'v1' },
       toObject() { return this }
@@ -50,5 +51,24 @@ describe('GET /api/approvals/:id', () => {
     expect(Object.keys(res.body.form_data)).toEqual(fields.map(f => f._id))
     expect(mockFormField.find).toHaveBeenCalledWith({ form: 'form1' })
     expect(sort).toHaveBeenCalledWith({ order: 1 })
+  })
+
+  it('returns not found when the employee is not a request participant', async () => {
+    const doc = {
+      _id: 'req2',
+      applicant_employee: { _id: 'other-employee' },
+      form: { _id: 'form1', name: 'F', category: 'C' },
+      steps: [{ approvers: [{ approver: { _id: 'other-supervisor' } }] }],
+    }
+    const populate3 = jest.fn().mockResolvedValue(doc)
+    const populate2 = jest.fn().mockReturnValue({ populate: populate3 })
+    const populate1 = jest.fn().mockReturnValue({ populate: populate2 })
+    mockApprovalRequest.findById.mockReturnValue({ populate: populate1 })
+
+    const res = await request(app).get('/api/approvals/req2')
+
+    expect(res.status).toBe(404)
+    expect(res.body).toEqual({ error: 'not found' })
+    expect(mockFormField.find).not.toHaveBeenCalled()
   })
 })

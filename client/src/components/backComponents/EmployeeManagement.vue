@@ -60,7 +60,7 @@
           <el-table-column prop="name" label="員工資訊" min-width="200">
             <template #default="{ row }">
               <div class="employee-info">
-                <el-avatar :size="40" :src="getPhotoUrl(row.photo)" class="employee-avatar">
+                <el-avatar :size="40" :src="row._photoObjectUrl || ''" class="employee-avatar">
                   {{ row.name ? row.name.charAt(0) : 'N' }}
                 </el-avatar>
                 <div class="employee-details">
@@ -1175,12 +1175,17 @@
 </template>
 
 <script setup>
-import { ref, onMounted, computed, watch, reactive } from 'vue'
+import { ref, onMounted, onBeforeUnmount, computed, watch, reactive } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { apiFetch, importEmployeesBulk } from '../../api'
 import { REQUIRED_FIELDS } from './requiredFields'
-import { getPhotoUrl, getPhotoPath } from '../../utils/photoUrl'
+import {
+  fetchEmployeePhotoUrl,
+  getPhotoUrl,
+  getPhotoPath,
+  revokeEmployeePhotoUrl,
+} from '../../utils/photoUrl'
 
 // 常數定義
 const CURRENT_YEAR = new Date().getFullYear()
@@ -2815,6 +2820,38 @@ const employeeDialogVisible = ref(false)
 const photoUploading = ref(false)
 let editEmployeeIndex = null
 let editEmployeeId = ''
+let photoLoadGeneration = 0
+const employeePhotoObjectUrls = new Set()
+
+function releaseEmployeePhotoUrls() {
+  photoLoadGeneration += 1
+  employeePhotoObjectUrls.forEach(revokeEmployeePhotoUrl)
+  employeePhotoObjectUrls.clear()
+}
+
+async function hydrateEmployeePhotos(rows, generation) {
+  let cursor = 0
+  const worker = async () => {
+    while (cursor < rows.length) {
+      const row = rows[cursor]
+      cursor += 1
+      if (!row?.photo || !row?._id) continue
+      try {
+        const objectUrl = await fetchEmployeePhotoUrl(row._id, row.photo)
+        if (!objectUrl) continue
+        if (generation !== photoLoadGeneration) {
+          revokeEmployeePhotoUrl(objectUrl)
+          continue
+        }
+        row._photoObjectUrl = objectUrl
+        employeePhotoObjectUrls.add(objectUrl)
+      } catch {
+        // The avatar falls back to the employee initial when a photo is unavailable.
+      }
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(6, rows.length) }, worker))
+}
 
 function departmentLabel(id) {
   const dept = departmentList.value.find(d => d._id === id)
@@ -2914,27 +2951,36 @@ function handlePhotoExceed() {
   ElMessage.warning('僅能上傳一張照片')
 }
 
-function buildPhotoUploadFile(url, name = '') {
+function buildPhotoUploadFile(url, name = '', storedPath = '') {
   if (!url) return null
   return {
     name: name ? `${name} 照片` : '員工照片',
     url: getPhotoUrl(url),
+    storedPath,
     status: 'success',
     percentage: 100
   }
+}
+
+function normalizeAttachmentUrl(value) {
+  if (typeof value !== 'string') return ''
+  const trimmed = value.trim()
+  if (/^https?:\/\//i.test(trimmed)) return trimmed
+  return getPhotoPath(trimmed)
 }
 
 function extractUploadUrls(files = []) {
   return (Array.isArray(files) ? files : [files])
     .map(file => {
       if (!file) return ''
-      if (typeof file === 'string') return getPhotoPath(file)
-      if (file.url) return getPhotoPath(file.url)
+      if (typeof file === 'string') return normalizeAttachmentUrl(file)
+      if (file.storedPath) return normalizeAttachmentUrl(file.storedPath)
+      if (file.url) return normalizeAttachmentUrl(file.url)
       const response = file.response
-      if (typeof response === 'string') return getPhotoPath(response)
+      if (typeof response === 'string') return normalizeAttachmentUrl(response)
       if (typeof response === 'object' && response !== null) {
-        if ('url' in response && response.url) return getPhotoPath(response.url)
-        if ('data' in response && response.data?.url) return getPhotoPath(response.data.url)
+        if ('url' in response && response.url) return normalizeAttachmentUrl(response.url)
+        if ('data' in response && response.data?.url) return normalizeAttachmentUrl(response.data.url)
       }
       return ''
     })
@@ -3198,7 +3244,7 @@ async function fetchEmployees() {
   if (handle401(res)) return
   if (res.ok) {
     const list = await res.json()
-    employeeList.value = list.map(e => {
+    const normalizedEmployees = list.map(e => {
       const appointment = e?.appointment ?? {}
       const monthlyAdjustments = normalizeMonthlySalaryAdjustments(
         e?.monthlySalaryAdjustments
@@ -3263,6 +3309,9 @@ async function fetchEmployees() {
         monthlySalaryAdjustments: monthlyAdjustments
       }
     })
+    releaseEmployeePhotoUrls()
+    employeeList.value = normalizedEmployees
+    void hydrateEmployeePhotos(normalizedEmployees, photoLoadGeneration)
   }
 }
 onMounted(() => {
@@ -3273,6 +3322,8 @@ onMounted(() => {
   fetchOrganizations()
   fetchSubDepartments()
 })
+
+onBeforeUnmount(releaseEmployeePhotoUrls)
 
 /* 表單模型（完整補齊） ------------------------------------------------------ */
 const emptyEmployee = {
@@ -4373,7 +4424,11 @@ async function openEmployeeDialog(employeeId = null) {
     employeeForm.value.signRole = normalizeSignRole(employeeForm.value.signRole)
     employeeForm.value.signLevel = normalizeSignLevel(employeeForm.value.signLevel)
     employeeForm.value.photo = employeeForm.value.photo || ''
-    const existingPhotoFile = buildPhotoUploadFile(employeeForm.value.photo, employeeForm.value.name)
+    const existingPhotoFile = buildPhotoUploadFile(
+      emp._photoObjectUrl || employeeForm.value.photo,
+      employeeForm.value.name,
+      employeeForm.value.photo,
+    )
     employeeForm.value.photoList = existingPhotoFile ? [existingPhotoFile] : []
     employeeForm.value.licenses = formatLicensesForForm(emp.licenses ?? [])
     employeeForm.value.trainings = formatTrainingsForForm(emp.trainings ?? [])

@@ -19,6 +19,10 @@ beforeAll(async () => {
   employeeRoutes = (await import('../src/routes/employeeRoutes.js')).default;
   app = express();
   app.use(express.json());
+  app.use((req, res, next) => {
+    req.user = { id: 'admin1', role: 'admin' };
+    next();
+  });
   app.use('/api/employees', employeeRoutes);
 });
 
@@ -31,7 +35,7 @@ describe('Employee API', () => {
     const fakeEmployees = [{ name: 'John', department: 'd1', title: 'Staff', status: '正職員工' }];
     mockEmployee.find.mockReturnValue({
       populate: jest.fn().mockReturnValue({
-        sort: jest.fn().mockResolvedValue(fakeEmployees),
+        sort: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue(fakeEmployees) }),
       }),
     });
     const res = await request(app).get('/api/employees');
@@ -41,7 +45,9 @@ describe('Employee API', () => {
 
   it('lists employees filtered by supervisor', async () => {
     const fakeEmployees = [{ name: 'Bob' }];
-    const populate = jest.fn().mockReturnValue({ sort: jest.fn().mockResolvedValue(fakeEmployees) });
+    const populate = jest.fn().mockReturnValue({
+      sort: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue(fakeEmployees) }),
+    });
     mockEmployee.find.mockReturnValue({ populate });
     const res = await request(app).get('/api/employees?supervisor=s1');
     expect(res.status).toBe(200);
@@ -51,7 +57,9 @@ describe('Employee API', () => {
 
   it('lists employees filtered by subDepartment', async () => {
     const fakeEmployees = [{ name: 'Alice' }];
-    const populate = jest.fn().mockReturnValue({ sort: jest.fn().mockResolvedValue(fakeEmployees) });
+    const populate = jest.fn().mockReturnValue({
+      sort: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue(fakeEmployees) }),
+    });
     mockEmployee.find.mockReturnValue({ populate });
     const res = await request(app).get('/api/employees?subDepartment=sd1');
     expect(res.status).toBe(200);
@@ -101,7 +109,7 @@ describe('Employee API', () => {
   it('returns 500 if listing fails', async () => {
     mockEmployee.find.mockReturnValue({
       populate: jest.fn().mockReturnValue({
-        sort: jest.fn().mockRejectedValue(new Error('fail')),
+        sort: jest.fn().mockReturnValue({ lean: jest.fn().mockRejectedValue(new Error('fail')) }),
       }),
     });
     const res = await request(app).get('/api/employees');
@@ -245,7 +253,7 @@ describe('Employee authorization middleware', () => {
   it('allows supervisor to list employees', async () => {
     const { authorizeRoles } = await import('../src/middleware/auth.js');
     const authenticate = (req, res, next) => {
-      req.user = { role: 'supervisor' };
+      req.user = { id: 'supervisor1', role: 'supervisor' };
       next();
     };
     const appAuth = express();
@@ -262,7 +270,11 @@ describe('Employee authorization middleware', () => {
       employeeRoutes
     );
     mockEmployee.find.mockReturnValue({
-      populate: jest.fn().mockReturnValue({ sort: jest.fn().mockResolvedValue([]) }),
+      select: jest.fn().mockReturnValue({
+        populate: jest.fn().mockReturnValue({
+          sort: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue([]) }),
+        }),
+      }),
     });
     const res = await request(appAuth).get('/api/employees');
     expect(res.status).toBe(200);
@@ -271,7 +283,7 @@ describe('Employee authorization middleware', () => {
   it('blocks supervisor from creating employee', async () => {
     const { authorizeRoles } = await import('../src/middleware/auth.js');
     const authenticate = (req, res, next) => {
-      req.user = { role: 'supervisor' };
+      req.user = { id: 'supervisor1', role: 'supervisor' };
       next();
     };
     const appAuth = express();
@@ -294,7 +306,7 @@ describe('Employee authorization middleware', () => {
   it('allows employee to list employees but not create', async () => {
     const { authorizeRoles } = await import('../src/middleware/auth.js');
     const authenticate = (req, res, next) => {
-      req.user = { role: 'employee' };
+      req.user = { id: 'employee1', role: 'employee' };
       next();
     };
     const appAuth = express();
@@ -312,7 +324,9 @@ describe('Employee authorization middleware', () => {
     );
 
     mockEmployee.find.mockReturnValue({
-      populate: jest.fn().mockReturnValue({ sort: jest.fn().mockResolvedValue([]) }),
+      populate: jest.fn().mockReturnValue({
+        sort: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue([]) }),
+      }),
     });
     const resList = await request(appAuth).get('/api/employees');
     expect(resList.status).toBe(200);

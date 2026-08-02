@@ -199,6 +199,7 @@ export async function ensureLeaveForm(req, res) {
         { label: '開始時間', type_1: 'datetime', required: true, order: 2 },
         { label: '結束時間', type_1: 'datetime', required: true, order: 3 },
         { label: '事由', type_1: 'textarea', order: 4, placeholder: '請說明請假原因' },
+        { label: '相關證明', type_1: 'file', required: true, order: 5 },
       ]
 
       for (const field of fields) {
@@ -219,6 +220,21 @@ export async function ensureLeaveForm(req, res) {
 
       wasGenerated = true
       console.log('Auto-generated leave form template')
+    }
+
+    const existingProofField = await FormField.findOne({
+      form: form._id,
+      type_1: 'file',
+      is_active: true,
+    })
+    if (!existingProofField) {
+      await FormField.create({
+        form: form._id,
+        label: '相關證明',
+        type_1: 'file',
+        required: true,
+        order: 5,
+      })
     }
 
     // Return the form with its fields and workflow
@@ -262,6 +278,7 @@ export async function restoreDefaultTemplates(req, res) {
           { label: '開始時間', type_1: 'datetime', required: true, order: 2 },
           { label: '結束時間', type_1: 'datetime', required: true, order: 3 },
           { label: '事由', type_1: 'textarea', order: 4, placeholder: '請說明請假原因' },
+          { label: '相關證明', type_1: 'file', required: true, order: 5 },
         ],
         steps: [
           { step_order: 1, approver_type: 'manager' },

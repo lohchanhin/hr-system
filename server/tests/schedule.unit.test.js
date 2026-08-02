@@ -11,11 +11,17 @@ const mockApprovalRequest = { findOne: jest.fn(), find: jest.fn() };
 const mockGetLeaveFieldIds = jest.fn();
 const mockAttendanceSetting = { findOne: jest.fn() };
 const mockEmployee = { find: jest.fn() };
+const mockAssertScheduleRuleCompliance = jest.fn();
+const mockIsLaborRuleValidationError = jest.fn((error) => Array.isArray(error?.violations));
 
 jest.unstable_mockModule('../src/models/ShiftSchedule.js', () => ({ default: mockShiftSchedule }));
 jest.unstable_mockModule('../src/models/approval_request.js', () => ({ default: mockApprovalRequest }));
 jest.unstable_mockModule('../src/models/AttendanceSetting.js', () => ({ default: mockAttendanceSetting }));
 jest.unstable_mockModule('../src/models/Employee.js', () => ({ default: mockEmployee }));
+jest.unstable_mockModule('../src/services/laborRuleValidationService.js', () => ({
+  assertScheduleRuleCompliance: mockAssertScheduleRuleCompliance,
+  isLaborRuleValidationError: mockIsLaborRuleValidationError,
+}));
 jest.unstable_mockModule('../src/services/leaveFieldService.js', () => ({
   getLeaveFieldIds: mockGetLeaveFieldIds,
 }));
@@ -29,6 +35,9 @@ describe('createSchedule validations', () => {
     mockApprovalRequest.findOne.mockReset();
     mockApprovalRequest.find.mockReset();
     mockGetLeaveFieldIds.mockReset();
+    mockAssertScheduleRuleCompliance.mockReset();
+    mockAssertScheduleRuleCompliance.mockResolvedValue({ ok: true, violations: [] });
+    mockIsLaborRuleValidationError.mockClear();
     mockGetLeaveFieldIds.mockResolvedValue({
       formId: 'form1',
       startId: 's',
@@ -57,6 +66,9 @@ describe('createSchedulesBatch validations', () => {
     mockApprovalRequest.findOne.mockReset();
     mockApprovalRequest.find.mockReset();
     mockGetLeaveFieldIds.mockReset();
+    mockAssertScheduleRuleCompliance.mockReset();
+    mockAssertScheduleRuleCompliance.mockResolvedValue({ ok: true, violations: [] });
+    mockIsLaborRuleValidationError.mockClear();
     mockGetLeaveFieldIds.mockResolvedValue({
       formId: 'form1',
       startId: 's',
@@ -122,6 +134,33 @@ describe('createSchedulesBatch validations', () => {
     expect(status).toHaveBeenCalledWith(201);
     expect(json).toHaveBeenCalledWith(insertedDocs);
   });
+
+  it('returns labor rule violations before writing batch schedules', async () => {
+    mockShiftSchedule.findOne.mockResolvedValue(null);
+    mockApprovalRequest.findOne.mockResolvedValue(null);
+    const error = new Error('排班規範檢核未通過');
+    error.status = 400;
+    error.violations = [{ rule: 'shift-gap', message: '班與班之間需間隔11小時' }];
+    mockAssertScheduleRuleCompliance.mockRejectedValue(error);
+
+    const req = {
+      body: {
+        schedules: [{ employee: 'e1', date: '2023-01-01', shiftId: 's1' }],
+      },
+    };
+    const status = jest.fn().mockReturnThis();
+    const json = jest.fn();
+    const res = { status, json };
+
+    await createSchedulesBatch(req, res);
+
+    expect(mockShiftSchedule.insertMany).not.toHaveBeenCalled();
+    expect(status).toHaveBeenCalledWith(400);
+    expect(json).toHaveBeenCalledWith({
+      error: '排班規範檢核未通過',
+      violations: error.violations,
+    });
+  });
 });
 
 describe('updateSchedule validations', () => {
@@ -131,6 +170,9 @@ describe('updateSchedule validations', () => {
     mockApprovalRequest.findOne.mockReset();
     mockApprovalRequest.find.mockReset();
     mockGetLeaveFieldIds.mockReset();
+    mockAssertScheduleRuleCompliance.mockReset();
+    mockAssertScheduleRuleCompliance.mockResolvedValue({ ok: true, violations: [] });
+    mockIsLaborRuleValidationError.mockClear();
     mockGetLeaveFieldIds.mockResolvedValue({
       formId: 'form1',
       startId: 's',
@@ -326,6 +368,7 @@ describe('exportSchedules excel matrix', () => {
     });
 
     const req = {
+      user: { id: 'admin1', role: 'admin' },
       query: {
         month: '2024-02',
         department: 'dep1',

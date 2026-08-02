@@ -1,10 +1,46 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { getPhotoUrl, getPhotoPath } from '../photoUrl'
+import { fetchEmployeePhotoUrl, getPhotoUrl, getPhotoPath } from '../photoUrl'
+
+const { apiFetchMock } = vi.hoisted(() => ({ apiFetchMock: vi.fn() }))
 
 // Mock the API module
 vi.mock('../../api', () => ({
-  API_BASE_URL: 'http://localhost:3000'
+  API_BASE_URL: 'http://localhost:3000',
+  apiFetch: apiFetchMock,
 }))
+
+beforeEach(() => {
+  apiFetchMock.mockReset()
+  Object.defineProperty(URL, 'createObjectURL', {
+    configurable: true,
+    value: vi.fn(() => 'blob:protected-photo'),
+  })
+})
+
+describe('fetchEmployeePhotoUrl', () => {
+  it('loads a protected employee photo through apiFetch', async () => {
+    apiFetchMock.mockResolvedValue({
+      ok: true,
+      blob: vi.fn().mockResolvedValue(new Blob(['photo'], { type: 'image/png' })),
+    })
+
+    await expect(fetchEmployeePhotoUrl('emp/1', '/upload/employees/photo.png'))
+      .resolves.toBe('blob:protected-photo')
+    expect(apiFetchMock).toHaveBeenCalledWith(
+      '/api/employees/emp%2F1/photo',
+      {},
+      { autoRedirect: false },
+    )
+  })
+
+  it('does not create a URL when access is denied', async () => {
+    apiFetchMock.mockResolvedValue({ ok: false })
+
+    await expect(fetchEmployeePhotoUrl('emp2', '/upload/employees/photo.png'))
+      .resolves.toBeNull()
+    expect(URL.createObjectURL).not.toHaveBeenCalled()
+  })
+})
 
 describe('getPhotoUrl', () => {
   it('should return null for null or undefined input', () => {

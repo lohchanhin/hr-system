@@ -7,28 +7,43 @@ import { fileURLToPath } from 'url'
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 const UPLOAD_DIR = path.join(__dirname, '../../upload')
+const PNG_BUFFER = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',
+  'base64'
+)
+
+async function removeStoredPhoto(storedPath) {
+  if (!storedPath?.startsWith('/upload/employees/')) return
+  const filepath = path.join(UPLOAD_DIR, 'employees', path.basename(storedPath))
+  await fs.unlink(filepath).catch(() => {})
+}
 
 describe('photoUploadMulter middleware', () => {
   describe('processUploadedPhoto', () => {
     it('should set photo path when file is uploaded', async () => {
       const req = {
         file: {
-          filename: 'test_photo_12345.jpg'
+          buffer: PNG_BUFFER,
+          mimetype: 'image/png'
         },
         body: {}
       }
-      const res = {}
-      const next = () => {}
+      const res = { status: () => res, json: () => res }
+      let nextCalled = false
+      const next = () => { nextCalled = true }
       
       await processUploadedPhoto(req, res, next)
       
-      expect(req.body.photo).toBe('/upload/test_photo_12345.jpg')
+      expect(nextCalled).toBe(true)
+      expect(req.body.photo).toMatch(/^\/upload\/employees\/employee_[a-f0-9-]+\.png$/)
+      await removeStoredPhoto(req.body.photo)
     })
 
     it('should parse JSON fields in FormData', async () => {
       const req = {
         file: {
-          filename: 'test_photo_12345.jpg'
+          buffer: PNG_BUFFER,
+          mimetype: 'image/png'
         },
         body: {
           name: 'John Doe',
@@ -36,17 +51,20 @@ describe('photoUploadMulter middleware', () => {
           emergencyContacts: '[{"name":"Jane","phone":"123"}]'
         }
       }
-      const res = {}
-      const next = () => {}
+      const res = { status: () => res, json: () => res }
+      let nextCalled = false
+      const next = () => { nextCalled = true }
       
       await processUploadedPhoto(req, res, next)
       
-      expect(req.body.photo).toBe('/upload/test_photo_12345.jpg')
+      expect(nextCalled).toBe(true)
+      expect(req.body.photo).toMatch(/^\/upload\/employees\/employee_[a-f0-9-]+\.png$/)
       expect(req.body.name).toBe('John Doe')
       expect(Array.isArray(req.body.languages)).toBe(true)
       expect(req.body.languages).toEqual(['English', 'Chinese'])
       expect(Array.isArray(req.body.emergencyContacts)).toBe(true)
       expect(req.body.emergencyContacts[0].name).toBe('Jane')
+      await removeStoredPhoto(req.body.photo)
     })
 
     it('should fallback to base64 middleware when no file is uploaded', async () => {
@@ -63,13 +81,10 @@ describe('photoUploadMulter middleware', () => {
       await processUploadedPhoto(req, res, next)
       
       expect(nextCalled).toBe(true)
-      expect(req.body.photo).toMatch(/^\/upload\/employee_\d+_[a-f0-9]+\.png$/)
+      expect(req.body.photo).toMatch(/^\/upload\/employees\/employee_[a-f0-9-]+\.png$/)
       
       // Clean up
-      if (req.body.photo && req.body.photo.startsWith('/upload/')) {
-        const filepath = path.join(UPLOAD_DIR, path.basename(req.body.photo))
-        await fs.unlink(filepath).catch(() => {})
-      }
+      await removeStoredPhoto(req.body.photo)
     })
   })
 

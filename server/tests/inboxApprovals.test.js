@@ -10,8 +10,8 @@ let approvalRoutes
 beforeAll(async () => {
   await jest.unstable_mockModule('../src/models/approval_request.js', () => ({ default: mockApprovalRequest }))
   await jest.unstable_mockModule('../src/middleware/auth.js', () => ({
-    authenticate: (req, res, next) => { req.user = { role: 'supervisor' }; next() },
-    authorizeRoles: () => (req, res, next) => next()
+    authenticate: (req, res, next) => { req.user = { id: 'emp1', role: 'supervisor' }; next() },
+    authorizeRoles: () => (req, res, next) => { req.user = { id: 'emp1', role: 'supervisor' }; next() }
   }))
   approvalRoutes = (await import('../src/routes/approvalRoutes.js')).default
   app = express()
@@ -115,5 +115,13 @@ describe('GET /api/approvals/inbox', () => {
     expect(res.status).toBe(200)
     expect(res.body.map(doc => doc._id)).toEqual(sortedDocs.map(doc => doc._id))
     expect(sort).toHaveBeenCalledWith({ createdAt: -1 })
+  })
+
+  it('rejects querying another employee inbox', async () => {
+    const res = await request(app).get('/api/approvals/inbox?employee_id=someone-else')
+
+    expect(res.status).toBe(403)
+    expect(res.body).toEqual({ error: 'Forbidden' })
+    expect(mockApprovalRequest.find).not.toHaveBeenCalled()
   })
 })

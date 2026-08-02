@@ -5,11 +5,68 @@ import FormTemplate from '../models/form_template.js'
 import FormField from '../models/form_field.js'
 import Employee from '../models/Employee.js'
 import SubDepartment from '../models/SubDepartment.js'
+import fs from 'fs'
+import path from 'path'
+import { fileURLToPath } from 'url'
 import { getLeaveFieldIds } from '../services/leaveFieldService.js'
 import { deductAnnualLeave } from '../services/annualLeaveService.js'
+import {
+  assertApprovalRequestCompliance,
+  isLaborRuleValidationError,
+} from '../services/laborRuleValidationService.js'
 
 const APPLICANT_SUPERVISOR_VALUE = 'APPLICANT_SUPERVISOR'
 const ANNUAL_LEAVE_TYPES = ['特休', '特休假'] // 特休假別類型常數
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = path.dirname(__filename)
+const APPROVAL_UPLOAD_DIR = path.join(__dirname, '../../../upload/approvals')
+
+function normalizeId(value) {
+  if (value == null) return ''
+  if (typeof value === 'object' && value._id != null && value._id !== value) {
+    return normalizeId(value._id)
+  }
+  return String(value)
+}
+
+function getAuthenticatedEmployeeId(req) {
+  return normalizeId(req.user?.id)
+}
+
+function hasIdentityOverride(value, actorId) {
+  return value != null && normalizeId(value) !== actorId
+}
+
+function getIdempotencyKey(req) {
+  const raw = req.get?.('Idempotency-Key') ?? req.headers?.['idempotency-key']
+  return typeof raw === 'string' ? raw.trim() : ''
+}
+
+function isApprovalParticipant(doc, actorId) {
+  if (!doc || !actorId) return false
+  if (normalizeId(doc.applicant_employee) === actorId) return true
+  return (doc.steps || []).some((step) => (
+    (step.approvers || []).some((approver) => normalizeId(approver?.approver) === actorId)
+  ))
+}
+
+function findApprovalAttachment(value, expectedPath) {
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = findApprovalAttachment(item, expectedPath)
+      if (found) return found
+    }
+    return null
+  }
+  if (!value || typeof value !== 'object') return null
+  const storedPath = value.url || value.path
+  if (typeof storedPath === 'string' && storedPath === expectedPath) return value
+  for (const nested of Object.values(value)) {
+    const found = findApprovalAttachment(nested, expectedPath)
+    if (found) return found
+  }
+  return null
+}
 
 /* 依流程步驟解析「此關簽核人」 */
 export async function resolveApprovers(step, applicantEmp) {
@@ -114,10 +171,72 @@ async function notifyUsers(userIds, message) {
   // console.log('notify', userIds, message)
 }
 
+export function uploadApprovalAttachments(req, res) {
+  const files = (req.files || []).map((file) => ({
+    name: file.originalname,
+    url: `/upload/approvals/${file.filename}`,
+    size: file.size,
+    type: file.mimetype,
+  }))
+  if (!files.length) return res.status(400).json({ error: '請選擇附件' })
+  return res.status(201).json({ files })
+}
+
+export async function downloadApprovalAttachment(req, res) {
+  try {
+    const actorId = getAuthenticatedEmployeeId(req)
+    if (!actorId) return res.status(401).json({ error: 'Invalid user' })
+
+    const doc = await ApprovalRequest.findById(req.params.id).lean()
+    if (!doc) return res.status(404).json({ error: 'not found' })
+    if (req.user?.role !== 'admin' && !isApprovalParticipant(doc, actorId)) {
+      return res.status(404).json({ error: 'not found' })
+    }
+
+    const filename = String(req.params.filename || '')
+    if (!filename || path.basename(filename) !== filename) {
+      return res.status(404).json({ error: 'not found' })
+    }
+    const storedPath = `/upload/approvals/${filename}`
+    const metadata = findApprovalAttachment(doc.form_data, storedPath)
+    if (!metadata) return res.status(404).json({ error: 'not found' })
+
+    const absolutePath = path.join(APPROVAL_UPLOAD_DIR, filename)
+    if (!fs.existsSync(absolutePath)) return res.status(404).json({ error: 'not found' })
+
+    const downloadName = path.basename(String(metadata.name || filename))
+    res.set('X-Content-Type-Options', 'nosniff')
+    res.set('Content-Security-Policy', "default-src 'none'; sandbox")
+    return res.download(absolutePath, downloadName, (error) => {
+      if (error && !res.headersSent) res.status(404).json({ error: 'not found' })
+    })
+  } catch (error) {
+    return res.status(400).json({ error: error.message })
+  }
+}
+
 /* 建立送審單 */
 export async function createApprovalRequest(req, res) {
+  let actorId = ''
+  let idempotencyKey = ''
   try {
     const { form_id, form_data, applicant_employee_id } = req.body
+    actorId = getAuthenticatedEmployeeId(req)
+    if (!actorId) return res.status(401).json({ error: 'Invalid user' })
+    if (hasIdentityOverride(applicant_employee_id, actorId)) {
+      return res.status(403).json({ error: 'Forbidden' })
+    }
+    idempotencyKey = getIdempotencyKey(req)
+    if (idempotencyKey.length > 128) {
+      return res.status(400).json({ error: 'Idempotency-Key is too long' })
+    }
+    if (idempotencyKey) {
+      const existing = await ApprovalRequest.findOne({
+        applicant_employee: actorId,
+        idempotency_key: idempotencyKey,
+      })
+      if (existing) return res.status(200).json(existing)
+    }
     if (!form_id) return res.status(400).json({ error: 'form_id required' })
     const form = await FormTemplate.findById(form_id)
     if (!form) return res.status(400).json({ error: 'form not found' })
@@ -126,9 +245,14 @@ export async function createApprovalRequest(req, res) {
     const wf = await ApprovalWorkflow.findOne({ form: form._id })
     if (!wf || !wf.steps?.length) return res.status(400).json({ error: 'workflow not configured' })
 
-    const applicantEmp = applicant_employee_id
-      ? await Employee.findById(applicant_employee_id)
-      : await Employee.findById(req.user?.id)
+    const applicantEmp = await Employee.findById(actorId)
+    if (!applicantEmp) return res.status(401).json({ error: 'Invalid user' })
+
+    await assertApprovalRequestCompliance({
+      form,
+      formData: form_data || {},
+      applicantEmployeeId: applicantEmp?._id || req.user?.id,
+    })
 
     // 依每關解析審核人
     const reqSteps = []
@@ -180,6 +304,7 @@ export async function createApprovalRequest(req, res) {
       applicant_employee: applicantEmp?._id || req.user?.id,
       applicant_org: applicantEmp?.organization,
       applicant_department: applicantEmp?.department,
+      idempotency_key: idempotencyKey || undefined,
       status: 'pending',
       current_step_index: 0,
       steps: reqSteps,
@@ -211,6 +336,19 @@ export async function createApprovalRequest(req, res) {
 
     res.status(201).json(doc)
   } catch (e) {
+    if (e?.code === 11000 && actorId && idempotencyKey) {
+      const existing = await ApprovalRequest.findOne({
+        applicant_employee: actorId,
+        idempotency_key: idempotencyKey,
+      })
+      if (existing) return res.status(200).json(existing)
+    }
+    if (isLaborRuleValidationError(e)) {
+      return res.status(e.status || 400).json({
+        error: e.message,
+        violations: e.violations || [],
+      })
+    }
     res.status(400).json({ error: e.message })
   }
 }
@@ -218,11 +356,16 @@ export async function createApprovalRequest(req, res) {
 /* 取得送審單 */
 export async function getApprovalRequest(req, res) {
   try {
+    const actorId = getAuthenticatedEmployeeId(req)
+    if (!actorId) return res.status(401).json({ error: 'Invalid user' })
     const doc = await ApprovalRequest.findById(req.params.id)
       .populate('form', 'name category')
       .populate('applicant_employee', 'name employeeId department organization')
       .populate('steps.approvers.approver', 'name employeeId')
     if (!doc) return res.status(404).json({ error: 'not found' })
+    if (req.user?.role !== 'admin' && !isApprovalParticipant(doc, actorId)) {
+      return res.status(404).json({ error: 'not found' })
+    }
     const fields = await FormField.find({ form: doc.form._id }).sort({ order: 1 })
     const result = doc.toObject()
     result.form.fields = fields
@@ -235,7 +378,11 @@ export async function getApprovalRequest(req, res) {
 /* 申請者的清單 */
 export async function myApprovalRequests(req, res) {
   try {
-    const empId = req.query.employee_id || req.user?.id
+    const empId = getAuthenticatedEmployeeId(req)
+    if (!empId) return res.status(401).json({ error: 'Invalid user' })
+    if (hasIdentityOverride(req.query.employee_id, empId)) {
+      return res.status(403).json({ error: 'Forbidden' })
+    }
     const list = await ApprovalRequest.find({ applicant_employee: empId }).sort({ createdAt: -1 })
     res.json(list)
   } catch (e) {
@@ -246,7 +393,11 @@ export async function myApprovalRequests(req, res) {
 /* 審核者的待辦匣 */
 export async function inboxApprovals(req, res) {
   try {
-    const empId = req.query.employee_id || req.user?.id
+    const empId = getAuthenticatedEmployeeId(req)
+    if (!empId) return res.status(401).json({ error: 'Invalid user' })
+    if (hasIdentityOverride(req.query.employee_id, empId)) {
+      return res.status(403).json({ error: 'Forbidden' })
+    }
     // 找出目前關卡包含我，且我的 decision 是 pending 的
     // 使用 $elemMatch 確保 approver 與 decision 位於同一子文件
     const list = await ApprovalRequest.find({
@@ -275,8 +426,11 @@ export async function inboxApprovals(req, res) {
 /* 已簽核歷史紀錄（主管視角） */
 export async function historyApprovals(req, res) {
   try {
-    const empId = req.query.employee_id || req.user?.id
-    if (!empId) return res.status(400).json({ error: 'employee id required' })
+    const empId = getAuthenticatedEmployeeId(req)
+    if (!empId) return res.status(401).json({ error: 'Invalid user' })
+    if (hasIdentityOverride(req.query.employee_id, empId)) {
+      return res.status(403).json({ error: 'Forbidden' })
+    }
 
     const docs = await ApprovalRequest.find({
       steps: {
@@ -439,73 +593,196 @@ async function tryAdvance(doc, options = {}) {
   return doc
 }
 
+function advanceApprovalState(doc) {
+  const idx = doc.current_step_index
+  const step = doc.steps[idx]
+  if (!step || !step.approvers.every(approver => approver.decision === 'approved')) {
+    return { completed: false, nextApprovers: [] }
+  }
+
+  step.finished_at = new Date()
+  if (idx + 1 < doc.steps.length) {
+    doc.current_step_index = idx + 1
+    doc.steps[idx + 1].started_at = new Date()
+    doc.logs.push({ action: 'move_next', message: `進入第 ${idx + 2} 關` })
+    return {
+      completed: false,
+      nextApprovers: doc.steps[idx + 1].approvers.map(approver => approver.approver),
+    }
+  }
+
+  doc.status = 'approved'
+  doc.logs.push({ action: 'finish', message: '全部完成' })
+  return { completed: true, nextApprovers: [] }
+}
+
+function approvalConflictResponse(error, res) {
+  if (error?.name !== 'VersionError') return false
+  res.status(409).json({ error: 'Approval request changed; reload and retry' })
+  return true
+}
+
 /* Approve/Reject/Return */
 export async function actOnApproval(req, res) {
   try {
-    const { decision, comment } = req.body                  // 'approve' | 'reject' | 'return'
-    if (!['approve','reject','return'].includes(decision)) {
+    const { decision, comment } = req.body
+    const empId = getAuthenticatedEmployeeId(req)
+    if (!empId) return res.status(401).json({ error: 'Invalid user' })
+    if (hasIdentityOverride(req.body.employee_id, empId)) {
+      return res.status(403).json({ error: 'Forbidden' })
+    }
+    if (!['approve', 'reject', 'return'].includes(decision)) {
       return res.status(400).json({ error: 'invalid decision' })
     }
+
     const doc = await ApprovalRequest.findById(req.params.id)
     if (!doc) return res.status(404).json({ error: 'not found' })
-    if (doc.status !== 'pending') return res.status(400).json({ error: 'not pending' })
-    const empId = req.body.employee_id || req.user?.id
+    if (doc.status !== 'pending') return res.status(409).json({ error: 'not pending' })
+
     const idx = doc.current_step_index
     const step = doc.steps[idx]
     if (!step) return res.status(400).json({ error: 'invalid step' })
-
-    const me = step.approvers.find(a => String(a.approver) === String(empId))
-    if (!me || me.decision !== 'pending') return res.status(403).json({ error: 'not step approver or already acted' })
+    const me = step.approvers.find(approver => String(approver.approver) === String(empId))
+    if (!me || me.decision !== 'pending') {
+      return res.status(409).json({ error: 'not step approver or already acted' })
+    }
 
     if (decision === 'return') {
       if (!step.can_return) return res.status(400).json({ error: 'return not allowed' })
-      // 回上一關（或退回申請者）
       if (idx > 0) {
-        // 清空上一關的已決定狀態 → 重新簽
-        doc.steps[idx - 1].approvers = doc.steps[idx - 1].approvers.map(a => ({ ...a, decision: 'pending', comment: undefined, decided_at: undefined }))
+        doc.steps[idx - 1].approvers.forEach(approver => {
+          approver.decision = 'pending'
+          approver.comment = undefined
+          approver.decided_at = undefined
+        })
         doc.current_step_index = idx - 1
         doc.steps[idx - 1].started_at = new Date()
+        doc.steps[idx - 1].finished_at = undefined
         doc.logs.push({ action: 'return', message: `退回到第 ${idx} 關`, by_employee: empId })
-        await doc.save()
       } else {
-        // 退回申請者：整筆改成 returned
         doc.status = 'returned'
         doc.logs.push({ action: 'return', message: '退回申請者', by_employee: empId })
-        await doc.save()
       }
-      return res.json(doc)
-    }
-
-    if (decision === 'reject') {
-      me.decision = 'rejected'
-      me.comment = comment
-      me.decided_at = new Date()
-      doc.status = 'rejected'
-      doc.logs.push({ action: 'reject', message: comment, by_employee: empId })
       await doc.save()
       return res.json(doc)
     }
 
-    // approve
-    me.decision = 'approved'
+    me.decision = decision === 'reject' ? 'rejected' : 'approved'
     me.comment = comment
     me.decided_at = new Date()
-    doc.logs.push({ action: 'approve', message: comment, by_employee: empId })
-    await doc.save()
+    doc.logs.push({ action: decision, message: comment, by_employee: empId })
 
-    // 若此關 all_must_approve，需等全部核可；否則任一人核可即可前進
-    if (!step.all_must_approve) {
-      // 只要有人 approve 就視為本關完成，其餘 pending 標記為「跳過」
-      step.approvers = step.approvers.map(a => a.decision === 'pending' ? { ...a, decision: 'approved' } : a)
+    if (decision === 'reject') {
+      doc.status = 'rejected'
       await doc.save()
-    } else {
-      // all_must_approve = true，就等全部 approved
+      return res.json(doc)
     }
 
-    await tryAdvance(doc)
+    if (!step.all_must_approve) {
+      step.approvers.forEach(approver => {
+        if (approver.decision === 'pending') approver.decision = 'approved'
+      })
+    }
+    const transition = advanceApprovalState(doc)
+    await doc.save()
+
+    if (transition.nextApprovers.length) {
+      await notifyUsers(transition.nextApprovers, '有新的簽核待處理')
+    }
+    if (transition.completed) await handleAnnualLeaveDeduction(doc)
+
     const fresh = await ApprovalRequest.findById(doc._id)
-    res.json(fresh)
-  } catch (e) {
-    res.status(400).json({ error: e.message })
+    return res.json(fresh || doc)
+  } catch (error) {
+    if (approvalConflictResponse(error, res)) return
+    return res.status(400).json({ error: error.message })
+  }
+}
+
+export async function cancelApprovalRequest(req, res) {
+  try {
+    const actorId = getAuthenticatedEmployeeId(req)
+    if (!actorId) return res.status(401).json({ error: 'Invalid user' })
+
+    const doc = await ApprovalRequest.findById(req.params.id)
+    if (!doc || normalizeId(doc.applicant_employee) !== normalizeId(actorId)) {
+      return res.status(404).json({ error: 'not found' })
+    }
+    if (doc.status === 'canceled') return res.json(doc)
+    if (!['pending', 'returned'].includes(doc.status)) {
+      return res.status(409).json({ error: 'request cannot be canceled' })
+    }
+
+    doc.status = 'canceled'
+    doc.logs.push({ action: 'cancel', message: req.body?.comment, by_employee: actorId })
+    await doc.save()
+    return res.json(doc)
+  } catch (error) {
+    if (approvalConflictResponse(error, res)) return
+    return res.status(400).json({ error: error.message })
+  }
+}
+
+export async function resubmitApprovalRequest(req, res) {
+  try {
+    const actorId = getAuthenticatedEmployeeId(req)
+    if (!actorId) return res.status(401).json({ error: 'Invalid user' })
+
+    const doc = await ApprovalRequest.findById(req.params.id)
+    if (!doc || normalizeId(doc.applicant_employee) !== normalizeId(actorId)) {
+      return res.status(404).json({ error: 'not found' })
+    }
+    if (doc.status !== 'returned') {
+      return res.status(409).json({ error: 'request is not returned' })
+    }
+
+    const form = await FormTemplate.findById(doc.form)
+    if (!form?.is_active) return res.status(409).json({ error: 'form not available' })
+    await assertApprovalRequestCompliance({
+      form,
+      formData: doc.form_data || {},
+      applicantEmployeeId: actorId,
+    })
+
+    doc.status = 'pending'
+    doc.current_step_index = 0
+    doc.steps.forEach((step, index) => {
+      step.approvers.forEach(approver => {
+        approver.decision = 'pending'
+        approver.comment = undefined
+        approver.decided_at = undefined
+      })
+      step.started_at = index === 0 ? new Date() : undefined
+      step.finished_at = undefined
+    })
+    doc.logs.push({ action: 'resubmit', message: req.body?.comment, by_employee: actorId })
+
+    let transition = { completed: false, nextApprovers: [] }
+    let guard = 0
+    while (
+      doc.status === 'pending' &&
+      doc.steps[doc.current_step_index]?.approvers.length === 0 &&
+      guard < doc.steps.length
+    ) {
+      transition = advanceApprovalState(doc)
+      guard += 1
+    }
+
+    await doc.save()
+    const currentApprovers = transition.nextApprovers.length
+      ? transition.nextApprovers
+      : (doc.steps[doc.current_step_index]?.approvers || []).map(approver => approver.approver)
+    if (currentApprovers.length) await notifyUsers(currentApprovers, '有重新送出的簽核待處理')
+    if (transition.completed) await handleAnnualLeaveDeduction(doc)
+    return res.json(doc)
+  } catch (error) {
+    if (approvalConflictResponse(error, res)) return
+    if (isLaborRuleValidationError(error)) {
+      return res.status(error.status || 400).json({
+        error: error.message,
+        violations: error.violations || [],
+      })
+    }
+    return res.status(400).json({ error: error.message })
   }
 }
