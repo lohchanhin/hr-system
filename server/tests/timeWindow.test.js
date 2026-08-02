@@ -27,6 +27,16 @@ describe('timeWindow utilities', () => {
     expect(span.end.toISOString()).toBe('2024-01-01T22:00:00.000Z')
   })
 
+  it('treats an evening shift ending at midnight as eight hours across ICU versions', () => {
+    const scheduleDate = new Date(Date.UTC(2024, 3, 1))
+    const shift = { startTime: '16:00', endTime: '00:00', crossDay: true }
+    const span = computeShiftSpan(scheduleDate, shift)
+
+    expect(span.start.toISOString()).toBe('2024-04-01T08:00:00.000Z')
+    expect(span.end.toISOString()).toBe('2024-04-01T16:00:00.000Z')
+    expect(span.end.getTime() - span.start.getTime()).toBe(8 * 60 * 60 * 1000)
+  })
+
   it('derives action windows with buffers', () => {
     const scheduleDate = new Date(Date.UTC(2024, 0, 1))
     const shift = { startTime: '09:00', endTime: '18:00' }
