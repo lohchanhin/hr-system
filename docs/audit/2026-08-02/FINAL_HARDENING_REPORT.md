@@ -69,7 +69,7 @@
 - 排班测试改以服务端分页、状态筛选、员工偏好及拆分组件的现行契约为准。
 - Vite devtools 只在测试模式停用，不影响开发与生产行为。
 - 夜班种子验证与安全授权整合测试改为显式环境开关，避免一般测试误连正式资料库。
-- GitHub Actions 升级至 checkout/setup-node v4，并强制执行 `npm ci`、前后端全量测试、生产构建与三层依赖审计。
+- GitHub Actions 升级并以完整 commit SHA 固定 checkout 7.0.1 / setup-node 7.0.0，同时强制执行 `npm ci`、前后端全量测试、生产构建与三层依赖审计。
 
 ## 验证证据
 
