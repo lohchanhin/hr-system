@@ -39,6 +39,7 @@ describe('Approval.vue', () => {
     shallowMount(Approval, { global: { stubs } })
     await flushPromises()
     expect(window.fetch).toHaveBeenCalledWith(expect.stringContaining('/api/approvals'), expect.any(Object))
+    expect(window.fetch.mock.calls.some(([url]) => url.includes('/ensure-leave-form'))).toBe(false)
     window.fetch.mockRestore()
   })
 
@@ -246,6 +247,22 @@ describe('Approval.vue', () => {
     await flushPromises()
     await expect(wrapper.vm.openDetail('a1')).resolves.toBeUndefined()
     expect(wrapper.vm.detail.visible).toBe(true)
+    window.fetch.mockRestore()
+  })
+
+  it('renders attachment metadata as a filename instead of an object string', async () => {
+    vi.spyOn(window, 'fetch').mockResolvedValue({ ok: true, json: () => Promise.resolve([]) })
+    const wrapper = shallowMount(Approval, { global: { stubs } })
+    await flushPromises()
+    const attachment = {
+      name: 'CODEX_TEST_20260802_PROOF.pdf',
+      url: '/upload/approvals/generated-proof.pdf',
+    }
+
+    expect(wrapper.vm.attachmentItems([attachment])).toEqual([attachment])
+    expect(wrapper.vm.attachmentDisplayName(attachment)).toBe('CODEX_TEST_20260802_PROOF.pdf')
+    expect(wrapper.vm.renderValue(attachment)).toBe('CODEX_TEST_20260802_PROOF.pdf')
+    expect(wrapper.vm.renderValue(attachment)).not.toBe('[object Object]')
     window.fetch.mockRestore()
   })
 })

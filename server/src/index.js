@@ -30,6 +30,7 @@ import attendanceSettingRoutes from './routes/attendanceSettingRoutes.js';
 import shiftRoutes from './routes/shiftRoutes.js';
 import deptManagerRoutes from './routes/deptManagerRoutes.js';
 import { ensureDefaultSupervisorReports } from './services/supervisorReportSeed.js';
+import { initializeLaborInsuranceRates } from './services/laborInsuranceService.js';
 import privateUploadGuard from './middleware/privateUploadGuard.js';
 import {
   apiErrorHandler,
@@ -303,6 +304,7 @@ async function start() {
     await connectDB(process.env.MONGODB_URI);
     await ensureAdminUser();
     await ensureDefaultSupervisorReports();
+    await initializeLaborInsuranceRates();
     app.listen(PORT, () => {
       console.log(`Server running on port ${PORT}`);
     });

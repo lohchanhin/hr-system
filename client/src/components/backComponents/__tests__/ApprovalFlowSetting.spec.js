@@ -241,8 +241,10 @@ describe('ApprovalFlowSetting - restore defaults', () => {
             new Response(
               JSON.stringify({
                 success: true,
-                message: '已恢復預設簽核表單',
+                message: '已補齊預設簽核表單',
                 count: 8,
+                createdCount: 8,
+                preservedCount: 0,
                 forms: [
                   { _id: 'new1', name: '請假' },
                   { _id: 'new2', name: '支援申請' },
@@ -328,8 +330,8 @@ describe('ApprovalFlowSetting - restore defaults', () => {
     await flushPromises()
     
     expect(ElMessageBoxMock.confirm).toHaveBeenCalledWith(
-      '確定要恢復預設值嗎？這將清除所有現有的簽核表單並建立預設表單。此操作無法復原！',
-      '確認恢復預設值',
+      '確定要補齊預設表單嗎？系統只會建立缺少的預設表單，現有表單與歷史申請都會保留。',
+      '確認補齊預設表單',
       expect.objectContaining({
         confirmButtonText: '確定',
         cancelButtonText: '取消',
@@ -355,7 +357,7 @@ describe('ApprovalFlowSetting - restore defaults', () => {
       })
     )
     
-    expect(ElMessageMock.success).toHaveBeenCalledWith('已恢復預設值，建立了 8 個表單樣板')
+    expect(ElMessageMock.success).toHaveBeenCalledWith('已補齊預設值，新增 8 個，保留 0 個')
   })
 
   it('should not call API when user cancels confirmation', async () => {

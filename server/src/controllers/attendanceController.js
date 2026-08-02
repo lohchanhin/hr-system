@@ -156,15 +156,13 @@ export async function createRecord(req, res) {
 
     const targetEmployeeId = actorId;
 
-    const punchTime = (() => {
-      if (!timestamp) return new Date();
-      const date = new Date(timestamp);
-      return Number.isNaN(date.getTime()) ? null : date;
-    })();
-
-    if (!punchTime) {
+    if (timestamp != null && Number.isNaN(new Date(timestamp).getTime())) {
       return res.status(400).json({ error: 'invalid timestamp' });
     }
+
+    // Attendance events must use the server clock. Client time is display-only.
+    const punchTime = new Date(Date.now());
+    let punchKey;
 
     if (action === 'clockIn' || action === 'clockOut') {
       const timeZone = getTimezone();
@@ -265,12 +263,70 @@ export async function createRecord(req, res) {
           action,
         });
       }
+
+      const scheduleId = toStringId(selectedContext.schedule?._id);
+      if (!scheduleId) {
+        return res.status(400).json({ error: 'Invalid schedule' });
+      }
+
+      punchKey = `${targetEmployeeId}:${scheduleId}:${action}`;
+      const duplicate = await AttendanceRecord.exists({
+        $or: [
+          { punchKey },
+          {
+            employee: targetEmployeeId,
+            action,
+            timestamp: { $gte: actionWindow.start, $lte: actionWindow.end },
+          },
+        ],
+      });
+      if (duplicate) {
+        return res.status(409).json({ error: 'Attendance action already recorded for this shift' });
+      }
+
+      if (action === 'clockOut') {
+        const clockInWindow = computeActionWindow(
+          'clockIn',
+          selectedContext.shiftStart,
+          selectedContext.shiftEnd,
+          actionBuffers,
+        );
+        const clockInKey = `${targetEmployeeId}:${scheduleId}:clockIn`;
+        const hasClockIn = await AttendanceRecord.exists({
+          $or: [
+            { punchKey: clockInKey },
+            {
+              employee: targetEmployeeId,
+              action: 'clockIn',
+              timestamp: {
+                $gte: clockInWindow?.start || selectedContext.shiftStart,
+                $lte: selectedContext.shiftEnd,
+              },
+            },
+          ],
+        });
+        if (!hasClockIn) {
+          return res.status(409).json({ error: 'Clock-in is required before clock-out' });
+        }
+      }
     }
 
-    const record = new AttendanceRecord({ employee: targetEmployeeId, action, timestamp: punchTime, remark });
+    const record = new AttendanceRecord({
+      employee: targetEmployeeId,
+      action,
+      timestamp: punchTime,
+      remark,
+      punchKey,
+    });
     await record.save();
-    res.status(201).json(record);
+    const response = typeof record.toObject === 'function' ? record.toObject() : { ...record };
+    delete response.punchKey;
+    delete response.save;
+    res.status(201).json(response);
   } catch (err) {
+    if (err?.code === 11000) {
+      return res.status(409).json({ error: 'Attendance action already recorded for this shift' });
+    }
     res.status(400).json({ error: err.message });
   }
 }

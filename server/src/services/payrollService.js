@@ -36,13 +36,15 @@ export async function calculateEmployeePayroll(employeeId, month, customData = {
   if (!employee) {
     throw new Error('Employee not found');
   }
+  const calculationContext = context.calculationContext ?? { employee };
+  calculationContext.employee = employee;
 
   const { total: recurringAllowanceFromItems, breakdown: recurringAllowanceBreakdown } = extractRecurringAllowance(employee);
   
   // 計算工作時數和請假影響
   let workData = null;
   try {
-    workData = context.workData ?? await calculateCompleteWorkData(employeeId, month);
+    workData = context.workData ?? await calculateCompleteWorkData(employeeId, month, calculationContext);
   } catch (error) {
     console.error(`Error calculating work data for employee ${employeeId}:`, error);
     // 如果計算失敗，使用預設值
@@ -70,7 +72,7 @@ export async function calculateEmployeePayroll(employeeId, month, customData = {
   // 計算遲到早退自動扣款
   let lateEarlyDeduction = 0;
   try {
-    const deductionData = await calculateLateEarlyDeductions(employeeId, month);
+    const deductionData = await calculateLateEarlyDeductions(employeeId, month, calculationContext);
     lateEarlyDeduction = deductionData.totalDeduction || 0;
   } catch (error) {
     console.error(`Error calculating late/early deductions for employee ${employeeId}:`, error);
@@ -80,7 +82,7 @@ export async function calculateEmployeePayroll(employeeId, month, customData = {
   let nightShiftAllowanceData = null;
   try {
     nightShiftAllowanceData = context.nightShiftAllowanceData ??
-      await calculateNightShiftAllowance(employeeId, month, employee);
+      await calculateNightShiftAllowance(employeeId, month, employee, calculationContext);
   } catch (error) {
     console.error(`Error calculating night shift allowance for employee ${employeeId}:`, error);
   }

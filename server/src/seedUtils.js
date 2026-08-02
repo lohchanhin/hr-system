@@ -1218,30 +1218,8 @@ export async function seedTestUsers() {
   // 生成薪資記錄
   const payrollRecords = await seedPayrollRecords({ supervisors, employees });
 
-  // 輸出薪資資料摘要
-  console.log('\n=== 薪資資料摘要 ===');
-  console.log(`\n主管薪資 (${supervisors.length} 人):`);
-  supervisors.forEach((sup) => {
-    console.log(
-      `  ${sup.name}: ${sup.salaryType} ${sup.salaryAmount}元` +
-      (sup.laborPensionSelf > 0 ? `, 勞退自提: ${sup.laborPensionSelf}元` : '') +
-      (sup.employeeAdvance > 0 ? `, 預支: ${sup.employeeAdvance}元` : '') +
-      `\n    銀行A: ${sup.salaryAccountA?.bank || '未設定'} ${sup.salaryAccountA?.acct || ''}` +
-      `\n    銀行B: ${sup.salaryAccountB?.bank || '未設定'} ${sup.salaryAccountB?.acct || ''}`
-    );
-  });
-  
-  console.log(`\n員工薪資 (${employees.length} 人):`);
-  employees.forEach((emp) => {
-    console.log(
-      `  ${emp.name}: ${emp.salaryType} ${emp.salaryAmount}元` +
-      (emp.laborPensionSelf > 0 ? `, 勞退自提: ${emp.laborPensionSelf}元` : '') +
-      (emp.employeeAdvance > 0 ? `, 預支: ${emp.employeeAdvance}元` : '') +
-      `\n    銀行A: ${emp.salaryAccountA?.bank || '未設定'} ${emp.salaryAccountA?.acct || ''}` +
-      `\n    銀行B: ${emp.salaryAccountB?.bank || '未設定'} ${emp.salaryAccountB?.acct || ''}`
-    );
-  });
-  console.log('\n');
+  // Never emit payroll amounts or bank account data to process logs.
+  console.log(`Seeded payroll records for ${supervisors.length} supervisors and ${employees.length} employees`);
 
   return { supervisors, employees, attendanceSetting, attendanceRecords, shiftSchedules, payrollRecords };
 }

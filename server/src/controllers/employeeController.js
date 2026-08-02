@@ -555,10 +555,13 @@ export async function listEmployees(req, res) {
       month,
       search: searchRaw,
       jobType: jobTypeRaw,
+      includeSelf,
     } = req.query
     const actorId = toEntityId(req.user?.id)
     const actorRole = req.user?.role
     if (!actorId) return res.status(401).json({ error: 'Invalid user' })
+    const isScheduleView = view === 'schedule'
+    const shouldIncludeSelf = includeSelf === true || includeSelf === 'true'
     const filter = {}
     const search = readSearchTerm(searchRaw ?? q)
     const jobType = readSearchTerm(jobTypeRaw)
@@ -599,7 +602,11 @@ export async function listEmployees(req, res) {
     if (actorRole === 'employee') {
       filter._id = actorId
     } else if (actorRole === 'supervisor') {
-      andFilters.push({ $or: [{ _id: actorId }, { supervisor: actorId }] })
+      andFilters.push(
+        isScheduleView && !shouldIncludeSelf
+          ? { supervisor: actorId }
+          : { $or: [{ _id: actorId }, { supervisor: actorId }] }
+      )
     }
     if (search) {
       const rx = new RegExp(escapeRegex(search), 'i')
@@ -628,7 +635,6 @@ export async function listEmployees(req, res) {
       filter.$and = andFilters
     }
 
-    const isScheduleView = view === 'schedule'
     const page = parsePositiveInteger(pageRaw, 1)
     const pageSize = parsePositiveInteger(
       pageSizeRaw,
@@ -795,19 +801,31 @@ export async function listEmployeesSchedule(req, res) {
 
 export async function listEmployeeOptions(req, res) {
   try {
-    const employees = await Employee.find(
+    const isAdmin = req.user?.role === 'admin'
+    const projection = isAdmin
+      ? 'name username signRole signTags signLevel organization department role'
+      : 'name'
+    let employeeQuery = Employee.find(
       { username: { $exists: true, $ne: '' } },
-      'name username signRole signTags signLevel organization department role'
+      projection
     )
-      .populate('department', 'name')
-      .lean()
+    if (isAdmin) employeeQuery = employeeQuery.populate('department', 'name')
+    const employees = await employeeQuery.lean()
     const options = employees.map((e) => {
+      const id = e._id?.toString?.() ?? e.id
+      if (!isAdmin) {
+        return {
+          id,
+          name: e.name,
+          displayName: e.name,
+        }
+      }
       const dept = e.department && typeof e.department === 'object'
         ? { id: e.department._id?.toString?.() ?? e.department.id ?? e.department, name: e.department.name ?? '' }
         : null
       const signTags = Array.isArray(e.signTags) ? e.signTags.filter(Boolean) : []
       return {
-        id: e._id?.toString?.() ?? e.id,
+        id,
         name: e.name,
         username: e.username,
         signRole: e.signRole ?? '',

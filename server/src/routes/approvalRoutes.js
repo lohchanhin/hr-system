@@ -24,7 +24,7 @@ router.put('/forms/:id', authorizeRoles('admin'), updateFormTemplate)
 router.delete('/forms/:id', authorizeRoles('admin'), deleteFormTemplate)
 
 // Ensure leave form exists (auto-generate if missing)
-router.post('/ensure-leave-form', authorizeRoles('employee', 'supervisor', 'admin'), ensureLeaveForm)
+router.post('/ensure-leave-form', authorizeRoles('admin'), ensureLeaveForm)
 
 // Restore default templates
 router.post('/restore-defaults', authorizeRoles('admin'), restoreDefaultTemplates)

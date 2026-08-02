@@ -1,7 +1,12 @@
 import { describe, it, expect } from '@jest/globals'
 import { __testUtils } from '../src/services/reportMetricsService.js'
 
-const { getShiftBreakMinutes, buildWorkHoursSummary } = __testUtils
+const {
+  getShiftBreakMinutes,
+  buildAttendanceSummary,
+  buildEarlyLeaveSummary,
+  buildWorkHoursSummary,
+} = __testUtils
 
 describe('報表休息時段計算', () => {
   it('優先使用 breakWindows 計算分鐘數', () => {
@@ -54,5 +59,58 @@ describe('報表休息時段計算', () => {
     expect(result.records[0]).toEqual(
       expect.objectContaining({ scheduledHours: 8, workedHours: 8, differenceHours: 0 })
     )
+  })
+
+  it('不把休息日或例假日計入應出勤與工時', () => {
+    const schedules = [
+      { employee: 'emp1', date: '2024-01-06T00:00:00.000Z', shiftId: 'rest' },
+      { employee: 'emp1', date: '2024-01-07T00:00:00.000Z', shiftId: 'regular-rest' },
+    ]
+    const shiftMap = new Map([
+      ['rest', { _id: 'rest', code: 'REST', name: '休', startTime: '00:00', endTime: '00:00' }],
+      ['regular-rest', { _id: 'regular-rest', code: 'REG', name: '例', startTime: '00:00', endTime: '00:00' }],
+    ])
+    const employees = [{ _id: 'emp1', name: '測試員工' }]
+    const recordMap = new Map()
+
+    const attendance = buildAttendanceSummary({ employees, schedules, recordMap, shiftMap })
+    const workHours = buildWorkHoursSummary({ employees, schedules, recordMap, shiftMap })
+
+    expect(attendance).toEqual({ records: [], summary: { scheduled: 0, attended: 0, absent: 0 } })
+    expect(workHours.records).toEqual([])
+    expect(workHours.summary).toEqual({
+      totalScheduledHours: 0,
+      totalWorkedHours: 0,
+      differenceHours: 0,
+    })
+  })
+
+  it('以次日退卡判斷跨日班早退分鐘', () => {
+    const schedules = [
+      { employee: 'emp1', date: '2024-01-05T00:00:00.000Z', shiftId: 'night' },
+    ]
+    const shiftMap = new Map([
+      ['night', { _id: 'night', code: 'N', name: '夜班', startTime: '22:00', endTime: '06:00', crossDay: true }],
+    ])
+    const employees = [{ _id: 'emp1', name: '測試員工' }]
+    const recordMap = new Map([
+      ['emp1::2024-01-05', { clockIns: [new Date('2024-01-05T22:00:00.000Z')], clockOuts: [] }],
+      ['emp1::2024-01-06', { clockIns: [], clockOuts: [new Date('2024-01-06T05:50:00.000Z')] }],
+    ])
+
+    const result = buildEarlyLeaveSummary({
+      employees,
+      schedules,
+      recordMap,
+      shiftMap,
+      earlyGrace: 0,
+    })
+
+    expect(result.summary).toEqual({
+      totalEarlyLeaveCount: 1,
+      totalEarlyMinutes: 10,
+      averageEarlyMinutes: 10,
+    })
+    expect(result.records[0]).toEqual(expect.objectContaining({ minutesEarly: 10 }))
   })
 })

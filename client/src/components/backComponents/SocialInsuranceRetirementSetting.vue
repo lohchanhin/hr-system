@@ -132,7 +132,7 @@ function toggleRateTable() {
 function buildStatusPayload(type, message) {
   return {
     lastFetched: new Date().toLocaleString(),
-    message: message || `${rateTypeLabel[type] || '級距'}已從官網取得最新級距`
+    message: message || `${rateTypeLabel[type] || '級距'}資料已載入`
   }
 }
 
@@ -155,7 +155,7 @@ async function refreshLaborInsuranceRates(type = activeTab.value) {
     const res = await apiFetch(`/api/payroll/insurance/refresh?type=${type}`, { method: 'POST' })
     if (res.ok) {
       const data = await res.json()
-      laborRateStatus.value[type] = buildStatusPayload(type, data.message || (data.isUpToDate ? '級距已是最新' : '已同步最新級距'))
+      laborRateStatus.value[type] = buildStatusPayload(type, data.message)
       if (Array.isArray(data.rates) && data.rates.length > 0) {
         laborInsuranceRates.value[type] = data.rates
       } else {

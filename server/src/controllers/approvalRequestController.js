@@ -637,6 +637,9 @@ export async function actOnApproval(req, res) {
 
     const doc = await ApprovalRequest.findById(req.params.id)
     if (!doc) return res.status(404).json({ error: 'not found' })
+    if (req.user?.role !== 'admin' && !isApprovalParticipant(doc, empId)) {
+      return res.status(404).json({ error: 'not found' })
+    }
     if (doc.status !== 'pending') return res.status(409).json({ error: 'not pending' })
 
     const idx = doc.current_step_index

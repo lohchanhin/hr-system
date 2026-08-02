@@ -9,7 +9,7 @@ import { WORK_HOURS_CONFIG } from '../config/salaryConfig.js';
  * @param {Object} employee - 員工資料對象
  * @returns {Object} - 夜班津貼計算結果
  */
-export async function calculateNightShiftAllowance(employeeId, month, employee) {
+export async function calculateNightShiftAllowance(employeeId, month, employee, context = {}) {
   try {
     // 計算月份的起始和結束日期
     const monthStart = new Date(month);
@@ -17,7 +17,7 @@ export async function calculateNightShiftAllowance(employeeId, month, employee) 
     monthEnd.setMonth(monthEnd.getMonth() + 1);
 
     // 獲取班別設定
-    const attendanceSetting = await AttendanceSetting.findOne();
+    const attendanceSetting = context.attendanceSetting ?? await AttendanceSetting.findOne();
     if (!attendanceSetting || !attendanceSetting.shifts) {
       return {
         nightShiftDays: 0,
@@ -37,7 +37,7 @@ export async function calculateNightShiftAllowance(employeeId, month, employee) 
 
     // 查詢該員工在當月的排班記錄
     // 注意：建議在 ShiftSchedule 上建立 (employee, date) 的複合索引以提升查詢效能
-    const schedules = await ShiftSchedule.find({
+    const schedules = context.schedules ?? await ShiftSchedule.find({
       employee: employeeId,
       date: { $gte: monthStart, $lt: monthEnd },
     });

@@ -90,9 +90,16 @@ function getShiftText(shift) {
 
 export function classifyShift(shift) {
   const text = getShiftText(shift);
-  const upper = text.toUpperCase();
+  const code = String(shift?.code || '').trim().toUpperCase();
+  const name = String(shift?.name || '').trim().toUpperCase();
   const isRegularRest = /例|例假/.test(text);
-  const isRestDay = !isRegularRest && (/休/.test(text) || upper === 'OFF' || upper === 'REST');
+  const isRestDay = !isRegularRest && (
+    /休/.test(text) ||
+    code === 'OFF' ||
+    code === 'REST' ||
+    name === 'OFF' ||
+    name === 'REST'
+  );
   return {
     isRegularRest,
     isRestDay,

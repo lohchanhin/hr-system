@@ -143,6 +143,7 @@ const shiftDefinitions = ref([])
 const monthlySchedules = ref([])
 const actionBuffers = ref()
 const actionAvailability = ref(determineActionAvailability())
+const punchSubmitting = ref(false)
 
 const clockInState = computed(() => actionAvailability.value.actions?.clockIn || {
   disabled: true,
@@ -204,7 +205,11 @@ async function fetchMonthlySchedule() {
     const res = await apiFetch(`/api/schedules/monthly?${params.toString()}`)
     if (!res.ok) throw new Error('failed')
     const data = await res.json().catch(() => [])
-    monthlySchedules.value = Array.isArray(data) ? data : []
+    monthlySchedules.value = Array.isArray(data)
+      ? data
+      : Array.isArray(data?.schedules)
+        ? data.schedules
+        : []
   } catch (err) {
     console.error(err)
     monthlySchedules.value = []
@@ -277,27 +282,33 @@ function getEmployeeId() {
 }
 
 async function addRecord(action, remark = '') {
+  if (punchSubmitting.value) return
   const employeeId = getEmployeeId()
   if (!employeeId) {
     ElMessage.warning('請重新登入')
     return
   }
+  punchSubmitting.value = true
   const payload = {
     action: actionMap[action] || action,
-    timestamp: new Date(),
     remark,
     employee: employeeId
   }
-  const res = await apiFetch('/api/attendance', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify(payload)
-  })
-  if (res.ok) {
+  try {
+    const res = await apiFetch('/api/attendance', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(payload)
+    })
+    if (!res.ok) {
+      const result = await res.json().catch(() => ({}))
+      ElMessage.error(result.error || 'Attendance action failed')
+      return
+    }
     const saved = await res.json()
-    const timestamp = saved.timestamp || payload.timestamp
+    const timestamp = saved.timestamp
     const savedRecord = {
       action: reverseActionMap[saved.action] || saved.action,
       time: timestamp ? dayjs(timestamp).format('YYYY/MM/DD HH:mm:ss') : '',
@@ -305,6 +316,8 @@ async function addRecord(action, remark = '') {
       timestamp
     }
     records.value.unshift(savedRecord)
+  } finally {
+    punchSubmitting.value = false
   }
 }
 

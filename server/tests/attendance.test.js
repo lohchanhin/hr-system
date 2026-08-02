@@ -8,6 +8,7 @@ const mockAttendanceRecord = jest.fn().mockImplementation((data = {}) => ({
   save: saveMock
 }));
 mockAttendanceRecord.find = jest.fn();
+mockAttendanceRecord.exists = jest.fn();
 
 const mockEmployee = {
   findById: jest.fn(),
@@ -53,8 +54,11 @@ beforeAll(async () => {
 });
 
 beforeEach(() => {
+  mockAttendanceRecord.mockClear();
   saveMock.mockReset();
   mockAttendanceRecord.find.mockReset();
+  mockAttendanceRecord.exists.mockReset();
+  mockAttendanceRecord.exists.mockResolvedValue(false);
   mockEmployee.findById.mockReset();
   mockEmployee.find.mockReset();
   mockAttendanceManagementSetting.findOne.mockReset();
@@ -64,6 +68,11 @@ beforeEach(() => {
   mockEmployee.find.mockResolvedValue([]);
   mockAttendanceManagementSetting.findOne.mockResolvedValue(null);
   currentUser = undefined;
+  jest.spyOn(Date, 'now').mockReturnValue(Date.parse('2024-01-01T02:00:00.000Z'));
+});
+
+afterEach(() => {
+  jest.restoreAllMocks();
 });
 
 function setupScheduleMocks({ schedules = [], shifts = [] } = {}) {
@@ -224,9 +233,14 @@ describe('Attendance API', () => {
     expect(res.status).toBe(201);
     expect(saveMock).toHaveBeenCalled();
     expect(res.body).toMatchObject({ action: 'clockIn', employee: 'emp1', remark: 'test' });
+    expect(res.body.punchKey).toBeUndefined();
+    expect(mockAttendanceRecord.mock.calls.at(-1)[0].timestamp.toISOString()).toBe(
+      '2024-01-01T02:00:00.000Z'
+    );
   });
 
   it('rejects clockIn before allowed window', async () => {
+    Date.now.mockReturnValue(Date.parse('2023-12-31T23:30:00.000Z'));
     currentUser = { id: 'emp1', role: 'employee' };
     const scheduleDate = new Date(Date.UTC(2024, 0, 1));
     setupScheduleMocks({
@@ -247,6 +261,7 @@ describe('Attendance API', () => {
   });
 
   it('rejects clockOut after allowed window', async () => {
+    Date.now.mockReturnValue(Date.parse('2024-01-01T12:30:00.000Z'));
     currentUser = { id: 'emp1', role: 'employee' };
     const scheduleDate = new Date(Date.UTC(2024, 0, 1));
     setupScheduleMocks({
@@ -267,6 +282,7 @@ describe('Attendance API', () => {
   });
 
   it('accepts clockOut during cross-day shift on following morning', async () => {
+    Date.now.mockReturnValue(Date.parse('2024-01-01T21:30:00.000Z'));
     currentUser = { id: 'emp1', role: 'employee' };
     const scheduleDate = new Date(Date.UTC(2024, 0, 1));
     setupScheduleMocks({
@@ -278,12 +294,77 @@ describe('Attendance API', () => {
       employee: 'emp1',
       timestamp: '2024-01-01T21:30:00.000Z'
     };
+    mockAttendanceRecord.exists
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(true);
     saveMock.mockResolvedValue();
 
     const res = await request(app).post('/api/attendance').send(payload);
 
     expect(res.status).toBe(201);
     expect(saveMock).toHaveBeenCalled();
+  });
+
+  it('rejects a duplicate clock action for the same scheduled shift', async () => {
+    currentUser = { id: 'emp1', role: 'employee' };
+    const scheduleDate = new Date(Date.UTC(2024, 0, 1));
+    setupScheduleMocks({
+      schedules: [{ _id: 'sched1', employee: 'emp1', date: scheduleDate, shiftId: 'shift1' }],
+      shifts: [{ _id: 'shift1', startTime: '09:00', endTime: '18:00' }]
+    });
+    mockAttendanceRecord.exists.mockResolvedValueOnce(true);
+
+    const res = await request(app).post('/api/attendance').send({
+      action: 'clockIn',
+      employee: 'emp1',
+    });
+
+    expect(res.status).toBe(409);
+    expect(res.body.error).toContain('already recorded');
+    expect(saveMock).not.toHaveBeenCalled();
+  });
+
+  it('requires a clock-in before clock-out', async () => {
+    Date.now.mockReturnValue(Date.parse('2024-01-01T09:30:00.000Z'));
+    currentUser = { id: 'emp1', role: 'employee' };
+    const scheduleDate = new Date(Date.UTC(2024, 0, 1));
+    setupScheduleMocks({
+      schedules: [{ _id: 'sched1', employee: 'emp1', date: scheduleDate, shiftId: 'shift1' }],
+      shifts: [{ _id: 'shift1', startTime: '09:00', endTime: '18:00' }]
+    });
+    mockAttendanceRecord.exists
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(false);
+
+    const res = await request(app).post('/api/attendance').send({
+      action: 'clockOut',
+      employee: 'emp1',
+    });
+
+    expect(res.status).toBe(409);
+    expect(res.body.error).toContain('Clock-in is required');
+    expect(saveMock).not.toHaveBeenCalled();
+  });
+
+  it('ignores a valid client timestamp and stores the server time', async () => {
+    currentUser = { id: 'emp1', role: 'employee' };
+    const scheduleDate = new Date(Date.UTC(2024, 0, 1));
+    setupScheduleMocks({
+      schedules: [{ _id: 'sched1', employee: 'emp1', date: scheduleDate, shiftId: 'shift1' }],
+      shifts: [{ _id: 'shift1', startTime: '09:00', endTime: '18:00' }]
+    });
+    saveMock.mockResolvedValue();
+
+    const res = await request(app).post('/api/attendance').send({
+      action: 'clockIn',
+      employee: 'emp1',
+      timestamp: '1999-01-01T00:00:00.000Z',
+    });
+
+    expect(res.status).toBe(201);
+    expect(mockAttendanceRecord.mock.calls.at(-1)[0].timestamp.toISOString()).toBe(
+      '2024-01-01T02:00:00.000Z'
+    );
   });
 
   it('returns 400 when employee is missing', async () => {

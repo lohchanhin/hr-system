@@ -248,6 +248,30 @@ describe('actOnApproval authorization', () => {
     expect(doc.save).not.toHaveBeenCalled()
     expect(doc.steps[0].approvers[0].decision).toBe('pending')
   })
+
+  it('does not reveal the status of a request to a non-participant', async () => {
+    const doc = {
+      _id: 'req1',
+      applicant_employee: 'emp2',
+      status: 'approved',
+      current_step_index: 0,
+      steps: [{ approvers: [{ approver: 'sup1', decision: 'approved' }] }],
+      logs: [],
+      save: jest.fn().mockResolvedValue(),
+    }
+    mockApprovalRequest.findById.mockResolvedValue(doc)
+    const res = makeRes()
+
+    await actOnApproval({
+      params: { id: 'req1' },
+      user: { id: 'unrelated', role: 'employee' },
+      body: { decision: 'approve' },
+    }, res)
+
+    expect(res.status).toHaveBeenCalledWith(404)
+    expect(res.json).toHaveBeenCalledWith({ error: 'not found' })
+    expect(doc.save).not.toHaveBeenCalled()
+  })
 })
 
 describe('applicant approval state actions', () => {

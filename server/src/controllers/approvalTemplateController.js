@@ -255,18 +255,6 @@ export async function ensureLeaveForm(req, res) {
 /* ---------------------- Restore Default Templates ---------------------- */
 export async function restoreDefaultTemplates(req, res) {
   try {
-    // Delete all existing form templates, fields, and workflows
-    // Note: This is not transactional - in case of failure, manual cleanup may be needed
-    const forms = await FormTemplate.find({})
-    const formIds = forms.map(f => f._id)
-    
-    // Parallelize deletion of fields and workflows for better performance
-    await Promise.all([
-      FormField.deleteMany({ form: { $in: formIds } }),
-      ApprovalWorkflow.deleteMany({ form: { $in: formIds } }),
-      FormTemplate.deleteMany({})
-    ])
-
     // Create default templates using the same structure as seedApprovalTemplates
     const templates = [
       {
@@ -389,7 +377,14 @@ export async function restoreDefaultTemplates(req, res) {
     ]
 
     const createdForms = []
+    const preservedForms = []
     for (const t of templates) {
+      const existing = await FormTemplate.findOne({ name: t.name })
+      if (existing) {
+        preservedForms.push(existing)
+        continue
+      }
+
       const form = await FormTemplate.create({
         name: t.name,
         category: t.category,
@@ -413,9 +408,11 @@ export async function restoreDefaultTemplates(req, res) {
 
     res.json({ 
       success: true, 
-      message: '已恢復預設簽核表單',
+      message: '已非破壞性補齊預設簽核表單',
       count: createdForms.length,
-      forms: createdForms
+      createdCount: createdForms.length,
+      preservedCount: preservedForms.length,
+      forms: createdForms,
     })
   } catch (e) {
     res.status(500).json({ error: e.message })

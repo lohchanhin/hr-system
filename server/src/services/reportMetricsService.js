@@ -7,6 +7,7 @@ import ApprovalRequest from '../models/approval_request.js';
 import FormTemplate from '../models/form_template.js';
 import FormField from '../models/form_field.js';
 import { getLeaveFieldIds } from './leaveFieldService.js';
+import { classifyShift } from './laborRuleValidationService.js';
 
 export class ReportAccessError extends Error {
   constructor(status, message) {
@@ -320,6 +321,8 @@ function buildEmployeeMap(employees) {
 }
 
 async function loadAttendanceData({ employeeIds, start, end }) {
+  const recordRangeEnd = new Date(end);
+  recordRangeEnd.setUTCDate(recordRangeEnd.getUTCDate() + 1);
   const [schedules, attendanceRecords] = await Promise.all([
     ShiftSchedule.find({
       employee: { $in: employeeIds },
@@ -329,7 +332,7 @@ async function loadAttendanceData({ employeeIds, start, end }) {
       .exec(),
     AttendanceRecord.find({
       employee: { $in: employeeIds },
-      timestamp: { $gte: start, $lt: end },
+      timestamp: { $gte: start, $lt: recordRangeEnd },
       action: { $in: ['clockIn', 'clockOut'] },
     })
       .lean()
@@ -354,6 +357,8 @@ function buildAttendanceSummary({ employees, schedules, recordMap, shiftMap }) {
     const employeeId = normalizeId(schedule.employee);
     const record = attendanceCounter.get(employeeId);
     if (!record) return;
+    const shift = shiftMap.get(normalizeId(schedule.shiftId));
+    if (!shift || classifyShift(shift).isNonWork) return;
     record.scheduled += 1;
     const dateKey = buildDateKey(schedule.date);
     const entry = recordMap.get(`${employeeId}::${dateKey}`);
@@ -387,7 +392,7 @@ function buildTardinessSummary({ schedules, recordMap, shiftMap, employees, late
     if (!employee) return;
     const dateKey = buildDateKey(schedule.date);
     const shift = shiftMap.get(normalizeId(schedule.shiftId));
-    if (!shift) return;
+    if (!shift || classifyShift(shift).isNonWork) return;
     const { start } = computeShiftTimes(schedule.date, shift);
     const dayRecord = recordMap.get(`${employeeId}::${dateKey}`);
     if (!dayRecord || !dayRecord.clockIns.length) return;
@@ -424,11 +429,20 @@ function buildEarlyLeaveSummary({ schedules, recordMap, shiftMap, employees, ear
     if (!employee) return;
     const dateKey = buildDateKey(schedule.date);
     const shift = shiftMap.get(normalizeId(schedule.shiftId));
-    if (!shift) return;
-    const { end } = computeShiftTimes(schedule.date, shift);
+    if (!shift || classifyShift(shift).isNonWork) return;
+    const { start, end } = computeShiftTimes(schedule.date, shift);
     const dayRecord = recordMap.get(`${employeeId}::${dateKey}`);
-    if (!dayRecord || !dayRecord.clockOuts.length) return;
-    const lastClockOut = dayRecord.clockOuts[dayRecord.clockOuts.length - 1];
+    const clockOuts = [...(dayRecord?.clockOuts ?? [])];
+    if (shift.crossDay || buildDateKey(end) !== dateKey) {
+      const nextDayRecord = recordMap.get(`${employeeId}::${buildDateKey(end)}`);
+      clockOuts.push(...(nextDayRecord?.clockOuts ?? []));
+    }
+    const latestRelevantClockOut = new Date(end.getTime() + 6 * 60 * 60 * 1000);
+    const relevantClockOuts = clockOuts
+      .filter((clockOut) => clockOut > start && clockOut <= latestRelevantClockOut)
+      .sort((a, b) => a - b);
+    if (!relevantClockOuts.length) return;
+    const lastClockOut = relevantClockOuts[relevantClockOuts.length - 1];
     const diffMinutes = Math.max(minutesBetween(lastClockOut, end) - earlyGrace, 0);
     if (diffMinutes <= 0) return;
     summary.totalEarlyLeaveCount += 1;
@@ -462,7 +476,7 @@ function buildWorkHoursSummary({ schedules, recordMap, shiftMap, employees }) {
     if (!employee) return;
     const dateKey = buildDateKey(schedule.date);
     const shift = shiftMap.get(normalizeId(schedule.shiftId));
-    if (!shift) return;
+    if (!shift || classifyShift(shift).isNonWork) return;
     const { start, end } = computeShiftTimes(schedule.date, shift);
     const breakMinutes = getShiftBreakMinutes(shift, schedule.date);
     const scheduledMinutes = Math.max(minutesBetween(start, end) - breakMinutes, 0);
@@ -863,6 +877,8 @@ export const __testUtils = {
   computeShiftTimes,
   getShiftBreakMinutes,
   minutesBetween,
+  buildAttendanceSummary,
+  buildEarlyLeaveSummary,
   buildWorkHoursSummary,
 };
 

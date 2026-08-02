@@ -5,6 +5,7 @@ import ApprovalRequest from '../models/approval_request.js';
 import Employee from '../models/Employee.js';
 import { getLeaveFieldIds } from './leaveFieldService.js';
 import { calculateNightShiftAllowance } from './nightShiftAllowanceService.js';
+import { classifyShift } from './laborRuleValidationService.js';
 import { 
   WORK_HOURS_CONFIG,
   LEAVE_POLICY,
@@ -177,11 +178,12 @@ function groupAttendanceRecords(records) {
  * @param {String} month - 月份 (YYYY-MM-DD 格式)
  * @returns {Object} - 工作時數計算結果
  */
-export async function calculateWorkHours(employeeId, month) {
-  const employee = await Employee.findById(employeeId);
+export async function calculateWorkHours(employeeId, month, context = {}) {
+  const employee = context.employee ?? await Employee.findById(employeeId);
   if (!employee) {
     throw new Error('Employee not found');
   }
+  context.employee = employee;
   
   // 解析月份範圍
   const monthDate = new Date(month);
@@ -191,7 +193,24 @@ export async function calculateWorkHours(employeeId, month) {
   endDate.setUTCMonth(endDate.getUTCMonth() + 1);
   
   // 取得班表設定
-  const attendanceSetting = await AttendanceSetting.findOne().lean();
+  const recordRangeEnd = new Date(endDate);
+  recordRangeEnd.setUTCDate(recordRangeEnd.getUTCDate() + 1);
+  const [attendanceSetting, schedules, attendanceRecords] = await Promise.all([
+    context.attendanceSetting ?? AttendanceSetting.findOne().lean(),
+    context.schedules ?? ShiftSchedule.find({
+      employee: employeeId,
+      date: { $gte: startDate, $lt: endDate }
+    }).lean(),
+    context.attendanceRecords ?? AttendanceRecord.find({
+      employee: employeeId,
+      timestamp: { $gte: startDate, $lt: recordRangeEnd },
+      action: { $in: ['clockIn', 'clockOut'] }
+    }).lean(),
+  ]);
+  context.attendanceSetting = attendanceSetting;
+  context.schedules = schedules;
+  context.attendanceRecords = attendanceRecords;
+
   const shiftMap = new Map();
   if (attendanceSetting && attendanceSetting.shifts) {
     attendanceSetting.shifts.forEach((shift) => {
@@ -200,19 +219,6 @@ export async function calculateWorkHours(employeeId, month) {
       }
     });
   }
-  
-  // 取得該月份的班表
-  const schedules = await ShiftSchedule.find({
-    employee: employeeId,
-    date: { $gte: startDate, $lt: endDate }
-  }).lean();
-  
-  // 取得出勤記錄
-  const attendanceRecords = await AttendanceRecord.find({
-    employee: employeeId,
-    timestamp: { $gte: startDate, $lt: endDate },
-    action: { $in: ['clockIn', 'clockOut'] }
-  }).lean();
   
   // 分組出勤記錄
   const recordMap = groupAttendanceRecords(attendanceRecords);
@@ -228,6 +234,19 @@ export async function calculateWorkHours(employeeId, month) {
     const shift = shiftMap.get(schedule.shiftId.toString());
     
     if (!shift) return;
+
+    if (classifyShift(shift).isNonWork) {
+      dailyDetails.push({
+        date: dateKey,
+        scheduledHours: 0,
+        workedHours: 0,
+        hasAttendance: false,
+        shiftName: shift.name || 'Unnamed shift',
+        clockInTime: null,
+        clockOutTime: null
+      });
+      return;
+    }
     
     const { start, end } = computeShiftTimes(schedule.date, shift);
     const breakMinutes = getShiftBreakMinutes(shift, schedule.date);
@@ -326,8 +345,8 @@ export async function calculateWorkHours(employeeId, month) {
  * @param {String} month - 月份 (YYYY-MM-DD 格式)
  * @returns {Object} - 請假扣款資料
  */
-export async function calculateLeaveImpact(employeeId, month) {
-  const employee = await Employee.findById(employeeId);
+export async function calculateLeaveImpact(employeeId, month, context = {}) {
+  const employee = context.employee ?? await Employee.findById(employeeId);
   if (!employee) {
     throw new Error('Employee not found');
   }
@@ -461,8 +480,8 @@ export async function calculateLeaveImpact(employeeId, month) {
  * @param {String} month - 月份 (YYYY-MM-DD 格式)
  * @returns {Object} - 加班資料
  */
-export async function calculateOvertimePay(employeeId, month) {
-  const employee = await Employee.findById(employeeId);
+export async function calculateOvertimePay(employeeId, month, context = {}) {
+  const employee = context.employee ?? await Employee.findById(employeeId);
   if (!employee) {
     throw new Error('Employee not found');
   }
@@ -594,14 +613,18 @@ export async function calculateOvertimePay(employeeId, month) {
  * @param {String} month - 月份 (YYYY-MM-DD 格式)
  * @returns {Object} - 完整的工作時數和薪資計算結果
  */
-export async function calculateCompleteWorkData(employeeId, month) {
-  const employee = await Employee.findById(employeeId);
-  
-  const [workHours, leaveImpact, overtimePay, nightShiftAllowanceData] = await Promise.all([
-    calculateWorkHours(employeeId, month),
-    calculateLeaveImpact(employeeId, month),
-    calculateOvertimePay(employeeId, month),
-    calculateNightShiftAllowance(employeeId, month, employee)
+export async function calculateCompleteWorkData(employeeId, month, context = {}) {
+  const employee = context.employee ?? await Employee.findById(employeeId);
+  if (!employee) throw new Error('Employee not found');
+  context.employee = employee;
+
+  // Work hours loads the shared attendance context once. The other calculations
+  // reuse it instead of repeating the same employee, setting and schedule reads.
+  const workHours = await calculateWorkHours(employeeId, month, context);
+  const [leaveImpact, overtimePay, nightShiftAllowanceData] = await Promise.all([
+    calculateLeaveImpact(employeeId, month, context),
+    calculateOvertimePay(employeeId, month, context),
+    calculateNightShiftAllowance(employeeId, month, employee, context)
   ]);
   
   // 計算基本薪資 - 使用配置的轉換函數

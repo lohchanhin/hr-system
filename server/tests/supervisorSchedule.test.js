@@ -183,7 +183,7 @@ describe('Supervisor schedule permissions', () => {
 
     expect(res.status).toBe(200);
     expect(mockEmployee.find).toHaveBeenCalledWith({
-      $or: [{ _id: 'u1' }, { supervisor: 'u1' }],
+      supervisor: 'u1',
     });
     expect(selectMock).toHaveBeenCalledWith(
       '_id name employeeId photo title practiceTitle department subDepartment annualLeave supervisor role status requiresScheduling partTime'
@@ -215,8 +215,23 @@ describe('Supervisor schedule permissions', () => {
     expect(res.status).toBe(200);
     const query = mockEmployee.find.mock.calls[0][0];
     expect(query.department).toBe(departmentId);
-    expect(query.$and[0]).toEqual({ $or: [{ _id: 'u1' }, { supervisor: 'u1' }] });
+    expect(query.$and[0]).toEqual({ supervisor: 'u1' });
     expect(query.$and[1].$or).toHaveLength(3);
+  });
+
+  it('includes the supervisor in the schedule employee list only when requested', async () => {
+    const leanMock = jest.fn().mockResolvedValue([{ _id: 'u1', name: 'Supervisor' }]);
+    const sortMock = jest.fn().mockReturnValue({ lean: leanMock });
+    const selectMock = jest.fn().mockReturnValue({ sort: sortMock });
+    mockEmployee.find.mockReturnValue({ select: selectMock });
+
+    const res = await request(app)
+      .get('/api/employees/schedule?supervisor=u1&includeSelf=true');
+
+    expect(res.status).toBe(200);
+    expect(mockEmployee.find).toHaveBeenCalledWith({
+      $or: [{ _id: 'u1' }, { supervisor: 'u1' }],
+    });
   });
   it('includes supervisor schedule when includeSelf is true', async () => {
     const selectMock = jest.fn()

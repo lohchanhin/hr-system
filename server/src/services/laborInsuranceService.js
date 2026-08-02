@@ -1,54 +1,19 @@
 import LaborInsuranceRate from '../models/LaborInsuranceRate.js';
+import {
+  DEFAULT_HEALTH_INSURANCE_RATES,
+  DEFAULT_LABOR_INSURANCE_RATES,
+  DEFAULT_LABOR_PENSION_RATES,
+  TAIWAN_INSURANCE_BASELINE_EFFECTIVE_FROM,
+  TAIWAN_INSURANCE_SOURCES,
+} from '../data/taiwanInsuranceRates2026.js';
 
-export const DEFAULT_LABOR_INSURANCE_RATES = [
-  { level: 1, insuredSalary: 11100, workerFee: 277, employerFee: 972 },
-  { level: 2, insuredSalary: 12540, workerFee: 313, employerFee: 1097 },
-  { level: 3, insuredSalary: 13500, workerFee: 338, employerFee: 1182 },
-  { level: 4, insuredSalary: 15840, workerFee: 396, employerFee: 1386 },
-  { level: 5, insuredSalary: 16500, workerFee: 413, employerFee: 1444 },
-  { level: 6, insuredSalary: 17280, workerFee: 432, employerFee: 1512 },
-  { level: 7, insuredSalary: 17880, workerFee: 447, employerFee: 1564 },
-  { level: 8, insuredSalary: 19047, workerFee: 476, employerFee: 1666 },
-  { level: 9, insuredSalary: 20008, workerFee: 500, employerFee: 1751 },
-  { level: 10, insuredSalary: 21009, workerFee: 525, employerFee: 1838 },
-  { level: 11, insuredSalary: 22000, workerFee: 550, employerFee: 1925 },
-  { level: 12, insuredSalary: 23100, workerFee: 577, employerFee: 2022 },
-  { level: 13, insuredSalary: 24000, workerFee: 600, employerFee: 2100 },
-  { level: 14, insuredSalary: 25250, workerFee: 632, employerFee: 2210 },
-  { level: 15, insuredSalary: 26400, workerFee: 660, employerFee: 2310 },
-  { level: 16, insuredSalary: 27600, workerFee: 690, employerFee: 2415 },
-  { level: 17, insuredSalary: 28590, workerFee: 715, employerFee: 2501 },
-  { level: 18, insuredSalary: 28800, workerFee: 720, employerFee: 2520 },
-  { level: 19, insuredSalary: 30300, workerFee: 758, employerFee: 2651 },
-  { level: 20, insuredSalary: 31800, workerFee: 795, employerFee: 2783 },
-  { level: 21, insuredSalary: 33300, workerFee: 833, employerFee: 2914 },
-  { level: 22, insuredSalary: 34800, workerFee: 870, employerFee: 3045 },
-  { level: 23, insuredSalary: 36300, workerFee: 908, employerFee: 3176 },
-  { level: 24, insuredSalary: 38200, workerFee: 955, employerFee: 3342 },
-  { level: 25, insuredSalary: 40100, workerFee: 1002, employerFee: 3509 },
-  { level: 26, insuredSalary: 42000, workerFee: 1050, employerFee: 3675 },
-  { level: 27, insuredSalary: 43900, workerFee: 1098, employerFee: 3841 },
-  { level: 28, insuredSalary: 45800, workerFee: 1145, employerFee: 4008 }
-];
+export {
+  DEFAULT_HEALTH_INSURANCE_RATES,
+  DEFAULT_LABOR_INSURANCE_RATES,
+  DEFAULT_LABOR_PENSION_RATES,
+};
 
-const HEALTH_INSURANCE_WORKER_RATE = 0.015;
-const HEALTH_INSURANCE_EMPLOYER_RATE = 0.03;
-const LABOR_PENSION_EMPLOYER_RATE = 0.06;
 const fetchFn = typeof fetch === 'function' ? fetch : null;
-
-export const DEFAULT_HEALTH_INSURANCE_RATES = DEFAULT_LABOR_INSURANCE_RATES.map((rate) => ({
-  level: rate.level,
-  insuredSalary: rate.insuredSalary,
-  workerFee: Math.round(rate.insuredSalary * HEALTH_INSURANCE_WORKER_RATE),
-  employerFee: Math.round(rate.insuredSalary * HEALTH_INSURANCE_EMPLOYER_RATE)
-}));
-
-export const DEFAULT_LABOR_PENSION_RATES = DEFAULT_LABOR_INSURANCE_RATES.map((rate) => ({
-  level: rate.level,
-  insuredSalary: rate.insuredSalary,
-  workerFee: 0,
-  employerFee: Math.round(rate.insuredSalary * LABOR_PENSION_EMPLOYER_RATE)
-}));
 
 function normalizeRate(rate) {
   return {
@@ -124,15 +89,16 @@ export async function initializeLaborInsuranceRates() {
  * 模擬從官方來源取得最新勞保級距
  */
 export async function fetchLatestLaborInsuranceRates() {
-  // TODO: Replace with HTTP fetch to the government endpoint (JSON table with level/insuredSalary/fees)
-  return DEFAULT_LABOR_INSURANCE_RATES;
+  const { rates } = await fetchRefreshSource('laborInsurance');
+  return rates;
 }
 
 /**
  * 檢查並更新勞保級距，返回是否已為最新
  */
 export async function refreshLaborInsuranceRates() {
-  const latestRates = await fetchLatestLaborInsuranceRates();
+  const sourceResult = await fetchRefreshSource('laborInsurance');
+  const latestRates = sourceResult.rates;
   const updatedLevels = [];
 
   for (const rate of latestRates) {
@@ -149,28 +115,59 @@ export async function refreshLaborInsuranceRates() {
     updatedLevels,
     updatedCount: updatedLevels.length,
     totalLevels: latestRates.length,
-    isUpToDate
+    isUpToDate,
+    ...buildSourceMetadata('laborInsurance', sourceResult.source),
+    message: buildRefreshMessage('laborInsurance', sourceResult.source),
   };
 }
 
 const OFFICIAL_SOURCE_CONFIG = {
   laborInsurance: {
     url: process.env.LABOR_INSURANCE_SOURCE_URL,
-    fallback: DEFAULT_LABOR_INSURANCE_RATES.map((rate) => ({ ...rate }))
+    fallback: DEFAULT_LABOR_INSURANCE_RATES.map((rate) => ({ ...rate })),
   },
   healthInsurance: {
     url: process.env.HEALTH_INSURANCE_SOURCE_URL,
-    fallback: DEFAULT_HEALTH_INSURANCE_RATES.map((rate) => ({ ...rate }))
+    fallback: DEFAULT_HEALTH_INSURANCE_RATES.map((rate) => ({ ...rate })),
   },
   laborPension: {
     url: process.env.LABOR_PENSION_SOURCE_URL,
-    fallback: DEFAULT_LABOR_PENSION_RATES.map((rate) => ({ ...rate }))
-  }
+    fallback: DEFAULT_LABOR_PENSION_RATES.map((rate) => ({ ...rate })),
+  },
 };
 
 const TYPE_ALIASES = {
   retirement: 'laborPension'
 };
+
+const TYPE_LABELS = {
+  laborInsurance: '勞保',
+  healthInsurance: '健保',
+  laborPension: '勞退',
+};
+
+function normalizeInsuranceType(type) {
+  if (OFFICIAL_SOURCE_CONFIG[type]) return type;
+  return TYPE_ALIASES[type] || 'laborInsurance';
+}
+
+function buildSourceMetadata(type, source) {
+  const normalizedType = normalizeInsuranceType(type);
+  return {
+    source,
+    effectiveFrom: TAIWAN_INSURANCE_BASELINE_EFFECTIVE_FROM,
+    sourceUrl: TAIWAN_INSURANCE_SOURCES[normalizedType],
+  };
+}
+
+function buildRefreshMessage(type, source) {
+  const normalizedType = normalizeInsuranceType(type);
+  const label = TYPE_LABELS[normalizedType];
+  if (source === 'configured-endpoint') {
+    return `已從設定的資料來源載入${label}級距；結薪前仍應核對官方公告`;
+  }
+  return `已載入 ${TAIWAN_INSURANCE_BASELINE_EFFECTIVE_FROM} 生效的${label}官方基準（非即時連線）；結薪前仍應核對最新公告`;
+}
 
 function pickFirstNumber(source, keys, fallbackValue) {
   for (const key of keys) {
@@ -201,30 +198,54 @@ function mapOfficialRates(rawRates, fallback) {
   return mapped.length ? mapped : fallback;
 }
 
-async function fetchRatesWithMeta(type = 'laborInsurance') {
-  const normalizedType = OFFICIAL_SOURCE_CONFIG[type] ? type : (TYPE_ALIASES[type] || 'laborInsurance');
-  const configKey = OFFICIAL_SOURCE_CONFIG[normalizedType] ? normalizedType : 'laborInsurance';
-
-  if (configKey === 'laborInsurance') {
-    const rates = await LaborInsuranceRate.find().sort({ level: 1 });
-    if (rates.length) return { rates, fromOfficial: true };
-    return { rates: DEFAULT_LABOR_INSURANCE_RATES.map(normalizeRate), fromOfficial: false };
-  }
-
-  const source = OFFICIAL_SOURCE_CONFIG[configKey];
+async function fetchRefreshSource(type) {
+  const normalizedType = normalizeInsuranceType(type);
+  const source = OFFICIAL_SOURCE_CONFIG[normalizedType];
   if (source.url && fetchFn) {
     try {
       const response = await fetchFn(source.url);
       if (response.ok) {
         const data = await response.json();
-        return { rates: mapOfficialRates(data, source.fallback), fromOfficial: true };
+        return {
+          rates: mapOfficialRates(data, source.fallback),
+          source: 'configured-endpoint',
+        };
       }
     } catch (error) {
-      console.error(`Failed to fetch official ${configKey} rates`, error);
+      console.error(`Failed to fetch configured ${normalizedType} rates`, error);
     }
   }
 
-  return { rates: source.fallback, fromOfficial: false };
+  return {
+    rates: source.fallback.map((rate) => ({ ...rate })),
+    source: 'embedded-official-baseline',
+  };
+}
+
+async function fetchRatesWithMeta(type = 'laborInsurance') {
+  const configKey = normalizeInsuranceType(type);
+
+  if (configKey === 'laborInsurance') {
+    const rates = await LaborInsuranceRate.find().sort({ level: 1 });
+    if (rates.length) {
+      return {
+        rates,
+        source: 'database',
+        ...buildSourceMetadata(configKey, 'database'),
+      };
+    }
+    return {
+      rates: DEFAULT_LABOR_INSURANCE_RATES.map(normalizeRate),
+      source: 'embedded-official-baseline',
+      ...buildSourceMetadata(configKey, 'embedded-official-baseline'),
+    };
+  }
+
+  const result = await fetchRefreshSource(configKey);
+  return {
+    ...result,
+    ...buildSourceMetadata(configKey, result.source),
+  };
 }
 
 export async function fetchInsuranceRatesByType(type = 'laborInsurance') {
@@ -233,17 +254,21 @@ export async function fetchInsuranceRatesByType(type = 'laborInsurance') {
 }
 
 export async function refreshInsuranceRatesByType(type = 'laborInsurance') {
-  if (type === 'laborInsurance') {
+  const normalizedType = normalizeInsuranceType(type);
+  if (normalizedType === 'laborInsurance') {
     return refreshLaborInsuranceRates();
   }
 
-  const { rates, fromOfficial } = await fetchRatesWithMeta(type);
+  const result = await fetchRefreshSource(normalizedType);
+  const { rates, source } = result;
   return {
-    updatedLevels: rates.map((r) => r.level),
-    updatedCount: rates.length,
+    updatedLevels: [],
+    updatedCount: 0,
     totalLevels: rates.length,
-    isUpToDate: fromOfficial && rates.length > 0,
-    rates
+    isUpToDate: rates.length > 0,
+    rates,
+    ...buildSourceMetadata(normalizedType, source),
+    message: buildRefreshMessage(normalizedType, source),
   };
 }
 

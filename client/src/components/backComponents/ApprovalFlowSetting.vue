@@ -48,7 +48,7 @@
       <el-tab-pane label="申請類型 / 關卡" name="approvalLevels">
         <div class="tab-content">
           <el-button type="primary" @click="openFormDialog()">新增表單樣板</el-button>
-          <el-button type="warning" @click="restoreDefaults">恢復預設值</el-button>
+          <el-button type="warning" @click="restoreDefaults">補齊預設值</el-button>
           <el-table :data="forms" style="margin-top: 20px;">
             <el-table-column prop="name" label="表單名稱" width="220" />
             <el-table-column label="分類" width="160">
@@ -1126,8 +1126,8 @@ async function saveWorkflow() {
 async function restoreDefaults() {
   try {
     await ElMessageBox.confirm(
-      '確定要恢復預設值嗎？這將清除所有現有的簽核表單並建立預設表單。此操作無法復原！',
-      '確認恢復預設值',
+      '確定要補齊預設表單嗎？系統只會建立缺少的預設表單，現有表單與歷史申請都會保留。',
+      '確認補齊預設表單',
       {
         confirmButtonText: '確定',
         cancelButtonText: '取消',
@@ -1142,7 +1142,7 @@ async function restoreDefaults() {
     
     if (res.ok) {
       const result = await res.json()
-      ElMessage.success(`已恢復預設值，建立了 ${result.count} 個表單樣板`)
+      ElMessage.success(`已補齊預設值，新增 ${result.createdCount ?? result.count} 個，保留 ${result.preservedCount ?? 0} 個`)
       selectedFormId.value = ''
       await loadForms()
       if (forms.value.length > 0) {

@@ -15,19 +15,21 @@ jest.unstable_mockModule('../src/models/Employee.js', () => ({ default: mockEmpl
 
 let app;
 let employeeRoutes;
+let requestUser;
 
 beforeAll(async () => {
   employeeRoutes = (await import('../src/routes/employeeRoutes.js')).default;
   app = express();
   app.use(express.json());
   app.use((req, res, next) => {
-    req.user = { id: 'admin1', role: 'admin' };
+    req.user = requestUser;
     next();
   });
   app.use('/api/employees', employeeRoutes);
 });
 
 beforeEach(() => {
+  requestUser = { id: 'admin1', role: 'admin' };
   Object.values(mockEmployee).forEach((fn) => fn.mockReset && fn.mockReset());
   mockEmployee.countDocuments.mockResolvedValue(0);
 });
@@ -164,6 +166,29 @@ describe('Employee API', () => {
     const res = await request(app).get('/api/employees');
     expect(res.status).toBe(500);
     expect(res.body).toEqual({ error: 'Failed to list employees' });
+  });
+
+  it('returns only names and ids in employee options for non-admin users', async () => {
+    requestUser = { id: 'employee1', role: 'employee' };
+    const fakeEmployees = [{
+      _id: '1',
+      name: 'Alice',
+      username: 'alice',
+      organization: 'org1',
+      role: 'supervisor',
+    }];
+    const lean = jest.fn().mockResolvedValue(fakeEmployees);
+    mockEmployee.find.mockReturnValue({ lean });
+
+    const res = await request(app).get('/api/employees/options');
+
+    expect(res.status).toBe(200);
+    expect(mockEmployee.find).toHaveBeenCalledWith(
+      { username: { $exists: true, $ne: '' } },
+      'name'
+    );
+    expect(lean).toHaveBeenCalled();
+    expect(res.body).toEqual([{ id: '1', name: 'Alice', displayName: 'Alice' }]);
   });
 
   it('returns only minimal fields for attendance import matching', async () => {

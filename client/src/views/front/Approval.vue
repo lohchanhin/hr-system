@@ -506,7 +506,19 @@
             :key="fld._id"
             :label="fld.label"
           >
-            <span>{{ renderValue(detail.doc.form_data?.[fld._id]) }}</span>
+            <template v-if="attachmentItems(detail.doc.form_data?.[fld._id]).length">
+              <el-button
+                v-for="attachment in attachmentItems(detail.doc.form_data?.[fld._id])"
+                :key="attachment.url || attachment.path || attachment.name"
+                link
+                type="primary"
+                size="small"
+                @click="downloadApprovalAttachment(attachment)"
+              >
+                下載 {{ attachmentDisplayName(attachment) }}
+              </el-button>
+            </template>
+            <span v-else>{{ renderValue(detail.doc.form_data?.[fld._id]) }}</span>
           </el-descriptions-item>
         </el-descriptions>
 
@@ -611,7 +623,59 @@ const canViewHistory = computed(() => ['manager', 'admin'].includes(authStore.ro
 
 /* -------------------- 共用小工具 -------------------- */
 const fmt = (d) => (d ? new Date(d).toLocaleString() : '-')
-const renderValue = (v) => Array.isArray(v) ? v.join(', ') : (v ?? '-')
+const renderValue = (value) => {
+  if (Array.isArray(value)) return value.length ? value.map(renderValue).join(', ') : '-'
+  if (value && typeof value === 'object') {
+    return value.label ?? value.name ?? value.value ?? value.code ?? '-'
+  }
+  return value ?? '-'
+}
+
+function attachmentItems(value) {
+  const values = Array.isArray(value) ? value : [value]
+  return values.filter(item => (
+    item &&
+    typeof item === 'object' &&
+    typeof (item.url || item.path) === 'string'
+  ))
+}
+
+function attachmentFilename(attachment) {
+  const storedPath = String(attachment?.url || attachment?.path || '').split('?')[0]
+  return storedPath.split('/').filter(Boolean).pop() || ''
+}
+
+function attachmentDisplayName(attachment) {
+  const name = String(attachment?.name || attachmentFilename(attachment) || 'attachment')
+  return name.split(/[\\/]/).pop()
+}
+
+async function downloadApprovalAttachment(attachment) {
+  const requestId = detail.doc?._id
+  const filename = attachmentFilename(attachment)
+  if (!requestId || !filename) return
+
+  try {
+    const response = await apiFetch(
+      `/api/approvals/${encodeURIComponent(requestId)}/attachments/${encodeURIComponent(filename)}`
+    )
+    if (!response.ok) {
+      const result = await response.json().catch(() => ({}))
+      throw new Error(result.error || 'Attachment download failed')
+    }
+    const blob = await response.blob()
+    const objectUrl = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = objectUrl
+    link.download = attachmentDisplayName(attachment)
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    URL.revokeObjectURL(objectUrl)
+  } catch (error) {
+    alert(error?.message || 'Attachment download failed')
+  }
+}
 
 /* 人名快取（顯示審核人用） */
 const employeeNameCache = reactive({})
@@ -1021,30 +1085,9 @@ function showFormHelp() {
   helpDlg.visible = true
 }
 
-/* -------------------- 自動檢查並生成請假表單 -------------------- */
-async function ensureLeaveFormExists() {
-  try {
-    const res = await apiFetch('/api/approvals/ensure-leave-form', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' }
-    })
-    if (res.ok) {
-      const result = await res.json()
-      if (result.generated) {
-        console.log('Leave form was auto-generated')
-        // Reload form templates to include the new leave form
-        await loadFormTemplates()
-      }
-    }
-  } catch (err) {
-    console.warn('Failed to ensure leave form exists:', err)
-  }
-}
-
 /* -------------------- 初始化 -------------------- */
 onMounted(async () => {
   authStore.loadUser()
-  await ensureLeaveFormExists() // Auto-check and generate leave form if needed
   await Promise.all([loadFormTemplates(), fetchUsersLite(), fetchDepts(), fetchOrgs()])
   // 預設進待我簽核
   await Promise.all([fetchInbox(), fetchMyList()])

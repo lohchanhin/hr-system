@@ -55,4 +55,57 @@ describe('Attendance.vue availability', () => {
     expect(cards[0].classes()).not.toContain('disabled')
     expect(cards[1].classes()).toContain('disabled')
   })
+
+  it('loads schedules from the monthly response envelope', async () => {
+    const schedules = [{ _id: 'schedule-1', date: '2026-08-02', shiftId: 'shift1' }]
+    apiFetch.mockReset()
+    apiFetch.mockImplementation(async (url) => {
+      if (url.startsWith('/api/schedules/monthly')) {
+        return { ok: true, json: async () => ({ schedules, publishSummary: null }) }
+      }
+      if (url === '/api/attendance/punch-window') {
+        return { ok: true, json: async () => ({ actionBuffers: {} }) }
+      }
+      return { ok: true, json: async () => [] }
+    })
+
+    const wrapper = mountComponent()
+    await flush()
+    await flush()
+
+    expect(wrapper.vm.monthlySchedules).toEqual(schedules)
+  })
+
+  it('does not send a client-controlled timestamp when recording attendance', async () => {
+    apiFetch.mockReset()
+    apiFetch.mockImplementation(async (url, options) => {
+      if (url === '/api/attendance' && options?.method === 'POST') {
+        return {
+          ok: true,
+          json: async () => ({
+            action: 'clockIn',
+            employee: 'emp1',
+            timestamp: '2026-08-02T12:00:00.000Z',
+          }),
+        }
+      }
+      if (url === '/api/attendance/punch-window') {
+        return { ok: true, json: async () => ({ actionBuffers: {} }) }
+      }
+      return { ok: true, json: async () => [] }
+    })
+    const wrapper = mountComponent()
+    await flush()
+
+    await wrapper.vm.addRecord('clockIn', 'CODEX_TEST_20260802_CLIENT_PUNCH')
+
+    const call = apiFetch.mock.calls.find(([, options]) => options?.method === 'POST')
+    const body = JSON.parse(call[1].body)
+    expect(body).toEqual({
+      action: 'clockIn',
+      remark: 'CODEX_TEST_20260802_CLIENT_PUNCH',
+      employee: 'emp1',
+    })
+    expect(body.timestamp).toBeUndefined()
+  })
 })

@@ -1371,6 +1371,7 @@ const fetchAllEmployeeIdsForCurrentFilter = async () => {
     if (jobTypeFilter.value) {
       params.push(`jobType=${encodeURIComponent(jobTypeFilter.value)}`)
     }
+    params.push(`includeSelf=${includeSelf.value && showIncludeSelfToggle.value}`)
     const url = `/api/employees/schedule?${params.join('&')}`
     const res = await apiFetch(url)
     if (!res.ok) throw new Error('Failed to fetch all employee ids')
@@ -3981,6 +3982,7 @@ async function fetchEmployees(
   if (jobTypeFilter.value) {
     params.push(`jobType=${encodeURIComponent(jobTypeFilter.value)}`)
   }
+  params.push(`includeSelf=${includeSelf.value && showIncludeSelfToggle.value}`)
   const url = `/api/employees/schedule${params.length ? `?${params.join('&')}` : ''
     }`
   try {

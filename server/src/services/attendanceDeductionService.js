@@ -1,206 +1,173 @@
-import AttendanceRecord from '../models/AttendanceRecord.js';
-import AttendanceSetting from '../models/AttendanceSetting.js';
-import Employee from '../models/Employee.js';
-import ShiftSchedule from '../models/ShiftSchedule.js';
+import AttendanceRecord from '../models/AttendanceRecord.js'
+import AttendanceSetting from '../models/AttendanceSetting.js'
+import ShiftSchedule from '../models/ShiftSchedule.js'
+import { classifyShift } from './laborRuleValidationService.js'
+import {
+  computeActionWindow,
+  computeShiftSpan,
+  getTimezone,
+  normalizeActionBuffers,
+} from '../utils/timeWindow.js'
 
-// Constants for date validation
-const DATE_FORMAT_REGEX = /^(19|20)\d{2}-(0[1-9]|1[0-2])(-(0[1-9]|[12]\d|3[01]))?$/;
-const EXPECTED_FORMATS = 'YYYY-MM format, YYYY-MM-DD format, or Date object';
-const VALID_YEAR_MIN = 1900;
-const VALID_YEAR_MAX = 2099;
+const DATE_FORMAT_REGEX = /^(19|20)\d{2}-(0[1-9]|1[0-2])(-(0[1-9]|[12]\d|3[01]))?$/
+const EXPECTED_FORMATS = 'YYYY-MM format, YYYY-MM-DD format, or Date object'
+const VALID_YEAR_MIN = 1900
+const VALID_YEAR_MAX = 2099
 
-/**
- * 計算時間差（分鐘）
- */
 function getMinutesDifference(time1, time2) {
-  const d1 = new Date(time1);
-  const d2 = new Date(time2);
-  return Math.floor((d2 - d1) / 60000);
+  return Math.floor((new Date(time2) - new Date(time1)) / 60000)
 }
 
-/**
- * 解析時間字串 (HH:mm) 並轉換為當天的 Date 物件
- */
-function parseTimeToDate(timeStr, date) {
-  if (!timeStr || !date) return null;
-  const [hours, minutes] = timeStr.split(':').map(Number);
-  if (isNaN(hours) || isNaN(minutes)) return null;
-  
-  const result = new Date(date);
-  result.setHours(hours, minutes, 0, 0);
-  return result;
-}
-
-/**
- * 檢查是否遲到
- */
-function isLate(clockInTime, scheduledStartTime, graceMinutes = 0) {
-  if (!clockInTime || !scheduledStartTime) return false;
-  const diff = getMinutesDifference(scheduledStartTime, clockInTime);
-  return diff > graceMinutes;
-}
-
-/**
- * 檢查是否早退
- */
-function isEarlyLeave(clockOutTime, scheduledEndTime, graceMinutes = 0) {
-  if (!clockOutTime || !scheduledEndTime) return false;
-  const diff = getMinutesDifference(clockOutTime, scheduledEndTime);
-  return diff > graceMinutes;
-}
-
-/**
- * 計算單個員工在指定月份的遲到早退次數
- */
-export async function calculateLateEarlyCount(employeeId, month) {
-  // Validate month parameter
+function parseMonthRange(month) {
   if (month === null || month === undefined) {
-    throw new Error('Month parameter is required');
+    throw new Error('Month parameter is required')
   }
-  
-  // Parse month to handle both "YYYY-MM" and "YYYY-MM-DD" formats
-  let monthStr = month;
+
+  let monthStr
   if (typeof month === 'string') {
-    // Validate and extract YYYY-MM from the input (handles both "YYYY-MM" and "YYYY-MM-DD")
-    // Year must be 1900-2099, month must be 01-12, day (if present) must be 01-31
-    // Note: Day validation allows 31 for all months. Invalid dates like "2024-02-31"
-    // will pass regex validation but are acceptable since we only use the YYYY-MM portion
-    // and create the date as the 1st of the month.
-    if (DATE_FORMAT_REGEX.test(month)) {
-      // Extract just the YYYY-MM portion (first 7 characters)
-      // Safe because regex guarantees at least "YYYY-MM" format
-      monthStr = month.substring(0, 7);
-    } else {
-      throw new Error(`Invalid month format: ${month}. Expected ${EXPECTED_FORMATS}.`);
+    if (!DATE_FORMAT_REGEX.test(month)) {
+      throw new Error(`Invalid month format: ${month}. Expected ${EXPECTED_FORMATS}.`)
     }
+    monthStr = month.slice(0, 7)
   } else if (month instanceof Date) {
-    // If month is a Date object, format it as YYYY-MM
-    if (isNaN(month.getTime())) {
-      throw new Error('Invalid Date object provided for month parameter');
-    }
-    const year = month.getFullYear();
-    // Validate year range for Date objects
+    if (Number.isNaN(month.getTime())) throw new Error('Invalid Date object provided for month parameter')
+    const year = month.getUTCFullYear()
     if (year < VALID_YEAR_MIN || year > VALID_YEAR_MAX) {
-      throw new Error(`Year ${year} is out of valid range (${VALID_YEAR_MIN}-${VALID_YEAR_MAX})`);
+      throw new Error(`Year ${year} is out of valid range (${VALID_YEAR_MIN}-${VALID_YEAR_MAX})`)
     }
-    const monthNum = String(month.getMonth() + 1).padStart(2, '0');
-    monthStr = `${year}-${monthNum}`;
+    monthStr = `${year}-${String(month.getUTCMonth() + 1).padStart(2, '0')}`
   } else {
-    throw new Error(`Invalid month parameter type: ${typeof month}. Expected ${EXPECTED_FORMATS}.`);
-  }
-  
-  const monthStart = new Date(`${monthStr}-01T00:00:00.000Z`);
-  // Validate the created date as a final safety check
-  // This should never fail given previous validations, but serves as defense-in-depth
-  if (isNaN(monthStart.getTime())) {
-    throw new Error(`Failed to create valid date from month: ${monthStr}`);
-  }
-  
-  const monthEnd = new Date(monthStart);
-  monthEnd.setMonth(monthEnd.getMonth() + 1);
-
-  // 取得出勤設定
-  const setting = await AttendanceSetting.findOne().lean();
-  const lateGrace = setting?.abnormalRules?.lateGrace || 0;
-  const earlyLeaveGrace = setting?.abnormalRules?.earlyLeaveGrace || 0;
-
-  // 建立班別對照表
-  const shiftMap = new Map();
-  if (setting?.shifts) {
-    setting.shifts.forEach(shift => {
-      if (shift._id) {
-        shiftMap.set(shift._id.toString(), shift);
-      }
-    });
+    throw new Error(`Invalid month parameter type: ${typeof month}. Expected ${EXPECTED_FORMATS}.`)
   }
 
-  // 取得排班記錄
-  const schedules = await ShiftSchedule.find({
-    employee: employeeId,
-    date: { $gte: monthStart, $lt: monthEnd },
-  }).lean();
+  const start = new Date(`${monthStr}-01T00:00:00.000Z`)
+  if (Number.isNaN(start.getTime())) {
+    throw new Error(`Failed to create valid date from month: ${monthStr}`)
+  }
+  const end = new Date(start)
+  end.setUTCMonth(end.getUTCMonth() + 1)
+  return { start, end }
+}
 
-  const scheduleMap = new Map();
-  schedules.forEach(schedule => {
-    const dateKey = new Date(schedule.date).toISOString().slice(0, 10);
-    scheduleMap.set(dateKey, schedule);
-  });
+function buildShiftMap(setting) {
+  const shiftMap = new Map()
+  for (const shift of setting?.shifts ?? []) {
+    if (shift?._id) shiftMap.set(shift._id.toString(), shift)
+  }
+  return shiftMap
+}
 
-  // 取得打卡記錄
-  const records = await AttendanceRecord.find({
-    employee: employeeId,
-    date: { $gte: monthStart, $lt: monthEnd },
-  }).sort({ date: 1 }).lean();
+function findPunch({ records, employeeId, schedule, action, window }) {
+  const scheduleId = schedule._id?.toString?.()
+  const expectedKey = scheduleId ? `${employeeId}:${scheduleId}:${action}` : ''
+  const matching = records.filter((record) => {
+    if (record.action !== action) return false
+    if (expectedKey && record.punchKey === expectedKey) return true
+    const time = new Date(record.timestamp).getTime()
+    return Number.isFinite(time) && time >= window.start.getTime() && time <= window.end.getTime()
+  })
+  matching.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp))
+  return action === 'clockIn' ? matching[0] : matching[matching.length - 1]
+}
 
-  let lateCount = 0;
-  let earlyLeaveCount = 0;
-  const lateDetails = [];
-  const earlyLeaveDetails = [];
+async function loadAttendanceContext(employeeId, monthRange, context) {
+  const recordRangeEnd = new Date(monthRange.end)
+  recordRangeEnd.setUTCDate(recordRangeEnd.getUTCDate() + 1)
+  const [setting, schedules, records] = await Promise.all([
+    context.attendanceSetting ?? AttendanceSetting.findOne().lean(),
+    context.schedules ?? ShiftSchedule.find({
+      employee: employeeId,
+      date: { $gte: monthRange.start, $lt: monthRange.end },
+    }).lean(),
+    context.attendanceRecords ?? AttendanceRecord.find({
+      employee: employeeId,
+      timestamp: { $gte: monthRange.start, $lt: recordRangeEnd },
+      action: { $in: ['clockIn', 'clockOut'] },
+    }).lean(),
+  ])
 
-  records.forEach(record => {
-    const dateKey = new Date(record.date).toISOString().slice(0, 10);
-    const schedule = scheduleMap.get(dateKey);
-    
-    if (!schedule || !schedule.shiftId) return;
+  context.attendanceSetting = setting
+  context.schedules = schedules
+  context.attendanceRecords = records
+  return { setting, schedules, records }
+}
 
-    const shift = shiftMap.get(schedule.shiftId.toString());
-    if (!shift) return;
+export async function calculateLateEarlyCount(employeeId, month, context = {}) {
+  const monthRange = parseMonthRange(month)
+  const { setting, schedules, records } = await loadAttendanceContext(employeeId, monthRange, context)
+  const shiftMap = buildShiftMap(setting)
+  const lateGrace = Math.max(Number(setting?.abnormalRules?.lateGrace) || 0, 0)
+  const earlyLeaveGrace = Math.max(Number(setting?.abnormalRules?.earlyLeaveGrace) || 0, 0)
+  const actionBuffers = normalizeActionBuffers(setting?.actionBuffers)
+  const timeZone = getTimezone()
+  const lateDetails = []
+  const earlyLeaveDetails = []
 
-    // 檢查遲到
-    if (record.clockIn && shift.startTime) {
-      const scheduledStart = parseTimeToDate(shift.startTime, record.date);
-      if (scheduledStart && isLate(record.clockIn, scheduledStart, lateGrace)) {
-        lateCount++;
+  for (const schedule of schedules) {
+    if (!schedule?.shiftId) continue
+    const shift = shiftMap.get(schedule.shiftId.toString())
+    if (!shift || classifyShift(shift).isNonWork) continue
+    const span = computeShiftSpan(schedule.date, shift, timeZone)
+    if (!span) continue
+
+    const clockInWindow = computeActionWindow('clockIn', span.start, span.end, actionBuffers)
+    const clockOutWindow = computeActionWindow('clockOut', span.start, span.end, actionBuffers)
+    if (!clockInWindow || !clockOutWindow) continue
+
+    const clockIn = findPunch({ records, employeeId, schedule, action: 'clockIn', window: clockInWindow })
+    const clockOut = findPunch({ records, employeeId, schedule, action: 'clockOut', window: clockOutWindow })
+    const date = new Date(schedule.date).toISOString().slice(0, 10)
+
+    if (clockIn?.timestamp) {
+      const actualClockIn = new Date(clockIn.timestamp)
+      const minutesLate = Math.max(getMinutesDifference(span.start, actualClockIn) - lateGrace, 0)
+      if (minutesLate > 0) {
         lateDetails.push({
-          date: dateKey,
-          clockIn: record.clockIn,
-          scheduledStart: scheduledStart,
-          minutesLate: getMinutesDifference(scheduledStart, record.clockIn),
-        });
+          date,
+          clockIn: actualClockIn,
+          scheduledStart: span.start,
+          minutesLate,
+        })
       }
     }
 
-    // 檢查早退
-    if (record.clockOut && shift.endTime) {
-      const scheduledEnd = parseTimeToDate(shift.endTime, record.date);
-      if (scheduledEnd && isEarlyLeave(record.clockOut, scheduledEnd, earlyLeaveGrace)) {
-        earlyLeaveCount++;
+    if (clockOut?.timestamp) {
+      const actualClockOut = new Date(clockOut.timestamp)
+      const minutesEarly = Math.max(getMinutesDifference(actualClockOut, span.end) - earlyLeaveGrace, 0)
+      if (minutesEarly > 0) {
         earlyLeaveDetails.push({
-          date: dateKey,
-          clockOut: record.clockOut,
-          scheduledEnd: scheduledEnd,
-          minutesEarly: getMinutesDifference(record.clockOut, scheduledEnd),
-        });
+          date,
+          clockOut: actualClockOut,
+          scheduledEnd: span.end,
+          minutesEarly,
+        })
       }
     }
-  });
+  }
 
   return {
     employeeId,
     month,
-    lateCount,
-    earlyLeaveCount,
+    lateCount: lateDetails.length,
+    earlyLeaveCount: earlyLeaveDetails.length,
     lateDetails,
     earlyLeaveDetails,
-  };
+  }
 }
 
-/**
- * 計算遲到早退的扣款金額
- */
-export async function calculateLateEarlyDeductions(employeeId, month) {
-  const setting = await AttendanceSetting.findOne().lean();
-  
-  const lateDeductionEnabled = setting?.abnormalRules?.lateDeductionEnabled || false;
-  const lateDeductionAmount = setting?.abnormalRules?.lateDeductionAmount || 0;
-  const earlyLeaveDeductionEnabled = setting?.abnormalRules?.earlyLeaveDeductionEnabled || false;
-  const earlyLeaveDeductionAmount = setting?.abnormalRules?.earlyLeaveDeductionAmount || 0;
+export async function calculateLateEarlyDeductions(employeeId, month, context = {}) {
+  const setting = context.attendanceSetting ?? await AttendanceSetting.findOne().lean()
+  context.attendanceSetting = setting
 
-  const counts = await calculateLateEarlyCount(employeeId, month);
-
-  const lateDeduction = lateDeductionEnabled ? counts.lateCount * lateDeductionAmount : 0;
-  const earlyLeaveDeduction = earlyLeaveDeductionEnabled ? counts.earlyLeaveCount * earlyLeaveDeductionAmount : 0;
-  const totalDeduction = lateDeduction + earlyLeaveDeduction;
+  const lateDeductionEnabled = setting?.abnormalRules?.lateDeductionEnabled || false
+  const lateDeductionAmount = Number(setting?.abnormalRules?.lateDeductionAmount) || 0
+  const earlyLeaveDeductionEnabled = setting?.abnormalRules?.earlyLeaveDeductionEnabled || false
+  const earlyLeaveDeductionAmount = Number(setting?.abnormalRules?.earlyLeaveDeductionAmount) || 0
+  const counts = await calculateLateEarlyCount(employeeId, month, context)
+  const lateDeduction = lateDeductionEnabled ? counts.lateCount * lateDeductionAmount : 0
+  const earlyLeaveDeduction = earlyLeaveDeductionEnabled
+    ? counts.earlyLeaveCount * earlyLeaveDeductionAmount
+    : 0
 
   return {
     ...counts,
@@ -208,36 +175,28 @@ export async function calculateLateEarlyDeductions(employeeId, month) {
     earlyLeaveDeductionAmount,
     lateDeduction,
     earlyLeaveDeduction,
-    totalDeduction,
+    totalDeduction: lateDeduction + earlyLeaveDeduction,
     settings: {
       lateDeductionEnabled,
       lateDeductionAmount,
       earlyLeaveDeductionEnabled,
       earlyLeaveDeductionAmount,
     },
-  };
+  }
 }
 
-/**
- * 批量計算多個員工的遲到早退扣款
- */
 export async function calculateBatchLateEarlyDeductions(employeeIds, month) {
-  const results = [];
-  
+  const sharedSetting = await AttendanceSetting.findOne().lean()
+  const results = []
   for (const employeeId of employeeIds) {
     try {
-      const result = await calculateLateEarlyDeductions(employeeId, month);
-      results.push(result);
+      results.push(await calculateLateEarlyDeductions(employeeId, month, {
+        attendanceSetting: sharedSetting,
+      }))
     } catch (err) {
-      console.error(`Error calculating deductions for employee ${employeeId}:`, err);
-      results.push({
-        employeeId,
-        month,
-        error: err.message,
-        totalDeduction: 0,
-      });
+      console.error(`Error calculating deductions for employee ${employeeId}:`, err)
+      results.push({ employeeId, month, error: err.message, totalDeduction: 0 })
     }
   }
-  
-  return results;
+  return results
 }

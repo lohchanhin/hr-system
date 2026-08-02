@@ -349,7 +349,7 @@ export async function refreshLaborInsuranceRatesController(req, res) {
     res.json({
       success: true,
       ...result,
-      message: result.isUpToDate ? '級距已是最新' : '已從官網取得最新級距'
+      message: result.message || '級距資料已載入'
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -521,8 +521,9 @@ export async function getMonthlyPayrollOverview(req, res) {
       // Always calculate work data including night shift data dynamically to ensure accuracy
       // This fixes the issue where stored PayrollRecords may have outdated night shift allowance
       let workData = null;
+      const calculationContext = { employee };
       try {
-        workData = await calculateCompleteWorkData(employeeIdStr, month);
+        workData = await calculateCompleteWorkData(employeeIdStr, month, calculationContext);
       } catch (error) {
         console.error(`Error calculating work data for employee ${employeeIdStr}:`, error);
       }
@@ -578,7 +579,7 @@ export async function getMonthlyPayrollOverview(req, res) {
             employeeIdStr,
             month,
             customData,
-            { employee, workData, nightShiftAllowanceData }
+            { employee, workData, nightShiftAllowanceData, calculationContext }
           );
           // Note: We don't save the calculated payroll automatically, just return it for preview
           payroll = calculatedPayroll;
