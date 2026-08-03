@@ -7,6 +7,7 @@ const find = jest.fn()
 const findByIdAndUpdate = jest.fn()
 const findByIdAndDelete = jest.fn()
 const findOneAndUpdate = jest.fn()
+const findHolidayMoves = jest.fn()
 
 jest.unstable_mockModule('../src/models/Holiday.js', () => ({
   default: {
@@ -16,6 +17,9 @@ jest.unstable_mockModule('../src/models/Holiday.js', () => ({
     findByIdAndDelete,
     findOneAndUpdate,
   },
+}))
+jest.unstable_mockModule('../src/models/HolidayMoveSetting.js', () => ({
+  default: { find: findHolidayMoves },
 }))
 
 let holidayRoutes
@@ -27,6 +31,7 @@ beforeAll(async () => {
 beforeEach(() => {
   jest.clearAllMocks()
   global.fetch = jest.fn()
+  findHolidayMoves.mockResolvedValue([])
 })
 
 describe('holidayController', () => {
@@ -91,5 +96,36 @@ describe('holidayController', () => {
       }),
     )
     expect(res.body._id).toBe('new-holiday')
+  })
+
+  it('returns the effective target date for a same-month holiday move', async () => {
+    const app = express()
+    app.use(express.json())
+    app.use('/api/holidays', holidayRoutes)
+    find.mockReturnValue({
+      sort: jest.fn().mockResolvedValue([{
+        _id: 'holiday-1',
+        name: '國定假日',
+        type: '國定假日',
+        date: new Date('2036-04-07T00:00:00.000Z'),
+      }]),
+    })
+    findHolidayMoves.mockResolvedValue([{
+      _id: 'move-1',
+      enableHolidayMove: true,
+      sourceDate: new Date('2036-04-07T00:00:00.000Z'),
+      targetDate: new Date('2036-04-20T00:00:00.000Z'),
+    }])
+
+    const res = await request(app).get('/api/holidays/by-month?month=2036-04')
+
+    expect(res.status).toBe(200)
+    expect(res.body).toHaveLength(1)
+    expect(res.body[0]).toMatchObject({
+      source: 'holiday-move',
+      movedFrom: '2036-04-07',
+      holidayMoveId: 'move-1',
+    })
+    expect(new Date(res.body[0].date).toISOString()).toBe('2036-04-20T00:00:00.000Z')
   })
 })

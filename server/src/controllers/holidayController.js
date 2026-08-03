@@ -1,4 +1,5 @@
 import Holiday from '../models/Holiday.js';
+import HolidayMoveSetting from '../models/HolidayMoveSetting.js';
 
 // 設定年份限制與資料來源
 const ROC_YEAR_MIN = 1900;
@@ -56,6 +57,16 @@ function isValidDateValue(dateValue) {
   return dateValue instanceof Date && !Number.isNaN(dateValue.getTime());
 }
 
+function utcDateKey(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toISOString().slice(0, 10);
+}
+
+function asPlainObject(value) {
+  return typeof value?.toObject === 'function' ? value.toObject() : { ...value };
+}
+
 // ------------------------------------------------------------------
 // 控制器 (Controllers)
 // ------------------------------------------------------------------
@@ -75,9 +86,30 @@ export async function listHolidaysByMonth(req, res) {
     const startDate = new Date(Date.UTC(year, monthNum - 1, 1));
     const endDate = new Date(Date.UTC(year, monthNum, 1));
     
-    const holidays = await Holiday.find({
+    const [holidayDocs, moveDocs] = await Promise.all([
+      Holiday.find({
       date: { $gte: startDate, $lt: endDate }
-    }).sort({ date: 1 });
+      }).sort({ date: 1 }),
+      HolidayMoveSetting.find({ enableHolidayMove: true }),
+    ]);
+    const holidays = (holidayDocs || []).map(asPlainObject);
+    for (const rawMove of moveDocs || []) {
+      const move = asPlainObject(rawMove);
+      const sourceKey = utcDateKey(move.sourceDate);
+      const targetKey = utcDateKey(move.targetDate);
+      if (!sourceKey || !targetKey || sourceKey.slice(0, 7) !== month || targetKey.slice(0, 7) !== month) continue;
+      const sourceIndex = holidays.findIndex((holiday) => utcDateKey(holiday.date) === sourceKey);
+      if (sourceIndex < 0) continue;
+      const [source] = holidays.splice(sourceIndex, 1);
+      holidays.push({
+        ...source,
+        date: new Date(`${targetKey}T00:00:00.000Z`),
+        source: 'holiday-move',
+        movedFrom: sourceKey,
+        holidayMoveId: move._id,
+      });
+    }
+    holidays.sort((a, b) => new Date(a.date) - new Date(b.date));
     
     console.log(`[Holiday] 查詢 ${month} 假日，共 ${holidays.length} 筆`);
     res.json(holidays);

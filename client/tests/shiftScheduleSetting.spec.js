@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
 import ElementPlus from 'element-plus'
 import ShiftScheduleSetting from '../src/components/backComponents/ShiftScheduleSetting.vue'
 import { apiFetch } from '../src/api'
@@ -11,6 +11,8 @@ vi.mock('../src/api', () => ({
 describe('ShiftScheduleSetting.vue', () => {
   beforeEach(() => {
     vi.stubGlobal('fetch', vi.fn())
+    apiFetch.mockReset()
+    apiFetch.mockImplementation(() => Promise.resolve({ ok: true, json: async () => [] }))
   })
 
   afterEach(() => {
@@ -56,5 +58,30 @@ describe('ShiftScheduleSetting.vue', () => {
 
     expect(getFullYearSpy).toHaveBeenCalled()
     expect(getUTCFullYearSpy).not.toHaveBeenCalled()
+  })
+
+  it('creates a same-month national holiday move through the settings API', async () => {
+    const wrapper = mount(ShiftScheduleSetting, { global: { plugins: [ElementPlus] } })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('國定假日挪移')
+    wrapper.vm.holidayMoveForm.sourceDate = '2036-04-07'
+    wrapper.vm.holidayMoveForm.targetDate = '2036-04-20'
+    wrapper.vm.holidayMoveForm.reason = '院內排班調整'
+    wrapper.vm.holidayMoveForm.needSignature = true
+    await wrapper.vm.saveHolidayMove()
+
+    const call = apiFetch.mock.calls.find((entry) => (
+      entry[0] === '/api/holiday-move-settings' && entry[1]?.method === 'POST'
+    ))
+    expect(call).toBeTruthy()
+    expect(JSON.parse(call[1].body)).toEqual({
+      enableHolidayMove: true,
+      sourceDate: '2036-04-07',
+      targetDate: '2036-04-20',
+      reason: '院內排班調整',
+      needSignature: true,
+      needMakeup: false
+    })
   })
 })

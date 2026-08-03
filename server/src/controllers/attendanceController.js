@@ -3,6 +3,7 @@ import Employee from '../models/Employee.js';
 import AttendanceManagementSetting from '../models/AttendanceManagementSetting.js';
 import ShiftSchedule from '../models/ShiftSchedule.js';
 import AttendanceSetting from '../models/AttendanceSetting.js';
+import { classifyShift } from '../services/laborRuleValidationService.js';
 import {
   buildScheduleDate,
   computeActionWindow,
@@ -230,6 +231,13 @@ export async function createRecord(req, res) {
       const todayContext = contexts.find((ctx) => todayKey !== undefined && ctx.scheduleDateMs === todayKey);
       const previousContext = contexts.find((ctx) => previousKey !== undefined && ctx.scheduleDateMs === previousKey);
       const selectedContext = activeContext || todayContext || previousContext || contexts[0];
+
+      if (action === 'clockIn' && classifyShift(selectedContext.shift).isRegularRest) {
+        return res.status(400).json({
+          error: '例假不得打卡或加班',
+          rule: 'regular-rest-attendance',
+        });
+      }
 
       const actionWindow = computeActionWindow(
         action,

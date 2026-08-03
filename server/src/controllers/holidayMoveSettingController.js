@@ -1,4 +1,28 @@
 import HolidayMoveSetting from '../models/HolidayMoveSetting.js';
+import Holiday from '../models/Holiday.js';
+
+const ALLOWED_FIELDS = [
+  'enableHolidayMove',
+  'needSignature',
+  'needMakeup',
+  'sourceDate',
+  'targetDate',
+  'reason',
+];
+
+function settingPayload(body = {}) {
+  return Object.fromEntries(
+    ALLOWED_FIELDS
+      .filter((field) => Object.prototype.hasOwnProperty.call(body, field))
+      .map((field) => [field, body[field]]),
+  );
+}
+
+async function assertSourceHoliday(setting) {
+  if (!setting.sourceDate) return;
+  const exists = await Holiday.exists({ date: setting.sourceDate });
+  if (!exists) throw new Error('sourceDate must reference an existing national holiday');
+}
 
 export async function listSettings(req, res) {
   try {
@@ -11,7 +35,9 @@ export async function listSettings(req, res) {
 
 export async function createSetting(req, res) {
   try {
-    const setting = new HolidayMoveSetting(req.body);
+    const setting = new HolidayMoveSetting(settingPayload(req.body));
+    await setting.validate();
+    await assertSourceHoliday(setting);
     await setting.save();
     res.status(201).json(setting);
   } catch (err) {
@@ -31,10 +57,12 @@ export async function getSetting(req, res) {
 
 export async function updateSetting(req, res) {
   try {
-    const setting = await HolidayMoveSetting.findByIdAndUpdate(req.params.id, req.body, {
-      new: true
-    });
+    const setting = await HolidayMoveSetting.findById(req.params.id);
     if (!setting) return res.status(404).json({ error: 'Not found' });
+    Object.assign(setting, settingPayload(req.body));
+    await setting.validate();
+    await assertSourceHoliday(setting);
+    await setting.save();
     res.json(setting);
   } catch (err) {
     res.status(400).json({ error: err.message });

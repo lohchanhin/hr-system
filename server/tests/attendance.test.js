@@ -239,6 +239,34 @@ describe('Attendance API', () => {
     );
   });
 
+  it('rejects clock-in on a regular rest day', async () => {
+    currentUser = { id: 'emp1', role: 'employee' };
+    const scheduleDate = new Date(Date.UTC(2024, 0, 1));
+    setupScheduleMocks({
+      schedules: [{ _id: 'sched1', employee: 'emp1', date: scheduleDate, shiftId: 'regular-rest' }],
+      shifts: [{
+        _id: 'regular-rest',
+        code: 'REG',
+        name: '例假',
+        startTime: '09:00',
+        endTime: '18:00',
+      }],
+    });
+
+    const res = await request(app).post('/api/attendance').send({
+      action: 'clockIn',
+      employee: 'emp1',
+      remark: 'CODEX_TEST_REGULAR_REST',
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({
+      error: '例假不得打卡或加班',
+      rule: 'regular-rest-attendance',
+    });
+    expect(saveMock).not.toHaveBeenCalled();
+  });
+
   it('rejects clockIn before allowed window', async () => {
     Date.now.mockReturnValue(Date.parse('2023-12-31T23:30:00.000Z'));
     currentUser = { id: 'emp1', role: 'employee' };

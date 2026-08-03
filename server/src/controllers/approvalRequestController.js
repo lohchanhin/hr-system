@@ -166,6 +166,16 @@ function buildDecisionList(employeeIds) {
   return employeeIds.map(id => ({ approver: id, decision: 'pending' }))
 }
 
+function assertRequiredApprovers(steps) {
+  const missingIndex = (steps || []).findIndex(step => (
+    step?.is_required !== false && !(step?.approvers || []).length
+  ))
+  if (missingIndex < 0) return
+  const error = new Error(`required approval step ${missingIndex + 1} has no approver`)
+  error.code = 'REQUIRED_APPROVER_MISSING'
+  throw error
+}
+
 async function notifyUsers(userIds, message) {
   // TODO: 串你的通知系統（站內信/Email/Line 等）
   // console.log('notify', userIds, message)
@@ -272,7 +282,7 @@ export async function createApprovalRequest(req, res) {
       const normalizedConfig = {
         approvers: sortedApproverIds,
         all_must_approve: !!s.all_must_approve,
-        is_required: !!s.is_required,
+        is_required: s.is_required !== false,
         can_return: !!s.can_return,
       }
       const signature = JSON.stringify(normalizedConfig)
@@ -294,6 +304,7 @@ export async function createApprovalRequest(req, res) {
     reqSteps.forEach((step, index) => {
       step.step_order = index + 1
     })
+    assertRequiredApprovers(reqSteps)
     // 第一關時間標記
     if (reqSteps[0]) reqSteps[0].started_at = new Date()
 
@@ -670,6 +681,16 @@ export async function actOnApproval(req, res) {
       return res.json(doc)
     }
 
+    if (decision === 'approve') {
+      const form = await FormTemplate.findById(normalizeId(doc.form))
+      if (!form) return res.status(409).json({ error: 'form not available' })
+      await assertApprovalRequestCompliance({
+        form,
+        formData: doc.form_data || {},
+        applicantEmployeeId: doc.applicant_employee,
+      })
+    }
+
     me.decision = decision === 'reject' ? 'rejected' : 'approved'
     me.comment = comment
     me.decided_at = new Date()
@@ -698,6 +719,12 @@ export async function actOnApproval(req, res) {
     return res.json(fresh || doc)
   } catch (error) {
     if (approvalConflictResponse(error, res)) return
+    if (isLaborRuleValidationError(error)) {
+      return res.status(error.status || 400).json({
+        error: error.message,
+        violations: error.violations || [],
+      })
+    }
     return res.status(400).json({ error: error.message })
   }
 }
@@ -741,6 +768,7 @@ export async function resubmitApprovalRequest(req, res) {
 
     const form = await FormTemplate.findById(doc.form)
     if (!form?.is_active) return res.status(409).json({ error: 'form not available' })
+    assertRequiredApprovers(doc.steps)
     await assertApprovalRequestCompliance({
       form,
       formData: doc.form_data || {},

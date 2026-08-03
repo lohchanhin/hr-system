@@ -126,7 +126,7 @@ describe('createApprovalRequest', () => {
     })
   })
 
-  it('skips empty initial step when applicant has no supervisor', async () => {
+  it('rejects a required manager step when applicant has no supervisor', async () => {
     mockFormTemplate.findById.mockResolvedValue({ _id: 'form1', name: '外出單', is_active: true })
     mockApprovalWorkflow.findOne.mockResolvedValue({
       _id: 'wf1',
@@ -138,6 +138,25 @@ describe('createApprovalRequest', () => {
     })
     mockEmployee.findById.mockResolvedValue({ _id: 'emp1', supervisor: null })
 
+    const res = makeRes()
+    await createApprovalRequest(makeCreateReq({ form_id: 'form1', form_data: {}, applicant_employee_id: 'emp1' }), res)
+
+    expect(res.status).toHaveBeenCalledWith(400)
+    expect(res.json).toHaveBeenCalledWith({ error: 'required approval step 1 has no approver' })
+    expect(mockApprovalRequest.create).not.toHaveBeenCalled()
+  })
+
+  it('skips an optional workflow step that resolves to no approver', async () => {
+    mockFormTemplate.findById.mockResolvedValue({ _id: 'form1', name: '外出單', is_active: true })
+    mockApprovalWorkflow.findOne.mockResolvedValue({
+      _id: 'wf1',
+      form: 'form1',
+      steps: [
+        { step_order: 1, approver_type: 'manager', approver_value: 'APPLICANT_SUPERVISOR', is_required: false },
+        { step_order: 2, approver_type: 'user', approver_value: ['lead1'], is_required: true },
+      ],
+    })
+    mockEmployee.findById.mockResolvedValue({ _id: 'emp1', supervisor: null })
     let createdDoc
     mockApprovalRequest.create.mockImplementation(async (payload) => {
       createdDoc = buildMockDoc(payload)
@@ -146,12 +165,10 @@ describe('createApprovalRequest', () => {
     })
 
     const res = makeRes()
-    await createApprovalRequest(makeCreateReq({ form_id: 'form1', form_data: {}, applicant_employee_id: 'emp1' }), res)
+    await createApprovalRequest(makeCreateReq({ form_id: 'form1', form_data: {} }), res)
 
     expect(res.status).toHaveBeenCalledWith(201)
     expect(createdDoc.current_step_index).toBe(1)
-    expect(createdDoc.steps[0].finished_at).toBeInstanceOf(Date)
-    expect(createdDoc.steps[1].started_at).toBeInstanceOf(Date)
   })
 
   it('merges consecutive steps with identical approvers and config', async () => {
@@ -270,6 +287,41 @@ describe('actOnApproval authorization', () => {
 
     expect(res.status).toHaveBeenCalledWith(404)
     expect(res.json).toHaveBeenCalledWith({ error: 'not found' })
+    expect(doc.save).not.toHaveBeenCalled()
+  })
+
+  it('revalidates labor rules before approving and keeps the request pending on failure', async () => {
+    const doc = buildMockDoc({
+      form: 'form1',
+      form_data: { start: '2038-03-16T09:00:00.000Z', end: '2038-03-16T12:00:00.000Z' },
+      applicant_employee: 'emp1',
+      status: 'pending',
+      current_step_index: 0,
+      steps: [{ approvers: [{ approver: 'sup1', decision: 'pending' }] }],
+      logs: [],
+    })
+    mockApprovalRequest.findById.mockResolvedValue(doc)
+    mockFormTemplate.findById.mockResolvedValue({ _id: 'form1', name: '加班申請', is_active: true })
+    const error = new Error('加班規範檢核未通過')
+    error.status = 400
+    error.violations = [{ rule: 'monthly-overtime-hours', minutes: 2820 }]
+    mockAssertApprovalRequestCompliance.mockRejectedValue(error)
+    const res = makeRes()
+
+    await actOnApproval({
+      params: { id: 'req1' },
+      user: { id: 'sup1', role: 'supervisor' },
+      body: { decision: 'approve' },
+    }, res)
+
+    expect(mockAssertApprovalRequestCompliance).toHaveBeenCalledWith({
+      form: expect.objectContaining({ _id: 'form1' }),
+      formData: doc.form_data,
+      applicantEmployeeId: 'emp1',
+    })
+    expect(res.status).toHaveBeenCalledWith(400)
+    expect(res.json).toHaveBeenCalledWith({ error: error.message, violations: error.violations })
+    expect(doc.steps[0].approvers[0].decision).toBe('pending')
     expect(doc.save).not.toHaveBeenCalled()
   })
 })
