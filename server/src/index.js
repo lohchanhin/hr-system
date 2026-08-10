@@ -8,6 +8,7 @@ import Employee from './models/Employee.js';
 import employeeRoutes from './routes/employeeRoutes.js';
 import attendanceRoutes from './routes/attendanceRoutes.js';
 import authRoutes from './routes/authRoutes.js';
+import { migrateMissingShiftSemantics } from './services/shiftSemanticService.js';
 import { authenticate, authorizeRoles } from './middleware/auth.js';
 import scheduleRoutes from './routes/scheduleRoutes.js';
 import payrollRoutes from './routes/payrollRoutes.js';
@@ -302,6 +303,10 @@ async function start() {
   try {
     assertSecureRuntimeConfig();
     await connectDB(process.env.MONGODB_URI);
+    const migratedShiftSemantics = await migrateMissingShiftSemantics();
+    if (migratedShiftSemantics) {
+      console.log(`Migrated semantic types for ${migratedShiftSemantics} shifts`);
+    }
     await ensureAdminUser();
     await ensureDefaultSupervisorReports();
     await initializeLaborInsuranceRates();

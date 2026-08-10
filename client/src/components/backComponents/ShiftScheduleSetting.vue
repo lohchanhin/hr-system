@@ -240,6 +240,8 @@
                   <el-option label="工作班" value="work" />
                   <el-option label="休息日" value="rest_day" />
                   <el-option label="例假" value="regular_rest" />
+                  <el-option label="國定假日" value="holiday" />
+                  <el-option label="請假" value="leave" />
                 </el-select>
               </el-form-item>
               <el-form-item label="上班時間" required>

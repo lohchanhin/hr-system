@@ -8,7 +8,6 @@ const attendanceSettingSchema = new mongoose.Schema({
       semanticType: {
         type: String,
         enum: ['work', 'rest_day', 'regular_rest', 'holiday', 'leave'],
-        default: 'work',
       },
       startTime: String,
       endTime: String,

@@ -1,5 +1,6 @@
 import AttendanceSetting from '../models/AttendanceSetting.js';
 import { parseTimeString } from '../utils/timeWindow.js';
+import { resolveShiftSemanticType } from '../services/shiftSemanticService.js';
 
 function validateTimeField(value, label) {
   if (!value || typeof value !== 'string' || !parseTimeString(value)) {
@@ -56,9 +57,7 @@ function buildShiftPayload(input, existing = {}) {
   const payload = {
     name,
     code,
-    semanticType: ['work', 'rest_day', 'regular_rest', 'holiday', 'leave'].includes(merged.semanticType)
-      ? merged.semanticType
-      : (/例/.test(`${code} ${name}`) ? 'regular_rest' : /休|OFF|REST/i.test(`${code} ${name}`) ? 'rest_day' : 'work'),
+    semanticType: resolveShiftSemanticType({ ...merged, name, code, startTime, endTime }),
     startTime,
     endTime,
     breakTime: merged.breakTime,

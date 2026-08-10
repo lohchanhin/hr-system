@@ -6,6 +6,7 @@ import Holiday from '../models/Holiday.js';
 import HolidayMoveSetting from '../models/HolidayMoveSetting.js';
 import { computeShiftSpan } from '../utils/timeWindow.js';
 import { getLeaveFieldIds } from './leaveFieldService.js';
+import { resolveShiftSemanticType } from './shiftSemanticService.js';
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const MS_PER_MINUTE = 60 * 1000;
@@ -107,27 +108,10 @@ async function loadLaborRulePolicy() {
   };
 }
 
-function getShiftText(shift) {
-  return [shift?.code, shift?.name, shift?.remark]
-    .filter(Boolean)
-    .map((item) => String(item).trim())
-    .join(' ');
-}
-
 export function classifyShift(shift) {
-  const text = getShiftText(shift);
-  const code = String(shift?.code || '').trim().toUpperCase();
-  const name = String(shift?.name || '').trim().toUpperCase();
-  const semanticType = normalizeLabel(shift?.semanticType);
-  const isRegularRest = semanticType === 'regular_rest' || /例|例假/.test(text);
-  const isRestDay = !isRegularRest && (
-    semanticType === 'rest_day' ||
-    /休/.test(text) ||
-    code === 'OFF' ||
-    code === 'REST' ||
-    name === 'OFF' ||
-    name === 'REST'
-  );
+  const semanticType = resolveShiftSemanticType(shift);
+  const isRegularRest = semanticType === 'regular_rest';
+  const isRestDay = semanticType === 'rest_day';
   return {
     isRegularRest,
     isRestDay,
