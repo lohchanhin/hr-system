@@ -55,32 +55,9 @@ export default defineConfig(({ mode }) => {
       testTimeout: 10000,
     },
     build: {
-      rolldownOptions: {
-        output: {
-          codeSplitting: {
-            groups: [
-              {
-                name: 'element-plus',
-                test: /node_modules[\\/]element-plus/,
-                maxSize: 400000,
-                priority: 30,
-              },
-              {
-                name: 'vue-vendor',
-                test: /node_modules[\\/](vue|vue-router|pinia|@vue)[\\/]/,
-                maxSize: 300000,
-                priority: 20,
-              },
-              {
-                name: 'vendor',
-                test: /node_modules/,
-                maxSize: 400000,
-                priority: 10,
-              },
-            ],
-          },
-        },
-      },
+      // Route components are already loaded lazily. Let Rolldown preserve its
+      // dependency graph so framework internals are never split into cycles.
+      chunkSizeWarningLimit: 1000,
     },
   }
 

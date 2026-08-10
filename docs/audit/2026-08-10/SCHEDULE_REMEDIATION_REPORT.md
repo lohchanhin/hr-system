@@ -29,6 +29,7 @@
 | 搜尋正規式風險 | 搜尋字串跳脫並限制長度，避免 operator/regex 注入與資源耗盡 | 控制器回歸測試 |
 | PDF 字型不可靠 | 共用繁中字型解析器；找不到字型時回傳明确 503，不再輸出乱码文件 | 本機实际 PDF 生成验证 |
 | 前端 High 依賴與大 chunk | 鎖定安全版 `nanoid`，生产代码分块 | 两端 audit 0；build 无大 chunk 警告 |
+| Element Plus 冷啟動白屏 | 移除會切斷框架內部循環相依的細粒度分包，保留路由 lazy loading | 本地 production preview 冷啟動、重載均無 console error |
 
 ## 規範結果
 
@@ -46,7 +47,7 @@
 - 前端：`43/43` 个测试文件、`281/281` 项通过。
 - 客户公版汇入实档：识别 `8` 名员工、`31` 个日期栏位。
 - 客户汇出范例实档：识别 `8` 名员工、`31` 个日期栏位。
-- 前端 production build：通过，最大 JS chunk `492.57 kB`，无 500 kB 警告。
+- 前端 production build：通过，最大入口 chunk `915.29 kB`（gzip `292.41 kB`），路由页面保持 lazy loading；production preview 冷启动无白屏或 console error。
 - 后端与前端 `npm audit --audit-level=high`：均为 `0 vulnerabilities`。
 - `git diff --check`：通过；仅有 Windows 行尾提示，无空白错误。
 
