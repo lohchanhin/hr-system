@@ -8,6 +8,9 @@ const ALLOWED_FIELDS = [
   'sourceDate',
   'targetDate',
   'reason',
+  'agreementReference',
+  'agreementDate',
+  'makeupConfirmed',
 ];
 
 function settingPayload(body = {}) {
@@ -36,6 +39,7 @@ export async function listSettings(req, res) {
 export async function createSetting(req, res) {
   try {
     const setting = new HolidayMoveSetting(settingPayload(req.body));
+    setting.updatedBy = req.user?.userId || req.user?.id;
     await setting.validate();
     await assertSourceHoliday(setting);
     await setting.save();
@@ -60,6 +64,7 @@ export async function updateSetting(req, res) {
     const setting = await HolidayMoveSetting.findById(req.params.id);
     if (!setting) return res.status(404).json({ error: 'Not found' });
     Object.assign(setting, settingPayload(req.body));
+    setting.updatedBy = req.user?.userId || req.user?.id;
     await setting.validate();
     await assertSourceHoliday(setting);
     await setting.save();

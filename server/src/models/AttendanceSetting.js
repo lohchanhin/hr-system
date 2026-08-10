@@ -5,6 +5,11 @@ const attendanceSettingSchema = new mongoose.Schema({
     {
       name: String,
       code: String,
+      semanticType: {
+        type: String,
+        enum: ['work', 'rest_day', 'regular_rest', 'holiday', 'leave'],
+        default: 'work',
+      },
       startTime: String,
       endTime: String,
       breakTime: String,
@@ -59,6 +64,23 @@ const attendanceSettingSchema = new mongoose.Schema({
     weekdayThreshold: Number,
     holidayRate: Number,
     toCompRate: Number
+  },
+  laborRules: {
+    workTimeRegime: {
+      type: String,
+      enum: ['standard', 'two_week', 'four_week', 'eight_week'],
+      default: 'standard',
+    },
+    workTimeRegimeApprovalReference: { type: String, trim: true, maxlength: 200, default: '' },
+    minShiftRestMinutes: { type: Number, default: 660, min: 480, max: 1440 },
+    restIntervalExceptionEnabled: { type: Boolean, default: false },
+    restIntervalExceptionMinutes: { type: Number, default: 480, min: 480, max: 660 },
+    restIntervalApprovalReference: { type: String, trim: true, maxlength: 200, default: '' },
+    extendedOvertimeEnabled: { type: Boolean, default: false },
+    monthlyOvertimeHours: { type: Number, default: 46, min: 1, max: 54 },
+    threeMonthOvertimeHours: { type: Number, default: 138, min: 1, max: 138 },
+    overtimeApprovalReference: { type: String, trim: true, maxlength: 200, default: '' },
+    strictCompanyWeeklyRest: { type: Boolean, default: true },
   },
   actionBuffers: {
     clockIn: {

@@ -6,26 +6,7 @@ import { calculateCompleteWorkData } from './workHoursCalculationService.js';
 import { aggregateBonusFromApprovals } from '../utils/payrollPreviewUtils.js';
 import ApprovalRequest from '../models/approval_request.js';
 import mongoose from 'mongoose';
-import path from 'path';
-import { fileURLToPath } from 'url';
-import fs from 'fs';
-
-// Get directory name for ES modules
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-// Path to Chinese font for PDF generation
-// Can be overridden by environment variable PDF_CHINESE_FONT_PATH
-const DEFAULT_FONT_PATH = path.join(__dirname, '../../fonts/NotoSansCJKtc-Regular.otf');
-const CHINESE_FONT_PATH = process.env.PDF_CHINESE_FONT_PATH || DEFAULT_FONT_PATH;
-
-// Validate font path on module load
-if (!fs.existsSync(CHINESE_FONT_PATH)) {
-  console.warn('警告：繁體中文字型檔案不存在 / Warning: Traditional Chinese font file not found');
-  console.warn(`路徑 / Path: ${CHINESE_FONT_PATH}`);
-  console.warn('PDF 匯出可能會顯示亂碼。請執行字型安裝腳本：./setup-fonts.sh');
-  console.warn('PDF export may show garbled text. Please run font installation script: ./setup-fonts.sh');
-}
+import { registerTraditionalChinesePdfFont } from './pdfFontService.js';
 
 /**
  * 格式化貨幣
@@ -250,15 +231,10 @@ export async function generateMonthlyPayrollOverviewPdf(month, filters = {}) {
 
     // Register Chinese font
     try {
-      doc.registerFont('NotoSansCJK', CHINESE_FONT_PATH);
-      doc.font('NotoSansCJK');
+      registerTraditionalChinesePdfFont(doc, 'NotoSansCJK');
     } catch (error) {
-      console.error('警告：無法載入繁體中文字型，PDF 中的中文可能會顯示為亂碼或方框');
-      console.error('Warning: Failed to load Traditional Chinese font. Chinese characters in PDF may appear garbled or as boxes.');
-      console.error('請確認字型檔案存在：Please ensure font file exists:', CHINESE_FONT_PATH);
-      console.error('執行字型安裝腳本：Run font installation script: ./setup-fonts.sh');
-      console.error(error);
-      // Fallback to default font - Chinese text will not display correctly
+      reject(error);
+      return;
     }
 
     // Collect chunks

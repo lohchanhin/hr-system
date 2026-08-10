@@ -22,6 +22,7 @@ const mockShiftSchedule = {
   findById: jest.fn(),
   findByIdAndDelete: jest.fn(),
   startSession: jest.fn(),
+  bulkWrite: jest.fn(),
 };
 
 const mockApprovalRequest = { findOne: jest.fn(), find: jest.fn() };
@@ -29,6 +30,7 @@ const mockApprovalRequest = { findOne: jest.fn(), find: jest.fn() };
 const mockEmployee = { find: jest.fn(), findById: jest.fn() };
 const mockAttendanceSetting = { findOne: jest.fn() };
 const mockDepartment = { find: jest.fn() };
+const mockHoliday = { find: jest.fn() };
 
 const mockGetLeaveFieldIds = jest.fn();
 const mockIsTokenBlacklisted = jest.fn();
@@ -94,6 +96,7 @@ jest.unstable_mockModule('../src/models/approval_request.js', () => ({ default: 
 jest.unstable_mockModule('../src/models/Employee.js', () => ({ default: mockEmployee }));
 jest.unstable_mockModule('../src/models/AttendanceSetting.js', () => ({ default: mockAttendanceSetting }));
 jest.unstable_mockModule('../src/models/Department.js', () => ({ default: mockDepartment }));
+jest.unstable_mockModule('../src/models/Holiday.js', () => ({ default: mockHoliday }));
 jest.unstable_mockModule('../src/services/leaveFieldService.js', () => ({
   getLeaveFieldIds: mockGetLeaveFieldIds,
 }));
@@ -137,6 +140,7 @@ beforeEach(() => {
   mockShiftSchedule.findById.mockReset();
   mockShiftSchedule.findByIdAndDelete.mockReset();
   mockShiftSchedule.startSession.mockReset();
+  mockShiftSchedule.bulkWrite.mockReset();
 
   mockApprovalRequest.findOne.mockReset();
   mockApprovalRequest.find.mockReset();
@@ -174,6 +178,8 @@ beforeEach(() => {
     select: jest.fn().mockReturnThis(),
     lean: jest.fn().mockResolvedValue([])
   });
+  mockHoliday.find.mockReset();
+  mockHoliday.find.mockReturnValue({ lean: jest.fn().mockResolvedValue([]) });
 
 });
 
@@ -283,7 +289,13 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
 
   it('rejects creation if leave conflict', async () => {
     mockShiftSchedule.findOne.mockResolvedValue(null);
-    mockApprovalRequest.findOne.mockResolvedValue({ _id: 'a1' });
+    mockApprovalRequest.find.mockReturnValue({
+      select: jest.fn().mockReturnThis(),
+      lean: jest.fn().mockResolvedValue([{
+        applicant_employee: 'e1',
+        form_data: { s: '2023-01-01', e: '2023-01-01', t: '特休' },
+      }]),
+    });
     const res = await request(app)
       .post('/api/schedules')
       .send({ employee: 'e1', date: '2023-01-01', shiftId: 's1' });
@@ -1107,11 +1119,68 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
 
   it('rejects batch if leave conflict', async () => {
     mockShiftSchedule.findOne.mockResolvedValue(null);
-    mockApprovalRequest.findOne.mockResolvedValue({ _id: 'a1' });
+    mockApprovalRequest.find.mockReturnValue({
+      select: jest.fn().mockReturnThis(),
+      lean: jest.fn().mockResolvedValue([{
+        applicant_employee: 'e1',
+        form_data: { s: '2023-01-01', e: '2023-01-01', t: '特休' },
+      }]),
+    });
     const payload = { schedules: [{ employee: 'e1', date: '2023-01-01', shiftId: 'day' }] };
     const res = await request(app).post('/api/schedules/batch').send(payload);
     expect(res.status).toBe(400);
     expect(res.body).toEqual({ error: 'leave conflict' });
+  });
+
+  it('previews and commits the public schedule workbook without overwriting existing data', async () => {
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet('工作表1');
+    sheet.addRow(['公版班表']);
+    sheet.addRow(['', '', '行事曆']);
+    sheet.addRow(['', '', '日期', 1]);
+    sheet.addRow(['員工代號', '姓名', '星期', '三']);
+    sheet.addRow(['A001', '測試員工', '護理師', 'D']);
+    const file = Buffer.from(await workbook.xlsx.writeBuffer());
+
+    mockEmployee.find.mockReturnValue({
+      select: jest.fn().mockReturnThis(),
+      lean: jest.fn().mockResolvedValue([{
+        _id: 'e1', employeeId: 'A001', name: '測試員工', department: 'd1', subDepartment: 'sd1',
+      }]),
+    });
+    mockAttendanceSetting.findOne.mockReturnValue({
+      lean: jest.fn().mockResolvedValue({ shifts: [{ _id: 'day', code: 'D', name: '日班' }] }),
+    });
+    mockShiftSchedule.find.mockReturnValue({ lean: jest.fn().mockResolvedValue([]) });
+    mockApprovalRequest.find.mockReturnValue({
+      select: jest.fn().mockReturnThis(),
+      lean: jest.fn().mockResolvedValue([]),
+    });
+    mockShiftSchedule.bulkWrite.mockResolvedValue({ upsertedCount: 1 });
+
+    const preview = await request(app)
+      .post('/api/schedules/import')
+      .set('Authorization', buildAuthHeader('admin'))
+      .field('month', '2026-07')
+      .field('department', 'd1')
+      .field('mode', 'preview')
+      .attach('file', file, { filename: 'schedule.xlsx', contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+
+    expect(preview.status).toBe(200);
+    expect(preview.body).toEqual(expect.objectContaining({ scheduleDays: 1, errors: [] }));
+    expect(mockShiftSchedule.bulkWrite).not.toHaveBeenCalled();
+
+    const committed = await request(app)
+      .post('/api/schedules/import')
+      .set('Authorization', buildAuthHeader('admin'))
+      .field('month', '2026-07')
+      .field('department', 'd1')
+      .field('mode', 'commit')
+      .attach('file', file, { filename: 'schedule.xlsx', contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+
+    expect(committed.status).toBe(201);
+    expect(committed.body.imported).toBe(1);
+    expect(mockShiftSchedule.bulkWrite).toHaveBeenCalledTimes(1);
   });
 
   it('lists leave approvals', async () => {
@@ -1388,7 +1457,7 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
       select: jest.fn().mockReturnThis(),
       populate: jest.fn().mockReturnThis(),
       lean: jest.fn().mockResolvedValue([
-        { _id: { toString: () => 'empA' }, name: 'Alice', title: '', practiceTitle: '', subDepartment: { name: 'A單位' } },
+        { _id: { toString: () => 'empA' }, employeeId: 'A001', name: 'Alice', title: '', practiceTitle: '', subDepartment: { name: 'A單位' } },
       ]),
     });
     mockApprovalRequest.find.mockReturnValue({
@@ -1436,12 +1505,13 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
 
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.load(toBuffer(res.body));
-    const worksheet = workbook.getWorksheet('Schedules') || workbook.getWorksheet('排班表');
-    expect(worksheet.rowCount).toBe(2);
-    const dataRow = worksheet.getRow(2).values;
-    expect(dataRow[1]).toBe('Alice');
-    expect(dataRow[2]).toBe('A單位');
-    expect(dataRow[3]).toBe('-');
+    const worksheet = workbook.getWorksheet('工作表1');
+    expect(worksheet.rowCount).toBeGreaterThanOrEqual(5);
+    expect(worksheet.getRow(4).values.slice(1, 4)).toEqual(['員工代號', '姓名', '星期']);
+    const dataRow = worksheet.getRow(5).values;
+    expect(dataRow[1]).toBe('A001');
+    expect(dataRow[2]).toBe('Alice');
+    expect(dataRow[3]).toBe('');
     expect(dataRow[13]).toBe('Morning');
   });
 

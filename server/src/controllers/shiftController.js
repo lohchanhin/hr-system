@@ -56,6 +56,9 @@ function buildShiftPayload(input, existing = {}) {
   const payload = {
     name,
     code,
+    semanticType: ['work', 'rest_day', 'regular_rest', 'holiday', 'leave'].includes(merged.semanticType)
+      ? merged.semanticType
+      : (/例/.test(`${code} ${name}`) ? 'regular_rest' : /休|OFF|REST/i.test(`${code} ${name}`) ? 'rest_day' : 'work'),
     startTime,
     endTime,
     breakTime: merged.breakTime,

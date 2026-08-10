@@ -14,7 +14,6 @@ const MAX_REGULAR_WORK_MINUTES_PER_DAY = 8 * 60;
 const MAX_TOTAL_WORK_MINUTES_PER_DAY = 12 * 60;
 const MAX_CONTINUOUS_NON_REST_DAYS = 6;
 const MAX_DAILY_OVERTIME_MINUTES = 4 * 60;
-const MAX_MONTHLY_OVERTIME_MINUTES = 46 * 60;
 
 class LaborRuleValidationError extends Error {
   constructor(message, violations = []) {
@@ -84,6 +83,30 @@ async function loadShiftMap() {
   return map;
 }
 
+async function loadLaborRulePolicy() {
+  const query = AttendanceSetting.findOne();
+  const setting = query && typeof query.lean === 'function' ? await query.lean() : await query;
+  const rules = setting?.laborRules || {};
+  const restExceptionEnabled = Boolean(
+    rules.restIntervalExceptionEnabled && String(rules.restIntervalApprovalReference || '').trim(),
+  );
+  const extendedOvertimeEnabled = Boolean(
+    rules.extendedOvertimeEnabled && String(rules.overtimeApprovalReference || '').trim(),
+  );
+  return {
+    workTimeRegime: rules.workTimeRegime || 'standard',
+    minShiftRestMinutes: restExceptionEnabled
+      ? Math.max(Number(rules.restIntervalExceptionMinutes) || 480, 480)
+      : Math.max(Number(rules.minShiftRestMinutes) || MIN_REST_BETWEEN_SHIFTS_MINUTES, MIN_REST_BETWEEN_SHIFTS_MINUTES),
+    monthlyOvertimeMinutes: (extendedOvertimeEnabled
+      ? Math.min(Number(rules.monthlyOvertimeHours) || 54, 54)
+      : Math.min(Number(rules.monthlyOvertimeHours) || 46, 46)) * 60,
+    threeMonthOvertimeMinutes: Math.min(Number(rules.threeMonthOvertimeHours) || 138, 138) * 60,
+    extendedOvertimeEnabled,
+    strictCompanyWeeklyRest: rules.strictCompanyWeeklyRest !== false,
+  };
+}
+
 function getShiftText(shift) {
   return [shift?.code, shift?.name, shift?.remark]
     .filter(Boolean)
@@ -95,8 +118,10 @@ export function classifyShift(shift) {
   const text = getShiftText(shift);
   const code = String(shift?.code || '').trim().toUpperCase();
   const name = String(shift?.name || '').trim().toUpperCase();
-  const isRegularRest = /例|例假/.test(text);
+  const semanticType = normalizeLabel(shift?.semanticType);
+  const isRegularRest = semanticType === 'regular_rest' || /例|例假/.test(text);
   const isRestDay = !isRegularRest && (
+    semanticType === 'rest_day' ||
     /休/.test(text) ||
     code === 'OFF' ||
     code === 'REST' ||
@@ -248,7 +273,7 @@ function validateDailyHours(grouped, shiftMap) {
   return violations;
 }
 
-function validateShiftGap(grouped, shiftMap) {
+function validateShiftGap(grouped, shiftMap, minRestMinutes = MIN_REST_BETWEEN_SHIFTS_MINUTES) {
   const violations = [];
   for (const [employee, schedules] of grouped) {
     const workSpans = schedules
@@ -264,11 +289,11 @@ function validateShiftGap(grouped, shiftMap) {
       const previous = workSpans[index - 1];
       const current = workSpans[index];
       const gapMinutes = Math.round((current.start.getTime() - previous.end.getTime()) / MS_PER_MINUTE);
-      if (gapMinutes < MIN_REST_BETWEEN_SHIFTS_MINUTES) {
+      if (gapMinutes < minRestMinutes) {
         violations.push(makeViolation(
           'shift-gap',
-          `班與班之間需間隔11小時：${dateKey(previous.schedule.date)} 到 ${dateKey(current.schedule.date)} 僅間隔 ${(gapMinutes / 60).toFixed(1)} 小時`,
-          { employee, previousDate: dateKey(previous.schedule.date), date: dateKey(current.schedule.date), gapMinutes },
+          `班與班之間需間隔 ${(minRestMinutes / 60).toFixed(1)} 小時：${dateKey(previous.schedule.date)} 到 ${dateKey(current.schedule.date)} 僅間隔 ${(gapMinutes / 60).toFixed(1)} 小時`,
+          { employee, previousDate: dateKey(previous.schedule.date), date: dateKey(current.schedule.date), gapMinutes, requiredMinutes: minRestMinutes },
         ));
       }
     }
@@ -426,7 +451,7 @@ export async function assertScheduleRuleCompliance({
   const normalizedCandidates = uniqueByEmployeeDate(candidateSchedules);
   if (!normalizedCandidates.length && !range) return { ok: true, violations: [] };
 
-  const shiftMap = await loadShiftMap();
+  const [shiftMap, policy] = await Promise.all([loadShiftMap(), loadLaborRulePolicy()]);
   const employeeIds = Array.from(new Set(normalizedCandidates.map((item) => item.employee).filter(Boolean)));
   if (!employeeIds.length) return { ok: true, violations: [] };
 
@@ -447,9 +472,10 @@ export async function assertScheduleRuleCompliance({
   ]);
   const violations = [
     ...validateDailyHours(grouped, shiftMap),
-    ...validateShiftGap(grouped, shiftMap),
+    ...validateShiftGap(grouped, shiftMap, policy.minShiftRestMinutes),
     ...validateContinuousNonRestDays(grouped, shiftMap, validationRange, leaveDaysMap, holidayDays),
   ];
+  // The customer's internal policy remains stricter than flexible-work-time minima.
   if (strictWeeklyRest) {
     violations.push(...validateWeeklyRest(grouped, shiftMap, validationRange));
   }
@@ -465,11 +491,13 @@ function normalizeLabel(value) {
 }
 
 function isOvertimeForm(form) {
+  if (normalizeLabel(form?.semanticType) === 'overtime') return true;
   const name = normalizeLabel(form?.name);
   return name.includes('加班') || name.includes('overtime');
 }
 
 function isLeaveForm(form) {
+  if (normalizeLabel(form?.semanticType) === 'leave') return true;
   const name = normalizeLabel(form?.name);
   return name.includes('請假') || name.includes('leave');
 }
@@ -619,12 +647,14 @@ async function loadScheduleForDate(employeeId, date) {
   return query;
 }
 
-async function loadApprovedOvertimeApprovals({ formId, employeeId }) {
-  return resolveLean(ApprovalRequest.find({
-    form: formId,
+async function loadApprovedOvertimeApprovals({ employeeId }) {
+  let query = ApprovalRequest.find({
     status: 'approved',
     applicant_employee: employeeId,
-  }));
+  });
+  if (query && typeof query.populate === 'function') query = query.populate('form');
+  if (query && typeof query.lean === 'function') return query.lean();
+  return query || [];
 }
 
 async function loadNearbySchedules(employeeId, payload) {
@@ -636,7 +666,7 @@ async function loadNearbySchedules(employeeId, payload) {
   }));
 }
 
-function validateOvertimeShiftGap({ employeeId, payload, schedule, schedules, shiftMap }) {
+function validateOvertimeShiftGap({ employeeId, payload, schedule, schedules, shiftMap, minRestMinutes }) {
   const currentDate = dateKey(schedule?.date);
   const currentSpan = getWorkSpan(schedule, shiftMap.get(normalizeId(schedule?.shiftId)));
   const effectiveStart = new Date(Math.min(
@@ -665,21 +695,21 @@ function validateOvertimeShiftGap({ employeeId, payload, schedule, schedules, sh
 
   if (previous) {
     const gapMinutes = Math.round((effectiveStart.getTime() - previous.end.getTime()) / MS_PER_MINUTE);
-    if (gapMinutes < MIN_REST_BETWEEN_SHIFTS_MINUTES) {
+    if (gapMinutes < minRestMinutes) {
       violations.push(makeViolation(
         'overtime-shift-gap',
-        `加班與前一班之間需間隔11小時：${dateKey(previous.schedule.date)} 到 ${dateKey(schedule.date)} 僅間隔 ${(gapMinutes / 60).toFixed(1)} 小時`,
-        { employee: employeeId, previousDate: dateKey(previous.schedule.date), date: currentDate, gapMinutes },
+        `加班與前一班之間需間隔 ${(minRestMinutes / 60).toFixed(1)} 小時：${dateKey(previous.schedule.date)} 到 ${dateKey(schedule.date)} 僅間隔 ${(gapMinutes / 60).toFixed(1)} 小時`,
+        { employee: employeeId, previousDate: dateKey(previous.schedule.date), date: currentDate, gapMinutes, requiredMinutes: minRestMinutes },
       ));
     }
   }
   if (next) {
     const gapMinutes = Math.round((next.start.getTime() - effectiveEnd.getTime()) / MS_PER_MINUTE);
-    if (gapMinutes < MIN_REST_BETWEEN_SHIFTS_MINUTES) {
+    if (gapMinutes < minRestMinutes) {
       violations.push(makeViolation(
         'overtime-shift-gap',
-        `加班後至下一班需間隔11小時：${currentDate} 到 ${dateKey(next.schedule.date)} 僅間隔 ${(gapMinutes / 60).toFixed(1)} 小時`,
-        { employee: employeeId, date: currentDate, nextDate: dateKey(next.schedule.date), gapMinutes },
+        `加班後至下一班需間隔 ${(minRestMinutes / 60).toFixed(1)} 小時：${currentDate} 到 ${dateKey(next.schedule.date)} 僅間隔 ${(gapMinutes / 60).toFixed(1)} 小時`,
+        { employee: employeeId, date: currentDate, nextDate: dateKey(next.schedule.date), gapMinutes, requiredMinutes: minRestMinutes },
       ));
     }
   }
@@ -699,16 +729,31 @@ export async function assertOvertimeApprovalCompliance({ form, formData, applica
     ]);
   }
   const overtimeDate = startOfUtcDay(payload.start);
-  const approved = await loadApprovedOvertimeApprovals({
-    formId: form._id,
-    employeeId,
-  });
+  const [approved, policy] = await Promise.all([
+    loadApprovedOvertimeApprovals({ employeeId }),
+    loadLaborRulePolicy(),
+  ]);
 
   let approvedMonthMinutes = 0;
+  let approvedThreeMonthMinutes = 0;
   let approvedDayMinutes = 0;
+  const rollingStart = new Date(Date.UTC(overtimeDate.getUTCFullYear(), overtimeDate.getUTCMonth() - 2, 1));
+  const rollingEnd = new Date(Date.UTC(overtimeDate.getUTCFullYear(), overtimeDate.getUTCMonth() + 1, 1));
+  const fieldCache = new Map([[normalizeId(form._id), fields]]);
   for (const approval of approved || []) {
-    const approvedPayload = parseOvertimeApprovalMinutes(approval, fields);
+    const approvalForm = approval.form && typeof approval.form === 'object'
+      ? approval.form
+      : (!approval.form || normalizeId(approval.form) === normalizeId(form._id) ? form : null);
+    if (!approvalForm || !isOvertimeForm(approvalForm)) continue;
+    const approvalFormId = normalizeId(approvalForm._id || approval.form);
+    if (!fieldCache.has(approvalFormId)) {
+      fieldCache.set(approvalFormId, await loadFormFields(approvalFormId));
+    }
+    const approvedPayload = parseOvertimeApprovalMinutes(approval, fieldCache.get(approvalFormId));
     if (!approvedPayload) continue;
+    if (approvedPayload.start >= rollingStart && approvedPayload.start < rollingEnd) {
+      approvedThreeMonthMinutes += approvedPayload.minutes;
+    }
     if (monthKey(approvedPayload.start) !== monthKey(overtimeDate)) continue;
     approvedMonthMinutes += approvedPayload.minutes;
     if (dateKey(approvedPayload.start) === dateKey(overtimeDate)) {
@@ -724,11 +769,18 @@ export async function assertOvertimeApprovalCompliance({ form, formData, applica
       { date: dateKey(overtimeDate), minutes: approvedDayMinutes + payload.minutes },
     ));
   }
-  if (approvedMonthMinutes + payload.minutes > MAX_MONTHLY_OVERTIME_MINUTES) {
+  if (approvedMonthMinutes + payload.minutes > policy.monthlyOvertimeMinutes) {
     violations.push(makeViolation(
       'monthly-overtime-hours',
-      `${monthKey(overtimeDate)} 加班不得超過46小時：累計 ${((approvedMonthMinutes + payload.minutes) / 60).toFixed(1)} 小時`,
-      { month: monthKey(overtimeDate), minutes: approvedMonthMinutes + payload.minutes },
+      `${monthKey(overtimeDate)} 加班不得超過${policy.monthlyOvertimeMinutes / 60}小時：累計 ${((approvedMonthMinutes + payload.minutes) / 60).toFixed(1)} 小時`,
+      { month: monthKey(overtimeDate), minutes: approvedMonthMinutes + payload.minutes, limitMinutes: policy.monthlyOvertimeMinutes },
+    ));
+  }
+  if (policy.extendedOvertimeEnabled && approvedThreeMonthMinutes + payload.minutes > policy.threeMonthOvertimeMinutes) {
+    violations.push(makeViolation(
+      'three-month-overtime-hours',
+      `连续3个月加班不得超过${policy.threeMonthOvertimeMinutes / 60}小时`,
+      { minutes: approvedThreeMonthMinutes + payload.minutes, limitMinutes: policy.threeMonthOvertimeMinutes },
     ));
   }
 
@@ -766,6 +818,7 @@ export async function assertOvertimeApprovalCompliance({ form, formData, applica
       schedule,
       schedules: nearbySchedules,
       shiftMap,
+      minRestMinutes: policy.minShiftRestMinutes,
     }));
   }
 

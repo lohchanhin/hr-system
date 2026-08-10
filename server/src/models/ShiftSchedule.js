@@ -26,6 +26,7 @@ const shiftScheduleSchema = new mongoose.Schema({
     default: false,
     index: true,
   },
+  importBatchId: { type: String, trim: true, maxlength: 64, index: true },
 }, { timestamps: true });
 
 shiftScheduleSchema.index({ employee: 1, date: 1 }, { unique: true });

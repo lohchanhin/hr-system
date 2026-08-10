@@ -323,7 +323,36 @@ describe('assertOvertimeApprovalCompliance', () => {
       violations: [expect.objectContaining({ rule: 'daily-overtime-hours', minutes: 300 })],
     });
     expect(mockApprovalRequest.find).toHaveBeenCalledWith({
-      form: 'form1', status: 'approved', applicant_employee: 'emp1',
+      status: 'approved', applicant_employee: 'emp1',
+    });
+  });
+
+  it('aggregates approved overtime across different overtime form templates', async () => {
+    mockShiftSchedule.findOne.mockReturnValue(leanQuery({
+      _id: 'sch1', employee: 'emp1', date: new Date('2024-04-10'), shiftId: 'D',
+    }));
+    const approvalQuery = {
+      populate: jest.fn().mockReturnThis(),
+      lean: jest.fn().mockResolvedValue([{
+        _id: 'approved-other-form',
+        form: { _id: 'form2', name: '臨時加班單', semanticType: 'overtime' },
+        form_data: {
+          start: '2024-04-01T00:00:00.000Z',
+          end: '2024-04-02T21:00:00.000Z',
+        },
+      }]),
+    };
+    mockApprovalRequest.find.mockReturnValue(approvalQuery);
+
+    await expect(assertOvertimeApprovalCompliance({
+      form: { _id: 'form1', name: '加班申請', semanticType: 'overtime' },
+      applicantEmployeeId: 'emp1',
+      formData: {
+        start: '2024-04-10T00:00:00.000Z',
+        end: '2024-04-10T02:00:00.000Z',
+      },
+    })).rejects.toMatchObject({
+      violations: [expect.objectContaining({ rule: 'monthly-overtime-hours' })],
     });
   });
 

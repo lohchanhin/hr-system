@@ -69,6 +69,8 @@ describe('ShiftScheduleSetting.vue', () => {
     wrapper.vm.holidayMoveForm.targetDate = '2036-04-20'
     wrapper.vm.holidayMoveForm.reason = '院內排班調整'
     wrapper.vm.holidayMoveForm.needSignature = true
+    wrapper.vm.holidayMoveForm.agreementReference = 'LABOR-MEETING-2036-04'
+    wrapper.vm.holidayMoveForm.agreementDate = '2036-03-20'
     await wrapper.vm.saveHolidayMove()
 
     const call = apiFetch.mock.calls.find((entry) => (
@@ -81,7 +83,10 @@ describe('ShiftScheduleSetting.vue', () => {
       targetDate: '2036-04-20',
       reason: '院內排班調整',
       needSignature: true,
-      needMakeup: false
+      needMakeup: false,
+      agreementReference: 'LABOR-MEETING-2036-04',
+      agreementDate: '2036-03-20',
+      makeupConfirmed: false
     })
   })
 })

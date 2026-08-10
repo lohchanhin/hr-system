@@ -34,16 +34,47 @@ export const LEAVE_POLICY = {
 
 // Overtime configuration
 export const OVERTIME_CONFIG = {
-  // Default overtime multiplier (simplified)
-  DEFAULT_MULTIPLIER: 1.5,
-  
-  // For future implementation of labor law compliant rates:
-  // WEEKDAY_FIRST_2_HOURS: 1.33,
-  // WEEKDAY_AFTER_2_HOURS: 1.66,
-  // REST_DAY_FIRST_2_HOURS: 1.33,
-  // REST_DAY_AFTER_2_HOURS: 1.66,
-  // HOLIDAY: 2.0,
+  WEEKDAY_FIRST_2_HOURS: 4 / 3,
+  WEEKDAY_AFTER_2_HOURS: 5 / 3,
+  REST_DAY_FIRST_2_HOURS: 4 / 3,
+  REST_DAY_HOURS_3_TO_8: 5 / 3,
+  REST_DAY_HOURS_9_TO_12: 8 / 3,
+  HOLIDAY_WITHIN_8_HOURS: 1,
 };
+
+export function calculateTaiwanOvertimeAmount(hours, hourlyRate, dayType = 'workday') {
+  const duration = Math.max(Number(hours) || 0, 0);
+  const rate = Math.max(Number(hourlyRate) || 0, 0);
+  const segments = [];
+  const addSegment = (segmentHours, multiplier, label) => {
+    if (segmentHours <= 0) return;
+    segments.push({
+      hours: segmentHours,
+      multiplier,
+      label,
+      amount: segmentHours * rate * multiplier,
+    });
+  };
+
+  if (dayType === 'national_holiday') {
+    if (duration > 0) addSegment(8, OVERTIME_CONFIG.HOLIDAY_WITHIN_8_HOURS, '國定假日8小時內加發一日工資');
+    const excess = Math.max(duration - 8, 0);
+    addSegment(Math.min(excess, 2), OVERTIME_CONFIG.WEEKDAY_FIRST_2_HOURS, '國定假日超過8小時之前2小時');
+    addSegment(Math.min(Math.max(excess - 2, 0), 2), OVERTIME_CONFIG.WEEKDAY_AFTER_2_HOURS, '國定假日超過10小時之後2小時');
+  } else if (dayType === 'rest_day') {
+    addSegment(Math.min(duration, 2), OVERTIME_CONFIG.REST_DAY_FIRST_2_HOURS, '休息日前2小時');
+    addSegment(Math.min(Math.max(duration - 2, 0), 6), OVERTIME_CONFIG.REST_DAY_HOURS_3_TO_8, '休息日第3至8小時');
+    addSegment(Math.min(Math.max(duration - 8, 0), 4), OVERTIME_CONFIG.REST_DAY_HOURS_9_TO_12, '休息日第9至12小時');
+  } else {
+    addSegment(Math.min(duration, 2), OVERTIME_CONFIG.WEEKDAY_FIRST_2_HOURS, '平日前2小時');
+    addSegment(Math.min(Math.max(duration - 2, 0), 2), OVERTIME_CONFIG.WEEKDAY_AFTER_2_HOURS, '平日第3至4小時');
+  }
+
+  return {
+    amount: Math.round(segments.reduce((total, segment) => total + segment.amount, 0)),
+    segments: segments.map((segment) => ({ ...segment, amount: Math.round(segment.amount) })),
+  };
+}
 
 // Overtime form names to recognize
 export const OVERTIME_FORM_NAMES = ['加班', '加班申請', '加班單'];
@@ -95,4 +126,5 @@ export default {
   OVERTIME_FIELDS,
   convertToHourlyRate,
   convertToDailyRate,
+  calculateTaiwanOvertimeAmount,
 };

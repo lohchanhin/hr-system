@@ -23,6 +23,19 @@ const DEFAULT_SETTING = Object.freeze({
     holidayRate: 2,
     toCompRate: 1.5,
   },
+  laborRules: {
+    workTimeRegime: 'standard',
+    workTimeRegimeApprovalReference: '',
+    minShiftRestMinutes: 660,
+    restIntervalExceptionEnabled: false,
+    restIntervalExceptionMinutes: 480,
+    restIntervalApprovalReference: '',
+    extendedOvertimeEnabled: false,
+    monthlyOvertimeHours: 46,
+    threeMonthOvertimeHours: 138,
+    overtimeApprovalReference: '',
+    strictCompanyWeeklyRest: true,
+  },
   actionBuffers: DEFAULT_ACTION_BUFFERS,
   management: {
     enableImport: false,
@@ -46,6 +59,7 @@ function buildDefaultSetting() {
     breakOutRules: { ...DEFAULT_SETTING.breakOutRules },
     globalBreakSetting: { ...DEFAULT_SETTING.globalBreakSetting },
     overtimeRules: { ...DEFAULT_SETTING.overtimeRules },
+    laborRules: { ...DEFAULT_SETTING.laborRules },
     actionBuffers: normalizeActionBuffers(DEFAULT_SETTING.actionBuffers),
     management: { ...DEFAULT_SETTING.management },
   };
@@ -60,6 +74,7 @@ function normalize(setting) {
     breakOutRules,
     globalBreakSetting,
     overtimeRules,
+    laborRules,
     actionBuffers,
     management,
     ...others
@@ -81,6 +96,10 @@ function normalize(setting) {
     overtimeRules: {
       ...DEFAULT_SETTING.overtimeRules,
       ...(overtimeRules || {}),
+    },
+    laborRules: {
+      ...DEFAULT_SETTING.laborRules,
+      ...(laborRules || {}),
     },
     actionBuffers: normalizeActionBuffers(actionBuffers || DEFAULT_SETTING.actionBuffers),
     management: {
@@ -122,7 +141,7 @@ function mergeRuleSection(current, incoming, defaults) {
 export async function updateAttendanceSetting(req, res) {
   try {
     const setting = await ensureAttendanceSetting();
-    const { abnormalRules, breakOutRules, overtimeRules, globalBreakSetting, actionBuffers } = req.body || {};
+    const { abnormalRules, breakOutRules, overtimeRules, laborRules, globalBreakSetting, actionBuffers } = req.body || {};
 
     if (abnormalRules) {
       setting.abnormalRules = mergeRuleSection(
@@ -154,6 +173,30 @@ export async function updateAttendanceSetting(req, res) {
         overtimeRules,
         DEFAULT_SETTING.overtimeRules
       );
+    }
+
+    if (laborRules) {
+      const nextLaborRules = mergeRuleSection(
+        setting.laborRules,
+        laborRules,
+        DEFAULT_SETTING.laborRules
+      );
+      if (nextLaborRules.restIntervalExceptionEnabled && !String(nextLaborRules.restIntervalApprovalReference || '').trim()) {
+        return res.status(400).json({ error: 'rest interval exception requires an approval reference' });
+      }
+      if (nextLaborRules.workTimeRegime !== 'standard' && !String(nextLaborRules.workTimeRegimeApprovalReference || '').trim()) {
+        return res.status(400).json({ error: 'flexible work-time regime requires an approval reference' });
+      }
+      if (nextLaborRules.extendedOvertimeEnabled && !String(nextLaborRules.overtimeApprovalReference || '').trim()) {
+        return res.status(400).json({ error: 'extended overtime requires an approval reference' });
+      }
+      if (nextLaborRules.strictCompanyWeeklyRest === false) {
+        return res.status(400).json({
+          error: 'company policy requires one regular rest day and one rest day every week',
+        });
+      }
+      nextLaborRules.strictCompanyWeeklyRest = true;
+      setting.laborRules = nextLaborRules;
     }
 
     if (req.body && Object.hasOwn(req.body, 'actionBuffers')) {

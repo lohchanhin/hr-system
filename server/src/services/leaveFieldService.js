@@ -77,7 +77,14 @@ export function resetLeaveFieldCache() {
 export async function getLeaveFieldIds() {
   if (leaveFieldCache) return leaveFieldCache;
 
-  const form = await FormTemplate.findOne({ name: '請假' }).lean();
+  let formQuery = FormTemplate.findOne({
+    is_active: { $ne: false },
+    $or: [{ semanticType: 'leave' }, { name: '請假' }, { name: /leave/i }],
+  });
+  if (formQuery && typeof formQuery.sort === 'function') {
+    formQuery = formQuery.sort({ semanticType: 1, updatedAt: -1 });
+  }
+  const form = formQuery && typeof formQuery.lean === 'function' ? await formQuery.lean() : await formQuery;
   if (!form) {
     leaveFieldCache = {};
     return leaveFieldCache;

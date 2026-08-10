@@ -1,4 +1,5 @@
 import FormTemplate from '../models/form_template.js'
+import { buildLiteralSearchRegex } from '../utils/safeSearch.js'
 import FormField from '../models/form_field.js'
 import ApprovalWorkflow from '../models/approval_workflow.js'
 
@@ -25,7 +26,7 @@ export async function listFormTemplates(req, res) {
   try {
     const { q, category, is_active } = req.query
     const filter = {}
-    if (q) filter.name = new RegExp(q, 'i')
+    if (q) filter.name = buildLiteralSearchRegex(q)
     if (category) filter.category = category
     if (is_active !== undefined) filter.is_active = is_active === 'true'
     const list = await FormTemplate.find(filter).sort({ updatedAt: -1 })
@@ -37,10 +38,11 @@ export async function listFormTemplates(req, res) {
 
 export async function createFormTemplate(req, res) {
   try {
-    const { name, category, description, owner_org_id, is_active } = req.body
+    const { name, category, description, owner_org_id, is_active, semanticType } = req.body
     if (!name) return res.status(400).json({ error: 'name is required' })
     const doc = await FormTemplate.create({
       name, category, description, owner_org_id,
+      semanticType: semanticType || (/加班|overtime/i.test(name) ? 'overtime' : /請假|leave/i.test(name) ? 'leave' : 'general'),
       is_active: is_active !== undefined ? !!is_active : true,
       created_by: req.user?.id, // 若有 auth
     })
@@ -66,10 +68,10 @@ export async function getFormTemplate(req, res) {
 
 export async function updateFormTemplate(req, res) {
   try {
-    const { name, category, description, owner_org_id, is_active } = req.body
+    const { name, category, description, owner_org_id, is_active, semanticType } = req.body
     const updated = await FormTemplate.findByIdAndUpdate(
       req.params.id,
-      { $set: { name, category, description, owner_org_id, is_active } },
+      { $set: { name, category, description, owner_org_id, is_active, semanticType } },
       { new: true }
     )
     if (!updated) return res.status(404).json({ error: 'not found' })
@@ -188,6 +190,7 @@ export async function ensureLeaveForm(req, res) {
       form = await FormTemplate.create({
         name: '請假',
         category: '人事',
+        semanticType: 'leave',
         description: '用於申請各類假別（事假、病假、特休等），此表單會自動連接薪資系統計算扣薪或假勤。支援小時級別的精確請假時間。',
         is_active: true,
         created_by: req.user?.id,

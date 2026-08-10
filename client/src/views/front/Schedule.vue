@@ -194,6 +194,22 @@
           <i class="el-icon-s-grid"></i>
           匯出 Excel
         </el-button>
+        <input
+          ref="scheduleImportInput"
+          type="file"
+          accept=".xlsx"
+          hidden
+          @change="onScheduleImportFile"
+        />
+        <el-button
+          class="action-btn secondary"
+          :loading="isImportingSchedule"
+          :disabled="!selectedDepartment"
+          @click="openScheduleImport"
+        >
+          <i class="el-icon-upload"></i>
+          匯入 Excel
+        </el-button>
       </div>
     </div>
 
@@ -620,7 +636,7 @@
 <script setup>
 import { ref, computed, onMounted, onBeforeUnmount, onUpdated, watch, reactive, shallowRef, triggerRef, defineAsyncComponent, nextTick } from 'vue'
 import dayjs from 'dayjs'
-import { apiFetch } from '../../api'
+import { apiFetch, importScheduleRecords } from '../../api'
 import { useAuthStore } from '../../stores/auth'
 import { useMenuStore } from '../../stores/menu'
 import { ElMessage, ElMessageBox, ElLoading } from 'element-plus'
@@ -706,6 +722,8 @@ const selectedDays = ref(new Set())
 const manualSelectedCells = ref(new Set())
 const selectedCellsCache = ref(new Map())
 const customRange = ref([])
+const scheduleImportInput = ref(null)
+const isImportingSchedule = ref(false)
 const batchShiftId = ref('')
 const batchDepartment = ref('')
 const batchSubDepartment = ref('')
@@ -1273,6 +1291,65 @@ const toggleCell = (empId, day, explicit) => {
 
 const exportPdf = () => exportSchedules('pdf')
 const exportExcel = () => exportSchedules('excel')
+
+const openScheduleImport = () => {
+  if (!selectedDepartment.value) {
+    ElMessage.warning('請先選擇部門')
+    return
+  }
+  scheduleImportInput.value?.click()
+}
+
+async function submitScheduleImport(file, mode) {
+  const formData = new FormData()
+  formData.append('file', file)
+  formData.append('month', currentMonth.value)
+  formData.append('department', selectedDepartment.value)
+  if (selectedSubDepartment.value) {
+    formData.append('subDepartment', selectedSubDepartment.value)
+  }
+  formData.append('mode', mode)
+  formData.append('overwrite', 'false')
+  const response = await importScheduleRecords(formData)
+  const payload = await response.json().catch(() => ({}))
+  return { response, payload }
+}
+
+async function onScheduleImportFile(event) {
+  const file = event?.target?.files?.[0]
+  if (event?.target) event.target.value = ''
+  if (!file) return
+  isImportingSchedule.value = true
+  try {
+    const preview = await submitScheduleImport(file, 'preview')
+    if (!preview.response.ok) {
+      const details = (preview.payload.errors || [])
+        .slice(0, 5)
+        .map(item => `第 ${item.row || '-'} 列${item.day ? `／${item.day} 日` : ''}：${item.message}`)
+        .join('\n')
+      throw new Error(details || preview.payload.error || '班表预览失败')
+    }
+    const warningText = preview.payload.warnings?.length
+      ? `\n另有 ${preview.payload.warnings.length} 项提醒，汇入后仍保留原假单与假日日历资料。`
+      : ''
+    await ElMessageBox.confirm(
+      `将汇入 ${preview.payload.employees} 名员工、${preview.payload.scheduleDays} 个班次。${warningText}`,
+      '确认汇入班表',
+      { confirmButtonText: '确认汇入', cancelButtonText: '取消', type: 'warning' }
+    )
+    const committed = await submitScheduleImport(file, 'commit')
+    if (!committed.response.ok) {
+      throw new Error(committed.payload.error || committed.payload.errors?.[0]?.message || '班表汇入失败')
+    }
+    ElMessage.success(`已汇入 ${committed.payload.imported} 个班次`)
+    await refreshScheduleData({ reset: true, reason: 'excel-import' })
+  } catch (error) {
+    if (error === 'cancel' || error === 'close') return
+    ElMessage.error(error?.message || '班表汇入失败')
+  } finally {
+    isImportingSchedule.value = false
+  }
+}
 
 const parseDelegatedBoolean = target => {
   if (!target) return undefined

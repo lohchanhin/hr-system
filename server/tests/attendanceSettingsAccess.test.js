@@ -41,6 +41,19 @@ function buildDoc(overrides = {}) {
       holidayRate: 2,
       toCompRate: 1.5,
     },
+    laborRules: {
+      workTimeRegime: 'standard',
+      workTimeRegimeApprovalReference: '',
+      minShiftRestMinutes: 660,
+      restIntervalExceptionEnabled: false,
+      restIntervalExceptionMinutes: 480,
+      restIntervalApprovalReference: '',
+      extendedOvertimeEnabled: false,
+      monthlyOvertimeHours: 46,
+      threeMonthOvertimeHours: 138,
+      overtimeApprovalReference: '',
+      strictCompanyWeeklyRest: true,
+    },
     management: {
       enableImport: false,
       importFormat: '',
@@ -66,6 +79,7 @@ function buildDoc(overrides = {}) {
       breakOutRules: doc.breakOutRules,
       globalBreakSetting: doc.globalBreakSetting,
       overtimeRules: doc.overtimeRules,
+      laborRules: doc.laborRules,
       management: doc.management,
     }));
     return doc;
@@ -148,6 +162,7 @@ describe('AttendanceSetting routes', () => {
         shifts: [],
         abnormalRules: expect.objectContaining({ lateGrace: 5 }),
         globalBreakSetting: expect.objectContaining({ breakMinutes: 60 }),
+        laborRules: expect.objectContaining({ strictCompanyWeeklyRest: true }),
         management: expect.objectContaining({ enableImport: false }),
       })
     );
@@ -219,5 +234,18 @@ describe('AttendanceSetting routes', () => {
     expect(doc.management.notifyTargets).toEqual(['HR']);
     expect(res.body.management.enableImport).toBe(true);
     expect(res.body.management.notifyTargets).toEqual(['HR']);
+  });
+
+  it('does not allow the company weekly rest policy to be disabled', async () => {
+    const doc = buildDoc();
+    findOne.mockResolvedValue(doc);
+
+    const res = await request(app)
+      .put('/api/attendance-settings')
+      .send({ laborRules: { strictCompanyWeeklyRest: false } });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/one regular rest day/i);
+    expect(doc.save).not.toHaveBeenCalled();
   });
 });

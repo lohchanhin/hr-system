@@ -22,9 +22,11 @@ import {
   checkCanFinalize,
   getIncludeSelfPreference,
   updateIncludeSelfPreference,
+  importSchedules,
 } from '../controllers/scheduleController.js';
 import { verifySupervisor } from '../middleware/supervisor.js';
 import { authenticate, authorizeRoles } from '../middleware/auth.js';
+import uploadMiddleware from '../middleware/upload.js';
 
 const router = Router();
 
@@ -42,6 +44,7 @@ router.get('/incomplete', authenticate, authorizeRoles('supervisor', 'admin'), g
 router.get('/can-finalize', authenticate, authorizeRoles('supervisor', 'admin'), checkCanFinalize);
 router.post('/publish', authenticate, authorizeRoles('supervisor', 'admin'), publishSchedules);
 router.post('/publish/finalize', authenticate, authorizeRoles('supervisor', 'admin'), finalizeSchedules);
+router.post('/import', authenticate, authorizeRoles('supervisor', 'admin'), uploadMiddleware, importSchedules);
 router.post('/batch', verifySupervisor, createSchedulesBatch);
 router.post('/', verifySupervisor, createSchedule);
 router.get('/:id', getSchedule);

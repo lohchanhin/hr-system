@@ -13,19 +13,14 @@ import {
   getIncompleteScheduleEmployees,
   canFinalizeSchedules 
 } from '../services/scheduleValidationService.js';
-import path from 'path';
-import { fileURLToPath } from 'url';
-import fs from 'fs';
 import { Types } from 'mongoose';
 import dayjs from 'dayjs';
-
-// Get directory name for ES modules
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-// Path to Chinese font for PDF generation
-const DEFAULT_FONT_PATH = path.join(__dirname, '../../fonts/NotoSansCJKtc-Regular.otf');
-const CHINESE_FONT_PATH = process.env.PDF_CHINESE_FONT_PATH || DEFAULT_FONT_PATH;
+import { randomUUID } from 'node:crypto';
+import Holiday from '../models/Holiday.js';
+import { leaveDaysFromCalendar, loadApprovedLeaveCalendar } from '../services/approvedLeaveCalendarService.js';
+import { buildLiteralSearchRegex } from '../utils/safeSearch.js';
+import { parseScheduleWorkbook } from '../services/scheduleWorkbookService.js';
+import { registerTraditionalChinesePdfFont } from '../services/pdfFontService.js';
 const SCHEDULE_EMPLOYEE_SELECT = 'name employeeId photo title practiceTitle department subDepartment supervisor role status';
 
 function toEntityId(value) {
@@ -76,53 +71,24 @@ async function attachShiftInfo(schedules) {
 }
 
 async function buildLeaveDaysMapForMonth(employeeIds, month, monthStartDate, monthEndDate) {
-  const leaveDaysMap = new Map();
-  const { formId, startId, endId } = await getLeaveFieldIds();
-  if (!formId || !startId || !endId || !employeeIds.length) return leaveDaysMap;
-
-  const leaveQuery = {
-    form: formId,
-    status: 'approved',
-    applicant_employee: { $in: employeeIds },
-  };
-  leaveQuery[`form_data.${startId}`] = { $lt: monthEndDate.toISOString().slice(0, 10) };
-  leaveQuery[`form_data.${endId}`] = { $gte: `${month}-01` };
-  const approvals = await ApprovalRequest.find(leaveQuery)
-    .select(`applicant_employee form_data.${startId} form_data.${endId}`)
-    .lean();
-  approvals.forEach((approval) => {
-    const empId = approval.applicant_employee?.toString?.() || '';
-    if (!empId) return;
-    if (!leaveDaysMap.has(empId)) leaveDaysMap.set(empId, new Set());
-    const entry = leaveDaysMap.get(empId);
-    const startDate = dayjs(approval.form_data?.[startId]);
-    const endDate = dayjs(approval.form_data?.[endId]);
-    const monthStart = dayjs(monthStartDate);
-    const monthEnd = dayjs(monthEndDate).subtract(1, 'day');
-    const leaveStart = startDate.isAfter(monthStart) ? startDate : monthStart;
-    const leaveEnd = endDate.isBefore(monthEnd) ? endDate : monthEnd;
-    if (!leaveStart.isValid() || !leaveEnd.isValid() || leaveEnd.isBefore(leaveStart)) return;
-    let pointer = leaveStart.startOf('day');
-    while (!pointer.isAfter(leaveEnd, 'day')) {
-      entry.add(pointer.format('YYYY/MM/DD'));
-      pointer = pointer.add(1, 'day');
-    }
+  const calendar = await loadApprovedLeaveCalendar({
+    employeeIds,
+    start: monthStartDate,
+    end: monthEndDate,
   });
-  return leaveDaysMap;
+  return new Map(employeeIds.map((employeeId) => [
+    toEntityId(employeeId),
+    leaveDaysFromCalendar(calendar, employeeId, '/'),
+  ]));
 }
 
 async function hasLeaveConflict(employeeId, date) {
-  const { formId, startId, endId } = await getLeaveFieldIds();
-  if (!formId || !startId || !endId) return false;
-  const query = {
-    form: formId,
-    applicant_employee: employeeId,
-    status: 'approved',
-  };
-  query[`form_data.${startId}`] = { $lte: date };
-  query[`form_data.${endId}`] = { $gte: date };
-  const approval = await ApprovalRequest.findOne(query);
-  return !!approval;
+  const day = new Date(date);
+  if (Number.isNaN(day.getTime())) return false;
+  day.setUTCHours(0, 0, 0, 0);
+  const end = new Date(day.getTime() + 86400000);
+  const calendar = await loadApprovedLeaveCalendar({ employeeIds: [employeeId], start: day, end });
+  return (calendar.get(toEntityId(employeeId))?.size || 0) > 0;
 }
 
 function buildMonthDays(startDate) {
@@ -399,11 +365,11 @@ export async function listMonthlySchedules(req, res) {
     if (subDepartment) employeeQuery.subDepartment = subDepartment;
     const andFilters = [];
     if (search) {
-      const rx = new RegExp(search, 'i');
+      const rx = buildLiteralSearchRegex(search);
       andFilters.push({ $or: [{ name: rx }, { employeeId: rx }] });
     }
     if (jobType) {
-      const rx = new RegExp(jobType, 'i');
+      const rx = buildLiteralSearchRegex(jobType);
       andFilters.push({ $or: [{ practiceTitle: rx }, { title: rx }, { jobType: rx }] });
     }
     if (andFilters.length === 1) {
@@ -833,54 +799,17 @@ export async function listSupervisorSummary(req, res) {
     }).lean();
 
     // 4️⃣ 讀取該月所有請假天數
-    const leaveDaysMap = new Map();
-    const { formId, startId, endId } = await getLeaveFieldIds();
-    if (formId && startId && endId && uniqueIds.length) {
-      const leaveQuery = {
-        form: formId,
-        status: 'approved',
-        applicant_employee: { $in: uniqueIds },
-      };
-      leaveQuery[`form_data.${startId}`] = { $lte: end };
-      leaveQuery[`form_data.${endId}`] = { $gte: start };
-      const approvals = await ApprovalRequest.find(leaveQuery).lean();
+    const leaveCalendar = await loadApprovedLeaveCalendar({
+      employeeIds: uniqueIds,
+      start,
+      end,
+    });
+    const leaveDaysMap = new Map(uniqueIds.map((employeeId) => [
+      toEntityId(employeeId),
+      leaveDaysFromCalendar(leaveCalendar, employeeId),
+    ]));
 
-      approvals.forEach((approval) => {
-        const rawEmp = approval.applicant_employee;
-        const empId = rawEmp?._id?.toString?.() || rawEmp?.toString?.();
-        if (!empId) return;
-
-        const rawStart = approval.form_data?.[startId];
-        const rawEnd = approval.form_data?.[endId];
-        const startDate = rawStart ? new Date(rawStart) : null;
-        const endDate = rawEnd ? new Date(rawEnd) : null;
-        if (!startDate || !endDate || Number.isNaN(startDate) || Number.isNaN(endDate)) return;
-
-        startDate.setUTCHours(0, 0, 0, 0);
-        endDate.setUTCHours(0, 0, 0, 0);
-        const monthStart = new Date(start);
-        const monthEnd = new Date(end);
-        monthStart.setUTCHours(0, 0, 0, 0);
-        monthEnd.setUTCHours(0, 0, 0, 0);
-
-        const leaveStart = startDate < monthStart ? monthStart : new Date(startDate);
-        const leaveEnd =
-          endDate >= monthEnd
-            ? new Date(monthEnd.getTime() - 86400000)
-            : new Date(endDate);
-
-        if (leaveEnd < leaveStart) return;
-
-        let pointer = new Date(leaveStart);
-        const bucket = leaveDaysMap.get(empId) || new Set();
-        while (pointer <= leaveEnd) {
-          const key = pointer.toISOString().slice(0, 10);
-          bucket.add(key);
-          pointer = new Date(pointer.getTime() + 86400000);
-        }
-        leaveDaysMap.set(empId, bucket);
-      });
-
+    if (uniqueIds.length) {
       // 把請假天數寫進 summaryMap
       leaveDaysMap.forEach((set, empId) => {
         if (summaryMap[empId]) {
@@ -1511,6 +1440,19 @@ export async function finalizeSchedules(req, res) {
       return res.status(400).json({ error: 'no pending schedules to finalize' });
     }
 
+    await assertScheduleRuleCompliance({
+      candidateSchedules: pendingDocs.map((doc) => ({
+        _id: doc._id,
+        employee: doc.employee?._id || doc.employee,
+        date: doc.date,
+        shiftId: doc.shiftId,
+        department: doc.department,
+        subDepartment: doc.subDepartment,
+      })),
+      range,
+      strictWeeklyRest: true,
+    });
+
     const ids = pendingDocs.map((doc) => doc._id);
     await ShiftSchedule.updateMany({ _id: { $in: ids } }, {
       $set: { state: 'finalized', needsReconfirm: false },
@@ -1982,6 +1924,229 @@ export async function deleteOldSchedules(req, res) {
   }
 }
 
+const IMPORT_LEAVE_CODES = new Set(['特', '特休', '病', '病假', '事', '事假', '喪', '喪假', '公', '公假', '原', '原民假', '補', '補休']);
+
+function normalizeWorkbookCode(value) {
+  return String(value || '').trim().toUpperCase();
+}
+
+function scheduleImportError(row, day, code, message) {
+  return { row, day, code, message };
+}
+
+export async function importSchedules(req, res) {
+  const importBatchId = randomUUID();
+  let rollbackExistingSchedules = [];
+  try {
+    const month = String(req.body?.month || '').trim();
+    const department = String(req.body?.department || '').trim();
+    const subDepartment = String(req.body?.subDepartment || '').trim();
+    const mode = req.body?.mode === 'commit' ? 'commit' : 'preview';
+    const overwrite = String(req.body?.overwrite || '').toLowerCase() === 'true';
+    if (!department) return res.status(400).json({ error: 'department required' });
+    let range;
+    try {
+      range = buildMonthRange(month);
+    } catch (error) {
+      return res.status(400).json({ error: error.message });
+    }
+    if (!String(req.file?.originalname || '').toLowerCase().endsWith('.xlsx')) {
+      return res.status(400).json({ error: 'schedule import only supports .xlsx files' });
+    }
+
+    const parsed = await parseScheduleWorkbook(req.file.buffer, { month });
+    const allowedEmployeeIds = await getAllowedScheduleEmployeeIds(req);
+    if (allowedEmployeeIds !== null && !allowedEmployeeIds.length) {
+      return res.status(403).json({ error: 'forbidden' });
+    }
+
+    const employeeQuery = { department };
+    if (subDepartment) employeeQuery.subDepartment = subDepartment;
+    if (allowedEmployeeIds !== null) employeeQuery._id = { $in: allowedEmployeeIds };
+    let employeeFind = Employee.find(employeeQuery).select('_id employeeId name department subDepartment');
+    const employees = employeeFind && typeof employeeFind.lean === 'function'
+      ? await employeeFind.lean()
+      : await employeeFind;
+    const employeeByCode = new Map();
+    for (const employee of employees || []) {
+      const code = normalizeWorkbookCode(employee.employeeId);
+      if (code) employeeByCode.set(code, employee);
+    }
+
+    const settingQuery = AttendanceSetting.findOne();
+    const setting = settingQuery && typeof settingQuery.lean === 'function'
+      ? await settingQuery.lean()
+      : await settingQuery;
+    const shiftByCode = new Map();
+    for (const shift of setting?.shifts || []) {
+      for (const key of [shift.code, shift.name]) {
+        const normalized = normalizeWorkbookCode(key);
+        if (normalized) shiftByCode.set(normalized, shift);
+      }
+    }
+
+    const importedEmployeeIds = parsed.rows
+      .map((row) => employeeByCode.get(normalizeWorkbookCode(row.employeeId))?._id)
+      .filter(Boolean);
+    const [leaveCalendar, holidays, existingSchedules] = await Promise.all([
+      loadApprovedLeaveCalendar({ employeeIds: importedEmployeeIds, start: range.start, end: range.end }),
+      Holiday.find({ date: { $gte: range.start, $lt: range.end } }).lean(),
+      importedEmployeeIds.length
+        ? ShiftSchedule.find({
+          employee: { $in: importedEmployeeIds },
+          date: { $gte: range.start, $lt: range.end },
+        }).lean()
+        : [],
+    ]);
+    const holidayDays = new Set((holidays || []).map((holiday) => new Date(holiday.date).toISOString().slice(0, 10)));
+    const existingByKey = new Map((existingSchedules || []).map((schedule) => [
+      `${toEntityId(schedule.employee)}:${new Date(schedule.date).toISOString().slice(0, 10)}`,
+      schedule,
+    ]));
+
+    const errors = [];
+    const warnings = [];
+    const candidates = [];
+    let informationalDays = 0;
+    for (const row of parsed.rows) {
+      const employee = employeeByCode.get(normalizeWorkbookCode(row.employeeId));
+      if (!employee) {
+        errors.push(scheduleImportError(row.rowNumber, null, row.employeeId, '员工代号不在目前部门或操作权限范围内'));
+        continue;
+      }
+      if (String(employee.name || '').trim() !== row.employeeName.trim()) {
+        warnings.push(scheduleImportError(row.rowNumber, null, row.employeeId, `姓名与系统资料不同：系统为「${employee.name}」`));
+      }
+      const employeeId = toEntityId(employee._id);
+      for (const entry of row.entries) {
+        const dateKey = `${month}-${String(entry.day).padStart(2, '0')}`;
+        const code = normalizeWorkbookCode(entry.code);
+        if (code === '國' || code === '国') {
+          informationalDays += 1;
+          if (!holidayDays.has(dateKey)) {
+            warnings.push(scheduleImportError(row.rowNumber, entry.day, entry.code, '公版标记为国定假日，但系统假日日历没有该日期'));
+          }
+          continue;
+        }
+        if (IMPORT_LEAVE_CODES.has(code)) {
+          informationalDays += 1;
+          if (!leaveCalendar.get(employeeId)?.has(dateKey)) {
+            warnings.push(scheduleImportError(row.rowNumber, entry.day, entry.code, '请假代码仅供核对；系统没有对应的已核准假单，因此不会由班表汇入建立假单'));
+          }
+          continue;
+        }
+        const shift = shiftByCode.get(code);
+        if (!shift?._id) {
+          errors.push(scheduleImportError(row.rowNumber, entry.day, entry.code, '找不到对应班别代码或名称'));
+          continue;
+        }
+        const existing = existingByKey.get(`${employeeId}:${dateKey}`);
+        if (existing && !overwrite) {
+          errors.push(scheduleImportError(row.rowNumber, entry.day, entry.code, '该日期已有班表；如需取代请明确启用覆盖'));
+          continue;
+        }
+        candidates.push({
+          existing,
+          employee: employee._id,
+          date: new Date(`${dateKey}T00:00:00.000Z`),
+          shiftId: shift._id,
+          department: employee.department || department,
+          subDepartment: employee.subDepartment || subDepartment || undefined,
+        });
+      }
+    }
+
+    if (!errors.length && candidates.length) {
+      await assertScheduleRuleCompliance({
+        candidateSchedules: candidates,
+        ignoredScheduleIds: candidates.map((item) => item.existing?._id).filter(Boolean),
+        range,
+        strictWeeklyRest: parsed.columns.length === buildMonthDays(range.start).length,
+      });
+    }
+
+    const summary = {
+      mode,
+      worksheet: parsed.worksheetName,
+      employees: parsed.rows.length,
+      scheduleDays: candidates.length,
+      informationalDays,
+      errors,
+      warnings,
+    };
+    if (mode === 'preview' || errors.length) {
+      return res.status(errors.length ? 422 : 200).json(summary);
+    }
+    if (!candidates.length) return res.status(400).json({ ...summary, error: 'no schedules to import' });
+
+    rollbackExistingSchedules = candidates
+      .map((candidate) => candidate.existing)
+      .filter(Boolean)
+      .map((existing) => ({ ...existing }));
+
+    const operations = candidates.map(({ existing, ...candidate }) => ({
+      updateOne: {
+        filter: { employee: candidate.employee, date: candidate.date },
+        update: {
+          $set: {
+            ...candidate,
+            state: 'draft',
+            publishedAt: null,
+            employeeResponse: 'pending',
+            responseNote: '',
+            responseAt: null,
+            needsReconfirm: true,
+            importBatchId,
+          },
+        },
+        upsert: true,
+      },
+    }));
+    await ShiftSchedule.bulkWrite(operations, { ordered: true });
+    return res.status(201).json({ ...summary, imported: candidates.length, importBatchId });
+  } catch (error) {
+    if (isLaborRuleValidationError(error)) {
+      return res.status(422).json({
+        error: error.message,
+        violations: error.violations || [],
+      });
+    }
+    try {
+      const existingIds = rollbackExistingSchedules.map((schedule) => schedule._id).filter(Boolean);
+      await ShiftSchedule.deleteMany({
+        importBatchId,
+        ...(existingIds.length ? { _id: { $nin: existingIds } } : {}),
+      });
+      if (rollbackExistingSchedules.length) {
+        await ShiftSchedule.bulkWrite(rollbackExistingSchedules.map((schedule) => ({
+          updateOne: {
+            filter: { _id: schedule._id },
+            update: {
+              $set: {
+                employee: schedule.employee,
+                date: schedule.date,
+                shiftId: schedule.shiftId,
+                department: schedule.department,
+                subDepartment: schedule.subDepartment,
+                state: schedule.state,
+                publishedAt: schedule.publishedAt,
+                employeeResponse: schedule.employeeResponse,
+                responseNote: schedule.responseNote,
+                responseAt: schedule.responseAt,
+                needsReconfirm: schedule.needsReconfirm,
+              },
+              $unset: { importBatchId: '' },
+            },
+          },
+        })), { ordered: false });
+      }
+    } catch {
+      // Preserve the original import error; the batch id remains available in logs.
+    }
+    return res.status(400).json({ error: error.message });
+  }
+}
+
 export async function exportSchedules(req, res) {
   try {
     const {
@@ -2024,7 +2189,7 @@ export async function exportSchedules(req, res) {
     if (allowedEmployeeIds !== null) employeeQuery._id = { $in: allowedEmployeeIds };
     if (subDepartment) employeeQuery.subDepartment = subDepartment;
     if (search) {
-      const rx = new RegExp(search, 'i');
+      const rx = buildLiteralSearchRegex(search);
       employeeQuery.$or = [{ name: rx }, { employeeId: rx }];
     }
     if (title) {
@@ -2034,7 +2199,7 @@ export async function exportSchedules(req, res) {
       employeeQuery.practiceTitle = practiceTitle;
     }
     const employeeList = await Employee.find(employeeQuery)
-      .select('_id name title practiceTitle subDepartment')
+      .select('_id employeeId name title practiceTitle subDepartment')
       .populate({ path: 'subDepartment', select: 'name' })
       .lean();
     const employeeIds = employeeList.map((item) => item._id.toString());
@@ -2045,7 +2210,11 @@ export async function exportSchedules(req, res) {
       .lean();
     let schedules = await attachShiftInfo(raw);
     const daysInMonth = dayjs(`${month}-01`).daysInMonth();
-    const leaveDaysMap = await buildLeaveDaysMapForMonth(employeeIds, month, start, end);
+    const leaveCalendar = await loadApprovedLeaveCalendar({ employeeIds, start, end });
+    const leaveDaysMap = new Map(employeeIds.map((employeeId) => [
+      employeeId,
+      leaveDaysFromCalendar(leaveCalendar, employeeId, '/'),
+    ]));
     const grouped = new Map();
     schedules.forEach((item) => {
       const empId = item?.employee?._id?.toString?.() || '';
@@ -2100,17 +2269,39 @@ export async function exportSchedules(req, res) {
         return res.status(500).json({ error: 'exceljs module not installed' });
       }
       const workbook = new ExcelJS.Workbook();
-      const ws = workbook.addWorksheet('排班表');
+      const exportSettingQuery = AttendanceSetting.findOne();
+      const exportSetting = exportSettingQuery && typeof exportSettingQuery.lean === 'function'
+        ? await exportSettingQuery.lean()
+        : await exportSettingQuery;
+      workbook.creator = 'HR System';
+      workbook.created = new Date();
+      const ws = workbook.addWorksheet('工作表1', { views: [{ state: 'frozen', xSplit: 3, ySplit: 4 }] });
       const monthDays = Array.from({ length: daysInMonth }, (_, idx) => idx + 1);
-      const headerRow = ['姓名', '單位', '職稱/職別', ...monthDays.map((day) => String(day))];
-      ws.addRow(headerRow);
+      const [yearNumber, monthNumber] = month.split('-').map(Number);
+      const weekLabels = ['日', '一', '二', '三', '四', '五', '六'];
+      const holidayRows = await Holiday.find({ date: { $gte: start, $lt: end } }).lean();
+      const holidayByDay = new Map((holidayRows || []).map((holiday) => [
+        new Date(holiday.date).getUTCDate(),
+        holiday.name || '國定假日',
+      ]));
+
+      ws.addRow([`${yearNumber}年${String(monthNumber).padStart(2, '0')}月班表`]);
+      ws.addRow(['', '', '行事曆', ...monthDays.map((day) => holidayByDay.get(day) || '')]);
+      ws.addRow(['', '', '日期', ...monthDays.map((day) => new Date(Date.UTC(yearNumber, monthNumber - 1, day)))]);
+      ws.addRow(['員工代號', '姓名', '星期', ...monthDays.map((day) => (
+        weekLabels[new Date(Date.UTC(yearNumber, monthNumber - 1, day)).getUTCDay()]
+      ))]);
+      ws.mergeCells(1, 1, 1, monthDays.length + 3);
 
       ws.columns = [
-        { width: 14 },
+        { width: 13 },
         { width: 16 },
-        { width: 24 },
-        ...monthDays.map(() => ({ width: 8 })),
+        { width: 13 },
+        ...monthDays.map(() => ({ width: 5 })),
       ];
+      monthDays.forEach((day, index) => {
+        ws.getCell(3, index + 4).numFmt = 'd';
+      });
 
       const weekendCols = new Set();
       monthDays.forEach((day, dayIndex) => {
@@ -2134,21 +2325,52 @@ export async function exportSchedules(req, res) {
       filteredEmployees.forEach((employee) => {
         const empId = employee._id.toString();
         const row = [
+          employee.employeeId || '',
           employee.name || '',
-          employee.subDepartment?.name || '未指定單位',
-          [employee.title, employee.practiceTitle].filter(Boolean).join(' / ') || '-',
+          employee.practiceTitle || employee.title || '',
         ];
         const empScheduleMap = scheduleMap.get(empId) || new Map();
-        const leaveDays = leaveDaysMap.get(empId) || new Set();
+        const employeeLeaveCalendar = leaveCalendar.get(empId) || new Map();
         monthDays.forEach((day) => {
-          const dateKey = dayjs(`${month}-${String(day).padStart(2, '0')}`).format('YYYY/MM/DD');
-          if (leaveDays.has(dateKey)) {
-            row.push('請假');
+          const dateKey = `${month}-${String(day).padStart(2, '0')}`;
+          const leaveType = employeeLeaveCalendar.get(dateKey);
+          if (leaveType) {
+            const leaveCode = leaveType.includes('特') ? '特'
+              : leaveType.includes('病') ? '病'
+                : leaveType.includes('事') ? '事'
+                  : leaveType.includes('喪') ? '喪'
+                    : leaveType.includes('公') ? '公'
+                      : leaveType.includes('原') ? '原'
+                        : leaveType.includes('補') ? '補' : leaveType;
+            row.push(leaveCode);
             return;
           }
-          row.push(empScheduleMap.get(day) || '未排班');
+          if (holidayByDay.has(day)) {
+            row.push('國');
+            return;
+          }
+          row.push(empScheduleMap.get(day) || '');
         });
         ws.addRow(row);
+      });
+
+      const statisticsStartRow = ws.rowCount + 2;
+      const shiftCodes = Array.from(new Set((exportSetting?.shifts || [])
+        .map((shift) => String(shift.code || shift.name || '').trim())
+        .filter(Boolean)));
+      shiftCodes.forEach((shiftCode, index) => {
+        const rowNumber = statisticsStartRow + index;
+        ws.getCell(rowNumber, 1).value = shiftCode;
+        ws.getCell(rowNumber, 2).value = '每日人數';
+        monthDays.forEach((_day, dayIndex) => {
+          const columnNumber = dayIndex + 4;
+          const columnLetter = ws.getColumn(columnNumber).letter;
+          const firstEmployeeRow = 5;
+          const lastEmployeeRow = Math.max(ws.rowCount - index - 1, firstEmployeeRow);
+          ws.getCell(rowNumber, columnNumber).value = {
+            formula: `COUNTIF(${columnLetter}${firstEmployeeRow}:${columnLetter}${lastEmployeeRow},${JSON.stringify(shiftCode)})`,
+          };
+        });
       });
 
       const headerStyle = {
@@ -2172,21 +2394,21 @@ export async function exportSchedules(req, res) {
         fgColor: { argb: 'FFF8CBAD' },
       };
 
-      ws.getRow(1).eachCell((cell) => {
+      [1, 2, 3, 4].forEach((rowNumber) => ws.getRow(rowNumber).eachCell((cell) => {
         cell.fill = headerStyle;
-        cell.font = { bold: true };
+        cell.font = { bold: rowNumber === 1 || rowNumber === 4 };
         cell.alignment = { vertical: 'middle', horizontal: 'center' };
-      });
+      }));
 
       ws.eachRow((row, rowNumber) => {
-        if (rowNumber === 1) return;
+        if (rowNumber <= 4 || rowNumber >= statisticsStartRow) return;
         row.eachCell((cell, colNumber) => {
           if (colNumber >= 4 && weekendCols.has(colNumber)) {
             cell.fill = weekendStyle;
           }
-          if (cell.value === '未排班') {
+          if (!cell.value && colNumber >= 4) {
             cell.fill = unscheduledStyle;
-          } else if (cell.value === '請假') {
+          } else if (IMPORT_LEAVE_CODES.has(normalizeWorkbookCode(cell.value))) {
             cell.fill = leaveStyle;
           }
           cell.alignment = { vertical: 'middle', horizontal: colNumber <= 3 ? 'left' : 'center' };
@@ -2213,21 +2435,9 @@ export async function exportSchedules(req, res) {
       
       // Register Chinese font for Traditional Chinese support
       try {
-        if (fs.existsSync(CHINESE_FONT_PATH)) {
-          doc.registerFont('NotoSansCJK', CHINESE_FONT_PATH);
-          doc.font('NotoSansCJK');
-        } else {
-          // Font file not found - will use default font but Chinese may not display correctly
-          const fontMessage = `警告：繁體中文字型檔案不存在 / Warning: Traditional Chinese font file not found: ${CHINESE_FONT_PATH}`;
-          if (process.env.NODE_ENV !== 'production') {
-            console.warn(fontMessage);
-          }
-        }
+        registerTraditionalChinesePdfFont(doc, 'NotoSansCJK');
       } catch (error) {
-        const errorMessage = '警告：無法載入繁體中文字型 / Warning: Failed to load Traditional Chinese font';
-        if (process.env.NODE_ENV !== 'production') {
-          console.error(errorMessage, error);
-        }
+        return res.status(503).json({ error: error.message });
       }
       
       doc.fontSize(16).text('排班表', { align: 'center' });

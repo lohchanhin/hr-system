@@ -8,7 +8,7 @@ const mockShiftSchedule = {
   create: jest.fn(),
   insertMany: jest.fn(),
 };
-const mockApprovalRequest = { findOne: jest.fn() };
+const mockApprovalRequest = { findOne: jest.fn(), find: jest.fn() };
 const mockGetLeaveFieldIds = jest.fn();
 const mockEmployee = { findById: jest.fn(), find: jest.fn(), countDocuments: jest.fn() };
 const mockAttendanceSetting = { findOne: jest.fn() };
@@ -50,6 +50,11 @@ beforeEach(() => {
   mockShiftSchedule.create.mockReset();
   mockShiftSchedule.insertMany.mockReset();
   mockApprovalRequest.findOne.mockReset();
+  mockApprovalRequest.find.mockReset();
+  mockApprovalRequest.find.mockReturnValue({
+    select: jest.fn().mockReturnThis(),
+    lean: jest.fn().mockResolvedValue([]),
+  });
   mockGetLeaveFieldIds.mockReset();
   mockGetLeaveFieldIds.mockResolvedValue({
     formId: 'form1',

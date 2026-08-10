@@ -235,6 +235,13 @@
               <el-form-item label="班別名稱" required>
                 <el-input v-model="shiftForm.name" placeholder="如：早班 / 夜班 / 彈性班" />
               </el-form-item>
+              <el-form-item label="班別性質" required>
+                <el-select v-model="shiftForm.semanticType" style="width: 100%">
+                  <el-option label="工作班" value="work" />
+                  <el-option label="休息日" value="rest_day" />
+                  <el-option label="例假" value="regular_rest" />
+                </el-select>
+              </el-form-item>
               <el-form-item label="上班時間" required>
                 <el-time-picker
                   v-model="shiftForm.startTime"
@@ -453,6 +460,21 @@
               <el-form-item label="安排補班">
                 <el-switch v-model="holidayMoveForm.needMakeup" />
               </el-form-item>
+              <el-form-item v-if="holidayMoveForm.needSignature" label="同意文件編號" required>
+                <el-input v-model="holidayMoveForm.agreementReference" maxlength="200" />
+              </el-form-item>
+              <el-form-item v-if="holidayMoveForm.needSignature" label="同意日期" required>
+                <el-date-picker
+                  v-model="holidayMoveForm.agreementDate"
+                  type="date"
+                  value-format="YYYY-MM-DD"
+                  format="YYYY/MM/DD"
+                  style="width: 100%"
+                />
+              </el-form-item>
+              <el-form-item v-if="holidayMoveForm.needMakeup" label="補休日確認" required>
+                <el-checkbox v-model="holidayMoveForm.makeupConfirmed">已確認調移後休假日期</el-checkbox>
+              </el-form-item>
             </el-form>
             <template #footer>
               <div class="dialog-footer">
@@ -500,7 +522,10 @@ const createHolidayMoveForm = () => ({
   targetDate: '',
   reason: '',
   needSignature: false,
-  needMakeup: false
+  needMakeup: false,
+  agreementReference: '',
+  agreementDate: '',
+  makeupConfirmed: false
 })
 const holidayMoveForm = ref(createHolidayMoveForm())
 
@@ -639,7 +664,10 @@ async function saveHolidayMove() {
         targetDate,
         reason: holidayMoveForm.value.reason,
         needSignature: Boolean(holidayMoveForm.value.needSignature),
-        needMakeup: Boolean(holidayMoveForm.value.needMakeup)
+        needMakeup: Boolean(holidayMoveForm.value.needMakeup),
+        agreementReference: holidayMoveForm.value.agreementReference || '',
+        agreementDate: holidayMoveForm.value.agreementDate || null,
+        makeupConfirmed: Boolean(holidayMoveForm.value.makeupConfirmed)
       })
     }
   )
@@ -741,6 +769,7 @@ const shiftTextPresets = [
 const createEmptyShiftForm = () => ({
   name: '',
   code: '',
+  semanticType: 'work',
   startTime: '',
   endTime: '',
   breakDuration: 60,

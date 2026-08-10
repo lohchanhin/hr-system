@@ -1,11 +1,6 @@
 import Employee from '../models/Employee.js';
 import ShiftSchedule from '../models/ShiftSchedule.js';
-import ApprovalRequest from '../models/approval_request.js';
-import AttendanceSetting from '../models/AttendanceSetting.js';
-import { getLeaveFieldIds } from './leaveFieldService.js';
-
-// Constants
-const MILLISECONDS_PER_DAY = 86400000;
+import { leaveDaysFromCalendar, loadApprovedLeaveCalendar } from './approvedLeaveCalendarService.js';
 
 /**
  * 取得指定月份的所有天數
@@ -29,28 +24,6 @@ function getMonthDays(month) {
 }
 
 /**
- * 計算留在指定範圍內的日期範圍
- * @param {Date} startDate - 開始日期
- * @param {Date} endDate - 結束日期
- * @param {Date} rangeStart - 範圍開始
- * @param {Date} rangeEnd - 範圍結束
- * @returns {Object} 調整後的開始和結束日期，如果無交集則返回 null
- */
-function clampDateRange(startDate, endDate, rangeStart, rangeEnd) {
-  const clampedStart = startDate < rangeStart ? new Date(rangeStart) : new Date(startDate);
-  const clampedEnd = endDate >= rangeEnd 
-    ? new Date(rangeEnd.getTime() - MILLISECONDS_PER_DAY) 
-    : new Date(endDate);
-  
-  // Check if there's any overlap
-  if (clampedEnd < clampedStart) {
-    return null;
-  }
-  
-  return { start: clampedStart, end: clampedEnd };
-}
-
-/**
  * 取得員工在指定月份的批准請假天數
  * @param {string} employeeId - 員工ID
  * @param {Date} monthStart - 月份開始日期
@@ -58,54 +31,17 @@ function clampDateRange(startDate, endDate, rangeStart, rangeEnd) {
  * @returns {Promise<Set<string>>} 請假日期集合 (YYYY-MM-DD 格式)
  */
 async function getApprovedLeaveDays(employeeId, monthStart, monthEnd) {
-  const leaveDays = new Set();
-  
   try {
-    const { formId, startId, endId } = await getLeaveFieldIds();
-    if (!formId || !startId || !endId) {
-      return leaveDays;
-    }
-    
-    const query = {
-      form: formId,
-      status: 'approved',
-      applicant_employee: employeeId,
-    };
-    query[`form_data.${startId}`] = { $lte: monthEnd };
-    query[`form_data.${endId}`] = { $gte: monthStart };
-    
-    const approvals = await ApprovalRequest.find(query).lean();
-    
-    approvals.forEach((approval) => {
-      const rawStart = approval.form_data?.[startId];
-      const rawEnd = approval.form_data?.[endId];
-      const startDate = rawStart ? new Date(rawStart) : null;
-      const endDate = rawEnd ? new Date(rawEnd) : null;
-      
-      if (!startDate || !endDate || isNaN(startDate) || isNaN(endDate)) {
-        return;
-      }
-      
-      startDate.setHours(0, 0, 0, 0);
-      endDate.setHours(0, 0, 0, 0);
-      
-      const clampedRange = clampDateRange(startDate, endDate, monthStart, monthEnd);
-      if (!clampedRange) {
-        return; // No overlap with the month
-      }
-      
-      let pointer = new Date(clampedRange.start);
-      while (pointer <= clampedRange.end) {
-        const key = pointer.toISOString().slice(0, 10);
-        leaveDays.add(key);
-        pointer = new Date(pointer.getTime() + MILLISECONDS_PER_DAY);
-      }
+    const calendar = await loadApprovedLeaveCalendar({
+      employeeIds: [employeeId],
+      start: monthStart,
+      end: monthEnd,
     });
+    return leaveDaysFromCalendar(calendar, employeeId);
   } catch (err) {
     console.error(`Error fetching leave days for employee ${employeeId}:`, err);
   }
-  
-  return leaveDays;
+  return new Set();
 }
 
 /**

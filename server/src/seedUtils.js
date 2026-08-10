@@ -265,6 +265,7 @@ const ATTENDANCE_SETTING_TEMPLATE = {
   shifts: [
     {
       name: '早班',
+      semanticType: 'work',
       code: 'SHIFT-A',
       startTime: '08:30',
       endTime: '17:30',
@@ -283,6 +284,7 @@ const ATTENDANCE_SETTING_TEMPLATE = {
     },
     {
       name: '中班',
+      semanticType: 'work',
       code: 'SHIFT-B',
       startTime: '12:00',
       endTime: '21:00',
@@ -301,6 +303,7 @@ const ATTENDANCE_SETTING_TEMPLATE = {
     },
     {
       name: '晚班',
+      semanticType: 'work',
       code: 'SHIFT-C',
       startTime: '14:00',
       endTime: '23:00',
@@ -319,6 +322,7 @@ const ATTENDANCE_SETTING_TEMPLATE = {
     },
     {
       name: '夜班',
+      semanticType: 'work',
       code: 'SHIFT-D',
       startTime: '22:00',
       endTime: '06:00',
@@ -356,6 +360,19 @@ const ATTENDANCE_SETTING_TEMPLATE = {
     holidayRate: 1.33,
     toCompRate: 1.0,
   },
+  laborRules: {
+    workTimeRegime: 'standard',
+    workTimeRegimeApprovalReference: '',
+    minShiftRestMinutes: 660,
+    restIntervalExceptionEnabled: false,
+    restIntervalExceptionMinutes: 480,
+    restIntervalApprovalReference: '',
+    extendedOvertimeEnabled: false,
+    monthlyOvertimeHours: 46,
+    threeMonthOvertimeHours: 138,
+    overtimeApprovalReference: '',
+    strictCompanyWeeklyRest: true,
+  },
 };
 
 const WORKDAYS_PER_EMPLOYEE = 60; // 至少前2個月的考勤資料
@@ -380,6 +397,7 @@ function buildAttendanceSettingPayload() {
     breakOutRules: { ...ATTENDANCE_SETTING_TEMPLATE.breakOutRules },
     actionBuffers: { ...ATTENDANCE_SETTING_TEMPLATE.actionBuffers },
     overtimeRules: { ...ATTENDANCE_SETTING_TEMPLATE.overtimeRules },
+    laborRules: { ...ATTENDANCE_SETTING_TEMPLATE.laborRules },
   };
 }
 
@@ -1228,6 +1246,7 @@ export async function seedApprovalTemplates() {
   const templates = [
     {
       name: '請假',
+      semanticType: 'leave',
       category: '人事',
       description: '用於申請各類假別（事假、病假、特休等），此表單會自動連接薪資系統計算扣薪或假勤。支援小時級別的精確請假時間。',
       fields: [
@@ -1299,6 +1318,7 @@ export async function seedApprovalTemplates() {
     },
     {
       name: '加班申請',
+      semanticType: 'overtime',
       category: '人事',
       description: '用於申請加班時數，此表單會自動連接薪資系統計算加班費。支援小時級別的精確加班時間。',
       fields: [
@@ -1350,7 +1370,12 @@ export async function seedApprovalTemplates() {
   for (const t of templates) {
     let form = await FormTemplate.findOne({ name: t.name });
     if (!form) {
-      form = await FormTemplate.create({ name: t.name, category: t.category, description: t.description });
+      form = await FormTemplate.create({
+        name: t.name,
+        category: t.category,
+        description: t.description,
+        semanticType: t.semanticType || 'general',
+      });
       console.log(`Created form template ${t.name}`);
     }
 

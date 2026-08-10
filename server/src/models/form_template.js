@@ -5,6 +5,12 @@ const formTemplateSchema = new Schema(
   {
     name: { type: String, required: true },                 // 表單名稱
     category: { type: String, default: '其他' },            // 類別：人事類/總務類/請假類/其他...
+    semanticType: {
+      type: String,
+      enum: ['leave', 'overtime', 'shift_change', 'business_trip', 'general'],
+      default: 'general',
+      index: true,
+    },
     description: String,
     created_by: { type: Schema.Types.ObjectId, ref: 'User' },
     owner_org_id: { type: String },                         // 可放機構代碼/ID

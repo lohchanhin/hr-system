@@ -3,17 +3,20 @@ import ShiftSchedule from '../models/ShiftSchedule.js';
 import AttendanceSetting from '../models/AttendanceSetting.js';
 import ApprovalRequest from '../models/approval_request.js';
 import Employee from '../models/Employee.js';
+import Holiday from '../models/Holiday.js';
+import HolidayMoveSetting from '../models/HolidayMoveSetting.js';
+import FormField from '../models/form_field.js';
 import { getLeaveFieldIds } from './leaveFieldService.js';
 import { calculateNightShiftAllowance } from './nightShiftAllowanceService.js';
 import { classifyShift } from './laborRuleValidationService.js';
 import { 
   WORK_HOURS_CONFIG,
   LEAVE_POLICY,
-  OVERTIME_CONFIG,
   OVERTIME_FORM_NAMES,
   OVERTIME_FIELDS,
   convertToHourlyRate,
-  convertToDailyRate
+  convertToDailyRate,
+  calculateTaiwanOvertimeAmount
 } from '../config/salaryConfig.js';
 
 /**
@@ -502,36 +505,77 @@ export async function calculateOvertimePay(employeeId, month, context = {}) {
     };
   }
   
-  // 查詢加班表單 (假設表單名稱為"加班")
+  // 依实际加班日期归属月份，不以送签建立时间判断，避免跨月送签漏算。
   const overtimeForms = await ApprovalRequest.find({
     applicant_employee: employeeId,
-    status: 'approved',
-    createdAt: { $gte: startDate, $lt: endDate }
+    status: 'approved'
   }).populate('form').lean();
   
-  // 篩選出加班表單 - 使用配置的表單名稱
-  const overtimeRecords = overtimeForms.filter(form => 
-    OVERTIME_FORM_NAMES.includes(form.form?.name)
-  );
+  const overtimeRecords = overtimeForms.filter((request) => (
+    request.form?.semanticType === 'overtime'
+    || OVERTIME_FORM_NAMES.includes(request.form?.name)
+    || String(request.form?.name || '').toLowerCase().includes('overtime')
+  ));
+  const overtimeFormIds = Array.from(new Set(overtimeRecords
+    .map((request) => request.form?._id?.toString?.())
+    .filter(Boolean)));
+  const overtimeFields = overtimeFormIds.length
+    ? await FormField.find({ form: { $in: overtimeFormIds }, is_active: { $ne: false } }).lean()
+    : [];
+  const fieldsByForm = new Map();
+  for (const field of overtimeFields || []) {
+    const formId = field.form?.toString?.() || '';
+    if (!fieldsByForm.has(formId)) fieldsByForm.set(formId, []);
+    fieldsByForm.get(formId).push(field);
+  }
+
+  const attendanceSetting = context.attendanceSetting ?? await AttendanceSetting.findOne().lean();
+  const schedules = context.schedules ?? await ShiftSchedule.find({
+    employee: employeeId,
+    date: { $gte: startDate, $lt: endDate },
+  }).lean();
+  const shiftMap = new Map((attendanceSetting?.shifts || []).map((shift) => [String(shift._id), shift]));
+  const scheduleByDate = new Map((schedules || []).map((schedule) => [
+    new Date(schedule.date).toISOString().slice(0, 10),
+    schedule,
+  ]));
+  const [holidays, holidayMoves] = await Promise.all([
+    Holiday.find({ date: { $gte: startDate, $lt: endDate } }).lean(),
+    HolidayMoveSetting.find({ enableHolidayMove: true }).lean(),
+  ]);
+  const holidayDays = new Set((holidays || []).map((holiday) => new Date(holiday.date).toISOString().slice(0, 10)));
+  for (const move of holidayMoves || []) {
+    const source = move.sourceDate ? new Date(move.sourceDate).toISOString().slice(0, 10) : '';
+    const target = move.targetDate ? new Date(move.targetDate).toISOString().slice(0, 10) : '';
+    if (source) holidayDays.delete(source);
+    if (target >= startDate.toISOString().slice(0, 10) && target < endDate.toISOString().slice(0, 10)) {
+      holidayDays.add(target);
+    }
+  }
   
   let totalOvertimeHours = 0;
+  let overtimePay = 0;
   const records = [];
-  
-  overtimeRecords.forEach((record) => {
-    // 嘗試從多個可能的欄位名稱取得加班時數
-    let hours = 0;
-    for (const fieldName of OVERTIME_FIELDS.hours) {
-      if (record.form_data?.[fieldName]) {
-        hours = parseFloat(record.form_data[fieldName]);
-        break;
+  const hourlyRate = convertToHourlyRate(employee.salaryAmount || 0, employee.salaryType || '月薪');
+
+  for (const record of overtimeRecords) {
+    const formFields = fieldsByForm.get(record.form?._id?.toString?.() || '') || [];
+    const valueByLabels = (labels) => {
+      const normalizedLabels = labels.map((label) => String(label).trim().toLowerCase());
+      const field = formFields.find((candidate) => normalizedLabels.includes(String(candidate.label || '').trim().toLowerCase()));
+      for (const key of [field?._id?.toString?.(), field?.label, ...labels].filter(Boolean)) {
+        if (Object.prototype.hasOwnProperty.call(record.form_data || {}, key)) return record.form_data[key];
       }
-    }
+      return undefined;
+    };
+    // 嘗試從多個可能的欄位名稱取得加班時數
+    let hours = parseFloat(valueByLabels(OVERTIME_FIELDS.hours)) || 0;
     
     // 如果沒有直接的時數欄位，嘗試從開始/結束時間計算
     if (hours === 0) {
-      const startTime = record.form_data?.['開始時間'] || record.form_data?.['startTime'];
-      const endTime = record.form_data?.['結束時間'] || record.form_data?.['endTime'];
-      const isCrossDay = record.form_data?.['是否跨日'] || record.form_data?.['crossDay'];
+      const startTime = valueByLabels(['開始時間', '開始日期', 'startTime', 'start']);
+      const endTime = valueByLabels(['結束時間', '結束日期', 'endTime', 'end']);
+      const isCrossDay = valueByLabels(['是否跨日', 'crossDay']);
       
       if (startTime && endTime) {
         const start = new Date(startTime);
@@ -557,48 +601,45 @@ export async function calculateOvertimePay(employeeId, month, context = {}) {
     }
     
     // 取得加班日期
-    let date = null;
-    for (const fieldName of OVERTIME_FIELDS.date) {
-      if (record.form_data?.[fieldName]) {
-        date = record.form_data[fieldName];
-        break;
-      }
-    }
+    let date = valueByLabels(OVERTIME_FIELDS.date);
     
     // 如果沒有日期欄位，嘗試使用開始時間作為日期
     if (!date) {
-      const startTime = record.form_data?.['開始時間'] || record.form_data?.['startTime'];
+      const startTime = valueByLabels(['開始時間', '開始日期', 'startTime', 'start']);
       if (startTime) {
         date = startTime;
       }
     }
     
     // 取得加班原因
-    let reason = '';
-    for (const fieldName of OVERTIME_FIELDS.reason) {
-      if (record.form_data?.[fieldName]) {
-        reason = record.form_data[fieldName];
-        break;
-      }
-    }
+    let reason = valueByLabels(OVERTIME_FIELDS.reason) || '';
     
     // 如果沒有原因欄位，嘗試'事由'欄位
-    if (!reason && record.form_data?.['事由']) {
-      reason = record.form_data['事由'];
+    if (!reason) reason = valueByLabels(['事由']) || '';
+    
+    const overtimeDate = date ? new Date(date) : null;
+    if (!overtimeDate || Number.isNaN(overtimeDate.getTime()) || overtimeDate < startDate || overtimeDate >= endDate) {
+      continue;
     }
-    
+    const overtimeDateKey = overtimeDate.toISOString().slice(0, 10);
+    const schedule = scheduleByDate.get(overtimeDateKey);
+    const classification = classifyShift(shiftMap.get(String(schedule?.shiftId || '')));
+    const dayType = holidayDays.has(overtimeDateKey)
+      ? 'national_holiday'
+      : classification.isRestDay ? 'rest_day' : 'workday';
+    const calculation = calculateTaiwanOvertimeAmount(hours, hourlyRate, dayType);
+
     totalOvertimeHours += hours;
-    
+    overtimePay += calculation.amount;
     records.push({
-      date: formatDate(date ?? record.createdAt),
+      date: formatDate(overtimeDate),
       hours,
-      reason
+      reason,
+      dayType,
+      pay: calculation.amount,
+      rateSegments: calculation.segments,
     });
-  });
-  
-  // 計算加班費 - 使用配置的倍率和轉換函數
-  const hourlyRate = convertToHourlyRate(employee.salaryAmount || 0, employee.salaryType || '月薪');
-  const overtimePay = Math.round(totalOvertimeHours * hourlyRate * OVERTIME_CONFIG.DEFAULT_MULTIPLIER);
+  }
   
   return {
     overtimeHours: totalOvertimeHours,

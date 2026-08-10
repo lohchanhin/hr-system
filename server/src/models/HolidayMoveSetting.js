@@ -7,7 +7,11 @@ const holidayMoveSettingSchema = new mongoose.Schema(
     needMakeup: { type: Boolean, default: false },
     sourceDate: { type: Date, default: null },
     targetDate: { type: Date, default: null },
-    reason: { type: String, trim: true, maxlength: 500, default: '' }
+    reason: { type: String, trim: true, maxlength: 500, default: '' },
+    agreementReference: { type: String, trim: true, maxlength: 200, default: '' },
+    agreementDate: { type: Date, default: null },
+    makeupConfirmed: { type: Boolean, default: false },
+    updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }
   },
   { timestamps: true }
 );
@@ -26,6 +30,13 @@ holidayMoveSettingSchema.pre('validate', function validateMove(next) {
     return next(new Error('sourceDate and targetDate must be provided together'));
   }
   if (!hasSource) return next();
+
+  if (this.needSignature && (!this.agreementReference || !this.agreementDate)) {
+    return next(new Error('labor agreement reference and date are required'));
+  }
+  if (this.needMakeup && !this.makeupConfirmed) {
+    return next(new Error('makeup holiday must be explicitly confirmed'));
+  }
 
   const source = normalizeUtcDate(this.sourceDate);
   const target = normalizeUtcDate(this.targetDate);
@@ -54,5 +65,6 @@ holidayMoveSettingSchema.index(
   { unique: true, partialFilterExpression: { sourceDate: { $type: 'date' } } },
 );
 holidayMoveSettingSchema.index({ targetDate: 1 });
+holidayMoveSettingSchema.index({ agreementDate: 1 });
 
 export default mongoose.model('HolidayMoveSetting', holidayMoveSettingSchema);

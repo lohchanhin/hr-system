@@ -45,4 +45,26 @@ describe('HolidayMoveSetting', () => {
 
     await expect(setting.validate()).rejects.toThrow('provided together');
   });
+
+  it('requires agreement evidence and makeup confirmation when enabled', async () => {
+    const missingEvidence = new HolidayMoveSetting({
+      enableHolidayMove: true,
+      sourceDate: '2036-04-07',
+      targetDate: '2036-04-20',
+      needSignature: true,
+    });
+    await expect(missingEvidence.validate()).rejects.toThrow('agreement reference');
+
+    const complete = new HolidayMoveSetting({
+      enableHolidayMove: true,
+      sourceDate: '2036-04-07',
+      targetDate: '2036-04-20',
+      needSignature: true,
+      agreementReference: 'LABOR-MEETING-2036-04',
+      agreementDate: '2036-03-20',
+      needMakeup: true,
+      makeupConfirmed: true,
+    });
+    await expect(complete.validate()).resolves.toBeUndefined();
+  });
 });
