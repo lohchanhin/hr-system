@@ -7,6 +7,7 @@
       <!-- 1) 通用流程規則（針對選定的表單樣板） -->
       <el-tab-pane label="通用流程規則" name="commonRule">
         <div class="flex items-center gap-2 mb-2">
+          <span class="template-select-label">表單樣板</span>
           <el-select v-model="selectedFormId" placeholder="選擇表單樣板" style="width: 320px" @change="loadWorkflow">
             <el-option
               v-for="f in forms"
@@ -1176,4 +1177,5 @@ onMounted(async () => {
 <style scoped>
 .approval-flow-setting { padding: 20px; }
 .rule-form { max-width: 520px; margin-top: 20px; }
+.template-select-label { flex: 0 0 auto; font-weight: 600; color: #334155; }
 </style>

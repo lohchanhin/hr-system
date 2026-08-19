@@ -1959,7 +1959,12 @@ export async function importSchedules(req, res) {
     }
 
     const parsed = await parseScheduleWorkbook(req.file.buffer, { month });
-    const allowedEmployeeIds = await getAllowedScheduleEmployeeIds(req);
+    const includeSelf = String(req.body?.includeSelf || '').toLowerCase() === 'true';
+    let allowedEmployeeIds = await getAllowedScheduleEmployeeIds(req);
+    if (req.user?.role === 'supervisor' && Array.isArray(allowedEmployeeIds) && !includeSelf) {
+      const actorId = toEntityId(req.user?.id);
+      allowedEmployeeIds = allowedEmployeeIds.filter((employeeId) => employeeId !== actorId);
+    }
     if (allowedEmployeeIds !== null && !allowedEmployeeIds.length) {
       return res.status(403).json({ error: 'forbidden' });
     }

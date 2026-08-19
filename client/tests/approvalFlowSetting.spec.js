@@ -92,6 +92,7 @@ describe('ApprovalFlowSetting approver select', () => {
     expect(labels).toContain('簽核類型')
     expect(labels).toContain('簽核對象')
     expect(labels).toContain('範圍')
+    expect(wrapper.text()).toContain('表單樣板')
   })
 
   it('loads options and saves selected id', async () => {

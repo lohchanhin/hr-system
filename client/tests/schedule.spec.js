@@ -33,7 +33,7 @@ vi.mock('element-plus', () => elementPlusMock.module)
 const { ElMessage, ElMessageBox, loadingInstances, loadingServiceMock } = elementPlusMock
 global.ElMessage = ElMessage
 
-vi.mock('../src/api', () => ({ apiFetch: vi.fn() }))
+vi.mock('../src/api', () => ({ apiFetch: vi.fn(), importScheduleRecords: vi.fn() }))
 const encodeBase64 = data => Buffer.from(data, 'utf8').toString('base64')
 const createToken = payload => `stub.${encodeBase64(JSON.stringify(payload ?? {}))}.sig`
 const setRoleToken = role => {
@@ -62,7 +62,7 @@ vi.mock('vue-router', async () => {
   return { ...actual, useRouter: () => ({ push: pushMock }) }
 })
 
-import { apiFetch } from '../src/api'
+import { apiFetch, importScheduleRecords } from '../src/api'
 import Schedule from '../src/views/front/Schedule.vue'
 
 describe('Schedule.vue', () => {
@@ -72,6 +72,7 @@ describe('Schedule.vue', () => {
     setActivePinia(createPinia())
     apiFetch.mockReset()
     apiFetch.mockResolvedValue({ ok: true, json: async () => [] })
+    importScheduleRecords.mockReset()
     ElMessage.error.mockReset()
     ElMessage.success.mockReset()
     ElMessage.warning.mockReset()
@@ -1179,6 +1180,66 @@ describe('Schedule.vue', () => {
     expect(button.element.disabled).toBe(true)
     expect(loadingInstance.close).toHaveBeenCalled()
     expect(ElMessage.success).toHaveBeenCalledWith('批次套用完成')
+  })
+
+  it('shows persistent labor-rule details when batch apply is rejected', async () => {
+    setRoleToken('supervisor')
+    apiFetch.mockResolvedValue({ ok: true, json: async () => [] })
+    const wrapper = mountSchedule()
+    await flush()
+    wrapper.vm.employees = [
+      { _id: 'e1', employeeId: 'CODEX_TEST_A0077', name: 'CODEX 測試主管', departmentId: 'd1', subDepartmentId: 'sd1' }
+    ]
+    wrapper.vm.scheduleMap = {
+      e1: { 1: { shiftId: '', department: 'd1', subDepartment: 'sd1' } }
+    }
+    await wrapper.vm.$nextTick()
+    wrapper.vm.toggleCell('e1', 1, true)
+    wrapper.vm.batchShiftId = 's1'
+    apiFetch.mockResolvedValueOnce({
+      ok: false,
+      json: async () => ({
+        error: '排班規範檢核未通過',
+        violations: [{ employee: 'e1', message: '不得連續7日未安排休/例' }]
+      })
+    })
+
+    await wrapper.vm.applyBatch()
+
+    expect(ElMessageBox.alert).toHaveBeenCalledWith(
+      expect.stringContaining('CODEX_TEST_A0077 CODEX 測試主管：不得連續7日未安排休/例'),
+      '排班規範檢核未通過',
+      expect.objectContaining({ customClass: 'schedule-issue-dialog', closeOnClickModal: false })
+    )
+  })
+
+  it('keeps schedule import errors open and includes row and employee code', async () => {
+    setRoleToken('supervisor')
+    apiFetch.mockResolvedValue({ ok: true, json: async () => [] })
+    importScheduleRecords.mockResolvedValue({
+      ok: false,
+      json: async () => ({
+        errors: [{ row: 11, day: null, code: 'CODEX_TEST_A0077', message: '員工代號不在目前部門或操作權限範圍內' }]
+      })
+    })
+    const wrapper = mountSchedule()
+    await flush()
+    wrapper.vm.selectedDepartment = 'd1'
+    wrapper.vm.includeSelf = true
+    await wrapper.vm.$nextTick()
+    const file = new File(['schedule'], 'schedule.xlsx', {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    })
+
+    await wrapper.vm.onScheduleImportFile({ target: { files: [file], value: 'schedule.xlsx' } })
+
+    const formData = importScheduleRecords.mock.calls[0][0]
+    expect(formData.get('includeSelf')).toBe('true')
+    expect(ElMessageBox.alert).toHaveBeenCalledWith(
+      expect.stringContaining('第 11 列／員工代號「CODEX_TEST_A0077」'),
+      '班表匯入檢核未通過',
+      expect.objectContaining({ customClass: 'schedule-issue-dialog', closeOnClickModal: false })
+    )
   })
 
   it('uses fullscreen popper strategy for batch shift and row-color selects and shows readonly department fields', async () => {

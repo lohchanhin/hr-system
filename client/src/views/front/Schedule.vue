@@ -1179,8 +1179,8 @@ const batchSubDepartmentDisplayName = computed(
 )
 const allEmployeesSelectionHint = computed(() =>
   selectedAllEmployeesAcrossPages.value
-    ? `已全選 ${selectedEmployeesSet.value.size} 位員工（全部人員），切換分頁仍會維持勾選。`
-    : `目前已選 ${selectedEmployeesSet.value.size} 位員工（本頁/手動）。`
+    ? `已全選 ${selectedEmployeesSet.value.size} 位員工（全部人員），目前涵蓋 ${allSelectedCells.value.size} 個可排班日期格。`
+    : `目前已選 ${selectedEmployeesSet.value.size} 位員工，共 ${allSelectedCells.value.size} 個可排班日期格；勾選員工會選取該員工本月全部可排班日期。`
 )
 
 // ✅ UI 上是否標成「已選取」：請假格子一律 false
@@ -1292,6 +1292,50 @@ const toggleCell = (empId, day, explicit) => {
 const exportPdf = () => exportSchedules('pdf')
 const exportExcel = () => exportSchedules('excel')
 
+const SCHEDULE_ISSUE_DISPLAY_LIMIT = 20
+
+function openScheduleIssueDialog(title, lines, fallbackMessage) {
+  const normalizedLines = (Array.isArray(lines) ? lines : []).filter(Boolean)
+  const displayed = normalizedLines.slice(0, SCHEDULE_ISSUE_DISPLAY_LIMIT)
+  if (normalizedLines.length > displayed.length) {
+    displayed.push(`另有 ${normalizedLines.length - displayed.length} 項，請修正前述問題後重新檢核。`)
+  }
+  const message = displayed.join('\n') || fallbackMessage || '操作失敗'
+  return Promise.resolve(ElMessageBox.alert(message, title, {
+    confirmButtonText: '關閉',
+    type: 'error',
+    customClass: 'schedule-issue-dialog',
+    closeOnClickModal: false,
+    showClose: true
+  })).catch(() => {})
+}
+
+function formatScheduleImportIssue(item = {}) {
+  const row = item.row || '-'
+  const day = item.day ? `／${item.day} 日` : ''
+  const code = String(item.code || '').trim()
+  const identifier = code
+    ? item.day
+      ? `／班別代號或名稱「${code}」`
+      : `／員工代號「${code}」`
+    : ''
+  return `第 ${row} 列${day}${identifier}：${item.message || '資料錯誤'}`
+}
+
+function employeeIssueLabel(employeeId) {
+  const normalizedId = String(employeeId || '')
+  if (!normalizedId) return ''
+  const employee = employees.value.find(item => String(item?._id || '') === normalizedId)
+  if (!employee) return `員工 ${normalizedId}`
+  const code = String(employee.employeeId || '').trim()
+  return [code, employee.name].filter(Boolean).join(' ') || `員工 ${normalizedId}`
+}
+
+function formatLaborRuleViolation(item = {}) {
+  const employee = employeeIssueLabel(item.employee)
+  return `${employee ? `${employee}：` : ''}${item.message || '排班規範檢核未通過'}`
+}
+
 const openScheduleImport = () => {
   if (!selectedDepartment.value) {
     ElMessage.warning('請先選擇部門')
@@ -1308,6 +1352,7 @@ async function submitScheduleImport(file, mode) {
   if (selectedSubDepartment.value) {
     formData.append('subDepartment', selectedSubDepartment.value)
   }
+  formData.append('includeSelf', String(includeSelf.value && showIncludeSelfToggle.value))
   formData.append('mode', mode)
   formData.append('overwrite', 'false')
   const response = await importScheduleRecords(formData)
@@ -1323,11 +1368,14 @@ async function onScheduleImportFile(event) {
   try {
     const preview = await submitScheduleImport(file, 'preview')
     if (!preview.response.ok) {
-      const details = (preview.payload.errors || [])
-        .slice(0, 5)
-        .map(item => `第 ${item.row || '-'} 列${item.day ? `／${item.day} 日` : ''}：${item.message}`)
-        .join('\n')
-      throw new Error(details || preview.payload.error || '班表预览失败')
+      const issues = (preview.payload.errors || []).map(formatScheduleImportIssue)
+      const violations = (preview.payload.violations || []).map(formatLaborRuleViolation)
+      await openScheduleIssueDialog(
+        violations.length ? '排班規範檢核未通過' : '班表匯入檢核未通過',
+        issues.length ? issues : violations,
+        preview.payload.error || '班表預覽失敗'
+      )
+      return
     }
     const warningText = preview.payload.warnings?.length
       ? `\n另有 ${preview.payload.warnings.length} 项提醒，汇入后仍保留原假单与假日日历资料。`
@@ -1339,7 +1387,14 @@ async function onScheduleImportFile(event) {
     )
     const committed = await submitScheduleImport(file, 'commit')
     if (!committed.response.ok) {
-      throw new Error(committed.payload.error || committed.payload.errors?.[0]?.message || '班表汇入失败')
+      const issues = (committed.payload.errors || []).map(formatScheduleImportIssue)
+      const violations = (committed.payload.violations || []).map(formatLaborRuleViolation)
+      await openScheduleIssueDialog(
+        violations.length ? '排班規範檢核未通過' : '班表匯入失敗',
+        issues.length ? issues : violations,
+        committed.payload.error || '班表匯入失敗'
+      )
+      return
     }
     ElMessage.success(`已汇入 ${committed.payload.imported} 个班次`)
     await refreshScheduleData({ reset: true, reason: 'excel-import' })
@@ -3793,12 +3848,22 @@ async function handleScheduleError(
 
 async function handleBatchApiError(res, defaultMsg = '批次套用失敗') {
   let msg = ''
+  let violations = []
   try {
     if (res) {
       const data = await res.json()
       msg = data?.error || ''
+      violations = Array.isArray(data?.violations) ? data.violations : []
     }
   } catch (err) { }
+  if (violations.length) {
+    await openScheduleIssueDialog(
+      '排班規範檢核未通過',
+      violations.map(formatLaborRuleViolation),
+      msg || defaultMsg
+    )
+    return
+  }
   if (msg === 'employee conflict') {
     ElMessage.warning('部分員工既有排班已更新，請重新整理檢查')
   } else if (msg === 'department overlap') {
@@ -3806,9 +3871,9 @@ async function handleBatchApiError(res, defaultMsg = '批次套用失敗') {
   } else if (msg === 'leave conflict') {
     ElMessageBox.alert('選取日期包含已核准請假，無法套用')
   } else if (msg) {
-    ElMessage.error(msg)
+    await openScheduleIssueDialog('批次套用失敗', [msg], defaultMsg)
   } else {
-    ElMessage.error(defaultMsg)
+    await openScheduleIssueDialog('批次套用失敗', [], defaultMsg)
   }
 }
 
@@ -4099,6 +4164,7 @@ async function fetchEmployees(
 
       return {
         _id: normalizedId,
+        employeeId: e.employeeId || '',
         name: e.name,
         title: e.title || '',
         practiceTitle: e.practiceTitle || '',
@@ -5654,5 +5720,13 @@ onUpdated(() => {
 .no-leave-info {
   color: #94a3b8;
   font-size: 0.875rem;
+}
+
+:global(.schedule-issue-dialog .el-message-box__message) {
+  max-height: min(60vh, 560px);
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.65;
 }
 </style>

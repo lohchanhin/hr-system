@@ -1189,6 +1189,69 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
     expect(mockShiftSchedule.bulkWrite).toHaveBeenCalledTimes(1);
   });
 
+  it('allows a supervisor to import their own row only when includeSelf is enabled', async () => {
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet('工作表1');
+    sheet.addRow(['公版班表']);
+    sheet.addRow(['', '', '行事曆']);
+    sheet.addRow(['', '', '日期', 1]);
+    sheet.addRow(['員工代號', '姓名', '星期', '三']);
+    sheet.addRow(['CODEX_TEST_A0077', 'CODEX 測試主管', '主管', 'D']);
+    const file = Buffer.from(await workbook.xlsx.writeBuffer());
+    const supervisor = {
+      _id: 'tester', employeeId: 'CODEX_TEST_A0077', name: 'CODEX 測試主管', department: 'd1', subDepartment: 'sd1',
+    };
+
+    mockEmployee.find.mockImplementation((query) => ({
+      select: jest.fn().mockImplementation(() => (
+        query?.supervisor === 'tester'
+          ? createSelectResponse([])
+          : createSelectResponse([supervisor])
+      )),
+    }));
+    mockAttendanceSetting.findOne.mockReturnValue({
+      lean: jest.fn().mockResolvedValue({ shifts: [{ _id: 'day', code: 'D', name: '日班' }] }),
+    });
+    mockShiftSchedule.find.mockReturnValue({ lean: jest.fn().mockResolvedValue([]) });
+    mockApprovalRequest.find.mockReturnValue({
+      select: jest.fn().mockReturnThis(),
+      lean: jest.fn().mockResolvedValue([]),
+    });
+
+    const withoutSelf = await request(app)
+      .post('/api/schedules/import')
+      .set('Authorization', buildAuthHeader('supervisor'))
+      .field('month', '2026-07')
+      .field('department', 'd1')
+      .field('includeSelf', 'false')
+      .field('mode', 'preview')
+      .attach('file', Buffer.from(file), {
+        filename: 'schedule.xlsx',
+        contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      });
+
+    expect(withoutSelf.status).toBe(403);
+
+    const preview = await request(app)
+      .post('/api/schedules/import')
+      .set('Authorization', buildAuthHeader('supervisor'))
+      .field('month', '2026-07')
+      .field('department', 'd1')
+      .field('includeSelf', 'true')
+      .field('mode', 'preview')
+      .attach('file', file, {
+        filename: 'schedule.xlsx',
+        contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      });
+
+    expect(preview.status).toBe(200);
+    expect(preview.body).toEqual(expect.objectContaining({ employees: 1, scheduleDays: 1, errors: [] }));
+    expect(mockEmployee.find).toHaveBeenCalledWith(expect.objectContaining({
+      department: 'd1',
+      _id: { $in: expect.arrayContaining(['tester']) },
+    }));
+  });
+
   it('rejects schedule import when configured shift identifiers are ambiguous', async () => {
     const workbook = new ExcelJS.Workbook();
     const sheet = workbook.addWorksheet('工作表1');
