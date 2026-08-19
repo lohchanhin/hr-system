@@ -1,6 +1,10 @@
 import AttendanceSetting from '../models/AttendanceSetting.js';
 import { parseTimeString } from '../utils/timeWindow.js';
 import { resolveShiftSemanticType } from '../services/shiftSemanticService.js';
+import {
+  assertUniqueShiftIdentity,
+  ShiftIdentityConflictError,
+} from '../services/shiftIdentityService.js';
 
 function validateTimeField(value, label) {
   if (!value || typeof value !== 'string' || !parseTimeString(value)) {
@@ -109,13 +113,16 @@ export async function createShift(req, res) {
       setting = await AttendanceSetting.create({ shifts: [] });
     }
     const payload = buildShiftPayload(req.body);
+    assertUniqueShiftIdentity(setting.shifts, payload);
     setting.shifts.push(payload);
     await setting.save();
     const newShift = setting.shifts[setting.shifts.length - 1];
     res.status(201).json(newShift);
   } catch (err) {
-    const status = err.message?.includes('必填') || err.message?.includes('格式不正確') ? 400 : 500;
-    res.status(status).json({ error: err.message });
+    const status = err instanceof ShiftIdentityConflictError
+      ? err.statusCode
+      : (err.message?.includes('必填') || err.message?.includes('格式不正確') ? 400 : 500);
+    res.status(status).json({ error: err.message, ...(err.code ? { code: err.code } : {}) });
   }
 }
 
@@ -127,12 +134,15 @@ export async function updateShift(req, res) {
     const shift = setting.shifts.id(id);
     if (!shift) return res.status(404).json({ error: 'Shift not found' });
     const payload = buildShiftPayload(req.body, shift.toObject ? shift.toObject() : shift);
+    assertUniqueShiftIdentity(setting.shifts, payload, { excludeId: id });
     Object.assign(shift, payload);
     await setting.save();
     res.json(shift);
   } catch (err) {
-    const status = err.message?.includes('必填') || err.message?.includes('格式不正確') ? 400 : 500;
-    res.status(status).json({ error: err.message });
+    const status = err instanceof ShiftIdentityConflictError
+      ? err.statusCode
+      : (err.message?.includes('必填') || err.message?.includes('格式不正確') ? 400 : 500);
+    res.status(status).json({ error: err.message, ...(err.code ? { code: err.code } : {}) });
   }
 }
 

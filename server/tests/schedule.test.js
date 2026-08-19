@@ -1149,7 +1149,13 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
       }]),
     });
     mockAttendanceSetting.findOne.mockReturnValue({
-      lean: jest.fn().mockResolvedValue({ shifts: [{ _id: 'day', code: 'D', name: '日班' }] }),
+      lean: jest.fn().mockResolvedValue({
+        shifts: [
+          { _id: 'day', code: 'D', name: '日班' },
+          { _id: 'evening-1', code: 'E', name: '晚班一' },
+          { _id: 'evening-2', code: 'F', name: 'ｅ' },
+        ],
+      }),
     });
     mockShiftSchedule.find.mockReturnValue({ lean: jest.fn().mockResolvedValue([]) });
     mockApprovalRequest.find.mockReturnValue({
@@ -1181,6 +1187,50 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
     expect(committed.status).toBe(201);
     expect(committed.body.imported).toBe(1);
     expect(mockShiftSchedule.bulkWrite).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects schedule import when configured shift identifiers are ambiguous', async () => {
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet('工作表1');
+    sheet.addRow(['公版班表']);
+    sheet.addRow(['', '', '行事曆']);
+    sheet.addRow(['', '', '日期', 1]);
+    sheet.addRow(['員工代號', '姓名', '星期', '三']);
+    sheet.addRow(['A001', '測試員工', '護理師', 'D']);
+    const file = Buffer.from(await workbook.xlsx.writeBuffer());
+
+    mockEmployee.find.mockReturnValue({
+      select: jest.fn().mockReturnThis(),
+      lean: jest.fn().mockResolvedValue([{
+        _id: 'e1', employeeId: 'A001', name: '測試員工', department: 'd1', subDepartment: 'sd1',
+      }]),
+    });
+    mockAttendanceSetting.findOne.mockReturnValue({
+      lean: jest.fn().mockResolvedValue({
+        shifts: [
+          { _id: 'day', code: 'D', name: '日班' },
+          { _id: 'evening', code: 'E', name: 'ｄ' },
+        ],
+      }),
+    });
+
+    const res = await request(app)
+      .post('/api/schedules/import')
+      .set('Authorization', buildAuthHeader('admin'))
+      .field('month', '2026-07')
+      .field('department', 'd1')
+      .field('mode', 'preview')
+      .attach('file', file, {
+        filename: 'schedule.xlsx',
+        contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      });
+
+    expect(res.status).toBe(409);
+    expect(res.body.code).toBe('SHIFT_IDENTIFIER_CONFLICT');
+    expect(res.body.conflicts).toEqual(expect.arrayContaining([
+      expect.objectContaining({ identifier: 'ｄ' }),
+    ]));
+    expect(mockShiftSchedule.bulkWrite).not.toHaveBeenCalled();
   });
 
   it('lists leave approvals', async () => {

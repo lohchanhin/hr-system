@@ -161,7 +161,17 @@ async function main() {
   const shifts = Array.isArray(shiftsPayload) ? shiftsPayload : [];
   assert(shifts.length > 0, 'no shifts are configured');
   verifyShiftSemantics(shifts);
-  const workShifts = shifts.filter((shift) => shift.semanticType === 'work' && (shift.code || shift.name));
+  const shiftIdentityCounts = new Map();
+  for (const configuredShift of shifts) {
+    for (const value of [configuredShift.code, configuredShift.name]) {
+      const key = String(value || '').trim().normalize('NFKC').toUpperCase();
+      if (key) shiftIdentityCounts.set(key, (shiftIdentityCounts.get(key) || 0) + 1);
+    }
+  }
+  const workShifts = shifts.filter((shift) => {
+    const code = String(shift.code || '').trim().normalize('NFKC').toUpperCase();
+    return shift.semanticType === 'work' && code && shiftIdentityCounts.get(code) === 1;
+  });
   const shift = requestedShiftCode
     ? workShifts.find((item) => String(item.code || '').trim() === requestedShiftCode)
     : workShifts[0];

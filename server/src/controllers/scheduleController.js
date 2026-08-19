@@ -21,6 +21,10 @@ import { leaveDaysFromCalendar, loadApprovedLeaveCalendar } from '../services/ap
 import { buildLiteralSearchRegex } from '../utils/safeSearch.js';
 import { parseScheduleWorkbook } from '../services/scheduleWorkbookService.js';
 import { registerTraditionalChinesePdfFont } from '../services/pdfFontService.js';
+import {
+  buildShiftIdentityLookup,
+  normalizeShiftIdentifier,
+} from '../services/shiftIdentityService.js';
 const SCHEDULE_EMPLOYEE_SELECT = 'name employeeId photo title practiceTitle department subDepartment supervisor role status';
 
 function toEntityId(value) {
@@ -1927,7 +1931,7 @@ export async function deleteOldSchedules(req, res) {
 const IMPORT_LEAVE_CODES = new Set(['特', '特休', '病', '病假', '事', '事假', '喪', '喪假', '公', '公假', '原', '原民假', '補', '補休']);
 
 function normalizeWorkbookCode(value) {
-  return String(value || '').trim().toUpperCase();
+  return normalizeShiftIdentifier(value);
 }
 
 function scheduleImportError(row, day, code, message) {
@@ -1977,12 +1981,31 @@ export async function importSchedules(req, res) {
     const setting = settingQuery && typeof settingQuery.lean === 'function'
       ? await settingQuery.lean()
       : await settingQuery;
-    const shiftByCode = new Map();
-    for (const shift of setting?.shifts || []) {
-      for (const key of [shift.code, shift.name]) {
-        const normalized = normalizeWorkbookCode(key);
-        if (normalized) shiftByCode.set(normalized, shift);
-      }
+    const { lookup: shiftByCode, conflicts: shiftIdentityConflicts } = buildShiftIdentityLookup(setting?.shifts || []);
+    const importedShiftIdentifiers = new Set(parsed.rows.flatMap((row) => row.entries)
+      .map((entry) => normalizeWorkbookCode(entry.code))
+      .filter((code) => code && code !== '國' && code !== '国' && !IMPORT_LEAVE_CODES.has(code)));
+    const relevantShiftIdentityConflicts = shiftIdentityConflicts.filter((conflict) => (
+      importedShiftIdentifiers.has(normalizeWorkbookCode(conflict.identifier))
+    ));
+    if (relevantShiftIdentityConflicts.length) {
+      return res.status(409).json({
+        error: '匯入檔使用的班別代碼或名稱對應到多個班別，請先修正班別設定',
+        code: 'SHIFT_IDENTIFIER_CONFLICT',
+        conflicts: relevantShiftIdentityConflicts.map((conflict) => ({
+          identifier: conflict.identifier,
+          firstShift: {
+            id: toEntityId(conflict.firstShift?._id),
+            code: conflict.firstShift?.code || '',
+            name: conflict.firstShift?.name || '',
+          },
+          secondShift: {
+            id: toEntityId(conflict.secondShift?._id),
+            code: conflict.secondShift?.code || '',
+            name: conflict.secondShift?.name || '',
+          },
+        })),
+      });
     }
 
     const importedEmployeeIds = parsed.rows

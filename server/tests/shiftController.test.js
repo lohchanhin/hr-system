@@ -91,4 +91,42 @@ describe('shiftController', () => {
     expect(setting.save).not.toHaveBeenCalled()
     expect(res.body.error).toContain('格式不正確')
   })
+
+  it('rejects duplicate shift codes without saving', async () => {
+    const setting = buildSetting({
+      shifts: [{ _id: 'shift-1', name: '白班', code: 'D1', startTime: '08:00', endTime: '17:00' }],
+    })
+    findOne.mockResolvedValue(setting)
+
+    const res = await request(app)
+      .post('/api/shifts')
+      .send({ name: '另一個班別', code: ' ｄ１ ', startTime: '09:00', endTime: '18:00' })
+
+    expect(res.status).toBe(409)
+    expect(res.body.code).toBe('SHIFT_IDENTIFIER_CONFLICT')
+    expect(res.body.error).toContain('白班')
+    expect(setting.save).not.toHaveBeenCalled()
+    expect(setting.shifts).toHaveLength(1)
+  })
+
+  it('rejects duplicate shift names on update but ignores the edited shift itself', async () => {
+    const editable = {
+      _id: 'shift-1',
+      name: '早班',
+      code: 'D',
+      startTime: '08:00',
+      endTime: '17:00',
+      toObject() { return { ...this } },
+    }
+    const existing = { _id: 'shift-2', name: '夜班', code: 'N', startTime: '16:00', endTime: '00:00' }
+    const setting = buildSetting({ shifts: [editable, existing] })
+    findOne.mockResolvedValue(setting)
+
+    const res = await request(app).put('/api/shifts/shift-1').send({ name: ' 夜班 ' })
+
+    expect(res.status).toBe(409)
+    expect(res.body.error).toContain('班別名稱')
+    expect(res.body.error).toContain('夜班')
+    expect(setting.save).not.toHaveBeenCalled()
+  })
 })

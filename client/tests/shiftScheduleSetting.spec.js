@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
-import ElementPlus from 'element-plus'
+import ElementPlus, { ElMessage } from 'element-plus'
 import ShiftScheduleSetting from '../src/components/backComponents/ShiftScheduleSetting.vue'
 import { apiFetch } from '../src/api'
 
@@ -47,6 +47,49 @@ describe('ShiftScheduleSetting.vue', () => {
     expect(createCall).toBeTruthy()
     expect(createCall[1].body).toContain('breakDuration')
     expect(createCall[1].body).toContain('午休')
+  })
+
+  it('說明班別代碼用於公版匯入', async () => {
+    const wrapper = mount(ShiftScheduleSetting, { global: { plugins: [ElementPlus] } })
+
+    wrapper.vm.openShiftDialog()
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.text()).toContain('公版班表日期欄填寫此代碼')
+    expect(wrapper.text()).toContain('代碼是匯入識別鍵')
+  })
+
+  it('前端阻擋重複班別名稱且不送出 API', async () => {
+    const messageSpy = vi.spyOn(ElMessage, 'error').mockImplementation(() => {})
+    const wrapper = mount(ShiftScheduleSetting, { global: { plugins: [ElementPlus] } })
+    await flushPromises()
+    apiFetch.mockClear()
+    wrapper.vm.shiftList = [{ _id: 's1', code: 'D', name: '日班' }]
+    wrapper.vm.openShiftDialog()
+    wrapper.vm.shiftForm.code = 'E'
+    wrapper.vm.shiftForm.name = ' 日班 '
+    wrapper.vm.shiftForm.startTime = '09:00'
+    wrapper.vm.shiftForm.endTime = '18:00'
+
+    await wrapper.vm.saveShift()
+
+    expect(apiFetch.mock.calls.find(call => call[0] === '/api/shifts' && call[1]?.method === 'POST')).toBeFalsy()
+    expect(messageSpy).toHaveBeenCalledWith(expect.stringContaining('班別名稱'))
+    expect(wrapper.vm.shiftDialogVisible).toBe(true)
+  })
+
+  it('在列表上列出既有的重複班別代碼', async () => {
+    const wrapper = mount(ShiftScheduleSetting, { global: { plugins: [ElementPlus] } })
+    await flushPromises()
+    wrapper.vm.shiftList = [
+      { _id: 's1', code: '日', name: '08-17(休1)' },
+      { _id: 's2', code: '日', name: '09-18(休1)' }
+    ]
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.vm.shiftIdentityConflicts).toHaveLength(1)
+    expect(wrapper.text()).toContain('不可用於公版班表匯入')
+    expect(wrapper.text()).toContain('08-17(休1)／09-18(休1)')
   })
 
   it('builds ROC holidays with the local current year', () => {

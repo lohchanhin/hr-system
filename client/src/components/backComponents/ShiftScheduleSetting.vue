@@ -148,6 +148,16 @@
               新增班別
             </el-button>
           </div>
+
+          <el-alert
+            v-if="shiftIdentityConflicts.length"
+            class="shift-conflict-alert"
+            type="warning"
+            :closable="false"
+            show-icon
+            title="重複的班別代碼或名稱不可用於公版班表匯入"
+            :description="shiftIdentityConflictDescription"
+          />
           
           <div class="table-container">
             <el-table 
@@ -156,12 +166,12 @@
               :header-cell-style="{ background: '#f8fafc', color: '#475569', fontWeight: '600' }"
               :row-style="{ height: '56px' }"
             >
-              <el-table-column prop="code" label="代碼" width="100">
+              <el-table-column prop="code" label="班別代碼（匯入）" width="180" show-overflow-tooltip>
                 <template #default="{ row }">
                   <el-tag class="code-tag">{{ row.code }}</el-tag>
                 </template>
               </el-table-column>
-              <el-table-column prop="name" label="班別名稱" width="180">
+              <el-table-column prop="name" label="班別名稱" width="220" show-overflow-tooltip>
                 <template #default="{ row }">
                   <div class="shift-info">
                     <div class="shift-icon">
@@ -230,10 +240,12 @@
           <el-dialog v-model="shiftDialogVisible" title="班別資料" width="500px" class="form-dialog">
             <el-form :model="shiftForm" label-width="120px" class="dialog-form">
               <el-form-item label="班別代碼" required>
-                <el-input v-model="shiftForm.code" placeholder="如：A1, B2, C3" />
+                <el-input v-model="shiftForm.code" maxlength="40" placeholder="如：D、E、N" />
+                <div class="form-help">公版班表日期欄填寫此代碼；代碼是匯入識別鍵，不得與其他班別的代碼或名稱重複。</div>
               </el-form-item>
               <el-form-item label="班別名稱" required>
-                <el-input v-model="shiftForm.name" placeholder="如：早班 / 夜班 / 彈性班" />
+                <el-input v-model="shiftForm.name" maxlength="100" placeholder="如：早班 / 夜班 / 彈性班" />
+                <div class="form-help">顯示於班表及報表，名稱不得與其他班別的名稱或代碼重複。</div>
               </el-form-item>
               <el-form-item label="班別性質" required>
                 <el-select v-model="shiftForm.semanticType" style="width: 100%">
@@ -746,6 +758,29 @@ const shiftList = ref([])
 const shiftDialogVisible = ref(false)
 let shiftEditIndex = null
 
+const shiftIdentityConflicts = computed(() => {
+  const owners = new Map()
+  const conflicts = []
+  for (const shift of shiftList.value) {
+    for (const field of ['code', 'name']) {
+      const value = String(shift?.[field] || '').trim()
+      const key = normalizeShiftIdentifier(value)
+      if (!key) continue
+      const existing = owners.get(key)
+      if (existing && existing.shift !== shift) {
+        conflicts.push({ identifier: value, first: existing.shift, second: shift })
+      } else {
+        owners.set(key, { shift, field })
+      }
+    }
+  }
+  return conflicts
+})
+
+const shiftIdentityConflictDescription = computed(() => shiftIdentityConflicts.value
+  .map(conflict => `「${conflict.identifier}」：${conflict.first.name || conflict.first.code}／${conflict.second.name || conflict.second.code}`)
+  .join('；'))
+
 const shiftBgPresets = [
   '#dbeafe',
   '#ede9fe',
@@ -878,15 +913,57 @@ function addBreakWindow() {
 function removeBreakWindow(index) {
   shiftForm.value.breakWindows.splice(index, 1)
 }
+
+function normalizeShiftIdentifier(value) {
+  return String(value || '').trim().normalize('NFKC').toUpperCase()
+}
+
+function findLocalShiftConflict(candidate) {
+  const currentId = shiftEditIndex === null
+    ? ''
+    : String(shiftList.value[shiftEditIndex]?._id || '')
+  const candidateEntries = [
+    { label: '班別代碼', value: String(candidate.code || '').trim() },
+    { label: '班別名稱', value: String(candidate.name || '').trim() }
+  ]
+
+  for (const shift of shiftList.value) {
+    if (currentId && String(shift?._id || '') === currentId) continue
+    const existingEntries = [
+      { label: '班別代碼', value: String(shift?.code || '').trim() },
+      { label: '班別名稱', value: String(shift?.name || '').trim() }
+    ]
+    for (const candidateEntry of candidateEntries) {
+      const normalized = normalizeShiftIdentifier(candidateEntry.value)
+      if (!normalized) continue
+      const matched = existingEntries.find(entry => normalizeShiftIdentifier(entry.value) === normalized)
+      if (matched) {
+        return `${candidateEntry.label}「${candidateEntry.value}」已由班別「${shift.name || shift.code}」作為${matched.label}使用`
+      }
+    }
+  }
+  return ''
+}
   
 async function saveShift() {
+  shiftForm.value.code = String(shiftForm.value.code || '').trim()
+  shiftForm.value.name = String(shiftForm.value.name || '').trim()
+  if (!shiftForm.value.code || !shiftForm.value.name) {
+    ElMessage.error('請填寫班別代碼與班別名稱')
+    return
+  }
+  const localConflict = findLocalShiftConflict(shiftForm.value)
+  if (localConflict) {
+    ElMessage.error(localConflict)
+    return
+  }
   const method = shiftEditIndex === null ? 'POST' : 'PUT'
   let url = '/api/shifts'
   if (method === 'PUT') {
     const id = shiftList.value[shiftEditIndex]._id
     url += `/${id}`
   }
-  await apiFetch(url, {
+  const res = await apiFetch(url, {
     method,
     headers: {
       'Content-Type': 'application/json',
@@ -894,8 +971,14 @@ async function saveShift() {
     },
     body: JSON.stringify(shiftForm.value)
   })
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    ElMessage.error(body.error || '班別儲存失敗')
+    return
+  }
   await fetchShifts()
   shiftDialogVisible.value = false
+  ElMessage.success('班別已儲存')
 }
 
 async function deleteShift(index) {
@@ -1181,6 +1264,10 @@ function getHolidayTagType(type) {
   color: #64748b;
   margin-top: 4px;
   line-height: 1.4;
+}
+
+.shift-conflict-alert {
+  margin-bottom: 16px;
 }
 
 .save-settings-btn {
