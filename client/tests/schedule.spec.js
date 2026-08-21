@@ -1647,6 +1647,53 @@ describe('Schedule.vue', () => {
     )
   })
 
+  it('normalizes populated department references before a supervisor creates a schedule', async () => {
+    apiFetch.mockResolvedValue({ ok: true, json: async () => [] })
+    const wrapper = mountSchedule()
+    await flush()
+
+    wrapper.vm.currentMonth = '2026-03'
+    wrapper.vm.employees = [
+      {
+        _id: 'sup1',
+        departmentId: { _id: 'd1', name: '護理部' },
+        subDepartmentId: { _id: 'sd1', name: 'B' }
+      }
+    ]
+    wrapper.vm.scheduleMap = {
+      sup1: {
+        2: {
+          shiftId: '',
+          department: { _id: 'd1', name: '護理部' },
+          subDepartment: { _id: 'sd1', name: 'B' }
+        }
+      }
+    }
+    await wrapper.vm.$nextTick()
+
+    apiFetch.mockReset()
+    apiFetch.mockImplementation(async url => {
+      if (url === '/api/schedules') {
+        return { ok: true, json: async () => ({ _id: 'sch-self', shiftId: 's1' }) }
+      }
+      if (url === '/api/schedules/summary') {
+        return { ok: true, json: async () => [] }
+      }
+      return { ok: true, json: async () => [] }
+    })
+
+    await wrapper.vm.onSelect('sup1', 2, 's1')
+
+    const createCall = apiFetch.mock.calls.find(([url]) => url === '/api/schedules')
+    expect(JSON.parse(createCall[1].body)).toEqual({
+      employee: 'sup1',
+      date: '2026-03-02',
+      shiftId: 's1',
+      department: 'd1',
+      subDepartment: 'sd1'
+    })
+  })
+
   it('formats shift label with code and name when available', async () => {
     apiFetch
       .mockResolvedValueOnce({ ok: true, json: async () => [] })

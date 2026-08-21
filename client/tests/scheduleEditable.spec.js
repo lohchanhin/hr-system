@@ -17,6 +17,7 @@ const ElSelectStub = defineComponent({
     modelValue: { type: String, default: '' },
     disabled: { type: Boolean, default: false },
     teleported: { type: Boolean, default: true },
+    automaticDropdown: { type: Boolean, default: false },
     appendTo: { type: [String, Object], default: undefined },
     popperClass: { type: String, default: '' }
   },
@@ -26,6 +27,7 @@ const ElSelectStub = defineComponent({
       class="schedule-editor-select"
       :value="modelValue"
       :disabled="disabled"
+      :data-automatic-dropdown="String(automaticDropdown)"
       :data-teleported="String(teleported)"
       :data-append-to="typeof appendTo === 'string' ? appendTo : (appendTo ? 'object' : '')"
       :data-popper-class="popperClass"
@@ -112,9 +114,10 @@ describe('ScheduleGridVirtualBody 可編輯行為', () => {
     })
 
     await wrapper.get('[data-schedule-cell="1"]').trigger('click')
-    expect(wrapper.find('.schedule-editor-select').exists()).toBe(true)
+    const editor = wrapper.get('.schedule-editor-select')
+    expect(editor.attributes('data-automatic-dropdown')).toBe('true')
 
-    await wrapper.get('.schedule-editor-select').setValue('s2')
+    await editor.setValue('s2')
     const emitted = wrapper.emitted('select-shift')
     expect(emitted).toBeTruthy()
     expect(emitted[0]).toEqual(['emp-1', '2026-03-05', 's2'])

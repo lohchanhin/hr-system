@@ -78,6 +78,22 @@ beforeEach(() => {
 });
 
 describe('Supervisor schedule permissions', () => {
+  it('allows a supervisor to create their own schedule', async () => {
+    mockEmployee.findById.mockResolvedValue({ _id: 'u1', role: 'supervisor' });
+    mockShiftSchedule.findOne.mockResolvedValue(null);
+    mockShiftSchedule.create.mockResolvedValue({ _id: 'sch-self' });
+
+    const res = await request(app)
+      .post('/api/schedules')
+      .send({ employee: 'u1', date: '2023-01-01', shiftId: 'day' });
+
+    expect(res.status).toBe(201);
+    expect(mockShiftSchedule.create).toHaveBeenCalledWith(expect.objectContaining({
+      employee: 'u1',
+      shiftId: 'day',
+    }));
+  });
+
   it('allows supervisor to create schedule for own employee', async () => {
     mockEmployee.findById.mockImplementation((id) => {
       if (id === 'u1') return Promise.resolve({ _id: 'u1', role: 'supervisor', supervisor: 'sup1' });

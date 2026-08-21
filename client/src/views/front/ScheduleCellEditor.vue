@@ -5,6 +5,7 @@
     placeholder="選擇班別"
     class="cell-select shift-select"
     size="small"
+    automatic-dropdown
     :teleported="isDropdownTeleported"
     :append-to="appendTarget"
     :popper-class="popperClassName"

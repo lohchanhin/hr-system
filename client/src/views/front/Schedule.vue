@@ -441,16 +441,20 @@
                 {{ row.name || '-' }}
               </span>
               <span class="employee-status-secondary" aria-label="排班狀態">
-                <component
+                <el-tooltip
                   v-if="(employeeStatusMap[row._id] || employeeStatus(row._id)) === 'unscheduled'"
-                  :is="CircleCloseFilled"
-                  class="status-icon unscheduled"
-                />
-                <component
+                  content="尚有未排班日期，仍可點擊日期格安排班別"
+                  placement="top"
+                >
+                  <span class="employee-status-badge unscheduled">缺班</span>
+                </el-tooltip>
+                <el-tooltip
                   v-else-if="(employeeStatusMap[row._id] || employeeStatus(row._id)) === 'onLeave'"
-                  :is="WarningFilled"
-                  class="status-icon on-leave"
-                />
+                  content="本月含請假日期"
+                  placement="top"
+                >
+                  <span class="employee-status-badge on-leave">請假</span>
+                </el-tooltip>
               </span>
             </div>
           </template>
@@ -697,7 +701,7 @@ import { useRouter } from 'vue-router'
 import ScheduleDashboard from './ScheduleDashboard.vue'
 import ScheduleGridVirtualBody from './ScheduleGridVirtualBody.vue'
 import SelectionActions from './SelectionActions.vue'
-import { Bell, CircleCloseFilled, Delete, EditPen, WarningFilled } from '@element-plus/icons-vue'
+import { Bell, Delete, EditPen } from '@element-plus/icons-vue'
 import { buildShiftStyle } from '../../utils/shiftColors'
 import { ROW_COLOR_PALETTE, normalizeRowColorIndex, resolveRowColor } from '../../utils/rowColors'
 
@@ -3918,10 +3922,12 @@ async function onSelect(empId, day, value) {
   const dateStr = `${currentMonth.value}-${String(day).padStart(2, '0')}`
   const existing = scheduleMap.value[empId][day]
   const employee = employeeById.value[String(empId)] || {}
-  const department =
-    existing?.department || employee.departmentId || ''
-  const subDepartment =
-    existing?.subDepartment || employee.subDepartmentId || ''
+  const department = normalizeOptionalReferenceId(
+    existing?.department || employee.departmentId
+  )
+  const subDepartment = normalizeOptionalReferenceId(
+    existing?.subDepartment || employee.subDepartmentId
+  )
 
   // 該格只要被視為請假，就直接擋掉
   if (existing?.leave || isLeaveCell(empId, day)) {
@@ -4096,6 +4102,7 @@ async function handleScheduleError(
   } catch (e) { }
 
   const msg = data?.error || ''
+  const code = data?.code || ''
   const violations = Array.isArray(data?.violations) ? data.violations : []
   if (violations.length) {
     await openScheduleIssueDialog(
@@ -4114,7 +4121,13 @@ async function handleScheduleError(
   const requestedShift = conflict.requestedShiftId || requestedShiftId
   const requestedLabel = formatShiftLabel(shiftInfo(requestedShift)) || String(requestedShift || '')
 
-  if (msg === 'employee conflict') {
+  if (res?.status === 403 || code === 'SCHEDULE_SCOPE_FORBIDDEN') {
+    await openScheduleIssueDialog(
+      '排班權限不足',
+      ['目前帳號只能調整自己與直屬員工的班表。請重新整理後確認員工是否仍在此主管的管理範圍；若人員已調動，請由管理員更新主管設定。'],
+      defaultMsg
+    )
+  } else if (msg === 'employee conflict') {
     const existingShift = conflict.existingShiftId || ''
     const existingLabel = formatShiftLabel(shiftInfo(existingShift)) || String(existingShift || '')
     const existingText = existingLabel ? `已有排班「${existingLabel}」` : '已存在另一筆排班'
@@ -5750,16 +5763,25 @@ onUpdated(() => {
   transform: translateY(1px);
 }
 
-.status-icon {
-  font-size: 0.9rem;
-  margin-left: 2px;
+.employee-status-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 20px;
+  padding: 1px 5px;
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  font-size: 11px;
+  line-height: 1;
+  white-space: nowrap;
 
   &.unscheduled {
-    color: #dc2626;
+    color: #b45309;
+    background: #fffbeb;
   }
 
   &.on-leave {
-    color: #f59e0b;
+    color: #0369a1;
+    background: #f0f9ff;
   }
 }
 
