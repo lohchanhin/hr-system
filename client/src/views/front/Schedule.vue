@@ -1,17 +1,30 @@
 <template>
   <div class="schedule-page">
-    <!-- Modern header with better typography and spacing -->
-    <div class="page-header">
-      <h1 class="page-title">排班管理</h1>
-      <p class="page-subtitle">管理員工排班與班表預覽</p>
-    </div>
+    <header class="page-header">
+      <div class="page-header__copy">
+        <h1 class="page-title">排班管理</h1>
+        <div class="page-context" aria-label="目前排班範圍">
+          <span>{{ currentMonth }}</span>
+          <span aria-hidden="true">/</span>
+          <span>{{ selectedDepartmentName }}</span>
+          <span aria-hidden="true">/</span>
+          <span>{{ selectedSubDepartmentName }}</span>
+        </div>
+      </div>
+      <div class="page-header__status">
+        <span class="page-header__status-label">發布狀態</span>
+        <span class="status-badge" :class="`status-${publishSummary.status}`">
+          {{ publishStatusLabel }}
+        </span>
+      </div>
+    </header>
 
     <ScheduleDashboard :summary="summary" />
 
-    <!-- Enhanced filters section with card design -->
     <div class="filters-card">
       <div class="filters-header">
         <h3 class="filters-title">篩選條件</h3>
+        <span class="filters-scope">{{ selectedDepartmentName }} · {{ selectedSubDepartmentName }}</span>
       </div>
       <div class="filters-content">
         <div class="filter-group">
@@ -155,19 +168,21 @@
       </div>
     </div>
 
-    <!-- Enhanced actions section with modern button design -->
     <div class="actions-card">
-      <SelectionActions
-        :has-any-selection="hasAnySelection"
-        :employees-length="employees.length"
-        :server-pagination-total="serverPaginationTotal"
-        :is-selecting-all-employees-across-pages="isSelectingAllEmployeesAcrossPages"
-        :days-length="days.length"
-        @clear-selection="clearSelection"
-        @select-all-employees-on-page="selectAllEmployeesOnPage"
-        @select-all-employees-across-pages="selectAllEmployeesAcrossPages"
-        @select-all-days="selectAllDays"
-      />
+      <div class="actions-card__selection">
+        <span class="toolbar-label">選取範圍</span>
+        <SelectionActions
+          :has-any-selection="hasAnySelection"
+          :employees-length="employees.length"
+          :server-pagination-total="serverPaginationTotal"
+          :is-selecting-all-employees-across-pages="isSelectingAllEmployeesAcrossPages"
+          :days-length="days.length"
+          @clear-selection="clearSelection"
+          @select-all-employees-on-page="selectAllEmployeesOnPage"
+          @select-all-employees-across-pages="selectAllEmployeesAcrossPages"
+          @select-all-days="selectAllDays"
+        />
+      </div>
       <p v-if="selectedEmployeesSet.size > 0" class="selection-scope-hint" data-test="selection-scope-hint">
         {{ allEmployeesSelectionHint }}
       </p>
@@ -179,19 +194,19 @@
             @change="onCustomRangeChange" />
         </div>
         <el-button @click="preview('week')" class="action-btn secondary">
-          <i class="el-icon-calendar"></i>
+          <el-icon><Calendar /></el-icon>
           預覽週表
         </el-button>
         <el-button @click="preview('month')" class="action-btn secondary">
-          <i class="el-icon-date"></i>
+          <el-icon><Grid /></el-icon>
           預覽月表
         </el-button>
         <el-button @click="exportPdf" class="action-btn export">
-          <i class="el-icon-download"></i>
+          <el-icon><Download /></el-icon>
           匯出 PDF
         </el-button>
         <el-button @click="exportExcel" class="action-btn export">
-          <i class="el-icon-s-grid"></i>
+          <el-icon><Download /></el-icon>
           匯出 Excel
         </el-button>
         <el-badge :value="scheduleNotifications.length" :hidden="!scheduleNotifications.length" :max="99">
@@ -213,13 +228,12 @@
           :disabled="!selectedDepartment"
           @click="openScheduleImport"
         >
-          <i class="el-icon-upload"></i>
+          <el-icon><Upload /></el-icon>
           匯入 Excel
         </el-button>
       </div>
     </div>
 
-    <!-- Enhanced schedule table with modern design -->
     <div ref="scheduleCardRef" class="schedule-card" :class="{ 'is-fullscreen': isTableFullscreen }" data-test="schedule-card">
       <div
         ref="fullscreenPopperHostRef"
@@ -227,38 +241,69 @@
         data-test="fullscreen-popper-host"
       ></div>
       <div ref="scheduleHeaderRef" class="schedule-header">
-        <div class="schedule-title-wrapper">
-          <h3 class="schedule-title">員工排班表</h3>
-          <p v-if="isTableFullscreen" class="fullscreen-filter-hint">
-            目前部門/單位：{{ fullscreenFilterHint }}
-          </p>
-        </div>
-        <div class="approval-summary-inline" data-test="approval-summary-inline">
-          <div class="approval-summary-inline-item">
-            <span class="approval-summary-inline-label">待簽核</span>
-            <strong class="approval-summary-inline-value" data-test="approval-summary-pending">{{ pendingApprovalCount }}</strong>
+        <div class="schedule-header__main">
+          <div class="schedule-title-wrapper">
+            <h3 class="schedule-title">員工排班表</h3>
+            <p class="fullscreen-filter-hint">
+              {{ isTableFullscreen ? fullscreenFilterHint : `${serverPaginationTotal} 位員工 · ${days.length} 天` }}
+            </p>
           </div>
-          <div class="approval-summary-inline-item">
-            <span class="approval-summary-inline-label">異議</span>
-            <strong class="approval-summary-inline-value" data-test="approval-summary-disputed">{{ disputedApprovalCount }}</strong>
+          <div class="approval-summary-inline" data-test="approval-summary-inline">
+            <div class="approval-summary-inline-item">
+              <span class="approval-summary-inline-label">待簽核</span>
+              <strong class="approval-summary-inline-value" data-test="approval-summary-pending">{{ pendingApprovalCount }}</strong>
+            </div>
+            <div class="approval-summary-inline-item">
+              <span class="approval-summary-inline-label">異議</span>
+              <strong class="approval-summary-inline-value" data-test="approval-summary-disputed">{{ disputedApprovalCount }}</strong>
+            </div>
+            <el-button
+              class="action-btn secondary approval-jump-btn"
+              :disabled="!relatedApprovalRows.length"
+              data-test="approval-jump-button"
+              @click="jumpToApprovalSection"
+            >
+              前往簽核詳情
+            </el-button>
           </div>
-          <el-button
-            class="action-btn secondary approval-jump-btn"
-            :disabled="!relatedApprovalRows.length"
-            data-test="approval-jump-button"
-            @click="jumpToApprovalSection"
-          >
-            前往簽核詳情
-          </el-button>
+          <div class="schedule-view-actions">
+            <el-button class="action-btn secondary fullscreen-toggle" @click="toggleTableFullscreen"
+              data-test="fullscreen-toggle-button">
+              <el-icon><FullScreen /></el-icon>
+              {{ isTableFullscreen ? '退出全螢幕' : '全螢幕' }}
+            </el-button>
+            <el-button v-if="isTableFullscreen" class="action-btn secondary fullscreen-collapse-toggle"
+              @click="toggleFullscreenToolbar" data-test="fullscreen-toolbar-toggle-button">
+              <el-icon><component :is="isFullscreenToolbarCollapsed ? Expand : Fold" /></el-icon>
+              {{ isFullscreenToolbarCollapsed ? '展開工具' : '收合工具' }}
+            </el-button>
+          </div>
         </div>
-        <el-button class="action-btn secondary fullscreen-toggle" @click="toggleTableFullscreen"
-          data-test="fullscreen-toggle-button">
-          {{ isTableFullscreen ? '退出全螢幕' : '進入全螢幕' }}
-        </el-button>
-        <el-button v-if="isTableFullscreen" class="action-btn secondary fullscreen-collapse-toggle"
-          @click="toggleFullscreenToolbar" data-test="fullscreen-toolbar-toggle-button">
-          {{ isFullscreenToolbarCollapsed ? '展開上方工具' : '隱藏上方工具' }}
-        </el-button>
+        <div v-show="!isTableFullscreen || !isFullscreenToolbarCollapsed" class="schedule-header__controls">
+          <div class="schedule-legend" data-test="schedule-legend">
+            <template v-if="legendShifts.length">
+              <span v-for="legend in legendShifts" :key="legend.key" class="legend-item" :style="legend.style"
+                data-test="shift-legend-item">
+                {{ legend.label }}
+              </span>
+            </template>
+            <span v-else class="legend-empty" data-test="shift-legend-empty">
+              尚未設定班別
+            </span>
+            <span class="legend-item leave">請假</span>
+          </div>
+          <div class="schedule-search-controls">
+            <el-input v-model="employeeSearch" placeholder="搜尋員工"
+              :prefix-icon="Search" clearable class="employee-search" />
+            <el-select v-model="statusFilter" placeholder="狀態" class="status-filter">
+              <el-option label="全部" value="all" />
+              <el-option label="缺班" value="unscheduled" />
+              <el-option label="待審核請假" value="onLeave" />
+            </el-select>
+            <el-input v-model="jobTypeFilter" placeholder="搜尋職別"
+              :prefix-icon="Filter" clearable class="employee-search" />
+          </div>
+        </div>
         <SelectionActions
           v-if="isTableFullscreen"
           compact
@@ -273,39 +318,12 @@
           @select-all-employees-across-pages="selectAllEmployeesAcrossPages"
           @select-all-days="selectAllDays"
         />
-        <div v-show="!isTableFullscreen || !isFullscreenToolbarCollapsed" class="schedule-legend" data-test="schedule-legend">
-          <template v-if="legendShifts.length">
-            <span v-for="legend in legendShifts" :key="legend.key" class="legend-item" :style="legend.style"
-              data-test="shift-legend-item">
-              {{ legend.label }}
-            </span>
-          </template>
-          <span v-else class="legend-empty" data-test="shift-legend-empty">
-            尚未設定班別
-          </span>
-          <span class="legend-item leave">請假</span>
-        </div>
-        <el-input v-show="!isTableFullscreen || !isFullscreenToolbarCollapsed" v-model="employeeSearch" placeholder="搜尋員工"
-          clearable class="employee-search" />
-        <el-select v-show="!isTableFullscreen || !isFullscreenToolbarCollapsed" v-model="statusFilter" placeholder="狀態"
-          class="status-filter">
-          <el-option label="全部" value="all" />
-          <el-option label="缺班" value="unscheduled" />
-          <el-option label="待審核請假" value="onLeave" />
-        </el-select>
-        <el-input
-          v-show="!isTableFullscreen || !isFullscreenToolbarCollapsed"
-          v-model="jobTypeFilter"
-          placeholder="搜尋職別"
-          clearable
-          class="employee-search"
-        />
         <p
           v-if="shouldUseVirtualRender && visibleEmployees.length > 0"
           class="virtual-render-hint"
           data-test="virtual-render-hint"
         >
-          目前共 {{ serverPaginationTotal }} 位員工，為提升效能已啟用虛擬顯示，請在表格中上下滾動查看全部資料。
+          已啟用大量資料模式，共 {{ serverPaginationTotal }} 位員工
         </p>
       </div>
 
@@ -428,9 +446,9 @@
         data-test="schedule-table-wrapper" @click.capture="handleTableDelegatedClick"
         @change.capture="handleTableDelegatedChange">
         <el-table ref="scheduleTableRef" class="modern-schedule-table" :data="virtualVisibleEmployees" :max-height="tableMaxHeight" :header-cell-style="{
-          backgroundColor: '#ecfeff',
-          color: '#164e63',
-          fontWeight: '600'
+          backgroundColor: '#f4f6f7',
+          color: '#344054',
+          fontWeight: '650'
         }" :row-style="scheduleRowStyle" :row-class-name="scheduleRowClassName">
         <el-table-column prop="name" label="員工姓名" width="180" fixed="left" class-name="schedule-fixed-column">
           <template #default="{ row }">
@@ -701,7 +719,20 @@ import { useRouter } from 'vue-router'
 import ScheduleDashboard from './ScheduleDashboard.vue'
 import ScheduleGridVirtualBody from './ScheduleGridVirtualBody.vue'
 import SelectionActions from './SelectionActions.vue'
-import { Bell, Delete, EditPen } from '@element-plus/icons-vue'
+import {
+  Bell,
+  Calendar,
+  Delete,
+  Download,
+  EditPen,
+  Expand,
+  Filter,
+  Fold,
+  FullScreen,
+  Grid,
+  Search,
+  Upload
+} from '@element-plus/icons-vue'
 import { buildShiftStyle } from '../../utils/shiftColors'
 import { ROW_COLOR_PALETTE, normalizeRowColorIndex, resolveRowColor } from '../../utils/rowColors'
 
@@ -4789,1408 +4820,5 @@ onUpdated(() => {
 </script>
 
 
-<style scoped lang="scss">
-@use "element-plus/theme-chalk/src/common/var.scss" as *;
 
-/* Mixin for ultra-enhanced scrollbar styling */
-@mixin enhanced-table-scrollbar {
-  /* Force scrollbar to always be visible */
-  overflow-x: scroll !important;
-  overflow-y: scroll !important;
-  
-  /* Firefox: thick scrollbar with bright colors for better visibility */
-  scrollbar-color: #06b6d4 #cbd5e1 !important; /* Brighter cyan thumb, darker track */
-  scrollbar-width: thick !important; /* Use thick instead of auto for Firefox */
-  
-  /* Webkit browsers (Chrome, Safari, Edge) */
-  /* Large scrollbar: 32px for improved visibility and easier interaction */
-  &::-webkit-scrollbar {
-    height: 32px !important; /* Increased from 24px to 32px for better visibility */
-    width: 32px !important;
-    -webkit-appearance: none !important;
-  }
-  
-  &::-webkit-scrollbar-track {
-    background: #cbd5e1 !important; /* Darker track for better contrast */
-    border-radius: 8px !important;
-    border: 2px solid #94a3b8 !important; /* Border for better definition */
-    box-shadow: inset 0 0 6px rgba(0, 0, 0, 0.1) !important; /* Subtle depth effect */
-  }
-  
-  &::-webkit-scrollbar-thumb {
-    background: #06b6d4 !important; /* Bright cyan for high visibility */
-    border-radius: 8px !important;
-    border: 2px solid #ffffff !important; /* White border for contrast */
-    min-height: 60px !important; /* Larger grabbing area for easier interaction */
-    min-width: 60px !important;
-    box-shadow: 0 2px 8px rgba(6, 182, 212, 0.3) !important; /* Glow effect for prominence */
-    
-    &:hover {
-      background: #0891b2 !important; /* Slightly darker on hover for feedback */
-      box-shadow: 0 2px 12px rgba(6, 182, 212, 0.5) !important; /* Stronger glow on hover */
-    }
-    
-    &:active {
-      background: #0e7490 !important; /* Darker when actively dragging */
-      box-shadow: 0 2px 16px rgba(6, 182, 212, 0.6) !important; /* Maximum glow when active */
-    }
-  }
-  
-  /* Hide scrollbar arrow buttons for cleaner appearance */
-  &::-webkit-scrollbar-button {
-    display: none !important;
-  }
-}
-
-/* Modern HR system styling with professional design */
-.schedule-page {
-  --header-bg-color: #ecfeff;
-  --table-max-height-offset: 400px; /* Accounts for page header, filters, actions, and pagination */
-  
-  padding: 24px;
-  background: linear-gradient(135deg, #f8fafc 0%, #ecfeff 100%);
-  min-height: 100vh;
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-}
-
-.page-header {
-  margin-bottom: 32px;
-  text-align: center;
-
-  .page-title {
-    font-size: 2.5rem;
-    font-weight: 800;
-    color: #164e63;
-    margin: 0 0 8px 0;
-    letter-spacing: -0.025em;
-  }
-
-  .page-subtitle {
-    font-size: 1.125rem;
-    color: #475569;
-    margin: 0;
-    font-weight: 400;
-  }
-}
-
-.filters-card,
-.publish-card,
-.actions-card,
-.schedule-card,
-.approval-card {
-  background: white;
-  border-radius: 16px;
-  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
-  margin-bottom: 24px;
-  overflow: hidden;
-  border: 1px solid #ecfeff;
-}
-
-.filters-card {
-  .filters-header {
-    background: linear-gradient(135deg, #164e63 0%, #0891b2 100%);
-    padding: 20px 24px;
-
-    .filters-title {
-      color: white;
-      font-size: 1.25rem;
-      font-weight: 600;
-      margin: 0;
-    }
-  }
-
-  .filters-content {
-    padding: 24px;
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-    gap: 20px;
-  }
-
-  .filter-group {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-
-    &.filter-group-hidden {
-      visibility: hidden;
-      pointer-events: none;
-    }
-
-    .filter-label {
-      font-weight: 600;
-      color: #164e63;
-      font-size: 0.875rem;
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
-    }
-  }
-}
-
-.publish-card {
-  padding: 28px;
-  display: flex;
-  flex-direction: column;
-  gap: 24px;
-
-  .publish-header {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: 16px;
-
-    .publish-header-text {
-      display: flex;
-      flex-direction: column;
-      gap: 4px;
-    }
-
-    .publish-title {
-      font-size: 1.5rem;
-      font-weight: 700;
-      color: #0f172a;
-      margin: 0;
-    }
-
-    .publish-subtitle {
-      margin: 0;
-      color: #475569;
-      font-size: 0.95rem;
-    }
-  }
-
-  .status-badge {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    border-radius: 999px;
-    padding: 8px 16px;
-    font-weight: 600;
-    font-size: 0.95rem;
-    text-transform: none;
-    letter-spacing: 0.02em;
-
-    &.status-draft {
-      background: rgba(148, 163, 184, 0.16);
-      color: #475569;
-    }
-
-    &.status-pending {
-      background: rgba(249, 115, 22, 0.18);
-      color: #c2410c;
-    }
-
-    &.status-ready {
-      background: rgba(34, 197, 94, 0.18);
-      color: #166534;
-    }
-
-    &.status-disputed {
-      background: rgba(248, 113, 113, 0.2);
-      color: #b91c1c;
-    }
-
-    &.status-finalized {
-      background: rgba(59, 130, 246, 0.18);
-      color: #1d4ed8;
-    }
-  }
-
-  .publish-progress {
-    padding: 16px 20px;
-    border-radius: 16px;
-    background: linear-gradient(135deg, rgba(14, 116, 144, 0.08), rgba(45, 212, 191, 0.08));
-
-    .el-step__title.is-success,
-    .el-step__description.is-success {
-      color: #0f172a;
-    }
-
-    .el-step__title.is-error,
-    .el-step__description.is-error {
-      color: #b91c1c;
-    }
-
-    .el-step__description {
-      font-size: 0.85rem;
-      color: #475569;
-    }
-  }
-
-  .publish-meta-row {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 12px 20px;
-
-    .publish-meta {
-      margin: 0;
-      color: #0f172a;
-      font-weight: 500;
-    }
-
-    .publish-progress-indicator {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      min-width: 160px;
-
-      .el-progress {
-        flex: 1 1 120px;
-      }
-
-      .progress-label {
-        font-size: 0.85rem;
-        color: #0f172a;
-        font-weight: 600;
-      }
-    }
-  }
-
-  .publish-actions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 12px;
-
-    .publish-btn {
-      min-width: 140px;
-      border-radius: 999px;
-      font-weight: 600;
-      letter-spacing: 0.02em;
-    }
-  }
-
-  .publish-disable-reasons {
-    margin-top: 6px;
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-
-    .publish-disable-reason {
-      margin: 0;
-      color: #92400e;
-      font-size: 0.86rem;
-      line-height: 1.45;
-    }
-  }
-
-  .publish-stats {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-    gap: 16px;
-  }
-
-  .status-card {
-    border-radius: 16px;
-    padding: 20px;
-    border: 1px solid transparent;
-    background: #f8fafc;
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-
-    &.pending {
-      background: rgba(250, 204, 21, 0.18);
-      border-color: rgba(217, 119, 6, 0.45);
-    }
-
-    &.disputed {
-      background: rgba(248, 113, 113, 0.12);
-      border-color: rgba(220, 38, 38, 0.45);
-    }
-
-    &.ready {
-      background: rgba(134, 239, 172, 0.18);
-      border-color: rgba(34, 197, 94, 0.45);
-    }
-
-    &.finalized {
-      background: rgba(191, 219, 254, 0.28);
-      border-color: rgba(37, 99, 235, 0.4);
-    }
-
-    .card-header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 12px;
-    }
-
-    .card-title {
-      font-size: 1.05rem;
-      font-weight: 700;
-      color: #0f172a;
-    }
-
-    .card-badge {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      min-width: 48px;
-      padding: 6px 12px;
-      border-radius: 999px;
-      font-weight: 700;
-      background: white;
-      color: #0f172a;
-      box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.08);
-
-      &.success {
-        background: #10b981;
-        color: white;
-        box-shadow: none;
-      }
-    }
-
-    .card-list {
-      list-style: none;
-      margin: 0;
-      padding: 0;
-      display: flex;
-      flex-direction: column;
-      gap: 10px;
-    }
-
-    .card-item {
-      display: flex;
-      flex-direction: column;
-      gap: 6px;
-      padding: 10px 12px;
-      border-radius: 12px;
-      background: rgba(255, 255, 255, 0.75);
-
-      .card-item-main {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 8px;
-      }
-
-      .card-name {
-        font-weight: 600;
-        color: #0f172a;
-      }
-
-      .card-count {
-        font-weight: 600;
-        color: #334155;
-      }
-    }
-
-    .disputes-list {
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-      margin-top: 8px;
-    }
-
-    .dispute-item {
-      padding: 8px 10px;
-      border-radius: 8px;
-      background: rgba(255, 255, 255, 0.9);
-      border-left: 3px solid #dc2626;
-      display: flex;
-      flex-direction: column;
-      gap: 4px;
-    }
-
-    .dispute-date {
-      font-size: 0.8rem;
-      font-weight: 700;
-      color: #b91c1c;
-    }
-
-    .dispute-note {
-      font-size: 0.85rem;
-      color: #475569;
-      line-height: 1.4;
-      padding-left: 4px;
-
-      &.empty {
-        color: #94a3b8;
-        font-style: italic;
-      }
-    }
-
-    .card-note {
-      font-size: 0.85rem;
-      color: #475569;
-      line-height: 1.4;
-    }
-
-    .card-message {
-      margin: 0;
-      color: #0f172a;
-      font-weight: 600;
-      line-height: 1.5;
-    }
-  }
-}
-
-@media (max-width: 1024px) {
-  .publish-card {
-    padding: 24px;
-
-    .publish-progress {
-      padding: 12px 16px;
-    }
-  }
-}
-
-@media (max-width: 768px) {
-  .publish-card {
-    .publish-header {
-      flex-direction: column;
-      align-items: flex-start;
-    }
-
-    .publish-actions {
-      flex-direction: column;
-      align-items: stretch;
-
-      .publish-btn {
-        width: 100%;
-      }
-    }
-
-    .publish-meta-row {
-      flex-direction: column;
-      align-items: flex-start;
-    }
-  }
-}
-
-.modern-date-picker,
-.modern-select {
-  ::v-deep(.el-input__wrapper) {
-    border-radius: 8px;
-    border: 2px solid #ecfeff;
-    transition: all 0.2s ease;
-
-    &:hover {
-      border-color: #10b981;
-    }
-
-    &.is-focus {
-      border-color: #10b981;
-      box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.1);
-    }
-  }
-}
-
-.actions-card {
-  padding: 20px 24px;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 16px;
-
-  .secondary-actions {
-    display: flex;
-    gap: 12px;
-    flex-wrap: wrap;
-  }
-
-  .range-picker-wrapper {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    min-width: 220px;
-  }
-
-  .range-label {
-    font-weight: 600;
-    color: #164e63;
-    font-size: 0.75rem;
-    letter-spacing: 0.05em;
-  }
-
-  .range-picker {
-    width: 240px;
-  }
-
-  .selection-scope-hint {
-    width: 100%;
-    margin: 0;
-    font-size: 0.9rem;
-    color: #0f766e;
-    font-weight: 600;
-  }
-}
-
-.action-btn {
-  border-radius: 8px;
-  font-weight: 600;
-  padding: 12px 20px;
-  transition: all 0.2s ease;
-
-  &.primary {
-    background: linear-gradient(135deg, #10b981 0%, #059669 100%);
-    border: none;
-    color: white;
-
-    &:hover {
-      transform: translateY(-1px);
-      box-shadow: 0 4px 12px rgba(16, 185, 129, 0.4);
-    }
-  }
-
-  &.primary.is-disabled,
-  &.primary:disabled {
-    background: linear-gradient(135deg, #94a3b8 0%, #64748b 100%);
-    box-shadow: none;
-    transform: none;
-    cursor: not-allowed;
-    color: rgba(255, 255, 255, 0.85);
-  }
-
-  &.primary.is-disabled:hover,
-  &.primary:disabled:hover {
-    transform: none;
-    box-shadow: none;
-  }
-
-  &.secondary {
-    background: white;
-    border: 2px solid #164e63;
-    color: #164e63;
-
-    &:hover {
-      background: #164e63;
-      color: white;
-      transform: translateY(-1px);
-    }
-  }
-
-  &.export {
-    background: white;
-    border: 2px solid #10b981;
-    color: #10b981;
-
-    &:hover {
-      background: #10b981;
-      color: white;
-      transform: translateY(-1px);
-    }
-  }
-}
-
-.schedule-card {
-  --schedule-card-margin-bottom: 24px;
-  --schedule-inline-padding: clamp(20px, 2vw, 32px);
-  --schedule-header-block-padding: 20px;
-  --schedule-batch-toolbar-block-padding: 16px;
-  --schedule-stress-toolbar-block-padding: 10px;
-  --schedule-table-wrapper-block-padding: 0;
-
-  margin: 0 0 var(--schedule-card-margin-bottom);
-
-  &.is-fullscreen {
-    --schedule-card-margin-bottom: 0;
-    --schedule-inline-padding: clamp(24px, 3vw, 40px);
-    --schedule-header-block-padding: 20px;
-    --schedule-batch-toolbar-block-padding: 16px;
-    --schedule-stress-toolbar-block-padding: 10px;
-    --schedule-table-wrapper-block-padding: 0;
-
-    position: fixed;
-    inset: 0;
-    z-index: 3000;
-    margin: 0;
-    border-radius: 0;
-    border: none;
-    box-shadow: none;
-    display: flex;
-    flex-direction: column;
-    background: #fff;
-  }
-
-  .schedule-header {
-    background: linear-gradient(135deg, #f1f5f9 0%, #ecfeff 100%);
-    padding: var(--schedule-header-block-padding) var(--schedule-inline-padding);
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 16px;
-    min-height: 96px;
-
-    .schedule-title-wrapper {
-      display: flex;
-      flex-direction: column;
-      gap: 4px;
-      min-height: 48px;
-      justify-content: center;
-    }
-
-    .schedule-title {
-      color: #164e63;
-      font-size: 1.25rem;
-      font-weight: 700;
-      margin: 0;
-    }
-
-    .fullscreen-filter-hint {
-      margin: 0;
-      font-size: 0.85rem;
-      color: #334155;
-      font-weight: 500;
-    }
-
-    .approval-summary-inline {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      flex-wrap: wrap;
-
-      .approval-summary-inline-item {
-        display: flex;
-        align-items: baseline;
-        gap: 6px;
-        padding: 6px 12px;
-        border-radius: 999px;
-        background: #ecfeff;
-        border: 1px solid #bae6fd;
-      }
-
-      .approval-summary-inline-label {
-        font-size: 0.78rem;
-        color: #0f766e;
-        font-weight: 600;
-      }
-
-      .approval-summary-inline-value {
-        font-size: 1rem;
-        color: #0f172a;
-      }
-    }
-
-    .schedule-legend {
-      display: flex;
-      gap: 12px;
-      flex-wrap: wrap;
-
-      .legend-item {
-        padding: 4px 12px;
-        border-radius: 20px;
-        font-size: 0.75rem;
-        font-weight: 600;
-        text-transform: uppercase;
-        letter-spacing: 0.05em;
-        background: var(--shift-tag-bg, #f1f5f9);
-        color: var(--shift-text-color, #475569);
-        border: 1px solid var(--shift-border-color, rgba(148, 163, 184, 0.45));
-      }
-
-      .legend-item.leave {
-        background: #fef3c7;
-        color: #d97706;
-        border: 1px solid rgba(217, 119, 6, 0.4);
-      }
-
-      .legend-empty {
-        font-size: 0.75rem;
-        color: #64748b;
-        padding: 4px 0;
-      }
-    }
-
-    .employee-search {
-      max-width: 200px;
-    }
-
-    .status-filter {
-      max-width: 160px;
-    }
-
-    .fullscreen-selection-actions {
-      margin-left: auto;
-    }
-
-  }
-
-  .batch-toolbar {
-    padding: var(--schedule-batch-toolbar-block-padding) var(--schedule-inline-padding);
-    background: #f8fafc;
-    border-bottom: 1px solid #e2e8f0;
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 12px;
-  }
-
-  .batch-select {
-    min-width: 180px;
-  }
-
-  .batch-readonly-field {
-    min-width: 180px;
-    display: inline-flex;
-    flex-direction: column;
-    gap: 4px;
-    padding: 8px 10px;
-    border: 1px solid #dbeafe;
-    border-radius: 10px;
-    background: #eff6ff;
-  }
-
-  .batch-readonly-field__label {
-    font-size: 11px;
-    color: #64748b;
-    line-height: 1;
-  }
-
-  .batch-readonly-field__value {
-    font-size: 13px;
-    color: #0f172a;
-    font-weight: 600;
-    line-height: 1.2;
-  }
-
-  .apply-btn {
-    min-width: 120px;
-  }
-
-  .row-color-option {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-  }
-
-  .row-color-dot {
-    width: 12px;
-    height: 12px;
-    border-radius: 50%;
-    border: 1px solid #94a3b8;
-    display: inline-block;
-  }
-
-  .row-color-hint {
-    font-size: 12px;
-    color: #64748b;
-  }
-}
-
-.schedule-table-wrapper {
-  overflow-x: hidden;
-  padding: var(--schedule-table-wrapper-block-padding) var(--schedule-inline-padding);
-
-  &.is-fullscreen {
-    flex: 1;
-    min-height: 0;
-  }
-
-  /* Element Plus table handles its own scrolling with max-height prop */
-  /* Enhanced scrollbar styling for improved visibility and usability */
-  :deep(.el-table__body-wrapper) {
-    @include enhanced-table-scrollbar;
-  }
-
-  /* Additional Element Plus Scrollbar styling - z-index to ensure visibility */
-  :deep(.el-scrollbar__bar.is-horizontal) {
-    z-index: 10 !important; /* Ensure it's on top */
-  }
-}
-
-.stress-toolbar {
-  padding: var(--schedule-stress-toolbar-block-padding) var(--schedule-inline-padding);
-  border-bottom: 1px dashed #cbd5e1;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  align-items: center;
-  background: #f8fafc;
-}
-
-.stress-metric {
-  font-size: 12px;
-  color: #475569;
-}
-
-.modern-schedule-table {
-  width: 100%;
-  min-width: 0;
-
-  :deep(.el-table-fixed-column--left) {
-    z-index: 12;
-  }
-
-  :deep(.el-table__header-wrapper .el-table-fixed-column--left) {
-    background-color: #ecfeff;
-  }
-
-  :deep(.el-table__body .schedule-row > td.el-table__cell) {
-    background-color: var(--row-color-bg, #ffffff);
-    border-bottom-color: var(--row-color-border, #e2e8f0);
-  }
-
-  :deep(.el-table__body .schedule-row--selected > td.el-table__cell) {
-    background-color: #dbeafe !important;
-  }
-
-  /* Element Plus handles sticky header when max-height is set */
-  :deep(.el-table__header-wrapper) {
-    background: var(--header-bg-color);
-  }
-
-  :deep(.el-table__header) {
-    th {
-      border-bottom: 2px solid #ecfeff;
-    }
-  }
-
-  :deep(.el-table__row) {
-    &:hover {
-      background-color: var(--row-color-bg, #f8fafc) !important;
-    }
-  }
-
-  :deep(.el-table__cell) {
-    font-size: 13px;
-  }
-}
-
-.virtual-spacer-cell {
-  min-height: 1px;
-}
-
-.schedule-card.is-fullscreen {
-  .schedule-fullscreen-popper-host {
-    position: fixed;
-    inset: 0;
-    pointer-events: none;
-    z-index: 3000;
-  }
-
-  .modern-schedule-table {
-    :deep(.el-table__cell) {
-      font-size: 12px;
-    }
-
-    :deep(.title-position-column .cell) {
-      min-width: 220px;
-    }
-
-    :deep(.day-header) {
-      font-size: 12px;
-    }
-  }
-
-  :deep(.el-table-fixed-column--left),
-  :deep(.el-table-fixed-column--right) {
-    z-index: 25;
-  }
-
-  :deep(.schedule-cell-editor-popper--fullscreen) {
-    z-index: 3001 !important;
-    pointer-events: auto;
-  }
-
-  :deep(.schedule-toolbar-popper--fullscreen) {
-    z-index: 3001 !important;
-    pointer-events: auto;
-  }
-
-  :deep(.schedule-fullscreen-popper-host .schedule-cell-editor-popper--fullscreen),
-  :deep(.schedule-fullscreen-popper-host .schedule-toolbar-popper--fullscreen),
-  :deep(.schedule-fullscreen-popper-host .el-select-dropdown),
-  :deep(.schedule-fullscreen-popper-host .el-popper) {
-    pointer-events: auto;
-  }
-}
-
-.pagination-bar {
-  padding: 16px 0;
-  display: flex;
-  justify-content: flex-end;
-}
-
-.employee-name {
-  font-weight: 600;
-  color: #1e293b;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
-  font-size: 1rem;
-  line-height: 1.25;
-}
-
-.employee-name-text {
-  min-width: 0;
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.employee-status-secondary {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 16px;
-  flex-shrink: 0;
-}
-
-.title-position-cell {
-  min-height: 40px;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  gap: 2px;
-  line-height: 1.25;
-}
-
-.title-line,
-.practice-title-line {
-  display: block;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.title-line {
-  font-weight: 600;
-  color: #334155;
-}
-
-.practice-title-line {
-  font-size: 0.75rem;
-  color: #64748b;
-}
-
-.row-checkbox {
-  margin-right: 0;
-  transform: translateY(1px);
-}
-
-.employee-status-badge {
-  display: inline-flex;
-  align-items: center;
-  min-height: 20px;
-  padding: 1px 5px;
-  border: 1px solid currentColor;
-  border-radius: 4px;
-  font-size: 11px;
-  line-height: 1;
-  white-space: nowrap;
-
-  &.unscheduled {
-    color: #b45309;
-    background: #fffbeb;
-  }
-
-  &.on-leave {
-    color: #0369a1;
-    background: #f0f9ff;
-  }
-}
-
-.sub-department-text {
-  display: inline-block;
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: #334155;
-}
-
-.day-header {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  min-height: 52px;
-  font-weight: 600;
-  color: #0f172a;
-}
-
-.day-header-label {
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.day-header-tools {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  height: 24px;
-}
-
-.day-memo-button {
-  width: 24px;
-  height: 24px;
-  padding: 0;
-  color: #64748b;
-
-  &.has-content {
-    color: #047857;
-    background: #d1fae5;
-  }
-}
-
-.day-checkbox {
-  margin: 0;
-}
-
-.notification-log-toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  min-height: 40px;
-  padding-bottom: 12px;
-  color: #64748b;
-  font-size: 13px;
-  border-bottom: 1px solid #e2e8f0;
-}
-
-.notification-log-list {
-  display: grid;
-}
-
-.notification-log-item {
-  padding: 14px 2px;
-  border-bottom: 1px solid #e2e8f0;
-  border-left: 3px solid #0284c7;
-  padding-left: 12px;
-
-  &[data-type='success'] { border-left-color: #059669; }
-  &[data-type='warning'] { border-left-color: #d97706; }
-  &[data-type='error'] { border-left-color: #dc2626; }
-
-  p {
-    margin: 6px 0 0;
-    color: #334155;
-    line-height: 1.55;
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
-  }
-}
-
-.notification-log-item__heading {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-
-  time {
-    flex: 0 0 auto;
-    color: #94a3b8;
-    font-size: 12px;
-  }
-}
-
-.modern-schedule-cell {
-  padding: 8px;
-  border-radius: 8px;
-  min-height: 60px;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  transition: all 0.2s ease;
-  position: relative;
-  border: 1px solid rgba(203, 213, 225, 0.6);
-
-  &.has-shift {
-    background: linear-gradient(135deg,
-        var(--shift-cell-bg-start, #f1f5f9) 0%,
-        var(--shift-cell-bg-end, #e2e8f0) 100%);
-    border: 1px solid var(--shift-border-color, #cbd5e1);
-    color: var(--shift-text-color, #0f172a);
-  }
-
-  &.has-leave {
-    background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
-    border: 1px solid #fbbf24;
-    cursor: not-allowed;
-  }
-
-  &.is-selected {
-    box-shadow: 0 0 0 2px rgba(14, 165, 233, 0.6) inset;
-    background-color: rgba(224, 242, 254, 0.6);
-  }
-}
-
-.cell-selection {
-  position: absolute;
-  top: 4px;
-  left: 4px;
-  background: rgba(255, 255, 255, 0.85);
-  border-radius: 4px;
-  padding: 2px;
-  box-shadow: 0 2px 6px rgba(15, 23, 42, 0.1);
-  z-index: 2;
-}
-
-.modern-schedule-cell.has-leave .cell-selection {
-  display: none;
-}
-
-.collapsed-cell {
-  color: #94a3b8;
-  text-align: center;
-}
-
-.cell-select {
-  ::v-deep(.el-input__wrapper) {
-    border-radius: 6px;
-    border: 1px solid rgba(255, 255, 255, 0.8);
-    background: rgba(255, 255, 255, 0.9);
-    backdrop-filter: blur(4px);
-  }
-}
-
-.modern-shift-tag {
-  background: var(--shift-tag-bg, white);
-  color: var(--shift-text-color, #164e63);
-  padding: 4px 8px;
-  border-radius: 6px;
-  font-weight: 600;
-  font-size: 0.75rem;
-  text-align: center;
-  cursor: pointer;
-  border: 1px solid var(--shift-border-color, rgba(22, 78, 99, 0.2));
-  transition: all 0.2s ease;
-
-  &:hover {
-    background: var(--shift-border-color, #164e63);
-    color: white;
-    transform: scale(1.05);
-  }
-
-  &.text-only {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 100%;
-    padding: 2px 6px;
-    background: transparent;
-    border-style: dashed;
-    transform: none;
-
-    &:hover {
-      background: rgba(14, 165, 233, 0.12);
-      color: var(--shift-text-color, #164e63);
-      transform: none;
-    }
-  }
-}
-
-.shift-details {
-  .detail-row {
-    display: flex;
-    justify-content: space-between;
-    margin-bottom: 8px;
-
-    .detail-label {
-      font-weight: 600;
-      color: #475569;
-    }
-
-    .detail-value {
-      color: #164e63;
-      font-weight: 500;
-    }
-  }
-}
-
-.leave-indicator {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  background: linear-gradient(135deg, #fefce8 0%, #fef3c7 100%);
-  border-radius: 8px;
-  border: 1px dashed rgba(217, 119, 6, 0.45);
-  padding: 6px 8px;
-  color: #92400e;
-  font-size: 0.75rem;
-  font-weight: 600;
-  text-align: center;
-  min-height: 48px;
-}
-
-.leave-text {
-  font-size: 0.75rem;
-  color: #b45309;
-  font-weight: 600;
-  letter-spacing: 0.05em;
-}
-
-.leave-tag {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0 10px;
-  border-radius: 999px;
-  background: rgba(217, 119, 6, 0.12);
-  border: 1px solid rgba(217, 119, 6, 0.35);
-  color: #b45309;
-  letter-spacing: 0.08em;
-}
-
-.leave-note {
-  font-size: 0.7rem;
-  font-weight: 500;
-  color: #b45309;
-}
-
-.missing-shift {
-  background: #fee2e2;
-}
-
-.missing-label {
-  color: #b91c1c;
-  font-size: 0.75rem;
-  font-weight: 600;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  height: 100%;
-
-  &::before {
-    content: '⚠';
-    margin-right: 4px;
-  }
-}
-
-.empty-cell {
-  color: #94a3b8;
-  font-size: 1.25rem;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  height: 100%;
-}
-
-.approval-card {
-  .approval-empty-hint {
-    margin: 0;
-    padding: 14px 24px;
-    font-size: 0.92rem;
-    color: #475569;
-    border-bottom: 1px solid #e2e8f0;
-    background: #f8fafc;
-  }
-
-  .approval-error-alert {
-    margin: 12px 24px 0;
-  }
-
-  .approval-header {
-    background: linear-gradient(135deg, #164e63 0%, #0891b2 100%);
-    padding: 20px 24px;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-
-    .approval-title {
-      color: white;
-      font-size: 1.25rem;
-      font-weight: 600;
-      margin: 0;
-    }
-
-    .approval-count {
-      background: rgba(255, 255, 255, 0.2);
-      color: white;
-      padding: 4px 12px;
-      border-radius: 20px;
-      font-size: 0.875rem;
-      font-weight: 600;
-    }
-  }
-}
-
-.modern-approval-table {
-  /* Enhanced scrollbar styling for better visibility and usability */
-  :deep(.el-table__body-wrapper) {
-    @include enhanced-table-scrollbar;
-  }
-
-  ::v-deep(.el-table__row) {
-    &:hover {
-      background-color: #f8fafc !important;
-    }
-  }
-}
-
-.applicant-name,
-.form-type {
-  font-weight: 500;
-  color: #1e293b;
-}
-
-.status-tag {
-  font-weight: 600;
-  border-radius: 6px;
-}
-
-@media (max-width: 768px) {
-  .schedule-page {
-    padding: 16px;
-  }
-
-  .page-header .page-title {
-    font-size: 2rem;
-  }
-
-  .filters-content {
-    grid-template-columns: 1fr;
-  }
-
-  .actions-card {
-    flex-direction: column;
-    align-items: stretch;
-
-    .primary-actions,
-    .secondary-actions {
-      justify-content: center;
-    }
-  }
-
-  .schedule-header {
-    flex-direction: column;
-    align-items: flex-start;
-
-    .approval-summary-inline {
-      width: 100%;
-    }
-  }
-
-  .modern-schedule-table {
-    ::v-deep(.el-table-fixed-column--left) {
-      z-index: 10;
-    }
-  }
-}
-
-/* Annual Leave Column Styling */
-.annual-leave-info {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 4px;
-  
-  .leave-hours {
-    font-size: 0.75rem;
-    color: #64748b;
-  }
-}
-
-.no-leave-info {
-  color: #94a3b8;
-  font-size: 0.875rem;
-}
-
-:global(.schedule-issue-dialog .el-message-box__message) {
-  max-height: min(60vh, 560px);
-  overflow-y: auto;
-  white-space: pre-wrap;
-  word-break: break-word;
-  line-height: 1.65;
-}
-</style>
+<style scoped lang="scss" src="./ScheduleWorkspace.scss"></style>

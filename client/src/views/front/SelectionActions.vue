@@ -1,13 +1,12 @@
 <template>
   <div class="selection-actions" :class="{ 'selection-actions--compact': compact }">
     <el-button
-      type="primary"
-      class="action-btn primary"
+      class="action-btn secondary"
       :disabled="!hasAnySelection"
       :data-test="compact ? 'fullscreen-clear-selection-button' : 'clear-selection-button'"
       @click="$emit('clear-selection')"
     >
-      <i class="el-icon-close"></i>
+      <el-icon><Close /></el-icon>
       清除選取
     </el-button>
     <el-button
@@ -19,31 +18,27 @@
       :data-test="compact ? 'fullscreen-select-all-button' : 'select-all-employees-across-pages-button'"
       @click="$emit('select-all-employees-across-pages')"
     >
-      <i class="el-icon-user-solid"></i>
+      <el-icon><UserFilled /></el-icon>
       全部人員全選
     </el-button>
 
     <template v-if="!compact">
       <el-button
-        type="primary"
-        class="action-btn primary"
-        plain
+        class="action-btn secondary"
         :disabled="!employeesLength"
         data-test="select-all-employees-on-page-button"
         @click="$emit('select-all-employees-on-page')"
       >
-        <i class="el-icon-user"></i>
+        <el-icon><User /></el-icon>
         本頁全選
       </el-button>
       <el-button
-        type="primary"
-        class="action-btn primary"
-        plain
+        class="action-btn secondary"
         :disabled="!daysLength"
         data-test="select-all-days-button"
         @click="$emit('select-all-days')"
       >
-        <i class="el-icon-date"></i>
+        <el-icon><Calendar /></el-icon>
         全選日期
       </el-button>
     </template>
@@ -55,6 +50,7 @@
       @command="handleCompactCommand"
     >
       <el-button class="action-btn secondary selection-actions__more-btn" data-test="fullscreen-selection-more-button">
+        <el-icon><MoreFilled /></el-icon>
         更多選取操作
       </el-button>
       <template #dropdown>
@@ -72,6 +68,8 @@
 </template>
 
 <script setup>
+import { Calendar, Close, MoreFilled, User, UserFilled } from '@element-plus/icons-vue'
+
 defineProps({
   compact: {
     type: Boolean,
@@ -115,7 +113,7 @@ const handleCompactCommand = command => {
 <style scoped lang="scss">
 .selection-actions {
   display: flex;
-  gap: 12px;
+  gap: 8px;
   flex-wrap: wrap;
 
   &--compact {

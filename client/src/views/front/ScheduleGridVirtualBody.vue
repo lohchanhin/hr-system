@@ -110,17 +110,26 @@ watch(
 .cell-view-content {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  justify-content: center;
+  gap: 5px;
   min-height: 44px;
 }
 
 .empty-hint {
-  font-size: 12px;
-  color: #0369a1;
+  font-size: 11px;
+  color: #52606b;
   text-align: center;
-  border: 1px dashed rgba(3, 105, 161, 0.45);
-  border-radius: 6px;
-  padding: 2px 6px;
-  background: rgba(224, 242, 254, 0.7);
+  border: 1px dashed #b7c0c7;
+  border-radius: 5px;
+  padding: 3px 5px;
+  background: #fff;
+  transition: border-color 140ms cubic-bezier(0.23, 1, 0.32, 1), color 140ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .modern-schedule-cell:hover .empty-hint {
+    color: #0a766e;
+    border-color: #0a766e;
+  }
 }
 </style>
