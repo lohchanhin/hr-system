@@ -1131,14 +1131,15 @@
 
 .notification-log-item {
   padding: 12px 2px 12px 11px;
-  border-bottom: 1px solid var(--schedule-line);
+  border-bottom: 1px solid #dfe3e6;
   border-left-width: 2px;
   border-left-style: solid;
   border-left-color: #4387b8;
+  background: #fff;
 }
 
 .notification-log-item[data-type="success"] {
-  border-left-color: var(--schedule-accent);
+  border-left-color: #0a766e;
 }
 
 .notification-log-item[data-type="warning"] {
@@ -1146,7 +1147,25 @@
 }
 
 .notification-log-item[data-type="error"] {
-  border-left-color: var(--schedule-danger);
+  border-left-color: #b42318;
+}
+
+.notification-log-item__heading strong {
+  color: #2f6f9f;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.notification-log-item[data-type="success"] .notification-log-item__heading strong {
+  color: #08635c;
+}
+
+.notification-log-item[data-type="warning"] .notification-log-item__heading strong {
+  color: #8a4b05;
+}
+
+.notification-log-item[data-type="error"] .notification-log-item__heading strong {
+  color: #9f2d24;
 }
 
 .notification-log-toolbar,
@@ -1160,8 +1179,8 @@
 .notification-log-toolbar {
   min-height: 38px;
   padding-bottom: 10px;
-  border-bottom: 1px solid var(--schedule-line);
-  color: var(--schedule-text-secondary);
+  border-bottom: 1px solid #dfe3e6;
+  color: #52606b;
   font-size: 12px;
 }
 
@@ -1171,7 +1190,7 @@
 
 .notification-log-item__heading time {
   flex: 0 0 auto;
-  color: var(--schedule-text-muted);
+  color: #66727b;
   font-size: 11px;
 }
 
@@ -1182,6 +1201,33 @@
   line-height: 1.55;
   overflow-wrap: anywhere;
   white-space: pre-wrap;
+}
+
+:global(.schedule-notification-drawer) {
+  color: #182026;
+  background: #fff;
+}
+
+:global(.schedule-notification-drawer .el-drawer__header) {
+  margin-bottom: 0;
+  padding-bottom: 16px;
+  color: #182026;
+  border-bottom: 1px solid #dfe3e6;
+}
+
+:global(.schedule-notification-drawer .el-drawer__title) {
+  color: #182026;
+  font-size: 17px;
+  font-weight: 700;
+}
+
+:global(.schedule-notification-drawer .el-drawer__close-btn) {
+  color: #52606b;
+}
+
+:global(.schedule-notification-drawer .el-drawer__body) {
+  color: #182026;
+  background: #fff;
 }
 
 .schedule-card.is-fullscreen {

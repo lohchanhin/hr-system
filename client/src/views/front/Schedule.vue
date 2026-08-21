@@ -692,7 +692,8 @@
     </template>
   </el-dialog>
 
-  <el-drawer v-model="notificationDrawerVisible" title="排班通知日誌" size="min(440px, 92vw)" append-to-body>
+  <el-drawer v-model="notificationDrawerVisible" title="排班通知日誌" size="min(440px, 92vw)" append-to-body
+    class="schedule-notification-drawer">
     <div class="notification-log-toolbar">
       <span>保留最近 {{ NOTIFICATION_LIMIT }} 筆</span>
       <el-button text type="danger" :disabled="!scheduleNotifications.length" @click="clearScheduleNotifications">

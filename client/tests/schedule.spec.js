@@ -1340,11 +1340,15 @@ describe('Schedule.vue', () => {
     await flush()
 
     wrapper.vm.callWarning('CODEX_TEST 通知內容')
+    await wrapper.vm.$nextTick()
 
     expect(wrapper.vm.scheduleNotifications[0]).toEqual(expect.objectContaining({
       type: 'warning',
       message: 'CODEX_TEST 通知內容'
     }))
+    expect(wrapper.find('.schedule-notification-drawer').exists()).toBe(true)
+    expect(wrapper.find('.notification-log-item').attributes('data-type')).toBe('warning')
+    expect(wrapper.find('.notification-log-item__heading').text()).toContain('提醒')
     const stored = JSON.parse(localStorage.getItem('schedule-notifications:sup1'))
     expect(stored[0].message).toBe('CODEX_TEST 通知內容')
   })
