@@ -1,11 +1,15 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
 var capturedGuard
+var capturedRouterError
+var capturedAfterEach
 var warningSpy
 vi.mock('vue-router', () => ({
   createRouter: ({ routes }) => ({
     getRoutes: () => routes,
-    beforeEach: fn => { capturedGuard = fn }
+    beforeEach: fn => { capturedGuard = fn },
+    onError: fn => { capturedRouterError = fn },
+    afterEach: fn => { capturedAfterEach = fn }
   }),
   createWebHistory: () => ({})
 }))
@@ -19,7 +23,11 @@ vi.mock('element-plus', () => {
   }
 })
 
-import router from '../src/router/index.js'
+import router, {
+  ROUTE_CHUNK_RELOAD_KEY,
+  isRouteChunkLoadError,
+  recoverRouteChunk
+} from '../src/router/index.js'
 import { setToken } from '../src/utils/tokenService'
 
 beforeEach(() => {
@@ -52,6 +60,16 @@ describe('router', () => {
   it('includes manager login route', () => {
     const paths = router.getRoutes().map(r => r.path)
     expect(paths).toContain('/manager/login')
+  })
+
+  it('redirects an authenticated supervisor away from manager login', () => {
+    const payload = btoa(JSON.stringify({ role: 'supervisor' }))
+    setToken(`h.${payload}.s`)
+    const next = vi.fn()
+
+    capturedGuard({ matched: [], meta: {}, name: 'ManagerLogin' }, {}, next)
+
+    expect(next).toHaveBeenCalledWith('/front/schedule')
   })
 
   it('redirects /manager to settings', () => {
@@ -183,5 +201,41 @@ describe('router', () => {
     expect(next.mock.calls[0][0]).toBeUndefined()
     expect(sessionStorage.getItem('role')).toBe('admin')
     expect(localStorage.getItem('role')).toBe('admin')
+  })
+
+  it('recognizes stale deployment chunk loading failures', () => {
+    expect(isRouteChunkLoadError(new TypeError('Failed to fetch dynamically imported module: /assets/Schedule-old.js'))).toBe(true)
+    expect(isRouteChunkLoadError(new Error('Unable to preload CSS for /assets/Schedule-old.css'))).toBe(true)
+    expect(isRouteChunkLoadError(new Error('Network request failed'))).toBe(false)
+  })
+
+  it('reloads the failed target once and prevents a reload loop', () => {
+    const storage = new Map()
+    const storageAdapter = {
+      getItem: key => storage.get(key) ?? null,
+      setItem: (key, value) => storage.set(key, value),
+      removeItem: key => storage.delete(key)
+    }
+    const navigate = vi.fn()
+    const error = new TypeError('Failed to fetch dynamically imported module: /assets/FrontLayout-old.js')
+    const target = { fullPath: '/front/schedule' }
+    const runtime = {
+      storage: storageAdapter,
+      location: { pathname: '/manager/login', search: '', hash: '', replace: vi.fn() },
+      navigate
+    }
+
+    expect(recoverRouteChunk(error, target, runtime)).toBe(true)
+    expect(navigate).toHaveBeenCalledWith('/front/schedule')
+    expect(storage.get(ROUTE_CHUNK_RELOAD_KEY)).toBe('/front/schedule')
+
+    expect(recoverRouteChunk(error, target, runtime)).toBe(false)
+    expect(navigate).toHaveBeenCalledTimes(1)
+    expect(storage.has(ROUTE_CHUNK_RELOAD_KEY)).toBe(false)
+  })
+
+  it('registers router recovery hooks', () => {
+    expect(capturedRouterError).toEqual(expect.any(Function))
+    expect(capturedAfterEach).toEqual(expect.any(Function))
   })
 })

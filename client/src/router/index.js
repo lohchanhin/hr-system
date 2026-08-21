@@ -2,6 +2,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { getToken } from '@/utils/tokenService'
 import { clearRoleCache, refreshRoleFromSource, resolveUserRole } from '@/utils/roleResolver'
+import { getAuthenticatedHomeRoute } from '@/utils/authNavigation'
 
 // ★ 既有的後台檔案
 const ManagerLogin = () => import('@/views/Login.vue')
@@ -159,6 +160,34 @@ const router = createRouter({
   routes,
 })
 
+export const ROUTE_CHUNK_RELOAD_KEY = 'hr-system:route-chunk-reload'
+
+export function isRouteChunkLoadError(error) {
+  const message = error instanceof Error ? error.message : String(error || '')
+  return /Failed to fetch dynamically imported module|Importing a module script failed|Unable to preload CSS|Loading chunk [\w-]+ failed/i.test(message)
+}
+
+export function recoverRouteChunk(error, to, runtime = {}) {
+  if (!isRouteChunkLoadError(error)) return false
+
+  const location = runtime.location ?? (typeof window !== 'undefined' ? window.location : null)
+  const storage = runtime.storage ?? (typeof window !== 'undefined' ? window.sessionStorage : null)
+  if (!location || !storage) return false
+
+  const currentPath = `${location.pathname || '/'}${location.search || ''}${location.hash || ''}`
+  const targetPath = to?.fullPath || currentPath
+
+  if (storage.getItem(ROUTE_CHUNK_RELOAD_KEY) === targetPath) {
+    storage.removeItem(ROUTE_CHUNK_RELOAD_KEY)
+    return false
+  }
+
+  storage.setItem(ROUTE_CHUNK_RELOAD_KEY, targetPath)
+  const navigate = runtime.navigate ?? (path => location.replace(path))
+  navigate(targetPath)
+  return true
+}
+
 const showWarningMessage = message => {
   const globalWarning = typeof window !== 'undefined' ? window.ElMessage?.warning : undefined
   const moduleWarning = ElMessage?.warning
@@ -198,6 +227,11 @@ router.beforeEach((to, from, next) => {
   const requiresAuth = to.matched.some(r => r.meta.requiresAuth)
   const frontRequiresAuth = to.matched.some(r => r.meta.frontRequiresAuth)
 
+  if (token && ['ManagerLogin', 'FrontLogin'].includes(to.name)) {
+    const destination = getAuthenticatedHomeRoute(activeRole)
+    if (destination) return next(destination)
+  }
+
   // 後台登入檢查
   if (requiresAuth) {
     if (!token) {
@@ -224,6 +258,19 @@ router.beforeEach((to, from, next) => {
   }
 
   next()
+})
+
+router.onError((error, to) => {
+  if (recoverRouteChunk(error, to)) return
+  if (isRouteChunkLoadError(error)) {
+    showWarningMessage('系統更新資源載入失敗，請重新整理頁面後再試')
+  }
+})
+
+router.afterEach((_to, _from, failure) => {
+  if (!failure && typeof window !== 'undefined') {
+    window.sessionStorage?.removeItem(ROUTE_CHUNK_RELOAD_KEY)
+  }
 })
 
 export default router

@@ -83,7 +83,6 @@
               size="large" 
               class="login-button"
               :loading="isLoading"
-              @click="onLogin"
               native-type="submit"
             >
               <span v-if="!isLoading">登入系統</span>
@@ -117,6 +116,8 @@ import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { apiFetch } from '../api'
 import { setToken } from '../utils/tokenService'
+import { persistRole } from '../utils/roleCache'
+import { getAuthenticatedHomeRoute } from '../utils/authNavigation'
 import { ElMessage } from 'element-plus'
 import { useMenuStore } from '../stores/menu'
 
@@ -166,20 +167,21 @@ const onLogin = async () => {
     
     if (res.ok) {
       const data = await res.json()
+      const authenticatedRole = data.user?.role
+      const destination = getAuthenticatedHomeRoute(authenticatedRole)
+
+      if (!data.token || !destination) {
+        throw new Error('Invalid login response')
+      }
+
       setToken(data.token)
-      sessionStorage.setItem('role', data.user.role)
+      persistRole(authenticatedRole)
       sessionStorage.setItem('employeeId', data.user.employeeId || data.user.id)
-      localStorage.setItem('role', data.user.role)
       localStorage.setItem('employeeId', data.user.employeeId || data.user.id)
 
       await menuStore.fetchMenu()
+      await router.replace(destination)
       ElMessage.success('登入成功！')
-
-      if (data.user.role === 'supervisor') {
-        router.push('/front/schedule')
-      } else if (data.user.role === 'admin') {
-        router.push('/manager/settings')
-      }
     } else {
       const errorData = await res.json()
       ElMessage.error(errorData.message || '登入失敗，請檢查帳號密碼')

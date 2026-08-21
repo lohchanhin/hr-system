@@ -11,8 +11,9 @@ function createToken(offset = 3600) {
 }
 
 const push = vi.fn()
+const replace = vi.fn()
 vi.mock('vue-router', () => ({
-  useRouter: () => ({ push })
+  useRouter: () => ({ push, replace })
 }))
 vi.mock('element-plus', async () => {
   const actual = await vi.importActual('element-plus')
@@ -57,8 +58,12 @@ describe('Login.vue', () => {
     localStorage.clear()
     sessionStorage.clear()
     push.mockReset()
+    replace.mockReset()
     const module = await import('../src/views/Login.vue')
     Login = module.default
+    const { ElMessage } = await import('element-plus')
+    ElMessage.success.mockClear()
+    ElMessage.error.mockClear()
     const menuStore = useMenuStore()
     fetchMenuSpy = vi.spyOn(menuStore, 'fetchMenu').mockResolvedValue()
   })
@@ -99,7 +104,7 @@ describe('Login.vue', () => {
     expect(sessionStorage.getItem('role')).toBe('supervisor')
     expect(sessionStorage.getItem('employeeId')).toBe('e1')
     expect(fetchMenuSpy).toHaveBeenCalled()
-    expect(push).toHaveBeenCalledWith('/front/schedule')
+    expect(replace).toHaveBeenCalledWith('/front/schedule')
   })
 
   it('redirects admin to manager', async () => {
@@ -115,7 +120,7 @@ describe('Login.vue', () => {
     await wrapper.vm.onLogin()
     expect(sessionStorage.getItem('employeeId')).toBe('a1')
     expect(fetchMenuSpy).toHaveBeenCalled()
-    expect(push).toHaveBeenCalledWith('/manager/settings')
+    expect(replace).toHaveBeenCalledWith('/manager/settings')
   })
 
   it('shows error on role mismatch', async () => {
@@ -139,8 +144,26 @@ describe('Login.vue', () => {
     expect(ElMessage.error).toHaveBeenCalledWith('角色錯誤')
     expect(fetchMenuSpy).not.toHaveBeenCalled()
     expect(push).not.toHaveBeenCalled()
+    expect(replace).not.toHaveBeenCalled()
     expect(window.location.href).toBe('')
     window.location = originalLocation
+  })
+
+  it('does not report success when the authenticated role has no destination', async () => {
+    fetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ token: createToken(), user: { role: 'unknown', employeeId: 'x1' } })
+    })
+    const wrapper = mountLogin()
+    wrapper.vm.loginFormRef = { validate: async () => true }
+    wrapper.vm.loginForm.username = 'u'
+    wrapper.vm.loginForm.password = 'p'
+    await wrapper.vm.onLogin()
+
+    const { ElMessage } = await import('element-plus')
+    expect(replace).not.toHaveBeenCalled()
+    expect(ElMessage.success).not.toHaveBeenCalled()
+    expect(ElMessage.error).toHaveBeenCalledWith('登入過程中發生錯誤，請稍後再試')
   })
 
   it('navigates to employee login when link clicked', async () => {
