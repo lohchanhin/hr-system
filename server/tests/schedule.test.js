@@ -270,12 +270,21 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
   });
 
   it('rejects creation if schedule exists', async () => {
-    mockShiftSchedule.findOne.mockResolvedValue({ _id: '1', department: 'd1' });
+    mockShiftSchedule.findOne.mockResolvedValue({ _id: '1', department: 'd1', shiftId: 'existing-shift' });
     const res = await request(app)
       .post('/api/schedules')
       .send({ employee: 'e1', date: '2023-01-01', shiftId: 's1' });
     expect(res.status).toBe(400);
-    expect(res.body).toEqual({ error: 'employee conflict' });
+    expect(res.body).toEqual({
+      error: 'employee conflict',
+      conflict: {
+        employee: 'e1',
+        date: '2023-01-01T00:00:00.000Z',
+        existingScheduleId: '1',
+        existingShiftId: 'existing-shift',
+        requestedShiftId: 's1',
+      },
+    });
   });
 
   it('rejects creation if cross-department', async () => {
@@ -284,7 +293,15 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
       .post('/api/schedules')
       .send({ employee: 'e1', date: '2023-01-01', shiftId: 's1', department: 'd2' });
     expect(res.status).toBe(400);
-    expect(res.body).toEqual({ error: 'department overlap' });
+    expect(res.body).toEqual({
+      error: 'department overlap',
+      conflict: expect.objectContaining({
+        employee: 'e1',
+        date: '2023-01-01T00:00:00.000Z',
+        existingScheduleId: '1',
+        requestedShiftId: 's1',
+      }),
+    });
   });
 
   it('rejects creation if leave conflict', async () => {

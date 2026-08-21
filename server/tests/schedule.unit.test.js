@@ -57,7 +57,14 @@ describe('createSchedule validations', () => {
     const res = { status, json };
     await createSchedule(req, res);
     expect(status).toHaveBeenCalledWith(400);
-    expect(json).toHaveBeenCalledWith({ error: 'department overlap' });
+    expect(json).toHaveBeenCalledWith({
+      error: 'department overlap',
+      conflict: expect.objectContaining({
+        employee: 'e1',
+        date: '2023-01-01T00:00:00.000Z',
+        requestedShiftId: 's1',
+      }),
+    });
   });
 
   it('omits blank optional department references when creating a schedule', async () => {
@@ -278,7 +285,14 @@ describe('updateSchedule validations', () => {
     const res = { status, json };
     await updateSchedule(req, res);
     expect(status).toHaveBeenCalledWith(400);
-    expect(json).toHaveBeenCalledWith({ error: 'department overlap' });
+    expect(json).toHaveBeenCalledWith({
+      error: 'department overlap',
+      conflict: expect.objectContaining({
+        employee: 'e1',
+        date: '2023-01-01T00:00:00.000Z',
+        existingScheduleId: '2',
+      }),
+    });
   });
 
   it('updates schedule with new department when no conflict', async () => {

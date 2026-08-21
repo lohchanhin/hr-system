@@ -1908,6 +1908,48 @@ describe('Schedule.vue', () => {
     expect(wrapper.vm.scheduleMap.e1?.[2]?.shiftId ?? '').toBe('')
   })
 
+  it('shows employee, date and shift details when a single schedule conflicts', async () => {
+    apiFetch.mockResolvedValue({ ok: true, json: async () => [] })
+    const wrapper = mountSchedule()
+    await flush()
+
+    wrapper.vm.currentMonth = '2026-08'
+    wrapper.vm.employees = [
+      { _id: 'e1', employeeId: 'A0077', name: '石靜嫻', departmentId: 'd1', subDepartmentId: 'sd1' }
+    ]
+    wrapper.vm.shifts = [
+      { _id: 'rest', code: '休', name: '休假' },
+      { _id: 'day', code: 'D', name: '日班' }
+    ]
+    wrapper.vm.scheduleMap = {
+      e1: { 21: { shiftId: '', department: 'd1', subDepartment: 'sd1' } }
+    }
+    apiFetch.mockReset()
+    apiFetch.mockResolvedValue({
+      ok: false,
+      status: 400,
+      json: async () => ({
+        error: 'employee conflict',
+        conflict: {
+          employee: 'e1',
+          date: '2026-08-21T00:00:00.000Z',
+          existingScheduleId: 'schedule-existing',
+          existingShiftId: 'day',
+          requestedShiftId: 'rest'
+        }
+      })
+    })
+
+    await wrapper.vm.onSelect('e1', 21, 'rest')
+
+    expect(ElMessageBox.alert).toHaveBeenCalledWith(
+      expect.stringContaining('A0077 石靜嫻：2026-08-21 已有排班「D(日班)」，無法再排「休(休假)」'),
+      '排班資料衝突',
+      expect.objectContaining({ customClass: 'schedule-issue-dialog', closeOnClickModal: false })
+    )
+    expect(wrapper.vm.scheduleMap.e1[21].shiftId).toBe('')
+  })
+
   it('shows name column and weekday labels', async () => {
     apiFetch
       .mockResolvedValueOnce({ ok: true, json: async () => [] })

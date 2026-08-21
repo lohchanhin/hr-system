@@ -198,6 +198,16 @@ function respondLaborRuleError(res, err) {
   return true;
 }
 
+function buildScheduleConflictDetails({ employee, date, shiftId, existing }) {
+  return {
+    employee: normalizeId(employee),
+    date: date instanceof Date ? date.toISOString() : new Date(date).toISOString(),
+    existingScheduleId: normalizeId(existing?._id),
+    existingShiftId: normalizeId(existing?.shiftId),
+    requestedShiftId: normalizeId(shiftId),
+  };
+}
+
 export async function getIncludeSelfPreference(req, res) {
   try {
     const userId = req.user?.id;
@@ -1500,14 +1510,15 @@ export async function createSchedule(req, res) {
 
     const existing = await ShiftSchedule.findOne({ employee, date: dt });
     if (existing) {
+      const conflict = buildScheduleConflictDetails({ employee, date: dt, shiftId, existing });
       if (
         (normalizedDepartment || normalizedSubDepartment) &&
         (existing.department?.toString() !== normalizedDepartment ||
           existing.subDepartment?.toString() !== normalizedSubDepartment)
       ) {
-        return res.status(400).json({ error: 'department overlap' });
+        return res.status(400).json({ error: 'department overlap', conflict });
       }
-      return res.status(400).json({ error: 'employee conflict' });
+      return res.status(400).json({ error: 'employee conflict', conflict });
     }
 
     if (await hasLeaveConflict(employee, dt)) {
@@ -1574,14 +1585,20 @@ export async function updateSchedule(req, res) {
       _id: { $ne: schedule._id },
     });
     if (conflict) {
+      const conflictDetails = buildScheduleConflictDetails({
+        employee: newEmployee,
+        date: newDate,
+        shiftId: shiftId !== undefined ? shiftId : schedule.shiftId,
+        existing: conflict,
+      });
       if (
         (normalizedDepartment || normalizedSubDepartment) &&
         (conflict.department?.toString() !== normalizedDepartment ||
           conflict.subDepartment?.toString() !== normalizedSubDepartment)
       ) {
-        return res.status(400).json({ error: 'department overlap' });
+        return res.status(400).json({ error: 'department overlap', conflict: conflictDetails });
       }
-      return res.status(400).json({ error: 'employee conflict' });
+      return res.status(400).json({ error: 'employee conflict', conflict: conflictDetails });
     }
 
     if (await hasLeaveConflict(newEmployee, newDate)) {

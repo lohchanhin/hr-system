@@ -3733,7 +3733,8 @@ async function onSelect(empId, day, value) {
           '更新排班失敗',
           empId,
           day,
-          prev
+          prev,
+          value
         )
       } else {
         invalidateFetchAllCache()
@@ -3749,7 +3750,8 @@ async function onSelect(empId, day, value) {
         '更新排班失敗',
         empId,
         day,
-        prev
+        prev,
+        value
       )
     }
   } else {
@@ -3786,7 +3788,8 @@ async function onSelect(empId, day, value) {
           '新增排班失敗',
           empId,
           day,
-          prev
+          prev,
+          value
         )
       }
     } catch (err) {
@@ -3795,7 +3798,8 @@ async function onSelect(empId, day, value) {
         '新增排班失敗',
         empId,
         day,
-        prev
+        prev,
+        value
       )
     }
   }
@@ -3827,7 +3831,8 @@ async function handleScheduleError(
   defaultMsg,
   empId,
   day,
-  prev
+  prev,
+  requestedShiftId = ''
 ) {
   if (!scheduleMap.value[empId]) {
     scheduleMap.value[empId] = {}
@@ -3844,20 +3849,56 @@ async function handleScheduleError(
   recomputeEmployeeStatusFor(empId)
   markScheduleMapDirty()
 
-  let msg = ''
+  let data = null
   try {
     if (res) {
-      const data = await res.json()
-      msg = data?.error || ''
+      data = await res.json()
     }
   } catch (e) { }
 
+  const msg = data?.error || ''
+  const violations = Array.isArray(data?.violations) ? data.violations : []
+  if (violations.length) {
+    await openScheduleIssueDialog(
+      '排班規範檢核未通過',
+      violations.map(formatLaborRuleViolation),
+      msg || defaultMsg
+    )
+    return
+  }
+
+  const conflict = data?.conflict || {}
+  const employee = employeeIssueLabel(conflict.employee || empId)
+  const fallbackDate = `${currentMonth.value}-${String(day).padStart(2, '0')}`
+  const parsedDate = dayjs(conflict.date || fallbackDate)
+  const date = parsedDate.isValid() ? parsedDate.format('YYYY-MM-DD') : fallbackDate
+  const requestedShift = conflict.requestedShiftId || requestedShiftId
+  const requestedLabel = formatShiftLabel(shiftInfo(requestedShift)) || String(requestedShift || '')
+
   if (msg === 'employee conflict') {
-    ElMessageBox.alert('人員衝突')
+    const existingShift = conflict.existingShiftId || ''
+    const existingLabel = formatShiftLabel(shiftInfo(existingShift)) || String(existingShift || '')
+    const existingText = existingLabel ? `已有排班「${existingLabel}」` : '已存在另一筆排班'
+    const requestedText = requestedLabel ? `，無法再排「${requestedLabel}」` : '，無法重複新增'
+    await openScheduleIssueDialog(
+      '排班資料衝突',
+      [`${employee}：${date} ${existingText}${requestedText}。畫面資料可能已過期，請重新整理後再調整。`],
+      defaultMsg
+    )
   } else if (msg === 'department overlap') {
-    ElMessageBox.alert('跨區重複')
+    await openScheduleIssueDialog(
+      '部門或單位不一致',
+      [`${employee}：${date} 的既有排班屬於不同部門或單位，無法覆蓋。請重新整理後再調整。`],
+      defaultMsg
+    )
   } else if (msg === 'leave conflict') {
-    ElMessageBox.alert('請假衝突')
+    await openScheduleIssueDialog(
+      '核准請假衝突',
+      [`${employee}：${date} 已有核准請假，無法安排班別${requestedLabel ? `「${requestedLabel}」` : ''}。`],
+      defaultMsg
+    )
+  } else if (msg) {
+    await openScheduleIssueDialog('排班操作失敗', [msg], defaultMsg)
   } else {
     ElMessage.error(defaultMsg)
   }
