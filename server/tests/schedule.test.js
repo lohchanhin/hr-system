@@ -667,6 +667,48 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
       }, { $set: { state: 'finalized', needsReconfirm: false } });
     });
 
+    it('returns labor-rule details when finalize validation fails', async () => {
+      const docs = [
+        {
+          _id: 'sch1',
+          employee: { _id: 'emp1', name: '王小明' },
+          state: 'pending_confirmation',
+          employeeResponse: 'confirmed',
+          responseNote: '',
+          date: new Date('2024-05-03'),
+        },
+      ];
+      mockShiftSchedule.find.mockReturnValue({
+        populate: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockResolvedValue(docs),
+      });
+      const selectMock = jest.fn().mockResolvedValue([{ _id: 'emp1' }]);
+      mockEmployee.find.mockReturnValue({ select: selectMock });
+      const validationError = new Error('排班規範檢核未通過');
+      validationError.status = 400;
+      validationError.violations = [
+        {
+          rule: 'minimum-shift-gap',
+          employee: 'emp1',
+          date: '2024-05-03',
+          message: '2024-05-03 換班間隔僅 8 小時，至少須 11 小時',
+        },
+      ];
+      mockAssertScheduleRuleCompliance.mockRejectedValueOnce(validationError);
+
+      const res = await request(app)
+        .post('/api/schedules/publish/finalize')
+        .set('Authorization', buildAuthHeader('supervisor'))
+        .send({ month: '2024-05' });
+
+      expect(res.status).toBe(400);
+      expect(res.body).toEqual({
+        error: '排班規範檢核未通過',
+        violations: validationError.violations,
+      });
+      expect(mockShiftSchedule.updateMany).not.toHaveBeenCalled();
+    });
+
     it('全員已確認後僅重新發布有異動員工', async () => {
       const selectMock = jest.fn().mockResolvedValue([{ _id: 'emp1' }, { _id: 'emp2' }]);
       mockEmployee.find.mockReturnValue({ select: selectMock });

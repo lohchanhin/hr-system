@@ -1346,6 +1346,27 @@ function formatLaborRuleViolation(item = {}) {
   return `${employee ? `${employee}：` : ''}${item.message || '排班規範檢核未通過'}`
 }
 
+async function handleScheduleActionApiError(res, fallbackMessage) {
+  let data = null
+  try {
+    data = await res?.json()
+  } catch (err) {
+    // Keep the fallback message when the server does not return JSON.
+  }
+
+  const violations = Array.isArray(data?.violations) ? data.violations : []
+  if (violations.length) {
+    await openScheduleIssueDialog(
+      '排班規範檢核未通過',
+      violations.map(formatLaborRuleViolation),
+      data?.error || fallbackMessage
+    )
+    return
+  }
+
+  callWarning(data?.error || fallbackMessage)
+}
+
 const openScheduleImport = () => {
   if (!selectedDepartment.value) {
     ElMessage.warning('請先選擇部門')
@@ -2668,14 +2689,8 @@ async function publishSchedulesForMonth() {
       body: JSON.stringify(buildPublishPayload())
     })
     if (!res.ok) {
-      let message = '發布失敗'
-      try {
-        const data = await res.json()
-        if (data?.error) message = data.error
-      } catch (err) {
-        // ignore
-      }
-      throw new Error(message)
+      await handleScheduleActionApiError(res, '發布失敗')
+      return
     }
     const payload = await res.json().catch(() => null)
     const publishedMonth = payload?.publishedMonth || currentMonth.value
@@ -2714,14 +2729,8 @@ async function finalizeSchedulesForMonth() {
       return
     }
     if (!res.ok) {
-      let message = '完成發布失敗'
-      try {
-        const data = await res.json()
-        if (data?.error) message = data.error
-      } catch (err) {
-        // ignore
-      }
-      throw new Error(message)
+      await handleScheduleActionApiError(res, '完成發布失敗')
+      return
     }
     callSuccess('班表已完成發布')
     invalidateFetchAllCache()

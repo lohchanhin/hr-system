@@ -1213,6 +1213,61 @@ describe('Schedule.vue', () => {
     )
   })
 
+  it('shows employee and rule details when publish or finalize is rejected', async () => {
+    setRoleToken('supervisor')
+    localStorage.setItem('employeeId', 'sup1')
+    const violationResponse = message => ({
+      ok: false,
+      status: 400,
+      json: async () => ({
+        error: '排班規範檢核未通過',
+        violations: [{ employee: 'e1', message }]
+      })
+    })
+    setupSupervisorApiMock({
+      employees: [
+        {
+          _id: 'e1',
+          employeeId: 'CODEX_TEST_A0077',
+          name: 'CODEX 測試主管',
+          department: 'd1',
+          subDepartment: 'sd1'
+        }
+      ],
+      publishHandler: () => violationResponse('2026-08-07 至 2026-08-13 不得連續7日出勤'),
+      finalizeHandler: () => violationResponse('2026-08-20 換班間隔僅 8 小時，至少須 11 小時')
+    })
+
+    const wrapper = mountSchedule()
+    await flush()
+    wrapper.vm.employees = [
+      {
+        _id: 'e1',
+        employeeId: 'CODEX_TEST_A0077',
+        name: 'CODEX 測試主管',
+        departmentId: 'd1',
+        subDepartmentId: 'sd1'
+      }
+    ]
+
+    await wrapper.vm.publishSchedulesForMonth()
+    await wrapper.vm.finalizeSchedulesForMonth()
+
+    expect(ElMessageBox.alert).toHaveBeenNthCalledWith(
+      1,
+      expect.stringContaining('CODEX_TEST_A0077 CODEX 測試主管：2026-08-07 至 2026-08-13 不得連續7日出勤'),
+      '排班規範檢核未通過',
+      expect.objectContaining({ customClass: 'schedule-issue-dialog', closeOnClickModal: false })
+    )
+    expect(ElMessageBox.alert).toHaveBeenNthCalledWith(
+      2,
+      expect.stringContaining('CODEX_TEST_A0077 CODEX 測試主管：2026-08-20 換班間隔僅 8 小時，至少須 11 小時'),
+      '排班規範檢核未通過',
+      expect.objectContaining({ customClass: 'schedule-issue-dialog', closeOnClickModal: false })
+    )
+    expect(ElMessage.warning).not.toHaveBeenCalledWith('排班規範檢核未通過')
+  })
+
   it('keeps schedule import errors open and includes row and employee code', async () => {
     setRoleToken('supervisor')
     apiFetch.mockResolvedValue({ ok: true, json: async () => [] })

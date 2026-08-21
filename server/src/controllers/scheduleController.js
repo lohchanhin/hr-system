@@ -1469,6 +1469,7 @@ export async function finalizeSchedules(req, res) {
 
     res.json({ finalized: ids.length });
   } catch (err) {
+    if (respondLaborRuleError(res, err)) return;
     res.status(400).json({ error: err.message });
   }
 }
