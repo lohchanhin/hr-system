@@ -1,7 +1,7 @@
 <template>
   <el-select
     ref="selectRef"
-    v-model="scheduleCell.shiftId"
+    v-model="selectedShiftId"
     placeholder="選擇班別"
     class="cell-select shift-select"
     size="small"
@@ -12,6 +12,7 @@
     @visible-change="handleVisibleChange"
     @change="handleSelectShiftChange"
   >
+    <el-option label="清空排班" value="" class="clear-schedule-option" />
     <el-option
       v-for="opt in shifts"
       :key="opt._id"
@@ -22,7 +23,7 @@
 </template>
 
 <script setup>
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 const props = defineProps({
   scheduleCell: { type: Object, required: true },
@@ -34,6 +35,7 @@ const props = defineProps({
 
 const emit = defineEmits(['select-shift', 'close'])
 const selectRef = ref(null)
+const selectedShiftId = ref(props.scheduleCell.shiftId || '')
 const dropdownVisible = ref(false)
 let closeTimer = null
 
@@ -77,6 +79,13 @@ const handleVisibleChange = visible => {
     scheduleClose()
   }
 }
+
+watch(
+  () => props.scheduleCell.shiftId,
+  value => {
+    selectedShiftId.value = value || ''
+  }
+)
 
 onMounted(() => {
   nextTick(() => {

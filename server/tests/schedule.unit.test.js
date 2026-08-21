@@ -12,6 +12,7 @@ const mockGetLeaveFieldIds = jest.fn();
 const mockAttendanceSetting = { findOne: jest.fn() };
 const mockEmployee = { find: jest.fn() };
 const mockHoliday = { find: jest.fn() };
+const mockScheduleDayMemo = { find: jest.fn(), findOneAndUpdate: jest.fn(), findOneAndDelete: jest.fn() };
 const mockAssertScheduleRuleCompliance = jest.fn();
 const mockIsLaborRuleValidationError = jest.fn((error) => Array.isArray(error?.violations));
 
@@ -20,6 +21,7 @@ jest.unstable_mockModule('../src/models/approval_request.js', () => ({ default: 
 jest.unstable_mockModule('../src/models/AttendanceSetting.js', () => ({ default: mockAttendanceSetting }));
 jest.unstable_mockModule('../src/models/Employee.js', () => ({ default: mockEmployee }));
 jest.unstable_mockModule('../src/models/Holiday.js', () => ({ default: mockHoliday }));
+jest.unstable_mockModule('../src/models/ScheduleDayMemo.js', () => ({ default: mockScheduleDayMemo }));
 jest.unstable_mockModule('../src/services/laborRuleValidationService.js', () => ({
   assertScheduleRuleCompliance: mockAssertScheduleRuleCompliance,
   isLaborRuleValidationError: mockIsLaborRuleValidationError,
@@ -404,6 +406,10 @@ describe('exportSchedules excel matrix', () => {
     });
     mockHoliday.find.mockReset();
     mockHoliday.find.mockReturnValue({ lean: jest.fn().mockResolvedValue([]) });
+    mockScheduleDayMemo.find.mockReset();
+    mockScheduleDayMemo.find.mockReturnValue({
+      sort: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue([]) }),
+    });
   });
 
   it('exports matrix headers and day value by employee/date', async () => {
@@ -459,6 +465,14 @@ describe('exportSchedules excel matrix', () => {
         ]),
       }),
     });
+    mockScheduleDayMemo.find.mockReturnValue({
+      sort: jest.fn().mockReturnValue({
+        lean: jest.fn().mockResolvedValue([{
+          date: new Date('2024-02-02T00:00:00.000Z'),
+          content: 'CODEX_TEST 日期備忘錄',
+        }]),
+      }),
+    });
 
     const req = {
       user: { id: 'admin1', role: 'admin' },
@@ -489,10 +503,12 @@ describe('exportSchedules excel matrix', () => {
     expect(headerValues).toEqual(['員工代號', '姓名', '星期', '四', '五', '六']);
 
     expect(sheet.columnCount).toBe(32); // 3 fixed columns + 29 days in 2024/02
-    expect(sheet.getRow(5).getCell(1).value).toBe('A001');
-    expect(sheet.getRow(5).getCell(2).value).toBe('王小明');
-    expect(sheet.getRow(5).getCell(4).value).toBe('D');
-    expect(sheet.getRow(5).getCell(5).value).toBe('N');
-    expect(sheet.getRow(5).getCell(6).value).toBe('特');
+    expect(sheet.getRow(5).getCell(3).value).toBe('備忘錄');
+    expect(sheet.getRow(5).getCell(5).value).toBe('CODEX_TEST 日期備忘錄');
+    expect(sheet.getRow(6).getCell(1).value).toBe('A001');
+    expect(sheet.getRow(6).getCell(2).value).toBe('王小明');
+    expect(sheet.getRow(6).getCell(4).value).toBe('D');
+    expect(sheet.getRow(6).getCell(5).value).toBe('N');
+    expect(sheet.getRow(6).getCell(6).value).toBe('特');
   });
 });

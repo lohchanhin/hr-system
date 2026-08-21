@@ -120,6 +120,18 @@ describe('ScheduleGridVirtualBody 可編輯行為', () => {
     expect(emitted[0]).toEqual(['emp-1', '2026-03-05', 's2'])
   })
 
+  it('可从班别选单选择清空排班，且不预先改写原始 cell', async () => {
+    const cellView = createCellView({ shiftId: 's1' })
+    const wrapper = mountCell({ canEdit: true, cellView })
+
+    await wrapper.get('[data-schedule-cell="1"]').trigger('click')
+    expect(wrapper.findAll('option').some(option => option.text() === '清空排班')).toBe(true)
+    await wrapper.get('.schedule-editor-select').setValue('')
+
+    expect(wrapper.emitted('select-shift')[0]).toEqual(['emp-1', '2026-03-05', ''])
+    expect(cellView.scheduleCell.shiftId).toBe('s1')
+  })
+
   it('無排班權限僅顯示 ScheduleCellDisplay，不可觸發編輯', async () => {
     const wrapper = mountCell({
       canEdit: false,

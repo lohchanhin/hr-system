@@ -17,6 +17,7 @@ import { Types } from 'mongoose';
 import dayjs from 'dayjs';
 import { randomUUID } from 'node:crypto';
 import Holiday from '../models/Holiday.js';
+import ScheduleDayMemo from '../models/ScheduleDayMemo.js';
 import { leaveDaysFromCalendar, loadApprovedLeaveCalendar } from '../services/approvedLeaveCalendarService.js';
 import { buildLiteralSearchRegex } from '../utils/safeSearch.js';
 import { parseScheduleWorkbook } from '../services/scheduleWorkbookService.js';
@@ -84,6 +85,28 @@ async function buildLeaveDaysMapForMonth(employeeIds, month, monthStartDate, mon
     toEntityId(employeeId),
     leaveDaysFromCalendar(calendar, employeeId, '/'),
   ]));
+}
+
+async function canManageScheduleScope(req, department, subDepartment = '') {
+  const allowedEmployeeIds = await getAllowedScheduleEmployeeIds(req);
+  if (allowedEmployeeIds === null) return true;
+  if (!allowedEmployeeIds.length) return false;
+
+  const query = { _id: { $in: allowedEmployeeIds }, department };
+  if (subDepartment) query.subDepartment = subDepartment;
+  const employeeQuery = Employee.find(query).select('_id');
+  const matchingEmployees = employeeQuery && typeof employeeQuery.lean === 'function'
+    ? await employeeQuery.lean()
+    : await employeeQuery;
+  return Array.isArray(matchingEmployees) && matchingEmployees.length > 0;
+}
+
+function normalizeScheduleMemoDate(value) {
+  const normalized = String(value || '').trim();
+  if (!/^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/.test(normalized)) return null;
+  const date = new Date(`${normalized}T00:00:00.000Z`);
+  if (Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== normalized) return null;
+  return date;
 }
 
 async function hasLeaveConflict(employeeId, date) {
@@ -1961,6 +1984,100 @@ export async function deleteOldSchedules(req, res) {
   }
 }
 
+export async function deleteSchedulesBatch(req, res) {
+  try {
+    const ids = Array.from(new Set(
+      (Array.isArray(req.body?.ids) ? req.body.ids : [])
+        .map((id) => String(id || '').trim())
+        .filter(Boolean)
+    ));
+    if (!ids.length) return res.status(400).json({ error: 'ids required' });
+    if (ids.length > 5000) return res.status(400).json({ error: 'too many schedules' });
+
+    const allowedEmployeeIds = await getAllowedScheduleEmployeeIds(req);
+    if (allowedEmployeeIds !== null && !allowedEmployeeIds.length) {
+      return res.status(403).json({ error: 'forbidden' });
+    }
+    const scheduleQuery = ShiftSchedule.find({ _id: { $in: ids } }).select('_id employee');
+    const schedules = scheduleQuery && typeof scheduleQuery.lean === 'function'
+      ? await scheduleQuery.lean()
+      : await scheduleQuery;
+    const allowedSet = allowedEmployeeIds === null ? null : new Set(allowedEmployeeIds.map(String));
+    if (allowedSet && (schedules || []).some((schedule) => !allowedSet.has(toEntityId(schedule.employee)))) {
+      return res.status(403).json({ error: 'forbidden' });
+    }
+
+    const foundIds = (schedules || []).map((schedule) => toEntityId(schedule._id)).filter(Boolean);
+    if (!foundIds.length) return res.json({ deleted: 0, ids: [] });
+    const result = await ShiftSchedule.deleteMany({ _id: { $in: foundIds } });
+    return res.json({ deleted: result.deletedCount ?? foundIds.length, ids: foundIds });
+  } catch (err) {
+    return res.status(400).json({ error: err.message });
+  }
+}
+
+export async function listScheduleDayMemos(req, res) {
+  try {
+    const month = String(req.query?.month || '').trim();
+    const department = String(req.query?.department || '').trim();
+    const subDepartment = String(req.query?.subDepartment || '').trim();
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month) || !department) {
+      return res.status(400).json({ error: 'valid month and department required' });
+    }
+    if (!await canManageScheduleScope(req, department, subDepartment)) {
+      return res.status(403).json({ error: 'forbidden' });
+    }
+    const start = new Date(`${month}-01T00:00:00.000Z`);
+    const end = new Date(start);
+    end.setUTCMonth(end.getUTCMonth() + 1);
+    const rows = await ScheduleDayMemo.find({
+      date: { $gte: start, $lt: end },
+      department,
+      subDepartment: subDepartment || null,
+    }).sort({ date: 1 }).lean();
+    return res.json((rows || []).map((row) => ({
+      _id: row._id,
+      date: new Date(row.date).toISOString().slice(0, 10),
+      content: row.content || '',
+      updatedAt: row.updatedAt,
+    })));
+  } catch (err) {
+    return res.status(400).json({ error: err.message });
+  }
+}
+
+export async function upsertScheduleDayMemo(req, res) {
+  try {
+    const date = normalizeScheduleMemoDate(req.params.date);
+    const department = String(req.body?.department || '').trim();
+    const subDepartment = String(req.body?.subDepartment || '').trim();
+    const content = String(req.body?.content || '').trim();
+    if (!date || !department) return res.status(400).json({ error: 'valid date and department required' });
+    if (content.length > 1000) return res.status(400).json({ error: 'memo exceeds 1000 characters' });
+    if (!await canManageScheduleScope(req, department, subDepartment)) {
+      return res.status(403).json({ error: 'forbidden' });
+    }
+    const filter = { date, department, subDepartment: subDepartment || null };
+    if (!content) {
+      await ScheduleDayMemo.findOneAndDelete(filter);
+      return res.json({ date: req.params.date, content: '', deleted: true });
+    }
+    const row = await ScheduleDayMemo.findOneAndUpdate(
+      filter,
+      { $set: { content, updatedBy: req.user.id } },
+      { upsert: true, new: true, setDefaultsOnInsert: true }
+    );
+    return res.json({
+      _id: row?._id,
+      date: req.params.date,
+      content: row?.content || content,
+      updatedAt: row?.updatedAt,
+    });
+  } catch (err) {
+    return res.status(400).json({ error: err.message });
+  }
+}
+
 const IMPORT_LEAVE_CODES = new Set(['特', '特休', '病', '病假', '事', '事假', '喪', '喪假', '公', '公假', '原', '原民假', '補', '補休']);
 
 function normalizeWorkbookCode(value) {
@@ -2066,6 +2183,7 @@ export async function importSchedules(req, res) {
     ]));
 
     const errors = [];
+    const overwriteConflicts = [];
     const warnings = [];
     const candidates = [];
     let informationalDays = 0;
@@ -2103,7 +2221,12 @@ export async function importSchedules(req, res) {
         }
         const existing = existingByKey.get(`${employeeId}:${dateKey}`);
         if (existing && !overwrite) {
-          errors.push(scheduleImportError(row.rowNumber, entry.day, entry.code, '该日期已有班表；如需取代请明确启用覆盖'));
+          const conflict = scheduleImportError(row.rowNumber, entry.day, entry.code, '该日期已有班表；确认后可覆盖');
+          if (mode === 'preview') {
+            overwriteConflicts.push(conflict);
+          } else {
+            errors.push(conflict);
+          }
           continue;
         }
         candidates.push({
@@ -2134,6 +2257,8 @@ export async function importSchedules(req, res) {
       informationalDays,
       errors,
       warnings,
+      overwriteConflicts,
+      overwriteCount: overwriteConflicts.length,
     };
     if (mode === 'preview' || errors.length) {
       return res.status(errors.length ? 422 : 200).json(summary);
@@ -2306,6 +2431,15 @@ export async function exportSchedules(req, res) {
     }
 
     const format = formatParam === 'excel' ? 'excel' : 'pdf';
+    const memoRows = await ScheduleDayMemo.find({
+      date: { $gte: start, $lt: end },
+      department,
+      subDepartment: subDepartment || null,
+    }).sort({ date: 1 }).lean();
+    const memoByDay = new Map((memoRows || []).map((memo) => [
+      new Date(memo.date).getUTCDate(),
+      String(memo.content || '').trim(),
+    ]));
 
     const sanitizeSegment = (value) => {
       const cleaned = String(value)
@@ -2336,7 +2470,7 @@ export async function exportSchedules(req, res) {
         : await exportSettingQuery;
       workbook.creator = 'HR System';
       workbook.created = new Date();
-      const ws = workbook.addWorksheet('工作表1', { views: [{ state: 'frozen', xSplit: 3, ySplit: 4 }] });
+      const ws = workbook.addWorksheet('工作表1', { views: [{ state: 'frozen', xSplit: 3, ySplit: 5 }] });
       const monthDays = Array.from({ length: daysInMonth }, (_, idx) => idx + 1);
       const [yearNumber, monthNumber] = month.split('-').map(Number);
       const weekLabels = ['日', '一', '二', '三', '四', '五', '六'];
@@ -2352,13 +2486,14 @@ export async function exportSchedules(req, res) {
       ws.addRow(['員工代號', '姓名', '星期', ...monthDays.map((day) => (
         weekLabels[new Date(Date.UTC(yearNumber, monthNumber - 1, day)).getUTCDay()]
       ))]);
+      ws.addRow(['', '', '備忘錄', ...monthDays.map((day) => memoByDay.get(day) || '')]);
       ws.mergeCells(1, 1, 1, monthDays.length + 3);
 
       ws.columns = [
         { width: 13 },
         { width: 16 },
         { width: 13 },
-        ...monthDays.map(() => ({ width: 5 })),
+        ...monthDays.map(() => ({ width: 8 })),
       ];
       monthDays.forEach((day, index) => {
         ws.getCell(3, index + 4).numFmt = 'd';
@@ -2426,7 +2561,7 @@ export async function exportSchedules(req, res) {
         monthDays.forEach((_day, dayIndex) => {
           const columnNumber = dayIndex + 4;
           const columnLetter = ws.getColumn(columnNumber).letter;
-          const firstEmployeeRow = 5;
+          const firstEmployeeRow = 6;
           const lastEmployeeRow = Math.max(ws.rowCount - index - 1, firstEmployeeRow);
           ws.getCell(rowNumber, columnNumber).value = {
             formula: `COUNTIF(${columnLetter}${firstEmployeeRow}:${columnLetter}${lastEmployeeRow},${JSON.stringify(shiftCode)})`,
@@ -2455,14 +2590,15 @@ export async function exportSchedules(req, res) {
         fgColor: { argb: 'FFF8CBAD' },
       };
 
-      [1, 2, 3, 4].forEach((rowNumber) => ws.getRow(rowNumber).eachCell((cell) => {
+      [1, 2, 3, 4, 5].forEach((rowNumber) => ws.getRow(rowNumber).eachCell((cell) => {
         cell.fill = headerStyle;
         cell.font = { bold: rowNumber === 1 || rowNumber === 4 };
-        cell.alignment = { vertical: 'middle', horizontal: 'center' };
+        cell.alignment = { vertical: 'middle', horizontal: 'center', wrapText: rowNumber === 5 };
       }));
+      ws.getRow(5).height = 36;
 
       ws.eachRow((row, rowNumber) => {
-        if (rowNumber <= 4 || rowNumber >= statisticsStartRow) return;
+        if (rowNumber <= 5 || rowNumber >= statisticsStartRow) return;
         row.eachCell((cell, colNumber) => {
           if (colNumber >= 4 && weekendCols.has(colNumber)) {
             cell.fill = weekendStyle;
@@ -2505,6 +2641,14 @@ export async function exportSchedules(req, res) {
       doc.moveDown();
       doc.fontSize(10).text(`月份：${month}`, { align: 'center' });
       doc.moveDown(1.5);
+
+      if (memoByDay.size) {
+        doc.fontSize(11).text('日期備忘錄');
+        Array.from(memoByDay.entries()).forEach(([day, content]) => {
+          doc.fontSize(9).text(`${month}-${String(day).padStart(2, '0')}：${content}`);
+        });
+        doc.moveDown();
+      }
       
       // Table layout with proper column positioning
       const tableLeft = 50;

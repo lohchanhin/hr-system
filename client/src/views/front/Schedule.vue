@@ -194,6 +194,12 @@
           <i class="el-icon-s-grid"></i>
           匯出 Excel
         </el-button>
+        <el-badge :value="scheduleNotifications.length" :hidden="!scheduleNotifications.length" :max="99">
+          <el-button class="action-btn secondary" data-test="notification-log-button" @click="notificationDrawerVisible = true">
+            <el-icon><Bell /></el-icon>
+            通知日誌
+          </el-button>
+        </el-badge>
         <input
           ref="scheduleImportInput"
           type="file"
@@ -382,6 +388,12 @@
           @click="applyBatch" data-test="batch-apply-button">
           套用至選取
         </el-button>
+        <el-button type="danger" plain class="action-btn apply-btn"
+          :disabled="!selectedPersistedSchedules.length || isClearingBatch" :loading="isClearingBatch"
+          @click="clearSelectedSchedules" data-test="batch-clear-button">
+          <el-icon><Delete /></el-icon>
+          清空選取排班
+        </el-button>
         <span class="row-color-hint">列色僅暫存於目前瀏覽器 session</span>
       </div>
       <div
@@ -490,9 +502,17 @@
         <el-table-column v-for="d in virtualVisibleDays" :key="d.date" :label="d.label" :width="dayColumnWidth" align="center">
           <template #header>
             <div class="day-header">
-              <span>{{ d.label }}</span>
-              <el-checkbox v-if="canEditSchedule" class="day-checkbox" :model-value="selectedDaysSet.has(d.date)"
-                :data-schedule-action="'toggle-day'" :data-day="String(d.date)" />
+              <span class="day-header-label">{{ d.label }}</span>
+              <div v-if="canEditSchedule" class="day-header-tools">
+                <el-checkbox class="day-checkbox" :model-value="selectedDaysSet.has(d.date)"
+                  :data-schedule-action="'toggle-day'" :data-day="String(d.date)" />
+                <el-tooltip :content="dayMemos[d.date] || '新增日期備忘錄'" placement="top">
+                  <el-button text circle class="day-memo-button" :class="{ 'has-content': !!dayMemos[d.date] }"
+                    :aria-label="`${d.label}備忘錄`" :data-test="`day-memo-${d.date}`" @click.stop="openDayMemo(d.date)">
+                    <el-icon><EditPen /></el-icon>
+                  </el-button>
+                </el-tooltip>
+              </div>
             </div>
           </template>
 
@@ -633,6 +653,37 @@
       <el-button @click="detail.visible = false">關閉</el-button>
     </template>
   </el-dialog>
+
+  <el-dialog v-model="memoDialog.visible" :title="`${memoDialog.date} 備忘錄`" width="520px" destroy-on-close>
+    <el-input v-model="memoDialog.content" type="textarea" :rows="6" maxlength="1000" show-word-limit
+      placeholder="輸入此日期的排班備忘錄，內容會一併匯出。" data-test="day-memo-input" />
+    <template #footer>
+      <el-button v-if="dayMemos[memoDialog.day]" type="danger" plain :disabled="memoDialog.saving"
+        @click="clearDayMemo">清除備忘錄</el-button>
+      <el-button @click="memoDialog.visible = false">取消</el-button>
+      <el-button type="primary" :loading="memoDialog.saving" @click="saveDayMemo" data-test="day-memo-save">儲存</el-button>
+    </template>
+  </el-dialog>
+
+  <el-drawer v-model="notificationDrawerVisible" title="排班通知日誌" size="min(440px, 92vw)" append-to-body>
+    <div class="notification-log-toolbar">
+      <span>保留最近 {{ NOTIFICATION_LIMIT }} 筆</span>
+      <el-button text type="danger" :disabled="!scheduleNotifications.length" @click="clearScheduleNotifications">
+        <el-icon><Delete /></el-icon>
+        清空日誌
+      </el-button>
+    </div>
+    <el-empty v-if="!scheduleNotifications.length" description="目前沒有通知" />
+    <div v-else class="notification-log-list" data-test="notification-log-list">
+      <article v-for="item in scheduleNotifications" :key="item.id" class="notification-log-item" :data-type="item.type">
+        <div class="notification-log-item__heading">
+          <strong>{{ item.title }}</strong>
+          <time>{{ formatNotificationTime(item.createdAt) }}</time>
+        </div>
+        <p>{{ item.message }}</p>
+      </article>
+    </div>
+  </el-drawer>
 </template>
 
 <script setup>
@@ -646,7 +697,7 @@ import { useRouter } from 'vue-router'
 import ScheduleDashboard from './ScheduleDashboard.vue'
 import ScheduleGridVirtualBody from './ScheduleGridVirtualBody.vue'
 import SelectionActions from './SelectionActions.vue'
-import { CircleCloseFilled, WarningFilled } from '@element-plus/icons-vue'
+import { Bell, CircleCloseFilled, Delete, EditPen, WarningFilled } from '@element-plus/icons-vue'
 import { buildShiftStyle } from '../../utils/shiftColors'
 import { ROW_COLOR_PALETTE, normalizeRowColorIndex, resolveRowColor } from '../../utils/rowColors'
 
@@ -684,6 +735,11 @@ const currentMonth = ref(dayjs().add(1, 'month').format('YYYY-MM'))
 
 
 const scheduleMap = shallowRef({})
+const dayMemos = ref({})
+const memoDialog = reactive({ visible: false, day: null, date: '', content: '', saving: false })
+const notificationDrawerVisible = ref(false)
+const scheduleNotifications = ref([])
+const NOTIFICATION_LIMIT = 200
 const rawSchedules = ref([])
 const holidays = ref([])
 const holidayMap = ref({})
@@ -733,6 +789,7 @@ const batchRowColorIndex = ref(null)
 const rowColorAssignments = ref({})
 const ROW_COLOR_SESSION_KEY = 'schedule-row-colors'
 const isApplyingBatch = ref(false)
+const isClearingBatch = ref(false)
 const isPublishing = ref(false)
 const isFinalizing = ref(false)
 const isTableFullscreen = ref(false)
@@ -1168,6 +1225,11 @@ const rebuildSelectionCache = () => {
 }
 
 const hasAnySelection = computed(() => allSelectedCells.value.size > 0)
+const selectedPersistedSchedules = computed(() => Array.from(allSelectedCells.value).flatMap(key => {
+  const { empId, day } = parseCellKey(key)
+  const id = scheduleMap.value[empId]?.[day]?.id
+  return id ? [{ key, empId, day, id: String(id) }] : []
+}))
 
 const batchSubDepartments = computed(() =>
   batchDepartment.value ? subDepsFor(batchDepartment.value) : []
@@ -1311,6 +1373,7 @@ function openScheduleIssueDialog(title, lines, fallbackMessage) {
     displayed.push(`另有 ${normalizedLines.length - displayed.length} 項，請修正前述問題後重新檢核。`)
   }
   const message = displayed.join('\n') || fallbackMessage || '操作失敗'
+  appendScheduleNotification('error', title, message)
   return Promise.resolve(ElMessageBox.alert(message, title, {
     confirmButtonText: '關閉',
     type: 'error',
@@ -1369,13 +1432,13 @@ async function handleScheduleActionApiError(res, fallbackMessage) {
 
 const openScheduleImport = () => {
   if (!selectedDepartment.value) {
-    ElMessage.warning('請先選擇部門')
+    callWarning('請先選擇部門')
     return
   }
   scheduleImportInput.value?.click()
 }
 
-async function submitScheduleImport(file, mode) {
+async function submitScheduleImport(file, mode, overwrite = false) {
   const formData = new FormData()
   formData.append('file', file)
   formData.append('month', currentMonth.value)
@@ -1385,7 +1448,7 @@ async function submitScheduleImport(file, mode) {
   }
   formData.append('includeSelf', String(includeSelf.value && showIncludeSelfToggle.value))
   formData.append('mode', mode)
-  formData.append('overwrite', 'false')
+  formData.append('overwrite', String(overwrite))
   const response = await importScheduleRecords(formData)
   const payload = await response.json().catch(() => ({}))
   return { response, payload }
@@ -1397,7 +1460,8 @@ async function onScheduleImportFile(event) {
   if (!file) return
   isImportingSchedule.value = true
   try {
-    const preview = await submitScheduleImport(file, 'preview')
+    let overwrite = false
+    let preview = await submitScheduleImport(file, 'preview', false)
     if (!preview.response.ok) {
       const issues = (preview.payload.errors || []).map(formatScheduleImportIssue)
       const violations = (preview.payload.violations || []).map(formatLaborRuleViolation)
@@ -1408,15 +1472,39 @@ async function onScheduleImportFile(event) {
       )
       return
     }
+
+    const overwriteCount = Number(preview.payload.overwriteCount || preview.payload.overwriteConflicts?.length || 0)
+    if (overwriteCount > 0) {
+      await ElMessageBox.confirm(
+        `發現 ${overwriteCount} 個日期已有班表。選擇「覆蓋匯入」會取代原班別，並將員工確認狀態重設為待確認；取消不會修改任何資料。`,
+        '確認覆蓋既有排班',
+        { confirmButtonText: '覆蓋匯入', cancelButtonText: '取消', type: 'warning' }
+      )
+      overwrite = true
+      preview = await submitScheduleImport(file, 'preview', true)
+      if (!preview.response.ok) {
+        const issues = (preview.payload.errors || []).map(formatScheduleImportIssue)
+        const violations = (preview.payload.violations || []).map(formatLaborRuleViolation)
+        await openScheduleIssueDialog(
+          violations.length ? '覆蓋排班規範檢核未通過' : '覆蓋匯入檢核未通過',
+          issues.length ? issues : violations,
+          preview.payload.error || '覆蓋匯入預覽失敗'
+        )
+        return
+      }
+    }
+
     const warningText = preview.payload.warnings?.length
       ? `\n另有 ${preview.payload.warnings.length} 项提醒，汇入后仍保留原假单与假日日历资料。`
       : ''
-    await ElMessageBox.confirm(
-      `将汇入 ${preview.payload.employees} 名员工、${preview.payload.scheduleDays} 个班次。${warningText}`,
-      '确认汇入班表',
-      { confirmButtonText: '确认汇入', cancelButtonText: '取消', type: 'warning' }
-    )
-    const committed = await submitScheduleImport(file, 'commit')
+    if (!overwrite) {
+      await ElMessageBox.confirm(
+        `将汇入 ${preview.payload.employees} 名员工、${preview.payload.scheduleDays} 个班次。${warningText}`,
+        '确认汇入班表',
+        { confirmButtonText: '确认汇入', cancelButtonText: '取消', type: 'warning' }
+      )
+    }
+    const committed = await submitScheduleImport(file, 'commit', overwrite)
     if (!committed.response.ok) {
       const issues = (committed.payload.errors || []).map(formatScheduleImportIssue)
       const violations = (committed.payload.violations || []).map(formatLaborRuleViolation)
@@ -1427,11 +1515,11 @@ async function onScheduleImportFile(event) {
       )
       return
     }
-    ElMessage.success(`已汇入 ${committed.payload.imported} 个班次`)
+    callSuccess(`已汇入 ${committed.payload.imported} 个班次${overwrite ? '（含覆盖）' : ''}`)
     await refreshScheduleData({ reset: true, reason: 'excel-import' })
   } catch (error) {
     if (error === 'cancel' || error === 'close') return
-    ElMessage.error(error?.message || '班表汇入失败')
+    callError(error?.message || '班表汇入失败')
   } finally {
     isImportingSchedule.value = false
   }
@@ -1577,7 +1665,7 @@ const selectAllEmployeesAcrossPages = async () => {
     rebuildSelectionCache()
   } catch (err) {
     console.error(err)
-    ElMessage.error('全選全部人員失敗')
+    callError('全選全部人員失敗')
   } finally {
     isSelectingAllEmployeesAcrossPages.value = false
   }
@@ -1608,6 +1696,127 @@ async function syncIncludeSelfPreference(value) {
   }
 }
 
+function scheduleNotificationStorageKey() {
+  const owner = authStore.user?.id || authStore.user?._id || getSupervisorIdFromStorage() || 'anonymous'
+  return `schedule-notifications:${String(owner)}`
+}
+
+function persistScheduleNotifications() {
+  if (typeof window === 'undefined') return
+  try {
+    window.localStorage?.setItem(
+      scheduleNotificationStorageKey(),
+      JSON.stringify(scheduleNotifications.value.slice(0, NOTIFICATION_LIMIT))
+    )
+  } catch (err) {
+    console.warn('Failed to persist schedule notifications', err)
+  }
+}
+
+function loadScheduleNotifications() {
+  if (typeof window === 'undefined') return
+  try {
+    const stored = window.localStorage?.getItem(scheduleNotificationStorageKey())
+    const parsed = stored ? JSON.parse(stored) : []
+    scheduleNotifications.value = Array.isArray(parsed) ? parsed.slice(0, NOTIFICATION_LIMIT) : []
+  } catch (err) {
+    scheduleNotifications.value = []
+    console.warn('Failed to load schedule notifications', err)
+  }
+}
+
+function appendScheduleNotification(type, title, message) {
+  const normalizedMessage = String(message || '').trim()
+  if (!normalizedMessage) return
+  const randomPart = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+    ? crypto.randomUUID()
+    : Math.random().toString(36).slice(2)
+  scheduleNotifications.value = [{
+    id: `${Date.now()}-${randomPart}`,
+    type,
+    title,
+    message: normalizedMessage,
+    createdAt: new Date().toISOString()
+  }, ...scheduleNotifications.value].slice(0, NOTIFICATION_LIMIT)
+  persistScheduleNotifications()
+}
+
+function clearScheduleNotifications() {
+  scheduleNotifications.value = []
+  persistScheduleNotifications()
+}
+
+function formatNotificationTime(value) {
+  const parsed = dayjs(value)
+  return parsed.isValid() ? parsed.format('YYYY/MM/DD HH:mm:ss') : ''
+}
+
+function scheduleMemoDate(day) {
+  return `${currentMonth.value}-${String(day).padStart(2, '0')}`
+}
+
+async function fetchDayMemos() {
+  if (!selectedDepartment.value) {
+    dayMemos.value = {}
+    return
+  }
+  const params = new URLSearchParams({
+    month: currentMonth.value,
+    department: selectedDepartment.value
+  })
+  if (selectedSubDepartment.value) params.set('subDepartment', selectedSubDepartment.value)
+  try {
+    const res = await apiFetch(`/api/schedules/memos?${params.toString()}`)
+    if (!res.ok) throw new Error('日期備忘錄載入失敗')
+    const rows = await res.json()
+    dayMemos.value = Object.fromEntries((Array.isArray(rows) ? rows : []).map(row => [
+      dayjs(row.date).date(),
+      String(row.content || '')
+    ]))
+  } catch (err) {
+    dayMemos.value = {}
+    callWarning(err?.message || '日期備忘錄載入失敗')
+  }
+}
+
+function openDayMemo(day) {
+  memoDialog.day = day
+  memoDialog.date = scheduleMemoDate(day)
+  memoDialog.content = dayMemos.value[day] || ''
+  memoDialog.visible = true
+}
+
+async function persistDayMemo(content) {
+  if (!memoDialog.day || !selectedDepartment.value) return
+  memoDialog.saving = true
+  try {
+    const res = await apiFetch(`/api/schedules/memos/${memoDialog.date}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        department: selectedDepartment.value,
+        subDepartment: selectedSubDepartment.value || '',
+        content
+      })
+    })
+    const payload = await res.json().catch(() => ({}))
+    if (!res.ok) throw new Error(payload.error || '備忘錄儲存失敗')
+    const next = { ...dayMemos.value }
+    if (payload.content) next[memoDialog.day] = payload.content
+    else delete next[memoDialog.day]
+    dayMemos.value = next
+    memoDialog.visible = false
+    callSuccess(payload.content ? '日期備忘錄已儲存' : '日期備忘錄已清除')
+  } catch (err) {
+    callError(err?.message || '備忘錄儲存失敗')
+  } finally {
+    memoDialog.saving = false
+  }
+}
+
+const saveDayMemo = () => persistDayMemo(String(memoDialog.content || '').trim())
+const clearDayMemo = () => persistDayMemo('')
+
 async function refreshScheduleData({
   reset = false,
   reason = 'unknown',
@@ -1615,6 +1824,9 @@ async function refreshScheduleData({
   includeSummary = true
 } = {}) {
   const tasks = [fetchSchedules({ reset, fetchAll, reason })]
+  if (canEditSchedule.value && selectedDepartment.value) {
+    tasks.push(fetchDayMemos())
+  }
   if (includeSummary) {
     tasks.push(fetchSummary())
   }
@@ -2266,6 +2478,7 @@ const filteredSubDepartments = computed(() =>
 const router = useRouter()
 
 authStore.loadUser()
+loadScheduleNotifications()
 
 const canUseSupervisorFilter = computed(() =>
   ['supervisor', 'admin'].includes(authStore.role)
@@ -2609,6 +2822,7 @@ watch(showIncludeSelfToggle, newVal => {
 // ========= 提示工具 =========
 
 const callWarning = message => {
+  appendScheduleNotification('warning', '提醒', message)
   const moduleWarn = ElMessage?.warning
   if (typeof moduleWarn === 'function') {
     moduleWarn(message)
@@ -2621,6 +2835,7 @@ const callWarning = message => {
 }
 
 const callInfo = message => {
+  appendScheduleNotification('info', '通知', message)
   const moduleInfo = ElMessage?.info
   if (typeof moduleInfo === 'function') {
     moduleInfo(message)
@@ -2633,6 +2848,7 @@ const callInfo = message => {
 }
 
 const callSuccess = message => {
+  appendScheduleNotification('success', '完成', message)
   const moduleSuccess = ElMessage?.success
   if (typeof moduleSuccess === 'function') {
     moduleSuccess(message)
@@ -3557,7 +3773,7 @@ async function fetchSchedules({ reset = false, fetchAll = false, reason = 'unkno
     await requestPromise
   } catch (err) {
     console.error(err)
-    ElMessage.error('取得排班資料失敗')
+    callError('取得排班資料失敗')
     rawSchedules.value = []
   } finally {
     if (activeScheduleRequest.requestId === requestId) {
@@ -3655,7 +3871,7 @@ async function preview(type) {
     })
   } catch (err) {
     console.error(err)
-    ElMessage.error('載入排班資料失敗')
+    callError('載入排班資料失敗')
   } finally {
     loading.close()
   }
@@ -3692,7 +3908,7 @@ async function exportSchedules(format) {
     a.click()
     URL.revokeObjectURL(url)
   } catch (err) {
-    ElMessage.error('匯出失敗')
+    callError('匯出失敗')
   }
 }
 
@@ -3714,6 +3930,28 @@ async function onSelect(empId, day, value) {
   }
 
   const prev = existing?.shiftId ?? ''
+
+  if (!value) {
+    if (!existing?.id) return
+    try {
+      const res = await apiFetch(`/api/schedules/${existing.id}`, { method: 'DELETE' })
+      if (!res.ok) {
+        await handleScheduleError(res, '清空排班失敗', empId, day, prev, '')
+        return
+      }
+      scheduleMap.value[empId][day] = { ...existing, id: '', shiftId: '' }
+      invalidateFetchAllCache()
+      invalidateCellMetaCache(empId, day)
+      recomputeEmployeeStatusFor(empId)
+      markScheduleMapDirty()
+      await fetchSummary()
+      await refreshFrontMenu()
+      callSuccess(`${employee.name || '員工'} ${dateStr} 排班已清空`)
+    } catch (err) {
+      await handleScheduleError(null, '清空排班失敗', empId, day, prev, '')
+    }
+    return
+  }
 
   // 已有 schedule -> 更新
   if (existing && existing.id) {
@@ -3737,6 +3975,7 @@ async function onSelect(empId, day, value) {
           value
         )
       } else {
+        scheduleMap.value[empId][day] = { ...existing, shiftId: value }
         invalidateFetchAllCache()
         invalidateCellMetaCache(empId, day)
         recomputeEmployeeStatusFor(empId)
@@ -3900,8 +4139,16 @@ async function handleScheduleError(
   } else if (msg) {
     await openScheduleIssueDialog('排班操作失敗', [msg], defaultMsg)
   } else {
-    ElMessage.error(defaultMsg)
+    callError(defaultMsg)
   }
+}
+
+const callError = message => {
+  appendScheduleNotification('error', '操作失敗', message)
+  const moduleError = ElMessage?.error
+  if (typeof moduleError === 'function') moduleError(message)
+  const globalError = typeof window !== 'undefined' ? window.ElMessage?.error : undefined
+  if (typeof globalError === 'function' && globalError !== moduleError) globalError(message)
 }
 
 // ========= 批次套用 =========
@@ -3925,15 +4172,67 @@ async function handleBatchApiError(res, defaultMsg = '批次套用失敗') {
     return
   }
   if (msg === 'employee conflict') {
-    ElMessage.warning('部分員工既有排班已更新，請重新整理檢查')
+    callWarning('部分員工既有排班已更新，請重新整理檢查')
   } else if (msg === 'department overlap') {
-    ElMessageBox.alert('部門或單位與既有資料不一致，無法套用')
+    await openScheduleIssueDialog('部門或單位不一致', ['部門或單位與既有資料不一致，無法套用'], defaultMsg)
   } else if (msg === 'leave conflict') {
-    ElMessageBox.alert('選取日期包含已核准請假，無法套用')
+    await openScheduleIssueDialog('核准請假衝突', ['選取日期包含已核准請假，無法套用'], defaultMsg)
   } else if (msg) {
     await openScheduleIssueDialog('批次套用失敗', [msg], defaultMsg)
   } else {
     await openScheduleIssueDialog('批次套用失敗', [], defaultMsg)
+  }
+}
+
+async function clearSelectedSchedules() {
+  const selected = selectedPersistedSchedules.value
+  if (!selected.length) {
+    callInfo('選取範圍內沒有可清空的排班')
+    return
+  }
+  try {
+    await ElMessageBox.confirm(
+      `即將清空 ${selected.length} 筆已排班資料。此操作不會刪除員工、假單或日期備忘錄。`,
+      '確認清空排班',
+      { confirmButtonText: '清空排班', cancelButtonText: '取消', type: 'warning' }
+    )
+  } catch (error) {
+    return
+  }
+
+  isClearingBatch.value = true
+  try {
+    const res = await apiFetch('/api/schedules/batch-delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids: selected.map(item => item.id) })
+    })
+    if (!res.ok) {
+      await handleScheduleActionApiError(res, '清空排班失敗')
+      return
+    }
+    const payload = await res.json()
+    const deletedIds = new Set((payload.ids || []).map(String))
+    const affectedEmployees = new Set()
+    selected.forEach(item => {
+      if (!deletedIds.has(item.id)) return
+      const current = scheduleMap.value[item.empId]?.[item.day]
+      if (!current) return
+      scheduleMap.value[item.empId][item.day] = { ...current, id: '', shiftId: '' }
+      invalidateCellMetaCache(item.empId, item.day)
+      affectedEmployees.add(String(item.empId))
+    })
+    recomputeEmployeeStatuses(Array.from(affectedEmployees))
+    markScheduleMapDirty()
+    invalidateFetchAllCache()
+    clearSelection()
+    await fetchSummary()
+    await refreshFrontMenu()
+    callSuccess(`已清空 ${Number(payload.deleted || deletedIds.size)} 筆排班`)
+  } catch (err) {
+    callError(err?.message || '清空排班失敗')
+  } finally {
+    isClearingBatch.value = false
   }
 }
 
@@ -4283,7 +4582,7 @@ async function fetchEmployees(
     pruneSelections()
   } catch (err) {
     console.error(err)
-    ElMessage.error('取得員工資料失敗')
+    callError('取得員工資料失敗')
   }
 }
 
@@ -5475,15 +5774,90 @@ onUpdated(() => {
 
 .day-header {
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: 4px;
+  min-height: 52px;
   font-weight: 600;
   color: #0f172a;
 }
 
+.day-header-label {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.day-header-tools {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  height: 24px;
+}
+
+.day-memo-button {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  color: #64748b;
+
+  &.has-content {
+    color: #047857;
+    background: #d1fae5;
+  }
+}
+
 .day-checkbox {
-  margin-left: 4px;
+  margin: 0;
+}
+
+.notification-log-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 40px;
+  padding-bottom: 12px;
+  color: #64748b;
+  font-size: 13px;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.notification-log-list {
+  display: grid;
+}
+
+.notification-log-item {
+  padding: 14px 2px;
+  border-bottom: 1px solid #e2e8f0;
+  border-left: 3px solid #0284c7;
+  padding-left: 12px;
+
+  &[data-type='success'] { border-left-color: #059669; }
+  &[data-type='warning'] { border-left-color: #d97706; }
+  &[data-type='error'] { border-left-color: #dc2626; }
+
+  p {
+    margin: 6px 0 0;
+    color: #334155;
+    line-height: 1.55;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+}
+
+.notification-log-item__heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+
+  time {
+    flex: 0 0 auto;
+    color: #94a3b8;
+    font-size: 12px;
+  }
 }
 
 .modern-schedule-cell {

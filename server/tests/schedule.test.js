@@ -31,6 +31,11 @@ const mockEmployee = { find: jest.fn(), findById: jest.fn() };
 const mockAttendanceSetting = { findOne: jest.fn() };
 const mockDepartment = { find: jest.fn() };
 const mockHoliday = { find: jest.fn() };
+const mockScheduleDayMemo = {
+  find: jest.fn(),
+  findOneAndUpdate: jest.fn(),
+  findOneAndDelete: jest.fn(),
+};
 
 const mockGetLeaveFieldIds = jest.fn();
 const mockIsTokenBlacklisted = jest.fn();
@@ -97,6 +102,7 @@ jest.unstable_mockModule('../src/models/Employee.js', () => ({ default: mockEmpl
 jest.unstable_mockModule('../src/models/AttendanceSetting.js', () => ({ default: mockAttendanceSetting }));
 jest.unstable_mockModule('../src/models/Department.js', () => ({ default: mockDepartment }));
 jest.unstable_mockModule('../src/models/Holiday.js', () => ({ default: mockHoliday }));
+jest.unstable_mockModule('../src/models/ScheduleDayMemo.js', () => ({ default: mockScheduleDayMemo }));
 jest.unstable_mockModule('../src/services/leaveFieldService.js', () => ({
   getLeaveFieldIds: mockGetLeaveFieldIds,
 }));
@@ -141,6 +147,12 @@ beforeEach(() => {
   mockShiftSchedule.findByIdAndDelete.mockReset();
   mockShiftSchedule.startSession.mockReset();
   mockShiftSchedule.bulkWrite.mockReset();
+  mockScheduleDayMemo.find.mockReset();
+  mockScheduleDayMemo.find.mockReturnValue({
+    sort: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue([]) }),
+  });
+  mockScheduleDayMemo.findOneAndUpdate.mockReset();
+  mockScheduleDayMemo.findOneAndDelete.mockReset();
 
   mockApprovalRequest.findOne.mockReset();
   mockApprovalRequest.find.mockReset();
@@ -1248,6 +1260,63 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
     expect(mockShiftSchedule.bulkWrite).toHaveBeenCalledTimes(1);
   });
 
+  it('reports overwrite conflicts in preview and overwrites only when explicitly enabled', async () => {
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet('工作表1');
+    sheet.addRow(['公版班表']);
+    sheet.addRow(['', '', '行事曆']);
+    sheet.addRow(['', '', '日期', 1]);
+    sheet.addRow(['員工代號', '姓名', '星期', '三']);
+    sheet.addRow(['A001', '測試員工', '護理師', 'D']);
+    const file = Buffer.from(await workbook.xlsx.writeBuffer());
+    const employee = { _id: 'e1', employeeId: 'A001', name: '測試員工', department: 'd1', subDepartment: 'sd1' };
+    const existing = {
+      _id: 'existing-1',
+      employee: 'e1',
+      date: new Date('2026-07-01T00:00:00.000Z'),
+      shiftId: 'night',
+      department: 'd1',
+      subDepartment: 'sd1',
+    };
+    mockEmployee.find.mockReturnValue({
+      select: jest.fn().mockReturnThis(),
+      lean: jest.fn().mockResolvedValue([employee]),
+    });
+    mockAttendanceSetting.findOne.mockReturnValue({
+      lean: jest.fn().mockResolvedValue({ shifts: [{ _id: 'day', code: 'D', name: '日班' }] }),
+    });
+    mockShiftSchedule.find.mockReturnValue({ lean: jest.fn().mockResolvedValue([existing]) });
+    mockApprovalRequest.find.mockReturnValue({ select: jest.fn().mockReturnThis(), lean: jest.fn().mockResolvedValue([]) });
+    mockShiftSchedule.bulkWrite.mockResolvedValue({ modifiedCount: 1 });
+
+    const preview = await request(app)
+      .post('/api/schedules/import')
+      .set('Authorization', buildAuthHeader('admin'))
+      .field('month', '2026-07')
+      .field('department', 'd1')
+      .field('mode', 'preview')
+      .field('overwrite', 'false')
+      .attach('file', Buffer.from(file), { filename: 'schedule.xlsx', contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+
+    expect(preview.status).toBe(200);
+    expect(preview.body.overwriteCount).toBe(1);
+    expect(preview.body.overwriteConflicts[0]).toEqual(expect.objectContaining({ day: 1 }));
+    expect(mockShiftSchedule.bulkWrite).not.toHaveBeenCalled();
+
+    const committed = await request(app)
+      .post('/api/schedules/import')
+      .set('Authorization', buildAuthHeader('admin'))
+      .field('month', '2026-07')
+      .field('department', 'd1')
+      .field('mode', 'commit')
+      .field('overwrite', 'true')
+      .attach('file', Buffer.from(file), { filename: 'schedule.xlsx', contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+
+    expect(committed.status).toBe(201);
+    expect(committed.body.imported).toBe(1);
+    expect(mockShiftSchedule.bulkWrite).toHaveBeenCalledTimes(1);
+  });
+
   it('allows a supervisor to import their own row only when includeSelf is enabled', async () => {
     const workbook = new ExcelJS.Workbook();
     const sheet = workbook.addWorksheet('工作表1');
@@ -1533,6 +1602,74 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
     expect(mockShiftSchedule.findByIdAndDelete).not.toHaveBeenCalled();
   });
 
+  it('batch deletes only schedules resolved inside the authenticated scope', async () => {
+    currentRole = 'admin';
+    mockShiftSchedule.find.mockReturnValue({
+      select: jest.fn().mockReturnValue({
+        lean: jest.fn().mockResolvedValue([
+          { _id: 'schedule-1', employee: 'employee-1' },
+          { _id: 'schedule-2', employee: 'employee-2' },
+        ]),
+      }),
+    });
+    mockShiftSchedule.deleteMany.mockResolvedValue({ deletedCount: 2 });
+
+    const res = await request(app)
+      .post('/api/schedules/batch-delete')
+      .set('Authorization', buildAuthHeader('admin'))
+      .send({ ids: ['schedule-1', 'schedule-2'] });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ deleted: 2, ids: ['schedule-1', 'schedule-2'] });
+    expect(mockShiftSchedule.deleteMany).toHaveBeenCalledWith({
+      _id: { $in: ['schedule-1', 'schedule-2'] },
+    });
+  });
+
+  it('lists and upserts schedule day memos for an administrator', async () => {
+    currentRole = 'admin';
+    mockScheduleDayMemo.find.mockReturnValue({
+      sort: jest.fn().mockReturnValue({
+        lean: jest.fn().mockResolvedValue([{
+          _id: 'memo-1',
+          date: new Date('2026-08-03T00:00:00.000Z'),
+          content: 'CODEX_TEST 交班提醒',
+          updatedAt: new Date('2026-08-01T00:00:00.000Z'),
+        }]),
+      }),
+    });
+    mockScheduleDayMemo.findOneAndUpdate.mockResolvedValue({
+      _id: 'memo-1',
+      content: 'CODEX_TEST 更新提醒',
+      updatedAt: new Date('2026-08-02T00:00:00.000Z'),
+    });
+
+    const listed = await request(app)
+      .get('/api/schedules/memos?month=2026-08&department=department-1')
+      .set('Authorization', buildAuthHeader('admin'));
+    expect(listed.status).toBe(200);
+    expect(listed.body[0]).toEqual(expect.objectContaining({
+      date: '2026-08-03',
+      content: 'CODEX_TEST 交班提醒',
+    }));
+
+    const saved = await request(app)
+      .put('/api/schedules/memos/2026-08-03')
+      .set('Authorization', buildAuthHeader('admin'))
+      .send({ department: 'department-1', content: 'CODEX_TEST 更新提醒' });
+    expect(saved.status).toBe(200);
+    expect(saved.body.content).toBe('CODEX_TEST 更新提醒');
+    expect(mockScheduleDayMemo.findOneAndUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        date: new Date('2026-08-03T00:00:00.000Z'),
+        department: 'department-1',
+        subDepartment: null,
+      }),
+      { $set: { content: 'CODEX_TEST 更新提醒', updatedBy: 'tester' } },
+      expect.objectContaining({ upsert: true, new: true })
+    );
+  });
+
   it('scopes the general schedule list to the current employee', async () => {
     currentRole = 'employee';
     const populate = jest.fn().mockReturnThis();
@@ -1678,9 +1815,10 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.load(toBuffer(res.body));
     const worksheet = workbook.getWorksheet('工作表1');
-    expect(worksheet.rowCount).toBeGreaterThanOrEqual(5);
+    expect(worksheet.rowCount).toBeGreaterThanOrEqual(6);
     expect(worksheet.getRow(4).values.slice(1, 4)).toEqual(['員工代號', '姓名', '星期']);
-    const dataRow = worksheet.getRow(5).values;
+    expect(worksheet.getRow(5).getCell(3).value).toBe('備忘錄');
+    const dataRow = worksheet.getRow(6).values;
     expect(dataRow[1]).toBe('A001');
     expect(dataRow[2]).toBe('Alice');
     expect(dataRow[3]).toBe('');

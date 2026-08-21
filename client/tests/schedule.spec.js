@@ -191,6 +191,12 @@ describe('Schedule.vue', () => {
       emits: ['update:modelValue'],
       template: '<div class="dialog-stub"><slot></slot></div>'
     }
+    const DrawerStub = {
+      name: 'ElDrawer',
+      props: ['modelValue'],
+      emits: ['update:modelValue'],
+      template: '<aside class="drawer-stub"><slot></slot></aside>'
+    }
     const AlertStub = {
       name: 'ElAlert',
       props: ['title', 'type'],
@@ -222,6 +228,10 @@ describe('Schedule.vue', () => {
       'el-descriptions': DescriptionsStub,
       'el-descriptions-item': DescriptionsItemStub,
       'el-dialog': DialogStub,
+      'el-drawer': DrawerStub,
+      'el-badge': { name: 'ElBadge', template: '<span class="badge-stub"><slot></slot></span>' },
+      'el-icon': { name: 'ElIcon', template: '<span class="icon-stub"><slot></slot></span>' },
+      'el-empty': { name: 'ElEmpty', template: '<div class="empty-stub"></div>' },
       'el-alert': AlertStub,
       'el-timeline': TimelineStub,
       'el-timeline-item': TimelineItemStub,
@@ -257,6 +267,9 @@ describe('Schedule.vue', () => {
     monthlyWithoutSelf = [],
     approvals = [],
     leaves = [],
+    memos = [],
+    memoHandler,
+    batchDeleteHandler,
     leaveApprovalsHandler,
     publishHandler,
     finalizeHandler,
@@ -521,6 +534,28 @@ describe('Schedule.vue', () => {
         }
         const resolved = finalizeResult ?? { finalized: 0 }
         return { ok: true, json: async () => resolved }
+      }
+
+      if (pathname === '/api/schedules/memos') {
+        return { ok: true, json: async () => memos }
+      }
+
+      if (pathname.startsWith('/api/schedules/memos/')) {
+        if (typeof memoHandler === 'function') {
+          const handled = await memoHandler({ url, options })
+          if (handled) return handled
+        }
+        const content = JSON.parse(options.body || '{}').content || ''
+        return { ok: true, json: async () => ({ date: pathname.split('/').pop(), content }) }
+      }
+
+      if (pathname === '/api/schedules/batch-delete') {
+        if (typeof batchDeleteHandler === 'function') {
+          const handled = await batchDeleteHandler({ url, options })
+          if (handled) return handled
+        }
+        const ids = JSON.parse(options.body || '{}').ids || []
+        return { ok: true, json: async () => ({ deleted: ids.length, ids }) }
       }
 
       if (pathname === '/api/schedules/export') {
@@ -1297,6 +1332,109 @@ describe('Schedule.vue', () => {
     )
   })
 
+  it('保留排班通知日誌並寫入目前帳號的 localStorage', async () => {
+    setRoleToken('supervisor')
+    localStorage.setItem('employeeId', 'sup1')
+    setupSupervisorApiMock()
+    const wrapper = mountSchedule()
+    await flush()
+
+    wrapper.vm.callWarning('CODEX_TEST 通知內容')
+
+    expect(wrapper.vm.scheduleNotifications[0]).toEqual(expect.objectContaining({
+      type: 'warning',
+      message: 'CODEX_TEST 通知內容'
+    }))
+    const stored = JSON.parse(localStorage.getItem('schedule-notifications:sup1'))
+    expect(stored[0].message).toBe('CODEX_TEST 通知內容')
+  })
+
+  it('載入並儲存逐日期排班備忘錄', async () => {
+    setRoleToken('supervisor')
+    localStorage.setItem('employeeId', 'sup1')
+    setupSupervisorApiMock({
+      employees: [{ _id: 'e1', name: '員工A', department: 'd1', subDepartment: 'sd1' }],
+      directReports: [{ _id: 'e1', subDepartment: { _id: 'sd1' } }],
+      memos: [{ date: `${dayjs().add(1, 'month').format('YYYY-MM')}-01`, content: '原備忘錄' }]
+    })
+    const wrapper = mountSchedule()
+    await flush()
+    await flush()
+
+    expect(wrapper.vm.dayMemos[1]).toBe('原備忘錄')
+    wrapper.vm.openDayMemo(1)
+    wrapper.vm.memoDialog.content = 'CODEX_TEST 新備忘錄'
+    await wrapper.vm.saveDayMemo()
+
+    expect(wrapper.vm.dayMemos[1]).toBe('CODEX_TEST 新備忘錄')
+    expect(apiFetch).toHaveBeenCalledWith(
+      expect.stringMatching(/^\/api\/schedules\/memos\/\d{4}-\d{2}-01$/),
+      expect.objectContaining({ method: 'PUT' })
+    )
+  })
+
+  it('批次清空只删除选取范围内已经存在的排班', async () => {
+    setRoleToken('supervisor')
+    localStorage.setItem('employeeId', 'sup1')
+    setupSupervisorApiMock({
+      employees: [{ _id: 'e1', name: '員工A', department: 'd1', subDepartment: 'sd1' }],
+      directReports: [{ _id: 'e1', subDepartment: { _id: 'sd1' } }]
+    })
+    const wrapper = mountSchedule()
+    await flush()
+    wrapper.vm.scheduleMap = {
+      e1: { 1: { id: 'schedule-1', shiftId: 'shift-1', department: 'd1', subDepartment: 'sd1' } }
+    }
+    wrapper.vm.selectedCellsCache = new Map([['e1::1', { manual: true }]])
+    await wrapper.vm.$nextTick()
+
+    await wrapper.vm.clearSelectedSchedules()
+
+    expect(apiFetch).toHaveBeenCalledWith('/api/schedules/batch-delete', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({ ids: ['schedule-1'] })
+    }))
+    expect(wrapper.vm.scheduleMap.e1[1].shiftId).toBe('')
+    expect(wrapper.vm.scheduleMap.e1[1].id).toBe('')
+  })
+
+  it('匯入遇到既有班表时先确认，再以 overwrite 预览与提交', async () => {
+    setRoleToken('supervisor')
+    localStorage.setItem('employeeId', 'sup1')
+    setupSupervisorApiMock()
+    importScheduleRecords
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ employees: 1, scheduleDays: 0, errors: [], warnings: [], overwriteCount: 1 })
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ employees: 1, scheduleDays: 1, errors: [], warnings: [], overwriteCount: 0 })
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ imported: 1 })
+      })
+    const wrapper = mountSchedule()
+    await flush()
+    const file = new File(['schedule'], 'schedule.xlsx', {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    })
+
+    await wrapper.vm.onScheduleImportFile({ target: { files: [file], value: 'schedule.xlsx' } })
+
+    expect(importScheduleRecords).toHaveBeenCalledTimes(3)
+    expect(importScheduleRecords.mock.calls[0][0].get('overwrite')).toBe('false')
+    expect(importScheduleRecords.mock.calls[1][0].get('overwrite')).toBe('true')
+    expect(importScheduleRecords.mock.calls[2][0].get('overwrite')).toBe('true')
+    expect(importScheduleRecords.mock.calls[2][0].get('mode')).toBe('commit')
+    expect(ElMessageBox.confirm).toHaveBeenCalledWith(
+      expect.stringContaining('發現 1 個日期已有班表'),
+      '確認覆蓋既有排班',
+      expect.objectContaining({ confirmButtonText: '覆蓋匯入' })
+    )
+  })
+
   it('uses fullscreen popper strategy for batch shift and row-color selects and shows readonly department fields', async () => {
     setRoleToken('admin')
     apiFetch.mockResolvedValue({ ok: true, json: async () => [] })
@@ -1866,6 +2004,7 @@ describe('Schedule.vue', () => {
     localStorage.setItem('employeeId', 's1')
     const wrapper = mountSchedule()
     await flush()
+    apiFetch.mockResolvedValue({ ok: false, json: async () => ({}) })
     wrapper.vm.scheduleMap = { e1: { 1: { id: 'sch1', shiftId: 's1', department: 'd1', subDepartment: 'sd1' } } }
     await wrapper.vm.onSelect('e1', 1, 's2')
     expect(wrapper.vm.scheduleMap.e1[1].shiftId).toBe('s1')
