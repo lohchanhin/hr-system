@@ -863,13 +863,27 @@
 }
 
 .title-position-cell {
+  display: flex;
+  overflow: hidden;
+  flex-direction: column;
+  justify-content: center;
   min-height: 36px;
+  gap: 2px;
 }
 
 .title-line,
 .sub-department-text {
   color: #344054;
   font-size: 12px;
+}
+
+.title-line,
+.practice-title-line,
+.sub-department-text {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .practice-title-line,

@@ -450,7 +450,7 @@
           color: '#344054',
           fontWeight: '650'
         }" :row-style="scheduleRowStyle" :row-class-name="scheduleRowClassName">
-        <el-table-column prop="name" label="員工姓名" width="180" fixed="left" class-name="schedule-fixed-column">
+        <el-table-column prop="name" label="員工姓名" width="160" fixed="left" class-name="schedule-fixed-column">
           <template #default="{ row }">
             <div class="employee-name">
               <el-checkbox v-if="canEditSchedule" class="row-checkbox" :model-value="selectedEmployeesSet.has(row._id)"
@@ -477,7 +477,7 @@
             </div>
           </template>
         </el-table-column>
-        <el-table-column prop="subDepartmentName" label="單位" width="160" fixed="left"
+        <el-table-column prop="subDepartmentName" label="單位" width="92" fixed="left"
           class-name="schedule-fixed-column sub-department-column">
           <template #default="{ row }">
             <span class="sub-department-text" :title="row.subDepartmentName || row.subDepartment || '-'">
@@ -485,17 +485,22 @@
             </span>
           </template>
         </el-table-column>
-        <el-table-column label="職稱 / 職位" width="220" fixed="left"
+        <el-table-column label="職稱 / 職位" width="166" fixed="left"
           class-name="schedule-fixed-column title-position-column">
           <template #default="{ row }">
             <div class="title-position-cell">
-              <span class="title-line">{{ row.title || '-' }}</span>
-              <span class="practice-title-line">{{ row.practiceTitle || '-' }}</span>
+              <span class="title-line" :title="row.title || row.practiceTitle || '-'">
+                {{ row.title || row.practiceTitle || '-' }}
+              </span>
+              <span v-if="row.title && row.practiceTitle && row.practiceTitle !== row.title"
+                class="practice-title-line" :title="row.practiceTitle">
+                {{ row.practiceTitle }}
+              </span>
             </div>
           </template>
         </el-table-column>
         
-        <el-table-column label="特休剩餘" width="120" fixed="left" class-name="schedule-fixed-column">
+        <el-table-column label="特休剩餘" width="96" fixed="left" class-name="schedule-fixed-column">
           <template #default="{ row }">
             <div v-if="row.annualLeave" class="annual-leave-info">
               <el-tag size="small" type="info">

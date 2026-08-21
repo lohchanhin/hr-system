@@ -2184,6 +2184,27 @@ describe('Schedule.vue', () => {
     cols.slice(0, 4).forEach(column => {
       expect(column.attributes('data-class-name')).toContain('schedule-fixed-column')
     })
+    expect(cols.slice(0, 4).map(column => column.attributes('data-width'))).toEqual(['160', '92', '166', '96'])
+  })
+
+  it('shows identical title and practice title only once', async () => {
+    setRoleToken('supervisor')
+    localStorage.setItem('employeeId', 'sup1')
+    const employee = {
+      _id: 'e1',
+      name: 'E1',
+      department: 'd1',
+      subDepartment: 'sd1',
+      title: '專任管理員',
+      practiceTitle: '專任管理員'
+    }
+    setupSupervisorApiMock({ employees: [employee], directReports: [employee] })
+
+    const wrapper = mountSchedule()
+    await flush()
+
+    expect(wrapper.find('.title-line').text()).toBe('專任管理員')
+    expect(wrapper.findAll('.practice-title-line')).toHaveLength(0)
   })
 
   it('displays leave label when leave data exists', async () => {
