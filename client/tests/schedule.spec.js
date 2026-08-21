@@ -1873,7 +1873,7 @@ describe('Schedule.vue', () => {
     expect(cols[4].attributes('data-label')).toMatch(/^1\(.\)$/)
   })
 
-  it('keeps name and sub-department columns fixed on horizontal scroll', async () => {
+  it('keeps all employee identity columns fixed on horizontal scroll', async () => {
     apiFetch
       .mockResolvedValueOnce({ ok: true, json: async () => [] })
       .mockResolvedValueOnce({ ok: true, json: async () => [{ _id: '1F', name: '1F' }] })
@@ -1894,8 +1894,13 @@ describe('Schedule.vue', () => {
     expect(cols[1].attributes('data-label')).toBe('單位')
     expect(cols[1].attributes('data-fixed')).toBe('left')
     expect(cols[2].attributes('data-label')).toBe('職稱 / 職位')
-    expect(cols[2].attributes('data-class-name')).toBe('title-position-column')
+    expect(cols[2].attributes('data-fixed')).toBe('left')
+    expect(cols[2].attributes('data-class-name')).toContain('title-position-column')
     expect(cols[3].attributes('data-label')).toBe('特休剩餘')
+    expect(cols[3].attributes('data-fixed')).toBe('left')
+    cols.slice(0, 4).forEach(column => {
+      expect(column.attributes('data-class-name')).toContain('schedule-fixed-column')
+    })
   })
 
   it('displays leave label when leave data exists', async () => {
@@ -2038,6 +2043,44 @@ describe('Schedule.vue', () => {
       expect.objectContaining({ id: 'sch1', shiftId: 's1', department: 'd2', subDepartment: 'sd2' })
     )
     expect(ElMessage.success).toHaveBeenCalledWith('批次套用完成')
+  })
+
+  it('omits blank department references from batch payloads', async () => {
+    const month = dayjs().add(1, 'month').format('YYYY-MM')
+    apiFetch.mockResolvedValue({ ok: true, json: async () => [] })
+    const wrapper = mountSchedule()
+    await flush()
+    wrapper.vm.employees = [
+      { _id: 'e1', departmentId: '', subDepartmentId: '', department: '', subDepartment: '' }
+    ]
+    wrapper.vm.scheduleMap = {
+      e1: {
+        1: { shiftId: '', department: '', subDepartment: '' }
+      }
+    }
+    await wrapper.vm.$nextTick()
+    wrapper.vm.toggleCell('e1', 1, true)
+    wrapper.vm.batchShiftId = 's1'
+    apiFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ([{
+        _id: 'sch1',
+        employee: 'e1',
+        date: `${month}-01`,
+        shiftId: 's1'
+      }])
+    })
+
+    await wrapper.vm.applyBatch()
+
+    const batchCall = apiFetch.mock.calls.findLast(([url]) => url === '/api/schedules/batch')
+    expect(JSON.parse(batchCall[1].body)).toEqual({
+      schedules: [{
+        employee: 'e1',
+        date: `${month}-01`,
+        shiftId: 's1'
+      }]
+    })
   })
 
   it('updates existing schedules via batch apply', async () => {
@@ -2535,7 +2578,7 @@ describe('Schedule.vue', () => {
     expect(wrapper.vm.displayedApprovalRows.length).toBe(2)
   })
 
-  it('全螢幕上方工具列收合時隱藏 batch-toolbar，展開後才顯示', async () => {
+  it('進入全螢幕時保留工具列，仍可手動收合與展開', async () => {
     const auth = useAuthStore()
     auth.loadUser = vi.fn(() => {
       auth.user = { role: 'admin', id: 'admin1' }
@@ -2557,14 +2600,8 @@ describe('Schedule.vue', () => {
     await wrapper.vm.$nextTick()
 
     expect(wrapper.vm.isTableFullscreen).toBe(true)
-    expect(wrapper.vm.isFullscreenToolbarCollapsed).toBe(true)
-    expect(batchToolbar().exists()).toBe(true)
-    expect(isBatchToolbarHidden()).toBe(true)
-
-    wrapper.vm.toggleFullscreenToolbar()
-    await wrapper.vm.$nextTick()
-
     expect(wrapper.vm.isFullscreenToolbarCollapsed).toBe(false)
+    expect(batchToolbar().exists()).toBe(true)
     expect(isBatchToolbarHidden()).toBe(false)
 
     wrapper.vm.toggleFullscreenToolbar()
@@ -2572,6 +2609,12 @@ describe('Schedule.vue', () => {
 
     expect(wrapper.vm.isFullscreenToolbarCollapsed).toBe(true)
     expect(isBatchToolbarHidden()).toBe(true)
+
+    wrapper.vm.toggleFullscreenToolbar()
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.vm.isFullscreenToolbarCollapsed).toBe(false)
+    expect(isBatchToolbarHidden()).toBe(false)
   })
 
   it('全螢幕模式可展開班別選單並成功回寫班別', async () => {

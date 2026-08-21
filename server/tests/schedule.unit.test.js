@@ -59,6 +59,35 @@ describe('createSchedule validations', () => {
     expect(status).toHaveBeenCalledWith(400);
     expect(json).toHaveBeenCalledWith({ error: 'department overlap' });
   });
+
+  it('omits blank optional department references when creating a schedule', async () => {
+    mockShiftSchedule.findOne.mockResolvedValue(null);
+    mockShiftSchedule.create.mockResolvedValue({ _id: 'schedule-1' });
+    const req = {
+      body: {
+        employee: 'e1',
+        date: '2023-01-01',
+        shiftId: 's1',
+        department: ' ',
+        subDepartment: '',
+      },
+    };
+    const status = jest.fn().mockReturnThis();
+    const json = jest.fn();
+    const res = { status, json };
+
+    await createSchedule(req, res);
+
+    expect(mockShiftSchedule.create).toHaveBeenCalledWith({
+      employee: 'e1',
+      date: new Date('2023-01-01'),
+      shiftId: 's1',
+      department: undefined,
+      subDepartment: undefined,
+      needsReconfirm: true,
+    });
+    expect(status).toHaveBeenCalledWith(201);
+  });
 });
 
 describe('createSchedulesBatch validations', () => {
@@ -137,6 +166,43 @@ describe('createSchedulesBatch validations', () => {
           needsReconfirm: true,
         }
       ],
+      { ordered: false }
+    );
+    expect(status).toHaveBeenCalledWith(201);
+    expect(json).toHaveBeenCalledWith(insertedDocs);
+  });
+
+  it('omits blank optional department references before inserting schedules', async () => {
+    mockShiftSchedule.findOne.mockResolvedValue(null);
+    mockApprovalRequest.findOne.mockResolvedValue(null);
+    const insertedDocs = [{ _id: '1', employee: 'e1', date: new Date('2023-01-01'), shiftId: 's1' }];
+    mockShiftSchedule.insertMany.mockResolvedValue(insertedDocs);
+    const req = {
+      body: {
+        schedules: [{
+          employee: 'e1',
+          date: '2023-01-01',
+          shiftId: 's1',
+          department: '  ',
+          subDepartment: '',
+        }],
+      },
+    };
+    const status = jest.fn().mockReturnThis();
+    const json = jest.fn();
+    const res = { status, json };
+
+    await createSchedulesBatch(req, res);
+
+    expect(mockShiftSchedule.insertMany).toHaveBeenCalledWith(
+      [{
+        employee: 'e1',
+        date: new Date('2023-01-01'),
+        shiftId: 's1',
+        department: undefined,
+        subDepartment: undefined,
+        needsReconfirm: true,
+      }],
       { ordered: false }
     );
     expect(status).toHaveBeenCalledWith(201);

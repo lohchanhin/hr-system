@@ -184,6 +184,11 @@ function normalizeId(value) {
   return String(value);
 }
 
+function normalizeOptionalId(value) {
+  const normalized = normalizeId(value).trim();
+  return normalized || undefined;
+}
+
 function respondLaborRuleError(res, err) {
   if (!isLaborRuleValidationError(err)) return false;
   res.status(err.status || 400).json({
@@ -1196,8 +1201,8 @@ export async function createSchedulesBatch(req, res) {
         employee: raw.employee,
         date: dt,
         shiftId: raw.shiftId,
-        department: raw.department,
-        subDepartment: raw.subDepartment,
+        department: normalizeOptionalId(raw.department),
+        subDepartment: normalizeOptionalId(raw.subDepartment),
       });
     }
 
@@ -1489,13 +1494,15 @@ export async function createSchedule(req, res) {
   try {
     const { employee, date, shiftId, department, subDepartment } = req.body;
     const dt = new Date(date);
+    const normalizedDepartment = normalizeOptionalId(department);
+    const normalizedSubDepartment = normalizeOptionalId(subDepartment);
 
     const existing = await ShiftSchedule.findOne({ employee, date: dt });
     if (existing) {
       if (
-        (department || subDepartment) &&
-        (existing.department?.toString() !== department?.toString() ||
-          existing.subDepartment?.toString() !== subDepartment?.toString())
+        (normalizedDepartment || normalizedSubDepartment) &&
+        (existing.department?.toString() !== normalizedDepartment ||
+          existing.subDepartment?.toString() !== normalizedSubDepartment)
       ) {
         return res.status(400).json({ error: 'department overlap' });
       }
@@ -1507,15 +1514,21 @@ export async function createSchedule(req, res) {
     }
 
     await assertScheduleRuleCompliance({
-      candidateSchedules: [{ employee, date: dt, shiftId, department, subDepartment }],
+      candidateSchedules: [{
+        employee,
+        date: dt,
+        shiftId,
+        department: normalizedDepartment,
+        subDepartment: normalizedSubDepartment,
+      }],
     });
 
     const schedule = await ShiftSchedule.create({
       employee,
       date: dt,
       shiftId,
-      department,
-      subDepartment,
+      department: normalizedDepartment,
+      subDepartment: normalizedSubDepartment,
       needsReconfirm: true,
     });
     res.status(201).json(schedule);
@@ -1551,6 +1564,8 @@ export async function updateSchedule(req, res) {
 
     const newEmployee = employee || schedule.employee;
     const newDate = date ? new Date(date) : schedule.date;
+    const normalizedDepartment = normalizeOptionalId(department);
+    const normalizedSubDepartment = normalizeOptionalId(subDepartment);
 
     const conflict = await ShiftSchedule.findOne({
       employee: newEmployee,
@@ -1559,9 +1574,9 @@ export async function updateSchedule(req, res) {
     });
     if (conflict) {
       if (
-        (department || subDepartment) &&
-        (conflict.department?.toString() !== department?.toString() ||
-          conflict.subDepartment?.toString() !== subDepartment?.toString())
+        (normalizedDepartment || normalizedSubDepartment) &&
+        (conflict.department?.toString() !== normalizedDepartment ||
+          conflict.subDepartment?.toString() !== normalizedSubDepartment)
       ) {
         return res.status(400).json({ error: 'department overlap' });
       }
@@ -1576,8 +1591,8 @@ export async function updateSchedule(req, res) {
       employee: newEmployee,
       date: newDate,
       shiftId: shiftId !== undefined ? shiftId : schedule.shiftId,
-      department: department !== undefined ? department : schedule.department,
-      subDepartment: subDepartment !== undefined ? subDepartment : schedule.subDepartment,
+      department: normalizedDepartment ?? schedule.department,
+      subDepartment: normalizedSubDepartment ?? schedule.subDepartment,
     };
     await assertScheduleRuleCompliance({
       candidateSchedules: [nextData],

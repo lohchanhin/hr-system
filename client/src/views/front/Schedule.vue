@@ -420,7 +420,7 @@
           color: '#164e63',
           fontWeight: '600'
         }" :row-style="scheduleRowStyle" :row-class-name="scheduleRowClassName">
-        <el-table-column prop="name" label="員工姓名" width="180" fixed="left">
+        <el-table-column prop="name" label="員工姓名" width="180" fixed="left" class-name="schedule-fixed-column">
           <template #default="{ row }">
             <div class="employee-name">
               <el-checkbox v-if="canEditSchedule" class="row-checkbox" :model-value="selectedEmployeesSet.has(row._id)"
@@ -443,14 +443,16 @@
             </div>
           </template>
         </el-table-column>
-        <el-table-column prop="subDepartmentName" label="單位" width="160" fixed="left" class-name="sub-department-column">
+        <el-table-column prop="subDepartmentName" label="單位" width="160" fixed="left"
+          class-name="schedule-fixed-column sub-department-column">
           <template #default="{ row }">
             <span class="sub-department-text" :title="row.subDepartmentName || row.subDepartment || '-'">
               {{ row.subDepartmentName || row.subDepartment || '-' }}
             </span>
           </template>
         </el-table-column>
-        <el-table-column label="職稱 / 職位" width="220" fixed="left" class-name="title-position-column">
+        <el-table-column label="職稱 / 職位" width="220" fixed="left"
+          class-name="schedule-fixed-column title-position-column">
           <template #default="{ row }">
             <div class="title-position-cell">
               <span class="title-line">{{ row.title || '-' }}</span>
@@ -459,7 +461,7 @@
           </template>
         </el-table-column>
         
-        <el-table-column label="特休剩餘" width="120" fixed="left">
+        <el-table-column label="特休剩餘" width="120" fixed="left" class-name="schedule-fixed-column">
           <template #default="{ row }">
             <div v-if="row.annualLeave" class="annual-leave-info">
               <el-tag size="small" type="info">
@@ -890,6 +892,14 @@ const canApplyRowColor = computed(() => {
 
 // ✅ 用 "::" 當分隔，避免 ObjectId 裡面的 "-" 把字串拆爛
 const buildCellKey = (empId, day) => `${empId}::${day}`
+
+const normalizeOptionalReferenceId = value => {
+  const rawValue = typeof value === 'object' && value
+    ? (value._id ?? value.id)
+    : value
+  const normalized = String(rawValue ?? '').trim()
+  return normalized || undefined
+}
 
 const parseCellKey = key => {
   const str = String(key)
@@ -2168,7 +2178,7 @@ const syncFullscreenState = () => {
   const target = scheduleCardRef.value
   const isNowFullscreen = !!target && document.fullscreenElement === target
   isTableFullscreen.value = isNowFullscreen
-  isFullscreenToolbarCollapsed.value = isNowFullscreen
+  isFullscreenToolbarCollapsed.value = false
   updateFullscreenLayoutHeight()
 }
 
@@ -2178,7 +2188,7 @@ const toggleTableFullscreen = () => {
   if (!target || typeof target.requestFullscreen !== 'function') {
     const nextIsFullscreen = !isTableFullscreen.value
     isTableFullscreen.value = nextIsFullscreen
-    isFullscreenToolbarCollapsed.value = nextIsFullscreen
+    isFullscreenToolbarCollapsed.value = false
     updateViewportHeight()
     updateFullscreenLayoutHeight()
     return
@@ -2196,7 +2206,7 @@ const toggleTableFullscreen = () => {
 
   target.requestFullscreen().catch(() => {
     isTableFullscreen.value = true
-    isFullscreenToolbarCollapsed.value = true
+    isFullscreenToolbarCollapsed.value = false
     updateViewportHeight()
     updateFullscreenLayoutHeight()
   })
@@ -3910,8 +3920,8 @@ async function applyBatch() {
       day,
       date: `${currentMonth.value}-${String(day).padStart(2, '0')}`,
       shiftId: batchShiftId.value,
-      department,
-      subDepartment
+      department: normalizeOptionalReferenceId(department),
+      subDepartment: normalizeOptionalReferenceId(subDepartment)
     })
   })
 
@@ -5199,7 +5209,7 @@ onUpdated(() => {
 }
 
 .schedule-table-wrapper {
-  overflow-x: auto;
+  overflow-x: hidden;
   padding: var(--schedule-table-wrapper-block-padding) var(--schedule-inline-padding);
 
   &.is-fullscreen {
@@ -5235,7 +5245,16 @@ onUpdated(() => {
 }
 
 .modern-schedule-table {
-  min-width: max-content;
+  width: 100%;
+  min-width: 0;
+
+  :deep(.el-table-fixed-column--left) {
+    z-index: 12;
+  }
+
+  :deep(.el-table__header-wrapper .el-table-fixed-column--left) {
+    background-color: #ecfeff;
+  }
 
   :deep(.el-table__body .schedule-row > td.el-table__cell) {
     background-color: var(--row-color-bg, #ffffff);
@@ -5294,9 +5313,8 @@ onUpdated(() => {
     }
   }
 
-  :deep(.el-table__fixed),
-  :deep(.el-table__fixed-right),
-  :deep(.el-table__fixed-column--left) {
+  :deep(.el-table-fixed-column--left),
+  :deep(.el-table-fixed-column--right) {
     z-index: 25;
   }
 
@@ -5698,7 +5716,7 @@ onUpdated(() => {
   }
 
   .modern-schedule-table {
-    ::v-deep(.el-table__fixed-column--left) {
+    ::v-deep(.el-table-fixed-column--left) {
       z-index: 10;
     }
   }
