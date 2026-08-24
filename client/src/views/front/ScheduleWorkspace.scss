@@ -1185,6 +1185,10 @@
   white-space: pre-wrap;
 }
 
+:global(.schedule-issue-overlay) {
+  z-index: 5000 !important;
+}
+
 @media (max-width: 1280px) {
   .filters-card .filters-content {
     grid-template-columns: repeat(2, minmax(160px, 1fr));

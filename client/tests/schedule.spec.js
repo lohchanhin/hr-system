@@ -1453,10 +1453,16 @@ describe('Schedule.vue', () => {
     expect(ElMessageBox.alert).toHaveBeenCalledWith(
       expect.stringContaining('CODEX_TEST 问题 138'),
       '排班規範檢核未通過',
-      expect.objectContaining({ customClass: 'schedule-issue-dialog' })
+      expect.objectContaining({
+        customClass: 'schedule-issue-dialog',
+        modalClass: 'schedule-issue-overlay'
+      })
     )
     expect(ElMessageBox.alert.mock.calls[0][0]).not.toContain('另有')
     expect(wrapper.vm.scheduleNotifications[0].details).toHaveLength(138)
+    const renderedDetails = wrapper.findAll('.notification-log-item__details li')
+    expect(renderedDetails).toHaveLength(138)
+    expect(renderedDetails[137].text()).toContain('CODEX_TEST 问题 138')
 
     ElMessageBox.alert.mockClear()
     await wrapper.find('.notification-log-item__details-button').trigger('click')
@@ -2960,6 +2966,7 @@ describe('Schedule.vue', () => {
       '排班規範檢核未通過',
       expect.objectContaining({
         customClass: 'schedule-issue-dialog',
+        modalClass: 'schedule-issue-overlay',
         appendTo: wrapper.find('[data-test="schedule-card"]').element
       })
     )

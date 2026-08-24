@@ -119,6 +119,29 @@
   white-space: pre-wrap;
 }
 
+.schedule-notification-drawer .notification-log-item__details {
+  max-height: 360px;
+  margin: 9px 0 0 23px;
+  padding: 9px 10px 9px 28px;
+  overflow-y: auto;
+  border: 1px solid #d0d5dd;
+  border-radius: 4px;
+  color: #344054;
+  background: #fff;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.schedule-notification-drawer .notification-log-item__details li {
+  padding: 3px 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.schedule-notification-drawer .notification-log-item__details li + li {
+  border-top: 1px solid #eaecf0;
+}
+
 .schedule-notification-drawer .notification-log-item__details-button {
   margin: 5px 0 0 15px;
   color: #175cd3;
@@ -139,5 +162,10 @@
 
   .schedule-notification-drawer .notification-log-item__heading time {
     margin-left: 23px;
+  }
+
+  .schedule-notification-drawer .notification-log-item__details {
+    max-height: 300px;
+    margin-left: 0;
   }
 }

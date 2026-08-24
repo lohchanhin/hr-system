@@ -2246,20 +2246,7 @@ export async function importSchedules(req, res) {
       }
     }
 
-    let violations = [];
-    if (!errors.length && candidates.length) {
-      try {
-        await assertScheduleRuleCompliance({
-          candidateSchedules: candidates,
-          ignoredScheduleIds: candidates.map((item) => item.existing?._id).filter(Boolean),
-          range,
-          strictWeeklyRest: parsed.columns.length === buildMonthDays(range.start).length,
-        });
-      } catch (error) {
-        if (!isLaborRuleValidationError(error)) throw error;
-        violations = error.violations || [];
-      }
-    }
+    const violations = [];
 
     const summary = {
       mode,
@@ -2302,6 +2289,29 @@ export async function importSchedules(req, res) {
       },
     }));
     await ShiftSchedule.bulkWrite(operations, { ordered: true });
+
+    try {
+      await assertScheduleRuleCompliance({
+        candidateSchedules: candidates,
+        ignoredScheduleIds: candidates.map((item) => item.existing?._id).filter(Boolean),
+        range,
+        strictWeeklyRest: parsed.columns.length === buildMonthDays(range.start).length,
+      });
+    } catch (validationError) {
+      if (isLaborRuleValidationError(validationError)) {
+        violations.push(...(validationError.violations || []));
+      } else {
+        console.error('Post-import schedule validation failed', {
+          error: validationError?.name || 'Error',
+        });
+        warnings.push(scheduleImportError(
+          null,
+          null,
+          '',
+          '匯入已完成，但排班規範檢核暫時無法完成，請按「排班檢核」重試',
+        ));
+      }
+    }
     return res.status(201).json({ ...summary, imported: candidates.length, importBatchId });
   } catch (error) {
     if (isLaborRuleValidationError(error)) {
@@ -2463,10 +2473,6 @@ export async function exportSchedules(req, res) {
     const monthDays = Array.from({ length: daysInMonth }, (_, idx) => idx + 1);
     const [yearNumber, monthNumber] = month.split('-').map(Number);
     const weekLabels = ['日', '一', '二', '三', '四', '五', '六'];
-    const calendarByDay = new Map(monthDays.map((day) => [
-      day,
-      [holidayByDay.get(day), memoByDay.get(day)].filter(Boolean).join('\n'),
-    ]));
     const scheduleMap = new Map();
     schedules.forEach((item) => {
       const empId = item?.employee?._id?.toString?.() || '';
@@ -2530,10 +2536,11 @@ export async function exportSchedules(req, res) {
         : await exportSettingQuery;
       workbook.creator = 'HR System';
       workbook.created = new Date();
-      const ws = workbook.addWorksheet('工作表1', { views: [{ state: 'frozen', xSplit: 4, ySplit: 4 }] });
+      const ws = workbook.addWorksheet('工作表1', { views: [{ state: 'frozen', xSplit: 4, ySplit: 5 }] });
 
       ws.addRow([`${yearNumber}年${String(monthNumber).padStart(2, '0')}月班表`]);
-      ws.addRow(['行事曆', '', '', '', ...monthDays.map((day) => calendarByDay.get(day) || '')]);
+      ws.addRow(['備忘錄', '', '', '', ...monthDays.map((day) => memoByDay.get(day) || '')]);
+      ws.addRow(['行事曆', '', '', '', ...monthDays.map((day) => holidayByDay.get(day) || '')]);
       ws.addRow(['日期', '', '', '', ...monthDays.map((day) => new Date(Date.UTC(yearNumber, monthNumber - 1, day)))]);
       ws.addRow(['員工代號', '姓名', '單位', '職稱／職位', ...monthDays.map((day) => (
         weekLabels[new Date(Date.UTC(yearNumber, monthNumber - 1, day)).getUTCDay()]
@@ -2541,6 +2548,7 @@ export async function exportSchedules(req, res) {
       ws.mergeCells(1, 1, 1, monthDays.length + 4);
       ws.mergeCells(2, 1, 2, 4);
       ws.mergeCells(3, 1, 3, 4);
+      ws.mergeCells(4, 1, 4, 4);
 
       ws.columns = [
         { width: 13 },
@@ -2550,7 +2558,7 @@ export async function exportSchedules(req, res) {
         ...monthDays.map(() => ({ width: 8 })),
       ];
       monthDays.forEach((day, index) => {
-        ws.getCell(3, index + 5).numFmt = 'd';
+        ws.getCell(4, index + 5).numFmt = 'd';
       });
 
       const weekendCols = new Set();
@@ -2571,8 +2579,8 @@ export async function exportSchedules(req, res) {
       ]));
 
       const statisticsStartRow = ws.rowCount + 2;
-      const firstEmployeeRow = 5;
-      const lastEmployeeRow = 4 + exportRows.length;
+      const firstEmployeeRow = 6;
+      const lastEmployeeRow = 5 + exportRows.length;
       const shiftCodes = Array.from(new Set((exportSetting?.shifts || [])
         .map((shift) => String(shift.code || shift.name || '').trim())
         .filter(Boolean)));
@@ -2612,15 +2620,15 @@ export async function exportSchedules(req, res) {
         fgColor: { argb: 'FFF8CBAD' },
       };
 
-      [1, 2, 3, 4].forEach((rowNumber) => ws.getRow(rowNumber).eachCell((cell) => {
+      [1, 2, 3, 4, 5].forEach((rowNumber) => ws.getRow(rowNumber).eachCell((cell) => {
         cell.fill = headerStyle;
-        cell.font = { bold: rowNumber === 1 || rowNumber === 4 };
+        cell.font = { bold: rowNumber === 1 || rowNumber === 5 };
         cell.alignment = { vertical: 'middle', horizontal: 'center', wrapText: rowNumber === 2 };
       }));
       ws.getRow(2).height = 42;
 
       ws.eachRow((row, rowNumber) => {
-        if (rowNumber <= 4 || rowNumber >= statisticsStartRow) return;
+        if (rowNumber <= 5 || rowNumber >= statisticsStartRow) return;
         row.eachCell((cell, colNumber) => {
           if (colNumber >= 5 && weekendCols.has(colNumber)) {
             cell.fill = weekendStyle;
@@ -2665,7 +2673,16 @@ export async function exportSchedules(req, res) {
       doc.fontSize(10).text(`月份：${month}`, { align: 'center' });
       doc.moveDown(1.5);
 
-      const calendarEntries = Array.from(calendarByDay.entries()).filter(([, content]) => content);
+      const memoEntries = Array.from(memoByDay.entries()).filter(([, content]) => content);
+      if (memoEntries.length) {
+        doc.fontSize(11).text('備忘錄');
+        memoEntries.forEach(([day, content]) => {
+          doc.fontSize(9).text(`${month}-${String(day).padStart(2, '0')}：${content.replace(/\n/g, '／')}`);
+        });
+        doc.moveDown();
+      }
+
+      const calendarEntries = Array.from(holidayByDay.entries()).filter(([, content]) => content);
       if (calendarEntries.length) {
         doc.fontSize(11).text('行事曆');
         calendarEntries.forEach(([day, content]) => {

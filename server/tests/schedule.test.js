@@ -1331,9 +1331,10 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
     expect(preview.body).toEqual(expect.objectContaining({
       scheduleDays: 1,
       errors: [],
-      violations: [draftViolation],
+      violations: [],
     }));
     expect(mockShiftSchedule.bulkWrite).not.toHaveBeenCalled();
+    expect(mockAssertScheduleRuleCompliance).not.toHaveBeenCalled();
 
     const committed = await request(app)
       .post('/api/schedules/import')
@@ -1347,6 +1348,9 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
     expect(committed.body.imported).toBe(1);
     expect(committed.body.violations).toEqual([draftViolation]);
     expect(mockShiftSchedule.bulkWrite).toHaveBeenCalledTimes(1);
+    expect(mockAssertScheduleRuleCompliance).toHaveBeenCalledTimes(1);
+    expect(mockShiftSchedule.bulkWrite.mock.invocationCallOrder[0])
+      .toBeLessThan(mockAssertScheduleRuleCompliance.mock.invocationCallOrder[0]);
   });
 
   it('reports overwrite conflicts in preview and overwrites only when explicitly enabled', async () => {
@@ -1905,8 +1909,10 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
     await workbook.xlsx.load(toBuffer(res.body));
     const worksheet = workbook.getWorksheet('工作表1');
     expect(worksheet.rowCount).toBeGreaterThanOrEqual(6);
-    expect(worksheet.getRow(4).values.slice(1, 5)).toEqual(['員工代號', '姓名', '單位', '職稱／職位']);
-    const dataRow = worksheet.getRow(5).values;
+    expect(worksheet.getRow(2).getCell(1).value).toBe('備忘錄');
+    expect(worksheet.getRow(3).getCell(1).value).toBe('行事曆');
+    expect(worksheet.getRow(5).values.slice(1, 5)).toEqual(['員工代號', '姓名', '單位', '職稱／職位']);
+    const dataRow = worksheet.getRow(6).values;
     expect(dataRow[1]).toBe('A001');
     expect(dataRow[2]).toBe('Alice');
     expect(dataRow[3]).toBe('A單位');

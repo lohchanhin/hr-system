@@ -723,13 +723,18 @@
           <time>{{ formatNotificationTime(item.createdAt) }}</time>
         </div>
         <p>{{ item.message }}</p>
+        <ol v-if="item.details?.length" class="notification-log-item__details">
+          <li v-for="(detail, detailIndex) in item.details" :key="`${item.id}-${detailIndex}`">
+            {{ formatLaborRuleViolation(detail) }}
+          </li>
+        </ol>
         <el-button
           v-if="item.details?.length"
           class="notification-log-item__details-button"
           text
           @click="reopenNotificationDetails(item)"
         >
-          查看完整明細（{{ item.details.length }}）
+          在視窗檢視完整明細（{{ item.details.length }}）
         </el-button>
       </article>
     </div>
@@ -1454,6 +1459,7 @@ function openScheduleIssueDialog(title, lines, fallbackMessage, options = {}) {
     confirmButtonText: '關閉',
     type: type === 'info' ? 'info' : type,
     customClass: 'schedule-issue-dialog',
+    modalClass: 'schedule-issue-overlay',
     closeOnClickModal: false,
     showClose: true
   }

@@ -540,22 +540,23 @@ describe('exportSchedules excel matrix', () => {
     await workbook.xlsx.load(res.send.mock.calls[0][0]);
     const sheet = workbook.getWorksheet('工作表1');
 
-    const headerValues = sheet.getRow(4).values.slice(1, 9);
+    const headerValues = sheet.getRow(5).values.slice(1, 9);
     expect(headerValues).toEqual(['員工代號', '姓名', '單位', '職稱／職位', '四', '五', '六', '日']);
 
     expect(sheet.columnCount).toBe(33); // 4 fixed columns + 29 days in 2024/02
-    expect(sheet.views[0]).toEqual(expect.objectContaining({ state: 'frozen', xSplit: 4, ySplit: 4 }));
-    expect(sheet.getRow(2).getCell(6).value).toBe('有班假日\nCODEX_TEST 日期備忘錄');
-    expect(sheet.getRow(2).getCell(7).value).toBe('請假假日');
-    expect(sheet.getRow(2).getCell(8).value).toBe('無班假日');
-    expect(sheet.getRow(5).getCell(1).value).toBe('A001');
-    expect(sheet.getRow(5).getCell(2).value).toBe('王小明');
-    expect(sheet.getRow(5).getCell(3).value).toBe('內科');
-    expect(sheet.getRow(5).getCell(4).value).toBe('RN');
-    expect(sheet.getRow(5).getCell(5).value).toBe('D');
-    expect(sheet.getRow(5).getCell(6).value).toBe('N');
-    expect(sheet.getRow(5).getCell(7).value).toBe('特');
-    expect(sheet.getRow(5).getCell(8).value).toBe('');
-    expect(sheet.getCell('E8').value).toEqual({ formula: 'COUNTIF(E5:E6,"D")' });
+    expect(sheet.views[0]).toEqual(expect.objectContaining({ state: 'frozen', xSplit: 4, ySplit: 5 }));
+    expect(sheet.getRow(2).getCell(6).value).toBe('CODEX_TEST 日期備忘錄');
+    expect(sheet.getRow(3).getCell(6).value).toBe('有班假日');
+    expect(sheet.getRow(3).getCell(7).value).toBe('請假假日');
+    expect(sheet.getRow(3).getCell(8).value).toBe('無班假日');
+    expect(sheet.getRow(6).getCell(1).value).toBe('A001');
+    expect(sheet.getRow(6).getCell(2).value).toBe('王小明');
+    expect(sheet.getRow(6).getCell(3).value).toBe('內科');
+    expect(sheet.getRow(6).getCell(4).value).toBe('RN');
+    expect(sheet.getRow(6).getCell(5).value).toBe('D');
+    expect(sheet.getRow(6).getCell(6).value).toBe('N');
+    expect(sheet.getRow(6).getCell(7).value).toBe('特');
+    expect(sheet.getRow(6).getCell(8).value).toBe('');
+    expect(sheet.getCell('E9').value).toEqual({ formula: 'COUNTIF(E6:E7,"D")' });
   });
 });
