@@ -1240,60 +1240,77 @@ export async function createSchedulesBatch(req, res) {
     }
 
     const uniqueSchedules = Array.from(scheduleMap.values());
+    if (!uniqueSchedules.length) return res.status(201).json([]);
 
-    for (const entry of uniqueSchedules) {
-      if (await hasLeaveConflict(entry.employee, entry.date)) {
-        return res.status(400).json({ error: 'leave conflict' });
-      }
+    const employeeIds = Array.from(new Set(uniqueSchedules.map((item) => toEntityId(item.employee))));
+    const timestamps = uniqueSchedules.map((item) => item.date.getTime());
+    const rangeStart = new Date(Math.min(...timestamps));
+    const rangeEnd = new Date(Math.max(...timestamps) + 86400000);
+    const [leaveCalendar, existingRows] = await Promise.all([
+      loadApprovedLeaveCalendar({ employeeIds, start: rangeStart, end: rangeEnd }),
+      ShiftSchedule.find({
+        employee: { $in: employeeIds },
+        date: { $gte: rangeStart, $lt: rangeEnd },
+      }).lean(),
+    ]);
+
+    const scheduleKey = (employee, date) => (
+      `${toEntityId(employee)}:${new Date(date).toISOString().slice(0, 10)}`
+    );
+    const conflictingLeave = uniqueSchedules.find((entry) => (
+      leaveCalendar.get(toEntityId(entry.employee))?.has(entry.date.toISOString().slice(0, 10))
+    ));
+    if (conflictingLeave) {
+      return res.status(400).json({ error: 'leave conflict' });
     }
 
-    await assertScheduleRuleCompliance({
-      candidateSchedules: uniqueSchedules,
+    const existingByKey = new Map((existingRows || []).map((row) => [
+      scheduleKey(row.employee, row.date),
+      row,
+    ]));
+    const operations = uniqueSchedules.map((sched) => {
+      const existing = existingByKey.get(scheduleKey(sched.employee, sched.date));
+      const nextData = {
+        employee: sched.employee,
+        date: sched.date,
+        shiftId: sched.shiftId,
+        department: sched.department ?? existing?.department,
+        subDepartment: sched.subDepartment ?? existing?.subDepartment,
+      };
+      const changed = !existing || hasScheduleDiff(existing, nextData);
+      return {
+        updateOne: {
+          filter: { employee: sched.employee, date: sched.date },
+          update: {
+            $set: {
+              ...nextData,
+              ...(changed ? {
+                state: 'draft',
+                publishedAt: null,
+                employeeResponse: 'pending',
+                responseNote: '',
+                responseAt: null,
+                needsReconfirm: true,
+              } : {}),
+            },
+          },
+          upsert: true,
+        },
+      };
     });
 
-    const updated = [];
-    const toInsert = [];
-
-    for (const sched of uniqueSchedules) {
-      const existing = await ShiftSchedule.findOne({ employee: sched.employee, date: sched.date });
-      if (existing) {
-        const nextData = {
-          employee: sched.employee,
-          date: sched.date,
-          shiftId: sched.shiftId,
-          department: sched.department ?? existing.department,
-          subDepartment: sched.subDepartment ?? existing.subDepartment,
-        };
-        const shouldReset = hasScheduleDiff(existing, nextData);
-        existing.employee = nextData.employee;
-        existing.date = nextData.date;
-        existing.shiftId = nextData.shiftId;
-        existing.department = nextData.department;
-        existing.subDepartment = nextData.subDepartment;
-        if (shouldReset) {
-          resetScheduleProgress(existing);
-        }
-        const saved = await existing.save();
-        updated.push(typeof saved?.toObject === 'function' ? saved.toObject() : saved);
-      } else {
-        toInsert.push({
-          employee: sched.employee,
-          date: sched.date,
-          shiftId: sched.shiftId,
-          department: sched.department,
-          subDepartment: sched.subDepartment,
-          needsReconfirm: true,
-        });
-      }
-    }
-
-    let inserted = [];
-    if (toInsert.length) {
-      const docs = await ShiftSchedule.insertMany(toInsert, { ordered: false });
-      inserted = docs.map((doc) => (typeof doc?.toObject === 'function' ? doc.toObject() : doc));
-    }
-
-    res.status(201).json([...inserted, ...updated]);
+    await ShiftSchedule.bulkWrite(operations, { ordered: false });
+    const writtenRows = await ShiftSchedule.find({
+      employee: { $in: employeeIds },
+      date: { $gte: rangeStart, $lt: rangeEnd },
+    }).lean();
+    const writtenByKey = new Map((writtenRows || []).map((row) => [
+      scheduleKey(row.employee, row.date),
+      row,
+    ]));
+    res.status(201).json(uniqueSchedules
+      .map((item) => writtenByKey.get(scheduleKey(item.employee, item.date)))
+      .filter(Boolean));
   } catch (err) {
     if (respondLaborRuleError(res, err)) return;
     res.status(400).json({ error: err.message });
@@ -1548,16 +1565,6 @@ export async function createSchedule(req, res) {
       return res.status(400).json({ error: 'leave conflict' });
     }
 
-    await assertScheduleRuleCompliance({
-      candidateSchedules: [{
-        employee,
-        date: dt,
-        shiftId,
-        department: normalizedDepartment,
-        subDepartment: normalizedSubDepartment,
-      }],
-    });
-
     const schedule = await ShiftSchedule.create({
       employee,
       date: dt,
@@ -1635,11 +1642,6 @@ export async function updateSchedule(req, res) {
       department: normalizedDepartment ?? schedule.department,
       subDepartment: normalizedSubDepartment ?? schedule.subDepartment,
     };
-    await assertScheduleRuleCompliance({
-      candidateSchedules: [nextData],
-      ignoredScheduleIds: [schedule._id],
-    });
-
     const shouldReset = hasScheduleDiff(schedule, nextData);
     schedule.employee = nextData.employee;
     schedule.date = nextData.date;
@@ -2214,6 +2216,10 @@ export async function importSchedules(req, res) {
           }
           continue;
         }
+        if (leaveCalendar.get(employeeId)?.has(dateKey)) {
+          errors.push(scheduleImportError(row.rowNumber, entry.day, entry.code, '該日期已有核准請假，無法匯入班別'));
+          continue;
+        }
         const shift = shiftByCode.get(code);
         if (!shift?._id) {
           errors.push(scheduleImportError(row.rowNumber, entry.day, entry.code, '找不到对应班别代码或名称'));
@@ -2240,13 +2246,19 @@ export async function importSchedules(req, res) {
       }
     }
 
+    let violations = [];
     if (!errors.length && candidates.length) {
-      await assertScheduleRuleCompliance({
-        candidateSchedules: candidates,
-        ignoredScheduleIds: candidates.map((item) => item.existing?._id).filter(Boolean),
-        range,
-        strictWeeklyRest: parsed.columns.length === buildMonthDays(range.start).length,
-      });
+      try {
+        await assertScheduleRuleCompliance({
+          candidateSchedules: candidates,
+          ignoredScheduleIds: candidates.map((item) => item.existing?._id).filter(Boolean),
+          range,
+          strictWeeklyRest: parsed.columns.length === buildMonthDays(range.start).length,
+        });
+      } catch (error) {
+        if (!isLaborRuleValidationError(error)) throw error;
+        violations = error.violations || [];
+      }
     }
 
     const summary = {
@@ -2257,6 +2269,7 @@ export async function importSchedules(req, res) {
       informationalDays,
       errors,
       warnings,
+      violations,
       overwriteConflicts,
       overwriteCount: overwriteConflicts.length,
     };
@@ -2431,15 +2444,62 @@ export async function exportSchedules(req, res) {
     }
 
     const format = formatParam === 'excel' ? 'excel' : 'pdf';
-    const memoRows = await ScheduleDayMemo.find({
-      date: { $gte: start, $lt: end },
-      department,
-      subDepartment: subDepartment || null,
-    }).sort({ date: 1 }).lean();
+    const [memoRows, holidayRows] = await Promise.all([
+      ScheduleDayMemo.find({
+        date: { $gte: start, $lt: end },
+        department,
+        subDepartment: subDepartment || null,
+      }).sort({ date: 1 }).lean(),
+      Holiday.find({ date: { $gte: start, $lt: end } }).lean(),
+    ]);
     const memoByDay = new Map((memoRows || []).map((memo) => [
       new Date(memo.date).getUTCDate(),
       String(memo.content || '').trim(),
     ]));
+    const holidayByDay = new Map((holidayRows || []).map((holiday) => [
+      new Date(holiday.date).getUTCDate(),
+      String(holiday.name || '國定假日').trim(),
+    ]));
+    const monthDays = Array.from({ length: daysInMonth }, (_, idx) => idx + 1);
+    const [yearNumber, monthNumber] = month.split('-').map(Number);
+    const weekLabels = ['日', '一', '二', '三', '四', '五', '六'];
+    const calendarByDay = new Map(monthDays.map((day) => [
+      day,
+      [holidayByDay.get(day), memoByDay.get(day)].filter(Boolean).join('\n'),
+    ]));
+    const scheduleMap = new Map();
+    schedules.forEach((item) => {
+      const empId = item?.employee?._id?.toString?.() || '';
+      if (!empId) return;
+      if (!scheduleMap.has(empId)) scheduleMap.set(empId, new Map());
+      const dateKey = dayjs(item.date, 'YYYY/MM/DD').date();
+      scheduleMap.get(empId).set(dateKey, item.shiftCode || item.shiftName || '');
+    });
+    const leaveCode = (leaveType) => (
+      leaveType.includes('特') ? '特'
+        : leaveType.includes('病') ? '病'
+          : leaveType.includes('事') ? '事'
+            : leaveType.includes('喪') ? '喪'
+              : leaveType.includes('公') ? '公'
+                : leaveType.includes('原') ? '原'
+                  : leaveType.includes('補') ? '補' : leaveType
+    );
+    const exportRows = filteredEmployees.map((employee) => {
+      const empId = employee._id.toString();
+      const employeeLeaveCalendar = leaveCalendar.get(empId) || new Map();
+      const employeeScheduleMap = scheduleMap.get(empId) || new Map();
+      return {
+        employeeId: employee.employeeId || '',
+        name: employee.name || '',
+        unit: employee.subDepartment?.name || '',
+        title: employee.practiceTitle || employee.title || '',
+        days: monthDays.map((day) => {
+          const dateKey = `${month}-${String(day).padStart(2, '0')}`;
+          const approvedLeave = employeeLeaveCalendar.get(dateKey);
+          return approvedLeave ? leaveCode(approvedLeave) : (employeeScheduleMap.get(day) || '');
+        }),
+      };
+    });
 
     const sanitizeSegment = (value) => {
       const cleaned = String(value)
@@ -2470,33 +2530,27 @@ export async function exportSchedules(req, res) {
         : await exportSettingQuery;
       workbook.creator = 'HR System';
       workbook.created = new Date();
-      const ws = workbook.addWorksheet('工作表1', { views: [{ state: 'frozen', xSplit: 3, ySplit: 5 }] });
-      const monthDays = Array.from({ length: daysInMonth }, (_, idx) => idx + 1);
-      const [yearNumber, monthNumber] = month.split('-').map(Number);
-      const weekLabels = ['日', '一', '二', '三', '四', '五', '六'];
-      const holidayRows = await Holiday.find({ date: { $gte: start, $lt: end } }).lean();
-      const holidayByDay = new Map((holidayRows || []).map((holiday) => [
-        new Date(holiday.date).getUTCDate(),
-        holiday.name || '國定假日',
-      ]));
+      const ws = workbook.addWorksheet('工作表1', { views: [{ state: 'frozen', xSplit: 4, ySplit: 4 }] });
 
       ws.addRow([`${yearNumber}年${String(monthNumber).padStart(2, '0')}月班表`]);
-      ws.addRow(['', '', '行事曆', ...monthDays.map((day) => holidayByDay.get(day) || '')]);
-      ws.addRow(['', '', '日期', ...monthDays.map((day) => new Date(Date.UTC(yearNumber, monthNumber - 1, day)))]);
-      ws.addRow(['員工代號', '姓名', '星期', ...monthDays.map((day) => (
+      ws.addRow(['行事曆', '', '', '', ...monthDays.map((day) => calendarByDay.get(day) || '')]);
+      ws.addRow(['日期', '', '', '', ...monthDays.map((day) => new Date(Date.UTC(yearNumber, monthNumber - 1, day)))]);
+      ws.addRow(['員工代號', '姓名', '單位', '職稱／職位', ...monthDays.map((day) => (
         weekLabels[new Date(Date.UTC(yearNumber, monthNumber - 1, day)).getUTCDay()]
       ))]);
-      ws.addRow(['', '', '備忘錄', ...monthDays.map((day) => memoByDay.get(day) || '')]);
-      ws.mergeCells(1, 1, 1, monthDays.length + 3);
+      ws.mergeCells(1, 1, 1, monthDays.length + 4);
+      ws.mergeCells(2, 1, 2, 4);
+      ws.mergeCells(3, 1, 3, 4);
 
       ws.columns = [
         { width: 13 },
         { width: 16 },
-        { width: 13 },
+        { width: 16 },
+        { width: 18 },
         ...monthDays.map(() => ({ width: 8 })),
       ];
       monthDays.forEach((day, index) => {
-        ws.getCell(3, index + 4).numFmt = 'd';
+        ws.getCell(3, index + 5).numFmt = 'd';
       });
 
       const weekendCols = new Set();
@@ -2504,53 +2558,21 @@ export async function exportSchedules(req, res) {
         const dateObj = dayjs(`${month}-${String(day).padStart(2, '0')}`);
         const dayOfWeek = dateObj.day();
         if (dayOfWeek === 0 || dayOfWeek === 6) {
-          weekendCols.add(dayIndex + 4);
+          weekendCols.add(dayIndex + 5);
         }
       });
 
-      const scheduleMap = new Map();
-      schedules.forEach((item) => {
-        const empId = item?.employee?._id?.toString?.() || '';
-        if (!empId) return;
-        if (!scheduleMap.has(empId)) scheduleMap.set(empId, new Map());
-        const dateKey = dayjs(item.date, 'YYYY/MM/DD').date();
-        const shiftValue = item.shiftCode || item.shiftName || '未排班';
-        scheduleMap.get(empId).set(dateKey, shiftValue);
-      });
-
-      filteredEmployees.forEach((employee) => {
-        const empId = employee._id.toString();
-        const row = [
-          employee.employeeId || '',
-          employee.name || '',
-          employee.practiceTitle || employee.title || '',
-        ];
-        const empScheduleMap = scheduleMap.get(empId) || new Map();
-        const employeeLeaveCalendar = leaveCalendar.get(empId) || new Map();
-        monthDays.forEach((day) => {
-          const dateKey = `${month}-${String(day).padStart(2, '0')}`;
-          const leaveType = employeeLeaveCalendar.get(dateKey);
-          if (leaveType) {
-            const leaveCode = leaveType.includes('特') ? '特'
-              : leaveType.includes('病') ? '病'
-                : leaveType.includes('事') ? '事'
-                  : leaveType.includes('喪') ? '喪'
-                    : leaveType.includes('公') ? '公'
-                      : leaveType.includes('原') ? '原'
-                        : leaveType.includes('補') ? '補' : leaveType;
-            row.push(leaveCode);
-            return;
-          }
-          if (holidayByDay.has(day)) {
-            row.push('國');
-            return;
-          }
-          row.push(empScheduleMap.get(day) || '');
-        });
-        ws.addRow(row);
-      });
+      exportRows.forEach((row) => ws.addRow([
+        row.employeeId,
+        row.name,
+        row.unit,
+        row.title,
+        ...row.days,
+      ]));
 
       const statisticsStartRow = ws.rowCount + 2;
+      const firstEmployeeRow = 5;
+      const lastEmployeeRow = 4 + exportRows.length;
       const shiftCodes = Array.from(new Set((exportSetting?.shifts || [])
         .map((shift) => String(shift.code || shift.name || '').trim())
         .filter(Boolean)));
@@ -2559,13 +2581,13 @@ export async function exportSchedules(req, res) {
         ws.getCell(rowNumber, 1).value = shiftCode;
         ws.getCell(rowNumber, 2).value = '每日人數';
         monthDays.forEach((_day, dayIndex) => {
-          const columnNumber = dayIndex + 4;
+          const columnNumber = dayIndex + 5;
           const columnLetter = ws.getColumn(columnNumber).letter;
-          const firstEmployeeRow = 6;
-          const lastEmployeeRow = Math.max(ws.rowCount - index - 1, firstEmployeeRow);
-          ws.getCell(rowNumber, columnNumber).value = {
-            formula: `COUNTIF(${columnLetter}${firstEmployeeRow}:${columnLetter}${lastEmployeeRow},${JSON.stringify(shiftCode)})`,
-          };
+          ws.getCell(rowNumber, columnNumber).value = exportRows.length
+            ? {
+              formula: `COUNTIF(${columnLetter}${firstEmployeeRow}:${columnLetter}${lastEmployeeRow},${JSON.stringify(shiftCode)})`,
+            }
+            : 0;
         });
       });
 
@@ -2590,25 +2612,25 @@ export async function exportSchedules(req, res) {
         fgColor: { argb: 'FFF8CBAD' },
       };
 
-      [1, 2, 3, 4, 5].forEach((rowNumber) => ws.getRow(rowNumber).eachCell((cell) => {
+      [1, 2, 3, 4].forEach((rowNumber) => ws.getRow(rowNumber).eachCell((cell) => {
         cell.fill = headerStyle;
         cell.font = { bold: rowNumber === 1 || rowNumber === 4 };
-        cell.alignment = { vertical: 'middle', horizontal: 'center', wrapText: rowNumber === 5 };
+        cell.alignment = { vertical: 'middle', horizontal: 'center', wrapText: rowNumber === 2 };
       }));
-      ws.getRow(5).height = 36;
+      ws.getRow(2).height = 42;
 
       ws.eachRow((row, rowNumber) => {
-        if (rowNumber <= 5 || rowNumber >= statisticsStartRow) return;
+        if (rowNumber <= 4 || rowNumber >= statisticsStartRow) return;
         row.eachCell((cell, colNumber) => {
-          if (colNumber >= 4 && weekendCols.has(colNumber)) {
+          if (colNumber >= 5 && weekendCols.has(colNumber)) {
             cell.fill = weekendStyle;
           }
-          if (!cell.value && colNumber >= 4) {
+          if (!cell.value && colNumber >= 5) {
             cell.fill = unscheduledStyle;
           } else if (IMPORT_LEAVE_CODES.has(normalizeWorkbookCode(cell.value))) {
             cell.fill = leaveStyle;
           }
-          cell.alignment = { vertical: 'middle', horizontal: colNumber <= 3 ? 'left' : 'center' };
+          cell.alignment = { vertical: 'middle', horizontal: colNumber <= 4 ? 'left' : 'center' };
         });
       });
 
@@ -2626,7 +2648,7 @@ export async function exportSchedules(req, res) {
       } catch (err) {
         return res.status(500).json({ error: 'pdfkit module not installed' });
       }
-      const doc = new PDFDocument();
+      const doc = new PDFDocument({ margin: 42 });
       res.setHeader('Content-Type', 'application/pdf');
       res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
       
@@ -2636,53 +2658,49 @@ export async function exportSchedules(req, res) {
       } catch (error) {
         return res.status(503).json({ error: error.message });
       }
+      doc.pipe(res);
       
       doc.fontSize(16).text('排班表', { align: 'center' });
       doc.moveDown();
       doc.fontSize(10).text(`月份：${month}`, { align: 'center' });
       doc.moveDown(1.5);
 
-      if (memoByDay.size) {
-        doc.fontSize(11).text('日期備忘錄');
-        Array.from(memoByDay.entries()).forEach(([day, content]) => {
-          doc.fontSize(9).text(`${month}-${String(day).padStart(2, '0')}：${content}`);
+      const calendarEntries = Array.from(calendarByDay.entries()).filter(([, content]) => content);
+      if (calendarEntries.length) {
+        doc.fontSize(11).text('行事曆');
+        calendarEntries.forEach(([day, content]) => {
+          doc.fontSize(9).text(`${month}-${String(day).padStart(2, '0')}：${content.replace(/\n/g, '／')}`);
         });
         doc.moveDown();
       }
-      
-      // Table layout with proper column positioning
-      const tableLeft = 50;
-      const colWidths = { name: 150, date: 150, shift: 150 };
+
+      const tableLeft = 42;
+      const colWidths = { employee: 220, date: 105, shift: 145 };
       let y = doc.y;
-      
-      // Draw header row
-      doc.fontSize(10);
-      doc.text('員工姓名', tableLeft, y, { width: colWidths.name, underline: true });
-      doc.text('日期', tableLeft + colWidths.name, y, { width: colWidths.date, underline: true });
-      doc.text('班別名稱', tableLeft + colWidths.name + colWidths.date, y, { width: colWidths.shift, underline: true });
-      
-      y += 20;
-      
-      schedules.forEach((s) => {
-        doc.fontSize(10);
-        doc.text(s.employee?.name ?? '', tableLeft, y, { width: colWidths.name });
-        doc.text(s.date, tableLeft + colWidths.name, y, { width: colWidths.date });
-        doc.text(s.shiftName || '未指定', tableLeft + colWidths.name + colWidths.date, y, { width: colWidths.shift });
-        y += 18;
-        
-        // Start new page if needed
-        if (y > 700) {
-          doc.addPage();
-          y = 50;
-          // Redraw header on new page
-          doc.fontSize(10);
-          doc.text('員工姓名', tableLeft, y, { width: colWidths.name, underline: true });
-          doc.text('日期', tableLeft + colWidths.name, y, { width: colWidths.date, underline: true });
-          doc.text('班別名稱', tableLeft + colWidths.name + colWidths.date, y, { width: colWidths.shift, underline: true });
-          y += 20;
-        }
+      const drawPdfHeader = () => {
+        doc.fontSize(9);
+        doc.text('員工代號／姓名／單位／職稱', tableLeft, y, { width: colWidths.employee, underline: true });
+        doc.text('日期', tableLeft + colWidths.employee, y, { width: colWidths.date, underline: true });
+        doc.text('班別／假別', tableLeft + colWidths.employee + colWidths.date, y, { width: colWidths.shift, underline: true });
+        y += 20;
+      };
+      drawPdfHeader();
+
+      exportRows.forEach((row) => {
+        row.days.forEach((value, index) => {
+          if (!value) return;
+          if (y > 730) {
+            doc.addPage();
+            y = 42;
+            drawPdfHeader();
+          }
+          doc.fontSize(8);
+          doc.text([row.employeeId, row.name, row.unit, row.title].filter(Boolean).join('／'), tableLeft, y, { width: colWidths.employee });
+          doc.text(`${month}-${String(index + 1).padStart(2, '0')}`, tableLeft + colWidths.employee, y, { width: colWidths.date });
+          doc.text(value, tableLeft + colWidths.employee + colWidths.date, y, { width: colWidths.shift });
+          y += 17;
+        });
       });
-      doc.pipe(res);
       doc.end();
     }
   } catch (err) {
@@ -2709,6 +2727,55 @@ export async function validateScheduleCompleteness(req, res) {
     res.json(validation);
   } catch (err) {
     res.status(400).json({ error: err.message });
+  }
+}
+
+/**
+ * 非阻塞檢查目前範圍內的排班草稿；發布路由仍會再次強制檢核。
+ */
+export async function validateScheduleRules(req, res) {
+  try {
+    const { month, department, subDepartment } = req.query || {};
+    const includeSelf = String(req.query?.includeSelf || '').toLowerCase() === 'true';
+    const range = buildMonthRange(month);
+    const scopedIds = await resolveScopedEmployeeIds(req.user, { includeSelf });
+    if (Array.isArray(scopedIds) && !scopedIds.length) {
+      return res.json({ ok: true, count: 0, violations: [] });
+    }
+
+    const query = buildPublishQuery(range, { department, subDepartment });
+    if (Array.isArray(scopedIds)) query.employee = { $in: scopedIds };
+    const schedules = await ShiftSchedule.find(query).lean();
+    if (!schedules.length) {
+      return res.json({ ok: true, count: 0, violations: [] });
+    }
+
+    try {
+      await assertScheduleRuleCompliance({
+        candidateSchedules: schedules.map((schedule) => ({
+          _id: schedule._id,
+          employee: schedule.employee?._id || schedule.employee,
+          date: schedule.date,
+          shiftId: schedule.shiftId,
+          department: schedule.department,
+          subDepartment: schedule.subDepartment,
+        })),
+        range,
+        strictWeeklyRest: true,
+      });
+      return res.json({ ok: true, count: 0, violations: [] });
+    } catch (error) {
+      if (!isLaborRuleValidationError(error)) throw error;
+      const violations = (error.violations || []).map((violation) => ({
+        rule: violation.rule || violation.code || 'SCHEDULE_RULE',
+        employee: toEntityId(violation.employee),
+        date: violation.date || violation.startDate || violation.weekStart || null,
+        message: violation.message || error.message,
+      }));
+      return res.json({ ok: false, count: violations.length, violations });
+    }
+  } catch (error) {
+    return res.status(error.message === 'unauthorized' ? 401 : 400).json({ error: error.message });
   }
 }
 

@@ -17,6 +17,7 @@ import {
   finalizeSchedules,
   respondToSchedule,
   respondToSchedulesBulk,
+  validateScheduleRules,
   validateScheduleCompleteness,
   getIncompleteSchedules,
   checkCanFinalize,
@@ -42,6 +43,7 @@ router.get('/summary', authenticate, authorizeRoles('supervisor'), listSuperviso
 router.get('/overview', authorizeRoles('admin'), listScheduleOverview);
 router.get('/overview/export', authorizeRoles('admin'), exportScheduleOverview);
 router.get('/export', exportSchedules);
+router.get('/rules/validate', authenticate, authorizeRoles('supervisor', 'admin'), validateScheduleRules);
 router.get('/validate', authenticate, authorizeRoles('supervisor', 'admin'), validateScheduleCompleteness);
 router.get('/incomplete', authenticate, authorizeRoles('supervisor', 'admin'), getIncompleteSchedules);
 router.get('/can-finalize', authenticate, authorizeRoles('supervisor', 'admin'), checkCanFinalize);

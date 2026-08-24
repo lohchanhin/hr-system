@@ -7,6 +7,7 @@ const mockShiftSchedule = {
   findOne: jest.fn(),
   create: jest.fn(),
   insertMany: jest.fn(),
+  bulkWrite: jest.fn(),
 };
 const mockApprovalRequest = { findOne: jest.fn(), find: jest.fn() };
 const mockGetLeaveFieldIds = jest.fn();
@@ -49,6 +50,7 @@ beforeEach(() => {
   mockShiftSchedule.findOne.mockReset();
   mockShiftSchedule.create.mockReset();
   mockShiftSchedule.insertMany.mockReset();
+  mockShiftSchedule.bulkWrite.mockReset();
   mockApprovalRequest.findOne.mockReset();
   mockApprovalRequest.find.mockReset();
   mockApprovalRequest.find.mockReturnValue({
@@ -176,14 +178,24 @@ describe('Supervisor schedule permissions', () => {
       if (id === 'emp1') return Promise.resolve({ _id: 'emp1', supervisor: 'u1' });
       return Promise.resolve(null);
     });
-    mockShiftSchedule.findOne.mockResolvedValue(null);
-    mockApprovalRequest.findOne.mockResolvedValue(null);
-    mockShiftSchedule.insertMany.mockResolvedValue([{ _id: 'sch1' }]);
+    const written = [{
+      _id: 'sch1',
+      employee: 'emp1',
+      date: new Date('2023-01-01'),
+      shiftId: 'day',
+    }];
+    mockShiftSchedule.find
+      .mockReturnValueOnce({ lean: jest.fn().mockResolvedValue([]) })
+      .mockReturnValueOnce({ lean: jest.fn().mockResolvedValue(written) });
+    mockShiftSchedule.bulkWrite.mockResolvedValue({ acknowledged: true });
 
     const payload = { schedules: [{ employee: 'emp1', date: '2023-01-01', shiftId: 'day' }] };
     const res = await request(app).post('/api/schedules/batch').send(payload);
     expect(res.status).toBe(201);
-    expect(mockShiftSchedule.insertMany).toHaveBeenCalled();
+    expect(mockShiftSchedule.bulkWrite).toHaveBeenCalledWith(
+      [expect.objectContaining({ updateOne: expect.objectContaining({ upsert: true }) })],
+      { ordered: false }
+    );
   });
 
 

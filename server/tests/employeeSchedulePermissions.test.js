@@ -49,6 +49,7 @@ jest.unstable_mockModule('../src/controllers/scheduleController.js', () => ({
   deleteOldSchedules: jest.fn(),
   listLeaveApprovals: jest.fn(),
   listSupervisorSummary: jest.fn(),
+  validateScheduleRules: jest.fn(),
   validateScheduleCompleteness: jest.fn(),
   getIncompleteSchedules: jest.fn(),
   checkCanFinalize: jest.fn(),

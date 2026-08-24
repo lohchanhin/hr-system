@@ -5,6 +5,7 @@ const mockShiftSchedule = {
   findById: jest.fn(),
   create: jest.fn(),
   insertMany: jest.fn(),
+  bulkWrite: jest.fn(),
   find: jest.fn(),
 };
 const mockApprovalRequest = { findOne: jest.fn(), find: jest.fn() };
@@ -95,6 +96,7 @@ describe('createSchedule validations', () => {
       subDepartment: undefined,
       needsReconfirm: true,
     });
+    expect(mockAssertScheduleRuleCompliance).not.toHaveBeenCalled();
     expect(status).toHaveBeenCalledWith(201);
   });
 });
@@ -103,6 +105,8 @@ describe('createSchedulesBatch validations', () => {
   beforeEach(() => {
     mockShiftSchedule.findOne.mockReset();
     mockShiftSchedule.insertMany.mockReset();
+    mockShiftSchedule.bulkWrite.mockReset();
+    mockShiftSchedule.find.mockReset();
     mockApprovalRequest.findOne.mockReset();
     mockApprovalRequest.find.mockReset();
     mockGetLeaveFieldIds.mockReset();
@@ -116,6 +120,14 @@ describe('createSchedulesBatch validations', () => {
       typeId: 't',
       typeOptions: [],
     });
+    mockApprovalRequest.find.mockReturnValue({
+      select: jest.fn().mockReturnThis(),
+      lean: jest.fn().mockResolvedValue([]),
+    });
+    mockShiftSchedule.find.mockReturnValue({
+      lean: jest.fn().mockResolvedValue([]),
+    });
+    mockShiftSchedule.bulkWrite.mockResolvedValue({ acknowledged: true });
   });
 
   it('returns leave conflict when batch has approved leave', async () => {
@@ -137,13 +149,13 @@ describe('createSchedulesBatch validations', () => {
   });
 
   it('creates multiple schedules when payload is valid', async () => {
-    mockShiftSchedule.findOne.mockResolvedValue(null);
-    mockApprovalRequest.findOne.mockResolvedValue(null);
     const insertedDocs = [
       { _id: '1', employee: 'e1', date: new Date('2023-01-01'), shiftId: 's1', department: 'd1', subDepartment: 'sd1' },
       { _id: '2', employee: 'e2', date: new Date('2023-01-02'), shiftId: 's2', department: 'd2', subDepartment: 'sd2' }
     ];
-    mockShiftSchedule.insertMany.mockResolvedValue(insertedDocs);
+    mockShiftSchedule.find
+      .mockReturnValueOnce({ lean: jest.fn().mockResolvedValue([]) })
+      .mockReturnValueOnce({ lean: jest.fn().mockResolvedValue(insertedDocs) });
     const req = {
       body: {
         schedules: [
@@ -156,36 +168,25 @@ describe('createSchedulesBatch validations', () => {
     const json = jest.fn();
     const res = { status, json };
     await createSchedulesBatch(req, res);
-    expect(mockShiftSchedule.insertMany).toHaveBeenCalledWith(
-      [
-        {
-          employee: 'e1',
-          date: new Date('2023-01-01'),
-          shiftId: 's1',
-          department: 'd1',
-          subDepartment: 'sd1',
-          needsReconfirm: true,
-        },
-        {
-          employee: 'e2',
-          date: new Date('2023-01-02'),
-          shiftId: 's2',
-          department: 'd2',
-          subDepartment: 'sd2',
-          needsReconfirm: true,
-        }
-      ],
-      { ordered: false }
-    );
+    expect(mockShiftSchedule.bulkWrite).toHaveBeenCalledWith([
+      expect.objectContaining({ updateOne: expect.objectContaining({
+        filter: { employee: 'e1', date: new Date('2023-01-01') },
+        upsert: true,
+      }) }),
+      expect.objectContaining({ updateOne: expect.objectContaining({
+        filter: { employee: 'e2', date: new Date('2023-01-02') },
+        upsert: true,
+      }) }),
+    ], { ordered: false });
     expect(status).toHaveBeenCalledWith(201);
     expect(json).toHaveBeenCalledWith(insertedDocs);
   });
 
   it('omits blank optional department references before inserting schedules', async () => {
-    mockShiftSchedule.findOne.mockResolvedValue(null);
-    mockApprovalRequest.findOne.mockResolvedValue(null);
     const insertedDocs = [{ _id: '1', employee: 'e1', date: new Date('2023-01-01'), shiftId: 's1' }];
-    mockShiftSchedule.insertMany.mockResolvedValue(insertedDocs);
+    mockShiftSchedule.find
+      .mockReturnValueOnce({ lean: jest.fn().mockResolvedValue([]) })
+      .mockReturnValueOnce({ lean: jest.fn().mockResolvedValue(insertedDocs) });
     const req = {
       body: {
         schedules: [{
@@ -203,28 +204,56 @@ describe('createSchedulesBatch validations', () => {
 
     await createSchedulesBatch(req, res);
 
-    expect(mockShiftSchedule.insertMany).toHaveBeenCalledWith(
-      [{
-        employee: 'e1',
-        date: new Date('2023-01-01'),
-        shiftId: 's1',
-        department: undefined,
-        subDepartment: undefined,
-        needsReconfirm: true,
-      }],
-      { ordered: false }
-    );
+    const operation = mockShiftSchedule.bulkWrite.mock.calls[0][0][0].updateOne;
+    expect(operation.update.$set).toEqual(expect.objectContaining({
+      employee: 'e1',
+      date: new Date('2023-01-01'),
+      shiftId: 's1',
+      department: undefined,
+      subDepartment: undefined,
+      needsReconfirm: true,
+    }));
     expect(status).toHaveBeenCalledWith(201);
     expect(json).toHaveBeenCalledWith(insertedDocs);
   });
 
-  it('returns labor rule violations before writing batch schedules', async () => {
-    mockShiftSchedule.findOne.mockResolvedValue(null);
-    mockApprovalRequest.findOne.mockResolvedValue(null);
+  it('keeps batch query count constant for 23 employees across 30 days', async () => {
+    const schedules = Array.from({ length: 23 }, (_, employeeIndex) => (
+      Array.from({ length: 30 }, (_, dayIndex) => ({
+        employee: `e${employeeIndex + 1}`,
+        date: `2023-01-${String(dayIndex + 1).padStart(2, '0')}`,
+        shiftId: 's1',
+      }))
+    )).flat();
+    const written = schedules.map((schedule, index) => ({
+      ...schedule,
+      _id: `schedule-${index + 1}`,
+      date: new Date(schedule.date),
+    }));
+    mockShiftSchedule.find
+      .mockReturnValueOnce({ lean: jest.fn().mockResolvedValue([]) })
+      .mockReturnValueOnce({ lean: jest.fn().mockResolvedValue(written) });
+    const status = jest.fn().mockReturnThis();
+    const json = jest.fn();
+
+    await createSchedulesBatch({ body: { schedules } }, { status, json });
+
+    expect(status).toHaveBeenCalledWith(201);
+    expect(mockShiftSchedule.find).toHaveBeenCalledTimes(2);
+    expect(mockShiftSchedule.bulkWrite).toHaveBeenCalledTimes(1);
+    expect(mockShiftSchedule.bulkWrite.mock.calls[0][0]).toHaveLength(690);
+    expect(mockApprovalRequest.find).toHaveBeenCalledTimes(1);
+  });
+
+  it('stores a batch as draft without running blocking labor validation', async () => {
     const error = new Error('排班規範檢核未通過');
     error.status = 400;
     error.violations = [{ rule: 'shift-gap', message: '班與班之間需間隔11小時' }];
     mockAssertScheduleRuleCompliance.mockRejectedValue(error);
+    const written = [{ _id: '1', employee: 'e1', date: new Date('2023-01-01'), shiftId: 's1' }];
+    mockShiftSchedule.find
+      .mockReturnValueOnce({ lean: jest.fn().mockResolvedValue([]) })
+      .mockReturnValueOnce({ lean: jest.fn().mockResolvedValue(written) });
 
     const req = {
       body: {
@@ -237,12 +266,10 @@ describe('createSchedulesBatch validations', () => {
 
     await createSchedulesBatch(req, res);
 
-    expect(mockShiftSchedule.insertMany).not.toHaveBeenCalled();
-    expect(status).toHaveBeenCalledWith(400);
-    expect(json).toHaveBeenCalledWith({
-      error: '排班規範檢核未通過',
-      violations: error.violations,
-    });
+    expect(mockAssertScheduleRuleCompliance).not.toHaveBeenCalled();
+    expect(mockShiftSchedule.bulkWrite).toHaveBeenCalledTimes(1);
+    expect(status).toHaveBeenCalledWith(201);
+    expect(json).toHaveBeenCalledWith(written);
   });
 });
 
@@ -328,6 +355,7 @@ describe('updateSchedule validations', () => {
     await updateSchedule(req, res);
     expect(status).not.toHaveBeenCalled();
     expect(json).toHaveBeenCalledWith(saved);
+    expect(mockAssertScheduleRuleCompliance).not.toHaveBeenCalled();
   });
 });
 
@@ -405,7 +433,20 @@ describe('exportSchedules excel matrix', () => {
       typeId: 'type',
     });
     mockHoliday.find.mockReset();
-    mockHoliday.find.mockReturnValue({ lean: jest.fn().mockResolvedValue([]) });
+    mockHoliday.find.mockReturnValue({ lean: jest.fn().mockResolvedValue([
+      {
+        date: new Date('2024-02-02T00:00:00.000Z'),
+        name: '有班假日',
+      },
+      {
+        date: new Date('2024-02-03T00:00:00.000Z'),
+        name: '請假假日',
+      },
+      {
+        date: new Date('2024-02-04T00:00:00.000Z'),
+        name: '無班假日',
+      },
+    ]) });
     mockScheduleDayMemo.find.mockReset();
     mockScheduleDayMemo.find.mockReturnValue({
       sort: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue([]) }),
@@ -499,16 +540,22 @@ describe('exportSchedules excel matrix', () => {
     await workbook.xlsx.load(res.send.mock.calls[0][0]);
     const sheet = workbook.getWorksheet('工作表1');
 
-    const headerValues = sheet.getRow(4).values.slice(1, 7);
-    expect(headerValues).toEqual(['員工代號', '姓名', '星期', '四', '五', '六']);
+    const headerValues = sheet.getRow(4).values.slice(1, 9);
+    expect(headerValues).toEqual(['員工代號', '姓名', '單位', '職稱／職位', '四', '五', '六', '日']);
 
-    expect(sheet.columnCount).toBe(32); // 3 fixed columns + 29 days in 2024/02
-    expect(sheet.getRow(5).getCell(3).value).toBe('備忘錄');
-    expect(sheet.getRow(5).getCell(5).value).toBe('CODEX_TEST 日期備忘錄');
-    expect(sheet.getRow(6).getCell(1).value).toBe('A001');
-    expect(sheet.getRow(6).getCell(2).value).toBe('王小明');
-    expect(sheet.getRow(6).getCell(4).value).toBe('D');
-    expect(sheet.getRow(6).getCell(5).value).toBe('N');
-    expect(sheet.getRow(6).getCell(6).value).toBe('特');
+    expect(sheet.columnCount).toBe(33); // 4 fixed columns + 29 days in 2024/02
+    expect(sheet.views[0]).toEqual(expect.objectContaining({ state: 'frozen', xSplit: 4, ySplit: 4 }));
+    expect(sheet.getRow(2).getCell(6).value).toBe('有班假日\nCODEX_TEST 日期備忘錄');
+    expect(sheet.getRow(2).getCell(7).value).toBe('請假假日');
+    expect(sheet.getRow(2).getCell(8).value).toBe('無班假日');
+    expect(sheet.getRow(5).getCell(1).value).toBe('A001');
+    expect(sheet.getRow(5).getCell(2).value).toBe('王小明');
+    expect(sheet.getRow(5).getCell(3).value).toBe('內科');
+    expect(sheet.getRow(5).getCell(4).value).toBe('RN');
+    expect(sheet.getRow(5).getCell(5).value).toBe('D');
+    expect(sheet.getRow(5).getCell(6).value).toBe('N');
+    expect(sheet.getRow(5).getCell(7).value).toBe('特');
+    expect(sheet.getRow(5).getCell(8).value).toBe('');
+    expect(sheet.getCell('E8').value).toEqual({ formula: 'COUNTIF(E5:E6,"D")' });
   });
 });

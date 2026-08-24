@@ -67,6 +67,13 @@ const buildScheduleDoc = (data = {}) => {
   return doc;
 };
 
+const setupBatchPersistence = (existingRows = [], writtenRows = []) => {
+  mockShiftSchedule.find
+    .mockReturnValueOnce({ lean: jest.fn().mockResolvedValue(existingRows) })
+    .mockReturnValueOnce({ lean: jest.fn().mockResolvedValue(writtenRows) });
+  mockShiftSchedule.bulkWrite.mockResolvedValue({ acknowledged: true });
+};
+
 const buildPopulateChain = (value) => {
   const chain = {
     select: jest.fn(function select() {
@@ -156,6 +163,10 @@ beforeEach(() => {
 
   mockApprovalRequest.findOne.mockReset();
   mockApprovalRequest.find.mockReset();
+  mockApprovalRequest.find.mockReturnValue({
+    select: jest.fn().mockReturnThis(),
+    lean: jest.fn().mockResolvedValue([]),
+  });
   mockGetLeaveFieldIds.mockReset();
   mockGetLeaveFieldIds.mockResolvedValue({
     formId: 'form1',
@@ -479,30 +490,31 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
 
 
   it('creates schedules batch', async () => {
-    mockShiftSchedule.findOne.mockResolvedValue(null);
-    mockApprovalRequest.findOne.mockResolvedValue(null);
-    mockShiftSchedule.insertMany.mockResolvedValue([{ _id: '1' }]);
+    setupBatchPersistence([], [{
+      _id: '1', employee: 'e1', date: new Date('2023-01-01'), shiftId: 'day',
+    }]);
 
     const payload = { schedules: [{ employee: 'e1', date: '2023-01-01', shiftId: 'day' }] };
     const res = await request(app).post('/api/schedules/batch').send(payload);
 
     expect(res.status).toBe(201);
-    expect(mockShiftSchedule.insertMany).toHaveBeenCalledWith([
-      {
-        employee: 'e1',
-        date: new Date('2023-01-01'),
-        shiftId: 'day',
-        department: undefined,
-        subDepartment: undefined,
-        needsReconfirm: true,
-      }
+    expect(mockShiftSchedule.bulkWrite).toHaveBeenCalledWith([
+      expect.objectContaining({ updateOne: expect.objectContaining({
+        filter: { employee: 'e1', date: new Date('2023-01-01') },
+        upsert: true,
+      }) }),
     ], { ordered: false });
   });
 
   it('creates schedules batch with department and subDepartment', async () => {
-    mockShiftSchedule.findOne.mockResolvedValue(null);
-    mockApprovalRequest.findOne.mockResolvedValue(null);
-    mockShiftSchedule.insertMany.mockResolvedValue([{ _id: '1' }]);
+    setupBatchPersistence([], [{
+      _id: '1',
+      employee: 'e1',
+      date: new Date('2023-01-01'),
+      shiftId: 'day',
+      department: 'd1',
+      subDepartment: 'sd1',
+    }]);
 
     const payload = {
       schedules: [
@@ -518,25 +530,15 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
     const res = await request(app).post('/api/schedules/batch').send(payload);
 
     expect(res.status).toBe(201);
-    expect(mockShiftSchedule.insertMany).toHaveBeenCalledWith([
-      {
-        employee: 'e1',
-        date: new Date('2023-01-01'),
-        shiftId: 'day',
-        department: 'd1',
-        subDepartment: 'sd1',
-        needsReconfirm: true,
-      }
-    ], { ordered: false });
+    expect(mockShiftSchedule.bulkWrite.mock.calls[0][0][0].updateOne.update.$set)
+      .toEqual(expect.objectContaining({ department: 'd1', subDepartment: 'sd1' }));
   });
 
   it('allows supervisor to include self in batch payload without duplicate lookups', async () => {
-    mockShiftSchedule.findOne.mockResolvedValueOnce(null);
-    mockShiftSchedule.findOne.mockResolvedValueOnce(null);
-    mockApprovalRequest.findOne.mockResolvedValue(null);
-    mockShiftSchedule.insertMany.mockImplementation(async (docs) =>
-      docs.map((doc, index) => ({ ...doc, _id: `new${index}` }))
-    );
+    setupBatchPersistence([], [
+      { _id: 'new0', employee: 'tester', date: new Date('2023-01-01'), shiftId: 'day' },
+      { _id: 'new1', employee: 'emp1', date: new Date('2023-01-02'), shiftId: 'night' },
+    ]);
 
     const payload = {
       schedules: [
@@ -558,24 +560,7 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
       'tester',
       'emp1'
     ]);
-    expect(mockShiftSchedule.insertMany).toHaveBeenCalledWith([
-      {
-        employee: 'tester',
-        date: new Date('2023-01-01'),
-        shiftId: 'day',
-        department: undefined,
-        subDepartment: undefined,
-        needsReconfirm: true,
-      },
-      {
-        employee: 'emp1',
-        date: new Date('2023-01-02'),
-        shiftId: 'night',
-        department: undefined,
-        subDepartment: undefined,
-        needsReconfirm: true,
-      }
-    ], { ordered: false });
+    expect(mockShiftSchedule.bulkWrite.mock.calls[0][0]).toHaveLength(2);
   });
 
   describe('publish and finalize workflow', () => {
@@ -630,6 +615,52 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
         publishedAt: expect.any(String),
         publishedMonth: '2024-05',
       });
+    });
+
+    it('keeps draft state unchanged when publish labor validation fails', async () => {
+      const docs = [
+        {
+          _id: 'sch1',
+          employee: { _id: 'emp1', name: '王小明' },
+          state: 'draft',
+          employeeResponse: 'pending',
+          publishedAt: null,
+          date: new Date('2024-05-01'),
+        },
+      ];
+      mockShiftSchedule.find.mockReturnValue({
+        populate: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockResolvedValue(docs),
+      });
+      mockEmployee.find.mockReturnValue({
+        select: jest.fn().mockResolvedValue([{ _id: 'emp1' }]),
+      });
+      const validationError = new Error('排班規範檢核未通過');
+      validationError.status = 400;
+      validationError.violations = [{
+        rule: 'minimum-shift-gap',
+        employee: 'emp1',
+        date: '2024-05-01',
+        message: '換班間隔不足 11 小時',
+      }];
+      mockAssertScheduleRuleCompliance.mockRejectedValueOnce(validationError);
+
+      const res = await request(app)
+        .post('/api/schedules/publish')
+        .set('Authorization', buildAuthHeader('supervisor'))
+        .send({ month: '2024-05' });
+
+      expect(res.status).toBe(400);
+      expect(res.body).toEqual({
+        error: '排班規範檢核未通過',
+        violations: validationError.violations,
+      });
+      expect(mockShiftSchedule.updateMany).not.toHaveBeenCalled();
+      expect(docs[0]).toEqual(expect.objectContaining({
+        state: 'draft',
+        employeeResponse: 'pending',
+        publishedAt: null,
+      }));
     });
 
     it('blocks finalize when employees are pending', async () => {
@@ -694,6 +725,44 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
       expect(mockShiftSchedule.updateMany).toHaveBeenCalledWith({
         _id: { $in: ['sch1'] },
       }, { $set: { state: 'finalized', needsReconfirm: false } });
+    });
+
+    it('returns complete non-blocking draft rule violations from the preflight endpoint', async () => {
+      const docs = [{
+        _id: 'sch1',
+        employee: 'emp1',
+        date: new Date('2024-05-03T00:00:00.000Z'),
+        shiftId: 'night',
+        department: 'd1',
+      }];
+      const selectMock = jest.fn().mockResolvedValue([{ _id: 'emp1' }]);
+      mockEmployee.find.mockReturnValue({ select: selectMock });
+      mockShiftSchedule.find.mockReturnValue({
+        lean: jest.fn().mockResolvedValue(docs),
+      });
+      const validationError = new Error('排班規範檢核未通過');
+      validationError.violations = Array.from({ length: 138 }, (_, index) => ({
+        rule: 'minimum-shift-gap',
+        employee: 'emp1',
+        date: `2024-05-${String((index % 28) + 1).padStart(2, '0')}`,
+        message: `CODEX_TEST violation ${index + 1}`,
+      }));
+      mockAssertScheduleRuleCompliance.mockRejectedValueOnce(validationError);
+
+      const res = await request(app)
+        .get('/api/schedules/rules/validate?month=2024-05&department=d1')
+        .set('Authorization', buildAuthHeader('supervisor'));
+
+      expect(res.status).toBe(200);
+      expect(res.body.ok).toBe(false);
+      expect(res.body.count).toBe(138);
+      expect(res.body.violations).toHaveLength(138);
+      expect(res.body.violations[137]).toEqual(expect.objectContaining({
+        rule: 'minimum-shift-gap',
+        employee: 'emp1',
+        message: 'CODEX_TEST violation 138',
+      }));
+      expect(mockShiftSchedule.updateMany).not.toHaveBeenCalled();
     });
 
     it('returns labor-rule details when finalize validation fails', async () => {
@@ -1131,9 +1200,12 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
 
   it('rejects batch if schedule exists', async () => {
     const existing = buildScheduleDoc();
-    mockShiftSchedule.findOne.mockResolvedValue(existing);
-    mockApprovalRequest.findOne.mockResolvedValue(null);
-    mockShiftSchedule.insertMany.mockResolvedValue([]);
+    setupBatchPersistence([existing], [{
+      ...existing,
+      shiftId: 'day',
+      department: 'd2',
+      subDepartment: 'sd2',
+    }]);
 
     const payload = {
       schedules: [
@@ -1150,8 +1222,8 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
     const res = await request(app).post('/api/schedules/batch').send(payload);
 
     expect(res.status).toBe(201);
-    expect(existing.save).toHaveBeenCalled();
-    expect(mockShiftSchedule.insertMany).not.toHaveBeenCalled();
+    expect(existing.save).not.toHaveBeenCalled();
+    expect(mockShiftSchedule.bulkWrite).toHaveBeenCalledTimes(1);
     expect(res.body).toEqual([
       expect.objectContaining({
         _id: 'sch1',
@@ -1165,9 +1237,12 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
 
   it('keeps existing department info when override payload omits it', async () => {
     const existing = buildScheduleDoc({ department: 'd3', subDepartment: 'sd9' });
-    mockShiftSchedule.findOne.mockResolvedValue(existing);
-    mockApprovalRequest.findOne.mockResolvedValue(null);
-    mockShiftSchedule.insertMany.mockResolvedValue([]);
+    setupBatchPersistence([existing], [{
+      ...existing,
+      shiftId: 'day',
+      department: 'd3',
+      subDepartment: 'sd9',
+    }]);
 
     const payload = {
       schedules: [
@@ -1182,14 +1257,14 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
     const res = await request(app).post('/api/schedules/batch').send(payload);
 
     expect(res.status).toBe(201);
-    expect(existing.save).toHaveBeenCalled();
+    expect(existing.save).not.toHaveBeenCalled();
     const savedPayload = res.body[0];
     expect(savedPayload.department).toBe('d3');
     expect(savedPayload.subDepartment).toBe('sd9');
   });
 
   it('rejects batch if leave conflict', async () => {
-    mockShiftSchedule.findOne.mockResolvedValue(null);
+    mockShiftSchedule.find.mockReturnValueOnce({ lean: jest.fn().mockResolvedValue([]) });
     mockApprovalRequest.find.mockReturnValue({
       select: jest.fn().mockReturnThis(),
       lean: jest.fn().mockResolvedValue([{
@@ -1234,6 +1309,15 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
       lean: jest.fn().mockResolvedValue([]),
     });
     mockShiftSchedule.bulkWrite.mockResolvedValue({ upsertedCount: 1 });
+    const draftViolation = {
+      rule: 'minimum-shift-gap',
+      employee: 'e1',
+      date: '2026-07-01',
+      message: 'CODEX_TEST 草稿换班间隔不足 11 小时',
+    };
+    const validationError = new Error('排班規範檢核未通過');
+    validationError.violations = [draftViolation];
+    mockAssertScheduleRuleCompliance.mockRejectedValue(validationError);
 
     const preview = await request(app)
       .post('/api/schedules/import')
@@ -1244,7 +1328,11 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
       .attach('file', file, { filename: 'schedule.xlsx', contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
 
     expect(preview.status).toBe(200);
-    expect(preview.body).toEqual(expect.objectContaining({ scheduleDays: 1, errors: [] }));
+    expect(preview.body).toEqual(expect.objectContaining({
+      scheduleDays: 1,
+      errors: [],
+      violations: [draftViolation],
+    }));
     expect(mockShiftSchedule.bulkWrite).not.toHaveBeenCalled();
 
     const committed = await request(app)
@@ -1257,6 +1345,7 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
 
     expect(committed.status).toBe(201);
     expect(committed.body.imported).toBe(1);
+    expect(committed.body.violations).toEqual([draftViolation]);
     expect(mockShiftSchedule.bulkWrite).toHaveBeenCalledTimes(1);
   });
 
@@ -1816,13 +1905,13 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
     await workbook.xlsx.load(toBuffer(res.body));
     const worksheet = workbook.getWorksheet('工作表1');
     expect(worksheet.rowCount).toBeGreaterThanOrEqual(6);
-    expect(worksheet.getRow(4).values.slice(1, 4)).toEqual(['員工代號', '姓名', '星期']);
-    expect(worksheet.getRow(5).getCell(3).value).toBe('備忘錄');
-    const dataRow = worksheet.getRow(6).values;
+    expect(worksheet.getRow(4).values.slice(1, 5)).toEqual(['員工代號', '姓名', '單位', '職稱／職位']);
+    const dataRow = worksheet.getRow(5).values;
     expect(dataRow[1]).toBe('A001');
     expect(dataRow[2]).toBe('Alice');
-    expect(dataRow[3]).toBe('');
-    expect(dataRow[13]).toBe('Morning');
+    expect(dataRow[3]).toBe('A單位');
+    expect(dataRow[4]).toBe('');
+    expect(dataRow[14]).toBe('Morning');
   });
 
   describe('schedule overview', () => {

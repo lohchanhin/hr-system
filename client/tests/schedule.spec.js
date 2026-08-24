@@ -1,10 +1,15 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { shallowMount } from '@vue/test-utils'
 import dayjs from 'dayjs'
+import { readFileSync } from 'node:fs'
 import { createPinia, setActivePinia } from 'pinia'
 import { buildShiftStyle } from '../src/utils/shiftColors'
 import { ROW_COLOR_PALETTE } from '../src/utils/rowColors'
 import { useAuthStore } from '../src/stores/auth'
+const notificationDrawerStyles = readFileSync(
+  'src/views/front/ScheduleNotificationDrawer.scss',
+  'utf8'
+)
 
 const elementPlusMock = vi.hoisted(() => {
   const ElMessage = { error: vi.fn(), success: vi.fn(), warning: vi.fn(), info: vi.fn() }
@@ -1202,9 +1207,7 @@ describe('Schedule.vue', () => {
     expect(wrapper.vm.isApplyingBatch).toBe(true)
     expect(button.attributes('loading')).toBe('true')
     expect(button.element.disabled).toBe(true)
-    expect(loadingServiceMock).toHaveBeenCalledTimes(1)
-    const loadingInstance = loadingServiceMock.mock.results[0]?.value
-    expect(typeof loadingInstance?.close).toBe('function')
+    expect(loadingServiceMock).not.toHaveBeenCalled()
 
     resolveFetch()
     await applyPromise
@@ -1213,7 +1216,6 @@ describe('Schedule.vue', () => {
     expect(wrapper.vm.isApplyingBatch).toBe(false)
     expect(button.attributes('loading')).toBe('false')
     expect(button.element.disabled).toBe(true)
-    expect(loadingInstance.close).toHaveBeenCalled()
     expect(ElMessage.success).toHaveBeenCalledWith('批次套用完成')
   })
 
@@ -1231,6 +1233,11 @@ describe('Schedule.vue', () => {
     await wrapper.vm.$nextTick()
     wrapper.vm.toggleCell('e1', 1, true)
     wrapper.vm.batchShiftId = 's1'
+    let applyingWhenDialogOpened = true
+    ElMessageBox.alert.mockImplementation(() => {
+      applyingWhenDialogOpened = wrapper.vm.isApplyingBatch
+      return Promise.resolve()
+    })
     apiFetch.mockResolvedValueOnce({
       ok: false,
       json: async () => ({
@@ -1241,6 +1248,8 @@ describe('Schedule.vue', () => {
 
     await wrapper.vm.applyBatch()
 
+    expect(applyingWhenDialogOpened).toBe(false)
+    expect(loadingServiceMock).not.toHaveBeenCalled()
     expect(ElMessageBox.alert).toHaveBeenCalledWith(
       expect.stringContaining('CODEX_TEST_A0077 CODEX 測試主管：不得連續7日未安排休/例'),
       '排班規範檢核未通過',
@@ -1351,6 +1360,111 @@ describe('Schedule.vue', () => {
     expect(wrapper.find('.notification-log-item__heading').text()).toContain('提醒')
     const stored = JSON.parse(localStorage.getItem('schedule-notifications:sup1'))
     expect(stored[0].message).toBe('CODEX_TEST 通知內容')
+  })
+
+  it('通知日誌超過容量上限時淘汰最舊記錄', async () => {
+    setRoleToken('supervisor')
+    localStorage.setItem('employeeId', 'sup1')
+    setupSupervisorApiMock()
+    const wrapper = mountSchedule()
+    await flush()
+    const largeMessage = `CODEX_TEST ${'X'.repeat(70_000)}`
+    wrapper.vm.scheduleNotifications = Array.from({ length: 8 }, (_, index) => ({
+      id: `notification-${index}`,
+      type: 'warning',
+      title: '容量測試',
+      message: largeMessage,
+      details: [{ rule: 'capacity', message: largeMessage }],
+      createdAt: new Date(2026, 7, 24, 12, 0, index % 60).toISOString()
+    }))
+
+    wrapper.vm.persistScheduleNotifications()
+
+    const serialized = localStorage.getItem('schedule-notifications:sup1')
+    const stored = JSON.parse(serialized)
+    expect(new Blob([serialized]).size).toBeLessThanOrEqual(900_000)
+    expect(stored.length).toBeLessThan(8)
+    expect(stored[0].id).toBe('notification-0')
+    expect(stored.at(-1).id).toBe(`notification-${stored.length - 1}`)
+  })
+
+  it('通知抽屜以全域高對比色顯示四種狀態', async () => {
+    setRoleToken('supervisor')
+    localStorage.setItem('employeeId', 'sup1')
+    setupSupervisorApiMock()
+    const host = document.createElement('div')
+    const style = document.createElement('style')
+    style.textContent = notificationDrawerStyles
+    document.head.appendChild(style)
+    document.body.appendChild(host)
+    const wrapper = mountSchedule({ attachTo: host })
+    await flush()
+
+    wrapper.vm.callSuccess('成功內容')
+    wrapper.vm.callWarning('提醒內容')
+    wrapper.vm.callError('錯誤內容')
+    wrapper.vm.callInfo('通知內容')
+    await wrapper.vm.$nextTick()
+
+    const drawer = wrapper.find('.schedule-notification-drawer')
+    const toolbar = getComputedStyle(drawer.find('.notification-log-toolbar span').element)
+    const title = getComputedStyle(drawer.find('.notification-log-item__heading strong').element)
+    const time = getComputedStyle(drawer.find('.notification-log-item__heading time').element)
+    const body = getComputedStyle(drawer.find('.notification-log-item p').element)
+    expect(toolbar.color).toBe('rgb(71, 84, 103)')
+    expect(title.color).toBe('rgb(24, 32, 38)')
+    expect(time.color).toBe('rgb(102, 112, 133)')
+    expect(body.color).toBe('rgb(52, 64, 84)')
+
+    const expectedBorders = {
+      info: 'rgb(23, 92, 211)',
+      error: 'rgb(180, 35, 24)',
+      warning: 'rgb(181, 71, 8)',
+      success: 'rgb(8, 127, 91)'
+    }
+    wrapper.findAll('.notification-log-item').forEach(item => {
+      expect(getComputedStyle(item.element).borderLeftColor)
+        .toBe(expectedBorders[item.attributes('data-type')])
+    })
+    const relativeLuminance = hex => {
+      const channels = hex.match(/[a-f\d]{2}/gi)
+        .map(channel => parseInt(channel, 16) / 255)
+        .map(value => value <= 0.03928 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4)
+      return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2]
+    }
+    const contrastOnWhite = hex => 1.05 / (relativeLuminance(hex) + 0.05)
+    ;['#182026', '#344054', '#667085', '#475467', '#B42318', '#087F5B', '#B54708', '#175CD3']
+      .forEach(color => expect(contrastOnWhite(color)).toBeGreaterThanOrEqual(4.5))
+
+    wrapper.unmount()
+    host.remove()
+    style.remove()
+  })
+
+  it('完整保存并重新开启 138 项排班问题，不再截断前 20 项', async () => {
+    setRoleToken('supervisor')
+    localStorage.setItem('employeeId', 'sup1')
+    setupSupervisorApiMock()
+    const wrapper = mountSchedule()
+    await flush()
+    const issues = Array.from({ length: 138 }, (_, index) => `CODEX_TEST 问题 ${index + 1}`)
+
+    await wrapper.vm.openScheduleIssueDialog('排班規範檢核未通過', issues, '检核失败')
+    expect(ElMessageBox.alert).toHaveBeenCalledWith(
+      expect.stringContaining('CODEX_TEST 问题 138'),
+      '排班規範檢核未通過',
+      expect.objectContaining({ customClass: 'schedule-issue-dialog' })
+    )
+    expect(ElMessageBox.alert.mock.calls[0][0]).not.toContain('另有')
+    expect(wrapper.vm.scheduleNotifications[0].details).toHaveLength(138)
+
+    ElMessageBox.alert.mockClear()
+    await wrapper.find('.notification-log-item__details-button').trigger('click')
+    expect(ElMessageBox.alert).toHaveBeenCalledWith(
+      expect.stringContaining('CODEX_TEST 问题 138'),
+      '排班規範檢核未通過',
+      expect.objectContaining({ customClass: 'schedule-issue-dialog' })
+    )
   })
 
   it('載入並儲存逐日期排班備忘錄', async () => {
@@ -2826,6 +2940,29 @@ describe('Schedule.vue', () => {
     wrapper.vm.toggleTableFullscreen()
     await wrapper.vm.$nextTick()
     expect(wrapper.vm.isTableFullscreen).toBe(false)
+  })
+
+  it('全螢幕模式將完整問題檢視器掛載在排班容器內', async () => {
+    const wrapper = mountSchedule()
+    await flush()
+    wrapper.vm.toggleTableFullscreen()
+    await wrapper.vm.$nextTick()
+
+    await wrapper.vm.openScheduleIssueDialog(
+      '排班規範檢核未通過',
+      ['CODEX_TEST 全螢幕問題'],
+      '檢核失敗',
+      { record: false }
+    )
+
+    expect(ElMessageBox.alert).toHaveBeenCalledWith(
+      'CODEX_TEST 全螢幕問題',
+      '排班規範檢核未通過',
+      expect.objectContaining({
+        customClass: 'schedule-issue-dialog',
+        appendTo: wrapper.find('[data-test="schedule-card"]').element
+      })
+    )
   })
 
   it('全螢幕模式仍可看到簽核摘要，且可展開簽核詳細列表', async () => {

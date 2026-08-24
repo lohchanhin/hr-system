@@ -215,6 +215,17 @@
             通知日誌
           </el-button>
         </el-badge>
+        <el-badge :value="scheduleRuleValidation.count" :hidden="!scheduleRuleValidation.count" :max="999">
+          <el-button
+            class="action-btn secondary"
+            data-test="schedule-rule-issues-button"
+            :loading="scheduleRuleValidation.checking"
+            @click="inspectScheduleRules"
+          >
+            <el-icon><WarningFilled /></el-icon>
+            排班檢核
+          </el-button>
+        </el-badge>
         <input
           ref="scheduleImportInput"
           type="file"
@@ -705,10 +716,21 @@
     <div v-else class="notification-log-list" data-test="notification-log-list">
       <article v-for="item in scheduleNotifications" :key="item.id" class="notification-log-item" :data-type="item.type">
         <div class="notification-log-item__heading">
-          <strong>{{ item.title }}</strong>
+          <div class="notification-log-item__title">
+            <el-icon aria-hidden="true"><component :is="notificationIcon(item.type)" /></el-icon>
+            <strong>{{ item.title }}</strong>
+          </div>
           <time>{{ formatNotificationTime(item.createdAt) }}</time>
         </div>
         <p>{{ item.message }}</p>
+        <el-button
+          v-if="item.details?.length"
+          class="notification-log-item__details-button"
+          text
+          @click="reopenNotificationDetails(item)"
+        >
+          查看完整明細（{{ item.details.length }}）
+        </el-button>
       </article>
     </div>
   </el-drawer>
@@ -736,8 +758,12 @@ import {
   Fold,
   FullScreen,
   Grid,
+  CircleCheckFilled,
+  CircleCloseFilled,
+  InfoFilled,
   Search,
-  Upload
+  Upload,
+  WarningFilled
 } from '@element-plus/icons-vue'
 import { buildShiftStyle } from '../../utils/shiftColors'
 import { ROW_COLOR_PALETTE, normalizeRowColorIndex, resolveRowColor } from '../../utils/rowColors'
@@ -781,6 +807,10 @@ const memoDialog = reactive({ visible: false, day: null, date: '', content: '', 
 const notificationDrawerVisible = ref(false)
 const scheduleNotifications = ref([])
 const NOTIFICATION_LIMIT = 200
+const NOTIFICATION_STORAGE_BYTES = 900_000
+const scheduleRuleValidation = reactive({ checking: false, ok: true, count: 0, violations: [] })
+let scheduleRuleValidationTimer = null
+let lastLoggedRuleSignature = ''
 const rawSchedules = ref([])
 const holidays = ref([])
 const holidayMap = ref({})
@@ -1405,23 +1435,31 @@ const toggleCell = (empId, day, explicit) => {
 const exportPdf = () => exportSchedules('pdf')
 const exportExcel = () => exportSchedules('excel')
 
-const SCHEDULE_ISSUE_DISPLAY_LIMIT = 20
+function issueDialogAppendTarget() {
+  if (!isTableFullscreen.value) return undefined
+  return scheduleCardRef.value || fullscreenPopperHostRef.value || undefined
+}
 
-function openScheduleIssueDialog(title, lines, fallbackMessage) {
+function openScheduleIssueDialog(title, lines, fallbackMessage, options = {}) {
   const normalizedLines = (Array.isArray(lines) ? lines : []).filter(Boolean)
-  const displayed = normalizedLines.slice(0, SCHEDULE_ISSUE_DISPLAY_LIMIT)
-  if (normalizedLines.length > displayed.length) {
-    displayed.push(`另有 ${normalizedLines.length - displayed.length} 項，請修正前述問題後重新檢核。`)
+  const message = normalizedLines.join('\n') || fallbackMessage || '操作失敗'
+  const type = options.type || 'error'
+  if (options.record !== false) {
+    const summary = normalizedLines.length
+      ? `共 ${normalizedLines.length} 項問題，請開啟完整明細檢視。`
+      : message
+    appendScheduleNotification(type, title, summary, normalizedLines)
   }
-  const message = displayed.join('\n') || fallbackMessage || '操作失敗'
-  appendScheduleNotification('error', title, message)
-  return Promise.resolve(ElMessageBox.alert(message, title, {
+  const alertOptions = {
     confirmButtonText: '關閉',
-    type: 'error',
+    type: type === 'info' ? 'info' : type,
     customClass: 'schedule-issue-dialog',
     closeOnClickModal: false,
     showClose: true
-  })).catch(() => {})
+  }
+  const appendTo = issueDialogAppendTarget()
+  if (appendTo) alertOptions.appendTo = appendTo
+  return Promise.resolve(ElMessageBox.alert(message, title, alertOptions)).catch(() => {})
 }
 
 function formatScheduleImportIssue(item = {}) {
@@ -1447,8 +1485,70 @@ function employeeIssueLabel(employeeId) {
 
 function formatLaborRuleViolation(item = {}) {
   const employee = employeeIssueLabel(item.employee)
-  return `${employee ? `${employee}：` : ''}${item.message || '排班規範檢核未通過'}`
+  const parsedDate = item.date ? dayjs(item.date) : null
+  const date = parsedDate?.isValid() ? ` ${parsedDate.format('YYYY-MM-DD')}` : ''
+  const rule = item.rule ? ` [${item.rule}]` : ''
+  const subject = `${employee}${date}${rule}`.trim()
+  return `${subject ? `${subject}：` : ''}${item.message || '排班規範檢核未通過'}`
 }
+
+function scheduleRuleQueryParams() {
+  const payload = buildPublishPayload()
+  const params = new URLSearchParams({ month: payload.month })
+  if (payload.department) params.set('department', payload.department)
+  if (payload.subDepartment) params.set('subDepartment', payload.subDepartment)
+  if (payload.includeSelf) params.set('includeSelf', 'true')
+  return params
+}
+
+async function fetchScheduleRuleValidation({ showIssues = false, notify = true } = {}) {
+  if (scheduleRuleValidation.checking) return null
+  scheduleRuleValidation.checking = true
+  try {
+    const res = await apiFetch(`/api/schedules/rules/validate?${scheduleRuleQueryParams().toString()}`)
+    const payload = await res.json().catch(() => ({}))
+    if (!res.ok) throw new Error(payload.error || '排班規範預檢失敗')
+    const violations = Array.isArray(payload.violations) ? payload.violations : []
+    scheduleRuleValidation.ok = Boolean(payload.ok) && violations.length === 0
+    scheduleRuleValidation.count = Number(payload.count ?? violations.length)
+    scheduleRuleValidation.violations = violations
+    const lines = violations.map(formatLaborRuleViolation)
+    const signature = lines.join('\n')
+    if (notify && lines.length && signature !== lastLoggedRuleSignature) {
+      appendScheduleNotification('warning', '排班草稿待修正', `目前共有 ${lines.length} 項排班規範問題。`, violations)
+      lastLoggedRuleSignature = signature
+    } else if (!lines.length) {
+      lastLoggedRuleSignature = ''
+    }
+    if (showIssues) {
+      if (lines.length) {
+        await openScheduleIssueDialog('排班規範檢核未通過', lines, '請先修正排班規範問題', {
+          type: 'warning',
+          record: false
+        })
+      } else {
+        callSuccess('排班規範預檢已通過')
+      }
+    }
+    return { ...payload, ok: scheduleRuleValidation.ok, violations }
+  } catch (error) {
+    if (showIssues) callWarning(error?.message || '排班規範預檢失敗')
+    return null
+  } finally {
+    scheduleRuleValidation.checking = false
+  }
+}
+
+function scheduleDraftRuleValidation() {
+  if (typeof document !== 'undefined' && scheduleCardRef.value && !scheduleCardRef.value.isConnected) return
+  if (scheduleRuleValidationTimer) clearTimeout(scheduleRuleValidationTimer)
+  scheduleRuleValidationTimer = setTimeout(() => {
+    scheduleRuleValidationTimer = null
+    fetchScheduleRuleValidation().catch(() => {})
+  }, 650)
+}
+
+const inspectScheduleRules = () => fetchScheduleRuleValidation({ showIssues: true, notify: true })
 
 async function handleScheduleActionApiError(res, fallbackMessage) {
   let data = null
@@ -1535,8 +1635,18 @@ async function onScheduleImportFile(event) {
       }
     }
 
-    const warningText = preview.payload.warnings?.length
-      ? `\n另有 ${preview.payload.warnings.length} 项提醒，汇入后仍保留原假单与假日日历资料。`
+    const previewViolations = Array.isArray(preview.payload.violations)
+      ? preview.payload.violations.map(formatLaborRuleViolation)
+      : []
+    const warningParts = []
+    if (preview.payload.warnings?.length) {
+      warningParts.push(`${preview.payload.warnings.length} 项资料提醒`)
+    }
+    if (previewViolations.length) {
+      warningParts.push(`${previewViolations.length} 项排班规范问题（可存为草稿，发布前必须修正）`)
+    }
+    const warningText = warningParts.length
+      ? `\n另有 ${warningParts.join('、')}。`
       : ''
     if (!overwrite) {
       await ElMessageBox.confirm(
@@ -1557,7 +1667,20 @@ async function onScheduleImportFile(event) {
       return
     }
     callSuccess(`已汇入 ${committed.payload.imported} 个班次${overwrite ? '（含覆盖）' : ''}`)
+    const committedViolationDetails = Array.isArray(committed.payload.violations)
+      ? committed.payload.violations
+      : []
+    const committedViolations = committedViolationDetails.map(formatLaborRuleViolation)
+    if (committedViolations.length) {
+      appendScheduleNotification(
+        'warning',
+        '匯入草稿待修正',
+        `匯入完成，但仍有 ${committedViolations.length} 項排班規範問題。`,
+        committedViolationDetails
+      )
+    }
     await refreshScheduleData({ reset: true, reason: 'excel-import' })
+    scheduleDraftRuleValidation()
   } catch (error) {
     if (error === 'cancel' || error === 'close') return
     callError(error?.message || '班表汇入失败')
@@ -1745,10 +1868,14 @@ function scheduleNotificationStorageKey() {
 function persistScheduleNotifications() {
   if (typeof window === 'undefined') return
   try {
-    window.localStorage?.setItem(
-      scheduleNotificationStorageKey(),
-      JSON.stringify(scheduleNotifications.value.slice(0, NOTIFICATION_LIMIT))
-    )
+    const bounded = scheduleNotifications.value.slice(0, NOTIFICATION_LIMIT)
+    let serialized = JSON.stringify(bounded)
+    while (bounded.length > 1 && new Blob([serialized]).size > NOTIFICATION_STORAGE_BYTES) {
+      bounded.pop()
+      serialized = JSON.stringify(bounded)
+    }
+    scheduleNotifications.value = bounded
+    window.localStorage?.setItem(scheduleNotificationStorageKey(), serialized)
   } catch (err) {
     console.warn('Failed to persist schedule notifications', err)
   }
@@ -1759,14 +1886,34 @@ function loadScheduleNotifications() {
   try {
     const stored = window.localStorage?.getItem(scheduleNotificationStorageKey())
     const parsed = stored ? JSON.parse(stored) : []
-    scheduleNotifications.value = Array.isArray(parsed) ? parsed.slice(0, NOTIFICATION_LIMIT) : []
+    scheduleNotifications.value = Array.isArray(parsed)
+      ? parsed.slice(0, NOTIFICATION_LIMIT).map(item => ({
+        ...item,
+        details: Array.isArray(item.details) ? item.details : []
+      }))
+      : []
   } catch (err) {
     scheduleNotifications.value = []
     console.warn('Failed to load schedule notifications', err)
   }
 }
 
-function appendScheduleNotification(type, title, message) {
+function normalizeNotificationDetails(details) {
+  return (Array.isArray(details) ? details : [])
+    .map(detail => {
+      if (typeof detail === 'string') return { message: detail.trim() }
+      if (!detail || typeof detail !== 'object') return { message: String(detail || '').trim() }
+      return {
+        rule: String(detail.rule || detail.code || '').trim(),
+        employee: String(detail.employee?._id || detail.employee || '').trim(),
+        date: detail.date || detail.startDate || detail.weekStart || null,
+        message: String(detail.message || '').trim()
+      }
+    })
+    .filter(detail => detail.message)
+}
+
+function appendScheduleNotification(type, title, message, details = []) {
   const normalizedMessage = String(message || '').trim()
   if (!normalizedMessage) return
   const randomPart = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
@@ -1777,6 +1924,7 @@ function appendScheduleNotification(type, title, message) {
     type,
     title,
     message: normalizedMessage,
+    details: normalizeNotificationDetails(details),
     createdAt: new Date().toISOString()
   }, ...scheduleNotifications.value].slice(0, NOTIFICATION_LIMIT)
   persistScheduleNotifications()
@@ -1790,6 +1938,25 @@ function clearScheduleNotifications() {
 function formatNotificationTime(value) {
   const parsed = dayjs(value)
   return parsed.isValid() ? parsed.format('YYYY/MM/DD HH:mm:ss') : ''
+}
+
+function notificationIcon(type) {
+  if (type === 'success') return CircleCheckFilled
+  if (type === 'warning') return WarningFilled
+  if (type === 'error') return CircleCloseFilled
+  return InfoFilled
+}
+
+function reopenNotificationDetails(item) {
+  return openScheduleIssueDialog(
+    item.title,
+    normalizeNotificationDetails(item.details).map(formatLaborRuleViolation),
+    item.message,
+    {
+      type: item.type,
+      record: false
+    }
+  )
 }
 
 function scheduleMemoDate(day) {
@@ -3004,6 +3171,8 @@ async function confirmPublish() {
     callWarning('目前沒有可發布的班表')
     return
   }
+  const validation = await fetchScheduleRuleValidation({ showIssues: true, notify: true })
+  if (!validation?.ok) return
   try {
     await ElMessageBox.confirm('確認要將本月班表發送給員工確認嗎？', '批次發布', {
       type: 'warning',
@@ -3025,6 +3194,8 @@ async function confirmFinalize() {
     callWarning('仍有員工尚未回覆，請確認後再完成發布')
     return
   }
+  const validation = await fetchScheduleRuleValidation({ showIssues: true, notify: true })
+  if (!validation?.ok) return
   try {
     await ElMessageBox.confirm('全部員工已確認，是否完成發布並鎖定班表？', '完成發布', {
       type: 'success',
@@ -3990,6 +4161,7 @@ async function onSelect(empId, day, value) {
       await fetchSummary()
       await refreshFrontMenu()
       callSuccess(`${employee.name || '員工'} ${dateStr} 排班已清空`)
+      scheduleDraftRuleValidation()
     } catch (err) {
       await handleScheduleError(null, '清空排班失敗', empId, day, prev, '')
     }
@@ -4025,6 +4197,7 @@ async function onSelect(empId, day, value) {
         markScheduleMapDirty()
         await fetchSummary()
         await refreshFrontMenu()
+        scheduleDraftRuleValidation()
       }
     } catch (err) {
       await handleScheduleError(
@@ -4064,6 +4237,7 @@ async function onSelect(empId, day, value) {
         invalidateFetchAllCache()
         await fetchSummary()
         await refreshFrontMenu()
+        scheduleDraftRuleValidation()
       } else {
         await handleScheduleError(
           res,
@@ -4279,6 +4453,7 @@ async function clearSelectedSchedules() {
     await fetchSummary()
     await refreshFrontMenu()
     callSuccess(`已清空 ${Number(payload.deleted || deletedIds.size)} 筆排班`)
+    scheduleDraftRuleValidation()
   } catch (err) {
     callError(err?.message || '清空排班失敗')
   } finally {
@@ -4335,11 +4510,6 @@ async function applyBatch() {
   })
 
   isApplyingBatch.value = true
-  const loadingInstance = ElLoading.service({
-    fullscreen: true,
-    lock: true,
-    text: '批次套用中...'
-  })
 
   try {
     let res
@@ -4352,11 +4522,13 @@ async function applyBatch() {
         })
       })
     } catch (err) {
+      isApplyingBatch.value = false
       await handleBatchApiError(null)
       return
     }
 
     if (!res.ok) {
+      isApplyingBatch.value = false
       await handleBatchApiError(res)
       return
     }
@@ -4407,8 +4579,8 @@ async function applyBatch() {
     await fetchSummary()
     clearSelection()
     await refreshFrontMenu()
+    scheduleDraftRuleValidation()
   } finally {
-    loadingInstance?.close()
     isApplyingBatch.value = false
   }
 }
@@ -4693,6 +4865,10 @@ async function onMonthChange(value) {
 // ========= 初始化 =========
 
 onBeforeUnmount(() => {
+  if (scheduleRuleValidationTimer) {
+    clearTimeout(scheduleRuleValidationTimer)
+    scheduleRuleValidationTimer = null
+  }
   if (filterRefreshTimer) {
     clearTimeout(filterRefreshTimer)
     filterRefreshTimer = null
@@ -4828,3 +5004,4 @@ onUpdated(() => {
 
 
 <style scoped lang="scss" src="./ScheduleWorkspace.scss"></style>
+<style lang="scss" src="./ScheduleNotificationDrawer.scss"></style>
