@@ -34,4 +34,80 @@ describe('schedule workbook parser', () => {
     const parsed = await parseScheduleWorkbook(await workbook.xlsx.writeBuffer(), { month: '2026-01' });
     expect(parsed.columns).toEqual([{ column: 4, day: 1 }]);
   });
+
+  it('accepts an employee row when the name cell is blank', async () => {
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet('工作表1');
+    sheet.addRow(['班表']);
+    sheet.addRow(['', '', '行事曆']);
+    sheet.addRow(['', '', '日期', 1]);
+    sheet.addRow(['員工代號', '姓名', '星期', '三']);
+    sheet.addRow(['A001', '', '護理師', 'D']);
+
+    const parsed = await parseScheduleWorkbook(await workbook.xlsx.writeBuffer(), { month: '2026-07' });
+
+    expect(parsed.rows).toEqual([expect.objectContaining({
+      employeeId: 'A001',
+      employeeName: '',
+      entries: [{ day: 1, code: 'D' }],
+    })]);
+  });
+
+  it('preserves leading zeroes expressed by the Excel number format', async () => {
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet('工作表1');
+    sheet.addRow(['班表']);
+    sheet.addRow(['', '', '行事曆']);
+    sheet.addRow(['', '', '日期', 1]);
+    sheet.addRow(['員工代號', '姓名', '星期', '三']);
+    const employeeRow = sheet.addRow([123, '', '護理師', 'D']);
+    employeeRow.getCell(1).numFmt = '00000';
+
+    const parsed = await parseScheduleWorkbook(await workbook.xlsx.writeBuffer(), { month: '2026-07' });
+
+    expect(parsed.rows[0].employeeId).toBe('00123');
+  });
+
+  it('rejects employee ids duplicated after whitespace, width, and case normalization', async () => {
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet('工作表1');
+    sheet.addRow(['班表']);
+    sheet.addRow(['', '', '行事曆']);
+    sheet.addRow(['', '', '日期', 1]);
+    sheet.addRow(['員工代號', '姓名', '星期', '三']);
+    sheet.addRow(['A001', '員工一', '護理師', 'D']);
+    sheet.addRow([' ａ００１ ', '員工二', '護理師', 'D']);
+
+    await expect(parseScheduleWorkbook(
+      await workbook.xlsx.writeBuffer(),
+      { month: '2026-07' },
+    )).rejects.toMatchObject({
+      name: 'ScheduleWorkbookValidationError',
+      code: 'WORKBOOK_EMPLOYEE_ID_CONFLICT',
+      conflicts: [{ employeeId: 'A001', rows: [5, 6] }],
+      errors: expect.arrayContaining([
+        expect.objectContaining({ row: 5, code: 'A001' }),
+        expect.objectContaining({ row: 6, code: 'A001' }),
+      ]),
+    });
+  });
+
+  it('rejects a named employee row that has no employee id', async () => {
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet('工作表1');
+    sheet.addRow(['班表']);
+    sheet.addRow(['', '', '行事曆']);
+    sheet.addRow(['', '', '日期', 1]);
+    sheet.addRow(['員工代號', '姓名', '星期', '三']);
+    sheet.addRow(['', '缺少代號員工', '護理師', 'D']);
+
+    await expect(parseScheduleWorkbook(
+      await workbook.xlsx.writeBuffer(),
+      { month: '2026-07' },
+    )).rejects.toMatchObject({
+      name: 'ScheduleWorkbookValidationError',
+      code: 'EMPLOYEE_ID_REQUIRED',
+      errors: [expect.objectContaining({ row: 5, message: '員工代號必填' })],
+    });
+  });
 });

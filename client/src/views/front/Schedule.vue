@@ -1480,6 +1480,20 @@ function formatScheduleImportIssue(item = {}) {
   return `第 ${row} 列${day}${identifier}：${item.message || '資料錯誤'}`
 }
 
+function formatScheduleImportPayloadIssues(payload = {}) {
+  const issues = Array.isArray(payload.errors)
+    ? payload.errors.map(formatScheduleImportIssue)
+    : []
+  if (payload.code !== 'EMPLOYEE_ID_AMBIGUOUS') return issues
+
+  const conflicts = Array.isArray(payload.conflicts) ? payload.conflicts : []
+  return conflicts.map(conflict => {
+    const employeeId = String(conflict?.employeeId || '').trim() || '未提供'
+    const count = Number(conflict?.count || 0)
+    return `員工代號「${employeeId}」在系統內有 ${count} 筆資料，請先修正員工資料再匯入`
+  })
+}
+
 function employeeIssueLabel(employeeId) {
   const normalizedId = String(employeeId || '')
   if (!normalizedId) return ''
@@ -1610,7 +1624,7 @@ async function onScheduleImportFile(event) {
     let overwrite = false
     let preview = await submitScheduleImport(file, 'preview', false)
     if (!preview.response.ok) {
-      const issues = (preview.payload.errors || []).map(formatScheduleImportIssue)
+      const issues = formatScheduleImportPayloadIssues(preview.payload)
       const violations = (preview.payload.violations || []).map(formatLaborRuleViolation)
       await openScheduleIssueDialog(
         violations.length ? '排班規範檢核未通過' : '班表匯入檢核未通過',
@@ -1630,7 +1644,7 @@ async function onScheduleImportFile(event) {
       overwrite = true
       preview = await submitScheduleImport(file, 'preview', true)
       if (!preview.response.ok) {
-        const issues = (preview.payload.errors || []).map(formatScheduleImportIssue)
+        const issues = formatScheduleImportPayloadIssues(preview.payload)
         const violations = (preview.payload.violations || []).map(formatLaborRuleViolation)
         await openScheduleIssueDialog(
           violations.length ? '覆蓋排班規範檢核未通過' : '覆蓋匯入檢核未通過',
@@ -1663,7 +1677,7 @@ async function onScheduleImportFile(event) {
     }
     const committed = await submitScheduleImport(file, 'commit', overwrite)
     if (!committed.response.ok) {
-      const issues = (committed.payload.errors || []).map(formatScheduleImportIssue)
+      const issues = formatScheduleImportPayloadIssues(committed.payload)
       const violations = (committed.payload.violations || []).map(formatLaborRuleViolation)
       await openScheduleIssueDialog(
         violations.length ? '排班規範檢核未通過' : '班表匯入失敗',

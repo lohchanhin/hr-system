@@ -1,4 +1,5 @@
 import ExcelJS from 'exceljs';
+import { normalizeEmployeeIdentifier } from './employeeIdentityService.js';
 
 const MAX_ROWS = 5_000;
 const MAX_COLUMNS = 40;
@@ -12,6 +13,36 @@ function cellText(cell) {
     if (value.text !== undefined) return String(value.text).trim();
   }
   return String(value).trim();
+}
+
+function employeeIdentifierText(cell) {
+  const value = cell?.value;
+  const numericValue = typeof value === 'number'
+    ? value
+    : typeof value?.result === 'number'
+      ? value.result
+      : null;
+  const primaryNumberFormat = String(cell?.numFmt || '').split(';')[0].trim();
+
+  if (
+    Number.isSafeInteger(numericValue)
+    && numericValue >= 0
+    && /^0+$/.test(primaryNumberFormat)
+  ) {
+    return String(numericValue).padStart(primaryNumberFormat.length, '0');
+  }
+
+  return cellText(cell);
+}
+
+export class ScheduleWorkbookValidationError extends Error {
+  constructor(message, { code = 'SCHEDULE_WORKBOOK_INVALID', errors = [], conflicts = [] } = {}) {
+    super(message);
+    this.name = 'ScheduleWorkbookValidationError';
+    this.code = code;
+    this.errors = errors;
+    this.conflicts = conflicts;
+  }
 }
 
 function parseDay(cell, month) {
@@ -70,16 +101,28 @@ export async function parseScheduleWorkbook(buffer, { month } = {}) {
   if (!columns.length) throw new Error('找不到有效日期欄位');
 
   const rows = [];
-  const seenEmployeeIds = new Set();
+  const employeeRowsById = new Map();
+  const validationErrors = [];
   for (let rowNumber = employeeHeaderRow + 1; rowNumber <= worksheet.rowCount; rowNumber += 1) {
     const row = worksheet.getRow(rowNumber);
-    const employeeId = cellText(row.getCell(1));
+    const employeeId = employeeIdentifierText(row.getCell(1));
     const employeeName = cellText(row.getCell(2));
     if (!employeeId && !employeeName) continue;
     if (/^(早班|中班|晚班|夜班|日班|統計|合計)/.test(employeeId) && !employeeName) continue;
-    if (!employeeId || !employeeName) continue;
-    if (seenEmployeeIds.has(employeeId)) throw new Error(`員工代號重複：${employeeId}`);
-    seenEmployeeIds.add(employeeId);
+    if (!employeeId) {
+      validationErrors.push({
+        row: rowNumber,
+        day: null,
+        code: '',
+        message: '員工代號必填',
+      });
+      continue;
+    }
+    const normalizedEmployeeId = normalizeEmployeeIdentifier(employeeId);
+    if (!employeeRowsById.has(normalizedEmployeeId)) {
+      employeeRowsById.set(normalizedEmployeeId, { employeeId, rows: [] });
+    }
+    employeeRowsById.get(normalizedEmployeeId).rows.push(rowNumber);
     const entries = columns
       .map(({ column, day }) => ({ day, code: cellText(row.getCell(column)) }))
       .filter((entry) => entry.code && entry.code !== '未排班');
@@ -91,8 +134,30 @@ export async function parseScheduleWorkbook(buffer, { month } = {}) {
       entries,
     });
   }
+
+  const conflicts = [...employeeRowsById.values()]
+    .filter((item) => item.rows.length > 1)
+    .map((item) => ({ employeeId: item.employeeId, rows: item.rows }));
+  for (const conflict of conflicts) {
+    const rowList = conflict.rows.join('、');
+    for (const rowNumber of conflict.rows) {
+      validationErrors.push({
+        row: rowNumber,
+        day: null,
+        code: conflict.employeeId,
+        message: `員工代號重複（第 ${rowList} 列）`,
+      });
+    }
+  }
+  if (validationErrors.length) {
+    throw new ScheduleWorkbookValidationError('班表員工代號資料有誤', {
+      code: conflicts.length ? 'WORKBOOK_EMPLOYEE_ID_CONFLICT' : 'EMPLOYEE_ID_REQUIRED',
+      errors: validationErrors,
+      conflicts,
+    });
+  }
   if (!rows.length) throw new Error('班表没有可辨识的员工资料');
   return { worksheetName: worksheet.name, employeeHeaderRow, dateRowNumber, columns, rows };
 }
 
-export const __testUtils = { cellText, parseDay, daysInMonth };
+export const __testUtils = { cellText, employeeIdentifierText, parseDay, daysInMonth };

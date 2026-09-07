@@ -1341,6 +1341,38 @@ describe('Schedule.vue', () => {
     )
   })
 
+  it('shows every ambiguous system employee id before schedule import', async () => {
+    setRoleToken('supervisor')
+    apiFetch.mockResolvedValue({ ok: true, json: async () => [] })
+    importScheduleRecords.mockResolvedValue({
+      ok: false,
+      json: async () => ({
+        error: '員工代號在系統內重複，請先修正員工資料',
+        code: 'EMPLOYEE_ID_AMBIGUOUS',
+        conflicts: [
+          { employeeId: 'A001', count: 2 },
+          { employeeId: 'B002', count: 3 }
+        ]
+      })
+    })
+    const wrapper = mountSchedule()
+    await flush()
+    wrapper.vm.selectedDepartment = 'd1'
+    await wrapper.vm.$nextTick()
+    const file = new File(['schedule'], 'schedule.xlsx', {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    })
+
+    await wrapper.vm.onScheduleImportFile({ target: { files: [file], value: 'schedule.xlsx' } })
+
+    expect(ElMessageBox.alert).toHaveBeenCalledWith(
+      expect.stringContaining('員工代號「A001」在系統內有 2 筆資料'),
+      '班表匯入檢核未通過',
+      expect.objectContaining({ customClass: 'schedule-issue-dialog', closeOnClickModal: false })
+    )
+    expect(ElMessageBox.alert.mock.calls[0][0]).toContain('員工代號「B002」在系統內有 3 筆資料')
+  })
+
   it('保留排班通知日誌並寫入目前帳號的 localStorage', async () => {
     setRoleToken('supervisor')
     localStorage.setItem('employeeId', 'sup1')

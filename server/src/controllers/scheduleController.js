@@ -20,7 +20,11 @@ import Holiday from '../models/Holiday.js';
 import ScheduleDayMemo from '../models/ScheduleDayMemo.js';
 import { leaveDaysFromCalendar, loadApprovedLeaveCalendar } from '../services/approvedLeaveCalendarService.js';
 import { buildLiteralSearchRegex } from '../utils/safeSearch.js';
-import { parseScheduleWorkbook } from '../services/scheduleWorkbookService.js';
+import {
+  parseScheduleWorkbook,
+  ScheduleWorkbookValidationError,
+} from '../services/scheduleWorkbookService.js';
+import { normalizeEmployeeIdentifier } from '../services/employeeIdentityService.js';
 import { registerTraditionalChinesePdfFont } from '../services/pdfFontService.js';
 import {
   buildShiftIdentityLookup,
@@ -2128,10 +2132,36 @@ export async function importSchedules(req, res) {
     const employees = employeeFind && typeof employeeFind.lean === 'function'
       ? await employeeFind.lean()
       : await employeeFind;
-    const employeeByCode = new Map();
+    const employeesByCode = new Map();
     for (const employee of employees || []) {
-      const code = normalizeWorkbookCode(employee.employeeId);
-      if (code) employeeByCode.set(code, employee);
+      const code = normalizeEmployeeIdentifier(employee.employeeId);
+      if (!code) continue;
+      if (!employeesByCode.has(code)) employeesByCode.set(code, []);
+      employeesByCode.get(code).push(employee);
+    }
+
+    const importedEmployeeCodes = new Map();
+    for (const row of parsed.rows) {
+      const code = normalizeEmployeeIdentifier(row.employeeId);
+      if (code && !importedEmployeeCodes.has(code)) importedEmployeeCodes.set(code, row.employeeId);
+    }
+    const employeeIdentityConflicts = [...importedEmployeeCodes.entries()]
+      .map(([code, importedEmployeeId]) => ({
+        employeeId: importedEmployeeId,
+        count: employeesByCode.get(code)?.length || 0,
+      }))
+      .filter((conflict) => conflict.count > 1);
+    if (employeeIdentityConflicts.length) {
+      return res.status(409).json({
+        error: '員工代號在系統內重複，請先修正員工資料',
+        code: 'EMPLOYEE_ID_AMBIGUOUS',
+        conflicts: employeeIdentityConflicts,
+      });
+    }
+
+    const employeeByCode = new Map();
+    for (const [code, matchingEmployees] of employeesByCode) {
+      if (matchingEmployees.length === 1) employeeByCode.set(code, matchingEmployees[0]);
     }
 
     const settingQuery = AttendanceSetting.findOne();
@@ -2165,9 +2195,10 @@ export async function importSchedules(req, res) {
       });
     }
 
-    const importedEmployeeIds = parsed.rows
-      .map((row) => employeeByCode.get(normalizeWorkbookCode(row.employeeId))?._id)
-      .filter(Boolean);
+    const importedEmployeeIds = [...new Map(parsed.rows
+      .map((row) => employeeByCode.get(normalizeEmployeeIdentifier(row.employeeId))?._id)
+      .filter(Boolean)
+      .map((employeeId) => [toEntityId(employeeId), employeeId])).values()];
     const [leaveCalendar, holidays, existingSchedules] = await Promise.all([
       loadApprovedLeaveCalendar({ employeeIds: importedEmployeeIds, start: range.start, end: range.end }),
       Holiday.find({ date: { $gte: range.start, $lt: range.end } }).lean(),
@@ -2190,13 +2221,10 @@ export async function importSchedules(req, res) {
     const candidates = [];
     let informationalDays = 0;
     for (const row of parsed.rows) {
-      const employee = employeeByCode.get(normalizeWorkbookCode(row.employeeId));
+      const employee = employeeByCode.get(normalizeEmployeeIdentifier(row.employeeId));
       if (!employee) {
         errors.push(scheduleImportError(row.rowNumber, null, row.employeeId, '员工代号不在目前部门或操作权限范围内'));
         continue;
-      }
-      if (String(employee.name || '').trim() !== row.employeeName.trim()) {
-        warnings.push(scheduleImportError(row.rowNumber, null, row.employeeId, `姓名与系统资料不同：系统为「${employee.name}」`));
       }
       const employeeId = toEntityId(employee._id);
       for (const entry of row.entries) {
@@ -2314,6 +2342,14 @@ export async function importSchedules(req, res) {
     }
     return res.status(201).json({ ...summary, imported: candidates.length, importBatchId });
   } catch (error) {
+    if (error instanceof ScheduleWorkbookValidationError) {
+      return res.status(422).json({
+        error: error.message,
+        code: error.code,
+        errors: error.errors,
+        conflicts: error.conflicts,
+      });
+    }
     if (isLaborRuleValidationError(error)) {
       return res.status(422).json({
         error: error.message,

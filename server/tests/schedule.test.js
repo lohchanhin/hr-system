@@ -1353,6 +1353,156 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
       .toBeLessThan(mockAssertScheduleRuleCompliance.mock.invocationCallOrder[0]);
   });
 
+  it('imports by normalized employee id when names are blank or incorrect', async () => {
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet('工作表1');
+    sheet.addRow(['公版班表']);
+    sheet.addRow(['', '', '行事曆']);
+    sheet.addRow(['', '', '日期', 1]);
+    sheet.addRow(['員工代號', '姓名', '星期', '三']);
+    sheet.addRow([' ａ００１ ', '', '護理師', 'D']);
+    sheet.addRow(['A002', '已失效的舊姓名', '護理師', 'D']);
+    const file = Buffer.from(await workbook.xlsx.writeBuffer());
+
+    mockEmployee.find.mockReturnValue({
+      select: jest.fn().mockReturnThis(),
+      lean: jest.fn().mockResolvedValue([
+        { _id: 'e1', employeeId: 'A001', name: '系統員工一', department: 'd1', subDepartment: 'sd1' },
+        { _id: 'e2', employeeId: 'A002', name: '系統員工二', department: 'd1', subDepartment: 'sd1' },
+      ]),
+    });
+    mockAttendanceSetting.findOne.mockReturnValue({
+      lean: jest.fn().mockResolvedValue({ shifts: [{ _id: 'day', code: 'D', name: '日班' }] }),
+    });
+    mockShiftSchedule.find.mockReturnValue({ lean: jest.fn().mockResolvedValue([]) });
+    mockShiftSchedule.bulkWrite.mockResolvedValue({ upsertedCount: 2 });
+
+    const response = await request(app)
+      .post('/api/schedules/import')
+      .set('Authorization', buildAuthHeader('admin'))
+      .field('month', '2026-07')
+      .field('department', 'd1')
+      .field('mode', 'commit')
+      .attach('file', file, {
+        filename: 'schedule.xlsx',
+        contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      });
+
+    expect(response.status).toBe(201);
+    expect(response.body).toEqual(expect.objectContaining({ imported: 2, warnings: [] }));
+    const operations = mockShiftSchedule.bulkWrite.mock.calls[0][0];
+    expect(operations.map((operation) => operation.updateOne.update.$set.employee)).toEqual(['e1', 'e2']);
+  });
+
+  it('rejects imported employee ids that are ambiguous in the authorized employee scope', async () => {
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet('工作表1');
+    sheet.addRow(['公版班表']);
+    sheet.addRow(['', '', '行事曆']);
+    sheet.addRow(['', '', '日期', 1]);
+    sheet.addRow(['員工代號', '姓名', '星期', '三']);
+    sheet.addRow(['A001', '', '護理師', 'D']);
+    const file = Buffer.from(await workbook.xlsx.writeBuffer());
+
+    mockEmployee.find.mockReturnValue({
+      select: jest.fn().mockReturnThis(),
+      lean: jest.fn().mockResolvedValue([
+        { _id: 'e1', employeeId: 'A001', name: '員工一', department: 'd1', subDepartment: 'sd1' },
+        { _id: 'e2', employeeId: 'ａ００１', name: '員工二', department: 'd1', subDepartment: 'sd1' },
+      ]),
+    });
+
+    const response = await request(app)
+      .post('/api/schedules/import')
+      .set('Authorization', buildAuthHeader('admin'))
+      .field('month', '2026-07')
+      .field('department', 'd1')
+      .field('mode', 'commit')
+      .attach('file', file, {
+        filename: 'schedule.xlsx',
+        contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      });
+
+    expect(response.status).toBe(409);
+    expect(response.body).toEqual({
+      error: '員工代號在系統內重複，請先修正員工資料',
+      code: 'EMPLOYEE_ID_AMBIGUOUS',
+      conflicts: [{ employeeId: 'A001', count: 2 }],
+    });
+    expect(mockShiftSchedule.bulkWrite).not.toHaveBeenCalled();
+  });
+
+  it('rejects normalized duplicate employee ids in the workbook before writing schedules', async () => {
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet('工作表1');
+    sheet.addRow(['公版班表']);
+    sheet.addRow(['', '', '行事曆']);
+    sheet.addRow(['', '', '日期', 1]);
+    sheet.addRow(['員工代號', '姓名', '星期', '三']);
+    sheet.addRow(['A001', '', '護理師', 'D']);
+    sheet.addRow([' ａ００１ ', '舊姓名', '護理師', 'D']);
+    const file = Buffer.from(await workbook.xlsx.writeBuffer());
+
+    const response = await request(app)
+      .post('/api/schedules/import')
+      .set('Authorization', buildAuthHeader('admin'))
+      .field('month', '2026-07')
+      .field('department', 'd1')
+      .field('mode', 'commit')
+      .attach('file', file, {
+        filename: 'schedule.xlsx',
+        contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      });
+
+    expect(response.status).toBe(422);
+    expect(response.body).toEqual(expect.objectContaining({
+      code: 'WORKBOOK_EMPLOYEE_ID_CONFLICT',
+      conflicts: [{ employeeId: 'A001', rows: [5, 6] }],
+      errors: expect.arrayContaining([
+        expect.objectContaining({ row: 5, code: 'A001' }),
+        expect.objectContaining({ row: 6, code: 'A001' }),
+      ]),
+    }));
+    expect(mockShiftSchedule.bulkWrite).not.toHaveBeenCalled();
+  });
+
+  it('rejects an unknown employee id without writing schedules', async () => {
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet('工作表1');
+    sheet.addRow(['公版班表']);
+    sheet.addRow(['', '', '行事曆']);
+    sheet.addRow(['', '', '日期', 1]);
+    sheet.addRow(['員工代號', '姓名', '星期', '三']);
+    sheet.addRow(['UNKNOWN-001', '', '護理師', 'D']);
+    const file = Buffer.from(await workbook.xlsx.writeBuffer());
+
+    mockEmployee.find.mockReturnValue({
+      select: jest.fn().mockReturnThis(),
+      lean: jest.fn().mockResolvedValue([]),
+    });
+    mockAttendanceSetting.findOne.mockReturnValue({
+      lean: jest.fn().mockResolvedValue({ shifts: [{ _id: 'day', code: 'D', name: '日班' }] }),
+    });
+    mockShiftSchedule.find.mockReturnValue({ lean: jest.fn().mockResolvedValue([]) });
+
+    const response = await request(app)
+      .post('/api/schedules/import')
+      .set('Authorization', buildAuthHeader('admin'))
+      .field('month', '2026-07')
+      .field('department', 'd1')
+      .field('mode', 'commit')
+      .attach('file', file, {
+        filename: 'schedule.xlsx',
+        contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      });
+
+    expect(response.status).toBe(422);
+    expect(response.body.errors).toEqual([
+      expect.objectContaining({ code: 'UNKNOWN-001', message: expect.stringContaining('操作权限范围') }),
+    ]);
+    expect(mockShiftSchedule.bulkWrite).not.toHaveBeenCalled();
+  });
+
   it('reports overwrite conflicts in preview and overwrites only when explicitly enabled', async () => {
     const workbook = new ExcelJS.Workbook();
     const sheet = workbook.addWorksheet('工作表1');
