@@ -245,7 +245,8 @@ function validateDailyHours(grouped, shiftMap) {
           `每日工時不得超過12小時：${dateKey(schedule.date)} 已排 ${(span.workMinutes / 60).toFixed(1)} 小時`,
           { employee, date: dateKey(schedule.date), minutes: span.workMinutes },
         ));
-      } else if (span.workMinutes > MAX_REGULAR_WORK_MINUTES_PER_DAY) {
+      }
+      if (span.workMinutes > MAX_REGULAR_WORK_MINUTES_PER_DAY) {
         violations.push(makeViolation(
           'regular-work-hours',
           `正常班每日工時不得超過8小時：${dateKey(schedule.date)} 已排 ${(span.workMinutes / 60).toFixed(1)} 小時`,

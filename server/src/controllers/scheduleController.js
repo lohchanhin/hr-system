@@ -2820,6 +2820,7 @@ export async function validateScheduleRules(req, res) {
     } catch (error) {
       if (!isLaborRuleValidationError(error)) throw error;
       const violations = (error.violations || []).map((violation) => ({
+        ...violation,
         rule: violation.rule || violation.code || 'SCHEDULE_RULE',
         employee: toEntityId(violation.employee),
         date: violation.date || violation.startDate || violation.weekStart || null,

@@ -102,8 +102,36 @@ describe('assertScheduleRuleCompliance', () => {
     await expect(assertScheduleRuleCompliance({
       candidateSchedules: [{ employee: 'emp1', date: new Date('2024-04-01'), shiftId: 'LONG' }],
     })).rejects.toMatchObject({
-      violations: [expect.objectContaining({ rule: 'daily-work-hours' })],
+      violations: expect.arrayContaining([
+        expect.objectContaining({ rule: 'daily-work-hours' }),
+        expect.objectContaining({ rule: 'regular-work-hours' }),
+      ]),
     });
+  });
+
+  it('collects all rule families and employees in one validation', async () => {
+    const schedules = ['emp1', 'emp2'].flatMap(employee =>
+      Array.from({ length: 7 }, (_, index) => ({
+        employee,
+        date: new Date(`2024-04-0${index + 1}`),
+        shiftId: index === 0 ? 'LONG' : 'D',
+      })),
+    );
+    let error;
+    try {
+      await assertScheduleRuleCompliance({
+        candidateSchedules: schedules,
+        range: { start: new Date('2024-04-01'), end: new Date('2024-04-08') },
+        strictWeeklyRest: true,
+      });
+    } catch (caught) { error = caught; }
+    expect(error?.violations).toBeDefined();
+    for (const employee of ['emp1', 'emp2']) {
+      expect(error.violations).toEqual(expect.arrayContaining([
+        'daily-work-hours', 'regular-work-hours', 'shift-gap',
+        'continuous-work-days', 'weekly-one-regular-rest-one-rest-day',
+      ].map(rule => expect.objectContaining({ employee, rule }))));
+    }
   });
 
   it('rejects a regular shift longer than eight working hours', async () => {

@@ -1473,6 +1473,42 @@ describe('Schedule.vue', () => {
     style.remove()
   })
 
+  it.each([200, 400])('shows all 138 precheck violations for HTTP %s and keeps them on the page', async status => {
+    setRoleToken('supervisor')
+    setupSupervisorApiMock()
+    const wrapper = mountSchedule()
+    await flush()
+    wrapper.vm.employees = [{ _id: 'e1', employeeId: 'QA001', name: '測試員工' }]
+    const violations = Array.from({ length: 138 }, (_, index) => ({
+      employee: 'e1', date: '2026-09-01', rule: 'shift-gap', message: `間隔不足 ${index + 1}`
+    }))
+    apiFetch.mockResolvedValueOnce({ ok: status === 200, status, json: async () => ({ ok: false, violations }) })
+    await wrapper.vm.fetchScheduleRuleValidation({ showIssues: true })
+    await flush()
+    const panel = wrapper.find('[data-test="schedule-rule-results"]')
+    expect(panel.findAll('li')).toHaveLength(138)
+    expect(panel.text()).toContain('QA001 測試員工 2026-09-01 [換班休息間隔]')
+    expect(panel.findAll('li')[137].text()).toContain('間隔不足 138')
+    expect(wrapper.vm.scheduleNotifications[0].details).toHaveLength(138)
+    expect(ElMessageBox.alert).toHaveBeenCalledWith(
+      expect.stringContaining('間隔不足 138'), expect.any(String), expect.objectContaining({ zIndex: 4000 })
+    )
+    expect(ElMessage.success).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('does not report a failed or incomplete precheck as compliant', async () => {
+    setupSupervisorApiMock()
+    const wrapper = mountSchedule()
+    await flush()
+    apiFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ ok: false, error: '檢核未完成' }) })
+    await wrapper.vm.fetchScheduleRuleValidation({ showIssues: true })
+    expect(wrapper.vm.scheduleRuleValidation.ok).toBe(false)
+    expect(ElMessage.success).not.toHaveBeenCalled()
+    expect(ElMessage.warning).toHaveBeenCalledWith('檢核未完成')
+    wrapper.unmount()
+  })
+
   it('完整保存并重新开启 138 项排班问题，不再截断前 20 项', async () => {
     setRoleToken('supervisor')
     localStorage.setItem('employeeId', 'sup1')

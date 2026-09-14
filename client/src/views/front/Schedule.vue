@@ -278,6 +278,9 @@
             </el-button>
           </div>
           <div class="schedule-view-actions">
+            <el-button v-if="isTableFullscreen" :loading="scheduleRuleValidation.checking" @click="inspectScheduleRules">
+              <el-icon><WarningFilled /></el-icon>排班檢核
+            </el-button>
             <el-button class="action-btn secondary fullscreen-toggle" @click="toggleTableFullscreen"
               data-test="fullscreen-toggle-button">
               <el-icon><FullScreen /></el-icon>
@@ -453,6 +456,12 @@
         </span>
       </div>
 
+      <section v-if="scheduleIssues.lines.length" class="schedule-rule-results" aria-label="完整排班檢核結果" data-test="schedule-rule-results">
+        <h3>{{ scheduleIssues.title }}（共 {{ scheduleIssues.lines.length }} 項）</h3>
+        <ol tabindex="0" aria-label="全部不合規明細">
+          <li v-for="(line, index) in scheduleIssues.lines" :key="index">{{ line }}</li>
+        </ol>
+      </section>
       <div ref="scheduleTableWrapperRef" class="schedule-table-wrapper" :class="{ 'is-fullscreen': isTableFullscreen }"
         data-test="schedule-table-wrapper" @click.capture="handleTableDelegatedClick"
         @change.capture="handleTableDelegatedChange">
@@ -814,6 +823,7 @@ const scheduleNotifications = ref([])
 const NOTIFICATION_LIMIT = 200
 const NOTIFICATION_STORAGE_BYTES = 900_000
 const scheduleRuleValidation = reactive({ checking: false, ok: true, count: 0, violations: [] })
+const scheduleIssues = reactive({ title: '', lines: [] })
 let scheduleRuleValidationTimer = null
 let lastLoggedRuleSignature = ''
 const rawSchedules = ref([])
@@ -1447,6 +1457,8 @@ function issueDialogAppendTarget() {
 
 function openScheduleIssueDialog(title, lines, fallbackMessage, options = {}) {
   const normalizedLines = (Array.isArray(lines) ? lines : []).filter(Boolean)
+  scheduleIssues.title = title
+  scheduleIssues.lines = normalizedLines.length ? normalizedLines : [fallbackMessage || '操作失敗']
   const message = normalizedLines.join('\n') || fallbackMessage || '操作失敗'
   const type = options.type || 'error'
   if (options.record !== false) {
@@ -1460,6 +1472,7 @@ function openScheduleIssueDialog(title, lines, fallbackMessage, options = {}) {
     type: type === 'info' ? 'info' : type,
     customClass: 'schedule-issue-dialog',
     modalClass: 'schedule-issue-overlay',
+    zIndex: 4000,
     closeOnClickModal: false,
     showClose: true
   }
@@ -1504,10 +1517,18 @@ function employeeIssueLabel(employeeId) {
 }
 
 function formatLaborRuleViolation(item = {}) {
+  if (typeof item === 'string') return item
   const employee = employeeIssueLabel(item.employee)
-  const parsedDate = item.date ? dayjs(item.date) : null
+  const parsedDate = dayjs(item.date || item.weekStart || item.startDate || item.dates?.[0] || '')
   const date = parsedDate?.isValid() ? ` ${parsedDate.format('YYYY-MM-DD')}` : ''
-  const rule = item.rule ? ` [${item.rule}]` : ''
+  const ruleLabels = {
+    'daily-work-hours': '每日總工時上限',
+    'regular-work-hours': '正常班工時上限',
+    'shift-gap': '換班休息間隔',
+    'continuous-work-days': '連續出勤限制',
+    'weekly-one-regular-rest-one-rest-day': '每週一例一休'
+  }
+  const rule = item.rule ? ` [${ruleLabels[item.rule] || item.rule}]` : ''
   const subject = `${employee}${date}${rule}`.trim()
   return `${subject ? `${subject}：` : ''}${item.message || '排班規範檢核未通過'}`
 }
@@ -1524,15 +1545,19 @@ function scheduleRuleQueryParams() {
 async function fetchScheduleRuleValidation({ showIssues = false, notify = true } = {}) {
   if (scheduleRuleValidation.checking) return null
   scheduleRuleValidation.checking = true
+  const query = scheduleRuleQueryParams().toString()
   try {
-    const res = await apiFetch(`/api/schedules/rules/validate?${scheduleRuleQueryParams().toString()}`)
+    const res = await apiFetch(`/api/schedules/rules/validate?${query}`)
     const payload = await res.json().catch(() => ({}))
-    if (!res.ok) throw new Error(payload.error || '排班規範預檢失敗')
+    if (query !== scheduleRuleQueryParams().toString()) return null
     const violations = Array.isArray(payload.violations) ? payload.violations : []
-    scheduleRuleValidation.ok = Boolean(payload.ok) && violations.length === 0
+    if ((!res.ok || !payload.ok) && !violations.length) throw new Error(payload.error || '排班規範預檢未完成，請重試')
+    scheduleRuleValidation.ok = res.ok && Boolean(payload.ok) && violations.length === 0
     scheduleRuleValidation.count = Number(payload.count ?? violations.length)
     scheduleRuleValidation.violations = violations
     const lines = violations.map(formatLaborRuleViolation)
+    scheduleIssues.title = '排班規範檢核未通過'
+    scheduleIssues.lines = lines
     const signature = lines.join('\n')
     if (notify && lines.length && signature !== lastLoggedRuleSignature) {
       appendScheduleNotification('warning', '排班草稿待修正', `目前共有 ${lines.length} 項排班規範問題。`, violations)
@@ -1552,6 +1577,7 @@ async function fetchScheduleRuleValidation({ showIssues = false, notify = true }
     }
     return { ...payload, ok: scheduleRuleValidation.ok, violations }
   } catch (error) {
+    scheduleRuleValidation.ok = false
     if (showIssues) callWarning(error?.message || '排班規範預檢失敗')
     return null
   } finally {
@@ -1968,6 +1994,7 @@ function notificationIcon(type) {
 }
 
 function reopenNotificationDetails(item) {
+  notificationDrawerVisible.value = false
   return openScheduleIssueDialog(
     item.title,
     normalizeNotificationDetails(item.details).map(formatLaborRuleViolation),
@@ -4871,6 +4898,14 @@ async function fetchSummary() {
 }
 
 // ========= 月份切換 =========
+
+watch([currentMonth, selectedDepartment, selectedSubDepartment, includeSelf], () => {
+  scheduleIssues.lines = []
+  scheduleRuleValidation.ok = false
+  scheduleRuleValidation.violations = []
+  scheduleRuleValidation.count = 0
+  lastLoggedRuleSignature = ''
+})
 
 async function onMonthChange(value) {
   const next = value ? dayjs(value) : dayjs()

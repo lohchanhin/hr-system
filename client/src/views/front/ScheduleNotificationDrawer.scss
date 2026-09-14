@@ -1,3 +1,23 @@
+.schedule-issue-dialog {
+  width: min(900px, calc(100vw - 32px));
+  max-width: calc(100vw - 32px);
+  color: #182026;
+  background: #fff;
+}
+
+.schedule-issue-dialog .el-message-box__message {
+  max-height: 60vh;
+  overflow: auto;
+  color: #344054;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.65;
+}
+
+.schedule-issue-dialog .el-message-box__title {
+  color: #182026;
+}
+
 .schedule-notification-drawer {
   color: #182026;
   background: #fff;
