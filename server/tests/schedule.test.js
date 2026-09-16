@@ -2366,4 +2366,114 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
       );
     });
   });
+
+  // These two routes gate whether a supervisor is allowed to finalize/publish
+  // a month's schedule. Unlike the rest of this file, checkCanFinalize here
+  // exercises the real scheduleValidationService completeness logic (only the
+  // Employee/ShiftSchedule/ApprovalRequest models are mocked) instead of
+  // stubbing it out, since prior to this there was zero test coverage -- not
+  // even through a mock -- for either endpoint.
+  describe('finalize gating endpoints', () => {
+    const allDaysOf = (month) => {
+      const start = new Date(`${month}-01T00:00:00.000Z`);
+      const end = new Date(start);
+      end.setUTCMonth(end.getUTCMonth() + 1);
+      const days = [];
+      for (let d = new Date(start); d < end; d.setUTCDate(d.getUTCDate() + 1)) {
+        days.push(new Date(d));
+      }
+      return days;
+    };
+
+    it('reports canFinalize true when every scheduled employee has a shift on every day of the month', async () => {
+      const month = '2025-02'; // 28 days, keeps the fixture small
+      mockEmployee.find.mockReturnValueOnce({
+        lean: jest.fn().mockResolvedValue([{ _id: 'e1', name: 'Alice', role: 'employee' }]),
+      });
+      mockShiftSchedule.find.mockReturnValueOnce({
+        lean: jest.fn().mockResolvedValue(allDaysOf(month).map((date) => ({ employee: 'e1', date, shiftId: 's1' }))),
+      });
+
+      const res = await request(app)
+        .get(`/api/schedules/can-finalize?month=${month}`)
+        .set('Authorization', buildAuthHeader('admin'));
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({
+        canFinalize: true,
+        reason: 'All employees have complete schedules',
+        incompleteEmployees: [],
+      });
+    });
+
+    it('reports canFinalize false and names the incomplete employee when days are missing', async () => {
+      const month = '2025-02';
+      const daysMissingOne = allDaysOf(month).slice(0, -1); // every day except the last
+      mockEmployee.find.mockReturnValueOnce({
+        lean: jest.fn().mockResolvedValue([{ _id: 'e1', name: 'Alice', role: 'employee' }]),
+      });
+      mockShiftSchedule.find.mockReturnValueOnce({
+        lean: jest.fn().mockResolvedValue(daysMissingOne.map((date) => ({ employee: 'e1', date, shiftId: 's1' }))),
+      });
+
+      const res = await request(app)
+        .get(`/api/schedules/can-finalize?month=${month}`)
+        .set('Authorization', buildAuthHeader('admin'));
+
+      expect(res.status).toBe(200);
+      expect(res.body.canFinalize).toBe(false);
+      expect(res.body.reason).toBe('1 employee(s) have incomplete schedules');
+      expect(res.body.incompleteEmployees).toHaveLength(1);
+      expect(res.body.incompleteEmployees[0]).toEqual(expect.objectContaining({
+        employeeId: 'e1',
+        missingDays: expect.arrayContaining([expect.any(String)]),
+      }));
+    });
+
+    it('rejects can-finalize with a 500 and the underlying message on an invalid month', async () => {
+      const res = await request(app)
+        .get('/api/schedules/can-finalize?month=not-a-month')
+        .set('Authorization', buildAuthHeader('admin'));
+
+      expect(res.status).toBe(500);
+      expect(res.body.error).toMatch(/Invalid month format/);
+    });
+
+    it('validateScheduleRules returns ok with no violations when there are no draft schedules in scope', async () => {
+      mockShiftSchedule.find.mockReturnValueOnce({ lean: jest.fn().mockResolvedValue([]) });
+
+      const res = await request(app)
+        .get('/api/schedules/rules/validate?month=2025-02')
+        .set('Authorization', buildAuthHeader('admin'));
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ ok: true, count: 0, violations: [] });
+      expect(mockAssertScheduleRuleCompliance).not.toHaveBeenCalled();
+    });
+
+    it('validateScheduleRules surfaces labor-rule violations reported by the compliance check', async () => {
+      mockShiftSchedule.find.mockReturnValueOnce({
+        lean: jest.fn().mockResolvedValue([
+          { _id: 'sch1', employee: 'e1', date: new Date('2025-02-10'), shiftId: 's1', department: 'd1', subDepartment: 'sd1' },
+        ]),
+      });
+      const violationError = Object.assign(new Error('labor rule violated'), {
+        violations: [{ employee: 'e1', rule: 'WEEKLY_REST', message: '單週應有一日例假' }],
+      });
+      mockAssertScheduleRuleCompliance.mockRejectedValueOnce(violationError);
+
+      const res = await request(app)
+        .get('/api/schedules/rules/validate?month=2025-02')
+        .set('Authorization', buildAuthHeader('admin'));
+
+      expect(res.status).toBe(200);
+      expect(res.body.ok).toBe(false);
+      expect(res.body.count).toBe(1);
+      expect(res.body.violations[0]).toEqual(expect.objectContaining({
+        rule: 'WEEKLY_REST',
+        employee: 'e1',
+        message: '單週應有一日例假',
+      }));
+    });
+  });
 });

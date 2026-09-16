@@ -114,4 +114,75 @@ describe('work-hours calculation', () => {
       pay: 900,
     }))
   })
+
+  describe('overtime derived from start/end time when no hours field is present', () => {
+    function mockCommonLookups() {
+      mockEmployee.findById.mockResolvedValue({
+        _id: 'emp1', autoOvertimeCalc: true, salaryAmount: 36000, salaryType: '月薪',
+      })
+      mockFormField.find.mockReturnValue({ lean: jest.fn().mockResolvedValue([]) })
+      mockAttendanceSetting.findOne.mockReturnValue({ lean: jest.fn().mockResolvedValue({ shifts: [] }) })
+      mockShiftSchedule.find.mockReturnValue({ lean: jest.fn().mockResolvedValue([]) })
+      mockHoliday.find.mockReturnValue({ lean: jest.fn().mockResolvedValue([]) })
+      mockHolidayMoveSetting.find.mockReturnValue({ lean: jest.fn().mockResolvedValue([]) })
+    }
+
+    it('wraps a negative start/end diff by 24 hours when the record is flagged cross-day', async () => {
+      mockCommonLookups()
+      mockApprovalRequest.find.mockReturnValue({
+        populate: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockResolvedValue([{
+          form: { _id: 'form2', name: '加班申請', semanticType: 'overtime' },
+          form_data: {
+            開始時間: '2026-09-10T23:00:00.000Z',
+            結束時間: '2026-09-10T02:00:00.000Z',
+            是否跨日: true,
+          },
+        }]),
+      })
+
+      const result = await calculateOvertimePay('emp1', '2026-09-01')
+
+      // Raw diff is -21h; the cross-day flag adds 24h back, yielding 3h of OT.
+      expect(result.overtimeHours).toBe(3)
+      expect(result.overtimePay).toBe(650)
+      expect(result.overtimeRecords[0]).toEqual(expect.objectContaining({ hours: 3, dayType: 'workday', hasIssue: false }))
+      expect(result.overtimeIssues).toEqual([])
+    })
+
+    it('clamps the same negative diff to zero hours and surfaces an issue instead of silently dropping it when cross-day is not flagged', async () => {
+      mockCommonLookups()
+      const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {})
+      mockApprovalRequest.find.mockReturnValue({
+        populate: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockResolvedValue([{
+          form: { _id: 'form3', name: '加班申請', semanticType: 'overtime' },
+          form_data: {
+            開始時間: '2026-09-10T23:00:00.000Z',
+            結束時間: '2026-09-10T02:00:00.000Z',
+          },
+        }]),
+      })
+
+      const result = await calculateOvertimePay('emp1', '2026-09-01')
+
+      // Without the cross-day flag, a form-entry mistake (or a genuinely
+      // cross-midnight shift the requester forgot to flag) still produces
+      // zero overtime hours/pay -- but it's no longer silent: the record is
+      // marked hasIssue and a human-readable message is surfaced both on the
+      // record and in the top-level overtimeIssues list so it reaches the
+      // payroll review UI instead of only a server-side console.warn.
+      expect(result.overtimeHours).toBe(0)
+      expect(result.overtimePay).toBe(0)
+      expect(result.overtimeRecords[0]).toEqual(expect.objectContaining({
+        hours: 0,
+        pay: 0,
+        hasIssue: true,
+        issue: expect.stringContaining('未勾選「跨日」'),
+      }))
+      expect(result.overtimeIssues).toEqual([expect.stringContaining('未勾選「跨日」')])
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('negative duration without cross-day flag'))
+      warnSpy.mockRestore()
+    })
+  })
 })

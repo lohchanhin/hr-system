@@ -556,6 +556,7 @@ export async function calculateOvertimePay(employeeId, month, context = {}) {
   let totalOvertimeHours = 0;
   let overtimePay = 0;
   const records = [];
+  const overtimeIssues = [];
   const hourlyRate = convertToHourlyRate(employee.salaryAmount || 0, employee.salaryType || '月薪');
 
   for (const record of overtimeRecords) {
@@ -570,31 +571,36 @@ export async function calculateOvertimePay(employeeId, month, context = {}) {
     };
     // 嘗試從多個可能的欄位名稱取得加班時數
     let hours = parseFloat(valueByLabels(OVERTIME_FIELDS.hours)) || 0;
-    
+    let recordIssue = null;
+
     // 如果沒有直接的時數欄位，嘗試從開始/結束時間計算
     if (hours === 0) {
       const startTime = valueByLabels(['開始時間', '開始日期', 'startTime', 'start']);
       const endTime = valueByLabels(['結束時間', '結束日期', 'endTime', 'end']);
       const isCrossDay = valueByLabels(['是否跨日', 'crossDay']);
-      
+
       if (startTime && endTime) {
         const start = new Date(startTime);
         const end = new Date(endTime);
-        
+
         if (Number.isFinite(start.getTime()) && Number.isFinite(end.getTime())) {
           // 計算時間差異（小時）
           let diffMs = end.getTime() - start.getTime();
-          
-          // 記錄異常情況（在調整前）
+
+          // 記錄異常情況（在調整前）：結束時間早於開始時間，但申請單未勾選「跨日」。
+          // 這通常代表申請人忘記勾選跨日，而不是真的 0 小時加班，因此不靜默略過，
+          // 而是把時數算為 0 並回報成一筆需要人工確認的問題，而非默默漏發加班費。
           if (diffMs < 0 && !isCrossDay) {
+            const message = `加班申請時間為 ${start.toISOString()} - ${end.toISOString()}，結束時間早於開始時間但未勾選「跨日」，時數已算為 0，請確認是否漏勾跨日`;
             console.warn(`Overtime record has negative duration without cross-day flag (start: ${start.toISOString()}, end: ${end.toISOString()}). Setting hours to 0.`);
+            recordIssue = message;
           }
-          
+
           // 如果時間為負值且標記為跨日，加上 24 小時
           if (diffMs < 0 && isCrossDay) {
             diffMs += 24 * 60 * 60 * 1000;
           }
-          
+
           hours = Math.max(0, diffMs / (1000 * 60 * 60)); // 轉換為小時，確保非負
         }
       }
@@ -638,13 +644,19 @@ export async function calculateOvertimePay(employeeId, month, context = {}) {
       dayType,
       pay: calculation.amount,
       rateSegments: calculation.segments,
+      hasIssue: Boolean(recordIssue),
+      issue: recordIssue,
     });
+    if (recordIssue) {
+      overtimeIssues.push(`${formatDate(overtimeDate)}：${recordIssue}`);
+    }
   }
-  
+
   return {
     overtimeHours: totalOvertimeHours,
     overtimePay,
-    overtimeRecords: records
+    overtimeRecords: records,
+    overtimeIssues,
   };
 }
 
@@ -704,6 +716,7 @@ export async function calculateCompleteWorkData(employeeId, month, context = {})
     // 加班資料
     overtimeHours: overtimePay.overtimeHours,
     overtimePay: overtimePay.overtimePay,
+    overtimeIssues: overtimePay.overtimeIssues ?? [],
     
     // 夜班資料
     nightShiftDays: nightShiftAllowanceData?.nightShiftDays ?? 0,

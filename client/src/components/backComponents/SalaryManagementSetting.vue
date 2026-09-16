@@ -573,6 +573,26 @@
                     </el-col>
                   </el-row>
 
+                  <!-- 顯示加班時數計算問題（例如疑似漏勾跨日） -->
+                  <div v-if="selectedEmployee.overtimeIssues && selectedEmployee.overtimeIssues.length > 0"
+                       class="configuration-issues" style="margin-top: 12px;">
+                    <el-alert
+                      type="warning"
+                      :closable="false">
+                      <template #title>
+                        <div style="font-size: 12px; font-weight: bold;">加班時數計算問題：</div>
+                      </template>
+                      <ul style="margin: 4px 0; padding-left: 20px; font-size: 11px;">
+                        <li v-for="(issue, idx) in selectedEmployee.overtimeIssues" :key="idx">
+                          {{ issue }}
+                        </li>
+                      </ul>
+                      <div style="font-size: 11px; margin-top: 4px; color: #666;">
+                        請確認加班申請單是否漏勾「跨日」，否則加班時數與加班費可能被低估
+                      </div>
+                    </el-alert>
+                  </div>
+
                   <!-- Overtime Records -->
                   <div v-if="employeeDetailData?.overtimeRecords?.length" style="margin-top: 20px">
                     <h4>加班記錄</h4>
@@ -584,6 +604,13 @@
                         </template>
                       </el-table-column>
                       <el-table-column prop="reason" label="原因" />
+                      <el-table-column label="" width="40" align="center">
+                        <template #default="{ row }">
+                          <el-tooltip v-if="row.hasIssue" :content="row.issue || '此筆加班時數計算可能有誤'" placement="top">
+                            <el-icon style="color: #E6A23C;"><WarningFilled /></el-icon>
+                          </el-tooltip>
+                        </template>
+                      </el-table-column>
                     </el-table>
                   </div>
                 </el-card>
@@ -1775,7 +1802,8 @@ const showExplanationDialog = ref(false)
             nightShiftAllowance: employeeDetailData.value.nightShiftAllowance ?? selectedEmployee.value.nightShiftAllowance,
             nightShiftCalculationMethod: employeeDetailData.value.nightShiftCalculationMethod ?? selectedEmployee.value.nightShiftCalculationMethod,
             nightShiftBreakdown: employeeDetailData.value.nightShiftBreakdown ?? selectedEmployee.value.nightShiftBreakdown,
-            nightShiftConfigurationIssues: employeeDetailData.value.nightShiftConfigurationIssues ?? selectedEmployee.value.nightShiftConfigurationIssues
+            nightShiftConfigurationIssues: employeeDetailData.value.nightShiftConfigurationIssues ?? selectedEmployee.value.nightShiftConfigurationIssues,
+            overtimeIssues: employeeDetailData.value.overtimeIssues ?? selectedEmployee.value.overtimeIssues
           }
         }
       } else {

@@ -116,6 +116,7 @@ export async function generateMonthlyPayrollOverviewPdf(month, filters = {}) {
             leaveDeduction: workData.leaveDeduction,
             overtimeHours: workData.overtimeHours,
             overtimePay: workData.overtimePay,
+            overtimeIssues: workData.overtimeIssues,
             baseSalary: workData.baseSalary,
             nightShiftDays: workData.nightShiftDays,
             nightShiftHours: workData.nightShiftHours,
@@ -170,7 +171,8 @@ export async function generateMonthlyPayrollOverviewPdf(month, filters = {}) {
         nightShiftCalculationMethod: workData.nightShiftCalculationMethod,
         nightShiftBreakdown: workData.nightShiftBreakdown,
         nightShiftConfigurationIssues: workData.nightShiftConfigurationIssues,
-        totalBonus: (payroll.overtimePay || 0) + 
+        overtimeIssues: workData.overtimeIssues,
+        totalBonus: (payroll.overtimePay || 0) +
                    (workData.nightShiftAllowance || 0) + 
                    (payroll.performanceBonus || 0) + 
                    (payroll.otherBonuses || 0),

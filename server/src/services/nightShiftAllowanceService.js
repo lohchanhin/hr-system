@@ -59,6 +59,7 @@ export async function calculateNightShiftAllowance(employeeId, month, employee, 
     let totalAllowance = 0;
     const shiftBreakdown = []; // 詳細的班次計算資訊
     const configurationIssues = []; // 配置問題列表
+    const flaggedCrossDayShiftCodes = new Set(); // 避免同一班別跨日警告重複出現多次
 
     for (const schedule of schedules) {
       const shift = shiftMap.get(schedule.shiftId.toString());
@@ -71,6 +72,20 @@ export async function calculateNightShiftAllowance(employeeId, month, employee, 
         // 計算夜班工作時數（考慮休息時間）
         const workHours = calculateShiftHours(shift);
         totalNightShiftHours += workHours;
+
+        // 班別時間結束早於開始（例如 22:00-06:00），但未勾選「跨日」，
+        // 工時會被靜默算成 0，而不會報錯，需要提醒管理員檢查班別設定。
+        let hasCrossDayIssue = false;
+        if (isMissingCrossDayFlag(shift)) {
+          hasCrossDayIssue = true;
+          const shiftKey = `${shift.name}|${shift.code}`;
+          if (!flaggedCrossDayShiftCodes.has(shiftKey)) {
+            flaggedCrossDayShiftCodes.add(shiftKey);
+            const issue = `班別「${shift.name}」(${shift.code}) 時間為 ${shift.startTime}-${shift.endTime}，疑似跨日班別但未勾選「跨日」，工時已被算為 0，請檢查班別設定`;
+            console.warn(`Night shift "${shift.name}" (${shift.code}) looks cross-day (end before start) but crossDay flag is not set.`);
+            configurationIssues.push(issue);
+          }
+        }
 
         // Fixed allowance: pay a fixed amount per night shift
         const allowanceAmount = Number(shift.fixedAllowanceAmount);
@@ -88,7 +103,7 @@ export async function calculateNightShiftAllowance(employeeId, month, employee, 
           calculationDetail = '固定津貼未設定 (請設定固定津貼金額)';
           hasIssue = true;
         }
-        
+
         // 記錄班次詳情
         shiftBreakdown.push({
           shiftName: shift.name,
@@ -97,9 +112,10 @@ export async function calculateNightShiftAllowance(employeeId, month, employee, 
           workHours,
           allowanceAmount: shiftAllowance,
           calculationDetail,
-          hasIssue
+          hasIssue,
+          hasCrossDayIssue,
         });
-        
+
         totalAllowance += shiftAllowance;
       }
     }
@@ -170,6 +186,20 @@ function calculateShiftHours(shift) {
     // 使用配置中的預設工作時數
     return WORK_HOURS_CONFIG.HOURS_PER_DAY;
   }
+}
+
+/**
+ * 判斷班別是否疑似跨日（結束時間早於開始時間）但未勾選「跨日」
+ * @param {Object} shift - 班別資料
+ * @returns {Boolean}
+ */
+function isMissingCrossDayFlag(shift) {
+  if (shift.crossDay) return false;
+  const [startHour, startMin] = String(shift.startTime || '').split(':').map(Number);
+  const [endHour, endMin] = String(shift.endTime || '').split(':').map(Number);
+  if ([startHour, startMin, endHour, endMin].some((value) => !Number.isFinite(value))) return false;
+  const totalMinutes = (endHour * 60 + endMin) - (startHour * 60 + startMin);
+  return totalMinutes < 0;
 }
 
 export default {

@@ -169,6 +169,7 @@ export async function calculateEmployeePayroll(employeeId, month, customData = {
     // 加班資料
     overtimeHours: customData.overtimeHours ?? workData.overtimeHours ?? 0,
     overtimePay,
+    overtimeIssues: workData.overtimeIssues ?? [],
     
     // 夜班資料
     nightShiftDays: nightShiftAllowanceData?.nightShiftDays ?? 0,

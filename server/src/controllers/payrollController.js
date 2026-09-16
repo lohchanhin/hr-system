@@ -548,6 +548,7 @@ export async function getMonthlyPayrollOverview(req, res) {
               leaveDeduction: workData.leaveDeduction,
               overtimeHours: workData.overtimeHours,
               overtimePay: workData.overtimePay,
+              overtimeIssues: workData.overtimeIssues,
               baseSalary: workData.baseSalary,
               // Include night shift data
               nightShiftDays: workData.nightShiftDays,
@@ -601,6 +602,7 @@ export async function getMonthlyPayrollOverview(req, res) {
           nightShiftCalculationMethod: workData.nightShiftCalculationMethod,
           nightShiftBreakdown: workData.nightShiftBreakdown,
           nightShiftConfigurationIssues: workData.nightShiftConfigurationIssues,
+          overtimeIssues: workData.overtimeIssues,
           // Recalculate totalBonus to include updated nightShiftAllowance
           totalBonus: (payroll.overtimePay || 0) + 
                      (workData.nightShiftAllowance || 0) + 
@@ -644,6 +646,7 @@ export async function getMonthlyPayrollOverview(req, res) {
         // Overtime data
         overtimeHours: payroll?.overtimeHours || 0,
         overtimePay: payroll?.overtimePay || 0,
+        overtimeIssues: payroll?.overtimeIssues || [],
         // Night shift data
         nightShiftDays: payroll?.nightShiftDays || 0,
         nightShiftHours: payroll?.nightShiftHours || 0,
