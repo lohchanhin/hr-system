@@ -35,7 +35,9 @@ import { initializeLaborInsuranceRates } from './services/laborInsuranceService.
 import privateUploadGuard from './middleware/privateUploadGuard.js';
 import {
   apiErrorHandler,
+  apiMutationRateLimiter,
   apiNotFound,
+  apiRateLimiter,
   configureTrustProxy,
   disableApiCaching,
   requestContext,
@@ -174,6 +176,8 @@ app.get('/api/health', (req, res) => {
 });
 
 app.use('/api', disableApiCaching);
+app.use('/api', apiRateLimiter);
+app.use('/api', apiMutationRateLimiter);
 app.use('/api', authRoutes);
 app.use(
   '/api/employees',
