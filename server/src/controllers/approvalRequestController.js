@@ -9,7 +9,7 @@ import fs from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
 import { getLeaveFieldIds } from '../services/leaveFieldService.js'
-import { deductAnnualLeave } from '../services/annualLeaveService.js'
+import { deductAnnualLeave, getAnnualLeaveBalance } from '../services/annualLeaveService.js'
 import {
   assertApprovalRequestCompliance,
   isLaborRuleValidationError,
@@ -370,7 +370,7 @@ export async function getApprovalRequest(req, res) {
     const actorId = getAuthenticatedEmployeeId(req)
     if (!actorId) return res.status(401).json({ error: 'Invalid user' })
     const doc = await ApprovalRequest.findById(req.params.id)
-      .populate('form', 'name category')
+      .populate('form', 'name category semanticType')
       .populate('applicant_employee', 'name employeeId department organization')
       .populate('steps.approvers.approver', 'name employeeId')
     if (!doc) return res.status(404).json({ error: 'not found' })
@@ -380,6 +380,14 @@ export async function getApprovalRequest(req, res) {
     const fields = await FormField.find({ form: doc.form._id }).sort({ order: 1 })
     const result = doc.toObject()
     result.form.fields = fields
+    if (doc.form?.semanticType === 'leave' && doc.applicant_employee?._id) {
+      try {
+        result.leave_balance = await getAnnualLeaveBalance(doc.applicant_employee._id)
+      } catch (err) {
+        // 特休餘額僅供顯示參考，查詢失敗不應阻擋簽核表單載入
+        result.leave_balance = null
+      }
+    }
     res.json(result)
   } catch (e) {
     res.status(400).json({ error: e.message })

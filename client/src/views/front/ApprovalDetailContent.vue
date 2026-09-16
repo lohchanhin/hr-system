@@ -9,6 +9,16 @@
         <b>申請人：</b>{{ doc.applicant_employee?.name || '-' }}
       </p>
       <p class="mb-2"><b>狀態：</b>{{ getStatusText(doc.status) }}</p>
+      <el-alert
+        v-if="doc.form?.semanticType === 'leave' && doc.leave_balance"
+        type="info"
+        :closable="false"
+        class="leave-balance-alert mb-2"
+      >
+        <template #title>
+          特休餘額：已使用 {{ doc.leave_balance.usedDays }} 天／剩餘 {{ doc.leave_balance.remainingDays }} 天（年度總天數 {{ doc.leave_balance.totalDays }} 天）
+        </template>
+      </el-alert>
 
       <el-divider content-position="left">填寫內容</el-divider>
       <el-descriptions :column="1" size="small" border>

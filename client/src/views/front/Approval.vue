@@ -499,6 +499,16 @@
         <p class="mb-2"><b>表單：</b>{{ detail.doc.form?.name }}（{{ detail.doc.form?.category }}）</p>
         <p class="mb-2"><b>申請人：</b>{{ detail.doc.applicant_employee?.name || '-' }}</p>
         <p class="mb-2"><b>狀態：</b>{{ getStatusText(detail.doc.status) }}</p>
+        <el-alert
+          v-if="detail.doc.form?.semanticType === 'leave' && detail.doc.leave_balance"
+          type="info"
+          :closable="false"
+          class="leave-balance-alert mb-2"
+        >
+          <template #title>
+            特休餘額：已使用 {{ detail.doc.leave_balance.usedDays }} 天／剩餘 {{ detail.doc.leave_balance.remainingDays }} 天（年度總天數 {{ detail.doc.leave_balance.totalDays }} 天）
+          </template>
+        </el-alert>
         <el-divider content-position="left">填寫內容</el-divider>
         <el-descriptions :column="1" size="small" border>
           <el-descriptions-item
