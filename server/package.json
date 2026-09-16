@@ -13,15 +13,14 @@
     "verify:production": "node scripts/verify-production.js"
   },
   "dependencies": {
-    "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
     "dotenv": "^16.3.1",
     "exceljs": "^4.3.0",
     "express": "^4.22.2",
     "express-rate-limit": "^8.6.1",
     "helmet": "^8.1.0",
-    "jszip": "^3.10.1",
     "jsonwebtoken": "^9.0.3",
+    "jszip": "^3.10.1",
     "mongoose": "^7.8.11",
     "multer": "^2.2.0",
     "pdfkit": "^0.13.0"
