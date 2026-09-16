@@ -694,14 +694,16 @@
     </div>
   </div>
 
-  <el-dialog v-model="detail.visible" title="申請單明細" width="760px" destroy-on-close @closed="onDetailClosed">
+  <el-dialog v-model="detail.visible" title="申請單明細" width="760px" destroy-on-close
+    :append-to="toolbarPopperAppendTarget" @closed="onDetailClosed">
     <component :is="ApprovalDetailContent" v-if="detail.visible" :approval-id="detail.approvalId" />
     <template #footer>
       <el-button @click="detail.visible = false">關閉</el-button>
     </template>
   </el-dialog>
 
-  <el-dialog v-model="memoDialog.visible" :title="`${memoDialog.date} 備忘錄`" width="520px" destroy-on-close>
+  <el-dialog v-model="memoDialog.visible" :title="`${memoDialog.date} 備忘錄`" width="520px" destroy-on-close
+    :append-to="toolbarPopperAppendTarget">
     <el-input v-model="memoDialog.content" type="textarea" :rows="6" maxlength="1000" show-word-limit
       placeholder="輸入此日期的排班備忘錄，內容會一併匯出。" data-test="day-memo-input" />
     <template #footer>
@@ -713,7 +715,7 @@
   </el-dialog>
 
   <el-drawer v-model="notificationDrawerVisible" title="排班通知日誌" size="min(440px, 92vw)" append-to-body
-    class="schedule-notification-drawer">
+    :append-to="toolbarPopperAppendTarget" class="schedule-notification-drawer">
     <div class="notification-log-toolbar">
       <span>保留最近 {{ NOTIFICATION_LIMIT }} 筆</span>
       <el-button text type="danger" :disabled="!scheduleNotifications.length" @click="clearScheduleNotifications">
@@ -781,6 +783,38 @@ import {
 } from '@element-plus/icons-vue'
 import { buildShiftStyle } from '../../utils/shiftColors'
 import { ROW_COLOR_PALETTE, normalizeRowColorIndex, resolveRowColor } from '../../utils/rowColors'
+import { buildMonthDays } from '../../utils/scheduleCalendar'
+import {
+  buildCellKey,
+  parseCellKey,
+  normalizeOptionalReferenceId,
+  sortEmployeesByDept,
+} from '../../utils/scheduleKeys'
+import {
+  formatShiftLabel,
+  formatScheduleImportIssue,
+  formatScheduleImportPayloadIssues,
+  normalizeNotificationDetails,
+  parseDelegatedBoolean,
+  getEmployeeIssueLabel,
+  formatLaborRuleViolation as formatLaborRuleViolationCore,
+} from '../../utils/scheduleFormatting'
+import {
+  resolvePublishSummary,
+  getPublishStatusLabel,
+  getPendingCount,
+  getDisputedCount,
+  getPublishStepIndex,
+  getStepStatuses,
+  getPendingStepDescription,
+  getDisputeStepDescription,
+  getFinalStepDescription,
+  getPublishProgress,
+  isPublishDisabled,
+  isFinalizeDisabled,
+  getPublishDisabledReason,
+  getFinalizeDisabledReason,
+} from '../../utils/schedulePublishStatus'
 
 const ApprovalDetailContent = defineAsyncComponent(() => import('./ApprovalDetailContent.vue'))
 const authStore = useAuthStore()
@@ -1034,26 +1068,6 @@ const canApplyRowColor = computed(() => {
 })
 
 // ✅ 用 "::" 當分隔，避免 ObjectId 裡面的 "-" 把字串拆爛
-const buildCellKey = (empId, day) => `${empId}::${day}`
-
-const normalizeOptionalReferenceId = value => {
-  const rawValue = typeof value === 'object' && value
-    ? (value._id ?? value.id)
-    : value
-  const normalized = String(rawValue ?? '').trim()
-  return normalized || undefined
-}
-
-const parseCellKey = key => {
-  const str = String(key)
-  const idx = str.lastIndexOf('::')
-  if (idx === -1) {
-    return { empId: str, day: NaN }
-  }
-  const empId = str.slice(0, idx)
-  const day = Number(str.slice(idx + 2))
-  return { empId, day }
-}
 
 // ✅ 這個月所有「已核准」請假的快取：{ [empId]: { [dayNumber]: true } }
 const leaveIndex = shallowRef({})
@@ -1481,56 +1495,12 @@ function openScheduleIssueDialog(title, lines, fallbackMessage, options = {}) {
   return Promise.resolve(ElMessageBox.alert(message, title, alertOptions)).catch(() => {})
 }
 
-function formatScheduleImportIssue(item = {}) {
-  const row = item.row || '-'
-  const day = item.day ? `／${item.day} 日` : ''
-  const code = String(item.code || '').trim()
-  const identifier = code
-    ? item.day
-      ? `／班別代號或名稱「${code}」`
-      : `／員工代號「${code}」`
-    : ''
-  return `第 ${row} 列${day}${identifier}：${item.message || '資料錯誤'}`
-}
-
-function formatScheduleImportPayloadIssues(payload = {}) {
-  const issues = Array.isArray(payload.errors)
-    ? payload.errors.map(formatScheduleImportIssue)
-    : []
-  if (payload.code !== 'EMPLOYEE_ID_AMBIGUOUS') return issues
-
-  const conflicts = Array.isArray(payload.conflicts) ? payload.conflicts : []
-  return conflicts.map(conflict => {
-    const employeeId = String(conflict?.employeeId || '').trim() || '未提供'
-    const count = Number(conflict?.count || 0)
-    return `員工代號「${employeeId}」在系統內有 ${count} 筆資料，請先修正員工資料再匯入`
-  })
-}
-
 function employeeIssueLabel(employeeId) {
-  const normalizedId = String(employeeId || '')
-  if (!normalizedId) return ''
-  const employee = employees.value.find(item => String(item?._id || '') === normalizedId)
-  if (!employee) return `員工 ${normalizedId}`
-  const code = String(employee.employeeId || '').trim()
-  return [code, employee.name].filter(Boolean).join(' ') || `員工 ${normalizedId}`
+  return getEmployeeIssueLabel(employeeId, employees.value)
 }
 
 function formatLaborRuleViolation(item = {}) {
-  if (typeof item === 'string') return item
-  const employee = employeeIssueLabel(item.employee)
-  const parsedDate = dayjs(item.date || item.weekStart || item.startDate || item.dates?.[0] || '')
-  const date = parsedDate?.isValid() ? ` ${parsedDate.format('YYYY-MM-DD')}` : ''
-  const ruleLabels = {
-    'daily-work-hours': '每日總工時上限',
-    'regular-work-hours': '正常班工時上限',
-    'shift-gap': '換班休息間隔',
-    'continuous-work-days': '連續出勤限制',
-    'weekly-one-regular-rest-one-rest-day': '每週一例一休'
-  }
-  const rule = item.rule ? ` [${ruleLabels[item.rule] || item.rule}]` : ''
-  const subject = `${employee}${date}${rule}`.trim()
-  return `${subject ? `${subject}：` : ''}${item.message || '排班規範檢核未通過'}`
+  return formatLaborRuleViolationCore(item, employees.value)
 }
 
 function scheduleRuleQueryParams() {
@@ -1735,11 +1705,6 @@ async function onScheduleImportFile(event) {
   }
 }
 
-const parseDelegatedBoolean = target => {
-  if (!target) return undefined
-  if (typeof target.checked === 'boolean') return target.checked
-  return undefined
-}
 
 const handleTableDelegatedChange = event => {
   const target = event?.target
@@ -1944,21 +1909,6 @@ function loadScheduleNotifications() {
   }
 }
 
-function normalizeNotificationDetails(details) {
-  return (Array.isArray(details) ? details : [])
-    .map(detail => {
-      if (typeof detail === 'string') return { message: detail.trim() }
-      if (!detail || typeof detail !== 'object') return { message: String(detail || '').trim() }
-      return {
-        rule: String(detail.rule || detail.code || '').trim(),
-        employee: String(detail.employee?._id || detail.employee || '').trim(),
-        date: detail.date || detail.startDate || detail.weekStart || null,
-        message: String(detail.message || '').trim()
-      }
-    })
-    .filter(detail => detail.message)
-}
-
 function appendScheduleNotification(type, title, message, details = []) {
   const normalizedMessage = String(message || '').trim()
   if (!normalizedMessage) return
@@ -2131,12 +2081,6 @@ const selectAllDays = () => {
   })
 }
 
-const sortEmployeesByDept = list =>
-  [...list].sort((a, b) => {
-    const deptCompare = (a.department || '').localeCompare(b.department || '')
-    if (deptCompare !== 0) return deptCompare
-    return (a.name || '').localeCompare(b.name || '')
-  })
 
 const onCustomRangeChange = range => {
   if (!Array.isArray(range) || range.length !== 2) return
@@ -2758,304 +2702,35 @@ const missingSupervisorScheduleNoticeKey = ref('')
 
 // ========= 發布狀態相關 =========
 
-const buildPublishSummaryFromRawSchedules = () => {
-  const result = {
-    status: 'draft',
-    pendingEmployees: [],
-    disputedEmployees: [],
-    publishedAt: null,
-    hasSchedules: false,
-    totalEmployees: 0,
-    allEmployeesConfirmed: false
-  }
+const publishSummary = computed(() => resolvePublishSummary(rawSchedules.value, publishSnapshot.value))
 
-  const list = Array.isArray(rawSchedules.value) ? rawSchedules.value : []
-  if (!list.length) return result
+const publishStatusLabel = computed(() => getPublishStatusLabel(publishSummary.value.status))
 
-  result.hasSchedules = true
-  const employeeMap = new Map()
-  let latestPublishedAt = null
-  let hasPublished = false
-  let hasDisputed = false
-  let hasFinalized = false
+const pendingCount = computed(() => getPendingCount(publishSummary.value))
 
-  list.forEach(item => {
-    if (!item) return
-    const state = item.state || 'draft'
-    const response = item.employeeResponse || 'pending'
-    const employee = item.employee || {}
-    const rawId = employee?._id ?? employee?.id ?? item.employee
-    const id = rawId ? String(rawId) : ''
-    const name = employee?.name || item.employeeName || id
+const disputedCount = computed(() => getDisputedCount(publishSummary.value))
 
-    if (state !== 'draft') hasPublished = true
-    if (state === 'changes_requested' || response === 'disputed') hasDisputed = true
-    if (state === 'finalized') hasFinalized = true
+const publishStepIndex = computed(() => getPublishStepIndex(publishSummary.value))
 
-    if (item?.publishedAt) {
-      const published = new Date(item.publishedAt)
-      if (!Number.isNaN(published)) {
-        if (!latestPublishedAt || latestPublishedAt < published) {
-          latestPublishedAt = published
-        }
-      }
-    }
+const stepStatuses = computed(() => getStepStatuses(publishSummary.value))
 
-    if (!id) return
-    if (!employeeMap.has(id)) {
-      employeeMap.set(id, {
-        id,
-        name: name || id,
-        pendingCount: 0,
-        disputedCount: 0,
-        latestNote: '',
-        latestResponseAt: null,
-        disputes: []
-      })
-    }
+const pendingStepDescription = computed(() => getPendingStepDescription(publishSummary.value))
 
-    const entry = employeeMap.get(id)
-    if (state === 'pending_confirmation' && response === 'pending') {
-      entry.pendingCount += 1
-    }
-    if (response === 'disputed' || state === 'changes_requested') {
-      entry.disputedCount += 1
-      if (item?.responseNote) {
-        entry.latestNote = item.responseNote
-      }
-      entry.disputes.push({
-        date: item.date,
-        note: item.responseNote || '',
-        responseAt: item.responseAt
-      })
-    }
-    if (item?.responseAt) {
-      const responded = new Date(item.responseAt)
-      if (!Number.isNaN(responded)) {
-        if (!entry.latestResponseAt || entry.latestResponseAt < responded) {
-          entry.latestResponseAt = responded
-        }
-      }
-    }
-  })
+const disputeStepDescription = computed(() => getDisputeStepDescription(publishSummary.value))
 
-  const pendingEmployees = []
-  const disputedEmployees = []
+const finalStepDescription = computed(() => getFinalStepDescription(publishSummary.value))
 
-  employeeMap.forEach(entry => {
-    if (entry.pendingCount > 0) {
-      pendingEmployees.push({
-        id: entry.id,
-        name: entry.name,
-        pendingCount: entry.pendingCount
-      })
-    }
-    if (entry.disputedCount > 0) {
-      disputedEmployees.push({
-        id: entry.id,
-        name: entry.name,
-        disputedCount: entry.disputedCount,
-        latestNote: entry.latestNote,
-        latestResponseAt: entry.latestResponseAt
-          ? entry.latestResponseAt.toISOString()
-          : null,
-        disputes: entry.disputes
-      })
-    }
-  })
-
-  result.pendingEmployees = pendingEmployees
-  result.disputedEmployees = disputedEmployees
-  result.totalEmployees = employeeMap.size
-  result.publishedAt = latestPublishedAt ? latestPublishedAt.toISOString() : null
-
-  if (hasFinalized) {
-    result.status = 'finalized'
-  } else if (hasDisputed) {
-    result.status = 'disputed'
-  } else if (hasPublished) {
-    result.status = pendingEmployees.length ? 'pending' : 'ready'
-  } else {
-    result.status = 'draft'
-  }
-
-  result.allEmployeesConfirmed =
-    result.status === 'ready' &&
-    pendingEmployees.length === 0 &&
-    disputedEmployees.length === 0
-
-  return result
-}
-
-const publishSummary = computed(() => {
-  const fallbackSummary = buildPublishSummaryFromRawSchedules()
-
-  if (publishSnapshot.value) {
-    const snapshot = publishSnapshot.value
-    const status =
-      typeof snapshot.status === 'string' && snapshot.status
-        ? snapshot.status
-        : fallbackSummary.status
-    const pendingEmployees = Array.isArray(snapshot.pendingEmployees)
-      ? snapshot.pendingEmployees
-      : fallbackSummary.pendingEmployees
-    const disputedEmployees = Array.isArray(snapshot.disputedEmployees)
-      ? snapshot.disputedEmployees
-      : fallbackSummary.disputedEmployees
-    const hasSchedules =
-      typeof snapshot.hasSchedules === 'boolean'
-        ? snapshot.hasSchedules
-        : fallbackSummary.hasSchedules
-    const totalEmployees = Number.isFinite(snapshot.totalEmployees)
-      ? snapshot.totalEmployees
-      : fallbackSummary.totalEmployees
-    const allEmployeesConfirmed =
-      typeof snapshot.allEmployeesConfirmed === 'boolean'
-        ? snapshot.allEmployeesConfirmed
-        : fallbackSummary.allEmployeesConfirmed
-
-    return {
-      status,
-      pendingEmployees,
-      disputedEmployees,
-      publishedAt: snapshot.publishedAt || fallbackSummary.publishedAt || null,
-      hasSchedules,
-      totalEmployees,
-      allEmployeesConfirmed
-    }
-  }
-
-  return fallbackSummary
-})
-
-const publishStatusLabel = computed(() => {
-  const map = {
-    draft: '尚未發布',
-    pending: '待員工確認',
-    ready: '可完成發布',
-    disputed: '需處理異議',
-    finalized: '已完成發布'
-  }
-  return map[publishSummary.value.status] || '尚未發布'
-})
-
-const pendingCount = computed(() =>
-  publishSummary.value.pendingEmployees.reduce(
-    (total, emp) => total + (Number(emp?.pendingCount) || 0),
-    0
-  )
-)
-
-const disputedCount = computed(() =>
-  publishSummary.value.disputedEmployees.reduce(
-    (total, emp) => total + (Number(emp?.disputedCount) || 0),
-    0
-  )
-)
-
-const publishStepIndex = computed(() => {
-  const status = publishSummary.value.status
-  if (status === 'pending') return 1
-  if (status === 'disputed') return 2
-  if (status === 'ready' || status === 'finalized') return 3
-  return 0
-})
-
-const stepStatuses = computed(() => {
-  const status = publishSummary.value.status
-  const hasPending = pendingCount.value > 0
-  const hasDisputed = disputedCount.value > 0
-  return {
-    draft: status === 'draft' ? 'process' : 'finish',
-    pending:
-      status === 'draft'
-        ? 'wait'
-        : hasPending || status === 'pending'
-          ? 'process'
-          : 'finish',
-    disputed:
-      hasDisputed
-        ? 'error'
-        : status === 'draft' || status === 'pending'
-          ? 'wait'
-          : 'finish',
-    finalized:
-      status === 'finalized'
-        ? 'success'
-        : status === 'ready'
-          ? 'process'
-          : 'wait'
-  }
-})
-
-const pendingStepDescription = computed(() => {
-  if (!publishSummary.value.hasSchedules) return '尚未發送確認'
-  if (pendingCount.value > 0) {
-    return `${pendingCount.value} 筆待回覆`
-  }
-  return '員工已完成回覆'
-})
-
-const disputeStepDescription = computed(() => {
-  if (!publishSummary.value.hasSchedules) return '尚未進入異議流程'
-  if (disputedCount.value > 0) {
-    return `${disputedCount.value} 筆異議待處理`
-  }
-  return '無異議紀錄'
-})
-
-const finalStepDescription = computed(() => {
-  if (publishSummary.value.status === 'finalized') return '班表已鎖定'
-  if (publishSummary.value.status === 'ready') return '可執行最終發布'
-  return '等待完成發布'
-})
-
-const publishProgress = computed(() => {
-  if (publishSummary.value.status === 'finalized') return 100
-  const total = publishSummary.value.totalEmployees
-  if (!total || total <= 0) {
-    return publishSummary.value.status === 'draft' ? 0 : 20
-  }
-  const responded = Math.max(
-    total - publishSummary.value.pendingEmployees.length,
-    0
-  )
-  const percentage = Math.round((responded / total) * 100)
-  return Math.min(Math.max(percentage, 0), 100)
-})
+const publishProgress = computed(() => getPublishProgress(publishSummary.value))
 
 const finalHasSchedules = computed(() => publishSummary.value.hasSchedules)
 
-const publishDisabled = computed(
-  () =>
-    isPublishing.value ||
-    !finalHasSchedules.value ||
-    publishSummary.value.status === 'finalized'
-)
+const publishDisabled = computed(() => isPublishDisabled(publishSummary.value, isPublishing.value))
 
-const finalizeDisabled = computed(
-  () =>
-    isFinalizing.value ||
-    publishSummary.value.status !== 'ready'
-)
+const finalizeDisabled = computed(() => isFinalizeDisabled(publishSummary.value, isFinalizing.value))
 
-const publishDisabledReason = computed(() => {
-  if (!publishDisabled.value) return ''
-  if (isPublishing.value) return '系統正在送出中，請稍候。'
-  if (!finalHasSchedules.value) return '目前範圍沒有可發布班表，請先確認本月是否已完成排班。'
-  if (publishSummary.value.status === 'finalized') return '本月班表已完成發布並鎖定。'
-  return '目前不符合發送條件。'
-})
+const publishDisabledReason = computed(() => getPublishDisabledReason(publishSummary.value, isPublishing.value))
 
-const finalizeDisabledReason = computed(() => {
-  if (!finalizeDisabled.value) return ''
-  if (isFinalizing.value) return '系統正在完成發布，請稍候。'
-  if (!publishSummary.value.hasSchedules) return '尚未發送待確認，請先執行「發送待確認」。'
-  if (publishSummary.value.status === 'finalized') return '班表已完成發布。'
-  if (publishSummary.value.status === 'pending') return '仍有員工尚未回覆，請先完成確認。'
-  if (publishSummary.value.status === 'disputed') return '仍有員工提出異議，請先處理異議。'
-  return '尚未達到完成發布條件。'
-})
+const finalizeDisabledReason = computed(() => getFinalizeDisabledReason(publishSummary.value, isFinalizing.value))
 
 watch(showIncludeSelfToggle, newVal => {
   const supervisorId = getStoredSupervisorId() || getSupervisorIdFromStorage()
@@ -3255,19 +2930,7 @@ async function confirmFinalize() {
   await finalizeSchedulesForMonth()
 }
 
-const days = computed(() => {
-  const dt = dayjs(currentMonth.value + '-01')
-  const end = dt.endOf('month').date()
-  const week = ['日', '一', '二', '三', '四', '五', '六']
-  return Array.from({ length: end }, (_, i) => {
-    const date = i + 1
-    const wd = week[dt.date(date).day()]
-    const dateStr = `${currentMonth.value}-${String(date).padStart(2, '0')}`
-    const holiday = holidayMap.value[dateStr]
-    const label = holiday ? `${date}(${wd}) 🎊${holiday.name}` : `${date}(${wd})`
-    return { date, label, holiday }
-  })
-})
+const days = computed(() => buildMonthDays(currentMonth.value, holidayMap.value))
 
 // ========= 假日管理 =========
 
@@ -4705,13 +4368,6 @@ function shiftInfo(id) {
   return shiftInfoMap.value.get(key) || shifts.value.find(s => s._id === id)
 }
 
-function formatShiftLabel(shift) {
-  if (!shift) return ''
-  const code = shift.code ?? ''
-  const name = shift.name ?? ''
-  if (!code && !name) return ''
-  return name ? `${code}(${name})` : code
-}
 
 function shiftClass(idOrShift) {
   const info =

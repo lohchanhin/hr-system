@@ -1177,6 +1177,11 @@
   pointer-events: auto;
 }
 
+.schedule-card.is-fullscreen :deep(.schedule-fullscreen-popper-host .el-overlay) {
+  pointer-events: auto;
+  z-index: 3001;
+}
+
 :global(.schedule-issue-dialog .el-message-box__message) {
   max-height: min(60vh, 560px);
   overflow-y: auto;
