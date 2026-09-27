@@ -575,6 +575,37 @@ describe('attendanceImportController', () => {
     expect(inserted[1]).toMatchObject({ employee: 'emp-chinese', action: 'clockOut' })
   })
 
+  it('將加班簽到/加班簽退視同一般上下班簽到退匯入', async () => {
+    const buffer = await createWorkbookBuffer([
+      { USERID: 'E002', CHECKTIME: '2024-05-01 18:00:00', CHECKTYPE: '加班簽到' },
+      { USERID: 'E002', CHECKTIME: '2024-05-01 20:00:00', CHECKTYPE: '加班簽退' }
+    ])
+
+    mockEmployeeFindWith([{ _id: 'emp-overtime', employeeId: 'E002', name: 'Overtime User' }])
+
+    const req = {
+      user: { role: 'admin' },
+      file: {
+        buffer,
+        mimetype: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        originalname: 'attendance.xlsx'
+      },
+      body: {
+        options: JSON.stringify({ timezone: 'Asia/Taipei', dryRun: false })
+      }
+    }
+
+    const res = createMockRes()
+
+    await importAttendanceRecords(req, res)
+
+    expect(mockAttendanceRecord.insertMany).toHaveBeenCalledTimes(1)
+    const inserted = mockAttendanceRecord.insertMany.mock.calls[0][0]
+    expect(inserted).toHaveLength(2)
+    expect(inserted[0]).toMatchObject({ employee: 'emp-overtime', action: 'clockIn' })
+    expect(inserted[1]).toMatchObject({ employee: 'emp-overtime', action: 'clockOut' })
+  })
+
   it('支援姓名欄位並使用編號+姓名組合匹配員工', async () => {
     const workbook = new ExcelJS.Workbook()
     const worksheet = workbook.addWorksheet('Records')

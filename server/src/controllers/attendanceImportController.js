@@ -22,7 +22,10 @@ const TYPE_MAPPINGS = {
   '上班簽到': 'clockIn',
   '下班簽退': 'clockOut',
   '上班': 'clockIn',
-  '下班': 'clockOut'
+  '下班': 'clockOut',
+  // 打卡機記錄不區分平日/加班，加班費另由簽核單申請計算，故視同一般上下班簽到退。
+  '加班簽到': 'clockIn',
+  '加班簽退': 'clockOut'
 }
 
 const SUPPORTED_ACTIONS = new Set(['clockIn', 'clockOut', 'outing', 'breakIn'])
