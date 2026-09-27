@@ -273,6 +273,12 @@ export function buildEmployeeDoc(body = {}) {
       notes: body?.monthlySalaryAdjustments?.notes ?? '',
     },
 
+    /* 勞健保投保資訊 */
+    laborInsuredSalary: toNum(body.laborInsuredSalary) ?? 0,
+    pensionInsuredSalary: toNum(body.pensionInsuredSalary) ?? 0,
+    healthInsuredSalary: toNum(body.healthInsuredSalary) ?? 0,
+    dependentCount: toNum(body.dependentCount) ?? 0,
+
     /* 特休管理 (Annual Leave) */
     annualLeave: {
       totalDays: toNum(body?.annualLeave?.totalDays) ?? 0,
@@ -280,6 +286,7 @@ export function buildEmployeeDoc(body = {}) {
       year: toNum(body?.annualLeave?.year) ?? new Date().getFullYear(),
       expiryDate: toDate(body?.annualLeave?.expiryDate),
       accumulatedLeave: toNum(body?.annualLeave?.accumulatedLeave) ?? 0,
+      compensatoryHours: toNum(body?.annualLeave?.compensatoryHours) ?? 0,
       notes: body?.annualLeave?.notes ?? '',
     },
   }
@@ -465,8 +472,15 @@ export function buildEmployeePatch(body = {}, existing = null) {
     if (isDefined(al.year)) put('annualLeave.year', toNum(al.year))
     if (isDefined(al.expiryDate)) put('annualLeave.expiryDate', toDate(al.expiryDate))
     if (isDefined(al.accumulatedLeave)) put('annualLeave.accumulatedLeave', toNum(al.accumulatedLeave) ?? 0)
+    if (isDefined(al.compensatoryHours)) put('annualLeave.compensatoryHours', toNum(al.compensatoryHours) ?? 0)
     if (isDefined(al.notes)) put('annualLeave.notes', al.notes ?? '')
   }
+
+  // 勞健保投保資訊
+  if (isDefined(body.laborInsuredSalary)) put('laborInsuredSalary', toNum(body.laborInsuredSalary))
+  if (isDefined(body.pensionInsuredSalary)) put('pensionInsuredSalary', toNum(body.pensionInsuredSalary))
+  if (isDefined(body.healthInsuredSalary)) put('healthInsuredSalary', toNum(body.healthInsuredSalary))
+  if (isDefined(body.dependentCount)) put('dependentCount', toNum(body.dependentCount))
 
   return { $set, $unset }
 }

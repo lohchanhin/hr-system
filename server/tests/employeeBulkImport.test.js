@@ -139,7 +139,16 @@ const EN_HEADERS = [
   'salaryAccountA_acct',
   'salaryAccountB_bank',
   'salaryAccountB_acct',
-  'salaryItems'
+  'salaryItems',
+  'annualLeave_totalDays',
+  'annualLeave_usedDays',
+  'annualLeave_accumulatedLeave',
+  'annualLeave_expiryDate',
+  'annualLeave_compensatoryHours',
+  'laborInsuredSalary',
+  'pensionInsuredSalary',
+  'healthInsuredSalary',
+  'dependentCount'
 ]
 
 const ZH_HEADERS = [
@@ -203,7 +212,16 @@ const ZH_HEADERS = [
   '薪資帳戶A 帳號',
   '薪資帳戶B 銀行代號',
   '薪資帳戶B 帳號',
-  '其他薪資項目 (多個逗號分隔)'
+  '其他薪資項目 (多個逗號分隔)',
+  '年度特休總天數',
+  '已使用天數',
+  '積假',
+  '請假期限',
+  '補休時數',
+  '勞保投保薪資',
+  '勞退投保薪資',
+  '健保投保薪資',
+  '眷口數'
 ]
 
 async function createWorkbookBuffer(rows) {
@@ -424,6 +442,52 @@ describe('POST /api/employees/bulk-import', () => {
       username: 'E0001',
       initialPassword: 'A123456789'
     })
+  })
+
+  it('可匯入特休/補休與勞健保投保薪資等薪資計算新增欄位', async () => {
+    const application = await setupApp()
+    const buffer = await createWorkbookBuffer([
+      {
+        employeeId: 'E0010',
+        name: '許少欣',
+        idNumber: 'D123456789',
+        email: 'e0010@example.com',
+        annualLeave_totalDays: '14',
+        annualLeave_usedDays: '3',
+        annualLeave_accumulatedLeave: '2.5',
+        annualLeave_expiryDate: '2026-12-31',
+        annualLeave_compensatoryHours: '8',
+        laborInsuredSalary: '45800',
+        pensionInsuredSalary: '45800',
+        healthInsuredSalary: '45800',
+        dependentCount: '2'
+      }
+    ])
+
+    setupEmployeeFind({ emailData: [] })
+
+    const response = await request(application)
+      .post('/api/employees/bulk-import')
+      .attach('file', buffer, { filename: 'import.xlsx' })
+      .field('options', JSON.stringify({ defaultRole: 'employee' }))
+
+    expect(response.status).toBe(200)
+    expect(response.body.successCount).toBe(1)
+    expect(response.body.errors).toEqual([])
+
+    const createdDoc = mockEmployeeModel.insertMany.mock.calls[0][0][0]
+    expect(createdDoc.annualLeave).toMatchObject({
+      totalDays: 14,
+      usedDays: 3,
+      accumulatedLeave: 2.5,
+      compensatoryHours: 8
+    })
+    expect(createdDoc.annualLeave.expiryDate).toBeInstanceOf(Date)
+    expect(createdDoc.annualLeave.expiryDate.toISOString()).toContain('2026-12-31')
+    expect(createdDoc.laborInsuredSalary).toBe(45800)
+    expect(createdDoc.pensionInsuredSalary).toBe(45800)
+    expect(createdDoc.healthInsuredSalary).toBe(45800)
+    expect(createdDoc.dependentCount).toBe(2)
   })
 
   it('欄位缺漏時回傳錯誤並不建立資料', async () => {

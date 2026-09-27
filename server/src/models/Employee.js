@@ -219,6 +219,12 @@ const employeeSchema = new Schema(
     lateDeductionEnabled: { type: Boolean, default: false }, // 遲到扣款啟用
     lateDeductionAmount: { type: Number, default: 0 }, // 遲到扣款金額
 
+    /* 勞健保投保資訊（可手動覆蓋，不隨薪資自動連動） */
+    laborInsuredSalary: { type: Number, default: 0 }, // 勞保投保薪資
+    pensionInsuredSalary: { type: Number, default: 0 }, // 勞退投保薪資
+    healthInsuredSalary: { type: Number, default: 0 }, // 健保投保薪資
+    dependentCount: { type: Number, default: 0 }, // 眷口數（健保眷屬人數）
+
     /* 特休管理 */
     annualLeave: {
       totalDays: { type: Number, default: 0 }, // 年度特休總天數（可設定）
@@ -226,6 +232,7 @@ const employeeSchema = new Schema(
       year: { type: Number, default: () => new Date().getFullYear() }, // 年度標記
       expiryDate: { type: Date }, // 請假期限
       accumulatedLeave: { type: Number, default: 0 }, // 積假
+      compensatoryHours: { type: Number, default: 0 }, // 補休時數（同積假，手動調整）
       notes: { type: String, default: '' }, // 備註
       appliedApprovalRequestIds: { type: [String], default: [], select: false },
     },

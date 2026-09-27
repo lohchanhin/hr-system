@@ -70,7 +70,16 @@ const DEFAULT_COLUMN_MAPPINGS = Object.freeze({
   'salaryAccountA.acct': 'salaryAccountA_acct',
   'salaryAccountB.bank': 'salaryAccountB_bank',
   'salaryAccountB.acct': 'salaryAccountB_acct',
-  salaryItems: 'salaryItems'
+  salaryItems: 'salaryItems',
+  'annualLeave.totalDays': 'annualLeave_totalDays',
+  'annualLeave.usedDays': 'annualLeave_usedDays',
+  'annualLeave.accumulatedLeave': 'annualLeave_accumulatedLeave',
+  'annualLeave.compensatoryHours': 'annualLeave_compensatoryHours',
+  'annualLeave.expiryDate': 'annualLeave_expiryDate',
+  laborInsuredSalary: 'laborInsuredSalary',
+  pensionInsuredSalary: 'pensionInsuredSalary',
+  healthInsuredSalary: 'healthInsuredSalary',
+  dependentCount: 'dependentCount'
 })
 
 const CHINESE_HEADER_HINTS = new Set([
@@ -91,7 +100,8 @@ const DATE_FIELDS = new Set([
   'resignDate',
   'dismissDate',
   'reAppointDate',
-  'reDismissDate'
+  'reDismissDate',
+  'annualLeave.expiryDate'
 ])
 const NUMBER_FIELDS = new Set([
   'probationDays',
@@ -100,7 +110,15 @@ const NUMBER_FIELDS = new Set([
   'laborPensionSelf',
   'employeeAdvance',
   'graduationYear',
-  'dischargeYear'
+  'dischargeYear',
+  'annualLeave.totalDays',
+  'annualLeave.usedDays',
+  'annualLeave.accumulatedLeave',
+  'annualLeave.compensatoryHours',
+  'laborInsuredSalary',
+  'pensionInsuredSalary',
+  'healthInsuredSalary',
+  'dependentCount'
 ])
 const CSV_ARRAY_FIELDS = new Set(['languages', 'identityCategory', 'salaryItems'])
 
@@ -781,8 +799,12 @@ export async function bulkImportEmployees(req, res) {
       setPathValue(original, key, cellValue)
 
       const baseKey = key.split('.')[0]
+      // 大多數欄位以 baseKey（第一段）判斷型別即可，但像 annualLeave 這種同一個
+      // 群組底下混合數字（totalDays 等）與日期（expiryDate）子欄位的情況，
+      // baseKey 無法區分，因此優先比對完整的 key（例如 'annualLeave.expiryDate'）。
+      const matchesType = (set) => set.has(key) || set.has(baseKey)
 
-      if (BOOLEAN_FIELDS.has(baseKey)) {
+      if (matchesType(BOOLEAN_FIELDS)) {
         const boolValue = toBoolean(cellValue)
         if (typeof boolValue === 'boolean') {
           setPathValue(normalized, key, boolValue)
@@ -790,7 +812,7 @@ export async function bulkImportEmployees(req, res) {
         return
       }
 
-      if (DATE_FIELDS.has(baseKey)) {
+      if (matchesType(DATE_FIELDS)) {
         const dateValue = toDateValue(cellValue)
         if (dateValue) {
           setPathValue(normalized, key, dateValue)
@@ -800,7 +822,7 @@ export async function bulkImportEmployees(req, res) {
         return
       }
 
-      if (NUMBER_FIELDS.has(baseKey)) {
+      if (matchesType(NUMBER_FIELDS)) {
         const numberValue = toNumberValue(cellValue)
         if (numberValue !== undefined) {
           setPathValue(normalized, key, numberValue)

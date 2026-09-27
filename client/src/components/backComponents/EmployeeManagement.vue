@@ -877,6 +877,31 @@
                   </div>
 
                   <div class="form-group">
+                    <h3 class="form-group-title">勞健保投保資訊</h3>
+                    <div class="form-row">
+                      <el-form-item label="勞保投保薪資" prop="laborInsuredSalary">
+                        <el-input-number v-model="employeeForm.laborInsuredSalary" :min="0" :step="1000"
+                          :formatter="value => `$ ${value ?? 0}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')"
+                          :parser="value => (value ? value.replace(/\$\s?|(,*)/g, '') : '')" />
+                      </el-form-item>
+                      <el-form-item label="勞退投保薪資" prop="pensionInsuredSalary">
+                        <el-input-number v-model="employeeForm.pensionInsuredSalary" :min="0" :step="1000"
+                          :formatter="value => `$ ${value ?? 0}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')"
+                          :parser="value => (value ? value.replace(/\$\s?|(,*)/g, '') : '')" />
+                      </el-form-item>
+                      <el-form-item label="健保投保薪資" prop="healthInsuredSalary">
+                        <el-input-number v-model="employeeForm.healthInsuredSalary" :min="0" :step="1000"
+                          :formatter="value => `$ ${value ?? 0}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')"
+                          :parser="value => (value ? value.replace(/\$\s?|(,*)/g, '') : '')" />
+                      </el-form-item>
+                      <el-form-item label="眷口數" prop="dependentCount">
+                        <el-input-number v-model="employeeForm.dependentCount" :min="0" :step="1" />
+                        <span style="margin-left: 8px; color: #909399;">人</span>
+                      </el-form-item>
+                    </div>
+                  </div>
+
+                  <div class="form-group">
                     <h3 class="form-group-title">銀行帳戶</h3>
                     <div class="account-section">
                       <h4 class="account-subtitle">薪資帳戶 A</h4>
@@ -994,6 +1019,11 @@
                         <el-input-number v-model="employeeForm.annualLeave.accumulatedLeave" :min="0" :max="365" :step="0.5"
                           placeholder="0" />
                         <span style="margin-left: 8px; color: #909399;">天</span>
+                      </el-form-item>
+                      <el-form-item label="補休時數" prop="annualLeave.compensatoryHours">
+                        <el-input-number v-model="employeeForm.annualLeave.compensatoryHours" :min="0" :step="0.5"
+                          placeholder="0" />
+                        <span style="margin-left: 8px; color: #909399;">小時</span>
                       </el-form-item>
                     </div>
                     <div class="form-row">
@@ -3492,11 +3522,18 @@ const emptyEmployee = {
     notes: ''
   },
 
+  // 勞健保投保資訊
+  laborInsuredSalary: 0,
+  pensionInsuredSalary: 0,
+  healthInsuredSalary: 0,
+  dependentCount: 0,
+
   // 特休管理
   annualLeave: {
     totalDays: 0,
     usedDays: 0,
-    year: CURRENT_YEAR
+    year: CURRENT_YEAR,
+    compensatoryHours: 0
   }
 }
 const employeeForm = ref({ ...emptyEmployee })
@@ -3529,6 +3566,10 @@ const rules = {
   ],
   laborPensionSelf: [createNonNegativeRule('勞退自提')],
   employeeAdvance: [createNonNegativeRule('員工預支')],
+  laborInsuredSalary: [createNonNegativeRule('勞保投保薪資')],
+  pensionInsuredSalary: [createNonNegativeRule('勞退投保薪資')],
+  healthInsuredSalary: [createNonNegativeRule('健保投保薪資')],
+  dependentCount: [createNonNegativeRule('眷口數')],
   salaryItems: [
     {
       validator: (_rule, value) => {
