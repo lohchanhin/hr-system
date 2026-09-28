@@ -1164,36 +1164,42 @@
         <!-- 外層先用 v-if 包住，裡面再單純 v-for -->
         <div v-if="referenceMappingDialogVisible">
           <!-- ✅ 用預先算好的 sections 來畫，避免模板裡層層 ?. -->
-          <div v-for="section in referenceMappingSectionsForUI" :key="section.type" class="reference-mapping-section"
-            v-if="section && Array.isArray(section.values) && section.values.length">
-            <h4 class="reference-mapping-title">
-              {{ getReferenceMappingLabel(section.type) }}對應
-            </h4>
+          <!-- Vue 3 的 v-if 優先權高於 v-for，兩者寫在同一個元素上時 v-for 的
+               區域變數（這裡是 section）在 v-if 求值當下還不存在，整段永遠不會
+               渲染。改用 template v-for 搭配內層元素的 v-if 才能各自判斷每個
+               section 是否有資料要顯示。 -->
+          <template v-for="section in referenceMappingSectionsForUI" :key="section.type">
+            <div v-if="section && Array.isArray(section.values) && section.values.length"
+              class="reference-mapping-section">
+              <h4 class="reference-mapping-title">
+                {{ getReferenceMappingLabel(section.type) }}對應
+              </h4>
 
-            <div v-for="entry in section.values" :key="getReferenceEntryKey(entry)" class="reference-mapping-item">
-              <div class="reference-mapping-info">
-                <span class="reference-mapping-value">
-                  {{ entry.value || '（空值）' }}
-                </span>
-                <span class="reference-mapping-rows">
-                  出現於第 {{ (entry.rows || []).join('、') }} 列
-                </span>
+              <div v-for="entry in section.values" :key="getReferenceEntryKey(entry)" class="reference-mapping-item">
+                <div class="reference-mapping-info">
+                  <span class="reference-mapping-value">
+                    {{ entry.value || '（空值）' }}
+                  </span>
+                  <span class="reference-mapping-rows">
+                    出現於第 {{ (entry.rows || []).join('、') }} 列
+                  </span>
+                </div>
+
+                <el-radio-group v-model="getRefSel(section.type, getReferenceEntryKey(entry)).mode"
+                  class="reference-mapping-mode">
+                  <el-radio label="map">指定既有資料</el-radio>
+                  <el-radio label="ignore">忽略此次匯入</el-radio>
+                </el-radio-group>
+
+                <el-select v-if="getRefSel(section.type, getReferenceEntryKey(entry)).mode === 'map'"
+                  v-model="getRefSel(section.type, getReferenceEntryKey(entry)).targetId" placeholder="請選擇既有項目"
+                  class="reference-mapping-select" filterable clearable>
+                  <el-option v-for="option in section.options" :key="option.id"
+                    :label="buildReferenceOptionLabel(section.type, option)" :value="option.id" />
+                </el-select>
               </div>
-
-              <el-radio-group v-model="getRefSel(section.type, getReferenceEntryKey(entry)).mode"
-                class="reference-mapping-mode">
-                <el-radio label="map">指定既有資料</el-radio>
-                <el-radio label="ignore">忽略此次匯入</el-radio>
-              </el-radio-group>
-
-              <el-select v-if="getRefSel(section.type, getReferenceEntryKey(entry)).mode === 'map'"
-                v-model="getRefSel(section.type, getReferenceEntryKey(entry)).targetId" placeholder="請選擇既有項目"
-                class="reference-mapping-select" filterable clearable>
-                <el-option v-for="option in section.options" :key="option.id"
-                  :label="buildReferenceOptionLabel(section.type, option)" :value="option.id" />
-              </el-select>
             </div>
-          </div>
+          </template>
 
           <!-- ✅ 單一空狀態邏輯，避免重複條件 -->
           <div v-if="!hasPendingReferenceMappings" class="reference-mapping-empty">
