@@ -1118,7 +1118,7 @@
             </el-form-item>
             <el-form-item label="預設登入密碼">
               <el-input v-model="bulkImportForm.options.resetPassword" type="password" show-password
-                placeholder="未設定則由後端自動產生" />
+                placeholder="未設定則預設為該員工的身分證字號" />
             </el-form-item>
             <el-form-item label="寄發通知信">
               <el-switch v-model="bulkImportForm.options.sendWelcomeEmail" />
