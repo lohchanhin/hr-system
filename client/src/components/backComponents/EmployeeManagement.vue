@@ -5009,6 +5009,7 @@ function getStatusTagType(status) {
 
 .content-actions {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 12px;
 }
@@ -5044,6 +5045,7 @@ function getStatusTagType(status) {
 
 .dept-filter-select {
   min-width: 200px;
+  max-width: 240px;
   margin-right: 12px;
   flex-shrink: 0;
 }
@@ -5054,6 +5056,7 @@ function getStatusTagType(status) {
   gap: 6px;
   border-radius: 999px;
   font-weight: 600;
+  flex-shrink: 0;
 }
 
 .bulk-import-dialog :deep(.el-dialog__body) {
@@ -5251,6 +5254,7 @@ function getStatusTagType(status) {
   padding: 10px 20px;
   border-radius: 8px;
   font-weight: 500;
+  flex-shrink: 0;
 }
 
 /* 表格樣式 */
