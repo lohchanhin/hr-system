@@ -433,7 +433,8 @@
                       </el-form-item>
                       <el-form-item label="直屬主管">
                         <el-select v-model="employeeForm.supervisor" placeholder="選擇主管">
-                          <el-option v-for="sup in supervisorList" :key="sup._id" :label="sup.name" :value="sup._id" />
+                          <el-option v-for="sup in supervisorList" :key="sup._id"
+                            :label="sup.employeeNo ? `${sup.name}（${sup.employeeNo}）` : sup.name" :value="sup._id" />
                         </el-select>
                       </el-form-item>
                     </div>
@@ -1123,10 +1124,21 @@
             <el-form-item label="寄發通知信">
               <el-switch v-model="bulkImportForm.options.sendWelcomeEmail" />
             </el-form-item>
+            <el-form-item label="更新已存在的員工資料">
+              <div class="bulk-import-update-option">
+                <el-switch v-model="bulkImportForm.options.updateExisting" />
+                <div class="bulk-import-update-hint">
+                  開啟後，以員工編號（找不到時以 Email）比對系統裡已有的員工：已有的人「更新」檔案裡有填的欄位，
+                  沒有的人才「新增」。檔案裡空白的欄位不會清掉原有資料；帳號、權限、Email 與密碼不會被更動。
+                  未開啟時，只要有人已存在就會停止匯入。
+                </div>
+              </div>
+            </el-form-item>
           </el-form>
         </div>
 
-        <div class="bulk-import-result" v-if="bulkImportPreview.length || bulkImportErrors.length">
+        <div class="bulk-import-result"
+          v-if="bulkImportPreview.length || bulkImportErrors.length || bulkImportWarnings.length">
           <el-alert v-if="bulkImportErrors.length" type="warning" :closable="false" show-icon class="bulk-import-error">
             <template #title>匯入時發現以下問題，請確認後重新處理：</template>
             <ul class="error-list">
@@ -1134,9 +1146,24 @@
             </ul>
           </el-alert>
 
+          <el-alert v-if="bulkImportWarnings.length" type="info" :closable="false" show-icon
+            class="bulk-import-warning">
+            <template #title>匯入已完成，但有 {{ bulkImportWarnings.length }} 項資料已自動調整或略過，請抽查確認：</template>
+            <ul class="error-list">
+              <li v-for="(warning, idx) in bulkImportWarnings" :key="idx">{{ warning }}</li>
+            </ul>
+          </el-alert>
+
           <div v-if="bulkImportPreview.length" class="bulk-import-preview">
             <h4>匯入預覽</h4>
             <el-table :data="bulkImportPreview" size="small" height="240">
+              <el-table-column v-if="bulkImportPreview.some(item => item.action)" label="處理" width="80">
+                <template #default="{ row }">
+                  <el-tag :type="row.action === 'updated' ? 'warning' : 'success'" size="small">
+                    {{ row.action === 'updated' ? '更新' : '新增' }}
+                  </el-tag>
+                </template>
+              </el-table-column>
               <el-table-column prop="employeeNo" label="員工編號" width="140" />
               <el-table-column prop="name" label="姓名" width="140" />
               <el-table-column prop="department" label="部門" min-width="120" />
@@ -1547,6 +1574,14 @@ function mapRowToFormShape(row, mappings) {
       case 'employeeAdvance':
       case 'probationDays':
       case 'dischargeYear':
+      case 'annualLeave.totalDays':
+      case 'annualLeave.usedDays':
+      case 'annualLeave.accumulatedLeave':
+      case 'annualLeave.compensatoryHours':
+      case 'laborInsuredSalary':
+      case 'pensionInsuredSalary':
+      case 'healthInsuredSalary':
+      case 'dependentCount':
         out[sysKey] = (raw === '' || raw == null) ? '' : String(raw).replace(/[^\d.-]/g, '')
         break
 
@@ -2207,6 +2242,69 @@ const BULK_IMPORT_FIELD_CONFIGS = Object.freeze([
     label: '其他薪資項目',
     description: '其他薪資項目 (多個逗號分隔)',
     category: '薪資與帳戶'
+  },
+  {
+    key: 'annualLeave.totalDays',
+    header: 'annualLeave_totalDays',
+    label: '年度特休總天數',
+    description: '年度特休總天數',
+    category: '特休與投保'
+  },
+  {
+    key: 'annualLeave.usedDays',
+    header: 'annualLeave_usedDays',
+    label: '已使用天數',
+    description: '已使用天數',
+    category: '特休與投保'
+  },
+  {
+    key: 'annualLeave.accumulatedLeave',
+    header: 'annualLeave_accumulatedLeave',
+    label: '積假',
+    description: '積假',
+    category: '特休與投保'
+  },
+  {
+    key: 'annualLeave.expiryDate',
+    header: 'annualLeave_expiryDate',
+    label: '請假期限',
+    description: '請假期限 (yyyy-mm-dd，亦可填民國年如 116/12/09)',
+    category: '特休與投保'
+  },
+  {
+    key: 'annualLeave.compensatoryHours',
+    header: 'annualLeave_compensatoryHours',
+    label: '補休時數',
+    description: '補休時數',
+    category: '特休與投保'
+  },
+  {
+    key: 'laborInsuredSalary',
+    header: 'laborInsuredSalary',
+    label: '勞保投保薪資',
+    description: '勞保投保薪資',
+    category: '特休與投保'
+  },
+  {
+    key: 'pensionInsuredSalary',
+    header: 'pensionInsuredSalary',
+    label: '勞退投保薪資',
+    description: '勞退投保薪資',
+    category: '特休與投保'
+  },
+  {
+    key: 'healthInsuredSalary',
+    header: 'healthInsuredSalary',
+    label: '健保投保薪資',
+    description: '健保投保薪資',
+    category: '特休與投保'
+  },
+  {
+    key: 'dependentCount',
+    header: 'dependentCount',
+    label: '眷口數',
+    description: '眷口數',
+    category: '特休與投保'
   }
 ])
 
@@ -2349,12 +2447,14 @@ const bulkImportFile = ref(null)
 const bulkImportUploadFileList = ref([])
 const bulkImportPreview = ref([])
 const bulkImportErrors = ref([])
+const bulkImportWarnings = ref([])
 const bulkImportForm = reactive({
   columnMappings: { ...DEFAULT_BULK_IMPORT_COLUMN_MAPPINGS },
   options: {
     defaultRole: defaultBulkImportRole,
     resetPassword: '',
-    sendWelcomeEmail: false
+    sendWelcomeEmail: false,
+    updateExisting: false
   }
 })
 
@@ -2395,7 +2495,7 @@ const hasBulkImportProgress = computed(() => {
   const hasFile = Boolean(bulkImportFile.value)
   const hasUploadList = (bulkImportUploadFileList.value || []).length > 0
   const hasPreview = (bulkImportPreview.value || []).length > 0
-  const hasErrors = (bulkImportErrors.value || []).length > 0
+  const hasErrors = (bulkImportErrors.value || []).length > 0 || (bulkImportWarnings.value || []).length > 0
   const hasReferenceDialog = referenceMappingDialogVisible.value
   const hasReferenceMessage = Boolean(referenceMappingDialogMessage.value)
   const hasPendingReference = referenceMappingKeys.value.some(
@@ -2423,7 +2523,8 @@ const hasBulkImportProgress = computed(() => {
   const hasOptionChange =
     bulkImportForm.options.defaultRole !== defaultBulkImportRole ||
     Boolean(bulkImportForm.options.resetPassword) ||
-    Boolean(bulkImportForm.options.sendWelcomeEmail)
+    Boolean(bulkImportForm.options.sendWelcomeEmail) ||
+    Boolean(bulkImportForm.options.updateExisting)
 
   return (
     hasFile ||
@@ -3293,6 +3394,16 @@ function normalizeEmployeeRecord(e = {}) {
     department: e.department?._id || e.department || '',
     subDepartment: e.subDepartment?._id || e.subDepartment || '',
     supervisor: e.supervisor?._id || e.supervisor || null,
+    // 後端已把直屬主管帶成 { _id, name, employeeId }，上面攤平成 id 之後姓名就沒了，
+    // 這裡另外留下來，讓編輯畫面能顯示主管姓名而不是一串 ObjectId。
+    supervisorInfo:
+      e.supervisor && typeof e.supervisor === 'object' && e.supervisor._id
+        ? {
+          _id: e.supervisor._id,
+          name: e.supervisor.name ?? '',
+          employeeNo: e.supervisor.employeeId ?? e.supervisor.employeeNo ?? ''
+        }
+        : null,
     laborPensionSelf: toNumberOrNull(e?.laborPensionSelf) ?? 0,
     employeeAdvance: toNumberOrNull(e?.employeeAdvance) ?? 0,
     salaryItems: filteredSalaryItems,
@@ -3606,15 +3717,76 @@ const filteredSubDepartments = computed(() =>
     ? subDepartmentList.value.filter(sd => sd.department === employeeForm.value.department)
     : []
 )
-const supervisorList = computed(() =>
-  employeeForm.value.organization && employeeForm.value.department
-    ? employeeList.value.filter(
-      e =>
-        e.role === 'supervisor' &&
-        e.organization === employeeForm.value.organization &&
-        e.department === employeeForm.value.department
-    )
-    : []
+// 直屬主管下拉選單的候選人。員工清單是分頁載入的，只靠目前這一頁找不到其他頁的主管，
+// 所以另外向後端查「同機構同部門的主管」；再保證目前已設定的主管一定在選項內，
+// 不然 el-select 找不到對應選項就會直接顯示 ObjectId。
+const supervisorCandidates = ref([])
+const currentSupervisorInfo = ref(null)
+let supervisorCandidatesGeneration = 0
+
+function toSupervisorOption(e = {}) {
+  return {
+    _id: e._id,
+    name: e.name ?? '',
+    employeeNo: e.employeeNo ?? e.employeeId ?? ''
+  }
+}
+
+async function fetchSupervisorCandidates() {
+  const generation = ++supervisorCandidatesGeneration
+  const { organization, department } = employeeForm.value
+  if (!organization || !department) {
+    supervisorCandidates.value = []
+    return
+  }
+  const params = new URLSearchParams({
+    role: 'supervisor',
+    organization: String(organization),
+    department: String(department),
+    pageSize: String(100)
+  })
+  try {
+    const res = await apiFetch(`/api/employees?${params.toString()}`)
+    if (!res.ok) return
+    const payload = await res.json()
+    if (generation !== supervisorCandidatesGeneration) return
+    const list = Array.isArray(payload) ? payload : (payload.employees ?? [])
+    supervisorCandidates.value = list.map(toSupervisorOption)
+  } catch (error) {
+    console.warn('載入主管候選人失敗', error)
+  }
+}
+
+const supervisorList = computed(() => {
+  const options = new Map()
+  const addOption = option => {
+    const key = option?._id ? String(option._id) : ''
+    if (key && !options.has(key)) options.set(key, option)
+  }
+  const { organization, department, supervisor } = employeeForm.value
+  if (organization && department) {
+    employeeList.value
+      .filter(e => e.role === 'supervisor' && e.organization === organization && e.department === department)
+      .map(toSupervisorOption)
+      .forEach(addOption)
+    supervisorCandidates.value.forEach(addOption)
+  }
+  if (supervisor && !options.has(String(supervisor))) {
+    const known =
+      (currentSupervisorInfo.value && String(currentSupervisorInfo.value._id) === String(supervisor)
+        ? currentSupervisorInfo.value
+        : null) ??
+      employeeList.value.find(e => String(e._id) === String(supervisor))
+    addOption(known ? toSupervisorOption(known) : { _id: supervisor, name: '（原直屬主管）', employeeNo: '' })
+  }
+  return Array.from(options.values())
+})
+
+watch(
+  () => [employeeForm.value.organization, employeeForm.value.department],
+  () => {
+    if (employeeDialogVisible.value) fetchSupervisorCandidates()
+  }
 )
 
 const salaryItemOptionMap = computed(() => {
@@ -3807,6 +3979,7 @@ function resetBulkImportState({
   }
   if (resetErrors) {
     bulkImportErrors.value = []
+    bulkImportWarnings.value = []
   }
   if (resetReferenceDialogs) {
     referenceMappingDialogVisible.value = false
@@ -3843,6 +4016,7 @@ function resetBulkImportState({
     bulkImportForm.options.defaultRole = defaultBulkImportRole
     bulkImportForm.options.resetPassword = ''
     bulkImportForm.options.sendWelcomeEmail = false
+    bulkImportForm.options.updateExisting = false
   }
 }
 
@@ -4358,6 +4532,7 @@ async function submitBulkImport({ triggeredByMapping = false } = {}) {
     return
   }
   bulkImportLoading.value = true
+  bulkImportWarnings.value = []
   try {
     const formData = new FormData()
     formData.append('file', bulkImportFile.value)
@@ -4433,11 +4608,15 @@ async function submitBulkImport({ triggeredByMapping = false } = {}) {
       bulkImportPreview.value = serverPreview
     }
     bulkImportErrors.value = Array.isArray(payload?.errors) ? payload.errors : []
+    bulkImportWarnings.value = Array.isArray(payload?.warnings) ? payload.warnings : []
 
+    const importSummary = Number.isFinite(payload?.updatedCount)
+      ? `新增 ${payload.createdCount ?? 0} 筆、更新 ${payload.updatedCount} 筆`
+      : ''
     if (bulkImportErrors.value.length) {
       ElMessage.warning('匯入完成，但有部分資料需要檢查')
     } else {
-      ElMessage.success('匯入成功')
+      ElMessage.success(importSummary ? `匯入成功：${importSummary}` : '匯入成功')
     }
 
     await fetchEmployees()
@@ -4532,8 +4711,10 @@ async function openEmployeeDialog(employeeId = null) {
     emp._photoObjectUrl = summaryEmployee?._photoObjectUrl || ''
     editEmployeeIndex = index
     editEmployeeId = emp._id || ''
+    currentSupervisorInfo.value = emp.supervisorInfo ?? null
     // 以 emptyEmployee 為基底，可避免漏欄位
     employeeForm.value = { ...structuredClone(emptyEmployee), ...emp, password: '', photoList: [] }
+    delete employeeForm.value.supervisorInfo
     employeeForm.value.title = extractOptionValue(employeeForm.value.title)
     employeeForm.value.practiceTitle = extractOptionValue(employeeForm.value.practiceTitle)
     employeeForm.value.languages = toOptionValueArray(employeeForm.value.languages)
@@ -4604,6 +4785,7 @@ async function openEmployeeDialog(employeeId = null) {
   } else {
     editEmployeeIndex = null
     editEmployeeId = ''
+    currentSupervisorInfo.value = null
     employeeDialogTab.value = 'account'
     employeeForm.value = { ...structuredClone(emptyEmployee) }
     employeeForm.value.licenses = []
@@ -4622,6 +4804,7 @@ async function openEmployeeDialog(employeeId = null) {
   }
   await fetchSubDepartments(employeeForm.value.department)
   employeeDialogVisible.value = true
+  void fetchSupervisorCandidates()
 }
 
 async function saveEmployee() {
@@ -5178,6 +5361,30 @@ function getStatusTagType(status) {
   margin: 12px 0 0 0;
   padding-left: 20px;
   color: #b45309;
+}
+
+.bulk-import-warning {
+  border-radius: 8px;
+  padding: 12px 16px;
+}
+
+.bulk-import-warning .error-list {
+  max-height: 180px;
+  overflow-y: auto;
+  color: #475569;
+}
+
+.bulk-import-update-option {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: flex-start;
+}
+
+.bulk-import-update-hint {
+  font-size: 12px;
+  line-height: 1.6;
+  color: #64748b;
 }
 
 .bulk-import-preview h4 {

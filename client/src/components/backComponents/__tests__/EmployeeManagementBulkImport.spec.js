@@ -625,4 +625,121 @@ describe('EmployeeManagement - 批量匯入流程', () => {
       expect(labels.some(text => text.includes('缺少可辨識的標籤'))).toBe(true)
     }
   })
+
+  it('預設欄位對應包含特休與勞健保投保薪資等新欄位，範本也帶有這些欄位', async () => {
+    const wrapper = await mountComponent()
+    const expected = {
+      'annualLeave.totalDays': 'annualLeave_totalDays',
+      'annualLeave.usedDays': 'annualLeave_usedDays',
+      'annualLeave.accumulatedLeave': 'annualLeave_accumulatedLeave',
+      'annualLeave.expiryDate': 'annualLeave_expiryDate',
+      'annualLeave.compensatoryHours': 'annualLeave_compensatoryHours',
+      laborInsuredSalary: 'laborInsuredSalary',
+      pensionInsuredSalary: 'pensionInsuredSalary',
+      healthInsuredSalary: 'healthInsuredSalary',
+      dependentCount: 'dependentCount'
+    }
+    expect(wrapper.vm.bulkImportForm.columnMappings).toMatchObject(expected)
+
+    const [headerRow, descriptionRow] = wrapper.vm.buildBulkImportTemplateCsvContent().replace('﻿', '').split('\n')
+    Object.values(expected).forEach(header => expect(headerRow).toContain(`"${header}"`))
+    expect(descriptionRow).toContain('年度特休總天數')
+    expect(descriptionRow).toContain('眷口數')
+  })
+
+  it('勾選「更新已存在的員工資料」會在 options 帶出 updateExisting，並顯示新增/更新筆數與提醒', async () => {
+    importEmployeesBulkMock.mockResolvedValue(
+      createApiResponse({
+        successCount: 3,
+        createdCount: 1,
+        updatedCount: 2,
+        preview: [
+          { action: 'created', employeeNo: 'E1', name: '新人', department: '', role: 'employee', email: 'a@example.com' },
+          { action: 'updated', employeeNo: 'E2', name: '舊人', department: '', role: '', email: 'b@example.com' }
+        ],
+        warnings: ['第 4 列「自提勞退」0.06 視為 6%，以 45800 換算為每月 2748 元'],
+        errors: []
+      })
+    )
+
+    const wrapper = await mountComponent()
+    await wrapper.find('[data-test="bulk-import-button"]').trigger('click')
+    const file = new File(['x'], 'employees.xlsx', {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    })
+    await wrapper.vm.handleBulkImportFileChange({ name: 'employees.xlsx', raw: file })
+
+    expect(wrapper.vm.bulkImportForm.options.updateExisting).toBe(false)
+    wrapper.vm.bulkImportForm.options.updateExisting = true
+
+    await wrapper.vm.submitBulkImport()
+    await flushPromises()
+
+    const formData = importEmployeesBulkMock.mock.calls[0][0]
+    expect(JSON.parse(formData.get('options')).updateExisting).toBe(true)
+    expect(ElMessage.success).toHaveBeenCalledWith('匯入成功：新增 1 筆、更新 2 筆')
+    expect(wrapper.vm.bulkImportWarnings).toEqual([
+      '第 4 列「自提勞退」0.06 視為 6%，以 45800 換算為每月 2748 元'
+    ])
+    expect(wrapper.text()).toContain('第 4 列「自提勞退」0.06 視為 6%')
+  })
+})
+
+describe('EmployeeManagement - 直屬主管下拉選單', () => {
+  let apiFetchMock
+
+  beforeEach(() => {
+    apiFetchMock = vi.spyOn(apiModule, 'apiFetch').mockImplementation((path) => {
+      const cleanPath = typeof path === 'string' ? path.split('?')[0] : path
+      if (cleanPath === '/api/employees' && String(path).includes('role=supervisor')) {
+        return Promise.resolve(createApiResponse({
+          employees: [{ _id: 'sup-b', name: '羅惠如', employeeId: 'A0134', role: 'supervisor' }],
+          pagination: { total: 1, page: 1, pageSize: 100, totalPages: 1 }
+        }))
+      }
+      return Promise.resolve(createApiResponse(DEFAULT_API_PAYLOADS[cleanPath] ?? {}))
+    })
+  })
+
+  afterEach(() => {
+    apiFetchMock.mockRestore()
+  })
+
+  const mountWithForm = async (form) => {
+    const wrapper = shallowMount(EmployeeManagement, {
+      global: { stubs: { transition: false, teleport: false, ...elementStubs } }
+    })
+    await flushPromises()
+    Object.assign(wrapper.vm.employeeForm, form)
+    return wrapper
+  }
+
+  it('目前已設定的主管即使不在已載入的員工清單內，也會顯示姓名而不是 ObjectId', async () => {
+    const wrapper = await mountWithForm({ organization: 'org-1', department: 'dept-1', supervisor: 'sup-a' })
+    wrapper.vm.currentSupervisorInfo = { _id: 'sup-a', name: '石靜嫻', employeeNo: 'A0077' }
+    await flushPromises()
+
+    const option = wrapper.vm.supervisorList.find(item => item._id === 'sup-a')
+    expect(option).toMatchObject({ name: '石靜嫻', employeeNo: 'A0077' })
+  })
+
+  it('查不到主管姓名時至少不會顯示一串 ID', async () => {
+    const wrapper = await mountWithForm({ organization: 'org-1', department: 'dept-1', supervisor: '691e90e7da0c5b8dfbed422b' })
+    await flushPromises()
+
+    const option = wrapper.vm.supervisorList.find(item => item._id === '691e90e7da0c5b8dfbed422b')
+    expect(option.name).toBe('（原直屬主管）')
+  })
+
+  it('會向後端查詢同機構同部門的主管，不受員工清單分頁限制', async () => {
+    const wrapper = await mountWithForm({ organization: 'org-1', department: 'dept-1', supervisor: null })
+    await wrapper.vm.fetchSupervisorCandidates()
+    await flushPromises()
+
+    const call = apiFetchMock.mock.calls.find(([path]) => String(path).includes('role=supervisor'))
+    expect(call).toBeTruthy()
+    expect(String(call[0])).toContain('organization=org-1')
+    expect(String(call[0])).toContain('department=dept-1')
+    expect(wrapper.vm.supervisorList.map(item => item.name)).toContain('羅惠如')
+  })
 })
