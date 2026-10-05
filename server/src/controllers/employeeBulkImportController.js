@@ -1,10 +1,11 @@
 import ExcelJS from 'exceljs'
+import mongoose from 'mongoose'
 import { Readable } from 'stream'
 import Employee from '../models/Employee.js'
 import Organization from '../models/Organization.js'
 import Department from '../models/Department.js'
 import SubDepartment from '../models/SubDepartment.js'
-import { buildEmployeeDoc } from './employeeController.js'
+import { buildEmployeeDoc, buildEmployeePatch } from './employeeController.js'
 
 const REQUIRED_MAPPING_KEYS = ['employeeNo', 'name', 'email']
 const VALID_ROLES = ['employee', 'supervisor', 'admin']
@@ -121,6 +122,53 @@ const NUMBER_FIELDS = new Set([
   'dependentCount'
 ])
 const CSV_ARRAY_FIELDS = new Set(['languages', 'identityCategory', 'salaryItems'])
+
+// 這幾個欄位是後來才加進範本的：舊版檔案沒有也不該讓整批匯入失敗。
+const OPTIONAL_COLUMN_KEYS = new Set([
+  'annualLeave.totalDays',
+  'annualLeave.usedDays',
+  'annualLeave.accumulatedLeave',
+  'annualLeave.compensatoryHours',
+  'annualLeave.expiryDate',
+  'laborInsuredSalary',
+  'pensionInsuredSalary',
+  'healthInsuredSalary',
+  'dependentCount'
+])
+
+// 客戶實際拿到的 Excel，第 1 列是英文欄位名，但後加的欄位只有第 2 列的中文說明。
+// 第 1 列找不到對應欄位時，改用第 2 列的中文名稱比對，客戶不必自己改表頭。
+const HEADER_LABEL_FALLBACKS = Object.freeze({
+  annualLeave_totalDays: ['年度特休總天數'],
+  annualLeave_usedDays: ['已使用天數'],
+  annualLeave_accumulatedLeave: ['積假'],
+  annualLeave_expiryDate: ['請假期限'],
+  annualLeave_compensatoryHours: ['補休時數'],
+  laborInsuredSalary: ['勞保投保薪資'],
+  pensionInsuredSalary: ['勞退投保薪資'],
+  healthInsuredSalary: ['健保投保薪資'],
+  dependentCount: ['眷口數']
+})
+
+const NUMBER_FIELD_LABELS = Object.freeze({
+  'annualLeave.totalDays': '年度特休總天數',
+  'annualLeave.usedDays': '已使用天數',
+  'annualLeave.accumulatedLeave': '積假',
+  'annualLeave.compensatoryHours': '補休時數',
+  laborInsuredSalary: '勞保投保薪資',
+  pensionInsuredSalary: '勞退投保薪資',
+  healthInsuredSalary: '健保投保薪資',
+  dependentCount: '眷口數',
+  salaryAmount: '薪資金額',
+  laborPensionSelf: '自提勞退',
+  employeeAdvance: '員工墊付金額'
+})
+
+// 「3國」這種數字後面帶單位/備註的欄位，取前面的數字，並在結果提醒使用者確認。
+const NUMBER_WITH_SUFFIX_FIELDS = new Set(['annualLeave.accumulatedLeave'])
+
+// 更新既有員工時，不會被檔案內容覆蓋的欄位（帳號、權限、登入識別）。
+const UPDATE_EXCLUDED_KEYS = new Set(['role', 'username', 'password', 'email', 'employeeNo'])
 
 const REFERENCE_KEYS = ['organization', 'department', 'subDepartment', 'supervisor']
 
@@ -463,6 +511,28 @@ function excelSerialToDate(serial) {
   return new Date(excelEpoch.getTime() + millis)
 }
 
+// 民國年日期，例如 091/12/01、60/10/1、115年9月1日。年份 3 位數以內才視為民國年，
+// 4 位數仍走西元年。不先處理的話 `new Date('091/12/01')` 會被當成西元 91 年。
+const ROC_DATE_REGEX = /^(\d{1,3})\s*[/.\-年]\s*(\d{1,2})\s*[/.\-月]\s*(\d{1,2})\s*日?$/
+
+function parseRocDate(text) {
+  const match = ROC_DATE_REGEX.exec(text)
+  if (!match) return undefined
+  const year = Number(match[1]) + 1911
+  const month = Number(match[2])
+  const day = Number(match[3])
+  const date = new Date(Date.UTC(year, month - 1, day))
+  if (
+    Number.isNaN(date.getTime()) ||
+    date.getUTCFullYear() !== year ||
+    date.getUTCMonth() !== month - 1 ||
+    date.getUTCDate() !== day
+  ) {
+    return undefined
+  }
+  return date
+}
+
 function toDateValue(value) {
   if (!value && value !== 0) return undefined
   if (value instanceof Date) return value
@@ -473,17 +543,25 @@ function toDateValue(value) {
   if (typeof value === 'string') {
     const trimmed = value.trim()
     if (!trimmed) return undefined
+    if (ROC_DATE_REGEX.test(trimmed)) return parseRocDate(trimmed)
     const date = new Date(trimmed)
     return Number.isNaN(date.getTime()) ? undefined : date
   }
   return undefined
 }
 
-function toNumberValue(value) {
+function toNumberValue(value, { allowSuffix = false } = {}) {
   if (value === null || value === undefined || value === '') return undefined
-  if (typeof value === 'number') return value
-  const num = Number(String(value).trim())
-  return Number.isNaN(num) ? undefined : num
+  if (typeof value === 'number') return Number.isNaN(value) ? undefined : value
+  const text = String(value).trim().replace(/,/g, '')
+  if (!text) return undefined
+  const num = Number(text)
+  if (!Number.isNaN(num)) return num
+  if (allowSuffix) {
+    const match = /^(-?\d+(?:\.\d+)?)\s*\D+$/.exec(text)
+    if (match) return Number(match[1])
+  }
+  return undefined
 }
 
 function normalizeEmail(value) {
@@ -617,6 +695,60 @@ function deriveUsername(row) {
   return ''
 }
 
+// 範本的「自提勞退 (%)」填的是比例（0.06 = 6%），但系統的 laborPensionSelf 是每月扣款金額，
+// 薪資計算時直接加進扣款合計。0~1 之間的值視為比例，依勞退投保薪資換算成金額，
+// 找不到可換算的基準時寧可略過，也不要把 0.06 元當成扣款寫進去。
+function convertPensionSelfRate(normalized, rowNumber, warnings) {
+  const rate = normalized.laborPensionSelf
+  if (typeof rate !== 'number' || !(rate > 0 && rate <= 1)) return
+  const base = [
+    normalized.pensionInsuredSalary,
+    normalized.laborInsuredSalary,
+    normalized.salaryAmount
+  ].find(value => typeof value === 'number' && value > 0)
+  if (!base) {
+    delete normalized.laborPensionSelf
+    warnings.push(`第 ${rowNumber} 列「自提勞退」${rate} 視為比例，但沒有可換算的投保薪資或薪資金額，已略過`)
+    return
+  }
+  const amount = Math.round(base * rate)
+  normalized.laborPensionSelf = amount
+  warnings.push(
+    `第 ${rowNumber} 列「自提勞退」${rate} 視為 ${Math.round(rate * 10000) / 100}%，以 ${base} 換算為每月 ${amount} 元`
+  )
+}
+
+function isBlankImportValue(value) {
+  if (value === undefined || value === null) return true
+  if (typeof value === 'string') return value.trim() === ''
+  if (Array.isArray(value)) return value.length === 0
+  return false
+}
+
+// 更新既有員工時，只帶檔案裡「有填」的欄位：空白儲存格代表「沒資料」，不能把系統裡的值洗掉。
+function pruneBlankValues(source) {
+  const result = {}
+  Object.entries(source).forEach(([key, value]) => {
+    if (isBlankImportValue(value)) return
+    if (value && typeof value === 'object' && !Array.isArray(value) && !(value instanceof Date)) {
+      const nested = pruneBlankValues(value)
+      if (Object.keys(nested).length) result[key] = nested
+      return
+    }
+    result[key] = value
+  })
+  return result
+}
+
+function buildUpdateBody(normalized) {
+  const body = {}
+  Object.entries(normalized).forEach(([key, value]) => {
+    if (UPDATE_EXCLUDED_KEYS.has(key)) return
+    body[key] = value
+  })
+  return pruneBlankValues(body)
+}
+
 const DEFAULT_CREDENTIAL_RULE = Object.freeze({
   username: '帳號優先使用員工編號，缺少時依序以 Email 帳號前綴或手動輸入帳號填入',
   password: '預設密碼為身分證號（idNumber），缺少時將中止匯入'
@@ -624,6 +756,7 @@ const DEFAULT_CREDENTIAL_RULE = Object.freeze({
 
 function createPreview(row) {
   return {
+    action: row.action ?? 'created',
     employeeNo: row.employeeNo ?? '',
     name: row.name ?? '',
     department: row.department ?? '',
@@ -718,6 +851,7 @@ export async function bulkImportEmployees(req, res) {
   const resetPassword = typeof options?.resetPassword === 'string' && options.resetPassword.trim()
     ? options.resetPassword.trim()
     : null
+  const updateExisting = options?.updateExisting === true || options?.updateExisting === 'true'
 
   const workbook = new ExcelJS.Workbook()
   let worksheet
@@ -760,13 +894,34 @@ export async function bulkImportEmployees(req, res) {
 
   const headerRowsToSkip = new Set()
   const secondRow = worksheet.getRow(2)
+  const labelMap = new Map()
   if (hasChineseHeaderHints(secondRow)) {
     headerRowsToSkip.add(2)
+    secondRow.eachCell((cell, colNumber) => {
+      const value = toPlainCellValue(cell)
+      if (typeof value === 'string' && value.trim() && !labelMap.has(value.trim())) {
+        labelMap.set(value.trim(), colNumber)
+      }
+    })
+  }
+
+  const resolveColumn = header => {
+    const name = header.trim()
+    const direct = headerMap.get(name)
+    if (direct) return direct
+    const labels = HEADER_LABEL_FALLBACKS[name]
+    if (labels) {
+      for (const label of labels) {
+        const col = labelMap.get(label)
+        if (col) return col
+      }
+    }
+    return undefined
   }
 
   const missingColumns = Object.entries(columnMappings)
     .filter(([, header]) => typeof header === 'string' && header.trim())
-    .filter(([, header]) => !headerMap.has(header.trim()))
+    .filter(([key, header]) => !resolveColumn(header) && !OPTIONAL_COLUMN_KEYS.has(key))
     .map(([key, header]) => `${key} (${header})`)
 
   if (missingColumns.length) {
@@ -778,7 +933,10 @@ export async function bulkImportEmployees(req, res) {
   }
 
   const parsedRows = []
-  const maxRow = worksheet.actualRowCount || worksheet.rowCount
+  const warnings = []
+  // actualRowCount 只算「有內容的列數」，中間有空白列時會比最後一列的編號小，
+  // 拿來當迴圈上限會把檔案尾端的資料整段漏掉，所以改用 rowCount（最後一列的編號）。
+  const maxRow = Math.max(worksheet.rowCount || 0, worksheet.actualRowCount || 0)
   for (let index = 2; index <= maxRow; index += 1) {
     if (headerRowsToSkip.has(index)) continue
     const row = worksheet.getRow(index)
@@ -790,7 +948,7 @@ export async function bulkImportEmployees(req, res) {
 
     Object.entries(columnMappings).forEach(([key, header]) => {
       if (typeof header !== 'string' || !header.trim()) return
-      const col = headerMap.get(header.trim())
+      const col = resolveColumn(header)
       if (!col) return
       const cellValue = toPlainCellValue(row.getCell(col))
       if (cellValue !== '' && cellValue !== null && cellValue !== undefined) {
@@ -823,9 +981,19 @@ export async function bulkImportEmployees(req, res) {
       }
 
       if (matchesType(NUMBER_FIELDS)) {
-        const numberValue = toNumberValue(cellValue)
+        const allowSuffix = NUMBER_WITH_SUFFIX_FIELDS.has(key)
+        const numberValue = toNumberValue(cellValue, { allowSuffix })
         if (numberValue !== undefined) {
           setPathValue(normalized, key, numberValue)
+          if (allowSuffix && typeof cellValue === 'string' && String(numberValue) !== cellValue.trim()) {
+            warnings.push(
+              `第 ${index} 列「${NUMBER_FIELD_LABELS[key] || key}」的值「${cellValue}」已取數字 ${numberValue}，請確認`
+            )
+          }
+        } else if (typeof cellValue === 'string' && cellValue.trim()) {
+          warnings.push(
+            `第 ${index} 列「${NUMBER_FIELD_LABELS[key] || key}」的值「${cellValue}」不是數字，已略過`
+          )
         }
         return
       }
@@ -853,12 +1021,16 @@ export async function bulkImportEmployees(req, res) {
     if (!hasData) continue
 
     normalizeRowObject(normalized)
+    convertPensionSelfRate(normalized, index, warnings)
 
     parsedRows.push({
       rowNumber: index,
       original,
       normalized,
-      errors: []
+      errors: [],
+      // 先配好 _id，讓同一份檔案裡的員工可以互相指定為主管（主管本人可能也在這次匯入的檔案內）。
+      newId: new mongoose.Types.ObjectId(),
+      existing: null
     })
   }
 
@@ -920,9 +1092,20 @@ export async function bulkImportEmployees(req, res) {
           departmentMap.set(id, { ...doc, organization: organizationId })
         })
       }
+      const aliasMap = buildReferenceAliasMap(docs, config.aliasFields)
+      if (type === 'supervisor') {
+        // 主管常常也在同一份檔案裡（還沒建立，資料庫查不到）。
+        // 資料庫已有的人優先，沒有的才用這次檔案裡預先配好 _id 的員工。
+        parsedRows.forEach(row => {
+          const employeeNo = row.normalized.employeeNo
+          const key = normalizeReferenceKey(employeeNo)
+          if (!key || aliasMap.has(key)) return
+          aliasMap.set(key, { _id: row.newId, name: row.normalized.name, employeeId: String(employeeNo) })
+        })
+      }
       referenceLookups[type] = {
         docs,
-        aliasMap: buildReferenceAliasMap(docs, config.aliasFields),
+        aliasMap,
         options: buildReferenceOptions(type, docs, { organizationMap, departmentMap })
       }
     } catch (error) {
@@ -1168,6 +1351,13 @@ export async function bulkImportEmployees(req, res) {
     REFERENCE_KEYS.forEach(key => {
       const normalizedValue = normalizeReferenceKey(getPathValue(row.original, key))
       if (!normalizedValue) return
+      if (key === 'supervisor' && normalizedValue === normalizeReferenceKey(row.normalized.employeeNo)) {
+        // 「主管員工 ID」填成自己（多半是標示「我是這個單位的主管帳號」），
+        // 若照存會變成自己簽自己，請假流程也會卡住，所以不設定直屬主管。
+        delete row.normalized.supervisor
+        warnings.push(`第 ${row.rowNumber} 列的主管員工 ID 與本人相同，已不設定直屬主管`)
+        return
+      }
       let resolutionKey = normalizedValue
       if (key === 'subDepartment') {
         const normalizedDepartment = normalizeReferenceKey(getPathValue(row.original, 'department'))
@@ -1190,9 +1380,21 @@ export async function bulkImportEmployees(req, res) {
   const seenEmails = new Set()
   const emailCandidates = new Set()
 
+  // 這份檔案裡被別人填成「主管員工 ID」的員工編號。主管帳號常常是跟著同一份檔案一起匯入，
+  // 如果都以預設權限（員工）建立，之後在員工資料的直屬主管下拉選單會找不到他們。
+  const referencedSupervisorKeys = new Set()
+  parsedRows.forEach(row => {
+    const key = normalizeReferenceKey(getPathValue(row.original, 'supervisor'))
+    if (key && key !== normalizeReferenceKey(row.normalized.employeeNo)) {
+      referencedSupervisorKeys.add(key)
+    }
+  })
+
   parsedRows.forEach(row => {
     if (!row.normalized.role) {
-      row.normalized.role = defaultRole
+      const promote = defaultRole === 'employee' &&
+        referencedSupervisorKeys.has(normalizeReferenceKey(row.normalized.employeeNo))
+      row.normalized.role = promote ? 'supervisor' : defaultRole
     }
 
     const email = row.normalized.email ?? row.original.email
@@ -1239,34 +1441,108 @@ export async function bulkImportEmployees(req, res) {
   if (emailCandidates.size) {
     try {
       const emailList = Array.from(emailCandidates)
-      existingEmails = await Employee.find({ email: { $in: emailList } }, 'email')
+      existingEmails = await Employee.find({ email: { $in: emailList } }, 'email employeeId')
     } catch (error) {
       res.status(500).json({ message: '檢查既有 Email 失敗', error: error.message })
       return
     }
   }
 
-  const existingEmailSet = new Set((existingEmails || []).map(doc => normalizeEmail(doc.email)))
+  const employeeNoList = Array.from(new Set(
+    parsedRows
+      .map(row => String(row.normalized.employeeNo ?? '').trim())
+      .filter(Boolean)
+  ))
+  let existingByNo = []
+  if (employeeNoList.length) {
+    try {
+      const found = await Employee.find(
+        { employeeId: { $in: employeeNoList } },
+        '_id employeeId email emergencyContacts salaryItems'
+      )
+      existingByNo = (found || []).map(doc => (typeof doc?.toObject === 'function' ? doc.toObject() : doc))
+    } catch (error) {
+      res.status(500).json({ message: '檢查既有員工編號失敗', error: error.message })
+      return
+    }
+  }
+
+  const existingEmailMap = new Map(
+    (existingEmails || []).map(doc => [normalizeEmail(doc.email), doc])
+  )
+  const existingNoMap = new Map(
+    (existingByNo || [])
+      .map(doc => [String(doc?.employeeId ?? doc?.employeeNo ?? '').trim(), doc])
+      .filter(([no]) => no)
+  )
+  const idOf = doc => (doc?._id === undefined || doc?._id === null ? '' : String(doc._id))
+
   parsedRows.forEach(row => {
     const email = normalizeEmail(row.normalized.email ?? row.original.email)
-    if (email && existingEmailSet.has(email)) {
-      row.errors.push('Email 已存在')
+    const employeeNo = String(row.normalized.employeeNo ?? '').trim()
+    const byEmail = email ? existingEmailMap.get(email) : undefined
+    const byNo = employeeNo ? existingNoMap.get(employeeNo) : undefined
+
+    if (!updateExisting) {
+      if (byEmail) row.errors.push('Email 已存在（若要更新既有員工的資料，請勾選「更新已存在的員工資料」）')
+      else if (byNo) row.errors.push('員工編號已存在（若要更新既有員工的資料，請勾選「更新已存在的員工資料」）')
+      return
+    }
+
+    if (byNo && byEmail && idOf(byNo) && idOf(byEmail) && idOf(byNo) !== idOf(byEmail)) {
+      row.errors.push('Email 已被另一位員工使用，無法更新')
+      return
+    }
+    // 以員工編號為主要依據；系統裡的員工編號對不上時，才退而用 Email 比對。
+    const matched = byNo || byEmail
+    if (matched) {
+      row.existing = {
+        _id: matched._id,
+        employeeId: matched.employeeId,
+        emergencyContacts: matched.emergencyContacts,
+        salaryItems: matched.salaryItems
+      }
     }
   })
 
-  const firstErrorRow = parsedRows.find(row => row.errors.length)
-  if (firstErrorRow) {
-    const formattedError = formatRowError(firstErrorRow.rowNumber, firstErrorRow.errors)
+  const errorRows = parsedRows.filter(row => row.errors.length)
+  if (errorRows.length) {
+    const firstErrorRow = errorRows[0]
+    const MAX_REPORTED_ERRORS = 20
+    const reportedRows = errorRows.slice(0, MAX_REPORTED_ERRORS)
+    const errors = reportedRows.map(row => formatRowError(row.rowNumber, row.errors))
+    if (errorRows.length > reportedRows.length) {
+      errors.push(`其餘 ${errorRows.length - reportedRows.length} 列也有問題，請先修正以上錯誤後重試`)
+    }
     res.status(400).json({
       message: `第 ${firstErrorRow.rowNumber} 列資料有誤，已停止匯入`,
-      errors: [formattedError],
+      errors,
       rowNumber: firstErrorRow.rowNumber
     })
     return
   }
 
   const preparedRows = []
+  const updateRows = []
   for (const row of parsedRows) {
+    if (row.existing) {
+      const updateBody = buildUpdateBody(row.normalized)
+      const patch = buildEmployeePatch(updateBody, row.existing)
+      if (Array.isArray(patch.$set.emergencyContacts)) {
+        patch.$set.emergencyContacts = patch.$set.emergencyContacts.filter(Boolean)
+      }
+      const update = {}
+      if (Object.keys(patch.$set).length) update.$set = patch.$set
+      if (Object.keys(patch.$unset).length) update.$unset = patch.$unset
+      updateRows.push({
+        rowNumber: row.rowNumber,
+        id: row.existing._id,
+        update,
+        fallbackBody: row.normalized
+      })
+      continue
+    }
+
     const password = resetPassword || String(row.normalized.idNumber).trim()
     const body = {
       ...row.normalized,
@@ -1276,6 +1552,7 @@ export async function bulkImportEmployees(req, res) {
 
     const employeeDoc = buildEmployeeDoc(body)
     employeeDoc.password = password
+    employeeDoc._id = row.newId
 
     try {
       const modelInstance = new Employee(employeeDoc)
@@ -1324,10 +1601,14 @@ export async function bulkImportEmployees(req, res) {
       insertOptions.session = session
     }
 
-    const createdDocs = await Employee.insertMany(preparedRows.map(row => row.doc), insertOptions)
+    const createdDocs = preparedRows.length
+      ? await Employee.insertMany(preparedRows.map(row => row.doc), insertOptions)
+      : []
+    createdIds.push(...createdDocs.map(doc => doc?._id).filter(Boolean))
     const preview = createdDocs.map((created, index) => {
       const prepared = preparedRows[index]
       return createPreview({
+        action: 'created',
         employeeNo: created.employeeId || created.employeeNo || prepared.fallbackBody.employeeNo,
         name: created.name,
         department: created.department || prepared.fallbackBody.department,
@@ -1338,14 +1619,50 @@ export async function bulkImportEmployees(req, res) {
       })
     })
 
+    // 先新增、後更新：新增比較可能因為資料問題失敗，失敗時既有員工的資料還沒被動到。
+    let currentUpdate = null
+    try {
+      for (const item of updateRows) {
+        currentUpdate = item
+        if (!item.update.$set && !item.update.$unset) {
+          currentUpdate = null
+          continue
+        }
+        await Employee.updateOne(
+          { _id: item.id },
+          item.update,
+          usingTransaction && session ? { session } : undefined
+        )
+        currentUpdate = null
+      }
+    } catch (updateError) {
+      updateError.failedUpdateRow = currentUpdate?.rowNumber
+      throw updateError
+    }
+    updateRows.forEach(item => {
+      preview.push(createPreview({
+        action: 'updated',
+        employeeNo: item.fallbackBody.employeeNo,
+        name: item.fallbackBody.name,
+        department: item.fallbackBody.department,
+        role: '',
+        email: item.fallbackBody.email,
+        username: item.fallbackBody.username,
+        initialPassword: ''
+      }))
+    })
+
     if (usingTransaction && session && typeof session.commitTransaction === 'function') {
       await session.commitTransaction()
     }
 
     res.status(200).json({
-      successCount: parsedRows.length,
+      successCount: preparedRows.length + updateRows.length,
+      createdCount: preparedRows.length,
+      updatedCount: updateRows.length,
       failureCount: 0,
       preview,
+      warnings,
       errors: [],
       credentialRule: DEFAULT_CREDENTIAL_RULE
     })
@@ -1368,9 +1685,11 @@ export async function bulkImportEmployees(req, res) {
     }
 
     const failureIndex = Array.isArray(error?.insertedDocs) ? error.insertedDocs.length : null
-    const failedRowNumber = typeof failureIndex === 'number' && preparedRows[failureIndex]
-      ? preparedRows[failureIndex].rowNumber
-      : null
+    const failedRowNumber = typeof error?.failedUpdateRow === 'number'
+      ? error.failedUpdateRow
+      : typeof failureIndex === 'number' && preparedRows[failureIndex]
+        ? preparedRows[failureIndex].rowNumber
+        : null
 
     const formattedError = failedRowNumber
       ? formatRowError(failedRowNumber, error.message)

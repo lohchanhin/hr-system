@@ -8,6 +8,7 @@ const mockEmployeeModel = function (doc) {
 }
 mockEmployeeModel.find = jest.fn()
 mockEmployeeModel.insertMany = jest.fn()
+mockEmployeeModel.updateOne = jest.fn()
 mockEmployeeModel.deleteMany = jest.fn()
 mockEmployeeModel.startSession = jest.fn()
 mockEmployeeModel.prototype.validate = jest.fn()
@@ -40,10 +41,13 @@ function mockFindWithData(model, data) {
   }))
 }
 
-function setupEmployeeFind({ referenceData = [], emailData = [] } = {}) {
+function setupEmployeeFind({ referenceData = [], emailData = [], existingByNo = [] } = {}) {
   mockEmployeeModel.find.mockImplementation((query, projection) => {
     if (query && query.email) {
       return Promise.resolve(emailData)
+    }
+    if (query && query.employeeId) {
+      return Promise.resolve(existingByNo)
     }
     return {
       lean: jest.fn().mockResolvedValue(referenceData)
@@ -237,6 +241,37 @@ async function createWorkbookBuffer(rows) {
   return Buffer.from(arrayBuffer)
 }
 
+const NEW_COLUMN_HEADERS = [
+  'annualLeave_totalDays',
+  'annualLeave_usedDays',
+  'annualLeave_accumulatedLeave',
+  'annualLeave_expiryDate',
+  'annualLeave_compensatoryHours',
+  'laborInsuredSalary',
+  'pensionInsuredSalary',
+  'healthInsuredSalary',
+  'dependentCount'
+]
+
+// 仿客戶實際交付的檔案：後加的 9 個欄位第 1 列沒有英文欄位名（空白或「115/8/31為截點」這類備註），
+// 只有第 2 列有中文說明。blankRowsBefore 可在資料列前插入空白列。
+async function createClientStyleWorkbookBuffer(rows, { blankRowsBetween = 0 } = {}) {
+  const workbook = new ExcelJS.Workbook()
+  const worksheet = workbook.addWorksheet('員工資料')
+  const headerRow = EN_HEADERS.map(header => (NEW_COLUMN_HEADERS.includes(header) ? '' : header))
+  headerRow[EN_HEADERS.indexOf('annualLeave_totalDays')] = '115/8/31為截點'
+  worksheet.addRow(headerRow)
+  worksheet.addRow(ZH_HEADERS)
+  rows.forEach((data, index) => {
+    if (index > 0) {
+      for (let i = 0; i < blankRowsBetween; i += 1) worksheet.addRow([])
+    }
+    worksheet.addRow(EN_HEADERS.map(header => (data[header] !== undefined ? data[header] : '')))
+  })
+  const arrayBuffer = await workbook.xlsx.writeBuffer()
+  return Buffer.from(arrayBuffer)
+}
+
 function escapeCsvValue(value) {
   if (value === null || value === undefined) return ''
   const text = String(value)
@@ -264,6 +299,8 @@ function createCsvBuffer(rows) {
 beforeEach(() => {
   mockEmployeeModel.find.mockReset()
   mockEmployeeModel.insertMany.mockReset()
+  mockEmployeeModel.updateOne.mockReset()
+  mockEmployeeModel.updateOne.mockResolvedValue({ acknowledged: true })
   mockEmployeeModel.deleteMany.mockReset()
   mockEmployeeModel.startSession.mockReset()
   mockEmployeeModel.prototype.validate.mockReset()
@@ -325,6 +362,7 @@ describe('POST /api/employees/bulk-import', () => {
     expect(response.body.failureCount).toBe(0)
     expect(response.body.preview).toEqual([
       {
+        action: 'created',
         employeeNo: 'E0101',
         name: '林宥辰',
         department: 'RD',
@@ -490,6 +528,285 @@ describe('POST /api/employees/bulk-import', () => {
     expect(createdDoc.dependentCount).toBe(2)
   })
 
+  describe('客戶實際檔案格式（民國年日期、中文說明列、更新既有員工）', () => {
+    async function postImport(buffer, options = {}) {
+      const application = await setupApp()
+      return request(application)
+        .post('/api/employees/bulk-import')
+        .attach('file', buffer, { filename: 'import.xlsx' })
+        .field('options', JSON.stringify(options))
+    }
+
+    it('第 1 列沒有英文欄位名時，改用第 2 列的中文說明讀取特休與投保薪資欄位', async () => {
+      const buffer = await createClientStyleWorkbookBuffer([
+        {
+          employeeId: 'E0201',
+          name: '許少欣',
+          idNumber: 'D123456789',
+          email: 'e0201@example.com',
+          annualLeave_totalDays: 170,
+          annualLeave_usedDays: 8,
+          annualLeave_compensatoryHours: 2.5,
+          laborInsuredSalary: 45800,
+          pensionInsuredSalary: 45800,
+          healthInsuredSalary: '45,800',
+          dependentCount: 2
+        }
+      ])
+      setupEmployeeFind({ emailData: [] })
+
+      const response = await postImport(buffer)
+
+      expect(response.status).toBe(200)
+      const createdDoc = mockEmployeeModel.insertMany.mock.calls[0][0][0]
+      expect(createdDoc.annualLeave).toMatchObject({ totalDays: 170, usedDays: 8, compensatoryHours: 2.5 })
+      expect(createdDoc.laborInsuredSalary).toBe(45800)
+      expect(createdDoc.pensionInsuredSalary).toBe(45800)
+      expect(createdDoc.healthInsuredSalary).toBe(45800)
+      expect(createdDoc.dependentCount).toBe(2)
+    })
+
+    it('民國年日期（091/12/01）轉成正確的西元日期', async () => {
+      const buffer = await createClientStyleWorkbookBuffer([
+        {
+          employeeId: 'E0202',
+          name: '黃麗娥',
+          idNumber: 'D223456789',
+          email: 'e0202@example.com',
+          birthDate: '060/10/01',
+          hireDate: '091/12/01',
+          annualLeave_expiryDate: '116/12/09'
+        }
+      ])
+      setupEmployeeFind({ emailData: [] })
+
+      const response = await postImport(buffer)
+
+      expect(response.status).toBe(200)
+      const createdDoc = mockEmployeeModel.insertMany.mock.calls[0][0][0]
+      expect(createdDoc.birthday.toISOString().slice(0, 10)).toBe('1971-10-01')
+      expect(createdDoc.appointment.hireDate.toISOString().slice(0, 10)).toBe('2002-12-01')
+      expect(createdDoc.annualLeave.expiryDate.toISOString().slice(0, 10)).toBe('2027-12-09')
+    })
+
+    it('投保薪資欄位出現「已勞退」這類文字時略過並回報提醒；積假「3國」取數字 3', async () => {
+      const buffer = await createClientStyleWorkbookBuffer([
+        {
+          employeeId: 'E0203',
+          name: '陳麗君',
+          idNumber: 'D323456789',
+          email: 'e0203@example.com',
+          laborInsuredSalary: '已勞退',
+          healthInsuredSalary: '投65歲',
+          annualLeave_accumulatedLeave: '3國'
+        }
+      ])
+      setupEmployeeFind({ emailData: [] })
+
+      const response = await postImport(buffer)
+
+      expect(response.status).toBe(200)
+      const createdDoc = mockEmployeeModel.insertMany.mock.calls[0][0][0]
+      expect(createdDoc.laborInsuredSalary).toBe(0)
+      expect(createdDoc.healthInsuredSalary).toBe(0)
+      expect(createdDoc.annualLeave.accumulatedLeave).toBe(3)
+      expect(response.body.warnings).toEqual(expect.arrayContaining([
+        expect.stringContaining('勞保投保薪資」的值「已勞退」不是數字'),
+        expect.stringContaining('健保投保薪資」的值「投65歲」不是數字'),
+        expect.stringContaining('積假」的值「3國」已取數字 3')
+      ]))
+    })
+
+    it('自提勞退填 0.06（6%）時，依勞退投保薪資換算成每月金額', async () => {
+      const buffer = await createClientStyleWorkbookBuffer([
+        {
+          employeeId: 'E0204',
+          name: '蕭雅內',
+          idNumber: 'D423456789',
+          email: 'e0204@example.com',
+          laborPensionSelf: 0.06,
+          pensionInsuredSalary: 45800
+        },
+        {
+          employeeId: 'E0205',
+          name: '童元龍',
+          idNumber: 'D523456789',
+          email: 'e0205@example.com',
+          laborPensionSelf: 0.06
+        }
+      ])
+      setupEmployeeFind({ emailData: [] })
+
+      const response = await postImport(buffer)
+
+      expect(response.status).toBe(200)
+      const docs = mockEmployeeModel.insertMany.mock.calls[0][0]
+      expect(docs[0].laborPensionSelf).toBe(2748)
+      expect(docs[1].laborPensionSelf).toBe(0)
+      expect(response.body.warnings).toEqual(expect.arrayContaining([
+        expect.stringContaining('換算為每月 2748 元'),
+        expect.stringContaining('沒有可換算的投保薪資或薪資金額')
+      ]))
+    })
+
+    it('檔案中間有空白列時，後面的資料不會被漏掉', async () => {
+      const buffer = await createClientStyleWorkbookBuffer([
+        { employeeId: 'E0206', name: '甲', idNumber: 'D623456789', email: 'e0206@example.com' },
+        { employeeId: 'E0207', name: '乙', idNumber: 'D723456789', email: 'e0207@example.com' }
+      ], { blankRowsBetween: 2 })
+      setupEmployeeFind({ emailData: [] })
+
+      const response = await postImport(buffer)
+
+      expect(response.status).toBe(200)
+      expect(response.body.successCount).toBe(2)
+      expect(mockEmployeeModel.insertMany.mock.calls[0][0].map(doc => doc.employeeNo)).toEqual(['E0206', 'E0207'])
+    })
+
+    it('同一份檔案內的主管可被指定，且被指定為主管者自動成為 supervisor；主管欄填自己則不設定', async () => {
+      const buffer = await createClientStyleWorkbookBuffer([
+        { employeeId: 'S100', name: '主管甲', idNumber: 'D823456789', email: 's100@example.com', supervisor: 'S100' },
+        { employeeId: 'E0208', name: '員工乙', idNumber: 'D923456789', email: 'e0208@example.com', supervisor: 'S100' },
+        { employeeId: 'E0209', name: '員工丙', idNumber: 'E023456789', email: 'e0209@example.com', supervisor: 'S100' }
+      ])
+      setupEmployeeFind({ emailData: [] })
+
+      const response = await postImport(buffer)
+
+      expect(response.status).toBe(200)
+      const [boss, staffB, staffC] = mockEmployeeModel.insertMany.mock.calls[0][0]
+      expect(boss.role).toBe('supervisor')
+      expect(boss.supervisor).toBeUndefined()
+      expect(staffB.role).toBe('employee')
+      expect(String(staffB.supervisor)).toBe(String(boss._id))
+      expect(String(staffC.supervisor)).toBe(String(boss._id))
+      expect(response.body.warnings).toEqual(expect.arrayContaining([
+        expect.stringContaining('第 3 列的主管員工 ID 與本人相同')
+      ]))
+    })
+
+    it('明確指定預設權限時，不會自動把被指定的主管升為 supervisor', async () => {
+      const buffer = await createClientStyleWorkbookBuffer([
+        { employeeId: 'S101', name: '主管甲', idNumber: 'E123456780', email: 's101@example.com' },
+        { employeeId: 'E0210', name: '員工乙', idNumber: 'E223456780', email: 'e0210@example.com', supervisor: 'S101' }
+      ])
+      setupEmployeeFind({ emailData: [] })
+
+      const response = await postImport(buffer, { defaultRole: 'admin' })
+
+      expect(response.status).toBe(200)
+      const docs = mockEmployeeModel.insertMany.mock.calls[0][0]
+      expect(docs.map(doc => doc.role)).toEqual(['admin', 'admin'])
+    })
+
+    it('未勾選「更新既有員工」時，員工編號或 Email 已存在會停止匯入並提示', async () => {
+      const buffer = await createClientStyleWorkbookBuffer([
+        { employeeId: 'E0301', name: '舊員工', idNumber: 'E323456780', email: 'old@example.com' }
+      ])
+      setupEmployeeFind({
+        emailData: [{ _id: 'id-old', email: 'old@example.com', employeeId: 'E0301' }],
+        existingByNo: [{ _id: 'id-old', employeeId: 'E0301', email: 'old@example.com' }]
+      })
+
+      const response = await postImport(buffer)
+
+      expect(response.status).toBe(400)
+      expect(response.body.errors[0]).toMatch(/更新已存在的員工資料/)
+      expect(mockEmployeeModel.insertMany).not.toHaveBeenCalled()
+      expect(mockEmployeeModel.updateOne).not.toHaveBeenCalled()
+    })
+
+    it('勾選「更新既有員工」：已存在的更新、不存在的新增，空白儲存格不會洗掉原有資料', async () => {
+      const buffer = await createClientStyleWorkbookBuffer([
+        {
+          employeeId: 'E0301',
+          name: '舊員工',
+          idNumber: 'E323456780',
+          email: 'old@example.com',
+          hireDate: '100/04/20',
+          salaryAmount: 36300,
+          laborInsuredSalary: 36300,
+          annualLeave_totalDays: 120,
+          annualLeave_compensatoryHours: 4,
+          dependentCount: 1
+        },
+        { employeeId: 'E0302', name: '新員工', idNumber: 'E423456780', email: 'new@example.com' }
+      ])
+      setupEmployeeFind({
+        emailData: [{ _id: 'id-old', email: 'old@example.com', employeeId: 'E0301' }],
+        existingByNo: [{ _id: 'id-old', employeeId: 'E0301', email: 'old@example.com' }]
+      })
+
+      const response = await postImport(buffer, { updateExisting: true })
+
+      expect(response.status).toBe(200)
+      expect(response.body).toMatchObject({ successCount: 2, createdCount: 1, updatedCount: 1 })
+      expect(response.body.preview.map(item => item.action)).toEqual(['created', 'updated'])
+
+      expect(mockEmployeeModel.insertMany).toHaveBeenCalledTimes(1)
+      expect(mockEmployeeModel.insertMany.mock.calls[0][0].map(doc => doc.employeeNo)).toEqual(['E0302'])
+
+      expect(mockEmployeeModel.updateOne).toHaveBeenCalledTimes(1)
+      const [filter, update, updateOptions] = mockEmployeeModel.updateOne.mock.calls[0]
+      expect(filter).toEqual({ _id: 'id-old' })
+      expect(update.$set).toMatchObject({
+        name: '舊員工',
+        idNumber: 'E323456780',
+        salaryAmount: 36300,
+        laborInsuredSalary: 36300,
+        dependentCount: 1,
+        'annualLeave.totalDays': 120,
+        'annualLeave.compensatoryHours': 4
+      })
+      expect(update.$set['appointment.hireDate'].toISOString().slice(0, 10)).toBe('2011-04-20')
+      // 帳號、權限、Email、密碼不會被更新
+      ;['role', 'username', 'email', 'password', 'employeeId'].forEach(key => {
+        expect(update.$set).not.toHaveProperty(key)
+      })
+      // 檔案中沒填的欄位不會出現在更新內容裡（不會把原有資料清掉）
+      ;['salaryType', 'title', 'department', 'supervisor', 'annualLeave.usedDays'].forEach(key => {
+        expect(update.$set).not.toHaveProperty(key)
+      })
+      expect(updateOptions).toEqual({ session: mockSession })
+      expect(mockSession.commitTransaction).toHaveBeenCalledTimes(1)
+    })
+
+    it('更新模式下 Email 已被另一位員工使用時，停止匯入', async () => {
+      const buffer = await createClientStyleWorkbookBuffer([
+        { employeeId: 'E0301', name: '舊員工', idNumber: 'E323456780', email: 'other@example.com' }
+      ])
+      setupEmployeeFind({
+        emailData: [{ _id: 'id-other', email: 'other@example.com', employeeId: 'E0999' }],
+        existingByNo: [{ _id: 'id-old', employeeId: 'E0301', email: 'old@example.com' }]
+      })
+
+      const response = await postImport(buffer, { updateExisting: true })
+
+      expect(response.status).toBe(400)
+      expect(response.body.errors[0]).toMatch(/Email 已被另一位員工使用/)
+      expect(mockEmployeeModel.updateOne).not.toHaveBeenCalled()
+    })
+
+    it('更新失敗時回報失敗列並中止（交易回滾）', async () => {
+      const buffer = await createClientStyleWorkbookBuffer([
+        { employeeId: 'E0301', name: '舊員工', idNumber: 'E323456780', email: 'old@example.com', salaryAmount: 1 }
+      ])
+      setupEmployeeFind({
+        emailData: [{ _id: 'id-old', email: 'old@example.com', employeeId: 'E0301' }],
+        existingByNo: [{ _id: 'id-old', employeeId: 'E0301', email: 'old@example.com' }]
+      })
+      mockEmployeeModel.updateOne.mockRejectedValueOnce(new Error('write failed'))
+
+      const response = await postImport(buffer, { updateExisting: true })
+
+      expect(response.status).toBe(400)
+      expect(response.body.rowNumber).toBe(3)
+      expect(response.body.errors[0]).toMatch(/第 3 列：write failed/)
+      expect(mockSession.abortTransaction).toHaveBeenCalledTimes(1)
+      expect(mockSession.commitTransaction).not.toHaveBeenCalled()
+    })
+  })
+
   it('欄位缺漏時回傳錯誤並不建立資料', async () => {
     const application = await setupApp()
     const buffer = await createWorkbookBuffer([
@@ -565,8 +882,10 @@ describe('POST /api/employees/bulk-import', () => {
 
     expect(response.status).toBe(400)
     expect(response.body.rowNumber).toBe(4)
-    expect(response.body.errors).toHaveLength(1)
-    expect(response.body.errors[0]).toMatch(/Email 重複/)
+    // 一次回報所有有問題的列，不再只回報第一列
+    expect(response.body.errors).toHaveLength(2)
+    expect(response.body.errors[0]).toMatch(/第 4 列：Email 重複/)
+    expect(response.body.errors[1]).toMatch(/第 5 列：Email 已存在/)
     expect(mockEmployeeModel.insertMany).not.toHaveBeenCalled()
     expect(mockEmployeeModel.startSession).not.toHaveBeenCalled()
   })
