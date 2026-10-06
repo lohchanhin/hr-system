@@ -749,6 +749,18 @@ function buildUpdateBody(normalized) {
   return pruneBlankValues(body)
 }
 
+// 單機模式（沒有複本集）的 MongoDB 不支援多文件交易，第一個帶 session 的寫入會回報
+// "Transaction numbers are only allowed on a replica set member or mongos"（code 20）。
+function isTransactionUnsupportedError(error) {
+  if (!error) return false
+  const message = String(error.message || '')
+  return (
+    /Transaction numbers are only allowed|replica set member or mongos/i.test(message) ||
+    (error.code === 20 && /transaction/i.test(message)) ||
+    /transactions? (is|are) not supported/i.test(message)
+  )
+}
+
 const DEFAULT_CREDENTIAL_RULE = Object.freeze({
   username: '帳號優先使用員工編號，缺少時依序以 Email 帳號前綴或手動輸入帳號填入',
   password: '預設密碼為身分證號（idNumber），缺少時將中止匯入'
@@ -1399,14 +1411,13 @@ export async function bulkImportEmployees(req, res) {
   const seenEmails = new Set()
   const emailCandidates = new Set()
 
-  // 這份檔案裡被別人填成「主管員工 ID」的員工編號。主管帳號常常是跟著同一份檔案一起匯入，
+  // 這份檔案裡出現在「主管員工 ID」欄的員工編號：被別人指定為主管，或填成自己（標示「我是
+  // 這個單位的主管帳號」，例如只有一個人的單位）。主管帳號常常跟著同一份檔案一起匯入，
   // 如果都以預設權限（員工）建立，之後在員工資料的直屬主管下拉選單會找不到他們。
   const referencedSupervisorKeys = new Set()
   parsedRows.forEach(row => {
     const key = normalizeReferenceKey(getPathValue(row.original, 'supervisor'))
-    if (key && key !== normalizeReferenceKey(row.normalized.employeeNo)) {
-      referencedSupervisorKeys.add(key)
-    }
+    if (key) referencedSupervisorKeys.add(key)
   })
 
   parsedRows.forEach(row => {
@@ -1594,143 +1605,168 @@ export async function bulkImportEmployees(req, res) {
   }
 
   const createdIds = []
-  let session = null
-  let usingTransaction = false
-  let transactionUnavailable = false
+  let allowTransaction = true
 
-  try {
-    if (typeof Employee.startSession === 'function') {
-      session = await Employee.startSession()
-      if (session && typeof session.startTransaction === 'function') {
-        await session.startTransaction()
-        usingTransaction = true
+  // 先以交易寫入（失敗時整批回滾）。單機模式的 MongoDB（沒有複本集）不支援交易，
+  // 第一次寫入就會回報錯誤，這時改用不含交易的方式重做一次，而不是直接讓匯入失敗。
+  for (;;) {
+    let session = null
+    let usingTransaction = false
+    let transactionUnavailable = !allowTransaction
+
+    try {
+      if (allowTransaction && typeof Employee.startSession === 'function') {
+        session = await Employee.startSession()
+        if (session && typeof session.startTransaction === 'function') {
+          await session.startTransaction()
+          usingTransaction = true
+        } else {
+          session = null
+          transactionUnavailable = true
+        }
       } else {
-        session = null
         transactionUnavailable = true
       }
-    } else {
-      transactionUnavailable = true
-    }
 
-    const insertOptions = {
-      ordered: true,
-      runValidators: false
-    }
-    if (usingTransaction && session) {
-      insertOptions.session = session
-    }
+      const insertOptions = {
+        ordered: true,
+        runValidators: false
+      }
+      if (usingTransaction && session) {
+        insertOptions.session = session
+      }
 
-    const createdDocs = preparedRows.length
-      ? await Employee.insertMany(preparedRows.map(row => row.doc), insertOptions)
-      : []
-    createdIds.push(...createdDocs.map(doc => doc?._id).filter(Boolean))
-    const preview = createdDocs.map((created, index) => {
-      const prepared = preparedRows[index]
-      return createPreview({
-        action: 'created',
-        employeeNo: created.employeeId || created.employeeNo || prepared.fallbackBody.employeeNo,
-        name: created.name,
-        department: created.department || prepared.fallbackBody.department,
-        role: created.role || prepared.fallbackBody.role,
-        email: created.email,
-        username: created.username || prepared.fallbackBody.username,
-        initialPassword: prepared.initialPassword
+      const createdDocs = preparedRows.length
+        ? await Employee.insertMany(preparedRows.map(row => row.doc), insertOptions)
+        : []
+      createdIds.push(...createdDocs.map(doc => doc?._id).filter(Boolean))
+      const preview = createdDocs.map((created, index) => {
+        const prepared = preparedRows[index]
+        return createPreview({
+          action: 'created',
+          employeeNo: created.employeeId || created.employeeNo || prepared.fallbackBody.employeeNo,
+          name: created.name,
+          department: created.department || prepared.fallbackBody.department,
+          role: created.role || prepared.fallbackBody.role,
+          email: created.email,
+          username: created.username || prepared.fallbackBody.username,
+          initialPassword: prepared.initialPassword
+        })
       })
-    })
 
-    // 先新增、後更新：新增比較可能因為資料問題失敗，失敗時既有員工的資料還沒被動到。
-    let currentUpdate = null
-    try {
-      for (const item of updateRows) {
-        currentUpdate = item
-        if (!item.update.$set && !item.update.$unset) {
+      // 先新增、後更新：新增比較可能因為資料問題失敗，失敗時既有員工的資料還沒被動到。
+      let currentUpdate = null
+      try {
+        for (const item of updateRows) {
+          currentUpdate = item
+          if (!item.update.$set && !item.update.$unset) {
+            currentUpdate = null
+            continue
+          }
+          await Employee.updateOne(
+            { _id: item.id },
+            item.update,
+            usingTransaction && session ? { session } : undefined
+          )
           currentUpdate = null
-          continue
         }
-        await Employee.updateOne(
-          { _id: item.id },
-          item.update,
-          usingTransaction && session ? { session } : undefined
+      } catch (updateError) {
+        updateError.failedUpdateRow = currentUpdate?.rowNumber
+        throw updateError
+      }
+      updateRows.forEach(item => {
+        preview.push(createPreview({
+          action: 'updated',
+          employeeNo: item.fallbackBody.employeeNo,
+          name: item.fallbackBody.name,
+          department: item.fallbackBody.department,
+          role: '',
+          email: item.fallbackBody.email,
+          username: item.fallbackBody.username,
+          initialPassword: ''
+        }))
+      })
+
+      if (usingTransaction && session && typeof session.commitTransaction === 'function') {
+        await session.commitTransaction()
+      }
+
+      if (!allowTransaction) {
+        warnings.push(
+          '資料庫為單機模式、不支援交易：這次匯入若中途失敗，新增的員工會被補償刪除，但已完成的更新無法回復'
         )
-        currentUpdate = null
       }
-    } catch (updateError) {
-      updateError.failedUpdateRow = currentUpdate?.rowNumber
-      throw updateError
-    }
-    updateRows.forEach(item => {
-      preview.push(createPreview({
-        action: 'updated',
-        employeeNo: item.fallbackBody.employeeNo,
-        name: item.fallbackBody.name,
-        department: item.fallbackBody.department,
-        role: '',
-        email: item.fallbackBody.email,
-        username: item.fallbackBody.username,
-        initialPassword: ''
-      }))
-    })
 
-    if (usingTransaction && session && typeof session.commitTransaction === 'function') {
-      await session.commitTransaction()
-    }
-
-    res.status(200).json({
-      successCount: preparedRows.length + updateRows.length,
-      createdCount: preparedRows.length,
-      updatedCount: updateRows.length,
-      failureCount: 0,
-      preview,
-      warnings,
-      errors: [],
-      credentialRule: DEFAULT_CREDENTIAL_RULE
-    })
-  } catch (error) {
-    if (usingTransaction && session && typeof session.abortTransaction === 'function') {
-      await session.abortTransaction()
-    }
-
-    if (!usingTransaction) {
-      if (Array.isArray(error?.insertedDocs)) {
-        createdIds.push(...error.insertedDocs.map(doc => doc._id).filter(Boolean))
+      res.status(200).json({
+        successCount: preparedRows.length + updateRows.length,
+        createdCount: preparedRows.length,
+        updatedCount: updateRows.length,
+        failureCount: 0,
+        preview,
+        warnings,
+        errors: [],
+        credentialRule: DEFAULT_CREDENTIAL_RULE
+      })
+      return
+    } catch (error) {
+      if (usingTransaction && session && typeof session.abortTransaction === 'function') {
+        try {
+          await session.abortTransaction()
+        } catch (abortError) {
+          // 交易根本沒有開始（例如資料庫不支援）時，中止會失敗，不影響後續處理
+        }
       }
-      const resultInsertedIds = error?.result?.result?.insertedIds
-      if (resultInsertedIds && typeof resultInsertedIds === 'object') {
-        createdIds.push(...Object.values(resultInsertedIds).filter(Boolean))
+
+      if (usingTransaction && isTransactionUnsupportedError(error)) {
+        // 交易不支援時，第一個寫入動作就失敗，資料庫裡還沒有任何變動，可以安全地重做。
+        allowTransaction = false
+        createdIds.length = 0
+        continue
       }
-      if (createdIds.length) {
-        await Employee.deleteMany({ _id: { $in: createdIds } })
+
+      if (!usingTransaction) {
+        if (Array.isArray(error?.insertedDocs)) {
+          createdIds.push(...error.insertedDocs.map(doc => doc._id).filter(Boolean))
+        }
+        const resultInsertedIds = error?.result?.result?.insertedIds
+        if (resultInsertedIds && typeof resultInsertedIds === 'object') {
+          createdIds.push(...Object.values(resultInsertedIds).filter(Boolean))
+        }
+        if (createdIds.length) {
+          await Employee.deleteMany({ _id: { $in: createdIds } })
+        }
       }
-    }
 
-    const failureIndex = Array.isArray(error?.insertedDocs) ? error.insertedDocs.length : null
-    const failedRowNumber = typeof error?.failedUpdateRow === 'number'
-      ? error.failedUpdateRow
-      : typeof failureIndex === 'number' && preparedRows[failureIndex]
-        ? preparedRows[failureIndex].rowNumber
-        : null
+      const failureIndex = Array.isArray(error?.insertedDocs) ? error.insertedDocs.length : null
+      const failedRowNumber = typeof error?.failedUpdateRow === 'number'
+        ? error.failedUpdateRow
+        : typeof failureIndex === 'number' && preparedRows[failureIndex]
+          ? preparedRows[failureIndex].rowNumber
+          : null
 
-    const formattedError = failedRowNumber
-      ? formatRowError(failedRowNumber, error.message)
-      : error.message
+      const formattedError = failedRowNumber
+        ? formatRowError(failedRowNumber, error.message)
+        : error.message
 
-    const transactionWarning = transactionUnavailable
-      ? '；環境不支援交易，無法保證全有全無'
-      : ''
-    const message = failedRowNumber
-      ? `第 ${failedRowNumber} 列資料寫入失敗，已停止匯入${transactionWarning}`
-      : transactionUnavailable
-        ? '環境不支援交易，無法保證全有全無'
-        : '匯入資料寫入失敗'
+      const transactionWarning = transactionUnavailable
+        ? '；環境不支援交易，無法保證全有全無'
+        : ''
+      const message = failedRowNumber
+        ? `第 ${failedRowNumber} 列資料寫入失敗，已停止匯入${transactionWarning}`
+        : transactionUnavailable
+          ? '環境不支援交易，無法保證全有全無'
+          : '匯入資料寫入失敗'
 
-    res.status(400).json({
-      message,
-      errors: [formattedError],
-      rowNumber: failedRowNumber || undefined
-    })
-  } finally {
-    if (session && typeof session.endSession === 'function') {
-      await session.endSession()
+      res.status(400).json({
+        message,
+        errors: [formattedError],
+        rowNumber: failedRowNumber || undefined
+      })
+      return
+    } finally {
+      if (session && typeof session.endSession === 'function') {
+        await session.endSession()
+      }
     }
   }
 }

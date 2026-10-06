@@ -685,6 +685,22 @@ describe('POST /api/employees/bulk-import', () => {
       ]))
     })
 
+    it('只有一個人的單位，主管欄填自己的帳號也會成為 supervisor（但不設定直屬主管）', async () => {
+      const buffer = await createClientStyleWorkbookBuffer([
+        { employeeId: 'G0001', name: '單人單位', idNumber: 'E523456780', email: 'g0001@example.com', supervisor: 'G0001' },
+        { employeeId: 'E0220', name: '一般員工', idNumber: 'E623456780', email: 'e0220@example.com' }
+      ])
+      setupEmployeeFind({ emailData: [] })
+
+      const response = await postImport(buffer)
+
+      expect(response.status).toBe(200)
+      const [solo, plain] = mockEmployeeModel.insertMany.mock.calls[0][0]
+      expect(solo.role).toBe('supervisor')
+      expect(solo.supervisor).toBeUndefined()
+      expect(plain.role).toBe('employee')
+    })
+
     it('明確指定預設權限時，不會自動把被指定的主管升為 supervisor', async () => {
       const buffer = await createClientStyleWorkbookBuffer([
         { employeeId: 'S101', name: '主管甲', idNumber: 'E123456780', email: 's101@example.com' },
@@ -996,6 +1012,102 @@ describe('POST /api/employees/bulk-import', () => {
     expect(response.body.message).toContain('環境不支援交易')
     expect(mockEmployeeModel.deleteMany).toHaveBeenCalledWith({ _id: { $in: ['partial-id'] } })
     expect(mockSession.abortTransaction).not.toHaveBeenCalled()
+  })
+
+  describe('資料庫是單機模式（沒有複本集、不支援交易）', () => {
+    const unsupportedError = () => {
+      const error = new Error('Transaction numbers are only allowed on a replica set member or mongos')
+      error.code = 20
+      error.codeName = 'IllegalOperation'
+      return error
+    }
+
+    const post = async (buffer, options) => {
+      const application = await setupApp()
+      const req = request(application)
+        .post('/api/employees/bulk-import')
+        .attach('file', buffer, { filename: 'import.xlsx' })
+      return options ? req.field('options', JSON.stringify(options)) : req
+    }
+
+    it('新增員工：交易被拒絕時自動改用非交易方式寫入，匯入仍然成功並提醒', async () => {
+      const buffer = await createWorkbookBuffer([
+        { employeeId: 'E3000', name: '單機甲', email: 'standalone-a@example.com', idNumber: 'N123456781' },
+        { employeeId: 'E3001', name: '單機乙', email: 'standalone-b@example.com', idNumber: 'N123456782' }
+      ])
+      setupEmployeeFind({ emailData: [] })
+      mockEmployeeModel.insertMany.mockRejectedValueOnce(unsupportedError())
+
+      const response = await post(buffer)
+
+      expect(response.status).toBe(200)
+      expect(response.body).toMatchObject({ successCount: 2, createdCount: 2, updatedCount: 0 })
+      expect(response.body.warnings).toEqual(expect.arrayContaining([
+        expect.stringContaining('不支援交易')
+      ]))
+      expect(mockEmployeeModel.insertMany).toHaveBeenCalledTimes(2)
+      expect(mockEmployeeModel.insertMany.mock.calls[0][1]).toHaveProperty('session', mockSession)
+      expect(mockEmployeeModel.insertMany.mock.calls[1][1]).not.toHaveProperty('session')
+      expect(mockEmployeeModel.startSession).toHaveBeenCalledTimes(1)
+      expect(mockSession.commitTransaction).not.toHaveBeenCalled()
+      expect(mockSession.endSession).toHaveBeenCalledTimes(1)
+    })
+
+    it('只更新既有員工：交易被拒絕時同樣改用非交易方式更新', async () => {
+      const buffer = await createClientStyleWorkbookBuffer([
+        { employeeId: 'E3100', name: '舊員工', idNumber: 'N223456781', email: 'old-standalone@example.com', salaryAmount: 40000 }
+      ])
+      setupEmployeeFind({
+        emailData: [{ _id: 'id-old', email: 'old-standalone@example.com', employeeId: 'E3100' }],
+        existingByNo: [{ _id: 'id-old', employeeId: 'E3100', email: 'old-standalone@example.com' }]
+      })
+      mockEmployeeModel.updateOne.mockRejectedValueOnce(unsupportedError())
+
+      const response = await post(buffer, { updateExisting: true })
+
+      expect(response.status).toBe(200)
+      expect(response.body).toMatchObject({ createdCount: 0, updatedCount: 1 })
+      expect(mockEmployeeModel.updateOne).toHaveBeenCalledTimes(2)
+      expect(mockEmployeeModel.updateOne.mock.calls[0][2]).toEqual({ session: mockSession })
+      expect(mockEmployeeModel.updateOne.mock.calls[1][2]).toBeUndefined()
+      expect(mockEmployeeModel.insertMany).not.toHaveBeenCalled()
+    })
+
+    it('改用非交易方式後若再失敗，仍會補償刪除已新增的員工並提示環境不支援交易', async () => {
+      const buffer = await createWorkbookBuffer([
+        { employeeId: 'E3200', name: '單機丙', email: 'standalone-c@example.com', idNumber: 'N323456781' },
+        { employeeId: 'E3201', name: '單機丁', email: 'standalone-d@example.com', idNumber: 'N323456782' }
+      ])
+      setupEmployeeFind({ emailData: [] })
+      mockEmployeeModel.insertMany
+        .mockRejectedValueOnce(unsupportedError())
+        .mockImplementationOnce(async docs => {
+          const error = new Error('validation failed')
+          error.insertedDocs = [{ ...docs[0], _id: 'partial-id' }]
+          throw error
+        })
+
+      const response = await post(buffer)
+
+      expect(response.status).toBe(400)
+      expect(response.body.rowNumber).toBe(4)
+      expect(response.body.message).toContain('環境不支援交易')
+      expect(mockEmployeeModel.deleteMany).toHaveBeenCalledWith({ _id: { $in: ['partial-id'] } })
+    })
+
+    it('其他類型的寫入錯誤不會被誤判成「不支援交易」而重試', async () => {
+      const buffer = await createWorkbookBuffer([
+        { employeeId: 'E3300', name: '一般錯誤', email: 'plain-error@example.com', idNumber: 'N423456781' }
+      ])
+      setupEmployeeFind({ emailData: [] })
+      mockEmployeeModel.insertMany.mockRejectedValue(new Error('E11000 duplicate key error'))
+
+      const response = await post(buffer)
+
+      expect(response.status).toBe(400)
+      expect(mockEmployeeModel.insertMany).toHaveBeenCalledTimes(1)
+      expect(mockSession.abortTransaction).toHaveBeenCalledTimes(1)
+    })
   })
 
   it('遇到未知部門時回傳 409 並提供對應選項', async () => {
