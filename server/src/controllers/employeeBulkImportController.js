@@ -1114,6 +1114,25 @@ export async function bulkImportEmployees(req, res) {
       return
     }
   }
+  // 客戶檔案的「所屬機構」欄放的其實是院所名稱，也就是系統裡的「部門」（兩欄常常填同一個值），
+  // 真正的機構是它們共同的上一層。機構值對不到任何機構、但剛好等於某個部門名稱時，
+  // 就視為該部門所屬的機構，不必請使用者逐一對應。同名部門分屬不同機構時無法判斷，維持原本流程。
+  if (referenceLookups.organization && referenceLookups.department) {
+    const orgAliasMap = referenceLookups.organization.aliasMap
+    const orgIdsByDepartmentName = new Map()
+    referenceLookups.department.docs.forEach(department => {
+      const orgId = toIdString(department?.organization)
+      const key = normalizeReferenceKey(department?.name)
+      if (!orgId || !key || !organizationMap.has(orgId)) return
+      const orgIds = orgIdsByDepartmentName.get(key) || new Set()
+      orgIds.add(orgId)
+      orgIdsByDepartmentName.set(key, orgIds)
+    })
+    orgIdsByDepartmentName.forEach((orgIds, key) => {
+      if (orgIds.size !== 1 || orgAliasMap.has(key)) return
+      orgAliasMap.set(key, organizationMap.get(Array.from(orgIds)[0]))
+    })
+  }
   const referenceOptionContext = { organizationMap, departmentMap }
 
   const resolutionMaps = {

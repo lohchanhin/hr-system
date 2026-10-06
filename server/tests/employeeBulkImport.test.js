@@ -1039,6 +1039,103 @@ describe('POST /api/employees/bulk-import', () => {
     expect(missingReferences.organization.options[0]).toMatchObject({ id: 'org1', name: '總公司' })
   })
 
+  describe('「所屬機構」欄填的是部門名稱（機構與部門同一層）', () => {
+    const importRows = () => createWorkbookBuffer([
+      {
+        employeeId: 'E0600',
+        name: '同層甲',
+        email: 'same-level-a@example.com',
+        organization: '迦南康復之家',
+        department: '迦南康復之家',
+        idNumber: 'M123456780'
+      },
+      {
+        employeeId: 'E0601',
+        name: '同層乙',
+        email: 'same-level-b@example.com',
+        organization: '和泰護理之家',
+        department: '和泰護理之家',
+        idNumber: 'M123456781'
+      }
+    ])
+
+    const post = async buffer => {
+      const application = await setupApp()
+      mockEmployeeModel.insertMany.mockImplementation(async docs => docs.map(doc => ({ ...doc })))
+      return request(application)
+        .post('/api/employees/bulk-import')
+        .attach('file', buffer, { filename: 'import.xlsx' })
+    }
+
+    it('機構值等於某個部門名稱時，自動對應到該部門所屬的機構，不需要逐一對應', async () => {
+      mockFindWithData(mockOrganizationModel, [{ _id: 'org-system', name: '迦南健康照護體系' }])
+      mockFindWithData(mockDepartmentModel, [
+        { _id: 'dep-kangfu', name: '迦南康復之家', organization: 'org-system' },
+        { _id: 'dep-hetai', name: '和泰護理之家', organization: 'org-system' }
+      ])
+      setupEmployeeFind({ emailData: [] })
+
+      const response = await post(await importRows())
+
+      expect(response.status).toBe(200)
+      const docs = mockEmployeeModel.insertMany.mock.calls[0][0]
+      expect(docs.map(doc => doc.organization)).toEqual(['org-system', 'org-system'])
+      expect(docs.map(doc => doc.department)).toEqual(['dep-kangfu', 'dep-hetai'])
+    })
+
+    it('真的有同名機構時，以機構為準，不會被部門的上層機構蓋掉', async () => {
+      mockFindWithData(mockOrganizationModel, [
+        { _id: 'org-system', name: '迦南健康照護體系' },
+        { _id: 'org-own', name: '迦南康復之家' }
+      ])
+      mockFindWithData(mockDepartmentModel, [
+        { _id: 'dep-kangfu', name: '迦南康復之家', organization: 'org-system' },
+        { _id: 'dep-hetai', name: '和泰護理之家', organization: 'org-system' }
+      ])
+      setupEmployeeFind({ emailData: [] })
+
+      const response = await post(await importRows())
+
+      expect(response.status).toBe(200)
+      const docs = mockEmployeeModel.insertMany.mock.calls[0][0]
+      expect(docs.map(doc => doc.organization)).toEqual(['org-own', 'org-system'])
+    })
+
+    it('同名部門分屬不同機構、無法判斷時，仍回傳 409 請使用者對應', async () => {
+      mockFindWithData(mockOrganizationModel, [
+        { _id: 'org-a', name: '甲體系' },
+        { _id: 'org-b', name: '乙體系' }
+      ])
+      mockFindWithData(mockDepartmentModel, [
+        { _id: 'dep-a', name: '迦南康復之家', organization: 'org-a' },
+        { _id: 'dep-b', name: '迦南康復之家', organization: 'org-b' },
+        { _id: 'dep-hetai', name: '和泰護理之家', organization: 'org-a' }
+      ])
+      setupEmployeeFind({ emailData: [] })
+
+      const response = await post(await importRows())
+
+      expect(response.status).toBe(409)
+      const values = response.body.missingReferences.organization.values.map(item => item.value)
+      expect(values).toEqual(['迦南康復之家'])
+      expect(mockEmployeeModel.insertMany).not.toHaveBeenCalled()
+    })
+
+    it('機構值既不是機構也不是任何部門名稱時，維持原本的 409 流程', async () => {
+      mockFindWithData(mockOrganizationModel, [{ _id: 'org-system', name: '迦南健康照護體系' }])
+      mockFindWithData(mockDepartmentModel, [
+        { _id: 'dep-hetai', name: '和泰護理之家', organization: 'org-system' }
+      ])
+      setupEmployeeFind({ emailData: [] })
+
+      const response = await post(await importRows())
+
+      expect(response.status).toBe(409)
+      const values = response.body.missingReferences.organization.values.map(item => item.value)
+      expect(values).toEqual(['迦南康復之家'])
+    })
+  })
+
   it('提供 valueMappings 與 ignore 後可完成匯入', async () => {
     const application = await setupApp()
     const buffer = await createWorkbookBuffer([
