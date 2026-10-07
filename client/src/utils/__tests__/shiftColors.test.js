@@ -41,6 +41,31 @@ describe('shift color utilities', () => {
     expect(style['--shift-border-color']).toBe(darken('#336699', 0.18))
   })
 
+  it('uses only configured colours when both are set and never the generated palette', () => {
+    const style = buildShiftStyle({ _id: 'x', code: 'C1', bgColor: '#7c2d12', color: '#fef3c7' })
+    expect(style['--shift-base-color']).toBe('#7c2d12')
+    expect(style['--shift-text-color']).toBe('#fef3c7')
+    expect(SHIFT_PALETTE.map(item => item.bg)).not.toContain(style['--shift-base-color'])
+  })
+
+  it('keeps the generated pastel for shifts without any configured colour', () => {
+    const shift = { _id: 's9', code: 'Q', name: '無顏色' }
+    const expected = SHIFT_PALETTE[hashKey(buildKey(shift)) % SHIFT_PALETTE.length]
+    expect(resolveShiftBaseColors(shift)).toEqual({ base: expected.bg, text: expected.text })
+    expect(resolveShiftBaseColors({ ...shift, bgColor: '', color: '' })).toEqual({ base: expected.bg, text: expected.text })
+  })
+
+  it('picks the automatic text colour against the lightened background that is actually displayed', () => {
+    const { getContrastColor } = __testUtils()
+    const light = resolveShiftBaseColors({ bgColor: '#ffd54f' })
+    expect(light.text).toBe(getContrastColor(lighten('#ffd54f', 0.18)))
+    expect(light.text).toBe('#1f2937')
+    const dark = resolveShiftBaseColors({ bgColor: '#1e3a8a' })
+    expect(dark.text).toBe('#f8fafc')
+    // 文字色有設定時一律用設定值
+    expect(resolveShiftBaseColors({ bgColor: '#ffd54f', color: '#000000' }).text).toBe('#000000')
+  })
+
   it('returns empty object for missing shift info', () => {
     expect(buildShiftStyle(null)).toEqual({})
   })

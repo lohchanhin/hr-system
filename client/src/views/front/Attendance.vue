@@ -16,6 +16,15 @@
     <!-- 重新設計打卡按鈕區域，使用卡片式布局和圖標 -->
     <div class="punch-section">
       <h2 class="section-title">快速打卡</h2>
+      <!-- 今天排的是休息日 / 例假 / 國定假日 / 請假時，明確告知不需打卡 -->
+      <el-alert
+        v-if="dayOffNotice"
+        class="day-off-notice"
+        type="info"
+        show-icon
+        :closable="false"
+        :title="dayOffNotice"
+      />
       <div class="punch-grid">
         <el-tooltip :disabled="!clockInState.reason" :content="clockInState.reason" placement="bottom">
           <div
@@ -154,6 +163,8 @@ const clockOutState = computed(() => actionAvailability.value.actions?.clockOut 
   disabled: true,
   reason: '今日未設定班表，無法打卡'
 })
+
+const dayOffNotice = computed(() => actionAvailability.value.dayOff?.reason || '')
 
 function updateAvailability(now = new Date()) {
   actionAvailability.value = determineActionAvailability({
@@ -413,6 +424,10 @@ onUnmounted(() => {
   margin: 0 0 24px 0;
   padding-left: 16px;
   border-left: 4px solid #10b981;
+}
+
+.day-off-notice {
+  margin-bottom: 20px;
 }
 
 .punch-grid {

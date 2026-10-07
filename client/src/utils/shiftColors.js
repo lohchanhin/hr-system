@@ -88,6 +88,9 @@ function getContrastColor(hex) {
   return luminance(normalized) > 0.65 ? '#1f2937' : '#f8fafc';
 }
 
+// 班表儲存格底色起點相對於班別底色的提亮比例
+const CELL_BG_LIGHTEN_START = 0.18;
+
 function buildKey(shift = {}) {
   const { _id, id, code, name } = shift;
   return [shift.bgColor, shift.color, _id, id, code, name]
@@ -113,9 +116,10 @@ export function resolveShiftBaseColors(shift) {
   const customBg = normalizeHex(shift.bgColor);
   const customText = normalizeHex(shift.color);
   if (customBg) {
+    // 儲存格實際顯示的是提亮後的底色（見 buildShiftStyle），自動文字色要以顯示底色判斷對比，不能只看原始底色
     return {
       base: customBg,
-      text: customText || getContrastColor(customBg),
+      text: customText || getContrastColor(lighten(customBg, CELL_BG_LIGHTEN_START)),
     };
   }
   const key = buildKey(shift);
@@ -133,7 +137,7 @@ export function buildShiftStyle(shift) {
     return {};
   }
   const tagBg = lighten(base, 0.1);
-  const cellStart = lighten(base, 0.18);
+  const cellStart = lighten(base, CELL_BG_LIGHTEN_START);
   const cellEnd = lighten(base, 0.32);
   const border = darken(base, 0.18);
   return {

@@ -56,6 +56,36 @@ describe('Attendance.vue availability', () => {
     expect(cards[1].classes()).toContain('disabled')
   })
 
+  it('shows a day-off notice and disables both punch cards on a day off', async () => {
+    const wrapper = mountComponent()
+    await flush()
+    wrapper.vm.shiftDefinitions = [
+      { _id: 'rest', semanticType: 'rest_day', startTime: '00:00', endTime: '00:00' }
+    ]
+    wrapper.vm.monthlySchedules = [{ date: '2024/01/01', shiftId: 'rest' }]
+    // 台北時間 2024-01-01 23:30：舊的 24 小時視窗內
+    wrapper.vm.updateAvailability(new Date('2024-01-01T15:30:00.000Z'))
+    await wrapper.vm.$nextTick()
+
+    const cards = wrapper.findAll('.punch-card')
+    expect(cards[0].classes()).toContain('disabled')
+    expect(cards[1].classes()).toContain('disabled')
+    expect(wrapper.find('.day-off-notice').attributes('title')).toBe('今日為休息日，不需打卡')
+    expect(wrapper.vm.clockInState.reason).toBe('今日為休息日，不需打卡')
+  })
+
+  it('does not show the day-off notice on a working day', async () => {
+    const wrapper = mountComponent()
+    await flush()
+    wrapper.vm.shiftDefinitions = [{ _id: 'shift1', semanticType: 'work', startTime: '09:00', endTime: '18:00' }]
+    wrapper.vm.monthlySchedules = [{ date: '2024/01/01', shiftId: 'shift1' }]
+    wrapper.vm.updateAvailability(new Date('2024-01-01T02:30:00.000Z'))
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.find('.day-off-notice').exists()).toBe(false)
+    expect(wrapper.findAll('.punch-card')[0].classes()).not.toContain('disabled')
+  })
+
   it('loads schedules from the monthly response envelope', async () => {
     const schedules = [{ _id: 'schedule-1', date: '2026-08-02', shiftId: 'shift1' }]
     apiFetch.mockReset()

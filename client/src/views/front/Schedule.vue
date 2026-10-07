@@ -783,7 +783,7 @@ import {
 } from '@element-plus/icons-vue'
 import { buildShiftStyle } from '../../utils/shiftColors'
 import { ROW_COLOR_PALETTE, normalizeRowColorIndex, resolveRowColor } from '../../utils/rowColors'
-import { buildMonthDays } from '../../utils/scheduleCalendar'
+import { buildMonthDays, buildHolidayMap } from '../../utils/scheduleCalendar'
 import {
   buildCellKey,
   parseCellKey,
@@ -794,6 +794,8 @@ import {
   formatShiftLabel,
   formatScheduleImportIssue,
   formatScheduleImportPayloadIssues,
+  formatScheduleImportWarning,
+  buildScheduleImportConfirmMessage,
   normalizeNotificationDetails,
   parseDelegatedBoolean,
   getEmployeeIssueLabel,
@@ -1595,6 +1597,11 @@ const openScheduleImport = () => {
   scheduleImportInput.value?.click()
 }
 
+// 匯入回應的 warnings 轉成可讀文字（與 errors 同一種 {row, day, code, message} 格式）
+function formatImportWarnings(warnings) {
+  return (Array.isArray(warnings) ? warnings : []).map(formatScheduleImportWarning).filter(Boolean)
+}
+
 async function submitScheduleImport(file, mode, overwrite = false) {
   const formData = new FormData()
   formData.append('file', file)
@@ -1630,13 +1637,9 @@ async function onScheduleImportFile(event) {
       return
     }
 
+    // 已有班表時先以覆蓋模式重新預覽，讓下方的確認視窗一次顯示「覆蓋後」的提醒與排班規範問題
     const overwriteCount = Number(preview.payload.overwriteCount || preview.payload.overwriteConflicts?.length || 0)
     if (overwriteCount > 0) {
-      await ElMessageBox.confirm(
-        `發現 ${overwriteCount} 個日期已有班表。選擇「覆蓋匯入」會取代原班別，並將員工確認狀態重設為待確認；取消不會修改任何資料。`,
-        '確認覆蓋既有排班',
-        { confirmButtonText: '覆蓋匯入', cancelButtonText: '取消', type: 'warning' }
-      )
       overwrite = true
       preview = await submitScheduleImport(file, 'preview', true)
       if (!preview.response.ok) {
@@ -1651,26 +1654,34 @@ async function onScheduleImportFile(event) {
       }
     }
 
+    const previewWarnings = formatImportWarnings(preview.payload.warnings)
     const previewViolations = Array.isArray(preview.payload.violations)
       ? preview.payload.violations.map(formatLaborRuleViolation)
       : []
-    const warningParts = []
-    if (preview.payload.warnings?.length) {
-      warningParts.push(`${preview.payload.warnings.length} 项资料提醒`)
+    const confirmOptions = {
+      confirmButtonText: overwrite ? '覆蓋匯入' : '確認匯入',
+      cancelButtonText: '取消',
+      type: 'warning',
+      customClass: 'schedule-issue-dialog',
+      modalClass: 'schedule-issue-overlay',
+      zIndex: 4000,
+      closeOnClickModal: false
     }
-    if (previewViolations.length) {
-      warningParts.push(`${previewViolations.length} 项排班规范问题（可存为草稿，发布前必须修正）`)
-    }
-    const warningText = warningParts.length
-      ? `\n另有 ${warningParts.join('、')}。`
-      : ''
-    if (!overwrite) {
-      await ElMessageBox.confirm(
-        `将汇入 ${preview.payload.employees} 名员工、${preview.payload.scheduleDays} 个班次。${warningText}`,
-        '确认汇入班表',
-        { confirmButtonText: '确认汇入', cancelButtonText: '取消', type: 'warning' }
-      )
-    }
+    const confirmAppendTo = issueDialogAppendTarget()
+    if (confirmAppendTo) confirmOptions.appendTo = confirmAppendTo
+    await ElMessageBox.confirm(
+      buildScheduleImportConfirmMessage({
+        employees: preview.payload.employees,
+        scheduleDays: preview.payload.scheduleDays,
+        informationalDays: preview.payload.informationalDays,
+        skippedDays: preview.payload.skippedDays,
+        overwriteCount: overwrite ? overwriteCount : 0,
+        warnings: previewWarnings,
+        violations: previewViolations
+      }),
+      overwrite ? '確認覆蓋既有排班' : '確認匯入班表',
+      confirmOptions
+    )
     const committed = await submitScheduleImport(file, 'commit', overwrite)
     if (!committed.response.ok) {
       const issues = formatScheduleImportPayloadIssues(committed.payload)
@@ -1682,7 +1693,25 @@ async function onScheduleImportFile(event) {
       )
       return
     }
-    callSuccess(`已汇入 ${committed.payload.imported} 个班次${overwrite ? '（含覆盖）' : ''}`)
+    callSuccess(`已匯入 ${committed.payload.imported} 個班次${overwrite ? '（含覆蓋）' : ''}`)
+    // 匯入後才出現的提醒（例如事後檢核無法完成）預覽看不到，完整列出而不是忽略
+    const committedWarnings = formatImportWarnings(committed.payload.warnings)
+    if (committedWarnings.length) {
+      appendScheduleNotification(
+        'warning',
+        '匯入提醒',
+        `匯入完成，另有 ${committedWarnings.length} 項資料提醒。`,
+        committedWarnings
+      )
+      const previewWarningSet = new Set(previewWarnings)
+      const newWarnings = committedWarnings.filter(line => !previewWarningSet.has(line))
+      if (newWarnings.length) {
+        openScheduleIssueDialog('班表匯入提醒', newWarnings, '班表匯入提醒', {
+          type: 'warning',
+          record: false
+        })
+      }
+    }
     const committedViolationDetails = Array.isArray(committed.payload.violations)
       ? committed.payload.violations
       : []
@@ -1699,7 +1728,7 @@ async function onScheduleImportFile(event) {
     scheduleDraftRuleValidation()
   } catch (error) {
     if (error === 'cancel' || error === 'close') return
-    callError(error?.message || '班表汇入失败')
+    callError(error?.message || '班表匯入失敗')
   } finally {
     isImportingSchedule.value = false
   }
@@ -2943,14 +2972,7 @@ async function fetchHolidays() {
       holidays.value = Array.isArray(data) ? data : []
       
       // Build holiday map by date string for quick lookup
-      const map = {}
-      holidays.value.forEach(h => {
-        if (h.date) {
-          const dateStr = dayjs(h.date).format('YYYY-MM-DD')
-          map[dateStr] = h
-        }
-      })
-      holidayMap.value = map
+      holidayMap.value = buildHolidayMap(holidays.value)
     }
   } catch (err) {
     console.warn('Failed to fetch holidays:', err)
@@ -2971,13 +2993,23 @@ async function fetchShiftOptions() {
         ? data
         : []
     if (Array.isArray(list)) {
+      // 保留顯示所需欄位：自訂底色／文字色、班別性質、跨日與夜班、休息設定
       shifts.value = list.map(s => ({
         _id: s._id,
         code: s.code,
         name: s.name ?? '',
         startTime: s.startTime,
         endTime: s.endTime,
-        remark: s.remark
+        remark: s.remark,
+        semanticType: s.semanticType,
+        crossDay: s.crossDay,
+        isNightShift: s.isNightShift,
+        bgColor: s.bgColor,
+        color: s.color,
+        breakDuration: s.breakDuration,
+        breakMinutes: s.breakMinutes,
+        breakTime: s.breakTime,
+        breakWindows: s.breakWindows
       }))
     }
   } else {

@@ -92,15 +92,83 @@ describe('ShiftScheduleSetting.vue', () => {
     expect(wrapper.text()).toContain('08-17(休1)／09-18(休1)')
   })
 
-  it('builds ROC holidays with the local current year', () => {
+  it('imports ROC holidays for the local current year and writes no built-in fallback list', async () => {
+    const wrapper = mount(ShiftScheduleSetting, { global: { plugins: [ElementPlus] } })
+    await flushPromises()
+    apiFetch.mockClear()
+    const successSpy = vi.spyOn(ElMessage, 'success').mockImplementation(() => {})
     const getFullYearSpy = vi.spyOn(Date.prototype, 'getFullYear')
     const getUTCFullYearSpy = vi.spyOn(Date.prototype, 'getUTCFullYear')
 
-    const wrapper = mount(ShiftScheduleSetting, { global: { plugins: [ElementPlus] } })
-    wrapper.vm.buildRocHolidays()
+    await wrapper.vm.loadRocHolidays()
 
+    const importCall = apiFetch.mock.calls.find(([url]) => String(url).startsWith('/api/holidays/import/roc'))
+    expect(importCall?.[0]).toBe(`/api/holidays/import/roc?year=${new Date().getFullYear()}`)
+    expect(importCall?.[1]).toMatchObject({ method: 'POST' })
     expect(getFullYearSpy).toHaveBeenCalled()
     expect(getUTCFullYearSpy).not.toHaveBeenCalled()
+    expect(successSpy).toHaveBeenCalled()
+    expect(wrapper.vm.loadingHolidays).toBe(false)
+  })
+
+  it('shows an error and writes no fake holidays when the ROC holiday import fails', async () => {
+    const errorSpy = vi.spyOn(ElMessage, 'error').mockImplementation(() => {})
+    const successSpy = vi.spyOn(ElMessage, 'success').mockImplementation(() => {})
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    apiFetch.mockImplementation((url) => {
+      if (String(url).startsWith('/api/holidays/import/roc')) {
+        return Promise.resolve({ ok: false, status: 500, json: async () => ({ error: '遠端連線失敗: 503' }) })
+      }
+      return Promise.resolve({ ok: true, json: async () => [] })
+    })
+    const wrapper = mount(ShiftScheduleSetting, { global: { plugins: [ElementPlus] } })
+    await flushPromises()
+    apiFetch.mockClear()
+
+    await wrapper.vm.loadRocHolidays()
+
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('未寫入任何資料'))
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('遠端連線失敗: 503'))
+    expect(successSpy).not.toHaveBeenCalled()
+    // 不再退回內建的（錯誤的）假日清單，也不逐筆寫入 /api/holidays
+    expect(apiFetch.mock.calls.filter(([url, options]) => url === '/api/holidays' && options?.method === 'POST')).toHaveLength(0)
+    expect(wrapper.vm.loadingHolidays).toBe(false)
+  })
+
+  it('shows an error when the ROC holiday import request itself throws', async () => {
+    const errorSpy = vi.spyOn(ElMessage, 'error').mockImplementation(() => {})
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    const wrapper = mount(ShiftScheduleSetting, { global: { plugins: [ElementPlus] } })
+    await flushPromises()
+    apiFetch.mockClear()
+    apiFetch.mockImplementation((url) => {
+      if (String(url).startsWith('/api/holidays/import/roc')) return Promise.reject(new Error('Failed to fetch'))
+      return Promise.resolve({ ok: true, json: async () => [] })
+    })
+
+    await wrapper.vm.loadRocHolidays()
+
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('Failed to fetch'))
+    expect(apiFetch.mock.calls.filter(([url, options]) => url === '/api/holidays' && options?.method === 'POST')).toHaveLength(0)
+  })
+
+  it('shows the server error and keeps the dialog open when saving a holiday is rejected', async () => {
+    const errorSpy = vi.spyOn(ElMessage, 'error').mockImplementation(() => {})
+    const wrapper = mount(ShiftScheduleSetting, { global: { plugins: [ElementPlus] } })
+    await flushPromises()
+    apiFetch.mockImplementation((url, options = {}) => {
+      if (url === '/api/holidays' && options.method === 'POST') {
+        return Promise.resolve({ ok: false, status: 403, json: async () => ({ error: '需要管理員權限' }) })
+      }
+      return Promise.resolve({ ok: true, json: async () => [] })
+    })
+    wrapper.vm.openCalendarDialog()
+    wrapper.vm.calendarForm = { name: '', date: '2026/06/19', type: '國定假日', desc: '端午節' }
+
+    await wrapper.vm.saveHoliday()
+
+    expect(errorSpy).toHaveBeenCalledWith('需要管理員權限')
+    expect(wrapper.vm.calendarDialogVisible).toBe(true)
   })
 
   it('creates a same-month national holiday move through the settings API', async () => {

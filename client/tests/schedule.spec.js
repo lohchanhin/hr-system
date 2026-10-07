@@ -1157,6 +1157,81 @@ describe('Schedule.vue', () => {
     ])
   })
 
+  it('keeps colour, semantic type, cross-day, night-shift and break fields so the configured colours show', async () => {
+    const shifts = [
+      {
+        _id: 's1', code: '日', name: '日班', startTime: '08:00', endTime: '17:00', semanticType: 'work',
+        bgColor: '#336699', color: '#ffffff', crossDay: false, isNightShift: false,
+        breakDuration: 60, breakMinutes: 60, breakTime: '12:00-13:00',
+        breakWindows: [{ start: '12:00', end: '13:00', label: '午休' }], hasAllowance: true
+      },
+      { _id: 's2', code: '國', name: '國定假日', startTime: '00:00', endTime: '00:00', semanticType: 'holiday', bgColor: '#fee2e2' },
+      { _id: 's3', code: 'N', name: '夜班', startTime: '00:00', endTime: '08:00', crossDay: true, isNightShift: true },
+      { _id: 's4', code: 'G', name: '只設文字色', startTime: '08:00', endTime: '17:00', color: '#7c2d12' }
+    ]
+    setupSupervisorApiMock({ shifts })
+    const wrapper = mountSchedule()
+    await flush()
+
+    expect(wrapper.vm.shifts[0]).toEqual({
+      _id: 's1', code: '日', name: '日班', startTime: '08:00', endTime: '17:00', remark: undefined,
+      semanticType: 'work', crossDay: false, isNightShift: false, bgColor: '#336699', color: '#ffffff',
+      breakDuration: 60, breakMinutes: 60, breakTime: '12:00-13:00',
+      breakWindows: [{ start: '12:00', end: '13:00', label: '午休' }]
+    })
+    expect(wrapper.vm.shifts[1]).toMatchObject({ semanticType: 'holiday', bgColor: '#fee2e2' })
+    expect(wrapper.vm.shifts[2]).toMatchObject({ crossDay: true, isNightShift: true })
+
+    const legendItems = wrapper.findAll('[data-test="shift-legend-item"]')
+    expect(legendItems).toHaveLength(4)
+    // 有設定底色 / 文字色：用設定的顏色
+    const configured = styleToObject(legendItems[0].attributes('style'))
+    expect(configured['--shift-base-color']).toBe('#336699')
+    expect(configured['--shift-text-color']).toBe('#ffffff')
+    expect(styleToObject(legendItems[1].attributes('style'))['--shift-base-color']).toBe('#fee2e2')
+    // 沒有設定顏色：才退回依代碼產生的淡色
+    const generated = styleToObject(legendItems[2].attributes('style'))
+    const expectedGenerated = buildShiftStyle({ _id: 's3', code: 'N', name: '夜班' })
+    expect(generated['--shift-base-color']).toBe(expectedGenerated['--shift-base-color'])
+    expect(generated['--shift-text-color']).toBe(expectedGenerated['--shift-text-color'])
+    // 只設文字色：底色仍用產生的淡色，文字色用設定值
+    const textOnly = styleToObject(legendItems[3].attributes('style'))
+    expect(textOnly['--shift-text-color']).toBe('#7c2d12')
+  })
+
+  it('marks only counted holidays in the day header (not 補班日, 工作日 or 例假日 records)', async () => {
+    const month = dayjs().add(1, 'month').format('YYYY-MM')
+    setupSupervisorApiMock()
+    const baseImplementation = apiFetch.getMockImplementation()
+    apiFetch.mockImplementation(async (url, options) => {
+      if (String(url).startsWith('/api/holidays-public/by-month')) {
+        return {
+          ok: true,
+          json: async () => [
+            { date: `${month}-05T00:00:00.000Z`, type: '國定假日', name: '測試節日' },
+            { date: `${month}-06T00:00:00.000Z`, type: '補班日', name: '測試補班' },
+            { date: `${month}-07T00:00:00.000Z`, type: '工作日', name: '測試工作日' },
+            { date: `${month}-08T00:00:00.000Z`, type: '例假日', name: '測試週休' }
+          ]
+        }
+      }
+      return baseImplementation(url, options)
+    })
+    const wrapper = mountSchedule()
+    await flush()
+
+    const labels = wrapper.vm.days.map(day => day.label)
+    expect(labels[4]).toContain('🎊測試節日')
+    expect(labels[5]).not.toContain('🎊')
+    expect(labels[6]).not.toContain('🎊')
+    expect(labels[7]).not.toContain('🎊')
+    const headerText = wrapper.findAll('.day-header-label').map(node => node.text()).join('|')
+    expect(headerText).toContain('🎊測試節日')
+    expect(headerText).not.toContain('測試補班')
+    expect(headerText).not.toContain('測試工作日')
+    expect(headerText).not.toContain('測試週休')
+  })
+
   it('shows loading state while applying batch schedules', async () => {
     const month = dayjs().add(1, 'month').format('YYYY-MM')
     setRoleToken('admin')
@@ -1625,6 +1700,228 @@ describe('Schedule.vue', () => {
       '確認覆蓋既有排班',
       expect.objectContaining({ confirmButtonText: '覆蓋匯入' })
     )
+  })
+
+  describe('schedule import confirmation dialog', () => {
+    const scheduleFile = () => new File(['schedule'], 'schedule.xlsx', {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    })
+    const runImport = async (wrapper) => {
+      wrapper.vm.employees = [{ _id: 'e1', employeeId: 'A0003', name: '王小明' }]
+      await wrapper.vm.onScheduleImportFile({ target: { files: [scheduleFile()], value: 'schedule.xlsx' } })
+    }
+
+    it('lists the warning texts, rule-violation texts and informational-day count before committing', async () => {
+      setRoleToken('supervisor')
+      localStorage.setItem('employeeId', 'sup1')
+      setupSupervisorApiMock()
+      importScheduleRecords
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            employees: 8,
+            scheduleDays: 232,
+            informationalDays: 8,
+            skippedDays: 2,
+            errors: [],
+            warnings: [
+              { row: 3, day: 19, code: '國', message: '公版標記為國定假日，但系統假日日曆沒有該日期' },
+              { row: 4, day: 20, code: '事', message: '請假代碼沒有對應的已核准假單' }
+            ],
+            violations: [
+              { employee: 'e1', date: '2026-06-29', rule: 'weekly-one-regular-rest-one-rest-day', message: '該週沒有例假' }
+            ],
+            overwriteCount: 0
+          })
+        })
+        .mockResolvedValueOnce({ ok: true, json: async () => ({ imported: 232, warnings: [], violations: [] }) })
+      const wrapper = mountSchedule()
+      await flush()
+
+      await runImport(wrapper)
+
+      expect(ElMessageBox.confirm).toHaveBeenCalledTimes(1)
+      const [message, title, options] = ElMessageBox.confirm.mock.calls[0]
+      expect(title).toBe('確認匯入班表')
+      expect(options).toMatchObject({
+        confirmButtonText: '確認匯入',
+        cancelButtonText: '取消',
+        customClass: 'schedule-issue-dialog'
+      })
+      expect(message).toContain('將匯入 8 名員工、232 個班次。')
+      expect(message).toContain('班表中共有 8 天為國定假日或請假標記，其中 2 天因班別設定中沒有對應的班別，不會建立班表')
+      expect(message).toContain('資料提醒（2 項）：')
+      expect(message).toContain('・第 3 列／19 日／班別代號或名稱「國」：公版標記為國定假日，但系統假日日曆沒有該日期')
+      expect(message).toContain('・第 4 列／20 日／班別代號或名稱「事」：請假代碼沒有對應的已核准假單')
+      expect(message).toContain('排班規範問題（1 項，可先存為草稿，發布前必須修正）：')
+      expect(message).toContain('・A0003 王小明 2026-06-29 [每週一例一休]：該週沒有例假')
+      expect(message).not.toMatch(/[项资规范问题汇确认]/)
+      expect(importScheduleRecords).toHaveBeenCalledTimes(2)
+      expect(importScheduleRecords.mock.calls[1][0].get('mode')).toBe('commit')
+      expect(ElMessage.success).toHaveBeenCalledWith('已匯入 232 個班次')
+    })
+
+    it('caps long warning and violation lists with a "…另有 N 項" line', async () => {
+      setRoleToken('supervisor')
+      localStorage.setItem('employeeId', 'sup1')
+      setupSupervisorApiMock()
+      importScheduleRecords
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            employees: 8,
+            scheduleDays: 240,
+            errors: [],
+            warnings: Array.from({ length: 45 }, (_, index) => ({ row: 2, day: index + 1, code: '事', message: `提醒${index + 1}` })),
+            violations: Array.from({ length: 138 }, (_, index) => ({ employee: 'e1', message: `違規${index + 1}` })),
+            overwriteCount: 0
+          })
+        })
+        .mockResolvedValueOnce({ ok: true, json: async () => ({ imported: 240 }) })
+      const wrapper = mountSchedule()
+      await flush()
+
+      await runImport(wrapper)
+
+      const message = ElMessageBox.confirm.mock.calls[0][0]
+      expect(message).toContain('資料提醒（45 項）：')
+      expect(message).toContain('提醒20')
+      expect(message).not.toContain('提醒21')
+      expect(message).toContain('…另有 25 項')
+      expect(message).toContain('排班規範問題（138 項')
+      expect(message).toContain('違規20')
+      expect(message).not.toContain('違規21')
+      expect(message).toContain('…另有 118 項')
+    })
+
+    it('does not commit when the confirmation is cancelled', async () => {
+      setRoleToken('supervisor')
+      localStorage.setItem('employeeId', 'sup1')
+      setupSupervisorApiMock()
+      ElMessageBox.confirm.mockRejectedValueOnce('cancel')
+      importScheduleRecords.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ employees: 1, scheduleDays: 1, errors: [], warnings: [], overwriteCount: 0 })
+      })
+      const wrapper = mountSchedule()
+      await flush()
+
+      await runImport(wrapper)
+
+      expect(importScheduleRecords).toHaveBeenCalledTimes(1)
+      expect(ElMessage.error).not.toHaveBeenCalled()
+      expect(wrapper.vm.isImportingSchedule).toBe(false)
+    })
+
+    it('shows the overwrite explanation and the overwrite preview warnings in one confirmation', async () => {
+      setRoleToken('supervisor')
+      localStorage.setItem('employeeId', 'sup1')
+      setupSupervisorApiMock()
+      importScheduleRecords
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({ employees: 1, scheduleDays: 0, errors: [], warnings: [], overwriteCount: 4 })
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            employees: 1,
+            scheduleDays: 30,
+            errors: [],
+            warnings: [{ row: 2, day: 9, code: '國', message: '覆蓋後才出現的提醒' }],
+            violations: [{ employee: 'e1', message: '覆蓋後才出現的違規' }],
+            overwriteCount: 0
+          })
+        })
+        .mockResolvedValueOnce({ ok: true, json: async () => ({ imported: 30 }) })
+      const wrapper = mountSchedule()
+      await flush()
+
+      await runImport(wrapper)
+
+      expect(ElMessageBox.confirm).toHaveBeenCalledTimes(1)
+      const [message, title, options] = ElMessageBox.confirm.mock.calls[0]
+      expect(title).toBe('確認覆蓋既有排班')
+      expect(options).toMatchObject({ confirmButtonText: '覆蓋匯入' })
+      expect(message).toContain('發現 4 個日期已有班表')
+      expect(message).toContain('覆蓋後才出現的提醒')
+      expect(message).toContain('A0003 王小明：覆蓋後才出現的違規')
+      expect(importScheduleRecords.mock.calls.map(call => call[0].get('mode'))).toEqual(['preview', 'preview', 'commit'])
+      expect(importScheduleRecords.mock.calls[2][0].get('overwrite')).toBe('true')
+      expect(ElMessage.success).toHaveBeenCalledWith('已匯入 30 個班次（含覆蓋）')
+    })
+
+    it('shows warnings that only appear after committing instead of ignoring them', async () => {
+      setRoleToken('supervisor')
+      localStorage.setItem('employeeId', 'sup1')
+      setupSupervisorApiMock()
+      const previewWarning = { row: 3, day: 19, code: '國', message: '預覽就看得到的提醒' }
+      importScheduleRecords
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({ employees: 1, scheduleDays: 3, errors: [], warnings: [previewWarning], overwriteCount: 0 })
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            imported: 3,
+            warnings: [
+              previewWarning,
+              { row: null, day: null, code: '', message: '匯入已完成，但排班規範檢核暫時無法完成，請按「排班檢核」重試' }
+            ]
+          })
+        })
+      const wrapper = mountSchedule()
+      await flush()
+
+      await runImport(wrapper)
+
+      expect(ElMessageBox.alert).toHaveBeenCalledTimes(1)
+      const [alertMessage, alertTitle] = ElMessageBox.alert.mock.calls[0]
+      expect(alertTitle).toBe('班表匯入提醒')
+      expect(alertMessage).toContain('匯入已完成，但排班規範檢核暫時無法完成')
+      expect(alertMessage).not.toContain('預覽就看得到的提醒')
+      expect(alertMessage).not.toContain('第 - 列')
+      const notification = wrapper.vm.scheduleNotifications.find(item => item.title === '匯入提醒')
+      expect(notification.message).toBe('匯入完成，另有 2 項資料提醒。')
+      expect(notification.details.map(detail => detail.message)).toEqual([
+        '第 3 列／19 日／班別代號或名稱「國」：預覽就看得到的提醒',
+        '匯入已完成，但排班規範檢核暫時無法完成，請按「排班檢核」重試'
+      ])
+    })
+
+    it('does not open an extra dialog when the commit adds no new warnings', async () => {
+      setRoleToken('supervisor')
+      localStorage.setItem('employeeId', 'sup1')
+      setupSupervisorApiMock()
+      const warning = { row: 3, day: 19, code: '國', message: '同一則提醒' }
+      importScheduleRecords
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({ employees: 1, scheduleDays: 3, errors: [], warnings: [warning], overwriteCount: 0 })
+        })
+        .mockResolvedValueOnce({ ok: true, json: async () => ({ imported: 3, warnings: [warning] }) })
+      const wrapper = mountSchedule()
+      await flush()
+
+      await runImport(wrapper)
+
+      expect(ElMessageBox.alert).not.toHaveBeenCalled()
+      expect(wrapper.vm.scheduleNotifications.some(item => item.title === '匯入提醒')).toBe(true)
+    })
+
+    it('reports an unexpected import failure in Traditional Chinese', async () => {
+      setRoleToken('supervisor')
+      localStorage.setItem('employeeId', 'sup1')
+      setupSupervisorApiMock()
+      importScheduleRecords.mockRejectedValueOnce(new Error(''))
+      const wrapper = mountSchedule()
+      await flush()
+
+      await runImport(wrapper)
+
+      expect(ElMessage.error).toHaveBeenCalledWith('班表匯入失敗')
+    })
   })
 
   it('uses fullscreen popper strategy for batch shift and row-color selects and shows readonly department fields', async () => {

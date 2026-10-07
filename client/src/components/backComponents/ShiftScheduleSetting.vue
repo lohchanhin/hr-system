@@ -181,6 +181,16 @@
                   </div>
                 </template>
               </el-table-column>
+              <el-table-column label="班別性質" width="150">
+                <template #default="{ row }">
+                  <el-tag :type="semanticTagType(row)" size="small" class="semantic-tag">
+                    {{ semanticLabel(row) }}
+                  </el-tag>
+                  <div v-if="isWorkShiftWithoutWorkingTime(row)" class="shift-type-warning">
+                    ⚠ 工作班沒有工作時間
+                  </div>
+                </template>
+              </el-table-column>
               <el-table-column label="夜班" width="100">
                 <template #default="{ row }">
                   <div v-if="row.isNightShift">
@@ -191,6 +201,7 @@
                       固定 ${{ row.fixedAllowanceAmount || 0 }}
                     </div>
                   </div>
+                  <span v-else-if="isNonWorkRow(row)" class="shift-not-applicable">—</span>
                   <el-tag v-else type="info" size="small">日班</el-tag>
                 </template>
               </el-table-column>
@@ -248,40 +259,64 @@
                 <div class="form-help">顯示於班表及報表，名稱不得與其他班別的名稱或代碼重複。</div>
               </el-form-item>
               <el-form-item label="班別性質" required>
-                <el-select v-model="shiftForm.semanticType" style="width: 100%">
-                  <el-option label="工作班" value="work" />
-                  <el-option label="休息日" value="rest_day" />
-                  <el-option label="例假" value="regular_rest" />
-                  <el-option label="國定假日" value="holiday" />
-                  <el-option label="請假" value="leave" />
+                <el-select
+                  :model-value="shiftForm.semanticType"
+                  style="width: 100%"
+                  data-test="shift-semantic-select"
+                  @update:model-value="onSemanticTypeChange"
+                >
+                  <el-option
+                    v-for="option in semanticOptions"
+                    :key="option.value"
+                    :label="option.label"
+                    :value="option.value"
+                  />
                 </el-select>
+                <div class="form-help">
+                  系統會依班別代碼／名稱自動判斷（休＝休息日、例＝例假、國＝國定假日、事／病／特／補／公等＝請假，其餘為工作班），也可手動改選。
+                </div>
+                <div class="form-help">
+                  休息日、例假、國定假日、請假不需上班：上下班時間固定為 00:00～00:00、休息 0 分鐘，不計工時。
+                </div>
+                <div v-if="workShiftTimeWarning" class="form-help form-help--warning" data-test="shift-work-time-warning">
+                  {{ workShiftTimeWarning }}
+                </div>
               </el-form-item>
-              <el-form-item label="上班時間" required>
+              <el-form-item label="上班時間" :required="!isNonWorkForm">
                 <el-time-picker
                   v-model="shiftForm.startTime"
                   :format="timeFormat"
                   :value-format="timeFormat"
+                  :disabled="isNonWorkForm"
                   placeholder="選擇上班時間"
                   style="width: 100%"
                 />
               </el-form-item>
-              <el-form-item label="下班時間" required>
+              <el-form-item label="下班時間" :required="!isNonWorkForm">
                 <el-time-picker
                   v-model="shiftForm.endTime"
                   :format="timeFormat"
                   :value-format="timeFormat"
+                  :disabled="isNonWorkForm"
                   placeholder="選擇下班時間"
                   style="width: 100%"
                 />
               </el-form-item>
               <el-form-item label="休息時長(分鐘)">
-                <el-input-number v-model="shiftForm.breakDuration" :min="0" :step="15" style="width: 100%" />
+                <el-input-number
+                  v-model="shiftForm.breakDuration"
+                  :min="0"
+                  :step="15"
+                  :disabled="isNonWorkForm"
+                  style="width: 100%"
+                />
               </el-form-item>
               <el-form-item label="休息時段">
                 <div class="break-window-list">
                   <div v-for="(item, index) in shiftForm.breakWindows" :key="index" class="break-window-row">
                     <el-time-picker
                       v-model="item.start"
+                      :disabled="isNonWorkForm"
                       :format="timeFormat"
                       :value-format="timeFormat"
                       placeholder="開始"
@@ -290,23 +325,25 @@
                     <span class="time-separator">~</span>
                     <el-time-picker
                       v-model="item.end"
+                      :disabled="isNonWorkForm"
                       :format="timeFormat"
                       :value-format="timeFormat"
                       placeholder="結束"
                       style="width: 120px"
                     />
-                    <el-input v-model="item.label" placeholder="備註" style="width: 140px" />
-                    <el-button type="danger" link @click="removeBreakWindow(index)">
+                    <el-input v-model="item.label" placeholder="備註" style="width: 140px" :disabled="isNonWorkForm" />
+                    <el-button type="danger" link :disabled="isNonWorkForm" @click="removeBreakWindow(index)">
                       <i class="el-icon-delete"></i>
                     </el-button>
                   </div>
-                  <el-button type="primary" link @click="addBreakWindow">新增時段</el-button>
+                  <el-button type="primary" link :disabled="isNonWorkForm" @click="addBreakWindow">新增時段</el-button>
                   <div class="form-help">若未填休息時段，將以「休息時長」扣除工時計算。</div>
                 </div>
               </el-form-item>
               <el-form-item label="跨日班">
                 <el-switch
                   v-model="shiftForm.crossDay"
+                  :disabled="isNonWorkForm"
                   active-text="是"
                   inactive-text="否"
                   active-color="#10b981"
@@ -315,6 +352,7 @@
               <el-form-item label="是否為夜班">
                 <el-switch
                   v-model="shiftForm.isNightShift"
+                  :disabled="isNonWorkForm"
                   active-text="是"
                   inactive-text="否"
                   active-color="#10b981"
@@ -324,7 +362,7 @@
               <el-form-item label="是否有夜班津貼">
                 <el-switch
                   v-model="shiftForm.hasAllowance"
-                  :disabled="!shiftForm.isNightShift"
+                  :disabled="isNonWorkForm || !shiftForm.isNightShift"
                   active-text="是"
                   inactive-text="否"
                   active-color="#10b981"
@@ -510,6 +548,17 @@ import { ElMessage } from 'element-plus'
 import { apiFetch } from '../../api'
 import { getToken } from '../../utils/tokenService'
 import { buildShiftStyle } from '../../utils/shiftColors'
+import {
+  SHIFT_SEMANTIC_OPTIONS,
+  SHIFT_SEMANTIC_LABELS,
+  SHIFT_SEMANTIC_TAG_TYPES,
+  NON_WORK_SHIFT_DEFAULTS,
+  hasNoWorkingTime,
+  inferShiftSemanticType,
+  isNonWorkSemanticType,
+  isWorkShiftWithoutWorkingTime,
+  resolveShiftSemanticType
+} from '../../utils/shiftSemantics'
 
 const activeTab = ref('calendar')
 const dateFormat = 'YYYY/MM/DD'
@@ -595,6 +644,12 @@ function openCalendarDialog(index = null) {
   calendarDialogVisible.value = true
 }
   
+// 讀取回應內容；沒有 JSON 時回傳空物件
+async function readJsonBody(res) {
+  if (!res || typeof res.json !== 'function') return {}
+  return (await res.json().catch(() => ({}))) || {}
+}
+
 async function saveHoliday() {
   const method = calendarEditIndex === null ? 'POST' : 'PUT'
   let url = '/api/holidays'
@@ -610,25 +665,35 @@ async function saveHoliday() {
   if (payload.date?.includes('/')) {
     payload.date = payload.date.replace(/\//g, '-')
   }
-  await apiFetch(url, {
+  const res = await apiFetch(url, {
     method,
     headers: {
       'Content-Type': 'application/json'
     },
     body: JSON.stringify(payload)
   })
+  if (res && res.ok === false) {
+    const body = await readJsonBody(res)
+    ElMessage.error(body.error || '假日儲存失敗')
+    return
+  }
   await fetchHolidays()
   calendarDialogVisible.value = false
 }
 
 async function deleteHoliday(index) {
   const id = holidayList.value[index]._id
-  await apiFetch(`/api/holidays/${id}`, {
+  const res = await apiFetch(`/api/holidays/${id}`, {
     method: 'DELETE',
     headers: {
       'Content-Type': 'application/json'
     }
   })
+  if (res && res.ok === false) {
+    const body = await readJsonBody(res)
+    ElMessage.error(body.error || '假日刪除失敗')
+    return
+  }
   await fetchHolidays()
 }
 
@@ -706,53 +771,34 @@ async function deleteHolidayMove(index) {
   await fetchHolidayMoves()
 }
 
-// 一鍵載入當年國定假日（簡化：使用內建清單）
-function buildRocHolidays(year = new Date().getFullYear()) {
-  return [
-    { date: `${year}-01-01`, type: '國定假日', desc: '元旦' },
-    { date: `${year}-02-28`, type: '國定假日', desc: '和平紀念日' },
-    { date: `${year}-04-04`, type: '國定假日', desc: '兒童節' },
-    { date: `${year}-04-05`, type: '國定假日', desc: '清明節' },
-    { date: `${year}-05-01`, type: '國定假日', desc: '勞動節' },
-    { date: `${year}-06-10`, type: '國定假日', desc: '端午節(示例)' },
-    { date: `${year}-09-17`, type: '國定假日', desc: '中秋節(示例)' },
-    { date: `${year}-10-10`, type: '國定假日', desc: '國慶日' }
-  ]
-}
-
+// 一鍵載入當年國定假日：由伺服器從行事曆來源匯入。
+// 匯入失敗時只顯示錯誤，不寫入任何預設或示例資料（寫入錯誤的假日會直接影響排班檢核與加班計算）。
 async function loadRocHolidays() {
   loadingHolidays.value = true
   const currentYear = new Date().getFullYear()
   try {
     const res = await apiFetch(`/api/holidays/import/roc?year=${currentYear}`, { method: 'POST' })
-    if (!res.ok) {
-      const errorText = await res.text().catch(() => '')
-      throw new Error(
-        `Import ROC holidays failed (${res.status})${errorText ? `: ${errorText}` : ''}`
-      )
+    const body = await readJsonBody(res)
+    if (!res?.ok) {
+      throw new Error(body.error || `連線失敗（${res?.status ?? '無回應'}）`)
     }
+    const count = Number(body.imported ?? body.count)
+    ElMessage.success(
+      Number.isFinite(count)
+        ? `已載入 ${currentYear} 年國定假日（${count} 筆）`
+        : `已載入 ${currentYear} 年國定假日`
+    )
   } catch (e) {
     console.error('載入國定假日失敗', e)
-    const payload = buildRocHolidays(currentYear).map((item) => ({
-      ...item,
-      name: item.desc || '國定假日',
-      description: item.desc,
-      desc: item.desc,
-      type: item.type || '國定假日'
-    }))
-    for (const item of payload) {
-      await apiFetch('/api/holidays', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(item)
-      })
-    }
+    ElMessage.error(
+      `無法載入 ${currentYear} 年國定假日，未寫入任何資料。請稍後再試，或使用「新增假日」手動輸入。（${e?.message || '連線失敗'}）`
+    )
   } finally {
     await fetchHolidays()
     loadingHolidays.value = false
   }
 }
-  
+
 // =========== 2) 班別管理 (排班用) ===========
 const shiftList = ref([])
 const shiftDialogVisible = ref(false)
@@ -844,6 +890,57 @@ watch(
   }
 )
 
+const semanticOptions = SHIFT_SEMANTIC_OPTIONS
+const WORK_DEFAULT_BREAK_MINUTES = 60
+
+// 休息日、例假、國定假日、請假：不需上班，時間固定為 00:00-00:00、休息 0 分鐘
+const isNonWorkForm = computed(() => isNonWorkSemanticType(shiftForm.value.semanticType))
+
+const workShiftTimeWarning = computed(() => (
+  isWorkShiftWithoutWorkingTime(shiftForm.value)
+    ? '工作班的上班與下班時間相同（且未勾跨日），等於沒有工作時間，無法儲存。若這是休假、例假、國定假日或請假，請改選班別性質。'
+    : ''
+))
+
+// 班別性質預設依代碼／名稱推斷；管理者手動選過、或編輯既有班別之後，就不再自動改動
+const semanticTouched = ref(false)
+
+function applySemanticType(type) {
+  const form = shiftForm.value
+  if (isNonWorkSemanticType(type)) {
+    Object.assign(form, NON_WORK_SHIFT_DEFAULTS, {
+      breakWindows: [],
+      isNightShift: false,
+      hasAllowance: false,
+      fixedAllowanceAmount: 0
+    })
+  } else if (hasNoWorkingTime(form)) {
+    // 從不需上班的類型改回工作班：清掉自動帶入的 00:00-00:00，讓管理者填入真正的上下班時間
+    form.startTime = ''
+    form.endTime = ''
+    form.breakDuration = WORK_DEFAULT_BREAK_MINUTES
+  }
+  form.semanticType = type
+}
+
+function onSemanticTypeChange(type) {
+  semanticTouched.value = true
+  applySemanticType(type)
+}
+
+watch(
+  () => [shiftForm.value.code, shiftForm.value.name],
+  ([code, name]) => {
+    if (semanticTouched.value) return
+    const inferred = inferShiftSemanticType({ code, name })
+    if (inferred !== shiftForm.value.semanticType) applySemanticType(inferred)
+  }
+)
+
+const isNonWorkRow = (row) => isNonWorkSemanticType(resolveShiftSemanticType(row))
+const semanticLabel = (row) => SHIFT_SEMANTIC_LABELS[resolveShiftSemanticType(row)] || '工作班'
+const semanticTagType = (row) => SHIFT_SEMANTIC_TAG_TYPES[resolveShiftSemanticType(row)] || 'info'
+
 const shiftPreviewStyle = computed(() => {
   const style = buildShiftStyle(shiftForm.value)
   return {
@@ -874,12 +971,19 @@ async function fetchShifts() {
   
 function openShiftDialog(index = null) {
   if (index !== null) {
-    // 編輯
+    // 編輯：班別性質以已儲存的值為準（舊資料沒有值時依代碼／名稱推斷），不再自動改動
     shiftEditIndex = index
-    shiftForm.value = { ...createEmptyShiftForm(), ...shiftList.value[index] }
+    semanticTouched.value = true
+    const stored = shiftList.value[index]
+    shiftForm.value = {
+      ...createEmptyShiftForm(),
+      ...stored,
+      semanticType: resolveShiftSemanticType(stored)
+    }
   } else {
-    // 新增
+    // 新增：班別性質先依代碼／名稱自動帶入，管理者手動選擇後即停止自動判斷
     shiftEditIndex = null
+    semanticTouched.value = false
     shiftForm.value = createEmptyShiftForm()
   }
   if (!Array.isArray(shiftForm.value.breakWindows)) {
@@ -955,6 +1059,14 @@ async function saveShift() {
   const localConflict = findLocalShiftConflict(shiftForm.value)
   if (localConflict) {
     ElMessage.error(localConflict)
+    return
+  }
+  const form = shiftForm.value
+  if (isNonWorkSemanticType(form.semanticType)) {
+    // 不需上班的班別沒有工作時間；時間欄位還是空的就補上固定值
+    if (!form.startTime || !form.endTime) Object.assign(form, NON_WORK_SHIFT_DEFAULTS)
+  } else if (hasNoWorkingTime(form)) {
+    ElMessage.error('工作班的上班與下班時間不可相同。若這是休假、例假、國定假日或請假，請改選班別性質。')
     return
   }
   const method = shiftEditIndex === null ? 'POST' : 'PUT'
@@ -1264,6 +1376,21 @@ function getHolidayTagType(type) {
   color: #64748b;
   margin-top: 4px;
   line-height: 1.4;
+}
+
+.form-help--warning {
+  color: #b45309;
+}
+
+.shift-not-applicable {
+  color: #94a3b8;
+}
+
+.shift-type-warning {
+  margin-top: 2px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: #b45309;
 }
 
 .shift-conflict-alert {
