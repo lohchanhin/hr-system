@@ -463,6 +463,14 @@ export async function generatePayrollExcel(month, bankTypeOrFormat, companyInfo 
     }));
   }
 
+  // 員工被刪除後，薪資記錄 populate 出來的 employee 會是 null，匯款檔取不到姓名與帳號，
+  // 留著會讓整個月份的匯出一起失敗，所以只略過這幾筆。
+  const orphanCount = payrollRecords.filter(record => !record.employee).length;
+  if (orphanCount) {
+    console.warn(`Payroll export skipped ${orphanCount} record(s) whose employee no longer exists`);
+    payrollRecords = payrollRecords.filter(record => record.employee);
+  }
+
   const enhancedCompanyInfo = { ...companyInfo, monthDate };
 
   if (format === 'taiwan') {
