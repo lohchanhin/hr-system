@@ -1,3 +1,4 @@
+import { isPayableNationalHoliday } from '../../services/countedHolidayService.js';
 import ShiftSchedule from '../../models/ShiftSchedule.js';
 import Employee from '../../models/Employee.js';
 import AttendanceSetting from '../../models/AttendanceSetting.js';
@@ -5,6 +6,14 @@ import Department from '../../models/Department.js';
 import { leaveDaysFromCalendar, loadApprovedLeaveCalendar } from '../../services/approvedLeaveCalendarService.js';
 import { isLaborRuleValidationError } from '../../services/laborRuleValidationService.js';
 import { normalizeShiftIdentifier } from '../../services/shiftIdentityService.js';
+import {
+  inferLegacyShiftSemanticType,
+  isNonWorkSemanticType,
+  isNonWorkShift,
+  LEAVE_SHIFT_CODES,
+  LEAVE_SHIFT_NAMES,
+  resolveShiftSemanticType,
+} from '../../services/shiftSemanticService.js';
 
 export const SCHEDULE_EMPLOYEE_SELECT = 'name employeeId photo title practiceTitle department subDepartment supervisor role status';
 export function toEntityId(value) {
@@ -88,7 +97,12 @@ export function normalizeScheduleMemoDate(value) {
   return date;
 }
 
-export async function hasLeaveConflict(employeeId, date) {
+/**
+ * 該日是否已有核准請假而不能再排班。
+ * 傳入 shift 且它不用上班（休息日／例假／國定假日／請假）時，不算衝突；沒傳 shift 維持原本「任何排班都衝突」。
+ */
+export async function hasLeaveConflict(employeeId, date, shift = null) {
+  if (shift && isNonWorkShift(shift)) return false;
   const day = new Date(date);
   if (Number.isNaN(day.getTime())) return false;
   day.setUTCHours(0, 0, 0, 0);
@@ -515,10 +529,34 @@ export function applyEmployeeResponse(schedule, normalized, noteValue, now = new
   throw createError('invalid response');
 }
 
-export const IMPORT_LEAVE_CODES = new Set(['特', '特休', '病', '病假', '事', '事假', '喪', '喪假', '公', '公假', '原', '原民假', '補', '補休']);
+// 公版班表的國定假日標記。班別設定裡有定義就照一般班別存成班表；沒定義才只當核對用途略過。
+export const IMPORT_HOLIDAY_CODES = new Set(['國', '国', '國定假日', '国定假日']);
+
+// 請假代碼／名稱：直接用 shiftSemanticService 推論班別性質時的同一份清單，兩邊不會不同步。
+// 班別設定裡有定義就照一般班別存成班表；沒定義才只當核對用途略過。
+export const IMPORT_LEAVE_CODES = new Set(
+  [...LEAVE_SHIFT_CODES, ...LEAVE_SHIFT_NAMES].map((code) => normalizeShiftIdentifier(code)),
+);
 
 export function normalizeWorkbookCode(value) {
   return normalizeShiftIdentifier(value);
+}
+
+/**
+ * 匯入時判斷班別屬於哪一類：work / rest_day / regular_rest / holiday / leave。
+ * 沒有工作時間卻被標成 work 的班別（00:00-00:00）依代號名稱推論，推論不出來就當請假，絕不當成上班。
+ */
+export function resolveImportShiftKind(shift) {
+  const semantic = resolveShiftSemanticType(shift);
+  if (isNonWorkSemanticType(semantic)) return semantic;
+  if (!isNonWorkShift(shift)) return 'work';
+  const inferred = inferLegacyShiftSemanticType(shift);
+  return isNonWorkSemanticType(inferred) ? inferred : 'leave';
+}
+
+/** 與 laborRuleValidationService 的國定假日判斷一致：工作日／補班日不算，其餘國定假日／假日算。 */
+export function isCountedHolidayRecord(holiday) {
+  return isPayableNationalHoliday(holiday);
 }
 
 export function scheduleImportError(row, day, code, message) {

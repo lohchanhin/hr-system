@@ -1,6 +1,10 @@
 import AttendanceSetting from '../models/AttendanceSetting.js';
 import { parseTimeString } from '../utils/timeWindow.js';
-import { resolveShiftSemanticType } from '../services/shiftSemanticService.js';
+import {
+  hasNoWorkingTime,
+  inferLegacyShiftSemanticType,
+  resolveShiftSemanticType,
+} from '../services/shiftSemanticService.js';
 import {
   assertUniqueShiftIdentity,
   ShiftIdentityConflictError,
@@ -36,6 +40,20 @@ function normalizeBreakWindows(breakWindows) {
     .filter(Boolean);
 }
 
+/**
+ * 決定要存的班別性質：明確選了有效的類型就尊重；沒選或選錯就由代碼/名稱推斷。
+ * 但沒有工作時間（開始等於結束且沒勾跨日，例如 00:00-00:00）的班別不可以存成 work，
+ * 否則會被當成 24 小時的班，要改成推斷出來的休息/請假類型。
+ */
+function resolvePayloadSemanticType(shift) {
+  const resolved = resolveShiftSemanticType(shift);
+  if (resolved === 'work' && hasNoWorkingTime(shift)) {
+    const inferred = inferLegacyShiftSemanticType(shift);
+    return inferred === 'work' ? 'leave' : inferred;
+  }
+  return resolved;
+}
+
 function buildShiftPayload(input, existing = {}) {
   const merged = { ...existing, ...input };
   const name = (merged.name || '').trim();
@@ -46,6 +64,7 @@ function buildShiftPayload(input, existing = {}) {
   const startTime = validateTimeField(merged.startTime, '上班時間');
   const endTime = validateTimeField(merged.endTime, '下班時間');
   const breakWindows = normalizeBreakWindows(merged.breakWindows ?? existing.breakWindows);
+  const crossDay = Boolean(merged.crossDay ?? existing.crossDay);
 
   let breakDuration;
   if (merged.breakDuration !== undefined) {
@@ -61,7 +80,7 @@ function buildShiftPayload(input, existing = {}) {
   const payload = {
     name,
     code,
-    semanticType: resolveShiftSemanticType({ ...merged, name, code, startTime, endTime }),
+    semanticType: resolvePayloadSemanticType({ ...merged, name, code, startTime, endTime, crossDay }),
     startTime,
     endTime,
     breakTime: merged.breakTime,
@@ -69,7 +88,7 @@ function buildShiftPayload(input, existing = {}) {
     breakDuration,
     breakWindows: breakWindows ?? [],
     allowMultiBreak: merged.allowMultiBreak ?? existing.allowMultiBreak ?? false,
-    crossDay: Boolean(merged.crossDay ?? existing.crossDay),
+    crossDay,
     remark: merged.remark ?? existing.remark ?? '',
     color: merged.color ?? existing.color ?? '',
     bgColor: merged.bgColor ?? existing.bgColor ?? '',

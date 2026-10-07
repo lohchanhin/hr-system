@@ -7,7 +7,7 @@ import ApprovalRequest from '../models/approval_request.js';
 import FormTemplate from '../models/form_template.js';
 import FormField from '../models/form_field.js';
 import { getLeaveFieldIds } from './leaveFieldService.js';
-import { classifyShift } from './laborRuleValidationService.js';
+import { isNonWorkShift } from './shiftSemanticService.js';
 
 export class ReportAccessError extends Error {
   constructor(status, message) {
@@ -282,7 +282,9 @@ function computeShiftTimes(date, shift) {
   const end = new Date(base);
   const [endHours, endMinutes] = String(shift.endTime ?? '00:00').split(':').map((value) => parseInt(value, 10) || 0);
   end.setUTCHours(endHours, endMinutes, 0, 0);
-  if (shift.crossDay || end <= start) {
+  // 結束早於開始 → 隔天；開始等於結束時，只有勾「跨日」才算整整 24 小時；
+  // 結束晚於開始（例如 00:00-08:00）時，跨日旗標不再多加 24 小時
+  if (end < start || (end.getTime() === start.getTime() && shift.crossDay)) {
     end.setUTCDate(end.getUTCDate() + 1);
   }
   return { start, end };
@@ -358,7 +360,8 @@ function buildAttendanceSummary({ employees, schedules, recordMap, shiftMap }) {
     const record = attendanceCounter.get(employeeId);
     if (!record) return;
     const shift = shiftMap.get(normalizeId(schedule.shiftId));
-    if (!shift || classifyShift(shift).isNonWork) return;
+    // 休息日 / 例假 / 國定假日 / 請假 / 沒有工作時間的班別：不算應出勤，也就不會算缺勤
+    if (!shift || isNonWorkShift(shift)) return;
     record.scheduled += 1;
     const dateKey = buildDateKey(schedule.date);
     const entry = recordMap.get(`${employeeId}::${dateKey}`);
@@ -392,7 +395,7 @@ function buildTardinessSummary({ schedules, recordMap, shiftMap, employees, late
     if (!employee) return;
     const dateKey = buildDateKey(schedule.date);
     const shift = shiftMap.get(normalizeId(schedule.shiftId));
-    if (!shift || classifyShift(shift).isNonWork) return;
+    if (!shift || isNonWorkShift(shift)) return;
     const { start } = computeShiftTimes(schedule.date, shift);
     const dayRecord = recordMap.get(`${employeeId}::${dateKey}`);
     if (!dayRecord || !dayRecord.clockIns.length) return;
@@ -429,7 +432,7 @@ function buildEarlyLeaveSummary({ schedules, recordMap, shiftMap, employees, ear
     if (!employee) return;
     const dateKey = buildDateKey(schedule.date);
     const shift = shiftMap.get(normalizeId(schedule.shiftId));
-    if (!shift || classifyShift(shift).isNonWork) return;
+    if (!shift || isNonWorkShift(shift)) return;
     const { start, end } = computeShiftTimes(schedule.date, shift);
     const dayRecord = recordMap.get(`${employeeId}::${dateKey}`);
     const clockOuts = [...(dayRecord?.clockOuts ?? [])];
@@ -476,7 +479,7 @@ function buildWorkHoursSummary({ schedules, recordMap, shiftMap, employees }) {
     if (!employee) return;
     const dateKey = buildDateKey(schedule.date);
     const shift = shiftMap.get(normalizeId(schedule.shiftId));
-    if (!shift || classifyShift(shift).isNonWork) return;
+    if (!shift || isNonWorkShift(shift)) return;
     const { start, end } = computeShiftTimes(schedule.date, shift);
     const breakMinutes = getShiftBreakMinutes(shift, schedule.date);
     const scheduledMinutes = Math.max(minutesBetween(start, end) - breakMinutes, 0);
@@ -878,6 +881,7 @@ export const __testUtils = {
   getShiftBreakMinutes,
   minutesBetween,
   buildAttendanceSummary,
+  buildTardinessSummary,
   buildEarlyLeaveSummary,
   buildWorkHoursSummary,
 };

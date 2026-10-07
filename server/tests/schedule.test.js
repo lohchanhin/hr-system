@@ -1328,13 +1328,14 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
       .attach('file', file, { filename: 'schedule.xlsx', contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
 
     expect(preview.status).toBe(200);
+    // 預覽也會跑排班規範檢核（不寫入），回傳的規範問題與匯入後的格式相同
     expect(preview.body).toEqual(expect.objectContaining({
       scheduleDays: 1,
       errors: [],
-      violations: [],
+      violations: [draftViolation],
     }));
     expect(mockShiftSchedule.bulkWrite).not.toHaveBeenCalled();
-    expect(mockAssertScheduleRuleCompliance).not.toHaveBeenCalled();
+    expect(mockAssertScheduleRuleCompliance).toHaveBeenCalledTimes(1);
 
     const committed = await request(app)
       .post('/api/schedules/import')
@@ -1348,9 +1349,10 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
     expect(committed.body.imported).toBe(1);
     expect(committed.body.violations).toEqual([draftViolation]);
     expect(mockShiftSchedule.bulkWrite).toHaveBeenCalledTimes(1);
-    expect(mockAssertScheduleRuleCompliance).toHaveBeenCalledTimes(1);
+    // 一次預覽、一次匯入，匯入後的檢核要在寫入之後
+    expect(mockAssertScheduleRuleCompliance).toHaveBeenCalledTimes(2);
     expect(mockShiftSchedule.bulkWrite.mock.invocationCallOrder[0])
-      .toBeLessThan(mockAssertScheduleRuleCompliance.mock.invocationCallOrder[0]);
+      .toBeLessThan(mockAssertScheduleRuleCompliance.mock.invocationCallOrder[1]);
   });
 
   it('imports by normalized employee id when names are blank or incorrect', async () => {
@@ -1498,7 +1500,7 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
 
     expect(response.status).toBe(422);
     expect(response.body.errors).toEqual([
-      expect.objectContaining({ code: 'UNKNOWN-001', message: expect.stringContaining('操作权限范围') }),
+      expect.objectContaining({ code: 'UNKNOWN-001', message: expect.stringContaining('操作權限範圍') }),
     ]);
     expect(mockShiftSchedule.bulkWrite).not.toHaveBeenCalled();
   });

@@ -67,6 +67,36 @@ function asPlainObject(value) {
   return typeof value?.toObject === 'function' ? value.toObject() : { ...value };
 }
 
+/**
+ * 遠端資料把每個週六、週日都標成 isHoliday=true，但只有真正的國定假日才有名稱（description）。
+ * 沒有名稱的是一般週末，不能存成國定假日。
+ */
+function hasHolidayDescription(item) {
+  return String(item?.description ?? item?.desc ?? item?.name ?? '').trim() !== '';
+}
+
+/**
+ * 清掉舊版匯入留下的週末假日：來源為 roc-calendar 且沒有名稱。手動新增或手動改過的假日（source 不是 roc-calendar）不會動。
+ * 不帶 year 就清全部年度（可在系統啟動時呼叫一次）；帶 year 只清該年度。回傳刪除筆數。
+ */
+export async function purgeLegacyRocWeekendHolidays({ year } = {}) {
+  const filter = {
+    source: 'roc-calendar',
+    // 只清週末（UTC：週日=1、週六=7）：舊版匯入產生的雜訊都是週末，平日的資料一律不碰
+    $expr: { $in: [{ $dayOfWeek: '$date' }, [1, 7]] },
+    $or: [
+      { description: { $exists: false } },
+      { description: null },
+      { description: { $regex: /^\s*$/ } },
+    ],
+  };
+  if (Number.isInteger(year)) {
+    filter.date = { $gte: new Date(Date.UTC(year, 0, 1)), $lt: new Date(Date.UTC(year + 1, 0, 1)) };
+  }
+  const removed = await Holiday.deleteMany(filter);
+  return removed?.deletedCount || 0;
+}
+
 // ------------------------------------------------------------------
 // 控制器 (Controllers)
 // ------------------------------------------------------------------
@@ -195,14 +225,16 @@ export async function importRocHolidays(req, res) {
     if (!response.ok) throw new Error(`遠端連線失敗: ${response.status}`);
     
     const rawData = await response.json();
+    if (!Array.isArray(rawData)) throw new Error('遠端資料格式錯誤');
     console.log(`[Import] 下載完成，原始資料共 ${rawData.length} 筆`);
 
     // 關鍵修正：對應你的 JSON 格式 (isHoliday 為布林值 true)
+    // 只存有名稱（description）的國定假日；沒有名稱的 isHoliday 只是一般週末，不是假日
     const holidaysToProcess = rawData
       .filter((item) => {
         // 同時兼容布林值 true 與字串 'Y'
         const isHoliday = item.isHoliday === true || item.isHoliday === 'Y';
-        return isHoliday && item.date;
+        return isHoliday && item.date && hasHolidayDescription(item);
       })
       .map((item) => normalizeHolidayPayload({ ...item, source: 'roc-calendar' }));
 
@@ -210,6 +242,12 @@ export async function importRocHolidays(req, res) {
 
     if (holidaysToProcess.length === 0) {
       console.warn('[Import] 警告：篩選結果為 0，請確認 JSON 中的 isHoliday 欄位類型');
+    }
+
+    // 清掉舊版匯入留下的該年度週末假日；手動新增或改過的不會動
+    const removedWeekendEntries = await purgeLegacyRocWeekendHolidays({ year });
+    if (removedWeekendEntries) {
+      console.log(`[Import] 已移除 ${removedWeekendEntries} 筆舊版匯入的週末假日`);
     }
 
     // 執行資料庫同步 (使用 Upsert)
@@ -237,6 +275,7 @@ export async function importRocHolidays(req, res) {
       year,
       imported: successfulSaves.length,
       count: successfulSaves.length,
+      removedWeekendEntries,
       holidays: successfulSaves
     });
   } catch (err) {

@@ -9,6 +9,7 @@ import employeeRoutes from './routes/employeeRoutes.js';
 import attendanceRoutes from './routes/attendanceRoutes.js';
 import authRoutes from './routes/authRoutes.js';
 import { migrateMissingShiftSemantics } from './services/shiftSemanticService.js';
+import { purgeLegacyRocWeekendHolidays } from './controllers/holidayController.js';
 import { authenticate, authorizeRoles } from './middleware/auth.js';
 import scheduleRoutes from './routes/scheduleRoutes.js';
 import payrollRoutes from './routes/payrollRoutes.js';
@@ -291,7 +292,16 @@ app.use('/api/dept-schedules', authenticate, authorizeRoles('admin'), deptSchedu
 app.use('/api/dept-managers', authenticate, authorizeRoles('admin'), deptManagerRoutes);
 
 app.use('/api/holidays', authenticate, authorizeRoles('admin'), holidayRoutes);
-app.use('/api/holidays-public', authenticate, holidayRoutes); // Public holiday access for schedules
+// 排班頁面用的假日讀取開放給所有已登入使用者；寫入（新增、修改、刪除、匯入）仍只有管理員
+app.use(
+  '/api/holidays-public',
+  authenticate,
+  (req, res, next) => {
+    if (req.method === 'GET' || req.method === 'HEAD') return next();
+    return authorizeRoles('admin')(req, res, next);
+  },
+  holidayRoutes
+);
 
 app.use('/api/salary-settings', authenticate, authorizeRoles('admin'), salarySettingRoutes);
 app.use('/api/holiday-move-settings', authenticate, authorizeRoles('admin'), holidayMoveSettingRoutes);
@@ -310,6 +320,15 @@ async function start() {
     const migratedShiftSemantics = await migrateMissingShiftSemantics();
     if (migratedShiftSemantics) {
       console.log(`Migrated semantic types for ${migratedShiftSemantics} shifts`);
+    }
+    // 舊版國定假日匯入把每個週末都存成「國定假日」，會讓排班檢核與加班費誤判；啟動時清掉（冪等）
+    try {
+      const purgedWeekendHolidays = await purgeLegacyRocWeekendHolidays();
+      if (purgedWeekendHolidays) {
+        console.log(`Removed ${purgedWeekendHolidays} legacy weekend holiday entries`);
+      }
+    } catch (purgeError) {
+      console.error('Failed to purge legacy weekend holidays', purgeError?.name ?? 'Error');
     }
     await ensureAdminUser();
     await ensureDefaultSupervisorReports();

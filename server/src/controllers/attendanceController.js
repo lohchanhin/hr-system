@@ -3,7 +3,7 @@ import Employee from '../models/Employee.js';
 import AttendanceManagementSetting from '../models/AttendanceManagementSetting.js';
 import ShiftSchedule from '../models/ShiftSchedule.js';
 import AttendanceSetting from '../models/AttendanceSetting.js';
-import { classifyShift } from '../services/laborRuleValidationService.js';
+import { isNonWorkShift, resolveShiftSemanticType } from '../services/shiftSemanticService.js';
 import {
   buildScheduleDate,
   computeActionWindow,
@@ -21,6 +21,27 @@ function toStringId(value) {
   if (typeof value === 'string') return value;
   if (typeof value.toString === 'function') return value.toString();
   return undefined;
+}
+
+const NON_WORK_DAY_LABELS = {
+  rest_day: '休息日',
+  holiday: '國定假日',
+  leave: '請假日',
+};
+
+// 當天排的是不用上班的班別（休息日 / 例假 / 國定假日 / 請假）時，不開放打卡，回覆明確的原因
+function buildNonWorkDayError(shift) {
+  const semanticType = resolveShiftSemanticType(shift);
+  if (semanticType === 'regular_rest') {
+    return {
+      error: '例假不得打卡或加班',
+      rule: 'regular-rest-attendance',
+    };
+  }
+  return {
+    error: `今日為${NON_WORK_DAY_LABELS[semanticType] || '休假日'}，不需打卡`,
+    rule: 'non-work-day-attendance',
+  };
 }
 
 function isSameDepartment(a, b) {
@@ -196,7 +217,7 @@ export async function createRecord(req, res) {
         shiftMap.set(shift._id.toString(), shift);
       });
 
-      const contexts = schedules
+      const entries = schedules
         .map((schedule) => {
           let shiftId;
           if (schedule.shiftId && typeof schedule.shiftId === 'object' && typeof schedule.shiftId.toString === 'function') {
@@ -206,22 +227,29 @@ export async function createRecord(req, res) {
           }
           const shift = shiftId ? shiftMap.get(shiftId) : null;
           if (!shift) return null;
+          const scheduleDateMs = new Date(schedule.date).getTime();
+          // 不用上班的班別沒有上下班時段，不計算打卡視窗
+          if (isNonWorkShift(shift)) {
+            return { schedule, shift, scheduleDateMs, nonWork: true };
+          }
           const span = computeShiftSpan(schedule.date, shift, timeZone);
           if (!span) return null;
-          const scheduleDateMs = new Date(schedule.date).getTime();
           return {
             schedule,
             shift,
             shiftStart: span.start,
             shiftEnd: span.end,
             scheduleDateMs,
+            nonWork: false,
           };
         })
         .filter(Boolean);
 
-      if (!contexts.length) {
+      if (!entries.length) {
         return res.status(400).json({ error: '班別設定缺少時間資訊，請聯絡管理員' });
       }
+
+      const contexts = entries.filter((ctx) => !ctx.nonWork);
 
       const todayKey = todayScheduleDate?.getTime();
       const previousKey = previousScheduleDate?.getTime();
@@ -230,13 +258,30 @@ export async function createRecord(req, res) {
       const activeContext = contexts.find((ctx) => nowMs >= ctx.shiftStart.getTime() && nowMs <= ctx.shiftEnd.getTime());
       const todayContext = contexts.find((ctx) => todayKey !== undefined && ctx.scheduleDateMs === todayKey);
       const previousContext = contexts.find((ctx) => previousKey !== undefined && ctx.scheduleDateMs === previousKey);
-      const selectedContext = activeContext || todayContext || previousContext || contexts[0];
+      const todayNonWork = entries.find((ctx) => ctx.nonWork && todayKey !== undefined && ctx.scheduleDateMs === todayKey);
 
-      if (action === 'clockIn' && classifyShift(selectedContext.shift).isRegularRest) {
-        return res.status(400).json({
-          error: '例假不得打卡或加班',
-          rule: 'regular-rest-attendance',
-        });
+      let selectedContext = activeContext || todayContext;
+      if (!selectedContext && previousContext) {
+        // 今天排休時，前一天跨日班的下班打卡仍然放行；其餘情況一律以「今天休假」回覆
+        const previousWindow = computeActionWindow(
+          action,
+          previousContext.shiftStart,
+          previousContext.shiftEnd,
+          actionBuffers,
+        );
+        if (!todayNonWork || isWithinWindow(punchTime, previousWindow)) {
+          selectedContext = previousContext;
+        }
+      }
+      if (!selectedContext) {
+        if (todayNonWork) {
+          return res.status(400).json(buildNonWorkDayError(todayNonWork.shift));
+        }
+        if (!contexts.length) {
+          // 只剩前一天的休假排班，今天本身沒有班表
+          return res.status(400).json({ error: '今日未設定班表，請洽管理員' });
+        }
+        selectedContext = contexts[0];
       }
 
       const actionWindow = computeActionWindow(

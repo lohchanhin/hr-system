@@ -127,6 +127,12 @@ export function buildScheduleDate({ year, month, day }) {
   return new Date(Date.UTC(year, month - 1, day))
 }
 
+/**
+ * 算出班別在 scheduleDate 當天的起訖時間。
+ * - 結束晚於開始：同一天內的班，crossDay 旗標不影響（例如 00:00-08:00 就是 8 小時）
+ * - 結束早於開始：一定跨日（例如 22:00-06:00、16:00-00:00）
+ * - 結束等於開始：勾跨日才是 24 小時的班；沒勾跨日（例如休假 00:00-00:00）是長度 0 的時段
+ */
 export function computeShiftSpan(scheduleDate, shift, timeZone = DEFAULT_TIMEZONE) {
   if (!scheduleDate || !shift) return null
   const baseParts = getLocalDateParts(scheduleDate, timeZone)
@@ -136,7 +142,7 @@ export function computeShiftSpan(scheduleDate, shift, timeZone = DEFAULT_TIMEZON
   const start = createDateFromParts({ ...baseParts, ...startParts }, timeZone)
   let end = createDateFromParts({ ...baseParts, ...endParts }, timeZone)
   if (!start || !end) return null
-  if (shift.crossDay || end <= start) {
+  if (end < start || (end.getTime() === start.getTime() && shift.crossDay)) {
     end = new Date(end.getTime() + MS_PER_DAY)
   }
   return { start, end }

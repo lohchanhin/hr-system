@@ -4,9 +4,10 @@ import ApprovalRequest from '../models/approval_request.js';
 import FormField from '../models/form_field.js';
 import Holiday from '../models/Holiday.js';
 import HolidayMoveSetting from '../models/HolidayMoveSetting.js';
+import { isPayableNationalHoliday } from './countedHolidayService.js';
 import { computeShiftSpan } from '../utils/timeWindow.js';
 import { getLeaveFieldIds } from './leaveFieldService.js';
-import { resolveShiftSemanticType } from './shiftSemanticService.js';
+import { isNonWorkShift, resolveShiftSemanticType } from './shiftSemanticService.js';
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const MS_PER_MINUTE = 60 * 1000;
@@ -109,13 +110,19 @@ async function loadLaborRulePolicy() {
 }
 
 export function classifyShift(shift) {
-  const semanticType = resolveShiftSemanticType(shift);
+  const target = shift || {};
+  const semanticType = resolveShiftSemanticType(target);
   const isRegularRest = semanticType === 'regular_rest';
   const isRestDay = semanticType === 'rest_day';
   return {
+    semanticType,
+    // 週休計算只認這兩種：例假算「例」、休息日算「休」；國定假日與請假兩者都不算
     isRegularRest,
     isRestDay,
-    isNonWork: isRegularRest || isRestDay,
+    isHoliday: semanticType === 'holiday',
+    isLeave: semanticType === 'leave',
+    // 休息日/例假/國定假日/請假/沒有工作時間的班別都不用上班，不產生工時
+    isNonWork: isNonWorkShift(target),
   };
 }
 
@@ -358,15 +365,6 @@ async function loadApprovedLeaveDaysMap(employeeIds, start, end) {
   return leaveDaysMap;
 }
 
-function isCountedHoliday(holiday) {
-  const text = [holiday?.type, holiday?.name, holiday?.description, holiday?.desc]
-    .filter(Boolean)
-    .join(' ')
-    .toLowerCase();
-  if (/工作日|補班|makeup\s*work/.test(text)) return false;
-  return /國定|假日|holiday/.test(text);
-}
-
 async function resolvePlainQuery(query) {
   if (query && typeof query.lean === 'function') return query.lean();
   return query || [];
@@ -379,7 +377,7 @@ async function loadCountedHolidayDays(start, end) {
   ]);
   const holidayDays = new Set(
     (holidays || [])
-      .filter(isCountedHoliday)
+      .filter(isPayableNationalHoliday)
       .map((holiday) => dateKey(holiday.date))
       .filter(Boolean),
   );
@@ -401,6 +399,14 @@ function validateWeeklyRest(grouped, shiftMap, { strictStart, strictEnd }) {
     const firstWeekStart = weekStartMonday(strictStart);
     for (let weekStart = firstWeekStart; weekStart < strictEnd; weekStart = addUtcDays(weekStart, 7)) {
       const weekEnd = addUtcDays(weekStart, 7);
+      // 跨出檢核範圍（跨月）的那一週：範圍外還沒排的日子之後仍可以補上例假/休息日，
+      // 所以只有「缺的例/休已經超過範圍外還沒排的天數」（再怎麼補也補不齊）才算違規，
+      // 不能因為鄰月還沒排就誤報。範圍內的整週沒有未排的範圍外日子，維持原本行為。
+      let missingOutsideDays = 0;
+      for (let pointer = new Date(weekStart); pointer < weekEnd; pointer = addUtcDays(pointer, 1)) {
+        const outsideRange = pointer < strictStart || pointer >= strictEnd;
+        if (outsideRange && !byDate.has(dateKey(pointer))) missingOutsideDays += 1;
+      }
       let hasScheduledInStrictRange = false;
       let regularRestCount = 0;
       let restDayCount = 0;
@@ -415,7 +421,8 @@ function validateWeeklyRest(grouped, shiftMap, { strictStart, strictEnd }) {
         if (classification.isRegularRest) regularRestCount += 1;
         else if (classification.isRestDay) restDayCount += 1;
       }
-      if (hasScheduledInStrictRange && (regularRestCount < 1 || restDayCount < 1)) {
+      const restShortfall = (regularRestCount < 1 ? 1 : 0) + (restDayCount < 1 ? 1 : 0);
+      if (hasScheduledInStrictRange && restShortfall > missingOutsideDays) {
         violations.push(makeViolation(
           'weekly-one-regular-rest-one-rest-day',
           `每週一至週日需至少1例1休：${dateKey(weekStart)} 週缺少${regularRestCount < 1 ? '例假' : ''}${regularRestCount < 1 && restDayCount < 1 ? '與' : ''}${restDayCount < 1 ? '休息日' : ''}`,

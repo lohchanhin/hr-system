@@ -14,8 +14,10 @@ import {
   getAllowedScheduleEmployeeIds,
   attachShiftInfo,
   buildScheduleOverview,
+  IMPORT_HOLIDAY_CODES,
   IMPORT_LEAVE_CODES,
   normalizeWorkbookCode,
+  resolveImportShiftKind,
 } from './scheduleShared.js';
 
 export async function exportScheduleOverview(req, res) {
@@ -252,14 +254,36 @@ export async function exportSchedules(req, res) {
       const dateKey = dayjs(item.date, 'YYYY/MM/DD').date();
       scheduleMap.get(empId).set(dateKey, item.shiftCode || item.shiftName || '');
     });
+    const exportSettingQuery = AttendanceSetting.findOne();
+    const exportSetting = exportSettingQuery && typeof exportSettingQuery.lean === 'function'
+      ? await exportSettingQuery.lean()
+      : await exportSettingQuery;
+    // 班別設定裡每個代碼／名稱屬於哪一類（請假、國定假日…），請假核准要換成班表代碼、儲存格底色都靠它
+    const shiftKindByText = new Map();
+    const leaveShiftCodeByText = new Map();
+    (exportSetting?.shifts || []).forEach((shift) => {
+      const kind = resolveImportShiftKind(shift);
+      const shiftCode = String(shift.code || shift.name || '').trim();
+      [shift.code, shift.name].forEach((text) => {
+        const key = normalizeWorkbookCode(text);
+        if (!key) return;
+        if (!shiftKindByText.has(key)) shiftKindByText.set(key, kind);
+        if (kind === 'leave' && shiftCode && !leaveShiftCodeByText.has(key)) leaveShiftCodeByText.set(key, shiftCode);
+      });
+    });
+    // 核准的請假類型優先對應班別設定裡的請假班別（例如「公傷假」→「公傷」），找不到才用舊的簡稱規則
     const leaveCode = (leaveType) => (
-      leaveType.includes('特') ? '特'
-        : leaveType.includes('病') ? '病'
-          : leaveType.includes('事') ? '事'
-            : leaveType.includes('喪') ? '喪'
-              : leaveType.includes('公') ? '公'
-                : leaveType.includes('原') ? '原'
-                  : leaveType.includes('補') ? '補' : leaveType
+      leaveShiftCodeByText.get(normalizeWorkbookCode(leaveType))
+      || (
+        leaveType.includes('特') ? '特'
+          : leaveType.includes('病') ? '病'
+            : leaveType.includes('事') ? '事'
+              : leaveType.includes('喪') ? '喪'
+                : leaveType.includes('公傷') ? '公傷'
+                  : leaveType.includes('公') ? '公'
+                    : leaveType.includes('原') ? '原'
+                      : leaveType.includes('補') ? '補' : leaveType
+      )
     );
     const exportRows = filteredEmployees.map((employee) => {
       const empId = employee._id.toString();
@@ -301,10 +325,6 @@ export async function exportSchedules(req, res) {
         return res.status(500).json({ error: 'exceljs module not installed' });
       }
       const workbook = new ExcelJS.Workbook();
-      const exportSettingQuery = AttendanceSetting.findOne();
-      const exportSetting = exportSettingQuery && typeof exportSettingQuery.lean === 'function'
-        ? await exportSettingQuery.lean()
-        : await exportSettingQuery;
       workbook.creator = 'HR System';
       workbook.created = new Date();
       const ws = workbook.addWorksheet('工作表1', { views: [{ state: 'frozen', xSplit: 4, ySplit: 5 }] });
@@ -393,6 +413,22 @@ export async function exportSchedules(req, res) {
         pattern: 'solid',
         fgColor: { argb: 'FFF8CBAD' },
       };
+      const holidayStyle = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: 'FFF4CCCC' },
+      };
+      // 有值的格子（含國定假日、請假班別）都是已排班，只有空白格才是未排班的黃底
+      const fillForCode = (value) => {
+        const key = normalizeWorkbookCode(value);
+        const kind = shiftKindByText.get(key);
+        if (kind === 'leave') return leaveStyle;
+        if (kind === 'holiday') return holidayStyle;
+        if (kind) return null;
+        if (IMPORT_LEAVE_CODES.has(key)) return leaveStyle;
+        if (IMPORT_HOLIDAY_CODES.has(key)) return holidayStyle;
+        return null;
+      };
 
       [1, 2, 3, 4, 5].forEach((rowNumber) => ws.getRow(rowNumber).eachCell((cell) => {
         cell.fill = headerStyle;
@@ -414,8 +450,9 @@ export async function exportSchedules(req, res) {
           }
           if (!cell.value && colNumber >= 5) {
             cell.fill = unscheduledStyle;
-          } else if (IMPORT_LEAVE_CODES.has(normalizeWorkbookCode(cell.value))) {
-            cell.fill = leaveStyle;
+          } else if (colNumber >= 5) {
+            const codeFill = fillForCode(cell.value);
+            if (codeFill) cell.fill = codeFill;
           }
           cell.alignment = { vertical: 'middle', horizontal: colNumber <= 4 ? 'left' : 'center' };
         });

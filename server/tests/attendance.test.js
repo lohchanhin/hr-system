@@ -267,6 +267,140 @@ describe('Attendance API', () => {
     expect(saveMock).not.toHaveBeenCalled();
   });
 
+  describe('non-work shifts (rest day / regular rest / national holiday / leave)', () => {
+    const zeroShift = (_id, code, name, semanticType) => ({
+      _id, code, name, startTime: '00:00', endTime: '00:00', semanticType,
+    });
+    const scheduleOn = (date, shiftId, _id = `sched-${shiftId}`) => ({ _id, employee: 'emp1', date, shiftId });
+    const TODAY = new Date(Date.UTC(2024, 0, 1));
+    const YESTERDAY = new Date(Date.UTC(2023, 11, 31));
+
+    it.each([
+      ['rest_day', '休', '休假', { error: '今日為休息日，不需打卡', rule: 'non-work-day-attendance' }],
+      ['holiday', '國', '國定假日', { error: '今日為國定假日，不需打卡', rule: 'non-work-day-attendance' }],
+      ['leave', '特', '特休', { error: '今日為請假日，不需打卡', rule: 'non-work-day-attendance' }],
+      ['regular_rest', '例', '例假', { error: '例假不得打卡或加班', rule: 'regular-rest-attendance' }],
+    ])('rejects both clock actions on a %s day with an explicit day-off reason', async (semanticType, code, name, expected) => {
+      currentUser = { id: 'emp1', role: 'employee' };
+      setupScheduleMocks({
+        schedules: [scheduleOn(TODAY, 'off')],
+        shifts: [zeroShift('off', code, name, semanticType)],
+      });
+
+      for (const action of ['clockIn', 'clockOut']) {
+        const res = await request(app).post('/api/attendance').send({ action, employee: 'emp1' });
+        expect(res.status).toBe(400);
+        expect(res.body).toEqual(expected);
+      }
+      expect(saveMock).not.toHaveBeenCalled();
+      expect(mockAttendanceRecord.exists).not.toHaveBeenCalled();
+    });
+
+    it('treats a shift without working time as a day off even if its semantic type says work', async () => {
+      currentUser = { id: 'emp1', role: 'employee' };
+      setupScheduleMocks({
+        schedules: [scheduleOn(TODAY, 'legacy')],
+        shifts: [zeroShift('legacy', 'XX', '未分類', 'work')],
+      });
+
+      const res = await request(app).post('/api/attendance').send({ action: 'clockIn', employee: 'emp1' });
+
+      expect(res.status).toBe(400);
+      expect(res.body.rule).toBe('non-work-day-attendance');
+      expect(saveMock).not.toHaveBeenCalled();
+    });
+
+    it('does not offer the old 23:00-04:00 window on a day off', async () => {
+      // 台北時間 2024-01-01 23:30（舊的 24 小時視窗內）
+      Date.now.mockReturnValue(Date.parse('2024-01-01T15:30:00.000Z'));
+      currentUser = { id: 'emp1', role: 'employee' };
+      setupScheduleMocks({
+        schedules: [scheduleOn(TODAY, 'rest')],
+        shifts: [zeroShift('rest', '休', '休假', 'rest_day')],
+      });
+
+      const res = await request(app).post('/api/attendance').send({ action: 'clockIn', employee: 'emp1' });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe('今日為休息日，不需打卡');
+      expect(res.body.allowedWindow).toBeUndefined();
+    });
+
+    it("still allows the clock-out of yesterday's cross-day night shift on the morning of a day off", async () => {
+      // 台北時間 2024-01-01 06:30，昨天的 22:00-06:00 夜班剛下班，今天排休
+      Date.now.mockReturnValue(Date.parse('2023-12-31T22:30:00.000Z'));
+      currentUser = { id: 'emp1', role: 'employee' };
+      setupScheduleMocks({
+        schedules: [scheduleOn(YESTERDAY, 'night', 'sched-night'), scheduleOn(TODAY, 'rest')],
+        shifts: [
+          { _id: 'night', code: 'N', name: '夜班', startTime: '22:00', endTime: '06:00', crossDay: true, semanticType: 'work' },
+          zeroShift('rest', '休', '休假', 'rest_day'),
+        ],
+      });
+      mockAttendanceRecord.exists
+        .mockResolvedValueOnce(false)
+        .mockResolvedValueOnce(true);
+      saveMock.mockResolvedValue();
+
+      const clockOut = await request(app).post('/api/attendance').send({ action: 'clockOut', employee: 'emp1' });
+      expect(clockOut.status).toBe(201);
+      expect(saveMock).toHaveBeenCalledTimes(1);
+      expect(mockAttendanceRecord.mock.calls.at(-1)[0].punchKey).toBe('emp1:sched-night:clockOut');
+
+      // 但今天休假，不能再用這個時間上班簽到
+      const clockIn = await request(app).post('/api/attendance').send({ action: 'clockIn', employee: 'emp1' });
+      expect(clockIn.status).toBe(400);
+      expect(clockIn.body.rule).toBe('non-work-day-attendance');
+      expect(saveMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not fall back to yesterday's finished day shift on a day off", async () => {
+      currentUser = { id: 'emp1', role: 'employee' };
+      setupScheduleMocks({
+        schedules: [scheduleOn(YESTERDAY, 'day'), scheduleOn(TODAY, 'rest')],
+        shifts: [
+          { _id: 'day', code: '日', name: '日班', startTime: '08:00', endTime: '17:00', semanticType: 'work' },
+          zeroShift('rest', '休', '休假', 'rest_day'),
+        ],
+      });
+
+      const res = await request(app).post('/api/attendance').send({ action: 'clockIn', employee: 'emp1' });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe('今日為休息日，不需打卡');
+    });
+
+    it('treats a yesterday-only day off as no schedule today', async () => {
+      currentUser = { id: 'emp1', role: 'employee' };
+      setupScheduleMocks({
+        schedules: [scheduleOn(YESTERDAY, 'rest')],
+        shifts: [zeroShift('rest', '休', '休假', 'rest_day')],
+      });
+
+      const res = await request(app).post('/api/attendance').send({ action: 'clockIn', employee: 'emp1' });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe('今日未設定班表，請洽管理員');
+    });
+
+    it('lets a normal day shift punch in when yesterday was a day off', async () => {
+      currentUser = { id: 'emp1', role: 'employee' };
+      setupScheduleMocks({
+        schedules: [scheduleOn(YESTERDAY, 'rest'), scheduleOn(TODAY, 'day')],
+        shifts: [
+          { _id: 'day', code: '日', name: '日班', startTime: '09:00', endTime: '18:00', semanticType: 'work' },
+          zeroShift('rest', '休', '休假', 'rest_day'),
+        ],
+      });
+      saveMock.mockResolvedValue();
+
+      const res = await request(app).post('/api/attendance').send({ action: 'clockIn', employee: 'emp1' });
+
+      expect(res.status).toBe(201);
+      expect(mockAttendanceRecord.mock.calls.at(-1)[0].punchKey).toBe('emp1:sched-day:clockIn');
+    });
+  });
+
   it('rejects clockIn before allowed window', async () => {
     Date.now.mockReturnValue(Date.parse('2023-12-31T23:30:00.000Z'));
     currentUser = { id: 'emp1', role: 'employee' };

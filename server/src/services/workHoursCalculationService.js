@@ -8,7 +8,8 @@ import HolidayMoveSetting from '../models/HolidayMoveSetting.js';
 import FormField from '../models/form_field.js';
 import { getLeaveFieldIds } from './leaveFieldService.js';
 import { calculateNightShiftAllowance } from './nightShiftAllowanceService.js';
-import { classifyShift } from './laborRuleValidationService.js';
+import { isNonWorkShift, resolveShiftSemanticType } from './shiftSemanticService.js';
+import { buildCountedHolidayDays } from './countedHolidayService.js';
 import { 
   WORK_HOURS_CONFIG,
   LEAVE_POLICY,
@@ -118,7 +119,9 @@ function computeShiftTimes(date, shift) {
   const [endHours, endMinutes] = String(shift.endTime ?? '00:00').split(':').map((value) => parseInt(value, 10) || 0);
   end.setUTCHours(endHours, endMinutes, 0, 0);
   
-  if (shift.crossDay || end <= start) {
+  // 結束早於開始 → 隔天；開始等於結束時，只有勾「跨日」才算整整 24 小時；
+  // 結束晚於開始（例如 00:00-08:00）時，跨日旗標不再多加 24 小時
+  if (end < start || (end.getTime() === start.getTime() && shift.crossDay)) {
     end.setUTCDate(end.getUTCDate() + 1);
   }
   
@@ -238,7 +241,8 @@ export async function calculateWorkHours(employeeId, month, context = {}) {
     
     if (!shift) return;
 
-    if (classifyShift(shift).isNonWork) {
+    // 休息日 / 例假 / 國定假日 / 請假 / 沒有工作時間的班別：不排時數，也不算出勤日
+    if (isNonWorkShift(shift)) {
       dailyDetails.push({
         date: dateKey,
         scheduledHours: 0,
@@ -478,6 +482,15 @@ export async function calculateLeaveImpact(employeeId, month, context = {}) {
 }
 
 /**
+ * 判斷加班日的日別：國定假日 > 休息日 > 平日。
+ * 國定假日只看 holidayDays（已排除補班日與說明為空的週末），排班上的「國」班別不會自己變成國定假日。
+ */
+function resolveOvertimeDayType(dateKey, holidayDays, shift) {
+  if (holidayDays.has(dateKey)) return 'national_holiday';
+  return shift && resolveShiftSemanticType(shift) === 'rest_day' ? 'rest_day' : 'workday';
+}
+
+/**
  * 計算加班費
  * @param {String} employeeId - 員工 ID
  * @param {String} month - 月份 (YYYY-MM-DD 格式)
@@ -543,15 +556,13 @@ export async function calculateOvertimePay(employeeId, month, context = {}) {
     Holiday.find({ date: { $gte: startDate, $lt: endDate } }).lean(),
     HolidayMoveSetting.find({ enableHolidayMove: true }).lean(),
   ]);
-  const holidayDays = new Set((holidays || []).map((holiday) => new Date(holiday.date).toISOString().slice(0, 10)));
-  for (const move of holidayMoves || []) {
-    const source = move.sourceDate ? new Date(move.sourceDate).toISOString().slice(0, 10) : '';
-    const target = move.targetDate ? new Date(move.targetDate).toISOString().slice(0, 10) : '';
-    if (source) holidayDays.delete(source);
-    if (target >= startDate.toISOString().slice(0, 10) && target < endDate.toISOString().slice(0, 10)) {
-      holidayDays.add(target);
-    }
-  }
+  // 只讀「算數的國定假日」：補班日、工作日、說明為空的週末都不是國定假日
+  const holidayDays = buildCountedHolidayDays({
+    holidays,
+    moves: holidayMoves,
+    start: startDate,
+    end: endDate,
+  });
   
   let totalOvertimeHours = 0;
   let overtimePay = 0;
@@ -629,10 +640,11 @@ export async function calculateOvertimePay(employeeId, month, context = {}) {
     }
     const overtimeDateKey = overtimeDate.toISOString().slice(0, 10);
     const schedule = scheduleByDate.get(overtimeDateKey);
-    const classification = classifyShift(shiftMap.get(String(schedule?.shiftId || '')));
-    const dayType = holidayDays.has(overtimeDateKey)
-      ? 'national_holiday'
-      : classification.isRestDay ? 'rest_day' : 'workday';
+    const dayType = resolveOvertimeDayType(
+      overtimeDateKey,
+      holidayDays,
+      shiftMap.get(String(schedule?.shiftId || '')),
+    );
     const calculation = calculateTaiwanOvertimeAmount(hours, hourlyRate, dayType);
 
     totalOvertimeHours += hours;
@@ -745,7 +757,8 @@ export const __testUtils = {
   computeShiftTimes,
   formatDate,
   buildDateKey,
-  groupAttendanceRecords
+  groupAttendanceRecords,
+  resolveOvertimeDayType
 };
 
 export default {

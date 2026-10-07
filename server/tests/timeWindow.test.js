@@ -37,6 +37,37 @@ describe('timeWindow utilities', () => {
     expect(span.end.getTime() - span.start.getTime()).toBe(8 * 60 * 60 * 1000)
   })
 
+  describe('computeShiftSpan crossDay semantics', () => {
+    const scheduleDate = new Date(Date.UTC(2026, 5, 2))
+    const hours = (span) => (span.end.getTime() - span.start.getTime()) / (60 * 60 * 1000)
+
+    it('ignores the crossDay flag when the end time is later than the start time', () => {
+      const span = computeShiftSpan(scheduleDate, { startTime: '00:00', endTime: '08:00', crossDay: true })
+      expect(hours(span)).toBe(8)
+      expect(span.start.toISOString()).toBe('2026-06-01T16:00:00.000Z')
+      expect(span.end.toISOString()).toBe('2026-06-02T00:00:00.000Z')
+      expect(hours(computeShiftSpan(scheduleDate, { startTime: '08:00', endTime: '17:00', crossDay: true }))).toBe(9)
+    })
+
+    it('keeps start equal to end with crossDay as a 24 hour span', () => {
+      const span = computeShiftSpan(scheduleDate, { startTime: '00:00', endTime: '00:00', crossDay: true })
+      expect(hours(span)).toBe(24)
+    })
+
+    it('turns start equal to end without crossDay into a zero length span, never 24 hours', () => {
+      const span = computeShiftSpan(scheduleDate, { startTime: '00:00', endTime: '00:00' })
+      expect(hours(span)).toBe(0)
+      expect(span.end.getTime()).toBe(span.start.getTime())
+      expect(hours(computeShiftSpan(scheduleDate, { startTime: '00:00', endTime: '00:00', crossDay: false }))).toBe(0)
+    })
+
+    it('still rolls an overnight shift (end earlier than start) to the next day with or without the flag', () => {
+      expect(hours(computeShiftSpan(scheduleDate, { startTime: '22:00', endTime: '06:00' }))).toBe(8)
+      expect(hours(computeShiftSpan(scheduleDate, { startTime: '22:00', endTime: '06:00', crossDay: true }))).toBe(8)
+      expect(hours(computeShiftSpan(scheduleDate, { startTime: '16:00', endTime: '00:00' }))).toBe(8)
+    })
+  })
+
   it('derives action windows with buffers', () => {
     const scheduleDate = new Date(Date.UTC(2024, 0, 1))
     const shift = { startTime: '09:00', endTime: '18:00' }

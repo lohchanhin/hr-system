@@ -1,6 +1,6 @@
 import { describe, expect, it } from '@jest/globals';
 import ExcelJS from 'exceljs';
-import { parseScheduleWorkbook } from '../src/services/scheduleWorkbookService.js';
+import { __testUtils, parseScheduleWorkbook } from '../src/services/scheduleWorkbookService.js';
 
 describe('schedule workbook parser', () => {
   it('parses the public four-row schedule layout with numeric dates', async () => {
@@ -109,5 +109,42 @@ describe('schedule workbook parser', () => {
       code: 'EMPLOYEE_ID_REQUIRED',
       errors: [expect.objectContaining({ row: 5, message: '員工代號必填' })],
     });
+  });
+
+  it('turns Excel date cells back into readable MM-DD text with the M-D spelling as an alternative', async () => {
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet('工作表1');
+    sheet.addRow(['班表']);
+    sheet.addRow(['', '', '行事曆']);
+    sheet.addRow(['', '', '日期', 1, 2, 3]);
+    sheet.addRow(['員工代號', '姓名', '星期', '一', '二', '三']);
+    // Excel 把輸入的「11-20」「08-12」轉成日期儲存格（UTC 午夜），其餘文字儲存格不受影響
+    sheet.addRow([
+      'A001', '測試員工', '護理師',
+      new Date('2026-11-20T00:00:00.000Z'),
+      new Date('2026-08-12T00:00:00.000Z'),
+      'D',
+    ]);
+
+    const parsed = await parseScheduleWorkbook(await workbook.xlsx.writeBuffer(), { month: '2026-06' });
+
+    expect(parsed.rows[0].entries).toEqual([
+      { day: 1, code: '11-20', fromDateCell: true },
+      { day: 2, code: '08-12', fromDateCell: true, alternatives: ['8-12'] },
+      { day: 3, code: 'D' },
+    ]);
+    expect(JSON.stringify(parsed.rows[0].entries)).not.toMatch(/GMT/);
+  });
+
+  it('reads date cells with UTC parts so the day never shifts with the server time zone', () => {
+    const { cellText, dateCellCodes } = __testUtils;
+
+    expect(cellText({ value: new Date('2026-01-01T00:00:00.000Z') })).toBe('01-01');
+    expect(cellText({ value: new Date('2026-12-31T23:30:00.000Z') })).toBe('12-31');
+    expect(cellText({ value: { formula: 'DATE(2026,3,5)', result: new Date('2026-03-05T00:00:00.000Z') } })).toBe('03-05');
+    expect(dateCellCodes(new Date('2026-03-05T00:00:00.000Z'))).toEqual({ text: '03-05', alternatives: ['3-5'] });
+    expect(dateCellCodes(new Date('2026-11-20T00:00:00.000Z'))).toEqual({ text: '11-20', alternatives: [] });
+    // 日期欄位的公式結果也走同一條路，不會被當成本地時間
+    expect(__testUtils.parseDay({ value: { formula: 'x', result: new Date('2026-06-05T00:00:00.000Z') } }, '2026-06')).toBe(5);
   });
 });

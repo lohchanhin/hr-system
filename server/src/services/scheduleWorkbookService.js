@@ -4,15 +4,57 @@ import { normalizeEmployeeIdentifier } from './employeeIdentityService.js';
 const MAX_ROWS = 5_000;
 const MAX_COLUMNS = 40;
 
+function pad2(value) {
+  return String(value).padStart(2, '0');
+}
+
+function isValidDate(value) {
+  return value instanceof Date && !Number.isNaN(value.getTime());
+}
+
+/**
+ * Excel 會把「11-20」「08-12」這類班別代碼自動轉成日期儲存格。
+ * 日期儲存格沒有時區，ExcelJS 以 UTC 午夜回傳，所以一律用 UTC 的月、日還原成「MM-DD」，
+ * 另外保留「M-D」（不補零）當備用寫法，供比對班別代碼時一併嘗試。
+ */
+function dateCellCodes(date) {
+  const month = date.getUTCMonth() + 1;
+  const day = date.getUTCDate();
+  const padded = `${pad2(month)}-${pad2(day)}`;
+  const short = `${month}-${day}`;
+  return { text: padded, alternatives: padded === short ? [] : [short] };
+}
+
+function cellDateValue(cell) {
+  const value = cell?.value;
+  if (isValidDate(value)) return value;
+  if (value && typeof value === 'object' && isValidDate(value.result)) return value.result;
+  return null;
+}
+
 function cellText(cell) {
   const value = cell?.value;
   if (value === null || value === undefined) return '';
+  const dateValue = cellDateValue(cell);
+  if (dateValue) return dateCellCodes(dateValue).text;
   if (typeof value === 'object') {
     if (value.result !== undefined) return String(value.result).trim();
     if (Array.isArray(value.richText)) return value.richText.map((part) => part.text || '').join('').trim();
     if (value.text !== undefined) return String(value.text).trim();
   }
   return String(value).trim();
+}
+
+/** 班表儲存格內容；日期儲存格會多帶 fromDateCell 與備用寫法 alternatives。 */
+function scheduleEntry(cell, day) {
+  const entry = { day, code: cellText(cell) };
+  const dateValue = cellDateValue(cell);
+  if (dateValue) {
+    const { alternatives } = dateCellCodes(dateValue);
+    entry.fromDateCell = true;
+    if (alternatives.length) entry.alternatives = alternatives;
+  }
+  return entry;
 }
 
 function employeeIdentifierText(cell) {
@@ -46,8 +88,8 @@ export class ScheduleWorkbookValidationError extends Error {
 }
 
 function parseDay(cell, month) {
-  const value = cell?.value;
-  if (value instanceof Date && !Number.isNaN(value.getTime())) return value.getUTCDate();
+  const dateValue = cellDateValue(cell);
+  if (dateValue) return dateValue.getUTCDate();
   const text = cellText(cell);
   const number = Number(text);
   if (Number.isInteger(number) && number >= 1 && number <= 31) return number;
@@ -124,7 +166,7 @@ export async function parseScheduleWorkbook(buffer, { month } = {}) {
     }
     employeeRowsById.get(normalizedEmployeeId).rows.push(rowNumber);
     const entries = columns
-      .map(({ column, day }) => ({ day, code: cellText(row.getCell(column)) }))
+      .map(({ column, day }) => scheduleEntry(row.getCell(column), day))
       .filter((entry) => entry.code && entry.code !== '未排班');
     rows.push({
       rowNumber,
@@ -160,4 +202,4 @@ export async function parseScheduleWorkbook(buffer, { month } = {}) {
   return { worksheetName: worksheet.name, employeeHeaderRow, dateRowNumber, columns, rows };
 }
 
-export const __testUtils = { cellText, employeeIdentifierText, parseDay, daysInMonth };
+export const __testUtils = { cellText, employeeIdentifierText, parseDay, daysInMonth, dateCellCodes };

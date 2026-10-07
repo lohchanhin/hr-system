@@ -1,6 +1,7 @@
 import ShiftSchedule from '../models/ShiftSchedule.js';
 import AttendanceSetting from '../models/AttendanceSetting.js';
 import { WORK_HOURS_CONFIG } from '../config/salaryConfig.js';
+import { isNonWorkShift } from './shiftSemanticService.js';
 
 /**
  * 計算員工在指定月份的夜班津貼
@@ -64,6 +65,10 @@ export async function calculateNightShiftAllowance(employeeId, month, employee, 
     for (const schedule of schedules) {
       const shift = shiftMap.get(schedule.shiftId.toString());
       if (!shift) continue;
+
+      // 休息日 / 例假 / 國定假日 / 請假 / 沒有工作時間的班別沒有上班，不發夜班津貼
+      // （就算班別設定誤勾了夜班津貼也一樣）
+      if (isNonWorkShift(shift)) continue;
 
       // 只計算標記為夜班且啟用津貼的班別
       if (shift.isNightShift && shift.hasAllowance) {

@@ -281,6 +281,429 @@ describe('assertScheduleRuleCompliance', () => {
   });
 });
 
+// 客戶「班表公版」：17 個休假/請假班別（00:00-00:00）與上班班別
+const CUSTOMER_OFF_SHIFTS = [
+  ['休', '休假'], ['例', '例假'], ['國', '國定假日'], ['事', '事假'], ['特', '特休'], ['補', '補休'],
+  ['原', '原民假'], ['病', '病假'], ['公', '公假'], ['公傷', '公傷假'], ['婚', '婚假'], ['喪', '喪假'],
+  ['生', '生理假'], ['檢', '產檢假'], ['陪', '陪產檢假'], ['產', '分娩假'], ['家', '家庭照顧假'],
+];
+const CUSTOMER_LEAVE_CODES = CUSTOMER_OFF_SHIFTS.map(([code]) => code)
+  .filter((code) => !['休', '例', '國'].includes(code));
+
+// explicitWork：模擬管理者建立班別時沒改「班別性質」預設值，被存成 work 的情況
+function customerSetting({ explicitWork = false } = {}) {
+  return {
+    shifts: [
+      ...CUSTOMER_OFF_SHIFTS.map(([code, name]) => ({
+        _id: code,
+        code,
+        name,
+        startTime: '00:00',
+        endTime: '00:00',
+        breakMinutes: 0,
+        ...(explicitWork ? { semanticType: 'work' } : {}),
+      })),
+      { _id: '日', code: '日', name: '日班', startTime: '08:00', endTime: '17:00', breakMinutes: 60 },
+      { _id: 'N', code: 'N', name: '夜班', startTime: '00:00', endTime: '08:00', breakMinutes: 0, crossDay: true },
+      { _id: 'N9', code: 'N9', name: '九小時夜班', startTime: '00:00', endTime: '09:00', breakMinutes: 0, crossDay: true },
+      { _id: 'E2', code: 'E2', name: '晚班', startTime: '16:00', endTime: '00:00', breakMinutes: 0, crossDay: true },
+      { _id: 'FULL', code: 'FULL', name: '24小時班', startTime: '00:00', endTime: '00:00', breakMinutes: 0, crossDay: true },
+    ],
+  };
+}
+
+const utcDay = (iso) => new Date(`${iso}T00:00:00.000Z`);
+
+// 由某天開始，一天一個班別代碼
+function rowsFromCodes(employee, startIso, codes) {
+  return codes.map((shiftId, index) => ({
+    employee,
+    date: new Date(utcDay(startIso).getTime() + index * 24 * 60 * 60 * 1000),
+    shiftId,
+  }));
+}
+
+const JUNE_EMPLOYEES = ['A0003', 'A0069', 'A0119', 'A0134', 'A0141', 'A0142', 'A0143', 'A0146'];
+const JUNE_RANGE = { start: utcDay('2026-06-01'), end: utcDay('2026-07-01') };
+// 6/6 6/13 6/20 6/27 例、6/7 6/14 6/21 6/28 休、6/19 端午節國定假日，其他天都是日班
+const JUNE_CODES = Array.from({ length: 30 }, (_, index) => {
+  const day = index + 1;
+  if ([6, 13, 20, 27].includes(day)) return '例';
+  if ([7, 14, 21, 28].includes(day)) return '休';
+  if (day === 19) return '國';
+  return '日';
+});
+
+function juneRows(employees = JUNE_EMPLOYEES, codes = JUNE_CODES) {
+  return employees.flatMap((employee) => rowsFromCodes(employee, '2026-06-01', codes));
+}
+
+async function collectViolations(args) {
+  try {
+    await assertScheduleRuleCompliance(args);
+    return [];
+  } catch (error) {
+    if (Array.isArray(error?.violations)) return error.violations;
+    throw error;
+  }
+}
+
+const HOURS_AND_GAP_RULES = ['daily-work-hours', 'regular-work-hours', 'shift-gap'];
+
+describe('classifyShift with the customer shift table', () => {
+  const { classifyShift } = __testUtils;
+
+  it.each(CUSTOMER_OFF_SHIFTS)('treats %s (%s) as non-work and counts only 例 and 休 for weekly rest', (code, name) => {
+    const shift = { _id: code, code, name, startTime: '00:00', endTime: '00:00', breakMinutes: 0 };
+    expect(classifyShift(shift)).toMatchObject({
+      isRegularRest: code === '例',
+      isRestDay: code === '休',
+      isHoliday: code === '國',
+      isLeave: !['休', '例', '國'].includes(code),
+      isNonWork: true,
+    });
+  });
+
+  it('treats a zero-time shift saved with the default work type as non-work but not as 例 or 休', () => {
+    const shift = { code: '休', name: '休假', startTime: '00:00', endTime: '00:00', semanticType: 'work' };
+    expect(classifyShift(shift)).toMatchObject({
+      semanticType: 'work', isRegularRest: false, isRestDay: false, isNonWork: true,
+    });
+  });
+
+  it('keeps working shifts as work, including cross-day and 24 hour shifts', () => {
+    for (const shift of customerSetting().shifts.filter((item) => !CUSTOMER_OFF_SHIFTS.some(([code]) => code === item.code))) {
+      expect(classifyShift(shift)).toMatchObject({ isRegularRest: false, isRestDay: false, isNonWork: false });
+    }
+    expect(classifyShift({ code: '休D', name: '休息日出勤', startTime: '08:00', endTime: '17:00' }).isNonWork).toBe(false);
+  });
+
+  it('does not throw for a missing shift', () => {
+    expect(classifyShift(undefined)).toMatchObject({ isRegularRest: false, isRestDay: false, isNonWork: false });
+    expect(classifyShift(null).isNonWork).toBe(false);
+  });
+});
+
+describe('assertScheduleRuleCompliance with the customer June 2026 schedule', () => {
+  beforeEach(() => {
+    mockAttendanceSetting.findOne.mockReturnValue(leanQuery(customerSetting()));
+  });
+
+  it('accepts the whole month for 8 employees with 例/休/國 saved as rows', async () => {
+    const violations = await collectViolations({
+      candidateSchedules: juneRows(),
+      range: JUNE_RANGE,
+      strictWeeklyRest: true,
+    });
+    expect(violations).toEqual([]);
+  });
+
+  it('raises no hours or gap findings when 國 and every leave code are saved as rows', async () => {
+    for (const explicitWork of [false, true]) {
+      mockAttendanceSetting.findOne.mockReturnValue(leanQuery(customerSetting({ explicitWork })));
+      // 日班與各種請假/國定假日交錯，每個請假代碼各出現一次
+      const codes = ['日', '國', '日', ...CUSTOMER_LEAVE_CODES.flatMap((code) => [code, '日']), '休', '例'];
+      const violations = await collectViolations({
+        candidateSchedules: rowsFromCodes('A0003', '2026-06-01', codes),
+      });
+      expect(violations.filter((item) => HOURS_AND_GAP_RULES.includes(item.rule))).toEqual([]);
+    }
+  });
+
+  it('raises no hours or gap findings for the June file even when day-off shifts were saved as work', async () => {
+    mockAttendanceSetting.findOne.mockReturnValue(leanQuery(customerSetting({ explicitWork: true })));
+    const violations = await collectViolations({
+      candidateSchedules: juneRows(['A0003']),
+      range: JUNE_RANGE,
+    });
+    expect(violations.filter((item) => HOURS_AND_GAP_RULES.includes(item.rule))).toEqual([]);
+  });
+
+  describe('week by week', () => {
+    it.each([
+      ['2026-06-01', 6, '例假'],
+      ['2026-06-08', 13, '例假'],
+      ['2026-06-15', 20, '例假'],
+      ['2026-06-22', 27, '例假'],
+      ['2026-06-01', 7, '休息日'],
+      ['2026-06-08', 14, '休息日'],
+      ['2026-06-15', 21, '休息日'],
+      ['2026-06-22', 28, '休息日'],
+    ])('reports only the week of %s when the rest on 6/%i is replaced by a work day (%s missing)', async (weekStart, day, label) => {
+      const codes = [...JUNE_CODES];
+      codes[day - 1] = '日';
+      const violations = await collectViolations({
+        candidateSchedules: juneRows(['A0003'], codes),
+        range: JUNE_RANGE,
+        strictWeeklyRest: true,
+      });
+      expect(violations).toEqual([
+        expect.objectContaining({
+          rule: 'weekly-one-regular-rest-one-rest-day',
+          employee: 'A0003',
+          weekStart,
+          regularRestCount: label === '例假' ? 0 : 1,
+          restDayCount: label === '休息日' ? 0 : 1,
+        }),
+      ]);
+      expect(violations[0].message).toContain(label);
+    });
+  });
+
+  describe('partial last week of the month (6/29-7/5)', () => {
+    const rowsFor = (codes, startIso = '2026-07-01') => rowsFromCodes('A0003', startIso, codes);
+
+    it('is not reported when the rows after the month are missing', async () => {
+      mockShiftSchedule.find.mockReturnValue(sortableLeanQuery([]));
+      const violations = await collectViolations({
+        candidateSchedules: juneRows(['A0003']),
+        range: JUNE_RANGE,
+        strictWeeklyRest: true,
+      });
+      expect(violations).toEqual([]);
+    });
+
+    it('is not reported when only some of 7/1..7/5 exist', async () => {
+      // 7/4、7/5 沒有資料：下個月根本還沒排完
+      mockShiftSchedule.find.mockReturnValue(sortableLeanQuery(rowsFor(['日', '日', '日'])));
+      const violations = await collectViolations({
+        candidateSchedules: juneRows(['A0003']),
+        range: JUNE_RANGE,
+        strictWeeklyRest: true,
+      });
+      expect(violations).toEqual([]);
+    });
+
+    it('is reported when every day 7/1..7/5 exists but has neither 例 nor 休', async () => {
+      mockShiftSchedule.find.mockReturnValue(sortableLeanQuery(rowsFor(['日', '日', '日', '日', '日'])));
+      const violations = await collectViolations({
+        candidateSchedules: juneRows(['A0003']),
+        range: JUNE_RANGE,
+        strictWeeklyRest: true,
+      });
+      expect(violations.filter((item) => item.rule === 'weekly-one-regular-rest-one-rest-day')).toEqual([
+        expect.objectContaining({ employee: 'A0003', weekStart: '2026-06-29', regularRestCount: 0, restDayCount: 0 }),
+      ]);
+    });
+
+    it('reports only the missing 例 when 7/1..7/5 exist with a 休 but no 例', async () => {
+      mockShiftSchedule.find.mockReturnValue(sortableLeanQuery(rowsFor(['日', '日', '休', '日', '日'])));
+      const violations = await collectViolations({
+        candidateSchedules: juneRows(['A0003']),
+        range: JUNE_RANGE,
+        strictWeeklyRest: true,
+      });
+      expect(violations).toEqual([
+        expect.objectContaining({
+          rule: 'weekly-one-regular-rest-one-rest-day',
+          weekStart: '2026-06-29',
+          regularRestCount: 0,
+          restDayCount: 1,
+        }),
+      ]);
+    });
+
+    it('passes when 7/1..7/5 exist and contain a 例 and a 休', async () => {
+      mockShiftSchedule.find.mockReturnValue(sortableLeanQuery(rowsFor(['日', '日', '例', '休', '日'])));
+      const violations = await collectViolations({
+        candidateSchedules: juneRows(['A0003']),
+        range: JUNE_RANGE,
+        strictWeeklyRest: true,
+      });
+      expect(violations).toEqual([]);
+    });
+  });
+
+  describe('month that starts in the middle of a week (July 2026)', () => {
+    const JULY_RANGE = { start: utcDay('2026-07-01'), end: utcDay('2026-08-01') };
+    const julyRows = () => [
+      ...rowsFromCodes('A0003', '2026-07-01', ['日', '日', '日', '日', '日']), // 6/29 週：整週沒有休/例
+      ...rowsFromCodes('A0003', '2026-07-06', ['休', '日', '日', '日', '日', '例', '日']),
+      ...rowsFromCodes('A0003', '2026-07-13', ['日', '日', '日', '日', '日', '例', '休']),
+      ...rowsFromCodes('A0003', '2026-07-20', ['日', '日', '日', '日', '日', '例', '休']),
+      ...rowsFromCodes('A0003', '2026-07-27', ['日', '日', '日', '日', '日']), // 7/27 週：8/1、8/2 不在範圍內
+    ];
+    const weeklyOf = (violations) => violations.filter((item) => item.rule === 'weekly-one-regular-rest-one-rest-day');
+
+    it('skips both boundary weeks when the neighbouring months have no rows', async () => {
+      mockShiftSchedule.find.mockReturnValue(sortableLeanQuery([]));
+      const violations = await collectViolations({
+        candidateSchedules: julyRows(), range: JULY_RANGE, strictWeeklyRest: true,
+      });
+      expect(violations).toEqual([]);
+    });
+
+    it('reports the first week when only one empty day is left for both a 例 and a 休', async () => {
+      // 6/30 已排日，只剩 6/29 一天可以補：一天放不下 1 例 + 1 休，已經無法補齊
+      mockShiftSchedule.find.mockReturnValue(sortableLeanQuery(rowsFromCodes('A0003', '2026-06-30', ['日'])));
+      const violations = await collectViolations({
+        candidateSchedules: julyRows(), range: JULY_RANGE, strictWeeklyRest: true,
+      });
+      expect(weeklyOf(violations)).toEqual([
+        expect.objectContaining({ weekStart: '2026-06-29', regularRestCount: 0, restDayCount: 0 }),
+      ]);
+    });
+
+    it('skips the first week while the missing days can still hold the missing rest days', async () => {
+      // 7/4 已有例，只缺 1 個休；6/29 還沒排，可以補休 → 先不報
+      const rows = julyRows().filter((row) => row.date.toISOString().slice(0, 10) !== '2026-07-04');
+      rows.push(...rowsFromCodes('A0003', '2026-07-04', ['例']));
+      mockShiftSchedule.find.mockReturnValue(sortableLeanQuery(rowsFromCodes('A0003', '2026-06-30', ['日'])));
+      const violations = await collectViolations({
+        candidateSchedules: rows, range: JULY_RANGE, strictWeeklyRest: true,
+      });
+      expect(weeklyOf(violations)).toEqual([]);
+    });
+
+    it('evaluates the first week when both 6/29 and 6/30 exist', async () => {
+      mockShiftSchedule.find.mockReturnValue(sortableLeanQuery(rowsFromCodes('A0003', '2026-06-29', ['日', '日'])));
+      const violations = await collectViolations({
+        candidateSchedules: julyRows(), range: JULY_RANGE, strictWeeklyRest: true,
+      });
+      expect(weeklyOf(violations)).toEqual([
+        expect.objectContaining({ weekStart: '2026-06-29', regularRestCount: 0, restDayCount: 0 }),
+      ]);
+    });
+
+    it('reports the last week once only one empty day is left, and also when both 8/1 and 8/2 exist', async () => {
+      // 8/1 已排日，只剩 8/2 一天：放不下 1 例 + 1 休
+      mockShiftSchedule.find.mockReturnValue(sortableLeanQuery(rowsFromCodes('A0003', '2026-08-01', ['日'])));
+      expect(weeklyOf(await collectViolations({
+        candidateSchedules: julyRows(), range: JULY_RANGE, strictWeeklyRest: true,
+      }))).toEqual([
+        expect.objectContaining({ weekStart: '2026-07-27', regularRestCount: 0, restDayCount: 0 }),
+      ]);
+
+      mockShiftSchedule.find.mockReturnValue(sortableLeanQuery(rowsFromCodes('A0003', '2026-08-01', ['日', '日'])));
+      expect(weeklyOf(await collectViolations({
+        candidateSchedules: julyRows(), range: JULY_RANGE, strictWeeklyRest: true,
+      }))).toEqual([
+        expect.objectContaining({ weekStart: '2026-07-27', regularRestCount: 0, restDayCount: 0 }),
+      ]);
+    });
+  });
+
+  describe('boundary weeks whose shortfall can no longer be fixed', () => {
+    const weeklyOf = (violations) => violations.filter((item) => item.rule === 'weekly-one-regular-rest-one-rest-day');
+
+    it('reports October 2026 (ends on Saturday) when 10/26-10/31 are six work days and only Sunday 11/1 is left', async () => {
+      const range = { start: utcDay('2026-10-01'), end: utcDay('2026-11-01') };
+      mockShiftSchedule.find.mockReturnValue(sortableLeanQuery([]));
+      const violations = await collectViolations({
+        candidateSchedules: [
+          ...rowsFromCodes('A0003', '2026-10-19', ['日', '日', '日', '日', '日', '例', '休']),
+          ...rowsFromCodes('A0003', '2026-10-26', ['日', '日', '日', '日', '日', '日']),
+        ],
+        range,
+        strictWeeklyRest: true,
+      });
+      expect(weeklyOf(violations)).toEqual([
+        expect.objectContaining({ weekStart: '2026-10-26', regularRestCount: 0, restDayCount: 0 }),
+      ]);
+    });
+
+    it('reports September 2026 (starts on Tuesday) when 9/1-9/6 are all work days and only Monday 8/31 is left', async () => {
+      const range = { start: utcDay('2026-09-01'), end: utcDay('2026-10-01') };
+      mockShiftSchedule.find.mockReturnValue(sortableLeanQuery([]));
+      const violations = await collectViolations({
+        candidateSchedules: [
+          ...rowsFromCodes('A0003', '2026-09-01', ['日', '日', '日', '日', '日', '日']),
+          ...rowsFromCodes('A0003', '2026-09-07', ['日', '日', '日', '日', '日', '例', '休']),
+        ],
+        range,
+        strictWeeklyRest: true,
+      });
+      expect(weeklyOf(violations)).toEqual([
+        expect.objectContaining({ weekStart: '2026-08-31', regularRestCount: 0, restDayCount: 0 }),
+      ]);
+    });
+  });
+
+  describe('genuine violations are still reported', () => {
+    it('reports seven consecutive work days without 休 or 例', async () => {
+      const violations = await collectViolations({
+        candidateSchedules: rowsFromCodes('A0003', '2026-06-01', ['日', '日', '日', '日', '日', '日', '日']),
+      });
+      expect(violations).toEqual([
+        expect.objectContaining({
+          rule: 'continuous-work-days',
+          dates: ['2026-06-01', '2026-06-02', '2026-06-03', '2026-06-04', '2026-06-05', '2026-06-06', '2026-06-07'],
+        }),
+      ]);
+    });
+
+    it('does not reset the seven day streak on 國 or a leave day', async () => {
+      const violations = await collectViolations({
+        candidateSchedules: rowsFromCodes('A0003', '2026-06-01', ['日', '日', '日', '國', '病', '日', '日']),
+      });
+      expect(violations).toEqual([expect.objectContaining({ rule: 'continuous-work-days' })]);
+    });
+
+    it('does not count 國 or a leave day as the weekly 例 or 休', async () => {
+      const violations = await collectViolations({
+        candidateSchedules: rowsFromCodes('A0003', '2026-06-01', ['日', '日', '日', '日', '日', '國', '病']),
+        range: { start: utcDay('2026-06-01'), end: utcDay('2026-06-08') },
+        strictWeeklyRest: true,
+      });
+      // 這 7 天同時也湊滿連續 7 日沒有休/例，這裡只看每週例休的部分
+      expect(violations.filter((item) => item.rule === 'weekly-one-regular-rest-one-rest-day')).toEqual([
+        expect.objectContaining({ weekStart: '2026-06-01', regularRestCount: 0, restDayCount: 0 }),
+      ]);
+    });
+
+    it('still rejects a real working shift that is too long', async () => {
+      mockAttendanceSetting.findOne.mockReturnValue(leanQuery({
+        shifts: [{ _id: 'LONG', code: 'L', name: '長班', startTime: '08:00', endTime: '22:00', breakMinutes: 60 }],
+      }));
+      const violations = await collectViolations({
+        candidateSchedules: rowsFromCodes('A0003', '2026-06-01', ['LONG']),
+      });
+      expect(violations.map((item) => item.rule)).toEqual(['daily-work-hours', 'regular-work-hours']);
+    });
+  });
+
+  describe('cross-day working hours', () => {
+    it('counts N 00:00-08:00 with the cross-day flag as 8 hours, not 32', async () => {
+      expect(await collectViolations({
+        candidateSchedules: rowsFromCodes('A0003', '2026-06-02', ['N']),
+      })).toEqual([]);
+
+      const violations = await collectViolations({
+        candidateSchedules: rowsFromCodes('A0003', '2026-06-02', ['N9']),
+      });
+      expect(violations).toEqual([
+        expect.objectContaining({ rule: 'regular-work-hours', minutes: 540 }),
+      ]);
+    });
+
+    it('counts E 16:00-00:00 with the cross-day flag as 8 hours', async () => {
+      expect(await collectViolations({
+        candidateSchedules: rowsFromCodes('A0003', '2026-06-02', ['E2']),
+      })).toEqual([]);
+    });
+
+    it('keeps a 00:00-00:00 shift with the cross-day flag as a 24 hour shift', async () => {
+      const violations = await collectViolations({
+        candidateSchedules: rowsFromCodes('A0003', '2026-06-02', ['FULL']),
+      });
+      expect(violations).toEqual(expect.arrayContaining([
+        expect.objectContaining({ rule: 'daily-work-hours', minutes: 1440 }),
+        expect.objectContaining({ rule: 'regular-work-hours', minutes: 1440 }),
+      ]));
+    });
+
+    it('still checks the rest gap between real working shifts', async () => {
+      // 日班 17:00 下班、隔天 00:00 夜班上班：只隔 7 小時
+      const violations = await collectViolations({
+        candidateSchedules: rowsFromCodes('A0003', '2026-06-01', ['日', 'N']),
+      });
+      expect(violations).toEqual([
+        expect.objectContaining({ rule: 'shift-gap', gapMinutes: 7 * 60 }),
+      ]);
+    });
+  });
+});
+
 describe('assertOvertimeApprovalCompliance', () => {
   it('rejects overtime on a regular rest day', async () => {
     mockShiftSchedule.findOne.mockReturnValue(leanQuery({

@@ -1,7 +1,7 @@
 import AttendanceRecord from '../models/AttendanceRecord.js'
 import AttendanceSetting from '../models/AttendanceSetting.js'
 import ShiftSchedule from '../models/ShiftSchedule.js'
-import { classifyShift } from './laborRuleValidationService.js'
+import { isNonWorkShift } from './shiftSemanticService.js'
 import {
   computeActionWindow,
   computeShiftSpan,
@@ -106,7 +106,8 @@ export async function calculateLateEarlyCount(employeeId, month, context = {}) {
   for (const schedule of schedules) {
     if (!schedule?.shiftId) continue
     const shift = shiftMap.get(schedule.shiftId.toString())
-    if (!shift || classifyShift(shift).isNonWork) continue
+    // 休息日 / 例假 / 國定假日 / 請假 / 沒有工作時間的班別沒有上下班時間，不會有遲到早退
+    if (!shift || isNonWorkShift(shift)) continue
     const span = computeShiftSpan(schedule.date, shift, timeZone)
     if (!span) continue
 

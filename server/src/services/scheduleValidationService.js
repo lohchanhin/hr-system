@@ -1,6 +1,8 @@
 import Employee from '../models/Employee.js';
 import ShiftSchedule from '../models/ShiftSchedule.js';
+import AttendanceSetting from '../models/AttendanceSetting.js';
 import { leaveDaysFromCalendar, loadApprovedLeaveCalendar } from './approvedLeaveCalendarService.js';
+import { isNonWorkShift } from './shiftSemanticService.js';
 
 /**
  * 取得指定月份的所有天數
@@ -10,14 +12,14 @@ import { leaveDaysFromCalendar, loadApprovedLeaveCalendar } from './approvedLeav
 function getMonthDays(month) {
   const start = new Date(`${month}-01T00:00:00.000Z`);
   const end = new Date(start);
-  end.setMonth(end.getMonth() + 1);
-  
+  end.setUTCMonth(end.getUTCMonth() + 1);
+
   const days = [];
   const pointer = new Date(start);
-  
+
   while (pointer < end) {
     days.push(pointer.toISOString().slice(0, 10));
-    pointer.setDate(pointer.getDate() + 1);
+    pointer.setUTCDate(pointer.getUTCDate() + 1);
   }
   
   return days;
@@ -45,18 +47,36 @@ async function getApprovedLeaveDays(employeeId, monthStart, monthEnd) {
 }
 
 /**
+ * 載入班別設定（班別 id -> 班別），用來判斷排班列是否為不用上班的班別。
+ * 載入失敗時回傳空表：所有排班列都當成上班班別，維持最嚴格的檢查。
+ */
+async function loadShiftMap() {
+  try {
+    const query = AttendanceSetting.findOne();
+    const setting = query && typeof query.lean === 'function' ? await query.lean() : await query;
+    return new Map((setting?.shifts || [])
+      .filter((shift) => shift?._id)
+      .map((shift) => [String(shift._id), shift]));
+  } catch (err) {
+    console.error('Error loading shifts for schedule completeness check:', err);
+    return new Map();
+  }
+}
+
+/**
  * 檢查單個員工的排班完整性
  * @param {Object} employee - 員工資料
  * @param {string} month - YYYY-MM 格式
+ * @param {Map<string, Object>} shiftMap - 班別 id -> 班別
  * @returns {Promise<Object>} 檢查結果
  */
-async function validateEmployeeSchedule(employee, month) {
+async function validateEmployeeSchedule(employee, month, shiftMap = new Map()) {
   const monthDays = getMonthDays(month);
   const totalDays = monthDays.length;
-  
+
   const monthStart = new Date(`${month}-01T00:00:00.000Z`);
   const monthEnd = new Date(monthStart);
-  monthEnd.setMonth(monthEnd.getMonth() + 1);
+  monthEnd.setUTCMonth(monthEnd.getUTCMonth() + 1);
   
   // 取得該員工的排班記錄
   const schedules = await ShiftSchedule.find({
@@ -64,8 +84,18 @@ async function validateEmployeeSchedule(employee, month) {
     date: { $gte: monthStart, $lt: monthEnd },
   }).lean();
   
+  // 只要有排班列（含休息日、例假、國定假日、請假班別）就算那天已排班
   const scheduledDays = new Set(
     schedules.map(s => new Date(s.date).toISOString().slice(0, 10))
+  );
+  // 不用上班的班別（休/例/國/請假）排在核准請假日不算衝突，只有上班班別才算
+  const workDays = new Set(
+    schedules
+      .filter((s) => {
+        const shift = shiftMap.get(String(s.shiftId));
+        return !(shift && isNonWorkShift(shift));
+      })
+      .map(s => new Date(s.date).toISOString().slice(0, 10))
   );
   
   // 取得批准的請假天數
@@ -75,10 +105,10 @@ async function validateEmployeeSchedule(employee, month) {
   const requiredDays = totalDays - leaveDays.size;
   const actualScheduledDays = scheduledDays.size;
   
-  // 檢查是否有請假日被排班
+  // 檢查是否有請假日被排上班
   const conflictDays = [];
   leaveDays.forEach(day => {
-    if (scheduledDays.has(day)) {
+    if (workDays.has(day)) {
       conflictDays.push(day);
     }
   });
@@ -136,7 +166,8 @@ export async function validateMonthSchedules(month, options = {}) {
   
   // 取得所有需要檢查的員工
   const employees = await Employee.find(employeeQuery).lean();
-  
+  const shiftMap = await loadShiftMap();
+
   // 逐一檢查每個員工
   const results = [];
   for (const employee of employees) {
@@ -145,7 +176,7 @@ export async function validateMonthSchedules(month, options = {}) {
       continue;
     }
     
-    const result = await validateEmployeeSchedule(employee, month);
+    const result = await validateEmployeeSchedule(employee, month, shiftMap);
     results.push(result);
   }
   
