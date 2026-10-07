@@ -47,15 +47,31 @@
             <i class="el-icon-upload2"></i>
             批量匯入
           </el-button>
+
+          <!-- 🗑️ 批量刪除（勾選員工後才會出現） -->
+          <div v-if="selectedEmployees.length > 0" class="bulk-delete-actions">
+            <el-button type="danger" plain class="bulk-delete-btn" data-test="bulk-delete-button"
+              :loading="bulkDeleting" @click="handleBulkDelete">
+              批量刪除（已選 {{ bulkDeletableEmployees.length }} 位）
+            </el-button>
+            <el-button size="small" class="bulk-delete-clear-btn" data-test="bulk-delete-clear-button"
+              :disabled="bulkDeleting" @click="clearEmployeeSelection">
+              取消選取
+            </el-button>
+          </div>
         </div>
       </div>
 
 
       <!-- 美化員工列表表格 -->
       <div class="table-container">
-        <el-table v-loading="employeeListLoading" :data="filteredEmployeeList" class="employee-table"
+        <el-table ref="employeeTableRef" v-loading="employeeListLoading" :data="filteredEmployeeList"
+          row-key="_id" class="employee-table"
           :header-cell-style="{ background: '#f8fafc', color: '#475569', fontWeight: '600' }"
-          :row-style="{ height: '64px' }">
+          :row-style="{ height: '64px' }" @selection-change="handleEmployeeSelectionChange">
+
+          <!-- 勾選欄：reserve-selection 讓換頁後仍保留勾選；管理員列不可勾選 -->
+          <el-table-column type="selection" width="48" reserve-selection :selectable="isEmployeeSelectable" />
 
           <el-table-column prop="name" label="員工資訊" min-width="200">
             <template #default="{ row }">
@@ -2937,6 +2953,9 @@ function formatSignLevelLabel(option) {
 const employeeDialogTab = ref('account')
 const employeeList = ref([])
 const employeeListLoading = ref(false)
+const employeeTableRef = ref(null)
+const selectedEmployees = ref([])
+const bulkDeleting = ref(false)
 const employeePagination = reactive({
   total: 0,
   active: 0,
@@ -3448,7 +3467,10 @@ function normalizeEmployeeRecord(e = {}) {
 }
 
 let employeeListRequestGeneration = 0
-async function fetchEmployees() {
+// keepSelection：換頁 / 換每頁筆數時保留跨頁勾選；其餘任何重新載入（儲存、刪除、匯入、搜尋、篩選）
+// 都會清掉勾選。reserve-selection 不會在資料更新時汰換或剔除舊的列物件，
+// 留著會出現已被刪除（或權限已被改成管理員）的「幽靈列」，並被一起送去批量刪除。
+async function fetchEmployees({ keepSelection = false } = {}) {
   const generation = ++employeeListRequestGeneration
   const params = new URLSearchParams({
     page: String(employeePagination.page),
@@ -3478,6 +3500,7 @@ async function fetchEmployees() {
     ).length)
     releaseEmployeePhotoUrls()
     employeeList.value = normalizedEmployees
+    if (!keepSelection) clearEmployeeSelection()
     void hydrateEmployeePhotos(normalizedEmployees, photoLoadGeneration)
   } catch (error) {
     if (generation === employeeListRequestGeneration) {
@@ -3493,23 +3516,30 @@ async function fetchEmployees() {
 
 function handleEmployeePageChange(page) {
   employeePagination.page = page
-  fetchEmployees()
+  fetchEmployees({ keepSelection: true })
 }
 
 function handleEmployeePageSizeChange(pageSize) {
   employeePagination.pageSize = pageSize
   employeePagination.page = 1
-  fetchEmployees()
+  fetchEmployees({ keepSelection: true })
 }
 
 let employeeSearchTimer = null
 watch(searchQuery, () => {
+  // 搜尋條件改變後，原本勾選的列可能已不在畫面上，必須清掉以免誤刪
+  clearEmployeeSelection()
   employeePagination.page = 1
   clearTimeout(employeeSearchTimer)
-  employeeSearchTimer = setTimeout(fetchEmployees, 300)
+  employeeSearchTimer = setTimeout(() => {
+    // 防抖等待的 300ms 內畫面仍是舊資料，期間可能又勾了列，送出查詢前再清一次
+    clearEmployeeSelection()
+    fetchEmployees()
+  }, 300)
 })
 
 watch(departmentFilter, () => {
+  clearEmployeeSelection()
   employeePagination.page = 1
   fetchEmployees()
 })
@@ -5005,6 +5035,195 @@ async function deleteEmployee(employeeId) {
   }
 }
 
+/* 批量刪除 ----------------------------------------------------------------- */
+const BULK_DELETE_MAX_IDS = 200 // 與後端 /api/employees/bulk-delete 的上限一致
+const BULK_DELETE_LIST_PREVIEW_LIMIT = 5 // 確認視窗最多列出幾位姓名
+const BULK_DELETE_TYPED_CONFIRM_THRESHOLD = 10 // 超過此人數需額外輸入確認字
+const BULK_DELETE_CONFIRM_WORD = '刪除'
+const BULK_DELETE_SKIPPED_LIST_LIMIT = 5 // 略過提示最多列出幾筆
+const BULK_DELETE_SKIP_MESSAGES = {
+  admin: '管理員帳戶不可刪除',
+  self: '不能刪除自己的帳號',
+  not_found: '找不到該員工（可能已被刪除）',
+  changed: '資料狀態已變更，未刪除',
+}
+
+// 管理員列不可勾選（勾選框反灰）
+function isEmployeeSelectable(row) {
+  return row?.role !== 'admin'
+}
+
+// 真正會送出的列：排除管理員、沒有 _id 與重複者（即使管理員列被意外勾到也不會送出）
+const bulkDeletableEmployees = computed(() => {
+  const seen = new Set()
+  return selectedEmployees.value.filter(emp => {
+    const id = emp?._id ? String(emp._id) : ''
+    if (!id || !isEmployeeSelectable(emp) || seen.has(id)) return false
+    seen.add(id)
+    return true
+  })
+})
+
+function handleEmployeeSelectionChange(rows) {
+  selectedEmployees.value = Array.isArray(rows) ? rows : []
+}
+
+function clearEmployeeSelection() {
+  selectedEmployees.value = []
+  // reserve-selection 會連其他頁的勾選一起保留，需透過表格本身清除
+  employeeTableRef.value?.clearSelection?.()
+}
+
+function formatBulkDeleteLabel(emp) {
+  return `${emp?.name || '未設定'}（${emp?.employeeNo || '無編號'}）`
+}
+
+function buildBulkDeleteConfirmMessage(rows) {
+  const lines = [`即將刪除 ${rows.length} 位員工：`]
+  rows.slice(0, BULK_DELETE_LIST_PREVIEW_LIMIT).forEach(emp => lines.push(formatBulkDeleteLabel(emp)))
+  if (rows.length > BULK_DELETE_LIST_PREVIEW_LIMIT) {
+    lines.push(`…等共 ${rows.length} 位`)
+  }
+  lines.push(
+    '',
+    '此操作無法復原，這些員工的帳號與資料將被永久刪除。',
+    '考勤、薪資、排班等歷史紀錄不會一併刪除。'
+  )
+  if (rows.length > BULK_DELETE_TYPED_CONFIRM_THRESHOLD) {
+    lines.push('', `請在下方輸入「${BULK_DELETE_CONFIRM_WORD}」以確認。`)
+  }
+  return lines.join('\n')
+}
+
+// 回傳 true 代表使用者已確認；取消或關閉視窗一律回傳 false，不送出任何請求
+async function confirmBulkDelete(rows) {
+  const message = buildBulkDeleteConfirmMessage(rows)
+  const options = {
+    type: 'warning',
+    confirmButtonText: '確認刪除',
+    cancelButtonText: '取消',
+    confirmButtonClass: 'el-button--danger',
+    customClass: 'bulk-delete-confirm',
+    closeOnClickModal: false,
+    // 預設會自動聚焦在紅色的「確認刪除」，長按或連按 Enter 就會直接刪除
+    autofocus: false,
+  }
+  try {
+    if (rows.length > BULK_DELETE_TYPED_CONFIRM_THRESHOLD) {
+      await ElMessageBox.prompt(message, '確認批量刪除', {
+        ...options,
+        inputPlaceholder: `請輸入「${BULK_DELETE_CONFIRM_WORD}」`,
+        inputValidator: value =>
+          String(value ?? '').trim() === BULK_DELETE_CONFIRM_WORD ||
+          `請輸入「${BULK_DELETE_CONFIRM_WORD}」二字以確認`,
+      })
+    } else {
+      await ElMessageBox.confirm(message, '確認批量刪除', options)
+    }
+    return true
+  } catch {
+    return false
+  }
+}
+
+function buildBulkDeleteSkippedMessage(skipped, rows) {
+  const knownById = new Map(rows.map(emp => [String(emp._id), emp]))
+  const items = skipped.slice(0, BULK_DELETE_SKIPPED_LIST_LIMIT).map(item => {
+    const known = knownById.get(String(item?._id)) || {}
+    const label = formatBulkDeleteLabel({
+      name: item?.name || known.name,
+      employeeNo: item?.employeeNo || known.employeeNo,
+    })
+    const reason = item?.message || BULK_DELETE_SKIP_MESSAGES[item?.reason] || '未刪除'
+    return `${label}：${reason}`
+  })
+  const more = skipped.length > items.length ? `；…等共 ${skipped.length} 位` : ''
+  return `有 ${skipped.length} 位員工未刪除：${items.join('；')}${more}`
+}
+
+async function submitBulkDelete(rows) {
+  let res
+  try {
+    res = await apiFetch('/api/employees/bulk-delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids: rows.map(emp => String(emp._id)) }),
+    })
+  } catch (error) {
+    console.warn('批量刪除員工失敗', error)
+    ElMessage.error('批量刪除失敗，已重新載入員工列表，請確認結果後再試')
+    // 連線中斷時伺服器可能已經處理完，列表要重新載入才不會和資料庫不一致
+    await fetchEmployees()
+    return
+  }
+  if (handle401(res)) return
+
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    ElMessage.error(data?.error || '批量刪除失敗')
+    await fetchEmployees()
+    return
+  }
+
+  const skipped = Array.isArray(data.skipped) ? data.skipped : []
+  const deletedCount = Number.isFinite(Number(data.deletedCount))
+    ? Number(data.deletedCount)
+    : (Array.isArray(data.deleted) ? data.deleted.length : 0)
+  const unassignedSubordinates = Number(data.unassignedSubordinates) || 0
+
+  if (deletedCount > 0) {
+    ElMessage.success(`已刪除 ${deletedCount} 位員工`)
+  } else if (skipped.length === 0) {
+    ElMessage.info('沒有員工被刪除')
+  }
+  if (skipped.length > 0) {
+    ElMessage.warning({
+      message: buildBulkDeleteSkippedMessage(skipped, rows),
+      duration: 8000,
+      showClose: true,
+    })
+  }
+  if (unassignedSubordinates > 0) {
+    ElMessage.info({
+      message: `有 ${unassignedSubordinates} 位員工的直屬主管已被刪除，目前沒有直屬主管，請為他們重新指定。`,
+      duration: 8000,
+      showClose: true,
+    })
+  }
+
+  const serverWarnings = Array.isArray(data.warnings) ? data.warnings.filter(Boolean) : []
+  if (serverWarnings.length > 0) {
+    ElMessage.warning({ message: serverWarnings.join('；'), duration: 8000, showClose: true })
+  }
+
+  // 重新載入列表時會一併清掉勾選（已刪除的列不能再被送出）
+  await fetchEmployees()
+}
+
+let bulkDeleteBusy = false // 同步旗標：涵蓋「確認視窗開啟中」與「請求進行中」，避免重複送出
+async function handleBulkDelete() {
+  if (bulkDeleteBusy) return
+  const rows = [...bulkDeletableEmployees.value]
+  if (rows.length === 0) {
+    ElMessage.warning('請先勾選要刪除的員工')
+    return
+  }
+  if (rows.length > BULK_DELETE_MAX_IDS) {
+    ElMessage.warning(`單次最多可批量刪除 ${BULK_DELETE_MAX_IDS} 位員工，請減少勾選數量`)
+    return
+  }
+
+  bulkDeleteBusy = true
+  try {
+    if (!(await confirmBulkDelete(rows))) return
+    bulkDeleting.value = true
+    await submitBulkDelete(rows)
+  } finally {
+    bulkDeleting.value = false
+    bulkDeleteBusy = false
+  }
+}
+
 function addExperience() {
   employeeForm.value.experiences.push({ unit: '', title: '', start: '', end: '' })
 }
@@ -5246,6 +5465,28 @@ function getStatusTagType(status) {
   border-radius: 999px;
   font-weight: 600;
   flex-shrink: 0;
+}
+
+/* 批量刪除：按鈕與「取消選取」成組換行，避免撐出工具列 */
+.bulk-delete-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.bulk-delete-btn {
+  border-radius: 999px;
+  font-weight: 600;
+}
+
+.bulk-delete-clear-btn {
+  margin-left: 0;
+}
+
+/* 確認視窗內容為多行純文字（不使用 HTML），需保留換行 */
+:global(.bulk-delete-confirm .el-message-box__message) {
+  white-space: pre-line;
 }
 
 .bulk-import-dialog :deep(.el-dialog__body) {

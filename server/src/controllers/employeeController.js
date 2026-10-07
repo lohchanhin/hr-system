@@ -1143,6 +1143,143 @@ export async function deleteEmployee(req, res) {
   }
 }
 
+const BULK_DELETE_MAX_IDS = 200
+const OBJECT_ID_HEX_PATTERN = /^[0-9a-fA-F]{24}$/
+const BULK_DELETE_SKIP_MESSAGES = {
+  admin: '管理員帳戶不可刪除',
+  self: '不能刪除自己的帳號',
+  not_found: '找不到該員工（可能已被刪除）',
+  changed: '資料狀態已變更，未刪除',
+}
+
+/** 把請求的 ids 驗證並去重；回傳 { ids } 或 { error } */
+function parseBulkDeleteIds(rawIds) {
+  if (!Array.isArray(rawIds)) return { error: '請提供要刪除的員工清單' }
+  if (rawIds.length === 0) return { error: '請至少選擇一位員工' }
+  if (rawIds.length > BULK_DELETE_MAX_IDS) {
+    return { error: `單次最多可刪除 ${BULK_DELETE_MAX_IDS} 位員工` }
+  }
+  // 只接受 24 位十六進位字串：物件（例如 {"$ne":null}）一律拒絕，避免 NoSQL operator injection
+  const invalid = rawIds.some((id) => typeof id !== 'string' || !OBJECT_ID_HEX_PATTERN.test(id))
+  if (invalid) return { error: '員工編號格式不正確' }
+  return { ids: [...new Set(rawIds.map((id) => id.toLowerCase()))] }
+}
+
+/** POST /api/employees/bulk-delete */
+export async function bulkDeleteEmployees(req, res) {
+  try {
+    const parsed = parseBulkDeleteIds(req.body?.ids)
+    if (parsed.error) return res.status(400).json({ error: parsed.error })
+    const { ids } = parsed
+    const actorId = toEntityId(req.user?.id)
+
+    const found = await Employee.find({ _id: { $in: ids } })
+      .select('_id name employeeId role photo')
+    const docById = new Map((found ?? []).map((doc) => [toEntityId(doc._id).toLowerCase(), doc]))
+
+    const toSummary = (id, doc) => ({
+      _id: id,
+      name: doc?.name ?? '',
+      employeeNo: doc?.employeeId ?? '',
+    })
+    const skipped = []
+    const skip = (id, doc, reason) => skipped.push({
+      ...toSummary(id, doc),
+      reason,
+      message: BULK_DELETE_SKIP_MESSAGES[reason],
+    })
+
+    // 分類：找不到 / 自己 / 管理員 → 略過，其餘列為可刪除
+    const deletable = []
+    ids.forEach((id) => {
+      const doc = docById.get(id)
+      if (!doc) return skip(id, doc, 'not_found')
+      if (actorId && id === actorId.toLowerCase()) return skip(id, doc, 'self')
+      if (doc.role === 'admin') return skip(id, doc, 'admin')
+      deletable.push({ id, doc })
+    })
+
+    const deleted = []
+    const warnings = []
+    let unassignedSubordinates = 0
+
+    if (deletable.length) {
+      const deletableIds = deletable.map((item) => item.id)
+      // 刪除條件再次排除 admin（縱深防禦，避免分類後角色被改成 admin）
+      const deleteResult = await Employee.deleteMany({ _id: { $in: deletableIds }, role: { $ne: 'admin' } })
+
+      // 從這裡開始資料已經被刪除：後續任何一步失敗都不能讓整個請求回報失敗，
+      // 否則使用者會以為沒刪成功，而且重試時會因為「找不到」而跳過善後。
+      // 不信任 deleteMany 的數量，重新查詢哪些仍然存在。
+      try {
+        const survivors = await Employee.find({ _id: { $in: deletableIds } }).select('_id')
+        const survivorIds = new Set((survivors ?? []).map((doc) => toEntityId(doc._id).toLowerCase()))
+        deletable.forEach(({ id, doc }) => {
+          if (survivorIds.has(id)) skip(id, doc, 'changed')
+          else deleted.push({ id, doc })
+        })
+      } catch (verifyErr) {
+        console.error('Bulk delete: failed to verify deletion', { error: verifyErr?.name ?? 'Error' })
+        deletable.forEach((item) => deleted.push(item))
+        warnings.push('無法確認刪除結果，請重新整理員工列表檢查')
+      }
+      if (typeof deleteResult?.deletedCount === 'number' && deleteResult.deletedCount < deleted.length) {
+        warnings.push('部分員工在這次操作前已被刪除，實際刪除的人數可能少於清單')
+      }
+
+      // 留下可追溯的紀錄：只記操作者與被刪除的 _id，不含個資
+      console.info('Bulk delete employees', {
+        actorId,
+        requested: ids.length,
+        deleted: deleted.length,
+        deletedIds: deleted.map((item) => item.id),
+      })
+
+      // 照片清理失敗不影響整體結果；歷史資料（出勤/薪資/排班/簽核）與單筆刪除一樣不連動刪除
+      for (const { id, doc } of deleted) {
+        if (!doc.photo) continue
+        try {
+          await deleteEmployeePhotoIfUnreferenced(doc.photo, id)
+        } catch (photoErr) {
+          console.error('Failed to clean up employee photo', { error: photoErr?.name ?? 'Error' })
+        }
+      }
+    }
+
+    // 直屬主管指向「已不存在的人」的員工：清除主管欄位。同時處理這次找不到的 id，
+    // 這樣上次刪除到一半失敗之後重試，也能把當時沒做完的善後補上。
+    const goneIds = [
+      ...deleted.map((item) => item.id),
+      ...skipped.filter((item) => item.reason === 'not_found').map((item) => item._id),
+    ]
+    if (goneIds.length) {
+      try {
+        const result = await Employee.updateMany(
+          { supervisor: { $in: goneIds } },
+          { $unset: { supervisor: 1 } }
+        )
+        unassignedSubordinates = Number(result?.modifiedCount) || 0
+      } catch (unsetErr) {
+        console.error('Bulk delete: failed to clear supervisor references', { error: unsetErr?.name ?? 'Error' })
+        warnings.push('部分員工的直屬主管設定未能清除，請檢查原本隸屬已刪除主管的員工')
+      }
+    }
+
+    res.json({
+      requested: ids.length,
+      deletedCount: deleted.length,
+      deleted: deleted.map(({ id, doc }) => toSummary(id, doc)),
+      skipped,
+      unassignedSubordinates,
+      warnings,
+    })
+  } catch (err) {
+    // 到這裡通常是刪除之前就失敗；不把資料庫的內部錯誤訊息回給前端
+    console.error('Bulk delete employees failed', { error: err?.name ?? 'Error' })
+    res.status(500).json({ error: '批量刪除失敗，請重新整理員工列表確認結果後再試' })
+  }
+}
+
 /** POST /api/employees/set-supervisors */
 export async function setSupervisors(req, res) {
   try {

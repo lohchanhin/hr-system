@@ -9,6 +9,7 @@ import {
   getEmployeePhoto,
   updateEmployee,
   deleteEmployee,
+  bulkDeleteEmployees,
   setSupervisors,
   getEmployeeAnnualLeave,
   getEmployeeAnnualLeaveHistory,
@@ -32,6 +33,8 @@ router.post('/', uploadSingle, handleMulterError, processUploadedPhoto, createEm
 router.post('/bulk-import', uploadMiddleware, validateBulkImportPayload, bulkImportEmployees);
 router.post('/import', uploadMiddleware, validateBulkImportPayload, bulkImportEmployees);
 router.post('/set-supervisors', setSupervisors);
+// 固定路徑的批量刪除必須註冊在所有 '/:id' 路由之前，避免被動態路由攔截
+router.post('/bulk-delete', bulkDeleteEmployees);
 
 // 特休管理路由
 router.get('/:id/annual-leave', getEmployeeAnnualLeave);
