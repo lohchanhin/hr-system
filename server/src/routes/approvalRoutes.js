@@ -50,7 +50,7 @@ router.post(
 )
 router.post('/', authorizeRoles('employee', 'supervisor', 'admin'), createApprovalRequest)
 router.get('/inbox', authorizeRoles('employee', 'supervisor', 'admin'), inboxApprovals)
-router.get('/history', authorizeRoles('supervisor', 'admin'), historyApprovals)
+router.get('/history', authorizeRoles('employee', 'supervisor', 'admin'), historyApprovals)
 router.get('/:id/attachments/:filename', authorizeRoles('employee', 'supervisor', 'admin'), downloadApprovalAttachment)
 router.post('/:id/cancel', authorizeRoles('employee', 'supervisor', 'admin'), cancelApprovalRequest)
 router.post('/:id/resubmit', authorizeRoles('employee', 'supervisor', 'admin'), resubmitApprovalRequest)

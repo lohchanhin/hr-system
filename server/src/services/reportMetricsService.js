@@ -6,9 +6,14 @@ import ShiftSchedule from '../models/ShiftSchedule.js';
 import ApprovalRequest from '../models/approval_request.js';
 import FormTemplate from '../models/form_template.js';
 import FormField from '../models/form_field.js';
-import { getLeaveFieldIds } from './leaveFieldService.js';
+import { getAllLeaveFieldInfos } from './leaveFieldService.js';
 import { isNonWorkShift } from './shiftSemanticService.js';
-import { ANNUAL_LEAVE_TYPES } from '../config/salaryConfig.js';
+import { ANNUAL_LEAVE_TYPES, WORK_HOURS_CONFIG } from '../config/salaryConfig.js';
+import { toTaipeiDateKey, toTaipeiParts } from '../utils/taipeiTime.js';
+import { normalizeLeaveFieldLabel } from '../utils/leaveFieldLabels.js';
+import { computeLeaveDuration, sumLeaveHoursInRange } from '../utils/leaveDuration.js';
+import { isOvertimeFormTemplate } from '../utils/formSemantics.js';
+import { orderFieldCandidateIds, pickFieldValue, resolveCandidateIds } from '../utils/fieldCandidates.js';
 
 export class ReportAccessError extends Error {
   constructor(status, message) {
@@ -17,15 +22,20 @@ export class ReportAccessError extends Error {
   }
 }
 
+// 各簽核報表對應的表單與欄位標籤（form_data 以欄位 ID 為鍵，所以要先依標籤找到欄位 ID）。
+// 加班報表依表單性質（semanticType）找表單，改名也找得到；預設的「加班申請」沒有時數欄位，時數由開始、結束時間算出。
 const APPROVAL_FORM_CONFIGS = {
   overtime: {
+    semanticType: 'overtime',
+    isForm: isOvertimeFormTemplate,
     templateNames: ['加班', '加班申請', '加班單'],
     fields: {
       date: ['加班日期', '日期'],
       startTime: ['開始時間', '加班開始', '開始時刻'],
       endTime: ['結束時間', '加班結束', '結束時刻'],
       hours: ['加班時數', '時數', '時長'],
-      reason: ['加班原因', '原因', '說明'],
+      reason: ['加班原因', '原因', '說明', '事由'],
+      crossDay: ['是否跨日', '跨日'],
     },
   },
   compTime: {
@@ -37,11 +47,11 @@ const APPROVAL_FORM_CONFIGS = {
     },
   },
   makeUp: {
-    templateNames: ['補打卡', '補打卡申請', '補卡'],
+    templateNames: ['補打卡', '補打卡申請', '補卡', '補簽申請', '補簽'],
     fields: {
-      date: ['補卡日期', '日期'],
+      date: ['補卡日期', '補簽日期', '日期', '開始時間'],
       category: ['補卡類別', '類別', '類型'],
-      note: ['補卡說明', '說明', '原因'],
+      note: ['補卡說明', '說明', '原因', '事由'],
     },
   },
 };
@@ -563,18 +573,49 @@ function buildWorkHoursSummary({ schedules, recordMap, shiftMap, employees }) {
   };
 }
 
-async function resolveApprovalFormConfig(type) {
-  const config = APPROVAL_FORM_CONFIGS[type];
-  if (!config) return null;
-  const form = await FormTemplate.findOne({ name: { $in: config.templateNames } }).lean();
-  if (!form) return null;
-  const fields = await FormField.find({ form: form._id }).lean();
+// 欄位標籤的寬鬆比對：全形轉半形、轉小寫、去掉空白與括號，「加班 時數」「加班時數」視為相同
+function labelMatches(label, aliases) {
+  const normalized = normalizeLeaveFieldLabel(label);
+  return aliases.some((alias) => normalizeLeaveFieldLabel(alias) === normalized);
+}
+
+// 找出這張表單裡各用途的欄位 ID：同標籤有多個欄位時全部列為候選（啟用中的在前、停用的在後），
+// 欄位被停用或換成同標籤的新欄位後，舊單據的答案還在舊欄位 ID 底下，每一張單各自用第一個有填值的
+function mapFormFields(fields, fieldLabels) {
   const fieldMap = {};
-  Object.entries(config.fields).forEach(([key, labels]) => {
-    const match = fields.find((field) => labels.includes(field.label));
-    fieldMap[key] = match ? normalizeId(match._id) : '';
+  Object.entries(fieldLabels).forEach(([key, labels]) => {
+    // 依 labels 的順序找：靠前的標籤優先（例如「加班日期」比「日期」優先）
+    let candidateIds = [];
+    for (const label of labels) {
+      candidateIds = orderFieldCandidateIds(fields.filter((field) => labelMatches(field.label, [label])));
+      if (candidateIds.length) break;
+    }
+    fieldMap[key] = candidateIds;
   });
-  return { formId: normalizeId(form._id), fieldMap };
+  return fieldMap;
+}
+
+// 這個報表對應的所有表單與各自的欄位對應。加班報表依表單性質找（改名也找得到），其他報表依名稱
+async function resolveApprovalFormConfigs(type) {
+  const config = APPROVAL_FORM_CONFIGS[type];
+  if (!config) return [];
+  const query = config.semanticType
+    ? {
+      $or: [
+        { semanticType: config.semanticType },
+        // 沒有表單性質的舊表單才用名稱推論
+        { semanticType: null, name: { $in: config.templateNames } },
+      ],
+    }
+    : { name: { $in: config.templateNames } };
+  const forms = (await FormTemplate.find(query).lean()) || [];
+  const matched = config.semanticType ? forms.filter(config.isForm) : forms;
+  const configs = [];
+  for (const form of matched) {
+    const fields = (await FormField.find({ form: form._id }).lean()) || [];
+    configs.push({ formId: normalizeId(form._id), fieldMap: mapFormFields(fields, config.fields) });
+  }
+  return configs;
 }
 
 function parseNumber(value) {
@@ -593,6 +634,110 @@ function ensureEmployeeApproval(approval, employeeMap) {
   return { employeeId, employee };
 }
 
+function monthKeysOf(start, end) {
+  return { startKey: start.toISOString().slice(0, 10), endKey: end.toISOString().slice(0, 10) };
+}
+
+/**
+ * 該月的已核准請假（所有請假表單）。請假依「請假日期」歸屬月份（台灣日期），不是送簽日期；
+ * 跨月的假單只算本月的天數。天數取自表單的「天數」欄位，沒有時才由開始、結束時間推算。
+ * 每筆回傳：{ approvalId, employeeId, name, leaveType, leaveCode, startDate, endDate, days, hours }
+ */
+async function loadMonthlyLeaveRows({ employeeIds, start, end }) {
+  const leaveForms = await getAllLeaveFieldInfos();
+  const { startKey, endKey } = monthKeysOf(start, end);
+  const rows = [];
+  for (const leaveForm of leaveForms || []) {
+    const { formId, startId, endId, typeId, daysId, typeOptions } = leaveForm;
+    if (!formId) continue;
+    // 已停用的請假表單照樣計入；欄位被停用或換成同標籤的新欄位後，逐張假單用第一個有填值的同標籤欄位
+    const startIds = resolveCandidateIds(leaveForm.startIds, startId);
+    const endIds = resolveCandidateIds(leaveForm.endIds, endId);
+    const typeIds = resolveCandidateIds(leaveForm.typeIds, typeId);
+    const daysIds = resolveCandidateIds(leaveForm.daysIds, daysId);
+    const approvals = await ApprovalRequest.find({
+      form: formId,
+      status: 'approved',
+      applicant_employee: { $in: employeeIds },
+    })
+      .populate('applicant_employee', 'name')
+      .lean();
+    const typeMap = new Map(typeOptions?.map((opt) => [String(opt.value), opt.label]));
+    for (const approval of approvals || []) {
+      const employee = approval.applicant_employee;
+      if (!employee) continue;
+      const formData = approval.form_data || {};
+      const typeValue = pickFieldValue(formData, typeIds);
+      const typeCode = typeValue?.code ?? typeValue?.value ?? typeValue ?? '';
+      const code = typeCode ? String(typeCode) : '';
+      const labelCandidate = typeValue?.label ?? typeMap.get(code) ?? code;
+      const leaveType = labelCandidate ? String(labelCandidate) : code;
+
+      const duration = computeLeaveDuration({
+        startValue: pickFieldValue(formData, startIds),
+        endValue: pickFieldValue(formData, endIds),
+        filledDays: pickFieldValue(formData, daysIds),
+        literalDays: formData.days ?? formData.duration,
+        literalHours: formData.hours,
+        hoursPerDay: WORK_HOURS_CONFIG.HOURS_PER_DAY,
+      });
+      let days = duration.days;
+      let hours = duration.hours;
+      if (duration.perDay.length) {
+        hours = sumLeaveHoursInRange(duration.perDay, startKey, endKey);
+        if (hours <= 0) continue;
+        days = Math.round((hours / WORK_HOURS_CONFIG.HOURS_PER_DAY) * 100) / 100;
+      } else {
+        // 沒有請假日期的舊資料，退回用送簽日期歸屬月份
+        const createdKey = toTaipeiDateKey(approval.createdAt);
+        if (createdKey && (createdKey < startKey || createdKey >= endKey)) continue;
+      }
+      rows.push({
+        approvalId: normalizeId(approval._id),
+        employeeId: normalizeId(employee._id ?? employee),
+        name: employee.name ?? '',
+        leaveType,
+        leaveCode: code,
+        startDate: duration.startKey,
+        endDate: duration.endKey,
+        days: Math.max(days, 0),
+        hours,
+      });
+    }
+  }
+  return rows;
+}
+
+// 表單日期時間（前端日期選擇器送出的 UTC ISO 字串）一律以台灣時間顯示
+function formatFormDate(value) {
+  return toTaipeiDateKey(value) ?? '';
+}
+
+function formatFormTime(value) {
+  if (value === undefined || value === null || value === '') return '';
+  if (typeof value === 'string' && /^\d{1,2}:\d{2}/.test(value.trim())) return value.trim();
+  const parts = toTaipeiParts(value);
+  if (!parts) return typeof value === 'string' ? value.trim() : '';
+  return `${String(parts.hour).padStart(2, '0')}:${String(parts.minute).padStart(2, '0')}`;
+}
+
+function isCrossDayFlag(value) {
+  if (typeof value === 'boolean') return value;
+  return ['true', '1', 'yes', 'y', '是', '跨日'].includes(String(value ?? '').trim().toLowerCase());
+}
+
+// 加班時數：有時數欄位就用它，沒有（預設的加班申請只有開始、結束時間）就由開始、結束時間算
+function overtimeHoursOf(read) {
+  const filled = parseNumber(read('hours'));
+  if (filled > 0) return filled;
+  const startMs = new Date(read('startTime')).getTime();
+  const endMs = new Date(read('endTime')).getTime();
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) return 0;
+  let diff = endMs - startMs;
+  if (diff < 0 && isCrossDayFlag(read('crossDay'))) diff += 24 * 60 * 60 * 1000;
+  return diff > 0 ? Math.round((diff / (60 * 60 * 1000)) * 100) / 100 : 0;
+}
+
 async function buildApprovalRecords({
   type,
   employeeIds,
@@ -600,41 +745,25 @@ async function buildApprovalRecords({
   end,
   employees,
 }) {
+  const employeeMap = buildEmployeeMap(employees);
+  const { startKey, endKey } = monthKeysOf(start, end);
+
   if (type === 'specialLeave') {
-    const { formId, startId, endId, typeId, typeOptions } = await getLeaveFieldIds();
-    if (!formId) return { records: [], summary: {} };
-    const approvals = await ApprovalRequest.find({
-      form: formId,
-      status: 'approved',
-      applicant_employee: { $in: employeeIds },
-      createdAt: { $gte: start, $lt: end },
-    })
-      .populate('applicant_employee', 'name')
-      .lean();
-    const typeMap = new Map(typeOptions?.map((opt) => [String(opt.value), opt.label]));
-    const employeeMap = buildEmployeeMap(employees);
+    const rows = (await loadMonthlyLeaveRows({ employeeIds, start, end }))
+      // 舊資料的「特休」與字典項目的「特休假」都算特休
+      .filter((row) => ANNUAL_LEAVE_TYPES.includes(row.leaveType));
     const records = [];
     let totalDays = 0;
-    approvals.forEach((approval) => {
-      const resolved = ensureEmployeeApproval(approval, employeeMap);
-      if (!resolved) return;
-      const typeValue = typeId ? approval.form_data?.[typeId] : undefined;
-      const typeCode = typeValue ? String(typeValue.code ?? typeValue.value ?? typeValue) : '';
-      const labelCandidate = typeValue?.label ?? typeMap.get(typeCode) ?? typeCode;
-      const normalizedLabel = labelCandidate ? String(labelCandidate) : '';
-      // 舊資料的「特休」與字典項目的「特休假」都算特休
-      if (!ANNUAL_LEAVE_TYPES.includes(normalizedLabel)) return;
-      const startValue = startId ? approval.form_data?.[startId] : undefined;
-      const endValue = endId ? approval.form_data?.[endId] : undefined;
-      const days = Math.max(parseNumber(approval.form_data?.days ?? approval.form_data?.duration ?? 0), 0);
-      if (days) totalDays += days;
+    rows.forEach((row) => {
+      if (!employeeMap.has(row.employeeId)) return;
+      if (row.days) totalDays += row.days;
       records.push({
-        approvalId: normalizeId(approval._id),
-        employee: resolved.employeeId,
-        name: resolved.employee.name ?? '',
-        startDate: formatDate(startValue),
-        endDate: formatDate(endValue),
-        days,
+        approvalId: row.approvalId,
+        employee: row.employeeId,
+        name: employeeMap.get(row.employeeId).name ?? row.name ?? '',
+        startDate: row.startDate,
+        endDate: row.endDate,
+        days: row.days,
       });
     });
     return {
@@ -646,40 +775,48 @@ async function buildApprovalRecords({
     };
   }
 
-  const config = await resolveApprovalFormConfig(type);
-  if (!config?.formId) {
+  const configs = await resolveApprovalFormConfigs(type);
+  if (!configs.length) {
     return { records: [], summary: {} };
   }
-  const approvals = await ApprovalRequest.find({
-    form: config.formId,
-    status: 'approved',
-    applicant_employee: { $in: employeeIds },
-    createdAt: { $gte: start, $lt: end },
-  })
-    .populate('applicant_employee', 'name')
-    .lean();
-  const employeeMap = buildEmployeeMap(employees);
+  // 每張符合的表單各查一次已核准的單，依各自的欄位 ID 取值，月份以單上的日期（台灣時間）為準
+  const items = [];
+  for (const config of configs) {
+    const approvals = await ApprovalRequest.find({
+      form: config.formId,
+      status: 'approved',
+      applicant_employee: { $in: employeeIds },
+    })
+      .populate('applicant_employee', 'name')
+      .lean();
+    for (const approval of approvals || []) {
+      const resolved = ensureEmployeeApproval(approval, employeeMap);
+      if (!resolved) continue;
+      const read = (key) => pickFieldValue(approval.form_data, config.fieldMap[key]);
+      items.push({ approval, resolved, read });
+    }
+  }
+
   if (type === 'overtime') {
     let totalHours = 0;
-    const records = approvals
-      .map((approval) => {
-        const resolved = ensureEmployeeApproval(approval, employeeMap);
-        if (!resolved) return null;
-        const { employee, employeeId } = resolved;
-        const hours = parseNumber(approval.form_data?.[config.fieldMap.hours]);
-        totalHours += hours;
-        return {
-          approvalId: normalizeId(approval._id),
-          employee: employeeId,
-          name: employee.name ?? '',
-          date: formatDate(approval.form_data?.[config.fieldMap.date] ?? approval.createdAt),
-          startTime: formatTime(approval.form_data?.[config.fieldMap.startTime]),
-          endTime: formatTime(approval.form_data?.[config.fieldMap.endTime]),
-          hours,
-          reason: approval.form_data?.[config.fieldMap.reason] ?? '',
-        };
-      })
-      .filter(Boolean);
+    const records = [];
+    for (const { approval, resolved, read } of items) {
+      // 加班日期：有日期欄位用它，否則用開始時間的台灣日期，最後才是送簽日期
+      const date = formatFormDate(read('date')) || formatFormDate(read('startTime')) || formatFormDate(approval.createdAt);
+      if (!date || date < startKey || date >= endKey) continue;
+      const hours = overtimeHoursOf(read);
+      totalHours += hours;
+      records.push({
+        approvalId: normalizeId(approval._id),
+        employee: resolved.employeeId,
+        name: resolved.employee.name ?? '',
+        date,
+        startTime: formatFormTime(read('startTime')),
+        endTime: formatFormTime(read('endTime')),
+        hours,
+        reason: read('reason') ?? '',
+      });
+    }
     return {
       records,
       summary: {
@@ -690,23 +827,21 @@ async function buildApprovalRecords({
   }
   if (type === 'compTime') {
     let totalHours = 0;
-    const records = approvals
-      .map((approval) => {
-        const resolved = ensureEmployeeApproval(approval, employeeMap);
-        if (!resolved) return null;
-        const { employee, employeeId } = resolved;
-        const hours = parseNumber(approval.form_data?.[config.fieldMap.hours]);
-        totalHours += hours;
-        return {
-          approvalId: normalizeId(approval._id),
-          employee: employeeId,
-          name: employee.name ?? '',
-          date: formatDate(approval.form_data?.[config.fieldMap.date] ?? approval.createdAt),
-          hours,
-          overtimeReference: approval.form_data?.[config.fieldMap.reference] ?? '',
-        };
-      })
-      .filter(Boolean);
+    const records = [];
+    for (const { approval, resolved, read } of items) {
+      const date = formatFormDate(read('date')) || formatFormDate(approval.createdAt);
+      if (!date || date < startKey || date >= endKey) continue;
+      const hours = parseNumber(read('hours'));
+      totalHours += hours;
+      records.push({
+        approvalId: normalizeId(approval._id),
+        employee: resolved.employeeId,
+        name: resolved.employee.name ?? '',
+        date,
+        hours,
+        overtimeReference: read('reference') ?? '',
+      });
+    }
     return {
       records,
       summary: {
@@ -717,25 +852,22 @@ async function buildApprovalRecords({
   }
   if (type === 'makeUp') {
     const categoryMap = new Map();
-    const records = approvals
-      .map((approval) => {
-        const resolved = ensureEmployeeApproval(approval, employeeMap);
-        if (!resolved) return null;
-        const { employee, employeeId } = resolved;
-        const category = approval.form_data?.[config.fieldMap.category] ?? '';
-        const normalizedCategory = category ? String(category) : '未分類';
-        const count = categoryMap.get(normalizedCategory) ?? 0;
-        categoryMap.set(normalizedCategory, count + 1);
-        return {
-          approvalId: normalizeId(approval._id),
-          employee: employeeId,
-          name: employee.name ?? '',
-          date: formatDate(approval.form_data?.[config.fieldMap.date] ?? approval.createdAt),
-          category: normalizedCategory,
-          note: approval.form_data?.[config.fieldMap.note] ?? '',
-        };
-      })
-      .filter(Boolean);
+    const records = [];
+    for (const { approval, resolved, read } of items) {
+      const date = formatFormDate(read('date')) || formatFormDate(approval.createdAt);
+      if (!date || date < startKey || date >= endKey) continue;
+      const category = read('category') ?? '';
+      const normalizedCategory = category ? String(category) : '未分類';
+      categoryMap.set(normalizedCategory, (categoryMap.get(normalizedCategory) ?? 0) + 1);
+      records.push({
+        approvalId: normalizeId(approval._id),
+        employee: resolved.employeeId,
+        name: resolved.employee.name ?? '',
+        date,
+        category: normalizedCategory,
+        note: read('note') ?? '',
+      });
+    }
     return {
       records,
       summary: {
@@ -796,59 +928,33 @@ export async function getDepartmentReportData({ type, month, departmentId, actor
     }
   }
   if (type === 'leave') {
-    const { formId, startId, endId, typeId, typeOptions } = await getLeaveFieldIds();
-    if (!formId) {
-      // Return empty data structure if leave form is not configured
-      return {
-        records: [],
-        summary: { totalLeaves: 0, totalDays: 0, byType: [] }
-      };
-    }
-    const approvals = await ApprovalRequest.find({
-      form: formId,
-      status: 'approved',
-      applicant_employee: { $in: employeeIds },
-      createdAt: { $gte: start, $lt: end },
-    })
-      .populate('applicant_employee', 'name')
-      .lean();
-    if (!approvals.length) {
+    const rows = await loadMonthlyLeaveRows({ employeeIds, start, end });
+    if (!rows.length) {
       // Return empty data structure instead of throwing error
       return {
         records: [],
         summary: { totalLeaves: 0, totalDays: 0, byType: [] }
       };
     }
-    const typeMap = new Map(typeOptions?.map((opt) => [String(opt.value), opt.label]));
     const records = [];
     const typeSummary = new Map();
     let totalDays = 0;
-    approvals.forEach((approval) => {
-      const employee = approval.applicant_employee;
-      if (!employee) return;
-      const startValue = startId ? approval.form_data?.[startId] : undefined;
-      const endValue = endId ? approval.form_data?.[endId] : undefined;
-      const typeValue = typeId ? approval.form_data?.[typeId] : undefined;
-      const typeCode = typeValue?.code ?? typeValue?.value ?? typeValue ?? '';
-      const code = typeCode ? String(typeCode) : '';
-      const labelCandidate = typeValue?.label ?? typeMap.get(code) ?? code;
-      const label = labelCandidate ? String(labelCandidate) : code;
-      const days = Math.max(parseNumber(approval.form_data?.days ?? approval.form_data?.duration ?? 0), 0);
-      totalDays += days;
+    rows.forEach((row) => {
+      totalDays += row.days;
       records.push({
-        approvalId: normalizeId(approval._id),
-        employee: normalizeId(employee._id ?? employee),
-        name: employee.name ?? '',
-        leaveType: label,
-        leaveCode: code,
-        startDate: formatDate(startValue),
-        endDate: formatDate(endValue),
-        days,
+        approvalId: row.approvalId,
+        employee: row.employeeId,
+        name: row.name,
+        leaveType: row.leaveType,
+        leaveCode: row.leaveCode,
+        startDate: row.startDate,
+        endDate: row.endDate,
+        days: row.days,
       });
-      const summaryEntry = typeSummary.get(label) || { leaveType: label, leaveCode: code, count: 0, days: 0 };
+      const summaryEntry = typeSummary.get(row.leaveType) || { leaveType: row.leaveType, leaveCode: row.leaveCode, count: 0, days: 0 };
       summaryEntry.count += 1;
-      summaryEntry.days += days;
-      typeSummary.set(label, summaryEntry);
+      summaryEntry.days += row.days;
+      typeSummary.set(row.leaveType, summaryEntry);
     });
     return {
       records,

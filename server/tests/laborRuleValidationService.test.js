@@ -1,3 +1,6 @@
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
 import { jest } from '@jest/globals';
 import mongoose from 'mongoose';
 
@@ -28,6 +31,24 @@ const {
   assertOvertimeApprovalCompliance,
   __testUtils,
 } = await import('../src/services/laborRuleValidationService.js');
+
+// 附件必須是上傳端點真的存進簽核附件資料夾的檔案：測試用暫存資料夾放一個檔案（不碰真正的上傳資料夾，
+// 以免和同時在跑的附件上傳測試互相干擾），結束後整個移除
+const PROOF_FILENAME = 'labor-rule-test-proof.pdf';
+const REAL_PROOF = [{ name: 'proof.pdf', url: `/upload/approvals/${PROOF_FILENAME}`, size: 14, type: 'application/pdf' }];
+let tempUploadDir;
+let previousUploadDir;
+
+beforeAll(() => {
+  tempUploadDir = fs.mkdtempSync(path.join(os.tmpdir(), 'labor-rule-uploads-'));
+  fs.writeFileSync(path.join(tempUploadDir, PROOF_FILENAME), '%PDF-1.4\n%%EOF\n');
+  previousUploadDir = __testUtils.setApprovalUploadDir(tempUploadDir);
+});
+
+afterAll(() => {
+  __testUtils.setApprovalUploadDir(previousUploadDir);
+  fs.rmSync(tempUploadDir, { recursive: true, force: true });
+});
 
 function leanQuery(value) {
   return {
@@ -871,7 +892,7 @@ describe('assertApprovalRequestCompliance', () => {
       formData: {
         type: '事假',
         reason: '家庭事務',
-        proof: [{ name: 'proof.pdf', url: '/upload/approvals/proof.pdf' }],
+        proof: REAL_PROOF,
       },
       applicantEmployeeId: 'emp1',
     })).resolves.toEqual({ ok: true, violations: [] });
@@ -978,22 +999,32 @@ describe('assertApprovalRequestCompliance leave proof', () => {
 
     await expect(assertApprovalRequestCompliance({
       form: defaultForm,
-      formData: { ...defaultData, proof: [{ name: 'proof.pdf', url: '/upload/approvals/proof.pdf' }] },
+      formData: { ...defaultData, proof: REAL_PROOF },
       applicantEmployeeId: 'emp1',
     })).resolves.toEqual({ ok: true, violations: [] });
   });
 
-  it('requires proof when the form has a proof-style text field (證明 / 附件) but nothing uploaded', async () => {
+  it('requires proof when a required proof-style text field (證明 / 附件) has nothing uploaded', async () => {
     mockFormField.find.mockReturnValue(sortableLeanQuery([
       { _id: 'type', label: '假別', type_1: 'text', required: true },
-      { _id: 'note', label: '附件說明', type_1: 'text' },
+      { _id: 'note', label: '附件說明', type_1: 'text', required: true },
     ]));
 
     const violations = await violationsOf({ _id: 'attach-form', name: '請假', semanticType: 'leave' }, { type: '特休', note: '' });
 
     expect(violations).toEqual([
+      { rule: 'required-form-field', message: '必填欄位不可空白：附件說明', fieldId: 'note', label: '附件說明' },
       { rule: 'leave-proof', message: '請假申請必須附上相關證明', fieldId: 'note' },
     ]);
+  });
+
+  it('does not force an upload when the proof field is optional', async () => {
+    mockFormField.find.mockReturnValue(sortableLeanQuery([
+      { _id: 'type', label: '假別', type_1: 'text', required: true },
+      { _id: 'note', label: '附件說明', type_1: 'text' },
+    ]));
+
+    expect(await violationsOf({ _id: 'attach-form', name: '請假', semanticType: 'leave' }, { type: '特休', note: '' })).toEqual([]);
   });
 
   it('does not require proof from a file field the admin has deactivated', async () => {
@@ -1009,16 +1040,44 @@ describe('assertApprovalRequestCompliance leave proof', () => {
     })).resolves.toEqual({ ok: true, violations: [] });
   });
 
-  it('requires proof as soon as the customer form gets an active file field', async () => {
+  it('requires proof as soon as the customer form gets an active required file field', async () => {
     mockFormField.find.mockReturnValue(sortableLeanQuery([
       ...customerFields,
-      { _id: 'c-file', label: '請假證明', type_1: 'file' },
+      { _id: 'c-file', label: '請假證明', type_1: 'file', required: true },
     ]));
 
     const violations = await violationsOf(customerForm, { ...customerData, 'c-type': '特休假' });
 
     expect(violations).toEqual([
+      { rule: 'required-form-field', message: '必填欄位不可空白：請假證明', fieldId: 'c-file', label: '請假證明' },
       { rule: 'leave-proof', message: '請假申請必須附上相關證明', fieldId: 'c-file' },
+    ]);
+  });
+
+  it('does not require an upload from an optional file field (an optional 附件 field no longer forces upload)', async () => {
+    mockFormField.find.mockReturnValue(sortableLeanQuery([
+      ...customerFields,
+      { _id: 'c-file', label: '附件', type_1: 'file', required: false },
+    ]));
+
+    expect(await violationsOf(customerForm, { ...customerData, 'c-type': '特休假' })).toEqual([]);
+    expect(await violationsOf(customerForm, { ...customerData, 'c-type': '特休假', 'c-file': REAL_PROOF })).toEqual([]);
+  });
+
+  it('still rejects a made-up value in an optional file field', async () => {
+    mockFormField.find.mockReturnValue(sortableLeanQuery([
+      ...customerFields,
+      { _id: 'c-file', label: '附件', type_1: 'file' },
+    ]));
+
+    const violations = await violationsOf(customerForm, {
+      ...customerData,
+      'c-type': '特休假',
+      'c-file': [{ name: 'x.pdf', url: '/upload/approvals/does-not-exist-fake.pdf' }],
+    });
+
+    expect(violations).toEqual([
+      { rule: 'leave-proof', message: '附件不是系統上傳的檔案，請重新上傳', fieldId: 'c-file' },
     ]);
   });
 

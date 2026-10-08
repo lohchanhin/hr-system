@@ -346,7 +346,10 @@ employeeSchema.methods.resetAnnualLeave = function (totalDays, year) {
 
 /* -------------------------------- indexes ------------------------------- */
 
-employeeSchema.index({ employeeId: 1 }, { sparse: true })
+// employeeId 的索引只由欄位上的 index: true 宣告一次（一般索引，不是唯一、也不是 sparse）：
+// 這也是正式環境已經建好的那一個。以前這裡再宣告一次 { sparse: true }，同名不同選項，
+// 全新的資料庫一啟動 autoIndex 就會因 IndexKeySpecsConflict 失敗。員工編號目前沒有唯一限制；
+// 要不要加唯一索引是另一個決定（需要先確認現有資料沒有重複編號），不在這裡順便改。
 employeeSchema.index({ name: 1 })
 employeeSchema.index({ organization: 1, department: 1 })
 employeeSchema.index({ role: 1 })

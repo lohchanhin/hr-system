@@ -11,6 +11,7 @@ import authRoutes from './routes/authRoutes.js';
 import { migrateMissingShiftSemantics } from './services/shiftSemanticService.js';
 import { purgeLegacyRocWeekendHolidays } from './controllers/holidayController.js';
 import { migrateLeaveFormSemantics } from './controllers/approvalTemplateController.js';
+import { normalizeStoredSignTags } from './controllers/employeeController.js';
 import { authenticate, authorizeRoles } from './middleware/auth.js';
 import scheduleRoutes from './routes/scheduleRoutes.js';
 import payrollRoutes from './routes/payrollRoutes.js';
@@ -318,6 +319,15 @@ async function start() {
   try {
     assertSecureRuntimeConfig();
     await connectDB(process.env.MONGODB_URI);
+    // 員工身上已存的簽核標籤統一成同一種寫法（全形轉半形、去空白、去重；冪等）：刪除員工前的影響盤點等以資料庫比對標籤的地方才對得上
+    try {
+      const normalizedSignTags = await normalizeStoredSignTags();
+      if (normalizedSignTags) {
+        console.log(`Normalized sign tags for ${normalizedSignTags} employees`);
+      }
+    } catch (normalizeError) {
+      console.error('Failed to normalize sign tags', normalizeError?.name ?? 'Error');
+    }
     const migratedShiftSemantics = await migrateMissingShiftSemantics();
     if (migratedShiftSemantics) {
       console.log(`Migrated semantic types for ${migratedShiftSemantics} shifts`);

@@ -8,10 +8,21 @@ const mockEmployee = {
   findByIdAndDelete: jest.fn(),
   create: jest.fn(),
   updateOne: jest.fn(),
+  updateMany: jest.fn(),
   countDocuments: jest.fn(),
+  distinct: jest.fn(),
+  exists: jest.fn(),
 };
+// 直屬主管必須是存在的員工（不是本人）；測試用的主管 id
+const SUPERVISOR_1 = '507f1f77bcf86cd799439021';
+const SUPERVISOR_2 = '507f1f77bcf86cd799439022';
+// 刪除員工前會盤點簽核影響（進行中的簽核單、流程關卡）；沒有資料庫連線時真實模型會一直等待，所以替換掉
+const mockApprovalRequest = { find: jest.fn() };
+const mockApprovalWorkflow = { find: jest.fn() };
 
 jest.unstable_mockModule('../src/models/Employee.js', () => ({ default: mockEmployee }));
+jest.unstable_mockModule('../src/models/approval_request.js', () => ({ default: mockApprovalRequest }));
+jest.unstable_mockModule('../src/models/approval_workflow.js', () => ({ default: mockApprovalWorkflow }));
 
 let app;
 let employeeRoutes;
@@ -32,6 +43,16 @@ beforeEach(() => {
   requestUser = { id: 'admin1', role: 'admin' };
   Object.values(mockEmployee).forEach((fn) => fn.mockReset && fn.mockReset());
   mockEmployee.countDocuments.mockResolvedValue(0);
+  mockEmployee.updateMany.mockResolvedValue({ modifiedCount: 0 });
+  mockEmployee.distinct.mockResolvedValue([]);
+  mockEmployee.exists.mockResolvedValue({ _id: 'supervisor' });
+  [mockApprovalRequest, mockApprovalWorkflow].forEach((model) => {
+    model.find.mockReset();
+    const query = { select: jest.fn(), limit: jest.fn(), lean: jest.fn().mockResolvedValue([]) };
+    query.select.mockReturnValue(query);
+    query.limit.mockReturnValue(query);
+    model.find.mockReturnValue(query);
+  });
 });
 
 function makeEmployeeListQuery(result) {
@@ -131,6 +152,8 @@ describe('Employee API', () => {
       organization: 'org1',
       department: { _id: 'd1', name: '人資部' },
       role: 'supervisor',
+      status: '留職停薪',
+      accountEnabled: false,
     }];
     const lean = jest.fn().mockResolvedValue(fakeEmployees);
     const populate = jest.fn().mockReturnValue({ lean });
@@ -139,7 +162,7 @@ describe('Employee API', () => {
     expect(res.status).toBe(200);
     expect(mockEmployee.find).toHaveBeenCalledWith(
       { username: { $exists: true, $ne: '' } },
-      'name username signRole signTags signLevel organization department role'
+      'name username signRole signTags signLevel organization department role status accountEnabled'
     );
     expect(populate).toHaveBeenCalledWith('department', 'name');
     expect(lean).toHaveBeenCalled();
@@ -154,6 +177,8 @@ describe('Employee API', () => {
         organization: 'org1',
         department: { id: 'd1', name: '人資部' },
         role: 'supervisor',
+        status: '留職停薪',
+        accountEnabled: false,
         displayName: 'Alice（alice）',
       },
     ]);
@@ -217,7 +242,7 @@ describe('Employee API', () => {
       username: 'jane',
       password: 'secret',
       role: 'employee',
-      supervisor: 's1'
+      supervisor: SUPERVISOR_1
     };
 
     mockEmployee.create.mockImplementation(async (doc) => ({ _id: '1', ...doc }));
@@ -231,7 +256,7 @@ describe('Employee API', () => {
       subDepartment: 'sd1',
       title: 'Manager',
       employmentStatus: '正職員工',
-      supervisor: 's1'
+      supervisor: SUPERVISOR_1
     }));
   });
 
@@ -292,13 +317,13 @@ describe('Employee API', () => {
   it('updates employee', async () => {
     mockEmployee.findById
       .mockResolvedValueOnce({ _id: '1', name: 'John' })
-      .mockResolvedValueOnce({ _id: '1', name: 'Updated', supervisor: 's2' });
+      .mockResolvedValueOnce({ _id: '1', name: 'Updated', supervisor: SUPERVISOR_2 });
     mockEmployee.updateOne.mockResolvedValue();
 
-    const res = await request(app).put('/api/employees/1').send({ name: 'Updated', supervisor: 's2' });
+    const res = await request(app).put('/api/employees/1').send({ name: 'Updated', supervisor: SUPERVISOR_2 });
     expect(res.status).toBe(200);
-    expect(mockEmployee.updateOne).toHaveBeenCalledWith({ _id: '1' }, { $set: { name: 'Updated', supervisor: 's2' } });
-    expect(res.body).toMatchObject({ _id: '1', name: 'Updated', supervisor: 's2' });
+    expect(mockEmployee.updateOne).toHaveBeenCalledWith({ _id: '1' }, { $set: { name: 'Updated', supervisor: SUPERVISOR_2 } });
+    expect(res.body).toMatchObject({ _id: '1', name: 'Updated', supervisor: SUPERVISOR_2 });
   });
 
   it('fails updating with invalid email or role', async () => {
@@ -314,7 +339,22 @@ describe('Employee API', () => {
     expect(res.status).toBe(200);
     expect(mockEmployee.findById).toHaveBeenCalledWith('1');
     expect(mockDeleteOne).toHaveBeenCalled();
-    expect(res.body).toEqual({ success: true });
+    // 刪除後會順手清掉別人指向這位員工的「直屬主管」，並回報簽核影響（這裡沒有任何影響）
+    expect(mockEmployee.updateMany).toHaveBeenCalledWith({ supervisor: { $in: ['1'] } }, { $unset: { supervisor: 1 } });
+    expect(res.body).toEqual({
+      success: true,
+      unassignedSubordinates: 0,
+      impact: {
+        pendingRequests: 0,
+        pendingApprovers: [],
+        subordinates: 0,
+        workflowSteps: 0,
+        lostTags: [],
+        incomplete: false,
+        messages: [],
+      },
+      warnings: [],
+    });
   });
 
   it('prevents deletion of admin accounts', async () => {
@@ -329,10 +369,10 @@ describe('Employee API', () => {
 
   it('sets supervisors in batch', async () => {
     mockEmployee.updateOne.mockResolvedValue();
-    const payload = { assignments: [{ employee: 'e1', supervisor: 's1' }] };
+    const payload = { assignments: [{ employee: 'e1', supervisor: SUPERVISOR_1 }] };
     const res = await request(app).post('/api/employees/set-supervisors').send(payload);
     expect(res.status).toBe(200);
-    expect(mockEmployee.updateOne).toHaveBeenCalledWith({ _id: 'e1' }, { supervisor: 's1' });
+    expect(mockEmployee.updateOne).toHaveBeenCalledWith({ _id: 'e1' }, { supervisor: SUPERVISOR_1 });
     expect(res.body).toEqual({ success: true });
   });
 });

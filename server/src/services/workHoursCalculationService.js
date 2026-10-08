@@ -10,11 +10,14 @@ import { getAllLeaveFieldInfos } from './leaveFieldService.js';
 import { calculateNightShiftAllowance } from './nightShiftAllowanceService.js';
 import { isNonWorkShift, resolveShiftSemanticType } from './shiftSemanticService.js';
 import { buildCountedHolidayDays } from './countedHolidayService.js';
-import { 
+import { toTaipeiDateKey } from '../utils/taipeiTime.js';
+import { computeLeaveDuration, sumLeaveHoursInRange } from '../utils/leaveDuration.js';
+import { isOvertimeFormTemplate } from '../utils/formSemantics.js';
+import { candidateSelectKeys, orderFieldCandidateIds, pickFieldValue, resolveCandidateIds } from '../utils/fieldCandidates.js';
+import {
   WORK_HOURS_CONFIG,
-  LEAVE_POLICY,
-  OVERTIME_FORM_NAMES,
   OVERTIME_FIELDS,
+  resolveLeavePay,
   convertToHourlyRate,
   convertToDailyRate,
   calculateTaiwanOvertimeAmount
@@ -348,26 +351,31 @@ export async function calculateWorkHours(employeeId, month, context = {}) {
 
 /**
  * 計算請假對薪資的影響
+ * 請假依「請假日期」歸屬月份（台灣日期，跨月的假單拆到各自的月份），不看送簽（建立）的月份。
  * @param {String} employeeId - 員工 ID
  * @param {String} month - 月份 (YYYY-MM-DD 格式)
+ * @param {Object} options.withDailyBreakdown - 另外回傳每天的給薪請假時數（payableLeaveByDay），日薪計算要用
  * @returns {Object} - 請假扣款資料
  */
-export async function calculateLeaveImpact(employeeId, month, context = {}) {
+export async function calculateLeaveImpact(employeeId, month, context = {}, { withDailyBreakdown = false } = {}) {
   const employee = context.employee ?? await Employee.findById(employeeId);
   if (!employee) {
     throw new Error('Employee not found');
   }
-  
+
   // 解析月份範圍
   const monthDate = new Date(month);
   const startDate = new Date(monthDate);
   startDate.setUTCHours(0, 0, 0, 0);
   const endDate = new Date(startDate);
   endDate.setUTCMonth(endDate.getUTCMonth() + 1);
-  
-  // 取得所有請假表單配置（預設的「請假」與自建的請假表單並存時，每張都要計入）
+  // 薪資月份對應的台灣日期範圍 [windowStartKey, windowEndKey)
+  const windowStartKey = formatDate(startDate);
+  const windowEndKey = formatDate(endDate);
+
+  // 取得所有請假表單配置（預設的「請假」與自建的請假表單並存時，每張都要計入；已停用的表單底下已核准的假單也要計入）
   const leaveForms = await getAllLeaveFieldInfos();
-  
+
   if (!leaveForms.length) {
     return {
       leaveHours: 0,
@@ -376,106 +384,130 @@ export async function calculateLeaveImpact(employeeId, month, context = {}) {
       sickLeaveHours: 0,
       personalLeaveHours: 0,
       leaveDeduction: 0,
-      leaveRecords: []
+      leaveRecords: [],
+      ...(withDailyBreakdown ? { payableLeaveByDay: {}, undatedPayableLeaveHours: 0 } : {})
     };
   }
-  
+
   let totalLeaveHours = 0;
   let paidLeaveHours = 0;
   let unpaidLeaveHours = 0;
   let sickLeaveHours = 0;
   let personalLeaveHours = 0;
   const leaveRecords = [];
-  
-  // 每張請假表單各查一次該月份已核准的請假記錄（一張假單只屬於一張表單，不會重複計算）
-  for (const { formId, startId, endId, typeId, daysId, typeOptions } of leaveForms) {
-    const approvals = await ApprovalRequest.find({
+  // 每個台灣日期的給薪請假時數（全薪算全部、半薪算一半）；沒有請假日期的舊資料無從分日，另外累計
+  const payableLeaveByDay = {};
+  let undatedPayableLeaveHours = 0;
+
+  // 每張請假表單各查一次該員工已核准的請假記錄（一張假單只屬於一張表單，不會重複計算）。
+  // form_data 的日期是字串，沒辦法用資料庫的日期條件篩選，所以取回後依請假日期在程式裡篩出落在本月的部分。
+  for (const leaveForm of leaveForms) {
+    const { formId, startId, endId, typeId, daysId, typeOptions } = leaveForm;
+    // 欄位被停用或換成同標籤的新欄位後，舊假單的答案還在舊欄位 ID 底下：逐張假單用第一個有填值的同標籤欄位
+    const startIds = resolveCandidateIds(leaveForm.startIds, startId);
+    const endIds = resolveCandidateIds(leaveForm.endIds, endId);
+    const typeIds = resolveCandidateIds(leaveForm.typeIds, typeId);
+    const daysIds = resolveCandidateIds(leaveForm.daysIds, daysId);
+    let approvalQuery = ApprovalRequest.find({
       form: formId,
       status: 'approved',
-      applicant_employee: employeeId,
-      createdAt: { $gte: startDate, $lt: endDate }
-    }).lean();
-    
+      applicant_employee: employeeId
+    });
+    if (approvalQuery && typeof approvalQuery.select === 'function') {
+      const projection = ['createdAt', 'form_data.days', 'form_data.duration', 'form_data.hours']
+        .concat(candidateSelectKeys(startIds, endIds, typeIds, daysIds).map((id) => `form_data.${id}`));
+      approvalQuery = approvalQuery.select(projection.join(' '));
+    }
+    const approvals = (await approvalQuery.lean()) || [];
+
     // 建立假別類型映射
     const typeMap = new Map(typeOptions?.map((opt) => [String(opt.value), opt.label]));
-    
+
     approvals.forEach((approval) => {
-      const typeValue = typeId ? approval.form_data?.[typeId] : undefined;
+      const formData = approval.form_data || {};
+      const typeValue = pickFieldValue(formData, typeIds);
       const typeCode = typeValue ? String(typeValue.code ?? typeValue.value ?? typeValue) : '';
       const leaveType = typeValue?.label ?? typeMap.get(typeCode) ?? typeCode;
-    
-      // 從表單數據取得請假天數或時數
-      // form_data 以欄位 ID 為鍵：表單有「天數」欄位且填了正數就以它為準，否則沿用 days / duration 鍵
-      const filledDays = daysId ? parseFloat(approval.form_data?.[daysId]) : NaN;
-      let days = Number.isFinite(filledDays) && filledDays > 0
-        ? filledDays
-        : parseFloat(approval.form_data?.days ?? approval.form_data?.duration ?? 0);
-      let hours = parseFloat(approval.form_data?.hours ?? 0);
-    
-      // 如果沒有直接的 days/hours 欄位，嘗試從開始/結束日期計算
-      if (days === 0 && hours === 0 && startId && endId) {
-        const startDate = approval.form_data?.[startId];
-        const endDate = approval.form_data?.[endId];
-      
-        if (startDate && endDate) {
-          const start = new Date(startDate);
-          const end = new Date(endDate);
-        
-          if (Number.isFinite(start.getTime()) && Number.isFinite(end.getTime())) {
-            // 計算日期差異（天數）- 使用日期部分，忽略時間
-            const startDay = new Date(start.getFullYear(), start.getMonth(), start.getDate());
-            const endDay = new Date(end.getFullYear(), end.getMonth(), end.getDate());
-            const diffTime = endDay.getTime() - startDay.getTime();
-            const diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24));
-          
-            // 確保至少 1 天（處理同一天或負值情況）
-            days = Math.max(diffDays, 1);
-            hours = days * WORK_HOURS_CONFIG.HOURS_PER_DAY;
-          }
-        }
-      } else if (hours === 0 && days > 0) {
-        // 如果有天數但沒有時數，將天數轉換為時數
-        hours = days * WORK_HOURS_CONFIG.HOURS_PER_DAY;
+
+      // 請假時數：表單有「天數」欄位且填了正數就以它為準，其次是舊資料的 days / duration / hours 鍵，
+      // 否則由開始/結束時間推算（台灣時間；4 小時就是 4 小時，不再一律當成整天）
+      const duration = computeLeaveDuration({
+        startValue: pickFieldValue(formData, startIds),
+        endValue: pickFieldValue(formData, endIds),
+        filledDays: pickFieldValue(formData, daysIds),
+        literalDays: formData.days ?? formData.duration,
+        literalHours: formData.hours,
+        hoursPerDay: WORK_HOURS_CONFIG.HOURS_PER_DAY,
+      });
+
+      let days;
+      let hours;
+      if (duration.perDay.length) {
+        // 有請假日期：只算落在本月的部分
+        hours = sumLeaveHoursInRange(duration.perDay, windowStartKey, windowEndKey);
+        if (hours <= 0) return;
+        days = Math.round((hours / WORK_HOURS_CONFIG.HOURS_PER_DAY) * 10000) / 10000;
+      } else {
+        // 沒有請假日期的舊資料，才退回用送簽（建立）時間歸屬月份
+        const createdAt = approval.createdAt ? new Date(approval.createdAt) : null;
+        if (createdAt && (createdAt < startDate || createdAt >= endDate)) return;
+        ({ days, hours } = duration);
+        if (hours <= 0) return;
       }
-    
+
       totalLeaveHours += hours;
-    
-      // 根據假別分類 - 使用配置的假別類型
-      if (LEAVE_POLICY.PAID_LEAVE_TYPES.includes(leaveType)) {
+
+      // 依假別薪資對照表（salaryConfig.LEAVE_TYPE_PAY_TABLE）決定給薪方式：全薪不扣、半薪扣一半、無薪全扣
+      const pay = resolveLeavePay(leaveType);
+      unpaidLeaveHours += hours * (1 - pay.payRate);
+      if (pay.category === 'paid') {
         paidLeaveHours += hours;
-      }
-      // 病假
-      else if (LEAVE_POLICY.SICK_LEAVE_TYPES.includes(leaveType)) {
+      } else if (pay.category === 'sick') {
         sickLeaveHours += hours;
-        // 病假按照配置的比率計算扣款
-        unpaidLeaveHours += hours * (1 - LEAVE_POLICY.SICK_LEAVE_PAY_RATE);
-      }
-      // 事假為無薪假
-      else if (LEAVE_POLICY.UNPAID_LEAVE_TYPES.includes(leaveType)) {
+      } else if (pay.known) {
+        // 事假、家庭照顧假等明列的無薪假
         personalLeaveHours += hours;
-        unpaidLeaveHours += hours;
       }
-      // 其他假別預設為無薪
-      else {
-        unpaidLeaveHours += hours;
+      // 對照表查不到的假別預設為無薪（只計入無薪時數）
+
+      if (duration.perDay.length) {
+        if (pay.payRate > 0) {
+          duration.perDay.forEach((item) => {
+            if (item.dateKey < windowStartKey || item.dateKey >= windowEndKey) return;
+            payableLeaveByDay[item.dateKey] = (payableLeaveByDay[item.dateKey] ?? 0) + item.hours * pay.payRate;
+          });
+        }
+      } else {
+        undatedPayableLeaveHours += hours * pay.payRate;
       }
-    
-      leaveRecords.push({
+
+      const record = {
         leaveType,
-        startDate: formatDate(approval.form_data?.[startId]),
-        endDate: formatDate(approval.form_data?.[endId]),
+        startDate: duration.startKey,
+        endDate: duration.endKey,
         days,
         hours,
-        isPaid: !LEAVE_POLICY.UNPAID_LEAVE_TYPES.includes(leaveType)
-      });
+        payRate: pay.payRate,
+        // 有給薪（全薪或半薪）才算有薪；全額扣款的假別是無薪
+        isPaid: pay.payRate > 0
+      };
+      if (duration.perDay.length && hours < duration.hours) {
+        // 跨月的假單：days / hours 是本月的部分，另外附上整張假單的天數與時數
+        record.totalDays = duration.days;
+        record.totalHours = duration.hours;
+      }
+      leaveRecords.push(record);
     });
   }
-  
-  // 計算請假扣款 - 使用配置的轉換函數
-  const hourlyRate = convertToHourlyRate(employee.salaryAmount || 0, employee.salaryType || '月薪');
-  
-  const leaveDeduction = unpaidLeaveHours * hourlyRate;
-  
+
+  // 計算請假扣款 - 使用配置的轉換函數。日薪、時薪是按出勤與有薪假給薪，
+  // 無薪假沒有薪水可領，不能再扣一次，所以只有月薪才有請假扣款
+  const salaryType = employee.salaryType || '月薪';
+  const hourlyRate = convertToHourlyRate(employee.salaryAmount || 0, salaryType);
+  const leaveDeduction = salaryType === '日薪' || salaryType === '時薪'
+    ? 0
+    : unpaidLeaveHours * hourlyRate;
+
   return {
     leaveHours: totalLeaveHours,
     paidLeaveHours,
@@ -483,7 +515,8 @@ export async function calculateLeaveImpact(employeeId, month, context = {}) {
     sickLeaveHours,
     personalLeaveHours,
     leaveDeduction: Math.round(leaveDeduction),
-    leaveRecords
+    leaveRecords,
+    ...(withDailyBreakdown ? { payableLeaveByDay, undatedPayableLeaveHours } : {})
   };
 }
 
@@ -514,6 +547,9 @@ export async function calculateOvertimePay(employeeId, month, context = {}) {
   startDate.setUTCHours(0, 0, 0, 0);
   const endDate = new Date(startDate);
   endDate.setUTCMonth(endDate.getUTCMonth() + 1);
+  // 薪資月份對應的台灣日期範圍 [windowStartKey, windowEndKey)
+  const windowStartKey = formatDate(startDate);
+  const windowEndKey = formatDate(endDate);
   
   // 如果員工設定為自動計算加班，從簽核系統取得加班記錄
   if (!employee.autoOvertimeCalc) {
@@ -530,16 +566,14 @@ export async function calculateOvertimePay(employeeId, month, context = {}) {
     status: 'approved'
   }).populate('form').lean();
   
-  const overtimeRecords = overtimeForms.filter((request) => (
-    request.form?.semanticType === 'overtime'
-    || OVERTIME_FORM_NAMES.includes(request.form?.name)
-    || String(request.form?.name || '').toLowerCase().includes('overtime')
-  ));
+  // 表單性質有設定就以它為準，沒有表單性質的舊表單才用名稱推論
+  const overtimeRecords = overtimeForms.filter((request) => isOvertimeFormTemplate(request.form));
   const overtimeFormIds = Array.from(new Set(overtimeRecords
     .map((request) => request.form?._id?.toString?.())
     .filter(Boolean)));
+  // 停用的欄位也要載入：欄位被停用（或換成同標籤的新欄位）後，舊加班單的答案還在舊欄位 ID 底下
   const overtimeFields = overtimeFormIds.length
-    ? await FormField.find({ form: { $in: overtimeFormIds }, is_active: { $ne: false } }).lean()
+    ? await FormField.find({ form: { $in: overtimeFormIds } }).lean()
     : [];
   const fieldsByForm = new Map();
   for (const field of overtimeFields || []) {
@@ -580,7 +614,13 @@ export async function calculateOvertimePay(employeeId, month, context = {}) {
     const formFields = fieldsByForm.get(record.form?._id?.toString?.() || '') || [];
     const valueByLabels = (labels) => {
       const normalizedLabels = labels.map((label) => String(label).trim().toLowerCase());
-      const field = formFields.find((candidate) => normalizedLabels.includes(String(candidate.label || '').trim().toLowerCase()));
+      const matched = formFields.filter((candidate) => normalizedLabels.includes(String(candidate.label || '').trim().toLowerCase()));
+      // 同標籤的欄位可能不只一個（舊欄位被停用後新增了同標籤的欄位）：啟用中的在前、停用的在後，
+      // 這一張單用第一個有填值的欄位
+      const candidateIds = orderFieldCandidateIds(matched);
+      const picked = pickFieldValue(record.form_data, candidateIds);
+      if (picked !== undefined) return picked;
+      const field = matched.find((candidate) => String(candidate._id) === candidateIds[0]);
       for (const key of [field?._id?.toString?.(), field?.label, ...labels].filter(Boolean)) {
         if (Object.prototype.hasOwnProperty.call(record.form_data || {}, key)) return record.form_data[key];
       }
@@ -640,11 +680,12 @@ export async function calculateOvertimePay(employeeId, month, context = {}) {
     // 如果沒有原因欄位，嘗試'事由'欄位
     if (!reason) reason = valueByLabels(['事由']) || '';
     
-    const overtimeDate = date ? new Date(date) : null;
-    if (!overtimeDate || Number.isNaN(overtimeDate.getTime()) || overtimeDate < startDate || overtimeDate >= endDate) {
+    // 加班屬於哪一天、哪個月以台灣時間判斷：台灣 11/1 早上 06:00（UTC 10/31 22:00）是 11 月的加班，
+    // 也要用 11/1 的班表與假日判斷日別，不能取 UTC 日期而算成 10 月、前一天的平日
+    const overtimeDateKey = date ? toTaipeiDateKey(date) : null;
+    if (!overtimeDateKey || overtimeDateKey < windowStartKey || overtimeDateKey >= windowEndKey) {
       continue;
     }
-    const overtimeDateKey = overtimeDate.toISOString().slice(0, 10);
     const schedule = scheduleByDate.get(overtimeDateKey);
     const dayType = resolveOvertimeDayType(
       overtimeDateKey,
@@ -656,7 +697,7 @@ export async function calculateOvertimePay(employeeId, month, context = {}) {
     totalOvertimeHours += hours;
     overtimePay += calculation.amount;
     records.push({
-      date: formatDate(overtimeDate),
+      date: overtimeDateKey,
       hours,
       reason,
       dayType,
@@ -666,7 +707,7 @@ export async function calculateOvertimePay(employeeId, month, context = {}) {
       issue: recordIssue,
     });
     if (recordIssue) {
-      overtimeIssues.push(`${formatDate(overtimeDate)}：${recordIssue}`);
+      overtimeIssues.push(`${overtimeDateKey}：${recordIssue}`);
     }
   }
 
@@ -676,6 +717,24 @@ export async function calculateOvertimePay(employeeId, month, context = {}) {
     overtimeRecords: records,
     overtimeIssues,
   };
+}
+
+/**
+ * 日薪要另外加計的「只請假沒上班」天數。
+ * 有出勤的那一天（workDays 已經算整天）請了半天有薪假，不能再把假的部分加一次：
+ * 日薪 2000 的人上 4 小時班、請 5 小時特休，那天只領 2000，不是 3250。
+ * 所以有出勤的日子不另外加請假，沒出勤的日子才依當天的給薪請假時數（全薪算全部、半薪算一半）加，每天最多 1 天。
+ * 沒有請假日期的舊資料無法判斷是哪一天，照時數換算成天數。
+ */
+function countPaidLeaveOnlyDays(dailyDetails, leaveImpact) {
+  const attendedDates = new Set((dailyDetails || []).filter((day) => day.hasAttendance).map((day) => day.date));
+  let days = 0;
+  Object.entries(leaveImpact.payableLeaveByDay || {}).forEach(([dateKey, hours]) => {
+    if (attendedDates.has(dateKey)) return;
+    days += Math.min(1, hours / WORK_HOURS_CONFIG.HOURS_PER_DAY);
+  });
+  days += (leaveImpact.undatedPayableLeaveHours || 0) / WORK_HOURS_CONFIG.HOURS_PER_DAY;
+  return days;
 }
 
 /**
@@ -693,7 +752,7 @@ export async function calculateCompleteWorkData(employeeId, month, context = {})
   // reuse it instead of repeating the same employee, setting and schedule reads.
   const workHours = await calculateWorkHours(employeeId, month, context);
   const [leaveImpact, overtimePay, nightShiftAllowanceData] = await Promise.all([
-    calculateLeaveImpact(employeeId, month, context),
+    calculateLeaveImpact(employeeId, month, context, { withDailyBreakdown: true }),
     calculateOvertimePay(employeeId, month, context),
     calculateNightShiftAllowance(employeeId, month, employee, context)
   ]);
@@ -703,15 +762,21 @@ export async function calculateCompleteWorkData(employeeId, month, context = {})
   const hourlyRate = convertToHourlyRate(employee.salaryAmount || 0, employee.salaryType || '月薪');
   const dailyRate = convertToDailyRate(employee.salaryAmount || 0, employee.salaryType || '月薪');
   
+  // 日薪、時薪是按出勤給薪：有薪假（全薪，以及半薪假的給薪部分）要算進去，
+  // 無薪假沒出勤本來就沒有薪水，所以也不會再有請假扣款（calculateLeaveImpact 只對月薪回傳扣款）
+  const payableLeaveHours = Math.max(
+    Math.round((leaveImpact.leaveHours - leaveImpact.unpaidLeaveHours) * 10000) / 10000,
+    0
+  );
   if (employee.salaryType === '時薪') {
-    baseSalary = workHours.actualWorkHours * hourlyRate;
+    baseSalary = (workHours.actualWorkHours + payableLeaveHours) * hourlyRate;
   } else if (employee.salaryType === '日薪') {
-    baseSalary = workHours.workDays * dailyRate;
+    baseSalary = (workHours.workDays + countPaidLeaveOnlyDays(workHours.dailyDetails, leaveImpact)) * dailyRate;
   } else { // 月薪
     baseSalary = employee.salaryAmount || 0;
   }
   
-  // 應用請假扣款
+  // 應用請假扣款（月薪）
   baseSalary -= leaveImpact.leaveDeduction;
   baseSalary = Math.max(0, baseSalary); // 確保不為負數
   

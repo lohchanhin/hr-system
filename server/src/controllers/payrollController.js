@@ -26,7 +26,8 @@ import {
 } from '../services/laborInsuranceService.js';
 import { generatePayrollExcel, generateIndividualPayrollExcel } from '../services/payrollExportService.js';
 import { generateMonthlyPayrollOverviewPdf } from '../services/payrollPdfExportService.js';
-import { aggregateBonusFromApprovals } from '../utils/payrollPreviewUtils.js';
+import { aggregateBonusFromApprovals, loadBonusFieldsByForm } from '../utils/payrollPreviewUtils.js';
+import { approvedInMonthFilter, payrollMonthRange } from '../utils/payrollMonth.js';
 
 export async function listPayrolls(req, res) {
   try {
@@ -485,16 +486,17 @@ export async function getMonthlyPayrollOverview(req, res) {
     });
 
     const approvalsByEmployee = new Map();
+    // 獎金申請依「核准完成」的時間歸屬月份（台灣時間），不看送簽時間；欄位定義整頁只載入一次
+    const bonusRange = payrollMonthRange(monthDate);
+    let bonusFieldsByForm = new Map();
     const validEmployeeIds = employeeIds.filter((id) => mongoose.Types.ObjectId.isValid(id));
     if (validEmployeeIds.length > 0) {
-      const approvalRangeEnd = new Date(monthDate);
-      approvalRangeEnd.setUTCMonth(approvalRangeEnd.getUTCMonth() + 1);
       try {
         const approvals = await ApprovalRequest.find({
           applicant_employee: { $in: validEmployeeIds },
-          status: 'approved',
-          createdAt: { $gte: monthDate, $lt: approvalRangeEnd },
+          ...approvedInMonthFilter(bonusRange),
         }).populate('form').lean();
+        bonusFieldsByForm = await loadBonusFieldsByForm(approvals);
 
         approvals.forEach((approval) => {
           const applicantId = approval.applicant_employee?._id ?? approval.applicant_employee;
@@ -562,7 +564,13 @@ export async function getMonthlyPayrollOverview(req, res) {
 
           const employeeApprovals = approvalsByEmployee.get(employeeIdStr) ?? [];
           if (employeeApprovals.length > 0) {
-            const bonusData = aggregateBonusFromApprovals(employeeApprovals);
+            // 核准的金額是「加在」員工每月調整設定的獎金（夜班津貼是加在動態計算值）之上，不會蓋掉原本設定的金額
+            const bonusData = aggregateBonusFromApprovals(employeeApprovals, {
+              employee,
+              workData,
+              fieldsByForm: bonusFieldsByForm,
+              range: bonusRange,
+            });
             Object.entries(bonusData || {}).forEach(([key, value]) => {
               if (typeof value === 'number') customData[key] = value;
             });
@@ -594,18 +602,22 @@ export async function getMonthlyPayrollOverview(req, res) {
       // Override night shift data with dynamically calculated values if available
       // This ensures even existing payroll records show up-to-date night shift allowances
       if (payroll && workData) {
+        // 剛算出來的薪資（沒有薪資記錄）夜班津貼已經加上核准的夜班獎金申請，不能再被動態值蓋掉
+        const nightShiftAllowance = payrollMap[employeeIdStr]
+          ? workData.nightShiftAllowance
+          : (payroll.nightShiftAllowance ?? workData.nightShiftAllowance);
         payroll = {
           ...payroll,
           nightShiftDays: workData.nightShiftDays,
           nightShiftHours: workData.nightShiftHours,
-          nightShiftAllowance: workData.nightShiftAllowance,
+          nightShiftAllowance,
           nightShiftCalculationMethod: workData.nightShiftCalculationMethod,
           nightShiftBreakdown: workData.nightShiftBreakdown,
           nightShiftConfigurationIssues: workData.nightShiftConfigurationIssues,
           overtimeIssues: workData.overtimeIssues,
           // Recalculate totalBonus to include updated nightShiftAllowance
           totalBonus: (payroll.overtimePay || 0) + 
-                     (workData.nightShiftAllowance || 0) + 
+                     (nightShiftAllowance || 0) + 
                      (payroll.performanceBonus || 0) + 
                      (payroll.otherBonuses || 0),
         };

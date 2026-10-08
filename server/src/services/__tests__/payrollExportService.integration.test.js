@@ -8,6 +8,7 @@ const mockApprovalRequestFind = jest.fn();
 const mockCalculateEmployeePayroll = jest.fn();
 const mockCalculateCompleteWorkData = jest.fn();
 const mockAggregateBonusFromApprovals = jest.fn();
+const mockLoadBonusFieldsByForm = jest.fn().mockResolvedValue(new Map());
 
 jest.unstable_mockModule('../../models/PayrollRecord.js', () => ({
   default: {
@@ -36,7 +37,8 @@ jest.unstable_mockModule('../workHoursCalculationService.js', () => ({
 }));
 
 jest.unstable_mockModule('../../utils/payrollPreviewUtils.js', () => ({
-  aggregateBonusFromApprovals: mockAggregateBonusFromApprovals
+  aggregateBonusFromApprovals: mockAggregateBonusFromApprovals,
+  loadBonusFieldsByForm: mockLoadBonusFieldsByForm
 }));
 
 const { generatePayrollExcel } = await import('../payrollExportService.js');

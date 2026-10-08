@@ -472,6 +472,7 @@ describe('calculateLeaveImpact', () => {
       endDate: '2026-09-03',
       days: 2,
       hours: 16,
+      payRate: 1,
       isPaid: true,
     }])
   })
@@ -485,8 +486,8 @@ describe('calculateLeaveImpact', () => {
 
     const result = await calculateLeaveImpact('emp1', MONTH)
 
-    // 預設表單沒有天數欄位：沿用日期差（9/1 到 9/2 = 1 天，8 小時），客戶表單 1 天 8 小時
-    expect(result).toMatchObject({ leaveHours: 16, paidLeaveHours: 16, unpaidLeaveHours: 0, leaveDeduction: 0 })
+    // 預設表單沒有天數欄位：由日期推算，9/1 到 9/2 含頭尾是 2 天（16 小時），客戶表單 1 天 8 小時
+    expect(result).toMatchObject({ leaveHours: 24, paidLeaveHours: 24, unpaidLeaveHours: 0, leaveDeduction: 0 })
   })
 
   it('deducts a 事假 as unpaid hours using the 天數 field', async () => {
@@ -514,7 +515,7 @@ describe('calculateLeaveImpact', () => {
     expect(result).toMatchObject({ leaveHours: 4, paidLeaveHours: 4, leaveDeduction: 0 })
   })
 
-  it('falls back to the date difference exactly as before when the 天數 field is empty or not positive', async () => {
+  it('falls back to the calendar days of the dates (both ends included) when the 天數 field is empty or not positive', async () => {
     mockGetAllLeaveFieldInfos.mockResolvedValue([CUSTOMER_FORM])
     approvalsByForm({
       'customer-form': [
@@ -527,12 +528,12 @@ describe('calculateLeaveImpact', () => {
 
     const result = await calculateLeaveImpact('emp1', MONTH)
 
-    // 3 天、至少 1 天、1 天、1 天（日期差不含起始日，同一天補到 1 天）
-    expect(result.leaveRecords.map((record) => record.days)).toEqual([3, 1, 1, 1])
-    expect(result.leaveHours).toBe(48)
+    // 9/2-9/5 是 4 天、9/8 當天是 1 天、9/9-9/10 是 2 天、9/15-9/16 是 2 天（舊算法用日期差，少算了結束那一天）
+    expect(result.leaveRecords.map((record) => record.days)).toEqual([4, 1, 2, 2])
+    expect(result.leaveHours).toBe(72)
   })
 
-  it('does not change the default 請假 form (no 天數 field): date difference, at least one day', async () => {
+  it('derives the hours of the default 請假 form (no 天數 field) from its dates, both ends included', async () => {
     mockGetAllLeaveFieldInfos.mockResolvedValue([DEFAULT_FORM])
     approvalsByForm({
       'default-form': [
@@ -544,11 +545,11 @@ describe('calculateLeaveImpact', () => {
     const result = await calculateLeaveImpact('emp1', MONTH)
 
     expect(result.leaveRecords.map((record) => [record.leaveType, record.days, record.hours])).toEqual([
-      ['事假', 2, 16],
+      ['事假', 3, 24],
       ['病假', 1, 8],
     ])
-    // 事假 16 小時全扣、病假 8 小時扣一半
-    expect(result).toMatchObject({ leaveHours: 24, personalLeaveHours: 16, sickLeaveHours: 8, unpaidLeaveHours: 20, leaveDeduction: 2500 })
+    // 事假 24 小時全扣、病假 8 小時扣一半
+    expect(result).toMatchObject({ leaveHours: 32, personalLeaveHours: 24, sickLeaveHours: 8, unpaidLeaveHours: 28, leaveDeduction: 3500 })
   })
 
   it('still honours the literal days / hours keys of old data', async () => {
@@ -584,7 +585,8 @@ describe('calculateLeaveImpact', () => {
     expect(mockApprovalRequest.find).toHaveBeenCalledWith(expect.objectContaining({
       form: 'customer-form', status: 'approved', applicant_employee: 'emp1',
     }))
-    expect(result).toMatchObject({ leaveHours: 40, paidLeaveHours: 16, personalLeaveHours: 24, unpaidLeaveHours: 24, leaveDeduction: 3000 })
+    // 預設表單 9/1-9/2 是 2 天（16 小時）事假，客戶表單 2 天事假 + 2 天特休假
+    expect(result).toMatchObject({ leaveHours: 48, paidLeaveHours: 16, personalLeaveHours: 32, unpaidLeaveHours: 32, leaveDeduction: 4000 })
     expect(result.leaveRecords).toHaveLength(3)
   })
 

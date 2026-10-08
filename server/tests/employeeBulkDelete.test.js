@@ -14,19 +14,26 @@ const mockEmployee = {
   deleteMany: jest.fn(),
   updateMany: jest.fn(),
   countDocuments: jest.fn(),
+  distinct: jest.fn(),
 }
+// 刪除前的「簽核影響」盤點會查進行中的簽核單與流程關卡；沒有資料庫連線時真實模型會一直等待，所以替換掉
+const mockApprovalRequest = { find: jest.fn() }
+const mockApprovalWorkflow = { find: jest.fn() }
 const mockDeleteEmployeePhoto = jest.fn()
 const mockIsManagedEmployeePhotoPath = jest.fn(() => true)
 const mockReadEmployeePhoto = jest.fn()
 const mockIsTokenBlacklisted = jest.fn()
 
 let bulkDeleteEmployees
+let previewDeleteImpact
 let app
 
 beforeAll(async () => {
   // 真實 app 的上傳中介層也會從照片儲存模組匯入其他成員，所以只覆寫本測試需要控制的函式
   const actualPhotoStorage = await import('../src/services/employeePhotoStorage.js')
   await jest.unstable_mockModule('../src/models/Employee.js', () => ({ default: mockEmployee }))
+  await jest.unstable_mockModule('../src/models/approval_request.js', () => ({ default: mockApprovalRequest }))
+  await jest.unstable_mockModule('../src/models/approval_workflow.js', () => ({ default: mockApprovalWorkflow }))
   await jest.unstable_mockModule('../src/services/employeePhotoStorage.js', () => ({
     ...actualPhotoStorage,
     deleteEmployeePhoto: mockDeleteEmployeePhoto,
@@ -37,9 +44,27 @@ beforeAll(async () => {
     isTokenBlacklisted: mockIsTokenBlacklisted,
     blacklistToken: jest.fn(),
   }))
-  ;({ bulkDeleteEmployees } = await import('../src/controllers/employeeController.js'))
+  ;({ bulkDeleteEmployees, previewDeleteImpact } = await import('../src/controllers/employeeController.js'))
   ;({ app } = await import('../src/index.js'))
 })
+
+const NO_IMPACT = {
+  pendingRequests: 0,
+  pendingApprovers: [],
+  subordinates: 0,
+  workflowSteps: 0,
+  lostTags: [],
+  incomplete: false,
+  messages: [],
+}
+
+/** find().select().limit().lean() 這種鏈式查詢的替身 */
+function queryChain(rows) {
+  const query = { select: jest.fn(), limit: jest.fn(), lean: jest.fn().mockResolvedValue(rows) }
+  query.select.mockReturnValue(query)
+  query.limit.mockReturnValue(query)
+  return query
+}
 
 const ACTOR_ID = oid(900)
 const PHOTO_A = '/upload/employees/employee_a.png'
@@ -95,6 +120,12 @@ beforeEach(() => {
   mockEmployee.exists.mockResolvedValue(null)
   mockEmployee.deleteMany.mockResolvedValue({ deletedCount: 0 })
   mockEmployee.updateMany.mockResolvedValue({ modifiedCount: 0 })
+  mockEmployee.countDocuments.mockResolvedValue(0)
+  mockEmployee.distinct.mockResolvedValue([])
+  mockApprovalRequest.find.mockReset()
+  mockApprovalRequest.find.mockReturnValue(queryChain([]))
+  mockApprovalWorkflow.find.mockReset()
+  mockApprovalWorkflow.find.mockReturnValue(queryChain([]))
   mockDeleteEmployeePhoto.mockReset()
   mockDeleteEmployeePhoto.mockResolvedValue(true)
   mockIsManagedEmployeePhotoPath.mockReset()
@@ -202,6 +233,7 @@ describe('bulkDeleteEmployees classification', () => {
         message: '管理員帳戶不可刪除',
       }],
       unassignedSubordinates: 0,
+      impact: NO_IMPACT,
       warnings: [],
     })
     expect(mockEmployee.deleteMany).not.toHaveBeenCalled()
@@ -319,6 +351,7 @@ describe('bulkDeleteEmployees deletion', () => {
       ],
       skipped: [],
       unassignedSubordinates: 4,
+      impact: NO_IMPACT,
       warnings: [],
     })
   })
@@ -667,6 +700,7 @@ describe('POST /api/employees/bulk-delete through the real app', () => {
         message: '不能刪除自己的帳號',
       }],
       unassignedSubordinates: 2,
+      impact: NO_IMPACT,
       warnings: [],
     })
     expect(mockEmployee.deleteMany).toHaveBeenCalledWith({
@@ -697,5 +731,96 @@ describe('POST /api/employees/bulk-delete through the real app', () => {
 
     expect(res.status).toBe(401)
     expect(mockEmployee.find).not.toHaveBeenCalled()
+  })
+})
+
+describe('bulkDeleteEmployees approval impact', () => {
+  const pendingFor = (...approverIds) => ({
+    steps: [{ approvers: approverIds.map((id) => ({ approver: id, decision: 'pending' })) }],
+  })
+
+  it('looks at pending approvals before deleting and returns the impact without blocking', async () => {
+    queueFinds([makeDoc(1, { name: '王主管' }), makeDoc(2)], [])
+    mockEmployee.deleteMany.mockResolvedValue({ deletedCount: 2 })
+    mockEmployee.updateMany.mockResolvedValue({ modifiedCount: 3 })
+    mockEmployee.countDocuments.mockResolvedValue(3)
+    mockApprovalRequest.find.mockReturnValue(queryChain([pendingFor(oid(1)), pendingFor(oid(1), oid(2)), pendingFor(oid(777))]))
+
+    const res = await run([oid(1), oid(2)])
+
+    expect(res.status).not.toHaveBeenCalled()
+    const body = responseBody(res)
+    expect(body.deletedCount).toBe(2)
+    expect(body.impact.pendingRequests).toBe(2)
+    expect(body.impact.pendingApprovers).toEqual([
+      { _id: oid(1), name: '王主管', employeeNo: 'E001', requests: 2 },
+      { _id: oid(2), name: '員工2', employeeNo: 'E002', requests: 1 },
+    ])
+    expect(body.impact.subordinates).toBe(3)
+    expect(body.impact.messages[0]).toContain('2 筆進行中的簽核單')
+    // 盤點必須在刪除之前，刪除後就查不到誰在等誰了
+    expect(mockApprovalRequest.find.mock.invocationCallOrder[0]).toBeLessThan(
+      mockEmployee.deleteMany.mock.invocationCallOrder[0]
+    )
+    // 影響只是提醒，不放進 warnings（那是給「刪除後善後失敗」用的）
+    expect(body.warnings).toEqual([])
+  })
+
+  it('only counts employees that will really be deleted (not admins or the actor)', async () => {
+    queueFinds([makeDoc(1), makeDoc(2, { role: 'admin' }), makeDoc(900)], [])
+    mockEmployee.deleteMany.mockResolvedValue({ deletedCount: 1 })
+
+    await run([oid(1), oid(2), oid(900)])
+
+    const approverFilter = mockApprovalRequest.find.mock.calls[0][0].steps.$elemMatch.approvers.$elemMatch.approver
+    expect(approverFilter).toEqual({ $in: [oid(1)] })
+  })
+
+  it('does not look anything up when every id is skipped', async () => {
+    queueFinds([makeDoc(1, { role: 'admin' })])
+
+    const res = await run([oid(1)])
+
+    expect(mockApprovalRequest.find).not.toHaveBeenCalled()
+    expect(responseBody(res).impact).toEqual(NO_IMPACT)
+  })
+
+  it('still deletes when the impact lookup fails, and says the numbers may be incomplete', async () => {
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {})
+    queueFinds([makeDoc(1)], [])
+    mockEmployee.deleteMany.mockResolvedValue({ deletedCount: 1 })
+    mockApprovalRequest.find.mockImplementation(() => {
+      throw new Error('mongodb://secret-host:27017 exploded')
+    })
+
+    const res = await run([oid(1)])
+
+    expect(res.status).not.toHaveBeenCalled()
+    const body = responseBody(res)
+    expect(body.deletedCount).toBe(1)
+    expect(body.impact.incomplete).toBe(true)
+    expect(body.impact.messages.at(-1)).toContain('無法確認')
+    expect(mockEmployee.deleteMany).toHaveBeenCalledTimes(1)
+    expect(JSON.stringify(errorSpy.mock.calls)).not.toContain('secret-host')
+  })
+})
+
+describe('previewDeleteImpact (direct)', () => {
+  it('does not delete anything and treats found admins and the actor as not deletable', async () => {
+    const select = jest.fn().mockResolvedValue([
+      makeDoc(1, { role: 'admin' }),
+      makeDoc(2),
+      makeDoc(900),
+    ])
+    mockEmployee.find.mockReturnValue({ select })
+    mockApprovalRequest.find.mockReturnValue(queryChain([{ steps: [{ approvers: [{ approver: oid(2), decision: 'pending' }] }] }]))
+    const res = makeRes()
+
+    await previewDeleteImpact(makeReq([oid(1), oid(2), oid(900)]), res)
+
+    expect(res.status).not.toHaveBeenCalled()
+    expect(res.json.mock.calls[0][0].impact.pendingRequests).toBe(1)
+    expect(mockEmployee.deleteMany).not.toHaveBeenCalled()
+    expect(mockEmployee.updateMany).not.toHaveBeenCalled()
   })
 })

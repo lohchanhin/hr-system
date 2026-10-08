@@ -3,16 +3,22 @@ import Employee from '../../models/Employee.js';
 import ApprovalRequest from '../../models/approval_request.js';
 import AttendanceSetting from '../../models/AttendanceSetting.js';
 import { Types } from 'mongoose';
-import dayjs from 'dayjs';
 import { getAllLeaveFieldInfos } from '../../services/leaveFieldService.js';
 import { leaveDaysFromCalendar, loadApprovedLeaveCalendar } from '../../services/approvedLeaveCalendarService.js';
 import { buildLiteralSearchRegex } from '../../utils/safeSearch.js';
+import { dateKeyToUtcMidnight, toTaipeiDateKey } from '../../utils/taipeiTime.js';
+import { candidateSelectKeys, pickFieldValue, resolveCandidateIds } from '../../utils/fieldCandidates.js';
 import {
   toEntityId,
   getAllowedScheduleEmployeeIds,
   attachShiftInfo,
   buildScheduleOverview,
 } from './scheduleShared.js';
+
+// 日期鍵（YYYY-MM-DD）加減幾天
+function shiftDateKey(dateKey, days) {
+  return new Date(dateKeyToUtcMidnight(dateKey).getTime() + days * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+}
 
 export async function listMonthlySchedules(req, res) {
   try {
@@ -192,43 +198,15 @@ export async function listMonthlySchedules(req, res) {
           }
         });
 
-        // 預設的「請假」與自建的請假表單並存時，每張請假表單各查一次
-        const leaveForms = await getAllLeaveFieldInfos({ withTypeOptions: false });
-        for (const { formId, startId, endId } of leaveForms) {
-          if (!formId || !startId || !endId) continue;
-          const monthStart = `${month}-01`;
-          const monthEnd = end.toISOString().slice(0, 10);
-          const leaveQuery = {
-            form: formId,
-            status: 'approved',
-            applicant_employee: { $in: employeeIdList },
-          };
-          leaveQuery[`form_data.${startId}`] = { $lt: monthEnd };
-          leaveQuery[`form_data.${endId}`] = { $gte: monthStart };
-          const leaveApprovals = await ApprovalRequest.find(leaveQuery)
-            .select(`applicant_employee form_data.${startId} form_data.${endId}`)
-            .lean();
-          leaveApprovals.forEach((approval) => {
-            const empId = approval.applicant_employee?.toString?.() || '';
-            const entry = statusMap.get(empId);
-            if (!entry) return;
-            const approvalStart = dayjs(approval.form_data?.[startId]);
-            const approvalEnd = dayjs(approval.form_data?.[endId]);
-            const monthStart = dayjs(start);
-            const monthEnd = dayjs(end).subtract(1, 'day');
-            const leaveStart = approvalStart.isAfter(monthStart) ? approvalStart : monthStart;
-            const leaveEnd = approvalEnd.isBefore(monthEnd) ? approvalEnd : monthEnd;
-            if (!leaveStart.isValid() || !leaveEnd.isValid() || leaveEnd.isBefore(leaveStart)) return;
-            let pointer = leaveStart.startOf('day');
-            while (!pointer.isAfter(leaveEnd, 'day')) {
-              entry.leaveDays.add(pointer.format('YYYY-MM-DD'));
-              pointer = pointer.add(1, 'day');
-            }
-          });
-        }
+        // 請假日以台灣時間判斷（台灣 7/1 的假存成 2026-06-30T16:00:00.000Z）：直接用假勤日曆，
+        // 它涵蓋預設的「請假」與自建的請假表單（含已停用的），跨月的假單只取本月的日子
+        const leaveCalendar = await loadApprovedLeaveCalendar({ employeeIds: employeeIdList, start, end });
+        employeeIdList.forEach((id) => {
+          statusMap.get(id).leaveDays = leaveDaysFromCalendar(leaveCalendar, id);
+        });
       }
 
-      const daysInMonth = dayjs(`${month}-01`).daysInMonth();
+      const daysInMonth = new Date(end.getTime() - 24 * 60 * 60 * 1000).getUTCDate();
       filteredEmployees = matchedEmployees.filter((emp) => {
         const key = emp._id.toString();
         const entry = statusMap.get(key) || { shiftDays: new Set(), leaveDays: new Set() };
@@ -449,8 +427,13 @@ export async function listLeaveApprovals(req, res) {
     const start = new Date(`${month}-01T00:00:00.000Z`);
     const end = new Date(start);
     end.setUTCMonth(end.getUTCMonth() + 1);
+    // 本月的台灣日期範圍 [monthStart, monthEnd)。資料庫端只能做字串比較，而存的是 UTC 的 ISO 字串
+    // （台灣 7/1 00:00 存成 2026-06-30T16:00:00.000Z，字串比 '2026-07-01' 小），所以查詢的兩邊各放寬一天，
+    // 真正屬於哪一天在程式裡用台灣日期判斷
     const monthStart = `${month}-01`;
     const monthEnd = end.toISOString().slice(0, 10);
+    const queryStart = shiftDateKey(monthStart, -1);
+    const queryEnd = shiftDateKey(monthEnd, 1);
 
     let departmentEmployeeIds = null;
     if (department || subDepartment) {
@@ -486,32 +469,49 @@ export async function listLeaveApprovals(req, res) {
 
     const leaves = [];
     const approvalsLite = [];
-    for (const { formId, startId, endId, typeId } of leaveForms) {
+    // 已停用的請假表單照樣查：它底下已核准的假單仍然有效。
+    // 欄位被停用或換成同標籤的新欄位後，舊假單的答案還在舊欄位 ID 底下，所以逐張假單用第一個有填值的同標籤欄位
+    for (const leaveForm of leaveForms) {
+      const { formId, startId, endId, typeId } = leaveForm;
+      const startIds = resolveCandidateIds(leaveForm.startIds, startId);
+      const endIds = resolveCandidateIds(leaveForm.endIds, endId);
+      const typeIds = resolveCandidateIds(leaveForm.typeIds, typeId);
+      if (!formId || !startIds.length || !endIds.length) continue;
+      const rangeConditions = startIds.flatMap((startField) => endIds.map((endField) => ({
+        [`form_data.${startField}`]: { $lt: queryEnd },
+        [`form_data.${endField}`]: { $gte: queryStart },
+      })));
       const formQuery = {
         ...approvalQuery,
         form: formId,
-        [`form_data.${startId}`]: { $lt: monthEnd },
-        [`form_data.${endId}`]: { $gte: monthStart },
+        // 開始、結束欄位各只有一個時是單純的範圍條件；有同標籤的候選欄位時，任一組合符合就先撈回來
+        ...(rangeConditions.length === 1 ? rangeConditions[0] : { $and: [{ $or: rangeConditions }] }),
       };
       const approvals = await ApprovalRequest.find(formQuery)
-        .select(`applicant_employee applicant_department status${typeId ? ` form_data.${typeId}` : ''} form_data.${startId} form_data.${endId}`)
+        .select(`applicant_employee applicant_department status ${candidateSelectKeys(typeIds, startIds, endIds).map((id) => `form_data.${id}`).join(' ')}`)
         .populate({ path: 'applicant_employee', select: 'name department subDepartment' })
         .lean();
 
       approvals.forEach((a) => {
+        const startDate = pickFieldValue(a.form_data, startIds);
+        const endDate = pickFieldValue(a.form_data, endIds);
+        const leaveStartKey = toTaipeiDateKey(startDate);
+        const leaveEndKey = toTaipeiDateKey(endDate);
+        if (!leaveStartKey || !leaveEndKey || leaveStartKey >= monthEnd || leaveEndKey < monthStart) return;
+        const leaveType = pickFieldValue(a.form_data, typeIds);
         leaves.push({
           employee: a.applicant_employee,
-          leaveType: a.form_data?.[typeId],
-          startDate: a.form_data?.[startId],
-          endDate: a.form_data?.[endId],
+          leaveType,
+          startDate,
+          endDate,
           status: a.status,
         });
         approvalsLite.push({
           _id: a._id,
           employee: a.applicant_employee,
-          leaveType: a.form_data?.[typeId],
-          startDate: a.form_data?.[startId],
-          endDate: a.form_data?.[endId],
+          leaveType,
+          startDate,
+          endDate,
           status: a.status,
         });
       });

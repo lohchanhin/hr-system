@@ -1,3 +1,6 @@
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import ShiftSchedule from '../models/ShiftSchedule.js';
 import AttendanceSetting from '../models/AttendanceSetting.js';
 import ApprovalRequest from '../models/approval_request.js';
@@ -8,7 +11,14 @@ import { isPayableNationalHoliday } from './countedHolidayService.js';
 import { computeShiftSpan } from '../utils/timeWindow.js';
 import { getAllLeaveFieldInfos } from './leaveFieldService.js';
 import { isNonWorkShift, resolveShiftSemanticType } from './shiftSemanticService.js';
+import { TAIPEI_OFFSET_MS, dateKeyToUtcMidnight, toTaipeiDateKey } from '../utils/taipeiTime.js';
+import { pickLeaveFields } from '../utils/leaveFieldLabels.js';
+import { isLeaveFormTemplate, isOvertimeFormTemplate } from '../utils/formSemantics.js';
+import { describeLeaveInterval, leaveIntervalsOverlap, parseLeaveInterval } from '../utils/leaveDuration.js';
 
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+// 簽核附件上傳的資料夾（與 approvalAttachmentUpload / approvalRequestController 相同）；單元測試會換成暫存資料夾
+let approvalUploadDir = path.join(__dirname, '../../../upload/approvals');
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const MS_PER_MINUTE = 60 * 1000;
 const MIN_REST_BETWEEN_SHIFTS_MINUTES = 11 * 60;
@@ -40,6 +50,13 @@ function startOfUtcDay(value) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return null;
   return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+}
+
+// 表單上填的日期時間（前端日期選擇器送出的是 UTC ISO 字串）一律用台灣時間判斷是哪一天，
+// 並以 UTC 午夜代表那一天（與班表日期同一種表示）；上面的 startOfUtcDay 只用在班表自己的日期。
+function formDay(value) {
+  const key = toTaipeiDateKey(value);
+  return key ? dateKeyToUtcMidnight(key) : null;
 }
 
 function addUtcDays(date, days) {
@@ -354,8 +371,8 @@ async function loadApprovedLeaveDaysMap(employeeIds, start, end) {
       const employeeId = normalizeId(approval.applicant_employee);
       const bucket = leaveDaysMap.get(employeeId);
       if (!bucket) continue;
-      const leaveStart = startOfUtcDay(approval.form_data?.[startId]);
-      const leaveEnd = startOfUtcDay(approval.form_data?.[endId]);
+      const leaveStart = formDay(approval.form_data?.[startId]);
+      const leaveEnd = formDay(approval.form_data?.[endId]);
       if (!leaveStart || !leaveEnd || leaveEnd < leaveStart) continue;
 
       const clampedStart = leaveStart > start ? leaveStart : start;
@@ -486,16 +503,13 @@ function normalizeLabel(value) {
   return String(value || '').trim().toLowerCase();
 }
 
+// 表單性質有設定就以它為準（「一般」就是一般，名稱含加班/請假也不套用規則），沒有表單性質的舊表單才用名稱推論
 function isOvertimeForm(form) {
-  if (normalizeLabel(form?.semanticType) === 'overtime') return true;
-  const name = normalizeLabel(form?.name);
-  return name.includes('加班') || name.includes('overtime');
+  return isOvertimeFormTemplate(form);
 }
 
 function isLeaveForm(form) {
-  if (normalizeLabel(form?.semanticType) === 'leave') return true;
-  const name = normalizeLabel(form?.name);
-  return name.includes('請假') || name.includes('leave');
+  return isLeaveFormTemplate(form);
 }
 
 async function loadFormFields(formId) {
@@ -540,19 +554,43 @@ function formValueText(value) {
   return String(value).trim();
 }
 
-function hasUploadedAttachment(value) {
-  const values = Array.isArray(value) ? value : [value];
-  return values.some((item) => {
-    const path = typeof item === 'object' && item
-      ? item.url ?? item.path ?? ''
-      : item;
-    return /^\/upload\/approvals\//.test(String(path || '').trim());
-  });
+const APPROVAL_UPLOAD_URL_PATTERN = /^\/upload\/approvals\/([^/\\?#]+)$/;
+
+// 只有 /api/approvals/attachments 上傳端點回傳的附件才算數：物件（{ name, url, size, type }）、
+// 網址指向簽核附件資料夾，而且檔案真的存在。自己編的路徑或純字串都不算。
+function isUploadedApprovalAttachment(item) {
+  if (!item || typeof item !== 'object') return false;
+  const match = APPROVAL_UPLOAD_URL_PATTERN.exec(String(item.url ?? item.path ?? '').trim());
+  if (!match) return false;
+  const filename = match[1];
+  if (filename === '.' || filename === '..' || path.basename(filename) !== filename) return false;
+  try {
+    return fs.statSync(path.join(approvalUploadDir, filename)).isFile();
+  } catch {
+    return false;
+  }
 }
 
-function validateRequiredFields(formData, fields) {
+function hasUploadedAttachment(value) {
+  const items = (Array.isArray(value) ? value : [value]).filter((item) => !isEmptyFormValue(item));
+  return items.length > 0 && items.every(isUploadedApprovalAttachment);
+}
+
+// asOf：以送簽當時的表單為準，送簽之後才新增或修改的欄位（例如後來加上的必填欄位）不追溯到已送出的單
+function fieldExistedAsOf(field, asOf) {
+  if (!asOf) return true;
+  const limit = new Date(asOf).getTime();
+  const touched = new Date(field.updatedAt ?? field.createdAt ?? 0).getTime();
+  if (!Number.isFinite(limit) || !Number.isFinite(touched)) return true;
+  return touched <= limit;
+}
+
+function validateRequiredFields(formData, fields, { asOf = null } = {}) {
   return fields
+    // 停用的欄位不會出現在填單畫面，沒有人能填，不能拿來擋送簽與核准
+    .filter((field) => field.is_active !== false)
     .filter((field) => field.required && field.type_1 !== 'checkbox')
+    .filter((field) => fieldExistedAsOf(field, asOf))
     .filter((field) => isEmptyFormValue(extractFormValue(formData, field)))
     .map((field) => makeViolation(
       'required-form-field',
@@ -563,10 +601,10 @@ function validateRequiredFields(formData, fields) {
 
 function validateLeaveRequest(formData, fields) {
   const violations = [];
-  const leaveTypeField = findField(fields, [/^假別$/, /leave.*type/]);
-  const reasonField = findField(fields, [/事由/, /原因/, /reason/]);
-  // 停用的欄位不會出現在填單畫面，不算證明欄位
+  // 停用的欄位不會出現在填單畫面，一律不參與判斷
   const activeFields = fields.filter((field) => field.is_active !== false);
+  const leaveTypeField = findField(activeFields, [/^假別$/, /leave.*type/]);
+  const reasonField = findField(activeFields, [/事由/, /原因/, /reason/]);
   const proofField = activeFields.find((field) => field.type_1 === 'file')
     || findField(activeFields, [/相關證明/, /證明/, /附件/, /proof/, /attachment/]);
   const leaveType = formValueText(extractFormValue(formData, leaveTypeField));
@@ -582,17 +620,82 @@ function validateLeaveRequest(formData, fields) {
     }
   }
 
-  // 只有表單真的有證明欄位（檔案 / 證明 / 附件）才要求附上證明；
+  // 只有表單真的有啟用中的證明欄位（檔案 / 證明 / 附件）才檢查附件，而且看那個欄位自己的必填設定：
+  // 必填就一定要附上系統上傳的附件；選填的欄位可以不附，但附了就必須是真的上傳檔案。
   // 客戶自建的請假表單沒有檔案欄位，使用者根本無從上傳，不能因此擋下送簽與核准。
-  if (proofField && !hasUploadedAttachment(extractFormValue(formData, proofField))) {
-    violations.push(makeViolation(
-      'leave-proof',
-      '請假申請必須附上相關證明',
-      { fieldId: normalizeId(proofField._id) },
-    ));
+  if (proofField) {
+    const proofValue = extractFormValue(formData, proofField);
+    const filled = !isEmptyFormValue(proofValue);
+    if (!hasUploadedAttachment(proofValue) && (proofField.required || filled)) {
+      violations.push(makeViolation(
+        'leave-proof',
+        // 選填欄位填了不是系統上傳的檔案，要說清楚是附件有問題，而不是沒附
+        proofField.required ? '請假申請必須附上相關證明' : '附件不是系統上傳的檔案，請重新上傳',
+        { fieldId: normalizeId(proofField._id) },
+      ));
+    }
   }
 
   return violations;
+}
+
+const LEAVE_CONFLICT_STATUS_LABELS = { pending: '簽核中', approved: '已核准' };
+
+// 同一位員工已送出（簽核中）或已核准的假單裡，有沒有和這段時間重疊的；退回、駁回、取消的不算
+async function findConflictingLeave({ employeeId, interval, ignoreRequestId }) {
+  const leaveForms = await getAllLeaveFieldInfos({ withTypeOptions: false });
+  for (const { formId, startId, endId } of leaveForms || []) {
+    if (!formId || !startId || !endId) continue;
+    let query = ApprovalRequest.find({
+      form: formId,
+      status: { $in: ['pending', 'approved'] },
+      applicant_employee: employeeId,
+    });
+    if (query && typeof query.select === 'function') {
+      query = query.select(`status form_data.${startId} form_data.${endId}`);
+    }
+    const rows = query && typeof query.lean === 'function' ? await query.lean() : await query;
+    for (const row of rows || []) {
+      if (ignoreRequestId && normalizeId(row._id) === ignoreRequestId) continue;
+      const other = parseLeaveInterval(row.form_data?.[startId], row.form_data?.[endId]);
+      if (leaveIntervalsOverlap(interval, other)) return { status: row.status, interval: other };
+    }
+  }
+  return null;
+}
+
+// 請假的時間順序（結束必須晚於開始），以及（checkConflicts 時）不可和自己已送出或已核准的假單重疊。
+// 日期以台灣時間判斷；找不到開始、結束欄位或欄位沒填的表單不在這裡檢查（必填由必填欄位檢核處理）。
+async function validateLeaveTimeRules({ formData, fields, applicantEmployeeId, checkConflicts, ignoreRequestId }) {
+  const activeFields = fields.filter((field) => field.is_active !== false);
+  const { startField, endField } = pickLeaveFields(activeFields);
+  if (!startField || !endField) return [];
+  const startValue = extractFormValue(formData, startField);
+  const endValue = extractFormValue(formData, endField);
+  if (isEmptyFormValue(startValue) || isEmptyFormValue(endValue)) return [];
+
+  const endFieldId = normalizeId(endField._id);
+  const interval = parseLeaveInterval(startValue, endValue, { startType: startField.type_1, endType: endField.type_1 });
+  if (!interval) {
+    return [makeViolation('leave-time-range', '請假的開始或結束時間無法判讀，請重新選擇', { fieldId: endFieldId })];
+  }
+  if (interval.reversed) {
+    return [makeViolation(
+      'leave-time-range',
+      interval.allDay ? '請假結束日期不可早於開始日期' : '請假結束時間必須晚於開始時間',
+      { fieldId: endFieldId },
+    )];
+  }
+
+  const employeeId = normalizeId(applicantEmployeeId);
+  if (!checkConflicts || !employeeId) return [];
+  const conflict = await findConflictingLeave({ employeeId, interval, ignoreRequestId: normalizeId(ignoreRequestId) });
+  if (!conflict) return [];
+  return [makeViolation(
+    'leave-overlap',
+    `請假時間與已申請的假單重疊（${LEAVE_CONFLICT_STATUS_LABELS[conflict.status] || conflict.status}：${describeLeaveInterval(conflict.interval)}），請勿重複申請`,
+    { fieldId: endFieldId, status: conflict.status },
+  )];
 }
 
 function boolValue(value) {
@@ -601,7 +704,9 @@ function boolValue(value) {
   return ['true', '1', 'yes', 'y', '是', '跨日'].includes(normalized);
 }
 
-function parseOvertimePayload(formData, fields) {
+function parseOvertimePayload(formData, rawFields) {
+  // 停用的欄位不會出現在填單畫面，同名的停用欄位不能蓋掉啟用中的欄位
+  const fields = (rawFields || []).filter((field) => field.is_active !== false);
   const startField = findField(fields, [/開始.*(時間|日期)/, /start/]);
   const endField = findField(fields, [/結束.*(時間|日期)/, /end/]);
   const hoursField = findField(fields, [/加班.*時數/, /^時數$/, /hours?/]);
@@ -628,9 +733,10 @@ function parseOvertimePayload(formData, fields) {
   }
 
   const hours = Number(rawHours);
-  const date = rawDate ? new Date(rawDate) : null;
-  if (Number.isFinite(hours) && hours > 0 && date && !Number.isNaN(date.getTime())) {
-    const start = startOfUtcDay(date);
+  // 只有日期與時數時，從那一天台灣時間 00:00 起算
+  const overtimeDay = rawDate ? formDay(rawDate) : null;
+  if (Number.isFinite(hours) && hours > 0 && overtimeDay) {
+    const start = new Date(overtimeDay.getTime() - TAIPEI_OFFSET_MS);
     return { start, end: new Date(start.getTime() + hours * 60 * MS_PER_MINUTE), minutes: Math.round(hours * 60) };
   }
 
@@ -658,8 +764,8 @@ async function loadApprovedOvertimeApprovals({ employeeId }) {
 }
 
 async function loadNearbySchedules(employeeId, payload) {
-  const start = addUtcDays(startOfUtcDay(payload.start), -2);
-  const end = addUtcDays(startOfUtcDay(payload.end), 3);
+  const start = addUtcDays(formDay(payload.start), -2);
+  const end = addUtcDays(formDay(payload.end), 3);
   return resolveLean(ShiftSchedule.find({
     employee: employeeId,
     date: { $gte: start, $lt: end },
@@ -728,7 +834,8 @@ export async function assertOvertimeApprovalCompliance({ form, formData, applica
       makeViolation('overtime-time-range', '加班申請需填寫可判讀的開始/結束時間或日期/時數'),
     ]);
   }
-  const overtimeDate = startOfUtcDay(payload.start);
+  // 加班屬於哪一天以台灣時間判斷：台灣早上 06:00 的加班是當天，不是 UTC 的前一天
+  const overtimeDate = formDay(payload.start);
   const [approved, policy] = await Promise.all([
     loadApprovedOvertimeApprovals({ employeeId }),
     loadLaborRulePolicy(),
@@ -751,12 +858,13 @@ export async function assertOvertimeApprovalCompliance({ form, formData, applica
     }
     const approvedPayload = parseOvertimeApprovalMinutes(approval, fieldCache.get(approvalFormId));
     if (!approvedPayload) continue;
-    if (approvedPayload.start >= rollingStart && approvedPayload.start < rollingEnd) {
+    const approvedDay = formDay(approvedPayload.start);
+    if (approvedDay >= rollingStart && approvedDay < rollingEnd) {
       approvedThreeMonthMinutes += approvedPayload.minutes;
     }
-    if (monthKey(approvedPayload.start) !== monthKey(overtimeDate)) continue;
+    if (monthKey(approvedDay) !== monthKey(overtimeDate)) continue;
     approvedMonthMinutes += approvedPayload.minutes;
-    if (dateKey(approvedPayload.start) === dateKey(overtimeDate)) {
+    if (dateKey(approvedDay) === dateKey(overtimeDate)) {
       approvedDayMinutes += approvedPayload.minutes;
     }
   }
@@ -828,11 +936,32 @@ export async function assertOvertimeApprovalCompliance({ form, formData, applica
   return { ok: true, violations: [] };
 }
 
-export async function assertApprovalRequestCompliance({ form, formData, applicantEmployeeId } = {}) {
+/**
+ * 送簽資料檢核（必填欄位、請假規則、加班規範）。
+ * - checkLeaveConflicts：送出新假單時設為 true，會拒絕和自己「簽核中 / 已核准」假單重疊（含完全重複）的請假；
+ *   核准、重送等重新檢核既有單據時要同時帶 ignoreRequestId（該單自己的 ID），否則會和自己重疊。
+ * - requiredFieldsAsOf：重新檢核既有單據（例如核准）時帶入該單的送簽時間，
+ *   送簽之後才新增或修改的必填欄位不追溯，避免管理員加了一個必填欄位就讓所有待簽的單都無法核准。
+ */
+export async function assertApprovalRequestCompliance({
+  form,
+  formData,
+  applicantEmployeeId,
+  checkLeaveConflicts = false,
+  ignoreRequestId = null,
+  requiredFieldsAsOf = null,
+} = {}) {
   const fields = await loadFormFields(form?._id);
-  const violations = validateRequiredFields(formData || {}, fields);
+  const violations = validateRequiredFields(formData || {}, fields, { asOf: requiredFieldsAsOf });
   if (isLeaveForm(form)) {
     violations.push(...validateLeaveRequest(formData || {}, fields));
+    violations.push(...await validateLeaveTimeRules({
+      formData: formData || {},
+      fields,
+      applicantEmployeeId,
+      checkConflicts: checkLeaveConflicts,
+      ignoreRequestId,
+    }));
   }
   if (violations.length) {
     throw new LaborRuleValidationError('送簽資料檢核未通過', violations);
@@ -851,9 +980,19 @@ export function isLaborRuleValidationError(error) {
   return error?.name === 'LaborRuleValidationError' || Array.isArray(error?.violations);
 }
 
+// 只給單元測試用：把附件資料夾換成暫存資料夾，回傳原本的資料夾
+function setApprovalUploadDir(dir) {
+  const previous = approvalUploadDir;
+  approvalUploadDir = dir;
+  return previous;
+}
+
 export const __testUtils = {
+  setApprovalUploadDir,
   dateKey,
   startOfUtcDay,
+  formDay,
+  hasUploadedAttachment,
   classifyShift,
   normalizeId,
   parseOvertimePayload,

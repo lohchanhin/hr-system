@@ -51,6 +51,53 @@ describe('Annual Leave Field Handling', () => {
       expect(result.$set['annualLeave.usedDays']).toBeUndefined();
     });
 
+    it('should not write usedDays when the form sends the value that is already stored (a stale form must not undo a deduction)', () => {
+      const existing = { annualLeave: { totalDays: 10, usedDays: 3 } };
+
+      const result = buildEmployeePatch({ annualLeave: { totalDays: 12, usedDays: 3, notes: 'n' } }, existing);
+
+      expect(result.$set['annualLeave.totalDays']).toBe(12);
+      expect(result.$set['annualLeave.notes']).toBe('n');
+      expect(result.$set).not.toHaveProperty(['annualLeave.usedDays']);
+      // 表單欄位送來的是文字也一樣比較數值；0 對 0 也是沒有變更
+      expect(buildEmployeePatch({ annualLeave: { usedDays: '3' } }, existing).$set).not.toHaveProperty(['annualLeave.usedDays']);
+      expect(buildEmployeePatch({ annualLeave: { usedDays: 0 } }, { annualLeave: { usedDays: 0 } }).$set)
+        .not.toHaveProperty(['annualLeave.usedDays']);
+    });
+
+    it('should write usedDays when the admin really changed it, including back to 0', () => {
+      const existing = { annualLeave: { totalDays: 10, usedDays: 3 } };
+
+      expect(buildEmployeePatch({ annualLeave: { usedDays: 5 } }, existing).$set['annualLeave.usedDays']).toBe(5);
+      expect(buildEmployeePatch({ annualLeave: { usedDays: 0 } }, existing).$set['annualLeave.usedDays']).toBe(0);
+      expect(buildEmployeePatch({ annualLeave: { usedDays: '' } }, existing).$set['annualLeave.usedDays']).toBe(0);
+    });
+
+    it('should keep writing usedDays when there is no stored value to compare with (bulk import, no existing)', () => {
+      expect(buildEmployeePatch({ annualLeave: { usedDays: 3 } }).$set['annualLeave.usedDays']).toBe(3);
+      expect(buildEmployeePatch({ annualLeave: { usedDays: 3 } }, null).$set['annualLeave.usedDays']).toBe(3);
+      expect(buildEmployeePatch({ annualLeave: { usedDays: 3 } }, { annualLeave: {} }).$set['annualLeave.usedDays']).toBe(3);
+    });
+
+    it('should never write the applied approval request ids from the edit form', () => {
+      const result = buildEmployeePatch(
+        { annualLeave: { totalDays: 5, usedDays: 2, appliedApprovalRequestIds: ['a', 'b'] } },
+        { annualLeave: { totalDays: 5, usedDays: 1 } },
+      );
+
+      expect(Object.keys(result.$set).filter((key) => key.includes('appliedApprovalRequestIds'))).toEqual([]);
+      expect(JSON.stringify(result)).not.toContain('appliedApprovalRequestIds');
+    });
+
+    it('should treat a supervisor of null or an empty string as "clear the supervisor"', () => {
+      for (const supervisor of [null, '']) {
+        const result = buildEmployeePatch({ supervisor }, { supervisor: 'someone' });
+        expect(result.$unset).toEqual({ supervisor: 1 });
+        expect(result.$set).not.toHaveProperty('supervisor');
+      }
+      expect(buildEmployeePatch({ supervisor: '507f1f77bcf86cd799439011' }).$set.supervisor).toBe('507f1f77bcf86cd799439011');
+    });
+
     it('should handle compensatoryHours alongside the other annualLeave fields', () => {
       const body = {
         annualLeave: {

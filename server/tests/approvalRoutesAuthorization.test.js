@@ -75,3 +75,22 @@ describe('approval template mutation authorization', () => {
     expect(res.body).toEqual({ ok: true })
   })
 })
+
+describe('approval request route access', () => {
+  it.each(['employee', 'supervisor', 'admin'])('lets a %s read the approval history (filtered to what they signed in the controller)', async (role) => {
+    currentUser = { id: `${role}-1`, role }
+
+    const res = await request(app).get('/api/approvals/history')
+
+    expect(res.status).toBe(200)
+    expect(res.body).toEqual({ ok: true })
+  })
+
+  it('does not let an unknown role in', async () => {
+    currentUser = { id: 'x-1', role: 'guest' }
+
+    const res = await request(app).get('/api/approvals/history')
+
+    expect(res.status).toBe(403)
+  })
+})

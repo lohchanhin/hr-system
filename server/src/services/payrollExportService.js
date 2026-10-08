@@ -4,7 +4,8 @@ import Employee from '../models/Employee.js';
 import ApprovalRequest from '../models/approval_request.js';
 import { calculateEmployeePayroll } from './payrollService.js';
 import { calculateCompleteWorkData } from './workHoursCalculationService.js';
-import { aggregateBonusFromApprovals } from '../utils/payrollPreviewUtils.js';
+import { aggregateBonusFromApprovals, loadBonusFieldsByForm } from '../utils/payrollPreviewUtils.js';
+import { approvedInMonthFilter, payrollMonthRange } from '../utils/payrollMonth.js';
 
 /**
  * 格式化日期為 YYYYMMDD
@@ -378,10 +379,11 @@ export async function generatePayrollExcel(month, bankTypeOrFormat, companyInfo 
     payrollRecords = await Promise.all(employees.map(async (employee) => {
       try {
         const customData = {};
+        let workData = null;
 
         // 計算工作時數資料
         try {
-          const workData = await calculateCompleteWorkData(employee._id.toString(), month);
+          workData = await calculateCompleteWorkData(employee._id.toString(), month);
           Object.assign(customData, {
             workDays: workData.workDays,
             scheduledHours: workData.scheduledHours,
@@ -402,20 +404,20 @@ export async function generatePayrollExcel(month, bankTypeOrFormat, companyInfo 
           console.error(`Error calculating work data for employee ${employee._id}:`, error);
         }
 
-        // 聚合獎金資料
+        // 聚合獎金資料：依核准完成的時間歸屬月份（台灣時間），核准的金額加在員工設定的獎金之上
         try {
-          const startDate = new Date(monthDate);
-          startDate.setUTCHours(0, 0, 0, 0);
-          const endDate = new Date(startDate);
-          endDate.setUTCMonth(endDate.getUTCMonth() + 1);
-
+          const bonusRange = payrollMonthRange(monthDate);
           const approvals = await ApprovalRequest.find({
             applicant_employee: employee._id,
-            status: 'approved',
-            createdAt: { $gte: startDate, $lt: endDate }
+            ...approvedInMonthFilter(bonusRange)
           }).populate('form').lean();
 
-          const bonusData = aggregateBonusFromApprovals(approvals);
+          const bonusData = aggregateBonusFromApprovals(approvals, {
+            employee,
+            workData,
+            fieldsByForm: await loadBonusFieldsByForm(approvals),
+            range: bonusRange
+          });
           Object.assign(customData, bonusData);
         } catch (error) {
           console.error(`Error aggregating approvals for employee ${employee._id}:`, error);

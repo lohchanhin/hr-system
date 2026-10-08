@@ -182,7 +182,8 @@
       <!-- 美化員工資料對話框 -->
       <el-dialog v-model="employeeDialogVisible" title="員工資料管理" width="1200px" class="employee-dialog"
         :close-on-click-modal="false">
-        <el-form ref="formRef" :model="employeeForm" :rules="rules" label-width="140px" class="employee-form">
+        <el-form ref="formRef" :model="employeeForm" :rules="rules" :validate-on-rule-change="false"
+          label-width="140px" class="employee-form">
           <el-tabs v-model="employeeDialogTab" type="border-card" class="employee-tabs">
             <!-- 帳號/權限 -->
             <el-tab-pane name="account">
@@ -200,8 +201,10 @@
                     <el-form-item label="登入帳號" required prop="username">
                       <el-input v-model="employeeForm.username" placeholder="請輸入登入帳號" />
                     </el-form-item>
-                    <el-form-item label="登入密碼" required prop="password">
-                      <el-input v-model="employeeForm.password" type="password" placeholder="請輸入密碼" show-password />
+                    <el-form-item label="登入密碼" :required="!isEditingEmployee" prop="password">
+                      <el-input v-model="employeeForm.password" type="password" autocomplete="new-password"
+                        :placeholder="isEditingEmployee ? '不修改請留空' : '請輸入密碼'" show-password />
+                      <div v-if="isEditingEmployee" class="option-desc">留空表示沿用原本的密碼；填寫新密碼會重設密碼並讓該員工重新登入。</div>
                     </el-form-item>
                   </div>
 
@@ -272,9 +275,14 @@
 
                     <el-form-item label="員工標籤">
                       <el-select v-model="employeeForm.signTags" multiple filterable allow-create default-first-option
-                        placeholder="選擇或新增標籤" class="tag-select">
-                        <el-option v-for="t in DEFAULT_TAGS" :key="t" :label="t" :value="t" />
+                        placeholder="選擇或新增標籤" class="tag-select" data-test="sign-tags-select"
+                        @change="handleSignTagsChange">
+                        <el-option v-for="t in signTagOptions" :key="t.name" :label="t.name" :value="t.name">
+                          <span class="tag-option-name">{{ t.name }}</span>
+                          <span v-if="formatSignTagMeta(t)" class="tag-option-meta">{{ formatSignTagMeta(t) }}</span>
+                        </el-option>
                       </el-select>
+                      <div class="option-desc">流程的「標籤」關卡會找持有這個標籤的在職員工簽核；清單右側為目前持有人數與被幾個流程關卡使用。</div>
                     </el-form-item>
                   </div>
                 </div>
@@ -448,7 +456,7 @@
                         </el-select>
                       </el-form-item>
                       <el-form-item label="直屬主管">
-                        <el-select v-model="employeeForm.supervisor" placeholder="選擇主管">
+                        <el-select v-model="employeeForm.supervisor" placeholder="選擇主管" clearable>
                           <el-option v-for="sup in supervisorList" :key="sup._id"
                             :label="sup.employeeNo ? `${sup.name}（${sup.employeeNo}）` : sup.name" :value="sup._id" />
                         </el-select>
@@ -1146,6 +1154,7 @@
                 <div class="bulk-import-update-hint">
                   開啟後，以員工編號（找不到時以 Email）比對系統裡已有的員工：已有的人「更新」檔案裡有填的欄位，
                   沒有的人才「新增」。檔案裡空白的欄位不會清掉原有資料；帳號、權限、Email 與密碼不會被更動。
+                  例外：簽核標籤、簽核角色、簽核層級只要檔案裡有這個欄位就以檔案為準（填了會取代原有設定、儲存格空白會清空）。
                   未開啟時，只要有人已存在就會停止匯入。
                 </div>
               </div>
@@ -1266,7 +1275,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onBeforeUnmount, computed, watch, reactive } from 'vue'
+import { ref, onMounted, onBeforeUnmount, computed, watch, reactive, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { apiFetch, importEmployeesBulk } from '../../api'
@@ -1583,6 +1592,11 @@ function mapRowToFormShape(row, mappings) {
       case 'identityCategory':
       case 'salaryItems':
         out[sysKey] = toCommaArray(raw)
+        break
+
+      // 簽核標籤：逗號、頓號、分號都可以分隔，並套用與後端相同的整理規則
+      case 'signTags':
+        out[sysKey] = normalizeSignTagList(String(raw ?? '').split(/[,，、;；\r\n]+/))
         break
 
       // 純數字
@@ -2321,6 +2335,27 @@ const BULK_IMPORT_FIELD_CONFIGS = Object.freeze([
     label: '眷口數',
     description: '眷口數',
     category: '特休與投保'
+  },
+  {
+    key: 'signTags',
+    header: 'signTags',
+    label: '簽核標籤',
+    description: '簽核標籤 (多個以逗號、頓號或分號分隔，例：人資,排班負責人)',
+    category: '簽核設定'
+  },
+  {
+    key: 'signRole',
+    header: 'signRole',
+    label: '簽核角色',
+    description: '簽核角色 (R001~R007，或：填報/覆核/審核/核定/知會/財務覆核/人資覆核)',
+    category: '簽核設定'
+  },
+  {
+    key: 'signLevel',
+    header: 'signLevel',
+    label: '簽核層級',
+    description: '簽核層級 (U001~U005，或 L1~L5)',
+    category: '簽核設定'
   }
 ])
 
@@ -2357,7 +2392,10 @@ const BULK_IMPORT_TEMPLATE_SAMPLE_EMPLOYEES = Object.freeze([
     partTime: 'FALSE',
     needClockIn: 'TRUE',
     lineId: 'hr-king',
-    languages: '中文,英文'
+    languages: '中文,英文',
+    signTags: '人資',
+    signRole: 'R007',
+    signLevel: 'U001'
   },
   {
     employeeId: 'EMP-0002',
@@ -2374,7 +2412,8 @@ const BULK_IMPORT_TEMPLATE_SAMPLE_EMPLOYEES = Object.freeze([
     partTime: 'FALSE',
     needClockIn: 'TRUE',
     lineId: 'nurse-ruby',
-    languages: '中文,台語'
+    languages: '中文,台語',
+    signTags: '排班負責人,支援單位主管'
   },
   {
     employeeId: 'EMP-0003',
@@ -2876,7 +2915,8 @@ const SIGN_LEVEL_OPTIONS = [
   { id: 'U004', label: 'L4', description: '高階主管或副執行長' },
   { id: 'U005', label: 'L5', description: '執行長 / 院長 / 董事會' }
 ] // 簽核層級
-const DEFAULT_TAGS = ['資深', '新人', '外聘', '志工']
+// 預設流程範本會用到的標籤；只在標籤清單 API（/api/employees/sign-tags）失敗時當備援
+const DEFAULT_TAGS = ['人資', '支援單位主管', '排班負責人', '財務覆核', '業務主管', '業務負責人']
 const SERVICE_TYPES = ['義務役', '志願役', '替代役', '免役', '尚未服役']
 const ABO_TYPES = ['A', 'B', 'O', 'AB', 'HR']                                                   // 依你的表格式
 
@@ -2947,6 +2987,60 @@ function formatPermissionGradeLabel(option) {
 function formatSignLevelLabel(option) {
   if (!option) return ''
   return `${option.id}｜${option.label}`
+}
+
+/* 員工標籤 ------------------------------------------------------------------- */
+// 與後端相同的整理規則（NFKC、去頭尾空白、壓縮空白、去空、去重）。
+// 不整理的話「人資 」與「人資」會變成兩個不同標籤，簽核流程永遠找不到人。
+function normalizeSignTagList(list) {
+  const seen = new Set()
+  const result = []
+  ;(Array.isArray(list) ? list : []).forEach(item => {
+    if (typeof item !== 'string' && typeof item !== 'number') return
+    const tag = String(item).normalize('NFKC').replace(/\s+/g, ' ').trim()
+    if (!tag || seen.has(tag)) return
+    seen.add(tag)
+    result.push(tag)
+  })
+  return result
+}
+
+// 標籤清單：預設先用流程範本需要的標籤，載入 /api/employees/sign-tags 成功後換成完整清單（含持有人數）
+const signTagOptions = ref(DEFAULT_TAGS.map(name => ({ name, count: null, requiredByWorkflows: null })))
+
+function formatSignTagMeta(tag) {
+  const parts = []
+  if (Number.isFinite(tag?.count)) parts.push(`${tag.count} 人持有`)
+  if (Number.isFinite(tag?.requiredByWorkflows) && tag.requiredByWorkflows > 0) {
+    parts.push(`${tag.requiredByWorkflows} 個流程關卡使用`)
+  }
+  return parts.join('・')
+}
+
+async function fetchSignTagOptions() {
+  try {
+    const res = await apiFetch('/api/employees/sign-tags')
+    if (!res?.ok) return
+    const payload = await res.json()
+    const options = (Array.isArray(payload?.tags) ? payload.tags : [])
+      .map(tag => ({
+        name: normalizeSignTagList([tag?.name])[0] || '',
+        count: Number.isFinite(Number(tag?.count)) ? Number(tag.count) : null,
+        requiredByWorkflows: Number.isFinite(Number(tag?.requiredByWorkflows))
+          ? Number(tag.requiredByWorkflows)
+          : null
+      }))
+      .filter(tag => tag.name)
+    if (options.length) signTagOptions.value = options
+  } catch (error) {
+    // 清單載入失敗時沿用預設標籤，不擋住員工表單
+    console.warn('載入員工標籤清單失敗', error)
+  }
+}
+
+// 自行輸入的標籤要先整理（el-select 的 allow-create 不會去掉前後空白）
+function handleSignTagsChange(values) {
+  employeeForm.value.signTags = normalizeSignTagList(values)
 }
 
 /* 狀態 --------------------------------------------------------------------- */
@@ -3695,9 +3789,13 @@ const createNonNegativeRule = label => ({
   },
   trigger: ['blur', 'change']
 })
-const rules = {
+// 編輯既有員工時登入密碼是選填（留空＝沿用原密碼）；只有新增員工才必填
+const isEditingEmployee = ref(false)
+const rules = computed(() => ({
   username: [{ required: true, message: '請輸入登入帳號', trigger: 'blur' }],
-  password: [{ required: true, message: '請輸入登入密碼', trigger: 'blur' }],
+  password: isEditingEmployee.value
+    ? []
+    : [{ required: true, message: '請輸入登入密碼', trigger: 'blur' }],
   role: [{ required: true, message: '請選擇系統權限', trigger: 'change' }],
   organization: [{ required: true, message: '請選擇所屬機構', trigger: 'change' }],
   department: [{ required: true, message: '請選擇所屬部門', trigger: 'change' }],
@@ -3734,7 +3832,7 @@ const rules = {
       trigger: 'change'
     }
   ]
-}
+}))
 
 /* 派生 --------------------------------------------------------------------- */
 const filteredDepartments = computed(() =>
@@ -4740,6 +4838,7 @@ async function openEmployeeDialog(employeeId = null) {
     const emp = normalizeEmployeeRecord(await detailResponse.json())
     emp._photoObjectUrl = summaryEmployee?._photoObjectUrl || ''
     editEmployeeIndex = index
+    isEditingEmployee.value = true
     editEmployeeId = emp._id || ''
     currentSupervisorInfo.value = emp.supervisorInfo ?? null
     // 以 emptyEmployee 為基底，可避免漏欄位
@@ -4752,6 +4851,7 @@ async function openEmployeeDialog(employeeId = null) {
     employeeForm.value.permissionGrade = normalizePermissionGrade(employeeForm.value.permissionGrade)
     employeeForm.value.signRole = normalizeSignRole(employeeForm.value.signRole)
     employeeForm.value.signLevel = normalizeSignLevel(employeeForm.value.signLevel)
+    employeeForm.value.signTags = normalizeSignTagList(employeeForm.value.signTags)
     employeeForm.value.photo = employeeForm.value.photo || ''
     const existingPhotoFile = buildPhotoUploadFile(
       emp._photoObjectUrl || employeeForm.value.photo,
@@ -4814,6 +4914,7 @@ async function openEmployeeDialog(employeeId = null) {
     employeeForm.value.graduationStatus = extractOptionValue(employeeForm.value.graduationStatus)
   } else {
     editEmployeeIndex = null
+    isEditingEmployee.value = false
     editEmployeeId = ''
     currentSupervisorInfo.value = null
     employeeDialogTab.value = 'account'
@@ -4835,6 +4936,39 @@ async function openEmployeeDialog(employeeId = null) {
   await fetchSubDepartments(employeeForm.value.department)
   employeeDialogVisible.value = true
   void fetchSupervisorCandidates()
+  void fetchSignTagOptions()
+  // 表單值整批換掉時，上一次留下的紅字（例如新增員工按儲存後的「請輸入登入密碼」）會殘留在欄位上，
+  // 編輯時選填的密碼還是紅的；等畫面更新完再清掉驗證狀態
+  await nextTick()
+  formRef.value?.clearValidate?.()
+}
+
+// 驗證欄位所在的分頁：必填欄位在別的分頁時，使用者看不到錯誤，要幫他切過去
+const EMPLOYEE_TAB_LABELS = {
+  account: '帳號權限',
+  approval: '簽核設定',
+  personal: '個人資訊',
+  employment: '任職資訊',
+  more: '更多資訊',
+  salary: '薪資設定'
+}
+const EMPLOYEE_FIELD_TABS = {
+  username: 'account',
+  password: 'account',
+  role: 'account',
+  name: 'personal',
+  gender: 'personal',
+  email: 'personal',
+  organization: 'employment',
+  department: 'employment'
+}
+function resolveEmployeeFieldTab(prop) {
+  const key = String(prop ?? '')
+  if (EMPLOYEE_FIELD_TABS[key]) return EMPLOYEE_FIELD_TABS[key]
+  if (/^(laborPensionSelf|employeeAdvance|salaryItems|laborInsuredSalary|pensionInsuredSalary|healthInsuredSalary|dependentCount|monthlySalaryAdjustments|annualLeave)/.test(key)) {
+    return 'salary'
+  }
+  return ''
 }
 
 async function saveEmployee() {
@@ -4845,15 +4979,36 @@ async function saveEmployee() {
     errors = err
   }
   if (errors) {
-    const fields = Object.values(errors)
-      .flat()
-      .map(e => e.message.replace(/^請(?:輸入|選擇)(?:有效)?\s*/, ''))
-    ElMessageBox.alert(`請補齊：${fields.join('、')}`)
+    // 同一欄位可能有多則錯誤；每個欄位只列一次，並標示它在哪個分頁
+    const seen = new Set()
+    const fields = []
+    Object.entries(errors).forEach(([prop, list]) => {
+      const tabLabel = EMPLOYEE_TAB_LABELS[resolveEmployeeFieldTab(prop)]
+      ;[].concat(list ?? []).forEach(e => {
+        const label = String(e?.message ?? '').replace(/^請(?:輸入|選擇)(?:有效)?\s*/, '')
+        if (!label || seen.has(label)) return
+        seen.add(label)
+        fields.push(tabLabel ? `${label}（${tabLabel}）` : label)
+      })
+    })
+    // 欄位在別的分頁時，切到第一個有問題的欄位所在的分頁
+    const firstTab = resolveEmployeeFieldTab(Object.keys(errors)[0])
+    let hint = ''
+    if (firstTab && firstTab !== employeeDialogTab.value) {
+      employeeDialogTab.value = firstTab
+      hint = `。已切換到「${EMPLOYEE_TAB_LABELS[firstTab]}」分頁。`
+    }
+    ElMessageBox.alert(`請補齊：${fields.join('、')}${hint}`)
     return
   }
 
   const form = employeeForm.value
   const payload = { ...form }
+  payload.signTags = normalizeSignTagList(form.signTags)
+  // 編輯既有員工時密碼是選填：留空代表沿用原密碼，絕對不能把空白密碼送出去
+  if (editEmployeeIndex !== null && !String(form.password ?? '').trim()) {
+    delete payload.password
+  }
   payload.title = extractOptionValue(form.title)
   payload.practiceTitle = extractOptionValue(form.practiceTitle)
   
@@ -4894,7 +5049,11 @@ async function saveEmployee() {
     form.monthlySalaryAdjustments
   )
   payload.dischargeYear = toNumberOrNull(form.dischargeYear)
-  if (payload.supervisor === '' || payload.supervisor === null) delete payload.supervisor
+  // 直屬主管：新增時沒選就不送；編輯時管理員把它清空，要明確送 null 才會取消（不送會沿用原本的主管）
+  if (payload.supervisor === '' || payload.supervisor === null || payload.supervisor === undefined) {
+    if (editEmployeeIndex !== null) payload.supervisor = null
+    else delete payload.supervisor
+  }
 
   const normalizedLicenses = (Array.isArray(form.licenses) ? form.licenses : [])
     .map(license => {
@@ -4960,6 +5119,11 @@ async function saveEmployee() {
     Object.keys(payload).forEach(key => {
       if (key !== 'photo' && key !== 'photoList') {
         const value = payload[key]
+        // multipart 無法表示 null：清空直屬主管時改送空字串（伺服器同樣視為取消）
+        if (key === 'supervisor' && value === null) {
+          formData.append(key, '')
+          return
+        }
         if (value !== undefined && value !== null) {
           if (typeof value === 'object') {
             formData.append(key, JSON.stringify(value))
@@ -5004,7 +5168,15 @@ async function saveEmployee() {
     employeeDialogVisible.value = false
     ElMessage.success('儲存成功')
   } else {
-    ElMessage.error('儲存失敗')
+    // 伺服器回的是中文說明（例如簽核角色不正確）就直接顯示，否則維持通用訊息
+    let message = '儲存失敗'
+    try {
+      const data = await res?.json?.()
+      if (typeof data?.error === 'string' && /[一-鿿]/.test(data.error)) message = data.error
+    } catch {
+      // 回應不是 JSON 時沿用通用訊息
+    }
+    ElMessage.error(message)
   }
 }
 
@@ -5015,23 +5187,101 @@ async function deleteEmployee(employeeId) {
     return
   }
   const emp = employeeList.value[index]
-  
+
   // Prevent deleting admin accounts
   if (emp.role === 'admin') {
     ElMessage.warning('管理員帳戶不可刪除')
     return
   }
-  
+
+  // 刪除前先讓管理員看到「刪掉之後簽核會怎樣」；查詢失敗不擋刪除
+  const impact = await fetchDeleteImpact([emp])
+  if (!(await confirmSingleDelete(emp, impact))) return
+
   const res = await apiFetch(`/api/employees/${emp._id}`, {
     method: 'DELETE'
   })
-  
+
   if (res.ok) {
     await fetchEmployees()
     ElMessage.success('刪除成功')
+    const data = await res.json().catch(() => ({}))
+    showDeleteImpactMessages(data?.impact ?? impact)
+    const unassignedSubordinates = Number(data?.unassignedSubordinates) || 0
+    if (unassignedSubordinates > 0) {
+      ElMessage.info({
+        message: `有 ${unassignedSubordinates} 位員工的直屬主管已被刪除，目前沒有直屬主管，請為他們重新指定。`,
+        duration: 8000,
+        showClose: true,
+      })
+    }
   } else {
     const data = await res.json().catch(() => ({}))
     ElMessage.error(data.error || '刪除失敗')
+  }
+}
+
+/* 刪除前的簽核影響 ----------------------------------------------------------- */
+// 向後端查詢「刪除這些員工之後，簽核會怎樣」（進行中的簽核單、直屬主管、流程關卡、標籤）。
+// 只是提醒，不阻擋刪除：查詢失敗就回傳 null，確認視窗照常顯示。
+async function fetchDeleteImpact(rows) {
+  try {
+    const res = await apiFetch('/api/employees/delete-impact', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids: rows.map(emp => String(emp._id)) }),
+    })
+    if (!res?.ok) return null
+    const data = await res.json()
+    const impact = data?.impact
+    return impact && typeof impact === 'object' && !Array.isArray(impact) ? impact : null
+  } catch (error) {
+    console.warn('無法預覽刪除的簽核影響', error)
+    return null
+  }
+}
+
+function getDeleteImpactMessages(impact) {
+  return Array.isArray(impact?.messages)
+    ? impact.messages.filter(message => typeof message === 'string' && message.trim())
+    : []
+}
+
+function appendDeleteImpactLines(lines, impact) {
+  const messages = getDeleteImpactMessages(impact)
+  if (!messages.length) return
+  lines.push('', '【簽核影響】')
+  messages.forEach(message => lines.push(`・${message}`))
+}
+
+function showDeleteImpactMessages(impact) {
+  const messages = getDeleteImpactMessages(impact)
+  if (!messages.length) return
+  ElMessage.warning({ message: messages.join('；'), duration: 10000, showClose: true })
+}
+
+async function confirmSingleDelete(emp, impact) {
+  const lines = [
+    `即將刪除 ${formatBulkDeleteLabel(emp)}。`,
+    '',
+    '此操作無法復原，這位員工的帳號與資料將被永久刪除。',
+    '考勤、薪資、排班等歷史紀錄不會一併刪除。',
+    '若只是離職，建議改把狀態設為「離職員工」，歷史資料與報表才會完整。'
+  ]
+  appendDeleteImpactLines(lines, impact)
+  try {
+    await ElMessageBox.confirm(lines.join('\n'), '確認刪除員工', {
+      type: 'warning',
+      confirmButtonText: '確認刪除',
+      cancelButtonText: '取消',
+      confirmButtonClass: 'el-button--danger',
+      customClass: 'bulk-delete-confirm',
+      closeOnClickModal: false,
+      autofocus: false,
+    })
+    return true
+  } catch {
+    return false
   }
 }
 
@@ -5078,7 +5328,7 @@ function formatBulkDeleteLabel(emp) {
   return `${emp?.name || '未設定'}（${emp?.employeeNo || '無編號'}）`
 }
 
-function buildBulkDeleteConfirmMessage(rows) {
+function buildBulkDeleteConfirmMessage(rows, impact = null) {
   const lines = [`即將刪除 ${rows.length} 位員工：`]
   rows.slice(0, BULK_DELETE_LIST_PREVIEW_LIMIT).forEach(emp => lines.push(formatBulkDeleteLabel(emp)))
   if (rows.length > BULK_DELETE_LIST_PREVIEW_LIMIT) {
@@ -5089,6 +5339,7 @@ function buildBulkDeleteConfirmMessage(rows) {
     '此操作無法復原，這些員工的帳號與資料將被永久刪除。',
     '考勤、薪資、排班等歷史紀錄不會一併刪除。'
   )
+  appendDeleteImpactLines(lines, impact)
   if (rows.length > BULK_DELETE_TYPED_CONFIRM_THRESHOLD) {
     lines.push('', `請在下方輸入「${BULK_DELETE_CONFIRM_WORD}」以確認。`)
   }
@@ -5096,8 +5347,8 @@ function buildBulkDeleteConfirmMessage(rows) {
 }
 
 // 回傳 true 代表使用者已確認；取消或關閉視窗一律回傳 false，不送出任何請求
-async function confirmBulkDelete(rows) {
-  const message = buildBulkDeleteConfirmMessage(rows)
+async function confirmBulkDelete(rows, impact = null) {
+  const message = buildBulkDeleteConfirmMessage(rows, impact)
   const options = {
     type: 'warning',
     confirmButtonText: '確認刪除',
@@ -5195,6 +5446,8 @@ async function submitBulkDelete(rows) {
   if (serverWarnings.length > 0) {
     ElMessage.warning({ message: serverWarnings.join('；'), duration: 8000, showClose: true })
   }
+  // 刪除前盤點到的簽核影響（等待簽核的單、失去簽核人的流程關卡…）
+  showDeleteImpactMessages(data.impact)
 
   // 重新載入列表時會一併清掉勾選（已刪除的列不能再被送出）
   await fetchEmployees()
@@ -5215,7 +5468,9 @@ async function handleBulkDelete() {
 
   bulkDeleteBusy = true
   try {
-    if (!(await confirmBulkDelete(rows))) return
+    // 先查「刪掉之後簽核會怎樣」並顯示在確認視窗；查詢失敗不擋刪除
+    const impact = await fetchDeleteImpact(rows)
+    if (!(await confirmBulkDelete(rows, impact))) return
     bulkDeleting.value = true
     await submitBulkDelete(rows)
   } finally {
@@ -5948,6 +6203,13 @@ function getStatusTagType(status) {
 
 .tag-select {
   width: 100%;
+}
+
+.tag-option-meta {
+  float: right;
+  margin-left: 16px;
+  font-size: 12px;
+  color: #94a3b8;
 }
 
 /* 緊急聯絡人 */

@@ -3,7 +3,8 @@ import PayrollRecord from '../models/PayrollRecord.js';
 import Employee from '../models/Employee.js';
 import { calculateEmployeePayroll, extractRecurringAllowance } from './payrollService.js';
 import { calculateCompleteWorkData } from './workHoursCalculationService.js';
-import { aggregateBonusFromApprovals } from '../utils/payrollPreviewUtils.js';
+import { aggregateBonusFromApprovals, loadBonusFieldsByForm } from '../utils/payrollPreviewUtils.js';
+import { approvedInMonthFilter, payrollMonthRange } from '../utils/payrollMonth.js';
 import ApprovalRequest from '../models/approval_request.js';
 import mongoose from 'mongoose';
 import { registerTraditionalChinesePdfFont } from './pdfFontService.js';
@@ -59,7 +60,7 @@ export async function generateMonthlyPayrollOverviewPdf(month, filters = {}) {
     .populate('department')
     .populate('subDepartment')
     .populate('organization')
-    .select('employeeId name department subDepartment organization salaryAmount salaryType salaryItems salaryItemAmounts annualLeave');
+    .select('employeeId name department subDepartment organization salaryAmount salaryType salaryItems salaryItemAmounts annualLeave monthlySalaryAdjustments');
 
   if (employees.length === 0) {
     throw new Error('No employees found matching the criteria');
@@ -129,19 +130,20 @@ export async function generateMonthlyPayrollOverviewPdf(month, filters = {}) {
 
         try {
           if (mongoose.Types.ObjectId.isValid(employeeIdStr)) {
-            const startDate = new Date(monthDate);
-            startDate.setUTCHours(0, 0, 0, 0);
-            const endDate = new Date(startDate);
-            endDate.setUTCMonth(endDate.getUTCMonth() + 1);
-
+            // 獎金申請依核准完成的時間歸屬月份（台灣時間），核准的金額加在員工設定的獎金之上
+            const bonusRange = payrollMonthRange(monthDate);
             const approvals = await ApprovalRequest.find({
               applicant_employee: employeeIdStr,
-              status: 'approved',
-              createdAt: { $gte: startDate, $lt: endDate }
+              ...approvedInMonthFilter(bonusRange)
             }).populate('form').lean();
 
             if (approvals.length > 0) {
-              const bonusData = aggregateBonusFromApprovals(approvals);
+              const bonusData = aggregateBonusFromApprovals(approvals, {
+                employee,
+                workData,
+                fieldsByForm: await loadBonusFieldsByForm(approvals),
+                range: bonusRange
+              });
               Object.entries(bonusData || {}).forEach(([key, value]) => {
                 if (typeof value === 'number') {
                   customData[key] = value;
@@ -163,17 +165,21 @@ export async function generateMonthlyPayrollOverviewPdf(month, filters = {}) {
 
     // Override night shift data with dynamically calculated values if available
     if (payroll && workData) {
+      // 剛算出來的薪資（沒有薪資記錄）夜班津貼已經加上核准的夜班獎金申請，不能再被動態值蓋掉
+      const nightShiftAllowance = payrollMap[employeeIdStr]
+        ? workData.nightShiftAllowance
+        : (payroll.nightShiftAllowance ?? workData.nightShiftAllowance);
       payroll = {
         ...payroll,
         nightShiftDays: workData.nightShiftDays,
         nightShiftHours: workData.nightShiftHours,
-        nightShiftAllowance: workData.nightShiftAllowance,
+        nightShiftAllowance,
         nightShiftCalculationMethod: workData.nightShiftCalculationMethod,
         nightShiftBreakdown: workData.nightShiftBreakdown,
         nightShiftConfigurationIssues: workData.nightShiftConfigurationIssues,
         overtimeIssues: workData.overtimeIssues,
         totalBonus: (payroll.overtimePay || 0) +
-                   (workData.nightShiftAllowance || 0) + 
+                   (nightShiftAllowance || 0) + 
                    (payroll.performanceBonus || 0) + 
                    (payroll.otherBonuses || 0),
       };

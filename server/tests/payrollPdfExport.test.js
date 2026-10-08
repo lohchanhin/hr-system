@@ -18,6 +18,7 @@ const mockCalculateEmployeePayroll = jest.fn();
 const mockExtractRecurringAllowance = jest.fn();
 const mockCalculateCompleteWorkData = jest.fn();
 const mockAggregateBonusFromApprovals = jest.fn();
+const mockLoadBonusFieldsByForm = jest.fn().mockResolvedValue(new Map());
 
 jest.unstable_mockModule('../src/models/PayrollRecord.js', () => ({
   default: mockPayrollRecord
@@ -41,7 +42,8 @@ jest.unstable_mockModule('../src/services/workHoursCalculationService.js', () =>
 }));
 
 jest.unstable_mockModule('../src/utils/payrollPreviewUtils.js', () => ({
-  aggregateBonusFromApprovals: mockAggregateBonusFromApprovals
+  aggregateBonusFromApprovals: mockAggregateBonusFromApprovals,
+  loadBonusFieldsByForm: mockLoadBonusFieldsByForm
 }));
 
 describe('Payroll PDF Export Service', () => {

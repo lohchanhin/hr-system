@@ -2,9 +2,12 @@
 import Employee from '../models/Employee.js'   // ← 對齊你新的 model 檔名
 import ShiftSchedule from '../models/ShiftSchedule.js'
 import ApprovalRequest from '../models/approval_request.js'
+import ApprovalWorkflow from '../models/approval_workflow.js'
 import dayjs from 'dayjs'
 import mongoose from 'mongoose'
 import { getAllLeaveFieldInfos } from '../services/leaveFieldService.js'
+import { eligibleEmployeeFilter, isEligibleApprover } from '../services/approverEligibility.js'
+import { normalizeSignTags } from '../utils/signTags.js'
 import {
   deleteEmployeePhoto,
   isManagedEmployeePhotoPath,
@@ -30,6 +33,7 @@ const toArray = (v) => {
   return [v]
 }
 const toStr = (v) => (v === '' || v === null || v === undefined ? '' : String(v))
+const isBlankPassword = (v) => v === null || v === undefined || (typeof v === 'string' && v.trim() === '')
 const firstOr = (arr, fallback) => (Array.isArray(arr) && arr.length ? arr[0] : fallback)
 
 const normalizeSalaryItemAmounts = (map = {}, salaryItems = []) => {
@@ -79,6 +83,74 @@ const MARITAL_STATUSES = ['已婚', '未婚', '離婚', '喪偶']
 const EMPLOYMENT_STATUSES = ['正職員工', '試用期員工', '離職員工', '留職停薪']
 const BLOOD_TYPES = ['A', 'B', 'O', 'AB', 'HR']
 const GRADUATION_STATUSES = ['畢業', '肄業']
+
+/* 簽核設定：角色 R001~R007、層級 U001~U005（與前端 EmployeeManagement.vue 的選項一致） */
+export const SIGN_ROLE_OPTIONS = Object.freeze([
+  { id: 'R001', label: '填報' },
+  { id: 'R002', label: '覆核' },
+  { id: 'R003', label: '審核' },
+  { id: 'R004', label: '核定' },
+  { id: 'R005', label: '知會' },
+  { id: 'R006', label: '財務覆核' },
+  { id: 'R007', label: '人資覆核' },
+])
+export const SIGN_LEVEL_OPTIONS = Object.freeze([
+  { id: 'U001', label: 'L1' },
+  { id: 'U002', label: 'L2' },
+  { id: 'U003', label: 'L3' },
+  { id: 'U004', label: 'L4' },
+  { id: 'U005', label: 'L5' },
+])
+const SIGN_ROLE_IDS = new Set(SIGN_ROLE_OPTIONS.map((option) => option.id))
+const SIGN_LEVEL_IDS = new Set(SIGN_LEVEL_OPTIONS.map((option) => option.id))
+const SIGN_ROLE_LABELS = new Map(SIGN_ROLE_OPTIONS.map((option) => [option.label, option.id]))
+// 舊資料與匯入檔常寫成「覆核人員」「財務覆核人員」
+SIGN_ROLE_OPTIONS.forEach((option) => SIGN_ROLE_LABELS.set(`${option.label}人員`, option.id))
+const SIGN_LEVEL_LABELS = new Map(SIGN_LEVEL_OPTIONS.map((option) => [option.label, option.id]))
+const MAX_SIGN_TAGS = 50
+const MAX_SIGN_TAG_LENGTH = 50
+
+// 回傳代碼（R001 / U001）、空字串（清空）、undefined（沒給）或 null（不認得）
+function resolveSignCode(value, ids, labels) {
+  if (value === undefined) return undefined
+  if (value === null) return ''
+  if (typeof value !== 'string' && typeof value !== 'number') return null
+  const text = String(value).normalize('NFKC').trim()
+  if (!text) return ''
+  const upper = text.toUpperCase()
+  if (ids.has(upper)) return upper
+  return labels.get(text) ?? labels.get(upper) ?? null
+}
+export const resolveSignRole = (value) => resolveSignCode(value, SIGN_ROLE_IDS, SIGN_ROLE_LABELS)
+export const resolveSignLevel = (value) => resolveSignCode(value, SIGN_LEVEL_IDS, SIGN_LEVEL_LABELS)
+const unknownToUndefined = (value) => (value === null ? undefined : value)
+
+const describeInvalidValue = (value) => String(value).slice(0, 20)
+
+/**
+ * 檢查請求裡的簽核設定（角色／層級／標籤），不合格回傳中文錯誤訊息，合格回傳 null。
+ * 角色與層級接受代碼或名稱（例如 R002 或「覆核」、U003 或 L3），空字串代表清空。
+ */
+export function validateSignSettings(body = {}) {
+  if (isDefined(body.signRole) && resolveSignRole(body.signRole) === null) {
+    return `簽核角色「${describeInvalidValue(body.signRole)}」不正確，請使用 R001～R007（填報、覆核、審核、核定、知會、財務覆核、人資覆核）`
+  }
+  if (isDefined(body.signLevel) && resolveSignLevel(body.signLevel) === null) {
+    return `簽核層級「${describeInvalidValue(body.signLevel)}」不正確，請使用 U001～U005（L1～L5）`
+  }
+  if (isDefined(body.signTags)) {
+    const list = toArray(body.signTags) ?? []
+    const malformed = list.some(
+      (item) => item !== null && item !== undefined && typeof item !== 'string' && typeof item !== 'number'
+    )
+    if (malformed) return '員工標籤格式不正確，請提供文字清單'
+    const tags = normalizeSignTags(list)
+    const tooLong = tags.find((tag) => tag.length > MAX_SIGN_TAG_LENGTH)
+    if (tooLong) return `員工標籤「${tooLong.slice(0, 20)}…」太長，每個標籤最多 ${MAX_SIGN_TAG_LENGTH} 個字`
+    if (tags.length > MAX_SIGN_TAGS) return `員工標籤最多 ${MAX_SIGN_TAGS} 個`
+  }
+  return null
+}
 
 /* 把前端送來的 experiences/licenses/trainings 正規化成模型想要的形狀 */
 function normalizeExperiences(list) {
@@ -162,9 +234,9 @@ export function buildEmployeeDoc(body = {}) {
     username: body.username,
     permissionGrade: body.permissionGrade,
     role: body.role,                     // employee/supervisor/admin
-    signRole: body.signRole,
-    signTags: toArray(body.signTags) ?? [],
-    signLevel: body.signLevel,
+    signRole: unknownToUndefined(resolveSignRole(body.signRole)),
+    signTags: normalizeSignTags(toArray(body.signTags)),
+    signLevel: unknownToUndefined(resolveSignLevel(body.signLevel)),
 
     /* 基本資料 */
     employeeNo: body.employeeNo ?? body.employeeId, // alias → employeeId
@@ -300,9 +372,9 @@ export function buildEmployeePatch(body = {}, existing = null) {
   const put = (k, v) => { if (isDefined(v)) $set[k] = v }
   const un = (k) => { $unset[k] = 1 }
 
-  // supervisor 特例：空字串 → unset
+  // supervisor 特例：空字串或 null（編輯表單清除主管）→ unset
   if (isDefined(body.supervisor)) {
-    if (body.supervisor === '') un('supervisor')
+    if (body.supervisor === '' || body.supervisor === null) un('supervisor')
     else put('supervisor', body.supervisor)
   }
 
@@ -311,9 +383,10 @@ export function buildEmployeePatch(body = {}, existing = null) {
   if (isDefined(body.accountEnabled)) put('accountEnabled', Boolean(body.accountEnabled))
   put('permissionGrade', body.permissionGrade)
   put('role', body.role)
-  put('signRole', body.signRole)
-  if (isDefined(body.signTags)) put('signTags', toArray(body.signTags) ?? [])
-  put('signLevel', body.signLevel)
+  // 不認得的代碼由 controller 先擋下（validateSignSettings），這裡遇到就不寫入
+  put('signRole', unknownToUndefined(resolveSignRole(body.signRole)))
+  if (isDefined(body.signTags)) put('signTags', normalizeSignTags(toArray(body.signTags)))
+  put('signLevel', unknownToUndefined(resolveSignLevel(body.signLevel)))
 
   // 基本資料
   put('employeeId', body.employeeNo ?? body.employeeId)
@@ -468,7 +541,15 @@ export function buildEmployeePatch(body = {}, existing = null) {
   if (isDefined(body.annualLeave)) {
     const al = body.annualLeave || {}
     if (isDefined(al.totalDays)) put('annualLeave.totalDays', toNum(al.totalDays) ?? 0)
-    if (isDefined(al.usedDays)) put('annualLeave.usedDays', toNum(al.usedDays) ?? 0)
+    // 已使用天數會在簽核核准時被原子扣減（並記下 appliedApprovalRequestIds，這個欄位永遠不從編輯表單寫入）。
+    // 編輯表單整包送出時，只有「和目前存的不一樣」才算管理員真的要改，否則剛好同時發生的扣減會被舊值蓋回去
+    if (isDefined(al.usedDays)) {
+      const submittedUsedDays = toNum(al.usedDays) ?? 0
+      const storedUsedDays = toNum(existing?.annualLeave?.usedDays)
+      if (storedUsedDays === undefined || submittedUsedDays !== storedUsedDays) {
+        put('annualLeave.usedDays', submittedUsedDays)
+      }
+    }
     if (isDefined(al.year)) put('annualLeave.year', toNum(al.year))
     if (isDefined(al.expiryDate)) put('annualLeave.expiryDate', toDate(al.expiryDate))
     if (isDefined(al.accumulatedLeave)) put('annualLeave.accumulatedLeave', toNum(al.accumulatedLeave) ?? 0)
@@ -516,6 +597,25 @@ const toEntityId = (value) => {
     return toEntityId(value._id)
   }
   return typeof value.toString === 'function' ? value.toString() : String(value)
+}
+
+/**
+ * 檢查要設定的直屬主管：必須是系統裡存在的員工、不能是本人（否則會自己簽自己），
+ * 而且要是「可簽核」的人（K1：帳號啟用、不是離職／留職停薪）——否則員工送出需要主管簽核的申請時，那一關會永遠找不到人。
+ * 空值（''、null）代表清除主管，一律放行。不合格回傳中文錯誤訊息，合格回傳 null。
+ */
+async function checkSupervisorAssignment(value, selfId) {
+  if (value === undefined || value === null || value === '') return null
+  const supervisorId = toEntityId(value)
+  if (!/^[0-9a-fA-F]{24}$/.test(supervisorId)) return '直屬主管資料不正確，請重新選擇'
+  if (selfId && toEntityId(selfId).toLowerCase() === supervisorId.toLowerCase()) {
+    return '不能把自己設為直屬主管（會變成自己簽自己）'
+  }
+  if (await Employee.exists({ _id: supervisorId, ...eligibleEmployeeFilter() })) return null
+  if (!(await Employee.exists({ _id: supervisorId }))) {
+    return '找不到所選的直屬主管（可能已被刪除），請重新選擇'
+  }
+  return '所選的直屬主管已離職、停用或留職停薪，無法擔任簽核人，請重新選擇'
 }
 
 async function canReadEmployeeResource(req, employeeId) {
@@ -819,7 +919,7 @@ export async function listEmployeeOptions(req, res) {
   try {
     const isAdmin = req.user?.role === 'admin'
     const projection = isAdmin
-      ? 'name username signRole signTags signLevel organization department role'
+      ? 'name username signRole signTags signLevel organization department role status accountEnabled'
       : 'name'
     let employeeQuery = Employee.find(
       { username: { $exists: true, $ne: '' } },
@@ -850,6 +950,9 @@ export async function listEmployeeOptions(req, res) {
         organization: e.organization ?? '',
         department: dept,
         role: e.role ?? '',
+        // 流程設定畫面用來把離職／留職停薪／停用帳號的人反灰（不能被當成簽核人）
+        status: e.status ?? '',
+        accountEnabled: e.accountEnabled !== false,
         displayName: e.username ? `${e.name}（${e.username}）` : e.name,
       }
     })
@@ -857,6 +960,85 @@ export async function listEmployeeOptions(req, res) {
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
+}
+
+// 流程預設範本會用到的標籤：即使還沒有人持有，也要出現在標籤清單，管理員才有得選
+export const DEFAULT_WORKFLOW_SIGN_TAGS = Object.freeze([
+  '人資',
+  '支援單位主管',
+  '排班負責人',
+  '財務覆核',
+  '業務主管',
+  '業務負責人',
+])
+
+/**
+ * GET /api/employees/sign-tags（管理員、主管）
+ * 標籤詞彙表 = 員工身上的標籤 ∪ 已儲存流程關卡用到的標籤 ∪ 預設流程需要的標籤。
+ * count 只算「可簽核」的持有者（帳號啟用且不是離職／留職停薪）；
+ * requiredByWorkflows 是引用這個標籤的流程關卡數。
+ */
+export async function listSignTags(req, res) {
+  try {
+    const [employees, workflows] = await Promise.all([
+      Employee.find({ 'signTags.0': { $exists: true } })
+        .select('signTags accountEnabled status')
+        .lean(),
+      ApprovalWorkflow.find({ 'steps.approver_type': 'tag' })
+        .select('steps.approver_type steps.approver_value')
+        .lean(),
+    ])
+
+    const entries = new Map()
+    const ensure = (name) => {
+      if (!entries.has(name)) entries.set(name, { name, count: 0, requiredByWorkflows: 0 })
+      return entries.get(name)
+    }
+    DEFAULT_WORKFLOW_SIGN_TAGS.forEach((name) => ensure(name))
+
+    for (const employee of employees ?? []) {
+      const eligible = isEligibleApprover(employee)
+      for (const tag of normalizeSignTags(employee?.signTags)) {
+        const entry = ensure(tag)
+        if (eligible) entry.count += 1
+      }
+    }
+    for (const workflow of workflows ?? []) {
+      for (const step of workflow?.steps ?? []) {
+        if (step?.approver_type !== 'tag') continue
+        const values = Array.isArray(step.approver_value) ? step.approver_value : [step.approver_value]
+        for (const tag of normalizeSignTags(values)) ensure(tag).requiredByWorkflows += 1
+      }
+    }
+
+    const tags = [...entries.values()].sort((a, b) => a.name.localeCompare(b.name, 'zh-Hant'))
+    res.json({ tags })
+  } catch (err) {
+    console.error('Failed to list sign tags', { error: err?.name ?? 'Error' })
+    res.status(500).json({ error: '載入員工標籤失敗' })
+  }
+}
+
+/**
+ * 一次性整理：把已儲存的員工標籤統一成 K3 規則（NFKC、去頭尾空白、壓縮空白、去空、去重）。
+ * 可以重複執行（已整理好的不會再動），只改 signTags 欄位，不碰其他欄位也不會讓登入失效。
+ * 回傳被修正的員工人數；由 index.js 的 start() 在連上資料庫之後呼叫。
+ */
+export async function normalizeStoredSignTags() {
+  const employees = await Employee.find({ 'signTags.0': { $exists: true } })
+    .select('_id signTags')
+    .lean()
+  let updated = 0
+  for (const employee of employees ?? []) {
+    const current = Array.isArray(employee.signTags) ? employee.signTags : []
+    const normalized = normalizeSignTags(current)
+    const unchanged =
+      normalized.length === current.length && normalized.every((tag, index) => tag === current[index])
+    if (unchanged) continue
+    await Employee.updateOne({ _id: employee._id }, { $set: { signTags: normalized } })
+    updated += 1
+  }
+  return updated
 }
 
 export async function listAttendanceImportEmployeeOptions(req, res) {
@@ -902,6 +1084,10 @@ export async function createEmployee(req, res) {
     if (body.photo && !req.uploadedPhotoPath) {
       return rejectWithPhotoCleanup(req, res, 400, { error: '新員工照片必須直接上傳' })
     }
+    const signSettingsError = validateSignSettings(body)
+    if (signSettingsError) return rejectWithPhotoCleanup(req, res, 400, { error: signSettingsError })
+    const supervisorError = await checkSupervisorAssignment(body.supervisor)
+    if (supervisorError) return rejectWithPhotoCleanup(req, res, 400, { error: supervisorError })
 
     const employeeDoc = buildEmployeeDoc(body)
     employeeDoc.password = password
@@ -1067,6 +1253,13 @@ export async function updateEmployee(req, res) {
     if (isDefined(body.accountEnabled) && typeof body.accountEnabled !== 'boolean') {
       return rejectWithPhotoCleanup(req, res, 400, { error: 'Invalid account state' })
     }
+    const signSettingsError = validateSignSettings(body)
+    if (signSettingsError) return rejectWithPhotoCleanup(req, res, 400, { error: signSettingsError })
+    // 只在主管「有變更」時檢查：原本就存在的（可能已經失效的）設定不該擋住其他欄位的修改
+    if (isDefined(body.supervisor) && toEntityId(body.supervisor) !== toEntityId(employee.supervisor)) {
+      const supervisorError = await checkSupervisorAssignment(body.supervisor, employee._id)
+      if (supervisorError) return rejectWithPhotoCleanup(req, res, 400, { error: supervisorError })
+    }
 
     // 建立 $set/$unset patch
     const { $set, $unset } = buildEmployeePatch(body, employee)
@@ -1107,7 +1300,8 @@ export async function updateEmployee(req, res) {
     // 取回最新
     const updated = await Employee.findById(employee._id)
 
-    if (isDefined(body.password)) {
+    // 編輯員工時密碼是選填：空白代表「維持原密碼」，不能重設密碼，也不能讓現有登入失效
+    if (!isBlankPassword(body.password)) {
       updated.password = body.password
       await updated.save()
     }
@@ -1123,6 +1317,189 @@ export async function updateEmployee(req, res) {
   }
 }
 
+/* ─────────────────────── 刪除員工前的「簽核影響」盤點 ─────────────────────── */
+
+const DELETE_IMPACT_MAX_REQUESTS = 5000
+const DELETE_IMPACT_NAME_LIMIT = 3
+
+const emptyDeleteImpact = () => ({
+  pendingRequests: 0, // 正在等這些員工簽核的進行中簽核單數
+  pendingApprovers: [], // [{ _id, name, employeeNo, requests }]
+  subordinates: 0, // 直屬主管是這些員工、本身不在刪除名單內的人數
+  workflowSteps: 0, // 流程關卡直接指定這些員工（使用者／指定主管）的數量
+  lostTags: [], // [{ name, requiredByWorkflows }]：刪除後再也沒有可簽核持有者、而且有流程關卡在用的標籤
+  incomplete: false, // 有一部分查詢失敗，數字可能偏少
+  messages: [], // 給確認視窗直接顯示的中文說明
+})
+
+function formatImpactNames(items, describe) {
+  const shown = items.slice(0, DELETE_IMPACT_NAME_LIMIT).map(describe).join('、')
+  return items.length > DELETE_IMPACT_NAME_LIMIT ? `${shown}…等 ${items.length} 位` : shown
+}
+
+function buildDeleteImpactMessages(impact) {
+  const messages = []
+  if (impact.pendingRequests > 0) {
+    const who = impact.pendingApprovers.length
+      ? `（${formatImpactNames(impact.pendingApprovers, (item) => `${item.name || '未命名'}：${item.requests} 筆`)}）`
+      : ''
+    messages.push(
+      `有 ${impact.pendingRequests} 筆進行中的簽核單正在等這些員工簽核${who}，刪除後這些單會失去簽核人而卡住，請先處理或改由管理員代簽。`
+    )
+  }
+  if (impact.subordinates > 0) {
+    messages.push(
+      `有 ${impact.subordinates} 位員工的直屬主管是這次要刪除的人，刪除後他們沒有直屬主管，送出需要主管簽核的申請會被擋下，請重新指定主管。`
+    )
+  }
+  if (impact.workflowSteps > 0) {
+    messages.push(
+      `有 ${impact.workflowSteps} 個簽核流程關卡直接指定了這些員工，刪除後該關卡找不到簽核人，請到流程設定改派。`
+    )
+  }
+  if (impact.lostTags.length > 0) {
+    const tags = impact.lostTags.map((tag) => `「${tag.name}」`).join('、')
+    const stepCount = impact.lostTags.reduce((sum, tag) => sum + tag.requiredByWorkflows, 0)
+    messages.push(
+      `標籤${tags}目前只剩這些員工持有，刪除後沒有人可以簽核（共 ${stepCount} 個流程關卡使用），相關表單將無法送出。`
+    )
+  }
+  if (impact.incomplete) {
+    messages.push('部分簽核影響無法確認，請刪除後檢查簽核紀錄。')
+  }
+  return messages
+}
+
+/**
+ * 盤點刪除這些員工之後，簽核會受到什麼影響（只查詢、不阻擋刪除，由管理員決定）。
+ * ids：要刪除的員工 _id；docs：id → { name, employeeId }（用來顯示姓名，可省略）。
+ * 任何一段查詢失敗都不會讓刪除失敗：失敗的部分記下 incomplete，其餘照常回報。
+ */
+export async function computeDeleteImpact(ids, docs = new Map()) {
+  const impact = emptyDeleteImpact()
+  const idList = [...new Set((ids ?? []).map((id) => toEntityId(id)).filter(Boolean))]
+  if (!idList.length) return impact
+  const idSet = new Set(idList.map((id) => id.toLowerCase()))
+
+  const attempt = async (label, task) => {
+    try {
+      await task()
+    } catch (error) {
+      impact.incomplete = true
+      console.error(`Delete impact: failed to check ${label}`, { error: error?.name ?? 'Error' })
+    }
+  }
+
+  await attempt('pending approvals', async () => {
+    const requests = await ApprovalRequest.find({
+      status: 'pending',
+      steps: {
+        $elemMatch: {
+          approvers: { $elemMatch: { approver: { $in: idList }, decision: 'pending' } },
+        },
+      },
+    })
+      .select('steps.approvers.approver steps.approvers.decision')
+      .limit(DELETE_IMPACT_MAX_REQUESTS)
+      .lean()
+
+    const perEmployee = new Map()
+    for (const request of requests ?? []) {
+      const waitingOn = new Set()
+      for (const step of request?.steps ?? []) {
+        for (const approver of step?.approvers ?? []) {
+          const id = toEntityId(approver?.approver).toLowerCase()
+          if (approver?.decision === 'pending' && idSet.has(id)) waitingOn.add(id)
+        }
+      }
+      if (!waitingOn.size) continue
+      impact.pendingRequests += 1
+      waitingOn.forEach((id) => perEmployee.set(id, (perEmployee.get(id) ?? 0) + 1))
+    }
+    impact.pendingApprovers = [...perEmployee.entries()]
+      .map(([id, requests]) => {
+        const doc = docs.get(id)
+        return { _id: id, name: doc?.name ?? '', employeeNo: doc?.employeeId ?? '', requests }
+      })
+      .sort((a, b) => b.requests - a.requests)
+  })
+
+  await attempt('subordinates', async () => {
+    const count = await Employee.countDocuments({
+      supervisor: { $in: idList },
+      _id: { $nin: idList },
+    })
+    impact.subordinates = Number(count) || 0
+  })
+
+  await attempt('workflow steps', async () => {
+    const workflows = await ApprovalWorkflow.find({
+      steps: {
+        $elemMatch: {
+          approver_type: { $in: ['user', 'manager'] },
+          approver_value: { $in: idList },
+        },
+      },
+    })
+      .select('steps.approver_type steps.approver_value')
+      .lean()
+    for (const workflow of workflows ?? []) {
+      for (const step of workflow?.steps ?? []) {
+        if (step?.approver_type !== 'user' && step?.approver_type !== 'manager') continue
+        const values = Array.isArray(step.approver_value) ? step.approver_value : [step.approver_value]
+        if (values.some((value) => idSet.has(toEntityId(value).toLowerCase()))) impact.workflowSteps += 1
+      }
+    }
+  })
+
+  await attempt('sign tags', async () => {
+    // 只看「可簽核」的持有者：離職／停用的人本來就不會被派到簽核單，刪掉他們不會改變什麼
+    const held = normalizeSignTags(
+      await Employee.distinct('signTags', { _id: { $in: idList }, ...eligibleEmployeeFilter() })
+    )
+    if (!held.length) return
+    const stillHeld = new Set(
+      normalizeSignTags(
+        await Employee.distinct('signTags', {
+          _id: { $nin: idList },
+          ...eligibleEmployeeFilter(),
+          signTags: { $in: held },
+        })
+      )
+    )
+    const lost = held.filter((tag) => !stillHeld.has(tag))
+    if (!lost.length) return
+    const workflows = await ApprovalWorkflow.find({
+      steps: { $elemMatch: { approver_type: 'tag', approver_value: { $in: lost } } },
+    })
+      .select('steps.approver_type steps.approver_value')
+      .lean()
+    const usage = new Map()
+    for (const workflow of workflows ?? []) {
+      for (const step of workflow?.steps ?? []) {
+        if (step?.approver_type !== 'tag') continue
+        const values = Array.isArray(step.approver_value) ? step.approver_value : [step.approver_value]
+        for (const tag of normalizeSignTags(values)) usage.set(tag, (usage.get(tag) ?? 0) + 1)
+      }
+    }
+    impact.lostTags = lost
+      .filter((tag) => usage.get(tag) > 0)
+      .map((tag) => ({ name: tag, requiredByWorkflows: usage.get(tag) }))
+  })
+
+  impact.messages = buildDeleteImpactMessages(impact)
+  return impact
+}
+
+// 直屬主管指向「已不存在的人」的員工：清除主管欄位，回傳被清掉的人數
+async function clearSupervisorReferences(goneIds) {
+  const result = await Employee.updateMany(
+    { supervisor: { $in: goneIds } },
+    { $unset: { supervisor: 1 } }
+  )
+  return Number(result?.modifiedCount) || 0
+}
+
 /** DELETE /api/employees/:id */
 export async function deleteEmployee(req, res) {
   try {
@@ -1134,12 +1511,31 @@ export async function deleteEmployee(req, res) {
       return res.status(403).json({ error: '管理員帳戶不可刪除' })
     }
 
+    // 刪除之前先盤點簽核影響（刪除後就查不到誰在等誰了）
+    const employeeId = toEntityId(employee._id)
+    const impact = await computeDeleteImpact(
+      [employeeId],
+      new Map([[employeeId.toLowerCase(), employee]])
+    )
+
     const previousPhoto = employee.photo
     await employee.deleteOne()
     if (previousPhoto) {
       await deleteEmployeePhotoIfUnreferenced(previousPhoto, employee._id)
     }
-    res.json({ success: true })
+
+    // 與批量刪除一致：別人的「直屬主管」不能繼續指向這個已不存在的人
+    // （刪除已經完成，善後失敗只回報警告，不讓整個請求失敗）
+    const warnings = []
+    let unassignedSubordinates = 0
+    try {
+      unassignedSubordinates = await clearSupervisorReferences([employeeId])
+    } catch (unsetErr) {
+      console.error('Delete employee: failed to clear supervisor references', { error: unsetErr?.name ?? 'Error' })
+      warnings.push('部分員工的直屬主管設定未能清除，請檢查原本隸屬已刪除主管的員工')
+    }
+
+    res.json({ success: true, unassignedSubordinates, impact, warnings })
   } catch (err) {
     res.status(400).json({ error: err.message })
   }
@@ -1204,6 +1600,10 @@ export async function bulkDeleteEmployees(req, res) {
     const deleted = []
     const warnings = []
     let unassignedSubordinates = 0
+    // 刪除之前先盤點簽核影響（刪除後就查不到誰在等誰了）；不阻擋刪除，結果隨回應帶回去
+    const impact = deletable.length
+      ? await computeDeleteImpact(deletable.map((item) => item.id), docById)
+      : emptyDeleteImpact()
 
     if (deletable.length) {
       const deletableIds = deletable.map((item) => item.id)
@@ -1273,6 +1673,7 @@ export async function bulkDeleteEmployees(req, res) {
       deleted: deleted.map(({ id, doc }) => toSummary(id, doc)),
       skipped,
       unassignedSubordinates,
+      impact,
       warnings,
     })
   } catch (err) {
@@ -1282,14 +1683,53 @@ export async function bulkDeleteEmployees(req, res) {
   }
 }
 
+/**
+ * POST /api/employees/delete-impact（僅管理員）
+ * 刪除前預覽簽核影響，不會刪除或修改任何資料。管理員與操作者本人不會被刪除，所以不列入計算。
+ */
+export async function previewDeleteImpact(req, res) {
+  try {
+    const parsed = parseBulkDeleteIds(req.body?.ids)
+    if (parsed.error) return res.status(400).json({ error: parsed.error })
+    const actorId = toEntityId(req.user?.id).toLowerCase()
+
+    const found = await Employee.find({ _id: { $in: parsed.ids } }).select('_id name employeeId role')
+    const docs = new Map()
+    const deletableIds = []
+    for (const doc of found ?? []) {
+      const id = toEntityId(doc._id).toLowerCase()
+      docs.set(id, doc)
+      if (doc.role === 'admin' || id === actorId) continue
+      deletableIds.push(id)
+    }
+
+    const impact = await computeDeleteImpact(deletableIds, docs)
+    res.json({ requested: parsed.ids.length, impact })
+  } catch (err) {
+    console.error('Delete impact preview failed', { error: err?.name ?? 'Error' })
+    res.status(500).json({ error: '無法預覽刪除影響，請稍後再試' })
+  }
+}
+
 /** POST /api/employees/set-supervisors */
 export async function setSupervisors(req, res) {
   try {
     const { assignments } = req.body ?? {}
     if (!Array.isArray(assignments)) return res.status(400).json({ error: 'Invalid assignments' })
 
-    for (const { employee, supervisor } of assignments) {
-      await Employee.updateOne({ _id: employee }, { supervisor })
+    // 先全部檢查過再寫入，避免只套用了前幾筆：主管必須存在、可簽核，也不能是本人
+    for (const item of assignments) {
+      const { employee, supervisor } = item ?? {}
+      const supervisorError = await checkSupervisorAssignment(supervisor, employee)
+      if (supervisorError) return res.status(400).json({ error: supervisorError })
+    }
+
+    for (const item of assignments) {
+      const { employee, supervisor } = item ?? {}
+      if (supervisor === undefined) continue // 沒帶 supervisor 就是不變更
+      // ''、null ＝清除主管
+      const clears = supervisor === null || supervisor === ''
+      await Employee.updateOne({ _id: employee }, clears ? { $unset: { supervisor: 1 } } : { supervisor })
     }
 
     res.json({ success: true })

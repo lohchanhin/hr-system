@@ -184,7 +184,8 @@ describe('getLeaveFieldIds', () => {
 
   it('prefers the candidate whose start, end and type fields are all recognised', async () => {
     forms = [
-      { _id: 'incomplete', name: '請假', semanticType: 'general' },
+      // 沒有表單性質的舊表單才會靠名稱「請假」被選進來（設成「一般」的不會，見下方查詢條件的測試）
+      { _id: 'incomplete', name: '請假' },
       { _id: 'complete', name: '休假申請單', semanticType: 'leave' },
     ]
     fields = [
@@ -204,7 +205,7 @@ describe('getLeaveFieldIds', () => {
 
   it('keeps the form named 請假 first when several candidates are equally complete', async () => {
     forms = [
-      { _id: 'first', name: '請假', semanticType: 'general' },
+      { _id: 'first', name: '請假' },
       { _id: 'second', name: '休假申請單', semanticType: 'leave' },
     ]
     fields = [
@@ -324,6 +325,25 @@ function seedDefaultAndCustomForms({ defaultUpdatedAt, customUpdatedAt } = {}) {
     field('c-days', 'custom', '天數', { type_1: 'number', order: 4 }),
   ]
 }
+
+describe('which forms are leave forms', () => {
+  it('trusts the form type when it is set and uses the name only for templates without a type', async () => {
+    forms = [{ _id: 'form1', name: '請假', semanticType: 'leave' }]
+    fields = [field('s', 'form1', '開始時間'), field('e', 'form1', '結束時間'), field('t', 'form1', '假別')]
+
+    await service.getAllLeaveFieldInfos()
+
+    // 表單性質明確設成「一般」等其他性質的表單，即使名稱叫「請假」也不算請假單；
+    // 不依 is_active 篩選：停用（含軟刪除）的請假表單底下已核准的假單仍要被讀取端看到
+    expect(mockFormTemplate.find).toHaveBeenCalledWith({
+      $or: [
+        { semanticType: 'leave' },
+        { semanticType: null, name: '請假' },
+        { semanticType: null, name: /leave/i },
+      ],
+    })
+  })
+})
 
 describe('getLeaveFieldIds with several leave forms (deterministic pick)', () => {
   it('keeps the default 請假 form even though the customer form was saved more recently', async () => {
@@ -553,5 +573,157 @@ describe('getLeaveFieldIdsForForm', () => {
 
     expect((await service.getLeaveFieldIdsForForm('custom')).typeId).toBe('c-type')
     expect(await service.getLeaveFieldIdsForForm(undefined)).toEqual({})
+  })
+})
+
+// 停用（含軟刪除）的請假表單：新的假單不能再用它，但它底下已核准的假單仍要被讀取端（日曆、薪資、報表、重疊檢查）看到
+describe('retired (inactive) leave forms', () => {
+  function seedActiveAndRetiredForms() {
+    forms = [
+      // 預設的「請假」被停用（刪除時因為已有單據而改為停用），客戶自建的表單仍啟用
+      { _id: 'default', name: '請假', semanticType: 'leave', is_active: false, createdAt: new Date('2026-01-01') },
+      { _id: 'custom', name: '休假/事假/公假申請單', semanticType: 'leave', is_active: true, createdAt: new Date('2026-05-01') },
+    ]
+    fields = [
+      field('d-type', 'default', '假別', { order: 1 }),
+      field('d-start', 'default', '開始時間', { type_1: 'datetime', order: 2 }),
+      field('d-end', 'default', '結束時間', { type_1: 'datetime', order: 3 }),
+      field('c-type', 'custom', '假別類別 (C12)', { order: 1 }),
+      field('c-start', 'custom', '日期(起)', { type_1: 'date', order: 2 }),
+      field('c-end', 'custom', '日期(迄)', { type_1: 'date', order: 3 }),
+    ]
+  }
+
+  it('getAllLeaveFieldInfos still returns the retired form, flagged isActive false, after the active ones', async () => {
+    seedActiveAndRetiredForms()
+
+    const infos = await service.getAllLeaveFieldInfos({ withTypeOptions: false })
+
+    // 預設的「請假」雖然永遠排第一，但停用的表單排在所有啟用的表單之後
+    expect(infos.map((info) => [info.formId, info.isActive])).toEqual([['custom', true], ['default', false]])
+    expect(infos[1]).toMatchObject({ startId: 'd-start', endId: 'd-end', typeId: 'd-type' })
+  })
+
+  it('getAllLeaveFieldInfos returns a retired form even when it is the only leave form', async () => {
+    forms = [{ _id: 'default', name: '請假', semanticType: 'leave', is_active: false }]
+    fields = [field('d-type', 'default', '假別'), field('d-start', 'default', '開始時間'), field('d-end', 'default', '結束時間')]
+
+    const infos = await service.getAllLeaveFieldInfos()
+
+    expect(infos).toHaveLength(1)
+    expect(infos[0]).toMatchObject({ formId: 'default', isActive: false, startId: 'd-start', endId: 'd-end' })
+  })
+
+  it('treats forms without an is_active value as active (old documents)', async () => {
+    forms = [{ _id: 'legacy', name: '請假', semanticType: 'leave' }]
+    fields = [field('l-start', 'legacy', '開始時間'), field('l-end', 'legacy', '結束時間')]
+
+    expect((await service.getAllLeaveFieldInfos())[0].isActive).toBe(true)
+  })
+
+  it('getLeaveFieldIds (the form for NEW requests) never picks a retired form while an active one exists', async () => {
+    seedActiveAndRetiredForms()
+
+    const info = await service.getLeaveFieldIds()
+
+    // 即使停用的是名稱剛好叫「請假」的預設表單
+    expect(info).toMatchObject({ formId: 'custom', startId: 'c-start', endId: 'c-end', typeId: 'c-type' })
+  })
+
+  it('getLeaveFieldIds returns nothing when every leave form is retired, as before', async () => {
+    forms = [{ _id: 'default', name: '請假', semanticType: 'leave', is_active: false }]
+    fields = [field('d-type', 'default', '假別'), field('d-start', 'default', '開始時間'), field('d-end', 'default', '結束時間')]
+
+    expect(await service.getLeaveFieldIds()).toEqual({})
+  })
+
+  it('getLeaveFieldIds prefers an incomplete active form over a complete retired one', async () => {
+    forms = [
+      { _id: 'old', name: '請假', semanticType: 'leave', is_active: false, createdAt: new Date('2026-01-01') },
+      { _id: 'new', name: '休假申請', semanticType: 'leave', createdAt: new Date('2026-05-01') },
+    ]
+    fields = [
+      field('o-type', 'old', '假別'), field('o-start', 'old', '開始時間'), field('o-end', 'old', '結束時間'),
+      field('n-start', 'new', '日期(起)'), field('n-end', 'new', '日期(迄)'),
+    ]
+
+    expect((await service.getLeaveFieldIds()).formId).toBe('new')
+  })
+
+  it('does not change the shape of getLeaveFieldIds for the active form', async () => {
+    seedActiveAndRetiredForms()
+
+    const info = await service.getLeaveFieldIds()
+
+    expect(info).not.toHaveProperty('isActive')
+    expect(info).not.toHaveProperty('startIds')
+  })
+
+  it('getLeaveFieldIdsForForm works for a retired form and reports it', async () => {
+    seedActiveAndRetiredForms()
+
+    const info = await service.getLeaveFieldIdsForForm(forms[0])
+
+    expect(info).toMatchObject({ formId: 'default', isActive: false, startId: 'd-start', endId: 'd-end', typeId: 'd-type' })
+  })
+})
+
+// 欄位被停用或換成同標籤的新欄位：舊單據的答案還在舊欄位 ID 底下，所以回傳同標籤的全部候選欄位（啟用中的在前）
+describe('same-label field candidates', () => {
+  it('lists the active field first and the retired same-label field after it', async () => {
+    forms = [{ _id: 'default', name: '請假', semanticType: 'leave' }]
+    fields = [
+      field('d-type', 'default', '假別', { order: 1 }),
+      field('d-start-old', 'default', '開始時間', { order: 2, is_active: false }),
+      field('d-end', 'default', '結束時間', { order: 3 }),
+      field('d-start-new', 'default', '開始時間', { order: 9 }),
+    ]
+
+    const [info] = await service.getAllLeaveFieldInfos({ withTypeOptions: false })
+
+    // 單一欄位 ID 仍是啟用中的那一個（給新單據用），候選清單另外列出新舊兩個
+    expect(info).toMatchObject({ startId: 'd-start-new', endId: 'd-end', typeId: 'd-type' })
+    expect(info.startIds).toEqual(['d-start-new', 'd-start-old'])
+    expect(info.endIds).toEqual(['d-end'])
+    expect(info.typeIds).toEqual(['d-type'])
+    expect(info.daysIds).toEqual([])
+  })
+
+  it('uses the retired fields as the only candidates when no active field has that label', async () => {
+    forms = [{ _id: 'default', name: '請假', semanticType: 'leave' }]
+    fields = [
+      field('d-start', 'default', '開始時間', { order: 1, is_active: false }),
+      field('d-end', 'default', '結束時間', { order: 2, is_active: false }),
+    ]
+
+    const [info] = await service.getAllLeaveFieldInfos({ withTypeOptions: false })
+
+    expect(info).toMatchObject({ startId: 'd-start', endId: 'd-end', startIds: ['d-start'], endIds: ['d-end'] })
+  })
+
+  it('matches same-label fields after normalising width and spaces, and never mixes in other labels', async () => {
+    forms = [{ _id: 'custom', name: '休假申請', semanticType: 'leave' }]
+    fields = [
+      field('c-start', 'custom', '日期（起）', { order: 1 }),
+      field('c-start-old', 'custom', '日期 (起)', { order: 2, is_active: false }),
+      field('c-start-other', 'custom', '開始日期', { order: 3, is_active: false }),
+      field('c-end', 'custom', '日期(迄)', { order: 4 }),
+    ]
+
+    const [info] = await service.getAllLeaveFieldInfos({ withTypeOptions: false })
+
+    expect(info.startIds).toEqual(['c-start', 'c-start-old'])
+  })
+
+  it('also reports the candidates through getLeaveFieldIdsForForm', async () => {
+    fields = [
+      field('x-start', 'x', '開始時間', { order: 1, is_active: false }),
+      field('y-start', 'x', '開始時間', { order: 2 }),
+      field('x-end', 'x', '結束時間', { order: 3 }),
+    ]
+
+    const info = await service.getLeaveFieldIdsForForm('x')
+
+    expect(info).toMatchObject({ startId: 'y-start', startIds: ['y-start', 'x-start'], endIds: ['x-end'], isActive: true })
   })
 })

@@ -27,6 +27,8 @@ beforeAll(async () => {
   }))
   await jest.unstable_mockModule('../src/services/annualLeaveService.js', () => ({
     deductAnnualLeave: mockDeductAnnualLeave,
+    refundAnnualLeave: jest.fn(),
+    isAnnualLeaveConfigured: jest.fn(),
     getAnnualLeaveBalance: jest.fn(),
   }))
   await jest.unstable_mockModule('../src/services/otherControlSettingsStore.js', () => ({
@@ -88,7 +90,7 @@ async function approveLastStep({ form, formData }) {
   const res = makeRes()
 
   await actOnApproval({
-    params: { id: 'req1' },
+    params: { id: '0123456789abcdef01234567' },
     user: { id: 'sup1', role: 'supervisor' },
     body: { decision: 'approve' },
   }, res)
@@ -200,8 +202,11 @@ describe('annual leave deduction for the customer leave form', () => {
     expect(res.status).not.toHaveBeenCalledWith(400)
   })
 
-  it('logs the failure on the request but keeps the approval when the deduction fails', async () => {
-    mockDeductAnnualLeave.mockRejectedValue(new Error('Insufficient annual leave balance'))
+  it('logs the failure (in Chinese) on the request but keeps the approval when the deduction fails', async () => {
+    mockDeductAnnualLeave.mockRejectedValue(Object.assign(
+      new Error('Insufficient annual leave balance'),
+      { code: 'INSUFFICIENT_BALANCE', remaining: 0, requested: 1 },
+    ))
 
     const { doc, res } = await approveLastStep({
       form: CUSTOMER_FORM,
@@ -209,10 +214,39 @@ describe('annual leave deduction for the customer leave form', () => {
     })
 
     expect(doc.status).toBe('approved')
+    const message = '特休扣減失敗：餘額不足（剩餘 0 天，本次需扣 1 天），請人資確認特休天數後手動補登'
     expect(doc.logs).toEqual(expect.arrayContaining([
-      expect.objectContaining({ action: 'annual_leave_error', message: expect.stringContaining('Insufficient annual leave balance') }),
+      expect.objectContaining({ action: 'annual_leave_error', message }),
     ]))
+    expect(doc.annual_leave).toEqual(expect.objectContaining({ state: 'failed', days: 1, message }))
+    // 回應也帶警告，核准的人當下就知道
     expect(res.status).not.toHaveBeenCalledWith(400)
+    expect(res.json.mock.calls[0][0].warnings).toEqual([{ code: 'ANNUAL_LEAVE_DEDUCTION_FAILED', message }])
+  })
+
+  it('does not leak the raw error text of an unexpected failure into the request log', async () => {
+    mockDeductAnnualLeave.mockRejectedValue(new Error('MongoServerError: connection <secret-host> refused'))
+
+    const { doc } = await approveLastStep({
+      form: CUSTOMER_FORM,
+      formData: { 'c-type': '特休假', 'c-start': '2026-03-02', 'c-end': '2026-03-02' },
+    })
+
+    const errorLog = doc.logs.find(log => log.action === 'annual_leave_error')
+    expect(errorLog.message).toBe('特休扣減失敗：系統發生錯誤，請人資確認特休餘額後手動補登')
+    expect(JSON.stringify(doc.logs)).not.toContain('secret-host')
+  })
+
+  it('records the deducted days on the request', async () => {
+    const { doc } = await approveLastStep({
+      form: CUSTOMER_FORM,
+      formData: { 'c-type': '特休假', 'c-start': '2026-03-02', 'c-end': '2026-03-03' },
+    })
+
+    expect(doc.annual_leave).toEqual(expect.objectContaining({ state: 'deducted', days: 2 }))
+    expect(doc.logs).toEqual(expect.arrayContaining([
+      expect.objectContaining({ action: 'annual_leave', message: '已扣除特休 2 天' }),
+    ]))
   })
 })
 
@@ -228,21 +262,50 @@ describe('annual leave deduction for the default 請假 form (unchanged)', () =>
     ]
   })
 
-  it('deducts for 特休 and 特休假 typed into the text field, counting days the way it always did', async () => {
+  it('deducts for 特休 and 特休假 typed into the text field, counting Taiwan calendar days', async () => {
+    // 台灣 3/2 09:00 到 3/4 18:00（UTC 01:00 / 10:00）：3/2、3/3、3/4 共 3 天（舊算法會算成 4 天）
     await approveLastStep({
       form: DEFAULT_FORM,
-      formData: { 'd-type': '特休', 'd-start': '2026-03-02T09:00:00.000Z', 'd-end': '2026-03-04T18:00:00.000Z' },
+      formData: { 'd-type': '特休', 'd-start': '2026-03-02T01:00:00.000Z', 'd-end': '2026-03-04T10:00:00.000Z' },
     })
     await approveLastStep({
       form: DEFAULT_FORM,
       formData: { 'd-type': '特休假', 'd-start': '2026-03-02', 'd-end': '2026-03-02' },
     })
 
-    // 與修改前相同的算法：ceil(天數差) + 1
     expect(mockDeductAnnualLeave.mock.calls).toEqual([
-      ['emp1', 4, 'req1'],
+      ['emp1', 3, 'req1'],
       ['emp1', 1, 'req1'],
     ])
+  })
+
+  it('counts a one-day 特休 filed with times (09:00-18:00) as one day, not two, and a 4-hour slot as half a day (like payroll and reports)', async () => {
+    await approveLastStep({
+      form: DEFAULT_FORM,
+      formData: { 'd-type': '特休', 'd-start': '2026-03-02T01:00:00.000Z', 'd-end': '2026-03-02T10:00:00.000Z' },
+    })
+    await approveLastStep({
+      form: DEFAULT_FORM,
+      formData: { 'd-type': '特休', 'd-start': '2026-03-02T01:00:00.000Z', 'd-end': '2026-03-02T05:00:00.000Z' },
+    })
+
+    expect(mockDeductAnnualLeave.mock.calls.map(([, days]) => days)).toEqual([1, 0.5])
+  })
+
+  it('counts by the Taiwan date, so a late-evening leave is not shifted by the UTC day', async () => {
+    // 台灣 3/2 23:00 ~ 3/3 08:00（UTC 3/2 15:00 ~ 3/3 00:00）：跨兩個台灣日，共 1 + 8 = 9 小時（和薪資、報表同一個算法）。
+    // 若誤用 UTC 日期，這段會落在同一天（3/2），算出來的小時數會不一樣
+    await approveLastStep({
+      form: DEFAULT_FORM,
+      formData: { 'd-type': '特休', 'd-start': '2026-03-02T15:00:00.000Z', 'd-end': '2026-03-03T00:00:00.000Z' },
+    })
+    // 日期選擇器的整天：台灣 3/2 00:00 ~ 3/3 00:00（UTC 3/1 16:00 ~ 3/2 16:00）是 3/2、3/3 兩個整天
+    await approveLastStep({
+      form: DEFAULT_FORM,
+      formData: { 'd-type': '特休', 'd-start': '2026-03-01T16:00:00.000Z', 'd-end': '2026-03-02T16:00:00.000Z' },
+    })
+
+    expect(mockDeductAnnualLeave.mock.calls.map(([, days]) => days)).toEqual([1.125, 2])
   })
 
   it('does not deduct for other leave types', async () => {
@@ -254,13 +317,23 @@ describe('annual leave deduction for the default 請假 form (unchanged)', () =>
     expect(mockDeductAnnualLeave).not.toHaveBeenCalled()
   })
 
-  it('still recognises the form by its name when the semanticType was left as general', async () => {
+  it('still recognises an old form by its name when it never had a semanticType', async () => {
     await approveLastStep({
-      form: { ...DEFAULT_FORM, semanticType: 'general' },
+      form: { ...DEFAULT_FORM, semanticType: undefined },
       formData: { 'd-type': '特休', 'd-start': '2026-03-02', 'd-end': '2026-03-02' },
     })
 
     expect(mockDeductAnnualLeave).toHaveBeenCalledWith('emp1', 1, 'req1')
+  })
+
+  it('does not deduct when the admin explicitly set the form named 請假 to 一般: the type wins over the name', async () => {
+    const { doc } = await approveLastStep({
+      form: { ...DEFAULT_FORM, semanticType: 'general' },
+      formData: { 'd-type': '特休', 'd-start': '2026-03-02', 'd-end': '2026-03-02' },
+    })
+
+    expect(mockDeductAnnualLeave).not.toHaveBeenCalled()
+    expect(doc.annual_leave).toBeUndefined()
   })
 
   it('falls back to the legacy days value, then to 1 day, when there are no dates', async () => {

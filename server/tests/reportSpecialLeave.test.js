@@ -4,13 +4,13 @@ import { jest } from '@jest/globals'
 
 const mockEmployee = { find: jest.fn() }
 const mockApprovalRequest = { find: jest.fn() }
-const mockGetLeaveFieldIds = jest.fn()
+const mockGetAllLeaveFieldInfos = jest.fn()
 
 jest.unstable_mockModule('../src/models/Employee.js', () => ({ default: mockEmployee }))
 jest.unstable_mockModule('../src/models/Department.js', () => ({ default: { findById: jest.fn() } }))
 jest.unstable_mockModule('../src/models/approval_request.js', () => ({ default: mockApprovalRequest }))
 jest.unstable_mockModule('../src/services/leaveFieldService.js', () => ({
-  getLeaveFieldIds: mockGetLeaveFieldIds,
+  getAllLeaveFieldInfos: mockGetAllLeaveFieldInfos,
 }))
 
 let getDepartmentReportData
@@ -42,9 +42,9 @@ beforeAll(async () => {
 beforeEach(() => {
   mockEmployee.find.mockReset()
   mockApprovalRequest.find.mockReset()
-  mockGetLeaveFieldIds.mockReset()
+  mockGetAllLeaveFieldInfos.mockReset()
   mockEmployee.find.mockResolvedValue([{ _id: 'emp1', name: '員工1' }])
-  mockGetLeaveFieldIds.mockResolvedValue(LEAVE_FORM)
+  mockGetAllLeaveFieldInfos.mockResolvedValue([LEAVE_FORM])
 })
 
 describe('specialLeave report', () => {

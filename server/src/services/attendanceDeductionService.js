@@ -1,6 +1,8 @@
+import mongoose from 'mongoose'
 import AttendanceRecord from '../models/AttendanceRecord.js'
 import AttendanceSetting from '../models/AttendanceSetting.js'
 import ShiftSchedule from '../models/ShiftSchedule.js'
+import { loadApprovedLeaveIntervals } from './approvedLeaveCalendarService.js'
 import { isNonWorkShift } from './shiftSemanticService.js'
 import {
   computeActionWindow,
@@ -92,6 +94,48 @@ async function loadAttendanceContext(employeeId, monthRange, context) {
   return { setting, schedules, records }
 }
 
+// 這一班在請假中的部分不算遲到或早退：請假涵蓋上班時間，從請假結束才開始算遲到；請假涵蓋下班時間，只看請假開始之前有沒有走。
+// 整班都在請假中時回傳的結束時間不晚於開始時間，呼叫端略過這一班。
+function trimSpanByLeave(span, leaves) {
+  let start = span.start.getTime()
+  let end = span.end.getTime()
+  for (let round = 0; round <= leaves.length; round += 1) {
+    let changed = false
+    for (const leave of leaves) {
+      if (leave.endMs <= start || leave.startMs >= end) continue
+      if (leave.startMs <= start) {
+        start = Math.min(leave.endMs, end)
+        changed = true
+      } else if (leave.endMs >= end) {
+        end = Math.max(leave.startMs, start)
+        changed = true
+      }
+    }
+    if (!changed) break
+  }
+  return { start: new Date(start), end: new Date(end) }
+}
+
+// 該月已核准的請假區間；沒有資料庫連線時（例如單元測試）不查，等同沒有請假
+async function loadLeaveIntervals(employeeId, monthRange, context) {
+  if (context.approvedLeaveIntervals) return context.approvedLeaveIntervals
+  let intervals = []
+  if (mongoose.connection.readyState === 1) {
+    try {
+      const calendar = await loadApprovedLeaveIntervals({
+        employeeIds: [employeeId],
+        start: monthRange.start,
+        end: monthRange.end,
+      })
+      intervals = calendar.get(String(employeeId)) ?? []
+    } catch (error) {
+      console.error(`Failed to load approved leave for late/early check of employee ${employeeId}:`, error)
+    }
+  }
+  context.approvedLeaveIntervals = intervals
+  return intervals
+}
+
 export async function calculateLateEarlyCount(employeeId, month, context = {}) {
   const monthRange = parseMonthRange(month)
   const { setting, schedules, records } = await loadAttendanceContext(employeeId, monthRange, context)
@@ -103,6 +147,8 @@ export async function calculateLateEarlyCount(employeeId, month, context = {}) {
   const lateDetails = []
   const earlyLeaveDetails = []
 
+  // 先找出每一班的上下班打卡
+  const entries = []
   for (const schedule of schedules) {
     if (!schedule?.shiftId) continue
     const shift = shiftMap.get(schedule.shiftId.toString())
@@ -115,34 +161,47 @@ export async function calculateLateEarlyCount(employeeId, month, context = {}) {
     const clockOutWindow = computeActionWindow('clockOut', span.start, span.end, actionBuffers)
     if (!clockInWindow || !clockOutWindow) continue
 
-    const clockIn = findPunch({ records, employeeId, schedule, action: 'clockIn', window: clockInWindow })
-    const clockOut = findPunch({ records, employeeId, schedule, action: 'clockOut', window: clockOutWindow })
-    const date = new Date(schedule.date).toISOString().slice(0, 10)
+    entries.push({
+      span,
+      clockIn: findPunch({ records, employeeId, schedule, action: 'clockIn', window: clockInWindow }),
+      clockOut: findPunch({ records, employeeId, schedule, action: 'clockOut', window: clockOutWindow }),
+      date: new Date(schedule.date).toISOString().slice(0, 10),
+    })
+  }
 
-    if (clockIn?.timestamp) {
-      const actualClockIn = new Date(clockIn.timestamp)
-      const minutesLate = Math.max(getMinutesDifference(span.start, actualClockIn) - lateGrace, 0)
-      if (minutesLate > 0) {
-        lateDetails.push({
-          date,
-          clockIn: actualClockIn,
-          scheduledStart: span.start,
-          minutesLate,
-        })
-      }
+  const minutesLateOf = (entry, scheduledStart) => (entry.clockIn?.timestamp
+    ? Math.max(getMinutesDifference(scheduledStart, new Date(entry.clockIn.timestamp)) - lateGrace, 0)
+    : 0)
+  const minutesEarlyOf = (entry, scheduledEnd) => (entry.clockOut?.timestamp
+    ? Math.max(getMinutesDifference(new Date(entry.clockOut.timestamp), scheduledEnd) - earlyLeaveGrace, 0)
+    : 0)
+
+  // 真的有遲到或早退時才去查請假（核准的請假中不算遲到早退）
+  const hasCandidate = entries.some((entry) => minutesLateOf(entry, entry.span.start) > 0 || minutesEarlyOf(entry, entry.span.end) > 0)
+  const leaves = hasCandidate ? await loadLeaveIntervals(employeeId, monthRange, context) : []
+
+  for (const entry of entries) {
+    const { start, end } = leaves.length ? trimSpanByLeave(entry.span, leaves) : entry.span
+    if (end.getTime() <= start.getTime()) continue
+
+    const minutesLate = minutesLateOf(entry, start)
+    if (minutesLate > 0) {
+      lateDetails.push({
+        date: entry.date,
+        clockIn: new Date(entry.clockIn.timestamp),
+        scheduledStart: start,
+        minutesLate,
+      })
     }
 
-    if (clockOut?.timestamp) {
-      const actualClockOut = new Date(clockOut.timestamp)
-      const minutesEarly = Math.max(getMinutesDifference(actualClockOut, span.end) - earlyLeaveGrace, 0)
-      if (minutesEarly > 0) {
-        earlyLeaveDetails.push({
-          date,
-          clockOut: actualClockOut,
-          scheduledEnd: span.end,
-          minutesEarly,
-        })
-      }
+    const minutesEarly = minutesEarlyOf(entry, end)
+    if (minutesEarly > 0) {
+      earlyLeaveDetails.push({
+        date: entry.date,
+        clockOut: new Date(entry.clockOut.timestamp),
+        scheduledEnd: end,
+        minutesEarly,
+      })
     }
   }
 

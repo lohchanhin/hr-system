@@ -1672,6 +1672,7 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
     expect(mockShiftSchedule.bulkWrite).not.toHaveBeenCalled();
   });
 
+  // 資料庫端的字串條件兩邊各放寬一天（台灣 7/1 的假存成 06-30T16:00Z），真正屬於哪一天在程式裡用台灣日期判斷
   it('lists leave approvals', async () => {
     mockEmployee.find.mockReturnValue({
       select: jest.fn().mockReturnValue(createSelectResponse([{ _id: 'e1' }])),
@@ -1696,8 +1697,8 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
       applicant_employee: { $in: ['e1'] },
       form: 'form1',
       status: 'approved',
-      'form_data.s': { $lt: '2023-02-01' },
-      'form_data.e': { $gte: '2023-01-01' },
+      'form_data.s': { $lt: '2023-02-02' },
+      'form_data.e': { $gte: '2022-12-31' },
     });
     expect(selectMock).toHaveBeenCalledWith('applicant_employee applicant_department status form_data.t form_data.s form_data.e');
     expect(populateMock).toHaveBeenCalledWith({ path: 'applicant_employee', select: 'name department subDepartment' });
@@ -1759,15 +1760,15 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
       applicant_employee: { $in: ['e1'] },
       form: 'form1',
       status: 'approved',
-      'form_data.s': { $lt: '2023-02-01' },
-      'form_data.e': { $gte: '2023-01-01' },
+      'form_data.s': { $lt: '2023-02-02' },
+      'form_data.e': { $gte: '2022-12-31' },
     });
     expect(mockApprovalRequest.find).toHaveBeenCalledWith({
       applicant_employee: { $in: ['e1'] },
       form: 'form2',
       status: 'approved',
-      'form_data.cs': { $lt: '2023-02-01' },
-      'form_data.ce': { $gte: '2023-01-01' },
+      'form_data.cs': { $lt: '2023-02-02' },
+      'form_data.ce': { $gte: '2022-12-31' },
     });
     expect(selectMocks.find(([form]) => form === 'form2')[1]).toHaveBeenCalledWith(
       'applicant_employee applicant_department status form_data.ct form_data.cs form_data.ce',
@@ -1864,8 +1865,8 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
       applicant_employee: { $in: ['e1', 'e3'] },
       form: 'form1',
       status: 'approved',
-      'form_data.s': { $lt: '2023-02-01' },
-      'form_data.e': { $gte: '2023-01-01' },
+      'form_data.s': { $lt: '2023-02-02' },
+      'form_data.e': { $gte: '2022-12-31' },
     });
     expect(res.body.approvals).toHaveLength(1);
     expect(res.body.approvals.map((a) => a._id)).toEqual(['a1']);
@@ -1902,8 +1903,8 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
     expect(queryArg).toEqual(expect.objectContaining({
       form: 'form1',
       status: 'approved',
-      'form_data.s': { $lt: '2023-02-01' },
-      'form_data.e': { $gte: '2023-01-01' },
+      'form_data.s': { $lt: '2023-02-02' },
+      'form_data.e': { $gte: '2022-12-31' },
     }));
     expect(populateMock).toHaveBeenCalledWith({ path: 'applicant_employee', select: 'name department subDepartment' });
   });

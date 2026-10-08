@@ -5,7 +5,15 @@ import Employee from '../models/Employee.js'
 import Organization from '../models/Organization.js'
 import Department from '../models/Department.js'
 import SubDepartment from '../models/SubDepartment.js'
-import { buildEmployeeDoc, buildEmployeePatch } from './employeeController.js'
+import {
+  buildEmployeeDoc,
+  buildEmployeePatch,
+  resolveSignRole,
+  resolveSignLevel,
+  validateSignSettings
+} from './employeeController.js'
+import { INACTIVE_EMPLOYMENT_STATUSES } from '../services/approverEligibility.js'
+import { splitSignTagText } from '../utils/signTags.js'
 
 const REQUIRED_MAPPING_KEYS = ['employeeNo', 'name', 'email']
 const VALID_ROLES = ['employee', 'supervisor', 'admin']
@@ -80,7 +88,10 @@ const DEFAULT_COLUMN_MAPPINGS = Object.freeze({
   laborInsuredSalary: 'laborInsuredSalary',
   pensionInsuredSalary: 'pensionInsuredSalary',
   healthInsuredSalary: 'healthInsuredSalary',
-  dependentCount: 'dependentCount'
+  dependentCount: 'dependentCount',
+  signTags: 'signTags',
+  signRole: 'signRole',
+  signLevel: 'signLevel'
 })
 
 const CHINESE_HEADER_HINTS = new Set([
@@ -121,7 +132,11 @@ const NUMBER_FIELDS = new Set([
   'healthInsuredSalary',
   'dependentCount'
 ])
-const CSV_ARRAY_FIELDS = new Set(['languages', 'identityCategory', 'salaryItems'])
+const CSV_ARRAY_FIELDS = new Set(['languages', 'identityCategory', 'salaryItems', 'signTags'])
+
+// 簽核設定欄位：更新既有員工時以檔案為準（有這個欄位就照填寫內容設定，空白代表清空），
+// 沒有這個欄位則完全不動。其他欄位的空白儲存格則是「沒資料」，不會洗掉系統裡的值。
+const SIGN_SETTING_KEYS = ['signTags', 'signRole', 'signLevel']
 
 // 這幾個欄位是後來才加進範本的：舊版檔案沒有也不該讓整批匯入失敗。
 const OPTIONAL_COLUMN_KEYS = new Set([
@@ -133,7 +148,10 @@ const OPTIONAL_COLUMN_KEYS = new Set([
   'laborInsuredSalary',
   'pensionInsuredSalary',
   'healthInsuredSalary',
-  'dependentCount'
+  'dependentCount',
+  'signTags',
+  'signRole',
+  'signLevel'
 ])
 
 // 客戶實際拿到的 Excel，第 1 列是英文欄位名，但後加的欄位只有第 2 列的中文說明。
@@ -147,7 +165,10 @@ const HEADER_LABEL_FALLBACKS = Object.freeze({
   laborInsuredSalary: ['勞保投保薪資'],
   pensionInsuredSalary: ['勞退投保薪資'],
   healthInsuredSalary: ['健保投保薪資'],
-  dependentCount: ['眷口數']
+  dependentCount: ['眷口數'],
+  signTags: ['簽核標籤', '員工標籤'],
+  signRole: ['簽核角色'],
+  signLevel: ['簽核層級']
 })
 
 const NUMBER_FIELD_LABELS = Object.freeze({
@@ -626,11 +647,32 @@ function splitToList(value) {
     .filter(item => item)
 }
 
+const EMPLOYMENT_STATUSES = ['正職員工', '試用期員工', '離職員工', '留職停薪']
+
+// 常見的寫法對應到系統的四種人員狀態；對不到的不再默默當成正職員工（見 checkEmploymentStatus）
 const STATUS_ALIASES = new Map([
+  ['正職', '正職員工'],
+  ['正式', '正職員工'],
+  ['正式員工', '正職員工'],
+  ['在職', '正職員工'],
+  ['在職員工', '正職員工'],
   ['試用期', '試用期員工'],
+  ['試用', '試用期員工'],
   ['離職', '離職員工'],
-  ['正職', '正職員工']
+  ['已離職', '離職員工'],
+  ['離職中', '離職員工'],
+  ['辭職', '離職員工'],
+  ['已辭職', '離職員工'],
+  ['留停', '留職停薪'],
+  ['停薪留職', '留職停薪']
 ])
+
+function resolveEmploymentStatus(value) {
+  const text = String(value).normalize('NFKC').trim()
+  if (!text) return ''
+  if (EMPLOYMENT_STATUSES.includes(text)) return text
+  return STATUS_ALIASES.get(text) || STATUS_ALIASES.get(text.replace(/員工$/, '')) || null
+}
 
 function normalizeRowObject(normalized) {
   if (typeof normalized.gender === 'string') {
@@ -641,8 +683,7 @@ function normalizeRowObject(normalized) {
   }
   if (typeof normalized.employmentStatus === 'string') {
     const trimmed = normalized.employmentStatus.trim()
-    const alias = STATUS_ALIASES.get(trimmed) || STATUS_ALIASES.get(trimmed.replace(/員工$/, ''))
-    normalized.employmentStatus = alias || trimmed
+    normalized.employmentStatus = resolveEmploymentStatus(trimmed) ?? trimmed
   }
 
   CSV_ARRAY_FIELDS.forEach(field => {
@@ -680,6 +721,55 @@ function normalizeRowObject(normalized) {
   else delete normalized.emergency2
 
   return normalized
+}
+
+// 空白儲存格維持原本行為（新增時用預設的「正職員工」、更新時不動）；
+// 有填但對不到四種狀態的值不再默默變成正職員工：移除該值並在結果提醒，由人工確認。
+function checkEmploymentStatus(normalized, rowNumber, warnings) {
+  if (!('employmentStatus' in normalized)) return
+  const value = normalized.employmentStatus
+  if (value === undefined || value === null || (typeof value === 'string' && !value.trim())) return
+  if (typeof value === 'string' && EMPLOYMENT_STATUSES.includes(value)) return
+  warnings.push(
+    `第 ${rowNumber} 列「人員狀態」的值「${String(value).slice(0, 20)}」無法辨識（請填：${EMPLOYMENT_STATUSES.join('、')}），` +
+    '新增時會以預設的「正職員工」建立並可登入，更新時維持原狀態，請確認後再手動調整'
+  )
+  delete normalized.employmentStatus
+}
+
+// 簽核標籤／角色／層級：標籤依 K3 規則整理；角色與層級接受代碼或名稱，
+// 認不得的值只提醒、不讓整批匯入失敗（該欄位當作沒填）。
+function normalizeSignSettings(normalized, rowNumber, warnings) {
+  if ('signTags' in normalized) {
+    normalized.signTags = splitSignTagText(normalized.signTags)
+    const problem = validateSignSettings({ signTags: normalized.signTags })
+    if (problem) {
+      warnings.push(`第 ${rowNumber} 列「簽核標籤」${problem}，已略過`)
+      delete normalized.signTags
+    }
+  }
+  if ('signRole' in normalized) {
+    const code = resolveSignRole(normalized.signRole)
+    if (code === null) {
+      warnings.push(
+        `第 ${rowNumber} 列「簽核角色」的值「${String(normalized.signRole).slice(0, 20)}」不是 R001～R007 或對應名稱（填報、覆核、審核、核定、知會、財務覆核、人資覆核），已略過`
+      )
+      delete normalized.signRole
+    } else {
+      normalized.signRole = code
+    }
+  }
+  if ('signLevel' in normalized) {
+    const code = resolveSignLevel(normalized.signLevel)
+    if (code === null) {
+      warnings.push(
+        `第 ${rowNumber} 列「簽核層級」的值「${String(normalized.signLevel).slice(0, 20)}」不是 U001～U005 或 L1～L5，已略過`
+      )
+      delete normalized.signLevel
+    } else {
+      normalized.signLevel = code
+    }
+  }
 }
 
 function deriveUsername(row) {
@@ -746,7 +836,29 @@ function buildUpdateBody(normalized) {
     if (UPDATE_EXCLUDED_KEYS.has(key)) return
     body[key] = value
   })
-  return pruneBlankValues(body)
+  const pruned = pruneBlankValues(body)
+  // 簽核標籤／角色／層級：檔案裡有這個欄位就以它為準（空白＝清空）；沒有這個欄位就完全不動
+  SIGN_SETTING_KEYS.forEach(key => {
+    if (key in normalized) pruned[key] = normalized[key]
+  })
+  return pruned
+}
+
+// 更新時簽核設定被清空或換掉的提醒：一旦標籤／角色／層級被洗掉，流程會找不到簽核人，必須讓管理員看得到
+function describeSignSettingChanges(row) {
+  const existing = row.existing || {}
+  const messages = []
+  const previousTags = Array.isArray(existing.signTags) ? existing.signTags : []
+  if ('signTags' in row.normalized && !row.normalized.signTags.length && previousTags.length) {
+    messages.push(`「簽核標籤」空白，已清除原有標籤：${previousTags.join('、')}`)
+  }
+  if ('signRole' in row.normalized && !row.normalized.signRole && existing.signRole) {
+    messages.push(`「簽核角色」空白，已清除原有角色：${existing.signRole}`)
+  }
+  if ('signLevel' in row.normalized && !row.normalized.signLevel && existing.signLevel) {
+    messages.push(`「簽核層級」空白，已清除原有層級：${existing.signLevel}`)
+  }
+  return messages
 }
 
 // 單機模式（沒有複本集）的 MongoDB 不支援多文件交易，第一個帶 session 的寫入會回報
@@ -914,6 +1026,11 @@ export async function bulkImportEmployees(req, res) {
       if (typeof value === 'string' && value.trim() && !labelMap.has(value.trim())) {
         labelMap.set(value.trim(), colNumber)
       }
+      // 範本的說明列會在名稱後面加註（例如「簽核標籤 (多個以逗號分隔)」），也用括號前的名稱比對
+      if (typeof value === 'string') {
+        const baseLabel = value.replace(/\s*[（(].*$/, '').trim()
+        if (baseLabel && !labelMap.has(baseLabel)) labelMap.set(baseLabel, colNumber)
+      }
     })
   }
 
@@ -1033,6 +1150,8 @@ export async function bulkImportEmployees(req, res) {
     if (!hasData) continue
 
     normalizeRowObject(normalized)
+    checkEmploymentStatus(normalized, index, warnings)
+    normalizeSignSettings(normalized, index, warnings)
     convertPensionSelfRate(normalized, index, warnings)
 
     parsedRows.push({
@@ -1422,9 +1541,16 @@ export async function bulkImportEmployees(req, res) {
 
   parsedRows.forEach(row => {
     if (!row.normalized.role) {
-      const promote = defaultRole === 'employee' &&
+      const wouldPromote = defaultRole === 'employee' &&
         referencedSupervisorKeys.has(normalizeReferenceKey(row.normalized.employeeNo))
-      row.normalized.role = promote ? 'supervisor' : defaultRole
+      // 離職／留職停薪的人不能登入，也不該因為被填在「主管員工 ID」就自動取得主管權限
+      const inactive = INACTIVE_EMPLOYMENT_STATUSES.includes(row.normalized.employmentStatus)
+      if (wouldPromote && inactive) {
+        warnings.push(
+          `第 ${row.rowNumber} 列的員工是「${row.normalized.employmentStatus}」，雖然被其他人填為主管員工 ID，仍不會自動設為主管權限，請確認那些員工的直屬主管`
+        )
+      }
+      row.normalized.role = wouldPromote && !inactive ? 'supervisor' : defaultRole
     }
 
     const email = row.normalized.email ?? row.original.email
@@ -1471,7 +1597,14 @@ export async function bulkImportEmployees(req, res) {
   if (emailCandidates.size) {
     try {
       const emailList = Array.from(emailCandidates)
-      existingEmails = await Employee.find({ email: { $in: emailList } }, 'email employeeId')
+      // 員工編號對不到時會改用 Email 比對，所以這裡也要帶出更新時用來比對舊值的欄位
+      // （簽核標籤／角色／層級被清空的提醒、聯絡人與薪資項目的合併），兩種比對方式的結果才一致
+      const foundByEmail = await Employee.find(
+        { email: { $in: emailList } },
+        'email employeeId emergencyContacts salaryItems signTags signRole signLevel'
+      )
+      // 和員工編號比對一樣轉成純物件：聯絡人是子文件，直接展開會把 Mongoose 的內部欄位一起寫回去
+      existingEmails = (foundByEmail || []).map(doc => (typeof doc?.toObject === 'function' ? doc.toObject() : doc))
     } catch (error) {
       res.status(500).json({ message: '檢查既有 Email 失敗', error: error.message })
       return
@@ -1488,7 +1621,7 @@ export async function bulkImportEmployees(req, res) {
     try {
       const found = await Employee.find(
         { employeeId: { $in: employeeNoList } },
-        '_id employeeId email emergencyContacts salaryItems'
+        '_id employeeId email emergencyContacts salaryItems signTags signRole signLevel'
       )
       existingByNo = (found || []).map(doc => (typeof doc?.toObject === 'function' ? doc.toObject() : doc))
     } catch (error) {
@@ -1530,7 +1663,10 @@ export async function bulkImportEmployees(req, res) {
         _id: matched._id,
         employeeId: matched.employeeId,
         emergencyContacts: matched.emergencyContacts,
-        salaryItems: matched.salaryItems
+        salaryItems: matched.salaryItems,
+        signTags: matched.signTags,
+        signRole: matched.signRole,
+        signLevel: matched.signLevel
       }
     }
   })
@@ -1557,6 +1693,9 @@ export async function bulkImportEmployees(req, res) {
   for (const row of parsedRows) {
     if (row.existing) {
       const updateBody = buildUpdateBody(row.normalized)
+      describeSignSettingChanges(row).forEach(message => {
+        warnings.push(`第 ${row.rowNumber} 列${message}`)
+      })
       const patch = buildEmployeePatch(updateBody, row.existing)
       if (Array.isArray(patch.$set.emergencyContacts)) {
         patch.$set.emergencyContacts = patch.$set.emergencyContacts.filter(Boolean)
@@ -1579,6 +1718,10 @@ export async function bulkImportEmployees(req, res) {
       email: row.normalized.email,
       username: row.normalized.username
     }
+    // 新增員工時空白的簽核欄位就是「沒有設定」，不必存成空字串
+    SIGN_SETTING_KEYS.forEach(key => {
+      if (isBlankImportValue(body[key])) delete body[key]
+    })
 
     const employeeDoc = buildEmployeeDoc(body)
     employeeDoc.password = password
