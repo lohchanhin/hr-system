@@ -4,6 +4,7 @@
 import request from 'supertest';
 import express from 'express';
 import { jest } from '@jest/globals';
+import { buildLeaveFieldServiceMock } from './helpers/leaveFieldServiceMock.js';
 import ExcelJS from 'exceljs';
 import jwt from 'jsonwebtoken';
 
@@ -38,6 +39,9 @@ const mockScheduleDayMemo = {
 };
 
 const mockGetLeaveFieldIds = jest.fn();
+// 設成陣列時，getAllLeaveFieldInfos 回傳這幾張請假表單（測多張請假表單用）；null 則由 mockGetLeaveFieldIds 的那一張推得
+let mockAllLeaveForms = null;
+const mockLeaveFieldService = buildLeaveFieldServiceMock(mockGetLeaveFieldIds, { getAllOverride: () => mockAllLeaveForms });
 const mockIsTokenBlacklisted = jest.fn();
 const mockAssertScheduleRuleCompliance = jest.fn();
 const mockIsLaborRuleValidationError = jest.fn((error) => Array.isArray(error?.violations));
@@ -110,9 +114,7 @@ jest.unstable_mockModule('../src/models/AttendanceSetting.js', () => ({ default:
 jest.unstable_mockModule('../src/models/Department.js', () => ({ default: mockDepartment }));
 jest.unstable_mockModule('../src/models/Holiday.js', () => ({ default: mockHoliday }));
 jest.unstable_mockModule('../src/models/ScheduleDayMemo.js', () => ({ default: mockScheduleDayMemo }));
-jest.unstable_mockModule('../src/services/leaveFieldService.js', () => ({
-  getLeaveFieldIds: mockGetLeaveFieldIds,
-}));
+jest.unstable_mockModule('../src/services/leaveFieldService.js', () => mockLeaveFieldService);
 jest.unstable_mockModule('../src/services/laborRuleValidationService.js', () => ({
   assertScheduleRuleCompliance: mockAssertScheduleRuleCompliance,
   isLaborRuleValidationError: mockIsLaborRuleValidationError,
@@ -167,6 +169,7 @@ beforeEach(() => {
     select: jest.fn().mockReturnThis(),
     lean: jest.fn().mockResolvedValue([]),
   });
+  mockAllLeaveForms = null;
   mockGetLeaveFieldIds.mockReset();
   mockGetLeaveFieldIds.mockResolvedValue({
     formId: 'form1',
@@ -1717,6 +1720,114 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
     });
   });
 
+  it('lists the approved leave of every leave form (default 請假 and the customer form) with each form\'s own fields', async () => {
+    mockEmployee.find.mockReturnValue({
+      select: jest.fn().mockReturnValue(createSelectResponse([{ _id: 'e1' }, { _id: 'e2' }])),
+    });
+    mockAllLeaveForms = [
+      { formId: 'form1', startId: 's', endId: 'e', typeId: 't' },
+      { formId: 'form2', startId: 'cs', endId: 'ce', typeId: 'ct', daysId: 'cd' },
+    ];
+    const defaultApproval = {
+      _id: 'a1',
+      applicant_employee: { _id: 'e1', name: 'E1' },
+      form_data: { s: '2023-01-01', e: '2023-01-02', t: '病假' },
+      status: 'approved',
+    };
+    const customerApproval = {
+      _id: 'a2',
+      applicant_employee: { _id: 'e2', name: 'E2' },
+      form_data: { cs: '2023-01-10', ce: '2023-01-11', ct: '特休假', cd: 2 },
+      status: 'approved',
+    };
+    const selectMocks = [];
+    mockApprovalRequest.find.mockImplementation((filter) => {
+      const select = jest.fn().mockReturnThis();
+      selectMocks.push([filter.form, select]);
+      return {
+        select,
+        populate: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockResolvedValue(filter.form === 'form1' ? [defaultApproval] : [customerApproval]),
+      };
+    });
+
+    const res = await request(app).get('/api/schedules/leave-approvals?month=2023-01&employee=e1');
+
+    expect(res.status).toBe(200);
+    expect(mockApprovalRequest.find).toHaveBeenCalledTimes(2);
+    expect(mockApprovalRequest.find).toHaveBeenCalledWith({
+      applicant_employee: { $in: ['e1'] },
+      form: 'form1',
+      status: 'approved',
+      'form_data.s': { $lt: '2023-02-01' },
+      'form_data.e': { $gte: '2023-01-01' },
+    });
+    expect(mockApprovalRequest.find).toHaveBeenCalledWith({
+      applicant_employee: { $in: ['e1'] },
+      form: 'form2',
+      status: 'approved',
+      'form_data.cs': { $lt: '2023-02-01' },
+      'form_data.ce': { $gte: '2023-01-01' },
+    });
+    expect(selectMocks.find(([form]) => form === 'form2')[1]).toHaveBeenCalledWith(
+      'applicant_employee applicant_department status form_data.ct form_data.cs form_data.ce',
+    );
+    expect(res.body.leaves).toEqual([
+      { employee: defaultApproval.applicant_employee, leaveType: '病假', startDate: '2023-01-01', endDate: '2023-01-02', status: 'approved' },
+      { employee: customerApproval.applicant_employee, leaveType: '特休假', startDate: '2023-01-10', endDate: '2023-01-11', status: 'approved' },
+    ]);
+    expect(res.body.approvals.map((item) => item._id)).toEqual(['a1', 'a2']);
+  });
+
+  it('returns no leave approvals when there is no leave form at all', async () => {
+    mockEmployee.find.mockReturnValue({
+      select: jest.fn().mockReturnValue(createSelectResponse([{ _id: 'e1' }])),
+    });
+    mockAllLeaveForms = [];
+
+    const res = await request(app).get('/api/schedules/leave-approvals?month=2023-01&employee=e1');
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ leaves: [], approvals: [] });
+    expect(mockApprovalRequest.find).not.toHaveBeenCalled();
+  });
+
+  it('applies the onLeave status filter to leave from every leave form', async () => {
+    const matchedEmployees = [
+      { _id: 'e1', name: 'A員工', department: 'd1' },
+      { _id: 'e2', name: 'B員工', department: 'd1' },
+      { _id: 'e3', name: 'C員工', department: 'd1' },
+    ];
+    mockEmployee.find.mockReturnValue({
+      select: jest.fn().mockImplementation(() => createSelectResponse(matchedEmployees)),
+    });
+    mockAllLeaveForms = [
+      { formId: 'form1', startId: 's', endId: 'e', typeId: 't' },
+      { formId: 'form2', startId: 'cs', endId: 'ce', typeId: 'ct' },
+    ];
+    mockApprovalRequest.find.mockImplementation((filter) => ({
+      select: jest.fn().mockReturnValue({
+        lean: jest.fn().mockResolvedValue(filter.form === 'form1'
+          ? [{ applicant_employee: 'e1', form_data: { s: '2023-01-05', e: '2023-01-06' } }]
+          : [{ applicant_employee: 'e2', form_data: { cs: '2023-01-20', ce: '2023-01-20' } }]),
+      }),
+    }));
+    mockShiftSchedule.find
+      .mockReturnValueOnce({
+        select: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue([]) }),
+      })
+      .mockReturnValueOnce({
+        select: jest.fn().mockReturnThis(),
+        populate: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockResolvedValue([]),
+      });
+
+    const res = await request(app).get('/api/schedules/monthly?month=2023-01&department=d1&status=onLeave');
+
+    expect(res.status).toBe(200);
+    expect(mockApprovalRequest.find).toHaveBeenCalledTimes(2);
+    expect(res.body.employees.map((employee) => employee._id)).toEqual(['e1', 'e2']);
+  });
   it('filters leave approvals by department and subDepartment in Mongo query', async () => {
     const employeeSelectMock = jest
       .fn()

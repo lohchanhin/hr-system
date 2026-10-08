@@ -17,10 +17,14 @@ export const WORK_HOURS_CONFIG = {
   // DAYS_PER_MONTH: 22, // 22 working days
 };
 
+// 特休的各種名稱：舊資料與手動輸入的「特休」，以及字典項目（C12）的「特休假」。
+// 特休相關的判斷（薪資不扣款、特休報表）都用這個常數，兩種名稱視為同一種假。
+export const ANNUAL_LEAVE_TYPES = ['特休', '特休假'];
+
 // Leave policy configuration
 export const LEAVE_POLICY = {
   // Paid leave types (no deduction)
-  PAID_LEAVE_TYPES: ['特休', '年假', '婚假', '喪假', '產假', '陪產假'],
+  PAID_LEAVE_TYPES: [...ANNUAL_LEAVE_TYPES, '年假', '婚假', '喪假', '產假', '陪產假'],
   
   // Sick leave types
   SICK_LEAVE_TYPES: ['病假', '生理假'],
@@ -120,6 +124,7 @@ export function convertToDailyRate(salaryAmount, salaryType) {
 
 export default {
   WORK_HOURS_CONFIG,
+  ANNUAL_LEAVE_TYPES,
   LEAVE_POLICY,
   OVERTIME_CONFIG,
   OVERTIME_FORM_NAMES,

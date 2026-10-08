@@ -8,6 +8,7 @@ import FormTemplate from '../models/form_template.js';
 import FormField from '../models/form_field.js';
 import { getLeaveFieldIds } from './leaveFieldService.js';
 import { isNonWorkShift } from './shiftSemanticService.js';
+import { ANNUAL_LEAVE_TYPES } from '../config/salaryConfig.js';
 
 export class ReportAccessError extends Error {
   constructor(status, message) {
@@ -621,7 +622,8 @@ async function buildApprovalRecords({
       const typeCode = typeValue ? String(typeValue.code ?? typeValue.value ?? typeValue) : '';
       const labelCandidate = typeValue?.label ?? typeMap.get(typeCode) ?? typeCode;
       const normalizedLabel = labelCandidate ? String(labelCandidate) : '';
-      if (normalizedLabel !== '特休') return;
+      // 舊資料的「特休」與字典項目的「特休假」都算特休
+      if (!ANNUAL_LEAVE_TYPES.includes(normalizedLabel)) return;
       const startValue = startId ? approval.form_data?.[startId] : undefined;
       const endValue = endId ? approval.form_data?.[endId] : undefined;
       const days = Math.max(parseNumber(approval.form_data?.days ?? approval.form_data?.duration ?? 0), 0);

@@ -148,4 +148,30 @@ describe('OtherControlSetting custom field defaults', () => {
     })
     expect(wrapper.vm.itemSettings.C04[1]).toEqual({ name: '物理治療師', code: 'PHYS_THER' })
   })
+
+  it('載入設定失敗時以真實 Element Plus 顯示警告與重新載入，並停用新增 / 儲存，重新載入成功後恢復', async () => {
+    apiFetch.mockImplementation(url => {
+      if (url === '/api/other-control-settings') return Promise.resolve({ ok: false, status: 500, json: async () => ({}) })
+      return Promise.resolve({ ok: true, json: async () => ({}) })
+    })
+    const wrapper = mount(OtherControlSetting, { global: { plugins: [ElementPlus] } })
+    await flushPromises()
+
+    expect(wrapper.vm.settingsLoaded).toBe(false)
+    const alert = wrapper.find('.load-alert')
+    expect(alert.exists()).toBe(true)
+    expect(alert.text()).toContain('載入失敗')
+    const retry = wrapper.find('[data-test="reload-settings"]')
+    expect(retry.text()).toBe('重新載入')
+    const addFieldButton = wrapper.findAll('button').find(button => button.text() === '新增欄位')
+    expect(addFieldButton.attributes('disabled')).toBeDefined()
+
+    apiFetch.mockImplementation(() => Promise.resolve({ ok: true, json: async () => ({}) }))
+    await retry.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.vm.settingsLoaded).toBe(true)
+    expect(wrapper.find('.load-alert').exists()).toBe(false)
+    expect(wrapper.findAll('button').find(button => button.text() === '新增欄位').attributes('disabled')).toBeUndefined()
+  })
 })

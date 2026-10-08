@@ -2,6 +2,8 @@ import FormTemplate from '../models/form_template.js'
 import { buildLiteralSearchRegex } from '../utils/safeSearch.js'
 import FormField from '../models/form_field.js'
 import ApprovalWorkflow from '../models/approval_workflow.js'
+import { resolveFieldOptions, resolveFieldsOptions, normalizeFieldKeyInput } from '../services/formFieldOptionsService.js'
+import { resetLeaveFieldCache } from '../services/leaveFieldService.js'
 
 const SIGN_ROLE_OPTIONS = [
   { value: 'R001', label: '填報', description: '提出申請與初始資料填寫' },
@@ -20,6 +22,51 @@ const SIGN_LEVEL_OPTIONS = [
   { value: 'U004', label: 'L4', description: '高階主管或副執行長' },
   { value: 'U005', label: 'L5', description: '執行長 / 院長 / 董事會' },
 ]
+
+// 表單性質：決定請假 / 加班相關功能（假勤日曆、特休餘額、扣減、加班檢核）會不會處理這張表單
+const SEMANTIC_TYPES = ['general', 'leave', 'overtime', 'shift_change', 'business_trip']
+const OVERTIME_NAME_PATTERN = /加班|overtime/i
+const LEAVE_NAME_PATTERN = /請假|休假|事假|病假|特休|公假|假單|leave/i
+// 名稱雖含假別字眼，但不是「請假申請」本身（例如特休保留、各種證明），不能被當成請假單
+const NOT_LEAVE_REQUEST_NAME_PATTERN = /保留|證明|結算/
+
+// 依表單名稱推論表單性質；管理員在介面上明確選擇時以選擇為準
+export function inferSemanticType(name) {
+  const text = String(name ?? '')
+  if (OVERTIME_NAME_PATTERN.test(text)) return 'overtime'
+  if (LEAVE_NAME_PATTERN.test(text) && !NOT_LEAVE_REQUEST_NAME_PATTERN.test(text)) return 'leave'
+  return 'general'
+}
+
+// 空值視為未指定；回傳 { valid, value }
+function parseSemanticTypeInput(raw) {
+  if (raw === undefined || raw === null || raw === '') return { valid: true, value: undefined }
+  if (typeof raw !== 'string' || !SEMANTIC_TYPES.includes(raw)) return { valid: false, value: undefined }
+  return { valid: true, value: raw }
+}
+
+/**
+ * 啟動時補正舊資料：名稱看起來是請假單、但表單性質仍是預設 general 的表單改成 leave。
+ * 只動 general（含欄位缺漏），已明確設為其他性質的不會被改；重複執行不會再有變動。回傳修正的筆數。
+ */
+export async function migrateLeaveFormSemantics() {
+  const generalForms = await FormTemplate.find(
+    { semanticType: { $in: ['general', null] } },
+    { name: 1, semanticType: 1 }
+  ).lean()
+  const leaveFormIds = (generalForms || [])
+    .filter(form => inferSemanticType(form.name) === 'leave')
+    .map(form => form._id)
+  if (!leaveFormIds.length) return 0
+
+  const result = await FormTemplate.updateMany(
+    { _id: { $in: leaveFormIds }, semanticType: { $in: ['general', null] } },
+    { $set: { semanticType: 'leave' } },
+    { timestamps: false }
+  )
+  resetLeaveFieldCache()
+  return result?.modifiedCount ?? leaveFormIds.length
+}
 
 /* ---------------------- FormTemplate CRUD ---------------------- */
 export async function listFormTemplates(req, res) {
@@ -40,14 +87,17 @@ export async function createFormTemplate(req, res) {
   try {
     const { name, category, description, owner_org_id, is_active, semanticType } = req.body
     if (!name) return res.status(400).json({ error: 'name is required' })
+    const semantic = parseSemanticTypeInput(semanticType)
+    if (!semantic.valid) return res.status(400).json({ error: 'invalid semanticType' })
     const doc = await FormTemplate.create({
       name, category, description, owner_org_id,
-      semanticType: semanticType || (/加班|overtime/i.test(name) ? 'overtime' : /請假|leave/i.test(name) ? 'leave' : 'general'),
+      semanticType: semantic.value || inferSemanticType(name),
       is_active: is_active !== undefined ? !!is_active : true,
       created_by: req.user?.id, // 若有 auth
     })
     // 建立預設空流程
     await ApprovalWorkflow.create({ form: doc._id, steps: [], policy: { maxApprovalLevel: 5, allowDelegate: false, overdueDays: 3, overdueAction: 'none' } })
+    resetLeaveFieldCache()
     res.status(201).json(doc)
   } catch (e) {
     res.status(400).json({ error: e.message })
@@ -60,7 +110,7 @@ export async function getFormTemplate(req, res) {
     if (!form) return res.status(404).json({ error: 'not found' })
     const fields = await FormField.find({ form: form._id, is_active: true }).sort({ order: 1 })
     const workflow = await ApprovalWorkflow.findOne({ form: form._id })
-    res.json({ form, fields, workflow })
+    res.json({ form, fields: await resolveFieldsOptions(fields), workflow })
   } catch (e) {
     res.status(400).json({ error: e.message })
   }
@@ -69,12 +119,15 @@ export async function getFormTemplate(req, res) {
 export async function updateFormTemplate(req, res) {
   try {
     const { name, category, description, owner_org_id, is_active, semanticType } = req.body
+    const semantic = parseSemanticTypeInput(semanticType)
+    if (!semantic.valid) return res.status(400).json({ error: 'invalid semanticType' })
     const updated = await FormTemplate.findByIdAndUpdate(
       req.params.id,
-      { $set: { name, category, description, owner_org_id, is_active, semanticType } },
+      { $set: { name, category, description, owner_org_id, is_active, semanticType: semantic.value } },
       { new: true }
     )
     if (!updated) return res.status(404).json({ error: 'not found' })
+    resetLeaveFieldCache()
     res.json(updated)
   } catch (e) {
     res.status(400).json({ error: e.message })
@@ -87,6 +140,7 @@ export async function deleteFormTemplate(req, res) {
     if (!form) return res.status(404).json({ error: 'not found' })
     await FormField.deleteMany({ form: form._id })
     await ApprovalWorkflow.deleteOne({ form: form._id })
+    resetLeaveFieldCache()
     res.json({ success: true })
   } catch (e) {
     res.status(400).json({ error: e.message })
@@ -100,10 +154,14 @@ export async function addField(req, res) {
     if (!form) return res.status(404).json({ error: 'form not found' })
     const { label, type_1, type_2, required, options, placeholder, order, is_active } = req.body
     if (!label || !type_1) return res.status(400).json({ error: 'label & type_1 required' })
+    const fieldKey = normalizeFieldKeyInput(req.body.field_key)
+    if (!fieldKey.valid) return res.status(400).json({ error: 'invalid field_key' })
     const doc = await FormField.create({
-      form: form._id, label, type_1, type_2, required: !!required, options, placeholder, order: order ?? 0, is_active: is_active !== false
+      form: form._id, label, type_1, type_2, required: !!required, options, placeholder, order: order ?? 0, is_active: is_active !== false,
+      ...(fieldKey.provided ? { field_key: fieldKey.value } : {}),
     })
-    res.status(201).json(doc)
+    resetLeaveFieldCache()
+    res.status(201).json(await resolveFieldOptions(doc))
   } catch (e) {
     res.status(400).json({ error: e.message })
   }
@@ -112,13 +170,22 @@ export async function addField(req, res) {
 export async function updateField(req, res) {
   try {
     const { label, type_1, type_2, required, options, placeholder, order, is_active } = req.body
+    const fieldKey = normalizeFieldKeyInput(req.body.field_key)
+    if (!fieldKey.valid) return res.status(400).json({ error: 'invalid field_key' })
     const updated = await FormField.findByIdAndUpdate(
       req.params.fieldId,
-      { $set: { label, type_1, type_2, required, options, placeholder, order, is_active } },
+      {
+        $set: {
+          label, type_1, type_2, required, options, placeholder, order, is_active,
+          // 沒帶 field_key 就維持原本的連結；帶空字串 / null 代表解除連結改手動輸入
+          ...(fieldKey.provided ? { field_key: fieldKey.value } : {}),
+        },
+      },
       { new: true }
     )
     if (!updated) return res.status(404).json({ error: 'field not found' })
-    res.json(updated)
+    resetLeaveFieldCache()
+    res.json(await resolveFieldOptions(updated))
   } catch (e) {
     res.status(400).json({ error: e.message })
   }
@@ -128,6 +195,7 @@ export async function deleteField(req, res) {
   try {
     const ret = await FormField.findByIdAndDelete(req.params.fieldId)
     if (!ret) return res.status(404).json({ error: 'field not found' })
+    resetLeaveFieldCache()
     res.json({ success: true })
   } catch (e) {
     res.status(400).json({ error: e.message })
@@ -137,7 +205,7 @@ export async function deleteField(req, res) {
 export async function listFields(req, res) {
   try {
     const fields = await FormField.find({ form: req.params.formId }).sort({ order: 1 })
-    res.json(fields)
+    res.json(await resolveFieldsOptions(fields))
   } catch (e) {
     res.status(400).json({ error: e.message })
   }
@@ -239,6 +307,7 @@ export async function ensureLeaveForm(req, res) {
         order: 5,
       })
     }
+    if (wasGenerated || !existingProofField) resetLeaveFieldCache()
 
     // Return the form with its fields and workflow
     const fields = await FormField.find({ form: form._id, is_active: true }).sort({ order: 1 })
@@ -246,7 +315,7 @@ export async function ensureLeaveForm(req, res) {
     
     res.json({ 
       form, 
-      fields, 
+      fields: await resolveFieldsOptions(fields),
       workflow,
       generated: wasGenerated
     })
@@ -392,6 +461,7 @@ export async function restoreDefaultTemplates(req, res) {
         name: t.name,
         category: t.category,
         description: t.description,
+        semanticType: inferSemanticType(t.name),
         is_active: true,
         created_by: req.user?.id,
       })
@@ -408,6 +478,7 @@ export async function restoreDefaultTemplates(req, res) {
 
       createdForms.push(form)
     }
+    if (createdForms.length) resetLeaveFieldCache()
 
     res.json({ 
       success: true, 

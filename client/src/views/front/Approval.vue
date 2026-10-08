@@ -818,10 +818,13 @@ function reloadSelectedForm() {
 
 function getOptions(field) {
   // options 可為陣列或物件；這裡統一轉成 [{label, value}]
+  // 物件選項除了 {label, value} 也可能是字典 / 自訂欄位的 {name, code}：顯示用名稱，值同伺服器的字典選項一樣用名稱
   const opt = field.options
   if (!opt) return []
   if (Array.isArray(opt)) {
-    return opt.map(v => (typeof v === 'string' ? { label: v, value: v } : { label: v.label ?? v.value, value: v.value ?? v.label }))
+    return opt.map(v => (typeof v === 'string'
+      ? { label: v, value: v }
+      : { label: v.label ?? v.name ?? v.value ?? v.code, value: v.value ?? v.label ?? v.name ?? v.code }))
   }
   return Object.entries(opt).map(([k, v]) => ({ label: String(v), value: String(k) }))
 }

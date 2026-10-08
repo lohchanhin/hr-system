@@ -1,261 +1,102 @@
 import { randomUUID } from 'crypto'
+import {
+  getSettings,
+  updateSettings,
+  resetSettings
+} from '../services/otherControlSettingsStore.js'
 
-const defaultSettings = {
-  notification: {
-    enableEmail: true,
-    enableSMS: false,
-    defaultReminderMinutes: 30,
-    digestTime: '08:30',
-    escalationTargets: ['manager'],
-    frequency: 'immediate'
-  },
-  security: {
-    enforce2FA: true,
-    passwordExpiration: true,
-    passwordExpireDays: 90,
-    sessionTimeout: 30,
-    loginAlert: true,
-    maintenanceContacts: ['security'],
-    ipWhitelist: [
-      { label: '台北總部', address: '203.0.113.0/24' },
-      { label: '備援機房', address: '198.51.100.25' }
-    ]
-  },
-  customFields: [
-    {
-      label: '員工證字號',
-      fieldKey: 'nationalId',
-      type: 'text',
-      category: 'employee',
-      group: '基本資料',
-      required: true,
-      description: '供報稅與投保使用'
-    },
-    {
-      label: '制服尺寸',
-      fieldKey: 'uniformSize',
-      type: 'select',
-      category: 'employee',
-      group: '報到資訊',
-      required: false,
-      description: '入職前通知行政備貨'
-    },
-    {
-      label: '職稱選單 (C03)',
-      fieldKey: 'C03',
-      type: 'select',
-      category: 'dictionary',
-      group: '職務設定',
-      required: true,
-      description: '維護員工職稱清單'
-    },
-    {
-      label: '執業職稱選單 (C04)',
-      fieldKey: 'C04',
-      type: 'select',
-      category: 'dictionary',
-      group: '職務設定',
-      required: false,
-      description: '提供專業人員執業職稱選項'
-    },
-    {
-      label: '語言能力庫 (C05)',
-      fieldKey: 'C05',
-      type: 'composite',
-      category: 'dictionary',
-      group: '基本資料',
-      required: false,
-      description: '設定可勾選的語言能力與層級'
-    },
-    {
-      label: '身障等級 (C06)',
-      fieldKey: 'C06',
-      type: 'select',
-      category: 'dictionary',
-      group: '基本資料',
-      required: false,
-      description: '維護身心障礙手冊等級'
-    },
-    {
-      label: '身分類別 (C07)',
-      fieldKey: 'C07',
-      type: 'select',
-      category: 'dictionary',
-      group: '基本資料',
-      required: false,
-      description: '設定身份註記分類'
-    },
-    {
-      label: '教育程度 (C08)',
-      fieldKey: 'C08',
-      type: 'select',
-      category: 'dictionary',
-      group: '學歷資料',
-      required: false,
-      description: '維護教育程度選單'
-    },
-    {
-      label: '緊急聯絡人稱謂 (C09)',
-      fieldKey: 'C09',
-      type: 'select',
-      category: 'dictionary',
-      group: '聯絡資訊',
-      required: false,
-      description: '提供緊急聯絡人稱謂選項'
-    },
-    {
-      label: '教育訓練積分類別 (C10)',
-      fieldKey: 'C10',
-      type: 'select',
-      category: 'dictionary',
-      group: '教育訓練',
-      required: false,
-      description: '維護教育訓練積分類別'
-    },
-    {
-      label: '假別類別 (C12)',
-      fieldKey: 'C12',
-      type: 'select',
-      category: 'dictionary',
-      group: '假別設定',
-      required: true,
-      description: '維護假別類別與對應設定'
-    },
-    {
-      label: '津貼項目 (C14)',
-      fieldKey: 'C14',
-      type: 'select',
-      category: 'dictionary',
-      group: '薪資設定',
-      required: false,
-      description: '維護津貼或補貼項目'
-    }
-  ],
-  itemSettings: {
-    C03: ['助理', '專員', '經理'],
-    C04: ['護理師', '藥師', '工程師'],
-    C05: [
-      { label: '英文', levels: ['A1', 'B2', 'C1'] },
-      { label: '日文', levels: ['N3', 'N2', 'N1'] }
-    ],
-    C06: ['第一類', '第二類', '第三類'],
-    C07: ['一般員工', '派遣', '實習'],
-    C08: ['高中', '大學', '碩士', '博士'],
-    C09: ['父親', '母親', '配偶', '其他'],
-    C10: ['新進訓練', '專業課程', '領導力'],
-    C12: ['特休假', '病假', '事假'],
-    C14: ['交通補助', '餐費補助', '職務津貼']
-  },
-  integration: {
-    vendor: 'none',
-    syncSchedule: true,
-    syncPayroll: false,
-    webhookUrl: '',
-    autoRetry: true,
-    lastSync: '尚未同步',
-    statusMessage: '等待測試'
-  },
-  automationRules: [
-    {
-      name: '新員工自動啟用',
-      trigger: '建立員工主檔後',
-      status: 'enabled',
-      actions: ['assignDefaultRole', 'sendMail'],
-      notifyTargets: ['hr'],
-      description: '自動寄送歡迎信並指派 HR 夥伴'
-    },
-    {
-      name: '異常登入鎖定',
-      trigger: '帳號連續 5 次登入失敗',
-      status: 'disabled',
-      actions: ['lockAccount', 'sendMail'],
-      notifyTargets: ['admin', 'security'],
-      description: '通知系統管理員並暫停帳號'
-    }
-  ]
-}
+// 所有設定（字典項目、自訂欄位、表單分類、通知／資安／整合設定、自動化規則）都存在資料庫，
+// 預設值與合併邏輯集中在 services/otherControlSettingsStore.js。
 
-const defaultFormCategories = [
-  {
-    id: 'cat-personnel',
-    name: '人事類',
-    code: '人事類',
-    description: '人員異動、到職與人事流程',
-    builtin: true
-  },
-  {
-    id: 'cat-general',
-    name: '總務類',
-    code: '總務類',
-    description: '行政資產、採購與總務流程',
-    builtin: true
-  },
-  {
-    id: 'cat-leave',
-    name: '請假類',
-    code: '請假類',
-    description: '各式請假、補休與出勤相關流程',
-    builtin: true
-  },
-  {
-    id: 'cat-other',
-    name: '其他',
-    code: '其他',
-    description: '尚未分類或臨時需求流程',
-    builtin: true
+const READ_FAILED_MESSAGE = '無法讀取其他控制設定，請稍後再試'
+const WRITE_FAILED_MESSAGE = '無法儲存其他控制設定，請稍後再試'
+
+// 在 updateSettings 的 mutator 內丟出，代表請求本身有問題（找不到、重複、不可刪除），不會寫入資料庫
+class SettingsRequestError extends Error {
+  constructor(status, message) {
+    super(message)
+    this.status = status
   }
-]
-
-function cloneSettings() {
-  return JSON.parse(JSON.stringify(defaultSettings))
 }
 
-let otherControlSettings = cloneSettings()
-let formCategories = defaultFormCategories.map((category) => ({ ...category }))
-
-export function getOtherControlSettings(req, res) {
-  res.json({
-    ...otherControlSettings,
-    formCategories
-  })
-}
-
-export function updateNotificationSettings(req, res) {
-  otherControlSettings.notification = {
-    ...otherControlSettings.notification,
-    ...(req.body || {})
+function sendFailure(res, error, fallbackMessage) {
+  if (error instanceof SettingsRequestError) {
+    return res.status(error.status).json({ error: error.message })
   }
-  res.json(otherControlSettings.notification)
+  // 只記錄錯誤名稱：資料庫錯誤訊息可能帶連線資訊，設定內容也含 webhookUrl 與資安欄位，都不寫進 log
+  console.error('[otherControlSetting] request failed:', error?.name ?? 'Error')
+  return res.status(500).json({ error: fallbackMessage })
 }
 
-export function updateSecuritySettings(req, res) {
-  const payload = req.body || {}
-  const ipWhitelist = Array.isArray(payload.ipWhitelist)
-    ? payload.ipWhitelist
-    : otherControlSettings.security.ipWhitelist
-
-  otherControlSettings.security = {
-    ...otherControlSettings.security,
-    ...payload,
-    ipWhitelist
+export async function getOtherControlSettings(req, res) {
+  try {
+    const settings = await getSettings()
+    res.json(settings)
+  } catch (error) {
+    sendFailure(res, error, READ_FAILED_MESSAGE)
   }
-
-  res.json(otherControlSettings.security)
 }
 
-export function updateIntegrationSettings(req, res) {
-  otherControlSettings.integration = {
-    ...otherControlSettings.integration,
-    ...(req.body || {})
+export async function updateNotificationSettings(req, res) {
+  try {
+    const payload = req.body || {}
+    const settings = await updateSettings((current) => {
+      current.notification = {
+        ...current.notification,
+        ...payload
+      }
+    })
+    res.json(settings.notification)
+  } catch (error) {
+    sendFailure(res, error, WRITE_FAILED_MESSAGE)
   }
-  res.json(otherControlSettings.integration)
 }
 
-export function getItemSettings(req, res) {
-  res.json(otherControlSettings.itemSettings)
+export async function updateSecuritySettings(req, res) {
+  try {
+    const payload = req.body || {}
+    const settings = await updateSettings((current) => {
+      const ipWhitelist = Array.isArray(payload.ipWhitelist)
+        ? payload.ipWhitelist
+        : current.security.ipWhitelist
+
+      current.security = {
+        ...current.security,
+        ...payload,
+        ipWhitelist
+      }
+    })
+    res.json(settings.security)
+  } catch (error) {
+    sendFailure(res, error, WRITE_FAILED_MESSAGE)
+  }
 }
 
-export function updateItemSettings(req, res) {
+export async function updateIntegrationSettings(req, res) {
+  try {
+    const payload = req.body || {}
+    const settings = await updateSettings((current) => {
+      current.integration = {
+        ...current.integration,
+        ...payload
+      }
+    })
+    res.json(settings.integration)
+  } catch (error) {
+    sendFailure(res, error, WRITE_FAILED_MESSAGE)
+  }
+}
+
+export async function getItemSettings(req, res) {
+  try {
+    const settings = await getSettings()
+    res.json(settings.itemSettings)
+  } catch (error) {
+    sendFailure(res, error, READ_FAILED_MESSAGE)
+  }
+}
+
+export async function updateItemSettings(req, res) {
   const payload = req.body
 
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
@@ -269,28 +110,46 @@ export function updateItemSettings(req, res) {
     return res.status(400).json({ error: `itemSettings.${key} 必須為陣列` })
   }
 
-  otherControlSettings.itemSettings = {
-    ...otherControlSettings.itemSettings,
-    ...payload
+  try {
+    // 只取代有送來的字典陣列，其餘字典維持原樣
+    const settings = await updateSettings((current) => {
+      current.itemSettings = {
+        ...current.itemSettings,
+        ...payload
+      }
+    })
+    res.json(settings.itemSettings)
+  } catch (error) {
+    sendFailure(res, error, WRITE_FAILED_MESSAGE)
   }
-
-  res.json(otherControlSettings.itemSettings)
 }
 
-export function replaceCustomFields(req, res) {
+export async function replaceCustomFields(req, res) {
   const { customFields } = req.body || {}
   if (!Array.isArray(customFields)) {
     return res.status(400).json({ error: 'customFields 必須為陣列' })
   }
-  otherControlSettings.customFields = customFields
-  res.json(otherControlSettings.customFields)
+
+  try {
+    const settings = await updateSettings((current) => {
+      current.customFields = customFields
+    })
+    res.json(settings.customFields)
+  } catch (error) {
+    sendFailure(res, error, WRITE_FAILED_MESSAGE)
+  }
 }
 
-export function listFormCategories(req, res) {
-  res.json(formCategories)
+export async function listFormCategories(req, res) {
+  try {
+    const settings = await getSettings()
+    res.json(settings.formCategories)
+  } catch (error) {
+    sendFailure(res, error, READ_FAILED_MESSAGE)
+  }
 }
 
-export function createFormCategory(req, res) {
+export async function createFormCategory(req, res) {
   const payload = req.body || {}
   const name = typeof payload.name === 'string' ? payload.name.trim() : ''
   const code = typeof payload.code === 'string' ? payload.code.trim() : name
@@ -302,10 +161,8 @@ export function createFormCategory(req, res) {
   if (!code) {
     return res.status(400).json({ error: 'code 為必填欄位' })
   }
-  if (formCategories.some((category) => category.code === code)) {
-    return res.status(409).json({ error: 'code 已存在' })
-  }
 
+  // id 在 mutator 外產生：樂觀鎖衝突而重跑 mutator 時，同一個請求仍是同一個 id
   const newCategory = {
     id: randomUUID(),
     name,
@@ -313,59 +170,83 @@ export function createFormCategory(req, res) {
     description,
     builtin: false
   }
-  formCategories.push(newCategory)
-  res.status(201).json(newCategory)
+
+  try {
+    await updateSettings((current) => {
+      if (current.formCategories.some((category) => category.code === code)) {
+        throw new SettingsRequestError(409, 'code 已存在')
+      }
+      current.formCategories = [...current.formCategories, newCategory]
+    })
+    res.status(201).json(newCategory)
+  } catch (error) {
+    sendFailure(res, error, WRITE_FAILED_MESSAGE)
+  }
 }
 
-export function updateFormCategory(req, res) {
+export async function updateFormCategory(req, res) {
   const { id } = req.params || {}
-  const index = formCategories.findIndex((category) => category.id === id)
-  if (index === -1) {
-    return res.status(404).json({ error: '找不到指定分類' })
-  }
-
   const payload = req.body || {}
-  const name = typeof payload.name === 'string' ? payload.name.trim() : formCategories[index].name
-  const code = typeof payload.code === 'string' ? payload.code.trim() : formCategories[index].code
-  const description =
-    typeof payload.description === 'string'
-      ? payload.description.trim()
-      : formCategories[index].description
 
-  if (!name) {
-    return res.status(400).json({ error: 'name 為必填欄位' })
-  }
-  if (!code) {
-    return res.status(400).json({ error: 'code 為必填欄位' })
-  }
-  if (formCategories.some((category) => category.id !== id && category.code === code)) {
-    return res.status(409).json({ error: 'code 已存在' })
-  }
+  try {
+    let updatedCategory = null
+    await updateSettings((current) => {
+      const index = current.formCategories.findIndex((category) => category.id === id)
+      if (index === -1) {
+        throw new SettingsRequestError(404, '找不到指定分類')
+      }
 
-  formCategories[index] = {
-    ...formCategories[index],
-    name,
-    code,
-    description
-  }
+      const existing = current.formCategories[index]
+      const name = typeof payload.name === 'string' ? payload.name.trim() : existing.name
+      const code = typeof payload.code === 'string' ? payload.code.trim() : existing.code
+      const description =
+        typeof payload.description === 'string' ? payload.description.trim() : existing.description
 
-  res.json(formCategories[index])
+      if (!name) {
+        throw new SettingsRequestError(400, 'name 為必填欄位')
+      }
+      if (!code) {
+        throw new SettingsRequestError(400, 'code 為必填欄位')
+      }
+      if (current.formCategories.some((category) => category.id !== id && category.code === code)) {
+        throw new SettingsRequestError(409, 'code 已存在')
+      }
+
+      updatedCategory = {
+        ...existing,
+        name,
+        code,
+        description
+      }
+      current.formCategories[index] = updatedCategory
+    })
+    res.json(updatedCategory)
+  } catch (error) {
+    sendFailure(res, error, WRITE_FAILED_MESSAGE)
+  }
 }
 
-export function deleteFormCategory(req, res) {
+export async function deleteFormCategory(req, res) {
   const { id } = req.params || {}
-  const index = formCategories.findIndex((category) => category.id === id)
-  if (index === -1) {
-    return res.status(404).json({ error: '找不到指定分類' })
+
+  try {
+    await updateSettings((current) => {
+      const index = current.formCategories.findIndex((category) => category.id === id)
+      if (index === -1) {
+        throw new SettingsRequestError(404, '找不到指定分類')
+      }
+      if (current.formCategories[index].builtin) {
+        throw new SettingsRequestError(400, '內建分類無法刪除')
+      }
+      current.formCategories.splice(index, 1)
+    })
+    res.json({ success: true })
+  } catch (error) {
+    sendFailure(res, error, WRITE_FAILED_MESSAGE)
   }
-  if (formCategories[index].builtin) {
-    return res.status(400).json({ error: '內建分類無法刪除' })
-  }
-  formCategories.splice(index, 1)
-  res.json({ success: true })
 }
 
-export function resetOtherControlSettings() {
-  otherControlSettings = cloneSettings()
-  formCategories = defaultFormCategories.map((category) => ({ ...category }))
+// 清掉資料庫內的設定，回到預設值（僅供測試與維護使用，沒有對外路由）
+export async function resetOtherControlSettings() {
+  await resetSettings()
 }

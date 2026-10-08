@@ -1,4 +1,5 @@
 import { jest } from '@jest/globals';
+import { buildLeaveFieldServiceMock } from './helpers/leaveFieldServiceMock.js';
 
 const mockShiftSchedule = {
   findOne: jest.fn(),
@@ -27,9 +28,7 @@ jest.unstable_mockModule('../src/services/laborRuleValidationService.js', () => 
   assertScheduleRuleCompliance: mockAssertScheduleRuleCompliance,
   isLaborRuleValidationError: mockIsLaborRuleValidationError,
 }));
-jest.unstable_mockModule('../src/services/leaveFieldService.js', () => ({
-  getLeaveFieldIds: mockGetLeaveFieldIds,
-}));
+jest.unstable_mockModule('../src/services/leaveFieldService.js', () => buildLeaveFieldServiceMock(mockGetLeaveFieldIds));
 
 const { createSchedule, createSchedulesBatch, updateSchedule, listSupervisorSummary, exportSchedules } = await import('../src/controllers/scheduleController.js');
 

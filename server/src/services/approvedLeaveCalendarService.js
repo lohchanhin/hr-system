@@ -1,5 +1,5 @@
 import ApprovalRequest from '../models/approval_request.js';
-import { getLeaveFieldIds } from './leaveFieldService.js';
+import { getAllLeaveFieldInfos } from './leaveFieldService.js';
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
@@ -28,6 +28,9 @@ function addUtcDays(value, days) {
  * ApprovalRequest.form_data is Mixed and stores ISO date strings. Querying those
  * values with BSON Date operands misses valid approvals, so range filtering is
  * intentionally performed after the scoped approval query.
+ *
+ * 系統預設的「請假」與客戶自建的請假表單可以並存：每張請假表單各查一次核准的假單（用該表單自己的欄位 ID），
+ * 合併進同一份日曆。一張假單只屬於一張表單，不會重複計入；同一人同一天在多張表單都有請假時只留一筆。
  */
 export async function loadApprovedLeaveCalendar({ employeeIds, start, end } = {}) {
   const ids = Array.from(new Set((employeeIds || []).map(normalizeId).filter(Boolean)));
@@ -36,35 +39,38 @@ export async function loadApprovedLeaveCalendar({ employeeIds, start, end } = {}
   const calendar = new Map(ids.map((id) => [id, new Map()]));
   if (!ids.length || !rangeStart || !rangeEnd || rangeEnd <= rangeStart) return calendar;
 
-  const { formId, startId, endId, typeId } = await getLeaveFieldIds();
-  if (!formId || !startId || !endId) return calendar;
+  const leaveForms = await getAllLeaveFieldInfos({ withTypeOptions: false });
+  const lastRangeDay = addUtcDays(rangeEnd, -1);
 
-  let query = ApprovalRequest.find({
-    form: formId,
-    status: 'approved',
-    applicant_employee: { $in: ids },
-  });
-  if (query && typeof query.select === 'function') {
-    query = query.select(`applicant_employee form_data.${startId} form_data.${endId}${typeId ? ` form_data.${typeId}` : ''}`);
-  }
-  const approvals = query && typeof query.lean === 'function' ? await query.lean() : await query;
+  for (const { formId, startId, endId, typeId } of leaveForms) {
+    if (!formId || !startId || !endId) continue;
 
-  for (const approval of approvals || []) {
-    const employeeId = normalizeId(approval.applicant_employee);
-    const bucket = calendar.get(employeeId);
-    if (!bucket) continue;
-    const leaveStart = startOfUtcDay(approval.form_data?.[startId]);
-    const leaveEnd = startOfUtcDay(approval.form_data?.[endId]);
-    if (!leaveStart || !leaveEnd || leaveEnd < leaveStart) continue;
+    let query = ApprovalRequest.find({
+      form: formId,
+      status: 'approved',
+      applicant_employee: { $in: ids },
+    });
+    if (query && typeof query.select === 'function') {
+      query = query.select(`applicant_employee form_data.${startId} form_data.${endId}${typeId ? ` form_data.${typeId}` : ''}`);
+    }
+    const approvals = query && typeof query.lean === 'function' ? await query.lean() : await query;
 
-    const firstDay = leaveStart > rangeStart ? leaveStart : rangeStart;
-    const lastRangeDay = addUtcDays(rangeEnd, -1);
-    const lastDay = leaveEnd < lastRangeDay ? leaveEnd : lastRangeDay;
-    if (lastDay < firstDay) continue;
+    for (const approval of approvals || []) {
+      const employeeId = normalizeId(approval.applicant_employee);
+      const bucket = calendar.get(employeeId);
+      if (!bucket) continue;
+      const leaveStart = startOfUtcDay(approval.form_data?.[startId]);
+      const leaveEnd = startOfUtcDay(approval.form_data?.[endId]);
+      if (!leaveStart || !leaveEnd || leaveEnd < leaveStart) continue;
 
-    const leaveType = String(approval.form_data?.[typeId] || '請假').trim() || '請假';
-    for (let pointer = firstDay; pointer <= lastDay; pointer = addUtcDays(pointer, 1)) {
-      bucket.set(pointer.toISOString().slice(0, 10), leaveType);
+      const firstDay = leaveStart > rangeStart ? leaveStart : rangeStart;
+      const lastDay = leaveEnd < lastRangeDay ? leaveEnd : lastRangeDay;
+      if (lastDay < firstDay) continue;
+
+      const leaveType = String(approval.form_data?.[typeId] || '請假').trim() || '請假';
+      for (let pointer = firstDay; pointer <= lastDay; pointer = addUtcDays(pointer, 1)) {
+        bucket.set(pointer.toISOString().slice(0, 10), leaveType);
+      }
     }
   }
 

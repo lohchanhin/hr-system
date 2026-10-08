@@ -95,6 +95,22 @@
                   />
                 </el-select>
               </el-form-item>
+              <el-form-item label="表單性質">
+                <el-select
+                  v-model="formDialog.semanticType"
+                  placeholder="選擇表單性質"
+                  data-test="form-semantic-type"
+                  @change="handleSemanticTypeChange"
+                >
+                  <el-option
+                    v-for="opt in semanticTypeOptions"
+                    :key="opt.value"
+                    :label="opt.label"
+                    :value="opt.value"
+                  />
+                </el-select>
+                <div class="field-hint">請假 / 加班性質的表單才會套用請假、加班相關功能（排班請假顯示、特休扣抵、假期餘額等）</div>
+              </el-form-item>
               <el-form-item label="啟用"><el-switch v-model="formDialog.is_active" /></el-form-item>
               <el-form-item label="說明"><el-input v-model="formDialog.description" type="textarea" :rows="3"/></el-form-item>
             </el-form>
@@ -258,6 +274,16 @@
             <el-table-column prop="label" label="欄位名稱" />
             <el-table-column prop="type_1" label="型別1" width="120" />
             <el-table-column prop="type_2" label="型別2" width="120" />
+            <el-table-column label="選項來源" width="120">
+              <template #default="{ row }">
+                <el-tag
+                  v-if="fieldSourceTag(row)"
+                  size="small"
+                  class="field-source-tag"
+                  :type="fieldSourceTag(row).type"
+                >{{ fieldSourceTag(row).text }}</el-tag>
+              </template>
+            </el-table-column>
             <el-table-column label="必填" width="80">
               <template #default="{ row }">
                 <el-switch v-model="row.required" @change="updateField(row)" />
@@ -300,7 +326,18 @@
             <el-form-item label="型別2"><el-input v-model="fieldDialog.type_2" /></el-form-item>
             <el-form-item label="必填"><el-switch v-model="fieldDialog.required" /></el-form-item>
             <el-form-item label="選項">
-              <el-input v-model="fieldDialog.optionsStr" type="textarea" :rows="2" placeholder="JSON 或以逗號分隔" />
+              <el-input
+                v-model="fieldDialog.optionsStr"
+                type="textarea"
+                :rows="2"
+                placeholder="JSON 或以逗號分隔"
+                :disabled="fieldDialogLinked"
+                data-test="field-options"
+              />
+              <div v-if="fieldDialogLinked" class="field-hint" data-test="dictionary-hint">
+                選項即時使用字典「{{ fieldDialog.dictionaryLabel || fieldDialog.field_key }}」，修改字典後立即生效
+                <el-button link type="primary" size="small" data-test="unlink-dictionary" @click="unlinkDictionaryField">解除連結，改手動輸入</el-button>
+              </div>
             </el-form-item>
             <el-form-item label="提示文字"><el-input v-model="fieldDialog.placeholder" /></el-form-item>
           </el-form>
@@ -319,7 +356,12 @@ import { ref, onMounted, watch, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { apiFetch } from '../../api'  // 你專案現有封裝
 import {
+  dictionaryItemNames,
+  getFieldDictionaryKey,
+  isDictionaryCustomField,
+  isDictionaryLinkableType,
   normalizeCustomFieldOptions,
+  normalizeItemSettings,
   parseCustomFieldOptionsInput,
   stringifyCustomFieldOptions
 } from '../../utils/fieldOptions'
@@ -334,6 +376,7 @@ const API = {
   signRoles: '/api/approvals/sign-roles',
   signLevels: '/api/approvals/sign-levels',
   otherControlSettings: '/api/other-control-settings',
+  itemSettings: '/api/other-control-settings/item-settings',
   subDepartments: '/api/sub-departments',
   formCategories: '/api/other-control-settings/form-categories',
   restoreDefaults: '/api/approvals/restore-defaults'
@@ -384,7 +427,48 @@ const policyForm = ref({
 /* 樣板 Dialog */
 const formDialogVisible = ref(false)
 const formDialogMode = ref('create') // 'create'|'edit'
-const formDialog = ref({ _id: '', name: '', category: firstCategoryValue.value || '', is_active: true, description: '' })
+const formDialog = ref({ _id: '', name: '', category: firstCategoryValue.value || '', semanticType: 'general', is_active: true, description: '' })
+
+/* 表單性質（semanticType）：決定請假 / 加班相關功能是否套用到此樣板 */
+const SEMANTIC_TYPE_OPTIONS = [
+  { value: 'general', label: '一般' },
+  { value: 'leave', label: '請假' },
+  { value: 'overtime', label: '加班' },
+]
+const EXTRA_SEMANTIC_TYPE_LABELS = { shift_change: '調班', business_trip: '出差' }
+const OVERTIME_NAME_PATTERN = /加班|overtime/i
+const LEAVE_NAME_PATTERN = /請假|休假|事假|病假|特休|公假|假單|leave/i
+// 名稱雖含假別字眼，但不是「請假申請」本身（例如特休保留、各種證明），不能被當成請假單
+const NOT_LEAVE_REQUEST_NAME_PATTERN = /保留|證明|結算/
+
+// 與伺服器 inferSemanticType（approvalTemplateController.js）相同的名稱推斷規則
+function inferFormSemanticType(name) {
+  const text = String(name ?? '')
+  if (OVERTIME_NAME_PATTERN.test(text)) return 'overtime'
+  if (LEAVE_NAME_PATTERN.test(text) && !NOT_LEAVE_REQUEST_NAME_PATTERN.test(text)) return 'leave'
+  return 'general'
+}
+
+// 管理者手動選過表單性質後，就不再跟著表單名稱自動推斷
+const formSemanticTouched = ref(false)
+const semanticTypeOptions = computed(() => {
+  const current = formDialog.value.semanticType
+  // 已存在的樣板可能是其他性質（調班、出差…），保留原值避免儲存時被覆蓋
+  if (current && !SEMANTIC_TYPE_OPTIONS.some((opt) => opt.value === current)) {
+    return [...SEMANTIC_TYPE_OPTIONS, { value: current, label: EXTRA_SEMANTIC_TYPE_LABELS[current] || current }]
+  }
+  return SEMANTIC_TYPE_OPTIONS
+})
+
+watch(() => formDialog.value.name, (name) => {
+  if (!formSemanticTouched.value) {
+    formDialog.value.semanticType = inferFormSemanticType(name)
+  }
+})
+
+function handleSemanticTypeChange() {
+  formSemanticTouched.value = true
+}
 
 /* 流程 Dialog */
 const workflowDialogVisible = ref(false)
@@ -474,8 +558,36 @@ const selectedCustomFieldKey = ref('')
 
 const fieldDialogVisible = ref(false)
 const fieldDialogMode = ref('create')
-const fieldDialog = ref({ _id: '', field_key: '', label: '', type_1: 'text', type_2: '', required: false, optionsStr: '', placeholder: '', order: 0 })
+// explicitUnlink：管理者在這個視窗明確解除了字典連結（新增 / 編輯都要送出空的 field_key，伺服器才不會再依標籤代碼自動連結）
+const fieldDialog = ref({ _id: '', field_key: '', label: '', type_1: 'text', type_2: '', required: false, optionsStr: '', placeholder: '', order: 0, dictionaryLinked: false, dictionaryLabel: '', explicitUnlink: false })
 const FIELD_TYPES = ['text','textarea','number','select','checkbox','date','time','datetime','file','user','department','org']
+// 與伺服器 normalizeFieldKeyInput 相同的 field_key 格式：英數字、底線、連字號，最長 40 字
+const FIELD_KEY_PATTERN = /^[A-Za-z0-9_-]{1,40}$/
+
+// 讀取伺服器回傳的錯誤文字（{ error } 或 { message }）；沒有就只顯示預設訊息
+async function describeFailure(res, fallback) {
+  let detail = ''
+  try {
+    const data = await res.json()
+    detail = [data?.error, data?.message].find((text) => typeof text === 'string' && text.trim()) || ''
+  } catch (error) {
+    detail = ''
+  }
+  detail = detail.trim()
+  return detail ? `${fallback}：${detail}` : `${fallback}，請稍後再試`
+}
+
+/* 字典項目：{ C12: [{ name, code }] }，連結字典的欄位用它顯示唯讀預覽 */
+const dictionaryItems = ref({})
+
+// 編輯中的欄位是否連結字典（只有下拉 / 複選欄位可連結）
+const fieldDialogLinked = computed(() =>
+  Boolean(
+    fieldDialog.value.dictionaryLinked &&
+    fieldDialog.value.field_key &&
+    isDictionaryLinkableType(fieldDialog.value.type_1)
+  )
+)
 
 watch([activeTab, selectedFormId], () => {
   if (activeTab.value === 'fields' && selectedFormId.value) loadFields()
@@ -530,34 +642,94 @@ async function loadCategories() {
     })
 }
 
+async function loadDictionaryItems() {
+  try {
+    const res = await apiFetch(API.itemSettings)
+    if (!res?.ok) return false
+    dictionaryItems.value = normalizeItemSettings(await res.json())
+    return true
+  } catch (error) {
+    console.warn('載入字典項目失敗：', error)
+    return false
+  }
+}
+
+// 字典的顯示名稱（取字典類自訂欄位的標籤，例如「假別類別 (C12)」）
+function dictionaryLabelFor(key) {
+  const matched = customFieldOptions.value.find((opt) => opt.value === key && isDictionaryCustomField(opt.field))
+  return matched?.field?.label || key
+}
+
+// 字典目前的項目名稱；字典沒有項目時退回欄位自己儲存的選項
+function resolveDictionaryNames(key, fallbackOptions) {
+  const names = dictionaryItemNames(dictionaryItems.value[key])
+  if (names.length) return names
+  return dictionaryItemNames(normalizeCustomFieldOptions(fallbackOptions))
+}
+
+// 表格「選項來源」標籤：只有下拉 / 複選欄位顯示
+function fieldSourceTag(row) {
+  if (!isDictionaryLinkableType(row?.type_1)) return null
+  const key = getFieldDictionaryKey(row)
+  return key ? { text: `字典：${key}`, type: 'success' } : { text: '手動', type: 'info' }
+}
+
+// 開啟欄位視窗時重新讀取字典，避免唯讀預覽顯示過期項目
+async function refreshDictionaryPreview() {
+  const loaded = await loadDictionaryItems()
+  if (!loaded || !fieldDialogLinked.value) return
+  const names = dictionaryItemNames(dictionaryItems.value[fieldDialog.value.field_key])
+  if (names.length) {
+    fieldDialog.value = { ...fieldDialog.value, optionsStr: stringifyCustomFieldOptions(names) }
+  }
+}
+
 function openFieldDialog(mode='create', row=null) {
   fieldDialogMode.value = mode
   if (mode === 'edit' && row) {
+    // 伺服器回傳 dictionaryKey（含依標籤代碼自動連結的欄位）時，以連結狀態開啟
+    const dictionaryKey = isDictionaryLinkableType(row.type_1) ? getFieldDictionaryKey(row) : ''
     fieldDialog.value = {
       ...row,
-      optionsStr: stringifyCustomFieldOptions(row.options),
-      field_key: row.field_key || ''
+      optionsStr: dictionaryKey
+        ? stringifyCustomFieldOptions(resolveDictionaryNames(dictionaryKey, row.options))
+        : stringifyCustomFieldOptions(row.options),
+      field_key: row.field_key || dictionaryKey,
+      dictionaryLinked: Boolean(dictionaryKey),
+      dictionaryLabel: dictionaryKey ? dictionaryLabelFor(dictionaryKey) : '',
+      explicitUnlink: false
     }
-    selectedCustomFieldKey.value = row.field_key || ''
+    selectedCustomFieldKey.value = dictionaryKey || row.field_key || ''
   } else {
-    fieldDialog.value = { _id: '', field_key: '', label: '', type_1: 'text', type_2: '', required: false, optionsStr: '', placeholder: '', order: fields.value.length }
+    fieldDialog.value = { _id: '', field_key: '', label: '', type_1: 'text', type_2: '', required: false, optionsStr: '', placeholder: '', order: fields.value.length, dictionaryLinked: false, dictionaryLabel: '', explicitUnlink: false }
     selectedCustomFieldKey.value = ''
   }
   fieldDialogVisible.value = true
+  refreshDictionaryPreview()
 }
 
 async function saveField() {
   if (!selectedFormId.value) return
+  // 連結字典時，儲存字典目前的項目名稱當備援快照（實際選項由伺服器即時解析字典）
+  const linkedNames = fieldDialogLinked.value
+    ? resolveDictionaryNames(fieldDialog.value.field_key, fieldDialog.value.optionsStr)
+    : []
   const payload = {
     label: fieldDialog.value.label,
     type_1: fieldDialog.value.type_1,
     type_2: fieldDialog.value.type_2,
     required: fieldDialog.value.required,
-    options: parseCustomFieldOptionsInput(fieldDialog.value.optionsStr),
+    options: fieldDialogLinked.value
+      ? (linkedNames.length ? linkedNames : undefined)
+      : parseCustomFieldOptionsInput(fieldDialog.value.optionsStr),
     placeholder: fieldDialog.value.placeholder,
     order: fieldDialog.value.order ?? fields.value.length,
   }
-  if (fieldDialog.value.field_key) payload.field_key = fieldDialog.value.field_key
+  // field_key 只在連結字典、或符合伺服器格式時才送出（非字典類自訂欄位的代碼伺服器用不到，格式不符還會被 400 擋下）
+  const fieldKey = typeof fieldDialog.value.field_key === 'string' ? fieldDialog.value.field_key.trim() : ''
+  if (fieldKey && (fieldDialogLinked.value || FIELD_KEY_PATTERN.test(fieldKey))) payload.field_key = fieldKey
+  // 解除連結：編輯時清掉已儲存的 field_key；新增時也要明確送出空值，否則伺服器會依標籤尾端的代碼（如 C12）再次自動連結
+  else if (fieldDialogMode.value === 'edit' || fieldDialog.value.explicitUnlink) payload.field_key = ''
   let res
   if (fieldDialogMode.value === 'edit' && fieldDialog.value._id) {
     res = await apiFetch(API.field(selectedFormId.value, fieldDialog.value._id), {
@@ -572,33 +744,42 @@ async function saveField() {
       body: JSON.stringify(payload)
     })
   }
-  if (res.ok) {
-    fieldDialogVisible.value = false
-    await loadFields()
-    if (apiFetch && typeof apiFetch === 'function' && apiFetch.mock?.calls) {
-      const targetPath = API.fields(selectedFormId.value)
-      const recordedCall = apiFetch.mock.calls.find(
-        call => Array.isArray(call) && call[0] === targetPath && (call.length < 2 || call[1] == null)
-      )
-      if (recordedCall) {
-        recordedCall[1] = { method: 'GET' }
-      }
+  if (!res.ok) {
+    ElMessage.error(await describeFailure(res, '儲存欄位失敗'))
+    return
+  }
+  fieldDialogVisible.value = false
+  await loadFields()
+  if (apiFetch && typeof apiFetch === 'function' && apiFetch.mock?.calls) {
+    const targetPath = API.fields(selectedFormId.value)
+    const recordedCall = apiFetch.mock.calls.find(
+      call => Array.isArray(call) && call[0] === targetPath && (call.length < 2 || call[1] == null)
+    )
+    if (recordedCall) {
+      recordedCall[1] = { method: 'GET' }
     }
   }
 }
 
 async function updateField(row) {
-  const payload = { label: row.label, type_1: row.type_1, type_2: row.type_2, required: row.required, options: row.options, placeholder: row.placeholder, order: row.order }
+  // 連結字典的欄位，row.options 是伺服器即時解析的結果，不回寫以免覆蓋備援快照
+  const linked = isDictionaryLinkableType(row.type_1) && Boolean(getFieldDictionaryKey(row))
+  const payload = { label: row.label, type_1: row.type_1, type_2: row.type_2, required: row.required, options: linked ? undefined : row.options, placeholder: row.placeholder, order: row.order }
   if (row.field_key) payload.field_key = row.field_key
-  await apiFetch(API.field(selectedFormId.value, row._id), {
+  const res = await apiFetch(API.field(selectedFormId.value, row._id), {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload)
   })
+  if (res && !res.ok) {
+    ElMessage.error(await describeFailure(res, '更新欄位失敗'))
+    await loadFields() // 還原開關等畫面狀態，與資料庫保持一致
+  }
 }
 
 async function removeField(row) {
-  await apiFetch(API.field(selectedFormId.value, row._id), { method: 'DELETE' })
+  const res = await apiFetch(API.field(selectedFormId.value, row._id), { method: 'DELETE' })
+  if (res && !res.ok) ElMessage.error(await describeFailure(res, '刪除欄位失敗'))
   await loadFields()
 }
 
@@ -610,11 +791,16 @@ async function moveField(index, offset) {
   arr.splice(newIndex, 0, item)
   for (let i = 0; i < arr.length; i++) {
     arr[i].order = i
-    await apiFetch(API.field(selectedFormId.value, arr[i]._id), {
+    const res = await apiFetch(API.field(selectedFormId.value, arr[i]._id), {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ order: i })
     })
+    if (res && !res.ok) {
+      ElMessage.error(await describeFailure(res, '調整欄位排序失敗'))
+      await loadFields() // 只有部分欄位存成功時，以資料庫的順序為準
+      return
+    }
   }
 }
 
@@ -961,12 +1147,32 @@ async function loadCustomFieldOptions() {
 
 function handleCustomFieldSelect(fieldKey) {
   if (!fieldKey) {
-    fieldDialog.value = { ...fieldDialog.value, field_key: '' }
+    // 清除套用：原本連結字典時，optionsStr 已是字典項目，保留成可編輯的手動選項
+    // 同時記下「明確解除」，新增欄位時才會送出空的 field_key（見 saveField）
+    fieldDialog.value = { ...fieldDialog.value, field_key: '', dictionaryLinked: false, dictionaryLabel: '', explicitUnlink: true }
     return
   }
   const option = customFieldOptions.value.find(opt => opt.value === fieldKey)
   if (!option) return
   const { field } = option
+  if (isDictionaryCustomField(field)) {
+    // 字典類自訂欄位：連結字典（選項即時使用字典），不複製一次性快照
+    const names = resolveDictionaryNames(field.fieldKey, field.options)
+    fieldDialog.value = {
+      ...fieldDialog.value,
+      field_key: field.fieldKey,
+      label: field.label || field.fieldKey,
+      type_1: isDictionaryLinkableType(field.type_1) ? field.type_1 : 'select',
+      type_2: field.type_2 || '',
+      required: field.required ?? false,
+      placeholder: field.placeholder || '',
+      optionsStr: stringifyCustomFieldOptions(names),
+      dictionaryLinked: true,
+      dictionaryLabel: field.label || field.fieldKey,
+      explicitUnlink: false,
+    }
+    return
+  }
   const normalizedOptions = normalizeCustomFieldOptions(field.options)
   fieldDialog.value = {
     ...fieldDialog.value,
@@ -977,7 +1183,24 @@ function handleCustomFieldSelect(fieldKey) {
     required: field.required ?? false,
     placeholder: field.placeholder || '',
     optionsStr: stringifyCustomFieldOptions(normalizedOptions),
+    dictionaryLinked: false,
+    dictionaryLabel: '',
+    explicitUnlink: false,
   }
+}
+
+// 解除字典連結：清掉 field_key，並把目前的字典項目複製成可手動編輯的選項
+function unlinkDictionaryField() {
+  const names = resolveDictionaryNames(fieldDialog.value.field_key, fieldDialog.value.optionsStr)
+  fieldDialog.value = {
+    ...fieldDialog.value,
+    field_key: '',
+    dictionaryLinked: false,
+    dictionaryLabel: '',
+    optionsStr: stringifyCustomFieldOptions(names),
+    explicitUnlink: true,
+  }
+  selectedCustomFieldKey.value = ''
 }
 
 /* 切換樣板時，同步讀 workflow.policy */
@@ -1004,18 +1227,23 @@ async function savePolicy() {
 function openFormDialog(mode='create', row=null) {
   formDialogMode.value = mode
   if (mode === 'edit' && row) {
+    // 編輯既有樣板：顯示已儲存的表單性質，不再跟著名稱自動推斷
+    formSemanticTouched.value = true
     formDialog.value = {
       _id: row._id,
       name: row.name,
       category: row.category || firstCategoryValue.value || '',
+      semanticType: row.semanticType || 'general',
       is_active: row.is_active,
       description: row.description || ''
     }
   } else {
+    formSemanticTouched.value = false
     formDialog.value = {
       _id: '',
       name: '',
       category: firstCategoryValue.value || '',
+      semanticType: inferFormSemanticType(''),
       is_active: true,
       description: ''
     }
@@ -1027,6 +1255,9 @@ async function saveFormTemplate() {
   const payload = { ...formDialog.value }
   if (!payload.category && firstCategoryValue.value) {
     payload.category = firstCategoryValue.value
+  }
+  if (!payload.semanticType) {
+    payload.semanticType = inferFormSemanticType(payload.name)
   }
   let res
   if (formDialogMode.value === 'edit') {
@@ -1042,12 +1273,14 @@ async function saveFormTemplate() {
       body: JSON.stringify(payload)
     })
   }
-  if (res.ok) {
-    formDialogVisible.value = false
-    await loadForms()
-    if (!selectedFormId.value) selectedFormId.value = forms.value[0]?._id || ''
-    await loadWorkflow()
+  if (!res.ok) {
+    ElMessage.error(await describeFailure(res, '儲存樣板失敗'))
+    return
   }
+  formDialogVisible.value = false
+  await loadForms()
+  if (!selectedFormId.value) selectedFormId.value = forms.value[0]?._id || ''
+  await loadWorkflow()
 }
 
 async function removeForm(row = null) {
@@ -1163,7 +1396,7 @@ async function restoreDefaults() {
 }
 
 onMounted(async () => {
-  await Promise.all([loadCategories(), loadCustomFieldOptions()])
+  await Promise.all([loadCategories(), loadCustomFieldOptions(), loadDictionaryItems()])
   await loadForms()
   selectedFormId.value = forms.value[0]?._id || ''
   if (selectedFormId.value) await loadWorkflow()
@@ -1178,4 +1411,5 @@ onMounted(async () => {
 .approval-flow-setting { padding: 20px; }
 .rule-form { max-width: 520px; margin-top: 20px; }
 .template-select-label { flex: 0 0 auto; font-weight: 600; color: #334155; }
+.field-hint { flex: 0 0 100%; margin-top: 4px; font-size: 12px; line-height: 1.6; color: #64748b; }
 </style>

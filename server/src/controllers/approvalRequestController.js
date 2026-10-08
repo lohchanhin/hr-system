@@ -8,7 +8,8 @@ import SubDepartment from '../models/SubDepartment.js'
 import fs from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
-import { getLeaveFieldIds } from '../services/leaveFieldService.js'
+import { getLeaveFieldIdsForForm } from '../services/leaveFieldService.js'
+import { resolveFieldsOptions } from '../services/formFieldOptionsService.js'
 import { deductAnnualLeave, getAnnualLeaveBalance } from '../services/annualLeaveService.js'
 import {
   assertApprovalRequestCompliance,
@@ -17,6 +18,7 @@ import {
 
 const APPLICANT_SUPERVISOR_VALUE = 'APPLICANT_SUPERVISOR'
 const ANNUAL_LEAVE_TYPES = ['特休', '特休假'] // 特休假別類型常數
+const LEAVE_FORM_NAME = '請假' // 系統預設的請假表單名稱
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 const APPROVAL_UPLOAD_DIR = path.join(__dirname, '../../../upload/approvals')
@@ -379,7 +381,7 @@ export async function getApprovalRequest(req, res) {
     }
     const fields = await FormField.find({ form: doc.form._id }).sort({ order: 1 })
     const result = doc.toObject()
-    result.form.fields = fields
+    result.form.fields = await resolveFieldsOptions(fields)
     if (doc.form?.semanticType === 'leave' && doc.applicant_employee?._id) {
       try {
         result.leave_balance = await getAnnualLeaveBalance(doc.applicant_employee._id)
@@ -505,52 +507,72 @@ export async function historyApprovals(req, res) {
   }
 }
 
+/* 假別欄位的值可能是名稱字串、{ label, value } 物件或陣列；回傳所有可用來辨識假別的名稱（值本身與選項對應的標籤） */
+function collectLeaveTypeNames(rawValue, typeOptions) {
+  const labelByValue = new Map((typeOptions || []).map(opt => [String(opt.value), opt.label]))
+  const names = new Set()
+  const add = (candidate) => {
+    if (candidate === undefined || candidate === null) return
+    const text = String(candidate).trim()
+    if (text) names.add(text)
+  }
+  const visit = (item) => {
+    if (Array.isArray(item)) {
+      item.forEach(visit)
+    } else if (item && typeof item === 'object') {
+      add(item.label)
+      add(item.name)
+      add(item.value)
+      if (item.value !== undefined && item.value !== null) add(labelByValue.get(String(item.value)))
+    } else {
+      add(item)
+      if (item !== undefined && item !== null) add(labelByValue.get(String(item)))
+    }
+  }
+  visit(rawValue)
+  return [...names]
+}
+
+/* 「天數」欄位填的正數（可能是 0.5 天）；沒填或不是正數回傳 null */
+function parseLeaveDays(rawValue) {
+  if (rawValue === undefined || rawValue === null || rawValue === '') return null
+  const days = Number(rawValue)
+  return Number.isFinite(days) && days > 0 ? days : null
+}
+
 /* 處理特休扣減（當請假審核通過時） */
 async function handleAnnualLeaveDeduction(doc) {
   try {
-    // 取得表單資訊
+    // 取得表單資訊：預設的「請假」表單，或表單性質為請假的自訂表單（例如「休假/事假/公假申請單」）
     const form = await FormTemplate.findById(doc.form).lean()
-    if (!form || form.name !== '請假') {
+    if (!form || (form.name !== LEAVE_FORM_NAME && form.semanticType !== 'leave')) {
       return // 不是請假表單，不處理
     }
 
-    // 取得假別欄位設定
-    const leaveFields = await getLeaveFieldIds()
+    // 取得這張假單所屬表單的假別 / 日期 / 天數欄位設定
+    const leaveFields = await getLeaveFieldIdsForForm(form)
     if (!leaveFields.typeId) {
       console.warn('[AnnualLeave] Leave type field not found')
       return
     }
 
-    // 檢查假別是否為特休
-    const leaveTypeValue = doc.form_data?.[leaveFields.typeId]
-    let leaveTypeName = null
-    
-    // 處理不同格式的假別資料
-    if (typeof leaveTypeValue === 'string') {
-      leaveTypeName = leaveTypeValue
-    } else if (leaveTypeValue?.label) {
-      leaveTypeName = leaveTypeValue.label
-    } else if (leaveTypeValue?.value) {
-      // 從 typeOptions 中查找對應的 label
-      const option = leaveFields.typeOptions?.find(opt => opt.value === leaveTypeValue.value)
-      leaveTypeName = option?.label || leaveTypeValue.value
-    }
-
-    // 檢查是否為特休
-    if (!leaveTypeName || !ANNUAL_LEAVE_TYPES.includes(leaveTypeName)) {
+    // 檢查假別是否為特休（連結字典的欄位存的是字典項目名稱，例如「特休假」）
+    const leaveTypeNames = collectLeaveTypeNames(doc.form_data?.[leaveFields.typeId], leaveFields.typeOptions)
+    if (!leaveTypeNames.some(name => ANNUAL_LEAVE_TYPES.includes(name))) {
       return // 不是特休，不處理
     }
 
-    // 計算請假天數
+    // 計算請假天數：表單有填「天數」就以它為準，否則由開始/結束日期推算
     const startDate = doc.form_data?.[leaveFields.startId]
     const endDate = doc.form_data?.[leaveFields.endId]
-    let days = doc.form_data?.days || 1 // 預設 1 天
+    const filledDays = leaveFields.daysId ? parseLeaveDays(doc.form_data?.[leaveFields.daysId]) : null
+    let days = filledDays ?? (doc.form_data?.days || 1) // 預設 1 天
 
     // 如果有開始和結束日期，計算天數
-    if (startDate && endDate) {
+    if (filledDays === null && startDate && endDate) {
       const start = new Date(startDate)
       const end = new Date(endDate)
-      
+
       // 確保結束日期在開始日期之後
       if (end >= start) {
         const diffTime = end - start

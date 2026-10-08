@@ -4,7 +4,7 @@ import ShiftSchedule from '../models/ShiftSchedule.js'
 import ApprovalRequest from '../models/approval_request.js'
 import dayjs from 'dayjs'
 import mongoose from 'mongoose'
-import { getLeaveFieldIds } from '../services/leaveFieldService.js'
+import { getAllLeaveFieldInfos } from '../services/leaveFieldService.js'
 import {
   deleteEmployeePhoto,
   isManagedEmployeePhotoPath,
@@ -734,8 +734,10 @@ export async function listEmployees(req, res) {
         entry.shiftDays.add(dayKey)
       })
 
-      const { formId, startId, endId } = await getLeaveFieldIds()
-      if (formId && startId && endId && employeeIds.length) {
+      // 預設的「請假」與自建的請假表單並存時，每張請假表單各查一次
+      const leaveForms = employeeIds.length ? await getAllLeaveFieldInfos({ withTypeOptions: false }) : []
+      for (const { formId, startId, endId } of leaveForms) {
+        if (!formId || !startId || !endId) continue
         const leaveQuery = {
           form: formId,
           status: 'approved',

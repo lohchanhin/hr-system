@@ -1,6 +1,7 @@
 import request from 'supertest';
 import express from 'express';
 import { jest } from '@jest/globals';
+import { buildLeaveFieldServiceMock } from './helpers/leaveFieldServiceMock.js';
 
 const mockShiftSchedule = {
   find: jest.fn(),
@@ -19,9 +20,7 @@ const mockIsLaborRuleValidationError = jest.fn();
 jest.unstable_mockModule('../src/models/ShiftSchedule.js', () => ({ default: mockShiftSchedule }));
 jest.unstable_mockModule('../src/models/approval_request.js', () => ({ default: mockApprovalRequest }));
 jest.unstable_mockModule('../src/models/Employee.js', () => ({ default: mockEmployee }));
-jest.unstable_mockModule('../src/services/leaveFieldService.js', () => ({
-  getLeaveFieldIds: mockGetLeaveFieldIds,
-}));
+jest.unstable_mockModule('../src/services/leaveFieldService.js', () => buildLeaveFieldServiceMock(mockGetLeaveFieldIds));
 jest.unstable_mockModule('../src/models/AttendanceSetting.js', () => ({ default: mockAttendanceSetting }));
 jest.unstable_mockModule('../src/services/laborRuleValidationService.js', () => ({
   assertScheduleRuleCompliance: mockAssertScheduleRuleCompliance,

@@ -250,6 +250,42 @@ describe('Approval.vue', () => {
     window.fetch.mockRestore()
   })
 
+  it('getOptions 把字串、{label,value}、{name,code} 選項統一成 {label,value}，不會出現 undefined 標籤', async () => {
+    vi.spyOn(window, 'fetch').mockResolvedValue({ ok: true, json: () => Promise.resolve([]) })
+    const wrapper = shallowMount(Approval, { global: { stubs } })
+    await flushPromises()
+
+    // 既有行為不變
+    expect(wrapper.vm.getOptions({ options: ['休假', '事假'] })).toEqual([
+      { label: '休假', value: '休假' },
+      { label: '事假', value: '事假' }
+    ])
+    expect(wrapper.vm.getOptions({ options: [{ label: '特休假', value: 'ANNUAL' }] })).toEqual([
+      { label: '特休假', value: 'ANNUAL' }
+    ])
+    expect(wrapper.vm.getOptions({ options: [{ label: '病假' }, { value: '公假' }] })).toEqual([
+      { label: '病假', value: '病假' },
+      { label: '公假', value: '公假' }
+    ])
+    expect(wrapper.vm.getOptions({ options: { A: '甲', B: '乙' } })).toEqual([
+      { label: '甲', value: 'A' },
+      { label: '乙', value: 'B' }
+    ])
+    expect(wrapper.vm.getOptions({})).toEqual([])
+
+    // 字典 / 自訂欄位的 {name, code} 選項：標籤用名稱
+    const options = wrapper.vm.getOptions({ options: [{ name: '特休假', code: 'ANNUAL' }, { name: '病假' }, { code: 'ONLY_CODE' }] })
+    expect(options.map(opt => opt.label)).toEqual(['特休假', '病假', 'ONLY_CODE'])
+    expect(options.every(opt => typeof opt.label === 'string' && opt.label && opt.value)).toBe(true)
+    // 值與伺服器解析字典時一樣用名稱（請假 / 特休扣減比對的是名稱）
+    expect(options[0]).toEqual({ label: '特休假', value: '特休假' })
+    // label / value 優先於 name / code
+    expect(wrapper.vm.getOptions({ options: [{ label: 'L', value: 'V', name: 'N', code: 'C' }] })).toEqual([
+      { label: 'L', value: 'V' }
+    ])
+    window.fetch.mockRestore()
+  })
+
   it('renders attachment metadata as a filename instead of an object string', async () => {
     vi.spyOn(window, 'fetch').mockResolvedValue({ ok: true, json: () => Promise.resolve([]) })
     const wrapper = shallowMount(Approval, { global: { stubs } })

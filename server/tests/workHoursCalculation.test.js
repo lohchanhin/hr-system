@@ -8,6 +8,7 @@ const mockEmployee = { findById: jest.fn() }
 const mockHoliday = { find: jest.fn() }
 const mockHolidayMoveSetting = { find: jest.fn() }
 const mockFormField = { find: jest.fn() }
+const mockGetAllLeaveFieldInfos = jest.fn().mockResolvedValue([])
 
 jest.unstable_mockModule('../src/models/AttendanceRecord.js', () => ({ default: mockAttendanceRecord }))
 jest.unstable_mockModule('../src/models/ShiftSchedule.js', () => ({ default: mockShiftSchedule }))
@@ -18,7 +19,7 @@ jest.unstable_mockModule('../src/models/Holiday.js', () => ({ default: mockHolid
 jest.unstable_mockModule('../src/models/HolidayMoveSetting.js', () => ({ default: mockHolidayMoveSetting }))
 jest.unstable_mockModule('../src/models/form_field.js', () => ({ default: mockFormField }))
 jest.unstable_mockModule('../src/services/leaveFieldService.js', () => ({
-  getLeaveFieldIds: jest.fn().mockResolvedValue({}),
+  getAllLeaveFieldInfos: mockGetAllLeaveFieldInfos,
 }))
 jest.unstable_mockModule('../src/services/nightShiftAllowanceService.js', () => ({
   calculateNightShiftAllowance: jest.fn(),
@@ -26,10 +27,11 @@ jest.unstable_mockModule('../src/services/nightShiftAllowanceService.js', () => 
 
 let calculateWorkHours
 let calculateOvertimePay
+let calculateLeaveImpact
 let __testUtils
 
 beforeAll(async () => {
-  ({ calculateWorkHours, calculateOvertimePay, __testUtils } = await import('../src/services/workHoursCalculationService.js'))
+  ({ calculateWorkHours, calculateOvertimePay, calculateLeaveImpact, __testUtils } = await import('../src/services/workHoursCalculationService.js'))
 })
 
 beforeEach(() => {
@@ -41,6 +43,8 @@ beforeEach(() => {
   mockHoliday.find.mockReset()
   mockHolidayMoveSetting.find.mockReset()
   mockFormField.find.mockReset()
+  mockGetAllLeaveFieldInfos.mockReset()
+  mockGetAllLeaveFieldInfos.mockResolvedValue([])
 })
 
 describe('work-hours calculation', () => {
@@ -402,5 +406,218 @@ describe('overtime day type uses only counted national holidays', () => {
 
     expect(source.dayType).toBe('workday')
     expect(target.dayType).toBe('national_holiday')
+  })
+})
+
+describe('calculateLeaveImpact', () => {
+  // 月薪 30000 → 時薪 125
+  const employee = { _id: 'emp1', salaryAmount: 30000, salaryType: '月薪' }
+  const MONTH = '2026-09-01'
+
+  // 預設的「請假」：沒有「天數」欄位（開始時間 / 結束時間 / 假別）
+  const DEFAULT_FORM = {
+    formId: 'default-form',
+    startId: 'd-start',
+    endId: 'd-end',
+    typeId: 'd-type',
+    typeOptions: [],
+  }
+  // 客戶自建的請假表單：假別連結字典 C12，有「天數」欄位
+  const CUSTOMER_FORM = {
+    formId: 'customer-form',
+    startId: 'c-start',
+    endId: 'c-end',
+    typeId: 'c-type',
+    daysId: 'c-days',
+    typeOptions: [
+      { value: '特休假', label: '特休假' },
+      { value: '病假', label: '病假' },
+      { value: '事假', label: '事假' },
+    ],
+  }
+
+  function approvalsByForm(rowsByForm) {
+    mockApprovalRequest.find.mockImplementation((filter) => ({
+      lean: jest.fn().mockResolvedValue(rowsByForm[filter.form] ?? []),
+    }))
+  }
+
+  beforeEach(() => {
+    mockEmployee.findById.mockResolvedValue(employee)
+  })
+
+  it('returns zero everything and does not query approvals when there is no leave form', async () => {
+    const result = await calculateLeaveImpact('emp1', MONTH)
+
+    expect(result).toEqual({
+      leaveHours: 0, paidLeaveHours: 0, unpaidLeaveHours: 0, sickLeaveHours: 0, personalLeaveHours: 0, leaveDeduction: 0, leaveRecords: [],
+    })
+    expect(mockApprovalRequest.find).not.toHaveBeenCalled()
+  })
+
+  it('counts an approved 特休假 of 2 days (天數 = 2) as 2 paid days, not 1', async () => {
+    mockGetAllLeaveFieldInfos.mockResolvedValue([CUSTOMER_FORM])
+    approvalsByForm({
+      'customer-form': [{
+        form_data: { 'c-type': '特休假', 'c-start': '2026-09-02', 'c-end': '2026-09-03', 'c-days': 2 },
+      }],
+    })
+
+    const result = await calculateLeaveImpact('emp1', MONTH)
+
+    expect(result).toMatchObject({ leaveHours: 16, paidLeaveHours: 16, unpaidLeaveHours: 0, personalLeaveHours: 0, leaveDeduction: 0 })
+    expect(result.leaveRecords).toEqual([{
+      leaveType: '特休假',
+      startDate: '2026-09-02',
+      endDate: '2026-09-03',
+      days: 2,
+      hours: 16,
+      isPaid: true,
+    }])
+  })
+
+  it('keeps 特休 (the old name) paid and treats 特休假 the same way', async () => {
+    mockGetAllLeaveFieldInfos.mockResolvedValue([DEFAULT_FORM, CUSTOMER_FORM])
+    approvalsByForm({
+      'default-form': [{ form_data: { 'd-type': '特休', 'd-start': '2026-09-01', 'd-end': '2026-09-02' } }],
+      'customer-form': [{ form_data: { 'c-type': '特休假', 'c-start': '2026-09-08', 'c-end': '2026-09-08', 'c-days': 1 } }],
+    })
+
+    const result = await calculateLeaveImpact('emp1', MONTH)
+
+    // 預設表單沒有天數欄位：沿用日期差（9/1 到 9/2 = 1 天，8 小時），客戶表單 1 天 8 小時
+    expect(result).toMatchObject({ leaveHours: 16, paidLeaveHours: 16, unpaidLeaveHours: 0, leaveDeduction: 0 })
+  })
+
+  it('deducts a 事假 as unpaid hours using the 天數 field', async () => {
+    mockGetAllLeaveFieldInfos.mockResolvedValue([CUSTOMER_FORM])
+    approvalsByForm({
+      'customer-form': [{ form_data: { 'c-type': '事假', 'c-start': '2026-09-10', 'c-end': '2026-09-11', 'c-days': '2' } }],
+    })
+
+    const result = await calculateLeaveImpact('emp1', MONTH)
+
+    expect(result).toMatchObject({
+      leaveHours: 16, paidLeaveHours: 0, personalLeaveHours: 16, unpaidLeaveHours: 16, leaveDeduction: 2000,
+    })
+    expect(result.leaveRecords[0]).toMatchObject({ leaveType: '事假', days: 2, hours: 16, isPaid: false })
+  })
+
+  it('supports half days from the 天數 field', async () => {
+    mockGetAllLeaveFieldInfos.mockResolvedValue([CUSTOMER_FORM])
+    approvalsByForm({
+      'customer-form': [{ form_data: { 'c-type': '特休假', 'c-start': '2026-09-10', 'c-end': '2026-09-10', 'c-days': 0.5 } }],
+    })
+
+    const result = await calculateLeaveImpact('emp1', MONTH)
+
+    expect(result).toMatchObject({ leaveHours: 4, paidLeaveHours: 4, leaveDeduction: 0 })
+  })
+
+  it('falls back to the date difference exactly as before when the 天數 field is empty or not positive', async () => {
+    mockGetAllLeaveFieldInfos.mockResolvedValue([CUSTOMER_FORM])
+    approvalsByForm({
+      'customer-form': [
+        { form_data: { 'c-type': '事假', 'c-start': '2026-09-02', 'c-end': '2026-09-05', 'c-days': '' } },
+        { form_data: { 'c-type': '事假', 'c-start': '2026-09-08', 'c-end': '2026-09-08', 'c-days': 0 } },
+        { form_data: { 'c-type': '事假', 'c-start': '2026-09-09', 'c-end': '2026-09-10', 'c-days': 'abc' } },
+        { form_data: { 'c-type': '事假', 'c-start': '2026-09-15', 'c-end': '2026-09-16' } },
+      ],
+    })
+
+    const result = await calculateLeaveImpact('emp1', MONTH)
+
+    // 3 天、至少 1 天、1 天、1 天（日期差不含起始日，同一天補到 1 天）
+    expect(result.leaveRecords.map((record) => record.days)).toEqual([3, 1, 1, 1])
+    expect(result.leaveHours).toBe(48)
+  })
+
+  it('does not change the default 請假 form (no 天數 field): date difference, at least one day', async () => {
+    mockGetAllLeaveFieldInfos.mockResolvedValue([DEFAULT_FORM])
+    approvalsByForm({
+      'default-form': [
+        { form_data: { 'd-type': '事假', 'd-start': '2026-09-01', 'd-end': '2026-09-03' } },
+        { form_data: { 'd-type': '病假', 'd-start': '2026-09-08', 'd-end': '2026-09-08' } },
+      ],
+    })
+
+    const result = await calculateLeaveImpact('emp1', MONTH)
+
+    expect(result.leaveRecords.map((record) => [record.leaveType, record.days, record.hours])).toEqual([
+      ['事假', 2, 16],
+      ['病假', 1, 8],
+    ])
+    // 事假 16 小時全扣、病假 8 小時扣一半
+    expect(result).toMatchObject({ leaveHours: 24, personalLeaveHours: 16, sickLeaveHours: 8, unpaidLeaveHours: 20, leaveDeduction: 2500 })
+  })
+
+  it('still honours the literal days / hours keys of old data', async () => {
+    mockGetAllLeaveFieldInfos.mockResolvedValue([DEFAULT_FORM])
+    approvalsByForm({
+      'default-form': [
+        { form_data: { 'd-type': '事假', days: 2 } },
+        { form_data: { 'd-type': '事假', hours: 3 } },
+      ],
+    })
+
+    const result = await calculateLeaveImpact('emp1', MONTH)
+
+    expect(result.leaveRecords.map((record) => [record.days, record.hours])).toEqual([[2, 16], [0, 3]])
+  })
+
+  it('reads every leave form, one approvals query each, and adds the results together', async () => {
+    mockGetAllLeaveFieldInfos.mockResolvedValue([DEFAULT_FORM, CUSTOMER_FORM])
+    approvalsByForm({
+      'default-form': [{ form_data: { 'd-type': '事假', 'd-start': '2026-09-01', 'd-end': '2026-09-02' } }],
+      'customer-form': [
+        { form_data: { 'c-type': '事假', 'c-start': '2026-09-10', 'c-end': '2026-09-11', 'c-days': 2 } },
+        { form_data: { 'c-type': '特休假', 'c-start': '2026-09-14', 'c-end': '2026-09-15', 'c-days': 2 } },
+      ],
+    })
+
+    const result = await calculateLeaveImpact('emp1', MONTH)
+
+    expect(mockApprovalRequest.find).toHaveBeenCalledTimes(2)
+    expect(mockApprovalRequest.find).toHaveBeenCalledWith(expect.objectContaining({
+      form: 'default-form', status: 'approved', applicant_employee: 'emp1',
+    }))
+    expect(mockApprovalRequest.find).toHaveBeenCalledWith(expect.objectContaining({
+      form: 'customer-form', status: 'approved', applicant_employee: 'emp1',
+    }))
+    expect(result).toMatchObject({ leaveHours: 40, paidLeaveHours: 16, personalLeaveHours: 24, unpaidLeaveHours: 24, leaveDeduction: 3000 })
+    expect(result.leaveRecords).toHaveLength(3)
+  })
+
+  it('resolves the leave type label from the option list of each form', async () => {
+    mockGetAllLeaveFieldInfos.mockResolvedValue([{
+      ...CUSTOMER_FORM,
+      typeOptions: [{ value: 'AL', label: '特休假' }, { value: 'PL', label: '事假' }],
+    }])
+    approvalsByForm({
+      'customer-form': [
+        { form_data: { 'c-type': 'AL', 'c-start': '2026-09-02', 'c-end': '2026-09-03', 'c-days': 2 } },
+        { form_data: { 'c-type': { label: '事假', value: 'PL' }, 'c-start': '2026-09-08', 'c-end': '2026-09-08', 'c-days': 1 } },
+      ],
+    })
+
+    const result = await calculateLeaveImpact('emp1', MONTH)
+
+    expect(result.leaveRecords.map((record) => [record.leaveType, record.isPaid])).toEqual([['特休假', true], ['事假', false]])
+    expect(result).toMatchObject({ paidLeaveHours: 16, unpaidLeaveHours: 8, leaveDeduction: 1000 })
+  })
+})
+
+describe('LEAVE_POLICY annual leave names', () => {
+  it('treats both 特休 and 特休假 as paid and shares one constant with the reports', async () => {
+    const { ANNUAL_LEAVE_TYPES, LEAVE_POLICY } = await import('../src/config/salaryConfig.js')
+
+    expect(ANNUAL_LEAVE_TYPES).toEqual(['特休', '特休假'])
+    for (const name of ANNUAL_LEAVE_TYPES) {
+      expect(LEAVE_POLICY.PAID_LEAVE_TYPES).toContain(name)
+    }
+    // 其餘有薪假別維持原樣，事假仍是無薪
+    expect(LEAVE_POLICY.PAID_LEAVE_TYPES).toEqual(expect.arrayContaining(['年假', '婚假', '喪假', '產假', '陪產假']))
+    expect(LEAVE_POLICY.UNPAID_LEAVE_TYPES).toContain('事假')
+    expect(LEAVE_POLICY.PAID_LEAVE_TYPES).not.toContain('事假')
   })
 })

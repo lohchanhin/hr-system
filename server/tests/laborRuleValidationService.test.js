@@ -10,7 +10,7 @@ const mockApprovalRequest = { find: jest.fn() };
 const mockFormField = { find: jest.fn() };
 const mockHoliday = { find: jest.fn() };
 const mockHolidayMoveSetting = { find: jest.fn() };
-const mockGetLeaveFieldIds = jest.fn();
+const mockGetAllLeaveFieldInfos = jest.fn();
 
 jest.unstable_mockModule('../src/models/ShiftSchedule.js', () => ({ default: mockShiftSchedule }));
 jest.unstable_mockModule('../src/models/AttendanceSetting.js', () => ({ default: mockAttendanceSetting }));
@@ -19,7 +19,7 @@ jest.unstable_mockModule('../src/models/form_field.js', () => ({ default: mockFo
 jest.unstable_mockModule('../src/models/Holiday.js', () => ({ default: mockHoliday }));
 jest.unstable_mockModule('../src/models/HolidayMoveSetting.js', () => ({ default: mockHolidayMoveSetting }));
 jest.unstable_mockModule('../src/services/leaveFieldService.js', () => ({
-  getLeaveFieldIds: mockGetLeaveFieldIds,
+  getAllLeaveFieldInfos: mockGetAllLeaveFieldInfos,
 }));
 
 const {
@@ -68,7 +68,7 @@ beforeEach(() => {
   mockFormField.find.mockReset();
   mockHoliday.find.mockReset();
   mockHolidayMoveSetting.find.mockReset();
-  mockGetLeaveFieldIds.mockReset();
+  mockGetAllLeaveFieldInfos.mockReset();
 
   mockAttendanceSetting.findOne.mockReturnValue(leanQuery(attendanceSetting));
   mockShiftSchedule.find.mockReturnValue(sortableLeanQuery([]));
@@ -77,7 +77,7 @@ beforeEach(() => {
   mockFormField.find.mockReturnValue(sortableLeanQuery(overtimeFields));
   mockHoliday.find.mockReturnValue(leanQuery([]));
   mockHolidayMoveSetting.find.mockReturnValue(leanQuery([]));
-  mockGetLeaveFieldIds.mockResolvedValue({});
+  mockGetAllLeaveFieldInfos.mockResolvedValue([]);
 });
 
 describe('assertScheduleRuleCompliance', () => {
@@ -165,11 +165,11 @@ describe('assertScheduleRuleCompliance', () => {
   });
 
   it('counts approved leave toward the six-day limit between rest days', async () => {
-    mockGetLeaveFieldIds.mockResolvedValue({
+    mockGetAllLeaveFieldInfos.mockResolvedValue([{
       formId: 'leave-form',
       startId: 'leave-start',
       endId: 'leave-end',
-    });
+    }]);
     mockApprovalRequest.find.mockReturnValue(sortableLeanQuery([
       {
         applicant_employee: 'emp1',
@@ -875,5 +875,203 @@ describe('assertApprovalRequestCompliance', () => {
       },
       applicantEmployeeId: 'emp1',
     })).resolves.toEqual({ ok: true, violations: [] });
+  });
+});
+
+// 客戶的「休假/事假/公假申請單（人事類-出勤標準）」：沒有檔案欄位，假別欄位是「假別類別 (C12)」
+describe('assertApprovalRequestCompliance leave proof', () => {
+  const customerForm = { _id: 'customer-form', name: '休假/事假/公假申請單（人事類-出勤標準）', semanticType: 'leave' };
+  const customerFields = [
+    { _id: 'c-type', label: '假別類別 (C12)', type_1: 'select', required: true },
+    { _id: 'c-start', label: '日期(起)', type_1: 'date', required: true },
+    { _id: 'c-end', label: '日期(迄)', type_1: 'date', required: true },
+    { _id: 'c-days', label: '天數', type_1: 'number', required: true },
+    { _id: 'c-note', label: '內容說明', type_1: 'textarea' },
+  ];
+  const customerData = { 'c-start': '2026-03-02', 'c-end': '2026-03-03', 'c-days': 2 };
+
+  const defaultForm = { _id: 'leave-form', name: '請假', semanticType: 'leave' };
+  const defaultFields = [
+    { _id: 'type', label: '假別', type_1: 'text', required: true },
+    { _id: 'start', label: '開始時間', type_1: 'datetime', required: true },
+    { _id: 'end', label: '結束時間', type_1: 'datetime', required: true },
+    { _id: 'reason', label: '事由', type_1: 'textarea' },
+    { _id: 'proof', label: '相關證明', type_1: 'file', required: true },
+  ];
+  const defaultData = { type: '特休', start: '2026-03-02T09:00:00.000Z', end: '2026-03-02T18:00:00.000Z', reason: '休假' };
+
+  async function violationsOf(form, formData) {
+    try {
+      await assertApprovalRequestCompliance({ form, formData, applicantEmployeeId: 'emp1' });
+      return [];
+    } catch (error) {
+      return error.violations;
+    }
+  }
+
+  it.each(['事假', '特休假', '公假'])('accepts a %s request on a leave form that has no proof field', async (leaveType) => {
+    mockFormField.find.mockReturnValue(sortableLeanQuery(customerFields));
+
+    await expect(assertApprovalRequestCompliance({
+      form: customerForm,
+      formData: { ...customerData, 'c-type': leaveType },
+      applicantEmployeeId: 'emp1',
+    })).resolves.toEqual({ ok: true, violations: [] });
+  });
+
+  it('still enforces the required fields of a leave form that has no proof field', async () => {
+    mockFormField.find.mockReturnValue(sortableLeanQuery(customerFields));
+
+    const violations = await violationsOf(customerForm, { 'c-type': '特休假', 'c-start': '2026-03-02', 'c-end': '2026-03-03' });
+
+    expect(violations).toEqual([
+      expect.objectContaining({ rule: 'required-form-field', label: '天數' }),
+    ]);
+  });
+
+  it('does not demand a reason for 事假 on a form whose type label is not exactly 假別 (rule unchanged)', async () => {
+    mockFormField.find.mockReturnValue(sortableLeanQuery(customerFields));
+
+    await expect(assertApprovalRequestCompliance({
+      form: customerForm,
+      formData: { ...customerData, 'c-type': '事假' },
+      applicantEmployeeId: 'emp1',
+    })).resolves.toEqual({ ok: true, violations: [] });
+  });
+
+  it('still demands the reason for 事假 on a form with a 假別 field, without also demanding proof when there is no proof field', async () => {
+    mockFormField.find.mockReturnValue(sortableLeanQuery([
+      { _id: 'type', label: '假別', type_1: 'text', required: true },
+      { _id: 'reason', label: '事由', type_1: 'textarea' },
+    ]));
+
+    const violations = await violationsOf({ _id: 'no-proof', name: '請假', semanticType: 'leave' }, { type: '事假', reason: '' });
+
+    expect(violations).toEqual([
+      { rule: 'personal-leave-reason', message: '事假必須填寫事由', fieldId: 'reason' },
+    ]);
+  });
+
+  it('keeps requiring proof on the default 請假 form (byte-for-byte violation)', async () => {
+    mockFormField.find.mockReturnValue(sortableLeanQuery(defaultFields));
+
+    const withoutProof = await violationsOf(defaultForm, defaultData);
+
+    expect(withoutProof).toEqual([
+      { rule: 'required-form-field', message: '必填欄位不可空白：相關證明', fieldId: 'proof', label: '相關證明' },
+      { rule: 'leave-proof', message: '請假申請必須附上相關證明', fieldId: 'proof' },
+    ]);
+  });
+
+  it('keeps rejecting a proof that is not an uploaded approval attachment on the default 請假 form', async () => {
+    mockFormField.find.mockReturnValue(sortableLeanQuery(defaultFields));
+
+    const violations = await violationsOf(defaultForm, { ...defaultData, proof: ['proof.pdf'] });
+
+    expect(violations).toEqual([
+      { rule: 'leave-proof', message: '請假申請必須附上相關證明', fieldId: 'proof' },
+    ]);
+  });
+
+  it('accepts the default 請假 form with an uploaded proof', async () => {
+    mockFormField.find.mockReturnValue(sortableLeanQuery(defaultFields));
+
+    await expect(assertApprovalRequestCompliance({
+      form: defaultForm,
+      formData: { ...defaultData, proof: [{ name: 'proof.pdf', url: '/upload/approvals/proof.pdf' }] },
+      applicantEmployeeId: 'emp1',
+    })).resolves.toEqual({ ok: true, violations: [] });
+  });
+
+  it('requires proof when the form has a proof-style text field (證明 / 附件) but nothing uploaded', async () => {
+    mockFormField.find.mockReturnValue(sortableLeanQuery([
+      { _id: 'type', label: '假別', type_1: 'text', required: true },
+      { _id: 'note', label: '附件說明', type_1: 'text' },
+    ]));
+
+    const violations = await violationsOf({ _id: 'attach-form', name: '請假', semanticType: 'leave' }, { type: '特休', note: '' });
+
+    expect(violations).toEqual([
+      { rule: 'leave-proof', message: '請假申請必須附上相關證明', fieldId: 'note' },
+    ]);
+  });
+
+  it('does not require proof from a file field the admin has deactivated', async () => {
+    mockFormField.find.mockReturnValue(sortableLeanQuery([
+      ...customerFields,
+      { _id: 'c-file', label: '附件', type_1: 'file', is_active: false },
+    ]));
+
+    await expect(assertApprovalRequestCompliance({
+      form: customerForm,
+      formData: { ...customerData, 'c-type': '特休假' },
+      applicantEmployeeId: 'emp1',
+    })).resolves.toEqual({ ok: true, violations: [] });
+  });
+
+  it('requires proof as soon as the customer form gets an active file field', async () => {
+    mockFormField.find.mockReturnValue(sortableLeanQuery([
+      ...customerFields,
+      { _id: 'c-file', label: '請假證明', type_1: 'file' },
+    ]));
+
+    const violations = await violationsOf(customerForm, { ...customerData, 'c-type': '特休假' });
+
+    expect(violations).toEqual([
+      { rule: 'leave-proof', message: '請假申請必須附上相關證明', fieldId: 'c-file' },
+    ]);
+  });
+
+  it('does not apply the leave rules to a form that is not a leave form', async () => {
+    mockFormField.find.mockReturnValue(sortableLeanQuery([{ _id: 'note', label: '備註', type_1: 'text' }]));
+
+    await expect(assertApprovalRequestCompliance({
+      form: { _id: 'general-form', name: '在職證明', semanticType: 'general' },
+      formData: {},
+      applicantEmployeeId: 'emp1',
+    })).resolves.toEqual({ ok: true, violations: [] });
+  });
+});
+
+describe('assertScheduleRuleCompliance with several leave forms', () => {
+  it('counts approved leave of every leave form toward the six-day limit', async () => {
+    mockGetAllLeaveFieldInfos.mockResolvedValue([
+      { formId: 'leave-form', startId: 'leave-start', endId: 'leave-end' },
+      { formId: 'custom-form', startId: 'c-start', endId: 'c-end' },
+    ]);
+    mockApprovalRequest.find.mockImplementation((filter) => sortableLeanQuery(filter.form === 'leave-form'
+      ? [{ applicant_employee: 'emp1', form_data: { 'leave-start': '2024-04-07', 'leave-end': '2024-04-08' } }]
+      : [{ applicant_employee: 'emp1', form_data: { 'c-start': '2024-04-13', 'c-end': '2024-04-13' } }]));
+    mockShiftSchedule.find.mockReturnValue(sortableLeanQuery([
+      { _id: 'regular-rest', employee: 'emp1', date: new Date('2024-04-06'), shiftId: 'REG' },
+      { _id: 'work-1', employee: 'emp1', date: new Date('2024-04-09'), shiftId: 'D' },
+      { _id: 'work-2', employee: 'emp1', date: new Date('2024-04-10'), shiftId: 'D' },
+      { _id: 'work-3', employee: 'emp1', date: new Date('2024-04-11'), shiftId: 'D' },
+      { _id: 'work-4', employee: 'emp1', date: new Date('2024-04-12'), shiftId: 'D' },
+      { _id: 'rest', employee: 'emp1', date: new Date('2024-04-14'), shiftId: 'REST' },
+    ]));
+
+    await expect(assertScheduleRuleCompliance({
+      candidateSchedules: [{ employee: 'emp1', date: new Date('2024-04-12'), shiftId: 'D' }],
+    })).rejects.toMatchObject({
+      violations: [expect.objectContaining({
+        rule: 'continuous-work-days',
+        // 04-07/04-08 來自預設的請假、04-13 來自客戶表單，缺一天都連不起來
+        dates: ['2024-04-07', '2024-04-08', '2024-04-09', '2024-04-10', '2024-04-11', '2024-04-12', '2024-04-13'],
+      })],
+    });
+    expect(mockApprovalRequest.find).toHaveBeenCalledTimes(2);
+    expect(mockApprovalRequest.find).toHaveBeenCalledWith({
+      form: 'custom-form', status: 'approved', applicant_employee: { $in: ['emp1'] },
+    });
+  });
+
+  it('does not query approvals when no leave form exists', async () => {
+    mockShiftSchedule.find.mockReturnValue(sortableLeanQuery([]));
+
+    await expect(assertScheduleRuleCompliance({
+      candidateSchedules: [{ employee: 'emp1', date: new Date('2024-04-12'), shiftId: 'D' }],
+    })).resolves.toEqual({ ok: true, violations: [] });
+    expect(mockApprovalRequest.find).not.toHaveBeenCalled();
   });
 });

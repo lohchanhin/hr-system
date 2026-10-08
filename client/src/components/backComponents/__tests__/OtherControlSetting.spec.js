@@ -668,3 +668,198 @@ describe('OtherControlSetting - form categories', () => {
     expect(wrapper.vm.formCategories[0].name).toBe('請假申請')
   })
 })
+
+describe('OtherControlSetting - 設定尚未成功載入時不可覆寫已儲存的資料', () => {
+  let apiFetchMock
+  let warnSpy
+  let settingsGet
+
+  const NOT_LOADED_MESSAGE = '其他控制設定尚未成功載入，為避免覆蓋已儲存的資料，目前無法儲存或刪除，請先按「重新載入」'
+  const json = (body, status = 200) =>
+    new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
+  const SAVED_SETTINGS = {
+    itemSettings: { C12: [{ name: '公假', code: 'PUBLIC' }] },
+    customFields: [{ label: '制服尺寸', fieldKey: 'uniformSize', type: 'select', category: 'employee', options: ['S', 'M'] }]
+  }
+
+  const writeCalls = () =>
+    apiFetchMock.mock.calls.filter(([, options]) => options?.method && options.method !== 'GET')
+  const settingsGetCalls = () =>
+    apiFetchMock.mock.calls.filter(([path, options]) => path === '/api/other-control-settings' && (options?.method || 'GET') === 'GET')
+  const buttonsByText = (wrapper, text) => wrapper.findAll('button').filter(button => button.text() === text)
+
+  beforeEach(() => {
+    settingsGet = () => Promise.resolve(new Response('', { status: 500 }))
+    apiFetchMock = vi.spyOn(apiModule, 'apiFetch')
+    apiFetchMock.mockImplementation((path, options = {}) => {
+      const method = options?.method || 'GET'
+      if (method === 'GET') {
+        if (path === '/api/other-control-settings') return settingsGet()
+        if (path === '/api/other-control-settings/form-categories') return Promise.resolve(json(defaultCategories))
+        return Promise.resolve(new Response('', { status: 404 }))
+      }
+      return Promise.resolve(new Response('', { status: 200 }))
+    })
+    warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    ElMessage.success.mockClear()
+    ElMessage.error.mockClear()
+    ElMessage.warning.mockClear()
+    ElMessageBox.confirm.mockReset()
+  })
+
+  afterEach(() => {
+    apiFetchMock.mockRestore()
+    warnSpy.mockRestore()
+  })
+
+  it('載入成功時 settingsLoaded 為 true、沒有警告，儲存功能照常開放', async () => {
+    settingsGet = () => Promise.resolve(json({ itemSettings: {}, customFields: [] }))
+    const wrapper = await mountComponent()
+
+    expect(wrapper.vm.settingsLoaded).toBe(true)
+    expect(wrapper.find('[data-test="settings-load-alert"]').exists()).toBe(false)
+    expect(buttonsByText(wrapper, '儲存').every(button => button.attributes('disabled') === undefined)).toBe(true)
+
+    expect(await wrapper.vm.saveItemSettings('已儲存')).toBeTruthy()
+    expect(writeCalls()).toHaveLength(1)
+    expect(ElMessage.error).not.toHaveBeenCalled()
+  })
+
+  it('讀取設定時回應非 2xx：settingsLoaded 維持 false，顯示警告與重新載入按鈕，但仍可閱讀預設內容', async () => {
+    const wrapper = await mountComponent()
+
+    expect(wrapper.vm.settingsLoaded).toBe(false)
+    const alert = wrapper.find('[data-test="settings-load-alert"]')
+    expect(alert.exists()).toBe(true)
+    expect(alert.text()).toContain('載入失敗')
+    expect(alert.text()).toContain('預設內容')
+    expect(wrapper.find('[data-test="reload-settings"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="reload-settings"]').text()).toBe('重新載入')
+    // 頁面仍可閱讀：預設的自訂欄位與字典項目還在
+    expect(wrapper.vm.customFields.length).toBeGreaterThan(0)
+    expect(wrapper.vm.itemSettings.C12.length).toBeGreaterThan(0)
+    // 表單分類是另一支 API，不受影響
+    expect(wrapper.vm.formCategories.map(category => category.id)).toEqual(['cat-leave', 'cat-general'])
+  })
+
+  it('網路錯誤或回應不是合法 JSON 也視為載入失敗', async () => {
+    settingsGet = () => Promise.reject(new Error('Failed to fetch'))
+    const networkFailure = await mountComponent()
+    expect(networkFailure.vm.settingsLoaded).toBe(false)
+    expect(networkFailure.find('[data-test="settings-load-alert"]').exists()).toBe(true)
+
+    settingsGet = () => Promise.resolve(new Response('<html>oops</html>', { status: 200 }))
+    const invalidBody = await mountComponent()
+    expect(invalidBody.vm.settingsLoaded).toBe(false)
+    expect(invalidBody.find('[data-test="settings-load-alert"]').exists()).toBe(true)
+  })
+
+  it('載入失敗時所有儲存 / 刪除路徑都被擋下並提示，不會送出任何寫入請求，本機資料也不變', async () => {
+    ElMessageBox.confirm.mockResolvedValue('confirm')
+    const wrapper = await mountComponent()
+    const itemSettingsBefore = JSON.parse(JSON.stringify(wrapper.vm.itemSettings))
+    const customFieldsBefore = JSON.parse(JSON.stringify(wrapper.vm.customFields))
+    const categoriesBefore = JSON.parse(JSON.stringify(wrapper.vm.formCategories))
+
+    wrapper.vm.optionForm = { dictionaryKey: 'C12', name: '公假', code: 'PUBLIC' }
+    Object.assign(wrapper.vm.fieldForm, { label: '測試欄位', fieldKey: 'testKey', type: 'text' })
+    wrapper.vm.categoryForm = { id: '', name: '出差', code: 'travel', description: '', builtin: false }
+
+    expect(await wrapper.vm.saveItemSettings('已儲存')).toBe(false)
+    await wrapper.vm.saveOption()
+    await wrapper.vm.removeOption('C12', 0)
+    await wrapper.vm.saveField()
+    await wrapper.vm.removeField(0)
+    await wrapper.vm.saveCategory()
+    await wrapper.vm.removeCategory({ id: 'cat-extra', name: '其他', code: 'other', builtin: false })
+
+    expect(writeCalls()).toHaveLength(0)
+    expect(ElMessageBox.confirm).not.toHaveBeenCalled()
+    expect(ElMessage.success).not.toHaveBeenCalled()
+    expect(ElMessage.error).toHaveBeenCalledTimes(7)
+    ElMessage.error.mock.calls.forEach(([message]) => expect(message).toBe(NOT_LOADED_MESSAGE))
+    expect(JSON.parse(JSON.stringify(wrapper.vm.itemSettings))).toEqual(itemSettingsBefore)
+    expect(JSON.parse(JSON.stringify(wrapper.vm.customFields))).toEqual(customFieldsBefore)
+    expect(JSON.parse(JSON.stringify(wrapper.vm.formCategories))).toEqual(categoriesBefore)
+  })
+
+  it('載入失敗時停用新增 / 編輯 / 刪除 / 儲存按鈕，成功重新載入後恢復', async () => {
+    const wrapper = await mountComponent()
+
+    for (const label of ['新增選項', '新增分類', '新增欄位', '編輯', '刪除', '儲存']) {
+      const buttons = buttonsByText(wrapper, label)
+      expect(buttons.length, label).toBeGreaterThan(0)
+      buttons.forEach(button => expect(button.attributes('disabled'), label).toBeDefined())
+    }
+    // 重新載入按鈕本身不能被停用
+    expect(wrapper.find('[data-test="reload-settings"]').attributes('disabled')).toBeUndefined()
+
+    settingsGet = () => Promise.resolve(json(SAVED_SETTINGS))
+    await wrapper.vm.reloadSettings()
+    await flushPromises()
+
+    for (const label of ['新增選項', '新增分類', '新增欄位', '編輯', '儲存']) {
+      buttonsByText(wrapper, label).forEach(button => expect(button.attributes('disabled'), label).toBeUndefined())
+    }
+  })
+
+  it('按下重新載入並成功：載入已儲存的資料、清除警告、恢復儲存', async () => {
+    settingsGet = () => Promise.reject(new Error('Failed to fetch'))
+    const wrapper = await mountComponent()
+    expect(wrapper.vm.settingsLoaded).toBe(false)
+    expect(settingsGetCalls()).toHaveLength(1)
+
+    settingsGet = () => Promise.resolve(json(SAVED_SETTINGS))
+    await wrapper.find('[data-test="reload-settings"]').trigger('click')
+    await flushPromises()
+
+    expect(settingsGetCalls()).toHaveLength(2)
+    expect(wrapper.vm.settingsLoaded).toBe(true)
+    expect(wrapper.vm.settingsLoadFailed).toBe(false)
+    expect(wrapper.find('[data-test="settings-load-alert"]').exists()).toBe(false)
+    expect(wrapper.vm.itemSettings.C12).toEqual([{ name: '公假', code: 'PUBLIC' }])
+    expect(wrapper.vm.customFields.map(field => field.fieldKey)).toEqual(['uniformSize'])
+
+    const saved = await wrapper.vm.saveItemSettings('已儲存字典項目設定')
+    expect(saved).toBeTruthy()
+    const putCall = writeCalls()[0]
+    expect(putCall[0]).toBe('/api/other-control-settings/item-settings')
+    expect(JSON.parse(putCall[1].body).C12).toEqual([{ name: '公假', code: 'PUBLIC' }])
+    expect(ElMessage.success).toHaveBeenCalledWith('已儲存字典項目設定')
+  })
+
+  it('重新載入仍失敗時維持封鎖與警告，之後再重試成功即可恢復', async () => {
+    const wrapper = await mountComponent()
+
+    await wrapper.vm.reloadSettings()
+    expect(settingsGetCalls()).toHaveLength(2)
+    expect(wrapper.vm.settingsLoaded).toBe(false)
+    expect(wrapper.find('[data-test="settings-load-alert"]').exists()).toBe(true)
+    expect(await wrapper.vm.saveItemSettings('已儲存')).toBe(false)
+    expect(writeCalls()).toHaveLength(0)
+
+    settingsGet = () => Promise.resolve(json(SAVED_SETTINGS))
+    await wrapper.vm.reloadSettings()
+    await flushPromises()
+    expect(wrapper.vm.settingsLoaded).toBe(true)
+    expect(wrapper.find('[data-test="settings-load-alert"]').exists()).toBe(false)
+  })
+
+  it('載入進行中（尚未成功）也不能儲存，載入成功後才開放', async () => {
+    let release
+    settingsGet = () => new Promise(resolve => {
+      release = () => resolve(json({ itemSettings: {}, customFields: [] }))
+    })
+    const wrapper = shallowMount(OtherControlSetting, { global: { stubs: elementStubs } })
+
+    expect(wrapper.vm.settingsLoaded).toBe(false)
+    expect(wrapper.find('[data-test="settings-load-alert"]').exists()).toBe(false)
+    expect(await wrapper.vm.saveItemSettings('已儲存')).toBe(false)
+    expect(writeCalls()).toHaveLength(0)
+
+    release()
+    await flushPromises()
+    expect(wrapper.vm.settingsLoaded).toBe(true)
+    expect(await wrapper.vm.saveItemSettings('已儲存')).toBeTruthy()
+  })
+})

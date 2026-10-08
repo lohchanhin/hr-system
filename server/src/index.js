@@ -10,6 +10,7 @@ import attendanceRoutes from './routes/attendanceRoutes.js';
 import authRoutes from './routes/authRoutes.js';
 import { migrateMissingShiftSemantics } from './services/shiftSemanticService.js';
 import { purgeLegacyRocWeekendHolidays } from './controllers/holidayController.js';
+import { migrateLeaveFormSemantics } from './controllers/approvalTemplateController.js';
 import { authenticate, authorizeRoles } from './middleware/auth.js';
 import scheduleRoutes from './routes/scheduleRoutes.js';
 import payrollRoutes from './routes/payrollRoutes.js';
@@ -329,6 +330,15 @@ async function start() {
       }
     } catch (purgeError) {
       console.error('Failed to purge legacy weekend holidays', purgeError?.name ?? 'Error');
+    }
+    // 名稱看起來是請假單、表單性質卻還是預設「一般」的舊表單（例如客戶的「休假/事假/公假申請單」）補成請假（冪等）
+    try {
+      const migratedLeaveForms = await migrateLeaveFormSemantics();
+      if (migratedLeaveForms) {
+        console.log(`Migrated semantic types for ${migratedLeaveForms} leave forms`);
+      }
+    } catch (migrateError) {
+      console.error('Failed to migrate leave form semantics', migrateError?.name ?? 'Error');
     }
     await ensureAdminUser();
     await ensureDefaultSupervisorReports();

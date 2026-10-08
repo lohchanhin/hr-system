@@ -6,7 +6,7 @@ import Holiday from '../models/Holiday.js';
 import HolidayMoveSetting from '../models/HolidayMoveSetting.js';
 import { isPayableNationalHoliday } from './countedHolidayService.js';
 import { computeShiftSpan } from '../utils/timeWindow.js';
-import { getLeaveFieldIds } from './leaveFieldService.js';
+import { getAllLeaveFieldInfos } from './leaveFieldService.js';
 import { isNonWorkShift, resolveShiftSemanticType } from './shiftSemanticService.js';
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
@@ -337,28 +337,32 @@ function validateContinuousNonRestDays(
 
 async function loadApprovedLeaveDaysMap(employeeIds, start, end) {
   const leaveDaysMap = new Map(employeeIds.map((employeeId) => [normalizeId(employeeId), new Set()]));
-  const { formId, startId, endId } = await getLeaveFieldIds();
-  if (!formId || !startId || !endId || !employeeIds.length) return leaveDaysMap;
+  if (!employeeIds.length) return leaveDaysMap;
+  // 預設的「請假」與客戶自建的請假表單並存時，每張請假表單各查一次，請假日合併計入
+  const leaveForms = await getAllLeaveFieldInfos({ withTypeOptions: false });
 
-  const query = ApprovalRequest.find({
-    form: formId,
-    status: 'approved',
-    applicant_employee: { $in: employeeIds },
-  });
-  const approvals = query && typeof query.lean === 'function' ? await query.lean() : await query;
+  for (const { formId, startId, endId } of leaveForms) {
+    if (!formId || !startId || !endId) continue;
+    const query = ApprovalRequest.find({
+      form: formId,
+      status: 'approved',
+      applicant_employee: { $in: employeeIds },
+    });
+    const approvals = query && typeof query.lean === 'function' ? await query.lean() : await query;
 
-  for (const approval of approvals || []) {
-    const employeeId = normalizeId(approval.applicant_employee);
-    const bucket = leaveDaysMap.get(employeeId);
-    if (!bucket) continue;
-    const leaveStart = startOfUtcDay(approval.form_data?.[startId]);
-    const leaveEnd = startOfUtcDay(approval.form_data?.[endId]);
-    if (!leaveStart || !leaveEnd || leaveEnd < leaveStart) continue;
+    for (const approval of approvals || []) {
+      const employeeId = normalizeId(approval.applicant_employee);
+      const bucket = leaveDaysMap.get(employeeId);
+      if (!bucket) continue;
+      const leaveStart = startOfUtcDay(approval.form_data?.[startId]);
+      const leaveEnd = startOfUtcDay(approval.form_data?.[endId]);
+      if (!leaveStart || !leaveEnd || leaveEnd < leaveStart) continue;
 
-    const clampedStart = leaveStart > start ? leaveStart : start;
-    const clampedEnd = leaveEnd < addUtcDays(end, -1) ? leaveEnd : addUtcDays(end, -1);
-    for (let pointer = new Date(clampedStart); pointer <= clampedEnd; pointer = addUtcDays(pointer, 1)) {
-      bucket.add(dateKey(pointer));
+      const clampedStart = leaveStart > start ? leaveStart : start;
+      const clampedEnd = leaveEnd < addUtcDays(end, -1) ? leaveEnd : addUtcDays(end, -1);
+      for (let pointer = new Date(clampedStart); pointer <= clampedEnd; pointer = addUtcDays(pointer, 1)) {
+        bucket.add(dateKey(pointer));
+      }
     }
   }
 
@@ -561,8 +565,10 @@ function validateLeaveRequest(formData, fields) {
   const violations = [];
   const leaveTypeField = findField(fields, [/^假別$/, /leave.*type/]);
   const reasonField = findField(fields, [/事由/, /原因/, /reason/]);
-  const proofField = fields.find((field) => field.type_1 === 'file')
-    || findField(fields, [/相關證明/, /證明/, /附件/, /proof/, /attachment/]);
+  // 停用的欄位不會出現在填單畫面，不算證明欄位
+  const activeFields = fields.filter((field) => field.is_active !== false);
+  const proofField = activeFields.find((field) => field.type_1 === 'file')
+    || findField(activeFields, [/相關證明/, /證明/, /附件/, /proof/, /attachment/]);
   const leaveType = formValueText(extractFormValue(formData, leaveTypeField));
 
   if (/事假|personal\s*leave/i.test(leaveType)) {
@@ -576,11 +582,13 @@ function validateLeaveRequest(formData, fields) {
     }
   }
 
-  if (!proofField || !hasUploadedAttachment(extractFormValue(formData, proofField))) {
+  // 只有表單真的有證明欄位（檔案 / 證明 / 附件）才要求附上證明；
+  // 客戶自建的請假表單沒有檔案欄位，使用者根本無從上傳，不能因此擋下送簽與核准。
+  if (proofField && !hasUploadedAttachment(extractFormValue(formData, proofField))) {
     violations.push(makeViolation(
       'leave-proof',
       '請假申請必須附上相關證明',
-      { fieldId: normalizeId(proofField?._id) },
+      { fieldId: normalizeId(proofField._id) },
     ));
   }
 

@@ -4,7 +4,7 @@ import ApprovalRequest from '../../models/approval_request.js';
 import AttendanceSetting from '../../models/AttendanceSetting.js';
 import { Types } from 'mongoose';
 import dayjs from 'dayjs';
-import { getLeaveFieldIds } from '../../services/leaveFieldService.js';
+import { getAllLeaveFieldInfos } from '../../services/leaveFieldService.js';
 import { leaveDaysFromCalendar, loadApprovedLeaveCalendar } from '../../services/approvedLeaveCalendarService.js';
 import { buildLiteralSearchRegex } from '../../utils/safeSearch.js';
 import {
@@ -192,8 +192,10 @@ export async function listMonthlySchedules(req, res) {
           }
         });
 
-        const { formId, startId, endId } = await getLeaveFieldIds();
-        if (formId && startId && endId) {
+        // 預設的「請假」與自建的請假表單並存時，每張請假表單各查一次
+        const leaveForms = await getAllLeaveFieldInfos({ withTypeOptions: false });
+        for (const { formId, startId, endId } of leaveForms) {
+          if (!formId || !startId || !endId) continue;
           const monthStart = `${month}-01`;
           const monthEnd = end.toISOString().slice(0, 10);
           const leaveQuery = {
@@ -439,8 +441,9 @@ export async function listLeaveApprovals(req, res) {
       scopedEmployeeIds = [employee];
     }
 
-    const { formId, startId, endId, typeId } = await getLeaveFieldIds();
-    if (!formId || !startId || !endId) {
+    // 預設的「請假」與自建的請假表單並存時，核准的假單要從每張請假表單各查一次再合併
+    const leaveForms = await getAllLeaveFieldInfos({ withTypeOptions: false });
+    if (!leaveForms.length) {
       return res.json({ leaves: [], approvals: [] });
     }
     const start = new Date(`${month}-01T00:00:00.000Z`);
@@ -462,11 +465,8 @@ export async function listLeaveApprovals(req, res) {
     }
 
     const approvalQuery = {
-      form: formId,
       status: 'approved',
     };
-    approvalQuery[`form_data.${startId}`] = { $lt: monthEnd };
-    approvalQuery[`form_data.${endId}`] = { $gte: monthStart };
 
     if (Array.isArray(scopedEmployeeIds)) {
       if (!scopedEmployeeIds.length) {
@@ -484,27 +484,38 @@ export async function listLeaveApprovals(req, res) {
       }
     }
 
-    const approvals = await ApprovalRequest.find(approvalQuery)
-      .select(`applicant_employee applicant_department status form_data.${typeId} form_data.${startId} form_data.${endId}`)
-      .populate({ path: 'applicant_employee', select: 'name department subDepartment' })
-      .lean();
+    const leaves = [];
+    const approvalsLite = [];
+    for (const { formId, startId, endId, typeId } of leaveForms) {
+      const formQuery = {
+        ...approvalQuery,
+        form: formId,
+        [`form_data.${startId}`]: { $lt: monthEnd },
+        [`form_data.${endId}`]: { $gte: monthStart },
+      };
+      const approvals = await ApprovalRequest.find(formQuery)
+        .select(`applicant_employee applicant_department status${typeId ? ` form_data.${typeId}` : ''} form_data.${startId} form_data.${endId}`)
+        .populate({ path: 'applicant_employee', select: 'name department subDepartment' })
+        .lean();
 
-    const leaves = approvals.map((a) => ({
-        employee: a.applicant_employee,
-        leaveType: a.form_data?.[typeId],
-        startDate: a.form_data?.[startId],
-        endDate: a.form_data?.[endId],
-        status: a.status,
-      }));
-
-    const approvalsLite = approvals.map((a) => ({
-      _id: a._id,
-      employee: a.applicant_employee,
-      leaveType: a.form_data?.[typeId],
-      startDate: a.form_data?.[startId],
-      endDate: a.form_data?.[endId],
-      status: a.status,
-    }));
+      approvals.forEach((a) => {
+        leaves.push({
+          employee: a.applicant_employee,
+          leaveType: a.form_data?.[typeId],
+          startDate: a.form_data?.[startId],
+          endDate: a.form_data?.[endId],
+          status: a.status,
+        });
+        approvalsLite.push({
+          _id: a._id,
+          employee: a.applicant_employee,
+          leaveType: a.form_data?.[typeId],
+          startDate: a.form_data?.[startId],
+          endDate: a.form_data?.[endId],
+          status: a.status,
+        });
+      });
+    }
 
     res.json({ leaves, approvals: approvalsLite });
   } catch (err) {

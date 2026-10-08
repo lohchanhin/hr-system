@@ -1,7 +1,16 @@
 import FormTemplate from '../models/form_template.js';
 import FormField from '../models/form_field.js';
+import { resolveFieldOptions } from './formFieldOptionsService.js';
+
+// 請假表單與欄位的對應結果會被快取；表單或欄位異動時由 approvalTemplateController 呼叫 resetLeaveFieldCache。
+// 加上存活時間，多個程序（例如 PM2 多個 worker）時，別的程序改了表單也會在一段時間內自行更新。
+// 快取的是「所有候選請假表單依固定順序排好的欄位對應」，getLeaveFieldIds（挑一張）與 getAllLeaveFieldInfos（全部）共用。
+const LEAVE_FIELD_CACHE_TTL_MS = 60 * 1000;
+// 系統預設的請假表單名稱；多張請假表單並存時，它永遠排第一
+const DEFAULT_LEAVE_FORM_NAME = '請假';
 
 let leaveFieldCache = null;
+let leaveFieldCacheGeneration = 0;
 
 function normalizeOption(value, label) {
   if (value === undefined || value === null) return null;
@@ -70,44 +79,178 @@ function extractOptions(field) {
   });
 }
 
-export function resetLeaveFieldCache() {
-  leaveFieldCache = null;
+/* ---------------------- 欄位標籤辨識（寬鬆比對） ---------------------- */
+
+// 全形轉半形、轉小寫、去掉所有空白與全/半形括號，「日期（起）」「日期 (起)」都會變成「日期起」
+export function normalizeLeaveFieldLabel(label) {
+  return String(label ?? '').normalize('NFKC').toLowerCase().replace(/[\s()]/g, '');
 }
 
-export async function getLeaveFieldIds() {
-  if (leaveFieldCache) return leaveFieldCache;
+const START_LABELS = new Set(['開始時間', '開始日期', '日期起', '起始時間', '起始日期', '請假起日', '開始']);
+const END_LABELS = new Set(['結束時間', '結束日期', '日期迄', '日期訖', '終止時間', '終止日期', '請假迄日', '結束']);
+const DAYS_LABELS = new Set(['天數', '請假天數', '日數', '請假日數']);
 
-  let formQuery = FormTemplate.findOne({
-    is_active: { $ne: false },
-    $or: [{ semanticType: 'leave' }, { name: '請假' }, { name: /leave/i }],
-  });
-  if (formQuery && typeof formQuery.sort === 'function') {
-    formQuery = formQuery.sort({ semanticType: 1, updatedAt: -1 });
-  }
-  const form = formQuery && typeof formQuery.lean === 'function' ? await formQuery.lean() : await formQuery;
-  if (!form) {
-    leaveFieldCache = {};
-    return leaveFieldCache;
-  }
+export function isLeaveStartLabel(label) {
+  return START_LABELS.has(normalizeLeaveFieldLabel(label));
+}
 
-  const fields = await FormField.find({ form: form._id }).lean();
-  // Support both old (開始日期) and new (開始時間) field names for backward compatibility
-  const startField = fields.find((f) => f.label === '開始時間' || f.label === '開始日期');
-  const endField = fields.find((f) => f.label === '結束時間' || f.label === '結束日期');
-  const typeField = fields.find((f) => f.label === '假別');
+export function isLeaveEndLabel(label) {
+  return END_LABELS.has(normalizeLeaveFieldLabel(label));
+}
 
-  leaveFieldCache = {
+// 「假別」或任何以「假別」開頭的標籤，例如「假別類別 (C12)」
+export function isLeaveTypeLabel(label) {
+  return normalizeLeaveFieldLabel(label).startsWith('假別');
+}
+
+export function isLeaveDaysLabel(label) {
+  return DAYS_LABELS.has(normalizeLeaveFieldLabel(label));
+}
+
+// 同名欄位時優先採用啟用中的；欄位依 order 排好後取第一個
+function pickField(fields, matchesLabel) {
+  const matches = fields.filter((field) => matchesLabel(field.label));
+  return matches.find((field) => field.is_active !== false) ?? matches[0];
+}
+
+function buildLeaveFieldBase(form, fields) {
+  const ordered = [...(fields || [])].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+  const startField = pickField(ordered, isLeaveStartLabel);
+  const endField = pickField(ordered, isLeaveEndLabel);
+  // 標籤剛好是「假別」的優先，其次才是「假別類別 (C12)」這類以假別開頭的
+  const typeField = pickField(ordered, (label) => normalizeLeaveFieldLabel(label) === '假別')
+    ?? pickField(ordered, isLeaveTypeLabel);
+  const daysField = pickField(ordered, isLeaveDaysLabel);
+
+  return {
     formId: form._id?.toString(),
     startId: startField?._id?.toString(),
     endId: endField?._id?.toString(),
     typeId: typeField?._id?.toString(),
-    typeOptions: typeField ? extractOptions(typeField) : [],
+    daysId: daysField?._id?.toString(),
     // Store the actual field labels for reference
     startLabel: startField?.label,
     endLabel: endField?.label,
+    typeLabel: typeField?.label,
+    // 假別欄位本身：選項要等到使用時才解析（連結字典的欄位選項會隨字典改變）
+    typeField,
   };
+}
 
-  return leaveFieldCache;
+// 假別選項用解析後的選項（連結字典的欄位取字典目前的項目）
+async function resolveTypeOptions(typeField) {
+  if (!typeField) return [];
+  try {
+    return extractOptions(await resolveFieldOptions(typeField));
+  } catch (error) {
+    return extractOptions(typeField);
+  }
+}
+
+// withTypeOptions: false 給只需要欄位 ID 的呼叫端（例如假勤日曆），省下解析字典選項的查詢
+async function toLeaveFieldInfo(base, { withTypeOptions = true } = {}) {
+  const { typeField, ...info } = base;
+  if (!withTypeOptions) return info;
+  return { ...info, typeOptions: await resolveTypeOptions(typeField) };
+}
+
+function hasAllLeaveFields(base) {
+  return Boolean(base.startId && base.endId && base.typeId);
+}
+
+function timeOf(value) {
+  const time = value ? new Date(value).getTime() : NaN;
+  return Number.isFinite(time) ? time : Infinity;
+}
+
+// 候選請假表單的固定排序：名稱剛好是「請假」的預設表單最優先，其餘依建立時間、_id 由舊到新。
+// 不用 updatedAt：管理員每儲存一次表單它就會變，會讓「挑中哪一張」跟著來回翻轉（預設的請假被新存檔的表單擠掉）。
+function compareLeaveForms(a, b) {
+  const aDefault = a.name === DEFAULT_LEAVE_FORM_NAME ? 0 : 1;
+  const bDefault = b.name === DEFAULT_LEAVE_FORM_NAME ? 0 : 1;
+  if (aDefault !== bDefault) return aDefault - bDefault;
+  const aTime = timeOf(a.createdAt);
+  const bTime = timeOf(b.createdAt);
+  if (aTime !== bTime) return aTime < bTime ? -1 : 1;
+  const aId = String(a._id ?? '');
+  const bId = String(b._id ?? '');
+  if (aId === bId) return 0;
+  return aId < bId ? -1 : 1;
+}
+
+// 所有候選請假表單（依 compareLeaveForms 排序）的欄位對應；沒有候選表單回傳空陣列
+async function findLeaveFieldBases() {
+  let formQuery = FormTemplate.find({
+    is_active: { $ne: false },
+    $or: [{ semanticType: 'leave' }, { name: DEFAULT_LEAVE_FORM_NAME }, { name: /leave/i }],
+  });
+  if (formQuery && typeof formQuery.sort === 'function') {
+    formQuery = formQuery.sort({ createdAt: 1, _id: 1 });
+  }
+  const queried = (formQuery && typeof formQuery.lean === 'function' ? await formQuery.lean() : await formQuery) || [];
+  if (!queried.length) return [];
+  const forms = [...queried].sort(compareLeaveForms);
+
+  const fields = await FormField.find({ form: { $in: forms.map((form) => form._id) } }).lean();
+  const fieldsByForm = new Map();
+  (fields || []).forEach((field) => {
+    const key = field.form?.toString();
+    if (!fieldsByForm.has(key)) fieldsByForm.set(key, []);
+    fieldsByForm.get(key).push(field);
+  });
+
+  return forms.map((form) => buildLeaveFieldBase(form, fieldsByForm.get(form._id?.toString()) || []));
+}
+
+async function loadLeaveFieldBases() {
+  if (leaveFieldCache && leaveFieldCache.expiresAt > Date.now()) return leaveFieldCache.bases;
+
+  const generation = leaveFieldCacheGeneration;
+  const bases = await findLeaveFieldBases();
+  // 查詢期間表單剛好被異動（快取被清掉）就不要把舊結果寫回快取
+  if (generation === leaveFieldCacheGeneration) {
+    leaveFieldCache = { bases, expiresAt: Date.now() + LEAVE_FIELD_CACHE_TTL_MS };
+  }
+  return bases;
+}
+
+export function resetLeaveFieldCache() {
+  leaveFieldCache = null;
+  leaveFieldCacheGeneration += 1;
+}
+
+/**
+ * 只需要「一張」請假表單的呼叫端用（回傳形狀不變）。
+ * 多張候選表單時，優先選開始、結束、假別三個欄位都辨識得出來的；同樣完整就取排序在前的
+ * （名稱為「請假」的預設表單最優先，之後依建立時間），不受表單被重新儲存的影響。
+ */
+export async function getLeaveFieldIds() {
+  const bases = await loadLeaveFieldBases();
+  const base = bases.find(hasAllLeaveFields) ?? bases[0] ?? {};
+  return base.formId ? toLeaveFieldInfo(base) : base;
+}
+
+/**
+ * 所有請假表單的欄位對應（預設的「請假」加上客戶自建的請假表單），只保留開始與結束欄位都辨識得出來的，
+ * 順序固定（名稱為「請假」的預設表單在最前）。假勤日曆、排班衝突、薪資等要看「所有請假」的地方用這個，
+ * 對每張表單各查一次核准的假單即可。快取與失效方式和 getLeaveFieldIds 完全相同。
+ * options.withTypeOptions 設為 false 可省去解析假別選項（字典）的查詢。
+ */
+export async function getAllLeaveFieldInfos(options = {}) {
+  const bases = await loadLeaveFieldBases();
+  const usable = bases.filter((base) => base.formId && base.startId && base.endId);
+  return Promise.all(usable.map((base) => toLeaveFieldInfo(base, options)));
+}
+
+/**
+ * 指定表單的請假欄位對應（不經過快取，也不受「只挑一張請假表單」影響）。
+ * 簽核通過後的特休扣減要用「這張假單所屬表單」的欄位，不能用全域挑中的那一張。
+ */
+export async function getLeaveFieldIdsForForm(form) {
+  const formId = form && typeof form === 'object' && form._id ? form._id : form;
+  if (!formId) return {};
+  const fields = await FormField.find({ form: formId }).lean();
+  return toLeaveFieldInfo(buildLeaveFieldBase({ _id: formId }, fields));
 }
 
 export async function getLeaveFieldConfig() {

@@ -2,6 +2,27 @@
   <div class="other-control-setting">
     <h2>其他控制設定</h2>
 
+    <el-alert
+      v-if="settingsLoadFailed"
+      title="無法取得已儲存的其他控制設定"
+      type="warning"
+      show-icon
+      :closable="false"
+      class="load-alert"
+      data-test="settings-load-alert"
+    >
+      <div class="load-alert__body">
+        <span>其他控制設定載入失敗，目前畫面顯示的是預設內容，並非已儲存的資料。為避免覆蓋已儲存的設定，載入成功前無法新增、編輯、儲存或刪除。</span>
+        <el-button
+          size="small"
+          type="primary"
+          :loading="settingsLoading"
+          data-test="reload-settings"
+          @click="reloadSettings"
+        >重新載入</el-button>
+      </div>
+    </el-alert>
+
     <el-tabs v-model="activeTab" type="border-card">
       <el-tab-pane label="字典項目" name="item-setting">
         <div class="tab-content">
@@ -25,7 +46,7 @@
                   :value="dict.key"
                 />
               </el-select>
-              <el-button type="primary" size="small" @click="openOptionDialog()">新增選項</el-button>
+              <el-button type="primary" size="small" :disabled="!settingsLoaded" @click="openOptionDialog()">新增選項</el-button>
             </div>
           </div>
           <el-table :data="itemSettings[activeDictionaryKey] || []" border>
@@ -34,10 +55,15 @@
             <el-table-column prop="code" label="代碼" width="160" />
             <el-table-column label="操作" width="200">
               <template #default="{ $index }">
-                <el-button size="small" @click="openOptionDialog(activeDictionaryKey, $index)">編輯</el-button>
+                <el-button
+                  size="small"
+                  :disabled="!settingsLoaded"
+                  @click="openOptionDialog(activeDictionaryKey, $index)"
+                >編輯</el-button>
                 <el-button
                   size="small"
                   type="danger"
+                  :disabled="!settingsLoaded"
                   @click="removeOption(activeDictionaryKey, $index)"
                 >刪除</el-button>
               </template>
@@ -55,7 +81,7 @@
             class="info-alert"
           />
           <div class="list-action-row">
-            <el-button type="primary" @click="openCategoryDialog()">新增分類</el-button>
+            <el-button type="primary" :disabled="!settingsLoaded" @click="openCategoryDialog()">新增分類</el-button>
           </div>
           <el-table :data="formCategories" border>
             <el-table-column type="index" width="60" label="#" />
@@ -73,11 +99,11 @@
             </el-table-column>
             <el-table-column label="操作" width="220">
               <template #default="{ row }">
-                <el-button size="small" @click="openCategoryDialog('edit', row)">編輯</el-button>
+                <el-button size="small" :disabled="!settingsLoaded" @click="openCategoryDialog('edit', row)">編輯</el-button>
                 <el-button
                   size="small"
                   type="danger"
-                  :disabled="row.builtin"
+                  :disabled="row.builtin || !settingsLoaded"
                   @click="removeCategory(row)"
                 >刪除</el-button>
               </template>
@@ -95,7 +121,7 @@
             class="info-alert"
           />
           <div class="list-action-row">
-            <el-button type="primary" @click="openFieldDialog()">新增欄位</el-button>
+            <el-button type="primary" :disabled="!settingsLoaded" @click="openFieldDialog()">新增欄位</el-button>
           </div>
           <el-table :data="customFields" border>
             <el-table-column prop="label" label="欄位名稱" width="180" />
@@ -111,8 +137,8 @@
             <el-table-column prop="description" label="使用說明" />
             <el-table-column label="操作" width="180">
               <template #default="{ $index }">
-                <el-button size="small" @click="openFieldDialog($index)">編輯</el-button>
-                <el-button size="small" type="danger" @click="removeField($index)">刪除</el-button>
+                <el-button size="small" :disabled="!settingsLoaded" @click="openFieldDialog($index)">編輯</el-button>
+                <el-button size="small" type="danger" :disabled="!settingsLoaded" @click="removeField($index)">刪除</el-button>
               </template>
             </el-table-column>
           </el-table>
@@ -142,7 +168,7 @@
       <template #footer>
         <span class="dialog-footer">
           <el-button @click="optionDialogVisible = false">取消</el-button>
-          <el-button type="primary" @click="saveOption">儲存</el-button>
+          <el-button type="primary" :disabled="!settingsLoaded" @click="saveOption">儲存</el-button>
         </span>
       </template>
     </el-dialog>
@@ -162,7 +188,7 @@
       <template #footer>
         <span class="dialog-footer">
           <el-button @click="categoryDialogVisible = false">取消</el-button>
-          <el-button type="primary" @click="saveCategory">儲存</el-button>
+          <el-button type="primary" :disabled="!settingsLoaded" @click="saveCategory">儲存</el-button>
         </span>
       </template>
     </el-dialog>
@@ -254,7 +280,7 @@
       <template #footer>
         <span class="dialog-footer">
           <el-button @click="fieldDialogVisible = false">取消</el-button>
-          <el-button type="primary" @click="saveField">儲存</el-button>
+          <el-button type="primary" :disabled="!settingsLoaded" @click="saveField">儲存</el-button>
         </span>
       </template>
     </el-dialog>
@@ -268,6 +294,18 @@ import { apiFetch } from '../../api'
 import { editableListToOptions, optionsToEditableList } from '../../utils/fieldOptions'
 
 const activeTab = ref('item-setting')
+// 其他控制設定是否已從伺服器成功載入。載入失敗時畫面上是預設值，不能把它當成已儲存的資料存回去
+const settingsLoaded = ref(false)
+const settingsLoading = ref(false)
+const settingsLoadFailed = ref(false)
+const SETTINGS_NOT_LOADED_MESSAGE = '其他控制設定尚未成功載入，為避免覆蓋已儲存的資料，目前無法儲存或刪除，請先按「重新載入」'
+
+function ensureSettingsLoaded() {
+  if (settingsLoaded.value) return true
+  ElMessage.error(SETTINGS_NOT_LOADED_MESSAGE)
+  return false
+}
+
 const formCategories = ref([])
 const categoryDialogVisible = ref(false)
 const categoryDialogMode = ref('create')
@@ -641,44 +679,59 @@ onMounted(() => {
 })
 
 async function loadSettings() {
+  settingsLoading.value = true
   try {
     const res = await apiFetch('/api/other-control-settings', { method: 'GET' }, { autoRedirect: false })
-    if (res.ok) {
-      const data = await res.json()
-      if (Array.isArray(data.customFields) && data.customFields.length) {
-        customFields.value = data.customFields
-      } else {
-        customFields.value = [...defaultCustomFields]
-      }
-      if (data.itemSettings && typeof data.itemSettings === 'object') {
-        Object.keys(data.itemSettings).forEach(key => {
-          if (!dictionaryDefinitions.value.some(dict => dict.key === key)) {
-            dictionaryDefinitions.value.push({ key, label: key })
-          }
-        })
-        const merged = createDefaultItemSettings()
-        dictionaryDefinitions.value.forEach(dict => {
-          if (Array.isArray(data.itemSettings[dict.key])) {
-            merged[dict.key] = data.itemSettings[dict.key].map(option => normalizeDictionaryOption(option))
-          }
-        })
-        itemSettings.value = merged
-        if (!dictionaryDefinitions.value.some(dict => dict.key === activeDictionaryKey.value)) {
-          activeDictionaryKey.value = dictionaryDefinitions.value[0]?.key ?? ''
+    if (!res.ok) {
+      throw new Error(`伺服器回應 ${res.status}`)
+    }
+    const data = await res.json()
+    if (Array.isArray(data.customFields) && data.customFields.length) {
+      customFields.value = data.customFields
+    } else {
+      customFields.value = [...defaultCustomFields]
+    }
+    if (data.itemSettings && typeof data.itemSettings === 'object') {
+      Object.keys(data.itemSettings).forEach(key => {
+        if (!dictionaryDefinitions.value.some(dict => dict.key === key)) {
+          dictionaryDefinitions.value.push({ key, label: key })
         }
-      } else {
-        itemSettings.value = createDefaultItemSettings()
-      }
-      if (Array.isArray(data.formCategories)) {
-        const normalized = data.formCategories.map(normalizeCategory).filter(Boolean)
-        if (normalized.length) {
-          formCategories.value = normalized
+      })
+      const merged = createDefaultItemSettings()
+      dictionaryDefinitions.value.forEach(dict => {
+        if (Array.isArray(data.itemSettings[dict.key])) {
+          merged[dict.key] = data.itemSettings[dict.key].map(option => normalizeDictionaryOption(option))
         }
+      })
+      itemSettings.value = merged
+      if (!dictionaryDefinitions.value.some(dict => dict.key === activeDictionaryKey.value)) {
+        activeDictionaryKey.value = dictionaryDefinitions.value[0]?.key ?? ''
+      }
+    } else {
+      itemSettings.value = createDefaultItemSettings()
+    }
+    if (Array.isArray(data.formCategories)) {
+      const normalized = data.formCategories.map(normalizeCategory).filter(Boolean)
+      if (normalized.length) {
+        formCategories.value = normalized
       }
     }
+    settingsLoaded.value = true
+    settingsLoadFailed.value = false
   } catch (error) {
+    // 載入失敗時畫面上仍是預設內容：不開放儲存 / 刪除，並顯示警告與重新載入按鈕
+    settingsLoaded.value = false
+    settingsLoadFailed.value = true
     console.warn('載入其他控制設定失敗：', error)
+  } finally {
+    settingsLoading.value = false
   }
+}
+
+// 載入失敗警告上的「重新載入」：設定與表單分類一起重讀，成功後警告消失、儲存功能恢復
+async function reloadSettings() {
+  if (settingsLoading.value) return
+  await Promise.all([loadSettings(), loadFormCategories()])
 }
 
 async function loadFormCategories() {
@@ -715,6 +768,7 @@ function openCategoryDialog(mode = 'create', category = null) {
 }
 
 async function saveCategory() {
+  if (!ensureSettingsLoaded()) return
   const name = (categoryForm.value.name || '').trim()
   const code = (categoryForm.value.code || '').trim() || name
   if (!name || !code) {
@@ -783,6 +837,7 @@ async function saveCategory() {
 }
 
 async function removeCategory(category) {
+  if (!ensureSettingsLoaded()) return
   if (!category?.id) return
   if (category.builtin) {
     ElMessage.warning('內建分類不可刪除')
@@ -824,6 +879,7 @@ async function removeCategory(category) {
 }
 
 async function saveItemSettings(successMessage = '已儲存字典項目設定') {
+  if (!ensureSettingsLoaded()) return false
   const payload = itemSettings.value
   const fallbackMessage = '儲存字典項目時發生問題，請稍後再試'
   try {
@@ -892,6 +948,7 @@ function openOptionDialog(dictionaryKey = activeDictionaryKey.value, index = -1)
 }
 
 async function saveOption() {
+  if (!ensureSettingsLoaded()) return
   if (!optionForm.value.name || !optionForm.value.code || !optionForm.value.dictionaryKey) {
     ElMessage.warning('請完整填寫字典與選項資訊')
     return
@@ -918,6 +975,7 @@ async function saveOption() {
 }
 
 async function removeOption(dictionaryKey, index) {
+  if (!ensureSettingsLoaded()) return
   if (!dictionaryKey || index < 0) return
   try {
     await ElMessageBox.confirm('確定要刪除此選項嗎？', '提醒', { type: 'warning' })
@@ -961,6 +1019,7 @@ function openFieldDialog(index = -1) {
 }
 
 async function saveField() {
+  if (!ensureSettingsLoaded()) return
   if (!fieldForm.value.label || !fieldForm.value.fieldKey) {
     ElMessage.warning('欄位名稱與識別代碼為必填')
     return
@@ -1032,6 +1091,7 @@ async function saveField() {
 }
 
 async function removeField(index) {
+  if (!ensureSettingsLoaded()) return
   try {
     await ElMessageBox.confirm('確定要刪除此欄位嗎？', '提醒', { type: 'warning' })
   } catch (error) {
@@ -1110,6 +1170,17 @@ async function removeField(index) {
 
 .info-alert {
   margin-bottom: 12px;
+}
+
+.load-alert {
+  margin-bottom: 12px;
+}
+
+.load-alert__body {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
 }
 
 .dictionary-action-row {
