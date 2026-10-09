@@ -870,6 +870,7 @@ describe('ApprovalFlowSetting - 樣板的表單性質', () => {
       ['請假', 'leave'],
       ['休假申請單', 'leave'],
       ['病假單', 'leave'],
+      ['(全)假別申請單', 'leave'],
       ['Leave Request', 'leave'],
       ['加班申請', 'overtime'],
       ['Overtime Request', 'overtime'],

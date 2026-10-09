@@ -94,6 +94,8 @@ describe('inferSemanticType', () => {
     ['特休申請', 'leave'],
     ['公假', 'leave'],
     ['外出假單', 'leave'],
+    ['(全)假別申請單', 'leave'],
+    ['假別申請單', 'leave'],
     ['Leave Request', 'leave'],
     ['加班申請', 'overtime'],
     ['Overtime', 'overtime'],
@@ -321,6 +323,59 @@ describe('updateFormTemplate semanticType', () => {
     expect(res.status).toHaveBeenCalledWith(400)
     expect(res.json).toHaveBeenCalledWith({ error: '表單性質不正確' })
     expect(mockFormTemplate.findByIdAndUpdate).not.toHaveBeenCalled()
+  })
+})
+
+describe('migrateLeaveKeywordForms', () => {
+  let store
+
+  function install(initial) {
+    store = initial.map((form) => ({ ...form }))
+    const pending = (form) => form.leave_keyword_migrated !== true
+    mockFormTemplate.find.mockImplementation((filter) => {
+      expect(filter).toEqual({ leave_keyword_migrated: { $ne: true } })
+      return { lean: async () => store.filter(pending).map(({ _id, name, semanticType }) => ({ _id, name, semanticType })) }
+    })
+    mockFormTemplate.updateMany.mockImplementation(async (filter, update, options) => {
+      expect(options).toEqual({ timestamps: false })
+      let modifiedCount = 0
+      store.forEach((form) => {
+        if (!filter._id.$in.includes(form._id) || !pending(form)) return
+        if (filter.semanticType && !(form.semanticType === 'general' || form.semanticType == null)) return
+        Object.assign(form, update.$set)
+        modifiedCount += 1
+      })
+      return { modifiedCount }
+    })
+  }
+
+  const byId = () => Object.fromEntries(store.map((form) => [form._id, form.semanticType]))
+
+  it('turns a general form named like (全)假別申請單 into a leave form once, and marks every form it looked at', async () => {
+    install([
+      { _id: 'a', name: '(全)假別申請單', semanticType: 'general', semantic_type_set: true },
+      { _id: 'b', name: '假別申請', semanticType: undefined, semantic_type_set: true },
+      { _id: 'c', name: '在職證明', semanticType: 'general', semantic_type_set: true },
+      { _id: 'd', name: '請假', semanticType: 'general', semantic_type_set: true }, // 沒有「假別」二字：不歸這次處理
+      { _id: 'e', name: '假別證明', semanticType: 'general', semantic_type_set: true }, // 證明不是請假申請
+      { _id: 'f', name: '假別申請', semanticType: 'overtime', semantic_type_set: true },
+    ])
+
+    expect(await controller.migrateLeaveKeywordForms()).toBe(2)
+    expect(byId()).toEqual({ a: 'leave', b: 'leave', c: 'general', d: 'general', e: 'general', f: 'overtime' })
+    expect(store.every((form) => form.leave_keyword_migrated === true)).toBe(true)
+    expect(mockResetLeaveFieldCache).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not touch a form again once it was processed (an admin choice of 一般 sticks across restarts)', async () => {
+    install([{ _id: 'a', name: '(全)假別申請單', semanticType: 'general' }])
+    expect(await controller.migrateLeaveKeywordForms()).toBe(1)
+
+    store[0].semanticType = 'general' // 管理員在介面特地改回「一般」
+    mockFormTemplate.updateMany.mockClear()
+    expect(await controller.migrateLeaveKeywordForms()).toBe(0)
+    expect(mockFormTemplate.updateMany).not.toHaveBeenCalled()
+    expect(byId().a).toBe('general')
   })
 })
 

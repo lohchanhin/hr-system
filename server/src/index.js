@@ -10,7 +10,7 @@ import attendanceRoutes from './routes/attendanceRoutes.js';
 import authRoutes from './routes/authRoutes.js';
 import { migrateMissingShiftSemantics } from './services/shiftSemanticService.js';
 import { purgeLegacyRocWeekendHolidays } from './controllers/holidayController.js';
-import { migrateLeaveFormSemantics } from './controllers/approvalTemplateController.js';
+import { migrateLeaveFormSemantics, migrateLeaveKeywordForms } from './controllers/approvalTemplateController.js';
 import { normalizeStoredSignTags } from './controllers/employeeController.js';
 import { authenticate, authorizeRoles } from './middleware/auth.js';
 import scheduleRoutes from './routes/scheduleRoutes.js';
@@ -349,6 +349,15 @@ async function start() {
       }
     } catch (migrateError) {
       console.error('Failed to migrate leave form semantics', migrateError?.name ?? 'Error');
+    }
+    // 名稱含「假別」的舊請假表單（例如「(全)假別申請單」）補成請假，每張表單只處理一次
+    try {
+      const migratedKeywordForms = await migrateLeaveKeywordForms();
+      if (migratedKeywordForms) {
+        console.log(`Migrated semantic types for ${migratedKeywordForms} leave forms (假別)`);
+      }
+    } catch (keywordError) {
+      console.error('Failed to migrate leave keyword forms', keywordError?.name ?? 'Error');
     }
     await ensureAdminUser();
     await ensureDefaultSupervisorReports();

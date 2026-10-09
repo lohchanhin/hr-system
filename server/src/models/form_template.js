@@ -14,6 +14,8 @@ const formTemplateSchema = new Schema(
     // 表單性質是否已被明確寫入（建立 / 編輯時由管理者選擇或系統依名稱推論後寫入）。
     // 啟動時的舊資料補正只處理還沒寫過的舊表單，所以管理者特地改成「一般」的表單不會在重啟後被改回去。
     semantic_type_set: { type: Boolean, default: false },
+    // 名稱判斷詞新增「假別」之後的一次性補正是否已處理過這張表單（見 migrateLeaveKeywordForms）
+    leave_keyword_migrated: { type: Boolean, default: false },
     // 系統預設表單的固定代號（leave、overtime…）：改名後「補齊預設值」仍認得是哪一張，不會再建一張重複的
     default_key: { type: String, trim: true },
     description: String,

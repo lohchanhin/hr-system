@@ -32,7 +32,7 @@ const SIGN_LEVEL_OPTIONS = [
 // 表單性質：決定請假 / 加班相關功能（假勤日曆、特休餘額、扣減、加班檢核）會不會處理這張表單
 const SEMANTIC_TYPES = ['general', 'leave', 'overtime', 'shift_change', 'business_trip']
 const OVERTIME_NAME_PATTERN = /加班|overtime/i
-const LEAVE_NAME_PATTERN = /請假|休假|事假|病假|特休|公假|假單|leave/i
+const LEAVE_NAME_PATTERN = /請假|休假|事假|病假|特休|公假|假單|假別|leave/i
 // 名稱雖含假別字眼，但不是「請假申請」本身（例如特休保留、各種證明、銷假、出差），不能被當成請假單
 const NOT_LEAVE_REQUEST_NAME_PATTERN = /保留|證明|結算|銷假|出差/
 
@@ -118,6 +118,44 @@ function respondFailure(res, error, context) {
   console.error(`[approval-template] ${context} failed: ${error?.name || 'Error'}`)
   if (error?.name === 'CastError') return res.status(400).json({ error: '資料格式不正確，請檢查後再試' })
   return res.status(500).json({ error: SERVER_ERROR_MESSAGE })
+}
+
+/**
+ * 一次性補正：請假單名稱的判斷詞新增了「假別」（例如客戶的「(全)假別申請單」），
+ * 之前啟動時的補正已經把這類表單當作「已處理」標記起來，所以這裡另外用 leave_keyword_migrated 標記只處理一次：
+ * 表單性質還是一般、名稱含「假別」的舊表單改成 leave，每張表單只會處理一次，
+ * 處理過之後管理員在介面選的表單性質（包含特地選「一般」）不會在重啟後被改回去。
+ * 回傳改成請假的筆數。
+ */
+export async function migrateLeaveKeywordForms() {
+  const pending = await FormTemplate.find(
+    { leave_keyword_migrated: { $ne: true } },
+    { name: 1, semanticType: 1 }
+  ).lean()
+  const rows = pending || []
+  if (!rows.length) return 0
+
+  const isGeneral = (value) => value === undefined || value === null || value === 'general'
+  const leaveIds = rows
+    .filter(form => isGeneral(form.semanticType) && /假別/.test(String(form.name ?? '')) && inferSemanticType(form.name) === 'leave')
+    .map(form => form._id)
+
+  let flipped = 0
+  if (leaveIds.length) {
+    const result = await FormTemplate.updateMany(
+      { _id: { $in: leaveIds }, leave_keyword_migrated: { $ne: true }, semanticType: { $in: ['general', null] } },
+      { $set: { semanticType: 'leave', semantic_type_set: true } },
+      { timestamps: false }
+    )
+    flipped = result?.modifiedCount ?? leaveIds.length
+    resetLeaveFieldCache()
+  }
+  await FormTemplate.updateMany(
+    { _id: { $in: rows.map(form => form._id) }, leave_keyword_migrated: { $ne: true } },
+    { $set: { leave_keyword_migrated: true } },
+    { timestamps: false }
+  )
+  return flipped
 }
 
 /**

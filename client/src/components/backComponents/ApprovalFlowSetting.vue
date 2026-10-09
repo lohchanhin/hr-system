@@ -596,7 +596,7 @@ const SEMANTIC_TYPE_OPTIONS = [
 ]
 const EXTRA_SEMANTIC_TYPE_LABELS = { shift_change: '調班', business_trip: '出差' }
 const OVERTIME_NAME_PATTERN = /加班|overtime/i
-const LEAVE_NAME_PATTERN = /請假|休假|事假|病假|特休|公假|假單|leave/i
+const LEAVE_NAME_PATTERN = /請假|休假|事假|病假|特休|公假|假單|假別|leave/i
 // 名稱雖含假別字眼，但不是「請假申請」本身（例如特休保留、各種證明、銷假、出差），不能被當成請假單
 const NOT_LEAVE_REQUEST_NAME_PATTERN = /保留|證明|結算|銷假|出差/
 

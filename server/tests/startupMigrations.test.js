@@ -61,7 +61,7 @@ describe('server startup migrations', () => {
   })
 
   it('imports migrateLeaveFormSemantics from the approval template controller', () => {
-    expect(indexSource).toMatch(/import \{ migrateLeaveFormSemantics \} from '\.\/controllers\/approvalTemplateController\.js';/)
+    expect(indexSource).toMatch(/import \{ migrateLeaveFormSemantics, migrateLeaveKeywordForms \} from '\.\/controllers\/approvalTemplateController\.js';/)
   })
 
   it('runs the leave form migration after the other startup migrations and before the admin bootstrap', () => {
@@ -95,5 +95,24 @@ describe('server startup migrations', () => {
     // 成功時只記錄筆數
     const success = body.slice(call, catchStart)
     expect(success).toContain('console.log(`Migrated semantic types for ${migratedLeaveForms} leave forms`)')
+  })
+
+  it('runs the one-off 假別 leave keyword migration right after the leave form migration, guarded and count-only', () => {
+    const body = startBody()
+    const leaveMigration = body.indexOf('await migrateLeaveFormSemantics()')
+    const call = body.indexOf('await migrateLeaveKeywordForms()')
+    const admin = body.indexOf('await ensureAdminUser()')
+    expect(call).toBeGreaterThan(leaveMigration)
+    expect(call).toBeLessThan(admin)
+
+    const tryStart = body.lastIndexOf('try {', call)
+    const catchStart = body.indexOf('} catch (keywordError) {', call)
+    const catchEnd = body.indexOf('\n    }\n', catchStart)
+    expect(tryStart).toBeGreaterThan(leaveMigration)
+    expect(catchStart).toBeGreaterThan(call)
+    const handler = body.slice(catchStart, catchEnd)
+    expect(handler).toContain("console.error('Failed to migrate leave keyword forms', keywordError?.name ?? 'Error')")
+    expect(handler).not.toMatch(/process\.exit|throw /)
+    expect(body.slice(call, catchStart)).toContain('console.log(`Migrated semantic types for ${migratedKeywordForms} leave forms (假別)`)')
   })
 })
