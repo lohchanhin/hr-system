@@ -5,6 +5,7 @@ import AttendanceSetting from '../../models/AttendanceSetting.js';
 import { Types } from 'mongoose';
 import { getAllLeaveFieldInfos } from '../../services/leaveFieldService.js';
 import { leaveDaysFromCalendar, loadApprovedLeaveCalendar } from '../../services/approvedLeaveCalendarService.js';
+import { listScheduleRelatedApprovals } from '../../services/scheduleApprovalService.js';
 import { buildLiteralSearchRegex } from '../../utils/safeSearch.js';
 import { dateKeyToUtcMidnight, toTaipeiDateKey } from '../../utils/taipeiTime.js';
 import { candidateSelectKeys, pickFieldValue, resolveCandidateIds } from '../../utils/fieldCandidates.js';
@@ -421,9 +422,6 @@ export async function listLeaveApprovals(req, res) {
 
     // 預設的「請假」與自建的請假表單並存時，核准的假單要從每張請假表單各查一次再合併
     const leaveForms = await getAllLeaveFieldInfos({ withTypeOptions: false });
-    if (!leaveForms.length) {
-      return res.json({ leaves: [], approvals: [] });
-    }
     const start = new Date(`${month}-01T00:00:00.000Z`);
     const end = new Date(start);
     end.setUTCMonth(end.getUTCMonth() + 1);
@@ -447,28 +445,27 @@ export async function listLeaveApprovals(req, res) {
       departmentEmployeeIds = matchedEmployees.map((emp) => emp._id.toString());
     }
 
-    const approvalQuery = {
-      status: 'approved',
-    };
+    // 誰的單據看得到（員工範圍＋部門條件）：日曆用的核准假單與「相關簽核」清單共用同一份
+    const scopeQuery = {};
 
     if (Array.isArray(scopedEmployeeIds)) {
       if (!scopedEmployeeIds.length) {
         return res.json({ leaves: [], approvals: [] });
       }
-      approvalQuery.applicant_employee = { $in: scopedEmployeeIds };
+      scopeQuery.applicant_employee = { $in: scopedEmployeeIds };
     }
 
     if (subDepartment) {
-      approvalQuery.applicant_employee = { $in: departmentEmployeeIds || [] };
+      scopeQuery.applicant_employee = { $in: departmentEmployeeIds || [] };
     } else if (department) {
-      approvalQuery.$or = [{ applicant_department: department }];
+      scopeQuery.$or = [{ applicant_department: department }];
       if (departmentEmployeeIds?.length) {
-        approvalQuery.$or.push({ applicant_employee: { $in: departmentEmployeeIds } });
+        scopeQuery.$or.push({ applicant_employee: { $in: departmentEmployeeIds } });
       }
     }
+    const approvalQuery = { status: 'approved', ...scopeQuery };
 
     const leaves = [];
-    const approvalsLite = [];
     // 已停用的請假表單照樣查：它底下已核准的假單仍然有效。
     // 欄位被停用或換成同標籤的新欄位後，舊假單的答案還在舊欄位 ID 底下，所以逐張假單用第一個有填值的同標籤欄位
     for (const leaveForm of leaveForms) {
@@ -506,18 +503,19 @@ export async function listLeaveApprovals(req, res) {
           endDate,
           status: a.status,
         });
-        approvalsLite.push({
-          _id: a._id,
-          employee: a.applicant_employee,
-          leaveType,
-          startDate,
-          endDate,
-          status: a.status,
-        });
       });
     }
 
-    res.json({ leaves, approvals: approvalsLite });
+    // 「相關簽核」清單：範圍內員工的所有簽核單（任何表單、任何狀態），不是只有核准的請假單；
+    // leaves[] 仍只含核准的請假，日曆靠它顯示
+    const { approvals, truncated } = await listScheduleRelatedApprovals({
+      scopeQuery,
+      leaveForms,
+      monthRange: { monthStart, monthEnd, queryStart, queryEnd },
+    });
+    if (truncated && typeof res.set === 'function') res.set('X-Approvals-Truncated', 'true');
+
+    res.json({ leaves, approvals });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }

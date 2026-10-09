@@ -625,9 +625,9 @@
         color: '#164e63',
         fontWeight: '600'
       }" v-if="relatedApprovalRows.length">
-        <el-table-column label="資料類型" width="120">
+        <el-table-column label="資料類型" width="150">
           <template #default="{ row }">
-            <el-tag :type="row.sourceType === 'schedule_confirmation' ? 'primary' : 'info'" class="status-tag">
+            <el-tag :type="row.sourceType === 'schedule_confirmation' ? 'primary' : 'info'" class="status-tag" :title="row.sourceTypeLabel">
               {{ row.sourceTypeLabel }}
             </el-tag>
           </template>
@@ -672,7 +672,7 @@
         </el-table-column>
         <el-table-column label="查看詳情" width="120">
           <template #default="{ row }">
-            <el-button size="small" @click="openDetail(row._id)" :disabled="!row._id || row.sourceType !== 'leave_approval'">
+            <el-button size="small" @click="openDetail(row._id)" :disabled="!row._id || row.sourceType === 'schedule_confirmation'">
               查看
             </el-button>
           </template>
@@ -690,6 +690,9 @@
       </div>
       <p v-if="approvalCollapsed && hasMoreApprovals" class="approval-collapse-hint">
         僅顯示前 {{ approvalCollapsedLimit }} 筆，點擊「展開列表」檢視全部。
+      </p>
+      <p v-if="approvalTruncated" class="approval-collapse-hint" data-test="approval-truncated-hint">
+        相關簽核超過 500 筆，只列出最新的 500 筆；可以縮小部門或單位範圍檢視。
       </p>
     </div>
   </div>
@@ -784,6 +787,7 @@ import {
 import { buildShiftStyle } from '../../utils/shiftColors'
 import { ROW_COLOR_PALETTE, normalizeRowColorIndex, resolveRowColor } from '../../utils/rowColors'
 import { buildMonthDays, buildHolidayMap } from '../../utils/scheduleCalendar'
+import { formatTaipeiDate } from '../../utils/approvalDisplay'
 import {
   buildCellKey,
   parseCellKey,
@@ -944,6 +948,8 @@ const approvalCollapsedLimit = 10
 const approvalPageSize = 10
 const approvalCurrentPage = ref(1)
 const approvalFetchError = ref('')
+// 伺服器只回傳最新 500 筆相關簽核，超過時以 X-Approvals-Truncated 標頭告知
+const approvalTruncated = ref(false)
 const pageSize = ref(50)
 const currentPage = ref(1)
 const serverPaginationTotal = ref(0)
@@ -1007,7 +1013,11 @@ const APPROVAL_STATUS_LABELS = {
   disputed: '有異議',
   confirmed: '已確認',
   approved: '已核准',
-  rejected: '已駁回'
+  rejected: '已駁回',
+  returned: '已退回',
+  // 伺服器的狀態拼成 canceled，兩種拼法都認
+  canceled: '已撤回',
+  cancelled: '已撤回'
 }
 
 const APPROVAL_STATUS_TAG_MAP = {
@@ -1015,7 +1025,16 @@ const APPROVAL_STATUS_TAG_MAP = {
   disputed: 'danger',
   confirmed: 'success',
   approved: 'success',
-  rejected: 'danger'
+  rejected: 'danger',
+  returned: 'warning',
+  canceled: 'info',
+  cancelled: 'info'
+}
+
+// 「資料類型」欄：請假、加班單獨標示，其餘顯示表單名稱
+const APPROVAL_KIND_LABELS = {
+  leave: '請假簽核',
+  overtime: '加班簽核'
 }
 
 // ========= includeSelf 偏好存取 =========
@@ -2323,53 +2342,74 @@ const approvalStatusTagType = status => {
   return APPROVAL_STATUS_TAG_MAP[normalized] || 'info'
 }
 
+// 期間：台灣時間的 起日 ~ 迄日（同一天只顯示一天）；沒有日期的單據顯示申請日
 const formatApprovalPeriod = approval => {
   const data = approval?.form_data || {}
   const from =
+    approval?.startDate ||
     data.startDate ||
     data.start_date ||
     data.fromDate ||
-    data.from_date ||
-    approval?.startDate
+    data.from_date
   const to =
+    approval?.endDate ||
     data.endDate ||
     data.end_date ||
     data.toDate ||
-    data.to_date ||
-    approval?.endDate
-  if (from && to) {
-    return `${dayjs(from).format('YYYY/MM/DD')} ~ ${dayjs(to).format('YYYY/MM/DD')}`
+    data.to_date
+  const fromText = formatTaipeiDate(from, '')
+  const toText = formatTaipeiDate(to, '')
+  if (fromText && toText) {
+    return fromText === toText ? fromText : `${fromText} ~ ${toText}`
   }
-  if (from) {
-    return dayjs(from).format('YYYY/MM/DD')
+  if (fromText || toText) {
+    return fromText || toText
   }
-  return '-'
+  const createdText = formatTaipeiDate(approval?.createdAt, '')
+  return createdText ? `申請日 ${createdText}` : '-'
 }
 
+// 申請人：伺服器放在 applicant_employee（舊欄位 employee 內容相同）
+const approvalApplicant = approval => {
+  const applicant = approval?.applicant_employee || approval?.employee
+  if (!applicant) return null
+  return typeof applicant === 'object' ? applicant : { _id: applicant }
+}
+
+// 表單性質：請假、加班…；舊資料沒有表單性質時看 isLeave 或類別
+const resolveApprovalKind = approval => {
+  const semantic = String(approval?.form?.semanticType || '').trim().toLowerCase()
+  if (semantic) return semantic
+  if (approval?.isLeave) return 'leave'
+  const category = String(approval?.form?.category || '').trim().toLowerCase()
+  return category === 'leave' || category === 'overtime' ? category : ''
+}
+
+// 相關簽核清單的列：伺服器回傳範圍內員工的所有簽核單（請假、加班、補簽、支援…，任何狀態），名稱沿用 leaveApprovalRows
 const leaveApprovalRows = computed(() => {
   const relatedSet = relatedEmployeeIds.value
   return approvalList.value
     .filter(approval => {
-      const id = approval?.applicant_employee?._id
+      const id = approvalApplicant(approval)?._id
       if (!id) return false
       return relatedSet.has(String(id))
     })
     .map(approval => {
       const rawStatus = String(approval?.status || 'pending').toLowerCase()
+      const kind = resolveApprovalKind(approval)
+      const formName = String(approval?.form?.name || '').trim()
       return {
         ...approval,
-        sourceType: 'leave_approval',
-        sourceTypeLabel: '請假簽核',
-        applicantName: approval?.applicant_employee?.name || '-',
-        approvalType: formatApprovalCategory(
-          approval?.form?.category,
-          approval?.form?.name
-        ),
+        sourceType: kind === 'leave' ? 'leave_approval' : 'approval',
+        sourceTypeLabel: APPROVAL_KIND_LABELS[kind] || formName || '其他簽核',
+        applicantName: approvalApplicant(approval)?.name || '-',
+        approvalType: formName || formatApprovalCategory(approval?.form?.category),
         periodText: formatApprovalPeriod(approval),
         status: rawStatus,
         statusLabel: formatApprovalStatus(rawStatus),
         statusTagType: approvalStatusTagType(rawStatus),
         noteSummary:
+          approval?.noteSummary ||
           approval?.remark ||
           approval?.comment ||
           approval?.note ||
@@ -3494,6 +3534,7 @@ function resetScheduleCache() {
   publishSnapshot.value = null
   loadedEmployeeIds.value = new Set()
   approvalList.value = []
+  approvalTruncated.value = false
   leaveIndex.value = {}
   markLeaveIndexDirty()
   employeeStatusMap.value = {}
@@ -3666,6 +3707,7 @@ async function fetchSchedules({ reset = false, fetchAll = false, reason = 'unkno
       if (activeScheduleRequest.requestId !== requestId) return
       rawSchedules.value = schedules
       approvalList.value = approvals
+      approvalTruncated.value = res2.headers?.get?.('X-Approvals-Truncated') === 'true'
       leaveIndex.value = nextLeaveIndex
       markLeaveIndexDirty()
       recomputeEmployeeStatuses(targetEmployees)

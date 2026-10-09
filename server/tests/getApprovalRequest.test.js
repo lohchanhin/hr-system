@@ -10,6 +10,8 @@ const REQ = oid(200)
 
 const mockApprovalRequest = { findById: jest.fn() }
 const mockFormField = { find: jest.fn() }
+// 排班範圍：主管的直屬部屬（getAllowedScheduleEmployeeIds 用 Employee.find({ supervisor })）
+const mockEmployee = { find: jest.fn() }
 const mockGetAnnualLeaveBalance = jest.fn()
 const mockGetSettings = jest.fn()
 const mockGetDictionaryItems = jest.fn()
@@ -21,6 +23,7 @@ let approvalRoutes
 beforeAll(async () => {
   await jest.unstable_mockModule('../src/models/approval_request.js', () => ({ default: mockApprovalRequest }))
   await jest.unstable_mockModule('../src/models/form_field.js', () => ({ default: mockFormField }))
+  await jest.unstable_mockModule('../src/models/Employee.js', () => ({ default: mockEmployee }))
   await jest.unstable_mockModule('../src/services/annualLeaveService.js', () => ({
     deductAnnualLeave: jest.fn(),
     refundAnnualLeave: jest.fn(),
@@ -45,6 +48,8 @@ beforeEach(() => {
   currentUser = { id: EMP, role: 'employee' }
   mockApprovalRequest.findById.mockReset()
   mockFormField.find.mockReset()
+  mockEmployee.find.mockReset()
+  mockEmployee.find.mockReturnValue({ select: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue([]) }) })
   mockGetAnnualLeaveBalance.mockReset()
   mockGetSettings.mockReset()
   mockGetDictionaryItems.mockReset()
@@ -195,6 +200,84 @@ describe('GET /api/approvals/:id', () => {
     expect(res.status).toBe(404)
     expect(res.body).toEqual({ error: '找不到這張簽核單' })
     expect(mockFormField.find).not.toHaveBeenCalled()
+  })
+
+  describe('read-only access for a supervisor whose schedule scope contains the applicant', () => {
+    const DIRECT_REPORT = oid(31)
+    const STRANGER = oid(32)
+    const otherRequest = (applicant) => ({
+      _id: REQ,
+      status: 'pending',
+      current_step_index: 0,
+      applicant_employee: { _id: applicant, name: '部屬' },
+      form: { _id: 'form1', name: '加班申請', category: 'C', semanticType: 'overtime' },
+      // 簽核人是別人（不是這位主管）
+      steps: [{ approvers: [{ approver: { _id: oid(78), name: '其他人' }, decision: 'pending' }] }],
+      form_data: {},
+      toObject() { return JSON.parse(JSON.stringify(this)) },
+    })
+    const reportsOf = (...ids) => mockEmployee.find.mockReturnValue({
+      select: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue(ids.map((id) => ({ _id: id }))) }),
+    })
+
+    it('opens a request of a direct report even though the supervisor is not an approver, without any right to act', async () => {
+      currentUser = { id: SUP, role: 'supervisor' }
+      reportsOf(DIRECT_REPORT)
+      mockDoc(otherRequest(DIRECT_REPORT))
+      mockFormField.find.mockReturnValue({ sort: jest.fn().mockResolvedValue([]) })
+
+      const res = await request(app).get(`/api/approvals/${REQ}`)
+
+      expect(res.status).toBe(200)
+      expect(res.body.viewer).toEqual({ is_applicant: false, can_act: false, can_override: false })
+      expect(mockEmployee.find).toHaveBeenCalledWith({ supervisor: SUP })
+    })
+
+    it('still answers 404 for a request whose applicant is outside the supervisor scope', async () => {
+      currentUser = { id: SUP, role: 'supervisor' }
+      reportsOf(DIRECT_REPORT)
+      mockDoc(otherRequest(STRANGER))
+
+      const res = await request(app).get(`/api/approvals/${REQ}`)
+
+      expect(res.status).toBe(404)
+      expect(res.body).toEqual({ error: '找不到這張簽核單' })
+      expect(mockFormField.find).not.toHaveBeenCalled()
+    })
+
+    it('does not look up the schedule scope when the supervisor already takes part in the request', async () => {
+      currentUser = { id: SUP, role: 'supervisor' }
+      const doc = otherRequest(DIRECT_REPORT)
+      doc.steps = [{ approvers: [{ approver: { _id: SUP, name: '主管' }, decision: 'pending' }] }]
+      mockDoc(doc)
+      mockFormField.find.mockReturnValue({ sort: jest.fn().mockResolvedValue([]) })
+
+      const res = await request(app).get(`/api/approvals/${REQ}`)
+
+      expect(res.status).toBe(200)
+      expect(res.body.viewer.can_act).toBe(true)
+      expect(mockEmployee.find).not.toHaveBeenCalled()
+    })
+
+    it('gives a plain employee no schedule scope beyond themselves', async () => {
+      currentUser = { id: EMP, role: 'employee' }
+      mockDoc(otherRequest(DIRECT_REPORT))
+
+      const res = await request(app).get(`/api/approvals/${REQ}`)
+
+      expect(res.status).toBe(404)
+      expect(mockEmployee.find).not.toHaveBeenCalled()
+    })
+
+    it('does not open the act endpoint to the supervisor who can only read', async () => {
+      currentUser = { id: SUP, role: 'supervisor' }
+      reportsOf(DIRECT_REPORT)
+      mockApprovalRequest.findById.mockReturnValue(queryResult(otherRequest(DIRECT_REPORT)))
+
+      const res = await request(app).post(`/api/approvals/${REQ}/act`).send({ decision: 'approve' })
+
+      expect(res.status).toBe(404)
+    })
   })
 
   it('still opens a request whose form template was deleted', async () => {

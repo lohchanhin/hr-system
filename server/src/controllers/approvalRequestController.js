@@ -49,6 +49,7 @@ import {
 import { normalizeSignTag } from '../utils/signTags.js'
 import { isLeaveFormTemplate } from '../utils/formSemantics.js'
 import { resolveLeaveFieldsForRequest } from '../utils/leaveFieldResolution.js'
+import { getAllowedScheduleEmployeeIds } from './schedule/scheduleShared.js'
 
 const OBJECT_ID_PATTERN = /^[a-f0-9]{24}$/i
 const MAX_COMMENT_LENGTH = 1000
@@ -192,6 +193,14 @@ function isApprovalParticipant(doc, actorId) {
   return (doc.steps || []).some((step) => (
     (step.approvers || []).some((approver) => normalizeId(approver?.approver) === actorId)
   ))
+}
+
+// 申請人在不在這位使用者的排班範圍內：和排班頁「相關簽核」清單用同一個範圍函式，不另外定義誰看得到誰
+async function isApplicantInScheduleScope(req, applicant) {
+  const applicantId = normalizeId(applicant)
+  if (!applicantId) return false
+  const allowedIds = await getAllowedScheduleEmployeeIds(req)
+  return allowedIds === null || allowedIds.includes(applicantId)
 }
 
 function findApprovalAttachment(value, expectedPath) {
@@ -363,7 +372,12 @@ export async function downloadApprovalAttachment(req, res) {
 
     const doc = await ApprovalRequest.findById(requestId).lean()
     if (!doc) return res.status(404).json({ error: MESSAGES.notFound })
-    if (req.user?.role !== 'admin' && !isApprovalParticipant(doc, actorId)) {
+    // 與開啟明細同一條規則：管理員、申請人與簽核人，以及申請人在自己排班範圍內的主管（唯讀）
+    if (
+      req.user?.role !== 'admin'
+      && !isApprovalParticipant(doc, actorId)
+      && !(await isApplicantInScheduleScope(req, doc.applicant_employee))
+    ) {
       return res.status(404).json({ error: MESSAGES.notFound })
     }
 
@@ -652,7 +666,9 @@ export async function getApprovalRequest(req, res) {
       .populate('logs.by_employee', 'name employeeId')
     if (!doc) return res.status(404).json({ error: MESSAGES.notFound })
     const isAdmin = req.user?.role === 'admin'
-    if (!isAdmin && !isApprovalParticipant(doc, actorId)) {
+    // 簽核人與申請人之外，申請人在排班範圍內的主管也可以唯讀開啟（排班頁「相關簽核」列出這些單）；
+    // 簽核、撤回、重送的權限仍只看簽核人與申請人，下方 viewer 的判斷不受影響
+    if (!isAdmin && !isApprovalParticipant(doc, actorId) && !(await isApplicantInScheduleScope(req, doc.applicant_employee))) {
       return res.status(404).json({ error: MESSAGES.notFound })
     }
 

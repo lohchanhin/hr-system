@@ -11,6 +11,8 @@ const REQ = oid(200)
 
 const mockApprovalRequest = { findById: jest.fn() }
 const mockApprovalAttachment = { findOne: jest.fn(), find: jest.fn(), insertMany: jest.fn(), updateMany: jest.fn() }
+// 排班範圍：主管的直屬部屬（getAllowedScheduleEmployeeIds 用 Employee.find({ supervisor }).select().lean()）
+const mockEmployee = { find: jest.fn() }
 
 let downloadApprovalAttachment
 let uploadApprovalAttachments
@@ -23,6 +25,7 @@ const filePath = path.join(uploadDir, filename)
 beforeAll(async () => {
   await jest.unstable_mockModule('../src/models/approval_request.js', () => ({ default: mockApprovalRequest }))
   await jest.unstable_mockModule('../src/models/approval_attachment.js', () => ({ default: mockApprovalAttachment }))
+  await jest.unstable_mockModule('../src/models/Employee.js', () => ({ default: mockEmployee }))
   const controller = await import('../src/controllers/approvalRequestController.js')
   downloadApprovalAttachment = controller.downloadApprovalAttachment
   uploadApprovalAttachments = controller.uploadApprovalAttachments
@@ -42,6 +45,8 @@ beforeEach(() => {
   mockApprovalRequest.findById.mockReset()
   mockApprovalAttachment.findOne.mockReset()
   mockApprovalAttachment.insertMany.mockReset()
+  mockEmployee.find.mockReset()
+  mockEmployee.find.mockReturnValue({ select: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue([]) }) })
   // 預設：沒有上傳紀錄（舊資料），不算綁定到別張單
   mockApprovalAttachment.findOne.mockReturnValue({ lean: async () => null })
 })
@@ -75,6 +80,36 @@ describe('approval attachment access', () => {
       user: { id: EMP, role: 'employee' },
       params: { id: REQ, filename },
     }, res)
+
+    expect(res.status).toHaveBeenCalledWith(404)
+    expect(res.download).not.toHaveBeenCalled()
+  })
+
+  it('lets a supervisor download the attachment of a direct report even though the supervisor is not an approver (read-only schedule scope)', async () => {
+    mockEmployee.find.mockReturnValue({ select: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue([{ _id: OTHER_EMP }]) }) })
+    mockApproval({
+      applicant_employee: OTHER_EMP,
+      steps: [{ approvers: [{ approver: oid(77) }] }],
+      form_data: { proof: [{ name: 'proof.pdf', url: `/upload/approvals/${filename}` }] },
+    })
+    const res = makeRes()
+
+    await downloadApprovalAttachment({ user: { id: SUP, role: 'supervisor' }, params: { id: REQ, filename } }, res)
+
+    expect(mockEmployee.find).toHaveBeenCalledWith({ supervisor: SUP })
+    expect(res.download).toHaveBeenCalledWith(filePath, 'proof.pdf', expect.any(Function))
+  })
+
+  it('still hides the attachment from a supervisor whose reports do not include the applicant', async () => {
+    mockEmployee.find.mockReturnValue({ select: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue([{ _id: oid(9) }]) }) })
+    mockApproval({
+      applicant_employee: OTHER_EMP,
+      steps: [{ approvers: [{ approver: oid(77) }] }],
+      form_data: { proof: [{ name: 'proof.pdf', url: `/upload/approvals/${filename}` }] },
+    })
+    const res = makeRes()
+
+    await downloadApprovalAttachment({ user: { id: SUP, role: 'supervisor' }, params: { id: REQ, filename } }, res)
 
     expect(res.status).toHaveBeenCalledWith(404)
     expect(res.download).not.toHaveBeenCalled()

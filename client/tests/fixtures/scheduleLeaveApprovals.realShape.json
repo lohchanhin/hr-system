@@ -1,0 +1,257 @@
+{
+  "_note": "產生方式：真的 scheduleQueryController.listLeaveApprovals（supertest + 真的 JWT + 本機 mongod），GET /api/schedules/leave-approvals?month=2026-07&supervisor=<林主任>",
+  "month": "2026-07",
+  "supervisor": "6ac9011994559cdcc6754bcf",
+  "employees": [
+    {
+      "_id": "6ac9011994559cdcc6754bdb",
+      "name": "沙俊宇",
+      "department": "6ac9011994559cdcc6754bcd",
+      "subDepartment": "6ac9011994559cdcc6754bce"
+    },
+    {
+      "_id": "6ac9011994559cdcc6754bde",
+      "name": "王小明",
+      "department": "6ac9011994559cdcc6754bcd",
+      "subDepartment": "6ac9011994559cdcc6754bce"
+    }
+  ],
+  "response": {
+    "leaves": [
+      {
+        "employee": {
+          "_id": "6ac9011994559cdcc6754bdb",
+          "name": "沙俊宇",
+          "department": "6ac9011994559cdcc6754bcd",
+          "subDepartment": "6ac9011994559cdcc6754bce"
+        },
+        "leaveType": "事假",
+        "startDate": "2026-07-11T16:00:00.000Z",
+        "endDate": "2026-07-12T16:00:00.000Z",
+        "status": "approved"
+      },
+      {
+        "employee": {
+          "_id": "6ac9011994559cdcc6754bdb",
+          "name": "沙俊宇",
+          "department": "6ac9011994559cdcc6754bcd",
+          "subDepartment": "6ac9011994559cdcc6754bce"
+        },
+        "leaveType": "特休假",
+        "startDate": "2026-07-19T16:00:00.000Z",
+        "endDate": "2026-07-19T16:00:00.000Z",
+        "status": "approved"
+      }
+    ],
+    "approvals": [
+      {
+        "_id": "6ac9011994559cdcc6754c47",
+        "applicant_employee": {
+          "_id": "6ac9011994559cdcc6754bde",
+          "name": "王小明",
+          "department": "6ac9011994559cdcc6754bcd",
+          "subDepartment": "6ac9011994559cdcc6754bce"
+        },
+        "employee": {
+          "_id": "6ac9011994559cdcc6754bde",
+          "name": "王小明",
+          "department": "6ac9011994559cdcc6754bcd",
+          "subDepartment": "6ac9011994559cdcc6754bce"
+        },
+        "form": {
+          "_id": "6ac9011994559cdcc6754c30",
+          "name": "（表單已刪除）",
+          "category": "",
+          "semanticType": "general"
+        },
+        "status": "pending",
+        "createdAt": "2026-07-15T04:00:00.000Z",
+        "isLeave": false
+      },
+      {
+        "_id": "6ac9011994559cdcc6754c3d",
+        "applicant_employee": {
+          "_id": "6ac9011994559cdcc6754bde",
+          "name": "王小明",
+          "department": "6ac9011994559cdcc6754bcd",
+          "subDepartment": "6ac9011994559cdcc6754bce"
+        },
+        "employee": {
+          "_id": "6ac9011994559cdcc6754bde",
+          "name": "王小明",
+          "department": "6ac9011994559cdcc6754bcd",
+          "subDepartment": "6ac9011994559cdcc6754bce"
+        },
+        "form": {
+          "_id": "6ac9011994559cdcc6754c02",
+          "name": "支援申請",
+          "category": "人事類",
+          "semanticType": "general"
+        },
+        "status": "pending",
+        "createdAt": "2026-07-12T03:00:00.000Z",
+        "isLeave": false,
+        "startDate": "2026-07-20",
+        "endDate": "2026-07-21",
+        "noteSummary": "支援急診"
+      },
+      {
+        "_id": "6ac9011994559cdcc6754c3b",
+        "applicant_employee": {
+          "_id": "6ac9011994559cdcc6754bde",
+          "name": "王小明",
+          "department": "6ac9011994559cdcc6754bcd",
+          "subDepartment": "6ac9011994559cdcc6754bce"
+        },
+        "employee": {
+          "_id": "6ac9011994559cdcc6754bde",
+          "name": "王小明",
+          "department": "6ac9011994559cdcc6754bcd",
+          "subDepartment": "6ac9011994559cdcc6754bce"
+        },
+        "form": {
+          "_id": "6ac9011994559cdcc6754bf8",
+          "name": "加班申請",
+          "category": "人事類",
+          "semanticType": "overtime"
+        },
+        "status": "approved",
+        "createdAt": "2026-07-10T09:00:00.000Z",
+        "isLeave": false,
+        "startDate": "2026-07-14T10:00:00.000Z",
+        "endDate": "2026-07-14T13:00:00.000Z",
+        "noteSummary": "病房交班延遲，需要補人力協助"
+      },
+      {
+        "_id": "6ac9011994559cdcc6754c42",
+        "applicant_employee": {
+          "_id": "6ac9011994559cdcc6754bde",
+          "name": "王小明",
+          "department": "6ac9011994559cdcc6754bcd",
+          "subDepartment": "6ac9011994559cdcc6754bce"
+        },
+        "employee": {
+          "_id": "6ac9011994559cdcc6754bde",
+          "name": "王小明",
+          "department": "6ac9011994559cdcc6754bcd",
+          "subDepartment": "6ac9011994559cdcc6754bce"
+        },
+        "form": {
+          "_id": "6ac9011994559cdcc6754c18",
+          "name": "獎金申請",
+          "category": "財務類",
+          "semanticType": "general"
+        },
+        "status": "rejected",
+        "createdAt": "2026-07-08T04:00:00.000Z",
+        "isLeave": false,
+        "noteSummary": "績效優良"
+      },
+      {
+        "_id": "6ac9011994559cdcc6754c40",
+        "applicant_employee": {
+          "_id": "6ac9011994559cdcc6754bdb",
+          "name": "沙俊宇",
+          "department": "6ac9011994559cdcc6754bcd",
+          "subDepartment": "6ac9011994559cdcc6754bce"
+        },
+        "employee": {
+          "_id": "6ac9011994559cdcc6754bdb",
+          "name": "沙俊宇",
+          "department": "6ac9011994559cdcc6754bcd",
+          "subDepartment": "6ac9011994559cdcc6754bce"
+        },
+        "form": {
+          "_id": "6ac9011994559cdcc6754c0e",
+          "name": "特休保留",
+          "category": "人事類",
+          "semanticType": "general"
+        },
+        "status": "returned",
+        "createdAt": "2026-07-06T04:00:00.000Z",
+        "isLeave": false,
+        "noteSummary": "年底前無法休完，申請保留至明年"
+      },
+      {
+        "_id": "6ac9011994559cdcc6754c45",
+        "applicant_employee": {
+          "_id": "6ac9011994559cdcc6754bdb",
+          "name": "沙俊宇",
+          "department": "6ac9011994559cdcc6754bcd",
+          "subDepartment": "6ac9011994559cdcc6754bce"
+        },
+        "employee": {
+          "_id": "6ac9011994559cdcc6754bdb",
+          "name": "沙俊宇",
+          "department": "6ac9011994559cdcc6754bcd",
+          "subDepartment": "6ac9011994559cdcc6754bce"
+        },
+        "form": {
+          "_id": "6ac9011994559cdcc6754c28",
+          "name": "補簽申請",
+          "category": "人事類",
+          "semanticType": "general"
+        },
+        "status": "canceled",
+        "createdAt": "2026-07-05T04:00:00.000Z",
+        "isLeave": false,
+        "noteSummary": "忘記打卡"
+      },
+      {
+        "_id": "6ac9011994559cdcc6754c39",
+        "applicant_employee": {
+          "_id": "6ac9011994559cdcc6754bdb",
+          "name": "沙俊宇",
+          "department": "6ac9011994559cdcc6754bcd",
+          "subDepartment": "6ac9011994559cdcc6754bce"
+        },
+        "employee": {
+          "_id": "6ac9011994559cdcc6754bdb",
+          "name": "沙俊宇",
+          "department": "6ac9011994559cdcc6754bcd",
+          "subDepartment": "6ac9011994559cdcc6754bce"
+        },
+        "form": {
+          "_id": "6ac9011994559cdcc6754be2",
+          "name": "(全)假別申請單",
+          "category": "人事類",
+          "semanticType": "leave"
+        },
+        "status": "approved",
+        "createdAt": "2026-07-03T02:00:00.000Z",
+        "isLeave": true,
+        "leaveType": "特休假",
+        "startDate": "2026-07-19T16:00:00.000Z",
+        "endDate": "2026-07-19T16:00:00.000Z"
+      },
+      {
+        "_id": "6ac9011994559cdcc6754c36",
+        "applicant_employee": {
+          "_id": "6ac9011994559cdcc6754bdb",
+          "name": "沙俊宇",
+          "department": "6ac9011994559cdcc6754bcd",
+          "subDepartment": "6ac9011994559cdcc6754bce"
+        },
+        "employee": {
+          "_id": "6ac9011994559cdcc6754bdb",
+          "name": "沙俊宇",
+          "department": "6ac9011994559cdcc6754bcd",
+          "subDepartment": "6ac9011994559cdcc6754bce"
+        },
+        "form": {
+          "_id": "6ac9011994559cdcc6754be2",
+          "name": "(全)假別申請單",
+          "category": "人事類",
+          "semanticType": "leave"
+        },
+        "status": "approved",
+        "createdAt": "2026-07-02T02:00:00.000Z",
+        "isLeave": true,
+        "leaveType": "事假",
+        "startDate": "2026-07-11T16:00:00.000Z",
+        "endDate": "2026-07-12T16:00:00.000Z",
+        "noteSummary": "家中有事"
+      }
+    ]
+  }
+}

@@ -158,7 +158,9 @@ if (process.env.FRONTEND_URL) {
 app.use(cors({
   origin: allowedOrigins,
   credentials: true,
-  methods: "GET,POST,PUT,DELETE,OPTIONS"
+  methods: "GET,POST,PUT,DELETE,OPTIONS",
+  // 跨網域部署時前端要讀得到清單的分頁與截斷提示（排班頁「相關簽核」超過 500 筆的提醒、簽核清單的總筆數）
+  exposedHeaders: ['X-Approvals-Truncated', 'X-Total-Count', 'X-Page', 'X-Limit']
 }));
 app.get('/env.js', (req, res) => {
   res.setHeader('Cache-Control', 'no-store');

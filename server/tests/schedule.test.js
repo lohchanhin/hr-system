@@ -30,6 +30,9 @@ const mockApprovalRequest = { findOne: jest.fn(), find: jest.fn() };
 
 const mockEmployee = { find: jest.fn(), findById: jest.fn() };
 const mockAttendanceSetting = { findOne: jest.fn() };
+// 「相關簽核」清單另外讀的表單與欄位
+const mockFormTemplate = { find: jest.fn() };
+const mockFormField = { find: jest.fn() };
 const mockDepartment = { find: jest.fn() };
 const mockHoliday = { find: jest.fn() };
 const mockScheduleDayMemo = {
@@ -111,6 +114,8 @@ jest.unstable_mockModule('../src/models/ShiftSchedule.js', () => ({ default: moc
 jest.unstable_mockModule('../src/models/approval_request.js', () => ({ default: mockApprovalRequest }));
 jest.unstable_mockModule('../src/models/Employee.js', () => ({ default: mockEmployee }));
 jest.unstable_mockModule('../src/models/AttendanceSetting.js', () => ({ default: mockAttendanceSetting }));
+jest.unstable_mockModule('../src/models/form_template.js', () => ({ default: mockFormTemplate }));
+jest.unstable_mockModule('../src/models/form_field.js', () => ({ default: mockFormField }));
 jest.unstable_mockModule('../src/models/Department.js', () => ({ default: mockDepartment }));
 jest.unstable_mockModule('../src/models/Holiday.js', () => ({ default: mockHoliday }));
 jest.unstable_mockModule('../src/models/ScheduleDayMemo.js', () => ({ default: mockScheduleDayMemo }));
@@ -167,7 +172,24 @@ beforeEach(() => {
   mockApprovalRequest.find.mockReset();
   mockApprovalRequest.find.mockReturnValue({
     select: jest.fn().mockReturnThis(),
+    populate: jest.fn().mockReturnThis(),
+    sort: jest.fn().mockReturnThis(),
+    limit: jest.fn().mockReturnThis(),
     lean: jest.fn().mockResolvedValue([]),
+  });
+  mockFormTemplate.find.mockReset();
+  mockFormTemplate.find.mockReturnValue({
+    select: jest.fn().mockReturnValue({
+      lean: jest.fn().mockResolvedValue([
+        { _id: 'form1', name: '請假', category: '人事類', semanticType: 'leave' },
+        { _id: 'form2', name: '客戶請假單', category: '人事類', semanticType: 'leave' },
+        { _id: 'form3', name: '加班申請', category: '人事類', semanticType: 'overtime' },
+      ]),
+    }),
+  });
+  mockFormField.find.mockReset();
+  mockFormField.find.mockReturnValue({
+    select: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue([]) }),
   });
   mockAllLeaveForms = null;
   mockGetLeaveFieldIds.mockReset();
@@ -1680,8 +1702,10 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
     const approvals = [{
       _id: 'a1',
       applicant_employee: { _id: 'e1', name: 'E1' },
+      form: 'form1',
       form_data: { s: '2023-01-01', e: '2023-01-02', t: '病假' },
-      status: 'approved'
+      status: 'approved',
+      createdAt: '2022-12-28T02:00:00.000Z'
     }];
     const populateMock = jest.fn().mockReturnThis();
     const selectMock = jest.fn().mockReturnThis();
@@ -1689,6 +1713,8 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
     mockApprovalRequest.find.mockReturnValue({
       select: selectMock,
       populate: populateMock,
+      sort: jest.fn().mockReturnThis(),
+      limit: jest.fn().mockReturnThis(),
       lean: leanMock,
     });
     const res = await request(app).get('/api/schedules/leave-approvals?month=2023-01&employee=e1');
@@ -1702,6 +1728,7 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
     });
     expect(selectMock).toHaveBeenCalledWith('applicant_employee applicant_department status form_data.t form_data.s form_data.e');
     expect(populateMock).toHaveBeenCalledWith({ path: 'applicant_employee', select: 'name department subDepartment' });
+    // leaves[]（日曆用）維持只含核准請假的原本形狀；approvals[]（相關簽核清單）是統一的新形狀
     expect(res.body).toEqual({
       leaves: [{
         employee: approvals[0].applicant_employee,
@@ -1712,11 +1739,15 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
       }],
       approvals: [{
         _id: 'a1',
+        applicant_employee: approvals[0].applicant_employee,
         employee: approvals[0].applicant_employee,
+        form: { _id: 'form1', name: '請假', category: '人事類', semanticType: 'leave' },
+        status: 'approved',
+        createdAt: '2022-12-28T02:00:00.000Z',
+        isLeave: true,
         leaveType: '病假',
         startDate: '2023-01-01',
-        endDate: '2023-01-02',
-        status: 'approved'
+        endDate: '2023-01-02'
       }]
     });
   });
@@ -1732,12 +1763,14 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
     const defaultApproval = {
       _id: 'a1',
       applicant_employee: { _id: 'e1', name: 'E1' },
+      form: 'form1',
       form_data: { s: '2023-01-01', e: '2023-01-02', t: '病假' },
       status: 'approved',
     };
     const customerApproval = {
       _id: 'a2',
       applicant_employee: { _id: 'e2', name: 'E2' },
+      form: 'form2',
       form_data: { cs: '2023-01-10', ce: '2023-01-11', ct: '特休假', cd: 2 },
       status: 'approved',
     };
@@ -1745,17 +1778,24 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
     mockApprovalRequest.find.mockImplementation((filter) => {
       const select = jest.fn().mockReturnThis();
       selectMocks.push([filter.form, select]);
+      // 每張請假表單各查一次核准的假單；沒指定表單的那一次是「相關簽核」清單，兩張表單的單都要在
+      let rows = [defaultApproval, customerApproval];
+      if (filter.form === 'form1') rows = [defaultApproval];
+      else if (filter.form === 'form2') rows = [customerApproval];
       return {
         select,
         populate: jest.fn().mockReturnThis(),
-        lean: jest.fn().mockResolvedValue(filter.form === 'form1' ? [defaultApproval] : [customerApproval]),
+        sort: jest.fn().mockReturnThis(),
+        limit: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockResolvedValue(rows),
       };
     });
 
     const res = await request(app).get('/api/schedules/leave-approvals?month=2023-01&employee=e1');
 
     expect(res.status).toBe(200);
-    expect(mockApprovalRequest.find).toHaveBeenCalledTimes(2);
+    // 兩張請假表單各一次，加上「相關簽核」清單一次
+    expect(mockApprovalRequest.find).toHaveBeenCalledTimes(3);
     expect(mockApprovalRequest.find).toHaveBeenCalledWith({
       applicant_employee: { $in: ['e1'] },
       form: 'form1',
@@ -1778,9 +1818,13 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
       { employee: customerApproval.applicant_employee, leaveType: '特休假', startDate: '2023-01-10', endDate: '2023-01-11', status: 'approved' },
     ]);
     expect(res.body.approvals.map((item) => item._id)).toEqual(['a1', 'a2']);
+    expect(res.body.approvals.map((item) => [item.form.name, item.leaveType, item.isLeave])).toEqual([
+      ['請假', '病假', true],
+      ['客戶請假單', '特休假', true],
+    ]);
   });
 
-  it('returns no leave approvals when there is no leave form at all', async () => {
+  it('returns no leaves and runs no leave-form query when there is no leave form at all', async () => {
     mockEmployee.find.mockReturnValue({
       select: jest.fn().mockReturnValue(createSelectResponse([{ _id: 'e1' }])),
     });
@@ -1790,7 +1834,12 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
 
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ leaves: [], approvals: [] });
-    expect(mockApprovalRequest.find).not.toHaveBeenCalled();
+    // 沒有請假表單就不查核准的假單；只剩「相關簽核」清單那一次（不限表單、不限狀態）
+    expect(mockApprovalRequest.find).toHaveBeenCalledTimes(1);
+    const filter = mockApprovalRequest.find.mock.calls[0][0];
+    expect(filter.status).toBeUndefined();
+    expect(filter.form).toBeUndefined();
+    expect(filter.applicant_employee).toEqual({ $in: ['e1'] });
   });
 
   it('applies the onLeave status filter to leave from every leave form', async () => {
@@ -1839,6 +1888,7 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
       {
         _id: 'a1',
         applicant_employee: { _id: 'e1', name: 'E1', department: 'd1', subDepartment: 'sd1' },
+        form: 'form1',
         form_data: { s: '2023-01-05', e: '2023-01-06', t: '病假' },
         status: 'approved'
       }
@@ -1849,6 +1899,8 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
     mockApprovalRequest.find.mockReturnValue({
       select: selectMock,
       populate: populateMock,
+      sort: jest.fn().mockReturnThis(),
+      limit: jest.fn().mockReturnThis(),
       lean: leanMock,
     });
 
@@ -1880,6 +1932,11 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
       }
     ]);
     expect(populateMock).toHaveBeenCalledWith({ path: 'applicant_employee', select: 'name department subDepartment' });
+    // 「相關簽核」清單用同一份員工範圍（小單位條件），但不限狀態、表單
+    const listFilter = mockApprovalRequest.find.mock.calls.map(([filter]) => filter).find((filter) => !filter.form);
+    expect(listFilter.applicant_employee).toEqual({ $in: ['e1', 'e3'] });
+    expect(listFilter.status).toBeUndefined();
+    expect(res.body.approvals[0]).toEqual(expect.objectContaining({ _id: 'a1', isLeave: true, status: 'approved' }));
   });
 
   it('leave approvals include supervisor when includeSelf is true', async () => {
@@ -1891,6 +1948,8 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
     mockApprovalRequest.find.mockReturnValue({
       select: approvalSelectMock,
       populate: populateMock,
+      sort: jest.fn().mockReturnThis(),
+      limit: jest.fn().mockReturnThis(),
       lean: jest.fn().mockResolvedValue(approvals),
     });
 
@@ -1907,6 +1966,9 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
       'form_data.e': { $gte: '2022-12-31' },
     }));
     expect(populateMock).toHaveBeenCalledWith({ path: 'applicant_employee', select: 'name department subDepartment' });
+    // 「相關簽核」清單的員工範圍與請假日曆完全相同（含主管本人）
+    const listFilter = mockApprovalRequest.find.mock.calls.map(([filter]) => filter).find((filter) => !filter.form);
+    expect(listFilter.applicant_employee.$in).toEqual(queryArg.applicant_employee.$in);
   });
 
   it('rejects leave approval queries for another supervisor scope', async () => {

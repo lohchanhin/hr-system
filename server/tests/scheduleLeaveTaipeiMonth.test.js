@@ -9,12 +9,16 @@ const mockShiftSchedule = { find: jest.fn() }
 const mockEmployee = { find: jest.fn() }
 const mockApprovalRequest = { find: jest.fn() }
 const mockAttendanceSetting = { findOne: jest.fn() }
+const mockFormTemplate = { find: jest.fn() }
+const mockFormField = { find: jest.fn() }
 const mockGetAllLeaveFieldInfos = jest.fn()
 
 jest.unstable_mockModule('../src/models/ShiftSchedule.js', () => ({ default: mockShiftSchedule }))
 jest.unstable_mockModule('../src/models/Employee.js', () => ({ default: mockEmployee }))
 jest.unstable_mockModule('../src/models/approval_request.js', () => ({ default: mockApprovalRequest }))
 jest.unstable_mockModule('../src/models/AttendanceSetting.js', () => ({ default: mockAttendanceSetting }))
+jest.unstable_mockModule('../src/models/form_template.js', () => ({ default: mockFormTemplate }))
+jest.unstable_mockModule('../src/models/form_field.js', () => ({ default: mockFormField }))
 jest.unstable_mockModule('../src/services/leaveFieldService.js', () => ({ getAllLeaveFieldInfos: mockGetAllLeaveFieldInfos }))
 
 let listLeaveApprovals
@@ -58,15 +62,25 @@ function useApprovedLeaves(rows) {
     const matched = rows.map((row) => ({
       applicant_employee: { _id: 'e1', name: 'A員工' },
       status: 'approved',
+      form: 'leave-form',
       ...row,
     })).filter((row) => mongoMatches(row, filter))
     const query = {
       select: jest.fn(() => query),
       populate: jest.fn(() => query),
+      sort: jest.fn(() => query),
+      limit: jest.fn(() => query),
       lean: jest.fn(async () => matched),
     }
     return query
   })
+}
+
+// 「相關簽核」清單另外讀的表單與欄位（這個檔案的假單都來自同一張請假表單）
+function useFormCatalog() {
+  const lean = (rows) => ({ select: jest.fn(() => ({ lean: jest.fn(async () => rows) })) })
+  mockFormTemplate.find.mockImplementation(() => lean([{ _id: 'leave-form', name: '請假', category: '人事類', semanticType: 'leave' }]))
+  mockFormField.find.mockImplementation(() => lean([]))
 }
 
 function createRes() {
@@ -83,6 +97,9 @@ beforeEach(() => {
   mockEmployee.find.mockReset()
   mockApprovalRequest.find.mockReset()
   mockAttendanceSetting.findOne.mockReset()
+  mockFormTemplate.find.mockReset()
+  mockFormField.find.mockReset()
+  useFormCatalog()
   mockGetAllLeaveFieldInfos.mockReset()
   mockGetAllLeaveFieldInfos.mockResolvedValue([FORM])
   mockAttendanceSetting.findOne.mockReturnValue({ lean: jest.fn().mockResolvedValue({ shifts: [] }) })
