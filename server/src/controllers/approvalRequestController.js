@@ -48,6 +48,7 @@ import {
 } from '../services/leaveRequestDays.js'
 import { normalizeSignTag } from '../utils/signTags.js'
 import { isLeaveFormTemplate } from '../utils/formSemantics.js'
+import { resolveLeaveFieldsForRequest } from '../utils/leaveFieldResolution.js'
 
 const OBJECT_ID_PATTERN = /^[a-f0-9]{24}$/i
 const MAX_COMMENT_LENGTH = 1000
@@ -405,8 +406,9 @@ function isAnnualLeaveFormTemplate(form) {
 async function analyzeAnnualLeave(form, formData) {
   if (!isAnnualLeaveFormTemplate(form)) return null
 
-  // 取得這張假單所屬表單的假別 / 日期 / 天數欄位設定
-  const leaveFields = await getLeaveFieldIdsForForm(form)
+  // 取得這張假單所屬表單的假別 / 日期 / 天數欄位設定；
+  // 欄位在單據還在簽核中時被停用、換成同標籤的新欄位，答案仍在舊欄位底下，所以逐張單據挑第一個有填值的欄位
+  const leaveFields = resolveLeaveFieldsForRequest(await getLeaveFieldIdsForForm(form), formData)
   if (!leaveFields.typeId) {
     console.warn('[AnnualLeave] Leave type field not found')
     return null
@@ -967,6 +969,10 @@ export async function actOnApproval(req, res) {
       }
       const me = step.approvers.find(approver => String(approver.approver) === String(empId))
       const isOverride = !me || me.decision !== 'pending'
+      // 管理員同時是這一關的簽核人、而且已經處理過：重複送出（雙擊、另一個分頁、並行重試）不能默默變成代為處理，
+      // 否則會跳過同一關其他必簽的人。只有「代為處理」對話框明確帶 override: true 才放行；
+      // 單純不在這一關名單上的管理員仍直接走代為處理（帶不帶旗標都可以）。
+      if (me && me.decision !== 'pending' && body.override !== true) throw notStepApproverError(me)
       if (isOverride && !isAdmin) throw notStepApproverError(me)
 
       if (decision === 'return' && step.can_return === false) {

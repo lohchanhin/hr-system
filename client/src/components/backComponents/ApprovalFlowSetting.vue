@@ -68,7 +68,7 @@
               @close="restoreReport = null"
             >
               <template v-if="restoreReport.warnings.length">
-                <p class="restore-report-lead">下列關卡目前找不到可簽核的人，員工送出申請時會被擋下，請到「員工管理」為負責的人加上對應的簽核標籤，或到「設定關卡」改成其他簽核對象：</p>
+                <p class="restore-report-lead" data-test="restore-report-lead">{{ restoreReport.lead }}</p>
                 <ul class="restore-report-list">
                   <li v-for="(warning, index) in restoreReport.warnings" :key="`${warning.formId}-${warning.step}-${index}`">{{ warning.message }}</li>
                 </ul>
@@ -579,6 +579,9 @@ const policyLoaded = ref(false)
 // 序號：快速切換表單時，慢回來的舊回應不能蓋掉現在這張表單的規則 / 關卡
 let policyLoadSeq = 0
 let workflowDialogSeq = 0
+// policyForm 目前對應（或正在讀取）的是哪一張表單；選單換表單時用它判斷要不要重新讀通用規則，
+// 儲存通用規則時也用它確認畫面上的規則真的是這張表單的
+let policyFormId = ''
 
 /* 樣板 Dialog */
 const formDialogVisible = ref(false)
@@ -855,6 +858,17 @@ const fieldDialogLinked = computed(() =>
 
 watch([activeTab, selectedFormId], () => {
   if (activeTab.value === 'fields' && selectedFormId.value) loadFields()
+})
+
+// 通用規則跟著 selectedFormId，不管是哪個下拉選單換掉它（「欄位設定」分頁的選單只會重讀欄位）：
+// 否則上一張表單的規則還留在畫面上，「儲存通用規則」會把它寫到這一張表單。
+// 程式自己換表單、而且已經讀過規則的（openWorkflowDialog / loadWorkflow）不會重複讀
+watch(selectedFormId, (formId) => {
+  if (!formId) {
+    policyFormId = ''
+    return
+  }
+  if (formId !== policyFormId) loadWorkflow()
 })
 
 watch(firstCategoryValue, (value) => {
@@ -1636,6 +1650,7 @@ async function loadWorkflow() {
   if (!selectedFormId.value) return
   const formId = selectedFormId.value
   const seq = ++policyLoadSeq
+  policyFormId = formId
   const isStale = () => seq !== policyLoadSeq || selectedFormId.value !== formId
   // 先回到預設值：沒有流程文件（或讀取失敗）的表單不能沿用上一張表單的規則
   policyForm.value = { ...DEFAULT_POLICY_FORM }
@@ -1661,7 +1676,7 @@ async function loadWorkflow() {
 // 通用規則目前只會被記錄；只送 policy，伺服器不會動這張表單的關卡
 async function savePolicy() {
   if (!selectedFormId.value) return
-  if (!policyLoaded.value) {
+  if (!policyLoaded.value || policyFormId !== selectedFormId.value) {
     ElMessage.error('這張表單的通用規則還沒有成功載入，請重新選擇表單樣板後再儲存')
     return
   }
@@ -1783,6 +1798,7 @@ async function openWorkflowDialog(row) {
   workflowLoaded.value = false
   // 通用規則跟著這張表單：先回到預設值，也讓還在等的 loadWorkflow 作廢
   policyLoadSeq += 1
+  policyFormId = formId
   policyForm.value = { ...DEFAULT_POLICY_FORM }
   policyLoaded.value = false
   const res = await readApi(API.workflow(formId))
@@ -1963,6 +1979,56 @@ async function saveWorkflow() {
   ElMessage.success('流程已儲存')
 }
 
+// 補齊預設值報告的標題與說明：依 warning.type 分別計算。三種問題要做的事不一樣
+// （找不到簽核人 → 加標籤；表單停用 → 重新啟用；沒有關卡 → 設定關卡），不能全部說成「關卡找不到人」
+const RESTORE_WARNING_KINDS = [
+  {
+    type: 'tag_without_holder',
+    count: (n) => `${n} 個關卡找不到可簽核的人`,
+    lead: '下列關卡目前找不到可簽核的人，員工送出申請時會被擋下，請到「員工管理」為負責的人加上對應的簽核標籤，或到「設定關卡」改成其他簽核對象：',
+  },
+  {
+    type: 'inactive_template',
+    count: (n) => `${n} 張表單已停用`,
+    lead: '下列表單目前是停用狀態，員工看不到也無法申請；需要使用的話，請到「編輯」重新啟用：',
+  },
+  {
+    type: 'empty_workflow',
+    count: (n) => `${n} 張表單沒有任何關卡`,
+    lead: '下列表單目前沒有任何簽核關卡，員工無法送出申請，請到「設定關卡」補上：',
+  },
+]
+const RESTORE_OTHER_COUNT = (n) => `${n} 項其他問題`
+const RESTORE_MIXED_LEAD = '下列項目需要處理（員工看不到這張表單，或送出申請時會被擋下），請依各項說明處理：'
+
+function describeRestoreWarnings(warnings) {
+  const list = Array.isArray(warnings) ? warnings : []
+  if (!list.length) {
+    return {
+      title: '補齊預設值完成，預設表單需要的簽核標籤都有人持有',
+      lead: '所有預設表單需要的簽核標籤都已有在職員工持有。',
+    }
+  }
+  const known = new Set(RESTORE_WARNING_KINDS.map((kind) => kind.type))
+  const counts = new Map()
+  list.forEach((warning) => {
+    // 舊版伺服器的警告沒有 type：只有「關卡找不到人」會帶 tag
+    const type = known.has(warning?.type) ? warning.type : (!warning?.type && warning?.tag ? 'tag_without_holder' : 'other')
+    counts.set(type, (counts.get(type) || 0) + 1)
+  })
+  const parts = RESTORE_WARNING_KINDS
+    .filter((kind) => counts.has(kind.type))
+    .map((kind) => kind.count(counts.get(kind.type)))
+  if (counts.has('other')) parts.push(RESTORE_OTHER_COUNT(counts.get('other')))
+  const onlyKind = counts.size === 1 ? RESTORE_WARNING_KINDS.find((kind) => counts.has(kind.type)) : null
+  return {
+    title: onlyKind?.type === 'tag_without_holder'
+      ? `補齊預設值完成，但有 ${list.length} 個關卡目前找不到可簽核的人`
+      : `補齊預設值完成，但有 ${list.length} 項需要處理（${parts.join('、')}）`,
+    lead: onlyKind ? onlyKind.lead : RESTORE_MIXED_LEAD,
+  }
+}
+
 async function restoreDefaults() {
   try {
     await ElMessageBox.confirm(
@@ -1990,10 +2056,10 @@ async function restoreDefaults() {
       // 顯示檢查報告：預設表單需要的標籤與持有人數、找不到簽核人的關卡
       const warnings = Array.isArray(result.warnings) ? result.warnings : []
       const templates = Array.isArray(result.templates) ? result.templates : []
+      const wording = describeRestoreWarnings(warnings)
       restoreReport.value = {
-        title: warnings.length
-          ? `補齊預設值完成，但有 ${warnings.length} 個關卡目前找不到可簽核的人`
-          : '補齊預設值完成，預設表單需要的簽核標籤都有人持有',
+        title: wording.title,
+        lead: wording.lead,
         warnings,
         templates: templates.map((item) => ({
           ...item,

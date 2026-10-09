@@ -200,6 +200,46 @@ describe('getAnnualLeaveHistory', () => {
     expect(in2025.map(item => item.requestId)).toEqual(['r2'])
   })
 
+  it('lists a request whose type, dates, days and reason sit under replaced (deactivated) fields, per request', async () => {
+    mockFormTemplate.find.mockReturnValue({ lean: async () => [leaveForm] })
+    // 管理員刪掉（停用）又重建同標籤的欄位：啟用中的新欄位在前，停用的舊欄位在後
+    mockGetLeaveFieldIdsForForm.mockResolvedValue({
+      typeId: 'n-type',
+      startId: 'n-start',
+      endId: 'n-end',
+      daysId: 'n-days',
+      typeIds: ['n-type', 'o-type'],
+      startIds: ['n-start', 'o-start'],
+      endIds: ['n-end', 'o-end'],
+      daysIds: ['n-days', 'o-days'],
+      typeOptions: [],
+    })
+    mockApprovalRequest.find.mockReturnValue({
+      sort: () => ({
+        lean: async () => [
+          { _id: 'r-old', createdAt: '2026-02-20T00:00:00.000Z', form_data: { 'o-type': '特休', 'o-start': '2026-03-02', 'o-end': '2026-03-03', 'o-reason': '舊欄位的事由' } },
+          { _id: 'r-new', createdAt: '2026-03-20T00:00:00.000Z', form_data: { 'n-type': '特休假', 'n-start': '2026-04-06', 'n-end': '2026-04-06', 'n-reason': '新欄位的事由' } },
+          { _id: 'r-mix', createdAt: '2026-04-20T00:00:00.000Z', form_data: { 'o-type': '特休', 'n-start': '2026-05-04', 'n-end': '2026-05-08', 'o-days': 2.5 } },
+          { _id: 'r-sick', createdAt: '2026-05-20T00:00:00.000Z', form_data: { 'o-type': '病假', 'o-start': '2026-06-01', 'o-end': '2026-06-01' } },
+        ],
+      }),
+    })
+    mockFormField.find.mockReturnValue({
+      lean: async () => [
+        { _id: 'o-reason', label: '事由', is_active: false, order: 4 },
+        { _id: 'n-reason', label: '事由', order: 9 },
+      ],
+    })
+
+    const history = await getAnnualLeaveHistory('emp1')
+
+    expect(history.map(item => [item.requestId, item.days, item.startDate, item.endDate, item.reason])).toEqual([
+      ['r-mix', 2.5, '2026-05-04', '2026-05-08', undefined],
+      ['r-new', 1, '2026-04-06', '2026-04-06', '新欄位的事由'],
+      ['r-old', 2, '2026-03-02', '2026-03-03', '舊欄位的事由'],
+    ])
+  })
+
   it('skips forms without a leave type field and returns an empty list when nothing matches', async () => {
     mockFormTemplate.find.mockReturnValue({ lean: async () => [leaveForm] })
     mockGetLeaveFieldIdsForForm.mockResolvedValue({})

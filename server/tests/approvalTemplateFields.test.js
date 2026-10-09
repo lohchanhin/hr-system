@@ -210,7 +210,7 @@ describe('createFormTemplate semanticType', () => {
     await controller.createFormTemplate({ body: { name: '請假申請', semanticType: 'payroll' } }, res)
 
     expect(res.status).toHaveBeenCalledWith(400)
-    expect(res.json).toHaveBeenCalledWith({ error: 'invalid semanticType' })
+    expect(res.json).toHaveBeenCalledWith({ error: '表單性質不正確' })
     expect(mockFormTemplate.create).not.toHaveBeenCalled()
   })
 })
@@ -319,7 +319,7 @@ describe('updateFormTemplate semanticType', () => {
     await controller.updateFormTemplate({ params: { id: '000000000000000000000f09' }, body: { semanticType: 'bogus' } }, res)
 
     expect(res.status).toHaveBeenCalledWith(400)
-    expect(res.json).toHaveBeenCalledWith({ error: 'invalid semanticType' })
+    expect(res.json).toHaveBeenCalledWith({ error: '表單性質不正確' })
     expect(mockFormTemplate.findByIdAndUpdate).not.toHaveBeenCalled()
   })
 })
@@ -628,7 +628,7 @@ describe('addField', () => {
     await controller.addField({ params: { formId: '000000000000000000000f09' }, body: { ...baseBody, field_key: 'C12; drop' } }, res)
 
     expect(res.status).toHaveBeenCalledWith(400)
-    expect(res.json).toHaveBeenCalledWith({ error: 'invalid field_key' })
+    expect(res.json).toHaveBeenCalledWith({ error: '欄位代碼格式不正確' })
     expect(mockFormField.create).not.toHaveBeenCalled()
   })
 
@@ -713,7 +713,7 @@ describe('updateField', () => {
     await controller.updateField({ params: { fieldId: 'c-type' }, body: { field_key: { $gt: '' } } }, res)
 
     expect(res.status).toHaveBeenCalledWith(400)
-    expect(res.json).toHaveBeenCalledWith({ error: 'invalid field_key' })
+    expect(res.json).toHaveBeenCalledWith({ error: '欄位代碼格式不正確' })
     expect(mockFormField.findOneAndUpdate).not.toHaveBeenCalled()
   })
 

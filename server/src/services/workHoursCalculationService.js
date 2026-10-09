@@ -252,6 +252,7 @@ export async function calculateWorkHours(employeeId, month, context = {}) {
         workedHours: 0,
         hasAttendance: false,
         shiftName: shift.name || 'Unnamed shift',
+        semanticType: resolveShiftSemanticType(shift),
         clockInTime: null,
         clockOutTime: null
       });
@@ -349,9 +350,64 @@ export async function calculateWorkHours(employeeId, month, context = {}) {
   };
 }
 
+async function resolveLeanQuery(query) {
+  return query && typeof query.lean === 'function' ? query.lean() : query;
+}
+
+/**
+ * 這個月班表上「不用上班」的日子（台灣日期鍵）：休息日、例假、國定假日、沒有工作時間的班別。
+ * 班表上排的「請假」班別不算：那一天有核准的假單就要照常給薪，不能因為班表標了請假就不給。
+ * 沒有班表的日子不在裡面（無從判斷，維持算請假）。班表與班別設定沿用 context（calculateWorkHours 已載入），沒有才查詢。
+ */
+async function loadNonWorkScheduleDays(employeeId, startDate, endDate, context) {
+  const [attendanceSetting, schedules] = await Promise.all([
+    context.attendanceSetting ?? resolveLeanQuery(AttendanceSetting.findOne()),
+    context.schedules ?? resolveLeanQuery(ShiftSchedule.find({
+      employee: employeeId,
+      date: { $gte: startDate, $lt: endDate },
+    })),
+  ]);
+  context.attendanceSetting = attendanceSetting;
+  context.schedules = schedules;
+
+  const shiftMap = new Map((attendanceSetting?.shifts || []).map((shift) => [String(shift._id), shift]));
+  const days = new Set();
+  for (const schedule of schedules || []) {
+    const shift = shiftMap.get(String(schedule.shiftId ?? ''));
+    if (!shift || !isNonWorkShift(shift) || resolveShiftSemanticType(shift) === 'leave') continue;
+    days.add(buildDateKey(schedule.date));
+  }
+  return days;
+}
+
+/**
+ * 把一張假單拆到每天的時數（perDay）裡，拿掉班表上不用上班的日子（見 loadNonWorkScheduleDays）。
+ * 由開始、結束時間推算的時數直接拿掉那幾天（週五 09:00 到週一 18:00 的假，週六日是休息日，只剩兩天 16 小時）；
+ * 表單「天數」欄位填的是請假的總天數，拿掉休息日後把總時數分給剩下的日子（每天最多一個工作天的時數），
+ * 這樣填「2 天」橫跨週末的假仍然是 2 天，不會因為週末被拿掉而少給薪。
+ */
+function dropNonWorkLeaveDays(duration, nonWorkDays) {
+  if (!nonWorkDays.size || !duration.perDay.length) return duration;
+  const kept = duration.perDay.filter((item) => !nonWorkDays.has(item.dateKey));
+  if (kept.length === duration.perDay.length) return duration;
+
+  let perDay = kept;
+  if (duration.source !== 'dates' && kept.length) {
+    const keptHours = kept.reduce((sum, item) => sum + item.hours, 0);
+    const factor = keptHours > 0 ? duration.hours / keptHours : 1;
+    perDay = kept.map((item) => ({
+      dateKey: item.dateKey,
+      hours: Math.min(Math.round(item.hours * factor * 10000) / 10000, WORK_HOURS_CONFIG.HOURS_PER_DAY),
+    }));
+  }
+  const hours = Math.round(perDay.reduce((sum, item) => sum + item.hours, 0) * 10000) / 10000;
+  return { ...duration, perDay, hours, days: Math.round((hours / WORK_HOURS_CONFIG.HOURS_PER_DAY) * 10000) / 10000 };
+}
+
 /**
  * 計算請假對薪資的影響
  * 請假依「請假日期」歸屬月份（台灣日期，跨月的假單拆到各自的月份），不看送簽（建立）的月份。
+ * 日薪、時薪只算排定要上班的日子（跨越休息日、例假、國定假日的假，那幾天不算）；月薪維持日曆日計算。
  * @param {String} employeeId - 員工 ID
  * @param {String} month - 月份 (YYYY-MM-DD 格式)
  * @param {Object} options.withDailyBreakdown - 另外回傳每天的給薪請假時數（payableLeaveByDay），日薪計算要用
@@ -399,6 +455,12 @@ export async function calculateLeaveImpact(employeeId, month, context = {}, { wi
   const payableLeaveByDay = {};
   let undatedPayableLeaveHours = 0;
 
+  // 日薪、時薪是按排定的上班日給薪：請假範圍橫跨的休息日、例假、國定假日（班表上不用上班的日子）不算請假、也不給薪。
+  // 月薪不受影響（維持日曆日計算）；特休餘額的天數是另一回事（日曆日計算，見 services/leaveRequestDays.js）。
+  const nonWorkDays = employee.salaryType === '日薪' || employee.salaryType === '時薪'
+    ? await loadNonWorkScheduleDays(employeeId, startDate, endDate, context)
+    : new Set();
+
   // 每張請假表單各查一次該員工已核准的請假記錄（一張假單只屬於一張表單，不會重複計算）。
   // form_data 的日期是字串，沒辦法用資料庫的日期條件篩選，所以取回後依請假日期在程式裡篩出落在本月的部分。
   for (const leaveForm of leaveForms) {
@@ -431,7 +493,7 @@ export async function calculateLeaveImpact(employeeId, month, context = {}, { wi
 
       // 請假時數：表單有「天數」欄位且填了正數就以它為準，其次是舊資料的 days / duration / hours 鍵，
       // 否則由開始/結束時間推算（台灣時間；4 小時就是 4 小時，不再一律當成整天）
-      const duration = computeLeaveDuration({
+      const rawDuration = computeLeaveDuration({
         startValue: pickFieldValue(formData, startIds),
         endValue: pickFieldValue(formData, endIds),
         filledDays: pickFieldValue(formData, daysIds),
@@ -439,10 +501,13 @@ export async function calculateLeaveImpact(employeeId, month, context = {}, { wi
         literalHours: formData.hours,
         hoursPerDay: WORK_HOURS_CONFIG.HOURS_PER_DAY,
       });
+      // 有請假日期的才能分日；日薪、時薪另外把班表上不用上班的日子從請假裡拿掉（全部拿掉時 hours 為 0，下面會略過）
+      const dated = rawDuration.perDay.length > 0;
+      const duration = dated ? dropNonWorkLeaveDays(rawDuration, nonWorkDays) : rawDuration;
 
       let days;
       let hours;
-      if (duration.perDay.length) {
+      if (dated) {
         // 有請假日期：只算落在本月的部分
         hours = sumLeaveHoursInRange(duration.perDay, windowStartKey, windowEndKey);
         if (hours <= 0) return;
@@ -470,7 +535,7 @@ export async function calculateLeaveImpact(employeeId, month, context = {}, { wi
       }
       // 對照表查不到的假別預設為無薪（只計入無薪時數）
 
-      if (duration.perDay.length) {
+      if (dated) {
         if (pay.payRate > 0) {
           duration.perDay.forEach((item) => {
             if (item.dateKey < windowStartKey || item.dateKey >= windowEndKey) return;
@@ -491,7 +556,7 @@ export async function calculateLeaveImpact(employeeId, month, context = {}, { wi
         // 有給薪（全薪或半薪）才算有薪；全額扣款的假別是無薪
         isPaid: pay.payRate > 0
       };
-      if (duration.perDay.length && hours < duration.hours) {
+      if (dated && hours < duration.hours) {
         // 跨月的假單：days / hours 是本月的部分，另外附上整張假單的天數與時數
         record.totalDays = duration.days;
         record.totalHours = duration.hours;
@@ -719,12 +784,22 @@ export async function calculateOvertimePay(employeeId, month, context = {}) {
   };
 }
 
+// 班表排定要上班的天數（排定時數大於 0；休息日、例假、國定假日的班別是 0）。
+// 請假班別（特、病、事、產…）的排定時數也是 0，但那天原本就是要上班的日子：請核准的有薪假時要算進來，
+// 否則整個月排請假班的日薪、時薪人員會被上限卡成 0 元。
+function countScheduledWorkdays(dailyDetails) {
+  return (dailyDetails || []).filter((day) => day.scheduledHours > 0 || day.semanticType === 'leave').length;
+}
+
 /**
  * 日薪要另外加計的「只請假沒上班」天數。
  * 有出勤的那一天（workDays 已經算整天）請了半天有薪假，不能再把假的部分加一次：
  * 日薪 2000 的人上 4 小時班、請 5 小時特休，那天只領 2000，不是 3250。
  * 所以有出勤的日子不另外加請假，沒出勤的日子才依當天的給薪請假時數（全薪算全部、半薪算一半）加，每天最多 1 天。
  * 沒有請假日期的舊資料無法判斷是哪一天，照時數換算成天數。
+ * 休息日、例假、國定假日（班表上不用上班的日子）不是給薪日：calculateLeaveImpact 對日薪、時薪已經把這些日子
+ * 從請假裡拿掉（週五到週一的特休，週六日是休息日，只給兩天）；這裡再以「排定上班的天數」為上限，
+ * 請假加總不會比班表排的上班日還多。
  */
 function countPaidLeaveOnlyDays(dailyDetails, leaveImpact) {
   const attendedDates = new Set((dailyDetails || []).filter((day) => day.hasAttendance).map((day) => day.date));
@@ -734,7 +809,7 @@ function countPaidLeaveOnlyDays(dailyDetails, leaveImpact) {
     days += Math.min(1, hours / WORK_HOURS_CONFIG.HOURS_PER_DAY);
   });
   days += (leaveImpact.undatedPayableLeaveHours || 0) / WORK_HOURS_CONFIG.HOURS_PER_DAY;
-  return days;
+  return Math.min(days, countScheduledWorkdays(dailyDetails));
 }
 
 /**
@@ -764,9 +839,10 @@ export async function calculateCompleteWorkData(employeeId, month, context = {})
   
   // 日薪、時薪是按出勤給薪：有薪假（全薪，以及半薪假的給薪部分）要算進去，
   // 無薪假沒出勤本來就沒有薪水，所以也不會再有請假扣款（calculateLeaveImpact 只對月薪回傳扣款）
-  const payableLeaveHours = Math.max(
-    Math.round((leaveImpact.leaveHours - leaveImpact.unpaidLeaveHours) * 10000) / 10000,
-    0
+  // 時薪的給薪請假時數同樣只算排定上班的日子（calculateLeaveImpact 已拿掉休息日等），而且不超過排定上班日數 × 每日時數
+  const payableLeaveHours = Math.min(
+    Math.max(Math.round((leaveImpact.leaveHours - leaveImpact.unpaidLeaveHours) * 10000) / 10000, 0),
+    countScheduledWorkdays(workHours.dailyDetails) * WORK_HOURS_CONFIG.HOURS_PER_DAY
   );
   if (employee.salaryType === '時薪') {
     baseSalary = (workHours.actualWorkHours + payableLeaveHours) * hourlyRate;

@@ -82,12 +82,11 @@ describe('schedule employee list: onLeave status filter', () => {
 
     expect(res.statusCode).toBe(200)
     expect(mockApprovalRequest.find).toHaveBeenCalledTimes(2)
+    // 日期範圍不再用資料庫的字串比較（ISO 字串 / 台灣時區會比錯），改取回核准的假單後以台灣日期判斷
     expect(mockApprovalRequest.find).toHaveBeenCalledWith({
       form: 'customer-form',
       status: 'approved',
       applicant_employee: { $in: ['e1', 'e2', 'e3'] },
-      'form_data.c-start': { $lt: '2026-04-01' },
-      'form_data.c-end': { $gte: '2026-03-01' },
     })
     expect(res.body.employees.map((employee) => employee._id)).toEqual(['e1', 'e2'])
   })
@@ -111,5 +110,103 @@ describe('schedule employee list: onLeave status filter', () => {
     const res = await listWithStatus('unscheduled')
 
     expect(res.body.employees.map((employee) => employee._id)).toEqual(['e1', 'e3'])
+  })
+})
+
+// 請假日以台灣時間判斷，與伺服器所在時區無關：台灣 2026-07-01 的整天假存成 2026-06-30T16:00:00.000Z
+describe('schedule employee list: onLeave status filter reads leave days in Taiwan time', () => {
+  const FORM = { formId: 'leave-form', startId: 'start', endId: 'end', typeId: 'type' }
+  const originalTz = process.env.TZ
+
+  afterEach(() => {
+    if (originalTz === undefined) delete process.env.TZ
+    else process.env.TZ = originalTz
+  })
+
+  async function listFor(month, status) {
+    const res = createRes()
+    await listEmployeesSchedule({
+      user: { id: ADMIN_ID, role: 'admin' },
+      query: { month, status },
+    }, res)
+    return res
+  }
+
+  function leaveRows(rows) {
+    mockGetAllLeaveFieldInfos.mockResolvedValue([FORM])
+    mockApprovalRequest.find.mockImplementation(() => leanChain(rows))
+  }
+
+  it.each(['UTC', 'Asia/Taipei', 'America/Los_Angeles'])('finds a one-day leave on Taiwan 2026-07-01 in July and not in June (server TZ=%s)', async (zone) => {
+    process.env.TZ = zone
+    leaveRows([{
+      applicant_employee: 'e2',
+      form_data: { start: '2026-06-30T16:00:00.000Z', end: '2026-06-30T16:00:00.000Z', type: '事假' },
+    }])
+
+    const july = await listFor('2026-07', 'onLeave')
+    const june = await listFor('2026-06', 'onLeave')
+
+    expect(july.statusCode).toBe(200)
+    expect(july.body.employees.map((employee) => employee._id)).toEqual(['e2'])
+    expect(june.body.employees).toEqual([])
+  })
+
+  it.each(['UTC', 'Asia/Taipei'])('finds a leave on Taiwan 2026-06-30 only in June, and a leave across the month end in both months (TZ=%s)', async (zone) => {
+    process.env.TZ = zone
+    leaveRows([
+      // 台灣 6/30 整天
+      { applicant_employee: 'e1', form_data: { start: '2026-06-29T16:00:00.000Z', end: '2026-06-29T16:00:00.000Z' } },
+      // 台灣 6/29 到 7/2
+      { applicant_employee: 'e3', form_data: { start: '2026-06-28T16:00:00.000Z', end: '2026-07-01T16:00:00.000Z' } },
+    ])
+
+    const june = await listFor('2026-06', 'onLeave')
+    const july = await listFor('2026-07', 'onLeave')
+
+    expect(june.body.employees.map((employee) => employee._id)).toEqual(['e1', 'e3'])
+    expect(july.body.employees.map((employee) => employee._id)).toEqual(['e3'])
+  })
+
+  it('reads leave answers that sit under a replaced (deactivated) start / end field', async () => {
+    mockGetAllLeaveFieldInfos.mockResolvedValue([{
+      ...FORM,
+      startIds: ['start', 'old-start'],
+      endIds: ['end', 'old-end'],
+    }])
+    mockApprovalRequest.find.mockImplementation(() => leanChain([
+      { applicant_employee: 'e1', form_data: { 'old-start': '2026-07-05', 'old-end': '2026-07-06' } },
+    ]))
+
+    const res = await listFor('2026-07', 'onLeave')
+
+    expect(res.body.employees.map((employee) => employee._id)).toEqual(['e1'])
+  })
+
+  it('queries the shift days with UTC-midnight bounds of the month and counts them by their stored UTC day', async () => {
+    process.env.TZ = 'Asia/Taipei'
+    mockGetAllLeaveFieldInfos.mockResolvedValue([])
+    const everyDay = Array.from({ length: 31 }, (_, index) => ({
+      employee: 'e1',
+      date: new Date(Date.UTC(2026, 6, index + 1)),
+      shiftId: 'day',
+    }))
+    mockShiftSchedule.find.mockImplementation(() => leanChain(everyDay))
+
+    const scheduled = await listFor('2026-07', 'scheduled')
+    const unscheduled = await listFor('2026-07', 'unscheduled')
+
+    expect(mockShiftSchedule.find).toHaveBeenCalledWith({
+      employee: { $in: ['e1', 'e2', 'e3'] },
+      date: { $gte: new Date('2026-07-01T00:00:00.000Z'), $lt: new Date('2026-08-01T00:00:00.000Z') },
+    })
+    expect(scheduled.body.employees.map((employee) => employee._id)).toEqual(['e1'])
+    expect(unscheduled.body.employees.map((employee) => employee._id)).toEqual(['e2', 'e3'])
+  })
+
+  it('rejects the status filter without a valid month', async () => {
+    const res = await listFor(undefined, 'onLeave')
+
+    expect(res.statusCode).toBe(400)
   })
 })

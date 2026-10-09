@@ -15,7 +15,7 @@ const mockEmployee = {
   exists: jest.fn(),
 }
 const mockApprovalRequest = { find: jest.fn() }
-const mockApprovalWorkflow = { find: jest.fn() }
+const mockApprovalWorkflow = { find: jest.fn(), updateOne: jest.fn() }
 
 jest.unstable_mockModule('../src/models/Employee.js', () => ({ default: mockEmployee }))
 jest.unstable_mockModule('../src/models/approval_request.js', () => ({ default: mockApprovalRequest }))
@@ -61,6 +61,8 @@ beforeEach(() => {
   mockApprovalRequest.find.mockReturnValue(queryChain([]))
   mockApprovalWorkflow.find.mockReset()
   mockApprovalWorkflow.find.mockReturnValue(queryChain([]))
+  mockApprovalWorkflow.updateOne.mockReset()
+  mockApprovalWorkflow.updateOne.mockResolvedValue({ acknowledged: true, modifiedCount: 1 })
 })
 
 describe('簽核標籤整理（K3）', () => {
@@ -329,6 +331,90 @@ describe('normalizeStoredSignTags 一次性整理', () => {
   })
 })
 
+describe('normalizeStoredWorkflowSignTags 流程關卡裡的標籤值一併整理', () => {
+  const WF_ID = 'wf-1'
+
+  it('只修正值還沒整理好的標籤關卡（字串與陣列），用 arrayFilters 鎖定那一關，不動 updatedAt', async () => {
+    mockApprovalWorkflow.find.mockReturnValue(
+      queryChain([
+        {
+          _id: WF_ID,
+          steps: [
+            { approver_type: 'manager', approver_value: 'APPLICANT_SUPERVISOR' },
+            { approver_type: 'tag', approver_value: '稽核 ' },
+            { approver_type: 'tag', approver_value: ['　人資', '人資 ', 'ＨＲ'] },
+            { approver_type: 'tag', approver_value: '財務覆核' },
+            { approver_type: 'tag', approver_value: '   ' },
+            { approver_type: 'role', approver_value: ' R003 ' },
+          ],
+        },
+      ])
+    )
+
+    const healed = await controller.normalizeStoredWorkflowSignTags()
+
+    expect(healed).toBe(2)
+    expect(mockApprovalWorkflow.find).toHaveBeenCalledWith({ 'steps.approver_type': 'tag' })
+    expect(mockApprovalWorkflow.updateOne.mock.calls).toEqual([
+      [
+        { _id: WF_ID },
+        { $set: { 'steps.$[step].approver_value': '稽核' } },
+        { arrayFilters: [{ 'step.approver_type': 'tag', 'step.approver_value': '稽核 ' }], timestamps: false },
+      ],
+      [
+        { _id: WF_ID },
+        { $set: { 'steps.$[step].approver_value': ['人資', 'HR'] } },
+        { arrayFilters: [{ 'step.approver_type': 'tag', 'step.approver_value': ['　人資', '人資 ', 'ＨＲ'] }], timestamps: false },
+      ],
+    ])
+  })
+
+  it('重複執行不會再動已經整理好的流程', async () => {
+    mockApprovalWorkflow.find.mockReturnValue(
+      queryChain([
+        { _id: WF_ID, steps: [{ approver_type: 'tag', approver_value: '稽核' }, { approver_type: 'tag', approver_value: ['人資', 'HR'] }] },
+      ])
+    )
+
+    expect(await controller.normalizeStoredWorkflowSignTags()).toBe(0)
+    expect(mockApprovalWorkflow.updateOne).not.toHaveBeenCalled()
+  })
+
+  it('另一個程序剛好先整理好時（沒有符合的關卡）不重複計數', async () => {
+    mockApprovalWorkflow.find.mockReturnValue(
+      queryChain([{ _id: WF_ID, steps: [{ approver_type: 'tag', approver_value: '稽核 ' }] }])
+    )
+    mockApprovalWorkflow.updateOne.mockResolvedValue({ acknowledged: true, modifiedCount: 0 })
+
+    expect(await controller.normalizeStoredWorkflowSignTags()).toBe(0)
+  })
+
+  it('員工標籤整理時一併整理流程關卡，回傳值仍是被修正的員工人數', async () => {
+    jest.spyOn(console, 'log').mockImplementation(() => {})
+    mockEmployee.find.mockReturnValue(queryChain([{ _id: 'e1', signTags: ['稽核 '] }]))
+    mockApprovalWorkflow.find.mockReturnValue(
+      queryChain([{ _id: WF_ID, steps: [{ approver_type: 'tag', approver_value: '稽核 ' }] }])
+    )
+
+    expect(await controller.normalizeStoredSignTags()).toBe(1)
+    expect(mockEmployee.updateOne).toHaveBeenCalledWith({ _id: 'e1' }, { $set: { signTags: ['稽核'] } })
+    expect(mockApprovalWorkflow.updateOne).toHaveBeenCalledTimes(1)
+    console.log.mockRestore()
+  })
+
+  it('流程整理失敗只記錄，不讓員工標籤的整理失敗', async () => {
+    jest.spyOn(console, 'error').mockImplementation(() => {})
+    mockEmployee.find.mockReturnValue(queryChain([{ _id: 'e1', signTags: ['稽核 '] }]))
+    mockApprovalWorkflow.find.mockImplementation(() => {
+      throw new Error('boom')
+    })
+
+    expect(await controller.normalizeStoredSignTags()).toBe(1)
+    expect(console.error).toHaveBeenCalled()
+    console.error.mockRestore()
+  })
+})
+
 describe('刪除員工前的簽核影響', () => {
   const ADMIN_ID = '507f1f77bcf86cd799439011'
   const SUP_ID = '507f1f77bcf86cd799439012'
@@ -402,6 +488,32 @@ describe('刪除員工前的簽核影響', () => {
       supervisor: { $in: [SUP_ID, HR_ID] },
       _id: { $nin: [SUP_ID, HR_ID] },
     })
+  })
+
+  it('流程關卡裡存的是還沒整理過的舊標籤值（尾端空白、全形空白、陣列）也要算進失去持有者的標籤，查詢不做精確比對', async () => {
+    mockEmployee.distinct.mockResolvedValueOnce(['稽核']).mockResolvedValueOnce([])
+    mockApprovalWorkflow.find
+      .mockReturnValueOnce(queryChain([]))
+      .mockReturnValueOnce(
+        queryChain([
+          {
+            steps: [
+              { approver_type: 'tag', approver_value: '稽核 ' },
+              { approver_type: 'tag', approver_value: ['稽核　'] },
+              { approver_type: 'tag', approver_value: '稽核' },
+              { approver_type: 'tag', approver_value: '別的標籤' },
+              { approver_type: 'manager', approver_value: '稽核' },
+            ],
+          },
+        ])
+      )
+
+    const impact = await controller.computeDeleteImpact([SUP_ID])
+
+    expect(impact.lostTags).toEqual([{ name: '稽核', requiredByWorkflows: 3 }])
+    expect(impact.messages.at(-1)).toContain('「稽核」')
+    // 載入所有有標籤關卡的流程，在記憶體裡正規化後比對；不再用 approver_value: { $in: 標籤 }
+    expect(mockApprovalWorkflow.find.mock.calls[1][0]).toEqual({ 'steps.approver_type': 'tag' })
   })
 
   it('標籤只算「可簽核」的持有者；沒有流程關卡使用的標籤不提醒', async () => {
@@ -788,5 +900,75 @@ describe('編輯員工：已使用的特休天數不會被舊畫面蓋回去', (
     const set = mockEmployee.updateOne.mock.calls[0][1].$set
     expect(set['annualLeave.usedDays']).toBe(1)
     expect(JSON.stringify(set)).not.toContain('appliedApprovalRequestIds')
+  })
+
+  it('沒帶 usedDays（新版畫面沒改天數就不送）：不寫入也不累加，其他特休欄位照常更新', async () => {
+    stubExisting({ totalDays: 10, usedDays: 3 })
+
+    const res = await request(app)
+      .put(`/api/employees/${EMP_ID}`)
+      .send({ annualLeave: { totalDays: 12, notes: '調整總天數' } })
+
+    expect(res.status).toBe(200)
+    const update = mockEmployee.updateOne.mock.calls[0][1]
+    expect(update.$set['annualLeave.totalDays']).toBe(12)
+    expect(update.$set).not.toHaveProperty(['annualLeave.usedDays'])
+    expect(update).not.toHaveProperty('$inc')
+    expect(mockEmployee.updateOne).toHaveBeenCalledTimes(1)
+  })
+
+  it('過期的視窗：開啟時是 0、這段時間核准扣到 1，管理員沒改天數存檔，不會把扣減蓋回 0', async () => {
+    stubExisting({ totalDays: 10, usedDays: 1 })
+
+    const res = await request(app)
+      .put(`/api/employees/${EMP_ID}`)
+      .send({ name: 'John', annualLeave: { totalDays: 12, usedDays: 0, usedDaysBase: 0 } })
+
+    expect(res.status).toBe(200)
+    const update = mockEmployee.updateOne.mock.calls[0][1]
+    expect(update.$set['annualLeave.totalDays']).toBe(12)
+    expect(update.$set).not.toHaveProperty(['annualLeave.usedDays'])
+    expect(update).not.toHaveProperty('$inc')
+  })
+
+  it('視窗開著時又被扣了天數，管理員自己改的差額用 $inc 加上去（不寫入絕對值，也不寫入 usedDaysBase）', async () => {
+    stubExisting({ totalDays: 10, usedDays: 1 })
+
+    const res = await request(app)
+      .put(`/api/employees/${EMP_ID}`)
+      .send({ annualLeave: { usedDays: 2, usedDaysBase: 0 } })
+
+    expect(res.status).toBe(200)
+    const update = mockEmployee.updateOne.mock.calls[0][1]
+    expect(update.$inc).toEqual({ 'annualLeave.usedDays': 2 })
+    expect(JSON.stringify(update)).not.toContain('usedDaysBase')
+    expect(update.$set ?? {}).not.toHaveProperty(['annualLeave.usedDays'])
+    expect(mockEmployee.updateOne).toHaveBeenCalledTimes(1)
+  })
+
+  it('差額更正和帳號異動（authVersion）合併成同一個 $inc', async () => {
+    stubExisting({ totalDays: 10, usedDays: 1 })
+
+    const res = await request(app)
+      .put(`/api/employees/${EMP_ID}`)
+      .send({ role: 'supervisor', annualLeave: { usedDays: 2, usedDaysBase: 0 } })
+
+    expect(res.status).toBe(200)
+    expect(mockEmployee.updateOne.mock.calls[0][1].$inc).toEqual({ 'annualLeave.usedDays': 2, authVersion: 1 })
+  })
+
+  it('負的差額寫入後再保險一次：已使用天數不會小於 0', async () => {
+    stubExisting({ totalDays: 10, usedDays: 2 })
+
+    const res = await request(app)
+      .put(`/api/employees/${EMP_ID}`)
+      .send({ annualLeave: { usedDays: 0, usedDaysBase: 3 } })
+
+    expect(res.status).toBe(200)
+    expect(mockEmployee.updateOne.mock.calls[0][1].$inc).toEqual({ 'annualLeave.usedDays': -2 })
+    expect(mockEmployee.updateOne.mock.calls[1]).toEqual([
+      { _id: EMP_ID, 'annualLeave.usedDays': { $lt: 0 } },
+      { $set: { 'annualLeave.usedDays': 0 } },
+    ])
   })
 })

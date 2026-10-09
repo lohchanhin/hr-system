@@ -5,6 +5,8 @@ import FormField from '../models/form_field.js'
 import { computeLeaveRequestDays, isAnnualLeaveType } from './leaveRequestDays.js'
 import { toTaipeiDateKey } from '../utils/taipeiTime.js'
 import { isLeaveFormTemplate } from '../utils/formSemantics.js'
+import { orderFieldCandidateIds, pickFieldValue } from '../utils/fieldCandidates.js'
+import { resolveLeaveFieldsForRequest } from '../utils/leaveFieldResolution.js'
 
 // 特休餘額相關的錯誤：message 保留英文供紀錄與既有測試，code / remaining / requested 讓呼叫端組出中文訊息
 export class AnnualLeaveError extends Error {
@@ -136,6 +138,15 @@ export async function getAnnualLeaveBalance(employeeId) {
 
 const REASON_LABEL_PATTERN = /事由|原因|備註|reason/i
 
+// 事由欄位的候選欄位 ID：第一個符合的欄位（啟用中的優先）加上同標籤的其他欄位，啟用中的在前、停用的在後
+function reasonFieldCandidateIds(fields) {
+  const matched = (fields || []).filter(field => REASON_LABEL_PATTERN.test(String(field.label || '')))
+  const picked = matched.find(field => field.is_active !== false) || matched[0]
+  if (!picked) return []
+  const label = String(picked.label || '').trim()
+  return orderFieldCandidateIds((fields || []).filter(field => String(field.label || '').trim() === label))
+}
+
 /**
  * 查詢員工特休使用記錄（從審核單查詢）
  * 假單的欄位 key 是欄位 id（不是固定的 leaveType / days），所以逐一請假表單用 getLeaveFieldIdsForForm 取欄位 id。
@@ -167,14 +178,16 @@ export async function getAnnualLeaveHistory(employeeId, year = null) {
     if (!requests.length) continue
 
     const fields = await FormField.find({ form: form._id }).lean()
-    const reasonField = (fields || []).find(field => REASON_LABEL_PATTERN.test(String(field.label || '')))
+    const reasonIds = reasonFieldCandidateIds(fields)
 
     for (const request of requests) {
       const data = request.form_data || {}
-      if (!isAnnualLeaveType(data[leaveFields.typeId], leaveFields.typeOptions)) continue
+      // 假別、日期、天數欄位被停用或換成同標籤的新欄位後，舊假單的答案還在舊欄位底下：逐張假單挑第一個有填值的欄位
+      const requestFields = resolveLeaveFieldsForRequest(leaveFields, data)
+      if (!isAnnualLeaveType(data[requestFields.typeId], leaveFields.typeOptions)) continue
 
-      const startValue = leaveFields.startId ? data[leaveFields.startId] : undefined
-      const endValue = leaveFields.endId ? data[leaveFields.endId] : undefined
+      const startValue = requestFields.startId ? data[requestFields.startId] : undefined
+      const endValue = requestFields.endId ? data[requestFields.endId] : undefined
       if (year) {
         const key = toTaipeiDateKey(startValue) || toTaipeiDateKey(request.createdAt)
         if (!key || Number(key.slice(0, 4)) !== Number(year)) continue
@@ -185,10 +198,10 @@ export async function getAnnualLeaveHistory(employeeId, year = null) {
         requestId: request._id,
         formName: form.name,
         createdAt: request.createdAt,
-        days: deducted ?? computeLeaveRequestDays({ formData: data, leaveFields }).days,
+        days: deducted ?? computeLeaveRequestDays({ formData: data, leaveFields: requestFields }).days,
         startDate: startValue,
         endDate: endValue,
-        reason: reasonField ? data[String(reasonField._id)] : undefined,
+        reason: pickFieldValue(data, reasonIds),
       })
     }
   }

@@ -3,11 +3,10 @@ import Employee from '../models/Employee.js'   // ← 對齊你新的 model 檔�
 import ShiftSchedule from '../models/ShiftSchedule.js'
 import ApprovalRequest from '../models/approval_request.js'
 import ApprovalWorkflow from '../models/approval_workflow.js'
-import dayjs from 'dayjs'
 import mongoose from 'mongoose'
-import { getAllLeaveFieldInfos } from '../services/leaveFieldService.js'
+import { leaveDaysFromCalendar, loadApprovedLeaveCalendar } from '../services/approvedLeaveCalendarService.js'
 import { eligibleEmployeeFilter, isEligibleApprover } from '../services/approverEligibility.js'
-import { normalizeSignTags } from '../utils/signTags.js'
+import { normalizeSignTag, normalizeSignTags } from '../utils/signTags.js'
 import {
   deleteEmployeePhoto,
   isManagedEmployeePhotoPath,
@@ -368,6 +367,7 @@ export function buildEmployeeDoc(body = {}) {
 export function buildEmployeePatch(body = {}, existing = null) {
   const $set = {}
   const $unset = {}
+  const $inc = {} // 只有特休已使用天數的差額更正會用到（見下方 annualLeave.usedDays）；沒有時不回傳
 
   const put = (k, v) => { if (isDefined(v)) $set[k] = v }
   const un = (k) => { $unset[k] = 1 }
@@ -542,12 +542,26 @@ export function buildEmployeePatch(body = {}, existing = null) {
     const al = body.annualLeave || {}
     if (isDefined(al.totalDays)) put('annualLeave.totalDays', toNum(al.totalDays) ?? 0)
     // 已使用天數會在簽核核准時被原子扣減（並記下 appliedApprovalRequestIds，這個欄位永遠不從編輯表單寫入）。
-    // 編輯表單整包送出時，只有「和目前存的不一樣」才算管理員真的要改，否則剛好同時發生的扣減會被舊值蓋回去
+    // usedDays 的契約（編輯表單可以不送、整包送出、或附上開啟視窗當下的值 usedDaysBase）：
+    // 1. 沒帶 usedDays：完全不碰，絕不 $set。
+    // 2. usedDays 和目前存的相同：不寫入（剛好同時發生的扣減不會被舊值蓋回去）。
+    // 3. usedDays 和目前存的不同，視為管理員的人工更正：
+    //    - 沒帶 usedDaysBase，或目前存的值還是 usedDaysBase：直接 $set 成 usedDays。
+    //    - 帶了 usedDaysBase，而且目前存的值已經不是 usedDaysBase（視窗開著的期間簽核核准又扣了天數）：
+    //      只套用管理員自己改的差額，用 $inc 加上 (usedDays - usedDaysBase)，不會抹掉期間內的扣減；
+    //      差額不會把已使用天數扣到小於 0（updateEmployee 在寫入後還會再補一次保險）。
+    // usedDaysBase 只用來比對，不會寫進資料庫。
     if (isDefined(al.usedDays)) {
       const submittedUsedDays = toNum(al.usedDays) ?? 0
       const storedUsedDays = toNum(existing?.annualLeave?.usedDays)
+      const baseUsedDays = toNum(al.usedDaysBase)
       if (storedUsedDays === undefined || submittedUsedDays !== storedUsedDays) {
-        put('annualLeave.usedDays', submittedUsedDays)
+        if (storedUsedDays !== undefined && baseUsedDays !== undefined && baseUsedDays !== storedUsedDays) {
+          const adjustment = Math.max(submittedUsedDays - baseUsedDays, -storedUsedDays)
+          if (adjustment !== 0) $inc['annualLeave.usedDays'] = adjustment
+        } else {
+          put('annualLeave.usedDays', submittedUsedDays)
+        }
       }
     }
     if (isDefined(al.year)) put('annualLeave.year', toNum(al.year))
@@ -563,7 +577,7 @@ export function buildEmployeePatch(body = {}, existing = null) {
   if (isDefined(body.healthInsuredSalary)) put('healthInsuredSalary', toNum(body.healthInsuredSalary))
   if (isDefined(body.dependentCount)) put('dependentCount', toNum(body.dependentCount))
 
-  return { $set, $unset }
+  return Object.keys($inc).length ? { $set, $unset, $inc } : { $set, $unset }
 }
 
 /* ─────────────────────────────── Controllers ─────────────────────────────── */
@@ -811,8 +825,11 @@ export async function listEmployees(req, res) {
       if (!month || !/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) {
         return res.status(400).json({ error: 'month required for status filter' })
       }
-      const monthStart = dayjs(`${month}-01`).startOf('day')
-      const monthEnd = monthStart.add(1, 'month')
+      // 班表日期與請假日都以 UTC 午夜代表台灣的某一天，與 scheduleQueryController.listMonthlySchedules 相同；
+      // 不依伺服器所在時區（TZ=UTC 與 TZ=Asia/Taipei 結果一致）
+      const monthStart = new Date(`${month}-01T00:00:00.000Z`)
+      const monthEnd = new Date(monthStart)
+      monthEnd.setUTCMonth(monthEnd.getUTCMonth() + 1)
       const employeeIds = scheduleEmployees.map(item => item._id?.toString?.() || String(item._id))
       const statusMap = new Map(
         employeeIds.map(id => [id, { shiftDays: new Set(), leaveDays: new Set() }])
@@ -820,7 +837,7 @@ export async function listEmployees(req, res) {
 
       const schedules = await ShiftSchedule.find({
         employee: { $in: employeeIds },
-        date: { $gte: monthStart.toDate(), $lt: monthEnd.toDate() },
+        date: { $gte: monthStart, $lt: monthEnd },
       })
         .select('employee date shiftId')
         .lean()
@@ -830,43 +847,22 @@ export async function listEmployees(req, res) {
         const entry = statusMap.get(empId)
         if (!entry) return
         if (!doc.shiftId) return
-        const dayKey = dayjs(doc.date).format('YYYY-MM-DD')
+        const dayKey = doc.date instanceof Date
+          ? doc.date.toISOString().slice(0, 10)
+          : new Date(doc.date).toISOString().slice(0, 10)
         entry.shiftDays.add(dayKey)
       })
 
-      // 預設的「請假」與自建的請假表單並存時，每張請假表單各查一次
-      const leaveForms = employeeIds.length ? await getAllLeaveFieldInfos({ withTypeOptions: false }) : []
-      for (const { formId, startId, endId } of leaveForms) {
-        if (!formId || !startId || !endId) continue
-        const leaveQuery = {
-          form: formId,
-          status: 'approved',
-          applicant_employee: { $in: employeeIds },
-        }
-        leaveQuery[`form_data.${startId}`] = { $lt: monthEnd.format('YYYY-MM-DD') }
-        leaveQuery[`form_data.${endId}`] = { $gte: monthStart.format('YYYY-MM-DD') }
-        const approvals = await ApprovalRequest.find(leaveQuery)
-          .select(`applicant_employee form_data.${startId} form_data.${endId}`)
-          .lean()
-        approvals.forEach((approval) => {
-          const empId = approval.applicant_employee?.toString?.() || ''
-          const entry = statusMap.get(empId)
-          if (!entry) return
-          const approvalStart = dayjs(approval.form_data?.[startId])
-          const approvalEnd = dayjs(approval.form_data?.[endId])
-          const monthLastDay = monthEnd.subtract(1, 'day')
-          const start = approvalStart.isAfter(monthStart) ? approvalStart : monthStart
-          const end = approvalEnd.isBefore(monthLastDay) ? approvalEnd : monthLastDay
-          if (!start.isValid() || !end.isValid() || end.isBefore(start)) return
-          let pointer = start.startOf('day')
-          while (!pointer.isAfter(end, 'day')) {
-            entry.leaveDays.add(pointer.format('YYYY-MM-DD'))
-            pointer = pointer.add(1, 'day')
-          }
+      // 請假日以台灣時間判斷（台灣 7/1 的假存成 2026-06-30T16:00:00.000Z）：直接用假勤日曆，
+      // 它涵蓋預設的「請假」與自建的請假表單（含已停用的、換過欄位的），跨月的假單只取本月的日子
+      if (employeeIds.length) {
+        const leaveCalendar = await loadApprovedLeaveCalendar({ employeeIds, start: monthStart, end: monthEnd })
+        employeeIds.forEach((id) => {
+          statusMap.get(id).leaveDays = leaveDaysFromCalendar(leaveCalendar, id)
         })
       }
 
-      const daysInMonth = monthStart.daysInMonth()
+      const daysInMonth = new Date(monthEnd.getTime() - 24 * 60 * 60 * 1000).getUTCDate()
       scheduleEmployees = scheduleEmployees.filter((employee) => {
         const empId = employee._id?.toString?.() || String(employee._id)
         const entry = statusMap.get(empId) || { shiftDays: new Set(), leaveDays: new Set() }
@@ -1038,7 +1034,46 @@ export async function normalizeStoredSignTags() {
     await Employee.updateOne({ _id: employee._id }, { $set: { signTags: normalized } })
     updated += 1
   }
+  // 流程關卡裡的標籤值也一併整理（舊資料有尾端空白、全形字）；失敗只記錄，不影響員工標籤的整理結果
+  try {
+    const healedSteps = await normalizeStoredWorkflowSignTags()
+    if (healedSteps) console.log(`Normalized sign tags in ${healedSteps} workflow steps`)
+  } catch (error) {
+    console.error('Failed to normalize workflow sign tags', error?.name ?? 'Error')
+  }
   return updated
+}
+
+/**
+ * 把已儲存的流程裡「標籤」關卡的標籤值統一成 K3 規則（和員工標籤同一套；簽核人解析兩邊都會正規化，這裡只是讓資料本身也一致）。
+ * 冪等：已整理好的關卡不會再動；只改 approver_value，用 arrayFilters 只鎖定值還沒整理的標籤關卡，
+ * 不會覆蓋同時被管理員修改的其他關卡，也不改動 updatedAt。回傳被修正的關卡數。
+ */
+export async function normalizeStoredWorkflowSignTags() {
+  const workflows = await ApprovalWorkflow.find({ 'steps.approver_type': 'tag' })
+    .select('_id steps.approver_type steps.approver_value')
+    .lean()
+  let healed = 0
+  for (const workflow of workflows ?? []) {
+    for (const step of workflow?.steps ?? []) {
+      if (step?.approver_type !== 'tag') continue
+      const current = step.approver_value
+      const normalized = Array.isArray(current) ? normalizeSignTags(current) : normalizeSignTag(current)
+      const empty = Array.isArray(normalized) ? normalized.length === 0 : normalized === ''
+      if (empty) continue // 空的標籤關卡是設定錯誤，不在這裡猜它的意思
+      const unchanged = Array.isArray(current)
+        ? normalized.length === current.length && normalized.every((tag, index) => tag === current[index])
+        : normalized === current
+      if (unchanged) continue
+      const result = await ApprovalWorkflow.updateOne(
+        { _id: workflow._id },
+        { $set: { 'steps.$[step].approver_value': normalized } },
+        { arrayFilters: [{ 'step.approver_type': 'tag', 'step.approver_value': current }], timestamps: false },
+      )
+      if (result?.modifiedCount !== 0) healed += 1
+    }
+  }
+  return healed
 }
 
 export async function listAttendanceImportEmployeeOptions(req, res) {
@@ -1262,7 +1297,7 @@ export async function updateEmployee(req, res) {
     }
 
     // 建立 $set/$unset patch
-    const { $set, $unset } = buildEmployeePatch(body, employee)
+    const { $set, $unset, $inc: patchInc } = buildEmployeePatch(body, employee)
 
     const nextRole = $set.role ?? employee.role
     const nextStatus = $set.status ?? employee.status
@@ -1293,9 +1328,17 @@ export async function updateEmployee(req, res) {
     const sessionFieldsChanged = ['role', 'status', 'accountEnabled'].some(
       (field) => isDefined($set[field]) && $set[field] !== employee[field]
     )
-    if (sessionFieldsChanged) update.$inc = { authVersion: 1 }
+    const increments = { ...(patchInc || {}), ...(sessionFieldsChanged ? { authVersion: 1 } : {}) }
+    if (Object.keys(increments).length) update.$inc = increments
     if (Object.keys(update).length) await Employee.updateOne({ _id: employee._id }, update)
     photoPersisted = true
+    // 已使用天數的差額更正：讀取之後若又有人調低，不可變成負數（與 refundAnnualLeave 相同的保險）
+    if (patchInc?.['annualLeave.usedDays'] < 0) {
+      await Employee.updateOne(
+        { _id: employee._id, 'annualLeave.usedDays': { $lt: 0 } },
+        { $set: { 'annualLeave.usedDays': 0 } },
+      )
+    }
 
     // 取回最新
     const updated = await Employee.findById(employee._id)
@@ -1469,9 +1512,9 @@ export async function computeDeleteImpact(ids, docs = new Map()) {
     )
     const lost = held.filter((tag) => !stillHeld.has(tag))
     if (!lost.length) return
-    const workflows = await ApprovalWorkflow.find({
-      steps: { $elemMatch: { approver_type: 'tag', approver_value: { $in: lost } } },
-    })
+    // 流程關卡裡存的標籤可能是還沒整理過的舊資料（尾端空白、全形字），不能用資料庫的精確比對（$in）：
+    // 和 listSignTags 一樣載入所有有標籤關卡的流程，在記憶體裡正規化後再比對（執行時解析簽核人也是兩邊都正規化）
+    const workflows = await ApprovalWorkflow.find({ 'steps.approver_type': 'tag' })
       .select('steps.approver_type steps.approver_value')
       .lean()
     const usage = new Map()

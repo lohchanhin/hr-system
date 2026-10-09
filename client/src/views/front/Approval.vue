@@ -1152,18 +1152,19 @@ async function fetchInbox(page = inboxPage.page) {
 }
 
 /* 審核動作 Dialog */
-const actionDlg = reactive({ visible: false, loading: false, decision: 'approve', comment: '', target: null, override: false })
+const actionDlg = reactive({ visible: false, loading: false, decision: 'approve', comment: '', target: null, override: false, fromDetail: false })
 const actionTitle = computed(() => {
   const verb = actionDlg.decision === 'approve' ? '核可' : (actionDlg.decision === 'reject' ? '否決' : '退簽')
   return actionDlg.override ? `管理員代為${verb}` : verb
 })
 
-function openAction(row, decision, { override = false } = {}) {
+function openAction(row, decision, { override = false, fromDetail = false } = {}) {
   actionDlg.visible = true
   actionDlg.decision = decision
   actionDlg.comment = ''
   actionDlg.target = row
   actionDlg.override = override
+  actionDlg.fromDetail = fromDetail
 }
 
 // 管理員可代為處理任何進行中的單（伺服器會在單據上記錄 admin_override）
@@ -1172,7 +1173,7 @@ function overrideFromDetail(decision) {
   const target = detail.doc
   if (!target) return
   detail.visible = false
-  openAction(target, decision, { override: true })
+  openAction(target, decision, { override: true, fromDetail: true })
 }
 
 // 歷史清單：自己簽過的單顯示自己的決定；管理員檢視他人的單則顯示單據目前狀態
@@ -1193,6 +1194,15 @@ async function refreshAfterAction() {
   if (historyLoaded.value) await fetchHistory()
 }
 
+// 畫面上這張單目前停在第幾關。送出時一起帶給伺服器：別的分頁（或別的管理員）已經處理過這一關，
+// 伺服器會回 409 CONFLICT，而不是把這個動作默默套用到下一關
+function displayedStepOrder(row) {
+  const index = row?.current_step_index
+  if (!Number.isInteger(index) || index < 0) return undefined
+  const order = Number(row?.steps?.[index]?.step_order)
+  return Number.isInteger(order) && order >= 1 ? order : index + 1
+}
+
 async function doAction() {
   if (!actionDlg.target || actionDlg.loading) return
   // 退簽沒寫原因，申請人就不知道要改什麼，送出前再確認一次
@@ -1202,12 +1212,20 @@ async function doAction() {
     typeof window !== 'undefined' &&
     !window.confirm('尚未填寫退簽原因，申請人將不知道要修改什麼，仍要退簽嗎？')
   ) return
+  const target = actionDlg.target
+  const fromDetail = actionDlg.fromDetail
   actionDlg.loading = true
   try {
-    const res = await apiFetch(`/api/approvals/${actionDlg.target._id}/act`, {
+    const body = { decision: actionDlg.decision, comment: actionDlg.comment }
+    const stepOrder = displayedStepOrder(target)
+    if (stepOrder !== undefined) body.step_order = stepOrder
+    // 只有「管理員代為處理」的對話框才明確要求代簽；一般核可 / 否決 / 退簽不帶，
+    // 伺服器才分得出重複送出（連按兩次、另一個分頁）和管理員刻意代簽
+    if (actionDlg.override) body.override = true
+    const res = await apiFetch(`/api/approvals/${target._id}/act`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ decision: actionDlg.decision, comment: actionDlg.comment })
+      body: JSON.stringify(body)
     })
     if (!res.ok) throw await readApiError(res)
     const result = await res.json().catch(() => ({}))
@@ -1219,6 +1237,8 @@ async function doAction() {
     // 單子已被別人處理 / 不存在時關閉對話框，並重新整理清單
     if (isStaleStatus(info)) actionDlg.visible = false
     await refreshAfterAction()
+    // 從明細按「代為處理」遇到畫面過期（409）：重新打開明細，讓管理員看到單據現在的關卡再決定
+    if (fromDetail && info.status === 409) await openDetail(target._id)
     showFailure('動作失敗', info)
   } finally {
     actionDlg.loading = false

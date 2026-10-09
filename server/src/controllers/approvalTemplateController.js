@@ -203,7 +203,7 @@ export async function createFormTemplate(req, res) {
     const name = typeof req.body?.name === 'string' ? req.body.name.trim() : ''
     if (!name) return res.status(400).json({ error: '請輸入表單名稱' })
     const semantic = parseSemanticTypeInput(semanticType)
-    if (!semantic.valid) return res.status(400).json({ error: 'invalid semanticType' })
+    if (!semantic.valid) return res.status(400).json({ error: '表單性質不正確' })
     doc = await FormTemplate.create({
       name, category, description, owner_org_id,
       semanticType: semantic.value || inferSemanticType(name),
@@ -244,7 +244,7 @@ export async function updateFormTemplate(req, res) {
   try {
     const body = req.body || {}
     const semantic = parseSemanticTypeInput(body.semanticType)
-    if (!semantic.valid) return res.status(400).json({ error: 'invalid semanticType' })
+    if (!semantic.valid) return res.status(400).json({ error: '表單性質不正確' })
 
     // 只更新有帶的欄位；名稱前後空白會去掉，不能改成空白
     const update = {}
@@ -325,7 +325,7 @@ export async function addField(req, res) {
     const label = typeof req.body?.label === 'string' ? req.body.label.trim() : ''
     if (!label || !type_1) return res.status(400).json({ error: '請填寫欄位名稱並選擇欄位型別' })
     const fieldKey = normalizeFieldKeyInput(req.body.field_key)
-    if (!fieldKey.valid) return res.status(400).json({ error: 'invalid field_key' })
+    if (!fieldKey.valid) return res.status(400).json({ error: '欄位代碼格式不正確' })
     const doc = await FormField.create({
       form: form._id, label, type_1, type_2, required: !!required, options, placeholder, order: order ?? 0, is_active: is_active !== false,
       ...(fieldKey.provided ? { field_key: fieldKey.value } : {}),
@@ -341,7 +341,7 @@ export async function updateField(req, res) {
   try {
     const body = req.body || {}
     const fieldKey = normalizeFieldKeyInput(body.field_key)
-    if (!fieldKey.valid) return res.status(400).json({ error: 'invalid field_key' })
+    if (!fieldKey.valid) return res.status(400).json({ error: '欄位代碼格式不正確' })
 
     // 只更新有帶的欄位；欄位名稱不能改成空白
     const update = {}

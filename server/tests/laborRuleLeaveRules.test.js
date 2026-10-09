@@ -639,3 +639,273 @@ describe('dates are read in Taiwan time', () => {
     });
   });
 });
+
+// 加班單的開始 / 結束 / 事由欄位被刪除（有申請單的欄位只是停用）又重建同標籤的新欄位後，
+// 舊的已核准加班仍在舊欄位 ID 底下：每日、每月、連續三個月的加班上限不能把它們漏掉
+describe('approved overtime whose answers sit under replaced (deactivated) fields still counts toward the caps', () => {
+  const overtimeForm = { _id: 'ot-form', name: '加班申請', semanticType: 'overtime' };
+  const replacedFields = [
+    { _id: 'old-start', label: '開始時間', type_1: 'datetime', is_active: false, order: 1 },
+    { _id: 'old-end', label: '結束時間', type_1: 'datetime', is_active: false, order: 2 },
+    { _id: 'old-reason', label: '事由', type_1: 'text', is_active: false, order: 3 },
+    { _id: 'start', label: '開始時間', type_1: 'datetime', required: true, order: 4 },
+    { _id: 'end', label: '結束時間', type_1: 'datetime', required: true, order: 5 },
+    { _id: 'reason', label: '事由', type_1: 'text', order: 6 },
+  ];
+  // 台灣 11/04 19:00-22:00（3 小時）已核准，答案在舊欄位
+  const approvedOld = {
+    _id: 'approved-old',
+    form_data: { 'old-start': '2026-11-04T11:00:00.000Z', 'old-end': '2026-11-04T14:00:00.000Z', 'old-reason': '趕工' },
+  };
+  const workday = () => mockShiftSchedule.findOne.mockReturnValue(leanQuery({
+    _id: 'sch', employee: 'emp1', date: new Date('2026-11-04T00:00:00.000Z'), shiftId: 'D',
+  }));
+  const fileMore = (formData) => assertOvertimeApprovalCompliance({
+    form: overtimeForm,
+    applicantEmployeeId: 'emp1',
+    formData,
+  });
+
+  beforeEach(() => {
+    mockFormField.find.mockReturnValue(sortableLeanQuery(replacedFields));
+    workday();
+  });
+
+  it('control: a further 2 hours the same day is refused when the approved overtime sits under the active fields', async () => {
+    mockApprovalRequest.find.mockReturnValue(sortableLeanQuery([{
+      _id: 'approved-new',
+      form_data: { start: '2026-11-04T11:00:00.000Z', end: '2026-11-04T14:00:00.000Z' },
+    }]));
+
+    await expect(fileMore({ start: '2026-11-04T14:00:00.000Z', end: '2026-11-04T16:00:00.000Z' })).rejects.toMatchObject({
+      violations: [expect.objectContaining({ rule: 'daily-overtime-hours', minutes: 300 })],
+    });
+  });
+
+  it('refuses the same further 2 hours when the approved overtime sits under the deactivated fields (daily limit)', async () => {
+    mockApprovalRequest.find.mockReturnValue(sortableLeanQuery([approvedOld]));
+
+    await expect(fileMore({ start: '2026-11-04T14:00:00.000Z', end: '2026-11-04T16:00:00.000Z' })).rejects.toMatchObject({
+      violations: [expect.objectContaining({ rule: 'daily-overtime-hours', date: '2026-11-04', minutes: 300 })],
+    });
+  });
+
+  it('counts the old-field overtime toward the monthly limit too', async () => {
+    // 46 小時上限：先放一筆舊欄位的 45 小時（跨多天，不計入單日）
+    mockApprovalRequest.find.mockReturnValue(sortableLeanQuery([{
+      _id: 'approved-month',
+      form_data: { 'old-start': '2026-11-01T00:00:00.000Z', 'old-end': '2026-11-02T21:00:00.000Z' },
+    }]));
+
+    await expect(fileMore({ start: '2026-11-04T11:00:00.000Z', end: '2026-11-04T13:00:00.000Z' })).rejects.toMatchObject({
+      violations: [expect.objectContaining({ rule: 'monthly-overtime-hours' })],
+    });
+  });
+
+  it('counts the old-field overtime toward the three-month limit when extended overtime is enabled', async () => {
+    mockAttendanceSetting.findOne.mockReturnValue(leanQuery({
+      ...attendanceSetting,
+      laborRules: { extendedOvertimeEnabled: true, overtimeApprovalReference: '文號', monthlyOvertimeHours: 54, threeMonthOvertimeHours: 138 },
+    }));
+    // 前兩個月各 54 小時（舊欄位），本月 30 小時之後再申請 2 小時會超過 138 小時
+    mockApprovalRequest.find.mockReturnValue(sortableLeanQuery([
+      { _id: 'a1', form_data: { 'old-start': '2026-09-01T00:00:00.000Z', 'old-end': '2026-09-03T06:00:00.000Z' } },
+      { _id: 'a2', form_data: { 'old-start': '2026-10-01T00:00:00.000Z', 'old-end': '2026-10-03T06:00:00.000Z' } },
+      { _id: 'a3', form_data: { 'old-start': '2026-11-01T00:00:00.000Z', 'old-end': '2026-11-02T06:00:00.000Z' } },
+    ]));
+
+    await expect(fileMore({ start: '2026-11-04T11:00:00.000Z', end: '2026-11-04T13:00:00.000Z' })).rejects.toMatchObject({
+      violations: expect.arrayContaining([expect.objectContaining({ rule: 'three-month-overtime-hours' })]),
+    });
+  });
+
+  it('uses the first field that holds an answer for each request (old, new or mixed) and ignores requests with no answer', async () => {
+    mockApprovalRequest.find.mockReturnValue(sortableLeanQuery([
+      approvedOld,
+      { _id: 'approved-mixed', form_data: { 'old-start': '2026-11-05T11:00:00.000Z', end: '2026-11-05T14:00:00.000Z' } },
+      { _id: 'approved-empty', form_data: { reason: '沒有時間' } },
+    ]));
+
+    // 11/04 已有 3 小時（舊欄位）；11/05 的 3 小時一半在舊、一半在新，不影響 11/04
+    await expect(fileMore({ start: '2026-11-04T14:00:00.000Z', end: '2026-11-04T15:00:00.000Z' })).resolves.toEqual({ ok: true, violations: [] });
+    await expect(fileMore({ start: '2026-11-04T14:00:00.000Z', end: '2026-11-04T16:00:00.000Z' })).rejects.toMatchObject({
+      violations: [expect.objectContaining({ rule: 'daily-overtime-hours', minutes: 300 })],
+    });
+  });
+
+  it('re-checking an already filed request at approval reads its answers under the deactivated fields too', async () => {
+    mockApprovalRequest.find.mockReturnValue(sortableLeanQuery([]));
+    const pending = { 'old-start': '2026-11-04T11:00:00.000Z', 'old-end': '2026-11-04T14:00:00.000Z', 'old-reason': '趕工' };
+
+    // 新送件只看啟用中的欄位：舊欄位的答案讀不到
+    await expect(fileMore(pending)).rejects.toMatchObject({ message: '加班申請時間無法判讀' });
+    // 核准時重新檢核（includeInactive）：欄位在送出後被停用取代，單仍可以核准
+    await expect(assertOvertimeApprovalCompliance({
+      form: overtimeForm,
+      applicantEmployeeId: 'emp1',
+      formData: pending,
+      includeInactive: true,
+    })).resolves.toEqual({ ok: true, violations: [] });
+  });
+
+  it('parseOvertimePayload keeps the active-only behaviour for the request being filed, and reads the old fields only on request', () => {
+    const oldOnly = { 'old-start': '2026-11-04T11:00:00.000Z', 'old-end': '2026-11-04T14:00:00.000Z' };
+
+    expect(__testUtils.parseOvertimePayload(oldOnly, replacedFields)).toBeNull();
+    expect(__testUtils.parseOvertimePayload(oldOnly, replacedFields, { includeInactive: true }).minutes).toBe(180);
+    // 啟用中的欄位有填就優先用它
+    expect(__testUtils.parseOvertimePayload(
+      { ...oldOnly, start: '2026-11-04T11:00:00.000Z', end: '2026-11-04T12:00:00.000Z' },
+      replacedFields,
+      { includeInactive: true },
+    ).minutes).toBe(60);
+  });
+
+  it('reads a date + hours overtime and the 跨日 flag from deactivated fields of an approved request', () => {
+    const fields = [
+      { _id: 'o-date', label: '加班日期', type_1: 'date', is_active: false },
+      { _id: 'o-hours', label: '加班時數', type_1: 'number', is_active: false },
+      { _id: 'date', label: '加班日期', type_1: 'date' },
+      { _id: 'hours', label: '加班時數', type_1: 'number' },
+      { _id: 'o-start', label: '開始時間', type_1: 'datetime', is_active: false },
+      { _id: 'o-end', label: '結束時間', type_1: 'datetime', is_active: false },
+      { _id: 'o-cross', label: '是否跨日', type_1: 'checkbox', is_active: false },
+    ];
+
+    const byHours = __testUtils.parseOvertimePayload({ 'o-date': '2026-11-09T16:00:00.000Z', 'o-hours': 2 }, fields, { includeInactive: true });
+    expect(byHours.minutes).toBe(120);
+    expect(byHours.start.toISOString()).toBe('2026-11-09T16:00:00.000Z');
+
+    const crossDay = __testUtils.parseOvertimePayload(
+      { 'o-start': '2026-11-04T14:00:00.000Z', 'o-end': '2026-11-04T01:00:00.000Z', 'o-cross': true },
+      fields,
+      { includeInactive: true },
+    );
+    expect(crossDay.minutes).toBe(11 * 60);
+  });
+});
+
+// 請假的開始 / 結束欄位被停用或換成同標籤的新欄位後，已核准（或簽核中）的舊假單仍在舊欄位 ID 底下：
+// 重疊檢查與排班規則（連續上班、假日）都要看得到它們，和假勤日曆、薪資一致
+describe('leave overlap and the schedule leave days read the replaced (deactivated) start / end fields', () => {
+  const leaveForm = { _id: 'leave-form', name: '請假', semanticType: 'leave' };
+  const fields = [
+    { _id: 'old-type', label: '假別', type_1: 'text', is_active: false, order: 1 },
+    { _id: 'old-start', label: '開始時間', type_1: 'datetime', is_active: false, order: 2 },
+    { _id: 'old-end', label: '結束時間', type_1: 'datetime', is_active: false, order: 3 },
+    { _id: 'type', label: '假別', type_1: 'text', required: true, order: 4 },
+    { _id: 'start', label: '開始時間', type_1: 'datetime', required: true, order: 5 },
+    { _id: 'end', label: '結束時間', type_1: 'datetime', required: true, order: 6 },
+  ];
+  const INFO = {
+    formId: 'leave-form',
+    startId: 'start',
+    endId: 'end',
+    typeId: 'type',
+    startIds: ['start', 'old-start'],
+    endIds: ['end', 'old-end'],
+    typeIds: ['type', 'old-type'],
+  };
+
+  beforeEach(() => {
+    mockFormField.find.mockReturnValue(sortableLeanQuery(fields));
+    mockGetAllLeaveFieldInfos.mockResolvedValue([INFO]);
+  });
+
+  describe('overlap check when filing', () => {
+    // 台灣 11/10 全天（UTC 11/09 16:00 起）
+    const fileOnTenth = () => violationsOf({
+      form: leaveForm,
+      formData: { type: '病假', start: '2026-11-09T16:00:00.000Z', end: '2026-11-10T10:00:00.000Z' },
+      applicantEmployeeId: 'emp1',
+      checkLeaveConflicts: true,
+    });
+
+    it('refuses a filing that overlaps an approved leave whose dates sit under the deactivated fields', async () => {
+      // 已核准的事假 11/09-11/10，答案在舊欄位
+      mockApprovalRequest.find.mockImplementation(() => selectableLeanQuery([{
+        _id: 'old-leave',
+        status: 'approved',
+        form_data: { 'old-start': '2026-11-08T16:00:00.000Z', 'old-end': '2026-11-10T10:00:00.000Z' },
+      }]));
+
+      const violations = await fileOnTenth();
+
+      expect(violations).toEqual([expect.objectContaining({ rule: 'leave-overlap', status: 'approved' })]);
+    });
+
+    it('also sees a pending request that was filed under the old fields', async () => {
+      mockApprovalRequest.find.mockImplementation(() => selectableLeanQuery([{
+        _id: 'old-pending',
+        status: 'pending',
+        form_data: { 'old-start': '2026-11-09T16:00:00.000Z', 'old-end': '2026-11-10T10:00:00.000Z' },
+      }]));
+
+      expect(await fileOnTenth()).toEqual([expect.objectContaining({ rule: 'leave-overlap', status: 'pending' })]);
+    });
+
+    it('selects every candidate start / end field of the form, not just the active ones', async () => {
+      const query = selectableLeanQuery([]);
+      mockApprovalRequest.find.mockImplementation(() => query);
+
+      await fileOnTenth();
+
+      expect(query.select).toHaveBeenCalledWith('status form_data.start form_data.old-start form_data.end form_data.old-end');
+    });
+
+    it('takes the first candidate that holds a value per request (mixed old and new fields)', async () => {
+      mockApprovalRequest.find.mockImplementation(() => selectableLeanQuery([
+        // 開始在舊欄位、結束在新欄位
+        { _id: 'mixed', status: 'approved', form_data: { 'old-start': '2026-11-09T16:00:00.000Z', end: '2026-11-10T10:00:00.000Z' } },
+      ]));
+
+      expect(await fileOnTenth()).toEqual([expect.objectContaining({ rule: 'leave-overlap' })]);
+    });
+
+    it('does not report an overlap with a request that does not touch the day, whichever field set holds it', async () => {
+      mockApprovalRequest.find.mockImplementation(() => selectableLeanQuery([
+        { _id: 'earlier', status: 'approved', form_data: { 'old-start': '2026-11-01T16:00:00.000Z', 'old-end': '2026-11-02T10:00:00.000Z' } },
+        { _id: 'later', status: 'approved', form_data: { start: '2026-11-19T16:00:00.000Z', end: '2026-11-20T10:00:00.000Z' } },
+      ]));
+
+      expect(await fileOnTenth()).toEqual([]);
+    });
+  });
+
+  describe('schedule rules (approved leave days)', () => {
+    it('counts an approved leave stored under the deactivated fields toward the six-day limit', async () => {
+      // 台灣 6/19 全天的核准假單，答案在舊欄位
+      mockApprovalRequest.find.mockReturnValue(sortableLeanQuery([{
+        applicant_employee: 'emp1',
+        form_data: { 'old-start': '2026-06-18T16:00:00.000Z', 'old-end': '2026-06-19T10:00:00.000Z' },
+      }]));
+      // 6/13-6/18 六天上班，6/19 請假：第七天
+      mockShiftSchedule.find.mockReturnValue(sortableLeanQuery(
+        ['13', '14', '15', '16', '17', '18'].map((day) => ({
+          _id: `s${day}`, employee: 'emp1', date: new Date(`2026-06-${day}T00:00:00.000Z`), shiftId: 'D',
+        })),
+      ));
+
+      await expect(assertScheduleRuleCompliance({
+        candidateSchedules: [{ employee: 'emp1', date: new Date('2026-06-13T00:00:00.000Z'), shiftId: 'D' }],
+      })).rejects.toMatchObject({
+        violations: [expect.objectContaining({
+          rule: 'continuous-work-days',
+          dates: ['2026-06-13', '2026-06-14', '2026-06-15', '2026-06-16', '2026-06-17', '2026-06-18', '2026-06-19'],
+        })],
+      });
+    });
+
+    it('selects the candidate fields so the old answers are fetched', async () => {
+      const query = { select: jest.fn(() => query), lean: jest.fn().mockResolvedValue([]) };
+      mockApprovalRequest.find.mockReturnValue(query);
+      mockShiftSchedule.find.mockReturnValue(sortableLeanQuery([]));
+
+      await assertScheduleRuleCompliance({
+        candidateSchedules: [{ employee: 'emp1', date: new Date('2026-06-13T00:00:00.000Z'), shiftId: 'D' }],
+      });
+
+      expect(query.select).toHaveBeenCalledWith('applicant_employee form_data.start form_data.old-start form_data.end form_data.old-end');
+    });
+  });
+});

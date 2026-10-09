@@ -3064,6 +3064,8 @@ const employeeDialogVisible = ref(false)
 const photoUploading = ref(false)
 let editEmployeeIndex = null
 let editEmployeeId = ''
+// 編輯視窗打開當下的特休「已使用天數」與已套用的簽核單編號（新增員工時為 null）
+let annualLeaveSnapshot = null
 let photoLoadGeneration = 0
 const employeePhotoObjectUrls = new Set()
 
@@ -4813,6 +4815,38 @@ async function confirmReferenceMappings() {
   }
 }
 
+/* 特休「已使用天數」會在簽核核准時由系統扣減（並記下已套用的簽核單）。
+   編輯視窗開著的時候才核准的扣減，不能被視窗裡的舊數字蓋回去：
+   打開視窗時記下當下的值，儲存時沒被管理員改過就不送，改過才送，並附上打開時的值讓伺服器只套用差額。 */
+function snapshotAnnualLeave(annualLeave) {
+  const source = annualLeave && typeof annualLeave === 'object' ? annualLeave : {}
+  return {
+    usedDays: toNumberOrNull(source.usedDays) ?? 0,
+    appliedApprovalRequestIds: Array.isArray(source.appliedApprovalRequestIds)
+      ? source.appliedApprovalRequestIds.map(id => String(id))
+      : []
+  }
+}
+
+function buildAnnualLeaveForUpdate(annualLeave, snapshot) {
+  const result = { ...(annualLeave && typeof annualLeave === 'object' ? annualLeave : {}) }
+  delete result.usedDaysBase
+  const usedDays = toNumberOrNull(result.usedDays) ?? 0
+  if (usedDays === snapshot.usedDays) {
+    delete result.usedDays
+  } else {
+    result.usedDays = usedDays
+    result.usedDaysBase = snapshot.usedDays
+  }
+  const applied = Array.isArray(result.appliedApprovalRequestIds)
+    ? result.appliedApprovalRequestIds.map(id => String(id))
+    : []
+  if (JSON.stringify(applied) === JSON.stringify(snapshot.appliedApprovalRequestIds)) {
+    delete result.appliedApprovalRequestIds
+  }
+  return result
+}
+
 async function openEmployeeDialog(employeeId = null) {
   ensureDictionaryFallbacks()
   if (employeeId !== null) {
@@ -4843,6 +4877,7 @@ async function openEmployeeDialog(employeeId = null) {
     currentSupervisorInfo.value = emp.supervisorInfo ?? null
     // 以 emptyEmployee 為基底，可避免漏欄位
     employeeForm.value = { ...structuredClone(emptyEmployee), ...emp, password: '', photoList: [] }
+    annualLeaveSnapshot = snapshotAnnualLeave(employeeForm.value.annualLeave)
     delete employeeForm.value.supervisorInfo
     employeeForm.value.title = extractOptionValue(employeeForm.value.title)
     employeeForm.value.practiceTitle = extractOptionValue(employeeForm.value.practiceTitle)
@@ -4916,6 +4951,7 @@ async function openEmployeeDialog(employeeId = null) {
     editEmployeeIndex = null
     isEditingEmployee.value = false
     editEmployeeId = ''
+    annualLeaveSnapshot = null
     currentSupervisorInfo.value = null
     employeeDialogTab.value = 'account'
     employeeForm.value = { ...structuredClone(emptyEmployee) }
@@ -5008,6 +5044,10 @@ async function saveEmployee() {
   // 編輯既有員工時密碼是選填：留空代表沿用原密碼，絕對不能把空白密碼送出去
   if (editEmployeeIndex !== null && !String(form.password ?? '').trim()) {
     delete payload.password
+  }
+  // 編輯時「已使用天數」沒被管理員改過就不送，改過才送（並附上打開視窗時的值，伺服器只套用差額）
+  if (editEmployeeIndex !== null && annualLeaveSnapshot && form.annualLeave) {
+    payload.annualLeave = buildAnnualLeaveForUpdate(form.annualLeave, annualLeaveSnapshot)
   }
   payload.title = extractOptionValue(form.title)
   payload.practiceTitle = extractOptionValue(form.practiceTitle)

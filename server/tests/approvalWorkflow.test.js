@@ -1132,6 +1132,134 @@ describe('actOnApproval administrator override', () => {
     expect(res.status).toHaveBeenCalledWith(409)
     expect(doc.save).not.toHaveBeenCalled()
   })
+
+  it('does not even give an explicit override flag to a non-admin who is not on the step', async () => {
+    const doc = makeRequestDoc({ steps: [{ approvers: [[HR1, 'pending']] }, { approvers: [[SUP, 'pending']] }] })
+    const res = await act(doc, { user: supUser(), body: { decision: 'approve', override: true } })
+    expect(res.status).toHaveBeenCalledWith(409)
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ code: 'NOT_STEP_APPROVER' }))
+    expect(doc.save).not.toHaveBeenCalled()
+  })
+
+  it('keeps the override of an admin who is not named on the step, with or without the flag', async () => {
+    const plain = makeRequestDoc({ steps: [{ approvers: [[HR1, 'pending'], [HR2, 'pending']] }, { approvers: [[LEAD1, 'pending']] }] })
+    await act(plain, { user: adminUser(), body: { decision: 'approve' } })
+    expect(plain.logs.map(log => log.action)).toContain('admin_override')
+    expect(decisions(plain, 0)).toEqual(['skipped', 'skipped'])
+
+    const flagged = makeRequestDoc({ steps: [{ approvers: [[HR1, 'pending'], [HR2, 'pending']] }, { approvers: [[LEAD1, 'pending']] }] })
+    await act(flagged, { user: adminUser(), body: { decision: 'approve', override: true } })
+    expect(flagged.logs.map(log => log.action)).toContain('admin_override')
+    expect(decisions(flagged, 0)).toEqual(['skipped', 'skipped'])
+  })
+})
+
+// 管理員同時是這一關的簽核人：已經簽過再送一次（雙擊、另一個分頁）不能默默變成代為處理而跳過其他必簽的人
+describe('actOnApproval - an administrator who is also a named approver and already decided', () => {
+  beforeEach(() => stubForm())
+
+  const stepWithAdmin = (adminDecision) => [
+    { approvers: [[ADMIN, adminDecision], [HR1, 'pending'], [HR2, 'pending']] },
+    { approvers: [[LEAD1, 'pending']] },
+  ]
+  const ALREADY_DECIDED = {
+    error: '您已經處理過這一關，請重新整理頁面',
+    code: 'ALREADY_DECIDED',
+  }
+
+  it.each(['approve', 'reject', 'return'])('answers the same ALREADY_DECIDED 409 for a repeated %s and changes nothing', async (decision) => {
+    const doc = makeRequestDoc({ steps: stepWithAdmin('approved') })
+    const res = await act(doc, { user: adminUser(), body: { decision } })
+
+    expect(res.status).toHaveBeenCalledWith(409)
+    expect(res.json).toHaveBeenCalledWith(ALREADY_DECIDED)
+    expect(doc.save).not.toHaveBeenCalled()
+    expect(decisions(doc, 0)).toEqual(['approved', 'pending', 'pending'])
+    expect(doc.current_step_index).toBe(0)
+    expect(doc.status).toBe('pending')
+    expect(doc.logs.filter(log => log.action === 'admin_override')).toEqual([])
+  })
+
+  it('treats the first approve as a normal one and the second as ALREADY_DECIDED (the other approvers stay required)', async () => {
+    const doc = makeRequestDoc({ steps: stepWithAdmin('pending') })
+
+    const first = await act(doc, { user: adminUser(), body: { decision: 'approve' } })
+    expect(first.status).not.toHaveBeenCalledWith(409)
+    expect(decisions(doc, 0)).toEqual(['approved', 'pending', 'pending'])
+    expect(doc.logs.map(log => log.action)).toEqual(['approve'])
+
+    const second = await act(doc, { user: adminUser(), body: { decision: 'approve' } })
+    expect(second.status).toHaveBeenCalledWith(409)
+    expect(second.json).toHaveBeenCalledWith(ALREADY_DECIDED)
+    expect(decisions(doc, 0)).toEqual(['approved', 'pending', 'pending'])
+    expect(doc.current_step_index).toBe(0)
+    expect(doc.logs.map(log => log.action)).toEqual(['approve'])
+  })
+
+  it('answers the skipped wording when the admin was skipped because someone else finished the step', async () => {
+    const doc = makeRequestDoc({ steps: [{ approvers: [[ADMIN, 'skipped'], [HR1, 'approved']], all_must_approve: false }] })
+    const res = await act(doc, { user: adminUser(), body: { decision: 'approve' } })
+
+    expect(res.status).toHaveBeenCalledWith(409)
+    expect(res.json).toHaveBeenCalledWith({ error: '這一關已由其他簽核人處理完成', code: 'ALREADY_DECIDED' })
+    expect(doc.save).not.toHaveBeenCalled()
+  })
+
+  it('lets the override dialog through when the body carries override: true (代為核可 skips the others and is logged)', async () => {
+    const doc = makeRequestDoc({ steps: stepWithAdmin('approved') })
+    const res = await act(doc, { user: adminUser(), body: { decision: 'approve', comment: '其餘人員出差，代為核可', override: true } })
+
+    expect(res.status).not.toHaveBeenCalledWith(409)
+    expect(decisions(doc, 0)).toEqual(['approved', 'skipped', 'skipped'])
+    expect(doc.current_step_index).toBe(1)
+    expect(doc.logs).toEqual(expect.arrayContaining([
+      expect.objectContaining({ action: 'admin_override', decision: 'approve', by_employee: ADMIN, step_order: 1 }),
+    ]))
+  })
+
+  it('lets an explicit override reject or return too, but only a literal true counts', async () => {
+    const rejected = makeRequestDoc({ steps: stepWithAdmin('approved') })
+    await act(rejected, { user: adminUser(), body: { decision: 'reject', override: true } })
+    expect(rejected.status).toBe('rejected')
+    expect(rejected.logs[0]).toEqual(expect.objectContaining({ action: 'admin_override', decision: 'reject' }))
+
+    const returned = makeRequestDoc({ steps: stepWithAdmin('approved') })
+    await act(returned, { user: adminUser(), body: { decision: 'return', override: true } })
+    expect(returned.status).toBe('returned')
+    expect(returned.logs[0]).toEqual(expect.objectContaining({ action: 'admin_override', decision: 'return' }))
+
+    for (const override of ['true', 1, 'yes', {}]) {
+      const doc = makeRequestDoc({ steps: stepWithAdmin('approved') })
+      const res = await act(doc, { user: adminUser(), body: { decision: 'approve', override } })
+      expect(res.status).toHaveBeenCalledWith(409)
+      expect(doc.save).not.toHaveBeenCalled()
+    }
+  })
+
+  it('does not turn a still-pending approver decision into an override just because the flag is sent', async () => {
+    const doc = makeRequestDoc({ steps: stepWithAdmin('pending') })
+    await act(doc, { user: adminUser(), body: { decision: 'approve', override: true } })
+
+    expect(decisions(doc, 0)).toEqual(['approved', 'pending', 'pending'])
+    expect(doc.logs.map(log => log.action)).toEqual(['approve'])
+  })
+
+  it('does not let a version-conflict retry replay the admin approve as an override', async () => {
+    // 兩個分頁同時按核可：兩邊都讀到 pending，第一個存檔成功，第二個存檔衝突、重新載入後看到自己已經簽過
+    const stale = makeRequestDoc({ steps: stepWithAdmin('pending') })
+    stale.save.mockRejectedValueOnce(versionError())
+    const reloaded = makeRequestDoc({ steps: stepWithAdmin('approved') })
+    mockApprovalRequest.findById.mockResolvedValueOnce(stale).mockResolvedValue(reloaded)
+
+    const res = makeRes()
+    await actOnApproval({ params: { id: REQ }, user: adminUser(), body: { decision: 'approve' } }, res)
+
+    expect(res.status).toHaveBeenCalledWith(409)
+    expect(res.json).toHaveBeenCalledWith(ALREADY_DECIDED)
+    expect(reloaded.save).not.toHaveBeenCalled()
+    expect(decisions(reloaded, 0)).toEqual(['approved', 'pending', 'pending'])
+    expect(reloaded.logs.filter(log => log.action === 'admin_override')).toEqual([])
+  })
 })
 
 describe('actOnApproval - annual leave on final approval', () => {
@@ -1721,5 +1849,101 @@ describe('annual leave days are counted like payroll and reports (a 4-hour leave
 
       expect(mockRefundAnnualLeave).toHaveBeenCalledWith(APPLICANT, 1, REQ)
     })
+  })
+})
+
+// 假單還在簽核中時，管理員把假別 / 日期欄位刪掉（有申請單的欄位只是停用）又建立同標籤的新欄位：
+// 答案仍在舊欄位 ID 底下，核准時的扣減、撤回時的返還都要逐張單據挑第一個有填值的欄位，不能漏掉
+describe('annual leave when the leave fields were replaced while the request was pending', () => {
+  const LEAVE_FORM = { _id: FORM, name: '請假', semanticType: 'leave', is_active: true }
+  const REPLACED_FIELDS = [
+    { _id: 'old-type', form: FORM, label: '假別', type_1: 'select', options: ['特休', '病假'], order: 1, is_active: false },
+    { _id: 'old-start', form: FORM, label: '開始時間', type_1: 'datetime', order: 2, is_active: false },
+    { _id: 'old-end', form: FORM, label: '結束時間', type_1: 'datetime', order: 3, is_active: false },
+    { _id: 'new-type', form: FORM, label: '假別', type_1: 'select', options: ['特休', '病假'], order: 4 },
+    { _id: 'new-start', form: FORM, label: '開始時間', type_1: 'datetime', order: 5 },
+    { _id: 'new-end', form: FORM, label: '結束時間', type_1: 'datetime', order: 6 },
+  ]
+
+  beforeEach(() => {
+    stubForm(LEAVE_FORM)
+    mockFormField.find.mockImplementation(() => ({ lean: async () => REPLACED_FIELDS }))
+  })
+
+  it('deducts a 2-day 特休 whose answers sit under the deactivated fields when it is approved', async () => {
+    mockDeductAnnualLeave.mockResolvedValue({})
+    const doc = makeRequestDoc({
+      form_data: { 'old-type': '特休', 'old-start': '2099-03-02', 'old-end': '2099-03-03' },
+      steps: [{ approvers: [[SUP, 'pending']] }],
+    })
+    const res = await act(doc, { user: supUser(), body: { decision: 'approve' } })
+
+    expect(res.status).not.toHaveBeenCalledWith(409)
+    expect(mockDeductAnnualLeave).toHaveBeenCalledTimes(1)
+    expect(mockDeductAnnualLeave).toHaveBeenCalledWith(APPLICANT, 2, REQ)
+    expect(doc.annual_leave).toEqual(expect.objectContaining({ state: 'deducted', days: 2 }))
+  })
+
+  it('reads each request from the field set that holds its answers (old fields, new fields, a mix)', async () => {
+    mockDeductAnnualLeave.mockResolvedValue({})
+    const answers = [
+      { 'old-type': '特休', 'old-start': '2099-03-02', 'old-end': '2099-03-03' }, // 全部在舊欄位
+      { 'new-type': '特休', 'new-start': '2099-04-06', 'new-end': '2099-04-06' }, // 全部在新欄位
+      { 'old-type': '特休', 'new-start': '2099-05-04', 'new-end': '2099-05-06' }, // 假別在舊、日期在新
+      { 'old-type': '病假', 'old-start': '2099-06-01', 'old-end': '2099-06-01' }, // 不是特休
+    ]
+    for (const formData of answers) {
+      const doc = makeRequestDoc({ form_data: formData, steps: [{ approvers: [[SUP, 'pending']] }] })
+      await act(doc, { user: supUser(), body: { decision: 'approve' } })
+    }
+
+    expect(mockDeductAnnualLeave.mock.calls.map(([, days]) => days)).toEqual([2, 1, 3])
+  })
+
+  it('prefers the active field when both the old and the new field hold an answer', async () => {
+    mockDeductAnnualLeave.mockResolvedValue({})
+    const doc = makeRequestDoc({
+      form_data: {
+        'old-type': '特休', 'old-start': '2099-03-02', 'old-end': '2099-03-05',
+        'new-type': '特休', 'new-start': '2099-03-02', 'new-end': '2099-03-02',
+      },
+      steps: [{ approvers: [[SUP, 'pending']] }],
+    })
+    await act(doc, { user: supUser(), body: { decision: 'approve' } })
+
+    expect(mockDeductAnnualLeave).toHaveBeenCalledWith(APPLICANT, 1, REQ)
+  })
+
+  it('lets the applicant withdraw an approved 特休 whose answers sit under the old fields, and refunds the deducted days', async () => {
+    mockRefundAnnualLeave.mockResolvedValue({ refunded: true, days: 2 })
+    const doc = makeRequestDoc({
+      status: 'approved',
+      form_data: { 'old-type': '特休', 'old-start': '2099-03-02', 'old-end': '2099-03-03' },
+      annual_leave: { days: 2, state: 'deducted' },
+    })
+    mockApprovalRequest.findById.mockResolvedValue(doc)
+    const res = makeRes()
+
+    await cancelApprovalRequest({ params: { id: REQ }, user: employeeUser(APPLICANT), body: {} }, res)
+
+    expect(res.status).not.toHaveBeenCalledWith(409)
+    expect(mockRefundAnnualLeave).toHaveBeenCalledWith(APPLICANT, 2, REQ)
+    expect(doc.status).toBe('canceled')
+  })
+
+  it('still knows the leave has started when the start date sits under the old field (the applicant cannot withdraw)', async () => {
+    const doc = makeRequestDoc({
+      status: 'approved',
+      form_data: { 'old-type': '特休', 'old-start': '2020-03-02', 'old-end': '2020-03-02' },
+      annual_leave: { days: 1, state: 'deducted' },
+    })
+    mockApprovalRequest.findById.mockResolvedValue(doc)
+    const res = makeRes()
+
+    await cancelApprovalRequest({ params: { id: REQ }, user: employeeUser(APPLICANT), body: {} }, res)
+
+    expect(res.status).toHaveBeenCalledWith(409)
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ code: 'LEAVE_STARTED' }))
+    expect(mockRefundAnnualLeave).not.toHaveBeenCalled()
   })
 })

@@ -15,6 +15,7 @@ import { TAIPEI_OFFSET_MS, dateKeyToUtcMidnight, toTaipeiDateKey } from '../util
 import { pickLeaveFields } from '../utils/leaveFieldLabels.js';
 import { isLeaveFormTemplate, isOvertimeFormTemplate } from '../utils/formSemantics.js';
 import { describeLeaveInterval, leaveIntervalsOverlap, parseLeaveInterval } from '../utils/leaveDuration.js';
+import { candidateSelectKeys, orderFieldCandidateIds, pickFieldValue, resolveCandidateIds } from '../utils/fieldCandidates.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // 簽核附件上傳的資料夾（與 approvalAttachmentUpload / approvalRequestController 相同）；單元測試會換成暫存資料夾
@@ -358,21 +359,31 @@ async function loadApprovedLeaveDaysMap(employeeIds, start, end) {
   // 預設的「請假」與客戶自建的請假表單並存時，每張請假表單各查一次，請假日合併計入
   const leaveForms = await getAllLeaveFieldInfos({ withTypeOptions: false });
 
-  for (const { formId, startId, endId } of leaveForms) {
+  for (const leaveForm of leaveForms) {
+    const { formId, startId, endId } = leaveForm;
     if (!formId || !startId || !endId) continue;
-    const query = ApprovalRequest.find({
+    // 開始、結束欄位被停用或換成同標籤的新欄位後，舊假單的答案還在舊欄位 ID 底下：
+    // 候選欄位全部取回，逐張假單用第一個有填值的（與假勤日曆 approvedLeaveCalendarService 相同）
+    const startIds = resolveCandidateIds(leaveForm.startIds, startId);
+    const endIds = resolveCandidateIds(leaveForm.endIds, endId);
+    let query = ApprovalRequest.find({
       form: formId,
       status: 'approved',
       applicant_employee: { $in: employeeIds },
     });
+    if (query && typeof query.select === 'function') {
+      query = query.select(['applicant_employee']
+        .concat(candidateSelectKeys(startIds, endIds).map((id) => `form_data.${id}`))
+        .join(' '));
+    }
     const approvals = query && typeof query.lean === 'function' ? await query.lean() : await query;
 
     for (const approval of approvals || []) {
       const employeeId = normalizeId(approval.applicant_employee);
       const bucket = leaveDaysMap.get(employeeId);
       if (!bucket) continue;
-      const leaveStart = formDay(approval.form_data?.[startId]);
-      const leaveEnd = formDay(approval.form_data?.[endId]);
+      const leaveStart = formDay(pickFieldValue(approval.form_data, startIds));
+      const leaveEnd = formDay(pickFieldValue(approval.form_data, endIds));
       if (!leaveStart || !leaveEnd || leaveEnd < leaveStart) continue;
 
       const clampedStart = leaveStart > start ? leaveStart : start;
@@ -644,20 +655,27 @@ const LEAVE_CONFLICT_STATUS_LABELS = { pending: '簽核中', approved: '已核�
 // 同一位員工已送出（簽核中）或已核准的假單裡，有沒有和這段時間重疊的；退回、駁回、取消的不算
 async function findConflictingLeave({ employeeId, interval, ignoreRequestId }) {
   const leaveForms = await getAllLeaveFieldInfos({ withTypeOptions: false });
-  for (const { formId, startId, endId } of leaveForms || []) {
+  for (const leaveForm of leaveForms || []) {
+    const { formId, startId, endId } = leaveForm;
     if (!formId || !startId || !endId) continue;
+    // 欄位被停用或換成同標籤的新欄位後，舊假單的答案還在舊欄位 ID 底下：取回所有候選欄位，
+    // 逐張假單用第一個有填值的（與假勤日曆 approvedLeaveCalendarService 相同）
+    const startIds = resolveCandidateIds(leaveForm.startIds, startId);
+    const endIds = resolveCandidateIds(leaveForm.endIds, endId);
     let query = ApprovalRequest.find({
       form: formId,
       status: { $in: ['pending', 'approved'] },
       applicant_employee: employeeId,
     });
     if (query && typeof query.select === 'function') {
-      query = query.select(`status form_data.${startId} form_data.${endId}`);
+      query = query.select(['status']
+        .concat(candidateSelectKeys(startIds, endIds).map((id) => `form_data.${id}`))
+        .join(' '));
     }
     const rows = query && typeof query.lean === 'function' ? await query.lean() : await query;
     for (const row of rows || []) {
       if (ignoreRequestId && normalizeId(row._id) === ignoreRequestId) continue;
-      const other = parseLeaveInterval(row.form_data?.[startId], row.form_data?.[endId]);
+      const other = parseLeaveInterval(pickFieldValue(row.form_data, startIds), pickFieldValue(row.form_data, endIds));
       if (leaveIntervalsOverlap(interval, other)) return { status: row.status, interval: other };
     }
   }
@@ -704,20 +722,44 @@ function boolValue(value) {
   return ['true', '1', 'yes', 'y', '是', '跨日'].includes(normalized);
 }
 
-function parseOvertimePayload(formData, rawFields) {
-  // 停用的欄位不會出現在填單畫面，同名的停用欄位不能蓋掉啟用中的欄位
-  const fields = (rawFields || []).filter((field) => field.is_active !== false);
-  const startField = findField(fields, [/開始.*(時間|日期)/, /start/]);
-  const endField = findField(fields, [/結束.*(時間|日期)/, /end/]);
-  const hoursField = findField(fields, [/加班.*時數/, /^時數$/, /hours?/]);
-  const dateField = findField(fields, [/加班.*日期/, /^日期$/, /date/]);
-  const crossDayField = findField(fields, [/跨日/]);
+// 加班單的欄位（開始、結束、時數、日期、跨日）各自的候選欄位。
+// 申請中的單據只看啟用中的欄位：停用的欄位不會出現在填單畫面，同名的停用欄位不能蓋掉啟用中的欄位。
+// includeInactive（讀已核准的舊單據用）：欄位被停用或換成同標籤的新欄位後，舊單據的答案還在舊欄位 ID 底下，
+// 所以同標籤的欄位都列為候選（啟用中的在前、停用的在後），每一張單據各自用第一個有填值的欄位。
+function overtimeFieldCandidates(rawFields, patterns, includeInactive) {
+  const fields = rawFields || [];
+  if (!includeInactive) {
+    const picked = findField(fields.filter((field) => field.is_active !== false), patterns);
+    return picked ? [picked] : [];
+  }
+  const byId = new Map(fields.map((field) => [normalizeId(field._id), field]));
+  const ordered = orderFieldCandidateIds(fields).map((id) => byId.get(id));
+  const picked = findField(ordered, patterns);
+  if (!picked) return [];
+  const label = normalizeLabel(picked.label);
+  return ordered.filter((field) => normalizeLabel(field.label) === label);
+}
 
-  const rawStart = extractFormValue(formData, startField);
-  const rawEnd = extractFormValue(formData, endField);
-  const rawHours = extractFormValue(formData, hoursField);
-  const rawDate = extractFormValue(formData, dateField);
-  const crossDay = boolValue(extractFormValue(formData, crossDayField));
+// 這張單據在候選欄位裡第一個有填值的值；都沒填回傳 undefined
+function pickCandidateFormValue(formData, candidates) {
+  for (const field of candidates) {
+    const value = extractFormValue(formData, field);
+    if (!isEmptyFormValue(value)) return value;
+  }
+  return undefined;
+}
+
+function parseOvertimePayload(formData, rawFields, { includeInactive = false } = {}) {
+  const pick = (patterns) => pickCandidateFormValue(
+    formData,
+    overtimeFieldCandidates(rawFields, patterns, includeInactive),
+  );
+
+  const rawStart = pick([/開始.*(時間|日期)/, /start/]);
+  const rawEnd = pick([/結束.*(時間|日期)/, /end/]);
+  const rawHours = pick([/加班.*時數/, /^時數$/, /hours?/]);
+  const rawDate = pick([/加班.*日期/, /^日期$/, /date/]);
+  const crossDay = boolValue(pick([/跨日/]));
 
   if (rawStart && rawEnd) {
     const start = new Date(rawStart);
@@ -743,8 +785,10 @@ function parseOvertimePayload(formData, rawFields) {
   return null;
 }
 
+// 已核准的加班單：答案可能在已停用（或換成同標籤新欄位前）的舊欄位底下，要把停用的欄位也列為候選，
+// 否則舊單據解析不出來，就會從每日、每月、連續三個月的加班上限累計裡消失
 function parseOvertimeApprovalMinutes(approval, fields) {
-  return parseOvertimePayload(approval?.form_data || {}, fields);
+  return parseOvertimePayload(approval?.form_data || {}, fields, { includeInactive: true });
 }
 
 async function loadScheduleForDate(employeeId, date) {
@@ -822,13 +866,16 @@ function validateOvertimeShiftGap({ employeeId, payload, schedule, schedules, sh
   return violations;
 }
 
-export async function assertOvertimeApprovalCompliance({ form, formData, applicantEmployeeId, fields: suppliedFields } = {}) {
+export async function assertOvertimeApprovalCompliance({
+  form, formData, applicantEmployeeId, fields: suppliedFields, includeInactive = false,
+} = {}) {
   if (!isOvertimeForm(form)) return { ok: true, violations: [] };
   const employeeId = normalizeId(applicantEmployeeId);
   if (!employeeId) return { ok: true, violations: [] };
 
   const fields = suppliedFields || await loadFormFields(form._id);
-  const payload = parseOvertimePayload(formData || {}, fields);
+  // 已送出的單（核准時重新檢核）可能填在後來被停用或取代的欄位下，要連停用的欄位一起讀
+  const payload = parseOvertimePayload(formData || {}, fields, { includeInactive });
   if (!payload || payload.minutes <= 0) {
     throw new LaborRuleValidationError('加班申請時間無法判讀', [
       makeViolation('overtime-time-range', '加班申請需填寫可判讀的開始/結束時間或日期/時數'),
@@ -972,6 +1019,7 @@ export async function assertApprovalRequestCompliance({
     formData,
     applicantEmployeeId,
     fields,
+    includeInactive: Boolean(ignoreRequestId),
   });
   return { ok: true, violations: [] };
 }

@@ -485,6 +485,25 @@ describe('daily wage with a partial-day paid leave on a worked day', () => {
     expect(data).toMatchObject({ paidLeaveHours: 24, baseSalary: 8000 })
   })
 
+  it('pays a whole month rostered on the 特 leave shift with approved 特休 (the workday cap counts leave-shift days)', async () => {
+    const leaveShifts = [{ _id: 'leave-shift', code: '特', name: '特休', semanticType: 'leave', startTime: '00:00', endTime: '00:00' }]
+    const dates = ['2026-12-01', '2026-12-02', '2026-12-03', '2026-12-04', '2026-12-05']
+    const leaveContext = (employee) => ({
+      employee,
+      attendanceSetting: { shifts: leaveShifts },
+      schedules: dates.map((iso) => ({ employee: 'emp1', date: day(iso), shiftId: 'leave-shift' })),
+      attendanceRecords: [],
+    })
+    mockGetAllLeaveFieldInfos.mockResolvedValue([CUSTOMER_FORM])
+    approvalsByForm({ 'customer-form': [customerLeave('特休假', '2026-12-01', '2026-12-05', { 'c-days': 5 })] })
+
+    const daily = await calculateCompleteWorkData('emp1', '2026-12-01', leaveContext(DAILY_2000))
+    expect(daily).toMatchObject({ workDays: 0, paidLeaveHours: 40, baseSalary: 10000 })
+
+    const hourly = await calculateCompleteWorkData('emp1', '2026-12-01', leaveContext(HOURLY_250))
+    expect(hourly).toMatchObject({ paidLeaveHours: 40, baseSalary: 10000 })
+  })
+
   it('converts the hours of old leave data without dates into days, as before', async () => {
     const data = await workData(DAILY_2000, [
       { createdAt: new Date('2026-09-10T03:00:00.000Z'), form_data: { 'c-type': '特休假', days: 1 } },
@@ -662,5 +681,180 @@ describe('overtime of requests answered under retired fields', () => {
     )
 
     expect(result.overtimeRecords[0]).toMatchObject({ date: '2026-10-20', hours: 1.5 })
+  })
+})
+
+// 日薪、時薪按排定的上班日給薪：請假範圍橫跨休息日、例假、國定假日（班表上不用上班的日子）時，那幾天不算請假也不給薪；
+// 月薪維持日曆日計算（結果不變）；特休餘額的天數是另一回事（日曆日，不在這裡）
+describe('daily / hourly pay: a leave range only pays the scheduled workdays', () => {
+  const day = (iso) => new Date(`${iso}T00:00:00.000Z`)
+  const shifts = [
+    { _id: 'day', code: 'D', name: '日班', semanticType: 'work', startTime: '09:00', endTime: '18:00', breakDuration: 60 },
+    { _id: 'rest', code: '休', name: '休息日', semanticType: 'rest_day', startTime: '00:00', endTime: '00:00' },
+    { _id: 'reg', code: '例', name: '例假', semanticType: 'regular_rest', startTime: '00:00', endTime: '00:00' },
+    { _id: 'holiday', code: '國', name: '國定假日', semanticType: 'holiday', startTime: '00:00', endTime: '00:00' },
+    { _id: 'leave', code: '特', name: '特休', semanticType: 'leave', startTime: '00:00', endTime: '00:00' },
+  ]
+  const DAILY_2000 = { _id: 'emp1', salaryAmount: 2000, salaryType: '日薪' }
+  const HOURLY_250 = { _id: 'emp1', salaryAmount: 250, salaryType: '時薪' }
+  const MONTHLY_30000 = { _id: 'emp1', salaryAmount: 30000, salaryType: '月薪' }
+  // 台灣 2026-09-04（五）09:00 到 2026-09-07（一）18:00 的特休，中間 9/5（六）休息日、9/6（日）例假
+  const FRI_TO_MON = customerLeave('特休假', '2026-09-04T01:00:00.000Z', '2026-09-07T10:00:00.000Z')
+  const weekend = [
+    { employee: 'emp1', date: day('2026-09-04'), shiftId: 'day' },
+    { employee: 'emp1', date: day('2026-09-05'), shiftId: 'rest' },
+    { employee: 'emp1', date: day('2026-09-06'), shiftId: 'reg' },
+    { employee: 'emp1', date: day('2026-09-07'), shiftId: 'day' },
+  ]
+
+  function workData(employee, leaveRows, schedules = weekend, setting = { shifts }) {
+    mockGetAllLeaveFieldInfos.mockResolvedValue([CUSTOMER_FORM])
+    approvalsByForm({ 'customer-form': leaveRows })
+    return calculateCompleteWorkData('emp1', '2026-09-01', { employee, attendanceSetting: setting, schedules, attendanceRecords: [] })
+  }
+
+  it('pays 2 workdays (4000) for a Fri 09:00 - Mon 18:00 特休 over a rest day and a regular rest day, with 16 leave hours', async () => {
+    const data = await workData(DAILY_2000, [FRI_TO_MON])
+
+    expect(data).toMatchObject({ workDays: 0, leaveHours: 16, paidLeaveHours: 16, unpaidLeaveHours: 0, baseSalary: 4000 })
+    expect(data.leaveRecords).toEqual([expect.objectContaining({ leaveType: '特休假', hours: 16, days: 2, startDate: '2026-09-04', endDate: '2026-09-07' })])
+  })
+
+  it('applies the same date filter to the paid hours of an hourly employee', async () => {
+    const data = await workData(HOURLY_250, [FRI_TO_MON])
+
+    expect(data).toMatchObject({ leaveHours: 16, paidLeaveHours: 16, baseSalary: 16 * 250 })
+  })
+
+  it('leaves the monthly employee unchanged (calendar days, nothing deducted for a paid leave)', async () => {
+    const paid = await workData(MONTHLY_30000, [FRI_TO_MON])
+    const unpaid = await workData(MONTHLY_30000, [customerLeave('事假', '2026-09-04T01:00:00.000Z', '2026-09-07T10:00:00.000Z')])
+
+    expect(paid).toMatchObject({ leaveHours: 32, paidLeaveHours: 32, leaveDeduction: 0, baseSalary: 30000 })
+    // 事假 32 小時 × 125 = 4000（月薪維持日曆日計算）
+    expect(unpaid).toMatchObject({ leaveHours: 32, personalLeaveHours: 32, leaveDeduction: 4000, baseSalary: 26000 })
+  })
+
+  it('drops national holidays inside the range too', async () => {
+    const data = await workData(DAILY_2000, [FRI_TO_MON], [
+      weekend[0],
+      { employee: 'emp1', date: day('2026-09-05'), shiftId: 'holiday' },
+      { employee: 'emp1', date: day('2026-09-06'), shiftId: 'holiday' },
+      weekend[3],
+    ])
+
+    expect(data).toMatchObject({ leaveHours: 16, baseSalary: 4000 })
+  })
+
+  it('keeps a day the schedule marks as a leave shift: the approved leave still pays that day', async () => {
+    const data = await workData(DAILY_2000, [FRI_TO_MON], [
+      ...['2026-09-01', '2026-09-02', '2026-09-03'].map((iso) => ({ employee: 'emp1', date: day(iso), shiftId: 'day' })),
+      { employee: 'emp1', date: day('2026-09-04'), shiftId: 'leave' },
+      weekend[1],
+      weekend[2],
+      weekend[3],
+    ])
+
+    // 9/4 班表排的是請假班別，有核准的特休就照給薪（9/4 與 9/7 兩天）；週六日的休息日、例假不算
+    expect(data).toMatchObject({ leaveHours: 16, paidLeaveHours: 16, baseSalary: 4000 })
+  })
+
+  it('counts days that have no schedule row at all, but never pays more days than the scheduled workdays', async () => {
+    // 只排了 9/4 與 9/7 兩個上班日，9/5、9/6 沒有班表：兩天沒有班表的日子照算（共 4 天），但上限是 2 個排定上班日
+    const data = await workData(DAILY_2000, [FRI_TO_MON], [weekend[0], weekend[3]])
+
+    expect(data.leaveHours).toBe(32)
+    expect(data.baseSalary).toBe(4000)
+  })
+
+  it('caps the paid hours of an hourly employee at the scheduled workdays too', async () => {
+    const data = await workData(HOURLY_250, [FRI_TO_MON], [weekend[0], weekend[3]])
+
+    expect(data.leaveHours).toBe(32)
+    expect(data.baseSalary).toBe(16 * 250)
+  })
+
+  it('does not pay a leave that only covers rest days (nothing left once the rest days are dropped)', async () => {
+    const data = await workData(DAILY_2000, [customerLeave('特休假', '2026-09-05', '2026-09-06', { 'c-days': 2 })])
+
+    expect(data).toMatchObject({ leaveHours: 0, paidLeaveHours: 0, baseSalary: 0 })
+    expect(data.leaveRecords).toEqual([])
+  })
+
+  it('moves the 天數 filled over the weekend onto the scheduled workdays (2 days stays 2 days, 4 calendar days pay 2)', async () => {
+    const two = await workData(DAILY_2000, [customerLeave('特休假', '2026-09-04', '2026-09-07', { 'c-days': 2 })])
+    const four = await workData(DAILY_2000, [customerLeave('特休假', '2026-09-04', '2026-09-07', { 'c-days': 4 })])
+
+    expect(two).toMatchObject({ leaveHours: 16, baseSalary: 4000 })
+    // 填 4 天橫跨週末：只有兩個上班日，每天最多一個工作天的時數
+    expect(four).toMatchObject({ leaveHours: 16, baseSalary: 4000 })
+  })
+
+  it('reads a range that starts and ends in the middle of a day the same way (each day is capped at a workday)', async () => {
+    // 9/4 13:00 到 9/7 12:00：週五、週一各以一個工作天的時數封頂，週六日是休息日、例假
+    const data = await workData(DAILY_2000, [customerLeave('特休假', '2026-09-04T05:00:00.000Z', '2026-09-07T04:00:00.000Z')])
+
+    expect(data.leaveHours).toBe(16)
+    expect(data.baseSalary).toBe(4000)
+  })
+
+  it('still uses the attendance of a worked day: leave on a worked day adds nothing', async () => {
+    const attendanceContext = {
+      employee: DAILY_2000,
+      attendanceSetting: { shifts },
+      schedules: weekend,
+      attendanceRecords: [
+        { employee: 'emp1', action: 'clockIn', timestamp: new Date('2026-09-04T01:00:00.000Z') },
+        { employee: 'emp1', action: 'clockOut', timestamp: new Date('2026-09-04T10:00:00.000Z') },
+      ],
+    }
+    mockGetAllLeaveFieldInfos.mockResolvedValue([CUSTOMER_FORM])
+    approvalsByForm({ 'customer-form': [FRI_TO_MON] })
+
+    const data = await calculateCompleteWorkData('emp1', '2026-09-01', attendanceContext)
+
+    // 9/4 有出勤（1 天），9/7 請假（1 天）；週末不算
+    expect(data).toMatchObject({ workDays: 1, baseSalary: 4000 })
+  })
+
+  it('loads the month schedule itself when calculateLeaveImpact is called alone for a daily employee', async () => {
+    mockEmployee.findById.mockResolvedValue(DAILY_2000)
+    mockGetAllLeaveFieldInfos.mockResolvedValue([CUSTOMER_FORM])
+    approvalsByForm({ 'customer-form': [FRI_TO_MON] })
+    mockAttendanceSetting.findOne.mockReturnValue({ lean: async () => ({ shifts }) })
+    mockShiftSchedule.find.mockReturnValue({ lean: async () => weekend })
+
+    const result = await calculateLeaveImpact('emp1', '2026-09-01', {}, { withDailyBreakdown: true })
+
+    expect(result.leaveHours).toBe(16)
+    expect(result.payableLeaveByDay).toEqual({ '2026-09-04': 8, '2026-09-07': 8 })
+    expect(mockShiftSchedule.find).toHaveBeenCalledWith({
+      employee: 'emp1',
+      date: { $gte: new Date('2026-09-01T00:00:00.000Z'), $lt: new Date('2026-10-01T00:00:00.000Z') },
+    })
+  })
+
+  it('does not even read the schedule for a monthly employee', async () => {
+    mockEmployee.findById.mockResolvedValue(MONTHLY_30000)
+    mockGetAllLeaveFieldInfos.mockResolvedValue([CUSTOMER_FORM])
+    approvalsByForm({ 'customer-form': [FRI_TO_MON] })
+
+    const result = await calculateLeaveImpact('emp1', '2026-09-01')
+
+    expect(result.leaveHours).toBe(32)
+    expect(mockShiftSchedule.find).not.toHaveBeenCalled()
+    expect(mockAttendanceSetting.findOne).not.toHaveBeenCalled()
+  })
+
+  it('reuses the schedule and shifts already loaded in the context instead of querying again', async () => {
+    mockEmployee.findById.mockResolvedValue(DAILY_2000)
+    mockGetAllLeaveFieldInfos.mockResolvedValue([CUSTOMER_FORM])
+    approvalsByForm({ 'customer-form': [FRI_TO_MON] })
+
+    const result = await calculateLeaveImpact('emp1', '2026-09-01', { attendanceSetting: { shifts }, schedules: weekend })
+
+    expect(result.leaveHours).toBe(16)
+    expect(mockShiftSchedule.find).not.toHaveBeenCalled()
+    expect(mockAttendanceSetting.findOne).not.toHaveBeenCalled()
   })
 })

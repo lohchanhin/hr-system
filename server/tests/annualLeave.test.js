@@ -213,3 +213,96 @@ describe('Annual Leave Field Handling', () => {
     });
   });
 });
+
+// 編輯員工視窗開著的時候，簽核核准又扣了特休：視窗存檔時不能把扣減蓋回去。
+// 契約：沒帶 usedDays 不碰；和目前存的相同不寫；不同才是管理員的更正，
+// 帶了 usedDaysBase（開啟視窗當下的值）而且目前存的值已不是它，只套用管理員自己改的差額（$inc）
+describe('buildEmployeePatch: usedDays with a stale edit dialog (usedDaysBase)', () => {
+  const stored = (usedDays) => ({ annualLeave: { totalDays: 10, usedDays } });
+  const usedDaysOf = (patch) => ({
+    set: patch.$set['annualLeave.usedDays'],
+    inc: patch.$inc?.['annualLeave.usedDays'],
+  });
+
+  it('never writes usedDays when the body does not carry it (other annual leave fields still update)', () => {
+    const patch = buildEmployeePatch({ annualLeave: { totalDays: 12, notes: '調整總天數' } }, stored(4));
+
+    expect(patch.$set['annualLeave.totalDays']).toBe(12);
+    expect(patch.$set).not.toHaveProperty(['annualLeave.usedDays']);
+    expect(patch).not.toHaveProperty('$inc');
+  });
+
+  it('ignores a lone usedDaysBase and never stores it', () => {
+    const patch = buildEmployeePatch({ annualLeave: { totalDays: 12, usedDaysBase: 3 } }, stored(4));
+
+    expect(usedDaysOf(patch)).toEqual({ set: undefined, inc: undefined });
+    expect(JSON.stringify(patch)).not.toContain('usedDaysBase');
+  });
+
+  it('does not write when usedDays equals the stored value, with or without a base', () => {
+    for (const annualLeave of [{ usedDays: 4 }, { usedDays: 4, usedDaysBase: 4 }, { usedDays: 4, usedDaysBase: 0 }]) {
+      const patch = buildEmployeePatch({ annualLeave }, stored(4));
+      expect(usedDaysOf(patch)).toEqual({ set: undefined, inc: undefined });
+      expect(patch).not.toHaveProperty('$inc');
+    }
+  });
+
+  it('sets the admin value when it differs from the stored one and there is no base (admin correction, as before)', () => {
+    expect(usedDaysOf(buildEmployeePatch({ annualLeave: { usedDays: 7 } }, stored(4)))).toEqual({ set: 7, inc: undefined });
+    expect(usedDaysOf(buildEmployeePatch({ annualLeave: { usedDays: 0 } }, stored(4)))).toEqual({ set: 0, inc: undefined });
+  });
+
+  it('sets the admin value when the base still equals the stored value (nothing happened meanwhile)', () => {
+    const patch = buildEmployeePatch({ annualLeave: { usedDays: 7, usedDaysBase: 4 } }, stored(4));
+
+    expect(usedDaysOf(patch)).toEqual({ set: 7, inc: undefined });
+    expect(patch).not.toHaveProperty('$inc');
+  });
+
+  it('applies only the admin difference with $inc when a deduction happened since the dialog was opened', () => {
+    // 視窗打開時 usedDays 是 0；之後核准扣了 1 天（存的是 1）；管理員把 0 改成 2（差額 +2）
+    const patch = buildEmployeePatch({ annualLeave: { usedDays: 2, usedDaysBase: 0 } }, stored(1));
+
+    expect(patch.$set).not.toHaveProperty(['annualLeave.usedDays']);
+    expect(patch.$inc).toEqual({ 'annualLeave.usedDays': 2 });
+  });
+
+  it('keeps a deduction made meanwhile when the dialog sends the untouched old value (stale form)', () => {
+    const patch = buildEmployeePatch({ annualLeave: { totalDays: 12, usedDays: 0, usedDaysBase: 0 } }, stored(1));
+
+    expect(patch.$set['annualLeave.totalDays']).toBe(12);
+    expect(patch.$set).not.toHaveProperty(['annualLeave.usedDays']);
+    expect(patch).not.toHaveProperty('$inc');
+  });
+
+  it('applies a negative admin difference but never takes usedDays below zero', () => {
+    // 存的是 2（視窗打開時是 3，之後又返還 1 天）；管理員把 3 改成 1（差額 -2）→ 2 + (-2) = 0
+    expect(buildEmployeePatch({ annualLeave: { usedDays: 1, usedDaysBase: 3 } }, stored(2)).$inc)
+      .toEqual({ 'annualLeave.usedDays': -2 });
+    // 差額 -3 會把 2 扣成 -1：只扣到 0
+    expect(buildEmployeePatch({ annualLeave: { usedDays: 0, usedDaysBase: 3 } }, stored(2)).$inc)
+      .toEqual({ 'annualLeave.usedDays': -2 });
+  });
+
+  it('handles half days and numeric text like the other number fields', () => {
+    const patch = buildEmployeePatch({ annualLeave: { usedDays: '1.5', usedDaysBase: '0' } }, stored(0.5));
+
+    expect(patch.$inc).toEqual({ 'annualLeave.usedDays': 1.5 });
+  });
+
+  it('falls back to a plain set when the base is not a number, and when there is no stored value to compare with', () => {
+    expect(usedDaysOf(buildEmployeePatch({ annualLeave: { usedDays: 7, usedDaysBase: 'abc' } }, stored(4)))).toEqual({ set: 7, inc: undefined });
+    expect(usedDaysOf(buildEmployeePatch({ annualLeave: { usedDays: 7, usedDaysBase: '' } }, stored(4)))).toEqual({ set: 7, inc: undefined });
+    expect(usedDaysOf(buildEmployeePatch({ annualLeave: { usedDays: 7, usedDaysBase: 0 } }, null))).toEqual({ set: 7, inc: undefined });
+    expect(usedDaysOf(buildEmployeePatch({ annualLeave: { usedDays: 7, usedDaysBase: 0 } }, { annualLeave: {} }))).toEqual({ set: 7, inc: undefined });
+  });
+
+  it('never writes the applied approval request ids, even together with a base', () => {
+    const patch = buildEmployeePatch(
+      { annualLeave: { usedDays: 3, usedDaysBase: 0, appliedApprovalRequestIds: ['a'] } },
+      stored(1),
+    );
+
+    expect(JSON.stringify(patch)).not.toContain('appliedApprovalRequestIds');
+  });
+});

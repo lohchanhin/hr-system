@@ -252,9 +252,141 @@ describe('Approval.vue 待我簽核與簽核動作（C2、C3）', () => {
     await wrapper.vm.doAction()
     await flushPromises()
     const actCall = callsTo(calls, c => c.url.endsWith('/a1/act'))[0]
-    expect(JSON.parse(actCall.body)).toEqual({ decision: 'return', comment: '用途請寫清楚' })
+    // 一律帶上畫面看到的關卡編號（step_order），一般退簽不帶 override
+    expect(JSON.parse(actCall.body)).toEqual({ decision: 'return', comment: '用途請寫清楚', step_order: 1 })
     expect(wrapper.vm.actionDlg.visible).toBe(false)
     expect(alertSpy).toHaveBeenCalledWith('已送出！')
+  })
+
+  describe('送出簽核時帶上畫面看到的關卡（step_order），過期的分頁會被伺服器擋下', () => {
+    // 停在第 2 關（索引 1）：關卡自己的編號是 5，不是索引 + 1
+    const stepTwoRow = (id = 'a2') => ({
+      ...inboxRow(id, true),
+      current_step_index: 1,
+      steps: [
+        { step_order: 1, can_return: true, approvers: [{ approver: { _id: 'other', name: '前一關' }, decision: 'approved' }] },
+        { step_order: 5, can_return: true, approvers: [{ approver: { _id: 'me', name: '我' }, decision: 'pending' }] },
+      ],
+    })
+    const actBody = (calls, id) => JSON.parse(callsTo(calls, c => c.url.endsWith(`/${id}/act`))[0].body)
+
+    it('關卡資料有 step_order 就用目前這關的 step_order', async () => {
+      const calls = installFetch([
+        ['/api/approvals/inbox', json([stepTwoRow()])],
+        [post('/a2/act'), json({ _id: 'a2', status: 'pending' })],
+      ])
+      const wrapper = await mountPage({ role: 'supervisor' })
+      wrapper.vm.openAction(wrapper.vm.inboxList[0], 'approve')
+      await wrapper.vm.doAction()
+      await flushPromises()
+      expect(actBody(calls, 'a2')).toEqual({ decision: 'approve', comment: '', step_order: 5 })
+    })
+
+    it('關卡沒有 step_order（舊資料）就用 current_step_index + 1', async () => {
+      const row = { ...stepTwoRow('a3'), current_step_index: 2, steps: [{ approvers: [] }, { approvers: [] }, { can_return: true, approvers: [] }] }
+      const calls = installFetch([
+        ['/api/approvals/inbox', json([row])],
+        [post('/a3/act'), json({ _id: 'a3', status: 'pending' })],
+      ])
+      const wrapper = await mountPage({ role: 'supervisor' })
+      wrapper.vm.openAction(wrapper.vm.inboxList[0], 'reject')
+      await wrapper.vm.doAction()
+      await flushPromises()
+      expect(actBody(calls, 'a3')).toEqual({ decision: 'reject', comment: '', step_order: 3 })
+    })
+
+    it('清單列沒有 current_step_index 時不帶 step_order（不亂猜關卡）', async () => {
+      installFetch()
+      const wrapper = await mountPage({ role: 'supervisor' })
+      expect(wrapper.vm.displayedStepOrder({ _id: 'x', steps: [{ step_order: 1 }] })).toBeUndefined()
+      expect(wrapper.vm.displayedStepOrder({ current_step_index: null })).toBeUndefined()
+      expect(wrapper.vm.displayedStepOrder({ current_step_index: 0 })).toBe(1)
+    })
+
+    it.each(['approve', 'reject', 'return'])('一般的「%s」不帶 override（即使登入的是管理員）', async (decision) => {
+      const calls = installFetch([
+        ['/api/approvals/inbox', json([inboxRow('a1', true)])],
+        [post('/a1/act'), json({ _id: 'a1', status: 'pending' })],
+      ])
+      const wrapper = await mountPage({ role: 'admin' })
+      wrapper.vm.openAction(wrapper.vm.inboxList[0], decision)
+      wrapper.vm.actionDlg.comment = '意見'
+      await wrapper.vm.doAction()
+      await flushPromises()
+      const body = actBody(calls, 'a1')
+      expect(body).toEqual({ decision, comment: '意見', step_order: 1 })
+      expect(Object.prototype.hasOwnProperty.call(body, 'override')).toBe(false)
+    })
+
+    it('另一個分頁已經處理過這一關：伺服器回 409 CONFLICT，顯示伺服器的中文說明、關閉對話框並重新載入待簽清單', async () => {
+      const calls = installFetch([
+        ['/api/approvals/inbox', json([inboxRow('a1', true)])],
+        [post('/a1/act'), json({ error: '這張簽核單剛被其他人更新，請重新整理後再試', code: 'CONFLICT' }, 409)],
+      ])
+      const wrapper = await mountPage({ role: 'supervisor' })
+      const inboxBefore = callsTo(calls, c => c.url.includes('/api/approvals/inbox')).length
+      wrapper.vm.openAction(wrapper.vm.inboxList[0], 'approve')
+      await wrapper.vm.doAction()
+      await flushPromises()
+
+      expect(actBody(calls, 'a1').step_order).toBe(1)
+      expect(alertSpy).toHaveBeenCalledTimes(1)
+      expect(alertSpy.mock.calls[0][0]).toBe('動作失敗：這張簽核單剛被其他人更新，請重新整理後再試')
+      expect(wrapper.vm.actionDlg.visible).toBe(false)
+      expect(callsTo(calls, c => c.url.includes('/api/approvals/inbox')).length).toBeGreaterThan(inboxBefore)
+    })
+
+    it('管理員代為處理的對話框才帶 override: true，並帶上單據目前的關卡', async () => {
+      const row = {
+        _id: 'p9', status: 'pending', oversight: true, current_step_index: 1,
+        form: { _id: 'f1', name: '請假' }, applicant_employee: { name: '王小明' }, my_approvals: [],
+      }
+      const calls = installFetch([
+        ['/api/approvals/history', json({ items: [row], total: 1, page: 1, limit: 20 })],
+        [post('/p9/act'), json({ _id: 'p9', status: 'pending' })],
+      ])
+      const wrapper = await mountPage({ role: 'admin' })
+      wrapper.vm.openAction(row, 'approve', { override: true })
+      await wrapper.vm.doAction()
+      await flushPromises()
+      expect(actBody(calls, 'p9')).toEqual({ decision: 'approve', comment: '', step_order: 2, override: true })
+
+      // 再開一般對話框（沒有 override）就不能沿用上一次的代簽旗標
+      calls.length = 0
+      wrapper.vm.openAction(row, 'reject')
+      await wrapper.vm.doAction()
+      await flushPromises()
+      expect(actBody(calls, 'p9')).toEqual({ decision: 'reject', comment: '', step_order: 2 })
+    })
+
+    it('從明細按「代為核可」遇到 409：重新打開最新的明細，並顯示伺服器的說明', async () => {
+      let detailLoads = 0
+      const doc = (stepIndex) => ({
+        _id: 'p1', status: 'pending', form: { name: '請假', fields: [] }, form_data: {},
+        applicant_employee: { name: '王小明' }, current_step_index: stepIndex,
+        steps: [{ step_order: 1, approvers: [] }, { step_order: 2, approvers: [] }], logs: [],
+        viewer: { can_override: true, can_act: false, is_applicant: false },
+      })
+      const calls = installFetch([
+        [(url) => url.endsWith('/api/approvals/p1'), () => json(doc(detailLoads++ === 0 ? 0 : 1))],
+        [post('/p1/act'), json({ error: '這張簽核單剛被其他人更新，請重新整理後再試', code: 'CONFLICT' }, 409)],
+      ])
+      const wrapper = await mountPage({ role: 'admin' })
+      await wrapper.vm.openDetail('p1')
+      await flushPromises()
+      expect(wrapper.vm.detail.doc.current_step_index).toBe(0)
+
+      wrapper.vm.overrideFromDetail('approve')
+      await wrapper.vm.doAction()
+      await flushPromises()
+
+      expect(actBody(calls, 'p1')).toEqual({ decision: 'approve', comment: '', step_order: 1, override: true })
+      expect(alertSpy).toHaveBeenCalledWith('動作失敗：這張簽核單剛被其他人更新，請重新整理後再試')
+      // 明細重新載入，顯示的是已經前進到第 2 關的單據
+      expect(detailLoads).toBe(2)
+      expect(wrapper.vm.detail.visible).toBe(true)
+      expect(wrapper.vm.detail.doc.current_step_index).toBe(1)
+    })
   })
 
   it('退簽沒填原因時先確認；不同意就不送出', async () => {
