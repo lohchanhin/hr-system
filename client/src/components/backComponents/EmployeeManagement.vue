@@ -76,9 +76,7 @@
           <el-table-column prop="name" label="員工資訊" min-width="200">
             <template #default="{ row }">
               <div class="employee-info">
-                <el-avatar :size="40" :src="row._photoObjectUrl || ''" class="employee-avatar">
-                  {{ row.name ? row.name.charAt(0) : 'N' }}
-                </el-avatar>
+                <EmployeeAvatar :employee="row" :size="40" class="employee-avatar" />
                 <div class="employee-details">
                   <div class="employee-name">{{ row.name || '未設定' }}</div>
                   <div class="employee-id">{{ row.employeeNo || '無編號' }}</div>
@@ -304,13 +302,17 @@
                     <h3 class="form-group-title">基本資料</h3>
                     <el-form-item label="個人照片" class="photo-upload-item">
                       <el-upload class="employee-photo-upload" v-model:file-list="employeeForm.photoList"
-                        :http-request="handlePhotoRequest" :on-success="handlePhotoSuccess"
+                        :http-request="handlePhotoRequest" :before-upload="handlePhotoBeforeUpload"
+                        :on-success="handlePhotoSuccess"
                         :on-remove="handlePhotoRemove" :on-exceed="handlePhotoExceed" list-type="picture-card"
-                        :limit="1" accept="image/*" :disabled="photoUploading">
+                        :limit="1" accept="image/jpeg,image/png,image/gif,image/webp" :disabled="photoUploading">
                         <div class="upload-placeholder">
                           <i class="el-icon-plus"></i>
                           <span>上傳照片</span>
                         </div>
+                        <template #tip>
+                          <div class="upload-tip">支援 JPEG、PNG、GIF、WebP，檔案大小上限 5MB；已有照片時再選一張即可更換，按「儲存員工資料」後生效</div>
+                        </template>
                       </el-upload>
                     </el-form-item>
                     <div class="form-row">
@@ -458,7 +460,12 @@
                       <el-form-item label="直屬主管">
                         <el-select v-model="employeeForm.supervisor" placeholder="選擇主管" clearable>
                           <el-option v-for="sup in supervisorList" :key="sup._id"
-                            :label="sup.employeeNo ? `${sup.name}（${sup.employeeNo}）` : sup.name" :value="sup._id" />
+                            :label="sup.employeeNo ? `${sup.name}（${sup.employeeNo}）` : sup.name" :value="sup._id">
+                            <span class="supervisor-option">
+                              <EmployeeAvatar :employee="sup" :size="20" />
+                              <span>{{ sup.employeeNo ? `${sup.name}（${sup.employeeNo}）` : sup.name }}</span>
+                            </span>
+                          </el-option>
                         </el-select>
                       </el-form-item>
                     </div>
@@ -1066,7 +1073,7 @@
         <template #footer>
           <div class="dialog-footer">
             <el-button @click="employeeDialogVisible = false" class="cancel-btn">取消</el-button>
-            <el-button type="primary" @click="saveEmployee" class="save-btn">
+            <el-button type="primary" :loading="employeeSaving" @click="saveEmployee" class="save-btn">
               <i class="el-icon-check"></i>
               儲存員工資料
             </el-button>
@@ -1280,10 +1287,13 @@ import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { apiFetch, importEmployeesBulk } from '../../api'
 import { REQUIRED_FIELDS } from './requiredFields'
+import EmployeeAvatar from '../EmployeeAvatar.vue'
+import { useProfileStore } from '../../stores/profile'
 import {
-  fetchEmployeePhotoUrl,
-  getPhotoUrl,
+  acquireEmployeePhoto,
   getPhotoPath,
+  invalidateEmployeePhoto,
+  prepareEmployeePhotoFile,
   revokeEmployeePhotoUrl,
 } from '../../utils/photoUrl'
 
@@ -3062,41 +3072,26 @@ const subDepartmentList = ref([])
 const orgList = ref([])
 const employeeDialogVisible = ref(false)
 const photoUploading = ref(false)
+const employeeSaving = ref(false)
 let editEmployeeIndex = null
 let editEmployeeId = ''
 // 編輯視窗打開當下的特休「已使用天數」與已套用的簽核單編號（新增員工時為 null）
 let annualLeaveSnapshot = null
-let photoLoadGeneration = 0
-const employeePhotoObjectUrls = new Set()
+// 員工照片的顯示（列表頭像、編輯視窗的縮圖）都交給 utils/photoUrl 的共用快取與 EmployeeAvatar；
+// 這裡只負責編輯視窗縮圖用到的那一份，以及選檔時產生的預覽網址
+let dialogPhotoLease = null
+let dialogPhotoGeneration = 0
+const photoPreviewUrls = new Set()
 
-function releaseEmployeePhotoUrls() {
-  photoLoadGeneration += 1
-  employeePhotoObjectUrls.forEach(revokeEmployeePhotoUrl)
-  employeePhotoObjectUrls.clear()
+function releaseDialogPhoto() {
+  dialogPhotoGeneration += 1
+  dialogPhotoLease?.release()
+  dialogPhotoLease = null
 }
 
-async function hydrateEmployeePhotos(rows, generation) {
-  let cursor = 0
-  const worker = async () => {
-    while (cursor < rows.length) {
-      const row = rows[cursor]
-      cursor += 1
-      if (!row?.photo || !row?._id) continue
-      try {
-        const objectUrl = await fetchEmployeePhotoUrl(row._id, row.photo)
-        if (!objectUrl) continue
-        if (generation !== photoLoadGeneration) {
-          revokeEmployeePhotoUrl(objectUrl)
-          continue
-        }
-        row._photoObjectUrl = objectUrl
-        employeePhotoObjectUrls.add(objectUrl)
-      } catch {
-        // The avatar falls back to the employee initial when a photo is unavailable.
-      }
-    }
-  }
-  await Promise.all(Array.from({ length: Math.min(6, rows.length) }, worker))
+function revokePhotoPreviews() {
+  photoPreviewUrls.forEach(revokeEmployeePhotoUrl)
+  photoPreviewUrls.clear()
 }
 
 function departmentLabel(id) {
@@ -3161,12 +3156,28 @@ function normalizePhotoUploadList(uploadFiles = []) {
   employeeForm.value.photo = normalized.length ? normalized[0].url || '' : ''
 }
 
+// 選檔當下就檢查格式與大小（與伺服器規則一致），太大的手機照片自動縮小；不合格直接說明原因，不要等到按儲存
+async function handlePhotoBeforeUpload(rawFile) {
+  const { file, error } = await prepareEmployeePhotoFile(rawFile)
+  if (!file) {
+    ElMessage.warning(error || '照片載入失敗，請重新選擇檔案')
+    return false
+  }
+  return file
+}
+
+function createPhotoPreviewUrl(file) {
+  const url = URL.createObjectURL(file)
+  photoPreviewUrls.add(url)
+  return url
+}
+
 async function handlePhotoRequest({ file, onSuccess, onError }) {
   photoUploading.value = true
   try {
     // 創建 Object URL 用於預覽，並保存原始檔案物件供後續上傳
     // Object URL 用於在界面顯示，原始檔案用於實際上傳
-    onSuccess?.({ url: URL.createObjectURL(file), raw: file })
+    onSuccess?.({ url: createPhotoPreviewUrl(file), raw: file })
   } catch (err) {
     onError?.(err)
     ElMessage.error('照片載入失敗，請重新選擇檔案')
@@ -3190,21 +3201,69 @@ function handlePhotoSuccess(response, uploadFile, uploadFiles) {
 }
 
 function handlePhotoRemove(_file, uploadFiles) {
+  // 拿掉縮圖等於不再使用目前這張照片：已經載入的舊照片可以放開
+  if (!uploadFiles?.length) releaseDialogPhoto()
   normalizePhotoUploadList(uploadFiles)
 }
 
-function handlePhotoExceed() {
-  ElMessage.warning('僅能上傳一張照片')
+// 已經有照片時再選一張：直接換成新選的（el-upload 的 limit=1 會把新檔案丟掉，只剩這個事件）
+async function handlePhotoExceed(files) {
+  const picked = Array.from(files || [])[0]
+  if (!picked) return
+  const file = await handlePhotoBeforeUpload(picked)
+  if (!file) return
+  releaseDialogPhoto()
+  revokePhotoPreviews()
+  const url = createPhotoPreviewUrl(file)
+  employeeForm.value.photoList = [{
+    name: file.name || '員工照片',
+    url,
+    raw: file,
+    uid: Date.now(),
+    status: 'success',
+    percentage: 100
+  }]
+  employeeForm.value.photo = url
 }
 
+// 照片載入前（或載入失敗時）縮圖用的灰色人像；storedPath 一律保留，儲存時才不會誤把照片清掉
+const EMPLOYEE_PHOTO_PLACEHOLDER =
+  'data:image/svg+xml;utf8,' +
+  encodeURIComponent(
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96"><rect width="96" height="96" fill="#e2e8f0"/>' +
+    '<circle cx="48" cy="36" r="16" fill="#94a3b8"/><path d="M16 88c2-18 16-28 32-28s30 10 32 28z" fill="#94a3b8"/></svg>'
+  )
+
 function buildPhotoUploadFile(url, name = '', storedPath = '') {
-  if (!url) return null
+  if (!url && !storedPath) return null
   return {
     name: name ? `${name} 照片` : '員工照片',
-    url: getPhotoUrl(url),
+    url: url || EMPLOYEE_PHOTO_PLACEHOLDER,
     storedPath,
     status: 'success',
     percentage: 100
+  }
+}
+
+// 編輯視窗的縮圖：經過共用快取以登入身分下載（/upload/employees 底下的檔案不能直接當圖片網址）
+async function loadDialogPhoto(employeeId, storedPath) {
+  releaseDialogPhoto()
+  const generation = dialogPhotoGeneration
+  try {
+    const lease = await acquireEmployeePhoto(employeeId, storedPath)
+    if (generation !== dialogPhotoGeneration) {
+      lease.release()
+      return
+    }
+    dialogPhotoLease = lease
+    const item = employeeForm.value.photoList?.[0]
+    // el-upload 會在使用者按刪除或元件卸載時自己 revoke 縮圖的 blob 網址：不能把共用快取的網址交給它
+    // （一 revoke，清單、簽核、排班、右上角所有顯示這位員工的頭像都會壞掉），用同一個 Blob 另外建立專屬的網址
+    if (lease.blob && item && !item.raw && item.storedPath === storedPath) {
+      employeeForm.value.photoList = [{ ...item, url: createPhotoPreviewUrl(lease.blob) }]
+    }
+  } catch {
+    // 縮圖載入失敗就維持灰色人像，不影響其他欄位
   }
 }
 
@@ -3594,10 +3653,8 @@ async function fetchEmployees({ keepSelection = false } = {}) {
     employeePagination.active = Number(payload.summary?.active ?? normalizedEmployees.filter(
       employee => ['正職員工', '試用期員工'].includes(employee.employmentStatus)
     ).length)
-    releaseEmployeePhotoUrls()
     employeeList.value = normalizedEmployees
     if (!keepSelection) clearEmployeeSelection()
-    void hydrateEmployeePhotos(normalizedEmployees, photoLoadGeneration)
   } catch (error) {
     if (generation === employeeListRequestGeneration) {
       console.warn('載入員工清單失敗', error)
@@ -3651,7 +3708,15 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   clearTimeout(employeeSearchTimer)
-  releaseEmployeePhotoUrls()
+  releaseDialogPhoto()
+  revokePhotoPreviews()
+})
+
+// 關閉編輯視窗（儲存、取消、按 Esc 都一樣）：放開縮圖用的照片、回收選檔時產生的預覽網址
+watch(employeeDialogVisible, visible => {
+  if (visible) return
+  releaseDialogPhoto()
+  revokePhotoPreviews()
 })
 
 /* 表單模型（完整補齊） ------------------------------------------------------ */
@@ -3858,7 +3923,9 @@ function toSupervisorOption(e = {}) {
   return {
     _id: e._id,
     name: e.name ?? '',
-    employeeNo: e.employeeNo ?? e.employeeId ?? ''
+    employeeNo: e.employeeNo ?? e.employeeId ?? '',
+    // 選項旁的小頭像用：照片路徑（沒有照片是空字串）
+    photo: e.photo ?? ''
   }
 }
 
@@ -4855,7 +4922,6 @@ async function openEmployeeDialog(employeeId = null) {
       ElMessage.error('找不到該員工資料')
       return
     }
-    const summaryEmployee = employeeList.value[index]
     let detailResponse
     try {
       detailResponse = await apiFetch(`/api/employees/${encodeURIComponent(employeeId)}`)
@@ -4870,7 +4936,6 @@ async function openEmployeeDialog(employeeId = null) {
       return
     }
     const emp = normalizeEmployeeRecord(await detailResponse.json())
-    emp._photoObjectUrl = summaryEmployee?._photoObjectUrl || ''
     editEmployeeIndex = index
     isEditingEmployee.value = true
     editEmployeeId = emp._id || ''
@@ -4888,12 +4953,16 @@ async function openEmployeeDialog(employeeId = null) {
     employeeForm.value.signLevel = normalizeSignLevel(employeeForm.value.signLevel)
     employeeForm.value.signTags = normalizeSignTagList(employeeForm.value.signTags)
     employeeForm.value.photo = employeeForm.value.photo || ''
+    // 縮圖先放灰色人像，真正的照片經過共用快取下載完再換上去（照片檔案不能直接用 /upload 網址顯示）
+    releaseDialogPhoto()
+    revokePhotoPreviews()
     const existingPhotoFile = buildPhotoUploadFile(
-      emp._photoObjectUrl || employeeForm.value.photo,
+      '',
       employeeForm.value.name,
       employeeForm.value.photo,
     )
     employeeForm.value.photoList = existingPhotoFile ? [existingPhotoFile] : []
+    if (employeeForm.value.photo) void loadDialogPhoto(editEmployeeId, employeeForm.value.photo)
     employeeForm.value.licenses = formatLicensesForForm(emp.licenses ?? [])
     employeeForm.value.trainings = formatTrainingsForForm(emp.trainings ?? [])
     employeeForm.value.laborPensionSelf =
@@ -4957,6 +5026,8 @@ async function openEmployeeDialog(employeeId = null) {
     employeeForm.value = { ...structuredClone(emptyEmployee) }
     employeeForm.value.licenses = []
     employeeForm.value.trainings = []
+    releaseDialogPhoto()
+    revokePhotoPreviews()
   }
 
   await fetchDepartments()
@@ -5007,7 +5078,83 @@ function resolveEmployeeFieldTab(prop) {
   return ''
 }
 
+// 後端自己管理、不該由編輯畫面回寫的欄位（帳號啟用狀態、登入版本、時間戳記…），以及只在畫面上使用的欄位
+const SERVER_MANAGED_EMPLOYEE_FIELDS = [
+  '_id',
+  'id',
+  '__v',
+  'createdAt',
+  'updatedAt',
+  'authVersion',
+  'accountEnabled',
+  'hasPhoto',
+  '_photoObjectUrl'
+]
+
+// 伺服器回的英文錯誤對照成中文；沒有對照到的就原樣顯示伺服器給的訊息，不要吞掉
+const EMPLOYEE_SAVE_ERROR_TEXT = {
+  'Invalid account state': '帳號狀態格式不正確',
+  'Invalid email': 'Email 格式不正確',
+  'Email is required': '請輸入 Email',
+  'Invalid role': '系統權限不正確',
+  'Too many fields': '送出的欄位過多，請聯絡系統管理員',
+  'Not found': '找不到該員工資料，可能已被刪除，請重新整理後再試',
+  'Invalid employee id': '員工識別碼不正確，請重新整理後再試',
+  'Internal server error': '伺服器發生錯誤，請稍後再試或聯絡系統管理員'
+}
+
+// 把失敗的回應整理成可以直接顯示的原因（伺服器有說明就用伺服器的，沒有才看狀態碼）
+async function describeEmployeeSaveError(res) {
+  let data = null
+  try {
+    data = await res?.json?.()
+  } catch {
+    // 回應不是 JSON（例如反向代理回的 HTML 錯誤頁）時改看狀態碼
+  }
+  const serverText = typeof data?.error === 'string' ? data.error.trim() : ''
+  const status = Number(res?.status)
+  let message = ''
+  if (EMPLOYEE_SAVE_ERROR_TEXT[serverText]) message = EMPLOYEE_SAVE_ERROR_TEXT[serverText]
+  else if (/E11000|duplicate key/i.test(serverText)) message = '員工編號、帳號或 Email 已被其他員工使用'
+  else if (/[一-鿿]/.test(serverText)) message = serverText
+  else if (serverText) message = `儲存失敗：${serverText}`
+  else if (status === 401) message = '登入已逾時，請重新登入後再試'
+  else if (status === 403) message = '您沒有權限執行這個操作'
+  else if (status === 413) message = '上傳的資料超過伺服器允許的大小，請換小一點的照片'
+  else if (status === 429) message = '操作太頻繁，請稍後再試'
+  else if (status >= 500) message = '伺服器發生錯誤，請稍後再試或聯絡系統管理員'
+  // 伺服器發生錯誤時附上錯誤代碼，方便管理員在伺服器紀錄中查到原因
+  const requestId = typeof data?.requestId === 'string' ? data.requestId : ''
+  if (message && requestId && status >= 500) message = `${message}（錯誤代碼 ${requestId}）`
+  return message
+}
+
+// 管理員改的是自己的照片：前台 / 後台標題列的頭像要跟著更新，所以重新讀一次個人資料
+function refreshOwnProfile(employeeId) {
+  try {
+    const ownId = sessionStorage.getItem('employeeId') || localStorage.getItem('employeeId')
+    if (!ownId || String(ownId) !== String(employeeId)) return
+    void useProfileStore().fetchProfile({ force: true }).catch(() => {})
+  } catch {
+    // 沒有 pinia（單元測試）或儲存空間不可用時略過
+  }
+}
+
 async function saveEmployee() {
+  if (employeeSaving.value) return
+  employeeSaving.value = true
+  try {
+    await submitEmployee()
+  } catch (error) {
+    // 連線中斷（伺服器重啟、反向代理擋下過大的請求…）：沒有回應可以讀，也要讓使用者知道
+    console.warn('儲存員工資料失敗', error)
+    ElMessage.error('儲存失敗，請檢查網路後再試')
+  } finally {
+    employeeSaving.value = false
+  }
+}
+
+async function submitEmployee() {
   let errors
   try {
     await formRef.value?.validate()
@@ -5052,18 +5199,27 @@ async function saveEmployee() {
   payload.title = extractOptionValue(form.title)
   payload.practiceTitle = extractOptionValue(form.practiceTitle)
   
+  SERVER_MANAGED_EMPLOYEE_FIELDS.forEach(key => delete payload[key])
+
   // 檢查是否有新上傳的照片檔案
   let photoFile = null
-  const normalizedPhotoList = extractPhotoUrls(form.photoList)
+  // 預覽用的 blob: / data: 網址不是已儲存的照片，不能當成 photo 送出
+  const normalizedPhotoList = extractPhotoUrls(form.photoList).filter(url => !/^(blob|data):/i.test(url))
   if (form.photoList && form.photoList.length > 0) {
     const firstPhoto = form.photoList[0]
-    // 如果有原始檔案物件（新上傳的照片），使用 multipart/form-data
+    // 如果有原始檔案物件（新上傳的照片），資料與照片檔放在同一個 multipart 請求一起送出
     if (firstPhoto.raw && firstPhoto.raw instanceof File) {
       photoFile = firstPhoto.raw
+      delete payload.photoList
+      delete payload.photo
     } else if (normalizedPhotoList.length) {
       // 否則使用現有的照片 URL（編輯時未更改照片）
       payload.photoList = normalizedPhotoList
       payload.photo = normalizedPhotoList[0]
+    } else {
+      // 不知道已儲存的路徑（例如只拿到 hasPhoto）：不動照片，也不能把預覽網址送出去
+      delete payload.photoList
+      delete payload.photo
     }
   } else if (editEmployeeIndex !== null) {
     payload.photoList = []
@@ -5147,77 +5303,50 @@ async function saveEmployee() {
     )
   payload.trainings = normalizedTrainings
 
-  let res
-  
-  // 如果有新上傳的照片檔案，使用 multipart/form-data
+  const isCreate = editEmployeeIndex === null
+  const url = isCreate ? '/api/employees' : `/api/employees/${encodeURIComponent(editEmployeeId)}`
+  const method = isCreate ? 'POST' : 'PUT'
+  let requestInit
   if (photoFile) {
+    // 有新照片：整份資料放在 data 這一個欄位（JSON 字串，布林值、數字、null 都保持原本的型別），另一個欄位是照片檔。
+    // 不能把每個欄位各自放進 FormData：布林值會變成 'false' 字串、巢狀資料與 null 會走樣，欄位數也會超過伺服器上限。
+    // 不設置 Content-Type，讓瀏覽器自動設置 multipart/form-data 和 boundary
     const formData = new FormData()
+    formData.append('data', JSON.stringify(payload))
     formData.append('photo', photoFile)
-    
-    // 將所有其他欄位也添加到 FormData
-    // 當使用 multipart/form-data 時，所有資料都必須通過 FormData 發送
-    Object.keys(payload).forEach(key => {
-      if (key !== 'photo' && key !== 'photoList') {
-        const value = payload[key]
-        // multipart 無法表示 null：清空直屬主管時改送空字串（伺服器同樣視為取消）
-        if (key === 'supervisor' && value === null) {
-          formData.append(key, '')
-          return
-        }
-        if (value !== undefined && value !== null) {
-          if (typeof value === 'object') {
-            formData.append(key, JSON.stringify(value))
-          } else {
-            formData.append(key, value)
-          }
-        }
-      }
-    })
-    
-    if (editEmployeeIndex === null) {
-      res = await apiFetch('/api/employees', {
-        method: 'POST',
-        body: formData
-        // 不設置 Content-Type，讓瀏覽器自動設置 multipart/form-data 和 boundary
-      })
-    } else {
-      res = await apiFetch(`/api/employees/${editEmployeeId}`, {
-        method: 'PUT',
-        body: formData
-      })
-    }
+    requestInit = { method, body: formData }
   } else {
-    // 沒有新照片，使用原來的 JSON 方式
-    if (editEmployeeIndex === null) {
-      res = await apiFetch('/api/employees', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      })
-    } else {
-      res = await apiFetch(`/api/employees/${editEmployeeId}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      })
-    }
+    requestInit = { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }
   }
-  
-  if (res && res.ok) {
-    await fetchEmployees()
-    employeeDialogVisible.value = false
-    ElMessage.success('儲存成功')
-  } else {
-    // 伺服器回的是中文說明（例如簽核角色不正確）就直接顯示，否則維持通用訊息
-    let message = '儲存失敗'
+  const res = await apiFetch(url, requestInit)
+
+  if (!(res && res.ok)) {
+    // 伺服器回的是中文說明（例如簽核角色不正確）就直接顯示，英文錯誤盡量轉成中文，否則維持通用訊息
+    ElMessage.error((await describeEmployeeSaveError(res)) || '儲存失敗')
+    return
+  }
+
+  let savedId = String(editEmployeeId || '')
+  if (isCreate) {
+    let created = null
     try {
-      const data = await res?.json?.()
-      if (typeof data?.error === 'string' && /[一-鿿]/.test(data.error)) message = data.error
+      created = await res.json()
     } catch {
-      // 回應不是 JSON 時沿用通用訊息
+      // 讀不到新員工的識別碼時只是少了通知頭像更新，列表重新載入後仍會顯示最新資料
     }
-    ElMessage.error(message)
+    savedId = String(created?._id ?? created?.id ?? '')
   }
+
+  // 換了照片、或把照片移除：作廢快取，所有正在顯示這位員工的頭像（列表、標題列…）立刻換成最新的
+  const photoChanged = Boolean(photoFile) || (!isCreate && !form.photoList?.length)
+  if (photoChanged && savedId) {
+    invalidateEmployeePhoto(savedId)
+    refreshOwnProfile(savedId)
+  }
+
+  await fetchEmployees()
+  employeeDialogVisible.value = false
+  ElMessage.success('儲存成功')
 }
 
 async function deleteEmployee(employeeId) {
@@ -6051,6 +6180,12 @@ function getStatusTagType(status) {
 .employee-id {
   font-size: 12px;
   color: #64748b;
+}
+
+.supervisor-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .department-info {

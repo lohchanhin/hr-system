@@ -337,7 +337,9 @@ describe('EmployeeManagement - 簽核設定與登入密碼（會真的驗證的�
       expect(putCalls()).toHaveLength(0)
     })
 
-    it('儲存失敗時顯示伺服器回的中文原因，英文或空白原因則用通用訊息', async () => {
+    // 行為有意改變：不再只顯示含中文的伺服器訊息；英文訊息也要讓使用者看到（已知的對照成中文，其餘原樣附在「儲存失敗：」後面），
+    // 只有伺服器完全沒給原因時才用通用訊息
+    it('儲存失敗時顯示伺服器回的原因（中文原樣、已知英文對照成中文），沒有原因才用通用訊息', async () => {
       await mountComponent()
       await wrapper.vm.openEmployeeDialog('e1')
       await flushPromises()
@@ -349,6 +351,21 @@ describe('EmployeeManagement - 簽核設定與登入密碼（會真的驗證的�
       expect(ElMessage.error).toHaveBeenLastCalledWith('簽核角色「banana」不正確，請使用 R001～R007')
 
       apiFetchMock.mockImplementation(async () => createApiResponse({ error: 'E11000 duplicate key' }, 400))
+      await wrapper.vm.saveEmployee()
+      await flushPromises()
+      expect(ElMessage.error).toHaveBeenLastCalledWith('員工編號、帳號或 Email 已被其他員工使用')
+
+      apiFetchMock.mockImplementation(async () => createApiResponse({ error: 'Invalid account state' }, 400))
+      await wrapper.vm.saveEmployee()
+      await flushPromises()
+      expect(ElMessage.error).toHaveBeenLastCalledWith('帳號狀態格式不正確')
+
+      apiFetchMock.mockImplementation(async () => createApiResponse({ error: 'Something unexpected' }, 400))
+      await wrapper.vm.saveEmployee()
+      await flushPromises()
+      expect(ElMessage.error).toHaveBeenLastCalledWith('儲存失敗：Something unexpected')
+
+      apiFetchMock.mockImplementation(async () => createApiResponse({}, 400))
       await wrapper.vm.saveEmployee()
       await flushPromises()
       expect(ElMessage.error).toHaveBeenLastCalledWith('儲存失敗')
@@ -491,7 +508,9 @@ describe('EmployeeManagement - 簽核設定與登入密碼（會真的驗證的�
       expect(JSON.parse(post[1].body)).not.toHaveProperty('supervisor')
     })
 
-    it('同時上傳新照片（multipart）時，清空的直屬主管送空字串', async () => {
+    // 行為有意改變：有新照片時整份資料放在 multipart 的 data 欄位（JSON 字串，null 與布林值保持原本型別），
+    // 原本每個欄位各自放進 FormData，清空的直屬主管只能送空字串
+    it('同時上傳新照片（multipart）時，清空的直屬主管在 data 欄位裡送 null', async () => {
       await withSupervisor(async () => {
         await mountComponent()
         await wrapper.vm.openEmployeeDialog('e1')
@@ -501,9 +520,13 @@ describe('EmployeeManagement - 簽核設定與登入密碼（會真的驗證的�
         await wrapper.vm.saveEmployee()
         await flushPromises()
 
+        expect(putCalls()).toHaveLength(1)
         const body = putCalls()[0][1].body
         expect(body).toBeInstanceOf(FormData)
-        expect(body.get('supervisor')).toBe('')
+        expect([...body.keys()]).toEqual(['data', 'photo'])
+        const data = JSON.parse(body.get('data'))
+        expect(data).toHaveProperty('supervisor', null)
+        expect(data).not.toHaveProperty('photo')
         expect(body.get('photo')).toBeInstanceOf(File)
       })
     })

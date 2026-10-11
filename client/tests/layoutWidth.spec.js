@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { ref } from 'vue'
 import { mount } from '@vue/test-utils'
+import { createPinia } from 'pinia'
 import ElementPlus from 'element-plus'
 import ModernLayout from '../src/views/ModernLayout.vue'
 import Layout from '../src/views/Layout.vue'
@@ -52,6 +53,9 @@ const mountGlobal = {
   }
 }
 
+// ModernLayout 的標題列會顯示登入者的頭像與姓名（個人資料 store），所以需要 pinia；選單 store 仍是上面的 mock
+const modernLayoutGlobal = () => ({ ...mountGlobal, plugins: [ElementPlus, createPinia()] })
+
 describe('layout widths', () => {
   beforeEach(() => {
     menuItems.value = []
@@ -71,7 +75,7 @@ describe('layout widths', () => {
   })
 
   it('ModernLayout aside maintains sidebar width and flexible main content', async () => {
-    const wrapper = mount(ModernLayout, { global: mountGlobal })
+    const wrapper = mount(ModernLayout, { global: modernLayoutGlobal() })
     const aside = wrapper.find('.layout-aside')
     const main = wrapper.find('.layout-main')
 
@@ -95,7 +99,7 @@ describe('layout widths', () => {
       { name: 'Approval', label: '簽核流程', icon: 'el-icon-s-operation' }
     ]
 
-    const wrapper = mount(ModernLayout, { global: mountGlobal })
+    const wrapper = mount(ModernLayout, { global: modernLayoutGlobal() })
     await wrapper.vm.$nextTick()
 
     const icons = wrapper.findAll('img.menu-icon')
@@ -117,7 +121,7 @@ describe('layout widths', () => {
 
   it('opens and closes the mobile drawer via toggle button', async () => {
     setViewportWidth(640)
-    const wrapper = mount(ModernLayout, { global: mountGlobal })
+    const wrapper = mount(ModernLayout, { global: modernLayoutGlobal() })
     await wrapper.vm.$nextTick()
 
     const aside = wrapper.find('.layout-aside')

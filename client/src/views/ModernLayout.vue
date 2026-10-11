@@ -8,6 +8,10 @@
         <h1 class="system-title">HR 管理系統</h1>
       </div>
       <div class="header-right">
+        <div v-if="headerUser.name" class="header-user" data-test="header-user">
+          <EmployeeAvatar :employee="headerUser" :size="32" :lazy="false" />
+          <span class="header-user-name">{{ headerUser.name }}</span>
+        </div>
         <el-button type="primary" @click="logout" class="logout-btn">
           <el-icon><i class="el-icon-switch-button" /></el-icon>
           登出
@@ -100,7 +104,9 @@
 import { ref, onMounted, onBeforeUnmount, watch, computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useMenuStore } from '../stores/menu'
+import { useProfileStore } from '../stores/profile'
 import { clearToken } from '../utils/tokenService'
+import { clearEmployeePhotoCache } from '../utils/photoUrl'
 import { storeToRefs } from 'pinia'
 import {
   DEFAULT_MENU_ICON,
@@ -109,11 +115,22 @@ import {
 } from '../constants/menuIcons'
 import { backendHelpContent } from '../constants/backendHelpContent'
 import GlobalHelpButton from '@/components/GlobalHelpButton.vue'
+import EmployeeAvatar from '@/components/EmployeeAvatar.vue'
 
 const router = useRouter()
 const route = useRoute()
 const menuStore = useMenuStore()
 const { items: menuItems } = storeToRefs(menuStore)
+const profileStore = useProfileStore()
+const { profile } = storeToRefs(profileStore)
+
+// 標題列顯示目前登入者的頭像與姓名（個人資料的 id 就是員工的 _id）
+const headerUser = computed(() => ({
+  _id: profile.value?._id || profile.value?.id || profile.value?.employeeId || '',
+  name: typeof profile.value?.name === 'string' ? profile.value.name.trim() : '',
+  photo: profile.value?.photo,
+  hasPhoto: profile.value?.hasPhoto
+}))
 
 const active = ref('')
 const isCollapse = ref(false)
@@ -163,6 +180,8 @@ onMounted(async () => {
     updateIsMobile()
     window.addEventListener('resize', updateIsMobile)
   }
+  // 個人資料只用來顯示標題列的頭像與姓名，讀不到不影響後台使用
+  profileStore.fetchProfile().catch(() => {})
   if (menuItems.value.length === 0) {
     await menuStore.fetchMenu()
   }
@@ -234,6 +253,8 @@ function resolveIcon(item) {
 
 function logout() {
   clearToken()
+  clearEmployeePhotoCache()
+  profileStore.clearProfile()
   menuStore.setMenu([])
   sessionStorage.removeItem('role')
   sessionStorage.removeItem('employeeId')
@@ -277,6 +298,22 @@ function logout() {
   display: flex;
   align-items: center;
   gap: 12px;
+}
+
+.header-user {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #ecfeff;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.header-user-name {
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .collapse-btn {
@@ -520,6 +557,10 @@ function logout() {
   }
 
   .logout-btn span {
+    display: none;
+  }
+
+  .header-user-name {
     display: none;
   }
 }

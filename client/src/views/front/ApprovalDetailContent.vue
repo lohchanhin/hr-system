@@ -5,8 +5,10 @@
       <p class="mb-2">
         <b>表單：</b>{{ doc.form?.name }}（{{ doc.form?.category }}）
       </p>
-      <p class="mb-2">
-        <b>申請人：</b>{{ doc.applicant_employee?.name || '-' }}
+      <p class="mb-2 person-line">
+        <b>申請人：</b>
+        <EmployeeAvatar :employee="personOf(doc.applicant_employee)" :size="24" />
+        <span>{{ doc.applicant_employee?.name || '-' }}</span>
       </p>
       <p class="mb-2"><b>狀態：</b>{{ getStatusText(doc.status) }}</p>
       <el-alert
@@ -64,7 +66,10 @@
           <el-table :data="Array.isArray(step.approvers) ? step.approvers : []" size="small" border>
             <el-table-column label="審核人" width="200">
               <template #default="{ row }">
-                {{ approverName(row.approver) }}
+                <div class="person-line">
+                  <EmployeeAvatar :employee="personOf(row.approver, approverName(row.approver))" :size="24" />
+                  <span>{{ approverName(row.approver) }}</span>
+                </div>
               </template>
             </el-table-column>
             <el-table-column label="決議" width="120">
@@ -86,7 +91,15 @@
         <el-divider content-position="left">簽核紀錄</el-divider>
         <el-table :data="logRows" size="small" border class="detail-logs">
           <el-table-column prop="time" label="時間" width="160" />
-          <el-table-column prop="actor" label="處理人" width="120" />
+          <el-table-column prop="actor" label="處理人" width="150">
+            <template #default="{ row }">
+              <div v-if="row.actorPerson" class="person-line">
+                <EmployeeAvatar :employee="personOf(row.actorPerson)" :size="22" />
+                <span>{{ row.actor }}</span>
+              </div>
+              <span v-else>{{ row.actor }}</span>
+            </template>
+          </el-table-column>
           <el-table-column prop="action" label="動作" width="130" />
           <el-table-column prop="message" label="說明" />
         </el-table>
@@ -99,6 +112,7 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { apiFetch } from '../../api'
+import EmployeeAvatar from '../../components/EmployeeAvatar.vue'
 import { formatFormValue, formatTaipeiDateTime, personNameOrFallback } from '../../utils/approvalDisplay'
 import { describeError, readApiError } from '../../utils/approvalErrors'
 import {
@@ -147,6 +161,12 @@ const downloadAttachment = async file => {
   } catch (err) {
     ElMessage.error(`附件下載失敗：${describeError(err).message}`)
   }
+}
+
+// 申請人 / 審核人可能是已展開的員工物件（含 _id、name、photo），也可能只是編號字串；頭像元件只接受物件
+const personOf = (value, fallbackName = '') => {
+  if (value && typeof value === 'object') return value
+  return { _id: value ? String(value) : '', name: fallbackName }
 }
 
 const approverName = emp => {
@@ -264,6 +284,12 @@ onBeforeUnmount(() => {
 <style scoped>
 .detail-error {
   color: #dc2626;
+}
+
+.person-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .attachment-list {

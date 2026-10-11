@@ -56,7 +56,7 @@ const FIELDS = [
   { _id: 'legacy-s', form: 'legacy-form', label: '開始時間', order: 2 },
   { _id: 'legacy-e', form: 'legacy-form', label: '結束時間', order: 3 },
 ]
-const E1 = { _id: 'e1', name: 'A員工', department: 'd1', subDepartment: 'sd1' }
+const E1 = { _id: 'e1', name: 'A員工', department: 'd1', subDepartment: 'sd1', photo: '/upload/employees/employee_e1.png' }
 const E2 = { _id: 'e2', name: 'B員工', department: 'd1', subDepartment: 'sd1' }
 
 let seq = 0
@@ -260,6 +260,20 @@ describe(`相關簽核清單的內容 (host time zone ${process.env.TZ || 'defau
       isLeave: false,
       status: 'pending',
     })])
+  })
+
+  it('carries the applicant photo path (empty when there is none) so the list can show an avatar', async () => {
+    const res = await listFor('2026-07', [
+      noDates({ _id: 'with-photo' }),
+      noDates({ _id: 'without-photo', applicant_employee: E2 }),
+    ])
+
+    const byId = Object.fromEntries(res.body.approvals.map((item) => [item._id, item]))
+    expect(byId['with-photo'].applicant_employee).toEqual(expect.objectContaining({ _id: 'e1', photo: '/upload/employees/employee_e1.png' }))
+    expect(byId['with-photo'].employee.photo).toBe('/upload/employees/employee_e1.png')
+    expect(byId['without-photo'].applicant_employee).toEqual(expect.objectContaining({ _id: 'e2', photo: '' }))
+    const populate = mockApprovalRequest.find.mock.results.at(-1).value.populate
+    expect(populate).toHaveBeenCalledWith({ path: 'applicant_employee', select: 'name department subDepartment photo' })
   })
 
   it('skips a request whose applicant no longer exists', async () => {

@@ -22,11 +22,25 @@ async function buildApp() {
   app.use('/api', apiRateLimiter)
   app.use('/api', apiMutationRateLimiter)
   app.get('/api/ping', (req, res) => res.json({ ok: true }))
+  app.get('/api/employees/:id/photo', (req, res) => res.json({ ok: true }))
   app.post('/api/echo', (req, res) => res.json({ ok: true }))
   return app
 }
 
 describe('API rate limiting', () => {
+  it('does not count employee photo requests (one per avatar) against the general limit, and still limits everything else', async () => {
+    const app = await buildApp()
+
+    for (let i = 0; i < 20; i += 1) {
+      const res = await request(app).get('/api/employees/abc123/photo')
+      expect(res.status).toBe(200)
+    }
+    // 照片請求不佔額度：一般請求仍然有完整的 3 次
+    const statuses = []
+    for (let i = 0; i < 4; i += 1) statuses.push((await request(app).get('/api/ping')).status)
+    expect(statuses).toEqual([200, 200, 200, 429])
+  })
+
   it('allows GET requests up to the general limit, then returns 429', async () => {
     const app = await buildApp()
 

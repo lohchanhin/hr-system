@@ -10,7 +10,9 @@ import { normalizeSignTag, normalizeSignTags } from '../utils/signTags.js'
 import {
   deleteEmployeePhoto,
   isManagedEmployeePhotoPath,
+  normalizeStoredPhotoPath,
   readEmployeePhoto,
+  statEmployeePhoto,
 } from '../services/employeePhotoStorage.js'
 
 /* ───────────────────────────── 小工具：型別轉換 ───────────────────────────── */
@@ -32,6 +34,9 @@ const toArray = (v) => {
   return [v]
 }
 const toStr = (v) => (v === '' || v === null || v === undefined ? '' : String(v))
+// multipart 表單送來的布林值是字串；Boolean('false') 會是 true，所以字串要自己判讀
+const FALSE_STRINGS = new Set(['', 'false', '0', 'off', 'no', 'null', 'undefined'])
+const toBool = (v) => (typeof v === 'string' ? !FALSE_STRINGS.has(v.trim().toLowerCase()) : Boolean(v))
 const isBlankPassword = (v) => v === null || v === undefined || (typeof v === 'string' && v.trim() === '')
 const firstOr = (arr, fallback) => (Array.isArray(arr) && arr.length ? arr[0] : fallback)
 
@@ -267,8 +272,8 @@ export function buildEmployeeDoc(body = {}) {
     supervisor,
     title: body.title,
     practiceTitle: body.practiceTitle,
-    isPartTime: Boolean(body.isPartTime),
-    isClocking: Boolean(body.isClocking),
+    isPartTime: toBool(body.isPartTime),
+    isClocking: toBool(body.isClocking),
 
     /* 人員狀態與試用 */
     employmentStatus: sanitizeEnum(body.employmentStatus, EMPLOYMENT_STATUSES),        // alias → status
@@ -380,7 +385,7 @@ export function buildEmployeePatch(body = {}, existing = null) {
 
   // 帳號/權限/簽核
   put('username', body.username)
-  if (isDefined(body.accountEnabled)) put('accountEnabled', Boolean(body.accountEnabled))
+  if (isDefined(body.accountEnabled)) put('accountEnabled', toBool(body.accountEnabled))
   put('permissionGrade', body.permissionGrade)
   put('role', body.role)
   // 不認得的代碼由 controller 先擋下（validateSignSettings），這裡遇到就不寫入
@@ -423,8 +428,8 @@ export function buildEmployeePatch(body = {}, existing = null) {
   }
   put('title', body.title)
   put('practiceTitle', body.practiceTitle)
-  if (isDefined(body.isPartTime)) put('partTime', Boolean(body.isPartTime))
-  if (isDefined(body.isClocking)) put('needClockIn', Boolean(body.isClocking))
+  if (isDefined(body.isPartTime)) put('partTime', toBool(body.isPartTime))
+  if (isDefined(body.isClocking)) put('needClockIn', toBool(body.isClocking))
 
   // 狀態/試用
   put('status', sanitizeEnum(body.employmentStatus ?? body.status, EMPLOYMENT_STATUSES))
@@ -641,12 +646,23 @@ async function canReadEmployeeResource(req, employeeId) {
   return Boolean(await Employee.exists({ _id: targetId, supervisor: actorId }))
 }
 
+// 舊資料的照片可能存成完整網址（http://主機/upload/...），畫面送回來的是同一個檔案的 /upload 路徑：
+// 這不是換了別人的檔案，不能被當成「照片必須直接上傳」擋下來
+function isSameStoredPhoto(submittedPhoto, storedPhoto) {
+  if (!storedPhoto || typeof submittedPhoto !== 'string') return false
+  const stored = normalizeStoredPhotoPath(storedPhoto)
+  return stored !== '' && stored === normalizeStoredPhotoPath(submittedPhoto)
+}
+
 async function deleteEmployeePhotoIfUnreferenced(photoPath, excludedEmployeeId) {
-  if (!isManagedEmployeePhotoPath(photoPath)) return
-  const filter = { photo: photoPath }
+  // 舊資料可能存成完整網址（http://主機/upload/...）：以正規化後的 /upload 路徑判斷與刪除，
+  // 引用檢查兩種寫法都要算，否則換照片或刪除員工後私有檔案會一直留在硬碟
+  const normalized = normalizeStoredPhotoPath(photoPath)
+  if (!normalized || !isManagedEmployeePhotoPath(normalized)) return
+  const filter = { photo: photoPath === normalized ? normalized : { $in: [photoPath, normalized] } }
   if (excludedEmployeeId) filter._id = { $ne: excludedEmployeeId }
   if (await Employee.exists(filter)) return
-  await deleteEmployeePhoto(photoPath)
+  await deleteEmployeePhoto(normalized)
 }
 
 async function cleanupUnpersistedPhoto(req) {
@@ -914,9 +930,10 @@ export async function listEmployeesSchedule(req, res) {
 export async function listEmployeeOptions(req, res) {
   try {
     const isAdmin = req.user?.role === 'admin'
+    // photo 是儲存的路徑（沒有照片時是空字串），選單／清單用它決定要不要去載入大頭照；照片本身走 /:id/photo
     const projection = isAdmin
-      ? 'name username signRole signTags signLevel organization department role status accountEnabled'
-      : 'name'
+      ? 'name photo username signRole signTags signLevel organization department role status accountEnabled'
+      : 'name photo'
     let employeeQuery = Employee.find(
       { username: { $exists: true, $ne: '' } },
       projection
@@ -929,6 +946,7 @@ export async function listEmployeeOptions(req, res) {
         return {
           id,
           name: e.name,
+          photo: e.photo ?? '',
           displayName: e.name,
         }
       }
@@ -939,6 +957,7 @@ export async function listEmployeeOptions(req, res) {
       return {
         id,
         name: e.name,
+        photo: e.photo ?? '',
         username: e.username,
         signRole: e.signRole ?? '',
         signLevel: e.signLevel ?? '',
@@ -1231,28 +1250,58 @@ export async function getEmployee(req, res) {
   }
 }
 
-/** GET /api/employees/:id/photo */
+// 沒有照片、檔案不見或 id 不正確都回 404；404 不可被瀏覽器快取，否則補上傳之後要等快取過期才看得到
+function photoNotFound(res) {
+  res.set('Cache-Control', 'no-store')
+  return res.status(404).json({ error: 'Not found' })
+}
+
+function matchesIfNoneMatch(header, etag) {
+  if (typeof header !== 'string' || !header.trim()) return false
+  if (header.trim() === '*') return true
+  return header.split(',').some((candidate) => candidate.trim().replace(/^W\//, '') === etag)
+}
+
+/**
+ * GET /api/employees/:id/photo
+ * 大頭照像員工通訊錄一樣，任何已登入的使用者都看得到（簽核、排班、出勤、選單到處都要顯示人頭）；
+ * 其他員工資料仍依 canReadEmployeeResource 限制。檔案本身不能由 /upload 靜態路徑讀取（privateUploadGuard），
+ * 只有這支需要登入的 API 能取得。
+ * 快取：回應帶 ETag，沒有變就回 304。呼叫端帶 ?v=<目前照片的檔名> 時（換照片檔名就會變）可以放心快取 5 分鐘；
+ * 沒帶或帶的是舊版本時每次都向伺服器確認，換照片之後不會看到舊圖。
+ */
 export async function getEmployeePhoto(req, res) {
   try {
-    if (!await canReadEmployeeResource(req, req.params.id)) {
-      return res.status(404).json({ error: 'Not found' })
-    }
+    if (!toEntityId(req.user?.id)) return res.status(401).json({ error: 'Invalid user' })
 
     const employee = await Employee.findById(req.params.id).select('photo')
-    if (!employee?.photo) return res.status(404).json({ error: 'Not found' })
+    const storedPath = normalizeStoredPhotoPath(employee?.photo)
+    const meta = storedPath ? await statEmployeePhoto(storedPath) : null
+    if (!meta) return photoNotFound(res)
 
-    const photo = await readEmployeePhoto(employee.photo)
-    if (!photo) return res.status(404).json({ error: 'Not found' })
-
-    res.set({
-      'Cache-Control': 'private, max-age=300',
+    const isCurrentVersion = req.query?.v === storedPath.split('/').pop()
+    const headers = {
+      'Cache-Control': isCurrentVersion ? 'private, max-age=300, must-revalidate' : 'private, no-cache',
       'Content-Security-Policy': "default-src 'none'; sandbox",
-      'Content-Type': photo.mimeType,
+      ETag: meta.etag,
       'X-Content-Type-Options': 'nosniff',
-    })
+      Vary: 'Authorization',
+    }
+    if (matchesIfNoneMatch(req.headers?.['if-none-match'], meta.etag)) {
+      res.set(headers)
+      return res.status(304).end()
+    }
+
+    const photo = await readEmployeePhoto(storedPath)
+    if (!photo) return photoNotFound(res)
+
+    res.set({ ...headers, 'Content-Type': photo.mimeType })
     return res.send(photo.buffer)
   } catch (err) {
-    return res.status(400).json({ error: err.message })
+    // 格式不正確的 id（CastError）等同找不到；其他錯誤（讀檔權限…）是伺服器問題，記下錯誤代碼並回 500，不把系統訊息回給使用者
+    if (err?.name === 'CastError') return photoNotFound(res)
+    console.error('Failed to read employee photo', { error: err?.name ?? 'Error', code: err?.code })
+    return res.status(500).json({ error: '載入照片失敗' })
   }
 }
 
@@ -1270,7 +1319,7 @@ export async function updateEmployee(req, res) {
     const previousPhoto = employee.photo
     if (
       isDefined(body.photo) && body.photo && body.photo !== previousPhoto &&
-      !req.uploadedPhotoPath
+      !req.uploadedPhotoPath && !isSameStoredPhoto(body.photo, previousPhoto)
     ) {
       return res.status(400).json({ error: '員工照片必須直接上傳' })
     }

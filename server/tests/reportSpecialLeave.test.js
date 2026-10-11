@@ -86,3 +86,31 @@ describe('specialLeave report', () => {
     expect(result.records.map((record) => record.approvalId)).toEqual(['a2'])
   })
 })
+
+describe('department report preview rows carry the employee photo', () => {
+  it('adds the stored photo path to the rows of employees that have one, and leaves other rows unchanged', async () => {
+    mockEmployee.find.mockResolvedValue([
+      { _id: 'emp1', name: '員工1', photo: '/upload/employees/employee_a.png' },
+      { _id: 'emp2', name: '員工2' },
+    ])
+    mockApprovalRequest.find.mockReturnValue({
+      populate: jest.fn().mockReturnThis(),
+      lean: jest.fn().mockResolvedValue([
+        approval('a1', '特休假', 1),
+        { ...approval('a2', '特休假', 1), applicant_employee: { _id: 'emp2', name: '員工2' } },
+      ]),
+    })
+
+    const result = await getDepartmentReportData({
+      type: 'specialLeave',
+      month: '2026-03',
+      departmentId: 'dept1',
+      actor: { role: 'admin', id: 'admin1' },
+    })
+
+    expect(result.records).toEqual([
+      expect.objectContaining({ approvalId: 'a1', employee: 'emp1', photo: '/upload/employees/employee_a.png' }),
+      expect.not.objectContaining({ photo: expect.anything() }),
+    ])
+  })
+})

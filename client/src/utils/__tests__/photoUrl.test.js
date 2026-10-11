@@ -26,8 +26,9 @@ describe('fetchEmployeePhotoUrl', () => {
 
     await expect(fetchEmployeePhotoUrl('emp/1', '/upload/employees/photo.png'))
       .resolves.toBe('blob:protected-photo')
+    // 行為有意改變：網址帶上照片檔名當版本（?v=），換照片後網址就不同，瀏覽器不會拿舊圖的快取；伺服器忽略這個參數
     expect(apiFetchMock).toHaveBeenCalledWith(
-      '/api/employees/emp%2F1/photo',
+      '/api/employees/emp%2F1/photo?v=photo.png',
       {},
       { autoRedirect: false },
     )

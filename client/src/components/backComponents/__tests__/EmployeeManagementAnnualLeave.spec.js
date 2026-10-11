@@ -187,6 +187,8 @@ describe('EmployeeManagement - 特休已使用天數不會被舊的編輯視窗�
     expect(annualLeave.usedDaysBase).toBe(2)
   })
 
+  // 行為有意改變：有新照片時，整份資料放在 multipart 的 data 欄位（JSON 字串），照片放在 photo 欄位；
+  // 不再把每個欄位各自放進 FormData（原本 annualLeave 是獨立的 JSON 字串欄位）
   it('有新照片改用 multipart 時，特休欄位同樣只在管理員改過時才帶 usedDays', async () => {
     await mountAndOpen()
     server.employee.annualLeave.usedDays = 1
@@ -195,9 +197,12 @@ describe('EmployeeManagement - 特休已使用天數不會被舊的編輯視窗�
     await wrapper.vm.saveEmployee()
     await flushPromises()
 
+    expect(writeCalls('PUT')).toHaveLength(1)
     const call = writeCalls('PUT').at(-1)
     expect(call[1].body).toBeInstanceOf(FormData)
-    const annualLeave = JSON.parse(call[1].body.get('annualLeave'))
+    expect([...call[1].body.keys()]).toEqual(['data', 'photo'])
+    expect(call[1].body.get('photo')).toBeInstanceOf(File)
+    const annualLeave = JSON.parse(call[1].body.get('data')).annualLeave
     expect(annualLeave.totalDays).toBe(10)
     expect(Object.prototype.hasOwnProperty.call(annualLeave, 'usedDays')).toBe(false)
     expect(Object.prototype.hasOwnProperty.call(annualLeave, 'appliedApprovalRequestIds')).toBe(false)
@@ -207,7 +212,7 @@ describe('EmployeeManagement - 特休已使用天數不會被舊的編輯視窗�
     wrapper.vm.employeeForm.photoList = [{ name: 'p.png', raw: new File(['x'], 'p.png', { type: 'image/png' }) }]
     await wrapper.vm.saveEmployee()
     await flushPromises()
-    const changed = JSON.parse(writeCalls('PUT').at(-1)[1].body.get('annualLeave'))
+    const changed = JSON.parse(writeCalls('PUT').at(-1)[1].body.get('data')).annualLeave
     expect(changed.usedDays).toBe(6)
     expect(changed.usedDaysBase).toBe(0)
   })

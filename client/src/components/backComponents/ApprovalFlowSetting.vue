@@ -206,7 +206,12 @@
                       :label="e.label"
                       :value="e.value"
                       :disabled="e.disabled"
-                    />
+                    >
+                      <span class="approver-option">
+                        <EmployeeAvatar :employee="approverAvatarOf(e)" :size="20" />
+                        <span class="approver-option-label">{{ e.label }}</span>
+                      </span>
+                    </el-option>
                   </el-select>
                   <el-select
                     v-else-if="row.approver_type==='manager'"
@@ -220,7 +225,12 @@
                       :label="m.label"
                       :value="m.value"
                       :disabled="m.disabled"
-                    />
+                    >
+                      <span class="approver-option">
+                        <EmployeeAvatar v-if="employeeById.has(m.value)" :employee="approverAvatarOf(m)" :size="20" />
+                        <span class="approver-option-label">{{ m.label }}</span>
+                      </span>
+                    </el-option>
                   </el-select>
                   <el-select
                     v-else-if="row.approver_type==='tag'"
@@ -480,6 +490,7 @@
 import { ref, onMounted, watch, computed, h } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { apiFetch } from '../../api'  // 你專案現有封裝
+import EmployeeAvatar from '../EmployeeAvatar.vue'
 import {
   dictionaryItemNames,
   getFieldDictionaryKey,
@@ -724,6 +735,14 @@ function employeeOptionFor(emp) {
 }
 
 const userApproverOptions = computed(() => employeeOptions.value.map(employeeOptionFor))
+
+// 簽核人下拉選單選項旁的小頭像：選項本身只有 value / label，照片路徑從員工清單查
+function approverAvatarOf(option) {
+  const emp = employeeById.value.get(option?.value)
+  return emp
+    ? { _id: emp.id, name: emp.name, photo: emp.photo }
+    : { _id: option?.value, name: String(option?.label ?? '') }
+}
 
 const APPLICANT_SUPERVISOR_VALUE = 'APPLICANT_SUPERVISOR'
 const APPLICANT_SUPERVISOR_OPTION = Object.freeze({
@@ -1158,6 +1177,7 @@ async function loadEmployeeOptions() {
           return {
             id: e.id,
             name: e.name,
+            photo: e.photo ?? '',
             username: e.username,
             signRole: e.signRole ?? '',
             signLevel: e.signLevel ?? '',
@@ -2102,6 +2122,8 @@ onMounted(async () => {
 
 <style scoped>
 .approval-flow-setting { padding: 20px; }
+.approver-option { display: flex; align-items: center; gap: 8px; }
+.approver-option-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .rule-form { max-width: 620px; margin-top: 20px; }
 .template-select-label { flex: 0 0 auto; font-weight: 600; color: #334155; }
 .field-hint { flex: 0 0 100%; margin-top: 4px; font-size: 12px; line-height: 1.6; color: #64748b; }

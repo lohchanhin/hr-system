@@ -201,9 +201,7 @@
                 <el-table-column prop="applicant_employee.name" label="申請人" width="140">
                   <template #default="{ row }">
                     <div class="applicant-info">
-                      <el-avatar :size="32" class="applicant-avatar">
-                        {{ (row.applicant_employee?.name || '-').charAt(0) }}
-                      </el-avatar>
+                      <EmployeeAvatar :employee="personOf(row.applicant_employee)" :size="32" class="applicant-avatar" />
                       <span>{{ row.applicant_employee?.name || '-' }}</span>
                     </div>
                   </template>
@@ -316,9 +314,7 @@
                 <el-table-column label="申請人" width="200">
                   <template #default="{ row }">
                     <div class="applicant-info">
-                      <el-avatar :size="32" class="applicant-avatar">
-                        {{ (row.applicant_employee?.name || '-').charAt(0) }}
-                      </el-avatar>
+                      <EmployeeAvatar :employee="personOf(row.applicant_employee)" :size="32" class="applicant-avatar" />
                       <span>{{ row.applicant_employee?.name || '-' }}</span>
                     </div>
                   </template>
@@ -468,7 +464,11 @@
     <el-dialog v-model="detail.visible" title="申請單明細" width="760px">
       <div v-if="detail.doc">
         <p class="mb-2"><b>表單：</b>{{ detail.doc.form?.name }}（{{ detail.doc.form?.category }}）</p>
-        <p class="mb-2"><b>申請人：</b>{{ detail.doc.applicant_employee?.name || '-' }}</p>
+        <p class="mb-2 applicant-line">
+          <b>申請人：</b>
+          <EmployeeAvatar :employee="personOf(detail.doc.applicant_employee)" :size="24" class="applicant-avatar" />
+          <span>{{ detail.doc.applicant_employee?.name || '-' }}</span>
+        </p>
         <p class="mb-2"><b>狀態：</b>{{ getStatusText(detail.doc.status) }}</p>
         <el-alert
           v-if="detailReturnInfo"
@@ -528,7 +528,12 @@
             </div>
             <el-table :data="s.approvers" size="small" border>
               <el-table-column label="審核人" width="200">
-                <template #default="{ row }">{{ approverName(row.approver) }}</template>
+                <template #default="{ row }">
+                  <div class="applicant-info">
+                    <EmployeeAvatar :employee="personOf(row.approver, approverName(row.approver))" :size="24" class="applicant-avatar" />
+                    <span>{{ approverName(row.approver) }}</span>
+                  </div>
+                </template>
               </el-table-column>
               <el-table-column label="決議" width="120">
                 <template #default="{ row }">{{ getStatusText(row.decision) }}</template>
@@ -545,7 +550,15 @@
           <el-divider content-position="left">簽核紀錄</el-divider>
           <el-table :data="detailLogRows" size="small" border class="detail-logs">
             <el-table-column prop="time" label="時間" width="160" />
-            <el-table-column prop="actor" label="處理人" width="120" />
+            <el-table-column prop="actor" label="處理人" width="150">
+              <template #default="{ row }">
+                <div v-if="row.actorPerson" class="applicant-info">
+                  <EmployeeAvatar :employee="personOf(row.actorPerson)" :size="22" class="applicant-avatar" />
+                  <span>{{ row.actor }}</span>
+                </div>
+                <span v-else>{{ row.actor }}</span>
+              </template>
+            </el-table-column>
             <el-table-column prop="action" label="動作" width="130" />
             <el-table-column prop="message" label="說明" />
           </el-table>
@@ -695,6 +708,7 @@ import { onBeforeRouteLeave } from 'vue-router'
 import { apiFetch } from '../../api'
 import { useAuthStore } from '../../stores/auth'
 import ApprovalFormFields from '../../components/ApprovalFormFields.vue'
+import EmployeeAvatar from '../../components/EmployeeAvatar.vue'
 import { formatTaipeiDateTime, formatFormValue, normalizeFieldOptions, personNameOrFallback } from '../../utils/approvalDisplay'
 import { describeError, readApiError, ApprovalApiError } from '../../utils/approvalErrors'
 import {
@@ -730,6 +744,8 @@ const fmt = (d) => formatTaipeiDateTime(d)
 
 /* 人名快取（顯示審核人用） */
 const employeeNameCache = reactive({})
+// 員工 _id -> 照片路徑（員工選項 / 簽核人資料帶回來的），審核人只有編號時也能顯示頭像
+const employeePhotoCache = reactive({})
 const myActionLoading = reactive({})
 const nameOfEmployee = (id) => employeeNameCache[id] || ''
 
@@ -741,6 +757,25 @@ const valueLookups = {
   org: (id) => optionLabel(orgOptions, id),
 }
 const renderValue = (value, field) => formatFormValue(field, value, { lookups: valueLookups })
+
+// 申請人 / 審核人可能是已展開的員工物件（含 _id、name、photo），也可能只是編號字串；頭像元件只接受物件
+function personOf(value, fallbackName = '') {
+  if (value && typeof value === 'object') {
+    const id = String(value._id || value.id || '')
+    // 伺服器沒帶照片欄位時，用員工選項快取補上
+    if (value.photo === undefined && id && employeePhotoCache[id]) return { ...value, photo: employeePhotoCache[id] }
+    return value
+  }
+  const id = value ? String(value) : ''
+  return { _id: id, name: fallbackName || employeeNameCache[id] || '', photo: employeePhotoCache[id] }
+}
+
+function rememberEmployee(person) {
+  const id = String(person?._id || person?.id || '')
+  if (!id) return
+  if (person.name) employeeNameCache[id] = person.name
+  if (person.photo) employeePhotoCache[id] = person.photo
+}
 
 function approverName(emp) {
   if (emp && typeof emp === 'object') {
@@ -806,12 +841,9 @@ async function fetchUsersLite() {
       const arr = await res.json()
       userOptions.value = arr.map(e => {
         const id = e.id || e._id
-        return { value: id, label: `${e.name}${e.username ? ' ('+e.username+')' : ''}` }
+        return { value: id, label: `${e.name}${e.username ? ' ('+e.username+')' : ''}`, name: e.name, photo: e.photo || '' }
       })
-      arr.forEach(e => {
-        const id = e.id || e._id
-        if (id) employeeNameCache[id] = e.name
-      })
+      arr.forEach(rememberEmployee)
     }
   } catch {
     // 員工選項載入失敗不阻擋申請；選員工的欄位會是空的
@@ -861,10 +893,7 @@ async function ensureEmployeeCache(ids) {
     const res = await apiFetch('/api/employees/options')
     if (res.ok) {
       const emps = await res.json()
-      emps.forEach(e => {
-        const id = e.id || e._id
-        if (id) employeeNameCache[id] = e.name
-      })
+      emps.forEach(rememberEmployee)
     }
   } catch {
     // 查不到名稱時預覽改顯示通用文字
@@ -1142,7 +1171,7 @@ async function fetchInbox(page = inboxPage.page) {
     // 快取審核者名字
     sortedList.forEach(doc => {
       (doc.steps?.[doc.current_step_index]?.approvers || []).forEach(a => {
-        if (a.approver && a.approver.name) employeeNameCache[a.approver._id] = a.approver.name
+        if (a.approver && a.approver.name) rememberEmployee(a.approver)
       })
     })
   } catch (error) {
@@ -1527,7 +1556,7 @@ async function openDetail(id) {
     steps.forEach(s => {
       const approvers = Array.isArray(s.approvers) ? s.approvers : []
       approvers.forEach(a => {
-        if (a.approver?._id && a.approver?.name) employeeNameCache[a.approver._id] = a.approver.name
+        if (a.approver?._id && a.approver?.name) rememberEmployee(a.approver)
       })
     })
   } catch (error) {
@@ -1799,6 +1828,13 @@ watch(activeTab, async (tab) => {
   background: #10b981;
   color: white;
   font-weight: 600;
+  flex-shrink: 0;
+}
+
+.applicant-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .status-tag {

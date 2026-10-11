@@ -130,6 +130,7 @@ export async function finalizeSchedules(req, res) {
         collection.set(id, {
           id,
           name: emp.name || '',
+          photo: emp.photo || '',
           response: doc.employeeResponse,
           latestNote: doc.responseNote || '',
           schedules: [],

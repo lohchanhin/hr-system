@@ -17,6 +17,9 @@ const rateLimitExceededResponse = (req, res) => {
   res.status(429).json({ error: 'Too many requests. Please slow down and try again later.', requestId: req.requestId })
 }
 
+// /api 底下的相對路徑：/employees/<id>/photo
+const EMPLOYEE_PHOTO_PATH = /^\/employees\/[^/]+\/photo\/?$/
+
 // Blanket safety net for every authenticated API call (GET included), so a
 // single client can't hammer the server without limit. Generous by default —
 // this is not meant to police normal usage, only clearly abusive traffic.
@@ -25,6 +28,9 @@ export const apiRateLimiter = rateLimit({
   limit: positiveInteger(process.env.API_RATE_LIMIT_MAX, 300),
   standardHeaders: 'draft-8',
   legacyHeaders: false,
+  // 大頭照是頁面上每個頭像各一個請求（含 304），一頁幾十個；算進每分鐘 300 次會把同一個 IP 後面的人
+  // 一起擋在門外（429）。照片路徑一定要登入，且回應是小檔案，不計入這個上限。
+  skip: (req) => req.method === 'GET' && EMPLOYEE_PHOTO_PATH.test(req.path),
   keyGenerator: (req) => ipKeyGenerator(req.ip),
   handler: rateLimitExceededResponse,
 })

@@ -879,12 +879,13 @@ async function buildApprovalRecords({
   return { records: [], summary: {} };
 }
 
-export async function getDepartmentReportData({ type, month, departmentId, actor }) {
+async function buildDepartmentReportData({ type, month, departmentId, actor }, context = {}) {
   if (!REPORT_NAME_MAP[type]) {
     throw new ReportAccessError(404, 'Unknown report type');
   }
   const { start, end } = parseMonthRange(month);
   const employees = await resolveDepartmentEmployees(departmentId, actor);
+  context.employees = employees;
   const employeeIds = employees.map((emp) => normalizeId(emp._id)).filter(Boolean);
   if (!employeeIds.length) {
     throw new ReportAccessError(404, 'No data');
@@ -978,6 +979,30 @@ export async function getDepartmentReportData({ type, month, departmentId, actor
   // Log warning for unknown report types but return empty data to avoid breaking API
   console.warn(`Unknown report type requested: ${type}. Returning empty data.`);
   return { summary: {}, records: [] };
+}
+
+// 預覽表格的每一列要能顯示員工頭像：員工資料已經載入，把有照片的列帶上 photo（儲存的路徑，與其他員工物件相同）
+function attachEmployeePhotos(data, employees) {
+  if (!data || !Array.isArray(data.records) || !Array.isArray(employees) || !employees.length) return data;
+  const photoById = new Map();
+  employees.forEach((emp) => {
+    const photo = typeof emp?.photo === 'string' ? emp.photo.trim() : '';
+    if (photo) photoById.set(normalizeId(emp._id), photo);
+  });
+  if (!photoById.size) return data;
+  return {
+    ...data,
+    records: data.records.map((record) => {
+      const photo = record && typeof record === 'object' ? photoById.get(normalizeId(record.employee ?? record.employeeObjectId)) : '';
+      return photo ? { ...record, photo } : record;
+    }),
+  };
+}
+
+export async function getDepartmentReportData(params) {
+  const context = {};
+  const data = await buildDepartmentReportData(params, context);
+  return attachEmployeePhotos(data, context.employees);
 }
 
 export function getReportDisplayName(type) {

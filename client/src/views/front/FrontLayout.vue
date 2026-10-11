@@ -25,9 +25,7 @@
       </div>
       <div v-if="!isSidebarCollapsed" class="sidebar-header">
         <div class="user-info">
-          <el-avatar :size="40" :src="profilePhotoUrl || ''" class="user-avatar">
-            <i class="el-icon-user"></i>
-          </el-avatar>
+          <EmployeeAvatar :employee="profileAvatar" :size="40" :lazy="false" class="user-avatar" />
           <span class="user-name">{{ displayName }}</span>
           <el-descriptions
             class="profile-descriptions"
@@ -111,7 +109,8 @@ import { clearToken } from "../../utils/tokenService";
 import { storeToRefs } from "pinia";
 import { iconMap as availableMenuIcons, resolveMenuIcon } from "../../constants/menuIcons";
 import { useAuthStore } from "../../stores/auth";
-import { fetchEmployeePhotoUrl, revokeEmployeePhotoUrl } from "../../utils/photoUrl";
+import { clearEmployeePhotoCache } from "../../utils/photoUrl";
+import EmployeeAvatar from "../../components/EmployeeAvatar.vue";
 
 const router = useRouter();
 const route = useRoute();
@@ -120,8 +119,6 @@ const { items: menuItems } = storeToRefs(menuStore);
 const profileStore = useProfileStore();
 const { profile } = storeToRefs(profileStore);
 const authStore = useAuthStore();
-const profilePhotoUrl = ref(null);
-let profilePhotoGeneration = 0;
 
 const hrLogo = "/HR.png";
 const username = ref("");
@@ -152,6 +149,15 @@ const displayName = computed(() => {
   }
   return username.value || "員工";
 });
+
+// 標題列頭像：個人資料裡的 id 是員工的 _id；照片由 EmployeeAvatar 經共用快取下載，
+// 在後台改了自己的照片之後（個人資料重新讀取、照片快取作廢）會自動換成新的
+const profileAvatar = computed(() => ({
+  _id: profile.value?._id || profile.value?.id || profile.value?.employeeId || "",
+  name: displayName.value,
+  photo: profile.value?.photo,
+  hasPhoto: profile.value?.hasPhoto,
+}));
 
 const displayOrganization = computed(() =>
   formatText(profile.value?.organizationName)
@@ -199,33 +205,10 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
-  profilePhotoGeneration += 1;
-  revokeEmployeePhotoUrl(profilePhotoUrl.value);
   if (typeof window !== "undefined") {
     window.removeEventListener("resize", updateSidebarCollapse);
   }
 });
-
-watch(
-  () => [profile.value?._id || profile.value?.id, profile.value?.photo],
-  async ([employeeId, photoPath]) => {
-    const generation = ++profilePhotoGeneration;
-    revokeEmployeePhotoUrl(profilePhotoUrl.value);
-    profilePhotoUrl.value = null;
-    if (!employeeId || !photoPath) return;
-    try {
-      const objectUrl = await fetchEmployeePhotoUrl(employeeId, photoPath);
-      if (generation !== profilePhotoGeneration) {
-        revokeEmployeePhotoUrl(objectUrl);
-        return;
-      }
-      profilePhotoUrl.value = objectUrl;
-    } catch {
-      profilePhotoUrl.value = null;
-    }
-  },
-  { immediate: true },
-);
 
 watch(
   () => authStore.role,
@@ -256,6 +239,7 @@ function onLogout() {
   sessionStorage.removeItem("role");
   sessionStorage.removeItem("employeeId");
   clearToken();
+  clearEmployeePhotoCache();
   menuStore.setMenu([]);
   profileStore.clearProfile();
   router.push(`/`);

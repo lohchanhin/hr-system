@@ -124,7 +124,14 @@
         border
         class="preview-table"
       >
-        <el-table-column prop="name" label="員工" min-width="140" />
+        <el-table-column prop="name" label="員工" min-width="140">
+          <template #default="{ row }">
+            <div class="report-person">
+              <EmployeeAvatar :employee="reportPerson(row)" :size="24" class="report-person-avatar" />
+              <span>{{ row.name }}</span>
+            </div>
+          </template>
+        </el-table-column>
         <el-table-column
           v-for="column in dynamicColumns"
           :key="column.prop"
@@ -142,6 +149,7 @@ import { ref, reactive, computed, onMounted, watch } from 'vue'
 import dayjs from 'dayjs'
 import { ElMessage } from 'element-plus'
 import { apiFetch } from '../../api'
+import EmployeeAvatar from '../../components/EmployeeAvatar.vue'
 
 const departments = ref([])
 const supervisorDepartmentId = ref('')
@@ -163,6 +171,14 @@ const preview = reactive({
   state: 'idle',
   summary: null,
   records: [],
+})
+
+// 報表每一列的員工：伺服器用 employee 放員工的 _id（沒有 _id 欄位）；照片路徑有帶才會顯示照片，否則是字母頭像
+const reportPerson = row => ({
+  _id: row?._id ?? (row?.employee && typeof row.employee === 'object' ? row.employee._id : row?.employee) ?? '',
+  name: row?.name,
+  photo: row?.photo,
+  hasPhoto: row?.hasPhoto,
 })
 
 const loading = reactive({
@@ -741,6 +757,16 @@ async function exportReport() {
 </script>
 
 <style scoped>
+.report-person {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.report-person-avatar {
+  flex: 0 0 auto;
+}
+
 .department-reports-page {
   display: flex;
   flex-direction: column;

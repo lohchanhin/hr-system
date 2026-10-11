@@ -92,7 +92,7 @@ describe('GET /api/approvals/history', () => {
     ])
     expect(query.sort).toHaveBeenCalledWith({ updatedAt: -1 })
     expect(query.populate).toHaveBeenCalledWith('form', 'name category semanticType')
-    expect(query.populate).toHaveBeenCalledWith('applicant_employee', 'name employeeId department organization')
+    expect(query.populate).toHaveBeenCalledWith('applicant_employee', 'name employeeId department organization photo')
     const filter = mockApprovalRequest.find.mock.calls[0][0]
     expect(filter).toEqual({
       steps: {
@@ -184,7 +184,7 @@ describe('GET /api/approvals/history', () => {
 
     expect(res.status).toBe(200)
     expect(mockApprovalRequest.find).toHaveBeenCalledWith({ status: 'pending' })
-    expect(query.populate).toHaveBeenCalledWith('steps.approvers.approver', 'name')
+    expect(query.populate).toHaveBeenCalledWith('steps.approvers.approver', 'name photo')
     expect(res.body[0]).toMatchObject({
       _id: oid(501),
       status: 'pending',

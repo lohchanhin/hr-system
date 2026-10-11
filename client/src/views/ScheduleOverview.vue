@@ -193,7 +193,14 @@
                     class="overview-table"
                     :key="`${unit.id}-table`"
                   >
-                    <el-table-column prop="name" label="姓名" fixed="left" min-width="140" />
+                    <el-table-column prop="name" label="姓名" fixed="left" min-width="140">
+                      <template #default="{ row }">
+                        <div class="overview-person">
+                          <EmployeeAvatar :employee="row" :size="24" class="overview-person-avatar" />
+                          <span>{{ row.name }}</span>
+                        </div>
+                      </template>
+                    </el-table-column>
                     <el-table-column prop="title" label="職稱" min-width="140" />
                     <el-table-column
                       v-for="day in visibleDays"
@@ -233,6 +240,7 @@ import { ref, computed, onMounted } from 'vue'
 import dayjs from 'dayjs'
 import { ElMessage } from 'element-plus'
 import { apiFetch } from '@/api'
+import EmployeeAvatar from '@/components/EmployeeAvatar.vue'
 
 const selectedMonth = ref(dayjs().format('YYYY-MM'))
 const selectedOrganization = ref('')
@@ -336,6 +344,8 @@ const buildTableRows = unit => {
       return {
         id: emp.id,
         name: emp.name,
+        photo: emp.photo,
+        hasPhoto: emp.hasPhoto,
         title: emp.title || '',
         entries
       }
@@ -954,6 +964,16 @@ onMounted(async () => {
   :deep(.el-table__fixed-header-wrapper) {
     z-index: 11;
   }
+}
+
+.overview-person {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.overview-person-avatar {
+  flex: 0 0 auto;
 }
 
 .shift-label {

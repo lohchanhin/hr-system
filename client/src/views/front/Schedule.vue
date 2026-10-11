@@ -111,7 +111,10 @@
           </div>
           <ul class="card-list">
             <li v-for="emp in publishSummary.pendingEmployees" :key="emp.id" class="card-item">
-              <span class="card-name">{{ emp.name }}</span>
+              <span class="card-name card-name--avatar">
+                <EmployeeAvatar :employee="publishEmployeeAvatar(emp)" :size="20" class="schedule-employee-avatar" />
+                {{ emp.name }}
+              </span>
               <span class="card-count">{{ emp.pendingCount }} 筆</span>
             </li>
           </ul>
@@ -125,7 +128,10 @@
           <ul class="card-list">
             <li v-for="emp in publishSummary.disputedEmployees" :key="emp.id" class="card-item">
               <div class="card-item-main">
-                <span class="card-name">{{ emp.name }}</span>
+                <span class="card-name card-name--avatar">
+                  <EmployeeAvatar :employee="publishEmployeeAvatar(emp)" :size="20" class="schedule-employee-avatar" />
+                  {{ emp.name }}
+                </span>
                 <span class="card-count">{{ emp.disputedCount }} 筆</span>
               </div>
               <div v-if="emp.disputes && emp.disputes.length > 0" class="disputes-list">
@@ -475,6 +481,7 @@
             <div class="employee-name">
               <el-checkbox v-if="canEditSchedule" class="row-checkbox" :model-value="selectedEmployeesSet.has(row._id)"
                 :data-schedule-action="'toggle-employee'" :data-emp-id="String(row._id)" />
+              <EmployeeAvatar :employee="row" :size="22" class="schedule-employee-avatar" />
               <span class="employee-name-text" :title="row.name || '-'">
                 {{ row.name || '-' }}
               </span>
@@ -634,8 +641,9 @@
         </el-table-column>
         <el-table-column label="申請人" width="120">
           <template #default="{ row }">
-            <div class="applicant-name">
-              {{ row.applicantName }}
+            <div class="applicant-name applicant-name--avatar">
+              <EmployeeAvatar :employee="approvalApplicant(row)" :size="22" class="schedule-employee-avatar" />
+              <span>{{ row.applicantName }}</span>
             </div>
           </template>
         </el-table-column>
@@ -766,6 +774,7 @@ import { useRouter } from 'vue-router'
 import ScheduleDashboard from './ScheduleDashboard.vue'
 import ScheduleGridVirtualBody from './ScheduleGridVirtualBody.vue'
 import SelectionActions from './SelectionActions.vue'
+import EmployeeAvatar from '../../components/EmployeeAvatar.vue'
 import {
   Bell,
   Calendar,
@@ -875,6 +884,10 @@ const employees = ref([])
 const employeeIndexMap = shallowRef(new Map())
 const employeeById = computed(() => Object.fromEntries(employeeIndexMap.value))
 const approvalList = ref([])
+const publishEmployeeAvatar = emp => {
+  const id = String(emp?.id ?? emp?._id ?? '')
+  return employeeById.value[id] || { _id: id, name: emp?.name || '', photo: emp?.photo, hasPhoto: emp?.hasPhoto }
+}
 const departments = ref([])
 const subDepartments = ref([])
 const selectedDepartment = ref('')
@@ -4527,6 +4540,7 @@ async function fetchEmployees(
         title: e.title || '',
         practiceTitle: e.practiceTitle || '',
         photo: e.photo,
+        hasPhoto: e.hasPhoto,
         departmentId: normalizedDept,
         subDepartmentId: normalizedSub,
         department: deptMap[normalizedDept] || '',

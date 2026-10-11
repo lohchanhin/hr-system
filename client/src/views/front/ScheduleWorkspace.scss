@@ -862,6 +862,17 @@
   margin-right: 0;
 }
 
+.schedule-employee-avatar {
+  flex: 0 0 auto;
+}
+
+.card-name--avatar,
+.applicant-name--avatar {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .title-position-cell {
   display: flex;
   overflow: hidden;

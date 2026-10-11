@@ -51,8 +51,9 @@ describe('GET /api/approvals/inbox', () => {
     expect(res.body).toEqual(docs)
     expect(query.sort).toHaveBeenCalledWith({ createdAt: -1 })
     expect(query.populate).toHaveBeenCalledWith('form', 'name category semanticType')
-    expect(query.populate).toHaveBeenCalledWith('applicant_employee', 'name employeeId department organization')
-    expect(query.populate).toHaveBeenCalledWith('steps.approvers.approver', 'name')
+    // 申請人與簽核人都帶 photo（照片路徑），待簽清單才能顯示大頭照
+    expect(query.populate).toHaveBeenCalledWith('applicant_employee', 'name employeeId department organization photo')
+    expect(query.populate).toHaveBeenCalledWith('steps.approvers.approver', 'name photo')
     expect(res.headers['x-total-count']).toBe('1')
   })
 
@@ -125,8 +126,8 @@ describe('GET /api/approvals (my requests)', () => {
     expect(mockApprovalRequest.find).toHaveBeenCalledWith({ applicant_employee: EMP })
     expect(query.sort).toHaveBeenCalledWith({ createdAt: -1 })
     expect(query.populate).toHaveBeenCalledWith('form', 'name category semanticType')
-    expect(query.populate).toHaveBeenCalledWith('applicant_employee', 'name employeeId department organization')
-    expect(query.populate).toHaveBeenCalledWith('steps.approvers.approver', 'name')
+    expect(query.populate).toHaveBeenCalledWith('applicant_employee', 'name employeeId department organization photo')
+    expect(query.populate).toHaveBeenCalledWith('steps.approvers.approver', 'name photo')
   })
 
   it('paginates', async () => {

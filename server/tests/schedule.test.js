@@ -427,6 +427,48 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
     expect(mockShiftSchedule.find).not.toHaveBeenCalled();
   });
 
+  it('publishSummary 的待確認、有異議員工帶 photo（照片路徑），畫面才能在名字旁顯示大頭照', async () => {
+    const supervisorApp = buildScheduleAppWithRole('supervisor');
+    const photo = '/upload/employees/employee_alice.png';
+    const fake = [
+      {
+        employee: { _id: 'emp1', name: '甲', photo },
+        shiftId: 's1',
+        date: new Date('2023-01-02'),
+        state: 'pending_confirmation',
+        employeeResponse: 'pending',
+      },
+      {
+        employee: { _id: 'emp2', name: '乙' },
+        shiftId: 's1',
+        date: new Date('2023-01-03'),
+        state: 'changes_requested',
+        employeeResponse: 'disputed',
+        responseNote: '想換班',
+      },
+    ];
+    mockShiftSchedule.countDocuments.mockResolvedValue(2);
+    mockShiftSchedule.find.mockReturnValue({
+      select: jest.fn().mockReturnThis(),
+      populate: jest.fn().mockReturnThis(),
+      skip: jest.fn().mockReturnThis(),
+      limit: jest.fn().mockReturnThis(),
+      lean: jest.fn().mockResolvedValue(fake),
+    });
+    mockEmployee.find.mockReturnValue({ select: jest.fn().mockResolvedValue([{ _id: 'emp1' }, { _id: 'emp2' }]) });
+
+    const res = await request(supervisorApp)
+      .get('/api/schedules/monthly?month=2023-01&supervisor=tester');
+
+    expect(res.status).toBe(200);
+    expect(res.body.publishSummary.pendingEmployees).toEqual([
+      expect.objectContaining({ id: 'emp1', name: '甲', photo, pendingCount: 1 }),
+    ]);
+    expect(res.body.publishSummary.disputedEmployees).toEqual([
+      expect.objectContaining({ id: 'emp2', name: '乙', photo: '', disputedCount: 1 }),
+    ]);
+  });
+
   it('允許主管使用主管篩選參數', async () => {
     const supervisorApp = buildScheduleAppWithRole('supervisor');
     const fake = [{ employee: 'emp1', shiftId: 's1', date: new Date('2023-01-02') }];
@@ -720,6 +762,42 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
         disputedEmployees: [],
       });
       expect(mockShiftSchedule.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('carries the employee photo path in the unconfirmed-employees list', async () => {
+      const photo = '/upload/employees/employee_alice.png';
+      const docs = [
+        {
+          _id: 'sch1',
+          employee: { _id: 'emp1', name: '王小明', photo },
+          state: 'pending_confirmation',
+          employeeResponse: 'pending',
+          responseNote: '',
+          date: new Date('2024-05-02'),
+        },
+        {
+          _id: 'sch2',
+          employee: { _id: 'emp2', name: '李小華' },
+          state: 'changes_requested',
+          employeeResponse: 'disputed',
+          responseNote: '想換班',
+          date: new Date('2024-05-03'),
+        },
+      ];
+      mockShiftSchedule.find.mockReturnValue({
+        populate: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockResolvedValue(docs),
+      });
+      mockEmployee.find.mockReturnValue({ select: jest.fn().mockResolvedValue([{ _id: 'emp1' }, { _id: 'emp2' }]) });
+
+      const res = await request(app)
+        .post('/api/schedules/publish/finalize')
+        .set('Authorization', buildAuthHeader('supervisor'))
+        .send({ month: '2024-05' });
+
+      expect(res.status).toBe(409);
+      expect(res.body.pendingEmployees).toEqual([expect.objectContaining({ id: 'emp1', photo })]);
+      expect(res.body.disputedEmployees).toEqual([expect.objectContaining({ id: 'emp2', photo: '' })]);
     });
 
     it('finalizes schedules when all confirmed', async () => {
@@ -1701,7 +1779,7 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
     });
     const approvals = [{
       _id: 'a1',
-      applicant_employee: { _id: 'e1', name: 'E1' },
+      applicant_employee: { _id: 'e1', name: 'E1', photo: '/upload/employees/employee_e1.png' },
       form: 'form1',
       form_data: { s: '2023-01-01', e: '2023-01-02', t: '病假' },
       status: 'approved',
@@ -1727,7 +1805,12 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
       'form_data.e': { $gte: '2022-12-31' },
     });
     expect(selectMock).toHaveBeenCalledWith('applicant_employee applicant_department status form_data.t form_data.s form_data.e');
-    expect(populateMock).toHaveBeenCalledWith({ path: 'applicant_employee', select: 'name department subDepartment' });
+    // 日曆上的請假者與「相關簽核」清單的申請人都要能顯示大頭照，所以兩個查詢都帶 photo（照片路徑）
+    expect(populateMock).toHaveBeenCalledWith({ path: 'applicant_employee', select: 'name department subDepartment photo' });
+    expect(populateMock).not.toHaveBeenCalledWith({ path: 'applicant_employee', select: 'name department subDepartment' });
+    // 兩個清單裡的請假者／申請人都帶 _id 與 photo（照片路徑）
+    expect(res.body.leaves[0].employee).toEqual({ _id: 'e1', name: 'E1', photo: '/upload/employees/employee_e1.png' });
+    expect(res.body.approvals[0].applicant_employee).toEqual(expect.objectContaining({ _id: 'e1', photo: '/upload/employees/employee_e1.png' }));
     // leaves[]（日曆用）維持只含核准請假的原本形狀；approvals[]（相關簽核清單）是統一的新形狀
     expect(res.body).toEqual({
       leaves: [{
@@ -1931,7 +2014,7 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
         status: 'approved'
       }
     ]);
-    expect(populateMock).toHaveBeenCalledWith({ path: 'applicant_employee', select: 'name department subDepartment' });
+    expect(populateMock).toHaveBeenCalledWith({ path: 'applicant_employee', select: 'name department subDepartment photo' });
     // 「相關簽核」清單用同一份員工範圍（小單位條件），但不限狀態、表單
     const listFilter = mockApprovalRequest.find.mock.calls.map(([filter]) => filter).find((filter) => !filter.form);
     expect(listFilter.applicant_employee).toEqual({ $in: ['e1', 'e3'] });
@@ -1965,7 +2048,7 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
       'form_data.s': { $lt: '2023-02-02' },
       'form_data.e': { $gte: '2022-12-31' },
     }));
-    expect(populateMock).toHaveBeenCalledWith({ path: 'applicant_employee', select: 'name department subDepartment' });
+    expect(populateMock).toHaveBeenCalledWith({ path: 'applicant_employee', select: 'name department subDepartment photo' });
     // 「相關簽核」清單的員工範圍與請假日曆完全相同（含主管本人）
     const listFilter = mockApprovalRequest.find.mock.calls.map(([filter]) => filter).find((filter) => !filter.form);
     expect(listFilter.applicant_employee.$in).toEqual(queryArg.applicant_employee.$in);
@@ -2264,7 +2347,7 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
           _id: 'sch-1',
           shiftId: 's1',
           date: new Date('2024-05-01T00:00:00.000Z'),
-          employee: { _id: 'emp-1', name: 'Alice', title: '護理師' },
+          employee: { _id: 'emp-1', name: 'Alice', title: '護理師', photo: '/upload/employees/employee_alice.png' },
           department: {
             _id: 'dept-1',
             name: '內科部',
@@ -2276,7 +2359,7 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
           _id: 'sch-2',
           shiftId: 's2',
           date: new Date('2024-05-02T00:00:00.000Z'),
-          employee: { _id: 'emp-1', name: 'Alice', title: '護理師' },
+          employee: { _id: 'emp-1', name: 'Alice', title: '護理師', photo: '/upload/employees/employee_alice.png' },
           department: {
             _id: 'dept-1',
             name: '內科部',
@@ -2332,6 +2415,7 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
                       id: 'emp-1',
                       name: 'Alice',
                       title: '護理師',
+                      photo: '/upload/employees/employee_alice.png',
                       schedules: [
                         { date: '2024-05-01', shiftId: 's1', shiftName: '早班' },
                         { date: '2024-05-02', shiftId: 's2', shiftName: '小夜班' },
@@ -2354,6 +2438,7 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
                       id: 'emp-2',
                       name: 'Brian',
                       title: '護理師',
+                      photo: '',
                       schedules: [
                         { date: '2024-05-01', shiftId: 's2', shiftName: '小夜班' },
                       ],

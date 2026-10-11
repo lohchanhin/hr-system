@@ -1218,6 +1218,8 @@ docker-compose up -d
        server_name your-domain.com;
    
        location /api {
+           # 員工照片、簽核附件要經過這裡上傳：Nginx 預設只允許 1MB，超過會直接回 413（伺服器本身最多收 5MB 照片 + 資料）
+           client_max_body_size 8m;
            proxy_pass http://localhost:3000;
            proxy_http_version 1.1;
            proxy_set_header Upgrade $http_upgrade;

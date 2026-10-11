@@ -250,6 +250,7 @@ export async function listMonthlySchedules(req, res) {
       const prev = employeeStatusMap.get(id) || {
         id,
         name: emp.name || '',
+        photo: emp.photo || '',
         pendingCount: 0,
         disputedCount: 0,
         latestNote: '',
@@ -318,6 +319,7 @@ export async function listMonthlySchedules(req, res) {
         publishSummary.pendingEmployees.push({
           id: entry.id,
           name: entry.name,
+          photo: entry.photo,
           pendingCount: entry.pendingCount,
         });
       }
@@ -325,6 +327,7 @@ export async function listMonthlySchedules(req, res) {
         publishSummary.disputedEmployees.push({
           id: entry.id,
           name: entry.name,
+          photo: entry.photo,
           disputedCount: entry.disputedCount,
           latestNote: entry.latestNote,
           latestResponseAt: entry.latestResponseAt ? entry.latestResponseAt.toISOString() : null,
@@ -486,7 +489,7 @@ export async function listLeaveApprovals(req, res) {
       };
       const approvals = await ApprovalRequest.find(formQuery)
         .select(`applicant_employee applicant_department status ${candidateSelectKeys(typeIds, startIds, endIds).map((id) => `form_data.${id}`).join(' ')}`)
-        .populate({ path: 'applicant_employee', select: 'name department subDepartment' })
+        .populate({ path: 'applicant_employee', select: 'name department subDepartment photo' })
         .lean();
 
       approvals.forEach((a) => {

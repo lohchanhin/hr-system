@@ -166,6 +166,8 @@ function buildApprovalRow(doc, catalog, monthRange) {
     name: applicant.name,
     department: applicant.department,
     subDepartment: applicant.subDepartment,
+    // 照片路徑（沒有照片時是空字串）：清單的申請人旁要顯示大頭照，圖片本身由 GET /api/employees/:id/photo 取得
+    photo: applicant.photo ?? '',
   };
   const row = {
     _id: doc._id,
@@ -215,7 +217,7 @@ export async function listScheduleRelatedApprovals({ scopeQuery = {}, leaveForms
   ).map((id) => `form_data.${id}`);
   const docs = await ApprovalRequest.find(filter)
     .select(['applicant_employee', 'form', 'status', 'createdAt', ...selectKeys].join(' '))
-    .populate({ path: 'applicant_employee', select: 'name department subDepartment' })
+    .populate({ path: 'applicant_employee', select: 'name department subDepartment photo' })
     .sort({ createdAt: -1, _id: -1 })
     .limit(DB_FETCH_LIMIT + 1)
     .lean();

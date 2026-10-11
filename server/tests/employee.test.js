@@ -145,6 +145,7 @@ describe('Employee API', () => {
     const fakeEmployees = [{
       _id: '1',
       name: 'Alice',
+      photo: '/upload/employees/employee_alice.png',
       username: 'alice',
       signRole: 'R003',
       signLevel: 'U002',
@@ -162,7 +163,7 @@ describe('Employee API', () => {
     expect(res.status).toBe(200);
     expect(mockEmployee.find).toHaveBeenCalledWith(
       { username: { $exists: true, $ne: '' } },
-      'name username signRole signTags signLevel organization department role status accountEnabled'
+      'name photo username signRole signTags signLevel organization department role status accountEnabled'
     );
     expect(populate).toHaveBeenCalledWith('department', 'name');
     expect(lean).toHaveBeenCalled();
@@ -170,6 +171,7 @@ describe('Employee API', () => {
       {
         id: '1',
         name: 'Alice',
+        photo: '/upload/employees/employee_alice.png',
         username: 'alice',
         signRole: 'R003',
         signLevel: 'U002',
@@ -193,14 +195,18 @@ describe('Employee API', () => {
     expect(res.body).toEqual({ error: 'Failed to list employees' });
   });
 
-  it('returns only names and ids in employee options for non-admin users', async () => {
+  it('returns only names, ids and photo paths in employee options for non-admin users', async () => {
     requestUser = { id: 'employee1', role: 'employee' };
     const fakeEmployees = [{
       _id: '1',
       name: 'Alice',
+      photo: '/upload/employees/employee_alice.png',
       username: 'alice',
       organization: 'org1',
       role: 'supervisor',
+    }, {
+      _id: '2',
+      name: 'Bob',
     }];
     const lean = jest.fn().mockResolvedValue(fakeEmployees);
     mockEmployee.find.mockReturnValue({ lean });
@@ -208,12 +214,16 @@ describe('Employee API', () => {
     const res = await request(app).get('/api/employees/options');
 
     expect(res.status).toBe(200);
+    // 大頭照路徑讓選單／清單決定要不要載入照片；沒有照片的人是空字串
     expect(mockEmployee.find).toHaveBeenCalledWith(
       { username: { $exists: true, $ne: '' } },
-      'name'
+      'name photo'
     );
     expect(lean).toHaveBeenCalled();
-    expect(res.body).toEqual([{ id: '1', name: 'Alice', displayName: 'Alice' }]);
+    expect(res.body).toEqual([
+      { id: '1', name: 'Alice', photo: '/upload/employees/employee_alice.png', displayName: 'Alice' },
+      { id: '2', name: 'Bob', photo: '', displayName: 'Bob' },
+    ]);
   });
 
   it('returns only minimal fields for attendance import matching', async () => {

@@ -278,7 +278,7 @@ export async function buildScheduleOverview({ month, organizationId, departmentI
       populate: { path: 'organization', select: 'name' },
     })
     .populate('subDepartment', 'name')
-    .populate({ path: 'employee', select: 'name title' })
+    .populate({ path: 'employee', select: 'name title photo' })
     .lean();
 
   const organizationMap = new Map();
@@ -313,6 +313,7 @@ export async function buildScheduleOverview({ month, organizationId, departmentI
     const employeeKey = employeeId;
     const employeeName = employeeDoc?.name || '未指定員工';
     const employeeTitle = employeeDoc?.title || '';
+    const employeePhoto = employeeDoc?.photo || '';
 
     if (!organizationMap.has(organizationKey)) {
       organizationMap.set(organizationKey, {
@@ -351,6 +352,7 @@ export async function buildScheduleOverview({ month, organizationId, departmentI
         id: employeeKey,
         name: employeeName,
         title: employeeTitle,
+        photo: employeePhoto,
         schedules: [],
       });
     }
@@ -387,6 +389,7 @@ export async function buildScheduleOverview({ month, organizationId, departmentI
                   id: emp.id,
                   name: emp.name,
                   title: emp.title,
+                  photo: emp.photo,
                   schedules: emp.schedules.sort((a, b) => a.date.localeCompare(b.date)),
                 }))
                 .sort((a, b) =>

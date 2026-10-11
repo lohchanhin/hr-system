@@ -653,6 +653,11 @@ function lastReturnSummary(logs) {
   return null
 }
 
+// 畫面上每個人名旁邊都要顯示大頭照，所以送審單裡的人（申請人、簽核人、紀錄的操作人）都帶 photo（照片路徑，
+// 沒有照片時沒有值）；實際圖片由 GET /api/employees/:id/photo 取得，這裡不放圖片內容
+const DETAIL_APPLICANT_FIELDS = 'name employeeId department organization photo'
+const DETAIL_PERSON_FIELDS = 'name employeeId photo'
+
 /* 取得送審單 */
 export async function getApprovalRequest(req, res) {
   try {
@@ -661,9 +666,9 @@ export async function getApprovalRequest(req, res) {
     const requestId = requireRequestId(req)
     const doc = await ApprovalRequest.findById(requestId)
       .populate('form', 'name category semanticType')
-      .populate('applicant_employee', 'name employeeId department organization')
-      .populate('steps.approvers.approver', 'name employeeId')
-      .populate('logs.by_employee', 'name employeeId')
+      .populate('applicant_employee', DETAIL_APPLICANT_FIELDS)
+      .populate('steps.approvers.approver', DETAIL_PERSON_FIELDS)
+      .populate('logs.by_employee', DETAIL_PERSON_FIELDS)
     if (!doc) return res.status(404).json({ error: MESSAGES.notFound })
     const isAdmin = req.user?.role === 'admin'
     // 簽核人與申請人之外，申請人在排班範圍內的主管也可以唯讀開啟（排班頁「相關簽核」列出這些單）；
@@ -737,7 +742,8 @@ function respondList(res, { items, total, page, limit, paginated }) {
 }
 
 const LIST_FORM_FIELDS = 'name category semanticType'
-const LIST_APPLICANT_FIELDS = 'name employeeId department organization'
+const LIST_APPLICANT_FIELDS = 'name employeeId department organization photo'
+const LIST_APPROVER_FIELDS = 'name photo'
 
 /* 申請者的清單 */
 export async function myApprovalRequests(req, res) {
@@ -756,7 +762,7 @@ export async function myApprovalRequests(req, res) {
         .limit(paging.limit)
         .populate('form', LIST_FORM_FIELDS)
         .populate('applicant_employee', LIST_APPLICANT_FIELDS)
-        .populate('steps.approvers.approver', 'name')
+        .populate('steps.approvers.approver', LIST_APPROVER_FIELDS)
         .lean(),
       ApprovalRequest.countDocuments(filter),
     ])
@@ -815,7 +821,7 @@ export async function inboxApprovals(req, res) {
         .limit(paging.limit)
         .populate('form', LIST_FORM_FIELDS)
         .populate('applicant_employee', LIST_APPLICANT_FIELDS)
-        .populate('steps.approvers.approver', 'name')
+        .populate('steps.approvers.approver', LIST_APPROVER_FIELDS)
         .lean(),
       ApprovalRequest.countDocuments(filter),
     ])
@@ -911,7 +917,7 @@ export async function historyApprovals(req, res) {
       .limit(paging.limit)
       .populate('form', LIST_FORM_FIELDS)
       .populate('applicant_employee', LIST_APPLICANT_FIELDS)
-    if (isAdmin) query = query.populate('steps.approvers.approver', 'name')
+    if (isAdmin) query = query.populate('steps.approvers.approver', LIST_APPROVER_FIELDS)
     const [docs, total] = await Promise.all([query.lean(), ApprovalRequest.countDocuments(filter)])
 
     const items = docs

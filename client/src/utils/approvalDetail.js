@@ -123,11 +123,15 @@ export function buildLogRows(doc, nameOf = () => '') {
   const logs = Array.isArray(doc?.logs) ? doc.logs : []
   return logs.map((log, index) => {
     const id = actorId(log.by_employee)
-    const embeddedName = log.by_employee && typeof log.by_employee === 'object' ? log.by_employee.name : ''
+    const embedded = log.by_employee && typeof log.by_employee === 'object' ? log.by_employee : null
+    const embeddedName = embedded ? embedded.name : ''
+    const actor = embeddedName || (id ? nameOf(id) : '') || '系統'
     return {
       key: `${index}-${log.action || ''}`,
       time: formatTaipeiDateTime(log.at || log.createdAt),
-      actor: embeddedName || (id ? nameOf(id) : '') || '系統',
+      actor,
+      // 處理人的員工物件（頭像用）；系統自動處理的紀錄沒有人，這裡是 null
+      actorPerson: id ? { ...(embedded || {}), _id: id, name: embedded?.name || nameOf(id) || '' } : null,
       action: actionLabel(log.action),
       message: String(log.message || '').trim(),
     }

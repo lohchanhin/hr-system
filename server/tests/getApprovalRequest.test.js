@@ -83,7 +83,10 @@ describe('GET /api/approvals/:id', () => {
     expect(Object.keys(res.body.form_data)).toEqual(fields.map(f => f._id))
     expect(mockFormField.find).toHaveBeenCalledWith({ form: 'form1' })
     expect(sort).toHaveBeenCalledWith({ order: 1 })
-    expect(query.populate).toHaveBeenCalledWith('logs.by_employee', 'name employeeId')
+    // 申請人、簽核人、紀錄的操作人都帶 photo（照片路徑），畫面才能在每個人名旁邊顯示大頭照
+    expect(query.populate).toHaveBeenCalledWith('applicant_employee', 'name employeeId department organization photo')
+    expect(query.populate).toHaveBeenCalledWith('steps.approvers.approver', 'name employeeId photo')
+    expect(query.populate).toHaveBeenCalledWith('logs.by_employee', 'name employeeId photo')
   })
 
   it('rejects a malformed id with a 400 instead of a Mongoose cast error', async () => {
