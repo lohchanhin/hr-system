@@ -743,7 +743,7 @@ function respondList(res, { items, total, page, limit, paginated }) {
 
 const LIST_FORM_FIELDS = 'name category semanticType'
 const LIST_APPLICANT_FIELDS = 'name employeeId department organization photo'
-const LIST_APPROVER_FIELDS = 'name photo'
+const LIST_APPROVER_FIELDS = 'name'
 
 /* 申請者的清單 */
 export async function myApprovalRequests(req, res) {

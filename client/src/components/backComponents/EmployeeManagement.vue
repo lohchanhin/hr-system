@@ -459,6 +459,13 @@
                       </el-form-item>
                       <el-form-item label="直屬主管">
                         <el-select v-model="employeeForm.supervisor" placeholder="選擇主管" clearable>
+                          <template #label="{ label, value }">
+                            <span class="supervisor-option">
+                              <EmployeeAvatar v-if="supervisorById.has(String(value))"
+                                :employee="supervisorById.get(String(value))" :size="20" />
+                              <span>{{ label }}</span>
+                            </span>
+                          </template>
                           <el-option v-for="sup in supervisorList" :key="sup._id"
                             :label="sup.employeeNo ? `${sup.name}（${sup.employeeNo}）` : sup.name" :value="sup._id">
                             <span class="supervisor-option">
@@ -3156,7 +3163,7 @@ function normalizePhotoUploadList(uploadFiles = []) {
   employeeForm.value.photo = normalized.length ? normalized[0].url || '' : ''
 }
 
-// 選檔當下就檢查格式與大小（與伺服器規則一致），太大的手機照片自動縮小；不合格直接說明原因，不要等到按儲存
+// 選檔當下就檢查格式與大小（與伺服器規則一致），照片先縮到長邊 640px 以內再上傳；不合格直接說明原因，不要等到按儲存
 async function handlePhotoBeforeUpload(rawFile) {
   const { file, error } = await prepareEmployeePhotoFile(rawFile)
   if (!file) {
@@ -3250,7 +3257,8 @@ async function loadDialogPhoto(employeeId, storedPath) {
   releaseDialogPhoto()
   const generation = dialogPhotoGeneration
   try {
-    const lease = await acquireEmployeePhoto(employeeId, storedPath)
+    // 縮圖卡片約 148px，向伺服器要 2 倍大的縮圖（384 檔位）就夠，不必下載幾 MB 的原檔（這份只用來顯示，不會重新上傳）
+    const lease = await acquireEmployeePhoto(employeeId, storedPath, 384)
     if (generation !== dialogPhotoGeneration) {
       lease.release()
       return
@@ -3978,6 +3986,8 @@ const supervisorList = computed(() => {
   }
   return Array.from(options.values())
 })
+// 下拉選單收起來時顯示的已選主管要靠 id 找回姓名與照片
+const supervisorById = computed(() => new Map(supervisorList.value.map(option => [String(option._id), option])))
 
 watch(
   () => [employeeForm.value.organization, employeeForm.value.department],

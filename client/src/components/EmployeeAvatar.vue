@@ -4,7 +4,9 @@
   傳入伺服器回傳的員工物件即可：{ _id | id, name, photo | hasPhoto }；
   或是分開傳 employee-id（員工的 _id，不是員工編號）、name、photo / has-photo。
   - 照片是私有檔案，透過 utils/photoUrl 的快取以登入身分下載，同一位員工全站只下載一次
-  - 預設等頭像捲進畫面才開始下載（瀏覽器支援 IntersectionObserver 時），長清單不會一次打出整頁請求
+  - 只下載縮圖：邊長是頭像大小的 2 倍（取固定檔位），不同大小的頭像常常共用同一份縮圖，不必抓幾 MB 的原檔
+  - 預設等頭像捲進畫面才開始下載（瀏覽器支援 IntersectionObserver 時），長清單不會一次打出整頁請求；
+    沒有照片的頭像不需要監看，長清單裡沒有照片的人不會各建一個 observer
   - 編輯員工照片後，所有正在顯示該員工的頭像會自動換成新照片
 -->
 <template>
@@ -29,6 +31,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
   acquireCachedEmployeePhoto,
   acquireEmployeePhoto,
+  photoSizeForDisplay,
   subscribeEmployeePhoto,
 } from '../utils/photoUrl'
 
@@ -57,6 +60,7 @@ const visible = ref(!props.lazy || typeof IntersectionObserver === 'undefined')
 let lease = null
 let generation = 0
 let unmounted = false
+let mountedOnce = false
 let observer = null
 let unsubscribe = null
 
@@ -80,6 +84,9 @@ const wantsPhoto = computed(() => {
   if (flag === false) return false
   return Boolean(photoPath.value) || flag === true
 })
+
+// 向伺服器要的縮圖邊長：頭像大小的 2 倍（高解析螢幕）取固定檔位，所以 32px 與 40px 的頭像共用同一份 96px 的縮圖
+const photoSize = computed(() => photoSizeForDisplay(props.size))
 
 const initial = computed(() => Array.from(resolvedName.value)[0] || '?')
 const label = computed(() => (resolvedName.value ? `${resolvedName.value}的頭像` : '員工頭像'))
@@ -113,13 +120,13 @@ async function load() {
     setLease(null)
     return
   }
-  const cached = acquireCachedEmployeePhoto(resolvedId.value, photoPath.value)
+  const cached = acquireCachedEmployeePhoto(resolvedId.value, photoPath.value, photoSize.value)
   if (cached) {
     setLease(cached)
     return
   }
   try {
-    const next = await acquireEmployeePhoto(resolvedId.value, photoPath.value)
+    const next = await acquireEmployeePhoto(resolvedId.value, photoPath.value, photoSize.value)
     if (current !== generation || unmounted) {
       next.release()
       return
@@ -162,7 +169,7 @@ function startObserving() {
 
 // 已經載入過的照片在第一次 render 就直接顯示，不先閃一下字母
 if (wantsPhoto.value && resolvedId.value) {
-  const cached = acquireCachedEmployeePhoto(resolvedId.value, photoPath.value)
+  const cached = acquireCachedEmployeePhoto(resolvedId.value, photoPath.value, photoSize.value)
   if (cached) setLease(cached)
 }
 
@@ -179,13 +186,17 @@ watch(
   { immediate: true },
 )
 
-watch([resolvedId, photoPath, wantsPhoto], () => {
+watch([resolvedId, photoPath, wantsPhoto, photoSize], () => {
   if (visible.value) void load()
+  // 原本沒有照片所以沒在監看，後來才有照片：這時才開始等捲進畫面
+  else if (mountedOnce && wantsPhoto.value && !observer) startObserving()
 })
 
 onMounted(() => {
+  mountedOnce = true
   if (visible.value) void load()
-  else startObserving()
+  // 沒有照片的頭像不必監看
+  else if (wantsPhoto.value) startObserving()
 })
 
 onBeforeUnmount(() => {
@@ -197,3 +208,10 @@ onBeforeUnmount(() => {
   setLease(null)
 })
 </script>
+
+<style scoped>
+/* 放在 flex 的儲存格（頭像 + 姓名）裡不被擠扁 */
+.employee-avatar-shared {
+  flex: 0 0 auto;
+}
+</style>

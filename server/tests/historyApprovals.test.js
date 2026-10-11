@@ -184,7 +184,7 @@ describe('GET /api/approvals/history', () => {
 
     expect(res.status).toBe(200)
     expect(mockApprovalRequest.find).toHaveBeenCalledWith({ status: 'pending' })
-    expect(query.populate).toHaveBeenCalledWith('steps.approvers.approver', 'name photo')
+    expect(query.populate).toHaveBeenCalledWith('steps.approvers.approver', 'name')
     expect(res.body[0]).toMatchObject({
       _id: oid(501),
       status: 'pending',

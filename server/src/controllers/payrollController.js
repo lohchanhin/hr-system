@@ -458,7 +458,7 @@ export async function getMonthlyPayrollOverview(req, res) {
     const employees = await Employee.find(employeeQuery)
       .populate('department')
       .populate('subDepartment')
-      .select('employeeId name department subDepartment organization salaryAmount salaryType salaryItems salaryItemAmounts annualLeave monthlySalaryAdjustments laborPensionSelf employeeAdvance salaryAccountA salaryAccountB')
+      .select('employeeId name photo department subDepartment organization salaryAmount salaryType salaryItems salaryItemAmounts annualLeave monthlySalaryAdjustments laborPensionSelf employeeAdvance salaryAccountA salaryAccountB')
       .sort({ name: 1, employeeId: 1, _id: 1 })
       .skip((safePage - 1) * pageSize)
       .limit(pageSize);
@@ -639,6 +639,8 @@ export async function getMonthlyPayrollOverview(req, res) {
         _id: employee._id,
         employeeId: employee.employeeId,
         name: employee.name,
+        // 儲存的照片路徑（沒有照片時是空字串），薪資明細視窗（單一員工）的頭像用 _id + photo 向 GET /api/employees/:id/photo 取圖；總覽表格本身不放頭像
+        photo: employee.photo || '',
         department: employee.department?.name || '',
         departmentId: employee.department?._id,
         subDepartment: employee.subDepartment?.name || '',

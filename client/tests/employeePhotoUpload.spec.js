@@ -250,8 +250,8 @@ describe('人資管理：員工清單的頭像', () => {
     expect(withPhoto.find('img').attributes('src')).toMatch(/^blob:test-/)
     expect(withoutPhoto.find('img').exists()).toBe(false)
     expect(withoutPhoto.text()).toBe('王')
-    // 只替有照片的員工發請求，網址帶著照片檔名當版本
-    expect(server.photoRequests).toEqual([{ id: 'e2', query: 'v=employee_old.png' }])
+    // 只替有照片的員工發請求，網址帶著照片檔名當版本；清單的頭像 40px，向伺服器要 96px 的縮圖
+    expect(server.photoRequests).toEqual([{ id: 'e2', query: 'v=employee_old.png&size=96' }])
   })
 })
 
@@ -294,7 +294,45 @@ describe('人資管理：編輯員工上傳照片（真正的 el-upload，一個
     const avatar = rowAvatar('王大明')
     expect(avatar.find('img').exists()).toBe(true)
     expect(avatar.find('img').attributes('src')).toMatch(/^blob:test-/)
-    expect(server.photoRequests.at(-1)).toEqual({ id: 'e1', query: 'v=employee_new1.png' })
+    expect(server.photoRequests.at(-1)).toEqual({ id: 'e1', query: 'v=employee_new1.png&size=96' })
+  })
+
+  it('選一張手機拍的大照片：送出的 photo 是縮到長邊 640px 的 JPEG，不是原檔', async () => {
+    await mountManagement()
+    await management.vm.openEmployeeDialog('e1')
+    await flush()
+
+    // jsdom 沒有影像解碼與 canvas：換成假的，檢查元件真的把縮小後的檔案送出去
+    const close = vi.fn()
+    vi.stubGlobal('createImageBitmap', vi.fn(async () => ({ width: 4032, height: 3024, close })))
+    const getContext = vi.spyOn(HTMLCanvasElement.prototype, 'getContext')
+      .mockImplementation(() => ({ fillRect: vi.fn(), drawImage: vi.fn(), getImageData: vi.fn(), fillStyle: '' }))
+    let canvasSize = null
+    const toBlob = vi.spyOn(HTMLCanvasElement.prototype, 'toBlob').mockImplementation(function toBlobMock(callback, type) {
+      canvasSize = [this.width, this.height]
+      callback(new Blob([new Uint8Array(60 * 1024)], { type }))
+    })
+    try {
+      const original = new File([new Uint8Array(3 * 1024 * 1024)], 'IMG_0001.jpeg', { type: 'image/jpeg' })
+      await chooseFile(original)
+      await flush()
+      expect(canvasSize).toEqual([640, 480])
+      expect(close).toHaveBeenCalled()
+
+      await management.vm.saveEmployee()
+      await flush()
+
+      const photo = server.saves[0].body.get('photo')
+      expect(photo).toBeInstanceOf(File)
+      expect(photo).not.toBe(original)
+      expect(photo.type).toBe('image/jpeg')
+      expect(photo.name).toBe('IMG_0001.jpg')
+      expect(photo.size).toBe(60 * 1024)
+    } finally {
+      getContext.mockRestore()
+      toBlob.mockRestore()
+      vi.unstubAllGlobals()
+    }
   })
 
   it('新增員工同時上傳照片：POST 一個 multipart 請求（兼職開關關著就是 false），新員工的頭像立刻出現', async () => {
@@ -328,7 +366,7 @@ describe('人資管理：編輯員工上傳照片（真正的 el-upload，一個
 
     const avatar = rowAvatar('新同事')
     expect(avatar.find('img').exists()).toBe(true)
-    expect(server.photoRequests.at(-1)).toEqual({ id: 'e9', query: 'v=employee_new1.png' })
+    expect(server.photoRequests.at(-1)).toEqual({ id: 'e9', query: 'v=employee_new1.png&size=96' })
   })
 
   it('欄位再多也只有 data 與 photo 兩個 multipart 欄位（不會超過伺服器的欄位數上限）', async () => {
@@ -354,6 +392,8 @@ describe('人資管理：編輯員工上傳照片（真正的 el-upload，一個
     await flush()
     expect(management.vm.employeeForm.photoList).toHaveLength(1)
     expect(management.vm.employeeForm.photoList[0].raw).toBeUndefined()
+    // 編輯視窗的縮圖卡片約 148px：向伺服器要 384px 的縮圖，不下載原檔；這份只用來顯示，不是待上傳的檔案
+    expect(server.photoRequests).toContainEqual({ id: 'e2', query: 'v=employee_old.png&size=384' })
 
     await chooseFile(pngFile('replacement.png'))
     await flush()
@@ -374,7 +414,7 @@ describe('人資管理：編輯員工上傳照片（真正的 el-upload，一個
     expect(newSrc).not.toBe(oldSrc)
     // 舊照片沒有人在用了，已經回收
     expect(revokedUrls).toContain(oldSrc)
-    expect(server.photoRequests.at(-1)).toEqual({ id: 'e2', query: 'v=employee_new1.png' })
+    expect(server.photoRequests.at(-1)).toEqual({ id: 'e2', query: 'v=employee_new1.png&size=96' })
   })
 
   it('沒有選新照片只改別的欄位：照舊用 JSON 儲存，原本的照片路徑保留', async () => {

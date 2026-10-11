@@ -6,10 +6,15 @@ import {
   EMPLOYEE_PHOTO_MAX_BYTES,
   EMPLOYEE_PHOTO_SIZE_MESSAGE,
   EMPLOYEE_PHOTO_TYPE_MESSAGE,
+  EMPLOYEE_PHOTO_UPLOAD_MAX_EDGE,
   fetchEmployeePhotoUrl,
+  fitPhotoSize,
   invalidateEmployeePhoto,
+  PHOTO_SIZE_STEPS,
+  photoSizeForDisplay,
   prepareEmployeePhotoFile,
   revokeEmployeePhotoUrl,
+  snapPhotoSize,
   subscribeEmployeePhoto,
   validateEmployeePhotoFile,
 } from '../photoUrl'
@@ -185,6 +190,146 @@ describe('員工照片快取：下載與去重', () => {
     // 舊的那份沒有人在用，已經回收
     expect(revokedUrls).toContain(first.url)
     second.release()
+  })
+})
+
+describe('員工照片快取：縮圖檔位', () => {
+  const requested = () => apiFetchMock.mock.calls.map(call => call[0])
+
+  it('snapPhotoSize：往上取到最接近的檔位，沒指定（或不是正數）就是原檔 0，超過最大檔位用最大檔位', () => {
+    expect(PHOTO_SIZE_STEPS).toEqual([48, 96, 160, 256, 384, 512])
+    expect(snapPhotoSize(1)).toBe(48)
+    expect(snapPhotoSize(48)).toBe(48)
+    expect(snapPhotoSize(49)).toBe(96)
+    expect(snapPhotoSize(96)).toBe(96)
+    expect(snapPhotoSize(100)).toBe(160)
+    expect(snapPhotoSize(160)).toBe(160)
+    expect(snapPhotoSize(161)).toBe(256)
+    expect(snapPhotoSize(256)).toBe(256)
+    expect(snapPhotoSize(257)).toBe(384)
+    expect(snapPhotoSize(384)).toBe(384)
+    expect(snapPhotoSize(385)).toBe(512)
+    expect(snapPhotoSize(5000)).toBe(512)
+    expect(snapPhotoSize('96')).toBe(96)
+    ;[0, -4, NaN, undefined, null, '', 'abc', Infinity].forEach(value => expect(snapPhotoSize(value)).toBe(0))
+  })
+
+  it('photoSizeForDisplay：頭像大小的 2 倍再取檔位；32px 與 40px 共用 96，字詞大小也看得懂', () => {
+    expect(photoSizeForDisplay(20)).toBe(48)
+    expect(photoSizeForDisplay(24)).toBe(48)
+    expect(photoSizeForDisplay(28)).toBe(96)
+    expect(photoSizeForDisplay(32)).toBe(96)
+    expect(photoSizeForDisplay(40)).toBe(96)
+    expect(photoSizeForDisplay(48)).toBe(96)
+    expect(photoSizeForDisplay(64)).toBe(160)
+    expect(photoSizeForDisplay(100)).toBe(256)
+    expect(photoSizeForDisplay(148)).toBe(384)
+    expect(photoSizeForDisplay('32')).toBe(96)
+    expect(photoSizeForDisplay('large')).toBe(160)
+    expect(photoSizeForDisplay('default')).toBe(96)
+    expect(photoSizeForDisplay('small')).toBe(48)
+    // 讀不懂的大小用預設頭像大小（40px）
+    expect(photoSizeForDisplay(undefined)).toBe(96)
+    expect(photoSizeForDisplay('huge')).toBe(96)
+  })
+
+  it('請求網址帶 size：版本與大小都有時 v 在前；只有大小時 size 單獨；沒指定大小就是原檔（不帶 size）', async () => {
+    apiFetchMock.mockResolvedValue(imageResponse())
+    ;(await acquireEmployeePhoto('e1', PHOTO, 96)).release()
+    ;(await acquireEmployeePhoto('e2', '', 48)).release()
+    ;(await acquireEmployeePhoto('e3', PHOTO)).release()
+    ;(await acquireEmployeePhoto('e4', PHOTO, 0)).release()
+
+    expect(requested()).toEqual([
+      '/api/employees/e1/photo?v=employee_aaa.png&size=96',
+      '/api/employees/e2/photo?size=48',
+      '/api/employees/e3/photo?v=employee_aaa.png',
+      '/api/employees/e4/photo?v=employee_aaa.png',
+    ])
+    expect(apiFetchMock.mock.calls[1][1]).toEqual({ cache: 'no-cache' })
+  })
+
+  it('要的大小會先往上取到檔位：64、80、96 都是同一份 96px，只下載一次', async () => {
+    apiFetchMock.mockResolvedValue(imageResponse())
+    const leases = await Promise.all([
+      acquireEmployeePhoto('e1', PHOTO, 64),
+      acquireEmployeePhoto('e1', PHOTO, 80),
+      acquireEmployeePhoto('e1', PHOTO, 96),
+    ])
+    expect(requested()).toEqual(['/api/employees/e1/photo?v=employee_aaa.png&size=96'])
+    expect(new Set(leases.map(lease => lease.url)).size).toBe(1)
+    leases.forEach(lease => lease.release())
+  })
+
+  it('快取的鍵包含檔位：不同檔位各是一份，原檔也是獨立的一份；acquireCachedEmployeePhoto 照檔位找', async () => {
+    apiFetchMock.mockResolvedValue(imageResponse())
+    const small = await acquireEmployeePhoto('e1', PHOTO, 48)
+    const medium = await acquireEmployeePhoto('e1', PHOTO, 96)
+    const original = await acquireEmployeePhoto('e1', PHOTO)
+
+    expect(new Set([small.url, medium.url, original.url]).size).toBe(3)
+    expect(apiFetchMock).toHaveBeenCalledTimes(3)
+
+    // 64 與 96 同一個檔位
+    const cached = acquireCachedEmployeePhoto('e1', PHOTO, 64)
+    expect(cached.url).toBe(medium.url)
+    cached.release()
+    expect(acquireCachedEmployeePhoto('e1', PHOTO, 160)).toBeNull()
+    expect(acquireCachedEmployeePhoto('e1', PHOTO, 48).url).toBe(small.url)
+    expect(acquireCachedEmployeePhoto('e1', PHOTO).url).toBe(original.url)
+    ;[small, medium, original].forEach(lease => lease.release())
+  })
+
+  it('作廢（換照片）會一起作廢這位員工所有檔位的縮圖，其他員工不受影響', async () => {
+    apiFetchMock.mockResolvedValue(imageResponse())
+    const a48 = await acquireEmployeePhoto('e1', PHOTO, 48)
+    const a96 = await acquireEmployeePhoto('e1', PHOTO, 96)
+    const other = await acquireEmployeePhoto('e2', PHOTO, 96)
+    a48.release()
+    a96.release()
+
+    invalidateEmployeePhoto('e1')
+    expect(revokedUrls.sort()).toEqual([a48.url, a96.url].sort())
+    expect(acquireCachedEmployeePhoto('e1', PHOTO, 48)).toBeNull()
+    expect(acquireCachedEmployeePhoto('e1', PHOTO, 96)).toBeNull()
+    expect(acquireCachedEmployeePhoto('e2', PHOTO, 96).url).toBe(other.url)
+    other.release()
+  })
+
+  it('照片換了檔名：舊版本各檔位的縮圖都丟掉；同一個版本的其他檔位不會被丟掉', async () => {
+    apiFetchMock.mockResolvedValue(imageResponse())
+    const oldSmall = await acquireEmployeePhoto('e1', PHOTO, 48)
+    const oldMedium = await acquireEmployeePhoto('e1', PHOTO, 96)
+    oldSmall.release()
+    oldMedium.release()
+    // 同一個版本再抓別的檔位：先前的檔位還在
+    const oldLarge = await acquireEmployeePhoto('e1', PHOTO, 160)
+    expect(revokedUrls).toEqual([])
+    expect(acquireCachedEmployeePhoto('e1', PHOTO, 48).url).toBe(oldSmall.url)
+
+    // 換新照片：舊版本三個檔位全部換掉
+    const next = await acquireEmployeePhoto('e1', NEW_PHOTO, 96)
+    oldLarge.release()
+    expect(acquireCachedEmployeePhoto('e1', PHOTO, 48)).toBeNull()
+    expect(acquireCachedEmployeePhoto('e1', PHOTO, 96)).toBeNull()
+    expect(acquireCachedEmployeePhoto('e1', PHOTO, 160)).toBeNull()
+    expect(acquireCachedEmployeePhoto('e1', NEW_PHOTO, 96).url).toBe(next.url)
+    next.release()
+  })
+
+  it('找不到的縮圖只記在那個檔位：換一個檔位仍會再問一次', async () => {
+    apiFetchMock.mockResolvedValueOnce(statusResponse(404))
+    const first = await acquireEmployeePhoto('e1', PHOTO, 48)
+    expect(first.url).toBeNull()
+    // 負向快取期間同一個檔位不重打
+    await acquireEmployeePhoto('e1', PHOTO, 48)
+    expect(apiFetchMock).toHaveBeenCalledTimes(1)
+
+    apiFetchMock.mockResolvedValueOnce(imageResponse())
+    const other = await acquireEmployeePhoto('e1', PHOTO, 96)
+    expect(other.url).toBe(createdUrls[0])
+    expect(apiFetchMock).toHaveBeenCalledTimes(2)
+    other.release()
   })
 })
 
@@ -603,34 +748,24 @@ describe('員工照片上傳前檢查', () => {
     expect(await prepareEmployeePhotoFile(heic)).toEqual({ file: null, error: EMPLOYEE_PHOTO_TYPE_MESSAGE })
   })
 
-  it('超過 5MB 的手機照片：瀏覽器能縮圖就縮成 JPEG，不能就回「檔案過大」', async () => {
+  it('超過 5MB 的手機照片：瀏覽器能縮圖就縮成長邊 640 的 JPEG，不能就回「檔案過大」', async () => {
     const huge = new File([new Uint8Array(EMPLOYEE_PHOTO_MAX_BYTES + 10)], 'IMG_0001.png', { type: 'image/png' })
 
     // 沒有縮圖功能（jsdom）
     expect(await prepareEmployeePhotoFile(huge)).toEqual({ file: null, error: EMPLOYEE_PHOTO_SIZE_MESSAGE })
 
-    const close = vi.fn()
-    vi.stubGlobal('createImageBitmap', vi.fn(async () => ({ width: 4000, height: 3000, close })))
-    const drawImage = vi.fn()
-    const getContext = vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({ fillRect: vi.fn(), drawImage })
-    let canvasSize = null
-    const toBlob = vi.spyOn(HTMLCanvasElement.prototype, 'toBlob').mockImplementation(function toBlobMock(callback, type) {
-      canvasSize = [this.width, this.height]
-      callback(new Blob(['small'], { type }))
-    })
+    const browser = stubBrowserImage({ width: 4000, height: 3000 })
     try {
       const result = await prepareEmployeePhotoFile(huge)
       expect(result.error).toBe('')
       expect(result.file).toBeInstanceOf(File)
       expect(result.file.type).toBe('image/jpeg')
       expect(result.file.name).toBe('IMG_0001.jpg')
-      expect(canvasSize).toEqual([1600, 1200])
-      expect(drawImage).toHaveBeenCalled()
-      expect(close).toHaveBeenCalled()
+      expect(browser.canvasSize()).toEqual([640, 480])
+      expect(browser.drawImage).toHaveBeenCalledWith(expect.anything(), 0, 0, 640, 480)
+      expect(browser.close).toHaveBeenCalled()
     } finally {
-      getContext.mockRestore()
-      toBlob.mockRestore()
-      vi.unstubAllGlobals()
+      browser.restore()
     }
   })
 
@@ -643,5 +778,211 @@ describe('員工照片上傳前檢查', () => {
     } finally {
       vi.unstubAllGlobals()
     }
+  })
+})
+
+// 假的瀏覽器影像功能：createImageBitmap 回傳指定寬高的影像，canvas 記下尺寸與輸出格式；
+// alpha 是每個像素的透明度（255 不透明），size 是重新編碼之後的檔案大小
+function stubBrowserImage({ width, height, alpha = 255, encodedSize = 1234, decodeFails = false, noContext = false } = {}) {
+  const close = vi.fn()
+  const createImageBitmap = vi.fn(async () => {
+    if (decodeFails) throw new Error('decode failed')
+    return { width, height, close }
+  })
+  vi.stubGlobal('createImageBitmap', createImageBitmap)
+  const drawImage = vi.fn()
+  const fillRect = vi.fn()
+  const getImageData = vi.fn(() => ({ data: new Uint8ClampedArray([10, 20, 30, alpha, 40, 50, 60, 255]) }))
+  const getContext = vi
+    .spyOn(HTMLCanvasElement.prototype, 'getContext')
+    .mockImplementation(() => (noContext ? null : { fillRect, drawImage, getImageData, fillStyle: '' }))
+  let size = null
+  let encoded = null
+  const toBlob = vi.spyOn(HTMLCanvasElement.prototype, 'toBlob').mockImplementation(function toBlobMock(callback, type, quality) {
+    size = [this.width, this.height]
+    encoded = { type, quality }
+    callback(new Blob([new Uint8Array(encodedSize)], { type }))
+  })
+  return {
+    createImageBitmap,
+    close,
+    drawImage,
+    fillRect,
+    getImageData,
+    canvasSize: () => size,
+    encoded: () => encoded,
+    restore() {
+      getContext.mockRestore()
+      toBlob.mockRestore()
+      vi.unstubAllGlobals()
+    },
+  }
+}
+
+describe('員工照片上傳前縮小（長邊 640px）', () => {
+  const photo = (name, type, bytes) => new File([new Uint8Array(bytes)], name, { type })
+  let browser = null
+
+  afterEach(() => {
+    browser?.restore()
+    browser = null
+  })
+
+  it('fitPhotoSize：長邊超過 640 等比例縮到 640，沒超過不放大；壞資料不會得到 0 或 NaN', () => {
+    expect(EMPLOYEE_PHOTO_UPLOAD_MAX_EDGE).toBe(640)
+    expect(fitPhotoSize(4000, 3000)).toEqual({ scale: 0.16, width: 640, height: 480 })
+    expect(fitPhotoSize(3000, 4000)).toEqual({ scale: 0.16, width: 480, height: 640 })
+    expect(fitPhotoSize(640, 640)).toEqual({ scale: 1, width: 640, height: 640 })
+    expect(fitPhotoSize(300, 200)).toEqual({ scale: 1, width: 300, height: 200 })
+    // 極端細長的圖短邊至少 1px
+    expect(fitPhotoSize(20000, 10)).toEqual({ scale: 0.032, width: 640, height: 1 })
+    expect(fitPhotoSize(0, 0)).toEqual({ scale: 1, width: 1, height: 1 })
+    expect(fitPhotoSize(NaN, -5)).toEqual({ scale: 1, width: 1, height: 1 })
+    expect(fitPhotoSize(2000, 1000, 100)).toEqual({ scale: 0.05, width: 100, height: 50 })
+  })
+
+  it('5MB 以內的大張 JPEG 也會縮：長邊 640、白底、品質 0.86、檔名副檔名 .jpg；解碼時要求依 EXIF 轉正', async () => {
+    browser = stubBrowserImage({ width: 3000, height: 2000, encodedSize: 80 * 1024 })
+    const original = photo('IMG_0002.jpeg', 'image/jpeg', 2 * 1024 * 1024)
+    const result = await prepareEmployeePhotoFile(original)
+
+    expect(result.error).toBe('')
+    expect(result.file).not.toBe(original)
+    expect(result.file.type).toBe('image/jpeg')
+    expect(result.file.name).toBe('IMG_0002.jpg')
+    expect(result.file.size).toBe(80 * 1024)
+    expect(browser.canvasSize()).toEqual([640, 427])
+    expect(browser.encoded()).toEqual({ type: 'image/jpeg', quality: 0.86 })
+    expect(browser.createImageBitmap).toHaveBeenCalledWith(original, { imageOrientation: 'from-image' })
+    // JPEG 沒有透明度：先鋪白底
+    expect(browser.fillRect).toHaveBeenCalledWith(0, 0, 640, 427)
+    expect(browser.getImageData).not.toHaveBeenCalled()
+    expect(browser.close).toHaveBeenCalledTimes(1)
+  })
+
+  it('直拍的照片（轉正後是直的）縮成 480x640；寬高對調時不會躺著', async () => {
+    browser = stubBrowserImage({ width: 3024, height: 4032, encodedSize: 50 * 1024 })
+    const result = await prepareEmployeePhotoFile(photo('portrait.jpg', 'image/jpeg', 3 * 1024 * 1024))
+    expect(browser.canvasSize()).toEqual([480, 640])
+    expect(result.file.type).toBe('image/jpeg')
+  })
+
+  it('有透明度的 PNG 維持 PNG（不鋪白底、不指定品質）；沒有透明度的 PNG / WebP 轉成 JPEG', async () => {
+    browser = stubBrowserImage({ width: 1600, height: 1600, alpha: 0, encodedSize: 90 * 1024 })
+    const transparent = await prepareEmployeePhotoFile(photo('logo.png', 'image/png', 1024 * 1024))
+    expect(transparent.file.type).toBe('image/png')
+    expect(transparent.file.name).toBe('logo.png')
+    expect(browser.encoded()).toEqual({ type: 'image/png', quality: undefined })
+    expect(browser.fillRect).not.toHaveBeenCalled()
+    expect(browser.canvasSize()).toEqual([640, 640])
+    browser.restore()
+
+    // 半透明（alpha 254）也算有透明度
+    browser = stubBrowserImage({ width: 1600, height: 1200, alpha: 254, encodedSize: 90 * 1024 })
+    expect((await prepareEmployeePhotoFile(photo('soft.webp', 'image/webp', 1024 * 1024))).file.type).toBe('image/png')
+    browser.restore()
+
+    browser = stubBrowserImage({ width: 1600, height: 1200, alpha: 255, encodedSize: 60 * 1024 })
+    const opaquePng = await prepareEmployeePhotoFile(photo('shot.png', 'image/png', 1024 * 1024))
+    expect(opaquePng.file.type).toBe('image/jpeg')
+    expect(opaquePng.file.name).toBe('shot.jpg')
+    expect(browser.encoded()).toEqual({ type: 'image/jpeg', quality: 0.86 })
+    browser.restore()
+
+    browser = stubBrowserImage({ width: 1600, height: 1200, alpha: 255, encodedSize: 60 * 1024 })
+    const opaqueWebp = await prepareEmployeePhotoFile(photo('a.b.webp', 'image/webp', 1024 * 1024))
+    expect(opaqueWebp.file.type).toBe('image/jpeg')
+    expect(opaqueWebp.file.name).toBe('a.b.jpg')
+  })
+
+  it('讀不出像素（getImageData 丟錯）時保守當作有透明度：寧可存 PNG，不要把透明處變黑', async () => {
+    browser = stubBrowserImage({ width: 1600, height: 1200, encodedSize: 90 * 1024 })
+    browser.getImageData.mockImplementation(() => {
+      throw new Error('tainted')
+    })
+    const result = await prepareEmployeePhotoFile(photo('x.png', 'image/png', 1024 * 1024))
+    expect(result.file.type).toBe('image/png')
+  })
+
+  it('本來就小的圖（長邊沒超過 640）重新編碼沒有比較小就用原檔，原檔物件原樣回傳', async () => {
+    browser = stubBrowserImage({ width: 500, height: 400, encodedSize: 40 * 1024 })
+    const small = photo('small.jpg', 'image/jpeg', 30 * 1024)
+    const result = await prepareEmployeePhotoFile(small)
+    expect(result).toEqual({ file: small, error: '' })
+    expect(result.file).toBe(small)
+    expect(browser.canvasSize()).toEqual([500, 400])
+  })
+
+  it('本來就小的圖但重新編碼更小，用較小的那份（不放大）', async () => {
+    browser = stubBrowserImage({ width: 500, height: 400, encodedSize: 20 * 1024 })
+    const result = await prepareEmployeePhotoFile(photo('small.jpg', 'image/jpeg', 300 * 1024))
+    expect(result.file.size).toBe(20 * 1024)
+    expect(browser.canvasSize()).toEqual([500, 400])
+  })
+
+  it('GIF（可能是動畫）不縮、不解碼，原樣通過', async () => {
+    browser = stubBrowserImage({ width: 4000, height: 3000 })
+    const gif = photo('a.gif', 'image/gif', 2 * 1024 * 1024)
+    expect(await prepareEmployeePhotoFile(gif)).toEqual({ file: gif, error: '' })
+    expect(browser.createImageBitmap).not.toHaveBeenCalled()
+  })
+
+  it('不支援的格式與空檔直接回原因，不會去解碼', async () => {
+    browser = stubBrowserImage({ width: 4000, height: 3000 })
+    const heic = photo('a.heic', 'image/heic', 1024)
+    expect(await prepareEmployeePhotoFile(heic)).toEqual({ file: null, error: EMPLOYEE_PHOTO_TYPE_MESSAGE })
+    expect(await prepareEmployeePhotoFile(photo('empty.png', 'image/png', 0))).toEqual({ file: null, error: '無效的圖片資料' })
+    expect(browser.createImageBitmap).not.toHaveBeenCalled()
+  })
+
+  it('瀏覽器不認得 imageOrientation 選項時，用預設值再解碼一次', async () => {
+    const close = vi.fn()
+    const createImageBitmap = vi.fn(async (_file, options) => {
+      if (options) throw new TypeError('unsupported option')
+      return { width: 2000, height: 1000, close }
+    })
+    browser = stubBrowserImage({ width: 1, height: 1, encodedSize: 30 * 1024 })
+    vi.stubGlobal('createImageBitmap', createImageBitmap)
+    const result = await prepareEmployeePhotoFile(photo('old.jpg', 'image/jpeg', 1024 * 1024))
+    expect(createImageBitmap).toHaveBeenCalledTimes(2)
+    expect(browser.canvasSize()).toEqual([640, 320])
+    expect(result.file.type).toBe('image/jpeg')
+    expect(close).toHaveBeenCalled()
+  })
+
+  it('檔案損毀（解碼失敗）：5MB 以內沿用原檔，超過 5MB 回「檔案過大」', async () => {
+    browser = stubBrowserImage({ width: 10, height: 10, decodeFails: true })
+    const broken = photo('broken.jpg', 'image/jpeg', 1024)
+    expect(await prepareEmployeePhotoFile(broken)).toEqual({ file: broken, error: '' })
+    const brokenHuge = photo('huge.jpg', 'image/jpeg', EMPLOYEE_PHOTO_MAX_BYTES + 1)
+    expect(await prepareEmployeePhotoFile(brokenHuge)).toEqual({ file: null, error: EMPLOYEE_PHOTO_SIZE_MESSAGE })
+  })
+
+  it('取不到 canvas 的 2d 環境：沿用原檔，並且釋放已解碼的影像', async () => {
+    browser = stubBrowserImage({ width: 3000, height: 2000, noContext: true })
+    const original = photo('a.jpg', 'image/jpeg', 1024 * 1024)
+    expect(await prepareEmployeePhotoFile(original)).toEqual({ file: original, error: '' })
+    expect(browser.close).toHaveBeenCalledTimes(1)
+  })
+
+  it('canvas 輸出失敗（toBlob 給 null）：沿用原檔', async () => {
+    browser = stubBrowserImage({ width: 3000, height: 2000 })
+    HTMLCanvasElement.prototype.toBlob.mockImplementation(callback => callback(null))
+    const original = photo('a.jpg', 'image/jpeg', 1024 * 1024)
+    expect(await prepareEmployeePhotoFile(original)).toEqual({ file: original, error: '' })
+  })
+
+  it('縮完仍超過 5MB（不可能的情況）也不上傳：5MB 以內的原檔沿用，超過的回「檔案過大」', async () => {
+    browser = stubBrowserImage({ width: 3000, height: 2000, encodedSize: EMPLOYEE_PHOTO_MAX_BYTES + 1 })
+    const original = photo('a.jpg', 'image/jpeg', 1024 * 1024)
+    expect(await prepareEmployeePhotoFile(original)).toEqual({ file: original, error: '' })
+    const huge = photo('huge.jpg', 'image/jpeg', EMPLOYEE_PHOTO_MAX_BYTES + 1)
+    expect(await prepareEmployeePhotoFile(huge)).toEqual({ file: null, error: EMPLOYEE_PHOTO_SIZE_MESSAGE })
+  })
+
+  it('沒有 createImageBitmap（舊瀏覽器 / jsdom）：5MB 以內原樣通過，不丟錯', async () => {
+    const original = photo('a.jpg', 'image/jpeg', 1024 * 1024)
+    expect(globalThis.createImageBitmap).toBeUndefined()
+    expect(await prepareEmployeePhotoFile(original)).toEqual({ file: original, error: '' })
   })
 })

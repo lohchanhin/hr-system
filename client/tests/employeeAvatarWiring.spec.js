@@ -163,7 +163,7 @@ describe('簽核頁（Approval.vue）', () => {
     expect(looks.filter(look => !look.src)).toEqual([{ src: null, text: '李' }])
     // 沒有照片的人沒發請求；有照片的人，兩張單只下載一次
     expect(fake.photoRequests.filter(request => request.startsWith('a2'))).toEqual([])
-    expect(fake.photoRequests.filter(request => request.startsWith('a1'))).toEqual([`a1?v=employee_a1.png`])
+    expect(fake.photoRequests.filter(request => request.startsWith('a1'))).toEqual(['a1?v=employee_a1.png&size=96'])
   })
 
   it('我已簽核：申請人頭像一樣顯示', async () => {
@@ -275,7 +275,7 @@ describe('ApprovalDetailContent（排班頁引用的申請單明細）', () => {
     // 申請人 + 審核人 + 紀錄處理人
     expect(avatars).toHaveLength(3)
     avatars.forEach(avatar => expect(avatarLook(avatar).src).toMatch(/^blob:wiring-/))
-    expect(fake.photoRequests.sort()).toEqual(['a1?v=employee_a1.png', 'p1?v=employee_p1.png'])
+    expect(fake.photoRequests.sort()).toEqual(['a1?v=employee_a1.png&size=48', 'p1?v=employee_p1.png&size=48'])
   })
 })
 
@@ -313,7 +313,7 @@ describe('前台側邊欄的使用者頭像（FrontLayout.vue）', () => {
 
     const avatar = wrapper.find('.sidebar-header .el-avatar')
     expect(avatarLook(avatar).src).toMatch(/^blob:wiring-/)
-    expect(fake.photoRequests).toEqual(['u1?v=employee_u1.png'])
+    expect(fake.photoRequests).toEqual(['u1?v=employee_u1.png&size=96'])
   })
 
   it('沒有照片：顯示姓名第一個字', async () => {
@@ -334,7 +334,7 @@ describe('前台側邊欄的使用者頭像（FrontLayout.vue）', () => {
     expect(after).toMatch(/^blob:wiring-/)
     expect(after).not.toBe(before)
     expect(revokedUrls).toContain(before)
-    expect(fake.photoRequests.at(-1)).toBe('u1?v=employee_u1_new.png')
+    expect(fake.photoRequests.at(-1)).toBe('u1?v=employee_u1_new.png&size=96')
   })
 
   it('登出：清掉所有照片快取（別人的照片不能留給下一位登入者）', async () => {
@@ -423,7 +423,7 @@ describe('排班總覽（ScheduleOverview.vue）', () => {
     expect(avatars).toHaveLength(2)
     expect(avatars[0].src).toMatch(/^blob:wiring-/)
     expect(avatars[1]).toEqual({ src: null, text: 'B' })
-    expect(fake.photoRequests).toEqual(['emp-1?v=employee_emp-1.png'])
+    expect(fake.photoRequests).toEqual(['emp-1?v=employee_emp-1.png&size=48'])
   })
 })
 
@@ -473,6 +473,6 @@ describe('部門報表預覽（DepartmentReports.vue）', () => {
     expect(avatars).toHaveLength(2)
     expect(avatars[0].src).toMatch(/^blob:wiring-/)
     expect(avatars[1]).toEqual({ src: null, text: '李' })
-    expect(fake.photoRequests).toEqual(['emp-1?v=employee_emp-1.png'])
+    expect(fake.photoRequests).toEqual(['emp-1?v=employee_emp-1.png&size=48'])
   })
 })

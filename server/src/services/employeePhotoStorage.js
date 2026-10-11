@@ -11,6 +11,9 @@ export const EMPLOYEE_PHOTO_MAX_SIZE = 5 * 1024 * 1024
 export const EMPLOYEE_PHOTO_MAX_READ_SIZE = 20 * 1024 * 1024
 export const UPLOAD_ROOT = path.resolve(__dirname, '../../../upload')
 export const EMPLOYEE_PHOTO_DIR = path.join(UPLOAD_ROOT, 'employees')
+// 縮圖快取（services/employeePhotoThumbnail.js）放在原檔旁邊；檔名是「原檔名（去掉副檔名）.邊長.副檔名」，
+// 所以原檔一刪除就能用檔名前綴找出它所有的縮圖。employees 資料夾整個不能由 /upload 靜態路徑讀取（privateUploadGuard）
+export const EMPLOYEE_PHOTO_THUMB_DIR = path.join(EMPLOYEE_PHOTO_DIR, '.thumbs')
 
 export const EMPLOYEE_PHOTO_FORMAT_MESSAGE = '不支援的圖片格式，僅支援 JPEG、PNG、GIF、WebP'
 export const EMPLOYEE_PHOTO_HEIF_MESSAGE = '不支援 HEIC／HEIF 格式（iPhone 預設的照片格式），瀏覽器無法顯示，請改用 JPG 或 PNG 圖片'
@@ -176,14 +179,57 @@ export async function readEmployeePhoto(storedPath) {
   }
 }
 
+// 縮圖檔名的前綴：原檔名去掉副檔名，再加一個點（employee_<uuid>. 開頭的都是這張照片的縮圖與暫存檔）
+function thumbnailFilePrefix(absolutePath) {
+  return `${path.basename(absolutePath, path.extname(absolutePath))}.`
+}
+
+/**
+ * 刪除一張照片的所有縮圖（含寫到一半的暫存檔）。回傳刪掉幾個檔案；沒有縮圖資料夾時是 0。
+ * 縮圖只是原檔的衍生檔，隨時可以重新產生，所以刪不掉不應該讓換照片／刪員工失敗：呼叫端自行決定要不要吞掉錯誤。
+ */
+export async function deleteEmployeePhotoThumbnails(storedPath) {
+  const absolutePath = resolveEmployeePhotoPath(storedPath)
+  if (!absolutePath) return 0
+  const prefix = thumbnailFilePrefix(absolutePath)
+
+  let names
+  try {
+    names = await fs.readdir(EMPLOYEE_PHOTO_THUMB_DIR)
+  } catch (error) {
+    if (error?.code === 'ENOENT' || error?.code === 'ENOTDIR') return 0
+    throw error
+  }
+
+  let removed = 0
+  for (const name of names) {
+    if (!name.startsWith(prefix)) continue
+    try {
+      await fs.unlink(path.join(EMPLOYEE_PHOTO_THUMB_DIR, name))
+      removed += 1
+    } catch (error) {
+      if (error?.code !== 'ENOENT') throw error
+    }
+  }
+  return removed
+}
+
 export async function deleteEmployeePhoto(storedPath) {
   const absolutePath = resolveEmployeePhotoPath(storedPath)
   if (!absolutePath) return false
+  let removed = false
   try {
     await fs.unlink(absolutePath)
-    return true
+    removed = true
   } catch (error) {
-    if (error?.code === 'ENOENT') return false
-    throw error
+    if (error?.code !== 'ENOENT') throw error
   }
+  // 原檔已經不在了才清縮圖（先刪原檔、後刪縮圖：產生縮圖的程序在寫完縮圖後會再確認原檔還在，兩邊交錯也不會留下孤兒縮圖）。
+  // 縮圖清不掉只記錄錯誤代碼，不影響照片本身的刪除結果
+  try {
+    await deleteEmployeePhotoThumbnails(storedPath)
+  } catch (error) {
+    console.error('Employee photo thumbnail cleanup failed', { code: error?.code ?? error?.name ?? 'Error' })
+  }
+  return removed
 }

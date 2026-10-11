@@ -74,8 +74,9 @@ describe('EmployeeAvatar 顯示', () => {
     expect(wrapper.attributes('role')).toBe('img')
     expect(wrapper.attributes('aria-label')).toBe('王小明的頭像')
     expect(img.attributes('alt')).toBe('王小明的頭像')
+    // 預設頭像 32px：向伺服器要 96px 的縮圖（2 倍取檔位），不下載原檔
     expect(apiFetchMock).toHaveBeenCalledWith(
-      '/api/employees/e1/photo?v=employee_aaa.png',
+      '/api/employees/e1/photo?v=employee_aaa.png&size=96',
       {},
       { autoRedirect: false },
     )
@@ -90,8 +91,8 @@ describe('EmployeeAvatar 顯示', () => {
     expect(byId.find('img').exists()).toBe(true)
     expect(byProps.find('img').exists()).toBe(true)
     expect(apiFetchMock.mock.calls.map(call => call[0]).sort()).toEqual([
-      '/api/employees/e7/photo?v=employee_aaa.png',
-      '/api/employees/e8/photo?v=employee_aaa.png',
+      '/api/employees/e7/photo?v=employee_aaa.png&size=96',
+      '/api/employees/e8/photo?v=employee_aaa.png&size=96',
     ])
   })
 
@@ -114,7 +115,8 @@ describe('EmployeeAvatar 顯示', () => {
     const flagged = mountAvatar({ employee: { _id: 'e2', name: 'B', hasPhoto: true } })
     await flush()
     expect(flagged.find('img').exists()).toBe(true)
-    expect(apiFetchMock).toHaveBeenCalledWith('/api/employees/e2/photo', { cache: 'no-cache' }, { autoRedirect: false })
+    // 不知道檔名（沒有版本可用）時每次先向伺服器確認，縮圖大小照樣帶上
+    expect(apiFetchMock).toHaveBeenCalledWith('/api/employees/e2/photo?size=96', { cache: 'no-cache' }, { autoRedirect: false })
   })
 
   it('照片拿不到（沒權限 / 檔案不見）：維持姓名字母，不丟錯', async () => {
@@ -212,7 +214,7 @@ describe('EmployeeAvatar 共用快取與重新整理', () => {
     await flush()
     expect(wrapper.find('img').attributes('src')).toBe('blob:photo-2')
     expect(apiFetchMock).toHaveBeenLastCalledWith(
-      '/api/employees/e1/photo?v=employee_bbb.png',
+      '/api/employees/e1/photo?v=employee_bbb.png&size=96',
       {},
       { autoRedirect: false },
     )
@@ -264,6 +266,82 @@ describe('EmployeeAvatar 共用快取與重新整理', () => {
     wrapper.unmount()
     wrappers = wrappers.filter(item => item !== wrapper)
     expect(revokedUrls).toContain('blob:photo-1')
+  })
+})
+
+describe('EmployeeAvatar 縮圖大小', () => {
+  const photoRequests = () => apiFetchMock.mock.calls.map(call => call[0])
+
+  it('向伺服器要頭像大小 2 倍的縮圖（取固定檔位）：20px 要 48，32px 與 40px 共用 96，64px 要 160', async () => {
+    apiFetchMock.mockResolvedValue(imageResponse())
+    mountAvatar({ employee: { _id: 'a', name: 'A', photo: PHOTO }, size: 20 })
+    mountAvatar({ employee: { _id: 'b', name: 'B', photo: PHOTO }, size: 24 })
+    mountAvatar({ employee: { _id: 'c', name: 'C', photo: PHOTO }, size: 28 })
+    mountAvatar({ employee: { _id: 'd', name: 'D', photo: PHOTO }, size: 40 })
+    mountAvatar({ employee: { _id: 'e', name: 'E', photo: PHOTO }, size: 64 })
+    mountAvatar({ employee: { _id: 'f', name: 'F', photo: PHOTO }, size: 'large' })
+    mountAvatar({ employee: { _id: 'g', name: 'G', photo: PHOTO }, size: '24' })
+    await flush()
+
+    expect(photoRequests().sort()).toEqual([
+      '/api/employees/a/photo?v=employee_aaa.png&size=48',
+      '/api/employees/b/photo?v=employee_aaa.png&size=48',
+      '/api/employees/c/photo?v=employee_aaa.png&size=96',
+      '/api/employees/d/photo?v=employee_aaa.png&size=96',
+      '/api/employees/e/photo?v=employee_aaa.png&size=160',
+      '/api/employees/f/photo?v=employee_aaa.png&size=160',
+      '/api/employees/g/photo?v=employee_aaa.png&size=48',
+    ])
+  })
+
+  it('同一位員工的 32px 與 40px 頭像共用同一份縮圖：只下載一次，先載過的第二個頭像一掛上就有圖', async () => {
+    apiFetchMock.mockResolvedValue(imageResponse())
+    const employee = { _id: 'e1', name: '王小明', photo: PHOTO }
+    const small = mountAvatar({ employee, size: 32 })
+    await flush()
+    const big = mountAvatar({ employee, size: 40 })
+
+    expect(big.find('img').attributes('src')).toBe(small.find('img').attributes('src'))
+    await flush()
+    expect(apiFetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('同一位員工在不同檔位各抓一份（20px 與 64px），但換照片時兩份都換掉', async () => {
+    apiFetchMock.mockResolvedValue(imageResponse())
+    const employee = { _id: 'e1', name: '王小明', photo: PHOTO }
+    const tiny = mountAvatar({ employee, size: 20 })
+    const large = mountAvatar({ employee, size: 64 })
+    await flush()
+    expect(photoRequests().sort()).toEqual([
+      '/api/employees/e1/photo?v=employee_aaa.png&size=160',
+      '/api/employees/e1/photo?v=employee_aaa.png&size=48',
+    ])
+
+    invalidateEmployeePhoto('e1')
+    await flush()
+    expect(apiFetchMock).toHaveBeenCalledTimes(4)
+    expect(tiny.find('img').exists()).toBe(true)
+    expect(large.find('img').exists()).toBe(true)
+  })
+
+  it('頭像大小改變、檔位跟著變時重新取圖；檔位沒變就不重抓', async () => {
+    apiFetchMock.mockResolvedValue(imageResponse())
+    const wrapper = mountAvatar({ employee: { _id: 'e1', name: '王小明', photo: PHOTO }, size: 32 })
+    await flush()
+    expect(apiFetchMock).toHaveBeenCalledTimes(1)
+
+    await wrapper.setProps({ size: 40 })
+    await flush()
+    expect(apiFetchMock).toHaveBeenCalledTimes(1)
+
+    await wrapper.setProps({ size: 64 })
+    await flush()
+    expect(apiFetchMock).toHaveBeenCalledTimes(2)
+    expect(apiFetchMock).toHaveBeenLastCalledWith(
+      '/api/employees/e1/photo?v=employee_aaa.png&size=160',
+      {},
+      { autoRedirect: false },
+    )
   })
 })
 
@@ -351,5 +429,32 @@ describe('EmployeeAvatar 捲進畫面才下載', () => {
     observers.forEach(observer => observer.show())
     await flush()
     expect(apiFetchMock).not.toHaveBeenCalled()
+  })
+
+  it('沒有照片的頭像不建立 observer：上千個選項的下拉選單不會有上千個監看', async () => {
+    for (let index = 0; index < 50; index += 1) {
+      mountAvatar({ employeeId: `e${index}`, name: `員工${index}`, photo: '' })
+    }
+    mountAvatar({ employee: { _id: 'x', name: 'X', hasPhoto: false, photo: PHOTO } })
+    await flush()
+    expect(observers).toHaveLength(0)
+    expect(apiFetchMock).not.toHaveBeenCalled()
+  })
+
+  it('原本沒有照片、之後才有（上傳後名單重新載入）：這時才開始等捲進畫面再下載', async () => {
+    apiFetchMock.mockResolvedValue(imageResponse())
+    const wrapper = mountAvatar({ employee: { _id: 'e1', name: '王小明', photo: '' } })
+    await flush()
+    expect(observers).toHaveLength(0)
+
+    await wrapper.setProps({ employee: { _id: 'e1', name: '王小明', photo: PHOTO } })
+    await flush()
+    expect(observers).toHaveLength(1)
+    expect(apiFetchMock).not.toHaveBeenCalled()
+
+    observers[0].show()
+    await flush()
+    expect(wrapper.find('img').exists()).toBe(true)
+    expect(apiFetchMock).toHaveBeenCalledTimes(1)
   })
 })

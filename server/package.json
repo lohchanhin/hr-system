@@ -23,7 +23,8 @@
     "jszip": "^3.10.1",
     "mongoose": "^7.8.11",
     "multer": "^2.2.0",
-    "pdfkit": "^0.13.0"
+    "pdfkit": "^0.13.0",
+    "sharp": "^0.35.5"
   },
   "devDependencies": {
     "@jest/globals": "^29.7.0",

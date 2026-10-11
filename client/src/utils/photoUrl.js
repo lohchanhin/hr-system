@@ -8,6 +8,8 @@ import { getToken } from './tokenService'
  * - 找不到的照片短時間內不重試（負向快取），避免整頁頭像各打一次 404
  * - object URL 由快取擁有：有畫面在用就不回收，最後一個使用者放開、被新照片取代或登出時才回收
  * - 編輯員工照片後呼叫 invalidateEmployeePhoto，所有正在顯示該員工的頭像會自動重新載入
+ * - 頭像只有幾十個像素，不必每個都下載原圖：向伺服器要「縮圖」（?size=），縮圖邊長只有固定幾個檔位（PHOTO_SIZE_STEPS），
+ *   快取的鍵包含檔位，所以 32px 與 40px 的頭像共用同一份 96px 的縮圖；沒指定檔位就是原檔
  */
 const MAX_CONCURRENT_REQUESTS = 6
 const MAX_CACHED_PHOTOS = 300
@@ -18,7 +20,10 @@ const PHOTO_REVALIDATE_MS = 10 * 60 * 1000
 const MISSING_PHOTO_TTL_MS = 60 * 1000
 const FAILED_PHOTO_TTL_MS = 5 * 1000
 
-const photoEntries = new Map() // key -> { key, employeeId, url, size, refs, fetchedAt, dead }（Map 的順序即最近使用順序）
+// 向伺服器要的縮圖邊長（像素）只有這幾個檔位（伺服器接受 48 ~ 512）：檔位少，快取才共用得起來
+export const PHOTO_SIZE_STEPS = [48, 96, 160, 256, 384, 512]
+
+const photoEntries = new Map() // key -> { key, employeeId, version, url, size, refs, fetchedAt, dead }（Map 的順序即最近使用順序）
 const retiredEntries = new Set() // 已被取代但仍有畫面在用的項目，最後一個使用者放開時才回收
 const missingPhotos = new Map() // key -> 負向快取到期時間
 const pendingLoads = new Map() // 下載中的請求 loadKey -> { promise, waiters }，同一張照片共用
@@ -31,8 +36,8 @@ let cachedBytes = 0
 let activeRequests = 0
 const waitingRequests = []
 
-function photoKey(employeeId, version) {
-  return `${employeeId}\n${version}`
+function photoKey(employeeId, version, size = 0) {
+  return `${employeeId}\n${version}\n${size}`
 }
 
 // 照片路徑最後的檔名：每次上傳都是新的檔名，換照片它就會變，用來當快取的版本，也是網址的版本參數（?v=）。
@@ -44,6 +49,29 @@ function photoFileName(photoPath) {
 }
 
 const photoVersion = photoFileName
+
+/**
+ * 要向伺服器要多大的縮圖：把想要的邊長（像素）往上取到最接近的檔位。
+ * 沒指定（或不是正數）代表要原檔，回傳 0；超過最大檔位就用最大檔位。
+ */
+export function snapPhotoSize(pixels) {
+  const wanted = Number(pixels)
+  if (!Number.isFinite(wanted) || wanted <= 0) return 0
+  return PHOTO_SIZE_STEPS.find(step => step >= wanted) ?? PHOTO_SIZE_STEPS[PHOTO_SIZE_STEPS.length - 1]
+}
+
+// el-avatar 的 size 也可以是 large / default / small 這幾個字
+const NAMED_AVATAR_PIXELS = { large: 56, default: 40, small: 24 }
+
+/**
+ * 頭像顯示成 displayPixels（CSS 像素）時要向伺服器要的縮圖邊長：高解析螢幕用 2 倍，再取檔位。
+ * 例如 20、24 -> 48；28、32、40 -> 96；48 -> 96；64 -> 160。
+ */
+export function photoSizeForDisplay(displayPixels) {
+  const named = typeof displayPixels === 'string' ? NAMED_AVATAR_PIXELS[displayPixels.trim()] : undefined
+  const pixels = Number(named ?? displayPixels)
+  return snapPhotoSize(Number.isFinite(pixels) && pixels > 0 ? pixels * 2 : NAMED_AVATAR_PIXELS.default * 2)
+}
 
 function employeeEpoch(employeeId) {
   return photoEpochs.get(employeeId) || 0
@@ -172,13 +200,15 @@ function enqueueRequest(task) {
   })
 }
 
-async function downloadPhoto(employeeId, photoPath) {
+async function downloadPhoto(employeeId, photoPath, size = 0) {
   try {
     // 網址帶上目前照片的檔名當版本（?v=）：換照片後網址就不同，瀏覽器不會拿舊圖的快取；伺服器會忽略這個參數。
-    // 不知道檔名時沒有版本可以依靠，改成每次先向伺服器確認（If-None-Match -> 304，不會重傳）
+    // 不知道檔名時沒有版本可以依靠，改成每次先向伺服器確認（If-None-Match -> 304，不會重傳）。
+    // size 是縮圖邊長（檔位），沒有就是原檔；伺服器沒辦法縮圖時會直接回原檔，畫面照樣能用
     const version = photoFileName(photoPath)
+    const query = [version ? `v=${encodeURIComponent(version)}` : '', size ? `size=${size}` : ''].filter(Boolean).join('&')
     const response = await apiFetch(
-      `/api/employees/${encodeURIComponent(employeeId)}/photo${version ? `?v=${encodeURIComponent(version)}` : ''}`,
+      `/api/employees/${encodeURIComponent(employeeId)}/photo${query ? `?${query}` : ''}`,
       version ? {} : { cache: 'no-cache' },
       { autoRedirect: false },
     )
@@ -200,7 +230,7 @@ async function downloadPhoto(employeeId, photoPath) {
 // 下載期間照片被編輯（或登出）過，這份結果已經過期：呼叫端要重新來過，不能當成「沒有照片」
 const STALE_LOAD = Symbol('stale-photo-load')
 
-function loadPhoto(employeeId, photoPath, key) {
+function loadPhoto(employeeId, photoPath, key, size = 0) {
   const epoch = employeeEpoch(employeeId)
   const globalEpoch = cacheEpoch
   const loadKey = `${key}\n${epoch}\n${globalEpoch}`
@@ -211,7 +241,7 @@ function loadPhoto(employeeId, photoPath, key) {
   }
 
   const record = { waiters: 1, promise: null }
-  record.promise = enqueueRequest(() => downloadPhoto(employeeId, photoPath))
+  record.promise = enqueueRequest(() => downloadPhoto(employeeId, photoPath, size))
     .then(result => {
       // 從這一刻起新來的呼叫端會直接看到快取項目，不再加入這一批等待者
       if (pendingLoads.get(loadKey) === record) pendingLoads.delete(loadKey)
@@ -228,9 +258,11 @@ function loadPhoto(employeeId, photoPath, key) {
         missingPhotos.set(key, Date.now() + FAILED_PHOTO_TTL_MS)
         return null
       }
+      const version = photoVersion(photoPath)
       const entry = {
         key,
         employeeId,
+        version,
         url,
         blob: result.blob,
         size: Number(result.blob.size) || 0,
@@ -238,9 +270,10 @@ function loadPhoto(employeeId, photoPath, key) {
         fetchedAt: Date.now(),
         dead: false,
       }
-      // 一位員工同一時間只有一張目前的照片：換了檔名之後，這位員工舊版本的照片不必再留著（還有畫面在用的等放開再回收）
+      // 一位員工同一時間只有一張目前的照片：換了檔名之後，這位員工舊版本的照片（各種大小的縮圖）不必再留著
+      // （還有畫面在用的等放開再回收）；同一版本不同大小的縮圖互不影響
       for (const other of [...photoEntries.values()]) {
-        if (other.employeeId === employeeId) dropEntry(other)
+        if (other.employeeId === employeeId && (other.version !== version || other.key === key)) dropEntry(other)
       }
       cachedBytes += entry.size
       managedUrls.add(entry.url)
@@ -259,12 +292,12 @@ function loadPhoto(employeeId, photoPath, key) {
  * 同步取得已快取的照片（不發請求），給畫面第一次 render 用，避免已載入過的頭像又閃一下字母。
  * 沒有快取、已過期或負向快取中都回傳 null。
  */
-export function acquireCachedEmployeePhoto(employeeId, photoPath = '') {
+export function acquireCachedEmployeePhoto(employeeId, photoPath = '', size = 0) {
   const id = employeeId == null ? '' : String(employeeId)
   if (!id) return null
   if (isDirectPhotoUrl(photoPath)) return { url: photoPath, release() {} }
   syncSession()
-  const entry = photoEntries.get(photoKey(id, photoVersion(photoPath)))
+  const entry = photoEntries.get(photoKey(id, photoVersion(photoPath), snapPhotoSize(size)))
   if (!entry || Date.now() - entry.fetchedAt > PHOTO_REVALIDATE_MS) return null
   return makeLease(entry)
 }
@@ -273,8 +306,9 @@ export function acquireCachedEmployeePhoto(employeeId, photoPath = '') {
  * 取得員工照片的 object URL。回傳 { url, release }：用完（元件卸載、換照片）要呼叫 release，
  * 沒有照片 / 沒有權限時 url 是 null（release 仍可安全呼叫）。
  * photoPath 當作版本：照片換過檔名就會變，直接取得新的一份。
+ * size 是想要的縮圖邊長（像素），會往上取到最接近的檔位（PHOTO_SIZE_STEPS）；不傳就是原檔。
  */
-export async function acquireEmployeePhoto(employeeId, photoPath = '') {
+export async function acquireEmployeePhoto(employeeId, photoPath = '', size = 0) {
   const id = employeeId == null ? '' : String(employeeId)
   if (!id) return emptyLease()
   if (isDirectPhotoUrl(photoPath)) return { url: photoPath, release() {} }
@@ -282,7 +316,8 @@ export async function acquireEmployeePhoto(employeeId, photoPath = '') {
   syncSession()
   // 登出通知的當下不要發請求（見 sessionEnded）
   if (sessionEnded) return emptyLease()
-  const key = photoKey(id, photoVersion(photoPath))
+  const step = snapPhotoSize(size)
+  const key = photoKey(id, photoVersion(photoPath), step)
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const missingUntil = missingPhotos.get(key)
     if (missingUntil) {
@@ -295,7 +330,7 @@ export async function acquireEmployeePhoto(employeeId, photoPath = '') {
       entry = null
     }
     if (entry) return makeLease(entry)
-    entry = await loadPhoto(id, photoPath, key)
+    entry = await loadPhoto(id, photoPath, key, step)
     // 等待期間照片被編輯 / 登出作廢了就重來一次
     if (entry === STALE_LOAD) continue
     if (!entry) return emptyLease()
@@ -370,14 +405,17 @@ export function subscribeEmployeePhoto(employeeId, callback) {
   }
 }
 
-/* 上傳前檢查 ------------------------------------------------------------------
+/* 上傳前檢查與縮小 ----------------------------------------------------------------
  * 與伺服器的規則一致（employeePhotoStorage）：JPEG / PNG / GIF / WebP，最大 5MB。
  * 在選檔當下就檢查，不要等到按「儲存」才被伺服器拒絕。
+ * 通過檢查的 JPEG / PNG / WebP 會在瀏覽器裡先縮到長邊 640px 以內再上傳（手機原圖動輒好幾 MB，
+ * 頭像用不到那麼大）：沒有透明度的存成 JPEG，有透明度的 PNG 維持 PNG，GIF（可能是動畫）不動。
  */
 export const EMPLOYEE_PHOTO_MAX_BYTES = 5 * 1024 * 1024
 export const EMPLOYEE_PHOTO_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp']
 const SHRINKABLE_TYPES = ['image/jpeg', 'image/png', 'image/webp']
-const SHRINK_MAX_EDGE = 1600
+export const EMPLOYEE_PHOTO_UPLOAD_MAX_EDGE = 640
+const UPLOAD_JPEG_QUALITY = 0.86
 
 export const EMPLOYEE_PHOTO_TYPE_MESSAGE = '不支援的圖片格式，僅支援 JPEG、PNG、GIF、WebP'
 export const EMPLOYEE_PHOTO_SIZE_MESSAGE = '圖片檔案過大，最大 5MB'
@@ -392,44 +430,85 @@ export function validateEmployeePhotoFile(file) {
   return ''
 }
 
-// 手機拍的照片常常超過 5MB：縮小並轉成 JPEG 再上傳；瀏覽器不支援或失敗就回傳 null，維持原本的「檔案過大」提示
-async function shrinkPhotoFile(file) {
-  if (typeof document === 'undefined' || typeof createImageBitmap !== 'function') return null
-  try {
-    const bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' })
-    const scale = Math.min(1, SHRINK_MAX_EDGE / Math.max(bitmap.width, bitmap.height, 1))
-    const canvas = document.createElement('canvas')
-    canvas.width = Math.max(1, Math.round(bitmap.width * scale))
-    canvas.height = Math.max(1, Math.round(bitmap.height * scale))
-    const context = canvas.getContext('2d')
-    if (!context) return null
-    // 轉成 JPEG 沒有透明度，先鋪白底避免透明處變黑
-    context.fillStyle = '#ffffff'
-    context.fillRect(0, 0, canvas.width, canvas.height)
-    context.drawImage(bitmap, 0, 0, canvas.width, canvas.height)
-    bitmap.close?.()
-    for (const quality of [0.88, 0.7]) {
-      const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', quality))
-      if (blob && blob.size > 0 && blob.size <= EMPLOYEE_PHOTO_MAX_BYTES) {
-        const baseName = String(file.name || 'photo').replace(/\.[^./\\]+$/, '') || 'photo'
-        return new File([blob], `${baseName}.jpg`, { type: 'image/jpeg' })
-      }
-    }
-  } catch {
-    // 縮圖失敗時沿用原本的檢查結果
-  }
-  return null
+/** 縮小後的尺寸：長邊超過 maxEdge 就等比例縮到 maxEdge，沒超過不放大（scale 為 1）。 */
+export function fitPhotoSize(width, height, maxEdge = EMPLOYEE_PHOTO_UPLOAD_MAX_EDGE) {
+  const w = Number(width) > 0 ? Number(width) : 1
+  const h = Number(height) > 0 ? Number(height) : 1
+  const scale = Math.min(1, maxEdge / Math.max(w, h))
+  return { scale, width: Math.max(1, Math.round(w * scale)), height: Math.max(1, Math.round(h * scale)) }
 }
 
-/** 檢查（必要時縮小）員工照片檔；回傳 { file, error }，error 是可直接顯示的中文訊息。 */
+// 影像裡有沒有透明 / 半透明的像素；讀不出來就當作有（寧可多存一張 PNG，也不要把透明處變黑）
+function hasTransparentPixels(context, width, height) {
+  try {
+    const { data } = context.getImageData(0, 0, width, height)
+    for (let index = 3; index < data.length; index += 4) {
+      if (data[index] < 255) return true
+    }
+    return false
+  } catch {
+    return true
+  }
+}
+
+async function decodePhoto(file) {
+  try {
+    // 手機直拍的照片靠 EXIF 記錄方向：要在解碼時轉正，縮完才不會躺著
+    return await createImageBitmap(file, { imageOrientation: 'from-image' })
+  } catch {
+    // 舊一點的瀏覽器不認得選項：用預設值再試一次（無法解碼的檔案這裡也會丟錯，由呼叫端接住）
+    return createImageBitmap(file)
+  }
+}
+
+// 在瀏覽器裡把照片縮到長邊 640px 以內：沒有透明度的存成 JPEG（品質 0.86），有透明度的維持 PNG。
+// 傳回 null 代表「用原檔」：瀏覽器沒有 canvas / createImageBitmap、解碼失敗，或沒縮小而且重新壓縮也沒有比較小
+async function resizePhotoFile(file) {
+  if (typeof document === 'undefined' || typeof createImageBitmap !== 'function') return null
+  let bitmap = null
+  try {
+    bitmap = await decodePhoto(file)
+    const { scale, width, height } = fitPhotoSize(bitmap.width, bitmap.height)
+    const canvas = document.createElement('canvas')
+    canvas.width = width
+    canvas.height = height
+    const context = canvas.getContext('2d')
+    if (!context) return null
+    const isJpeg = String(file.type).toLowerCase() === 'image/jpeg'
+    if (isJpeg) {
+      // JPEG 沒有透明度：先鋪白底，縮圖邊緣不會有半透明的像素變黑
+      context.fillStyle = '#ffffff'
+      context.fillRect(0, 0, width, height)
+    }
+    context.drawImage(bitmap, 0, 0, width, height)
+    const keepPng = !isJpeg && hasTransparentPixels(context, width, height)
+    const type = keepPng ? 'image/png' : 'image/jpeg'
+    const blob = await new Promise(resolve => canvas.toBlob(resolve, type, keepPng ? undefined : UPLOAD_JPEG_QUALITY))
+    if (!blob || !(blob.size > 0) || blob.size > EMPLOYEE_PHOTO_MAX_BYTES) return null
+    if (scale === 1 && blob.size >= file.size && file.size <= EMPLOYEE_PHOTO_MAX_BYTES) return null
+    const baseName = String(file.name || 'photo').replace(/\.[^./\\]+$/, '') || 'photo'
+    return new File([blob], `${baseName}.${keepPng ? 'png' : 'jpg'}`, { type })
+  } catch {
+    // 縮圖失敗時沿用原檔與原本的檢查結果
+    return null
+  } finally {
+    bitmap?.close?.()
+  }
+}
+
+/**
+ * 檢查員工照片檔並盡量縮小；回傳 { file, error }，error 是可直接顯示的中文訊息。
+ * 超過 5MB 的手機照片先縮小再檢查大小；瀏覽器縮不了就維持原檔與原本的規則。
+ */
 export async function prepareEmployeePhotoFile(file) {
   const error = validateEmployeePhotoFile(file)
-  if (!error) return { file, error: '' }
-  if (error === EMPLOYEE_PHOTO_SIZE_MESSAGE && SHRINKABLE_TYPES.includes(String(file.type).toLowerCase())) {
-    const shrunk = await shrinkPhotoFile(file)
-    if (shrunk) return { file: shrunk, error: '' }
+  // 格式不對 / 空檔直接回報；只有「檔案過大」還有機會靠縮小解決
+  if (error && error !== EMPLOYEE_PHOTO_SIZE_MESSAGE) return { file: null, error }
+  if (SHRINKABLE_TYPES.includes(String(file.type).toLowerCase())) {
+    const resized = await resizePhotoFile(file)
+    if (resized) return { file: resized, error: '' }
   }
-  return { file: null, error }
+  return error ? { file: null, error } : { file, error: '' }
 }
 
 /**

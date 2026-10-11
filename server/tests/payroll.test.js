@@ -394,6 +394,54 @@ describe('Payroll API', () => {
       expect(res.body.pagination).toEqual({ total: 1, page: 1, pageSize: 20, totalPages: 1 });
     });
 
+    it('carries the stored photo path (empty when there is none) next to the employee _id, and still no bank or ID data', async () => {
+      const fakeEmployees = [
+        {
+          _id: '507f1f77bcf86cd799439051',
+          employeeId: 'E001',
+          name: '有照片的人',
+          photo: '/upload/employees/employee_has-photo.png',
+          department: { _id: 'dept1', name: '人資部' },
+          subDepartment: null,
+          organization: 'org1',
+          salaryAmount: 45000,
+          salaryType: '月薪',
+          idNumber: 'A123456789',
+          salaryAccountA: { bank: '812', acct: '123456' },
+        },
+        {
+          _id: '507f1f77bcf86cd799439052',
+          employeeId: 'E002',
+          name: '沒照片的人',
+          department: { _id: 'dept1', name: '人資部' },
+          subDepartment: null,
+          organization: 'org1',
+          salaryAmount: 46000,
+          salaryType: '月薪',
+        },
+      ];
+      const employeeQuery = makeEmployeeOverviewQuery(fakeEmployees);
+      mockEmployee.find.mockReturnValue(employeeQuery);
+      mockEmployee.countDocuments.mockResolvedValue(2);
+      mockPayrollRecord.find.mockReturnValue(makePayrollOverviewQuery([]));
+
+      const res = await request(app).get('/api/payroll/overview/monthly?month=2025-11-01');
+
+      expect(res.status).toBe(200);
+      // 薪資明細視窗（單一員工）要顯示頭像：投影多一個 photo，每一列帶 _id 與 photo（沒有照片是空字串）；總覽表格本身不放頭像
+      expect(employeeQuery.select.mock.calls[0][0].split(' ')).toContain('photo');
+      expect(res.body.items.map(item => [item._id, item.name, item.photo])).toEqual([
+        ['507f1f77bcf86cd799439051', '有照片的人', '/upload/employees/employee_has-photo.png'],
+        ['507f1f77bcf86cd799439052', '沒照片的人', ''],
+      ]);
+      // 列上沒有為了頭像多帶身分證字號或銀行帳號
+      res.body.items.forEach(item => {
+        expect(item).not.toHaveProperty('idNumber');
+        expect(item).not.toHaveProperty('salaryAccountA');
+        expect(item).not.toHaveProperty('salaryAccountB');
+      });
+    });
+
     it('includes night shift fields in overview response', async () => {
       const fakeEmployees = [
         {

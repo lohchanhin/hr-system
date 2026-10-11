@@ -408,7 +408,13 @@
                   </template>
                   <el-descriptions :column="3" border>
                     <el-descriptions-item label="員工編號">{{ selectedEmployee.employeeId }}</el-descriptions-item>
-                    <el-descriptions-item label="姓名">{{ selectedEmployee.name }}</el-descriptions-item>
+                    <el-descriptions-item label="姓名">
+                      <!-- 明細只看一個人：姓名旁放頭像（總覽表格是上百列的數字，不放） -->
+                      <div class="payroll-person">
+                        <EmployeeAvatar :employee="selectedEmployee" :size="40" />
+                        <span>{{ selectedEmployee.name }}</span>
+                      </div>
+                    </el-descriptions-item>
                     <el-descriptions-item label="部門">{{ departmentName(selectedEmployee.department) }}</el-descriptions-item>
                     <el-descriptions-item label="單位">{{ subDepartmentName(selectedEmployee.subDepartment) }}</el-descriptions-item>
                     <el-descriptions-item label="薪資類型">{{ selectedEmployee.salaryType }}</el-descriptions-item>
@@ -1092,6 +1098,7 @@ import { ref, onMounted, onBeforeUnmount, computed, reactive } from 'vue'
 import { apiFetch } from '../../api'
 import { formatDate } from '../../utils/dateFormatter'
 import { ElMessage } from 'element-plus'
+import EmployeeAvatar from '../EmployeeAvatar.vue'
 import { 
   QuestionFilled, 
   Tools, 
@@ -1896,6 +1903,13 @@ const showExplanationDialog = ref(false)
     display: flex;
     justify-content: flex-end;
     padding: 16px 0;
+  }
+
+  /* 薪資明細的姓名：頭像 + 姓名 */
+  .payroll-person {
+    display: flex;
+    align-items: center;
+    gap: 10px;
   }
 
   .stat-item {

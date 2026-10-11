@@ -4563,6 +4563,8 @@ async function fetchEmployees(
           {
             _id: supervisorIdStr,
             name: supervisorProfile.value?.name || '主管本人',
+            // 頭像用：個人資料帶的照片路徑（沒有照片是空字串），排班表裡主管本人那一列才看得到自己的照片
+            photo: supervisorProfile.value?.photo || '',
             departmentId: supervisorDepartmentId.value || '',
             subDepartmentId:
               supervisorSubDepartmentId.value || '',

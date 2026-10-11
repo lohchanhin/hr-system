@@ -79,12 +79,24 @@ beforeEach(() => {
   mockEmployee.countDocuments.mockResolvedValue(1)
   mockEmployee.exists.mockResolvedValue(null)
   mockEmployee.findById.mockImplementation(() => findByIdResult({ ...stored }))
-  mockEmployee.updateOne.mockImplementation(async (_filter, update) => {
+  mockEmployee.updateOne.mockImplementation(async (filter, update) => {
+    // 和真的資料庫一樣：條件（換照片時是 _id 加上讀到的舊照片）對不上就不寫入，matchedCount 為 0
+    if (filter?.photo !== undefined && !photoMatchesCondition(stored.photo, filter.photo)) {
+      return { matchedCount: 0, modifiedCount: 0 }
+    }
     Object.assign(stored, update.$set)
-    return { modifiedCount: 1 }
+    return { matchedCount: 1, modifiedCount: 1 }
   })
   mockEmployee.create.mockImplementation(async doc => ({ _id: OTHER_ID, ...doc }))
 })
+
+// 資料庫替身用的條件比對：只認得「等於某個路徑」與「沒有照片（{ $in: [null, ''] }）」這兩種
+function photoMatchesCondition(current, condition) {
+  if (condition && typeof condition === 'object' && Array.isArray(condition.$in)) {
+    return condition.$in.some(candidate => (candidate ?? '') === (current ?? ''))
+  }
+  return condition === current
+}
 
 afterEach(async () => {
   // 測試裡對 fs/promises 做的 spy 作用在真正的核心模組上，一定要還原，不然會影響同一個程序裡後面的測試檔
@@ -322,6 +334,7 @@ describe('multipart upload middleware over HTTP', () => {
     const res = await photoFile(post().field('note', 'x'.repeat(1536 * 1024)))
 
     expect(res.status).toBe(200)
+    track(res.body.uploadedPhotoPath)
   })
 
   it('accepts a real image whose declared type disagrees with its content and stores it under the sniffed type', async () => {
@@ -329,6 +342,7 @@ describe('multipart upload middleware over HTTP', () => {
     const res = await photoFile(post(), PNG_1PX, { filename: 'photo.jpg', contentType: 'image/jpeg' })
 
     expect(res.status).toBe(200)
+    track(res.body.uploadedPhotoPath)
     expect(res.body.uploadedPhotoPath).toMatch(/\.png$/)
   })
 
@@ -548,6 +562,182 @@ describe('PUT /api/employees/:id with a photo', () => {
     expect(mockEmployee.updateOne).not.toHaveBeenCalled()
     expect(writes).toHaveLength(1)
     await expect(fs.stat(writes[0])).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  describe('when saves of the same employee run at the same time', () => {
+    const CONFLICT_MESSAGE = '員工照片剛剛已被其他人更新，這次的修改沒有儲存，請重新整理頁面後再試'
+    // 內容不同的 JPEG（檔頭相同，最後一個位元組不同）：每次上傳存成不同的檔案
+    const jpegVariant = (marker) => Buffer.concat([JPEG_TINY, Buffer.from([marker])])
+    const exists = (filePath) => fs.stat(filePath).then(() => true, () => false)
+
+    /**
+     * 讓前 count 個「讀取員工」的請求都讀完同一份舊資料之後才一起往下走（讀到的是各自抵達時的快照），
+     * 重現「幾個人同時按儲存、全都讀到同一張舊照片」的情況；之後的讀取（存檔之後再讀一次）不受影響。
+     */
+    function holdFirstReads(count) {
+      const readThrough = mockEmployee.findById.getMockImplementation()
+      const waiting = []
+      mockEmployee.findById.mockImplementation((...args) => {
+        if (waiting.length >= count) return readThrough(...args)
+        const snapshot = { ...stored }
+        const gate = new Promise((resolve) => {
+          waiting.push(resolve)
+          if (waiting.length === count) waiting.forEach((release) => release())
+        })
+        return findByIdResult(gate.then(() => snapshot))
+      })
+    }
+
+    async function storeOldPhoto() {
+      const old = await storage.storeEmployeePhoto(PNG_1PX, { declaredMimeType: 'image/png' })
+      track(old.storedPath)
+      stored.photo = old.storedPath
+      return old.storedPath
+    }
+
+    it('lets exactly one of three simultaneous replacements win; the others answer 409 and leave no file behind', async () => {
+      const oldPath = await storeOldPhoto()
+      holdFirstReads(3)
+      const writes = spyOnPhotoWrites()
+
+      const responses = await Promise.all([1, 2, 3].map((marker) => photoFile(
+        put().field('data', JSON.stringify({ ...editFormData(), name: `Editor ${marker}`, photo: oldPath })),
+        jpegVariant(marker),
+        { filename: `new${marker}.jpg`, contentType: 'image/jpeg' },
+      )))
+
+      const winners = responses.filter((res) => res.status === 200)
+      const losers = responses.filter((res) => res.status === 409)
+      expect(winners).toHaveLength(1)
+      expect(losers).toHaveLength(2)
+      const [winner] = winners
+      track(winner.body.photo)
+
+      // 輸的人什麼都沒存，並被告知目前真正存著的照片；贏的人回應的就是資料庫裡的照片
+      expect(stored.photo).toBe(winner.body.photo)
+      expect(winner.body.name).toBe(stored.name)
+      losers.forEach((res) => expect(res.body).toEqual({ error: CONFLICT_MESSAGE, photo: stored.photo }))
+      expect(stored.name).toMatch(/^Editor [123]$/)
+      // 三個人都用「讀到的舊照片」當條件寫入，只有第一個對得上
+      expect(mockEmployee.updateOne).toHaveBeenCalledTimes(3)
+      mockEmployee.updateOne.mock.calls.forEach(([filter]) => expect(filter).toMatchObject({ _id: EMPLOYEE_ID, photo: oldPath }))
+
+      // 硬碟上：三次上傳寫了三個檔，只剩被引用的那一個；舊照片也收掉了
+      expect(writes).toHaveLength(3)
+      const remaining = []
+      for (const filePath of writes) if (await exists(filePath)) remaining.push(filePath)
+      expect(remaining).toEqual([storage.resolveEmployeePhotoPath(stored.photo)])
+      expect(await storage.statEmployeePhoto(oldPath)).toBeNull()
+    })
+
+    it('does not put the old photo back when a save that never touched the photo read it before another save replaced it', async () => {
+      const oldPath = await storeOldPhoto()
+      holdFirstReads(2)
+
+      const [replacing, stale] = await Promise.all([
+        photoFile(
+          put().field('data', JSON.stringify({ ...editFormData(), photo: oldPath })),
+          jpegVariant(7),
+          { filename: 'new.jpg', contentType: 'image/jpeg' },
+        ),
+        // 編輯畫面每次存檔都會把目前的照片路徑原樣送回來
+        put().send({ name: 'Renamed', photo: oldPath }),
+      ])
+
+      expect(replacing.status).toBe(200)
+      expect(stale.status).toBe(200)
+      track(replacing.body.photo)
+      // 沒換照片的那次儲存不寫照片欄位，所以不論誰先寫，都不會把新照片蓋回舊路徑
+      mockEmployee.updateOne.mock.calls
+        .filter(([, update]) => update.$set.name === 'Renamed')
+        .forEach(([filter, update]) => {
+          expect(update.$set).not.toHaveProperty('photo')
+          expect(filter).not.toHaveProperty('photo')
+        })
+      expect(stored.photo).toBe(replacing.body.photo)
+      expect(stale.body.photo).toBe(stored.photo)
+      expect(await storage.statEmployeePhoto(stored.photo)).not.toBeNull()
+      expect(await storage.statEmployeePhoto(oldPath)).toBeNull()
+    })
+
+    it('answers 409 with the photo that is really stored, and removes its own file, when the photo was replaced after it was read', async () => {
+      const oldPath = await storeOldPhoto()
+      const other = await storage.storeEmployeePhoto(jpegVariant(9), { declaredMimeType: 'image/jpeg' })
+      track(other.storedPath)
+      const writes = spyOnPhotoWrites()
+      // 讀完員工、尚未寫入之前，別人把照片換成 other
+      const realUpdateOne = mockEmployee.updateOne.getMockImplementation()
+      mockEmployee.updateOne.mockImplementationOnce(async (...args) => {
+        stored.photo = other.storedPath
+        return realUpdateOne(...args)
+      })
+
+      const res = await photoFile(put().field('data', JSON.stringify({ ...editFormData(), photo: oldPath })), jpegVariant(8), { filename: 'mine.jpg', contentType: 'image/jpeg' })
+
+      expect(res.status).toBe(409)
+      expect(res.body).toEqual({ error: CONFLICT_MESSAGE, photo: other.storedPath })
+      expect(stored.name).toBe('John')
+      expect(writes).toHaveLength(1)
+      expect(await exists(writes[0])).toBe(false)
+      // 別人換上去的照片沒有被動到；舊照片不是這次請求換掉的，它的去留不歸這次請求管
+      expect(await storage.statEmployeePhoto(other.storedPath)).not.toBeNull()
+    })
+
+    it('treats an employee with no photo the same way: only one of two first uploads wins', async () => {
+      stored.photo = undefined
+      holdFirstReads(2)
+      const writes = spyOnPhotoWrites()
+
+      const responses = await Promise.all([1, 2].map((marker) => photoFile(
+        put().field('data', JSON.stringify({ ...editFormData(), name: `First ${marker}` })),
+        jpegVariant(marker),
+        { filename: `first${marker}.jpg`, contentType: 'image/jpeg' },
+      )))
+
+      expect(responses.map((res) => res.status).sort()).toEqual([200, 409])
+      const winner = responses.find((res) => res.status === 200)
+      track(winner.body.photo)
+      expect(stored.photo).toBe(winner.body.photo)
+      mockEmployee.updateOne.mock.calls.forEach(([filter]) => expect(filter.photo).toEqual({ $in: [null, ''] }))
+      const remaining = []
+      for (const filePath of writes) if (await exists(filePath)) remaining.push(filePath)
+      expect(remaining).toEqual([storage.resolveEmployeePhotoPath(stored.photo)])
+    })
+
+    it('answers 404 and removes the new file when the employee was deleted while the save was running', async () => {
+      const oldPath = await storeOldPhoto()
+      const writes = spyOnPhotoWrites()
+      let reads = 0
+      mockEmployee.findById.mockImplementation(() => findByIdResult(++reads === 1 ? { ...stored } : null))
+      mockEmployee.updateOne.mockResolvedValue({ matchedCount: 0, modifiedCount: 0 })
+
+      const res = await photoFile(put().field('data', JSON.stringify({ ...editFormData(), photo: oldPath })), jpegVariant(5), { filename: 'late.jpg', contentType: 'image/jpeg' })
+
+      expect(res.status).toBe(404)
+      expect(res.body).toEqual({ error: 'Not found' })
+      expect(writes).toHaveLength(1)
+      expect(await exists(writes[0])).toBe(false)
+    })
+
+    it('does not fail the save of a legacy full-URL photo that only needs its path rewritten when the photo changed meanwhile', async () => {
+      stored.photo = 'http://localhost:3000/upload/employee_legacy.png'
+      const replacedMeanwhile = '/upload/employees/employee_replaced-meanwhile.png'
+      const realUpdateOne = mockEmployee.updateOne.getMockImplementation()
+      mockEmployee.updateOne.mockImplementationOnce(async (...args) => {
+        stored.photo = replacedMeanwhile
+        return realUpdateOne(...args)
+      })
+
+      const res = await put().send({ name: 'Renamed', photo: '/upload/employee_legacy.png' })
+
+      // 只是改寫路徑格式，不值得為它回 409：其他欄位照存，照片欄位維持別人剛換上去的
+      expect(res.status).toBe(200)
+      expect(res.body.name).toBe('Renamed')
+      expect(res.body.photo).toBe(replacedMeanwhile)
+      expect(mockEmployee.updateOne).toHaveBeenCalledTimes(2)
+      expect(mockEmployee.updateOne.mock.calls[1][0]).toEqual({ _id: EMPLOYEE_ID })
+      expect(mockEmployee.updateOne.mock.calls[1][1].$set).not.toHaveProperty('photo')
+    })
   })
 })
 

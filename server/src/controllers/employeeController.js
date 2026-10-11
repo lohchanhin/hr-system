@@ -14,6 +14,12 @@ import {
   readEmployeePhoto,
   statEmployeePhoto,
 } from '../services/employeePhotoStorage.js'
+import {
+  employeePhotoThumbnailEtag,
+  loadSharp,
+  parseThumbnailSize,
+  readEmployeePhotoThumbnail,
+} from '../services/employeePhotoThumbnail.js'
 
 /* ───────────────────────────── 小工具：型別轉換 ───────────────────────────── */
 const isDefined = (v) => v !== undefined
@@ -1269,6 +1275,9 @@ function matchesIfNoneMatch(header, etag) {
  * 只有這支需要登入的 API 能取得。
  * 快取：回應帶 ETag，沒有變就回 304。呼叫端帶 ?v=<目前照片的檔名> 時（換照片檔名就會變）可以放心快取 5 分鐘；
  * 沒帶或帶的是舊版本時每次都向伺服器確認，換照片之後不會看到舊圖。
+ * 縮圖：?size=<像素>（48 ~ 512 的整數，伺服器往上取到固定檔位 48／96／160／256／384／512）回傳縮圖，頭像不必下載最大 5MB 的原檔。
+ * 認證、ETag、304、快取規則與原圖完全相同；縮圖有自己的 ETag。?size 不是 48 ~ 512 的整數就忽略（回原圖）；
+ * 伺服器沒有縮圖功能（sharp 載入不了）或這張圖做不出縮圖時，同樣回原圖，畫面照樣能用。
  */
 export async function getEmployeePhoto(req, res) {
   try {
@@ -1279,20 +1288,25 @@ export async function getEmployeePhoto(req, res) {
     const meta = storedPath ? await statEmployeePhoto(storedPath) : null
     if (!meta) return photoNotFound(res)
 
+    // 沒有縮圖功能時 ETag 與內容都等同原圖，不要讓 ?size= 的網址多出一套驗證碼
+    const thumbnailSize = parseThumbnailSize(req.query?.size)
+    const size = thumbnailSize && (await loadSharp()) ? thumbnailSize : null
+    const etag = size ? employeePhotoThumbnailEtag(storedPath, size, meta) : meta.etag
+
     const isCurrentVersion = req.query?.v === storedPath.split('/').pop()
     const headers = {
       'Cache-Control': isCurrentVersion ? 'private, max-age=300, must-revalidate' : 'private, no-cache',
       'Content-Security-Policy': "default-src 'none'; sandbox",
-      ETag: meta.etag,
+      ETag: etag,
       'X-Content-Type-Options': 'nosniff',
       Vary: 'Authorization',
     }
-    if (matchesIfNoneMatch(req.headers?.['if-none-match'], meta.etag)) {
+    if (matchesIfNoneMatch(req.headers?.['if-none-match'], etag)) {
       res.set(headers)
       return res.status(304).end()
     }
 
-    const photo = await readEmployeePhoto(storedPath)
+    const photo = (size && (await readEmployeePhotoThumbnail(storedPath, size, meta))) || (await readEmployeePhoto(storedPath))
     if (!photo) return photoNotFound(res)
 
     res.set({ ...headers, 'Content-Type': photo.mimeType })
@@ -1348,6 +1362,14 @@ export async function updateEmployee(req, res) {
     // 建立 $set/$unset patch
     const { $set, $unset, $inc: patchInc } = buildEmployeePatch(body, employee)
 
+    // 照片欄位只在「真的換了照片」時才寫：編輯畫面每次存檔都會把目前的照片路徑原樣送回來，
+    // 如果照樣寫入，同時有人換了照片的話，會被這一筆舊路徑蓋回去（新照片變孤兒、員工指向已被刪除的舊檔）
+    if (isDefined($set.photo) && toStr($set.photo) === toStr(previousPhoto)) delete $set.photo
+    const photoInPatch = isDefined($set.photo)
+    // 舊資料存成完整網址、畫面送回同一個檔案的 /upload 路徑：只是改寫成正規路徑，檔案沒有換，不能刪舊檔
+    const photoRewrittenOnly = photoInPatch && isSameStoredPhoto($set.photo, previousPhoto)
+    const photoReplaced = photoInPatch && !photoRewrittenOnly
+
     const nextRole = $set.role ?? employee.role
     const nextStatus = $set.status ?? employee.status
     const nextAccountEnabled = $set.accountEnabled ?? employee.accountEnabled
@@ -1371,16 +1393,54 @@ export async function updateEmployee(req, res) {
     }
 
     // 套用更新
-    const update = {}
-    if (Object.keys($set).length) update.$set = $set
-    if (Object.keys($unset).length) update.$unset = $unset
     const sessionFieldsChanged = ['role', 'status', 'accountEnabled'].some(
       (field) => isDefined($set[field]) && $set[field] !== employee[field]
     )
     const increments = { ...(patchInc || {}), ...(sessionFieldsChanged ? { authVersion: 1 } : {}) }
-    if (Object.keys(increments).length) update.$inc = increments
-    if (Object.keys(update).length) await Employee.updateOne({ _id: employee._id }, update)
+    const composeUpdate = () => {
+      const composed = {}
+      if (Object.keys($set).length) composed.$set = $set
+      if (Object.keys($unset).length) composed.$unset = $unset
+      if (Object.keys(increments).length) composed.$inc = increments
+      return composed
+    }
+    const update = composeUpdate()
+    if (Object.keys(update).length) {
+      // 換照片時以「比對舊值再換」寫入（compare-and-swap）：條件帶上讀到的舊照片，兩個人同時換照片時只有一個寫得進去，
+      // 輸的那一方不會動到任何欄位。沒換照片時條件只有 _id，行為與以前相同
+      const filter = { _id: employee._id }
+      if (photoInPatch) filter.photo = previousPhoto ? previousPhoto : { $in: [null, ''] }
+      const result = await Employee.updateOne(filter, update)
+      if (photoInPatch && result?.matchedCount === 0) {
+        if (!photoReplaced) {
+          // 只是改寫路徑的格式，不值得為它失敗：照片已經被別人換掉了，就不要動照片欄位，其餘欄位照常儲存
+          delete $set.photo
+          const rest = composeUpdate()
+          if (Object.keys(rest).length) await Employee.updateOne({ _id: employee._id }, rest)
+        } else {
+          // 輸掉競爭：自己剛存的新檔案沒人引用了，收掉；回 409 讓使用者重新載入再改（員工已被刪除則是 404）。
+          // 409 帶上目前真正存著的照片路徑，畫面可以直接換成它
+          await cleanupUnpersistedPhoto(req).catch(() => {})
+          const current = await Employee.findById(employee._id).select('photo')
+          if (!current) return res.status(404).json({ error: 'Not found' })
+          return res.status(409).json({
+            error: '員工照片剛剛已被其他人更新，這次的修改沒有儲存，請重新整理頁面後再試',
+            photo: current.photo ?? '',
+          })
+        }
+      }
+    }
     photoPersisted = true
+
+    // 換照片成功（比對舊值再換，確認被換掉的正是 previousPhoto）：舊檔沒有別人引用就連同它的縮圖一起刪掉。
+    // 刪不掉只記錄錯誤代碼：資料已經儲存，不能因為清檔失敗回報儲存失敗
+    if (photoReplaced && previousPhoto) {
+      try {
+        await deleteEmployeePhotoIfUnreferenced(previousPhoto, employee._id)
+      } catch (cleanupErr) {
+        console.error('Failed to remove replaced employee photo', { error: cleanupErr?.name ?? 'Error', code: cleanupErr?.code })
+      }
+    }
     // 已使用天數的差額更正：讀取之後若又有人調低，不可變成負數（與 refundAnnualLeave 相同的保險）
     if (patchInc?.['annualLeave.usedDays'] < 0) {
       await Employee.updateOne(
@@ -1396,10 +1456,6 @@ export async function updateEmployee(req, res) {
     if (!isBlankPassword(body.password)) {
       updated.password = body.password
       await updated.save()
-    }
-
-    if (isDefined(body.photo) && previousPhoto && previousPhoto !== updated.photo) {
-      await deleteEmployeePhotoIfUnreferenced(previousPhoto, employee._id)
     }
 
     res.json(updated)

@@ -53,7 +53,7 @@ describe('GET /api/approvals/inbox', () => {
     expect(query.populate).toHaveBeenCalledWith('form', 'name category semanticType')
     // 申請人與簽核人都帶 photo（照片路徑），待簽清單才能顯示大頭照
     expect(query.populate).toHaveBeenCalledWith('applicant_employee', 'name employeeId department organization photo')
-    expect(query.populate).toHaveBeenCalledWith('steps.approvers.approver', 'name photo')
+    expect(query.populate).toHaveBeenCalledWith('steps.approvers.approver', 'name')
     expect(res.headers['x-total-count']).toBe('1')
   })
 
@@ -127,7 +127,7 @@ describe('GET /api/approvals (my requests)', () => {
     expect(query.sort).toHaveBeenCalledWith({ createdAt: -1 })
     expect(query.populate).toHaveBeenCalledWith('form', 'name category semanticType')
     expect(query.populate).toHaveBeenCalledWith('applicant_employee', 'name employeeId department organization photo')
-    expect(query.populate).toHaveBeenCalledWith('steps.approvers.approver', 'name photo')
+    expect(query.populate).toHaveBeenCalledWith('steps.approvers.approver', 'name')
   })
 
   it('paginates', async () => {

@@ -123,12 +123,7 @@
           placeholder="選擇員工"
           @update:model-value="setValue(fld._id, $event)"
         >
-          <el-option v-for="u in userOptions" :key="u.value" :label="u.label" :value="u.value">
-            <span class="user-option">
-              <EmployeeAvatar :employee-id="u.value" :name="u.name || u.label" :photo="u.photo" :size="20" />
-              <span class="user-option-label">{{ u.label }}</span>
-            </span>
-          </el-option>
+          <el-option v-for="u in userOptions" :key="u.value" :label="u.label" :value="u.value" />
         </el-select>
 
         <el-select
@@ -169,7 +164,6 @@
 import { computed } from 'vue'
 import { normalizeFieldOptions } from '../utils/approvalDisplay'
 import { isActiveField } from '../utils/approvalForm'
-import EmployeeAvatar from './EmployeeAvatar.vue'
 
 const props = defineProps({
   fields: { type: Array, default: () => [] },
@@ -206,18 +200,6 @@ function setFiles(fieldId, list) {
 .field-input,
 .field-textarea {
   border-radius: 8px;
-}
-
-.user-option {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.user-option-label {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 .file-tip,

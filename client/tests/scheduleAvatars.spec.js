@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { shallowMount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import realShape from './fixtures/scheduleLeaveApprovals.realShape.json'
@@ -32,6 +32,7 @@ const setRoleToken = role => localStorage.setItem('token', `stub.${encodeBase64(
 
 const [sha, wang] = realShape.employees
 const SHA_PHOTO = '/upload/employees/employee_sha.png'
+const SUPERVISOR_PHOTO = '/upload/employees/employee_supervisor.png'
 
 // 沙俊宇有照片，王小明沒有
 const employees = [{ ...sha, photo: SHA_PHOTO }, { ...wang, photo: '' }]
@@ -113,7 +114,7 @@ const flush = async () => {
 let photoRequests
 let blobCounter
 
-function setupApi({ publishSummary } = {}) {
+function setupApi({ publishSummary, includeSelf = false, supervisorPhoto } = {}) {
   photoRequests = []
   apiFetch.mockImplementation(async url => {
     const { pathname, searchParams } = new URL(url, 'http://localhost')
@@ -122,7 +123,7 @@ function setupApi({ publishSummary } = {}) {
     const photoMatch = pathname.match(/^\/api\/employees\/([^/]+)\/photo$/)
     if (photoMatch) {
       photoRequests.push(`${photoMatch[1]}?${searchParams.toString()}`)
-      if (photoMatch[1] !== sha._id) return { ok: false, status: 404 }
+      if (![sha._id, realShape.supervisor].includes(photoMatch[1])) return { ok: false, status: 404 }
       return { ok: true, status: 200, blob: async () => ({ type: 'image/png', size: 4 }) }
     }
     if (pathname === '/api/employees/schedule' && searchParams.get('supervisor') && searchParams.get('pageSize') === '200' && !searchParams.has('department')) {
@@ -135,10 +136,12 @@ function setupApi({ publishSummary } = {}) {
       return ok({
         _id: realShape.supervisor,
         name: '林主任',
+        ...(supervisorPhoto !== undefined ? { photo: supervisorPhoto } : {}),
         department: { _id: employees[0].department, name: 'Dept A' },
         subDepartment: { _id: employees[0].subDepartment, name: 'Sub A' }
       })
     }
+    if (pathname === '/api/schedules/preferences/include-self') return ok({ includeSelf })
     if (pathname === '/api/departments') return ok([{ _id: employees[0].department, name: 'Dept A' }])
     if (pathname === '/api/sub-departments') {
       return ok([{ _id: employees[0].subDepartment, name: 'Sub A', department: { _id: employees[0].department } }])
@@ -162,6 +165,7 @@ async function mountSupervisorPage(options) {
   localStorage.setItem('employeeId', realShape.supervisor)
   setupApi(options)
   const wrapper = mountSchedule()
+  mounted.push(wrapper)
   await flush()
   await wrapper.vm.$nextTick()
   return wrapper
@@ -173,6 +177,12 @@ const avatarsIn = (wrapper, selector) =>
     src: avatar.find('img').exists() ? avatar.find('img').attributes('src') : null,
     text: avatar.text(),
   }))
+
+// 每個測試掛的頁面用完就卸載，不讓上一個測試的頭像還在背景發請求
+const mounted = []
+afterEach(() => {
+  while (mounted.length) mounted.pop().unmount()
+})
 
 beforeEach(() => {
   setActivePinia(createPinia())
@@ -206,6 +216,37 @@ describe('排班頁的人頭像（餵伺服器真的回應形狀）', () => {
     expect(avatars[1]).toEqual({ src: null, text: '王' })
   })
 
+  it('「包含自己」：名單裡補上的主管本人那一列也有頭像（個人資料帶的照片）', async () => {
+    const wrapper = await mountSupervisorPage({ includeSelf: true, supervisorPhoto: SUPERVISOR_PHOTO })
+
+    const rows = wrapper.vm.virtualVisibleEmployees
+    expect(rows.map(row => row._id).sort()).toEqual([realShape.supervisor, sha._id, wang._id].sort())
+    const self = rows.find(row => row._id === realShape.supervisor)
+    expect(self.name).toBe('林主任')
+    expect(self.photo).toBe(SUPERVISOR_PHOTO)
+
+    const avatars = avatarsIn(wrapper, '.col[data-label="員工姓名"] .employee-name')
+    expect(avatars).toHaveLength(3)
+    // 沙俊宇與主管本人有照片，王小明沒有
+    expect(avatars.filter(avatar => avatar.src)).toHaveLength(2)
+    expect(avatars.filter(avatar => !avatar.src)).toEqual([{ src: null, text: '王' }])
+    // 22px 的頭像：各向伺服器要一次 48px 的縮圖
+    expect([...photoRequests].sort()).toEqual([
+      `${realShape.supervisor}?v=employee_supervisor.png&size=48`,
+      `${sha._id}?v=employee_sha.png&size=48`,
+    ].sort())
+  })
+
+  it('「包含自己」但個人資料沒有照片（舊資料）：主管本人那一列是字母頭像，不發照片請求', async () => {
+    const wrapper = await mountSupervisorPage({ includeSelf: true })
+
+    const self = wrapper.vm.virtualVisibleEmployees.find(row => row._id === realShape.supervisor)
+    expect(self.photo).toBe('')
+    const avatars = avatarsIn(wrapper, '.col[data-label="員工姓名"] .employee-name')
+    expect(avatars.filter(avatar => avatar.text === '林')).toEqual([{ src: null, text: '林' }])
+    expect(photoRequests.some(request => request.startsWith(realShape.supervisor))).toBe(false)
+  })
+
   it('相關簽核的申請人欄：同一位申請人的每一張單都有頭像，照片只下載一次', async () => {
     const wrapper = await mountSupervisorPage()
 
@@ -219,7 +260,7 @@ describe('排班頁的人頭像（餵伺服器真的回應形狀）', () => {
     })
 
     // 員工欄 + 相關簽核好幾張單，沙俊宇的照片只向伺服器要一次
-    expect(photoRequests).toEqual([`${sha._id}?v=employee_sha.png`])
+    expect(photoRequests).toEqual([`${sha._id}?v=employee_sha.png&size=48`])
   })
 
   it('發布狀態的待回覆名單：頭像用員工清單裡的照片', async () => {
