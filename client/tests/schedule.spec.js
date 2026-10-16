@@ -3872,6 +3872,279 @@ describe('Schedule.vue', () => {
       wrapper.unmount()
     })
 
+    // 檢核還在跑的時候又來了新的要求（再切一次月份、發布、完成發布、排班檢核）：不能丟掉，要排在後面用「當下」的月份再檢核
+    describe('a check is already running', () => {
+      const draftSummary = {
+        status: 'draft',
+        pendingEmployees: [],
+        disputedEmployees: [],
+        publishedAt: null,
+        hasSchedules: true,
+        totalEmployees: 1,
+        allEmployeesConfirmed: false
+      }
+      const publishPosts = () => apiFetch.mock.calls.filter(([url, options]) => url === '/api/schedules/publish' && options?.method === 'POST')
+      const finalizePosts = () => apiFetch.mock.calls.filter(([url, options]) => url === '/api/schedules/publish/finalize' && options?.method === 'POST')
+
+      // 排班規則檢核的回應由測試手動放行，模擬伺服器比使用者的下一個動作慢
+      function holdValidate() {
+        const calls = []
+        answerValidateWith((url) => new Promise((resolve, reject) => {
+          calls.push({ month: new URL(url, 'http://localhost').searchParams.get('month'), resolve, reject })
+        }))
+        return calls
+      }
+      async function waitUntil(predicate, what) {
+        for (let attempt = 0; attempt < 60; attempt += 1) {
+          if (predicate()) return
+          await flush()
+        }
+        throw new Error(`timed out waiting for ${what}`)
+      }
+      const settle = async () => { for (let i = 0; i < 12; i += 1) await flush() }
+      const augustPending = () => pendingOnly([pendingItem({ weekStart: '2026-08-31', weekEnd: '2026-09-06', date: '2026-08-31', missingMonths: ['2026-09'] })])
+
+      it('A→B→C: the check for the month the user ends on still runs after the one for B is thrown away as out of date', async () => {
+        const wrapper = await mountSupervisor()
+        const calls = holdValidate()
+
+        const toB = wrapper.vm.onMonthChange('2026-08')
+        await waitUntil(() => calls.length === 1, 'the check for 2026-08')
+        const toC = wrapper.vm.onMonthChange('2026-09')
+        await settle()
+
+        // C 的檢核排在 B 後面，B 還沒回來就不會多送請求
+        expect(calls.map(call => call.month)).toEqual(['2026-08'])
+        expect(wrapper.vm.scheduleRuleValidation.checking).toBe(true)
+
+        // B 的回應晚到，月份早就換成 C：直接丟掉，不能顯示在 C 的頁面上
+        calls[0].resolve(pendingOnly([pendingItem()]))
+        await waitUntil(() => calls.length === 2, 'the check for 2026-09')
+        expect(calls[1].month).toBe('2026-09')
+        expect(wrapper.vm.scheduleRuleValidation.pendingCount).toBe(0)
+        expect(wrapper.find('[data-test="schedule-rule-pending"]').exists()).toBe(false)
+
+        calls[1].resolve(augustPending())
+        await Promise.all([toB, toC])
+        await flush()
+
+        expect(wrapper.vm.currentMonth).toBe('2026-09')
+        expect(calls).toHaveLength(2)
+        expect(wrapper.vm.scheduleRuleValidation).toMatchObject({ checking: false, ok: true, count: 0, pendingCount: 1 })
+        expect(wrapper.find('[data-test="schedule-rule-pending"]').text()).toContain('2026-08-31')
+        // 背景檢核不彈窗、不跳提示、不寫通知
+        expect(ElMessageBox.alert).not.toHaveBeenCalled()
+        expect(ElMessage.success).not.toHaveBeenCalled()
+        expect(wrapper.vm.scheduleNotifications).toHaveLength(0)
+        wrapper.unmount()
+      })
+
+      it('several month switches while one check runs cost exactly one more check, for the month the user ended on', async () => {
+        const wrapper = await mountSupervisor()
+        const calls = holdValidate()
+
+        const toB = wrapper.vm.onMonthChange('2026-08')
+        await waitUntil(() => calls.length === 1, 'the check for 2026-08')
+        const toC = wrapper.vm.onMonthChange('2026-09')
+        const toD = wrapper.vm.onMonthChange('2026-10')
+        await settle()
+        expect(calls).toHaveLength(1)
+
+        calls[0].resolve(pendingOnly([pendingItem()]))
+        await waitUntil(() => calls.length === 2, 'the follow-up check')
+        calls[1].resolve(augustPending())
+        await Promise.all([toB, toC, toD])
+        await settle()
+
+        expect(calls.map(call => call.month)).toEqual(['2026-08', '2026-10'])
+        expect(wrapper.vm.scheduleRuleValidation).toMatchObject({ checking: false, pendingCount: 1 })
+        wrapper.unmount()
+      })
+
+      it('identical background calls queued behind a running check share one run', async () => {
+        const wrapper = await mountSupervisor()
+        const calls = holdValidate()
+
+        const first = wrapper.vm.fetchScheduleRuleValidation({})
+        await waitUntil(() => calls.length === 1, 'the first check')
+        const queuedA = wrapper.vm.fetchScheduleRuleValidation({ quiet: true })
+        const queuedB = wrapper.vm.fetchScheduleRuleValidation({ quiet: true })
+        expect(queuedB).toBe(queuedA)
+
+        calls[0].resolve(validateResponse({ ok: true, count: 0, violations: [] }))
+        await first
+        await waitUntil(() => calls.length === 2, 'the queued check')
+        calls[1].resolve(pendingOnly([pendingItem()]))
+        const [resultA, resultB] = await Promise.all([queuedA, queuedB])
+        await settle()
+
+        expect(calls).toHaveLength(2)
+        expect(resultA).toBe(resultB)
+        expect(resultA.pendingWeeks).toHaveLength(1)
+        expect(wrapper.vm.scheduleRuleValidation.checking).toBe(false)
+        wrapper.unmount()
+      })
+
+      it('publishing while a month-change check is still running waits for it and then validates on its own, instead of doing nothing', async () => {
+        const wrapper = await mountSupervisor({
+          publishSummary: draftSummary,
+          publishResult: { updated: 1, publishedAt: new Date().toISOString(), employees: [] }
+        })
+        await flush()
+        const calls = holdValidate()
+
+        const quiet = wrapper.vm.fetchScheduleRuleValidation({ quiet: true })
+        await waitUntil(() => calls.length === 1, 'the month-change check')
+        const publishing = wrapper.vm.confirmPublish()
+        await settle()
+        expect(calls).toHaveLength(1)
+        expect(ElMessageBox.confirm).not.toHaveBeenCalled()
+
+        calls[0].resolve(validateResponse({ ok: true, count: 0, violations: [] }))
+        await quiet
+        await waitUntil(() => calls.length === 2, 'the publish check')
+        calls[1].resolve(pendingOnly([pendingItem()]))
+        await publishing
+
+        expect(ElMessageBox.confirm).toHaveBeenCalledTimes(1)
+        expect(ElMessageBox.confirm.mock.calls[0][0]).toContain('另有 1 項跨月週尚無法判斷一例一休')
+        expect(publishPosts()).toHaveLength(1)
+        expect(wrapper.vm.scheduleRuleValidation.checking).toBe(false)
+        wrapper.unmount()
+      })
+
+      it('judges the publish by its own check: a violation found after waiting blocks the publish and says why', async () => {
+        const wrapper = await mountSupervisor({ publishSummary: draftSummary })
+        await flush()
+        const calls = holdValidate()
+
+        const quiet = wrapper.vm.fetchScheduleRuleValidation({ quiet: true })
+        await waitUntil(() => calls.length === 1, 'the month-change check')
+        const publishing = wrapper.vm.confirmPublish()
+        await settle()
+
+        // 背景檢核當時沒有違規，等它跑完之後，發布自己的檢核才看到新違規
+        calls[0].resolve(validateResponse({ ok: true, count: 0, violations: [] }))
+        await quiet
+        await waitUntil(() => calls.length === 2, 'the publish check')
+        calls[1].resolve(validateResponse({
+          ok: false,
+          count: 1,
+          violations: [{ employee: 'e2', date: '2026-07-06', rule: 'continuous-work-days', message: '不得連續7日未安排休/例' }]
+        }))
+        await publishing
+
+        expect(ElMessageBox.confirm).not.toHaveBeenCalled()
+        expect(ElMessageBox.alert).toHaveBeenCalledTimes(1)
+        expect(ElMessageBox.alert.mock.calls[0][1]).toBe('排班規範檢核未通過')
+        expect(publishPosts()).toHaveLength(0)
+        wrapper.unmount()
+      })
+
+      it('finalizing while a check is still running waits for it and then validates on its own', async () => {
+        const wrapper = await mountSupervisor({
+          publishSummary: { ...draftSummary, status: 'ready', allEmployeesConfirmed: true },
+          finalizeResult: { finalized: 1 }
+        })
+        await flush()
+        const calls = holdValidate()
+
+        const quiet = wrapper.vm.fetchScheduleRuleValidation({ quiet: true })
+        await waitUntil(() => calls.length === 1, 'the month-change check')
+        const finalizing = wrapper.vm.confirmFinalize()
+        await settle()
+        expect(ElMessageBox.confirm).not.toHaveBeenCalled()
+
+        calls[0].resolve(validateResponse({ ok: true, count: 0, violations: [] }))
+        await quiet
+        await waitUntil(() => calls.length === 2, 'the finalize check')
+        calls[1].resolve(validateResponse({ ok: true, count: 0, violations: [] }))
+        await finalizing
+
+        expect(ElMessageBox.confirm).toHaveBeenCalledTimes(1)
+        expect(ElMessageBox.confirm.mock.calls[0][1]).toBe('完成發布')
+        expect(finalizePosts()).toHaveLength(1)
+        wrapper.unmount()
+      })
+
+      it('the 排班檢核 button during a running check waits and then reports its own result', async () => {
+        const wrapper = await mountSupervisor()
+        const calls = holdValidate()
+
+        const quiet = wrapper.vm.fetchScheduleRuleValidation({ quiet: true })
+        await waitUntil(() => calls.length === 1, 'the month-change check')
+        const inspecting = wrapper.vm.inspectScheduleRules()
+        await settle()
+        expect(ElMessage.success).not.toHaveBeenCalled()
+
+        calls[0].resolve(validateResponse({ ok: true, count: 0, violations: [] }))
+        await quiet
+        await waitUntil(() => calls.length === 2, 'the button check')
+        calls[1].resolve(validateResponse({ ok: true, count: 0, violations: [] }))
+        const result = await inspecting
+
+        expect(result).toMatchObject({ ok: true })
+        expect(ElMessage.success).toHaveBeenCalledWith('排班規範預檢已通過')
+        wrapper.unmount()
+      })
+
+      it('keeps the publish and finalize buttons disabled while a check is running, and enables them again afterwards', async () => {
+        const wrapper = await mountSupervisor({
+          publishSummary: { ...draftSummary, status: 'ready', allEmployeesConfirmed: true }
+        })
+        await flush()
+        const buttons = () => wrapper.findAll('.publish-btn')
+        expect(buttons()).toHaveLength(2)
+        expect(buttons().map(button => button.attributes('disabled'))).toEqual([undefined, undefined])
+        const calls = holdValidate()
+
+        const running = wrapper.vm.fetchScheduleRuleValidation({ quiet: true })
+        await waitUntil(() => calls.length === 1, 'the check')
+        await flush()
+        expect(buttons().map(button => button.attributes('disabled') !== undefined)).toEqual([true, true])
+
+        calls[0].resolve(validateResponse({ ok: true, count: 0, violations: [] }))
+        await running
+        await flush()
+        expect(buttons().map(button => button.attributes('disabled'))).toEqual([undefined, undefined])
+        wrapper.unmount()
+      })
+
+      it('a failed check does not stop the queued one behind it', async () => {
+        const wrapper = await mountSupervisor()
+        const calls = holdValidate()
+
+        const first = wrapper.vm.fetchScheduleRuleValidation({ quiet: true })
+        await waitUntil(() => calls.length === 1, 'the first check')
+        const second = wrapper.vm.fetchScheduleRuleValidation({ showIssues: true })
+        calls[0].reject(new Error('network down'))
+        await expect(first).resolves.toBeNull()
+        await waitUntil(() => calls.length === 2, 'the second check')
+        calls[1].resolve(validateResponse({ ok: true, count: 0, violations: [] }))
+        await expect(second).resolves.toMatchObject({ ok: true })
+
+        expect(ElMessage.success).toHaveBeenCalledWith('排班規範預檢已通過')
+        expect(wrapper.vm.scheduleRuleValidation.checking).toBe(false)
+        wrapper.unmount()
+      })
+
+      it('drops a queued check once the page is left', async () => {
+        const wrapper = await mountSupervisor()
+        const calls = holdValidate()
+
+        const first = wrapper.vm.fetchScheduleRuleValidation({ quiet: true })
+        await waitUntil(() => calls.length === 1, 'the first check')
+        const queued = wrapper.vm.fetchScheduleRuleValidation({})
+        wrapper.unmount()
+        calls[0].resolve(validateResponse({ ok: true, count: 0, violations: [] }))
+        await first
+        await expect(queued).resolves.toBeNull()
+        await settle()
+
+        expect(calls).toHaveLength(1)
+      })
+    })
+
     describe('import confirmation', () => {
       const scheduleFile = () => new File(['schedule'], 'schedule.xlsx', {
         type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'

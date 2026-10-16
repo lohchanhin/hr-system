@@ -9,7 +9,8 @@
  *   not_taken       本月沒有對應的「國」（沒休；reason 說明當天是上班、沒排班、休息日、請假…）
  *   na              不在職（到職前、離職後、留職停薪），不計入應休
  * 本月多出來、沒有對應到任何國定假日的「國」另外列為 extraGuoDates（多排的國）。
- * 只有「沒休的國定假日後續怎麼處理」這種人工決定才會存進資料庫（HolidayRestResolution）。
+ * 只有「沒休的國定假日後續怎麼處理」這種人工決定才會存進資料庫（HolidayRestResolution）；
+ * 登記之後班表又排了「國」（變成當日休或移休）時，登記的紀錄不會被藏起來，項目會帶 resolutionConflict 請人確認。
  *
  * 國定假日的認定與公司層級挪移（HolidayMoveSetting）和排班頁、加班費共用 countedHolidayService。
  */
@@ -20,9 +21,12 @@ import AttendanceSetting from '../models/AttendanceSetting.js';
 import Employee from '../models/Employee.js';
 import HolidayRestResolution from '../models/HolidayRestResolution.js';
 import { buildEffectiveMonthHolidays, isPayableNationalHoliday } from './countedHolidayService.js';
-import { loadApprovedLeaveCalendar } from './approvedLeaveCalendarService.js';
+import { loadApprovedLeaveIntervals } from './approvedLeaveCalendarService.js';
 import { resolveShiftSemanticType } from './shiftSemanticService.js';
-import { toTaipeiDateKey } from '../utils/taipeiTime.js';
+import { isScheduleRuleExempt } from './scheduleRuleExemptionService.js';
+import { taipeiMidnightMs } from '../utils/leaveDuration.js';
+import { computeShiftSpan } from '../utils/timeWindow.js';
+import { dateKeyToUtcMidnight, toTaipeiDateKey } from '../utils/taipeiTime.js';
 
 export const LEDGER_STATUS = Object.freeze({
   RESTED_ON_DATE: 'rested_on_date',
@@ -75,6 +79,11 @@ const ACTIONABLE_REASONS = new Set(['worked', 'unscheduled', 'shared_date']);
 // 國定假日當天本來就不用休息（上班或沒排班）的才「需要」一個國；其餘日子優先配給這類假日
 const NEEDS_REST_DAY_KINDS = new Set(['work', 'none']);
 
+// 管理員、主管的帳號不一定在班表上（沒有排班不代表漏排）；連續這麼多個月（含本月）都沒有任何班表才當作不用排班
+const ROSTER_OPTIONAL_ROLES = new Set(['admin', 'supervisor']);
+const ROSTER_LOOKBACK_MONTHS = 3;
+
+const MINUTE_MS = 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 function utcDateKey(value) {
@@ -114,6 +123,81 @@ export function buildShiftSemanticLookup(setting) {
     if (id) lookup.set(id, resolveShiftSemanticType(shift));
   }
   return lookup;
+}
+
+/** 班別設定 -> Map(班別 ID 字串, 班別本身)；請假有沒有涵蓋整個班次要用班別的上下班時間判斷 */
+export function buildShiftDocLookup(setting) {
+  const lookup = new Map();
+  for (const shift of setting?.shifts || []) {
+    const id = toId(shift?._id);
+    if (id) lookup.set(id, shift);
+  }
+  return lookup;
+}
+
+/**
+ * 沒休到的原因要不要人處理。上班、同日多個假日一律要處理；
+ * 「未排班」對兼職人員只是提示（兼職不要求排班，和排班規範一樣免檢核），不列入待處理，兼職人員上班沒休照樣要處理。
+ */
+export function isActionableReason(reason, employee = null) {
+  if (!ACTIONABLE_REASONS.has(reason)) return false;
+  return !(reason === 'unscheduled' && isScheduleRuleExempt(employee));
+}
+
+function shiftBreakMs(shift) {
+  for (const value of [shift?.breakDuration, shift?.breakMinutes]) {
+    const minutes = Number(value);
+    if (Number.isFinite(minutes) && minutes > 0) return minutes * MINUTE_MS;
+  }
+  return 0;
+}
+
+// 班次時間內沒有被請假涵蓋到的毫秒數（多張假單先合併重疊的部分）
+function uncoveredShiftMs(intervals, span) {
+  const start = span.start.getTime();
+  const end = span.end.getTime();
+  const clipped = intervals
+    .map((interval) => [Math.max(interval.startMs, start), Math.min(interval.endMs, end)])
+    .filter(([from, to]) => to > from)
+    .sort((a, b) => a[0] - b[0]);
+  let covered = 0;
+  let cursor = start;
+  for (const [from, to] of clipped) {
+    if (to <= cursor) continue;
+    covered += to - Math.max(from, cursor);
+    cursor = to;
+  }
+  return end - start - covered;
+}
+
+/**
+ * 國定假日當天算不算請假：回傳 (日期 YYYY-MM-DD) => boolean。請假改以小時計之後，只請幾小時的假不能讓整天都變成「請假」。
+ *  - 整天的假（allDay）一律算請假：假單核准的日子，班表上就算還排著班也是請假。
+ *  - 有時分的假：當天沒有排班就算請假；排了工作班，要整個班次都在請假中才算（班別的休息時間可以不在請假內）。
+ *  - 排的是休息日、例假、國定假日、請假，或只請了班次的一部分，都維持班表自己的狀態。
+ * intervals：loadApprovedLeaveIntervals 回傳的這位員工的請假區間；scheduleOf(日期)：該日的 { kind, shift }，沒排班回傳 null。
+ */
+export function buildLeaveDayCheck(intervals = [], scheduleOf = () => null) {
+  const leaves = (intervals || []).filter((leave) => (
+    Number.isFinite(leave?.startMs) && Number.isFinite(leave?.endMs) && leave.endMs > leave.startMs
+  ));
+  if (!leaves.length) return () => false;
+  return (dateKey) => {
+    const dayStart = taipeiMidnightMs(dateKey);
+    if (dayStart === null) return false;
+    const dayEnd = dayStart + DAY_MS;
+    const onDay = leaves.filter((leave) => leave.startMs < dayEnd && leave.endMs > dayStart);
+    if (!onDay.length) return false;
+    if (onDay.some((leave) => leave.allDay)) return true;
+
+    const scheduled = scheduleOf(dateKey);
+    if (!scheduled) return true;
+    if (scheduled.kind !== 'work') return false;
+    const span = scheduled.shift ? computeShiftSpan(dateKeyToUtcMidnight(dateKey), scheduled.shift) : null;
+    const spanMs = span ? span.end.getTime() - span.start.getTime() : 0;
+    if (spanMs <= 0) return false;
+    return uncoveredShiftMs(leaves, span) <= Math.min(shiftBreakMs(scheduled.shift), spanMs - 1);
+  };
 }
 
 /**
@@ -215,8 +299,10 @@ export function assignHolidayRests({ holidays = [], guoDates = [], dayKindOf = (
 /** 一個項目在報表（Excel）上顯示的文字；班表還是草稿、本月還沒結束的待處理項目（needsAction = schedule）顯示「尚未排國」 */
 export function describeLedgerItem(item) {
   if (!item) return '';
-  if (item.status === LEDGER_STATUS.RESTED_ON_DATE) return '當日休';
-  if (item.status === LEDGER_STATUS.MOVED) return `移休 ${String(item.guoDate || '').slice(5).replace('-', '/')}`;
+  // 已登記處理方式、班表之後卻排了「國」：照常顯示休假狀態，另外註明要確認（不能讓登記的紀錄默默消失）
+  const conflict = item.resolutionConflict ? '（已登記處理，請確認）' : '';
+  if (item.status === LEDGER_STATUS.RESTED_ON_DATE) return `當日休${conflict}`;
+  if (item.status === LEDGER_STATUS.MOVED) return `移休 ${String(item.guoDate || '').slice(5).replace('-', '/')}${conflict}`;
   if (item.status === LEDGER_STATUS.NA) return '—';
   if (item.resolution) return `未休（${LEDGER_RESOLUTION_LABELS[item.resolution.kind] || '已處理'}）`;
   if (item.needsAction === 'schedule') return '尚未排國';
@@ -260,7 +346,33 @@ export function serializeHolidayResolution(doc, nameById = new Map()) {
     note: doc.note || '',
     resolvedAt: doc.updatedAt || doc.createdAt || null,
     resolvedByName: nameById.get(toId(doc.resolvedBy)) || '',
+    // 最初登記的人（之後被別人修改也不會變）；舊資料沒有這個欄位
+    createdByName: nameById.get(toId(doc.createdBy)) || '',
   };
+}
+
+/**
+ * 本月沒有班表、角色是管理員或主管、也需要排班（預設）的帳號中，前面幾個月（含本月共 ROSTER_LOOKBACK_MONTHS 個月）
+ * 也都沒有班表的員工 ID：這些帳號本來就不在班表上，不是漏排；有任何一個月排過班就照常列入。
+ * 員工資料沒有 role（呼叫端沒有查角色）時一律不跳過。只有這類帳號存在時才多查一次班表（員工 + 日期索引）。
+ */
+async function findNeverRosteredIds({ employees, rowsByEmployee, start }) {
+  const candidateIds = employees
+    .filter((employee) => (
+      ROSTER_OPTIONAL_ROLES.has(employee.role)
+      && employee.requiresScheduling !== false
+      && !rowsByEmployee.has(toId(employee._id))
+    ))
+    .map((employee) => toId(employee._id));
+  if (!candidateIds.length) return new Set();
+  const lookbackStart = new Date(start);
+  lookbackStart.setUTCMonth(lookbackStart.getUTCMonth() - (ROSTER_LOOKBACK_MONTHS - 1));
+  const earlier = (await leanResult(ShiftSchedule.find({
+    employee: { $in: candidateIds },
+    date: { $gte: lookbackStart, $lt: start },
+  }).select('employee'))) || [];
+  const rostered = new Set(earlier.map((row) => toId(row.employee)));
+  return new Set(candidateIds.filter((id) => !rostered.has(id)));
 }
 
 /**
@@ -268,7 +380,8 @@ export function serializeHolidayResolution(doc, nameById = new Map()) {
  * employees：lean 員工資料（_id、employeeId、name、title、practiceTitle、subDepartment、status、appointment、requiresScheduling、partTime）。
  * holidayDocs / moves：呼叫端已經查好這個月的假日與已啟用的挪移設定時帶入，就不會重複查詢。
  * 回傳 { month, holidays, employees, summary }；沒有國定假日的月份不查班表，直接回傳空清單。
- * 兼職人員與一般員工一樣有紀錄（partTime 只是標示，方便畫面辨識）。
+ * 兼職人員與一般員工一樣有紀錄（partTime 只是標示，方便畫面辨識），差別是國定假日當天「未排班」只是提示、不列入待處理。
+ * 管理員、主管的帳號（employee.role）連續幾個月都沒有班表時當作不用排班，不列入。
  */
 export async function buildHolidayRestLedger({
   month,
@@ -297,29 +410,31 @@ export async function buildHolidayRestLedger({
   }
 
   const ids = employees.map((employee) => toId(employee._id));
-  const [scheduleRows, setting, leaveCalendar, resolutionRows] = await Promise.all([
+  const [scheduleRows, setting, leaveIntervals, resolutionRows] = await Promise.all([
     leanResult(ShiftSchedule.find({
       employee: { $in: ids },
       date: { $gte: start, $lt: end },
     }).select('employee date shiftId state')),
     leanResult(AttendanceSetting.findOne()),
-    loadApprovedLeaveCalendar({ employeeIds: ids, start, end }),
+    loadApprovedLeaveIntervals({ employeeIds: ids, start, end }),
     leanResult(HolidayRestResolution.find({ employee: { $in: ids }, month })),
   ]);
 
   const semanticByShiftId = buildShiftSemanticLookup(setting);
+  const shiftById = buildShiftDocLookup(setting);
   const rowsByEmployee = new Map();
   for (const row of scheduleRows || []) {
     const employeeId = toId(row.employee);
     if (!rowsByEmployee.has(employeeId)) rowsByEmployee.set(employeeId, []);
     rowsByEmployee.get(employeeId).push(row);
   }
+  const neverRostered = await findNeverRosteredIds({ employees, rowsByEmployee, start });
 
   const resolutions = resolutionRows || [];
-  const resolvedByIds = [...new Set(resolutions.map((doc) => toId(doc.resolvedBy)).filter(Boolean))];
+  const authorIds = [...new Set(resolutions.flatMap((doc) => [toId(doc.resolvedBy), toId(doc.createdBy)]).filter(Boolean))];
   const nameById = new Map();
-  if (resolvedByIds.length) {
-    const people = (await leanResult(Employee.find({ _id: { $in: resolvedByIds } }).select('name'))) || [];
+  if (authorIds.length) {
+    const people = (await leanResult(Employee.find({ _id: { $in: authorIds } }).select('name'))) || [];
     for (const person of people) nameById.set(toId(person._id), person.name || '');
   }
   const resolutionByKey = new Map(resolutions.map((doc) => [`${toId(doc.employee)}:${utcDateKey(doc.holidayDate)}`, doc]));
@@ -332,25 +447,28 @@ export async function buildHolidayRestLedger({
     const employeeId = toId(employee._id);
     const employeeRows = rowsByEmployee.get(employeeId) || [];
     const status = String(employee.status || '');
-    // 離職、留職停薪、不需要排班的人，本月沒有任何班表就不列入（不然每個假日都會是「未排班」）
-    if (!employeeRows.length && (status === '離職員工' || status === '留職停薪' || employee.requiresScheduling === false)) {
+    // 離職、留職停薪、不需要排班（含一直沒排過班的管理員、主管）的人，本月沒有任何班表就不列入（不然每個假日都會是「未排班」）
+    if (!employeeRows.length
+      && (status === '離職員工' || status === '留職停薪' || employee.requiresScheduling === false || neverRostered.has(employeeId))) {
       notScheduled += 1;
       continue;
     }
 
-    const kindByDate = new Map();
+    // 日期 -> { 班別性質, 班別 }：判斷國定假日當天是上班、休息還是沒排班
+    const scheduled = new Map();
     const guoDates = [];
     let lastScheduledKey = '';
     for (const row of employeeRows) {
       const key = utcDateKey(row.date);
       if (!key) continue;
-      const kind = semanticByShiftId.get(toId(row.shiftId)) || 'work';
-      kindByDate.set(key, kind);
+      const shiftKey = toId(row.shiftId);
+      const kind = semanticByShiftId.get(shiftKey) || 'work';
+      scheduled.set(key, { kind, shift: shiftById.get(shiftKey) || null });
       if (kind === 'holiday') guoDates.push(key);
       if (key > lastScheduledKey) lastScheduledKey = key;
     }
-    const leaveDays = leaveCalendar?.get?.(employeeId);
-    const dayKindOf = (key) => (leaveDays?.has(key) ? 'leave' : (kindByDate.get(key) || 'none'));
+    const onLeave = buildLeaveDayCheck(leaveIntervals?.get?.(employeeId), (key) => scheduled.get(key) || null);
+    const dayKindOf = (key) => (onLeave(key) ? 'leave' : (scheduled.get(key)?.kind || 'none'));
 
     const tenure = buildTenureCheck(employee, { hasRows: employeeRows.length > 0, lastScheduledKey });
     const { items, extraGuoDates } = assignHolidayRests({
@@ -364,12 +482,14 @@ export async function buildHolidayRestLedger({
     const provisional = !monthEnded && !(employeeRows.length > 0 && employeeRows.every((row) => row.state === 'finalized'));
     const list = holidays.map((holiday) => {
       const assigned = items.get(holiday.id);
-      const resolutionDoc = assigned.status === LEDGER_STATUS.NOT_TAKEN
-        ? resolutionByKey.get(`${employeeId}:${holiday.originalDate}`)
-        : null;
+      const storedDoc = resolutionByKey.get(`${employeeId}:${holiday.originalDate}`);
+      // 登記之後班表又排了「國」（當日休或移休）：登記的紀錄不隱藏，標成衝突請人確認（可能已經補休又折發工資）
+      const resolutionConflict = Boolean(storedDoc)
+        && (assigned.status === LEDGER_STATUS.RESTED_ON_DATE || assigned.status === LEDGER_STATUS.MOVED);
+      const resolutionDoc = assigned.status === LEDGER_STATUS.NOT_TAKEN || resolutionConflict ? storedDoc : null;
       const resolution = serializeHolidayResolution(resolutionDoc, nameById);
       let needsAction = null;
-      if (assigned.status === LEDGER_STATUS.NOT_TAKEN && !resolution && ACTIONABLE_REASONS.has(assigned.reason)) {
+      if (assigned.status === LEDGER_STATUS.NOT_TAKEN && !resolution && isActionableReason(assigned.reason, employee)) {
         needsAction = provisional ? 'schedule' : 'resolve';
       }
       return {
@@ -385,6 +505,7 @@ export async function buildHolidayRestLedger({
         reason: assigned.reason,
         needsAction,
         resolution,
+        resolutionConflict,
       };
     });
 
@@ -393,7 +514,7 @@ export async function buildHolidayRestLedger({
       rested: list.filter((item) => item.status === LEDGER_STATUS.RESTED_ON_DATE).length,
       moved: list.filter((item) => item.status === LEDGER_STATUS.MOVED).length,
       notTaken: list.filter((item) => item.status === LEDGER_STATUS.NOT_TAKEN).length,
-      open: list.filter((item) => item.needsAction).length,
+      open: list.filter((item) => item.needsAction || item.resolutionConflict).length,
     };
     if (!counts.entitled && !extraGuoDates.length) {
       notScheduled += 1;
@@ -423,9 +544,10 @@ export async function buildHolidayRestLedger({
 
 /**
  * 班表匯入預覽用的國定假日核對（只產生提醒，不擋匯入）。
- * states：每位匯入員工一筆 { id, employee, rowNumber, employeeCode, cells: [{ rowNumber, day, code, dateKey }], candidateKinds: Map(日期 -> 班別性質) }，
- *   cells 是匯入檔裡的「國」格子，candidateKinds 是匯入檔每個會寫入的格子的班別性質。
- * existingSchedules：這些員工本月既有的班表（沒被匯入檔覆蓋的格子仍然有效）；setting：班別設定；leaveCalendar：已核准請假日曆。
+ * states：每位匯入員工一筆 { id, employee, rowNumber, employeeCode, cells: [{ rowNumber, day, code, dateKey }], candidateKinds: Map(日期 -> 班別性質), candidateShifts: Map(日期 -> 班別) }，
+ *   cells 是匯入檔裡的「國」格子，candidateKinds 是匯入檔每個會寫入的格子的班別性質，candidateShifts 是那些格子的班別（判斷請假有沒有涵蓋整個班次用）。
+ * existingSchedules：這些員工本月既有的班表（沒被匯入檔覆蓋的格子仍然有效）；setting：班別設定；
+ * leaveIntervals：已核准的請假時間區間 Map(員工 ID -> 區間)（loadApprovedLeaveIntervals），只請幾小時的假不會把整天當成請假。
  * 回傳 [{ row, day, code, message }]：
  *  - 多排的國：比本月國定假日還多的「國」格子；本月沒有任何國定假日時沿用「日曆沒有該日期」的說明。
  *    「國」可以排在當月任何一天（移休），所以只有超過國定假日天數的才提醒。
@@ -436,31 +558,34 @@ export function buildImportHolidayWarnings({
   states = [],
   existingSchedules = [],
   setting = null,
-  leaveCalendar = null,
+  leaveIntervals = null,
   fullMonth = false,
 } = {}) {
   const semanticByShiftId = buildShiftSemanticLookup(setting);
-  const existingKinds = new Map();
+  const shiftById = buildShiftDocLookup(setting);
+  const existingDays = new Map();
   for (const schedule of existingSchedules || []) {
     const id = toId(schedule.employee);
     const key = utcDateKey(schedule.date);
     if (!id || !key) continue;
-    if (!existingKinds.has(id)) existingKinds.set(id, new Map());
-    existingKinds.get(id).set(key, semanticByShiftId.get(toId(schedule.shiftId)) || 'work');
+    if (!existingDays.has(id)) existingDays.set(id, new Map());
+    const shiftKey = toId(schedule.shiftId);
+    existingDays.get(id).set(key, { kind: semanticByShiftId.get(shiftKey) || 'work', shift: shiftById.get(shiftKey) || null });
   }
 
   const warnings = [];
   for (const state of states) {
-    const kinds = new Map(existingKinds.get(state.id) || []);
-    for (const [key, kind] of state.candidateKinds || []) kinds.set(key, kind);
-    const guoDates = [...kinds].filter(([, kind]) => kind === 'holiday').map(([key]) => key);
+    // 日期 -> { 班別性質, 班別 }：既有的班表加上匯入檔會寫入的格子（匯入檔優先）
+    const scheduled = new Map(existingDays.get(state.id) || []);
+    for (const [key, kind] of state.candidateKinds || []) scheduled.set(key, { kind, shift: state.candidateShifts?.get?.(key) || null });
+    const guoDates = [...scheduled].filter(([, day]) => day.kind === 'holiday').map(([key]) => key);
     if (!guoDates.length && !fullMonth) continue;
 
-    const leaveDays = leaveCalendar?.get?.(state.id);
-    const dayKindOf = (key) => (leaveDays?.has(key) ? 'leave' : (kinds.get(key) || 'none'));
+    const onLeave = buildLeaveDayCheck(leaveIntervals?.get?.(state.id), (key) => scheduled.get(key) || null);
+    const dayKindOf = (key) => (onLeave(key) ? 'leave' : (scheduled.get(key)?.kind || 'none'));
     const tenure = buildTenureCheck(state.employee, {
       hasRows: true,
-      lastScheduledKey: [...kinds.keys()].sort().pop() || '',
+      lastScheduledKey: [...scheduled.keys()].sort().pop() || '',
     });
     const { items, extraGuoDates } = assignHolidayRests({
       holidays,
@@ -485,7 +610,7 @@ export function buildImportHolidayWarnings({
     if (!fullMonth) continue;
     const missing = holidays.filter((holiday) => {
       const item = items.get(holiday.id);
-      return item?.status === LEDGER_STATUS.NOT_TAKEN && ACTIONABLE_REASONS.has(item.reason);
+      return item?.status === LEDGER_STATUS.NOT_TAKEN && isActionableReason(item.reason, state.employee);
     });
     if (!missing.length) continue;
     const entitled = holidays.filter((holiday) => items.get(holiday.id)?.status !== LEDGER_STATUS.NA).length;

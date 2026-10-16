@@ -23,6 +23,7 @@ const LEAVE_FORM = {
   typeOptions: [
     { value: '特休假', label: '特休假' },
     { value: '特休', label: '特休' },
+    { value: '特別休假', label: '特別休假' },
     { value: '事假', label: '事假' },
   ],
 }
@@ -69,6 +70,24 @@ describe('specialLeave report', () => {
     expect(result.records.map((record) => record.approvalId)).toEqual(['a1', 'a2'])
     expect(result.records.map((record) => record.hours)).toEqual([8, 16])
     expect(result.summary).toEqual({ totalRequests: 2, totalDays: 3, totalHours: 24 })
+  })
+
+  // 特別休假與特休、特休假一樣會扣特休、算進特休餘額，報表也要列出來
+  it('also lists 特別休假, the third name that is deducted from the annual leave balance', async () => {
+    mockApprovalRequest.find.mockReturnValue({
+      populate: jest.fn().mockReturnThis(),
+      lean: jest.fn().mockResolvedValue([approval('a1', '特休', 1), approval('a2', '特別休假', 1), approval('a3', '事假', 1)]),
+    })
+
+    const result = await getDepartmentReportData({
+      type: 'specialLeave',
+      month: '2026-03',
+      departmentId: 'dept1',
+      actor: { role: 'admin', id: 'admin1' },
+    })
+
+    expect(result.records.map((record) => record.approvalId)).toEqual(['a1', 'a2'])
+    expect(result.summary).toEqual({ totalRequests: 2, totalDays: 2, totalHours: 16 })
   })
 
   it('does not match a name that merely contains 特休', async () => {

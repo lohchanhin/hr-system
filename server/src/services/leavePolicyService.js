@@ -111,6 +111,12 @@ function cleanCountsAgainst(value) {
   return { key: value.key, exemptHours: Math.min(Math.max(exemptHours, 0), MAX_QUOTA_HOURS) }
 }
 
+// 特休超過剩餘時數一律擋下（送出時 assertLeaveAllowed 不看超額處理的設定），所以特休的超額處理固定是 block，
+// 不讓設定值（舊資料或直接呼叫 API 存進去的 warn / none）和實際行為不一致；畫面上那個開關對特休也是停用的。
+function enforcementOf(leaveType) {
+  return leaveType.source === 'employee_annual' ? 'block' : leaveType.enforcement
+}
+
 // 已存的設定疊在假別的預設值上；欄位不合法時保留預設值。builtin / key / source 不能被改（特休、補休的額度來源固定）
 function mergeType(base, stored) {
   if (!isPlainObject(stored)) return base
@@ -126,6 +132,7 @@ function mergeType(base, stored) {
   }
   if (LEAVE_PERIODS.includes(stored.period)) merged.period = stored.period
   if (LEAVE_ENFORCEMENTS.includes(stored.enforcement)) merged.enforcement = stored.enforcement
+  merged.enforcement = enforcementOf(merged)
   if (LEAVE_DISPLAYS.includes(stored.display)) merged.display = stored.display
   const countsAgainst = cleanCountsAgainst(stored.countsAgainst)
   if (countsAgainst !== undefined) merged.countsAgainst = countsAgainst
@@ -267,6 +274,7 @@ export function validateLeavePolicyInput(input) {
         if (!allowed.includes(raw[field])) fail(`「${item.name}」的${label}不正確`)
         item[field] = raw[field]
       }
+      item.enforcement = enforcementOf(item)
       if (raw.enabled !== undefined) {
         if (typeof raw.enabled !== 'boolean') fail(`「${item.name}」的啟用設定不正確`)
         if (isAnnual && raw.enabled === false) fail('特休不能停用')

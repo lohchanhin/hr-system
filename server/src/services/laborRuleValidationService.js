@@ -8,7 +8,11 @@ import FormField from '../models/form_field.js';
 import Holiday from '../models/Holiday.js';
 import HolidayMoveSetting from '../models/HolidayMoveSetting.js';
 import { isPayableNationalHoliday } from './countedHolidayService.js';
-import { loadScheduleRuleExemptEmployeeIds } from './scheduleRuleExemptionService.js';
+import {
+  isEmployedOn,
+  loadScheduleRuleEmploymentWindows,
+  loadScheduleRuleExemptEmployeeIds,
+} from './scheduleRuleExemptionService.js';
 import { computeShiftSpan } from '../utils/timeWindow.js';
 import { getAllLeaveFieldInfos } from './leaveFieldService.js';
 import { isNonWorkShift, resolveShiftSemanticType } from './shiftSemanticService.js';
@@ -449,22 +453,33 @@ async function loadCountedHolidayDays(start, end) {
 //   - 例/休都齊了：通過，不回報
 //   - 缺的例/休比範圍外還沒排的天數多（再怎麼補也補不齊）：違規
 //   - 其餘（缺的例/休還補得上）：還無法判斷，回報 pendingWeeks 讓畫面提醒，鄰月排定後下次檢核自然會判斷
+// 範圍外還沒排的日子只算這個人在職的日子（employmentWindows：員工 id -> 到職日、離職日，見 scheduleRuleExemptionService）：
+// 到職日之前、離職日之後那幾天永遠不會有班表，不算補得上；範圍外沒排的日子全都是這種日子時，
+// 這一週在職的日子都看得到了，沒有人能補，所以不回報待判斷，也不拿缺的天數當違規。
 // 範圍內的整週沒有範圍外的日子，維持原本行為（缺例或缺休就是違規）。
-function validateWeeklyRest(grouped, shiftMap, { strictStart, strictEnd }) {
+function validateWeeklyRest(grouped, shiftMap, { strictStart, strictEnd }, employmentWindows = new Map()) {
   const violations = [];
   const pendingWeeks = [];
   for (const [employee, schedules] of grouped) {
     const byDate = new Map(schedules.map((schedule) => [dateKey(schedule.date), schedule]));
+    const employmentWindow = employmentWindows.get(employee);
+    // 離職員工沒有離職日也沒有解聘日時，以他最後一筆班表當作最後在職的一天（與國定假日休假紀錄相同）
+    const lastScheduledKey = employmentWindow?.resigned && !employmentWindow.resignKey
+      ? (Array.from(byDate.keys()).sort().pop() || '')
+      : '';
     const firstWeekStart = weekStartMonday(strictStart);
     for (let weekStart = firstWeekStart; weekStart < strictEnd; weekStart = addUtcDays(weekStart, 7)) {
       const weekEnd = addUtcDays(weekStart, 7);
       const outsideDates = [];
       const missingDates = [];
+      const notEmployedDates = [];
       for (let pointer = new Date(weekStart); pointer < weekEnd; pointer = addUtcDays(pointer, 1)) {
         if (pointer >= strictStart && pointer < strictEnd) continue;
         const key = dateKey(pointer);
         outsideDates.push(key);
-        if (!byDate.has(key)) missingDates.push(key);
+        if (byDate.has(key)) continue;
+        if (isEmployedOn(employmentWindow, key, lastScheduledKey)) missingDates.push(key);
+        else notEmployedDates.push(key);
       }
       let hasScheduledInStrictRange = false;
       let regularRestCount = 0;
@@ -482,19 +497,22 @@ function validateWeeklyRest(grouped, shiftMap, { strictStart, strictEnd }) {
       }
       const restShortfall = (regularRestCount < 1 ? 1 : 0) + (restDayCount < 1 ? 1 : 0);
       if (!hasScheduledInStrictRange || restShortfall === 0) continue;
+      // 範圍外沒排的日子都在到職前或離職後：永遠不會有班表（不是「還沒排」），這週也沒有可補的日子，整週略過
+      if (!missingDates.length && notEmployedDates.length) continue;
       const weekStartKey = dateKey(weekStart);
       if (restShortfall > missingDates.length) {
         const lacking = `${regularRestCount < 1 ? '例假' : ''}${regularRestCount < 1 && restDayCount < 1 ? '與' : ''}${restDayCount < 1 ? '休息日' : ''}`;
         const crossMonth = outsideDates.length > 0;
         violations.push(makeViolation(
           'weekly-one-regular-rest-one-rest-day',
-          `每週一至週日需至少1例1休：${weekStartKey} 週缺少${lacking}${crossMonth ? crossMonthViolationNote(outsideDates, missingDates, lacking) : ''}`,
+          `每週一至週日需至少1例1休：${weekStartKey} 週缺少${lacking}${crossMonth ? crossMonthViolationNote(outsideDates, missingDates, lacking, notEmployedDates) : ''}`,
           {
             employee,
             weekStart: weekStartKey,
             regularRestCount,
             restDayCount,
             ...(crossMonth ? { crossMonth: true, outsideDates, missingDates } : {}),
+            ...(notEmployedDates.length ? { notEmployedDates } : {}),
           },
         ));
         continue;
@@ -523,14 +541,20 @@ function validateWeeklyRest(grouped, shiftMap, { strictStart, strictEnd }) {
 }
 
 // 跨月週違規的補充說明：哪幾天屬於相鄰月份、哪幾天已排班或還沒排，讓人知道週別不只在本月
-function crossMonthViolationNote(outsideDates, missingDates, lacking) {
-  const outsideText = dateRangeText(outsideDates);
-  if (!missingDates.length) return `（此週跨月：${outsideText} 屬相鄰月份，已全部排班）`;
+// notEmployedDates：範圍外、這個人還沒到職或已離職的日子，不算相鄰月份「已排班」或「還沒排」，另外說明不計入
+function crossMonthViolationNote(outsideDates, missingDates, lacking, notEmployedDates = []) {
+  const notEmployed = new Set(notEmployedDates);
+  const employedOutside = outsideDates.filter((key) => !notEmployed.has(key));
+  const outsideText = dateRangeText(employedOutside);
+  const notEmployedNote = notEmployedDates.length
+    ? `；${dateRangeText(notEmployedDates)} 在到職前或離職後，不計入`
+    : '';
+  if (!missingDates.length) return `（此週跨月：${outsideText} 屬相鄰月份，已全部排班${notEmployedNote}）`;
   const missing = new Set(missingDates);
-  const scheduledOutside = outsideDates.filter((key) => !missing.has(key));
+  const scheduledOutside = employedOutside.filter((key) => !missing.has(key));
   const shortfall = `尚未排班，最多只能再補 ${missingDates.length} 天，仍補不齊缺少的${lacking}`;
-  if (!scheduledOutside.length) return `（此週跨月：${outsideText} 屬相鄰月份且${shortfall}）`;
-  return `（此週跨月：${outsideText} 屬相鄰月份，${dateRangeText(scheduledOutside)} 已排班；${dateRangeText(missingDates)} ${shortfall}）`;
+  if (!scheduledOutside.length) return `（此週跨月：${outsideText} 屬相鄰月份且${shortfall}${notEmployedNote}）`;
+  return `（此週跨月：${outsideText} 屬相鄰月份，${dateRangeText(scheduledOutside)} 已排班；${dateRangeText(missingDates)} ${shortfall}${notEmployedNote}）`;
 }
 
 export async function assertScheduleRuleCompliance({
@@ -562,13 +586,15 @@ export async function assertScheduleRuleCompliance({
   }));
   const allSchedules = mergeSchedules(existing, ruleCandidates, ignoredScheduleIds);
   const grouped = groupSchedules(allSchedules);
-  const [leaveDaysMap, holidayDays] = await Promise.all([
+  const [leaveDaysMap, holidayDays, employmentWindows] = await Promise.all([
     loadApprovedLeaveDaysMap(
       employeeIds,
       validationRange.start,
       validationRange.end,
     ),
     loadCountedHolidayDays(validationRange.start, validationRange.end),
+    // 到職日、離職日只有判斷跨月週用得到（每週一例一休）
+    strictWeeklyRest ? loadScheduleRuleEmploymentWindows(employeeIds) : new Map(),
   ]);
   const violations = [
     ...validateDailyHours(grouped, shiftMap),
@@ -578,7 +604,7 @@ export async function assertScheduleRuleCompliance({
   // The customer's internal policy remains stricter than flexible-work-time minima.
   let pendingWeeks = [];
   if (strictWeeklyRest) {
-    const weekly = validateWeeklyRest(grouped, shiftMap, validationRange);
+    const weekly = validateWeeklyRest(grouped, shiftMap, validationRange, employmentWindows);
     violations.push(...weekly.violations);
     pendingWeeks = weekly.pendingWeeks;
   }

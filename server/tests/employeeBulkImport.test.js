@@ -1403,22 +1403,58 @@ describe('POST /api/employees/bulk-import - annual leave in hours', () => {
     expect(response.body.warnings).toEqual([expect.stringContaining('以時數為準')])
   })
 
-  it('reads old day columns row by row: small values are days (x8), a value above 40 is already hours and is flagged for confirmation', async () => {
+  // 單位以整份檔案判斷：只要有一列超過 40，客戶就是把小時填在天數欄位，其他列的 14、24、40 也是小時
+  it('reads old day columns per FILE: when any row is above 40 every row of the file is hours (14, 24 are not 14 or 24 days), and says how many', async () => {
     const response = await importRows([
       base(3, { annualLeave_totalDays: '14', annualLeave_usedDays: '2.5' }),
       base(4, { annualLeave_totalDays: '219', annualLeave_usedDays: '2' }),
       base(5, { annualLeave_totalDays: '10', annualLeave_usedDays: '41' }),
+      base(6, { annualLeave_totalDays: '24' }),
+      base(7, { annualLeave_totalDays: '0', annualLeave_usedDays: '0' }),
+    ])
+
+    expect(response.status).toBe(200)
+    const docs = mockEmployeeModel.insertMany.mock.calls[0][0]
+    expect(docs[0].annualLeave).toMatchObject({ totalHours: 14, usedHours: 2.5, unitSource: 'migrated-hours' })
+    expect(docs[1].annualLeave).toMatchObject({ totalHours: 219, usedHours: 2, unitSource: 'migrated-hours' })
+    expect(docs[2].annualLeave).toMatchObject({ totalHours: 10, usedHours: 41, unitSource: 'migrated-hours' })
+    expect(docs[3].annualLeave).toMatchObject({ totalHours: 24, unitSource: 'migrated-hours' })
+    expect(docs[4].annualLeave).toMatchObject({ totalHours: 0, usedHours: 0, unitSource: 'entered' }) // 數字都是 0：沒有東西要確認
+    expect(response.body.warnings).toEqual([
+      expect.stringMatching(/第 3 列「年度特休總天數」的值 14.*第 4、5 列超過 40.*已視為 14 小時（不乘 8）/),
+      expect.stringContaining('第 4 列「年度特休總天數」的值 219 超過 40'),
+      expect.stringContaining('第 5 列「已使用天數」的值 41 超過 40'),
+      expect.stringMatching(/第 6 列「年度特休總天數」的值 24.*已視為 24 小時/),
+      '特休單位：這份檔案有 2 列的天數欄位超過 40（第 4、5 列），整份檔案視為把小時填在天數欄位：使用天數欄位的 5 列中，4 列依小時讀取（不乘 8）、1 列依天數乘 8 換算（數字都是 0 的列），請逐列確認',
+    ])
+  })
+
+  it('a file where nobody is above 40 is days x8 for every row, also 24, 32 and 40, with no warning', async () => {
+    const response = await importRows([
+      base(3, { annualLeave_totalDays: '14', annualLeave_usedDays: '2.5' }),
+      base(4, { annualLeave_totalDays: '24' }),
+      base(5, { annualLeave_totalDays: '40', annualLeave_usedDays: '32' }),
     ])
 
     expect(response.status).toBe(200)
     const docs = mockEmployeeModel.insertMany.mock.calls[0][0]
     expect(docs[0].annualLeave).toMatchObject({ totalHours: 112, usedHours: 20, unitSource: 'entered' })
-    expect(docs[1].annualLeave).toMatchObject({ totalHours: 219, usedHours: 2, unitSource: 'migrated-hours' })
-    expect(docs[2].annualLeave).toMatchObject({ totalHours: 10, usedHours: 41, unitSource: 'migrated-hours' })
-    expect(response.body.warnings).toEqual([
-      expect.stringContaining('第 4 列「年度特休總天數」的值 219 超過 40'),
-      expect.stringContaining('第 5 列「已使用天數」的值 41 超過 40'),
+    expect(docs[1].annualLeave).toMatchObject({ totalHours: 192, unitSource: 'entered' })
+    expect(docs[2].annualLeave).toMatchObject({ totalHours: 320, usedHours: 256, unitSource: 'entered' })
+    expect(response.body.warnings ?? []).toEqual([])
+  })
+
+  it('rows that use the hours columns do not decide the convention of the other rows (their old day columns are ignored)', async () => {
+    const response = await importRows([
+      base(3, { annualLeave_totalHours: '80', annualLeave_totalDays: '170' }),
+      base(4, { annualLeave_totalDays: '14' }),
     ])
+
+    expect(response.status).toBe(200)
+    const docs = mockEmployeeModel.insertMany.mock.calls[0][0]
+    expect(docs[0].annualLeave).toMatchObject({ totalHours: 80, unitSource: 'entered' })
+    expect(docs[1].annualLeave).toMatchObject({ totalHours: 112, unitSource: 'entered' })
+    expect(response.body.warnings).toEqual([expect.stringContaining('以時數為準')])
   })
 
   it('writes only the hours columns that are in the file when updating an existing employee', async () => {

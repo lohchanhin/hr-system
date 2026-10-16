@@ -191,6 +191,34 @@ describe('buildLeaveBalances: types that count against another type', () => {
     expect(itemOf(balances, 'menstrual')).toMatchObject({ usedHours: 32, remainingHours: 64 })
   })
 
+  // 「含家庭照顧假 N 小時」放在「已使用」底下：只能是已核准的部分，簽核中的另外帶，畫面才不會把簽核中的算進已使用
+  it('carries the approved and the pending hours of an included type separately (the pending part is not part of 已使用)', async () => {
+    requestsByForm['form-default'] = [
+      request('p', 'approved', { 'd-type': '事假', 'd-start': '2026-03-02', 'd-end': '2026-03-02', 'd-hours': 36 }),
+      request('f1', 'approved', { 'd-type': '家庭照顧假', 'd-start': '2026-03-09', 'd-end': '2026-03-09', 'd-hours': 8 }),
+      request('f2', 'pending', { 'd-type': '家庭照顧假', 'd-start': '2026-03-16', 'd-end': '2026-03-16', 'd-hours': 4 }),
+      request('m1', 'approved', { 'd-type': '生理假', 'd-start': '2026-05-04', 'd-end': '2026-05-04', 'd-hours': 32 }),
+      request('m2', 'pending', { 'd-type': '生理假', 'd-start': '2026-06-01', 'd-end': '2026-06-01', 'd-hours': 8 }),
+    ]
+    mockGetAllLeaveFieldInfos.mockResolvedValue([defaultFormInfo])
+
+    const balances = await balanceService.buildLeaveBalances({ employeeId: 'emp1', year: 2026 })
+
+    // 已使用 36 + 8 = 44（不含簽核中的 4）；簽核中 4
+    const personal = itemOf(balances, 'personal')
+    expect(personal).toMatchObject({ usedHours: 44, pendingHours: 4 })
+    expect(personal.includes).toEqual([{ key: 'family_care', name: '家庭照顧假', approvedHours: 8, pendingHours: 4, hours: 12 }])
+    // 生理假 32 小時扣掉免計的 24 = 8 小時已核准併入；簽核中的 8 小時全部超過免計時數，併入的是簽核中
+    const sick = itemOf(balances, 'sick')
+    expect(sick).toMatchObject({ usedHours: 8, pendingHours: 8 })
+    expect(sick.includes).toEqual([{ key: 'menstrual', name: '生理假', approvedHours: 8, pendingHours: 8, hours: 16 }])
+    // 只有簽核中的子假別：已使用的那一邊是 0
+    requestsByForm['form-default'] = [request('f3', 'pending', { 'd-type': '家庭照顧假', 'd-start': '2026-03-16', 'd-end': '2026-03-16', 'd-hours': 4 })]
+    const pendingOnly = await balanceService.buildLeaveBalances({ employeeId: 'emp1', year: 2026 })
+    expect(itemOf(pendingOnly, 'personal').includes).toEqual([{ key: 'family_care', name: '家庭照顧假', approvedHours: 0, pendingHours: 4, hours: 4 }])
+    expect(itemOf(pendingOnly, 'personal')).toMatchObject({ usedHours: 0, pendingHours: 4 })
+  })
+
   it('does not add anything from 生理假 inside the free 3 days', async () => {
     requestsByForm['form-default'] = [request('m', 'approved', { 'd-type': '生理假', 'd-start': '2026-05-04', 'd-end': '2026-05-04', 'd-hours': 16 })]
     mockGetAllLeaveFieldInfos.mockResolvedValue([defaultFormInfo])
@@ -202,6 +230,17 @@ describe('buildLeaveBalances: types that count against another type', () => {
 })
 
 describe('buildLeaveBalances: 特休, 補休 and 積假 come from the employee record', () => {
+  it('reports 特休 as blocking even when the policy has it as warn (the server always refuses a 特休 request over the remaining hours)', async () => {
+    currentEmployee = employeeDoc({ totalHours: 80, usedHours: 16, year: 2026 })
+    mockGetAllLeaveFieldInfos.mockResolvedValue([defaultFormInfo])
+    const policy = JSON.parse(JSON.stringify(await policyService.getLeavePolicy({ fresh: true })))
+    policy.types.find(item => item.key === 'annual').enforcement = 'warn'
+
+    const balances = await balanceService.buildLeaveBalances({ employeeId: 'emp1', year: 2026, policy })
+
+    expect(itemOf(balances, 'annual').enforcement).toBe('block')
+  })
+
   it('shows the stored annual leave counter in hours with pending requests on top, and echoes the year and expiry', async () => {
     currentEmployee = employeeDoc({ totalHours: 120, usedHours: 40, year: 2026, expiryDate: '2026-12-31T00:00:00.000Z' })
     requestsByForm['form-default'] = [

@@ -746,6 +746,76 @@ describe('schedule import checks the national-holiday ledger instead of the holi
   });
 });
 
+describe('schedule import judges the national-holiday shortfall by the length of the approved leave', () => {
+  // 端午節 6/19，整月檔案；6/19 那格留空，沿用班表上已有的日班（沒被檔案覆蓋）
+  const monthCodes = () => Array.from({ length: 30 }, (_, index) => (index + 1 === 19 ? '' : '日'));
+  const shortageWarnings = (body) => body.warnings.filter((warning) => String(warning.message).includes('只排了'));
+
+  function setApprovedLeaveRanges(ranges, type = '事假') {
+    mockApprovalRequest.find.mockReturnValue({
+      select: jest.fn().mockReturnThis(),
+      lean: jest.fn().mockResolvedValue(ranges.map(([start, end]) => ({
+        applicant_employee: 'e1',
+        form_data: { s: start, e: end, t: type },
+      }))),
+    });
+  }
+
+  beforeEach(() => {
+    setHolidays([{ date: new Date('2026-06-19T00:00:00.000Z'), name: '端午節', type: '國定假日' }]);
+    setExistingSchedules([{ employee: 'e1', date: new Date('2026-06-19T00:00:00.000Z'), shiftId: 'day' }]);
+  });
+
+  it('still reports a worked holiday when the approved leave that day is only 2 hours', async () => {
+    // 台灣 09:00-11:00
+    setApprovedLeaveRanges([['2026-06-19T01:00:00.000Z', '2026-06-19T03:00:00.000Z']]);
+
+    const preview = await importWorkbook(await buildWorkbook(monthCodes()));
+
+    expect(preview.status).toBe(200);
+    expect(shortageWarnings(preview.body)).toEqual([
+      expect.objectContaining({ row: 5, day: null, code: 'A001', message: expect.stringContaining('端午節 06/19') }),
+    ]);
+  });
+
+  it('does not report the holiday when the leave is a full day or covers the whole shift', async () => {
+    setApprovedLeaveRanges([['2026-06-19', '2026-06-19']]);
+    expect(shortageWarnings((await importWorkbook(await buildWorkbook(monthCodes()))).body)).toEqual([]);
+
+    // 台灣 08:00-17:00，剛好是日班的上下班時間
+    setApprovedLeaveRanges([['2026-06-19T00:00:00.000Z', '2026-06-19T09:00:00.000Z']]);
+    expect(shortageWarnings((await importWorkbook(await buildWorkbook(monthCodes()))).body)).toEqual([]);
+  });
+
+  it('reports it without any leave, and only looks up the leave times for a whole-month file', async () => {
+    setApprovedLeaveRanges([]);
+
+    const whole = await importWorkbook(await buildWorkbook(monthCodes()));
+    expect(shortageWarnings(whole.body)).toHaveLength(1);
+    // 日曆版本（衝突檢查）與時間區間版本各查一次假單
+    expect(mockApprovalRequest.find).toHaveBeenCalledTimes(2);
+
+    mockApprovalRequest.find.mockClear();
+    const partial = await importWorkbook(await buildWorkbook(monthCodes().slice(0, 25)));
+    expect(shortageWarnings(partial.body)).toEqual([]);
+    expect(mockApprovalRequest.find).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not require part-time staff to be scheduled on the holiday, but still reports a worked one', async () => {
+    setApprovedLeaveRanges([]);
+    mockEmployee.find.mockReturnValue({
+      select: jest.fn().mockReturnThis(),
+      lean: jest.fn().mockResolvedValue([{ ...EMPLOYEE, partTime: true }]),
+    });
+
+    // 6/19 沒有班表、檔案也沒排：兼職不列入；同一天排了日班（檔案或班表）就照樣提醒
+    setExistingSchedules([]);
+    expect(shortageWarnings((await importWorkbook(await buildWorkbook(monthCodes()))).body)).toEqual([]);
+    setExistingSchedules([{ employee: 'e1', date: new Date('2026-06-19T00:00:00.000Z'), shiftId: 'day' }]);
+    expect(shortageWarnings((await importWorkbook(await buildWorkbook(monthCodes()))).body)).toHaveLength(1);
+  });
+});
+
 describe('schedule Excel export carries the national-holiday ledger as the second worksheet', () => {
   const chain = (rows) => ({
     select: jest.fn().mockReturnThis(),

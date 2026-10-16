@@ -1211,8 +1211,8 @@ describe('Approval.vue 已核可請假單的撤回（特休返還）', () => {
     expect(wrapper.vm.canCancelMine(wrapper.vm.myList[0])).toBe(true)
   })
 
-  it('撤回已核可的請假：先確認，成功後重新載入並顯示伺服器記下的結果（返還天數）', async () => {
-    const doc = { ...row('a1', 'canceled', leaveForm), logs: [{ action: 'cancel', message: '已撤回已核准的特休，返還 2 天' }] }
+  it('撤回已核可的請假：先確認，成功後重新載入並顯示伺服器記下的結果（返還特休時數）', async () => {
+    const doc = { ...row('a1', 'canceled', leaveForm), logs: [{ action: 'cancel', message: '已撤回已核准的特休，返還 16 小時（2 天）' }] }
     const calls = installFetch([
       [post('/a1/cancel'), json(doc)],
       listRoute([row('a1', 'approved', leaveForm)]),
@@ -1224,9 +1224,12 @@ describe('Approval.vue 已核可請假單的撤回（特休返還）', () => {
     await flushPromises()
 
     expect(confirmSpy.mock.calls.at(-1)[0]).toContain('已經核可')
+    // 單位是小時：不再說「天數」
+    expect(confirmSpy.mock.calls.at(-1)[0]).toBe('這筆請假已經核可，確定要撤回嗎？若是特休，已扣除的特休時數會一併返還。')
+    expect(confirmSpy.mock.calls.at(-1)[0]).not.toContain('天數')
     expect(callsTo(calls, c => c.url.endsWith('/a1/cancel'))).toHaveLength(1)
     expect(callsTo(calls, c => /\/api\/approvals\?/.test(c.url)).length).toBeGreaterThan(listCallsBefore)
-    expect(alertSpy).toHaveBeenCalledWith('已撤回已核准的特休，返還 2 天')
+    expect(alertSpy).toHaveBeenCalledWith('已撤回已核准的特休，返還 16 小時（2 天）')
   })
 
   it('假期已開始等伺服器拒絕時，顯示伺服器的中文原因並重新整理清單', async () => {
@@ -1279,7 +1282,7 @@ describe('Approval.vue 已核可請假單的撤回（特休返還）', () => {
     })
 
     it('撤回後歷史與我的申請都重新載入，並顯示返還結果', async () => {
-      const doc = { ...row('h1', 'canceled', leaveForm), logs: [{ action: 'cancel', message: '已撤回已核准的特休，返還 1 天' }] }
+      const doc = { ...row('h1', 'canceled', leaveForm), logs: [{ action: 'cancel', message: '已撤回已核准的特休，返還 8 小時（1 天）' }] }
       const calls = installFetch([
         [post('/h1/cancel'), json(doc)],
         historyRoute(),
@@ -1293,10 +1296,11 @@ describe('Approval.vue 已核可請假單的撤回（特休返還）', () => {
       await wrapper.vm.cancelApprovedFromHistory(wrapper.vm.historyList.find(item => item._id === 'h1'))
       await flushPromises()
 
+      expect(confirmSpy.mock.calls.at(-1)[0]).toBe('這筆請假已經核可，確定要撤回嗎？若是特休，已扣除的特休時數會一併返還。')
       expect(callsTo(calls, c => c.url.endsWith('/h1/cancel'))).toHaveLength(1)
       expect(callsTo(calls, c => c.url.includes('/api/approvals/history')).length).toBeGreaterThan(historyCallsBefore)
       expect(callsTo(calls, c => /\/api\/approvals\?/.test(c.url)).length).toBeGreaterThan(listCallsBefore)
-      expect(alertSpy).toHaveBeenCalledWith('已撤回已核准的特休，返還 1 天')
+      expect(alertSpy).toHaveBeenCalledWith('已撤回已核准的特休，返還 8 小時（1 天）')
     })
 
     it('不是特休等伺服器拒絕的情況，顯示伺服器的中文原因', async () => {
@@ -1633,5 +1637,136 @@ describe('Approval.vue 請假：時數、假別餘額與超額提示', () => {
     const call = callsTo(calls, c => c.url.endsWith('/r1/resubmit'))[0]
     expect(JSON.parse(call.body).form_data.hours).toBe(4)
     expect(alertSpy).toHaveBeenCalledWith('已重新送出！\n事假超額')
+  })
+
+  // 時數自動帶入、每日 8 小時上限的說明、剩餘時數提示只屬於請假表單；
+  // 客戶自建的加班／補休表單即使有「時數」欄位，也是一般的數字欄位（加班一天可以超過 8 小時）
+  describe('a customer overtime / 補休 form with a 時數 field is not treated as a leave form', () => {
+    const formsList = [
+      { _id: 'f1', name: '請假', category: '人事', semanticType: 'leave', default_key: 'leave' },
+      { _id: 'f2', name: '加班申請（含時數）', category: '人事', semanticType: 'overtime' },
+      { _id: 'f3', name: '補休申請', category: '人事', semanticType: 'general' },
+    ]
+    const overtimeFields = [
+      { _id: 'start', label: '開始時間', type_1: 'datetime', required: true, order: 1 },
+      { _id: 'end', label: '結束時間', type_1: 'datetime', required: true, order: 2 },
+      { _id: 'hours', label: '時數', type_1: 'number', required: true, order: 3 },
+    ]
+    const compFields = [
+      { _id: 'type', label: '假別', type_1: 'select', required: true, order: 1, options: ['特休假', '事假'] },
+      ...overtimeFields,
+    ]
+    const routes = (extra = []) => leaveRoutes([
+      ...extra,
+      [(url) => url.includes('/api/approvals/forms?'), json(formsList)],
+      ['/api/approvals/forms/f2/fields', json(overtimeFields)],
+      ['/api/approvals/forms/f2/workflow', json({ steps: [] })],
+      ['/api/approvals/forms/f3/fields', json(compFields)],
+      ['/api/approvals/forms/f3/workflow', json({ steps: [] })],
+    ])
+    async function selectForm(wrapper, formId) {
+      wrapper.vm.applyState.formId = formId
+      await wrapper.vm.onSelectForm()
+      await flushPromises()
+    }
+    const hintCalls = (calls) => callsTo(calls, c => c.url.includes('/api/approvals/leave-hours-hint'))
+
+    it('an overtime form keeps the plain number field: no auto fill, no 8-hours-a-day text, 12 hours of rest-day overtime can be typed', async () => {
+      const calls = installFetch(routes())
+      const wrapper = await mountPage()
+      await selectForm(wrapper, 'f2')
+
+      expect(wrapper.vm.applyIsLeaveForm).toBe(false)
+      expect(wrapper.find('[data-test="leave-hours-field"]').exists()).toBe(false)
+      expect(wrapper.find('.form-fields').text()).not.toContain('每日最多')
+      expect(wrapper.vm.applyLeaveHoursConfig.enabled).toBe(false)
+
+      // 起訖時間填好不會把時數自動帶成 8（或其他數字）
+      await fill(wrapper, { start: '2026-08-08T09:00:00+08:00', end: '2026-08-08T21:00:00+08:00' })
+      await sleep(400)
+      await flushPromises()
+      expect(wrapper.vm.applyState.formData.hours).toBeNull()
+      expect(hintCalls(calls)).toHaveLength(0)
+
+      // 用輸入框打 12 小時（休息日加班）：不會被每日上限夾回 8
+      const input = wrapper.find('.form-fields .el-input-number input')
+      await input.setValue('12')
+      await input.trigger('blur')
+      await flushPromises()
+      expect(wrapper.vm.applyState.formData.hours).toBe(12)
+
+      // 之後改起訖時間也不會蓋掉
+      await fill(wrapper, { end: '2026-08-08T22:00:00+08:00' })
+      await sleep(400)
+      expect(wrapper.vm.applyState.formData.hours).toBe(12)
+      expect(hintCalls(calls)).toHaveLength(0)
+    })
+
+    it('has no remaining-hours hint on a 補休 form even when it has a 假別 and a 時數 field (the hint is for leave forms)', async () => {
+      installFetch(routes())
+      const wrapper = await mountPage()
+      await selectForm(wrapper, 'f3')
+
+      await fill(wrapper, { type: '事假', start: '2026-08-03T09:00:00+08:00', end: '2026-08-03T13:00:00+08:00', hours: 4 })
+
+      expect(wrapper.vm.applyLeaveContext).toBeNull()
+      expect(wrapper.find('[data-test="leave-request-hint"]').exists()).toBe(false)
+      expect(wrapper.find('[data-test="leave-hours-field"]').exists()).toBe(false)
+      expect(wrapper.vm.applyState.formData.hours).toBe(4)
+    })
+
+    it('switching between a leave form and an overtime form switches the leave behaviour with it', async () => {
+      const calls = installFetch(routes())
+      const wrapper = await mountPage()
+
+      await selectForm(wrapper, 'f1')
+      expect(wrapper.vm.applyIsLeaveForm).toBe(true)
+      expect(wrapper.find('[data-test="leave-hours-field"]').exists()).toBe(true)
+      await fill(wrapper, { start: '2026-08-03T09:00:00+08:00', end: '2026-08-03T13:00:00+08:00' })
+      expect(wrapper.vm.applyState.formData.hours).toBe(4)
+
+      await selectForm(wrapper, 'f2')
+      expect(wrapper.find('[data-test="leave-hours-field"]').exists()).toBe(false)
+      await fill(wrapper, { start: '2026-08-03T09:00:00+08:00', end: '2026-08-03T13:00:00+08:00' })
+      expect(wrapper.vm.applyState.formData.hours).toBeNull()
+
+      await selectForm(wrapper, 'f1')
+      expect(wrapper.find('[data-test="leave-hours-field"]').exists()).toBe(true)
+      expect(hintCalls(calls).every(c => c.url.includes('start='))).toBe(true)
+    })
+
+    it('an overtime request sent back for changes is edited with the plain number field and its hours are kept', async () => {
+      const returned = {
+        _id: 'r2', status: 'returned',
+        form: { _id: 'f2', name: '加班申請（含時數）', category: '人事', semanticType: 'overtime', fields: overtimeFields },
+        form_data: { start: '2026-08-08T09:00:00+08:00', end: '2026-08-08T21:00:00+08:00', hours: 12 },
+        applicant_employee: { _id: 'me', name: '我' }, current_step_index: 0,
+        steps: [{ approvers: [{ approver: { _id: 'u2', name: 'Alice' }, decision: 'pending' }] }],
+        logs: [{ action: 'return', by_employee: { _id: 'u2', name: 'Alice' }, message: '請補事由', at: '2026-06-19T02:00:00.000Z' }],
+      }
+      const calls = installFetch(routes([
+        [(url) => /\/api\/approvals\?/.test(url), json([{ _id: 'r2', status: 'returned', form: { _id: 'f2', name: '加班申請（含時數）' }, current_step_index: 0, steps: [{}], createdAt: '2026-06-19T00:00:00.000Z' }])],
+        [(url) => url.endsWith('/api/approvals/r2'), json(returned)],
+      ]))
+      const wrapper = await mountPage()
+      await wrapper.vm.resubmitMyRequest({ _id: 'r2' })
+      await flushPromises()
+
+      expect(wrapper.vm.editDlg.leaveForm).toBe(false)
+      expect(wrapper.vm.editLeaveHoursConfig.enabled).toBe(false)
+      expect(wrapper.vm.editDlg.formData.hours).toBe(12)
+      const dialog = wrapper.findAll('.el-dialog').find(d => d.text().includes('修改並重新送出'))
+      expect(dialog.find('[data-test="leave-hours-field"]').exists()).toBe(false)
+      expect(dialog.find('[data-test="leave-request-hint"]').exists()).toBe(false)
+
+      // 時數清空後再改結束時間，也不會被自動帶入
+      wrapper.vm.editDlg.formData = { ...wrapper.vm.editDlg.formData, hours: null }
+      await flushPromises()
+      wrapper.vm.editDlg.formData = { ...wrapper.vm.editDlg.formData, end: '2026-08-08T20:00:00+08:00' }
+      await sleep(400)
+      await flushPromises()
+      expect(wrapper.vm.editDlg.formData.hours).toBeNull()
+      expect(hintCalls(calls)).toHaveLength(0)
+    })
   })
 })

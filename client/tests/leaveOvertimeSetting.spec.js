@@ -136,6 +136,40 @@ describe('LeaveOvertimeSetting 假別額度與餘額規則', () => {
     expect(wrapper.vm.policy).toBeNull()
   })
 
+  // 特休超過剩餘時數一律無法送出（伺服器不看這個設定），開關對特休不適用
+  it('the over-quota switch of 特休 is disabled and shown as on, with a note, and cannot be turned off', async () => {
+    installFetch()
+    const wrapper = await mountSetting()
+    const rows = wrapper.findAll('[data-test="policy-table"] .el-table__body tr')
+    const annualRow = rows[0]
+    const personalRow = rows[1]
+
+    const annualSwitch = annualRow.find('.el-switch')
+    expect(annualSwitch.classes()).toContain('is-checked')
+    expect(annualSwitch.classes()).toContain('is-disabled')
+    expect(annualRow.find('[data-test="annual-block-note"]').text()).toContain('一律無法送出')
+    expect(personalRow.find('.el-switch').classes()).not.toContain('is-disabled')
+    expect(personalRow.find('.el-switch').classes()).not.toContain('is-checked')
+    expect(wrapper.find('[data-test="leave-policy-card"]').text()).toContain('開關固定為開啟')
+
+    const annual = wrapper.vm.policy.types[0]
+    wrapper.vm.setBlocking(annual, false)
+    expect(annual.enforcement).toBe('block')
+    expect(wrapper.vm.isBlocking(annual)).toBe(true)
+  })
+
+  it('a 特休 stored as warn is shown and saved as block', async () => {
+    const calls = installFetch({ policy: { ...defaultPolicy(), types: defaultPolicy().types.map(item => (item.key === 'annual' ? { ...item, enforcement: 'warn' } : item)) } })
+    const wrapper = await mountSetting()
+
+    expect(wrapper.vm.policy.types[0].enforcement).toBe('block')
+    expect(wrapper.findAll('[data-test="policy-table"] .el-table__body tr')[0].find('.el-switch').classes()).toContain('is-checked')
+    await wrapper.find('[data-test="policy-save"]').trigger('click')
+    await flushPromises()
+    const put = calls.find(call => call.method === 'PUT')
+    expect(JSON.parse(put.body).types.find(item => item.key === 'annual').enforcement).toBe('block')
+  })
+
   it('adds a custom type, restores the defaults without saving, and removing a type clears what counted against it', async () => {
     installFetch()
     const wrapper = await mountSetting()

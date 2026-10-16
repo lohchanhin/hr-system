@@ -16,7 +16,8 @@ const MOVED_FILL = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE2EF
 const INFO_FILL = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF2F2F2' } };
 
 const LEGEND = '說明：當日休＝國定假日當天排「國」；移休＝同月其他日期排「國」（依日期先後配對，總數正確）；'
-  + '未休＝本月沒有對應的「國」；多排的國＝超過國定假日天數的「國」；紅底＝待處理。';
+  + '未休＝本月沒有對應的「國」；多排的國＝超過國定假日天數的「國」；紅底＝待處理；'
+  + '註明「已登記處理，請確認」＝先登記了未休的處理方式、班表之後又排了「國」，請確認是否重複補償。';
 
 function formatMonthDay(dateKey) {
   return String(dateKey || '').slice(5).replace('-', '/');
@@ -40,9 +41,10 @@ function describeResolution(item) {
 
 /**
  * 在活頁簿加入「國定假日休假紀錄」工作表。ledger 是 buildHolidayRestLedger 的結果（單一月份）。
+ * filterText：匯出時套用了篩選或搜尋的說明（例如「僅列出待處理」），會寫在標題，讓人知道這不是完整名單。
  * 回傳新增的工作表。
  */
-export function appendHolidayLedgerSheet(workbook, ledger, { departmentName = '' } = {}) {
+export function appendHolidayLedgerSheet(workbook, ledger, { departmentName = '', filterText = '' } = {}) {
   const holidays = ledger?.holidays || [];
   const employees = ledger?.employees || [];
   const [yearText, monthText] = String(ledger?.month || '').split('-');
@@ -51,7 +53,7 @@ export function appendHolidayLedgerSheet(workbook, ledger, { departmentName = ''
   });
 
   const headers = [...FIXED_HEADERS, ...holidays.map(holidayHeader), ...SUMMARY_HEADERS];
-  const title = `${departmentName ? `${departmentName}　` : ''}${yearText}年${monthText}月 國定假日休假紀錄`;
+  const title = `${departmentName ? `${departmentName}　` : ''}${yearText}年${monthText}月 國定假日休假紀錄${filterText ? `（${filterText}）` : ''}`;
   sheet.addRow([title]);
   sheet.addRow([LEGEND]);
   sheet.addRow(headers);
@@ -87,7 +89,7 @@ export function appendHolidayLedgerSheet(workbook, ledger, { departmentName = ''
     holidays.forEach((holiday, index) => {
       const item = (employee.items || []).find((entry) => entry.holidayId === holiday.id);
       const cell = row.getCell(FIXED_HEADERS.length + index + 1);
-      if (item?.needsAction) cell.fill = OPEN_FILL;
+      if (item?.needsAction || item?.resolutionConflict) cell.fill = OPEN_FILL;
       else if (item?.status === 'moved') cell.fill = MOVED_FILL;
       else if (item?.status === 'na' || (item?.status === 'not_taken' && !item?.resolution)) cell.fill = INFO_FILL;
     });

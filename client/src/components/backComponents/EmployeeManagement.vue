@@ -1025,16 +1025,16 @@
                       <p>設定員工年度特休時數（請假的單位是小時，1 天 = 8 小時）。當員工申請特休並審核通過後，系統將自動扣減剩餘時數。</p>
                     </el-alert>
                     <el-alert
-                      v-if="employeeForm.annualLeave?.unitSource === 'migrated-hours' && !employeeForm.annualLeave?.unitConfirmed"
+                      v-if="annualLeaveUnitNotice"
                       type="warning"
                       :closable="false"
                       show-icon
                       class="annual-leave-unit-warning"
                       style="margin-bottom: 16px;"
                     >
-                      <template #title>由舊資料推斷為小時，請確認</template>
-                      <p>這位員工原本的「年度特休總天數」是 {{ employeeForm.annualLeave.totalHours }}，超過特休的法定天數，系統已視為 {{ employeeForm.annualLeave.totalHours }} 小時。若無誤請勾選確認，不對請直接改成正確的時數。</p>
-                      <el-checkbox v-model="employeeForm.annualLeave.unitConfirmed">我已確認單位是小時</el-checkbox>
+                      <template #title>{{ annualLeaveUnitNotice.title }}</template>
+                      <p>{{ annualLeaveUnitNotice.message }}</p>
+                      <el-checkbox v-model="employeeForm.annualLeave.unitConfirmed">{{ annualLeaveUnitNotice.confirmLabel }}</el-checkbox>
                     </el-alert>
                     <div class="form-row">
                       <el-form-item label="年度特休總時數" prop="annualLeave.totalHours">
@@ -1307,7 +1307,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { apiFetch, importEmployeesBulk } from '../../api'
 import { REQUIRED_FIELDS } from './requiredFields'
 import EmployeeAvatar from '../EmployeeAvatar.vue'
-import { readAnnualLeaveHours } from '../../utils/leaveBalance'
+import { LEGACY_ANNUAL_LEAVE_DAYS_MAX, readAnnualLeaveHours } from '../../utils/leaveBalance'
 import { useProfileStore } from '../../stores/profile'
 import {
   acquireEmployeePhoto,
@@ -3587,13 +3587,45 @@ function normalizeAnnualLeaveRecord(annualLeave) {
   if (!annualLeave || typeof annualLeave !== 'object') return annualLeave
   const hours = readAnnualLeaveHours(annualLeave)
   const { totalDays, usedDays, remainingDays, remainingHours, ...rest } = annualLeave
+  const legacyDays = Number(totalDays)
   return {
     ...rest,
     totalHours: hours.totalHours,
     usedHours: hours.usedHours,
-    unitSource: hours.unitSource || undefined
+    unitSource: hours.unitSource || undefined,
+    // 搬移時凍結的舊「年度特休總天數」：只用來向人資說明單位是怎麼推斷的（唯讀，不送回伺服器）
+    legacyTotalDays: Number.isFinite(legacyDays) && legacyDays > 0 ? legacyDays : undefined
   }
 }
+
+// 單位待確認的提醒（unitSource 是 migrated-hours，人資勾選確認或改過總時數之前都會顯示）：
+// - 舊的天數欄位數字超過 40（不可能是天數）：系統視為小時。
+// - 舊的天數欄位數字不大，但整份資料裡有其他員工的數字明顯是小時（客戶把小時填在天數欄位）：
+//   這位員工的數字當初被當成天數乘 8，現在標成待確認，請人資核對。
+const annualLeaveUnitNotice = computed(() => {
+  const leave = employeeForm.value?.annualLeave
+  if (!leave || leave.unitSource !== 'migrated-hours' || leave.unitConfirmed) return null
+  const legacyDays = Number(leave.legacyTotalDays)
+  const convertedFromDays = legacyDays > 0 && legacyDays <= LEGACY_ANNUAL_LEAVE_DAYS_MAX &&
+    Math.abs(Number(leave.totalHours) - legacyDays * 8) < 0.005
+  if (convertedFromDays) {
+    return {
+      kind: 'converted-days',
+      title: '舊資料的天數換算成小時，請確認',
+      message: `這位員工原本的「年度特休總天數」是 ${legacyDays}，系統先當成 ${legacyDays} 天換算成 ${leave.totalHours} 小時；` +
+        `但這份資料裡有其他員工的數字明顯是小時（超過特休的法定天數），客戶可能是把小時填在天數欄位。` +
+        `若 ${legacyDays} 其實是小時，請把年度特休總時數改成 ${legacyDays}（已使用時數也請一併核對）；若總時數無誤請勾選確認。`,
+      confirmLabel: '我已確認總時數正確'
+    }
+  }
+  return {
+    kind: 'hours',
+    title: '由舊資料推斷為小時，請確認',
+    message: `這位員工原本的「年度特休總天數」是 ${leave.totalHours}，系統已視為 ${leave.totalHours} 小時（不是天數，沒有乘 8）。` +
+      `若無誤請勾選確認，不對請直接改成正確的時數。`,
+    confirmLabel: '我已確認單位是小時'
+  }
+})
 
 function annualLeaveRemainingHours(annualLeave) {
   if (!annualLeave || typeof annualLeave !== 'object') return 0
@@ -4963,7 +4995,7 @@ function snapshotAnnualLeave(annualLeave) {
 
 // 特休以小時儲存。舊的天數欄位、伺服器換算出來的剩餘時數／天數都不送回去：
 // 伺服器會把送來的天數乘 8 當成時數，舊欄位留在內容裡會把已使用時數蓋成舊值
-const ANNUAL_LEAVE_READ_ONLY_FIELDS = ['totalDays', 'usedDays', 'remainingHours', 'remainingDays', 'unitSource']
+const ANNUAL_LEAVE_READ_ONLY_FIELDS = ['totalDays', 'usedDays', 'remainingHours', 'remainingDays', 'unitSource', 'legacyTotalDays']
 
 function buildAnnualLeaveForUpdate(annualLeave, snapshot) {
   const result = { ...(annualLeave && typeof annualLeave === 'object' ? annualLeave : {}) }

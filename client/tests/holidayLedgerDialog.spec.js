@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import ElementPlus from 'element-plus'
+import { createPinia, setActivePinia } from 'pinia'
 
 const { messageError, messageSuccess, messageWarning } = vi.hoisted(() => ({
   messageError: vi.fn(),
@@ -17,6 +18,7 @@ vi.mock('element-plus', async (importOriginal) => {
 vi.mock('../src/api', () => ({ apiFetch: vi.fn() }))
 
 import { apiFetch } from '../src/api'
+import { useAuthStore } from '../src/stores/auth'
 import HolidayLedgerDialog from '../src/views/front/HolidayLedgerDialog.vue'
 
 const DialogStub = {
@@ -140,11 +142,17 @@ const jsonResponse = (body, status = 200) => ({
 
 const SCOPE = { month: '2026-09', department: 'd1', subDepartment: 's1' }
 
-function mountDialog(props = {}) {
+// role：目前登入者的角色（排班頁用的 auth store），viewerId：登入時存下的員工 _id
+function mountDialog(props = {}, { role = 'employee', viewerId = '' } = {}) {
+  const pinia = createPinia()
+  setActivePinia(pinia)
+  useAuthStore().role = role
+  sessionStorage.clear()
+  if (viewerId) sessionStorage.setItem('employeeId', viewerId)
   return mount(HolidayLedgerDialog, {
     props: { modelValue: true, scope: SCOPE, canResolve: true, ...props },
     global: {
-      plugins: [ElementPlus],
+      plugins: [ElementPlus, pinia],
       stubs: { ElDialog: DialogStub, ElTable: TableStub, ElTableColumn: ColumnStub, ElDatePicker: DatePickerStub, ElTooltip: TooltipStub },
     },
   })
@@ -159,6 +167,8 @@ const fieldOf = (wrapper, dataTest) => {
 const cellText = (wrapper, employeeId, holidayId) => wrapper.find(`[data-test="ledger-cell-${employeeId}-${holidayId}"]`).text()
 
 beforeEach(() => {
+  sessionStorage.clear()
+  localStorage.clear()
   apiFetch.mockReset()
   messageError.mockReset()
   messageSuccess.mockReset()
@@ -276,6 +286,94 @@ describe('HolidayLedgerDialog', () => {
     await flushPromises()
     expect(readOnly.find('[data-test="ledger-resolve-b2-2026-09-25"]').exists()).toBe(false)
     expect(readOnly.find('[data-test="ledger-resolve-e5-2026-09-25"]').exists()).toBe(false)
+  })
+
+  it('hides the 登記處理 button on the supervisor\'s own row, because the server refuses it, but not on the other rows', async () => {
+    const button = (wrapper, employeeId, holidayId) => wrapper.find(`[data-test="ledger-resolve-${employeeId}-${holidayId}"]`)
+
+    // 主管 b2（勾了「包含自己」）：自己那一列沒有按鈕，別人的照常有
+    const supervisor = mountDialog({ scope: { ...SCOPE, includeSelf: true } }, { role: 'supervisor', viewerId: 'b2' })
+    await flushPromises()
+    expect(supervisor.find('[data-test="ledger-cell-b2-2026-09-25"]').exists()).toBe(true)
+    expect(button(supervisor, 'b2', '2026-09-25').exists()).toBe(false)
+    expect(button(supervisor, 'd4', '2026-09-28').text()).toBe('登記處理')
+    expect(button(supervisor, 'e5', '2026-09-25').text()).toBe('修改')
+
+    // 管理員可以處理自己的
+    const admin = mountDialog({}, { role: 'admin', viewerId: 'b2' })
+    await flushPromises()
+    expect(button(admin, 'b2', '2026-09-25').text()).toBe('登記處理')
+
+    // 讀不到登入者是誰時不亂藏按鈕
+    const unknown = mountDialog({}, { role: 'supervisor' })
+    await flushPromises()
+    expect(button(unknown, 'b2', '2026-09-25').text()).toBe('登記處理')
+  })
+
+  it('reads the viewer again every time the dialog is opened', async () => {
+    const wrapper = mountDialog({ modelValue: false }, { role: 'supervisor' })
+    await flushPromises()
+    sessionStorage.setItem('employeeId', 'b2')
+
+    await wrapper.setProps({ modelValue: true })
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="ledger-resolve-b2-2026-09-25"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="ledger-resolve-d4-2026-09-28"]').exists()).toBe(true)
+  })
+
+  it('shows a stored resolution that clashes with a 國 on the roster, instead of hiding it, and lets it be reviewed and removed', async () => {
+    const clash = structuredClone(LEDGER)
+    clash.months[0].employees.push(person('g7', '衝突庚', [
+      item({
+        status: 'moved',
+        guoDate: '2026-09-20',
+        offsetDays: -5,
+        dateKind: 'work',
+        resolutionConflict: true,
+        resolution: { id: 'r7', kind: 'paid', compensatoryHours: null, restedDate: null, note: '', resolvedByName: '主管王', createdByName: '人資李' },
+      }),
+      second(),
+    ]))
+    apiFetch.mockResolvedValue(jsonResponse(clash))
+    const wrapper = mountDialog()
+    await flushPromises()
+
+    expect(cellText(wrapper, 'g7', '2026-09-25')).toBe('移休 09/20')
+    expect(wrapper.find('[data-test="ledger-conflict-g7-2026-09-25"]').text()).toBe('已登記處理但班表已有國，請確認')
+    expect(wrapper.find('[data-test="ledger-conflict-g7-2026-09-28"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="ledger-conflict-a1-2026-09-25"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="ledger-cell-g7-2026-09-25"]').html()).toContain('el-tag--warning')
+    expect(wrapper.find('[data-test="ledger-cell-a1-2026-09-28"]').html()).toContain('el-tag--primary')
+    // 登記的人也看得到：最後修改的人，以及最初登記的人
+    expect(wrapper.text()).toContain('主管王 登記（最初：人資李）')
+
+    apiFetch.mockClear()
+    apiFetch.mockResolvedValueOnce(jsonResponse({ success: true })).mockResolvedValue(jsonResponse(clash))
+    const open = wrapper.find('[data-test="ledger-resolve-g7-2026-09-25"]')
+    expect(open.text()).toBe('檢視登記')
+    await open.trigger('click')
+    await wrapper.find('[data-test="holiday-ledger-remove"]').trigger('click')
+    await flushPromises()
+    expect(apiFetch.mock.calls[0]).toEqual(['/api/holiday-ledger/resolutions/r7', { method: 'DELETE' }])
+    expect(wrapper.find('[data-test="ledger-resolve-g7-2026-09-28"]').exists()).toBe(false)
+  })
+
+  it('shows "未休·未排班" without a warning color or a button when it is not something to handle', async () => {
+    const partTime = structuredClone(LEDGER)
+    partTime.months[0].employees.push(person('p8', '兼職辛', [
+      item({ status: 'not_taken', guoDate: null, reason: 'worked', needsAction: 'resolve', dateKind: 'work' }),
+      second({ status: 'not_taken', guoDate: null, reason: 'unscheduled', needsAction: null, dateKind: 'none' }),
+    ], { partTime: true }))
+    apiFetch.mockResolvedValue(jsonResponse(partTime))
+    const wrapper = mountDialog()
+    await flushPromises()
+
+    expect(cellText(wrapper, 'p8', '2026-09-28')).toBe('未休·未排班')
+    expect(wrapper.find('[data-test="ledger-cell-p8-2026-09-28"]').html()).toContain('el-tag--info')
+    expect(wrapper.find('[data-test="ledger-resolve-p8-2026-09-28"]').exists()).toBe(false)
+    // 上班沒休照樣要處理
+    expect(wrapper.find('[data-test="ledger-resolve-p8-2026-09-25"]').text()).toBe('登記處理')
   })
 
   it('saves a resolution against the original holiday date, then reloads the ledger', async () => {
@@ -443,6 +541,46 @@ describe('HolidayLedgerDialog', () => {
     expect(click).toHaveBeenCalledTimes(1)
     expect(click.download).toBe('holiday-ledger-2026-09.xlsx')
     expect(revokeObjectURL).toHaveBeenCalledWith('blob:ledger')
+    click.mockRestore()
+    vi.unstubAllGlobals()
+  })
+
+  it('exports what is on screen: the active filter and the search text go to the server', async () => {
+    const wrapper = mountDialog()
+    await flushPromises()
+    apiFetch.mockClear()
+    apiFetch.mockResolvedValue(jsonResponse({}))
+    vi.stubGlobal('URL', Object.assign(URL, { createObjectURL: vi.fn(() => 'blob:ledger'), revokeObjectURL: vi.fn() }))
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+    const exportUrls = () => apiFetch.mock.calls.map(([url]) => url).filter((url) => url.startsWith('/api/holiday-ledger/export'))
+    const exportNow = async () => {
+      await wrapper.find('[data-test="holiday-ledger-export"]').trigger('click')
+      await flushPromises()
+    }
+    const choose = async (label) => {
+      const radio = wrapper.findAll('label.el-radio-button').find((node) => node.text().startsWith(label))
+      await radio.find('input').setValue(true)
+      await flushPromises()
+    }
+
+    await choose('待處理')
+    await exportNow()
+    await choose('未休')
+    await exportNow()
+    await choose('全部')
+    await fieldOf(wrapper, 'holiday-ledger-search').setValue('  未休乙 ')
+    await exportNow()
+    await choose('移休')
+    await exportNow()
+
+    expect(exportUrls()).toEqual([
+      '/api/holiday-ledger/export?month=2026-09&department=d1&subDepartment=s1&status=open',
+      '/api/holiday-ledger/export?month=2026-09&department=d1&subDepartment=s1&status=notTaken',
+      `/api/holiday-ledger/export?month=2026-09&department=d1&subDepartment=s1&search=${encodeURIComponent('未休乙')}`,
+      `/api/holiday-ledger/export?month=2026-09&department=d1&subDepartment=s1&status=moved&search=${encodeURIComponent('未休乙')}`,
+    ])
+    // 畫面上的資料本身仍是整月（篩選與搜尋在畫面上做），不重新載入
+    expect(apiFetch.mock.calls.some(([url]) => url.startsWith('/api/holiday-ledger?'))).toBe(false)
     click.mockRestore()
     vi.unstubAllGlobals()
   })

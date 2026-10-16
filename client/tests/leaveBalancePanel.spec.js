@@ -63,6 +63,58 @@ describe('LeaveBalancePanel', () => {
     expect(text).toContain('「神祕假」尚未設定額度：已使用 3 小時')
   })
 
+  // 伺服器 composeLeaveBalanceItems 對「事假已核准 8 + 家庭照顧假已核准 4、簽核中 2」實際回傳的 JSON（節錄）
+  const serverItems = () => [
+    { key: 'personal', name: '事假', aliases: ['事假申請'], period: 'year', enforcement: 'warn', builtin: true, note: '',
+      includes: [{ key: 'family_care', name: '家庭照顧假', approvedHours: 4, pendingHours: 2, hours: 6 }],
+      usedHours: 12, pendingHours: 2, quotaHours: 112, remainingHours: 100, availableHours: 98, source: 'policy', status: 'ok', countsAgainst: null,
+      quotaDays: 14, usedDays: 1.5, pendingDays: 0.25, remainingDays: 12.5, availableDays: 12.25 },
+    { key: 'family_care', name: '家庭照顧假', aliases: ['家庭照顧'], period: 'year', enforcement: 'warn', builtin: true, note: '',
+      includes: [], usedHours: 4, pendingHours: 2, quotaHours: 56, remainingHours: 52, availableHours: 50, source: 'policy', status: 'ok',
+      countsAgainst: { key: 'personal', exemptHours: 0 }, quotaDays: 7, usedDays: 0.5, pendingDays: 0.25, remainingDays: 6.5, availableDays: 6.25 },
+  ]
+
+  it('real server JSON: 已使用 only carries the approved part of the included type, the pending part is shown in the 簽核中 cell', async () => {
+    const wrapper = mountPanel({ balances: balances({ items: serverItems(), unmatched: [] }) })
+    await flushPromises()
+
+    const personal = wrapper.findAll('.el-table__body tr')[0] // 事假
+    const cells = personal.findAll('td')
+    const [, , used, pending] = cells.map(cell => cell.text())
+    expect(used).toContain('12 小時')
+    expect(used).toContain('含家庭照顧假 4 小時（4 小時）')
+    expect(used).not.toContain('含家庭照顧假 6 小時') // 簽核中的 2 小時不算進已使用的「含家庭照顧假」（合計 6 小時）
+    expect(used).not.toContain('含家庭照顧假 2 小時')
+    expect(pending).toContain('2 小時')
+    expect(pending).toContain('含家庭照顧假 2 小時（2 小時）')
+    expect(wrapper.findAll('[data-test="leave-balance-includes"]')).toHaveLength(1)
+    expect(wrapper.findAll('[data-test="leave-balance-includes-pending"]')).toHaveLength(1)
+  })
+
+  it('an included type that is only pending shows nothing under 已使用, and one that is only approved shows nothing under 簽核中', async () => {
+    const items = serverItems()
+    items[0].includes = [{ key: 'family_care', name: '家庭照顧假', approvedHours: 0, pendingHours: 3, hours: 3 }]
+    const onlyPending = mountPanel({ balances: balances({ items, unmatched: [] }) })
+    await flushPromises()
+    expect(onlyPending.findAll('[data-test="leave-balance-includes"]')).toHaveLength(0)
+    expect(onlyPending.findAll('[data-test="leave-balance-includes-pending"]').map(node => node.text())).toEqual(['含家庭照顧假 3 小時（3 小時）'])
+
+    const approvedItems = serverItems()
+    approvedItems[0].includes = [{ key: 'family_care', name: '家庭照顧假', approvedHours: 8, pendingHours: 0, hours: 8 }]
+    const onlyApproved = mountPanel({ balances: balances({ items: approvedItems, unmatched: [] }) })
+    await flushPromises()
+    expect(onlyApproved.findAll('[data-test="leave-balance-includes"]').map(node => node.text())).toEqual(['含家庭照顧假 8 小時（1 天）'])
+    expect(onlyApproved.findAll('[data-test="leave-balance-includes-pending"]')).toHaveLength(0)
+  })
+
+  it('an older server that only sends the combined hours of the included type keeps the old display (under 已使用)', async () => {
+    const wrapper = mountPanel({ balances: balances() })
+    await flushPromises()
+
+    expect(wrapper.findAll('[data-test="leave-balance-includes"]').map(node => node.text())).toEqual(['含家庭照顧假 8 小時（1 天）'])
+    expect(wrapper.findAll('[data-test="leave-balance-includes-pending"]')).toHaveLength(0)
+  })
+
   it('shows the effect of the request being looked at above the table and marks its row', async () => {
     const wrapper = mountPanel({
       balances: balances({ focus: { typeKey: 'personal', typeName: '事假', requestedHours: 80, remainingBefore: 68, remainingAfter: -12, exceeded: true, message: '事假今年額度 112 小時，將超出 12 小時' } }),

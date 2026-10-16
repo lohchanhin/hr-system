@@ -185,7 +185,7 @@ export async function exportSchedules(req, res) {
       employeeQuery.practiceTitle = practiceTitle;
     }
     const employeeList = await Employee.find(employeeQuery)
-      .select('_id employeeId name title practiceTitle subDepartment status appointment requiresScheduling partTime')
+      .select('_id employeeId name title practiceTitle subDepartment status role appointment requiresScheduling partTime')
       .populate({ path: 'subDepartment', select: 'name' })
       .lean();
     const employeeIds = employeeList.map((item) => item._id.toString());

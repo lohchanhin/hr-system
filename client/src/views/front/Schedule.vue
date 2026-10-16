@@ -85,11 +85,11 @@
       </div>
 
       <div class="publish-actions">
-        <el-button type="primary" class="publish-btn" :loading="isPublishing" :disabled="publishDisabled"
+        <el-button type="primary" class="publish-btn" :loading="isPublishing" :disabled="publishDisabled || scheduleRuleValidation.checking"
           @click="confirmPublish">
           發送待確認
         </el-button>
-        <el-button type="success" plain class="publish-btn" :loading="isFinalizing" :disabled="finalizeDisabled"
+        <el-button type="success" plain class="publish-btn" :loading="isFinalizing" :disabled="finalizeDisabled || scheduleRuleValidation.checking"
           @click="confirmFinalize">
           完成發布
         </el-button>
@@ -1621,11 +1621,44 @@ function openPendingWeeksDialog(pendingWeeks) {
   ).catch(() => {})
 }
 
+// 同一時間只跑一次檢核，後來的呼叫排在後面、不丟掉：前一次結束後，用「當下」的月份與篩選再檢核一次
+// （前一次的結果若已經過期會被丟掉，所以連續切換月份 A→B→C，最後一定會檢核到 C）。
+//   - 切換月份後的背景檢核、編輯後的延遲檢核：排在後面照常執行
+//   - 排班檢核、發布、完成發布：等前一次結束，再自己檢核一次，不會沒有反應就直接返回
+// 還沒開始跑的排隊檢核，選項相同的呼叫共用同一次（連續切換月份只會多跑一次）。
+let scheduleRuleCheckTail = Promise.resolve()
+let scheduleRuleCheckBusy = 0 // 正在跑加上排隊等候的檢核數
+let scheduleRuleCheckDisposed = false
+const scheduleRuleCheckQueued = new Map()
+
+function fetchScheduleRuleValidation({ showIssues = false, notify = true, quiet = false, announcePending = true } = {}) {
+  const key = [showIssues, notify, quiet, announcePending].join('|')
+  const queued = scheduleRuleCheckQueued.get(key)
+  if (queued) return queued
+  scheduleRuleCheckBusy += 1
+  scheduleRuleValidation.checking = true
+  const job = scheduleRuleCheckTail
+    .then(() => {
+      scheduleRuleCheckQueued.delete(key)
+      // 頁面已經離開：排隊中的檢核不用再跑
+      if (scheduleRuleCheckDisposed) return null
+      return runScheduleRuleValidation({ showIssues, notify, quiet, announcePending })
+    })
+    .finally(() => {
+      scheduleRuleCheckBusy -= 1
+      if (scheduleRuleCheckBusy <= 0) {
+        scheduleRuleCheckBusy = 0
+        scheduleRuleValidation.checking = false
+      }
+    })
+  scheduleRuleCheckTail = job.catch(() => null)
+  scheduleRuleCheckQueued.set(key, job)
+  return job
+}
+
 // quiet：切換月份後的背景重新檢核，只更新徽章、完整檢核結果與跨月週提醒，不彈窗、不跳提示、不寫通知
 // announcePending：預檢通過但有跨月週待判斷時，是否另外跳出說明視窗（發布／完成發布自己會在確認視窗註明，所以傳 false）
-async function fetchScheduleRuleValidation({ showIssues = false, notify = true, quiet = false, announcePending = true } = {}) {
-  if (scheduleRuleValidation.checking) return null
-  scheduleRuleValidation.checking = true
+async function runScheduleRuleValidation({ showIssues, notify, quiet, announcePending }) {
   const query = scheduleRuleQueryParams().toString()
   try {
     const res = await apiFetch(`/api/schedules/rules/validate?${query}`)
@@ -1668,8 +1701,6 @@ async function fetchScheduleRuleValidation({ showIssues = false, notify = true, 
     scheduleRuleValidation.ok = false
     if (showIssues) callWarning(error?.message || '排班規範預檢失敗')
     return null
-  } finally {
-    scheduleRuleValidation.checking = false
   }
 }
 
@@ -4784,6 +4815,7 @@ async function onMonthChange(value) {
 // ========= 初始化 =========
 
 onBeforeUnmount(() => {
+  scheduleRuleCheckDisposed = true
   if (scheduleRuleValidationTimer) {
     clearTimeout(scheduleRuleValidationTimer)
     scheduleRuleValidationTimer = null

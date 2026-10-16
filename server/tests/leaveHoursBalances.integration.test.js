@@ -184,6 +184,7 @@ describeIntegration('leave hours, balances, quotas and migrations against a real
   describe('a nurse on a scheduled 12-hour shift can take the whole shift off, a nurse without that shift cannot', () => {
     let dayShiftId
     let restShiftId
+    let earlyShiftId
 
     beforeAll(async () => {
       await AttendanceSetting.deleteMany({})
@@ -191,13 +192,17 @@ describeIntegration('leave hours, balances, quotas and migrations against a real
         shifts: [
           { name: '12小時日班', code: '日12', semanticType: 'work', startTime: '07:00', endTime: '19:00' },
           { name: '休息日', code: '休', semanticType: 'rest_day', startTime: '00:00', endTime: '00:00' },
+          // 預設的早班：08:30-17:30 休息 60 分鐘，實際工作 8 小時（請一天假是 8 小時，不是 9 小時）
+          { name: '早班', code: '早', semanticType: 'work', startTime: '08:30', endTime: '17:30', breakDuration: 60 },
         ],
       })
       dayShiftId = setting.shifts[0]._id
       restShiftId = setting.shifts[1]._id
+      earlyShiftId = setting.shifts[2]._id
       await ShiftSchedule.create({ employee: people.nurse1._id, date: new Date('2099-04-06T00:00:00.000Z'), shiftId: dayShiftId })
       await ShiftSchedule.create({ employee: people.nurse1._id, date: new Date('2099-04-07T00:00:00.000Z'), shiftId: restShiftId })
       await ShiftSchedule.create({ employee: people.nurse1._id, date: new Date('2099-04-08T00:00:00.000Z'), shiftId: dayShiftId })
+      await ShiftSchedule.create({ employee: people.nurse1._id, date: new Date('2099-04-13T00:00:00.000Z'), shiftId: earlyShiftId })
     })
 
     it('reads the hours hint from the caller\'s own schedule: 12 on a 12-hour shift, 0 on a rest day, 8 on an unscheduled day', async () => {
@@ -236,6 +241,19 @@ describeIntegration('leave hours, balances, quotas and migrations against a real
       expect(tooMuch.body.violations[0]).toMatchObject({ rule: 'leave-hours-range', maxHours: 12 })
       const restDay = await request1('nurse1', data('病假', '2099-04-07T07:00:00+08:00', '2099-04-07T19:00:00+08:00', 12))
       expect(restDay.status).toBe(400)
+    })
+
+    it('counts the net working hours of a shift with a break: the 早班 08:30-17:30 (60 minute break) is 8 hours, 9 hours of leave on it is refused', async () => {
+      const hint = await get('nurse1', '/api/approvals/leave-hours-hint?start=2099-04-13&end=2099-04-13')
+      expect(hint.body).toMatchObject({ valid: true, maxHours: 8, suggestedHours: 8, scheduleChecked: true })
+      expect(hint.body.days[0]).toMatchObject({ dateKey: '2099-04-13', scheduled: 'work', shiftHours: 8, suggestedHours: 8 })
+
+      const start = '2099-04-13T08:30:00+08:00'
+      const end = '2099-04-13T17:30:00+08:00'
+      const nine = await request1('nurse1', data('病假', start, end, 9))
+      expect(nine.status).toBe(400)
+      expect(nine.body.violations[0]).toMatchObject({ rule: 'leave-hours-range', maxHours: 8 })
+      expect((await request1('nurse1', data('病假', start, end, 8))).status).toBe(201)
     })
 
     it('deducts 12 hours of 特休 for the 12-hour shift and counts 12 leave hours in payroll', async () => {
@@ -279,7 +297,7 @@ describeIntegration('leave hours, balances, quotas and migrations against a real
       expect(item(res.body, 'annual')).toMatchObject({ quotaHours: 80, usedHours: 16, remainingHours: 64, remainingDays: 8, source: 'employee' })
       // 事假 14.5 自己 + 8 家庭照顧假 = 22.5；簽核中 3
       expect(item(res.body, 'personal')).toMatchObject({ quotaHours: 112, usedHours: 22.5, pendingHours: 3, remainingHours: 89.5, availableHours: 86.5 })
-      expect(item(res.body, 'personal').includes).toEqual([{ key: 'family_care', name: '家庭照顧假', hours: 8 }])
+      expect(item(res.body, 'personal').includes).toEqual([{ key: 'family_care', name: '家庭照顧假', approvedHours: 8, pendingHours: 0, hours: 8 }])
       expect(item(res.body, 'family_care')).toMatchObject({ usedHours: 8, remainingHours: 48 })
       expect(item(res.body, 'sick')).toMatchObject({ quotaHours: 240, usedHours: 4, remainingHours: 236, includes: [] }) // 生理假 8 小時在免計的 24 小時內
       expect(item(res.body, 'menstrual')).toMatchObject({ quotaHours: 96, usedHours: 8, remainingHours: 88 })
@@ -288,6 +306,26 @@ describeIntegration('leave hours, balances, quotas and migrations against a real
       expect(item(res.body, 'comp')).toMatchObject({ quotaHours: 6, status: 'manual' })
       expect(item(res.body, 'accumulated')).toMatchObject({ quotaHours: 8, status: 'manual' })
       expect(res.body.unmatched).toEqual([])
+    })
+
+    // 「含家庭照顧假 N 小時」在「已使用」底下只能是已核准的；簽核中的家庭照顧假另外帶，畫面放在「簽核中」
+    it('carries the approved and the pending hours of 家庭照顧假 separately in the includes line (the pending hours are not part of 已使用)', async () => {
+      await addPerson('balPending', { supervisor: people.boss._id, annualLeave: { totalHours: 80, usedHours: 0, year: 2099 } })
+      const filed = async (type, day, hours, approve) => {
+        const res = await request1('balPending', data(type, `2099-06-${day}T09:00:00+08:00`, `2099-06-${day}T18:00:00+08:00`, hours))
+        expect(res.status).toBe(201)
+        if (approve) await approveAll(res.body._id)
+      }
+      await filed('事假', '01', 8, true)
+      await filed('家庭照顧假', '02', 4, true)
+      await filed('家庭照顧假', '03', 2, false)
+
+      const res = await get('balPending', '/api/approvals/leave-balances?year=2099')
+
+      expect(res.status).toBe(200)
+      expect(item(res.body, 'personal')).toMatchObject({ usedHours: 12, pendingHours: 2 }) // 已使用 8 + 4；簽核中 2
+      expect(item(res.body, 'personal').includes).toEqual([{ key: 'family_care', name: '家庭照顧假', approvedHours: 4, pendingHours: 2, hours: 6 }])
+      expect(item(res.body, 'family_care')).toMatchObject({ usedHours: 4, pendingHours: 2 })
     })
 
     it('shows the same balances to the direct supervisor, to a step approver of that employee and to the admin, and to nobody else', async () => {
@@ -343,6 +381,23 @@ describeIntegration('leave hours, balances, quotas and migrations against a real
       const none = await request1('nurse3', data('特休假', tw('18', '09:00'), tw('18', '13:00'), 0.5))
       expect(none.status).toBe(400)
       expect(none.body).toMatchObject({ code: 'ANNUAL_LEAVE_INSUFFICIENT', remainingHours: 0, requestedHours: 0.5 })
+    })
+
+    // 特休超過剩餘時數一律擋下：設定頁的開關對特休不適用，API 存成 warn 也還是 block，餘額與簽核明細也回報 block
+    it('keeps 特休 blocking whatever the admin tries to save (warn / none): the policy, the balances and the request all say block', async () => {
+      for (const enforcement of ['warn', 'none']) {
+        const saved = await put('admin', '/api/other-control-settings/leave-policy', { types: [{ key: 'annual', enforcement }] })
+        expect(saved.status).toBe(200)
+        expect(saved.body.policy.types.find(entry => entry.key === 'annual').enforcement).toBe('block')
+      }
+      const read = await get('admin', '/api/other-control-settings/leave-policy')
+      expect(read.body.policy.types.find(entry => entry.key === 'annual').enforcement).toBe('block')
+      const balances = await get('nurse3', '/api/approvals/leave-balances')
+      expect(balances.body.items.find(entry => entry.key === 'annual')).toMatchObject({ enforcement: 'block', source: 'employee' })
+
+      const over = await request1('nurse3', data('特休假', tw('23', '09:00'), tw('24', '18:00'), 16))
+      expect(over.status).toBe(400)
+      expect(over.body.code).toBe('ANNUAL_LEAVE_INSUFFICIENT')
     })
 
     it('files an over-quota 事假 anyway but warns (default), and the approvers see it in the detail', async () => {
@@ -420,6 +475,7 @@ describeIntegration('leave hours, balances, quotas and migrations against a real
   describe('the migration on a mixed dataset is idempotent and leaves old data readable', () => {
     let customer
     let resetLeaveFieldCache
+    const OLD_UPDATED_AT = new Date('2026-09-01T00:00:00.000Z')
 
     beforeAll(async () => {
       // 客戶原本的休假申請單：假別類別（字典）、日期起迄、必填的天數
@@ -441,13 +497,15 @@ describeIntegration('leave hours, balances, quotas and migrations against a real
       await addPerson('legacyC', { supervisor: people.boss._id })
       await addPerson('legacyD', { supervisor: people.boss._id })
       await addPerson('alreadyHours', { supervisor: people.boss._id })
-      // 舊格式（只有天數欄位）：14 天已用 2 天；客戶輸入成小時的 170（已用 8）；沒設定；沒有特休資料；已經是時數的員工
+      // 舊格式（只有天數欄位）：14 與已用 2；客戶輸入成小時的 170（已用 8）；沒設定；沒有特休資料；已經是時數的員工
+      // 資料裡有 170，整份資料的慣例就是「小時填在天數欄位」，所以 14 也是 14 小時（不是 14 天）
+      // updatedAt 先寫成固定的舊日期：搬移不是人工修改，不能動到它
       const raw = Employee.collection
-      await raw.updateOne({ _id: people.legacyA._id }, { $set: { annualLeave: { totalDays: 14, usedDays: 2, year: 2099, accumulatedLeave: 1, notes: '備註A' } } })
-      await raw.updateOne({ _id: people.legacyB._id }, { $set: { annualLeave: { totalDays: 170, usedDays: 8, year: 2099 } } })
-      await raw.updateOne({ _id: people.legacyC._id }, { $set: { annualLeave: { totalDays: 0, usedDays: 0, year: 2099 } } })
+      await raw.updateOne({ _id: people.legacyA._id }, { $set: { updatedAt: OLD_UPDATED_AT, annualLeave: { totalDays: 14, usedDays: 2, year: 2099, accumulatedLeave: 1, notes: '備註A' } } })
+      await raw.updateOne({ _id: people.legacyB._id }, { $set: { updatedAt: OLD_UPDATED_AT, annualLeave: { totalDays: 170, usedDays: 8, year: 2099 } } })
+      await raw.updateOne({ _id: people.legacyC._id }, { $set: { updatedAt: OLD_UPDATED_AT, annualLeave: { totalDays: 0, usedDays: 0, year: 2099 } } })
       await raw.updateOne({ _id: people.legacyD._id }, { $unset: { annualLeave: 1 } })
-      await raw.updateOne({ _id: people.alreadyHours._id }, { $set: { annualLeave: { totalHours: 40, usedHours: 8, totalDays: 99, usedDays: 99, year: 2099, unitSource: 'entered' } } })
+      await raw.updateOne({ _id: people.alreadyHours._id }, { $set: { updatedAt: OLD_UPDATED_AT, annualLeave: { totalHours: 40, usedHours: 8, totalDays: 99, usedDays: 99, year: 2099, unitSource: 'entered' } } })
       // 一張舊的已核准假單（天數欄位 2 天，客戶表單的欄位）：薪資與餘額必須在搬移前後讀到一樣的結果
       await ApprovalRequest.create({
         form: customer.form._id,
@@ -463,32 +521,86 @@ describeIntegration('leave hours, balances, quotas and migrations against a real
       })
     })
 
-    it('migrates days x8, keeps hour-sized values, repairs nothing it should not, and does nothing the second time', async () => {
+    it('decides the unit for the whole data set (170 in the file means 14 is 14 hours too), repairs nothing it should not, keeps updatedAt and does nothing the second time', async () => {
       const beforeImpact = await payroll.calculateLeaveImpact(id('legacyA'), '2099-08-01')
       const beforeBalances = (await get('admin', `/api/approvals/leave-balances?employeeId=${id('legacyA')}&year=2099`)).body
 
       const first = await migrations.migrateAnnualLeaveToHours()
-      expect(first.migrated).toBeGreaterThanOrEqual(4) // legacyA、B、C、D 之外還有前面測試建立的員工（只有 totalDays 預設值 0）
-      expect(first.fromDays).toBeGreaterThanOrEqual(2)
-      expect(first.alreadyHours).toBe(1)
+      expect(first.migrated).toBeGreaterThanOrEqual(3) // legacyA、B、C 之外還有前面測試建立的員工（只有 totalDays 預設值 0）
+      expect(first.fromDays).toBeGreaterThanOrEqual(1) // 數字都是 0 的員工沒有東西要判斷
+      expect(first.alreadyHours).toBe(2) // legacyA（14）跟著整份資料，legacyB（170）本來就是小時
 
       const read = async (key) => (await Employee.collection.findOne({ _id: people[key]._id })).annualLeave
-      expect(await read('legacyA')).toMatchObject({ totalHours: 112, usedHours: 16, unitSource: 'migrated-days', totalDays: 14, usedDays: 2, accumulatedLeave: 1, notes: '備註A' })
+      expect(await read('legacyA')).toMatchObject({ totalHours: 14, usedHours: 2, unitSource: 'migrated-hours', totalDays: 14, usedDays: 2, accumulatedLeave: 1, notes: '備註A' })
       expect(await read('legacyB')).toMatchObject({ totalHours: 170, usedHours: 8, unitSource: 'migrated-hours', totalDays: 170 })
-      expect(await read('legacyC')).toMatchObject({ totalHours: 0, usedHours: 0 })
+      expect(await read('legacyC')).toMatchObject({ totalHours: 0, usedHours: 0, unitSource: 'migrated-days' })
       expect(await read('alreadyHours')).toMatchObject({ totalHours: 40, usedHours: 8, unitSource: 'entered', totalDays: 99 }) // 已經搬過的不再動
       expect((await Employee.collection.findOne({ _id: people.legacyD._id })).annualLeave).toBeUndefined() // 沒有特休資料的不建立
+      // 搬移不是人工修改：搬過的與沒搬的員工 updatedAt 都沒變（bulkWrite 要在每個 updateOne 上關掉 timestamps）
+      for (const key of ['legacyA', 'legacyB', 'legacyC', 'alreadyHours']) {
+        expect((await Employee.collection.findOne({ _id: people[key]._id })).updatedAt).toEqual(OLD_UPDATED_AT)
+      }
 
       const second = await migrations.migrateAnnualLeaveToHours()
-      expect(second).toEqual({ migrated: 0, fromDays: 0, alreadyHours: 0, repaired: 0 })
+      expect(second).toEqual({ migrated: 0, fromDays: 0, alreadyHours: 0, repaired: 0, flagged: 0 })
 
       // 搬移前後，同一個人的薪資請假與餘額相同
       const afterImpact = await payroll.calculateLeaveImpact(id('legacyA'), '2099-08-01')
       expect(afterImpact).toEqual(beforeImpact)
       expect(afterImpact.leaveHours).toBe(16)
       const afterBalances = (await get('admin', `/api/approvals/leave-balances?employeeId=${id('legacyA')}&year=2099`)).body
-      expect(afterBalances.items.find(entry => entry.key === 'annual')).toMatchObject({ quotaHours: 112, usedHours: 16, remainingHours: 96 })
+      expect(afterBalances.items.find(entry => entry.key === 'annual')).toMatchObject({ quotaHours: 14, usedHours: 2, remainingHours: 12 })
       expect(afterBalances.items.find(entry => entry.key === 'personal').usedHours).toBe(beforeBalances.items.find(entry => entry.key === 'personal').usedHours)
+    })
+
+    it('an already migrated data set (the earlier per-person rule): only the guesses are flagged, the numbers and updatedAt are untouched, and it is idempotent', async () => {
+      await addPerson('guessed24', { supervisor: people.boss._id })
+      await addPerson('guessed14', { supervisor: people.boss._id })
+      await addPerson('editedByHr', { supervisor: people.boss._id })
+      await addPerson('confirmedByHr', { supervisor: people.boss._id })
+      await addPerson('noData', { supervisor: people.boss._id })
+      const raw = Employee.collection
+      // 舊規則搬過的結果：24 被當成 3 天（192 小時）、14 被當成 14 天；人資改過總時數的、人資確認過的、沒有資料的
+      await raw.updateOne({ _id: people.guessed24._id }, { $set: { updatedAt: OLD_UPDATED_AT, annualLeave: { totalDays: 24, usedDays: 0, totalHours: 192, usedHours: 0, unitSource: 'migrated-days', year: 2099 } } })
+      await raw.updateOne({ _id: people.guessed14._id }, { $set: { updatedAt: OLD_UPDATED_AT, annualLeave: { totalDays: 14, usedDays: 2, totalHours: 112, usedHours: 24, unitSource: 'migrated-days', year: 2099 } } })
+      await raw.updateOne({ _id: people.editedByHr._id }, { $set: { updatedAt: OLD_UPDATED_AT, annualLeave: { totalDays: 14, usedDays: 0, totalHours: 100, usedHours: 0, unitSource: 'entered', year: 2099 } } })
+      await raw.updateOne({ _id: people.confirmedByHr._id }, { $set: { updatedAt: OLD_UPDATED_AT, annualLeave: { totalDays: 10, usedDays: 0, totalHours: 80, usedHours: 0, unitSource: 'entered', year: 2099 } } })
+      await raw.updateOne({ _id: people.noData._id }, { $set: { updatedAt: OLD_UPDATED_AT, annualLeave: { totalDays: 0, usedDays: 0, totalHours: 0, usedHours: 0, unitSource: 'migrated-days', year: 2099 } } })
+
+      const first = await migrations.migrateAnnualLeaveToHours()
+      expect(first).toMatchObject({ migrated: 0, flagged: 2 })
+
+      const read = async (key) => Employee.collection.findOne({ _id: people[key]._id })
+      expect((await read('guessed24')).annualLeave).toMatchObject({ totalHours: 192, usedHours: 0, unitSource: 'migrated-hours', totalDays: 24 }) // 數字不動，只是標成待確認
+      expect((await read('guessed14')).annualLeave).toMatchObject({ totalHours: 112, usedHours: 24, unitSource: 'migrated-hours', totalDays: 14, usedDays: 2 })
+      expect((await read('editedByHr')).annualLeave).toMatchObject({ totalHours: 100, unitSource: 'entered' })
+      expect((await read('confirmedByHr')).annualLeave).toMatchObject({ totalHours: 80, unitSource: 'entered' })
+      expect((await read('noData')).annualLeave).toMatchObject({ totalHours: 0, unitSource: 'migrated-days' })
+      for (const key of ['guessed24', 'guessed14', 'editedByHr', 'confirmedByHr', 'noData']) {
+        expect((await read(key)).updatedAt).toEqual(OLD_UPDATED_AT)
+      }
+      // 員工 API 帶著待確認的標記，員工管理畫面據此顯示提醒
+      expect((await get('admin', `/api/employees/${id('guessed24')}`)).body.annualLeave).toMatchObject({ totalHours: 192, unitSource: 'migrated-hours' })
+
+      // 冪等：再執行一次什麼都不會變
+      expect(await migrations.migrateAnnualLeaveToHours()).toEqual({ migrated: 0, fromDays: 0, alreadyHours: 0, repaired: 0, flagged: 0 })
+      expect((await read('guessed24')).annualLeave).toMatchObject({ totalHours: 192, unitSource: 'migrated-hours' })
+
+      // 給人資核對的清單：凍結的天數、現在的時數、單位來源
+      const report = await migrations.buildAnnualLeaveUnitReport()
+      expect(report.hoursConvention).toBe(true)
+      const row = (name) => report.rows.find(item => item.name === name)
+      expect(row('guessed24')).toMatchObject({ totalDays: 24, usedDays: 0, totalHours: 192, usedHours: 0, unitSource: 'migrated-hours', reading: 'days x8' })
+      expect(row('legacyB')).toMatchObject({ totalDays: 170, totalHours: 170, unitSource: 'migrated-hours', reading: 'as hours' })
+      expect(row('confirmedByHr')).toBeUndefined()
+      expect(row('noData')).toBeUndefined()
+
+      // 人資在員工管理確認（勾選）之後變成 entered，之後不會再被標記
+      const confirmed = await request(app).put(`/api/employees/${id('guessed24')}`).set(as('admin')).send({ annualLeave: { unitConfirmed: true } })
+      expect(confirmed.status).toBe(200)
+      expect((await read('guessed24')).annualLeave).toMatchObject({ totalHours: 192, unitSource: 'entered' })
+      expect(await migrations.flagGuessedAnnualLeaveUnits()).toBe(0)
+      expect((await read('guessed24')).annualLeave).toMatchObject({ unitSource: 'entered' })
     })
 
     it('adds the 時數 field to the customer form once, deactivates 天數 (never deletes it) and never re-adds a field the admin removed', async () => {
@@ -529,7 +641,7 @@ describeIntegration('leave hours, balances, quotas and migrations against a real
       expect(created.status).toBe(201)
       expect((await post('boss', `/api/approvals/${created.body._id}/act`, { decision: 'approve' })).status).toBe(200)
       expect((await load(created.body._id)).annual_leave).toMatchObject({ state: 'deducted', hours: 12 })
-      expect((await Employee.findById(id('legacyA'))).annualLeave.usedHours).toBe(28) // 搬來的 16 + 12
+      expect((await Employee.findById(id('legacyA'))).annualLeave.usedHours).toBe(14) // 搬來的 2 + 12
 
       // 舊單據（只有天數答案）照樣是 16 小時
       const balances = (await get('admin', `/api/employees/${id('legacyA')}/annual-leave/history?year=2099`)).body

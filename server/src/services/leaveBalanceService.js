@@ -187,7 +187,14 @@ export function composeLeaveBalanceItems({ policy, usage, employee, focusKey = n
       childApproved += countedApproved
       childPending += countedPending
       if (countedApproved > 0 || countedPending > 0) {
-        includes.push({ key: child.key, name: child.name, hours: roundHours(countedApproved + countedPending) })
+        // 已核准與簽核中分開帶：畫面只把已核准的放在「已使用」，簽核中的放在「簽核中」；hours 是兩者合計（舊畫面相容）
+        includes.push({
+          key: child.key,
+          name: child.name,
+          approvedHours: roundHours(countedApproved),
+          pendingHours: roundHours(countedPending),
+          hours: roundHours(countedApproved + countedPending),
+        })
       }
     }
 
@@ -215,6 +222,8 @@ export function composeLeaveBalanceItems({ policy, usage, employee, focusKey = n
       const annual = readAnnualLeaveHours(employee?.annualLeave)
       // 特休的已使用是系統核准時扣減的計數（人資也可以在員工管理調整），不是從單據加總
       base.source = 'employee'
+      // 特休超過剩餘時數一律擋下（不看設定的超額處理），餘額列表也如實回報，畫面才不會顯示「仍可送出」
+      base.enforcement = 'block'
       base.quotaHours = annual.totalHours
       base.usedHours = annual.usedHours
       base.pendingHours = roundHours(own.pending)

@@ -6,7 +6,8 @@
 
 - **請假的單位一律是「小時」**。資料庫、簽核單、特休餘額、薪資、報表都以小時儲存與計算；畫面上在小時旁邊補一個「約 N 天」，換算固定是 1 天 = 8 小時，只用來顯示，不另外儲存。
 - **最小單位 0.5 小時**（管理員可改成 0.25、0.5 或 1）。時數不是最小單位的整數倍、小於等於 0、或不是數字，送出時會被擋下並說明原因。
-- **每日上限預設 8 小時**（管理員可設 1 到 24）。當天排了 12 小時的班，上限自動提高到 12，所以 12 小時班的人可以請 12 小時。
+- **每日上限預設 8 小時**（管理員可設 1 到 24）。當天排了比每日上限更長的班，上限自動提高到班別的工作時數（12 小時班沒有休息就是 12），所以 12 小時班的人可以請 12 小時。
+- **班別的時數是實際工作時數**：上下班時間差扣掉休息時間（與薪資、工時計算同一個規則：休息時段加總，沒有就用休息時長），例如預設的早班 08:30-17:30 休息 60 分鐘是 8 小時，不是 9 小時，請一天假就是 8 小時。
 - **跨日的請假**：依台灣時間逐日計算。例如 10/3 下午到 10/4 上午，各日的時數分開算、再加總；跨年度的請假會依日期拆到兩個年度。
 - **計算年度是曆年（1/1 到 12/31）**，特休除外：特休用員工資料裡的「年度特休總時數」與「已使用時數」，不看曆年。
 
@@ -22,7 +23,7 @@
 ### 送出前的檢查（伺服器端，前端只是提示）
 
 - `leave-hours-invalid`：請假時數必須是大於 0 的數字，且以 0.5 小時為單位。
-- `leave-hours-range`：請假時數超過所選期間可請的上限（每個日曆日最多「每日上限」小時，預設 8；當天排了更長的班就以班別時數為準）。時數可以比期間少（半天、扣掉休息日），不能比期間多。只在送出與重新送出時嚴格檢查，核准時不再檢查，管理員事後調低每日上限不會讓簽核中的單卡住。
+- `leave-hours-range`：請假時數超過所選期間可請的上限（每個日曆日最多「每日上限」小時，預設 8；當天排了更長的班就以班別的工作時數（扣掉休息）為準）。時數可以比期間少（半天、扣掉休息日），不能比期間多。只在送出與重新送出時嚴格檢查，核准時不再檢查，管理員事後調低每日上限不會讓簽核中的單卡住。
 - 特休額度不足（HTTP 409，`ANNUAL_LEAVE_INSUFFICIENT`）：訊息例如「特休餘額不足：剩餘 8 小時（1 天），本次申請 16 小時（2 天）」，同時回傳 `remainingHours`、`requestedHours`。
 - 其他假別超過額度：預設只是**警告**（HTTP 201，回應 `warnings` 裡有 `LEAVE_QUOTA_EXCEEDED`，申請仍成立）；該假別的「超額時不能送出」開關打開後，改回 HTTP 400 `LEAVE_QUOTA_INSUFFICIENT`。
 
@@ -52,7 +53,7 @@
 
 管理員可以調整：每個假別的額度、計算方式、超額處理（「超額時不能送出」開關，預設關閉）、顯示方式（一律／用過才顯示／隱藏）、併入哪個假別計算；也可以新增自訂假別、還原預設值。每日最多可請時數與最小請假單位同樣在這裡設定。
 
-**特休的名稱固定**（特休、特休假、特別休假），特休一律不能超額送出（開關不適用）。假別比對只認完整名稱，名稱裡「剛好含有特休兩個字」的其他假別不會被當成特休。
+**特休的名稱固定**（特休、特休假、特別休假；特休統計報表與薪資對照表也認這三個名稱），特休超過剩餘時數一律不能送出：超額處理固定是「禁止」，管理頁的開關停用（顯示為開啟），儲存或讀到 `warn`／`none` 都會變成 `block`，餘額 API 與畫面提示也一律回報無法送出。假別比對只認完整名稱，名稱裡「剛好含有特休兩個字」的其他假別不會被當成特休。
 
 ## 剩餘餘額怎麼算
 
@@ -67,7 +68,7 @@
 | 路徑 | 說明 |
 | --- | --- |
 | `GET /api/approvals/leave-balances?employeeId=&year=` | 回傳各假別的額度、已使用、申請中、剩餘（小時）。`employeeId` 不帶就是本人。 |
-| `GET /api/approvals/leave-hours-hint?start=&end=&startType=&endType=` | 依本人班表算這段期間建議填的時數（只是預設值）：排工作班算班別時數（12 小時班就是 12）、休息日與國定假日算 0、沒排班的日子算每日上限。 |
+| `GET /api/approvals/leave-hours-hint?start=&end=&startType=&endType=` | 依本人班表算這段期間建議填的時數（只是預設值）：排工作班算班別的工作時數（扣掉休息：早班 08:30-17:30 休息 60 分鐘是 8；12 小時班沒有休息就是 12）、休息日與國定假日算 0、沒排班的日子算每日上限。 |
 | `GET /api/other-control-settings/leave-policy` | 管理員：讀取假別額度規則（含預設值）。 |
 | `PUT /api/other-control-settings/leave-policy` | 管理員：儲存假別額度規則，驗證失敗回中文訊息。 |
 
@@ -75,8 +76,10 @@
 
 ### 畫面
 
+- **只有請假表單**才有時數自動帶入、每日上限的說明與剩餘時數提示（表單性質為請假）；客戶自建的加班、補休表單即使有「時數」欄位，也維持一般的數字欄位（加班一天可以超過 8 小時，不會被自動帶入蓋掉）。
 - **簽核申請頁（員工與主管）**：頂端的「我的假別餘額」面板顯示所有假別剩餘的小時與天數；選好假別、填好時數後，欄位下方顯示「事假：目前可請 N 小時（約 X 天）；本次申請 H 小時，核准後剩 M 小時」，超過額度時顯示警告（特休與已打開「不能送出」開關的假別顯示紅色錯誤、送出會被擋下）。
 - **請假單明細（簽核人看）**：顯示申請人各假別餘額與這張單的影響（核准前剩多少、核准後剩多少）。
+- **假別餘額的「含…」說明**：併入其他假別計算的子假別（家庭照顧假併入事假）在「已使用」底下只列已核准的部分（`includes[].approvedHours`），簽核中的部分（`includes[].pendingHours`）列在「簽核中」那一欄，不會被當成已使用的一部分；`hours` 是兩者合計（舊畫面相容）。
 - **員工管理與排班頁**：特休欄位全部以小時顯示。
 
 ## 資料搬移（伺服器啟動時自動執行，可重複執行）
@@ -85,13 +88,16 @@
 
 1. **員工特休：天數改為小時**（`migrateAnnualLeaveToHours`）
    - 新欄位 `annualLeave.totalHours`、`usedHours`、`unitSource`；舊欄位 `totalDays`、`usedDays` 保留不動（只是不再使用，萬一要回復程式版本還在）。
-   - 判斷規則：`totalDays` 與 `usedDays` 都在 40 以內視為天數、乘 8；任何一個大於 40（法定特休最多 30 天，不可能是天數，例如客戶資料裡的 170、219）視為本來就是小時，原值保留。`unitSource` 記錄是 `migrated-days`（由天數換算）或 `migrated-hours`（原本就是小時）。
+   - 判斷規則**以整份資料為單位，不是逐人猜**：客戶的資料裡有人把小時填在「年度特休總天數」（170、219；法定特休最多 30 天，大於 40 不可能是天數）。只要有任何一位員工的 `totalDays` 或 `usedDays` 大於 40，整份資料就是「小時填在天數欄位」的慣例，所有還沒搬移的員工都原樣當成小時（24、32、40 也是小時，不是 3、4、5 天）；整份資料都沒有大於 40 的數字才乘 8。數字都是 0 的員工沒有東西要判斷，維持 `migrated-days`。已搬移的員工裡有 `migrated-hours` 或凍結的天數大於 40 也算證據，之後才補搬移的員工同樣跟著整份資料判斷。`unitSource` 記錄是 `migrated-days`（由天數乘 8 換算）或 `migrated-hours`（原樣當小時）。
    - 以「`totalHours` 是否已存在」判斷是否已搬移，**搬過的員工不會再動**；重複啟動不會重複乘 8。
-   - `migrated-hours` 的員工在員工管理編輯畫面會顯示「由舊資料推斷為小時，請確認」，管理員勾選確認後 `unitSource` 改為 `entered`。
-   - 啟動記錄：`Migrated annual leave to hours for N employees (days x8: A, already hours: B, repaired: C)`。
+   - `migrated-hours` 的員工在員工管理編輯畫面會顯示待確認的提醒（舊數字超過 40 時是「由舊資料推斷為小時，請確認」；舊數字不大、是被修復旗標標記的員工則說明原本的天數與換算出的時數），管理員勾選確認或改過總時數後 `unitSource` 改為 `entered`。
+   - **修復旗標（`flagGuessedAnnualLeaveUnits`，啟動時接在搬移後面，冪等）**：先前用逐人判斷的舊規則搬過的員工，若整份資料已經有人判定為小時，而這位員工的 `unitSource` 還是 `migrated-days`、總時數還等於凍結的 `totalDays` x 8（沒有人改過），就把 `unitSource` 標成 `migrated-hours`（待確認）。**只改單位來源，totalHours / usedHours 不動，也不更新 updatedAt**；確認或改過的員工是 `entered`，不會再被標記，重複啟動不會再標。
+   - 搬移與標記都不更新員工的 `updatedAt`（`bulkWrite` 的 `timestamps: false` 要放在每一個 `updateOne` 上才有效）。
+   - 啟動記錄（只有筆數）：`Migrated annual leave to hours for N employees (days x8: A, already hours: B, repaired: C)`，標記時另有 `Flagged N employees for annual leave unit confirmation (this data has hour-sized values in the days column)`。
+   - 員工特休匯入檔（批次匯入）同一個規則，以**整份檔案**判斷：只要有任何一列的天數欄位大於 40，整份檔案的天數欄位都當成小時，並提醒人資確認（說明各有幾列依小時、依天數乘 8 讀取）。有填「年度特休總時數／已使用時數」的列以時數為準，不參與判斷。
 2. **請假表單：補上「時數」欄位**（`migrateLeaveFormsToHours`）：請假單加上必填的「時數」欄位、停用「天數」欄位，已核准的申請內容完全不動，薪資以原本的計算結果為準；用 `leave_hours_migrated` 標記，已處理的表單不會再動。啟動記錄：`Added leave hours field to N leave forms (deactivated days field on M, forms checked: K)`。
 
-手動工具：`node scripts/migrate-annual-leave-hours.js --dry-run`（只統計）、不帶參數（立刻執行）、`--rollback`（把時數寫回天數欄位，回復到舊版程式前使用）。
+手動工具：`node scripts/migrate-annual-leave-hours.js --dry-run`（只統計：待搬移幾位、整份資料是否小時慣例、會標記幾位）、不帶參數（立刻執行）、`--report`（列出單位是推斷出來的員工：員工編號、姓名、凍結的舊天數、現在的時數、`unitSource`、`reading`，tab 分隔可貼進試算表給人資核對；`reading` 是現在的總時數相當於舊數字乘 8（`days x8`）、原值（`as hours`）或已被改過（`edited`）；只在維運人員自己的終端機使用）、`--rollback`（把時數寫回天數欄位，回復到舊版程式前使用）。
 
 ## 薪資與報表
 
@@ -100,5 +106,5 @@
 
 ## 對應的測試
 
-- 伺服器：`leaveHours`、`leavePolicy`、`leaveBalanceService`、`leaveBalancesApi`、`leaveHoursMigration`、`leaveShiftHours`、`annualLeave*`、`approvalWorkflow` 等；真實 mongod 的端對端測試是 `leaveHoursBalances.integration.test.js`（設定 `APPROVAL_ENGINE_TEST_MONGODB_URI` 才會執行）。
+- 伺服器：`leaveHours`、`leavePolicy`、`leaveBalanceService`、`leaveBalancesApi`、`leaveHoursMigration`（含整份資料判斷、修復旗標、`--report`）、`leaveShiftHours`（扣掉休息的班別時數）、`employeeBulkImport`（整份檔案判斷）、`salaryConfigLeavePay`／`reportSpecialLeave`（特別休假）、`annualLeave*`、`approvalWorkflow` 等；真實 mongod 的端對端測試是 `leaveHoursBalances.integration.test.js`（設定 `APPROVAL_ENGINE_TEST_MONGODB_URI` 才會執行）。
 - 前端：`leaveHours`、`leaveBalance`、`leaveBalancePanel`、`leaveOvertimeSetting`、`approvalPage`、`approvalFormFields`、`approvalDetailContent`、`EmployeeManagementAnnualLeave`。

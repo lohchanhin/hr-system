@@ -27,7 +27,7 @@
           @update:model-value="setValue(fld._id, $event)"
         />
 
-        <!-- 請假「時數」：以小時為單位（預設 0.5 的倍數），依起訖時間自動帶入，上限是所選期間最多可請的時數 -->
+        <!-- 請假「時數」（只有請假表單，leaveHours.enabled 不是 false）：以小時為單位（預設 0.5 的倍數），依起訖時間自動帶入，上限是所選期間最多可請的時數 -->
         <div v-else-if="isHoursField(fld)" class="hours-field" data-test="leave-hours-field">
           <el-input-number
             :model-value="modelValue[fld._id]"
@@ -184,10 +184,11 @@ import { normalizeFieldOptions } from '../utils/approvalDisplay'
 import { isActiveField, isLeaveHoursField } from '../utils/approvalForm'
 
 const props = defineProps({
-  // 請假單的時數欄位設定：max 是所選期間最多可請的時數（讀得出起訖時間才有），其餘取自假別規則
+  // 請假單的時數欄位設定：enabled 為 false 表示這張表單不是請假表單（例如客戶自建的加班／補休表單），
+  // 「時數」就是一般的數字欄位；max 是所選期間最多可請的時數（讀得出起訖時間才有），其餘取自假別規則
   leaveHours: {
     type: Object,
-    default: () => ({ max: undefined, maxHoursPerDay: 8, minUnitHours: 0.5 }),
+    default: () => ({ enabled: true, max: undefined, maxHoursPerDay: 8, minUnitHours: 0.5 }),
   },
   fields: { type: Array, default: () => [] },
   modelValue: { type: Object, default: () => ({}) },
@@ -201,7 +202,8 @@ const props = defineProps({
 const emit = defineEmits(['update:modelValue', 'update:files'])
 
 const activeFields = computed(() => props.fields.filter(isActiveField))
-const isHoursField = (field) => isLeaveHoursField(field)
+// 只有請假表單才用 0.5 小時為單位的時數輸入框；加班一天可以超過 8 小時，不能被請假的每日上限夾住
+const isHoursField = (field) => props.leaveHours?.enabled !== false && isLeaveHoursField(field)
 const hoursStep = computed(() => (Number(props.leaveHours?.minUnitHours) > 0 ? Number(props.leaveHours.minUnitHours) : 0.5))
 const hoursPrecision = computed(() => {
   const text = String(hoursStep.value)

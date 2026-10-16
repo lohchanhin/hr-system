@@ -3,7 +3,7 @@ import Employee from '../../models/Employee.js';
 import AttendanceSetting from '../../models/AttendanceSetting.js';
 import Holiday from '../../models/Holiday.js';
 import { randomUUID } from 'node:crypto';
-import { loadApprovedLeaveCalendar } from '../../services/approvedLeaveCalendarService.js';
+import { loadApprovedLeaveCalendar, loadApprovedLeaveIntervals } from '../../services/approvedLeaveCalendarService.js';
 import {
   assertScheduleRuleCompliance,
   isLaborRuleValidationError,
@@ -250,6 +250,7 @@ export async function importSchedules(req, res) {
           employeeCode: row.employeeId,
           cells: [],
           candidateKinds: new Map(),
+          candidateShifts: new Map(),
         });
       }
       for (const entry of row.entries) {
@@ -292,6 +293,7 @@ export async function importSchedules(req, res) {
         const kind = resolveImportShiftKind(shift);
         const holidayState = holidayEmployeeStates.get(employeeId);
         holidayState.candidateKinds.set(dateKey, kind);
+        holidayState.candidateShifts.set(dateKey, shift);
         if (kind === 'holiday') {
           informationalDays += 1;
           holidayState.cells.push({ rowNumber: row.rowNumber, day: entry.day, code: entry.code, dateKey });
@@ -313,14 +315,20 @@ export async function importSchedules(req, res) {
     }
 
     const monthDayCount = buildMonthDays(range.start).length;
+    const fullMonthFile = parsed.columns.length === monthDayCount;
+    // 國定假日有沒有休到要看請假的時間：只請幾小時的假不算整天請假（日曆版的 leaveCalendar 只知道哪幾天有假）。
+    // 只有整月檔案才核對有沒有休到，所以其他情況不多查一次假單
+    const leaveIntervals = fullMonthFile && effectiveHolidays.length && importedEmployeeIds.length
+      ? await loadApprovedLeaveIntervals({ employeeIds: importedEmployeeIds, start: range.start, end: range.end })
+      : null;
     // 國定假日核對：只提醒多排的國；整月檔案另外提醒本月國定假日當天上班、卻沒有國可對應的員工（移休後仍沒休到）
     warnings.push(...buildImportHolidayWarnings({
       holidays: effectiveHolidays,
       states: [...holidayEmployeeStates.values()],
       existingSchedules,
       setting,
-      leaveCalendar,
-      fullMonth: parsed.columns.length === monthDayCount,
+      leaveIntervals,
+      fullMonth: fullMonthFile,
     }));
 
     // 檔案的日期欄位不是整個月時，每週一例一休不檢核（缺的日子無從判斷），要明說，不能默默略過

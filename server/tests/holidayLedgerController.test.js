@@ -20,6 +20,7 @@ const mockShiftSchedule = { find: jest.fn() };
 const mockAttendanceSetting = { findOne: jest.fn() };
 const mockDepartment = { findById: jest.fn(), find: jest.fn() };
 const mockLoadApprovedLeaveCalendar = jest.fn();
+const mockLoadApprovedLeaveIntervals = jest.fn();
 
 jest.unstable_mockModule('../src/models/Employee.js', () => ({ default: mockEmployee }));
 jest.unstable_mockModule('../src/models/Holiday.js', () => ({ default: mockHoliday }));
@@ -29,6 +30,7 @@ jest.unstable_mockModule('../src/models/AttendanceSetting.js', () => ({ default:
 jest.unstable_mockModule('../src/models/Department.js', () => ({ default: mockDepartment }));
 jest.unstable_mockModule('../src/services/approvedLeaveCalendarService.js', () => ({
   loadApprovedLeaveCalendar: mockLoadApprovedLeaveCalendar,
+  loadApprovedLeaveIntervals: mockLoadApprovedLeaveIntervals,
   leaveDaysFromCalendar: jest.fn(() => new Set()),
 }));
 jest.unstable_mockModule('../src/services/laborRuleValidationService.js', () => ({
@@ -113,6 +115,7 @@ beforeEach(() => {
   mockAttendanceSetting.findOne.mockReturnValue(chain({ shifts: SHIFTS }));
   mockDepartment.findById.mockReturnValue(chain({ name: '護理部', unitName: '內科病房' }));
   mockLoadApprovedLeaveCalendar.mockResolvedValue(new Map());
+  mockLoadApprovedLeaveIntervals.mockResolvedValue(new Map());
   mockShiftSchedule.find.mockImplementation((query) => {
     const ids = query.employee.$in;
     const rows = [
@@ -208,13 +211,14 @@ describe('GET /api/holiday-ledger content', () => {
     expect(res.body.summary).toMatchObject({ employees: 1, holidays: 2, rested: 1, moved: 1, notTaken: 0, open: 0, extra: 0 });
   });
 
-  it('includes part-time employees like everyone else and flags them', async () => {
+  it('includes part-time employees and flags them, but "unscheduled" is no open item for them', async () => {
     const res = await request(app).get(url(`&employee=${ID.nurseB}`));
     const row = ledgerRows(res.body)[0];
     expect(row.partTime).toBe(true);
     expect(row.items[0]).toMatchObject({ status: 'not_taken', reason: 'worked', needsAction: 'resolve' });
-    expect(row.items[1]).toMatchObject({ status: 'not_taken', reason: 'unscheduled' });
-    expect(row.open).toBe(2);
+    expect(row.items[1]).toMatchObject({ status: 'not_taken', reason: 'unscheduled', needsAction: null });
+    expect(row.notTaken).toBe(2);
+    expect(row.open).toBe(1);
   });
 
   it('status=open keeps only employees with something to handle and recomputes the summary', async () => {
@@ -223,6 +227,79 @@ describe('GET /api/holiday-ledger content', () => {
     expect(idsOf(res.body)).toEqual(sorted(ID.nurseB, ID.otherNurse, ID.admin, ID.otherBoss));
     expect(res.body.summary.employees).toBe(4);
     expect(res.body.summary.open).toBe(ledgerRows(res.body).reduce((sum, row) => sum + row.open, 0));
+  });
+
+  it('filters by every status the dialog offers, with the same names, and treats anything else as everyone', async () => {
+    const all = sorted(ID.admin, ID.boss, ID.nurseA, ID.nurseB, ID.otherNurse, ID.otherBoss);
+
+    const moved = await request(app).get(url('&status=moved'));
+    expect(idsOf(moved.body)).toEqual([ID.nurseA]);
+    expect(moved.body.summary).toMatchObject({ employees: 1, moved: 1, rested: 1 });
+
+    const notTaken = await request(app).get(url('&status=notTaken'));
+    expect(idsOf(notTaken.body)).toEqual(sorted(ID.admin, ID.nurseB, ID.otherNurse, ID.otherBoss));
+    expect(notTaken.body.summary.employees).toBe(4);
+
+    const noExtra = await request(app).get(url('&status=extra'));
+    expect(idsOf(noExtra.body)).toEqual([]);
+    expect(noExtra.body.summary).toMatchObject({ employees: 0, holidays: 2 });
+
+    for (const status of ['all', 'bogus', 'constructor', '']) {
+      const res = await request(app).get(url(`&status=${status}`));
+      expect(idsOf(res.body)).toEqual(all);
+    }
+  });
+
+  it('status=extra keeps the employees that have a 國 beyond the number of holidays', async () => {
+    mockShiftSchedule.find.mockImplementation((query) => chain([
+      rowOf(ID.nurseA, '2026-09-25', 'guo'), rowOf(ID.nurseA, '2026-09-28', 'guo'), rowOf(ID.nurseA, '2026-09-30', 'guo'),
+      rowOf(ID.nurseB, '2026-09-25', 'guo'),
+    ].filter((row) => query.employee.$in.includes(row.employee))));
+    const res = await request(app).get(url('&status=extra'));
+    expect(idsOf(res.body)).toEqual([ID.nurseA]);
+    expect(res.body.summary.extra).toBe(1);
+  });
+
+  it('flags a stored resolution as a conflict once the roster has the 國, and counts it as something to handle', async () => {
+    resolutionStore.push({
+      _id: oid(800),
+      employee: ID.nurseA,
+      holidayDate: utc('2026-09-25'),
+      month: '2026-09',
+      kind: 'paid',
+      resolvedBy: ID.boss,
+      createdBy: ID.admin,
+    });
+
+    const res = await request(app).get(url(`&employee=${ID.nurseA}`));
+
+    const [rested] = ledgerRows(res.body)[0].items;
+    expect(rested).toMatchObject({
+      status: 'rested_on_date',
+      resolutionConflict: true,
+      needsAction: null,
+      resolution: { id: oid(800), kind: 'paid', resolvedByName: '主管', createdByName: '管理員' },
+    });
+    expect(ledgerRows(res.body)[0].open).toBe(1);
+    const open = await request(app).get(url('&status=open'));
+    expect(idsOf(open.body)).toContain(ID.nurseA);
+  });
+
+  it('asks the employee data for the role and leaves out administrators and supervisors who have never been on a roster', async () => {
+    const withRoles = ALL_EMPLOYEES.map((employee) => (
+      [ID.admin, ID.otherBoss].includes(employee._id) ? { ...employee, role: employee._id === ID.admin ? 'admin' : 'supervisor' } : employee
+    ));
+    const query = chain(withRoles);
+    mockEmployee.find.mockImplementation((filter = {}) => (filter._id?.$in ? chain(withRoles.filter((employee) => filter._id.$in.includes(employee._id))) : query));
+
+    const res = await request(app).get(url());
+
+    expect(query.select).toHaveBeenCalledWith(expect.stringMatching(/(^| )role( |$)/));
+    expect(idsOf(res.body)).toEqual(sorted(ID.boss, ID.nurseA, ID.nurseB, ID.otherNurse));
+    expect(res.body.summary.excluded.notScheduled).toBe(2);
+    // 前面幾個月都沒有班表才不列入：只查有可能被跳過的兩個帳號
+    const lookup = mockShiftSchedule.find.mock.calls.at(-1)[0];
+    expect([...lookup.employee.$in].sort()).toEqual(sorted(ID.admin, ID.otherBoss));
   });
 
   it('supports a month range and caps it at 12 months', async () => {
@@ -284,6 +361,22 @@ describe('POST /api/holiday-ledger/resolutions', () => {
     expect(update.$set).toMatchObject({ kind: 'compensatory_leave', compensatoryHours: 8, month: '2026-09', resolvedBy: ID.boss, holidayName: '中秋節' });
     expect(update.$unset).toEqual({ restedDate: '' });
     expect(options).toMatchObject({ upsert: true, new: true });
+  });
+
+  it('keeps the first author: createdBy is only set when the record is created, resolvedBy is always the latest editor', async () => {
+    loginAs('supervisor', ID.boss);
+    await request(app).post('/api/holiday-ledger/resolutions').send(body());
+    loginAs('admin', ID.admin);
+    await request(app).post('/api/holiday-ledger/resolutions').send(body({ kind: 'paid' }));
+
+    const [[, first], [, second]] = HolidayRestResolution.findOneAndUpdate.mock.calls;
+    expect(first.$set.resolvedBy).toBe(ID.boss);
+    expect(second.$set.resolvedBy).toBe(ID.admin);
+    // 寫在 $setOnInsert：資料庫只有在新增時才寫入，第二個人修改時不會蓋掉第一個人
+    for (const [update, actor] of [[first, ID.boss], [second, ID.admin]]) {
+      expect(update.$setOnInsert).toEqual({ createdBy: actor });
+      expect(update.$set).not.toHaveProperty('createdBy');
+    }
   });
 
   it('accepts custom hours, paid, rested later with a date, and waived with a note', async () => {
@@ -369,6 +462,36 @@ describe('POST /api/holiday-ledger/resolutions', () => {
 
 describe('DELETE /api/holiday-ledger/resolutions/:id', () => {
   const stored = (employee) => ({ _id: oid(800), employee, holidayDate: utc('2026-09-25'), kind: 'paid', month: '2026-09' });
+  let infoSpy;
+
+  beforeEach(() => {
+    infoSpy = jest.spyOn(console, 'info').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    infoSpy.mockRestore();
+  });
+
+  it('writes one audit line with the ids and the holiday date only, and none when nothing was deleted', async () => {
+    resolutionStore.push({ ...stored(ID.nurseA), note: '員工要求折發', holidayName: '中秋節', resolvedBy: ID.boss });
+    loginAs('supervisor', ID.boss);
+    expect((await request(app).delete(`/api/holiday-ledger/resolutions/${oid(800)}`)).status).toBe(200);
+
+    expect(infoSpy).toHaveBeenCalledTimes(1);
+    expect(infoSpy).toHaveBeenCalledWith('Holiday ledger resolution deleted', {
+      actorId: ID.boss,
+      employeeId: ID.nurseA,
+      holidayDate: '2026-09-25',
+    });
+    const logged = JSON.stringify(infoSpy.mock.calls);
+    for (const personal of ['員工要求折發', '護理甲', '主管']) expect(logged).not.toContain(personal);
+
+    infoSpy.mockClear();
+    loginAs('employee', ID.nurseA);
+    expect((await request(app).delete(`/api/holiday-ledger/resolutions/${oid(800)}`)).status).toBe(403);
+    expect((await request(app).delete(`/api/holiday-ledger/resolutions/${oid(801)}`)).status).toBe(403);
+    expect(infoSpy).not.toHaveBeenCalled();
+  });
 
   it('deletes within the permission scope', async () => {
     resolutionStore.push(stored(ID.nurseA));
@@ -427,6 +550,44 @@ describe('GET /api/holiday-ledger/export', () => {
     const names = [];
     sheet.eachRow((row, number) => { if (number > 3) names.push(row.getCell(2).value); });
     expect(names.sort()).toEqual(['護理乙', '護理甲'].sort());
+  });
+
+  async function exportedNames(query) {
+    const res = await download(query);
+    expect(res.status).toBe(200);
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(res.body);
+    const sheet = workbook.worksheets[0];
+    const names = [];
+    sheet.eachRow((row, number) => { if (number > 3) names.push(row.getCell(2).value); });
+    exportedTitle = sheet.getRow(1).getCell(1).value;
+    return names.sort();
+  }
+  let exportedTitle = '';
+
+  it('exports only what the dialog is filtered to: status and search', async () => {
+    loginAs('supervisor', ID.boss);
+    // 護理甲都休了；護理乙（兼職）國定假日上班沒休，有一個待處理
+    expect(await exportedNames('?month=2026-09')).toEqual(['護理乙', '護理甲'].sort());
+    expect(await exportedNames('?month=2026-09&status=open')).toEqual(['護理乙']);
+    expect(await exportedNames('?month=2026-09&status=moved')).toEqual(['護理甲']);
+    expect(await exportedNames('?month=2026-09&status=notTaken')).toEqual(['護理乙']);
+    expect(await exportedNames('?month=2026-09&status=extra')).toEqual([]);
+    expect(await exportedNames('?month=2026-09&search=護理甲')).toEqual(['護理甲']);
+    expect(await exportedNames('?month=2026-09&status=open&search=護理甲')).toEqual([]);
+    expect(await exportedNames('?month=2026-09&status=bogus')).toEqual(['護理乙', '護理甲'].sort());
+  });
+
+  it('says in the title that a filtered export is not the full list', async () => {
+    loginAs('supervisor', ID.boss);
+    await exportedNames('?month=2026-09');
+    expect(exportedTitle).toBe('2026年09月 國定假日休假紀錄');
+    await exportedNames('?month=2026-09&status=open');
+    expect(exportedTitle).toBe('2026年09月 國定假日休假紀錄（僅列出待處理）');
+    await exportedNames('?month=2026-09&status=moved&search=護理甲');
+    expect(exportedTitle).toBe('2026年09月 國定假日休假紀錄（僅列出移休、搜尋「護理甲」）');
+    await exportedNames('?month=2026-09&status=bogus&search=%20%20');
+    expect(exportedTitle).toBe('2026年09月 國定假日休假紀錄');
   });
 
   it('refuses employees and bad months', async () => {

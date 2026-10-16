@@ -140,6 +140,8 @@ async function validateEmployeeSchedule(employee, month, shiftMap = new Map()) {
 
 /**
  * 驗證指定月份所有員工的排班完整性
+ * 兼職人員（Employee.partTime）只是不套用排班「規範」檢核（一例一休、工時、班間隔，見 laborRuleValidationService）；
+ * 這裡的「每天都有班表」完整性檢查照常計入，沒有排滿的兼職人員一樣算未完成。
  * @param {string} month - YYYY-MM 格式
  * @param {Object} options - 選項
  * @param {string} options.department - 部門ID (可選)

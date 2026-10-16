@@ -90,6 +90,20 @@ describe('evaluateRequest (the hint under the form)', () => {
     expect(evaluateRequest({ ...annual, status: 'unconfigured' }, [], 100)).toMatchObject({ exceeded: false })
   })
 
+  // 伺服器對特休超過剩餘時數一律回 400（不看超額處理的設定），提示不能說「仍可送出」
+  it('always treats 特休 over the remaining hours as blocking, whatever the stored over-quota setting says', () => {
+    const base = { key: 'annual', name: '特休', source: 'employee', quotaHours: 80, usedHours: 72, remainingHours: 8, availableHours: 8 }
+    for (const enforcement of ['warn', 'none', 'block', undefined]) {
+      const result = evaluateRequest(item({ ...base, enforcement }), [], 9)
+      expect(result).toMatchObject({ level: 'error', exceeded: true, blocking: true })
+      expect(result.text).toContain('無法送出')
+      expect(result.text).not.toContain('仍可送出')
+      expect(evaluateRequest(item({ ...base, enforcement }), [], 8).exceeded).toBe(false)
+    }
+    // 其他假別的 warn 仍然只是警告
+    expect(evaluateRequest(item({ enforcement: 'warn', usedHours: 44 }), [], 80)).toMatchObject({ level: 'warning', blocking: false })
+  })
+
   it('compares per-event types with the per-request ceiling and has no remaining to show', () => {
     const marriage = item({ key: 'marriage', name: '婚假', period: 'event', quotaHours: 64, remainingHours: null, availableHours: null })
     expect(evaluateRequest(marriage, [], 64).exceeded).toBe(false)

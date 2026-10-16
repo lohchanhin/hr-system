@@ -234,8 +234,9 @@ const employeeSchema = new Schema(
       // 搬移完成前讀取端也會用 utils/annualLeaveHours.js 解讀舊的天數欄位，兩邊結果一致
       totalHours: { type: Number, min: 0 },
       usedHours: { type: Number, min: 0 },
-      // 時數的來源：migrated-days 由舊的天數乘 8 換算、migrated-hours 舊欄位的數字大於 40（不可能是天數）原樣視為小時
-      // （人資應再確認一次）、entered 人資在系統內直接輸入或確認過
+      // 時數的來源：migrated-days 由舊的天數乘 8 換算、migrated-hours 待人資確認（整份資料有數字大於 40，不可能是天數，
+      // 視為客戶把小時填在天數欄；或是已乘 8 換算但整份資料顯示可能其實是小時，畫面用凍結的舊天數欄分辨兩種）、
+      // entered 人資在系統內直接輸入或確認過
       unitSource: { type: String, enum: ['migrated-days', 'migrated-hours', 'entered'] },
       // 以下兩個舊欄位（天）搬移後凍結，只供稽核與回復；請用 totalHours / usedHours
       totalDays: { type: Number, default: 0 },

@@ -138,7 +138,7 @@
 ## 17. 特休欄位（annualLeave）的單位是小時
 
 - `annualLeave.totalHours`：年度特休總時數；`annualLeave.usedHours`：已使用時數（核准特休時自動扣減，撤回或駁回時退回）。1 天 = 8 小時。
-- `annualLeave.unitSource`：`migrated-days`（舊資料由天數乘 8 換算）、`migrated-hours`（舊資料的數字大於 40，視為本來就是小時，待人資確認）、`entered`（人資輸入或確認過）。
+- `annualLeave.unitSource`：`migrated-days`（舊資料由天數乘 8 換算）、`migrated-hours`（待人資確認：整份資料裡有數字大於 40，視為客戶把小時填在天數欄；或是已經依天數乘 8 換算、但同一份資料顯示客戶可能填的是小時，員工資料頁會出現確認提示，核對原本的天數數字）、`entered`（人資輸入或確認過）。單位依整份資料判斷，不是逐位員工判斷。
 - 舊欄位 `annualLeave.totalDays`、`annualLeave.usedDays` 在搬移後保留但不再使用；API 回傳不含這兩欄，寫入時送來的天數會乘 8 換成小時。
 - 其他欄位：`year`、`expiryDate`、`accumulatedLeave`（積假）、`compensatoryHours`（補休時數）、`notes`。
 - 搬移規則與各假別額度見 `docs/leave-hours-and-balances.md`。

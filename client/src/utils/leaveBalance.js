@@ -86,7 +86,8 @@ export function evaluateRequest(item, items, requestedHours) {
   const requested = toNumber(requestedHours)
   if (!item || !(requested > 0)) return null
   const name = item.name
-  const enforcement = item.enforcement || 'none'
+  // 特休超過剩餘時數一律無法送出（伺服器不看超額處理的設定），設定值是 warn 的舊資料也一樣顯示成無法送出
+  const enforcement = item.source === 'employee' ? 'block' : (item.enforcement || 'none')
   const reasons = []
   let remainingAfter = null
 

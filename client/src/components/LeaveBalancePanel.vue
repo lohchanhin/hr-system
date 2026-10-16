@@ -58,11 +58,15 @@
       <el-table-column label="已使用" min-width="120">
         <template #default="{ row }">
           {{ hoursText(row.usedHours) }}
-          <div v-for="part in row.includes || []" :key="part.key" class="row-note">含{{ part.name }} {{ hoursText(part.hours) }}</div>
+          <!-- 已使用只含已核准的：併入的子假別（家庭照顧假…）簽核中的部分放在「簽核中」那一欄，不然會被當成已使用的一部分 -->
+          <div v-for="part in approvedIncludes(row)" :key="part.key" class="row-note" data-test="leave-balance-includes">含{{ part.name }} {{ hoursText(part.hours) }}</div>
         </template>
       </el-table-column>
       <el-table-column v-if="!compact" label="簽核中" min-width="90">
-        <template #default="{ row }">{{ row.pendingHours > 0 ? hoursText(row.pendingHours) : '—' }}</template>
+        <template #default="{ row }">
+          {{ row.pendingHours > 0 ? hoursText(row.pendingHours) : '—' }}
+          <div v-for="part in pendingIncludes(row)" :key="part.key" class="row-note" data-test="leave-balance-includes-pending">含{{ part.name }} {{ hoursText(part.hours) }}</div>
+        </template>
       </el-table-column>
       <el-table-column label="剩餘" min-width="150">
         <template #default="{ row }">
@@ -158,6 +162,16 @@ function remainingText(row) {
   if (row.remainingHours < 0) return formatHoursWithDays(0)
   return formatHoursWithDays(row.remainingHours)
 }
+
+// 併入這個假別的子假別（含家庭照顧假 N 小時）：已核准與簽核中分開帶（approvedHours / pendingHours）；
+// 舊版伺服器只有合計（hours），照舊當成已使用
+const includesOf = (row) => (Array.isArray(row.includes) ? row.includes : [])
+const approvedIncludes = (row) => includesOf(row)
+  .map(part => ({ key: part.key, name: part.name, hours: part.approvedHours !== undefined ? Number(part.approvedHours) : Number(part.hours) }))
+  .filter(part => part.hours > 0)
+const pendingIncludes = (row) => includesOf(row)
+  .map(part => ({ key: part.key, name: part.name, hours: Number(part.pendingHours) }))
+  .filter(part => part.hours > 0)
 
 const overText = (row) => (row.period === 'event' ? '' : describeOver(row))
 const statusLabel = (row) => STATUS_LABELS[row.status] || ''

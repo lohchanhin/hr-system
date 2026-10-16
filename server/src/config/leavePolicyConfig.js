@@ -8,7 +8,8 @@ import { LEAVE_DAY_EQUIVALENT_HOURS } from '../utils/leaveHours.js'
 
 export const LEAVE_POLICY_VERSION = 1
 
-// 特休的各種寫法：與 leaveRequestDays.isAnnualLeaveType（扣減特休）使用同一份，顯示的餘額與實際扣減的假別不會分岔
+// 特休的各種寫法：與 leaveRequestDays.isAnnualLeaveType（扣減特休）、salaryConfig.ANNUAL_LEAVE_TYPES（特休統計報表、薪資對照表）使用同一份名稱，
+// 顯示的餘額、實際扣減的假別與特休報表不會分岔（salaryConfigLeavePay.test.js 會比對兩份清單）
 export const ANNUAL_LEAVE_TYPE_ALIASES = ['特休', '特休假', '特別休假']
 
 // 舊資料「年度特休總天數」的數字大於這個值就不可能是天數（法定上限 30 天，公司再給也到不了 40 天），視為已經是小時

@@ -903,15 +903,19 @@ async function fetchLeaveHoursHint(startValue, endValue, { startType, endType } 
   return body && typeof body === 'object' && !Array.isArray(body) ? body : null
 }
 
+// 時數自動帶入、每日上限的說明、剩餘時數提示只用在「請假表單」（表單性質為請假）：
+// 客戶自建的加班／補休表單即使有「時數」欄位，也維持一般的數字欄位（加班一天可以超過 8 小時，也不會被自動帶入蓋掉）
+const applyIsLeaveForm = computed(() => isLeaveForm(formTemplates.value.find(t => t._id === applyState.formId)))
+const applyLeaveFields = computed(() => (applyIsLeaveForm.value ? fieldList.value : []))
 const applyAutofill = useLeaveHoursAutofill({
-  fields: fieldList,
+  fields: applyLeaveFields,
   getFormData: () => applyState.formData,
   setValue: (fieldId, value) => { applyState.formData = { ...applyState.formData, [fieldId]: value } },
   getPolicy: leaveHoursPolicy,
   fetchHint: fetchLeaveHoursHint,
 })
-const applyLeaveHoursConfig = computed(() => ({ max: applyAutofill.maxHours.value, ...leaveHoursPolicy() }))
-const applyLeaveContext = computed(() => leaveContextOf(fieldList.value, applyState.formData))
+const applyLeaveHoursConfig = computed(() => ({ enabled: applyIsLeaveForm.value, max: applyAutofill.maxHours.value, ...leaveHoursPolicy() }))
+const applyLeaveContext = computed(() => (applyIsLeaveForm.value ? leaveContextOf(fieldList.value, applyState.formData) : null))
 
 const workflowSteps = ref([])
 const workflowWarning = ref('')
@@ -1466,7 +1470,7 @@ const canCancelMine = (row) => (
   row?.status === 'returned' ||
   (row?.status === 'approved' && isLeaveForm(formOfRow(row)))
 )
-// 管理員可在「我已簽核」撤回已核可的請假單（特休天數會返還）
+// 管理員可在「我已簽核」撤回已核可的請假單（特休時數會返還）
 const canCancelApprovedRow = (row) => (
   authStore.role === 'admin' && row?.status === 'approved' && isLeaveForm(formOfRow(row))
 )
@@ -1494,7 +1498,7 @@ async function runMyRequestAction(row, action, refresh = () => fetchMyList()) {
   return undefined
 }
 
-// 已核可的單撤回成功時，把伺服器記下的結果（例如返還幾天特休）告訴使用者
+// 已核可的單撤回成功時，把伺服器記下的結果（例如返還幾小時特休）告訴使用者
 function announceApprovedCancel(result) {
   const logs = Array.isArray(result?.logs) ? result.logs : []
   const message = String(logs[logs.length - 1]?.message || '').trim()
@@ -1504,7 +1508,7 @@ function announceApprovedCancel(result) {
 async function cancelMyRequest(row) {
   const wasApproved = row?.status === 'approved'
   const question = wasApproved
-    ? '這筆請假已經核可，確定要撤回嗎？若是特休，已扣除的天數會一併返還。'
+    ? '這筆請假已經核可，確定要撤回嗎？若是特休，已扣除的特休時數會一併返還。'
     : '確定撤回這筆申請？'
   if (typeof window !== 'undefined' && !window.confirm(question)) return
   const result = await runMyRequestAction(row, 'cancel')
@@ -1513,7 +1517,7 @@ async function cancelMyRequest(row) {
 
 // 管理員從「我已簽核」撤回已核可的請假單：成功後歷史與我的申請都重新載入
 async function cancelApprovedFromHistory(row) {
-  if (typeof window !== 'undefined' && !window.confirm('這筆請假已經核可，確定要撤回嗎？若是特休，已扣除的天數會一併返還。')) return
+  if (typeof window !== 'undefined' && !window.confirm('這筆請假已經核可，確定要撤回嗎？若是特休，已扣除的特休時數會一併返還。')) return
   const result = await runMyRequestAction(row, 'cancel', () => Promise.all([fetchHistory(), fetchMyList()]))
   if (result) announceApprovedCancel(result)
 }
@@ -1524,6 +1528,7 @@ const editDlg = reactive({
   loading: false,
   saving: false,
   requestId: '',
+  leaveForm: false, // 這張單是不是請假表單（時數自動帶入與提示只用在請假表單）
   fields: [],
   formData: {},
   files: {},
@@ -1534,18 +1539,19 @@ const editDlg = reactive({
 })
 let editSeq = 0
 
-// 修改並重新送出：同樣自動帶入時數與提示是否超額
+// 修改並重新送出：同樣自動帶入時數與提示是否超額（同樣只限請假表單）
 const editAutofill = useLeaveHoursAutofill({
-  fields: computed(() => editDlg.fields),
+  fields: computed(() => (editDlg.leaveForm ? editDlg.fields : [])),
   getFormData: () => editDlg.formData,
   setValue: (fieldId, value) => { editDlg.formData = { ...editDlg.formData, [fieldId]: value } },
   getPolicy: leaveHoursPolicy,
   fetchHint: fetchLeaveHoursHint,
 })
-const editLeaveHoursConfig = computed(() => ({ max: editAutofill.maxHours.value, ...leaveHoursPolicy() }))
-const editLeaveContext = computed(() => leaveContextOf(editDlg.fields, editDlg.formData))
+const editLeaveHoursConfig = computed(() => ({ enabled: editDlg.leaveForm, max: editAutofill.maxHours.value, ...leaveHoursPolicy() }))
+const editLeaveContext = computed(() => (editDlg.leaveForm ? leaveContextOf(editDlg.fields, editDlg.formData) : null))
 
 function clearEditDialog() {
+  editDlg.leaveForm = false
   editDlg.fields = []
   editDlg.formData = {}
   editDlg.files = {}
@@ -1579,6 +1585,8 @@ async function resubmitMyRequest(row) {
     const fields = (doc?.form?.fields || [])
       .filter(isActiveField)
       .sort((a, b) => (a.order || 0) - (b.order || 0))
+    // 表單性質看單據帶回來的表單，固定代號（default_key）看表單清單裡的樣板
+    editDlg.leaveForm = isLeaveForm({ ...formOfRow(row), ...(doc?.form && typeof doc.form === 'object' ? doc.form : {}) })
     editDlg.fields = fields
     editDlg.formData = prefillFormData(fields, doc.form_data)
     editDlg.kept = {}

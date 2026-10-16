@@ -14,7 +14,7 @@ import {
 } from './employeeController.js'
 import { INACTIVE_EMPLOYMENT_STATUSES } from '../services/approverEligibility.js'
 import { splitSignTagText } from '../utils/signTags.js'
-import { interpretLegacyAnnualLeave } from '../utils/annualLeaveHours.js'
+import { exceedsLegacyDaysMax, interpretLegacyAnnualLeave } from '../utils/annualLeaveHours.js'
 import { LEGACY_ANNUAL_LEAVE_DAYS_MAX } from '../config/leavePolicyConfig.js'
 
 const REQUIRED_MAPPING_KEYS = ['employeeNo', 'name', 'email']
@@ -822,13 +822,21 @@ function convertPensionSelfRate(normalized, rowNumber, warnings) {
 
 // 特休的單位是「小時」。範本新增了「年度特休總時數／已使用時數」欄位，舊版檔案的「年度特休總天數／已使用天數」仍可匯入：
 // - 有填時數欄位就以時數為準（舊的天數欄位忽略）。
-// - 只有舊的天數欄位：數字都在 LEGACY_ANNUAL_LEAVE_DAYS_MAX 以內視為天數、乘 8 換成小時；
-//   任何一個數字超過它（法定特休最多 30 天，不可能是天數，例如 170、219）就原樣當成小時，並提醒人資確認。
-function resolveAnnualLeaveUnits(normalized, rowNumber, warnings) {
+// - 只有舊的天數欄位：單位以「整份檔案」判斷，不是逐列猜。檔案裡只要有任何一列的數字超過 LEGACY_ANNUAL_LEAVE_DAYS_MAX
+//   （法定特休最多 30 天，不可能是天數，例如 170、219），客戶就是把小時填在天數欄位，整份檔案的天數欄位都原樣當成小時
+//   （24、32、40 也是小時，不是 3、4、5 天），並提醒人資確認；整份檔案都沒有超過的數字才視為天數、乘 8 換成小時。
+const hasAnnualLeaveHoursColumns = leave => leave.totalHours !== undefined || leave.usedHours !== undefined
+const hasAnnualLeaveDaysColumns = leave => leave.totalDays !== undefined || leave.usedDays !== undefined
+
+function isAnnualLeaveDaysOnly(leave) {
+  return Boolean(leave) && typeof leave === 'object' && !hasAnnualLeaveHoursColumns(leave) && hasAnnualLeaveDaysColumns(leave)
+}
+
+function resolveAnnualLeaveUnits(normalized, rowNumber, warnings, { hoursConvention = false, typedRowNumbers = [] } = {}) {
   const leave = normalized.annualLeave
   if (!leave || typeof leave !== 'object') return
-  const hasHours = leave.totalHours !== undefined || leave.usedHours !== undefined
-  const hasDays = leave.totalDays !== undefined || leave.usedDays !== undefined
+  const hasHours = hasAnnualLeaveHoursColumns(leave)
+  const hasDays = hasAnnualLeaveDaysColumns(leave)
   if (hasHours) {
     if (hasDays) {
       warnings.push(`第 ${rowNumber} 列同時填了「年度特休總時數／已使用時數」與舊的「年度特休總天數／已使用天數」，以時數為準`)
@@ -839,14 +847,22 @@ function resolveAnnualLeaveUnits(normalized, rowNumber, warnings) {
     return
   }
   if (!hasDays) return
-  const converted = interpretLegacyAnnualLeave(leave.totalDays, leave.usedDays)
+  const converted = interpretLegacyAnnualLeave(leave.totalDays, leave.usedDays, { hoursConvention })
   if (converted.unitSource === 'migrated-hours') {
-    const [label, value] = Number(leave.totalDays) > LEGACY_ANNUAL_LEAVE_DAYS_MAX
-      ? ['年度特休總天數', leave.totalDays]
-      : ['已使用天數', leave.usedDays]
-    warnings.push(
-      `第 ${rowNumber} 列「${label}」的值 ${value} 超過 ${LEGACY_ANNUAL_LEAVE_DAYS_MAX}（特休天數不可能這麼多），已視為 ${value} 小時，請確認`
-    )
+    const exceeds = exceedsLegacyDaysMax(leave.totalDays, leave.usedDays)
+    // 說明哪一個欄位：超過 40 的那一個；跟隨整份檔案的列則是有填數字的那一個（總天數優先）
+    const useTotal = exceeds ? Number(leave.totalDays) > LEGACY_ANNUAL_LEAVE_DAYS_MAX : Number(leave.totalDays) > 0
+    const [label, value] = useTotal ? ['年度特休總天數', leave.totalDays] : ['已使用天數', leave.usedDays]
+    if (exceeds) {
+      warnings.push(
+        `第 ${rowNumber} 列「${label}」的值 ${value} 超過 ${LEGACY_ANNUAL_LEAVE_DAYS_MAX}（特休天數不可能這麼多），已視為 ${value} 小時，請確認`
+      )
+    } else {
+      warnings.push(
+        `第 ${rowNumber} 列「${label}」的值 ${value}：這份檔案的第 ${typedRowNumbers.join('、')} 列超過 ${LEGACY_ANNUAL_LEAVE_DAYS_MAX}，` +
+        `整份檔案視為把小時填在天數欄位，已視為 ${value} 小時（不乘 8），請確認`
+      )
+    }
     leave.unitSource = 'migrated-hours'
   } else {
     leave.unitConfirmed = true
@@ -855,6 +871,25 @@ function resolveAnnualLeaveUnits(normalized, rowNumber, warnings) {
   if (leave.usedDays !== undefined) leave.usedHours = converted.usedHours
   delete leave.totalDays
   delete leave.usedDays
+}
+
+// 整份檔案一起判斷特休的單位（預覽與正式匯入走同一段）：先看有沒有超過 40 的列，再逐列換算；有判定為小時時說明各有幾列
+function resolveAnnualLeaveUnitsForFile(rows, warnings) {
+  const dayRows = rows.filter(row => isAnnualLeaveDaysOnly(row.normalized.annualLeave))
+  const typedRowNumbers = dayRows
+    .filter(row => exceedsLegacyDaysMax(row.normalized.annualLeave.totalDays, row.normalized.annualLeave.usedDays))
+    .map(row => row.rowNumber)
+  const hoursConvention = typedRowNumbers.length > 0
+  rows.forEach(row => {
+    resolveAnnualLeaveUnits(row.normalized, row.rowNumber, warnings, { hoursConvention, typedRowNumbers })
+  })
+  if (hoursConvention) {
+    const asHours = dayRows.filter(row => row.normalized.annualLeave.unitSource === 'migrated-hours').length
+    warnings.push(
+      `特休單位：這份檔案有 ${typedRowNumbers.length} 列的天數欄位超過 ${LEGACY_ANNUAL_LEAVE_DAYS_MAX}（第 ${typedRowNumbers.join('、')} 列），` +
+      `整份檔案視為把小時填在天數欄位：使用天數欄位的 ${dayRows.length} 列中，${asHours} 列依小時讀取（不乘 8）、${dayRows.length - asHours} 列依天數乘 8 換算（數字都是 0 的列），請逐列確認`
+    )
+  }
 }
 
 function isBlankImportValue(value) {
@@ -1202,7 +1237,6 @@ export async function bulkImportEmployees(req, res) {
     checkEmploymentStatus(normalized, index, warnings)
     normalizeSignSettings(normalized, index, warnings)
     convertPensionSelfRate(normalized, index, warnings)
-    resolveAnnualLeaveUnits(normalized, index, warnings)
 
     parsedRows.push({
       rowNumber: index,
@@ -1219,6 +1253,9 @@ export async function bulkImportEmployees(req, res) {
     res.status(400).json({ message: '匯入檔案沒有資料', errors: [] })
     return
   }
+
+  // 特休的單位以整份檔案判斷（要等所有列都讀完才知道有沒有人超過 40）
+  resolveAnnualLeaveUnitsForFile(parsedRows, warnings)
 
   const rowByNumber = new Map(parsedRows.map(row => [row.rowNumber, row]))
   const referenceUsage = collectReferenceUsage(parsedRows)

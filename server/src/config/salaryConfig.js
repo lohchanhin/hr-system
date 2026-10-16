@@ -17,9 +17,11 @@ export const WORK_HOURS_CONFIG = {
   // DAYS_PER_MONTH: 22, // 22 working days
 };
 
-// 特休的各種名稱：舊資料與手動輸入的「特休」，以及字典項目（C12）的「特休假」。
-// 特休相關的判斷（薪資不扣款、特休報表）都用這個常數，兩種名稱視為同一種假。
-export const ANNUAL_LEAVE_TYPES = ['特休', '特休假'];
+// 特休的各種名稱：舊資料與手動輸入的「特休」，字典項目（C12）的「特休假」，以及「特別休假」（法規用語）。
+// 特休相關的判斷（薪資不扣款、特休報表）都用這個常數，三種名稱視為同一種假；
+// 與扣減特休、假別餘額使用的名稱清單（config/leavePolicyConfig 的 ANNUAL_LEAVE_TYPE_ALIASES、services/leaveRequestDays.isAnnualLeaveType）一致，
+// 不然「特別休假」會被扣特休、算進餘額，卻不在特休統計報表裡。
+export const ANNUAL_LEAVE_TYPES = ['特休', '特休假', '特別休假'];
 
 // 假別薪資對照表：全系統唯一的來源，請假扣款與薪資報表的有薪/無薪判斷都查這張表。
 // payRate：1 = 全薪（不扣款）、0.5 = 半薪（扣一半）、0 = 無薪（全額扣款）。

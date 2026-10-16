@@ -18,7 +18,9 @@ const holidayRestResolutionSchema = new mongoose.Schema({
   // 只有 kind = rested_later（已另行補休）才有：實際補休的日期
   restedDate: { type: Date },
   note: { type: String, trim: true, maxlength: 500, default: '' },
+  // 最後一次登記（修改）的人；第一次登記的人另外記在 createdBy，之後被別人修改也不會被蓋掉（登記之前建立的舊資料沒有 createdBy）
   resolvedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'Employee' },
+  createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'Employee' },
 }, { timestamps: true });
 
 holidayRestResolutionSchema.index({ employee: 1, holidayDate: 1 }, { unique: true });

@@ -40,7 +40,7 @@
     <p class="ledger-help">
       班表上的「國」排在假日當天是<strong>當日休</strong>，排在當月其他日期是<strong>移休</strong>（顯示是哪一天）；
       本月沒有對應的「國」就是<strong>未休</strong>。「國」與假日依日期先後配對，總數一定正確，個別日期僅供參考。
-      公司統一挪移假日請到「班別設定 &gt; 國定假日挪移」。
+      公司統一挪移假日請到「班別設定 &gt; 國定假日挪移」。匯出 Excel 會依目前的篩選與搜尋匯出。
     </p>
 
     <div v-if="ledger?.holidays?.length" class="ledger-holidays" data-test="holiday-ledger-holidays">
@@ -120,7 +120,14 @@
                 {{ cellOf(row, holiday).text }}
               </el-tag>
             </el-tooltip>
-            <div v-if="canResolve && canRecordResolution(itemOf(row, holiday))" class="ledger-cell__action">
+            <div
+              v-if="itemOf(row, holiday).resolutionConflict"
+              class="ledger-cell__conflict"
+              :data-test="`ledger-conflict-${row.employeeId}-${holiday.id}`"
+            >
+              {{ LEDGER_CONFLICT_TEXT }}
+            </div>
+            <div v-if="showResolveButton(row, holiday)" class="ledger-cell__action">
               <el-button
                 link
                 type="primary"
@@ -128,11 +135,11 @@
                 :data-test="`ledger-resolve-${row.employeeId}-${holiday.id}`"
                 @click="openResolve(row, itemOf(row, holiday))"
               >
-                {{ itemOf(row, holiday).resolution ? '修改' : '登記處理' }}
+                {{ resolveButtonLabel(itemOf(row, holiday)) }}
               </el-button>
             </div>
-            <div v-if="itemOf(row, holiday).resolution?.resolvedByName" class="ledger-cell__note">
-              {{ itemOf(row, holiday).resolution.resolvedByName }} 登記
+            <div v-if="describeResolutionAuthor(itemOf(row, holiday).resolution)" class="ledger-cell__note">
+              {{ describeResolutionAuthor(itemOf(row, holiday).resolution) }}
             </div>
           </template>
         </template>
@@ -198,17 +205,22 @@ import { computed, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Download } from '@element-plus/icons-vue'
 import { apiFetch } from '../../api'
+import { useAuthStore } from '../../stores/auth'
 import { translateServerMessage } from '../../utils/approvalErrors'
 import {
+  LEDGER_CONFLICT_TEXT,
   LEDGER_FILTERS,
   RESOLUTION_OPTIONS,
   buildLedgerQuery,
-  canRecordResolution,
+  canShowResolveButton,
   countLedgerFilters,
   describeHolidayHeader,
   describeLedgerCell,
+  describeResolutionAuthor,
   formatMonthDay,
+  getViewerEmployeeId,
   ledgerRowMatchesFilter,
+  resolveButtonLabel,
 } from '../../utils/holidayLedger'
 
 defineOptions({ name: 'HolidayLedgerDialog' })
@@ -222,6 +234,10 @@ const props = defineProps({
   appendTo: { type: [String, Object], default: undefined },
 })
 const emit = defineEmits(['update:modelValue'])
+
+const authStore = useAuthStore()
+// 登入者自己的員工 _id：主管不能替自己登記處理方式（伺服器會拒絕），自己那一列不顯示按鈕
+const viewerId = ref(getViewerEmployeeId())
 
 const month = ref(props.scope?.month || '')
 const search = ref('')
@@ -260,6 +276,13 @@ const form = reactive({
 
 const itemOf = (row, holiday) => row.items.find((item) => item.holidayId === holiday.id)
 const cellOf = (row, holiday) => describeLedgerCell(itemOf(row, holiday))
+const showResolveButton = (row, holiday) => canShowResolveButton({
+  canResolve: props.canResolve,
+  role: authStore.role,
+  viewerId: viewerId.value,
+  row,
+  item: itemOf(row, holiday),
+})
 
 const LEDGER_ERROR_MESSAGES = [
   [/too many employees/i, '員工人數太多，請先在排班頁選擇部門或單位縮小範圍'],
@@ -309,6 +332,7 @@ watch(
     month.value = props.scope?.month || month.value
     search.value = ''
     filter.value = 'all'
+    viewerId.value = getViewerEmployeeId()
     loadLedger()
   },
   { immediate: true },
@@ -399,7 +423,8 @@ async function exportLedger() {
   if (exporting.value || !month.value) return
   exporting.value = true
   try {
-    const query = buildLedgerQuery({ ...props.scope, month: month.value })
+    // 匯出的就是畫面上看到的那些員工：帶目前的篩選與搜尋文字
+    const query = buildLedgerQuery({ ...props.scope, month: month.value, status: filter.value, search: search.value })
     const res = await apiFetch(`/api/holiday-ledger/export?${query}`)
     if (!res.ok) {
       ElMessage.error(await failureMessage(res, '匯出失敗'))
@@ -509,6 +534,13 @@ async function exportLedger() {
 .ledger-cell__note {
   color: var(--el-text-color-secondary);
   font-size: 12px;
+}
+
+.ledger-cell__conflict {
+  margin-top: 2px;
+  color: var(--el-color-warning);
+  font-size: 12px;
+  line-height: 1.4;
 }
 
 .ledger-none {

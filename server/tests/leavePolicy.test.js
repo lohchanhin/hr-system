@@ -136,6 +136,17 @@ describe('normalizeLeavePolicy (merge stored settings over the defaults by key)'
     expect(typeOf(policy, 'annual').aliases).toEqual(['特休假', '特別休假'])
   })
 
+  // 特休超過剩餘時數一律擋下（送出時不看這個設定），所以設定值也不能是 warn / none
+  it('keeps the over-quota handling of 特休 at block whatever was stored, and leaves the other types as stored', () => {
+    const policy = service.normalizeLeavePolicy({
+      types: [{ key: 'annual', enforcement: 'warn' }, { key: 'personal', enforcement: 'block' }, { key: 'sick', enforcement: 'none' }],
+    })
+    expect(typeOf(policy, 'annual').enforcement).toBe('block')
+    expect(typeOf(service.normalizeLeavePolicy({ types: [{ key: 'annual', enforcement: 'none' }] }), 'annual').enforcement).toBe('block')
+    expect(typeOf(policy, 'personal').enforcement).toBe('block')
+    expect(typeOf(policy, 'sick').enforcement).toBe('none')
+  })
+
   it('drops a countsAgainst that points at a missing type or at itself', () => {
     const policy = service.normalizeLeavePolicy({
       types: [
@@ -170,6 +181,13 @@ describe('validateLeavePolicyInput', () => {
     expect(policy.minUnitHours).toBe(1)
     expect(typeOf(policy, 'personal')).toMatchObject({ quotaHours: 96, enforcement: 'block', name: '事假' })
     expect(typeOf(policy, 'sick').quotaHours).toBe(240)
+  })
+
+  it('saves 特休 as block even when it is submitted as warn or none (the switch does not apply to 特休)', () => {
+    const policy = service.validateLeavePolicyInput({ types: [{ key: 'annual', enforcement: 'warn' }, { key: 'personal', enforcement: 'warn' }] })
+    expect(typeOf(policy, 'annual').enforcement).toBe('block')
+    expect(typeOf(service.validateLeavePolicyInput({ types: [{ key: 'annual', enforcement: 'none' }] }), 'annual').enforcement).toBe('block')
+    expect(typeOf(policy, 'personal').enforcement).toBe('warn')
   })
 
   it('rejects bad global settings with Chinese messages', () => {

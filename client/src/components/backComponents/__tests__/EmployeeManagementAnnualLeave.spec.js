@@ -354,6 +354,57 @@ describe('EmployeeManagement - 特休以小時顯示（舊天數資料、單位�
     expect(Object.prototype.hasOwnProperty.call(annualLeave, 'unitSource')).toBe(false)
   })
 
+  // 整份資料的單位以整份判斷：先前被當成天數乘 8 的員工（24 -> 192 小時）也會被標成待確認，數字不動，由人資核對
+  it('舊資料的天數換算成小時、但整份資料有人明顯是填小時：視窗也顯示確認提醒（說明原本的數字與換算），勾選確認才送 unitConfirmed', async () => {
+    server.employee.annualLeave = { totalDays: 24, usedDays: 0, totalHours: 192, usedHours: 0, unitSource: 'migrated-hours', year: 2026 }
+    await mountAndOpen()
+
+    expect(wrapper.vm.employeeForm.annualLeave.totalHours).toBe(192) // 數字沒有被自動改
+    expect(wrapper.find('.annual-leave-unit-warning').exists()).toBe(true)
+    const notice = wrapper.vm.annualLeaveUnitNotice
+    expect(notice.kind).toBe('converted-days')
+    expect(notice.message).toContain('原本的「年度特休總天數」是 24')
+    expect(notice.message).toContain('換算成 192 小時')
+    expect(notice.message).toContain('把年度特休總時數改成 24')
+    expect(notice.confirmLabel).toBe('我已確認總時數正確')
+
+    // 舊的天數欄位只用來說明，不會送回伺服器
+    await wrapper.vm.saveEmployee()
+    await flushPromises()
+    let annualLeave = putAnnualLeave()
+    expect(annualLeave.totalHours).toBe(192)
+    expect(annualLeave.unitConfirmed).toBeFalsy()
+    for (const key of ['totalDays', 'usedDays', 'legacyTotalDays', 'unitSource']) {
+      expect(Object.prototype.hasOwnProperty.call(annualLeave, key)).toBe(false)
+    }
+
+    wrapper.vm.employeeForm.annualLeave.unitConfirmed = true
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('.annual-leave-unit-warning').exists()).toBe(false)
+    await wrapper.vm.saveEmployee()
+    await flushPromises()
+    annualLeave = putAnnualLeave()
+    expect(annualLeave.unitConfirmed).toBe(true)
+    expect(Object.prototype.hasOwnProperty.call(annualLeave, 'legacyTotalDays')).toBe(false)
+  })
+
+  it('舊資料超過 40 判定為小時的提醒：說明沒有乘 8；人資改過的總時數（不再等於天數 x 8）也走小時的說明', async () => {
+    server.employee.annualLeave = { totalDays: 170, usedDays: 8, totalHours: 170, usedHours: 8, unitSource: 'migrated-hours', year: 2026 }
+    await mountAndOpen()
+    expect(wrapper.vm.annualLeaveUnitNotice).toMatchObject({ kind: 'hours', title: '由舊資料推斷為小時，請確認', confirmLabel: '我已確認單位是小時' })
+    expect(wrapper.vm.annualLeaveUnitNotice.message).toContain('系統已視為 170 小時（不是天數，沒有乘 8）')
+
+    wrapper.unmount()
+    server.employee.annualLeave = { totalDays: 14, usedDays: 0, totalHours: 100, usedHours: 0, unitSource: 'migrated-hours', year: 2026 }
+    await mountAndOpen()
+    expect(wrapper.vm.annualLeaveUnitNotice.kind).toBe('hours')
+
+    wrapper.unmount()
+    server.employee.annualLeave = { totalHours: 80, usedHours: 0, unitSource: 'entered', year: 2026 }
+    await mountAndOpen()
+    expect(wrapper.vm.annualLeaveUnitNotice).toBeNull()
+  })
+
   it('小時資料或舊天數資料換算成天數的小數：不出現提醒（只有判定為小時才提醒）', async () => {
     server.employee.annualLeave = { totalDays: 14, usedDays: 0, unitSource: 'migrated-days', year: 2026 }
     await mountAndOpen()

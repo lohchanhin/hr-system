@@ -1,14 +1,19 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import {
+  LEDGER_CONFLICT_TEXT,
   LEDGER_FILTERS,
   buildLedgerQuery,
   canRecordResolution,
+  canShowResolveButton,
   countLedgerFilters,
   describeHolidayHeader,
   describeLedgerCell,
   describeResolution,
+  describeResolutionAuthor,
   formatMonthDay,
+  getViewerEmployeeId,
   ledgerRowMatchesFilter,
+  resolveButtonLabel,
   weekdayLabel,
 } from '../holidayLedger'
 
@@ -120,5 +125,115 @@ describe('buildLedgerQuery', () => {
       .toBe('month=2026-09&department=d1&subDepartment=s1&includeSelf=true')
     expect(buildLedgerQuery({ month: '2026-09' })).toBe('month=2026-09')
     expect(buildLedgerQuery()).toBe('')
+  })
+
+  it('adds the active filter and the search text for the export, and nothing for "all" or an empty search', () => {
+    expect(buildLedgerQuery({ month: '2026-09', status: 'open' })).toBe('month=2026-09&status=open')
+    expect(buildLedgerQuery({ month: '2026-09', status: 'notTaken', search: '  護理 甲 ' })).toBe('month=2026-09&status=notTaken&search=%E8%AD%B7%E7%90%86+%E7%94%B2')
+    expect(buildLedgerQuery({ month: '2026-09', status: 'all', search: '   ' })).toBe('month=2026-09')
+    expect(buildLedgerQuery({ month: '2026-09', search: 'N001' })).toBe('month=2026-09&search=N001')
+  })
+
+  it('uses filter names the server understands', () => {
+    expect(LEDGER_FILTERS.map((filter) => filter.value).filter((value) => value !== 'all')).toEqual(['notTaken', 'moved', 'open', 'extra'])
+  })
+})
+
+describe('a stored resolution that clashes with a 國 on the roster', () => {
+  const clash = {
+    status: 'moved',
+    guoDate: '2026-09-20',
+    offsetDays: -5,
+    holidayDate: '2026-09-25',
+    resolutionConflict: true,
+    resolution: { kind: 'paid', resolvedByName: '主管王' },
+  }
+
+  it('keeps the holiday state, switches to the warning color and says it needs a look', () => {
+    const cell = describeLedgerCell(clash)
+    expect(cell).toMatchObject({ text: '移休 09/20', type: 'warning' })
+    expect(cell.tooltip).toContain('比假日早 5 天')
+    expect(cell.tooltip).toContain(LEDGER_CONFLICT_TEXT)
+    expect(describeLedgerCell({ status: 'rested_on_date', guoDate: '2026-09-25', resolutionConflict: true })).toMatchObject({ text: '當日休', type: 'warning' })
+    expect(LEDGER_CONFLICT_TEXT).toBe('已登記處理但班表已有國，請確認')
+    // 沒有衝突的格子不受影響
+    expect(describeLedgerCell({ ...clash, resolutionConflict: false })).toMatchObject({ type: 'primary' })
+  })
+
+  it('can be opened (to review or delete the record) with its own button label', () => {
+    expect(canRecordResolution(clash)).toBe(true)
+    expect(canRecordResolution({ ...clash, resolutionConflict: false })).toBe(false)
+    expect(resolveButtonLabel(clash)).toBe('檢視登記')
+    expect(resolveButtonLabel({ status: 'not_taken', resolution: { kind: 'paid' } })).toBe('修改')
+    expect(resolveButtonLabel({ status: 'not_taken', needsAction: 'resolve' })).toBe('登記處理')
+    expect(resolveButtonLabel(undefined)).toBe('登記處理')
+  })
+})
+
+describe('unscheduled holiday that is nothing to handle (part-time)', () => {
+  it('is shown as information, while a real open one keeps its warning', () => {
+    expect(describeLedgerCell({ status: 'not_taken', reason: 'unscheduled', needsAction: null })).toMatchObject({ text: '未休·未排班', type: 'info' })
+    expect(describeLedgerCell({ status: 'not_taken', reason: 'unscheduled', needsAction: null }).tooltip).toContain('兼職')
+    expect(describeLedgerCell({ status: 'not_taken', reason: 'unscheduled', needsAction: 'resolve' })).toMatchObject({ type: 'warning' })
+    expect(canRecordResolution({ status: 'not_taken', reason: 'unscheduled', needsAction: null })).toBe(false)
+  })
+})
+
+describe('describeResolutionAuthor', () => {
+  it('names the last editor, and the first author when someone else changed it afterwards', () => {
+    expect(describeResolutionAuthor({ resolvedByName: '主管王' })).toBe('主管王 登記')
+    expect(describeResolutionAuthor({ resolvedByName: '主管王', createdByName: '主管王' })).toBe('主管王 登記')
+    expect(describeResolutionAuthor({ resolvedByName: '主管王', createdByName: '人資李' })).toBe('主管王 登記（最初：人資李）')
+    expect(describeResolutionAuthor({ createdByName: '人資李' })).toBe('人資李 登記')
+    expect(describeResolutionAuthor({ resolvedByName: '', createdByName: '' })).toBe('')
+    expect(describeResolutionAuthor(null)).toBe('')
+  })
+})
+
+describe('canShowResolveButton', () => {
+  const open = { status: 'not_taken', needsAction: 'resolve' }
+  const row = { employeeId: 'b2' }
+
+  it('needs the permission and an item that can be recorded', () => {
+    expect(canShowResolveButton({ canResolve: true, role: 'admin', viewerId: 'x', row, item: open })).toBe(true)
+    expect(canShowResolveButton({ canResolve: false, role: 'admin', viewerId: 'x', row, item: open })).toBe(false)
+    expect(canShowResolveButton({ canResolve: true, role: 'admin', viewerId: 'x', row, item: { status: 'moved' } })).toBe(false)
+    expect(canShowResolveButton()).toBe(false)
+  })
+
+  it("hides the button on the supervisor's own row only", () => {
+    expect(canShowResolveButton({ canResolve: true, role: 'supervisor', viewerId: 'b2', row, item: open })).toBe(false)
+    expect(canShowResolveButton({ canResolve: true, role: 'supervisor', viewerId: 'other', row, item: open })).toBe(true)
+    // 管理員可以處理自己的；不知道登入者是誰時不亂藏
+    expect(canShowResolveButton({ canResolve: true, role: 'admin', viewerId: 'b2', row, item: open })).toBe(true)
+    expect(canShowResolveButton({ canResolve: true, role: 'supervisor', viewerId: '', row, item: open })).toBe(true)
+  })
+})
+
+describe('getViewerEmployeeId', () => {
+  beforeEach(() => {
+    sessionStorage.clear()
+    localStorage.clear()
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('reads the id saved at login, session first', () => {
+    expect(getViewerEmployeeId()).toBe('')
+    localStorage.setItem('employeeId', 'from-local')
+    expect(getViewerEmployeeId()).toBe('from-local')
+    sessionStorage.setItem('employeeId', 'from-session')
+    expect(getViewerEmployeeId()).toBe('from-session')
+  })
+
+  it('ignores a stored "undefined" and survives blocked storage', () => {
+    sessionStorage.setItem('employeeId', 'undefined')
+    localStorage.setItem('employeeId', 'real')
+    expect(getViewerEmployeeId()).toBe('real')
+
+    vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => { throw new Error('blocked') })
+    expect(getViewerEmployeeId()).toBe('')
   })
 })

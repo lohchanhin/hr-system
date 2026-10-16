@@ -610,10 +610,10 @@ describe('calculateLeaveImpact', () => {
 })
 
 describe('LEAVE_POLICY annual leave names', () => {
-  it('treats both 特休 and 特休假 as paid and shares one constant with the reports', async () => {
+  it('treats 特休, 特休假 and 特別休假 as paid and shares one constant with the reports', async () => {
     const { ANNUAL_LEAVE_TYPES, LEAVE_POLICY } = await import('../src/config/salaryConfig.js')
 
-    expect(ANNUAL_LEAVE_TYPES).toEqual(['特休', '特休假'])
+    expect(ANNUAL_LEAVE_TYPES).toEqual(['特休', '特休假', '特別休假'])
     for (const name of ANNUAL_LEAVE_TYPES) {
       expect(LEAVE_POLICY.PAID_LEAVE_TYPES).toContain(name)
     }

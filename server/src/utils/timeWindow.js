@@ -65,21 +65,35 @@ export function parseTimeString(value) {
   return { hour, minute, second }
 }
 
+// 建立 Intl.DateTimeFormat 很花時間（每次都要重新載入時區與語系資料），排班檢核每個班別格子都會呼叫好幾次，
+// 所以每個時區只建一次、之後重複使用（formatToParts 不改變 formatter 的狀態，重複使用結果相同）。
+// 無效的時區建立時會丟錯，不會被存進快取，每次呼叫都一樣丟錯。
+const dateTimePartsFormatters = new Map()
+
+function getDateTimePartsFormatter(timeZone) {
+  let formatter = dateTimePartsFormatters.get(timeZone)
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat('en-US', {
+      timeZone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hourCycle: 'h23'
+    })
+    dateTimePartsFormatters.set(timeZone, formatter)
+  }
+  return formatter
+}
+
 export function createDateFromParts(parts, timeZone = DEFAULT_TIMEZONE) {
   const { year, month, day, hour = 0, minute = 0, second = 0 } = parts || {}
   if (!year || !month || !day) return null
   const naiveUtc = Date.UTC(year, month - 1, day, hour, minute, second)
   const baseDate = new Date(naiveUtc)
-  const formatter = new Intl.DateTimeFormat('en-US', {
-    timeZone,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    hourCycle: 'h23'
-  })
+  const formatter = getDateTimePartsFormatter(timeZone)
   const mapped = formatter.formatToParts(baseDate).reduce((acc, part) => {
     if (part.type !== 'literal') acc[part.type] = part.value
     return acc
@@ -101,16 +115,7 @@ export function createDateFromParts(parts, timeZone = DEFAULT_TIMEZONE) {
 
 export function getLocalDateParts(date, timeZone = DEFAULT_TIMEZONE) {
   if (!date) return null
-  const formatter = new Intl.DateTimeFormat('en-US', {
-    timeZone,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    hourCycle: 'h23'
-  })
+  const formatter = getDateTimePartsFormatter(timeZone)
   const parts = formatter.formatToParts(new Date(date)).reduce((acc, part) => {
     if (part.type !== 'literal') acc[part.type] = part.value
     return acc

@@ -177,6 +177,28 @@ describe('ApprovalFormFields 請假時數欄位', () => {
     expect(wrapper.vm.formData.hours).toBeNull()
   })
 
+  // 客戶自建的加班／補休表單也可能有「時數」欄位：不是請假表單（leaveHours.enabled 為 false）就是一般的數字欄位
+  it('leaveHours.enabled false (not a leave form): a 時數 field is a plain number input without the 0.5 step, auto fill text or per-day cap', async () => {
+    const wrapper = mountFields([fields[1]], { leaveHours: { enabled: false, max: 8, maxHoursPerDay: 8, minUnitHours: 0.5 } })
+
+    expect(wrapper.find('[data-test="leave-hours-field"]').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('每日最多')
+    expect(wrapper.text()).not.toContain('自動帶入')
+    expect(wrapper.findAll('.el-input-number')).toHaveLength(1)
+
+    // 12 小時的加班不會被每日上限夾回 8
+    const input = wrapper.find('.el-input-number input')
+    await input.setValue('12')
+    await input.trigger('blur')
+    await flushPromises()
+    expect(wrapper.vm.formData.hours).toBe(12)
+  })
+
+  it('leaveHours.enabled true (or not given) keeps the leave hours field', () => {
+    expect(mountFields([fields[1]], { leaveHours: { enabled: true, max: 8 } }).find('[data-test="leave-hours-field"]').exists()).toBe(true)
+    expect(mountFields([fields[1]], { leaveHours: { max: 8 } }).find('[data-test="leave-hours-field"]').exists()).toBe(true)
+  })
+
   it('標籤不是時數的數字欄位仍是一般的數字輸入框', () => {
     const wrapper = mountFields([{ _id: 'days', label: '天數', type_1: 'number' }])
     expect(wrapper.find('[data-test="leave-hours-field"]').exists()).toBe(false)

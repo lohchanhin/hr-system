@@ -16,7 +16,7 @@ const mockShiftSchedule = { find: jest.fn() };
 const mockAttendanceSetting = { findOne: jest.fn() };
 const mockEmployee = { find: jest.fn() };
 const mockHolidayRestResolution = { find: jest.fn() };
-const mockLoadApprovedLeaveCalendar = jest.fn();
+const mockLoadApprovedLeaveIntervals = jest.fn();
 
 jest.unstable_mockModule('../src/models/Holiday.js', () => ({ default: mockHoliday }));
 jest.unstable_mockModule('../src/models/HolidayMoveSetting.js', () => ({ default: mockHolidayMoveSetting }));
@@ -25,7 +25,7 @@ jest.unstable_mockModule('../src/models/AttendanceSetting.js', () => ({ default:
 jest.unstable_mockModule('../src/models/Employee.js', () => ({ default: mockEmployee }));
 jest.unstable_mockModule('../src/models/HolidayRestResolution.js', () => ({ default: mockHolidayRestResolution }));
 jest.unstable_mockModule('../src/services/approvedLeaveCalendarService.js', () => ({
-  loadApprovedLeaveCalendar: mockLoadApprovedLeaveCalendar,
+  loadApprovedLeaveIntervals: mockLoadApprovedLeaveIntervals,
 }));
 
 const {
@@ -43,6 +43,10 @@ const {
 } = await import('../src/services/countedHolidayService.js');
 
 const utc = (key) => new Date(`${key}T00:00:00.000Z`);
+// 台灣時間的時間點（毫秒）；請假區間的格式與 loadApprovedLeaveIntervals 相同（整天的假是台灣當天 00:00 到最後一天隔天 00:00）
+const taipei = (key, time = '00:00') => Date.parse(`${key}T${time}:00+08:00`);
+const hoursLeave = (key, from, to, extra = {}) => ({ startMs: taipei(key, from), endMs: taipei(key, to), allDay: false, leaveType: '事假', ...extra });
+const allDayLeave = (key, lastKey = key) => ({ startMs: taipei(key), endMs: taipei(lastKey) + 24 * 60 * 60 * 1000, allDay: true, leaveType: '特休' });
 const holidayDoc = (key, name, extra = {}) => ({ date: utc(key), name, type: '國定假日', ...extra });
 const H25 = { id: '2026-09-25', name: '中秋節', date: '2026-09-25', originalDate: '2026-09-25', movedFrom: null };
 const H28 = { id: '2026-09-28', name: '教師節', date: '2026-09-28', originalDate: '2026-09-28', movedFrom: null };
@@ -306,7 +310,7 @@ describe('buildHolidayRestLedger (September 2026)', () => {
     mockHoliday.find.mockReturnValue(chain([holidayDoc('2026-09-25', '中秋節'), holidayDoc('2026-09-28', '教師節')]));
     mockHolidayMoveSetting.find.mockReturnValue(chain([]));
     mockAttendanceSetting.findOne.mockReturnValue(chain({ shifts: SHIFTS }));
-    mockLoadApprovedLeaveCalendar.mockResolvedValue(new Map());
+    mockLoadApprovedLeaveIntervals.mockResolvedValue(new Map());
     mockHolidayRestResolution.find.mockReturnValue(chain([]));
     mockEmployee.find.mockReturnValue(chain([]));
     mockShiftSchedule.find.mockReturnValue(chain([]));
@@ -348,11 +352,13 @@ describe('buildHolidayRestLedger (September 2026)', () => {
     expect(brief('D')).toEqual([['09-25', 'na', null, 'before_hire', null], ['09-28', 'rested_on_date', '09-28', null, null]]);
     expect(byId.D.entitled).toBe(1);
     expect(byId.F).toMatchObject({ rested: 2, moved: 0, extraGuoDates: ['2026-09-30'] });
-    // 兼職人員和一般員工一樣有紀錄，只是帶有 partTime 標示（沒排班，兩個假日都是未排班）
-    expect(byId.E).toMatchObject({ partTime: true, notTaken: 2, open: 2 });
+    // 兼職人員和一般員工一樣有紀錄，只是帶有 partTime 標示（沒排班，兩個假日都是未排班）；
+    // 兼職不要求排班，「未排班」只是提示，不列入待處理（一般員工同樣情況是待處理）
+    expect(byId.E).toMatchObject({ partTime: true, notTaken: 2, open: 0 });
     expect(brief('E').map((item) => item[3])).toEqual(['unscheduled', 'unscheduled']);
+    expect(brief('E').map((item) => item[4])).toEqual([null, null]);
     expect(ledger.summary).toEqual({
-      employees: 5, holidays: 2, entitled: 9, rested: 4, moved: 1, notTaken: 4, open: 3, extra: 1, excluded: { notScheduled: 0 },
+      employees: 5, holidays: 2, entitled: 9, rested: 4, moved: 1, notTaken: 4, open: 1, extra: 1, excluded: { notScheduled: 0 },
     });
     expect(byId.A).toMatchObject({ employeeNo: 'NA', name: '員工A', title: '護理師', subDepartmentName: '內科', partTime: false });
   });
@@ -374,7 +380,7 @@ describe('buildHolidayRestLedger (September 2026)', () => {
   });
 
   it('treats approved leave on the holiday as a leave reason, never an open item', async () => {
-    mockLoadApprovedLeaveCalendar.mockResolvedValue(new Map([['A', new Map([['2026-09-25', '特休']])]]));
+    mockLoadApprovedLeaveIntervals.mockResolvedValue(new Map([['A', [allDayLeave('2026-09-25')]]]));
     schedule([row('A', '2026-09-28', 'guo')]);
 
     const ledger = await buildHolidayRestLedger({ month: '2026-09', employees: [person('A')], today: AFTER_MONTH });
@@ -425,16 +431,46 @@ describe('buildHolidayRestLedger (September 2026)', () => {
     expect(describeLedgerItem(item)).toBe('未休（補休）');
   });
 
-  it('keeps a resolution but hides it once the roster gains a 國 for that holiday', async () => {
+  it('flags a recorded resolution as a conflict, instead of hiding it, once the roster gains a 國 for that holiday', async () => {
     schedule([row('C', '2026-09-20', 'guo')]);
     mockHolidayRestResolution.find.mockReturnValue(chain([{
-      _id: 'r1', employee: 'C', holidayDate: utc('2026-09-25'), month: '2026-09', kind: 'paid', resolvedBy: 'boss',
+      _id: 'r1', employee: 'C', holidayDate: utc('2026-09-25'), month: '2026-09', kind: 'paid', resolvedBy: 'boss', createdBy: 'first',
     }]));
-    mockEmployee.find.mockReturnValue(chain([{ _id: 'boss', name: '主管王' }]));
+    mockEmployee.find.mockReturnValue(chain([{ _id: 'boss', name: '主管王' }, { _id: 'first', name: '人資李' }]));
 
     const ledger = await buildHolidayRestLedger({ month: '2026-09', employees: [person('C')], today: AFTER_MONTH });
 
-    expect(ledger.employees[0].items[0]).toMatchObject({ status: 'moved', guoDate: '2026-09-20', resolution: null });
+    const [moved, notTaken] = ledger.employees[0].items;
+    expect(moved).toMatchObject({
+      status: 'moved',
+      guoDate: '2026-09-20',
+      needsAction: null,
+      resolutionConflict: true,
+      resolution: { id: 'r1', kind: 'paid', resolvedByName: '主管王', createdByName: '人資李' },
+    });
+    // 沒有登記過的、以及仍然沒休的項目不受影響
+    expect(notTaken).toMatchObject({ status: 'not_taken', resolution: null, resolutionConflict: false });
+    // 要人確認的衝突算在待處理裡（否則「待處理」篩選會漏掉）
+    expect(ledger.employees[0]).toMatchObject({ moved: 1, notTaken: 1, open: 2 });
+    expect(ledger.summary.open).toBe(2);
+    expect(describeLedgerItem(moved)).toBe('移休 09/20（已登記處理，請確認）');
+    expect(describeLedgerItem({ ...moved, status: 'rested_on_date' })).toBe('當日休（已登記處理，請確認）');
+  });
+
+  it('flags a recorded resolution when the 國 is on the holiday date too, and keeps a plain stored resolution of a still-open holiday as before', async () => {
+    schedule([row('C', '2026-09-25', 'guo'), row('D', '2026-09-28', 'rest')]);
+    mockHolidayRestResolution.find.mockReturnValue(chain([
+      { _id: 'r1', employee: 'C', holidayDate: utc('2026-09-25'), month: '2026-09', kind: 'waived', note: '放棄', resolvedBy: 'boss' },
+      { _id: 'r2', employee: 'D', holidayDate: utc('2026-09-25'), month: '2026-09', kind: 'paid', resolvedBy: 'boss' },
+    ]));
+
+    const ledger = await buildHolidayRestLedger({ month: '2026-09', employees: [person('C'), person('D')], today: AFTER_MONTH });
+
+    const c = ledger.employees.find((entry) => entry.employeeId === 'C');
+    const d = ledger.employees.find((entry) => entry.employeeId === 'D');
+    expect(c.items[0]).toMatchObject({ status: 'rested_on_date', resolutionConflict: true, resolution: { id: 'r1', kind: 'waived' } });
+    expect(d.items[0]).toMatchObject({ status: 'not_taken', resolutionConflict: false, resolution: { id: 'r2' }, needsAction: null });
+    expect(d.open).toBe(0);
   });
 
   it('leaves out resigned, unpaid-leave and no-scheduling employees who have no schedule, but keeps them when they do', async () => {
@@ -453,6 +489,202 @@ describe('buildHolidayRestLedger (September 2026)', () => {
     expect(ledger.summary.excluded.notScheduled).toBe(3);
     const resigned = ledger.employees.find((entry) => entry.employeeId === 'R');
     expect(resigned.items.map((item) => [item.status, item.reason])).toEqual([['not_taken', 'worked'], ['na', 'after_resignation']]);
+  });
+
+  describe('part-day (hourly) approved leave', () => {
+    const NIGHT = { _id: 'night', code: '夜', name: '夜班', semanticType: 'work', startTime: '22:00', endTime: '06:00' };
+    const DAY_BREAK = { _id: 'dayBreak', code: '日休', name: '日班含休息', semanticType: 'work', startTime: '08:00', endTime: '17:00', breakMinutes: 60 };
+
+    // A 在中秋節（9/25）排日班、教師節（9/28）休息日，核准的請假由 intervals 指定
+    async function ledgerWithLeave(intervals, rows = [row('A', '2026-09-25', 'day'), row('A', '2026-09-28', 'rest')]) {
+      mockAttendanceSetting.findOne.mockReturnValue(chain({ shifts: [...SHIFTS, NIGHT, DAY_BREAK] }));
+      mockLoadApprovedLeaveIntervals.mockResolvedValue(new Map([['A', intervals]]));
+      schedule(rows);
+      const ledger = await buildHolidayRestLedger({ month: '2026-09', employees: [person('A')], today: AFTER_MONTH });
+      return ledger.employees[0];
+    }
+    const itemOn925 = (entry) => entry.items[0];
+
+    it('keeps a worked holiday open when the leave on that day is only 2 hours', async () => {
+      const withLeave = await ledgerWithLeave([hoursLeave('2026-09-25', '09:00', '11:00')]);
+      const without = await ledgerWithLeave([]);
+
+      expect(itemOn925(withLeave)).toMatchObject({ status: 'not_taken', reason: 'worked', needsAction: 'resolve', dateKind: 'work' });
+      expect(withLeave.open).toBe(1);
+      expect(itemOn925(without)).toMatchObject({ reason: 'worked', needsAction: 'resolve' });
+    });
+
+    it('treats a full-day leave as leave even when the roster still shows a work shift', async () => {
+      const entry = await ledgerWithLeave([allDayLeave('2026-09-25')]);
+
+      expect(itemOn925(entry)).toMatchObject({ status: 'not_taken', reason: 'on_leave', needsAction: null, dateKind: 'leave' });
+      expect(entry.open).toBe(0);
+    });
+
+    it('treats a multi-day full leave that spans the holiday as leave', async () => {
+      const entry = await ledgerWithLeave([allDayLeave('2026-09-24', '2026-09-26')]);
+      expect(itemOn925(entry)).toMatchObject({ reason: 'on_leave', needsAction: null });
+    });
+
+    it('treats a leave that covers the whole shift as leave, also when it comes from several requests', async () => {
+      const whole = await ledgerWithLeave([hoursLeave('2026-09-25', '08:00', '17:00')]);
+      expect(itemOn925(whole)).toMatchObject({ reason: 'on_leave', needsAction: null, dateKind: 'leave' });
+
+      const morningAndAfternoon = await ledgerWithLeave([hoursLeave('2026-09-25', '12:00', '17:00'), hoursLeave('2026-09-25', '08:00', '12:00')]);
+      expect(itemOn925(morningAndAfternoon)).toMatchObject({ reason: 'on_leave' });
+
+      const overlapping = await ledgerWithLeave([hoursLeave('2026-09-25', '08:00', '13:00'), hoursLeave('2026-09-25', '11:00', '18:00')]);
+      expect(itemOn925(overlapping)).toMatchObject({ reason: 'on_leave' });
+    });
+
+    it('does not count a leave that leaves part of the shift uncovered', async () => {
+      const gap = await ledgerWithLeave([hoursLeave('2026-09-25', '08:00', '12:00'), hoursLeave('2026-09-25', '13:00', '17:00')]);
+      expect(itemOn925(gap)).toMatchObject({ reason: 'worked', needsAction: 'resolve' });
+
+      const afterWork = await ledgerWithLeave([hoursLeave('2026-09-25', '18:00', '20:00')]);
+      expect(itemOn925(afterWork)).toMatchObject({ reason: 'worked' });
+    });
+
+    it('lets the unpaid break of the shift stay outside the leave', async () => {
+      const rows = [row('A', '2026-09-25', 'dayBreak'), row('A', '2026-09-28', 'rest')];
+      // 日班 08:00-17:00 含 60 分鐘休息：請 8 小時（08:00-16:00，或兩段中間空出休息時間）算整班請假
+      const eightHours = await ledgerWithLeave([hoursLeave('2026-09-25', '08:00', '16:00')], rows);
+      expect(itemOn925(eightHours)).toMatchObject({ reason: 'on_leave' });
+      const aroundBreak = await ledgerWithLeave([hoursLeave('2026-09-25', '08:00', '12:00'), hoursLeave('2026-09-25', '13:00', '17:00')], rows);
+      expect(itemOn925(aroundBreak)).toMatchObject({ reason: 'on_leave' });
+      const sevenHours = await ledgerWithLeave([hoursLeave('2026-09-25', '08:00', '15:00')], rows);
+      expect(itemOn925(sevenHours)).toMatchObject({ reason: 'worked' });
+      // 沒設定休息時間的班別，同樣的 8 小時不算整班
+      const noBreak = await ledgerWithLeave([hoursLeave('2026-09-25', '08:00', '16:00')]);
+      expect(itemOn925(noBreak)).toMatchObject({ reason: 'worked' });
+    });
+
+    it('follows a night shift across midnight', async () => {
+      const rows = [row('A', '2026-09-25', 'night'), row('A', '2026-09-28', 'rest')];
+      const wholeShift = { startMs: taipei('2026-09-25', '22:00'), endMs: taipei('2026-09-26', '06:00'), allDay: false, leaveType: '事假' };
+      const whole = await ledgerWithLeave([wholeShift], rows);
+      expect(itemOn925(whole)).toMatchObject({ reason: 'on_leave' });
+      const half = await ledgerWithLeave([hoursLeave('2026-09-25', '22:00', '23:59')], rows);
+      expect(itemOn925(half)).toMatchObject({ reason: 'worked' });
+    });
+
+    it('counts a leave of any length as leave when nothing is scheduled that day, and lets the roster decide on non-working days', async () => {
+      const unscheduled = await ledgerWithLeave([hoursLeave('2026-09-25', '09:00', '11:00')], [row('A', '2026-09-28', 'rest')]);
+      expect(itemOn925(unscheduled)).toMatchObject({ reason: 'on_leave', needsAction: null, dateKind: 'leave' });
+
+      const restDay = await ledgerWithLeave([hoursLeave('2026-09-25', '09:00', '11:00')], [row('A', '2026-09-25', 'rest'), row('A', '2026-09-28', 'rest')]);
+      expect(itemOn925(restDay)).toMatchObject({ reason: 'on_rest_day', dateKind: 'rest_day' });
+    });
+
+    it('does not guess when the scheduled shift is unknown: a part-day leave then does not hide the holiday', async () => {
+      const entry = await ledgerWithLeave([hoursLeave('2026-09-25', '08:00', '17:00')], [row('A', '2026-09-25', 'ghost'), row('A', '2026-09-28', 'rest')]);
+      expect(itemOn925(entry)).toMatchObject({ reason: 'worked', needsAction: 'resolve' });
+    });
+
+    it('gives the 國 to the holiday that was really worked (only a 2-hour leave) before the one on a rest day', async () => {
+      // 一個國排在 9/20：9/28 上班只請了 2 小時的假（需要國），9/25 是休息日（不需要國）
+      const entry = await ledgerWithLeave(
+        [hoursLeave('2026-09-28', '09:00', '11:00')],
+        [row('A', '2026-09-20', 'guo'), row('A', '2026-09-25', 'rest'), row('A', '2026-09-28', 'day')],
+      );
+      expect(entry.items.map((item) => [item.holidayDate.slice(5), item.status, item.guoDate?.slice(5) ?? null, item.reason])).toEqual([
+        ['09-25', 'not_taken', null, 'on_rest_day'],
+        ['09-28', 'moved', '09-20', null],
+      ]);
+    });
+  });
+
+  describe('people who are not expected on a roster', () => {
+    it('does not make "unscheduled" an open item for part-time staff, but still does when they worked the holiday', async () => {
+      schedule([row('P', '2026-09-25', 'day', 'finalized'), row('F', '2026-09-25', 'day', 'finalized')]);
+      const ledger = await buildHolidayRestLedger({
+        month: '2026-09',
+        employees: [person('P', { partTime: true }), person('F')],
+        today: AFTER_MONTH,
+      });
+
+      const part = ledger.employees.find((entry) => entry.employeeId === 'P');
+      const full = ledger.employees.find((entry) => entry.employeeId === 'F');
+      // 中秋節上班、教師節沒排班
+      expect(part.items.map((item) => [item.reason, item.needsAction])).toEqual([['worked', 'resolve'], ['unscheduled', null]]);
+      expect(full.items.map((item) => [item.reason, item.needsAction])).toEqual([['worked', 'resolve'], ['unscheduled', 'resolve']]);
+      expect(part).toMatchObject({ notTaken: 2, open: 1, partTime: true });
+      expect(full.open).toBe(2);
+      expect(describeLedgerItem(part.items[1])).toBe('未休（未排班）');
+    });
+
+    describe('administrator and supervisor accounts without any roster', () => {
+      const rosterRows = (rows) => mockShiftSchedule.find.mockImplementation((query) => chain(rows.filter((entry) => (
+        query.employee.$in.includes(entry.employee) && entry.date >= query.date.$gte && entry.date < query.date.$lt
+      ))));
+      const idsOf = (ledger) => ledger.employees.map((entry) => entry.employeeId).sort();
+
+      it('leaves them out when they have had no roster for the last three months, and keeps them once they had one', async () => {
+        rosterRows([
+          row('N', '2026-09-25', 'day'),
+          row('SEPT', '2026-09-25', 'day'),
+          row('ADMIN_JULY', '2026-07-01', 'day'),
+          row('SUP_AUG', '2026-08-31', 'day'),
+          row('ADMIN_JUNE', '2026-06-30', 'day'),
+        ]);
+        const employees = [
+          person('N'),
+          person('SEPT', { role: 'supervisor' }),
+          person('ADMIN_NEVER', { role: 'admin' }),
+          person('SUP_NEVER', { role: 'supervisor' }),
+          person('ADMIN_JULY', { role: 'admin' }),
+          person('SUP_AUG', { role: 'supervisor' }),
+          person('ADMIN_JUNE', { role: 'admin' }),
+          person('NURSE_NONE', { role: 'employee' }),
+          person('NO_ROLE'),
+        ];
+
+        const ledger = await buildHolidayRestLedger({ month: '2026-09', employees, today: AFTER_MONTH });
+
+        // 本月有班表的、前兩個月（7、8 月）排過的照常列入；一直沒排過（含只在 6 月排過）的管理員、主管不列入；
+        // 一般員工與沒有帶 role 的員工沒排班照樣是「未排班」
+        expect(idsOf(ledger)).toEqual(['N', 'NURSE_NONE', 'NO_ROLE', 'SEPT', 'SUP_AUG', 'ADMIN_JULY'].sort());
+        expect(ledger.summary.excluded.notScheduled).toBe(3);
+        const nurse = ledger.employees.find((entry) => entry.employeeId === 'NURSE_NONE');
+        expect(nurse).toMatchObject({ notTaken: 2, open: 2 });
+        // 只多查一次前面幾個月的班表，而且只查本月沒有班表的管理員、主管
+        expect(mockShiftSchedule.find).toHaveBeenCalledTimes(2);
+        const lookup = mockShiftSchedule.find.mock.calls[1][0];
+        expect([...lookup.employee.$in].sort()).toEqual(['ADMIN_JULY', 'ADMIN_JUNE', 'ADMIN_NEVER', 'SUP_AUG', 'SUP_NEVER']);
+        expect(lookup.date.$gte.toISOString()).toBe('2026-07-01T00:00:00.000Z');
+        expect(lookup.date.$lt.toISOString()).toBe('2026-09-01T00:00:00.000Z');
+      });
+
+      it('does not look further back when nobody qualifies, and skips accounts flagged as not requiring a schedule without another query', async () => {
+        rosterRows([]);
+        const none = await buildHolidayRestLedger({ month: '2026-09', employees: [person('A'), person('B', { role: 'employee' })], today: AFTER_MONTH });
+        expect(none.employees).toHaveLength(2);
+        expect(mockShiftSchedule.find).toHaveBeenCalledTimes(1);
+
+        // requiresScheduling = false 的帳號在本月沒有班表時本來就不列入，不必再查前面的月份
+        mockShiftSchedule.find.mockClear();
+        const flagged = await buildHolidayRestLedger({
+          month: '2026-09',
+          employees: [person('X', { role: 'admin', requiresScheduling: false }), person('Y', { role: 'admin' })],
+          today: AFTER_MONTH,
+        });
+        expect(flagged.employees).toEqual([]);
+        expect(flagged.summary.excluded.notScheduled).toBe(2);
+        expect(mockShiftSchedule.find.mock.calls[1][0].employee.$in).toEqual(['Y']);
+      });
+
+      it('looks back across a year boundary', async () => {
+        mockHoliday.find.mockReturnValue(chain([holidayDoc('2026-01-01', '元旦')]));
+        rosterRows([row('SUP', '2025-12-02', 'day')]);
+        const ledger = await buildHolidayRestLedger({
+          month: '2026-01',
+          employees: [person('SUP', { role: 'supervisor' }), person('ADM', { role: 'admin' })],
+          today: new Date('2026-02-05T04:00:00.000Z'),
+        });
+        expect(idsOf(ledger)).toEqual(['SUP']);
+        expect(mockShiftSchedule.find.mock.calls[1][0].date.$gte.toISOString()).toBe('2025-11-01T00:00:00.000Z');
+      });
+    });
   });
 
   it('returns an empty ledger without touching the roster when the month has no national holiday', async () => {
@@ -484,7 +716,7 @@ describe('buildHolidayRestLedger (September 2026)', () => {
     schedule([]);
     await buildHolidayRestLedger({ month: '2026-09', employees: [person('A'), person('B'), person('C')], today: AFTER_MONTH });
     expect(mockShiftSchedule.find).toHaveBeenCalledTimes(1);
-    expect(mockLoadApprovedLeaveCalendar).toHaveBeenCalledTimes(1);
+    expect(mockLoadApprovedLeaveIntervals).toHaveBeenCalledTimes(1);
     expect(mockShiftSchedule.find.mock.calls[0][0].employee.$in).toEqual(['A', 'B', 'C']);
   });
 });
@@ -604,8 +836,8 @@ describe('buildImportHolidayWarnings', () => {
 
   it('does not count a holiday that falls on a rest day, approved leave, or before the hire date as missing', () => {
     const kinds = new Map([['2026-09-25', 'rest_day'], ['2026-09-28', 'work']]);
-    const leaveCalendar = new Map([['e1', new Map([['2026-09-28', '特休']])]]);
-    expect(buildImportHolidayWarnings({ holidays, states: [state({ candidateKinds: kinds })], leaveCalendar, fullMonth: true })).toEqual([]);
+    const leaveIntervals = new Map([['e1', [allDayLeave('2026-09-28')]]]);
+    expect(buildImportHolidayWarnings({ holidays, states: [state({ candidateKinds: kinds })], leaveIntervals, fullMonth: true })).toEqual([]);
 
     const hired = state({
       employee: { status: '正職員工', appointment: { hireDate: new Date('2026-09-27T00:00:00.000Z') } },
@@ -613,5 +845,80 @@ describe('buildImportHolidayWarnings', () => {
       cells: [cell('2026-09-28', 28)],
     });
     expect(buildImportHolidayWarnings({ holidays, states: [hired], fullMonth: true })).toEqual([]);
+  });
+
+  describe('part-day (hourly) approved leave', () => {
+    const DAY = { _id: 'day', code: '日', semanticType: 'work', startTime: '08:00', endTime: '17:00' };
+    const workDays = () => new Map([['2026-09-25', 'work'], ['2026-09-28', 'work']]);
+    const dayShifts = () => new Map([['2026-09-25', DAY], ['2026-09-28', DAY]]);
+    const shortfall = (leaveIntervals, extra = {}) => buildImportHolidayWarnings({
+      holidays,
+      states: [state({ candidateKinds: workDays(), candidateShifts: dayShifts(), ...extra })],
+      leaveIntervals,
+      setting: SETTING,
+      fullMonth: true,
+    }).map((warning) => warning.message);
+
+    it('still warns about a worked holiday that only has a 2-hour leave, but not when the leave is a full day or covers the whole shift', () => {
+      const messages = shortfall(new Map([['e1', [
+        hoursLeave('2026-09-25', '09:00', '11:00'),
+        allDayLeave('2026-09-28'),
+      ]]]));
+      expect(messages).toHaveLength(1);
+      expect(messages[0]).toContain('中秋節 09/25');
+      expect(messages[0]).not.toContain('教師節');
+
+      const covering = shortfall(new Map([['e1', [hoursLeave('2026-09-25', '08:00', '17:00'), hoursLeave('2026-09-28', '08:00', '12:00'), hoursLeave('2026-09-28', '12:00', '17:00')]]]));
+      expect(covering).toEqual([]);
+    });
+
+    it('judges the shift of a roster row the file does not overwrite by its shift hours too', () => {
+      const existingSchedules = [
+        { employee: 'e1', date: utc('2026-09-25'), shiftId: 'day' },
+        { employee: 'e1', date: utc('2026-09-28'), shiftId: 'day' },
+      ];
+      const run = (intervals) => buildImportHolidayWarnings({
+        holidays,
+        states: [state()],
+        existingSchedules,
+        setting: SETTING,
+        leaveIntervals: new Map([['e1', intervals]]),
+        fullMonth: true,
+      }).map((warning) => warning.message);
+
+      const partial = run([hoursLeave('2026-09-25', '09:00', '11:00'), hoursLeave('2026-09-28', '08:00', '17:00')]);
+      expect(partial).toHaveLength(1);
+      expect(partial[0]).toContain('中秋節 09/25');
+      expect(partial[0]).not.toContain('教師節');
+    });
+
+    it('treats a leave on a day the roster leaves empty as leave, whatever its length', () => {
+      const [message] = shortfall(new Map([['e1', [hoursLeave('2026-09-25', '09:00', '11:00')]]]), {
+        candidateKinds: new Map([['2026-09-28', 'work']]),
+        candidateShifts: new Map([['2026-09-28', DAY]]),
+      });
+      expect(message).toContain('教師節 09/28');
+      expect(message).not.toContain('中秋節');
+    });
+  });
+
+  it('does not report an unscheduled holiday for part-time staff, but still reports a worked one', () => {
+    const kinds = new Map([['2026-09-25', 'work']]);
+    const shifts = new Map([['2026-09-25', SETTING.shifts[1]]]);
+    const run = (employee) => buildImportHolidayWarnings({
+      holidays,
+      states: [state({ employee, candidateKinds: kinds, candidateShifts: shifts })],
+      setting: SETTING,
+      fullMonth: true,
+    }).map((warning) => warning.message);
+
+    const regular = run({ status: '正職員工' });
+    expect(regular[0]).toContain('中秋節 09/25');
+    expect(regular[0]).toContain('教師節 09/28');
+
+    const partTime = run({ status: '正職員工', partTime: true });
+    expect(partTime[0]).toContain('中秋節 09/25');
+    expect(partTime[0]).not.toContain('教師節');
+    expect(run({ status: '正職員工', partTime: true, appointment: { hireDate: new Date('2026-09-26T00:00:00.000Z') } })).toEqual([]);
   });
 });

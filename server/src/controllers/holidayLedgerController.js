@@ -21,7 +21,7 @@ const MAX_LEDGER_MONTHS = 12;
 // 一次最多處理的員工數：全公司沒有選單位時可能很多人，請使用者縮小範圍
 const MAX_LEDGER_EMPLOYEES = 2000;
 const MAX_NOTE_LENGTH = 500;
-const EMPLOYEE_SELECT = '_id employeeId name title practiceTitle subDepartment partTime requiresScheduling status appointment';
+const EMPLOYEE_SELECT = '_id employeeId name title practiceTitle subDepartment partTime requiresScheduling status appointment role';
 
 class LedgerRequestError extends Error {
   constructor(status, message) {
@@ -134,9 +134,22 @@ function respondError(res, err, label) {
   return res.status(500).json({ error: 'internal error' });
 }
 
-// status=open 只回傳還有待處理項目的員工；合計跟著回傳的員工重算
-function keepOpenEmployees(ledger) {
-  const employees = ledger.employees.filter((employee) => employee.open > 0);
+// status 篩選（與視窗上的篩選鈕同名）：只回傳符合條件的員工；沒帶或不認得的 status 一律是全部
+const STATUS_FILTERS = new Map([
+  ['open', { label: '待處理', matches: (employee) => employee.open > 0 }],
+  ['notTaken', { label: '未休', matches: (employee) => employee.notTaken > 0 }],
+  ['moved', { label: '移休', matches: (employee) => employee.moved > 0 }],
+  ['extra', { label: '多排的國', matches: (employee) => employee.extraGuoDates.length > 0 }],
+]);
+
+function statusFilterOf(query) {
+  return STATUS_FILTERS.get(String(query.status || '').trim()) || null;
+}
+
+// 合計跟著回傳的員工重算
+function keepEmployees(ledger, filter) {
+  if (!filter) return ledger;
+  const employees = ledger.employees.filter(filter.matches);
   return {
     ...ledger,
     employees,
@@ -165,11 +178,11 @@ export async function getHolidayLedger(req, res) {
   try {
     const months = resolveMonths(req.query);
     const employees = await loadLedgerEmployees(req);
-    const onlyOpen = String(req.query.status || 'all').trim() === 'open';
+    const filter = statusFilterOf(req.query);
     const ledgers = [];
     for (const month of months) {
       const ledger = await buildHolidayRestLedger({ month, employees });
-      ledgers.push(onlyOpen ? keepOpenEmployees(ledger) : ledger);
+      ledgers.push(keepEmployees(ledger, filter));
     }
     return res.json({ months: ledgers, summary: mergeSummaries(ledgers) });
   } catch (err) {
@@ -181,9 +194,11 @@ export async function exportHolidayLedger(req, res) {
   try {
     const [month] = resolveMonths(req.query, { single: true });
     const employees = await loadLedgerEmployees(req);
-    const onlyOpen = String(req.query.status || 'all').trim() === 'open';
-    const built = await buildHolidayRestLedger({ month, employees });
-    const ledger = onlyOpen ? keepOpenEmployees(built) : built;
+    const filter = statusFilterOf(req.query);
+    const ledger = keepEmployees(await buildHolidayRestLedger({ month, employees }), filter);
+    // 篩選過的匯出要在標題註明，免得被當成整個單位的完整名單
+    const search = String(req.query.search || '').trim().slice(0, 100);
+    const filterText = [filter && `僅列出${filter.label}`, search && `搜尋「${search}」`].filter(Boolean).join('、');
 
     let departmentName = '';
     if (req.query.department && isObjectId(String(req.query.department))) {
@@ -204,7 +219,7 @@ export async function exportHolidayLedger(req, res) {
     const workbook = new ExcelJS.Workbook();
     workbook.creator = 'HR System';
     workbook.created = new Date();
-    appendHolidayLedgerSheet(workbook, ledger, { departmentName });
+    appendHolidayLedgerSheet(workbook, ledger, { departmentName, filterText });
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', `attachment; filename="holiday-ledger-${month.replace('-', '')}.xlsx"`);
     return res.send(await workbook.xlsx.writeBuffer());
@@ -259,7 +274,9 @@ export async function saveHolidayLedgerResolution(req, res) {
     const note = String(body.note ?? '').trim();
     if (note.length > MAX_NOTE_LENGTH) throw new LedgerRequestError(400, `note cannot exceed ${MAX_NOTE_LENGTH} characters`);
 
-    const $set = { kind, note, month: holiday.key.slice(0, 7), resolvedBy: toEntityId(req.user?.id) };
+    const actorId = toEntityId(req.user?.id);
+    // resolvedBy 是最後一次登記的人；第一次登記的人只在新增時寫入 createdBy，之後別人修改也不會蓋掉
+    const $set = { kind, note, month: holiday.key.slice(0, 7), resolvedBy: actorId };
     const $unset = {};
     if (kind === 'compensatory_leave') {
       const hours = body.compensatoryHours === undefined || body.compensatoryHours === null || body.compensatoryHours === ''
@@ -288,7 +305,7 @@ export async function saveHolidayLedgerResolution(req, res) {
     if (!holidayDoc) throw new LedgerRequestError(400, 'holidayDate is not a national holiday');
     $set.holidayName = String(holidayDoc.name || holidayDoc.description || holidayDoc.desc || '國定假日').trim().slice(0, 100);
 
-    const update = { $set };
+    const update = { $set, $setOnInsert: { createdBy: actorId } };
     if (Object.keys($unset).length) update.$unset = $unset;
     const saved = await upsertResolution({ employee: employeeId, holidayDate: holiday.date }, update);
     return res.json(plainResolution(saved));
@@ -305,6 +322,12 @@ export async function deleteHolidayLedgerResolution(req, res) {
     if (!existing) throw new LedgerRequestError(404, 'resolution not found');
     await assertCanResolveFor(req, toEntityId(existing.employee));
     await HolidayRestResolution.deleteOne({ _id: id });
+    // 直接刪除、沒有歷史紀錄：至少留下是誰刪了誰的哪一天（只記 _id 與日期，不含姓名與備註）
+    console.info('Holiday ledger resolution deleted', {
+      actorId: toEntityId(req.user?.id),
+      employeeId: toEntityId(existing.employee),
+      holidayDate: existing.holidayDate ? new Date(existing.holidayDate).toISOString().slice(0, 10) : null,
+    });
     return res.json({ success: true });
   } catch (err) {
     return respondError(res, err, 'Holiday ledger resolution delete failed');

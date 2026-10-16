@@ -52,7 +52,7 @@
       <h3>假別額度與餘額規則</h3>
       <p class="hint">
         請假一律以小時為單位（1 天 = 8 小時）。額度預設是法定天數換成小時，特休與補休依員工資料。
-        超額時預設只警告（簽核人看得到），勾選「超額禁止送出」則直接擋下；特休一律以員工的剩餘時數檢查。
+        超額時預設只警告（簽核人看得到），勾選「超額禁止送出」則直接擋下；特休一律以員工的剩餘時數檢查，超過就無法送出（開關固定為開啟，不能改成只警告）。
       </p>
       <el-alert v-if="policyError" type="error" :closable="false" show-icon class="policy-error" :title="policyError" />
       <div v-loading="policyLoading">
@@ -96,10 +96,11 @@
           <el-table-column label="超額禁止送出" width="110" align="center">
             <template #default="{ row }">
               <el-switch
-                :model-value="row.enforcement === 'block'"
-                :disabled="row.source === 'employee_comp' || (row.source === 'policy' && (row.quotaHours === null || row.quotaHours === undefined))"
+                :model-value="isBlocking(row)"
+                :disabled="row.source === 'employee_annual' || row.source === 'employee_comp' || (row.source === 'policy' && (row.quotaHours === null || row.quotaHours === undefined))"
                 @update:model-value="setBlocking(row, $event)"
               />
+              <div v-if="row.source === 'employee_annual'" class="row-note" data-test="annual-block-note">特休超過剩餘時數一律無法送出</div>
             </template>
           </el-table-column>
           <el-table-column label="顯示" width="150">
@@ -249,6 +250,8 @@ async function loadPolicy() {
     if (!res.ok) throw new Error(await readError(res, '無法讀取假別額度規則'))
     const body = await res.json()
     policy.value = clonePolicy(body.policy)
+    // 特休一律禁止超額送出：舊資料存成 warn / none 也顯示並儲存成 block，和實際行為一致
+    for (const row of policy.value?.types || []) if (row.source === 'employee_annual') row.enforcement = 'block'
     policyDefaults.value = clonePolicy(body.defaults || body.policy)
   } catch (error) {
     policyError.value = error?.message || '無法讀取假別額度規則'
@@ -262,8 +265,15 @@ function quotaDaysText(row) {
   return `約 ${formatDaysAndHours(row.quotaHours)}${row.period === 'event' ? '（每次）' : ''}`
 }
 
-// 超額時「禁止送出」或「只警告」；沒有額度的假別沒有可以超過的東西
+// 特休超過剩餘時數一律無法送出（伺服器不看這個設定），所以特休的開關固定顯示為開啟
+const isBlocking = (row) => row.source === 'employee_annual' || row.enforcement === 'block'
+
+// 超額時「禁止送出」或「只警告」；沒有額度的假別沒有可以超過的東西；特休固定是禁止
 function setBlocking(row, blocking) {
+  if (row.source === 'employee_annual') {
+    row.enforcement = 'block'
+    return
+  }
   row.enforcement = blocking ? 'block' : (row.source === 'policy' && (row.quotaHours === null || row.quotaHours === undefined) ? 'none' : 'warn')
 }
 
