@@ -843,6 +843,13 @@
   background: #f0f7fd;
 }
 
+.employee-status-badge.part-time {
+  margin-right: 4px;
+  color: #475467;
+  border-color: #d0d5dd;
+  background: #f2f4f7;
+}
+
 .employee-name-text {
   min-width: 0;
   overflow: hidden;
@@ -1343,6 +1350,44 @@
 
   li {
     padding: 5px 0;
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
+  }
+}
+
+// 跨月週還無法判斷（鄰月尚未排班）：不是違規，用藍灰色資訊底色與琥珀色的違規區分
+.schedule-rule-pending {
+  flex: 0 1 auto;
+  padding: 12px 16px;
+  border-block: 1px solid #bdd9ef;
+  background: #f0f7fd;
+  color: #182026;
+
+  h3 {
+    margin: 0 0 4px;
+    font-size: 15px;
+    color: #182026;
+  }
+
+  .schedule-rule-pending-hint {
+    margin: 0 0 8px;
+    color: #475467;
+    font-size: 13px;
+    line-height: 1.6;
+  }
+
+  ol {
+    max-height: min(200px, 22vh);
+    overflow: auto;
+    margin: 0;
+    padding-left: 28px;
+    color: #344054;
+    font-size: 13px;
+    line-height: 1.6;
+  }
+
+  li {
+    padding: 4px 0;
     overflow-wrap: anywhere;
     white-space: pre-wrap;
   }

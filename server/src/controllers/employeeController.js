@@ -7,6 +7,8 @@ import mongoose from 'mongoose'
 import { leaveDaysFromCalendar, loadApprovedLeaveCalendar } from '../services/approvedLeaveCalendarService.js'
 import { eligibleEmployeeFilter, isEligibleApprover } from '../services/approverEligibility.js'
 import { normalizeSignTag, normalizeSignTags } from '../utils/signTags.js'
+import { presentAnnualLeave, readAnnualLeaveHours } from '../utils/annualLeaveHours.js'
+import { daysToHours, hoursToDays } from '../utils/leaveHours.js'
 import {
   deleteEmployeePhoto,
   isManagedEmployeePhotoPath,
@@ -32,6 +34,21 @@ const toNum = (v) => {
   if (v === '' || v === null || v === undefined) return undefined
   const n = Number(v)
   return Number.isNaN(n) ? undefined : n
+}
+// 特休欄位（totalHours / usedHours）的輸入：有送時數就用時數；只送舊的天數欄位（舊版畫面）就乘 8 換成小時，不做任何猜測
+const ANNUAL_LEAVE_UNIT_SOURCES = ['migrated-days', 'migrated-hours', 'entered']
+// 同上，但不是數字（空白、亂打）就當作沒送（用在只拿來比對的 usedHoursBase）
+const readAnnualLeaveHoursOptional = (annualLeave, hoursKey, daysKey) => {
+  const hours = toNum(annualLeave?.[hoursKey])
+  if (hours !== undefined) return hours
+  const days = toNum(annualLeave?.[daysKey])
+  return days === undefined ? undefined : daysToHours(days)
+}
+const readAnnualLeaveHoursInput = (annualLeave, hoursKey, daysKey) => {
+  if (!annualLeave || typeof annualLeave !== 'object') return undefined
+  if (annualLeave[hoursKey] !== undefined) return toNum(annualLeave[hoursKey]) ?? 0
+  if (annualLeave[daysKey] !== undefined) return daysToHours(toNum(annualLeave[daysKey]) ?? 0)
+  return undefined
 }
 const toArray = (v) => {
   if (v === undefined) return undefined
@@ -363,8 +380,10 @@ export function buildEmployeeDoc(body = {}) {
 
     /* 特休管理 (Annual Leave) */
     annualLeave: {
-      totalDays: toNum(body?.annualLeave?.totalDays) ?? 0,
-      usedDays: toNum(body?.annualLeave?.usedDays) ?? 0,
+      // 特休以小時儲存；舊版畫面送來的天數（totalDays / usedDays）直接乘 8 換成小時
+      totalHours: readAnnualLeaveHoursInput(body?.annualLeave, 'totalHours', 'totalDays') ?? 0,
+      usedHours: readAnnualLeaveHoursInput(body?.annualLeave, 'usedHours', 'usedDays') ?? 0,
+      unitSource: ANNUAL_LEAVE_UNIT_SOURCES.includes(body?.annualLeave?.unitSource) ? body.annualLeave.unitSource : 'entered',
       year: toNum(body?.annualLeave?.year) ?? new Date().getFullYear(),
       expiryDate: toDate(body?.annualLeave?.expiryDate),
       accumulatedLeave: toNum(body?.annualLeave?.accumulatedLeave) ?? 0,
@@ -378,7 +397,7 @@ export function buildEmployeeDoc(body = {}) {
 export function buildEmployeePatch(body = {}, existing = null) {
   const $set = {}
   const $unset = {}
-  const $inc = {} // 只有特休已使用天數的差額更正會用到（見下方 annualLeave.usedDays）；沒有時不回傳
+  const $inc = {} // 只有特休已使用時數的差額更正會用到（見下方 annualLeave.usedHours）；沒有時不回傳
 
   const put = (k, v) => { if (isDefined(v)) $set[k] = v }
   const un = (k) => { $unset[k] = 1 }
@@ -548,32 +567,46 @@ export function buildEmployeePatch(body = {}, existing = null) {
     if (isDefined(m.notes)) put('monthlySalaryAdjustments.notes', m.notes ?? '')
   }
 
-  // 特休管理 (Annual Leave)
+  // 特休管理 (Annual Leave)：特休以小時儲存（totalHours / usedHours）。
+  // 舊版畫面只會送天數（totalDays / usedDays / usedDaysBase），直接乘 8 換成小時，不做任何猜測。
   if (isDefined(body.annualLeave)) {
     const al = body.annualLeave || {}
-    if (isDefined(al.totalDays)) put('annualLeave.totalDays', toNum(al.totalDays) ?? 0)
-    // 已使用天數會在簽核核准時被原子扣減（並記下 appliedApprovalRequestIds，這個欄位永遠不從編輯表單寫入）。
-    // usedDays 的契約（編輯表單可以不送、整包送出、或附上開啟視窗當下的值 usedDaysBase）：
-    // 1. 沒帶 usedDays：完全不碰，絕不 $set。
-    // 2. usedDays 和目前存的相同：不寫入（剛好同時發生的扣減不會被舊值蓋回去）。
-    // 3. usedDays 和目前存的不同，視為管理員的人工更正：
-    //    - 沒帶 usedDaysBase，或目前存的值還是 usedDaysBase：直接 $set 成 usedDays。
-    //    - 帶了 usedDaysBase，而且目前存的值已經不是 usedDaysBase（視窗開著的期間簽核核准又扣了天數）：
-    //      只套用管理員自己改的差額，用 $inc 加上 (usedDays - usedDaysBase)，不會抹掉期間內的扣減；
-    //      差額不會把已使用天數扣到小於 0（updateEmployee 在寫入後還會再補一次保險）。
-    // usedDaysBase 只用來比對，不會寫進資料庫。
-    if (isDefined(al.usedDays)) {
-      const submittedUsedDays = toNum(al.usedDays) ?? 0
-      const storedUsedDays = toNum(existing?.annualLeave?.usedDays)
-      const baseUsedDays = toNum(al.usedDaysBase)
-      if (storedUsedDays === undefined || submittedUsedDays !== storedUsedDays) {
-        if (storedUsedDays !== undefined && baseUsedDays !== undefined && baseUsedDays !== storedUsedDays) {
-          const adjustment = Math.max(submittedUsedDays - baseUsedDays, -storedUsedDays)
-          if (adjustment !== 0) $inc['annualLeave.usedDays'] = adjustment
+    const existingLeave = existing?.annualLeave
+    const current = existingLeave ? readAnnualLeaveHours(existingLeave) : null
+    const submittedTotal = readAnnualLeaveHoursInput(al, 'totalHours', 'totalDays')
+    const submittedUsed = readAnnualLeaveHoursInput(al, 'usedHours', 'usedDays')
+    if (submittedTotal !== undefined) put('annualLeave.totalHours', submittedTotal)
+    // 資料還是舊格式（沒有時數欄位）：整組換成時數一起寫入，免得只寫一邊而漏掉另一邊
+    if (current?.legacy) {
+      if (submittedTotal === undefined) put('annualLeave.totalHours', current.totalHours)
+      if (submittedUsed === undefined) put('annualLeave.usedHours', current.usedHours)
+    }
+    // 已使用時數會在簽核核准時被原子扣減（並記下 appliedApprovalRequestIds，這個欄位永遠不從編輯表單寫入）。
+    // usedHours 的契約（編輯表單可以不送、整包送出、或附上開啟視窗當下的值 usedHoursBase）：
+    // 1. 沒帶 usedHours：完全不碰，絕不 $set。
+    // 2. usedHours 和目前存的相同：不寫入（剛好同時發生的扣減不會被舊值蓋回去）。
+    // 3. usedHours 和目前存的不同，視為管理員的人工更正：
+    //    - 沒帶 usedHoursBase，或目前存的值還是 usedHoursBase：直接 $set 成 usedHours。
+    //    - 帶了 usedHoursBase，而且目前存的值已經不是 usedHoursBase（視窗開著的期間簽核核准又扣了時數）：
+    //      只套用管理員自己改的差額，用 $inc 加上 (usedHours - usedHoursBase)，不會抹掉期間內的扣減；
+    //      差額不會把已使用時數扣到小於 0（updateEmployee 在寫入後還會再補一次保險）。
+    // usedHoursBase 只用來比對，不會寫進資料庫。
+    if (submittedUsed !== undefined) {
+      const storedUsedHours = current && !current.legacy ? current.usedHours : undefined
+      const baseUsedHours = readAnnualLeaveHoursOptional(al, 'usedHoursBase', 'usedDaysBase')
+      if (storedUsedHours === undefined || submittedUsed !== storedUsedHours) {
+        if (storedUsedHours !== undefined && baseUsedHours !== undefined && baseUsedHours !== storedUsedHours) {
+          const adjustment = Math.max(submittedUsed - baseUsedHours, -storedUsedHours)
+          if (adjustment !== 0) $inc['annualLeave.usedHours'] = adjustment
         } else {
-          put('annualLeave.usedDays', submittedUsedDays)
+          put('annualLeave.usedHours', submittedUsed)
         }
       }
+    }
+    // 時數的來源：人資在系統內輸入、改過總時數，或勾選「確認」之後，就不再顯示「由舊資料推斷」的提醒
+    if (ANNUAL_LEAVE_UNIT_SOURCES.includes(al.unitSource)) put('annualLeave.unitSource', al.unitSource)
+    if (al.unitConfirmed === true || (submittedTotal !== undefined && current && submittedTotal !== current.totalHours)) {
+      put('annualLeave.unitSource', 'entered')
     }
     if (isDefined(al.year)) put('annualLeave.year', toNum(al.year))
     if (isDefined(al.expiryDate)) put('annualLeave.expiryDate', toDate(al.expiryDate))
@@ -680,12 +713,10 @@ async function rejectWithPhotoCleanup(req, res, status, payload) {
   return res.status(status).json(payload)
 }
 
-const resolveRemainingAnnualLeaveDays = (annualLeave = {}) => {
-  const remaining = toNum(annualLeave?.remainingDays)
-  if (remaining !== undefined) return Math.max(0, remaining)
-  const totalDays = toNum(annualLeave?.totalDays) ?? 0
-  const usedDays = toNum(annualLeave?.usedDays) ?? 0
-  return Math.max(0, totalDays - usedDays)
+// 排班頁用的特休剩餘：時數為主，天數是 時數 / 8 的換算（資料還是舊的天數欄位時由 readAnnualLeaveHours 換算）
+const resolveRemainingAnnualLeave = (annualLeave = {}) => {
+  const remainingHours = Math.max(0, readAnnualLeaveHours(annualLeave).remainingHours)
+  return { remainingDays: hoursToDays(remainingHours), remainingHours }
 }
 
 /** GET /api/employees?q=...&supervisor=...&organization=...&department=...&subDepartment=...&status=...&role=...&view=schedule */
@@ -821,7 +852,12 @@ export async function listEmployees(req, res) {
         .lean()
 
       return res.json({
-        employees,
+        // 特休一律附上時數（舊格式的資料由天數換算），畫面直接顯示時數
+        employees: employees.map((employee) => (
+          employee?.annualLeave && typeof employee.annualLeave === 'object'
+            ? { ...employee, annualLeave: presentAnnualLeave(employee.annualLeave) }
+            : employee
+        )),
         pagination: {
           total,
           page: safePage,
@@ -838,9 +874,7 @@ export async function listEmployees(req, res) {
 
     let scheduleEmployees = employees.map((employee) => ({
       ...employee,
-      annualLeave: {
-        remainingDays: resolveRemainingAnnualLeaveDays(employee.annualLeave),
-      },
+      annualLeave: resolveRemainingAnnualLeave(employee.annualLeave),
     }))
 
     if (status && status !== 'all') {
@@ -1231,6 +1265,10 @@ export async function getEmployee(req, res) {
       ? employee.toObject({ virtuals: true })
       : employee
 
+    if (result?.annualLeave && typeof result.annualLeave === 'object') {
+      result.annualLeave = presentAnnualLeave(result.annualLeave)
+    }
+
     if (result?.department) {
       const fallbackName =
         (typeof result.department === 'object' && result.department?.name) ||
@@ -1441,11 +1479,11 @@ export async function updateEmployee(req, res) {
         console.error('Failed to remove replaced employee photo', { error: cleanupErr?.name ?? 'Error', code: cleanupErr?.code })
       }
     }
-    // 已使用天數的差額更正：讀取之後若又有人調低，不可變成負數（與 refundAnnualLeave 相同的保險）
-    if (patchInc?.['annualLeave.usedDays'] < 0) {
+    // 已使用時數的差額更正：讀取之後若又有人調低，不可變成負數（與 refundAnnualLeave 相同的保險）
+    if (patchInc?.['annualLeave.usedHours'] < 0) {
       await Employee.updateOne(
-        { _id: employee._id, 'annualLeave.usedDays': { $lt: 0 } },
-        { $set: { 'annualLeave.usedDays': 0 } },
+        { _id: employee._id, 'annualLeave.usedHours': { $lt: 0 } },
+        { $set: { 'annualLeave.usedHours': 0 } },
       )
     }
 
@@ -1922,15 +1960,16 @@ export async function getEmployeeAnnualLeaveHistory(req, res) {
   }
 }
 
-/** PATCH /api/employees/:id/annual-leave - 設定員工特休天數（管理員）*/
+/** PATCH /api/employees/:id/annual-leave - 設定員工特休時數（管理員）。body：{ totalHours, year }；舊的 totalDays 視為天數、乘 8 換成小時 */
 export async function setEmployeeAnnualLeave(req, res) {
   try {
-    const { totalDays, year } = req.body
-    if (totalDays === undefined || totalDays < 0) {
-      return res.status(400).json({ error: 'Invalid totalDays' })
+    const { totalHours, totalDays, year } = req.body
+    const hours = totalHours !== undefined ? Number(totalHours) : (totalDays !== undefined ? daysToHours(Number(totalDays)) : undefined)
+    if (hours === undefined || !(hours >= 0)) {
+      return res.status(400).json({ error: 'Invalid totalHours' })
     }
 
-    const employee = await setAnnualLeaveQuota(req.params.id, totalDays, year)
+    const employee = await setAnnualLeaveQuota(req.params.id, hours, year)
     res.json({
       success: true,
       annualLeave: employee.annualLeave
@@ -1940,15 +1979,16 @@ export async function setEmployeeAnnualLeave(req, res) {
   }
 }
 
-/** POST /api/employees/:id/annual-leave/validate - 驗證特休申請 */
+/** POST /api/employees/:id/annual-leave/validate - 驗證特休申請。body：{ hours }；舊的 days 視為天數、乘 8 換成小時 */
 export async function validateEmployeeAnnualLeave(req, res) {
   try {
-    const { days } = req.body
-    if (!days || days <= 0) {
-      return res.status(400).json({ error: 'Invalid days' })
+    const { hours: bodyHours, days } = req.body
+    const hours = bodyHours !== undefined ? Number(bodyHours) : (days !== undefined ? daysToHours(Number(days)) : undefined)
+    if (!hours || !(hours > 0)) {
+      return res.status(400).json({ error: 'Invalid hours' })
     }
 
-    const result = await validateAnnualLeaveRequest(req.params.id, days)
+    const result = await validateAnnualLeaveRequest(req.params.id, hours)
     res.json(result)
   } catch (err) {
     res.status(400).json({ error: err.message })

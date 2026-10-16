@@ -14,6 +14,8 @@ const mockGetLeaveFieldIds = jest.fn();
 const mockAttendanceSetting = { findOne: jest.fn() };
 const mockEmployee = { find: jest.fn() };
 const mockHoliday = { find: jest.fn() };
+const mockHolidayMoveSetting = { find: jest.fn() };
+const mockHolidayRestResolution = { find: jest.fn() };
 const mockScheduleDayMemo = { find: jest.fn(), findOneAndUpdate: jest.fn(), findOneAndDelete: jest.fn() };
 const mockAssertScheduleRuleCompliance = jest.fn();
 const mockIsLaborRuleValidationError = jest.fn((error) => Array.isArray(error?.violations));
@@ -23,6 +25,8 @@ jest.unstable_mockModule('../src/models/approval_request.js', () => ({ default: 
 jest.unstable_mockModule('../src/models/AttendanceSetting.js', () => ({ default: mockAttendanceSetting }));
 jest.unstable_mockModule('../src/models/Employee.js', () => ({ default: mockEmployee }));
 jest.unstable_mockModule('../src/models/Holiday.js', () => ({ default: mockHoliday }));
+jest.unstable_mockModule('../src/models/HolidayMoveSetting.js', () => ({ default: mockHolidayMoveSetting }));
+jest.unstable_mockModule('../src/models/HolidayRestResolution.js', () => ({ default: mockHolidayRestResolution }));
 jest.unstable_mockModule('../src/models/ScheduleDayMemo.js', () => ({ default: mockScheduleDayMemo }));
 jest.unstable_mockModule('../src/services/laborRuleValidationService.js', () => ({
   assertScheduleRuleCompliance: mockAssertScheduleRuleCompliance,
@@ -446,6 +450,10 @@ describe('exportSchedules excel matrix', () => {
         name: '無班假日',
       },
     ]) });
+    mockHolidayMoveSetting.find.mockReset();
+    mockHolidayMoveSetting.find.mockReturnValue({ lean: jest.fn().mockResolvedValue([]) });
+    mockHolidayRestResolution.find.mockReset();
+    mockHolidayRestResolution.find.mockReturnValue({ lean: jest.fn().mockResolvedValue([]) });
     mockScheduleDayMemo.find.mockReset();
     mockScheduleDayMemo.find.mockReturnValue({
       sort: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue([]) }),

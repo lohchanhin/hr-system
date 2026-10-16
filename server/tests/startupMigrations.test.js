@@ -116,3 +116,57 @@ describe('server startup migrations', () => {
     expect(body.slice(call, catchStart)).toContain('console.log(`Migrated semantic types for ${migratedKeywordForms} leave forms (假別)`)')
   })
 })
+
+// 請假改以「小時」為單位的兩個一次性資料搬移（新模組 services/leaveHoursMigration.js，各自獨立的 try/catch，只記錄筆數或錯誤名稱）
+describe('server startup: leave hours migrations', () => {
+  it('imports both migrations from their own module (the pinned import of approvalTemplateController stays as it is)', () => {
+    expect(indexSource).toMatch(/import \{ migrateAnnualLeaveToHours, migrateLeaveFormsToHours \} from '\.\/services\/leaveHoursMigration\.js';/)
+  })
+
+  it('runs the annual leave migration, then the form migration, after the leave form semantics migrations and before the admin bootstrap', () => {
+    const body = startBody()
+    const keywordForms = body.indexOf('await migrateLeaveKeywordForms()')
+    const annual = body.indexOf('await migrateAnnualLeaveToHours()')
+    const forms = body.indexOf('await migrateLeaveFormsToHours()')
+    const admin = body.indexOf('await ensureAdminUser()')
+
+    expect(annual).toBeGreaterThan(keywordForms)
+    expect(forms).toBeGreaterThan(annual)
+    expect(admin).toBeGreaterThan(forms)
+  })
+
+  it('does not let a failing annual leave migration stop the server, and only logs counts or the error name', () => {
+    const body = startBody()
+    const call = body.indexOf('await migrateAnnualLeaveToHours()')
+    const tryStart = body.lastIndexOf('try {', call)
+    const catchStart = body.indexOf('} catch (annualLeaveError) {', call)
+    const catchEnd = body.indexOf('\n    }\n', catchStart)
+
+    expect(tryStart).toBeGreaterThan(-1)
+    expect(body.slice(tryStart, call)).not.toContain('}')
+    expect(catchStart).toBeGreaterThan(call)
+    const handler = body.slice(catchStart, catchEnd)
+    expect(handler).toContain("console.error('Failed to migrate annual leave to hours', annualLeaveError?.name ?? 'Error')")
+    expect(handler).not.toMatch(/process\.exit|throw /)
+    // 成功時只記錄筆數（沒有搬移任何員工時不記錄）
+    const success = body.slice(call, catchStart)
+    expect(success).toContain('annualLeaveMigration?.migrated')
+    expect(success).toContain('Migrated annual leave to hours for ${annualLeaveMigration.migrated} employees')
+    expect(success).not.toMatch(/employee\.|\.name|annualLeave\.(total|used)/)
+  })
+
+  it('does not let a failing leave form migration stop the server, and only logs counts or the error name', () => {
+    const body = startBody()
+    const call = body.indexOf('await migrateLeaveFormsToHours()')
+    const tryStart = body.lastIndexOf('try {', call)
+    const catchStart = body.indexOf('} catch (leaveHoursError) {', call)
+    const catchEnd = body.indexOf('\n    }\n', catchStart)
+
+    expect(tryStart).toBeGreaterThan(-1)
+    expect(catchStart).toBeGreaterThan(call)
+    const handler = body.slice(catchStart, catchEnd)
+    expect(handler).toContain("console.error('Failed to migrate leave forms to hours', leaveHoursError?.name ?? 'Error')")
+    expect(handler).not.toMatch(/process\.exit|throw /)
+    expect(body.slice(call, catchStart)).toContain('Added leave hours field to ${leaveFormMigration.added} leave forms')
+  })
+})

@@ -12,6 +12,7 @@ import { migrateMissingShiftSemantics } from './services/shiftSemanticService.js
 import { purgeLegacyRocWeekendHolidays } from './controllers/holidayController.js';
 import { migrateLeaveFormSemantics, migrateLeaveKeywordForms } from './controllers/approvalTemplateController.js';
 import { normalizeStoredSignTags } from './controllers/employeeController.js';
+import { migrateAnnualLeaveToHours, migrateLeaveFormsToHours } from './services/leaveHoursMigration.js';
 import { authenticate, authorizeRoles } from './middleware/auth.js';
 import scheduleRoutes from './routes/scheduleRoutes.js';
 import payrollRoutes from './routes/payrollRoutes.js';
@@ -29,6 +30,8 @@ import otherControlSettingRoutes from './routes/otherControlSettingRoutes.js';
 
 import salarySettingRoutes from './routes/salarySettingRoutes.js';
 import holidayMoveSettingRoutes from './routes/holidayMoveSettingRoutes.js';
+import holidayLedgerRoutes from './routes/holidayLedgerRoutes.js';
+import HolidayRestResolution from './models/HolidayRestResolution.js';
 
 import attendanceSettingRoutes from './routes/attendanceSettingRoutes.js';
 import shiftRoutes from './routes/shiftRoutes.js';
@@ -309,6 +312,18 @@ app.use(
 
 app.use('/api/salary-settings', authenticate, authorizeRoles('admin'), salarySettingRoutes);
 app.use('/api/holiday-move-settings', authenticate, authorizeRoles('admin'), holidayMoveSettingRoutes);
+// 國定假日休假紀錄：查詢依班表的權限範圍（員工只看自己）；匯出與登記處理方式只有主管、管理員（路由檔內再擋一次）
+app.use(
+  '/api/holiday-ledger',
+  authenticate,
+  (req, res, next) => {
+    if (req.method === 'GET' && !req.path?.startsWith('/export')) {
+      return authorizeRoles('employee', 'supervisor', 'admin')(req, res, next);
+    }
+    return authorizeRoles('supervisor', 'admin')(req, res, next);
+  },
+  holidayLedgerRoutes
+);
 
 app.use('/api', apiNotFound);
 app.get('*', (req, res, next) => {
@@ -360,6 +375,36 @@ async function start() {
       }
     } catch (keywordError) {
       console.error('Failed to migrate leave keyword forms', keywordError?.name ?? 'Error');
+    }
+    // 請假改以「小時」為單位：員工特休從天數欄位搬成時數欄位（冪等：已有時數欄位的員工不會再動，只記錄筆數）
+    try {
+      const annualLeaveMigration = await migrateAnnualLeaveToHours();
+      if (annualLeaveMigration?.migrated) {
+        console.log(
+          `Migrated annual leave to hours for ${annualLeaveMigration.migrated} employees ` +
+          `(days x8: ${annualLeaveMigration.fromDays}, already hours: ${annualLeaveMigration.alreadyHours}, repaired: ${annualLeaveMigration.repaired})`
+        );
+      }
+    } catch (annualLeaveError) {
+      console.error('Failed to migrate annual leave to hours', annualLeaveError?.name ?? 'Error');
+    }
+    // 請假表單補上「時數」欄位並停用舊的「天數」欄位（每張表單只處理一次）
+    try {
+      const leaveFormMigration = await migrateLeaveFormsToHours();
+      if (leaveFormMigration?.forms) {
+        console.log(
+          `Added leave hours field to ${leaveFormMigration.added} leave forms ` +
+          `(deactivated days field on ${leaveFormMigration.deactivated}, forms checked: ${leaveFormMigration.forms})`
+        );
+      }
+    } catch (leaveHoursError) {
+      console.error('Failed to migrate leave forms to hours', leaveHoursError?.name ?? 'Error');
+    }
+    // 國定假日休假紀錄的處理方式集合：確保唯一索引存在（冪等；失敗不擋啟動，之後寫入時 Mongoose 仍會再試建立）
+    try {
+      await HolidayRestResolution.createIndexes();
+    } catch (indexError) {
+      console.error('Failed to ensure holiday rest resolution indexes', indexError?.name ?? 'Error');
     }
     await ensureAdminUser();
     await ensureDefaultSupervisorReports();

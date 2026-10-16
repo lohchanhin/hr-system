@@ -318,6 +318,7 @@ const dynamicColumns = computed(() => {
       { prop: 'leaveType', label: '假別', minWidth: 160 },
       { prop: 'startDate', label: '開始日期', minWidth: 140 },
       { prop: 'endDate', label: '結束日期', minWidth: 140 },
+      { prop: 'hours', label: '時數', minWidth: 100 },
       { prop: 'days', label: '天數', minWidth: 100 },
     ]
   }
@@ -372,6 +373,7 @@ const dynamicColumns = computed(() => {
     return [
       { prop: 'startDate', label: '開始日期', minWidth: 140 },
       { prop: 'endDate', label: '結束日期', minWidth: 140 },
+      { prop: 'hours', label: '時數', minWidth: 100 },
       { prop: 'days', label: '天數', minWidth: 100 },
     ]
   }
@@ -390,12 +392,13 @@ const summaryItems = computed(() => {
   if (reportType.value === 'leave') {
     const base = [
       { label: '總請假件數', value: preview.summary.totalLeaves },
+      { label: '總請假時數', value: preview.summary.totalHours ?? 0 },
       { label: '總請假天數', value: preview.summary.totalDays },
     ]
     const byType = Array.isArray(preview.summary.byType)
       ? preview.summary.byType.map((item) => ({
           label: `${item.leaveType || item.leaveCode} 件數`,
-          value: `${item.count ?? 0} 筆 / ${item.days ?? 0} 天`,
+          value: `${item.count ?? 0} 筆 / ${item.hours ?? 0} 小時（${item.days ?? 0} 天）`,
         }))
       : []
     return [...base, ...byType]
@@ -446,6 +449,7 @@ const summaryItems = computed(() => {
   if (reportType.value === 'specialLeave') {
     return [
       { label: '特休申請數', value: preview.summary.totalRequests ?? 0 },
+      { label: '特休總時數', value: preview.summary.totalHours ?? 0 },
       { label: '特休總天數', value: preview.summary.totalDays ?? 0 },
     ]
   }

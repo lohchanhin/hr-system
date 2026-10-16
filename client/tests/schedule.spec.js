@@ -1122,6 +1122,41 @@ describe('Schedule.vue', () => {
     expect(dash.props('summary')).toEqual({ direct: 2, unscheduled: 2, onLeave: 1 })
   })
 
+  it('shows the 國定假日休假 button to people who can edit the schedule and loads the dialog only after it is pressed', async () => {
+    setRoleToken('supervisor')
+    setupSupervisorApiMock({})
+    const wrapper = mountSchedule()
+    await flush()
+    const ledgerCalls = () => apiFetch.mock.calls.filter(([url]) => String(url).includes('/api/holiday-ledger'))
+
+    const button = wrapper.find('[data-test="holiday-ledger-button"]')
+    expect(button.exists()).toBe(true)
+    expect(button.text()).toContain('國定假日休假')
+    // 沒按按鈕之前：不載入視窗元件，也不發任何假日紀錄請求
+    expect(wrapper.vm.holidayLedgerRequested).toBe(false)
+    expect(wrapper.vm.holidayLedgerVisible).toBe(false)
+    expect(ledgerCalls()).toHaveLength(0)
+
+    await button.trigger('click')
+    await flush()
+
+    expect(wrapper.vm.holidayLedgerRequested).toBe(true)
+    expect(wrapper.vm.holidayLedgerVisible).toBe(true)
+    // 視窗沿用目前排班頁的月份與範圍
+    expect(wrapper.vm.holidayLedgerScope).toMatchObject({ month: wrapper.vm.currentMonth })
+    wrapper.unmount()
+  })
+
+  it('does not show the 國定假日休假 button to an employee', async () => {
+    setRoleToken('employee')
+    setupSupervisorApiMock({})
+    const wrapper = mountSchedule()
+    await flush()
+
+    expect(wrapper.find('[data-test="holiday-ledger-button"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
   it('loads shift options when API returns array directly', async () => {
     apiFetch
       .mockResolvedValueOnce({ ok: true, json: async () => [] })
@@ -2745,6 +2780,31 @@ describe('Schedule.vue', () => {
     ])
   })
 
+  it('shows the remaining annual leave in hours (legacy day-only responses are converted, 1 day = 8 hours)', async () => {
+    apiFetch
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [{ _id: 'd1', name: 'Dept A' }] })
+      .mockResolvedValueOnce({ ok: true, json: async () => [{ _id: 'sd1', name: 'Sub A', department: 'd1' }] })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => [
+          { _id: 'e1', name: 'E1', department: 'd1', subDepartment: 'sd1', annualLeave: { remainingHours: 20, remainingDays: 2.5 } },
+          { _id: 'e2', name: 'E2', department: 'd1', subDepartment: 'sd1', annualLeave: { remainingDays: 3 } },
+          { _id: 'e3', name: 'E3', department: 'd1', subDepartment: 'sd1', annualLeave: { remainingHours: -4 } }
+        ]
+      })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ approvals: [], leaves: [] }) })
+    const wrapper = mountSchedule()
+    await flush()
+
+    const byId = Object.fromEntries(wrapper.vm.employees.map(employee => [employee._id, employee.annualLeave]))
+    expect(byId.e1).toEqual({ remainingDays: 2.5, remainingHours: 20 })
+    expect(byId.e2).toEqual({ remainingDays: 3, remainingHours: 24 })
+    expect(byId.e3).toEqual({ remainingDays: 0, remainingHours: 0 })
+  })
+
   it('provides fixed 8 row color options', async () => {
     apiFetch
       .mockResolvedValueOnce({ ok: true, json: async () => [] })
@@ -3534,5 +3594,443 @@ describe('Schedule.vue', () => {
 
     expect(wrapper.vm.scheduleMap.e1[1].shiftId).toBe('s1')
     expect(wrapper.vm.isTableFullscreen).toBe(false)
+  })
+
+  describe('part-time tag on the roster', () => {
+    const rosterEmployees = [
+      { _id: 'e1', employeeId: 'P001', name: '兼職員工', department: 'd1', subDepartment: 'sd1', partTime: true },
+      { _id: 'e2', employeeId: 'F001', name: '正職員工', department: 'd1', subDepartment: 'sd1', partTime: false },
+      { _id: 'e3', employeeId: 'N001', name: '舊資料員工', department: 'd1', subDepartment: 'sd1' }
+    ]
+    const directReports = rosterEmployees.map(employee => ({ _id: employee._id, subDepartment: { _id: 'sd1' } }))
+
+    it('marks only employees whose partTime flag is true, and a missing flag counts as full-time', async () => {
+      setRoleToken('supervisor')
+      localStorage.setItem('employeeId', 'sup1')
+      setupSupervisorApiMock({ employees: rosterEmployees, directReports })
+      const wrapper = mountSchedule()
+      await flush()
+      await flush()
+
+      expect(wrapper.vm.employees.map(employee => [employee._id, employee.partTime])).toEqual([
+        ['e1', true],
+        ['e2', false],
+        ['e3', false]
+      ])
+      const badges = wrapper.findAll('[data-test="part-time-badge"]')
+      expect(badges).toHaveLength(1)
+      expect(badges[0].text()).toBe('兼職')
+      expect(badges[0].element.closest('.cell').textContent).toContain('兼職員工')
+      wrapper.unmount()
+    })
+
+    it('does not tag a supervisor’s own row unless their profile is part-time', async () => {
+      for (const partTime of [false, true]) {
+        setRoleToken('supervisor')
+        localStorage.setItem('employeeId', 'sup1')
+        setupSupervisorApiMock({
+          employees: [rosterEmployees[1]],
+          directReports: [directReports[1]],
+          includeSelfPreference: true,
+          supervisorProfile: {
+            _id: 'sup1',
+            name: '主管',
+            partTime,
+            department: { _id: 'd1', name: 'Dept A' },
+            subDepartment: { _id: 'sd1', name: 'Sub A' }
+          }
+        })
+        const wrapper = mountSchedule()
+        await flush()
+        await flush()
+
+        const selfRow = wrapper.vm.employees.find(employee => employee._id === 'sup1')
+        expect(selfRow).toBeTruthy()
+        expect(selfRow.partTime).toBe(partTime)
+        expect(wrapper.findAll('[data-test="part-time-badge"]')).toHaveLength(partTime ? 1 : 0)
+        wrapper.unmount()
+      }
+    })
+  })
+
+  describe('cross-month weeks that cannot be judged yet', () => {
+    const pendingItem = (overrides = {}) => ({
+      rule: 'weekly-rest-pending',
+      employee: 'e1',
+      weekStart: '2026-06-29',
+      weekEnd: '2026-07-05',
+      date: '2026-06-29',
+      missingDates: ['2026-06-29', '2026-06-30'],
+      missingMonths: ['2026-06'],
+      message: '跨月週（2026-06-29～2026-07-05）：2026-06-29～2026-06-30 尚未排班，暫時無法判斷每週一例一休（目前缺例假、休息日）；2026年6月 班表排定後會重新檢核',
+      ...overrides
+    })
+    const rosterOfTwo = [
+      { _id: 'e1', employeeId: 'A0003', name: '王小美' },
+      { _id: 'e2', employeeId: 'A0069', name: '林小華' }
+    ]
+    const validateResponse = (body, status = 200) => ({ ok: status === 200, status, json: async () => body })
+    const pendingOnly = (items) => validateResponse({ ok: true, count: 0, violations: [], pendingWeeks: items })
+
+    // 其餘請求照原本的替身回答，只把排班規則檢核換成指定的回應
+    const answerValidateWith = (body) => {
+      const base = apiFetch.getMockImplementation()
+      apiFetch.mockImplementation(async (url, options) => {
+        if (String(url).startsWith('/api/schedules/rules/validate')) return typeof body === 'function' ? body(url) : body
+        return base(url, options)
+      })
+    }
+
+    async function mountSupervisor(options = {}) {
+      setRoleToken('supervisor')
+      localStorage.setItem('employeeId', 'sup1')
+      setupSupervisorApiMock(options)
+      const wrapper = mountSchedule()
+      await flush()
+      wrapper.vm.employees = rosterOfTwo
+      return wrapper
+    }
+
+    it('lists the weeks in their own section and keeps the precheck a pass (no violation section, no failure)', async () => {
+      const wrapper = await mountSupervisor()
+      apiFetch.mockResolvedValueOnce(pendingOnly([pendingItem(), pendingItem({ employee: 'e2' })]))
+
+      await wrapper.vm.fetchScheduleRuleValidation({ showIssues: true })
+      await flush()
+
+      const section = wrapper.find('[data-test="schedule-rule-pending"]')
+      expect(section.exists()).toBe(true)
+      expect(section.find('h3').text()).toBe('尚無法判斷的跨月週（共 2 項）')
+      expect(section.text()).toContain('相鄰月份排定後會重新檢核')
+      const items = section.findAll('li').map(item => item.text())
+      expect(items).toHaveLength(2)
+      expect(items[0]).toContain('A0003 王小美 2026-06-29 [每週一例一休（待判斷）]：跨月週（2026-06-29～2026-07-05）')
+      expect(items[1]).toContain('A0069 林小華 2026-06-29')
+      expect(wrapper.find('[data-test="schedule-rule-results"]').exists()).toBe(false)
+      expect(wrapper.vm.scheduleRuleValidation).toMatchObject({ ok: true, count: 0, pendingCount: 2 })
+      wrapper.unmount()
+    })
+
+    it('opens an info dialog (one line per week) instead of a plain success toast when only weeks are pending', async () => {
+      const wrapper = await mountSupervisor()
+      apiFetch.mockResolvedValueOnce(pendingOnly([pendingItem(), pendingItem({ employee: 'e2' })]))
+
+      await wrapper.vm.fetchScheduleRuleValidation({ showIssues: true })
+
+      expect(ElMessageBox.alert).toHaveBeenCalledTimes(1)
+      const [message, title, options] = ElMessageBox.alert.mock.calls[0]
+      expect(title).toBe('排班規範預檢已通過，另有 2 項跨月週尚無法判斷')
+      expect(message).toContain('相鄰月份排定後會重新檢核')
+      expect(message).toContain('・2026-06-29～2026-07-05：2 人（A0003 王小美、A0069 林小華）尚無法判斷，2026年6月尚未排班')
+      expect(options).toMatchObject({ type: 'info', customClass: 'schedule-issue-dialog', zIndex: 4000 })
+      expect(ElMessage.success).not.toHaveBeenCalled()
+      // 這不是違規：不進完整檢核結果、不寫「待修正」通知
+      expect(wrapper.vm.scheduleIssues.lines).toEqual([])
+      expect(wrapper.vm.scheduleNotifications).toHaveLength(0)
+      wrapper.unmount()
+    })
+
+    it('still reports a plain success when nothing is pending', async () => {
+      const wrapper = await mountSupervisor()
+      apiFetch.mockResolvedValueOnce(validateResponse({ ok: true, count: 0, violations: [] }))
+
+      await wrapper.vm.fetchScheduleRuleValidation({ showIssues: true })
+
+      expect(ElMessage.success).toHaveBeenCalledWith('排班規範預檢已通過')
+      expect(ElMessageBox.alert).not.toHaveBeenCalled()
+      expect(wrapper.find('[data-test="schedule-rule-pending"]').exists()).toBe(false)
+      wrapper.unmount()
+    })
+
+    it('keeps the success toast when the caller states the pending weeks itself (announcePending false)', async () => {
+      const wrapper = await mountSupervisor()
+      apiFetch.mockResolvedValueOnce(pendingOnly([pendingItem()]))
+
+      const result = await wrapper.vm.fetchScheduleRuleValidation({ showIssues: true, announcePending: false })
+
+      expect(ElMessage.success).toHaveBeenCalledWith('排班規範預檢已通過')
+      expect(ElMessageBox.alert).not.toHaveBeenCalled()
+      expect(result.pendingWeeks).toHaveLength(1)
+      wrapper.unmount()
+    })
+
+    it('shows the pending weeks next to the violations without mixing them into the violation list', async () => {
+      const wrapper = await mountSupervisor()
+      apiFetch.mockResolvedValueOnce(validateResponse({
+        ok: false,
+        count: 1,
+        violations: [{ employee: 'e2', date: '2026-07-06', rule: 'continuous-work-days', message: '不得連續7日未安排休/例' }],
+        pendingWeeks: [pendingItem()]
+      }))
+
+      await wrapper.vm.fetchScheduleRuleValidation({ showIssues: true })
+      await flush()
+
+      expect(wrapper.find('[data-test="schedule-rule-results"]').findAll('li')).toHaveLength(1)
+      expect(wrapper.find('[data-test="schedule-rule-pending"]').findAll('li')).toHaveLength(1)
+      expect(wrapper.vm.scheduleRuleValidation).toMatchObject({ ok: false, count: 1, pendingCount: 1 })
+      wrapper.unmount()
+    })
+
+    it('shows the pending count on the 排班檢核 badge only while there is no violation', async () => {
+      const wrapper = await mountSupervisor()
+      const badgeOf = () => wrapper.find('[data-test="schedule-rule-issues-button"]').element.closest('.badge-stub')
+
+      apiFetch.mockResolvedValueOnce(pendingOnly([pendingItem(), pendingItem({ employee: 'e2' })]))
+      await wrapper.vm.fetchScheduleRuleValidation({})
+      await flush()
+      expect(badgeOf().getAttribute('value')).toBe('2')
+      expect(badgeOf().getAttribute('type')).toBe('info')
+
+      apiFetch.mockResolvedValueOnce(validateResponse({
+        ok: false,
+        count: 1,
+        violations: [{ employee: 'e2', date: '2026-07-06', rule: 'continuous-work-days', message: 'x' }],
+        pendingWeeks: [pendingItem()]
+      }))
+      await wrapper.vm.fetchScheduleRuleValidation({})
+      await flush()
+      expect(badgeOf().getAttribute('value')).toBe('1')
+      expect(badgeOf().getAttribute('type')).toBe('danger')
+      wrapper.unmount()
+    })
+
+    it('quiet mode refreshes the badge, the result panels and the pending section without a dialog, a toast or a notification', async () => {
+      const wrapper = await mountSupervisor()
+      apiFetch.mockResolvedValueOnce(validateResponse({
+        ok: false,
+        count: 1,
+        violations: [{ employee: 'e2', date: '2026-07-06', rule: 'continuous-work-days', message: '新違規' }],
+        pendingWeeks: [pendingItem()]
+      }))
+
+      await wrapper.vm.fetchScheduleRuleValidation({ quiet: true })
+      await flush()
+
+      expect(wrapper.vm.scheduleRuleValidation).toMatchObject({ ok: false, count: 1, pendingCount: 1 })
+      expect(wrapper.find('[data-test="schedule-rule-results"]').findAll('li')).toHaveLength(1)
+      expect(wrapper.find('[data-test="schedule-rule-results"]').text()).toContain('新違規')
+      expect(wrapper.find('[data-test="schedule-rule-pending"]').findAll('li')).toHaveLength(1)
+      expect(ElMessageBox.alert).not.toHaveBeenCalled()
+      expect(ElMessage.success).not.toHaveBeenCalled()
+      expect(ElMessage.warning).not.toHaveBeenCalled()
+      expect(wrapper.vm.scheduleNotifications).toHaveLength(0)
+      wrapper.unmount()
+    })
+
+    it('clears the pending section when the month changes and then judges the new month again in the background', async () => {
+      const wrapper = await mountSupervisor()
+      apiFetch.mockResolvedValueOnce(pendingOnly([pendingItem()]))
+      await wrapper.vm.fetchScheduleRuleValidation({})
+      await flush()
+      expect(wrapper.find('[data-test="schedule-rule-pending"]').exists()).toBe(true)
+
+      const validateUrls = []
+      answerValidateWith((url) => {
+        validateUrls.push(String(url))
+        return pendingOnly([pendingItem({ weekStart: '2026-07-27', weekEnd: '2026-08-02', date: '2026-07-27', missingMonths: ['2026-08'] })])
+      })
+      await wrapper.vm.onMonthChange('2026-08')
+      await flush()
+
+      // 切換月份後，背景重新檢核的是新月份；結果只更新徽章與提醒
+      expect(validateUrls).toHaveLength(1)
+      expect(new URL(validateUrls[0], 'http://localhost').searchParams.get('month')).toBe('2026-08')
+      expect(wrapper.vm.scheduleRuleValidation.pendingCount).toBe(1)
+      expect(wrapper.find('[data-test="schedule-rule-pending"]').text()).toContain('2026-07-27')
+      expect(ElMessageBox.alert).not.toHaveBeenCalled()
+      expect(wrapper.vm.scheduleNotifications).toHaveLength(0)
+      wrapper.unmount()
+    })
+
+    it('does not run the background re-check for someone who cannot edit the schedule', async () => {
+      setRoleToken('employee')
+      setupSupervisorApiMock()
+      const wrapper = mountSchedule()
+      await flush()
+      const validateUrls = []
+      answerValidateWith((url) => {
+        validateUrls.push(String(url))
+        return pendingOnly([pendingItem()])
+      })
+
+      await wrapper.vm.onMonthChange('2026-08')
+      await flush()
+
+      expect(validateUrls).toEqual([])
+      wrapper.unmount()
+    })
+
+    it('swallows a failed background re-check without disturbing the month change', async () => {
+      const wrapper = await mountSupervisor()
+      answerValidateWith(() => { throw new Error('network down') })
+
+      await expect(wrapper.vm.onMonthChange('2026-08')).resolves.toBeUndefined()
+
+      expect(wrapper.vm.currentMonth).toBe('2026-08')
+      expect(ElMessage.warning).not.toHaveBeenCalled()
+      wrapper.unmount()
+    })
+
+    describe('import confirmation', () => {
+      const scheduleFile = () => new File(['schedule'], 'schedule.xlsx', {
+        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+      })
+
+      it('lists one line per cross-month week and the part-time employees that are exempt, without blocking the import', async () => {
+        const wrapper = await mountSupervisor()
+        importScheduleRecords
+          .mockResolvedValueOnce({
+            ok: true,
+            json: async () => ({
+              employees: 3,
+              scheduleDays: 93,
+              errors: [],
+              warnings: [],
+              violations: [],
+              ruleExemptEmployees: [{ employeeId: 'P001', name: '兼職員工' }],
+              pendingWeeks: [
+                pendingItem(),
+                pendingItem({ employee: 'e2' }),
+                pendingItem({ employee: 'x9', employeeCode: 'A0141', employeeName: '陳小玲' }),
+                pendingItem({ weekStart: '2026-07-27', weekEnd: '2026-08-02', missingMonths: ['2026-08'] })
+              ],
+              overwriteCount: 0
+            })
+          })
+          .mockResolvedValueOnce({ ok: true, json: async () => ({ imported: 93 }) })
+
+        await wrapper.vm.onScheduleImportFile({ target: { files: [scheduleFile()], value: 'schedule.xlsx' } })
+
+        expect(ElMessageBox.confirm).toHaveBeenCalledTimes(1)
+        const [message] = ElMessageBox.confirm.mock.calls[0]
+        expect(message).toContain('其中 1 位兼職人員不套用排班規範檢核（P001 兼職員工）。')
+        expect(message).toContain('跨月週尚無法判斷一例一休（4 項，不影響匯入，待相鄰月份班表排定後會重新檢核）：')
+        expect(message).toContain('・2026-06-29～2026-07-05：3 人（A0003 王小美、A0069 林小華、A0141 陳小玲）尚無法判斷，2026年6月尚未排班')
+        expect(message).toContain('・2026-07-27～2026-08-02：1 人（A0003 王小美）尚無法判斷，2026年8月尚未排班')
+        expect(importScheduleRecords).toHaveBeenCalledTimes(2)
+        expect(ElMessage.success).toHaveBeenCalledWith('已匯入 93 個班次')
+        wrapper.unmount()
+      })
+
+      it('leaves the dialog text as before when the file has neither part-time employees nor pending weeks', async () => {
+        const wrapper = await mountSupervisor()
+        importScheduleRecords
+          .mockResolvedValueOnce({
+            ok: true,
+            json: async () => ({ employees: 1, scheduleDays: 30, errors: [], warnings: [], violations: [], ruleExemptEmployees: [], overwriteCount: 0 })
+          })
+          .mockResolvedValueOnce({ ok: true, json: async () => ({ imported: 30 }) })
+
+        await wrapper.vm.onScheduleImportFile({ target: { files: [scheduleFile()], value: 'schedule.xlsx' } })
+
+        expect(ElMessageBox.confirm.mock.calls[0][0]).toBe('將匯入 1 名員工、30 個班次。')
+        wrapper.unmount()
+      })
+
+      it('writes an info notification after the commit when weeks are still pending', async () => {
+        const wrapper = await mountSupervisor()
+        importScheduleRecords
+          .mockResolvedValueOnce({
+            ok: true,
+            json: async () => ({ employees: 1, scheduleDays: 31, errors: [], warnings: [], violations: [], overwriteCount: 0 })
+          })
+          .mockResolvedValueOnce({
+            ok: true,
+            json: async () => ({ imported: 31, warnings: [], violations: [], pendingWeeks: [pendingItem(), pendingItem({ weekStart: '2026-07-27', weekEnd: '2026-08-02' })] })
+          })
+
+        await wrapper.vm.onScheduleImportFile({ target: { files: [scheduleFile()], value: 'schedule.xlsx' } })
+
+        const notification = wrapper.vm.scheduleNotifications.find(item => item.title === '跨月週待判斷')
+        expect(notification).toMatchObject({
+          type: 'info',
+          message: '匯入完成，另有 2 項跨月週尚無法判斷一例一休（相鄰月份尚未排班）。'
+        })
+        expect(notification.details).toHaveLength(2)
+        expect(notification.details[0]).toMatchObject({ rule: 'weekly-rest-pending', employee: 'e1', date: '2026-06-29' })
+        wrapper.unmount()
+      })
+    })
+
+    describe('publish and finalize confirmation', () => {
+      const draftSummary = {
+        status: 'draft',
+        pendingEmployees: [],
+        disputedEmployees: [],
+        publishedAt: null,
+        hasSchedules: true,
+        totalEmployees: 1,
+        allEmployeesConfirmed: false
+      }
+
+      it('tells the user about the weeks that cannot be judged yet in the publish confirmation, and still publishes', async () => {
+        const wrapper = await mountSupervisor({
+          publishSummary: draftSummary,
+          publishResult: { updated: 1, publishedAt: new Date().toISOString(), employees: [] }
+        })
+        await flush()
+        answerValidateWith(pendingOnly([pendingItem(), pendingItem({ employee: 'e2' })]))
+
+        await wrapper.vm.confirmPublish()
+
+        expect(ElMessageBox.confirm).toHaveBeenCalledTimes(1)
+        const [message, title] = ElMessageBox.confirm.mock.calls[0]
+        expect(title).toBe('批次發布')
+        expect(message).toBe(
+          '確認要將本月班表發送給員工確認嗎？\n\n另有 2 項跨月週尚無法判斷一例一休（相鄰月份尚未排班），不影響發布，待相鄰月份班表排定後會重新檢核。'
+        )
+        // 不另外跳出說明視窗，發布照常送出
+        expect(ElMessageBox.alert).not.toHaveBeenCalled()
+        expect(apiFetch.mock.calls.some(([url, options]) => url === '/api/schedules/publish' && options?.method === 'POST')).toBe(true)
+        wrapper.unmount()
+      })
+
+      it('keeps the publish confirmation text unchanged when nothing is pending', async () => {
+        const wrapper = await mountSupervisor({ publishSummary: draftSummary })
+        await flush()
+        answerValidateWith(validateResponse({ ok: true, count: 0, violations: [] }))
+
+        await wrapper.vm.confirmPublish()
+
+        expect(ElMessageBox.confirm.mock.calls[0][0]).toBe('確認要將本月班表發送給員工確認嗎？')
+        wrapper.unmount()
+      })
+
+      it('does not publish when a violation exists, even if weeks are pending as well', async () => {
+        const wrapper = await mountSupervisor({ publishSummary: draftSummary })
+        await flush()
+        answerValidateWith(validateResponse({
+          ok: false,
+          count: 1,
+          violations: [{ employee: 'e2', date: '2026-07-06', rule: 'continuous-work-days', message: '不得連續7日未安排休/例' }],
+          pendingWeeks: [pendingItem()]
+        }))
+
+        await wrapper.vm.confirmPublish()
+
+        expect(ElMessageBox.confirm).not.toHaveBeenCalled()
+        expect(apiFetch.mock.calls.some(([url]) => url === '/api/schedules/publish')).toBe(false)
+        wrapper.unmount()
+      })
+
+      it('mentions the pending weeks in the finalize confirmation too', async () => {
+        const wrapper = await mountSupervisor({
+          publishSummary: { ...draftSummary, status: 'ready', allEmployeesConfirmed: true },
+          finalizeResult: { finalized: 1 }
+        })
+        await flush()
+        answerValidateWith(pendingOnly([pendingItem()]))
+
+        await wrapper.vm.confirmFinalize()
+
+        const [message, title] = ElMessageBox.confirm.mock.calls[0]
+        expect(title).toBe('完成發布')
+        expect(message).toBe(
+          '全部員工已確認，是否完成發布並鎖定班表？\n\n另有 1 項跨月週尚無法判斷一例一休（相鄰月份尚未排班），不影響發布，待相鄰月份班表排定後會重新檢核。'
+        )
+        wrapper.unmount()
+      })
+    })
   })
 })

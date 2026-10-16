@@ -1,6 +1,8 @@
 // backend/models/employee.js
 import mongoose from 'mongoose'
 import crypto from 'crypto'
+import { readAnnualLeaveHours } from '../utils/annualLeaveHours.js'
+import { LEAVE_DAY_EQUIVALENT_HOURS, roundHours } from '../utils/leaveHours.js'
 
 const { Schema } = mongoose
 
@@ -225,10 +227,19 @@ const employeeSchema = new Schema(
     healthInsuredSalary: { type: Number, default: 0 }, // 健保投保薪資
     dependentCount: { type: Number, default: 0 }, // 眷口數（健保眷屬人數）
 
-    /* 特休管理 */
+    /* 特休管理：請假一律以「小時」為單位，特休也以小時儲存（1 天 = 8 小時只是換算顯示） */
     annualLeave: {
-      totalDays: { type: Number, default: 0 }, // 年度特休總天數（可設定）
-      usedDays: { type: Number, default: 0 }, // 已使用的特休天數
+      // 年度特休總時數、已使用時數（可設定；簽核核准時由系統原子扣減）。
+      // 刻意不設預設值：沒有 totalHours 代表還沒搬移的舊資料，啟動時的資料搬移（services/leaveHoursMigration.js）會補上，
+      // 搬移完成前讀取端也會用 utils/annualLeaveHours.js 解讀舊的天數欄位，兩邊結果一致
+      totalHours: { type: Number, min: 0 },
+      usedHours: { type: Number, min: 0 },
+      // 時數的來源：migrated-days 由舊的天數乘 8 換算、migrated-hours 舊欄位的數字大於 40（不可能是天數）原樣視為小時
+      // （人資應再確認一次）、entered 人資在系統內直接輸入或確認過
+      unitSource: { type: String, enum: ['migrated-days', 'migrated-hours', 'entered'] },
+      // 以下兩個舊欄位（天）搬移後凍結，只供稽核與回復；請用 totalHours / usedHours
+      totalDays: { type: Number, default: 0 },
+      usedDays: { type: Number, default: 0 },
       year: { type: Number, default: () => new Date().getFullYear() }, // 年度標記
       expiryDate: { type: Date }, // 請假期限
       accumulatedLeave: { type: Number, default: 0 }, // 積假
@@ -281,10 +292,14 @@ employeeSchema
     this.passwordHash = hashPassword(plain)
   })
 
-// 特休剩餘天數虛擬欄位
+// 特休剩餘時數與剩餘天數（時數 / 8，只供顯示）虛擬欄位
+employeeSchema.virtual('annualLeave.remainingHours').get(function () {
+  if (!this.annualLeave) return 0
+  return readAnnualLeaveHours(this.annualLeave).remainingHours
+})
 employeeSchema.virtual('annualLeave.remainingDays').get(function () {
   if (!this.annualLeave) return 0
-  return (this.annualLeave.totalDays || 0) - (this.annualLeave.usedDays || 0)
+  return roundHours(readAnnualLeaveHours(this.annualLeave).remainingHours / LEAVE_DAY_EQUIVALENT_HOURS)
 })
 
 employeeSchema.methods.verifyPassword = function (plain) {
@@ -319,25 +334,28 @@ employeeSchema.pre('save', function (next) {
   next()
 })
 
-// 特休相關方法
-employeeSchema.methods.canDeductAnnualLeave = function (days) {
+// 特休相關方法（單位都是小時）
+employeeSchema.methods.canDeductAnnualLeave = function (hours) {
   if (!this.annualLeave) return false
-  const remaining = (this.annualLeave.totalDays || 0) - (this.annualLeave.usedDays || 0)
-  return remaining >= days
+  return readAnnualLeaveHours(this.annualLeave).remainingHours >= hours
 }
 
-employeeSchema.methods.deductAnnualLeave = function (days) {
+employeeSchema.methods.deductAnnualLeave = function (hours) {
   if (!this.annualLeave) {
-    this.annualLeave = { totalDays: 0, usedDays: 0, year: new Date().getFullYear() }
+    this.annualLeave = { totalHours: 0, usedHours: 0, unitSource: 'entered', year: new Date().getFullYear() }
   }
-  this.annualLeave.usedDays = (this.annualLeave.usedDays || 0) + days
+  // 舊格式的資料先換成時數欄位，免得只寫 usedHours 而漏掉舊的使用量
+  const current = readAnnualLeaveHours(this.annualLeave)
+  this.annualLeave.totalHours = current.totalHours
+  this.annualLeave.usedHours = roundHours(current.usedHours + hours)
   return this.save()
 }
 
-employeeSchema.methods.resetAnnualLeave = function (totalDays, year) {
+employeeSchema.methods.resetAnnualLeave = function (totalHours, year) {
   this.annualLeave = {
-    totalDays: totalDays || 0,
-    usedDays: 0,
+    totalHours: totalHours || 0,
+    usedHours: 0,
+    unitSource: 'entered',
     year: year || new Date().getFullYear(),
     appliedApprovalRequestIds: [],
   }

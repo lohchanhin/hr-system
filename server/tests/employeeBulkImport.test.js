@@ -144,6 +144,8 @@ const EN_HEADERS = [
   'salaryAccountB_bank',
   'salaryAccountB_acct',
   'salaryItems',
+  'annualLeave_totalHours',
+  'annualLeave_usedHours',
   'annualLeave_totalDays',
   'annualLeave_usedDays',
   'annualLeave_accumulatedLeave',
@@ -217,6 +219,8 @@ const ZH_HEADERS = [
   '薪資帳戶B 銀行代號',
   '薪資帳戶B 帳號',
   '其他薪資項目 (多個逗號分隔)',
+  '年度特休總時數',
+  '已使用時數',
   '年度特休總天數',
   '已使用天數',
   '積假',
@@ -242,6 +246,8 @@ async function createWorkbookBuffer(rows) {
 }
 
 const NEW_COLUMN_HEADERS = [
+  'annualLeave_totalHours',
+  'annualLeave_usedHours',
   'annualLeave_totalDays',
   'annualLeave_usedDays',
   'annualLeave_accumulatedLeave',
@@ -514,12 +520,16 @@ describe('POST /api/employees/bulk-import', () => {
     expect(response.body.errors).toEqual([])
 
     const createdDoc = mockEmployeeModel.insertMany.mock.calls[0][0][0]
+    // 舊欄位「年度特休總天數／已使用天數」：數字都在 40 以內視為天數，乘 8 換成小時存進時數欄位
     expect(createdDoc.annualLeave).toMatchObject({
-      totalDays: 14,
-      usedDays: 3,
+      totalHours: 112,
+      usedHours: 24,
+      unitSource: 'entered',
       accumulatedLeave: 2.5,
       compensatoryHours: 8
     })
+    expect(createdDoc.annualLeave).not.toHaveProperty('totalDays', 14)
+    expect(response.body.warnings ?? []).toEqual([])
     expect(createdDoc.annualLeave.expiryDate).toBeInstanceOf(Date)
     expect(createdDoc.annualLeave.expiryDate.toISOString()).toContain('2026-12-31')
     expect(createdDoc.laborInsuredSalary).toBe(45800)
@@ -559,7 +569,11 @@ describe('POST /api/employees/bulk-import', () => {
 
       expect(response.status).toBe(200)
       const createdDoc = mockEmployeeModel.insertMany.mock.calls[0][0][0]
-      expect(createdDoc.annualLeave).toMatchObject({ totalDays: 170, usedDays: 8, compensatoryHours: 2.5 })
+      // 170 超過特休法定上限（30 天）不可能是天數：客戶其實填的是小時，原樣當成小時，並提醒人資確認
+      expect(createdDoc.annualLeave).toMatchObject({ totalHours: 170, usedHours: 8, unitSource: 'migrated-hours', compensatoryHours: 2.5 })
+      expect(response.body.warnings).toEqual(expect.arrayContaining([
+        expect.stringMatching(/「年度特休總天數」的值 170 超過 40.*已視為 170 小時，請確認/),
+      ]))
       expect(createdDoc.laborInsuredSalary).toBe(45800)
       expect(createdDoc.pensionInsuredSalary).toBe(45800)
       expect(createdDoc.healthInsuredSalary).toBe(45800)
@@ -771,7 +785,8 @@ describe('POST /api/employees/bulk-import', () => {
         salaryAmount: 36300,
         laborInsuredSalary: 36300,
         dependentCount: 1,
-        'annualLeave.totalDays': 120,
+        'annualLeave.totalHours': 120,
+        'annualLeave.unitSource': 'migrated-hours',
         'annualLeave.compensatoryHours': 4
       })
       expect(update.$set['appointment.hireDate'].toISOString().slice(0, 10)).toBe('2011-04-20')
@@ -780,7 +795,7 @@ describe('POST /api/employees/bulk-import', () => {
         expect(update.$set).not.toHaveProperty(key)
       })
       // 檔案中沒填的欄位不會出現在更新內容裡（不會把原有資料清掉）
-      ;['salaryType', 'title', 'department', 'supervisor', 'annualLeave.usedDays'].forEach(key => {
+      ;['salaryType', 'title', 'department', 'supervisor', 'annualLeave.usedHours', 'annualLeave.usedDays'].forEach(key => {
         expect(update.$set).not.toHaveProperty(key)
       })
       expect(updateOptions).toEqual({ session: mockSession })
@@ -1356,5 +1371,73 @@ describe('POST /api/employees/bulk-import', () => {
     expect(response.body.missingReferences.supervisor.values[0]).toMatchObject({ value: '不存在的主管', rows: [3] })
     expect(response.body.missingReferences.supervisor.options).toEqual([])
     expect(mockEmployeeModel.insertMany).not.toHaveBeenCalled()
+  })
+})
+
+// 特休的單位是「小時」：範本有「年度特休總時數／已使用時數」欄位；舊檔案的天數欄位仍可匯入（有判斷規則與提醒）
+describe('POST /api/employees/bulk-import - annual leave in hours', () => {
+  async function importRows(rows, options = {}) {
+    const application = await setupApp()
+    setupEmployeeFind({ emailData: [] })
+    return request(application)
+      .post('/api/employees/bulk-import')
+      .attach('file', await createWorkbookBuffer(rows), { filename: 'import.xlsx' })
+      .field('options', JSON.stringify(options))
+  }
+  const base = (n, extra) => ({ employeeId: `E09${n}`, name: `員工${n}`, idNumber: `D12345678${n}`, email: `e09${n}@example.com`, ...extra })
+
+  it('stores the hours columns as typed, marks them as entered and does not warn', async () => {
+    const response = await importRows([base(1, { annualLeave_totalHours: '112', annualLeave_usedHours: '7.5' })])
+
+    expect(response.status).toBe(200)
+    const doc = mockEmployeeModel.insertMany.mock.calls[0][0][0]
+    expect(doc.annualLeave).toMatchObject({ totalHours: 112, usedHours: 7.5, unitSource: 'entered' })
+    expect(response.body.warnings ?? []).toEqual([])
+  })
+
+  it('lets the hours columns win over the old day columns of the same row, and says so', async () => {
+    const response = await importRows([base(2, { annualLeave_totalHours: '80', annualLeave_totalDays: '14' })])
+
+    const doc = mockEmployeeModel.insertMany.mock.calls[0][0][0]
+    expect(doc.annualLeave).toMatchObject({ totalHours: 80, unitSource: 'entered' })
+    expect(response.body.warnings).toEqual([expect.stringContaining('以時數為準')])
+  })
+
+  it('reads old day columns row by row: small values are days (x8), a value above 40 is already hours and is flagged for confirmation', async () => {
+    const response = await importRows([
+      base(3, { annualLeave_totalDays: '14', annualLeave_usedDays: '2.5' }),
+      base(4, { annualLeave_totalDays: '219', annualLeave_usedDays: '2' }),
+      base(5, { annualLeave_totalDays: '10', annualLeave_usedDays: '41' }),
+    ])
+
+    expect(response.status).toBe(200)
+    const docs = mockEmployeeModel.insertMany.mock.calls[0][0]
+    expect(docs[0].annualLeave).toMatchObject({ totalHours: 112, usedHours: 20, unitSource: 'entered' })
+    expect(docs[1].annualLeave).toMatchObject({ totalHours: 219, usedHours: 2, unitSource: 'migrated-hours' })
+    expect(docs[2].annualLeave).toMatchObject({ totalHours: 10, usedHours: 41, unitSource: 'migrated-hours' })
+    expect(response.body.warnings).toEqual([
+      expect.stringContaining('第 4 列「年度特休總天數」的值 219 超過 40'),
+      expect.stringContaining('第 5 列「已使用天數」的值 41 超過 40'),
+    ])
+  })
+
+  it('writes only the hours columns that are in the file when updating an existing employee', async () => {
+    const application = await setupApp()
+    setupEmployeeFind({
+      emailData: [{ _id: 'id-old', email: 'old@example.com', employeeId: 'E0900' }],
+      existingByNo: [{ _id: 'id-old', employeeId: 'E0900', email: 'old@example.com' }],
+    })
+    const buffer = await createWorkbookBuffer([{ employeeId: 'E0900', name: '舊員工', idNumber: 'E323456780', email: 'old@example.com', annualLeave_totalHours: '96' }])
+
+    const response = await request(application)
+      .post('/api/employees/bulk-import')
+      .attach('file', buffer, { filename: 'import.xlsx' })
+      .field('options', JSON.stringify({ updateExisting: true }))
+
+    expect(response.status).toBe(200)
+    const [, update] = mockEmployeeModel.updateOne.mock.calls[0]
+    expect(update.$set).toMatchObject({ 'annualLeave.totalHours': 96, 'annualLeave.unitSource': 'entered' })
+    expect(update.$set).not.toHaveProperty('annualLeave.usedHours')
+    expect(JSON.stringify(update)).not.toMatch(/totalDays|usedDays/)
   })
 })

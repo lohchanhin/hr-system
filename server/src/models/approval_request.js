@@ -42,8 +42,10 @@ const logSchema = new Schema(
 )
 
 // 特休扣減／返還的結果；失敗時由人資看這裡補登，不再只是一行沒人看得到的 log
+// hours 是實際扣減／返還的小時數（以它為準）；days 是 hours / 8 的換算，舊資料（改成小時之前核准的）只有 days
 const annualLeaveSchema = new Schema(
   {
+    hours: Number,
     days: Number,
     state: { type: String, enum: ['deducted', 'failed', 'refunded'] },
     message: String,

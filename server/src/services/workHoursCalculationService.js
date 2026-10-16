@@ -470,6 +470,8 @@ export async function calculateLeaveImpact(employeeId, month, context = {}, { wi
     const endIds = resolveCandidateIds(leaveForm.endIds, endId);
     const typeIds = resolveCandidateIds(leaveForm.typeIds, typeId);
     const daysIds = resolveCandidateIds(leaveForm.daysIds, daysId);
+    // 「時數」欄位（請假以小時為單位）；舊表單沒有這個欄位時為空陣列
+    const hoursIds = resolveCandidateIds(leaveForm.hoursIds, leaveForm.hoursId);
     let approvalQuery = ApprovalRequest.find({
       form: formId,
       status: 'approved',
@@ -477,7 +479,7 @@ export async function calculateLeaveImpact(employeeId, month, context = {}, { wi
     });
     if (approvalQuery && typeof approvalQuery.select === 'function') {
       const projection = ['createdAt', 'form_data.days', 'form_data.duration', 'form_data.hours']
-        .concat(candidateSelectKeys(startIds, endIds, typeIds, daysIds).map((id) => `form_data.${id}`));
+        .concat(candidateSelectKeys(startIds, endIds, typeIds, daysIds, hoursIds).map((id) => `form_data.${id}`));
       approvalQuery = approvalQuery.select(projection.join(' '));
     }
     const approvals = (await approvalQuery.lean()) || [];
@@ -491,11 +493,12 @@ export async function calculateLeaveImpact(employeeId, month, context = {}, { wi
       const typeCode = typeValue ? String(typeValue.code ?? typeValue.value ?? typeValue) : '';
       const leaveType = typeValue?.label ?? typeMap.get(typeCode) ?? typeCode;
 
-      // 請假時數：表單有「天數」欄位且填了正數就以它為準，其次是舊資料的 days / duration / hours 鍵，
+      // 請假時數：表單有「時數」欄位且填了正數就以它為準，其次是舊表單的「天數」欄位，再來是舊資料的 days / duration / hours 鍵，
       // 否則由開始/結束時間推算（台灣時間；4 小時就是 4 小時，不再一律當成整天）
       const rawDuration = computeLeaveDuration({
         startValue: pickFieldValue(formData, startIds),
         endValue: pickFieldValue(formData, endIds),
+        filledHours: pickFieldValue(formData, hoursIds),
         filledDays: pickFieldValue(formData, daysIds),
         literalDays: formData.days ?? formData.duration,
         literalHours: formData.hours,

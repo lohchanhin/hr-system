@@ -394,6 +394,7 @@ const DEPARTMENT_EXPORT_CONFIG = {
       { header: '假別代碼', key: 'leaveCode', width: 16 },
       { header: '開始日期', key: 'startDate', width: 16 },
       { header: '結束日期', key: 'endDate', width: 16 },
+      { header: '時數', key: 'hours', width: 10 },
       { header: '天數', key: 'days', width: 10 },
     ],
     mapRow: (record) => ({
@@ -402,17 +403,19 @@ const DEPARTMENT_EXPORT_CONFIG = {
       leaveCode: record.leaveCode,
       startDate: record.startDate,
       endDate: record.endDate,
+      hours: record.hours,
       days: record.days,
     }),
     buildSummaryRows: (summary = {}) => {
       const rows = [
         { label: '總請假件數', value: summary.totalLeaves ?? 0 },
+        { label: '總請假時數', value: summary.totalHours ?? 0 },
         { label: '總請假天數', value: summary.totalDays ?? 0 },
       ];
       (summary.byType ?? []).forEach((item) => {
         rows.push({
           label: `${item.leaveType || item.leaveCode || '其他'} 件數`,
-          value: `${item.count ?? 0} 筆 / ${item.days ?? 0} 天`,
+          value: `${item.count ?? 0} 筆 / ${item.hours ?? 0} 小時（${item.days ?? 0} 天）`,
         });
       });
       return rows;
@@ -547,16 +550,19 @@ const DEPARTMENT_EXPORT_CONFIG = {
       { header: '員工姓名', key: 'name', width: 24 },
       { header: '開始日期', key: 'startDate', width: 16 },
       { header: '結束日期', key: 'endDate', width: 16 },
+      { header: '時數', key: 'hours', width: 10 },
       { header: '天數', key: 'days', width: 10 },
     ],
     mapRow: (record) => ({
       name: record.name,
       startDate: record.startDate,
       endDate: record.endDate,
+      hours: record.hours,
       days: record.days,
     }),
     buildSummaryRows: (summary = {}) => [
       { label: '特休申請數', value: summary.totalRequests ?? 0 },
+      { label: '特休總時數', value: summary.totalHours ?? 0 },
       { label: '特休總天數', value: summary.totalDays ?? 0 },
     ],
   },

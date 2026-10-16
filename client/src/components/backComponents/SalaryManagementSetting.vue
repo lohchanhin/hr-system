@@ -333,14 +333,19 @@
               </el-table-column>
               
               <el-table-column label="特休資訊" align="center">
-                <el-table-column prop="annualLeave.totalDays" label="特休天數" width="100" align="right">
-                  <template #default="{ row }">
-                    {{ row.annualLeave?.totalDays || 0 }}
-                  </template>
-                </el-table-column>
-                <el-table-column prop="annualLeave.totalHours" label="特休時數" width="100" align="right">
+                <el-table-column prop="annualLeave.totalHours" label="特休總時數" width="100" align="right">
                   <template #default="{ row }">
                     {{ row.annualLeave?.totalHours || 0 }}
+                  </template>
+                </el-table-column>
+                <el-table-column prop="annualLeave.usedHours" label="已使用時數" width="110" align="right">
+                  <template #default="{ row }">
+                    {{ row.annualLeave?.usedHours || 0 }}
+                  </template>
+                </el-table-column>
+                <el-table-column prop="annualLeave.remainingHours" label="剩餘時數" width="100" align="right">
+                  <template #default="{ row }">
+                    {{ row.annualLeave?.remainingHours ?? ((row.annualLeave?.totalHours || 0) - (row.annualLeave?.usedHours || 0)) }}
                   </template>
                 </el-table-column>
                 <el-table-column prop="annualLeave.expiryDate" label="請假期限" width="120" align="center">

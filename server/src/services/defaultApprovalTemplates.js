@@ -15,13 +15,14 @@ export const DEFAULT_APPROVAL_TEMPLATES = [
     name: '請假',
     category: '人事',
     semanticType: 'leave',
-    description: '用於申請各類假別（事假、病假、特休等），此表單會自動連接薪資系統計算扣薪或假勤。支援小時級別的精確請假時間。',
+    description: '用於申請各類假別（事假、病假、特休等），此表單會自動連接薪資系統計算扣薪或假勤。請假以小時為單位（0.5 小時的倍數），時數會依起訖時間自動帶入，也可以自行調整。',
     fields: [
       { label: '假別', type_1: 'text', required: true, order: 1, placeholder: '例如：事假、病假、特休、婚假等' },
       { label: '開始時間', type_1: 'datetime', required: true, order: 2 },
       { label: '結束時間', type_1: 'datetime', required: true, order: 3 },
-      { label: '事由', type_1: 'textarea', order: 4, placeholder: '請說明請假原因' },
-      { label: '相關證明', type_1: 'file', required: true, order: 5 },
+      { label: '時數', type_1: 'number', required: true, order: 4, placeholder: '請假時數（小時），0.5 的倍數；系統依起訖時間自動帶入' },
+      { label: '事由', type_1: 'textarea', order: 5, placeholder: '請說明請假原因' },
+      { label: '相關證明', type_1: 'file', required: true, order: 6 },
     ],
     steps: [
       { step_order: 1, approver_type: 'manager' },

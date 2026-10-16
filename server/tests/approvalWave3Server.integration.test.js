@@ -379,7 +379,7 @@ describeIntegration('wave 3 server fixes against a real MongoDB through the real
   describe('S-3: annual leave when the 假別 field was replaced while the request was pending', () => {
     it('deducts on approval, lists the record in the history and refunds on withdrawal', async () => {
       const made = await makeForm({ name: '特休請假單', semanticType: 'leave', fields: leaveFieldSpecs(), steps: managerStep })
-      await addPerson('al1', { supervisor: people.boss._id, annualLeave: { totalDays: 10, usedDays: 0, year: 2099 } })
+      await addPerson('al1', { supervisor: people.boss._id, annualLeave: { totalHours: 80, usedHours: 0, year: 2099 } })
       const typeId = fieldId(made, '假別')
 
       // 台灣 2099-03-02 00:00 到 2099-03-03 18:00：2 天
@@ -398,19 +398,19 @@ describeIntegration('wave 3 server fixes against a real MongoDB through the real
       expect(approved.body.warnings).toBeUndefined()
       const doc = await load(created.body._id)
       expect(doc.status).toBe('approved')
-      expect(doc.annual_leave).toMatchObject({ state: 'deducted', days: 2 })
+      expect(doc.annual_leave).toMatchObject({ state: 'deducted', hours: 16, days: 2 })
       expect(doc.logs.map((log) => log.action)).toContain('annual_leave')
-      expect((await Employee.findById(id('al1'))).annualLeave.usedDays).toBe(2)
+      expect((await Employee.findById(id('al1'))).annualLeave.usedHours).toBe(16)
 
       const history = await get('admin', `/api/employees/${id('al1')}/annual-leave/history`)
       expect(history.status).toBe(200)
-      expect(history.body).toEqual([expect.objectContaining({ requestId: created.body._id, days: 2 })])
+      expect(history.body).toEqual([expect.objectContaining({ requestId: created.body._id, hours: 16, days: 2 })])
 
       const cancel = await post('al1', `/api/approvals/${created.body._id}/cancel`, { comment: '行程取消' })
       expect(cancel.status).toBe(200)
       expect(cancel.body.status).toBe('canceled')
-      expect((await load(created.body._id)).annual_leave).toMatchObject({ state: 'refunded', days: 2 })
-      expect((await Employee.findById(id('al1'))).annualLeave.usedDays).toBe(0)
+      expect((await load(created.body._id)).annual_leave).toMatchObject({ state: 'refunded', hours: 16, days: 2 })
+      expect((await Employee.findById(id('al1'))).annualLeave.usedHours).toBe(0)
     })
   })
 
@@ -446,74 +446,74 @@ describeIntegration('wave 3 server fixes against a real MongoDB through the real
 
   /* ------------------------------ S-5 ------------------------------ */
   describe('S-5: PUT /api/employees/:id with a stale edit dialog', () => {
-    const usedDays = async (key) => (await Employee.findById(id(key))).annualLeave.usedDays
+    const usedHours = async (key) => (await Employee.findById(id(key))).annualLeave.usedHours
 
-    it('never touches usedDays when the body does not carry it, and ignores an untouched stale value', async () => {
-      await addPerson('ed1', { annualLeave: { totalDays: 10, usedDays: 0 } })
-      await Employee.updateOne({ _id: people.ed1._id }, { $inc: { 'annualLeave.usedDays': 1 } }) // 視窗開著時簽核又扣了 1 天
+    it('never touches usedHours when the body does not carry it, and ignores an untouched stale value', async () => {
+      await addPerson('ed1', { annualLeave: { totalHours: 80, usedHours: 0 } })
+      await Employee.updateOne({ _id: people.ed1._id }, { $inc: { 'annualLeave.usedHours': 8 } }) // 視窗開著時簽核又扣了 8 小時
 
-      const noUsedDays = await put('admin', `/api/employees/${id('ed1')}`, { annualLeave: { totalDays: 12, notes: '改總天數' } })
-      expect(noUsedDays.status).toBe(200)
-      expect(await usedDays('ed1')).toBe(1)
+      const noUsedHours = await put('admin', `/api/employees/${id('ed1')}`, { annualLeave: { totalHours: 96, notes: '改總時數' } })
+      expect(noUsedHours.status).toBe(200)
+      expect(await usedHours('ed1')).toBe(8)
 
-      const stale = await put('admin', `/api/employees/${id('ed1')}`, { annualLeave: { totalDays: 13, usedDays: 0, usedDaysBase: 0 } })
+      const stale = await put('admin', `/api/employees/${id('ed1')}`, { annualLeave: { totalHours: 104, usedHours: 0, usedHoursBase: 0 } })
       expect(stale.status).toBe(200)
       const stored = await Employee.findById(id('ed1'))
-      expect(stored.annualLeave).toMatchObject({ totalDays: 13, usedDays: 1 })
+      expect(stored.annualLeave).toMatchObject({ totalHours: 104, usedHours: 8 })
     })
 
     it('applies only the admin difference with $inc when a deduction happened meanwhile, and a plain set otherwise', async () => {
-      await addPerson('ed2', { annualLeave: { totalDays: 10, usedDays: 0 } })
-      await Employee.updateOne({ _id: people.ed2._id }, { $inc: { 'annualLeave.usedDays': 1 } })
+      await addPerson('ed2', { annualLeave: { totalHours: 80, usedHours: 0 } })
+      await Employee.updateOne({ _id: people.ed2._id }, { $inc: { 'annualLeave.usedHours': 8 } })
 
-      // 視窗開啟時 0，管理員改成 2（差額 +2），期間簽核扣了 1 → 3
-      const adjusted = await put('admin', `/api/employees/${id('ed2')}`, { annualLeave: { usedDays: 2, usedDaysBase: 0 } })
+      // 視窗開啟時 0，管理員改成 16（差額 +16），期間簽核扣了 8 → 24
+      const adjusted = await put('admin', `/api/employees/${id('ed2')}`, { annualLeave: { usedHours: 16, usedHoursBase: 0 } })
       expect(adjusted.status).toBe(200)
-      expect(await usedDays('ed2')).toBe(3)
+      expect(await usedHours('ed2')).toBe(24)
 
       // 沒有期間異動（base 等於目前存的）：直接設成管理員填的值
-      const direct = await put('admin', `/api/employees/${id('ed2')}`, { annualLeave: { usedDays: 1, usedDaysBase: 3 } })
+      const direct = await put('admin', `/api/employees/${id('ed2')}`, { annualLeave: { usedHours: 8, usedHoursBase: 24 } })
       expect(direct.status).toBe(200)
-      expect(await usedDays('ed2')).toBe(1)
+      expect(await usedHours('ed2')).toBe(8)
 
       // 沒帶 base（舊畫面）：維持原本行為，人工更正直接設定
-      const legacy = await put('admin', `/api/employees/${id('ed2')}`, { annualLeave: { usedDays: 5 } })
+      const legacy = await put('admin', `/api/employees/${id('ed2')}`, { annualLeave: { usedHours: 40 } })
       expect(legacy.status).toBe(200)
-      expect(await usedDays('ed2')).toBe(5)
+      expect(await usedHours('ed2')).toBe(40)
     })
 
     it('keeps a deduction that happens between loading the employee and saving the correction', async () => {
-      await addPerson('ed3', { annualLeave: { totalDays: 10, usedDays: 3 } })
+      await addPerson('ed3', { annualLeave: { totalHours: 80, usedHours: 24 } })
       const original = Employee.updateOne
       const spy = jest.spyOn(Employee, 'updateOne').mockImplementation(async function updateAfterDeduction(...args) {
         spy.mockRestore()
-        await Employee.collection.updateOne({ _id: people.ed3._id }, { $inc: { 'annualLeave.usedDays': 1 } }) // 此時簽核通過、剛好扣了 1 天
+        await Employee.collection.updateOne({ _id: people.ed3._id }, { $inc: { 'annualLeave.usedHours': 8 } }) // 此時簽核通過、剛好扣了 8 小時
         return original.apply(this, args)
       })
 
-      // 視窗開啟時 2，之後被扣到 3（stored 3 ≠ base 2）；管理員把 2 改成 4（差額 +2）；寫入前又被扣 1 天 → 3 + 1 + 2 = 6
-      const res = await put('admin', `/api/employees/${id('ed3')}`, { annualLeave: { usedDays: 4, usedDaysBase: 2 } })
+      // 視窗開啟時 16，之後被扣到 24（stored 24 ≠ base 16）；管理員把 16 改成 32（差額 +16）；寫入前又被扣 8 小時 → 24 + 8 + 16 = 48
+      const res = await put('admin', `/api/employees/${id('ed3')}`, { annualLeave: { usedHours: 32, usedHoursBase: 16 } })
 
       spy.mockRestore()
       expect(res.status).toBe(200)
-      expect(await usedDays('ed3')).toBe(6)
+      expect(await usedHours('ed3')).toBe(48)
     })
 
-    it('never takes usedDays below zero, even when a refund lands between loading and saving', async () => {
-      await addPerson('ed4', { annualLeave: { totalDays: 10, usedDays: 2 } })
+    it('never takes usedHours below zero, even when a refund lands between loading and saving', async () => {
+      await addPerson('ed4', { annualLeave: { totalHours: 80, usedHours: 16 } })
       const original = Employee.updateOne
       const spy = jest.spyOn(Employee, 'updateOne').mockImplementation(async function updateAfterRefund(...args) {
         spy.mockRestore()
-        await Employee.collection.updateOne({ _id: people.ed4._id }, { $inc: { 'annualLeave.usedDays': -1 } }) // 此時有人撤回特休、返還 1 天
+        await Employee.collection.updateOne({ _id: people.ed4._id }, { $inc: { 'annualLeave.usedHours': -8 } }) // 此時有人撤回特休、返還 8 小時
         return original.apply(this, args)
       })
 
-      // 視窗開啟時 3，目前存 2，管理員把 3 改成 0（差額 -3 → 夾在 -2）；寫入前又返還 1 天 → 2 - 1 - 2 = -1 → 補成 0
-      const res = await put('admin', `/api/employees/${id('ed4')}`, { annualLeave: { usedDays: 0, usedDaysBase: 3 } })
+      // 視窗開啟時 24，目前存 16，管理員把 24 改成 0（差額 -24 → 夾在 -16）；寫入前又返還 8 小時 → 16 - 8 - 16 = -8 → 補成 0
+      const res = await put('admin', `/api/employees/${id('ed4')}`, { annualLeave: { usedHours: 0, usedHoursBase: 24 } })
 
       spy.mockRestore()
       expect(res.status).toBe(200)
-      expect(await usedDays('ed4')).toBe(0)
+      expect(await usedHours('ed4')).toBe(0)
     })
   })
 

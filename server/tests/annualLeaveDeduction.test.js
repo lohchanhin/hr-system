@@ -1,6 +1,6 @@
 import { jest } from '@jest/globals'
 
-// 簽核通過後的特休扣減：預設的「請假」表單，以及表單性質為請假的自訂表單（例如客戶的「休假/事假/公假申請單」）
+// 簽核通過後的特休扣減（單位是小時）：預設的「請假」表單，以及表單性質為請假的自訂表單（例如客戶的「休假/事假/公假申請單」）
 const mockFormTemplate = { findById: jest.fn() }
 const mockFormField = { find: jest.fn() }
 const mockApprovalWorkflow = { findOne: jest.fn() }
@@ -114,7 +114,7 @@ describe('annual leave deduction for the customer leave form', () => {
     formFields = customerFields()
   })
 
-  it('deducts the days between 日期(起) and 日期(迄) when 特休假 is selected', async () => {
+  it('deducts the hours between 日期(起) and 日期(迄) (8 hours a calendar day) when 特休假 is selected', async () => {
     const { res } = await approveLastStep({
       form: CUSTOMER_FORM,
       formData: { 'c-type': '特休假', 'c-start': '2026-03-02', 'c-end': '2026-03-04' },
@@ -122,10 +122,10 @@ describe('annual leave deduction for the customer leave form', () => {
 
     expect(res.status).not.toHaveBeenCalledWith(400)
     expect(mockDeductAnnualLeave).toHaveBeenCalledTimes(1)
-    expect(mockDeductAnnualLeave).toHaveBeenCalledWith('emp1', 3, 'req1')
+    expect(mockDeductAnnualLeave).toHaveBeenCalledWith('emp1', 24, 'req1')
   })
 
-  it('uses the number filled in 天數 first (half days, and weekends in the date span are not deducted)', async () => {
+  it('uses the number filled in the old 天數 field (x8 hours) when the form has no 時數 field yet', async () => {
     await approveLastStep({
       form: CUSTOMER_FORM,
       formData: { 'c-type': '特休假', 'c-start': '2026-03-02', 'c-end': '2026-03-08', 'c-days': 0.5 },
@@ -135,7 +135,34 @@ describe('annual leave deduction for the customer leave form', () => {
       formData: { 'c-type': '特休假', 'c-start': '2026-03-02', 'c-end': '2026-03-08', 'c-days': '5' },
     })
 
-    expect(mockDeductAnnualLeave.mock.calls.map(([, days]) => days)).toEqual([0.5, 5])
+    expect(mockDeductAnnualLeave.mock.calls.map(([, hours]) => hours)).toEqual([4, 40])
+  })
+
+  it('deducts exactly the number filled in 時數, before 天數 and the dates', async () => {
+    formFields = [...customerFields(), { _id: 'c-hours', form: 'form9', label: '時數', type_1: 'number', order: 5 }]
+    await approveLastStep({
+      form: CUSTOMER_FORM,
+      formData: { 'c-type': '特休假', 'c-start': '2026-03-02', 'c-end': '2026-03-08', 'c-days': 5, 'c-hours': 7.5 },
+    })
+    await approveLastStep({
+      form: CUSTOMER_FORM,
+      formData: { 'c-type': '特休假', 'c-start': '2026-03-02', 'c-end': '2026-03-02', 'c-hours': '4' },
+    })
+
+    expect(mockDeductAnnualLeave.mock.calls.map(([, hours]) => hours)).toEqual([7.5, 4])
+  })
+
+  it('falls back to the old 天數 answer when the 時數 field is blank or the request was filed before it existed', async () => {
+    formFields = [
+      ...customerFields().map(field => (field._id === 'c-days' ? { ...field, is_active: false } : field)),
+      { _id: 'c-hours', form: 'form9', label: '時數', type_1: 'number', order: 5 },
+    ]
+    await approveLastStep({
+      form: CUSTOMER_FORM,
+      formData: { 'c-type': '特休假', 'c-start': '2026-03-02', 'c-end': '2026-03-03', 'c-days': 1.5, 'c-hours': '' },
+    })
+
+    expect(mockDeductAnnualLeave).toHaveBeenCalledWith('emp1', 12, 'req1')
   })
 
   it('falls back to the dates when 天數 is blank or not a positive number', async () => {
@@ -145,7 +172,7 @@ describe('annual leave deduction for the customer leave form', () => {
         form: CUSTOMER_FORM,
         formData: { 'c-type': '特休假', 'c-start': '2026-03-02', 'c-end': '2026-03-03', 'c-days': blank },
       })
-      expect(mockDeductAnnualLeave).toHaveBeenCalledWith('emp1', 2, 'req1')
+      expect(mockDeductAnnualLeave).toHaveBeenCalledWith('emp1', 16, 'req1')
     }
   })
 
@@ -179,7 +206,7 @@ describe('annual leave deduction for the customer leave form', () => {
     })
 
     expect(mockFormField.find).toHaveBeenCalledWith({ form: 'form9' })
-    expect(mockDeductAnnualLeave).toHaveBeenCalledWith('emp1', 1, 'req1')
+    expect(mockDeductAnnualLeave).toHaveBeenCalledWith('emp1', 8, 'req1')
   })
 
   it('does nothing when the form is not a leave form', async () => {
@@ -205,7 +232,7 @@ describe('annual leave deduction for the customer leave form', () => {
   it('logs the failure (in Chinese) on the request but keeps the approval when the deduction fails', async () => {
     mockDeductAnnualLeave.mockRejectedValue(Object.assign(
       new Error('Insufficient annual leave balance'),
-      { code: 'INSUFFICIENT_BALANCE', remaining: 0, requested: 1 },
+      { code: 'INSUFFICIENT_BALANCE', remainingHours: 0, requestedHours: 8 },
     ))
 
     const { doc, res } = await approveLastStep({
@@ -214,11 +241,11 @@ describe('annual leave deduction for the customer leave form', () => {
     })
 
     expect(doc.status).toBe('approved')
-    const message = '特休扣減失敗：餘額不足（剩餘 0 天，本次需扣 1 天），請人資確認特休天數後手動補登'
+    const message = '特休扣減失敗：餘額不足（剩餘 0 小時（0 天），本次需扣 8 小時（1 天）），請人資確認特休時數後手動補登'
     expect(doc.logs).toEqual(expect.arrayContaining([
       expect.objectContaining({ action: 'annual_leave_error', message }),
     ]))
-    expect(doc.annual_leave).toEqual(expect.objectContaining({ state: 'failed', days: 1, message }))
+    expect(doc.annual_leave).toEqual(expect.objectContaining({ state: 'failed', hours: 8, days: 1, message }))
     // 回應也帶警告，核准的人當下就知道
     expect(res.status).not.toHaveBeenCalledWith(400)
     expect(res.json.mock.calls[0][0].warnings).toEqual([{ code: 'ANNUAL_LEAVE_DEDUCTION_FAILED', message }])
@@ -237,15 +264,28 @@ describe('annual leave deduction for the customer leave form', () => {
     expect(JSON.stringify(doc.logs)).not.toContain('secret-host')
   })
 
-  it('records the deducted days on the request', async () => {
+  it('records the deducted hours (and the day equivalent) on the request', async () => {
     const { doc } = await approveLastStep({
       form: CUSTOMER_FORM,
       formData: { 'c-type': '特休假', 'c-start': '2026-03-02', 'c-end': '2026-03-03' },
     })
 
-    expect(doc.annual_leave).toEqual(expect.objectContaining({ state: 'deducted', days: 2 }))
+    expect(doc.annual_leave).toEqual(expect.objectContaining({ state: 'deducted', hours: 16, days: 2 }))
     expect(doc.logs).toEqual(expect.arrayContaining([
-      expect.objectContaining({ action: 'annual_leave', message: '已扣除特休 2 天' }),
+      expect.objectContaining({ action: 'annual_leave', message: '已扣除特休 16 小時（2 天）' }),
+    ]))
+  })
+
+  it('records a part-day deduction in hours, not as a rounded day', async () => {
+    formFields = [...customerFields(), { _id: 'c-hours', form: 'form9', label: '時數', type_1: 'number', order: 5 }]
+    const { doc } = await approveLastStep({
+      form: CUSTOMER_FORM,
+      formData: { 'c-type': '特休假', 'c-start': '2026-03-02', 'c-end': '2026-03-02', 'c-hours': 3.5 },
+    })
+
+    expect(doc.annual_leave).toEqual(expect.objectContaining({ state: 'deducted', hours: 3.5, days: 0.4375 }))
+    expect(doc.logs).toEqual(expect.arrayContaining([
+      expect.objectContaining({ action: 'annual_leave', message: '已扣除特休 3.5 小時（0.44 天）' }),
     ]))
   })
 })
@@ -274,8 +314,8 @@ describe('annual leave deduction for the default 請假 form (unchanged)', () =>
     })
 
     expect(mockDeductAnnualLeave.mock.calls).toEqual([
-      ['emp1', 3, 'req1'],
-      ['emp1', 1, 'req1'],
+      ['emp1', 24, 'req1'],
+      ['emp1', 8, 'req1'],
     ])
   })
 
@@ -289,7 +329,7 @@ describe('annual leave deduction for the default 請假 form (unchanged)', () =>
       formData: { 'd-type': '特休', 'd-start': '2026-03-02T01:00:00.000Z', 'd-end': '2026-03-02T05:00:00.000Z' },
     })
 
-    expect(mockDeductAnnualLeave.mock.calls.map(([, days]) => days)).toEqual([1, 0.5])
+    expect(mockDeductAnnualLeave.mock.calls.map(([, hours]) => hours)).toEqual([8, 4])
   })
 
   it('counts by the Taiwan date, so a late-evening leave is not shifted by the UTC day', async () => {
@@ -305,7 +345,7 @@ describe('annual leave deduction for the default 請假 form (unchanged)', () =>
       formData: { 'd-type': '特休', 'd-start': '2026-03-01T16:00:00.000Z', 'd-end': '2026-03-02T16:00:00.000Z' },
     })
 
-    expect(mockDeductAnnualLeave.mock.calls.map(([, days]) => days)).toEqual([1.125, 2])
+    expect(mockDeductAnnualLeave.mock.calls.map(([, hours]) => hours)).toEqual([9, 16])
   })
 
   it('does not deduct for other leave types', async () => {
@@ -323,7 +363,7 @@ describe('annual leave deduction for the default 請假 form (unchanged)', () =>
       formData: { 'd-type': '特休', 'd-start': '2026-03-02', 'd-end': '2026-03-02' },
     })
 
-    expect(mockDeductAnnualLeave).toHaveBeenCalledWith('emp1', 1, 'req1')
+    expect(mockDeductAnnualLeave).toHaveBeenCalledWith('emp1', 8, 'req1')
   })
 
   it('does not deduct when the admin explicitly set the form named 請假 to 一般: the type wins over the name', async () => {
@@ -336,11 +376,25 @@ describe('annual leave deduction for the default 請假 form (unchanged)', () =>
     expect(doc.annual_leave).toBeUndefined()
   })
 
-  it('falls back to the legacy days value, then to 1 day, when there are no dates', async () => {
+  it('falls back to the legacy days value, then to 1 day (8 hours), when there are no dates', async () => {
     await approveLastStep({ form: DEFAULT_FORM, formData: { 'd-type': '特休', days: 2 } })
     await approveLastStep({ form: DEFAULT_FORM, formData: { 'd-type': '特休' } })
 
-    expect(mockDeductAnnualLeave.mock.calls.map(([, days]) => days)).toEqual([2, 1])
+    expect(mockDeductAnnualLeave.mock.calls.map(([, hours]) => hours)).toEqual([16, 8])
+  })
+
+  it('deducts the hours typed into the default form 時數 field (a 12-hour shift is 12 hours, a few hours stay a few hours)', async () => {
+    formFields = [...formFields, { _id: 'd-hours', form: 'form1', label: '時數', type_1: 'number', order: 5 }]
+    await approveLastStep({
+      form: DEFAULT_FORM,
+      formData: { 'd-type': '特休', 'd-start': '2026-03-02T07:00:00+08:00', 'd-end': '2026-03-02T19:00:00+08:00', 'd-hours': 12 },
+    })
+    await approveLastStep({
+      form: DEFAULT_FORM,
+      formData: { 'd-type': '特休', 'd-start': '2026-03-02T09:00:00+08:00', 'd-end': '2026-03-02T13:00:00+08:00', 'd-hours': 2.5 },
+    })
+
+    expect(mockDeductAnnualLeave.mock.calls.map(([, hours]) => hours)).toEqual([12, 2.5])
   })
 
   it('has no 天數 field, so a stray days value never replaces the dates', async () => {
@@ -349,6 +403,6 @@ describe('annual leave deduction for the default 請假 form (unchanged)', () =>
       formData: { 'd-type': '特休', 'd-start': '2026-03-02', 'd-end': '2026-03-03', days: 9 },
     })
 
-    expect(mockDeductAnnualLeave).toHaveBeenCalledWith('emp1', 2, 'req1')
+    expect(mockDeductAnnualLeave).toHaveBeenCalledWith('emp1', 16, 'req1')
   })
 })

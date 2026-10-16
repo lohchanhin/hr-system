@@ -13,6 +13,9 @@ const mockFormField = { find: jest.fn() }
 // 排班範圍：主管的直屬部屬（getAllowedScheduleEmployeeIds 用 Employee.find({ supervisor })）
 const mockEmployee = { find: jest.fn() }
 const mockGetAnnualLeaveBalance = jest.fn()
+// 各假別餘額（時數）：資料庫計算換成替身，這裡只驗證明細回應怎麼帶、帶給誰、算哪一年
+const mockBuildLeaveBalances = jest.fn()
+const mockDescribeRequestFocus = jest.fn()
 const mockGetSettings = jest.fn()
 const mockGetDictionaryItems = jest.fn()
 let currentUser
@@ -29,6 +32,12 @@ beforeAll(async () => {
     refundAnnualLeave: jest.fn(),
     isAnnualLeaveConfigured: jest.fn(),
     getAnnualLeaveBalance: mockGetAnnualLeaveBalance,
+  }))
+  await jest.unstable_mockModule('../src/services/leaveBalanceService.js', () => ({
+    buildLeaveBalances: mockBuildLeaveBalances,
+    describeRequestFocus: mockDescribeRequestFocus,
+    evaluateLeaveRequestAgainstBalance: jest.fn(),
+    currentTaipeiYear: () => 2026,
   }))
   await jest.unstable_mockModule('../src/services/otherControlSettingsStore.js', () => ({
     getSettings: mockGetSettings,
@@ -51,6 +60,9 @@ beforeEach(() => {
   mockEmployee.find.mockReset()
   mockEmployee.find.mockReturnValue({ select: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue([]) }) })
   mockGetAnnualLeaveBalance.mockReset()
+  mockBuildLeaveBalances.mockReset()
+  mockBuildLeaveBalances.mockResolvedValue(null)
+  mockDescribeRequestFocus.mockReset()
   mockGetSettings.mockReset()
   mockGetDictionaryItems.mockReset()
 })
@@ -188,6 +200,109 @@ describe('GET /api/approvals/:id', () => {
 
     expect(res.status).toBe(200)
     expect(res.body.leave_balance).toBeNull()
+  })
+
+  describe('balances of every leave type (hours) for the approvers', () => {
+    const LEAVE_FIELDS = [
+      { _id: 'f-type', form: 'form9', label: '假別', type_1: 'select', order: 1 },
+      { _id: 'f-start', form: 'form9', label: '開始時間', type_1: 'datetime', order: 2 },
+      { _id: 'f-end', form: 'form9', label: '結束時間', type_1: 'datetime', order: 3 },
+      { _id: 'f-hours', form: 'form9', label: '時數', type_1: 'number', order: 4 },
+    ]
+    const leaveDoc = (extra = {}) => ({
+      _id: REQ,
+      status: 'pending',
+      applicant_employee: { _id: EMP, name: 'Employee' },
+      form: { _id: 'form9', name: '請假', category: 'C', semanticType: 'leave' },
+      form_data: { 'f-type': '事假', 'f-start': '2026-08-03T01:00:00.000Z', 'f-end': '2026-08-03T05:00:00.000Z', 'f-hours': 4 },
+      steps: [{ approvers: [{ approver: { _id: SUP } }] }],
+      toObject() { return this },
+      ...extra,
+    })
+    const stubFields = () => {
+      const sort = jest.fn().mockResolvedValue(LEAVE_FIELDS)
+      mockFormField.find.mockReturnValue({ sort, lean: async () => LEAVE_FIELDS })
+    }
+
+    it('gives a supervisor the applicant\'s balances for the year of the leave, without the request itself, plus what this request does to its type', async () => {
+      currentUser = { id: SUP, role: 'supervisor' }
+      mockDoc(leaveDoc())
+      stubFields()
+      mockGetAnnualLeaveBalance.mockResolvedValue({ remainingHours: 40 })
+      mockBuildLeaveBalances.mockResolvedValue({ year: 2026, items: [{ key: 'personal', name: '事假', remainingHours: 100 }] })
+      mockDescribeRequestFocus.mockReturnValue({ typeKey: 'personal', typeName: '事假', requestedHours: 4, remainingBefore: 100, remainingAfter: 96, exceeded: false })
+
+      const res = await request(app).get(`/api/approvals/${REQ}`)
+
+      expect(res.status).toBe(200)
+      expect(mockBuildLeaveBalances).toHaveBeenCalledWith(expect.objectContaining({ employeeId: EMP, year: 2026, excludeRequestId: REQ, focusKey: 'personal' }))
+      expect(mockDescribeRequestFocus).toHaveBeenCalledWith(expect.objectContaining({ names: expect.arrayContaining(['事假']), requestedHours: 4 }))
+      expect(res.body.leave_balances).toMatchObject({
+        year: 2026,
+        items: [{ key: 'personal', remainingHours: 100 }],
+        focus: { typeKey: 'personal', requestedHours: 4, remainingAfter: 96, exceeded: false },
+      })
+      // 舊的特休欄位維持原樣
+      expect(res.body.leave_balance).toEqual({ remainingHours: 40 })
+    })
+
+    it('uses the year of the leave start date in Taiwan, not the year it was filed', async () => {
+      currentUser = { id: SUP, role: 'supervisor' }
+      mockDoc(leaveDoc({ form_data: { 'f-type': '事假', 'f-start': '2026-12-31T17:00:00.000Z', 'f-end': '2026-12-31T20:00:00.000Z', 'f-hours': 3 } }))
+      stubFields()
+      mockBuildLeaveBalances.mockResolvedValue({ year: 2027, items: [] })
+
+      await request(app).get(`/api/approvals/${REQ}`)
+
+      // UTC 12/31 17:00 = 台灣 2027/1/1 01:00
+      expect(mockBuildLeaveBalances).toHaveBeenCalledWith(expect.objectContaining({ year: 2027 }))
+    })
+
+    it('does not leave out or describe a request that is no longer pending (it is already part of the balance)', async () => {
+      currentUser = { id: SUP, role: 'supervisor' }
+      mockDoc(leaveDoc({ status: 'approved' }))
+      stubFields()
+      mockBuildLeaveBalances.mockResolvedValue({ year: 2026, items: [] })
+
+      const res = await request(app).get(`/api/approvals/${REQ}`)
+
+      expect(mockBuildLeaveBalances).toHaveBeenCalledWith(expect.objectContaining({ excludeRequestId: null }))
+      expect(mockDescribeRequestFocus).not.toHaveBeenCalled()
+      expect(res.body.leave_balances).toMatchObject({ year: 2026, focus: null })
+    })
+
+    it('shows the balances to the applicant too, and recognises an old leave form by its name', async () => {
+      mockDoc(leaveDoc({ form: { _id: 'form9', name: '請假', category: 'C' } }))
+      stubFields()
+      mockBuildLeaveBalances.mockResolvedValue({ year: 2026, items: [] })
+
+      const res = await request(app).get(`/api/approvals/${REQ}`)
+
+      expect(res.status).toBe(200)
+      expect(res.body.leave_balances).toMatchObject({ year: 2026 })
+    })
+
+    it('falls back to null balances instead of failing the whole request when the calculation errors', async () => {
+      mockDoc(leaveDoc())
+      stubFields()
+      mockBuildLeaveBalances.mockRejectedValue(new Error('boom'))
+
+      const res = await request(app).get(`/api/approvals/${REQ}`)
+
+      expect(res.status).toBe(200)
+      expect(res.body.leave_balances).toBeNull()
+    })
+
+    it('does not calculate any leave balance for a request that is not a leave request', async () => {
+      mockDoc(leaveDoc({ form: { _id: 'form1', name: '加班申請', category: 'C', semanticType: 'overtime' } }))
+      stubFields()
+
+      const res = await request(app).get(`/api/approvals/${REQ}`)
+
+      expect(res.status).toBe(200)
+      expect(res.body.leave_balances).toBeUndefined()
+      expect(mockBuildLeaveBalances).not.toHaveBeenCalled()
+    })
   })
 
   it('returns not found when the employee is not a request participant', async () => {

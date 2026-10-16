@@ -16,6 +16,8 @@ const formTemplateSchema = new Schema(
     semantic_type_set: { type: Boolean, default: false },
     // 名稱判斷詞新增「假別」之後的一次性補正是否已處理過這張表單（見 migrateLeaveKeywordForms）
     leave_keyword_migrated: { type: Boolean, default: false },
+    // 請假改以「小時」為單位後的一次性補正（補上「時數」欄位、停用舊的「天數」欄位）是否已處理過這張表單（見 services/leaveHoursMigration.js）
+    leave_hours_migrated: { type: Boolean, default: false },
     // 系統預設表單的固定代號（leave、overtime…）：改名後「補齊預設值」仍認得是哪一張，不會再建一張重複的
     default_key: { type: String, trim: true },
     description: String,

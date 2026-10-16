@@ -141,7 +141,7 @@
             <template #default="{ row }">
               <div v-if="row.annualLeave" class="annual-leave-info">
                 <el-tag type="info" size="small">
-                  剩餘 {{ (row.annualLeave?.totalDays || 0) - (row.annualLeave?.usedDays || 0) }} 天
+                  剩餘 {{ annualLeaveRemainingHours(row.annualLeave) }} 小時
                 </el-tag>
               </div>
               <span v-else class="no-data">未設定</span>
@@ -1022,27 +1022,39 @@
                   <div class="form-group">
                     <h3 class="form-group-title">特休管理</h3>
                     <el-alert type="info" :closable="false" style="margin-bottom: 16px;">
-                      <p>設定員工年度特休天數。當員工申請特休並審核通過後，系統將自動扣減剩餘天數。</p>
+                      <p>設定員工年度特休時數（請假的單位是小時，1 天 = 8 小時）。當員工申請特休並審核通過後，系統將自動扣減剩餘時數。</p>
+                    </el-alert>
+                    <el-alert
+                      v-if="employeeForm.annualLeave?.unitSource === 'migrated-hours' && !employeeForm.annualLeave?.unitConfirmed"
+                      type="warning"
+                      :closable="false"
+                      show-icon
+                      class="annual-leave-unit-warning"
+                      style="margin-bottom: 16px;"
+                    >
+                      <template #title>由舊資料推斷為小時，請確認</template>
+                      <p>這位員工原本的「年度特休總天數」是 {{ employeeForm.annualLeave.totalHours }}，超過特休的法定天數，系統已視為 {{ employeeForm.annualLeave.totalHours }} 小時。若無誤請勾選確認，不對請直接改成正確的時數。</p>
+                      <el-checkbox v-model="employeeForm.annualLeave.unitConfirmed">我已確認單位是小時</el-checkbox>
                     </el-alert>
                     <div class="form-row">
-                      <el-form-item label="年度特休總天數" prop="annualLeave.totalDays">
-                        <el-input-number v-model="employeeForm.annualLeave.totalDays" :min="0" :max="365" :step="1"
-                          placeholder="0" />
-                        <span style="margin-left: 8px; color: #909399;">天</span>
+                      <el-form-item label="年度特休總時數" prop="annualLeave.totalHours">
+                        <el-input-number v-model="employeeForm.annualLeave.totalHours" :min="0" :max="3000" :step="0.5"
+                          :precision="2" placeholder="0" />
+                        <span style="margin-left: 8px; color: #909399;">小時</span>
                       </el-form-item>
-                      <el-form-item label="特休時數" prop="annualLeave.totalHours">
+                      <el-form-item label="約合天數">
                         <el-tag type="info" size="large">
-                          {{ (employeeForm.annualLeave?.totalDays || 0) * 8 }} 小時
+                          約 {{ annualLeaveDaysText(employeeForm.annualLeave?.totalHours) }} 天
                         </el-tag>
                       </el-form-item>
-                      <el-form-item label="已使用天數" prop="annualLeave.usedDays">
-                        <el-input-number v-model="employeeForm.annualLeave.usedDays" :min="0" :step="1"
-                          placeholder="0" />
-                        <span style="margin-left: 8px; color: #909399;">天</span>
+                      <el-form-item label="已使用時數" prop="annualLeave.usedHours">
+                        <el-input-number v-model="employeeForm.annualLeave.usedHours" :min="0" :step="0.5"
+                          :precision="2" placeholder="0" />
+                        <span style="margin-left: 8px; color: #909399;">小時</span>
                       </el-form-item>
-                      <el-form-item label="剩餘天數">
+                      <el-form-item label="剩餘時數">
                         <el-tag type="success" size="large">
-                          {{ (employeeForm.annualLeave?.totalDays || 0) - (employeeForm.annualLeave?.usedDays || 0) }} 天
+                          {{ annualLeaveRemainingHours(employeeForm.annualLeave) }} 小時（約 {{ annualLeaveDaysText(annualLeaveRemainingHours(employeeForm.annualLeave)) }} 天）
                         </el-tag>
                       </el-form-item>
                     </div>
@@ -1295,6 +1307,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { apiFetch, importEmployeesBulk } from '../../api'
 import { REQUIRED_FIELDS } from './requiredFields'
 import EmployeeAvatar from '../EmployeeAvatar.vue'
+import { readAnnualLeaveHours } from '../../utils/leaveBalance'
 import { useProfileStore } from '../../stores/profile'
 import {
   acquireEmployeePhoto,
@@ -1621,6 +1634,8 @@ function mapRowToFormShape(row, mappings) {
       case 'employeeAdvance':
       case 'probationDays':
       case 'dischargeYear':
+      case 'annualLeave.totalHours':
+      case 'annualLeave.usedHours':
       case 'annualLeave.totalDays':
       case 'annualLeave.usedDays':
       case 'annualLeave.accumulatedLeave':
@@ -2291,17 +2306,31 @@ const BULK_IMPORT_FIELD_CONFIGS = Object.freeze([
     category: '薪資與帳戶'
   },
   {
+    key: 'annualLeave.totalHours',
+    header: 'annualLeave_totalHours',
+    label: '年度特休總時數',
+    description: '年度特休總時數（小時）',
+    category: '特休與投保'
+  },
+  {
+    key: 'annualLeave.usedHours',
+    header: 'annualLeave_usedHours',
+    label: '已使用時數',
+    description: '已使用時數（小時）',
+    category: '特休與投保'
+  },
+  {
     key: 'annualLeave.totalDays',
     header: 'annualLeave_totalDays',
     label: '年度特休總天數',
-    description: '年度特休總天數',
+    description: '年度特休總天數（舊版欄位，單位是天；數字大於 40 會視為小時。建議改填「年度特休總時數」）',
     category: '特休與投保'
   },
   {
     key: 'annualLeave.usedDays',
     header: 'annualLeave_usedDays',
     label: '已使用天數',
-    description: '已使用天數',
+    description: '已使用天數（舊版欄位，單位是天；建議改填「已使用時數」）',
     category: '特休與投保'
   },
   {
@@ -3082,7 +3111,7 @@ const photoUploading = ref(false)
 const employeeSaving = ref(false)
 let editEmployeeIndex = null
 let editEmployeeId = ''
-// 編輯視窗打開當下的特休「已使用天數」與已套用的簽核單編號（新增員工時為 null）
+// 編輯視窗打開當下的特休「已使用時數」與已套用的簽核單編號（新增員工時為 null）
 let annualLeaveSnapshot = null
 // 員工照片的顯示（列表頭像、編輯視窗的縮圖）都交給 utils/photoUrl 的共用快取與 EmployeeAvatar；
 // 這裡只負責編輯視窗縮圖用到的那一份，以及選檔時產生的預覽網址
@@ -3553,6 +3582,31 @@ async function fetchOrganizations() {
   if (res.ok) orgList.value = await res.json()
 }
 
+// 員工的特休一律用小時顯示與編輯：伺服器已附上時數，舊格式的資料（只有天數欄位）在這裡換算，畫面不必判斷單位
+function normalizeAnnualLeaveRecord(annualLeave) {
+  if (!annualLeave || typeof annualLeave !== 'object') return annualLeave
+  const hours = readAnnualLeaveHours(annualLeave)
+  const { totalDays, usedDays, remainingDays, remainingHours, ...rest } = annualLeave
+  return {
+    ...rest,
+    totalHours: hours.totalHours,
+    usedHours: hours.usedHours,
+    unitSource: hours.unitSource || undefined
+  }
+}
+
+function annualLeaveRemainingHours(annualLeave) {
+  if (!annualLeave || typeof annualLeave !== 'object') return 0
+  const explicit = Number(annualLeave.remainingHours)
+  if (annualLeave.remainingHours !== undefined && Number.isFinite(explicit)) return Math.max(Math.round(explicit * 100) / 100, 0)
+  return Math.max(readAnnualLeaveHours(annualLeave).remainingHours, 0)
+}
+
+function annualLeaveDaysText(hours) {
+  const number = Number(hours)
+  return Number.isFinite(number) ? String(Math.round((number / 8) * 100) / 100) : '0'
+}
+
 function normalizeEmployeeRecord(e = {}) {
   const appointment = e?.appointment ?? {}
   const monthlyAdjustments = normalizeMonthlySalaryAdjustments(
@@ -3561,6 +3615,8 @@ function normalizeEmployeeRecord(e = {}) {
   const filteredSalaryItems = filterValidSalaryItems(e?.salaryItems)
   return {
     ...e,
+    // 沒有特休資料的員工維持預設值（不要用 undefined 蓋掉）
+    ...(e?.annualLeave && typeof e.annualLeave === 'object' ? { annualLeave: normalizeAnnualLeaveRecord(e.annualLeave) } : {}),
     employeeNo: e?.employeeNo ?? e?.employeeId ?? '',
     employmentStatus: e?.employmentStatus ?? e?.status ?? '',
     phone: e?.phone ?? e?.mobile ?? '',
@@ -3844,10 +3900,10 @@ const emptyEmployee = {
   healthInsuredSalary: 0,
   dependentCount: 0,
 
-  // 特休管理
+  // 特休管理（單位是小時，1 天 = 8 小時）
   annualLeave: {
-    totalDays: 0,
-    usedDays: 0,
+    totalHours: 0,
+    usedHours: 0,
     year: CURRENT_YEAR,
     compensatoryHours: 0
   }
@@ -4892,29 +4948,35 @@ async function confirmReferenceMappings() {
   }
 }
 
-/* 特休「已使用天數」會在簽核核准時由系統扣減（並記下已套用的簽核單）。
+/* 特休「已使用時數」會在簽核核准時由系統扣減（並記下已套用的簽核單）。
    編輯視窗開著的時候才核准的扣減，不能被視窗裡的舊數字蓋回去：
    打開視窗時記下當下的值，儲存時沒被管理員改過就不送，改過才送，並附上打開時的值讓伺服器只套用差額。 */
 function snapshotAnnualLeave(annualLeave) {
   const source = annualLeave && typeof annualLeave === 'object' ? annualLeave : {}
   return {
-    usedDays: toNumberOrNull(source.usedDays) ?? 0,
+    usedHours: toNumberOrNull(source.usedHours) ?? 0,
     appliedApprovalRequestIds: Array.isArray(source.appliedApprovalRequestIds)
       ? source.appliedApprovalRequestIds.map(id => String(id))
       : []
   }
 }
 
+// 特休以小時儲存。舊的天數欄位、伺服器換算出來的剩餘時數／天數都不送回去：
+// 伺服器會把送來的天數乘 8 當成時數，舊欄位留在內容裡會把已使用時數蓋成舊值
+const ANNUAL_LEAVE_READ_ONLY_FIELDS = ['totalDays', 'usedDays', 'remainingHours', 'remainingDays', 'unitSource']
+
 function buildAnnualLeaveForUpdate(annualLeave, snapshot) {
   const result = { ...(annualLeave && typeof annualLeave === 'object' ? annualLeave : {}) }
-  delete result.usedDaysBase
-  const usedDays = toNumberOrNull(result.usedDays) ?? 0
-  if (usedDays === snapshot.usedDays) {
-    delete result.usedDays
+  ANNUAL_LEAVE_READ_ONLY_FIELDS.forEach(key => delete result[key])
+  delete result.usedHoursBase
+  const usedHours = toNumberOrNull(result.usedHours) ?? 0
+  if (usedHours === snapshot.usedHours) {
+    delete result.usedHours
   } else {
-    result.usedDays = usedDays
-    result.usedDaysBase = snapshot.usedDays
+    result.usedHours = usedHours
+    result.usedHoursBase = snapshot.usedHours
   }
+
   const applied = Array.isArray(result.appliedApprovalRequestIds)
     ? result.appliedApprovalRequestIds.map(id => String(id))
     : []
@@ -5202,7 +5264,7 @@ async function submitEmployee() {
   if (editEmployeeIndex !== null && !String(form.password ?? '').trim()) {
     delete payload.password
   }
-  // 編輯時「已使用天數」沒被管理員改過就不送，改過才送（並附上打開視窗時的值，伺服器只套用差額）
+  // 編輯時「已使用時數」沒被管理員改過就不送，改過才送（並附上打開視窗時的值，伺服器只套用差額）
   if (editEmployeeIndex !== null && annualLeaveSnapshot && form.annualLeave) {
     payload.annualLeave = buildAnnualLeaveForUpdate(form.annualLeave, annualLeaveSnapshot)
   }

@@ -224,7 +224,8 @@ describe('Supervisor schedule permissions', () => {
       title: '護理師',
       practiceTitle: '專科護理師',
     });
-    expect(res.body[0].annualLeave).toEqual({ remainingDays: 6 });
+    // 特休以小時儲存：舊格式的 10 天 - 4 天 = 6 天 = 48 小時（時數為主，天數是 時數 / 8 的換算）
+    expect(res.body[0].annualLeave).toEqual({ remainingDays: 6, remainingHours: 48 });
   });
 
   it('passes jobType with department/status filters on employee schedule route', async () => {

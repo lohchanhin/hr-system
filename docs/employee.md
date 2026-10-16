@@ -18,7 +18,9 @@
 ## 2. 職業別設定
 - **職稱選擇**（C03）
 - **執業職稱選擇**（C04）
-- **是否兼職**（勾選）
+- **是否兼職**（勾選）：兼職人員**不套用排班規範檢核**（每週一例一休、連續 7 日上班、每日工時、班與班間隔）。
+  排班表的員工欄會在姓名旁標示「兼職」；排班檢核（預檢、匯入、發布、完成發布）一律讀員工目前的兼職設定，
+  切換後整個月馬上依新的設定檢核。排班存檔、請假與加班的簽核檢核、打卡限制不受影響。
 - **是否打卡**（勾選）
 
 ## 3. 人員狀態
@@ -128,6 +130,15 @@
 - `department`
 - `subDepartment`
 - `supervisor`
-- `annualLeave.remainingDays`（後端會依 `annualLeave.totalDays - annualLeave.usedDays` 計算並回傳）
+- `annualLeave.remainingHours`（後端會依 `annualLeave.totalHours - annualLeave.usedHours` 計算並回傳，單位是小時）
+- `annualLeave.remainingDays`（`remainingHours / 8` 的換算，只用來顯示）
 
 > 注意：`view=schedule` 主要提供排班畫面使用，若需完整員工資料請改用一般員工列表 API。
+
+## 17. 特休欄位（annualLeave）的單位是小時
+
+- `annualLeave.totalHours`：年度特休總時數；`annualLeave.usedHours`：已使用時數（核准特休時自動扣減，撤回或駁回時退回）。1 天 = 8 小時。
+- `annualLeave.unitSource`：`migrated-days`（舊資料由天數乘 8 換算）、`migrated-hours`（舊資料的數字大於 40，視為本來就是小時，待人資確認）、`entered`（人資輸入或確認過）。
+- 舊欄位 `annualLeave.totalDays`、`annualLeave.usedDays` 在搬移後保留但不再使用；API 回傳不含這兩欄，寫入時送來的天數會乘 8 換成小時。
+- 其他欄位：`year`、`expiryDate`、`accumulatedLeave`（積假）、`compensatoryHours`（補休時數）、`notes`。
+- 搬移規則與各假別額度見 `docs/leave-hours-and-balances.md`。

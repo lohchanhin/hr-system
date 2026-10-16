@@ -14,6 +14,8 @@ import {
 } from './employeeController.js'
 import { INACTIVE_EMPLOYMENT_STATUSES } from '../services/approverEligibility.js'
 import { splitSignTagText } from '../utils/signTags.js'
+import { interpretLegacyAnnualLeave } from '../utils/annualLeaveHours.js'
+import { LEGACY_ANNUAL_LEAVE_DAYS_MAX } from '../config/leavePolicyConfig.js'
 
 const REQUIRED_MAPPING_KEYS = ['employeeNo', 'name', 'email']
 const VALID_ROLES = ['employee', 'supervisor', 'admin']
@@ -80,6 +82,8 @@ const DEFAULT_COLUMN_MAPPINGS = Object.freeze({
   'salaryAccountB.bank': 'salaryAccountB_bank',
   'salaryAccountB.acct': 'salaryAccountB_acct',
   salaryItems: 'salaryItems',
+  'annualLeave.totalHours': 'annualLeave_totalHours',
+  'annualLeave.usedHours': 'annualLeave_usedHours',
   'annualLeave.totalDays': 'annualLeave_totalDays',
   'annualLeave.usedDays': 'annualLeave_usedDays',
   'annualLeave.accumulatedLeave': 'annualLeave_accumulatedLeave',
@@ -123,6 +127,8 @@ const NUMBER_FIELDS = new Set([
   'employeeAdvance',
   'graduationYear',
   'dischargeYear',
+  'annualLeave.totalHours',
+  'annualLeave.usedHours',
   'annualLeave.totalDays',
   'annualLeave.usedDays',
   'annualLeave.accumulatedLeave',
@@ -140,6 +146,8 @@ const SIGN_SETTING_KEYS = ['signTags', 'signRole', 'signLevel']
 
 // 這幾個欄位是後來才加進範本的：舊版檔案沒有也不該讓整批匯入失敗。
 const OPTIONAL_COLUMN_KEYS = new Set([
+  'annualLeave.totalHours',
+  'annualLeave.usedHours',
   'annualLeave.totalDays',
   'annualLeave.usedDays',
   'annualLeave.accumulatedLeave',
@@ -157,6 +165,8 @@ const OPTIONAL_COLUMN_KEYS = new Set([
 // 客戶實際拿到的 Excel，第 1 列是英文欄位名，但後加的欄位只有第 2 列的中文說明。
 // 第 1 列找不到對應欄位時，改用第 2 列的中文名稱比對，客戶不必自己改表頭。
 const HEADER_LABEL_FALLBACKS = Object.freeze({
+  annualLeave_totalHours: ['年度特休總時數'],
+  annualLeave_usedHours: ['已使用時數'],
   annualLeave_totalDays: ['年度特休總天數'],
   annualLeave_usedDays: ['已使用天數'],
   annualLeave_accumulatedLeave: ['積假'],
@@ -172,6 +182,8 @@ const HEADER_LABEL_FALLBACKS = Object.freeze({
 })
 
 const NUMBER_FIELD_LABELS = Object.freeze({
+  'annualLeave.totalHours': '年度特休總時數',
+  'annualLeave.usedHours': '已使用時數',
   'annualLeave.totalDays': '年度特休總天數',
   'annualLeave.usedDays': '已使用天數',
   'annualLeave.accumulatedLeave': '積假',
@@ -808,6 +820,43 @@ function convertPensionSelfRate(normalized, rowNumber, warnings) {
   )
 }
 
+// 特休的單位是「小時」。範本新增了「年度特休總時數／已使用時數」欄位，舊版檔案的「年度特休總天數／已使用天數」仍可匯入：
+// - 有填時數欄位就以時數為準（舊的天數欄位忽略）。
+// - 只有舊的天數欄位：數字都在 LEGACY_ANNUAL_LEAVE_DAYS_MAX 以內視為天數、乘 8 換成小時；
+//   任何一個數字超過它（法定特休最多 30 天，不可能是天數，例如 170、219）就原樣當成小時，並提醒人資確認。
+function resolveAnnualLeaveUnits(normalized, rowNumber, warnings) {
+  const leave = normalized.annualLeave
+  if (!leave || typeof leave !== 'object') return
+  const hasHours = leave.totalHours !== undefined || leave.usedHours !== undefined
+  const hasDays = leave.totalDays !== undefined || leave.usedDays !== undefined
+  if (hasHours) {
+    if (hasDays) {
+      warnings.push(`第 ${rowNumber} 列同時填了「年度特休總時數／已使用時數」與舊的「年度特休總天數／已使用天數」，以時數為準`)
+    }
+    delete leave.totalDays
+    delete leave.usedDays
+    leave.unitConfirmed = true
+    return
+  }
+  if (!hasDays) return
+  const converted = interpretLegacyAnnualLeave(leave.totalDays, leave.usedDays)
+  if (converted.unitSource === 'migrated-hours') {
+    const [label, value] = Number(leave.totalDays) > LEGACY_ANNUAL_LEAVE_DAYS_MAX
+      ? ['年度特休總天數', leave.totalDays]
+      : ['已使用天數', leave.usedDays]
+    warnings.push(
+      `第 ${rowNumber} 列「${label}」的值 ${value} 超過 ${LEGACY_ANNUAL_LEAVE_DAYS_MAX}（特休天數不可能這麼多），已視為 ${value} 小時，請確認`
+    )
+    leave.unitSource = 'migrated-hours'
+  } else {
+    leave.unitConfirmed = true
+  }
+  if (leave.totalDays !== undefined) leave.totalHours = converted.totalHours
+  if (leave.usedDays !== undefined) leave.usedHours = converted.usedHours
+  delete leave.totalDays
+  delete leave.usedDays
+}
+
 function isBlankImportValue(value) {
   if (value === undefined || value === null) return true
   if (typeof value === 'string') return value.trim() === ''
@@ -1153,6 +1202,7 @@ export async function bulkImportEmployees(req, res) {
     checkEmploymentStatus(normalized, index, warnings)
     normalizeSignSettings(normalized, index, warnings)
     convertPensionSelfRate(normalized, index, warnings)
+    resolveAnnualLeaveUnits(normalized, index, warnings)
 
     parsedRows.push({
       rowNumber: index,

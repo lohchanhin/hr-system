@@ -205,11 +205,41 @@ export function normalizeOptionalId(value) {
   return normalized || undefined;
 }
 
+// 跨月週還無法判斷的項目（不算違規）整理成回給前端的樣子：員工 id 轉字串、date 用該週的週一，與 violations 同一種形狀
+export function formatPendingWeeks(items) {
+  return (Array.isArray(items) ? items : []).map((item) => ({
+    ...item,
+    employee: toEntityId(item.employee),
+    date: item.weekStart || null,
+  }));
+}
+
+// 跨月週待判斷的項目再附上員工代號與姓名：畫面只載入一頁員工，不在那一頁的員工也要能直接看到是誰。
+// 名字只是顯示用，查不到或查詢失敗都不影響檢核結果。
+export async function describePendingWeeks(items) {
+  const pending = formatPendingWeeks(items);
+  const ids = [...new Set(pending.map((item) => item.employee))].filter((id) => /^[0-9a-fA-F]{24}$/.test(id));
+  if (!ids.length) return pending;
+  try {
+    const query = Employee.find({ _id: { $in: ids } }).select('_id employeeId name');
+    const rows = query && typeof query.lean === 'function' ? await query.lean() : await query;
+    const byId = new Map((rows || []).map((row) => [toEntityId(row._id), row]));
+    return pending.map((item) => {
+      const row = byId.get(item.employee);
+      return row ? { ...item, employeeCode: row.employeeId || '', employeeName: row.name || '' } : item;
+    });
+  } catch {
+    return pending;
+  }
+}
+
 export function respondLaborRuleError(res, err) {
   if (!isLaborRuleValidationError(err)) return false;
+  const pendingWeeks = formatPendingWeeks(err.pendingWeeks);
   res.status(err.status || 400).json({
     error: err.message,
     violations: err.violations || [],
+    ...(pendingWeeks.length ? { pendingWeeks } : {}),
   });
   return true;
 }

@@ -5,6 +5,7 @@ import {
   resolveScopedEmployeeIds,
   normalizeId,
   respondLaborRuleError,
+  describePendingWeeks,
   buildPublishQuery,
   summarizeEmployees,
   normalizeResponsePayload,
@@ -44,7 +45,7 @@ export async function publishSchedules(req, res) {
       return res.status(404).json({ error: 'no schedules found' });
     }
 
-    await assertScheduleRuleCompliance({
+    const ruleResult = await assertScheduleRuleCompliance({
       candidateSchedules: docs.map((doc) => ({
         _id: doc._id,
         employee: doc.employee?._id || doc.employee,
@@ -75,11 +76,14 @@ export async function publishSchedules(req, res) {
       state: 'pending_confirmation',
     }));
 
+    // 跨月週（鄰月還沒排）目前無法判斷的週別不擋發布，只回報讓畫面提醒；沒有的時候回應內容不變
+    const pendingWeeks = await describePendingWeeks(ruleResult?.pendingWeeks);
     res.json({
       updated: ids.length,
       employees,
       publishedAt: now.toISOString(),
       publishedMonth: month,
+      ...(pendingWeeks.length ? { pendingWeeks } : {}),
     });
   } catch (err) {
     if (respondLaborRuleError(res, err)) return;
@@ -168,7 +172,7 @@ export async function finalizeSchedules(req, res) {
       return res.status(400).json({ error: 'no pending schedules to finalize' });
     }
 
-    await assertScheduleRuleCompliance({
+    const ruleResult = await assertScheduleRuleCompliance({
       candidateSchedules: pendingDocs.map((doc) => ({
         _id: doc._id,
         employee: doc.employee?._id || doc.employee,
@@ -186,7 +190,8 @@ export async function finalizeSchedules(req, res) {
       $set: { state: 'finalized', needsReconfirm: false },
     });
 
-    res.json({ finalized: ids.length });
+    const pendingWeeks = await describePendingWeeks(ruleResult?.pendingWeeks);
+    res.json({ finalized: ids.length, ...(pendingWeeks.length ? { pendingWeeks } : {}) });
   } catch (err) {
     if (respondLaborRuleError(res, err)) return;
     res.status(400).json({ error: err.message });

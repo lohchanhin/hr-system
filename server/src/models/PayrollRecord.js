@@ -73,9 +73,10 @@ const payrollRecordSchema = new mongoose.Schema({
   
   // 特休資訊 (從員工資料複製)
   annualLeave: {
-    totalDays: { type: Number, default: 0 }, // 特休總天數
-    totalHours: { type: Number, default: 0 }, // 特休總時數
-    usedDays: { type: Number, default: 0 }, // 已使用天數
+    totalDays: { type: Number, default: 0 }, // 特休總天數（總時數 / 8 的換算）
+    totalHours: { type: Number, default: 0 }, // 特休總時數（以時數為準）
+    usedDays: { type: Number, default: 0 }, // 已使用天數（已使用時數 / 8 的換算）
+    usedHours: { type: Number, default: 0 }, // 已使用時數
     expiryDate: { type: Date }, // 請假期限
     accumulatedLeave: { type: Number, default: 0 }, // 積假
     notes: { type: String, default: '' }, // 備註

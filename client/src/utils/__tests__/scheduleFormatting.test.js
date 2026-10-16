@@ -10,6 +10,8 @@ import {
   formatScheduleImportWarning,
   limitDialogLines,
   buildScheduleImportConfirmMessage,
+  buildPendingWeekLines,
+  formatRuleExemptNotice,
 } from '../scheduleFormatting.js'
 
 describe('formatShiftLabel', () => {
@@ -211,5 +213,128 @@ describe('buildScheduleImportConfirmMessage', () => {
     const text = buildScheduleImportConfirmMessage({ employees: 1, scheduleDays: 3, overwriteCount: 2 })
     expect(text.startsWith('發現 2 個日期已有班表。選擇「覆蓋匯入」會取代原班別')).toBe(true)
     expect(text).toContain('將匯入 1 名員工、3 個班次。')
+  })
+})
+
+describe('跨月週尚無法判斷的格式化', () => {
+  const employees = [
+    { _id: 'e1', employeeId: 'A0003', name: '王小美' },
+    { _id: 'e2', employeeId: 'A0069', name: '林小華' },
+  ]
+  const pendingItem = (overrides = {}) => ({
+    rule: 'weekly-rest-pending',
+    employee: 'e1',
+    weekStart: '2026-06-29',
+    weekEnd: '2026-07-05',
+    missingMonths: ['2026-06'],
+    message: '跨月週（2026-06-29～2026-07-05）：2026-06-29～2026-06-30 尚未排班，暫時無法判斷每週一例一休（目前缺例假、休息日）；2026年6月 班表排定後會重新檢核',
+    ...overrides,
+  })
+
+  it('待判斷的項目有自己的規則名稱，並且說出員工與週別', () => {
+    expect(formatLaborRuleViolation(pendingItem(), employees)).toBe(
+      `A0003 王小美 2026-06-29 [每週一例一休（待判斷）]：${pendingItem().message}`
+    )
+  })
+
+  it('員工不在目前載入的名單時，改用伺服器附上的代號與姓名', () => {
+    const item = pendingItem({ employee: 'e9', employeeCode: 'A0141', employeeName: '陳小玲' })
+    expect(formatLaborRuleViolation(item, employees)).toContain('A0141 陳小玲 2026-06-29')
+    expect(formatLaborRuleViolation(pendingItem({ employee: 'e9' }), employees)).toContain('員工 e9 2026-06-29')
+  })
+
+  describe('buildPendingWeekLines', () => {
+    it('同一週的員工併成一行，列出人數、姓名與尚未排班的月份', () => {
+      const lines = buildPendingWeekLines([
+        pendingItem({ employee: 'e1' }),
+        pendingItem({ employee: 'e2' }),
+      ], employees)
+      expect(lines).toEqual(['2026-06-29～2026-07-05：2 人（A0003 王小美、A0069 林小華）尚無法判斷，2026年6月尚未排班'])
+    })
+
+    it('不同週別各一行並依週別排序，月份可以不同', () => {
+      const lines = buildPendingWeekLines([
+        pendingItem({ weekStart: '2026-07-27', weekEnd: '2026-08-02', missingMonths: ['2026-08'] }),
+        pendingItem(),
+      ], employees)
+      expect(lines).toEqual([
+        '2026-06-29～2026-07-05：1 人（A0003 王小美）尚無法判斷，2026年6月尚未排班',
+        '2026-07-27～2026-08-02：1 人（A0003 王小美）尚無法判斷，2026年8月尚未排班',
+      ])
+    })
+
+    it('人數超過上限時只列前幾位並註明總人數', () => {
+      const many = Array.from({ length: 12 }, (_, index) => pendingItem({
+        employee: `x${index}`,
+        employeeCode: `B${String(index).padStart(3, '0')}`,
+        employeeName: `員工${index}`,
+      }))
+      const [line] = buildPendingWeekLines(many, [], { nameLimit: 3 })
+      expect(line).toBe('2026-06-29～2026-07-05：12 人（B000 員工0、B001 員工1、B002 員工2…等 12 人）尚無法判斷，2026年6月尚未排班')
+    })
+
+    it('沒有項目、或項目沒有週別時回傳空陣列', () => {
+      expect(buildPendingWeekLines([], employees)).toEqual([])
+      expect(buildPendingWeekLines(undefined, employees)).toEqual([])
+      expect(buildPendingWeekLines([{ employee: 'e1' }, null], employees)).toEqual([])
+    })
+  })
+
+  describe('formatRuleExemptNotice', () => {
+    it('沒有兼職人員時是空字串', () => {
+      expect(formatRuleExemptNotice([])).toBe('')
+      expect(formatRuleExemptNotice(undefined)).toBe('')
+    })
+
+    it('列出兼職人員的代號與姓名，超過上限就用「…等」收尾', () => {
+      expect(formatRuleExemptNotice([{ employeeId: 'A0003', name: '王小明' }]))
+        .toBe('其中 1 位兼職人員不套用排班規範檢核（A0003 王小明）。')
+      const many = Array.from({ length: 7 }, (_, index) => ({ employeeId: `P${index}`, name: `員工${index}` }))
+      expect(formatRuleExemptNotice(many, 2))
+        .toBe('其中 7 位兼職人員不套用排班規範檢核（P0 員工0、P1 員工1…等）。')
+    })
+  })
+
+  describe('buildScheduleImportConfirmMessage 的兼職與跨月週區塊', () => {
+    it('兼職人員的說明接在匯入摘要後面', () => {
+      const text = buildScheduleImportConfirmMessage({
+        employees: 3,
+        scheduleDays: 90,
+        ruleExemptEmployees: [{ employeeId: 'A0003', name: '王小明' }],
+      })
+      expect(text).toBe('將匯入 3 名員工、90 個班次。\n其中 1 位兼職人員不套用排班規範檢核（A0003 王小明）。')
+    })
+
+    it('跨月週區塊接在排班規範問題之後，每週一行，並說明不影響匯入', () => {
+      const text = buildScheduleImportConfirmMessage({
+        employees: 3,
+        scheduleDays: 90,
+        violations: ['A0003 2026-07-06 [每週一例一休]：該週沒有例假'],
+        pendingWeekLines: ['2026-06-29～2026-07-05：3 人（A0003 王小美、A0069 林小華、A0119 張小凡）尚無法判斷，2026年6月尚未排班'],
+        pendingWeekCount: 3,
+      })
+      const violationAt = text.indexOf('排班規範問題（1 項')
+      const pendingAt = text.indexOf('跨月週尚無法判斷一例一休（3 項，不影響匯入，待相鄰月份班表排定後會重新檢核）：')
+      expect(violationAt).toBeGreaterThan(-1)
+      expect(pendingAt).toBeGreaterThan(violationAt)
+      expect(text).toContain('\n・2026-06-29～2026-07-05：3 人（A0003 王小美、A0069 林小華、A0119 張小凡）尚無法判斷，2026年6月尚未排班')
+    })
+
+    it('項數預設就是行數，過長時同樣截斷', () => {
+      const lines = Array.from({ length: 25 }, (_, index) => `第 ${index + 1} 週`)
+      const text = buildScheduleImportConfirmMessage({ employees: 1, scheduleDays: 1, pendingWeekLines: lines, lineLimit: 20 })
+      expect(text).toContain('跨月週尚無法判斷一例一休（25 項，')
+      expect(text).toContain('・第 20 週')
+      expect(text).not.toContain('第 21 週')
+      expect(text).toContain('\n…另有 5 項')
+    })
+
+    it('沒有兼職人員、沒有跨月週時，內容和以前完全一樣', () => {
+      const base = { employees: 8, scheduleDays: 240, warnings: ['a'], violations: ['b'] }
+      expect(buildScheduleImportConfirmMessage({ ...base, ruleExemptEmployees: [], pendingWeekLines: [] }))
+        .toBe(buildScheduleImportConfirmMessage(base))
+      expect(buildScheduleImportConfirmMessage(base)).not.toContain('跨月週')
+      expect(buildScheduleImportConfirmMessage(base)).not.toContain('兼職')
+    })
   })
 })

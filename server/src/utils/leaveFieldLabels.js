@@ -10,6 +10,8 @@ export function normalizeLeaveFieldLabel(label) {
 const START_LABELS = new Set(['開始時間', '開始日期', '日期起', '起始時間', '起始日期', '請假起日', '開始']);
 const END_LABELS = new Set(['結束時間', '結束日期', '日期迄', '日期訖', '終止時間', '終止日期', '請假迄日', '結束']);
 const DAYS_LABELS = new Set(['天數', '請假天數', '日數', '請假日數']);
+// 「時數」欄位：請假的數量以小時為單位（系統內唯一儲存的請假單位），標籤寬鬆比對
+const HOURS_LABELS = new Set(['時數', '請假時數', '小時', '小時數', '請假小時', '請假小時數', '時數小時', '請假時數小時']);
 
 export function isLeaveStartLabel(label) {
   return START_LABELS.has(normalizeLeaveFieldLabel(label));
@@ -26,6 +28,10 @@ export function isLeaveTypeLabel(label) {
 
 export function isLeaveDaysLabel(label) {
   return DAYS_LABELS.has(normalizeLeaveFieldLabel(label));
+}
+
+export function isLeaveHoursLabel(label) {
+  return HOURS_LABELS.has(normalizeLeaveFieldLabel(label));
 }
 
 // 同名欄位時優先採用啟用中的；欄位依 order 排好後取第一個
@@ -46,5 +52,6 @@ export function pickLeaveFields(fields) {
     typeField: pickField(ordered, (label) => normalizeLeaveFieldLabel(label) === '假別')
       ?? pickField(ordered, isLeaveTypeLabel),
     daysField: pickField(ordered, isLeaveDaysLabel),
+    hoursField: pickField(ordered, isLeaveHoursLabel),
   };
 }

@@ -76,12 +76,15 @@ const LABOR_RULE_LABELS = {
   'shift-gap': '換班休息間隔',
   'continuous-work-days': '連續出勤限制',
   'weekly-one-regular-rest-one-rest-day': '每週一例一休',
+  'weekly-rest-pending': '每週一例一休（待判斷）',
 }
 
 /** Formats a labor-rule-validation violation object into a user-facing message. */
 export function formatLaborRuleViolation(item = {}, employees = []) {
   if (typeof item === 'string') return item
-  const employee = getEmployeeIssueLabel(item.employee, employees)
+  const employee = item.employeeCode || item.employeeName
+    ? pendingEmployeeLabel(item, employees)
+    : getEmployeeIssueLabel(item.employee, employees)
   const parsedDate = dayjs(item.date || item.weekStart || item.startDate || item.dates?.[0] || '')
   const date = parsedDate?.isValid() ? ` ${parsedDate.format('YYYY-MM-DD')}` : ''
   const rule = item.rule ? ` [${LABOR_RULE_LABELS[item.rule] || item.rule}]` : ''
@@ -94,6 +97,63 @@ export function formatScheduleImportWarning(item = {}) {
   if (typeof item === 'string') return item
   if (!item?.row) return String(item?.message || '資料提醒')
   return formatScheduleImportIssue(item)
+}
+
+// 員工不在目前載入的那一頁名單時，改用伺服器附上的代號與姓名
+function pendingEmployeeLabel(item, employees) {
+  const id = String(item.employee?._id || item.employee || '')
+  const known = (employees || []).some(employee => String(employee?._id || '') === id)
+  const named = [item.employeeCode, item.employeeName].map(value => String(value || '').trim()).filter(Boolean).join(' ')
+  return known || !named ? getEmployeeIssueLabel(id, employees) : named
+}
+
+/** 'YYYY-MM' → '2026年7月' */
+function formatMonthKey(key) {
+  const match = /^(\d{4})-(\d{1,2})$/.exec(String(key || '').trim())
+  return match ? `${Number(match[1])}年${Number(match[2])}月` : String(key || '')
+}
+
+/**
+ * 跨月週還無法判斷（鄰月尚未排班）的項目，同一週的員工併成一行，避免四十位員工出現四十行幾乎一樣的文字：
+ * 「2026-06-29～2026-07-05：12 人（A0003 王小美、A0069 林小華…等 12 人）尚無法判斷，2026年6月尚未排班」。
+ * `pendingWeeks` 是伺服器回傳的項目（employee、weekStart、weekEnd、missingMonths）。
+ */
+export function buildPendingWeekLines(pendingWeeks = [], employees = [], { nameLimit = 5 } = {}) {
+  const groups = new Map()
+  for (const item of Array.isArray(pendingWeeks) ? pendingWeeks : []) {
+    if (!item || typeof item !== 'object') continue
+    const weekStart = String(item.weekStart || item.date || '').slice(0, 10)
+    if (!weekStart) continue
+    const weekEnd = String(item.weekEnd || '').slice(0, 10)
+    const key = `${weekStart}|${weekEnd}`
+    if (!groups.has(key)) groups.set(key, { weekStart, weekEnd, employees: [], months: new Set() })
+    const group = groups.get(key)
+    const label = pendingEmployeeLabel(item, employees)
+    if (label && !group.employees.includes(label)) group.employees.push(label)
+    for (const month of item.missingMonths || []) group.months.add(month)
+  }
+  return [...groups.values()]
+    .sort((a, b) => a.weekStart.localeCompare(b.weekStart))
+    .map(group => {
+      const count = group.employees.length
+      const names = group.employees.slice(0, nameLimit).join('、')
+      const people = count > nameLimit ? `${names}…等 ${count} 人` : names
+      const range = group.weekEnd ? `${group.weekStart}～${group.weekEnd}` : group.weekStart
+      const months = [...group.months].sort().map(formatMonthKey).join('、')
+      return `${range}：${count} 人（${people}）尚無法判斷${months ? `，${months}尚未排班` : ''}`
+    })
+}
+
+/** 匯入檔裡不套用排班規範檢核的兼職人員提示：「其中 2 位兼職人員不套用排班規範檢核（A0003 王小明、…）。」 */
+export function formatRuleExemptNotice(employees = [], limit = 5) {
+  const list = (Array.isArray(employees) ? employees : []).filter(Boolean)
+  if (!list.length) return ''
+  const labels = list
+    .slice(0, limit)
+    .map(item => [String(item.employeeId || '').trim(), String(item.name || '').trim()].filter(Boolean).join(' '))
+    .filter(Boolean)
+  const detail = labels.length ? `（${labels.join('、')}${list.length > limit ? '…等' : ''}）` : ''
+  return `其中 ${list.length} 位兼職人員不套用排班規範檢核${detail}。`
 }
 
 export const IMPORT_CONFIRM_LINE_LIMIT = 20
@@ -124,6 +184,9 @@ export function buildScheduleImportConfirmMessage({
   overwriteCount = 0,
   warnings = [],
   violations = [],
+  ruleExemptEmployees = [],
+  pendingWeekLines = [],
+  pendingWeekCount,
   lineLimit = IMPORT_CONFIRM_LINE_LIMIT,
 } = {}) {
   const blocks = []
@@ -147,6 +210,8 @@ export function buildScheduleImportConfirmMessage({
       summary.push(`班表中共有 ${informational} 天為國定假日或請假標記，皆已依班別設定存入班表。`)
     }
   }
+  const exemptNotice = formatRuleExemptNotice(ruleExemptEmployees)
+  if (exemptNotice) summary.push(exemptNotice)
   blocks.push(summary.join('\n'))
 
   const warningLines = (Array.isArray(warnings) ? warnings : []).filter(Boolean)
@@ -161,6 +226,14 @@ export function buildScheduleImportConfirmMessage({
     blocks.push([
       `排班規範問題（${violationLines.length} 項，可先存為草稿，發布前必須修正）：`,
       ...bulletLines(limitDialogLines(violationLines, lineLimit), lineLimit),
+    ].join('\n'))
+  }
+  const pendingLines = (Array.isArray(pendingWeekLines) ? pendingWeekLines : []).filter(Boolean)
+  if (pendingLines.length) {
+    const total = pendingWeekCount == null ? pendingLines.length : Math.max(0, Number(pendingWeekCount) || 0)
+    blocks.push([
+      `跨月週尚無法判斷一例一休（${total} 項，不影響匯入，待相鄰月份班表排定後會重新檢核）：`,
+      ...bulletLines(limitDialogLines(pendingLines, lineLimit), lineLimit),
     ].join('\n'))
   }
   return blocks.join('\n\n')

@@ -12,6 +12,7 @@ import {
   updateFormCategory,
   deleteFormCategory
 } from '../controllers/otherControlSettingController.js'
+import { getLeavePolicySettings, updateLeavePolicySettings } from '../controllers/leavePolicyController.js'
 
 const router = Router()
 
@@ -26,5 +27,8 @@ router.get('/form-categories', listFormCategories)
 router.post('/form-categories', createFormCategory)
 router.put('/form-categories/:id', updateFormCategory)
 router.delete('/form-categories/:id', deleteFormCategory)
+// 假別額度規則（請假與加班設定）：額度、超額處理、顯示方式；沒有儲存過就用法定預設值
+router.get('/leave-policy', getLeavePolicySettings)
+router.put('/leave-policy', updateLeavePolicySettings)
 
 export default router

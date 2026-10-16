@@ -1,6 +1,7 @@
 import { jest } from '@jest/globals'
 
-// 特休餘額的記帳：扣減錯誤資料、核准後撤回的返還、年度總天數的原子更新、使用紀錄查詢
+// 特休餘額的記帳（單位是小時）：扣減錯誤資料、核准後撤回的返還、年度總時數的原子更新、使用紀錄查詢
+const mockEnsureAnnualLeaveHours = jest.fn()
 const mockEmployee = { findOneAndUpdate: jest.fn(), findById: jest.fn(), updateOne: jest.fn() }
 const mockApprovalRequest = { find: jest.fn() }
 const mockFormTemplate = { find: jest.fn() }
@@ -21,6 +22,7 @@ beforeAll(async () => {
   await jest.unstable_mockModule('../src/services/leaveFieldService.js', () => ({
     getLeaveFieldIdsForForm: mockGetLeaveFieldIdsForForm,
   }))
+  await jest.unstable_mockModule('../src/services/leaveHoursMigration.js', () => ({ ensureAnnualLeaveHours: mockEnsureAnnualLeaveHours }))
   const mod = await import('../src/services/annualLeaveService.js')
   deductAnnualLeave = mod.deductAnnualLeave
   refundAnnualLeave = mod.refundAnnualLeave
@@ -34,6 +36,8 @@ beforeEach(() => {
     Object.values(mock).forEach(fn => fn.mockReset())
   }
   mockGetLeaveFieldIdsForForm.mockReset()
+  mockEnsureAnnualLeaveHours.mockReset()
+  mockEnsureAnnualLeaveHours.mockResolvedValue(false)
   jest.spyOn(console, 'log').mockImplementation(() => {})
 })
 
@@ -42,17 +46,17 @@ afterEach(() => {
 })
 
 describe('deduction errors', () => {
-  it('carry code, remaining and requested so the caller can write a Chinese message', async () => {
+  it('carry code, remainingHours and requestedHours so the caller can write a Chinese message', async () => {
     mockEmployee.findOneAndUpdate.mockResolvedValue(null)
     mockEmployee.findById.mockReturnValue({
-      select: jest.fn().mockResolvedValue({ annualLeave: { totalDays: 5, usedDays: 4, appliedApprovalRequestIds: [] } }),
+      select: jest.fn().mockResolvedValue({ annualLeave: { totalHours: 40, usedHours: 32, appliedApprovalRequestIds: [] } }),
     })
 
-    await expect(deductAnnualLeave('emp1', 3, 'req1')).rejects.toMatchObject({
+    await expect(deductAnnualLeave('emp1', 24, 'req1')).rejects.toMatchObject({
       name: 'AnnualLeaveError',
       code: 'INSUFFICIENT_BALANCE',
-      remaining: 1,
-      requested: 3,
+      remainingHours: 8,
+      requestedHours: 24,
     })
   })
 })
@@ -62,39 +66,50 @@ describe('isAnnualLeaveConfigured', () => {
     expect(isAnnualLeaveConfigured(undefined)).toBe(false)
     expect(isAnnualLeaveConfigured({})).toBe(false)
     expect(isAnnualLeaveConfigured({ annualLeave: { totalDays: 0, usedDays: 0 } })).toBe(false)
+    expect(isAnnualLeaveConfigured({ annualLeave: { totalHours: 0, usedHours: 0 } })).toBe(false)
+    expect(isAnnualLeaveConfigured({ annualLeave: { totalHours: 80, usedHours: 0 } })).toBe(true)
+    expect(isAnnualLeaveConfigured({ annualLeave: { totalHours: 0, usedHours: 16 } })).toBe(true)
+    // 還沒搬移的舊資料（天數欄位）一樣讀得出來
     expect(isAnnualLeaveConfigured({ annualLeave: { totalDays: 10, usedDays: 0 } })).toBe(true)
     expect(isAnnualLeaveConfigured({ annualLeave: { totalDays: 0, usedDays: 2 } })).toBe(true)
   })
 })
 
 describe('refundAnnualLeave', () => {
-  it('gives the days back atomically and removes the applied marker so a second refund is a no-op', async () => {
-    mockEmployee.findOneAndUpdate.mockResolvedValue({ annualLeave: { totalDays: 10, usedDays: 3 } })
+  it('gives the hours back atomically and removes the applied marker so a second refund is a no-op', async () => {
+    mockEmployee.findOneAndUpdate.mockResolvedValue({ annualLeave: { totalHours: 80, usedHours: 24 } })
 
-    const result = await refundAnnualLeave('emp1', 2, 'req1')
+    const result = await refundAnnualLeave('emp1', 16, 'req1')
 
-    expect(result).toEqual({ refunded: true, days: 2 })
+    expect(result).toEqual({ refunded: true, hours: 16, days: 2 })
     const [filter, update, options] = mockEmployee.findOneAndUpdate.mock.calls[0]
     expect(filter).toEqual({ _id: 'emp1', 'annualLeave.appliedApprovalRequestIds': 'req1' })
     expect(update).toEqual({
-      $inc: { 'annualLeave.usedDays': -2 },
+      $inc: { 'annualLeave.usedHours': -16 },
       $pull: { 'annualLeave.appliedApprovalRequestIds': 'req1' },
     })
     expect(options).toEqual({ new: true })
     expect(mockEmployee.updateOne).not.toHaveBeenCalled()
   })
 
-  it('does nothing when that approval never deducted anything', async () => {
-    mockEmployee.findOneAndUpdate.mockResolvedValue(null)
-    expect(await refundAnnualLeave('emp1', 2, 'req1')).toEqual({ refunded: false, days: 0 })
+  it('converts a still legacy (days) employee to hours before giving anything back', async () => {
+    mockEmployee.findOneAndUpdate.mockResolvedValue({ annualLeave: { totalHours: 80, usedHours: 24 } })
+    await refundAnnualLeave('emp1', 8, 'req1')
+    expect(mockEnsureAnnualLeaveHours).toHaveBeenCalledWith('emp1')
+    expect(mockEnsureAnnualLeaveHours.mock.invocationCallOrder[0]).toBeLessThan(mockEmployee.findOneAndUpdate.mock.invocationCallOrder[0])
   })
 
-  it('never leaves a negative used-days value behind', async () => {
-    mockEmployee.findOneAndUpdate.mockResolvedValue({ annualLeave: { totalDays: 10, usedDays: -1 } })
-    await refundAnnualLeave('emp1', 2, 'req1')
+  it('does nothing when that approval never deducted anything', async () => {
+    mockEmployee.findOneAndUpdate.mockResolvedValue(null)
+    expect(await refundAnnualLeave('emp1', 16, 'req1')).toEqual({ refunded: false, hours: 0, days: 0 })
+  })
+
+  it('never leaves a negative used-hours value behind', async () => {
+    mockEmployee.findOneAndUpdate.mockResolvedValue({ annualLeave: { totalHours: 80, usedHours: -8 } })
+    await refundAnnualLeave('emp1', 16, 'req1')
     expect(mockEmployee.updateOne).toHaveBeenCalledWith(
-      { _id: 'emp1', 'annualLeave.usedDays': { $lt: 0 } },
-      { $set: { 'annualLeave.usedDays': 0 } },
+      { _id: 'emp1', 'annualLeave.usedHours': { $lt: 0 } },
+      { $set: { 'annualLeave.usedHours': 0 } },
     )
   })
 
@@ -106,30 +121,45 @@ describe('refundAnnualLeave', () => {
 })
 
 describe('setAnnualLeaveQuota', () => {
-  it('only changes totalDays within the same year, in one atomic update (usedDays is never overwritten)', async () => {
-    const updated = { _id: 'emp1', annualLeave: { totalDays: 14, usedDays: 4, year: 2026 } }
+  it('only changes totalHours within the same year, in one atomic update (usedHours is never overwritten)', async () => {
+    const updated = { _id: 'emp1', annualLeave: { totalHours: 112, usedHours: 32, year: 2026 } }
     mockEmployee.findOneAndUpdate.mockResolvedValueOnce(updated)
 
-    const result = await setAnnualLeaveQuota('emp1', 14, 2026)
+    const result = await setAnnualLeaveQuota('emp1', 112, 2026)
 
     expect(result).toBe(updated)
     expect(mockEmployee.findOneAndUpdate).toHaveBeenCalledTimes(1)
     expect(mockEmployee.findOneAndUpdate).toHaveBeenCalledWith(
       { _id: 'emp1', 'annualLeave.year': 2026 },
-      { $set: { 'annualLeave.totalDays': 14 } },
+      { $set: { 'annualLeave.totalHours': 112, 'annualLeave.unitSource': 'entered' } },
       { new: true },
     )
   })
 
-  it('resets the balance when a new year is set', async () => {
-    mockEmployee.findOneAndUpdate.mockResolvedValueOnce(null)
-    mockEmployee.findOneAndUpdate.mockResolvedValueOnce({ _id: 'emp1', annualLeave: { totalDays: 10, usedDays: 0, year: 2027 } })
+  it('converts a legacy (days) employee first so the used amount is not lost', async () => {
+    mockEmployee.findOneAndUpdate.mockResolvedValueOnce({ _id: 'emp1', annualLeave: {} })
+    await setAnnualLeaveQuota('emp1', 112, 2026)
+    expect(mockEnsureAnnualLeaveHours).toHaveBeenCalledWith('emp1')
+    expect(mockEnsureAnnualLeaveHours.mock.invocationCallOrder[0]).toBeLessThan(mockEmployee.findOneAndUpdate.mock.invocationCallOrder[0])
+  })
 
-    await setAnnualLeaveQuota('emp1', 10, 2027)
+  it('resets the used hours when a new year is set, with dotted paths so 積假, 補休, 請假期限 and 備註 stay untouched', async () => {
+    mockEmployee.findOneAndUpdate.mockResolvedValueOnce(null)
+    mockEmployee.findOneAndUpdate.mockResolvedValueOnce({ _id: 'emp1', annualLeave: { totalHours: 80, usedHours: 0, year: 2027 } })
+
+    await setAnnualLeaveQuota('emp1', 80, 2027)
 
     expect(mockEmployee.findOneAndUpdate).toHaveBeenLastCalledWith(
       { _id: 'emp1', 'annualLeave.year': { $ne: 2027 } },
-      { $set: { annualLeave: { totalDays: 10, usedDays: 0, year: 2027, appliedApprovalRequestIds: [] } } },
+      {
+        $set: {
+          'annualLeave.totalHours': 80,
+          'annualLeave.usedHours': 0,
+          'annualLeave.unitSource': 'entered',
+          'annualLeave.year': 2027,
+          'annualLeave.appliedApprovalRequestIds': [],
+        },
+      },
       { new: true },
     )
   })
@@ -174,12 +204,12 @@ describe('getAnnualLeaveHistory', () => {
 
     expect(mockApprovalRequest.find).toHaveBeenCalledWith({ applicant_employee: 'emp1', status: 'approved', form: 'form1' })
     expect(history).toEqual([
-      { requestId: 'r3', formName: '請假', createdAt: '2026-05-01T00:00:00.000Z', days: 1.5, startDate: '2026-05-04', endDate: '2026-05-05', reason: undefined },
-      { requestId: 'r1', formName: '請假', createdAt: '2026-02-20T00:00:00.000Z', days: 3, startDate: '2026-03-02', endDate: '2026-03-04', reason: '旅行' },
+      { requestId: 'r3', formName: '請假', createdAt: '2026-05-01T00:00:00.000Z', hours: 12, days: 1.5, startDate: '2026-05-04', endDate: '2026-05-05', reason: undefined },
+      { requestId: 'r1', formName: '請假', createdAt: '2026-02-20T00:00:00.000Z', hours: 24, days: 3, startDate: '2026-03-02', endDate: '2026-03-04', reason: '旅行' },
     ])
   })
 
-  it('prefers the days that were actually deducted and filters by the leave start year', async () => {
+  it('prefers the hours that were actually deducted (old records only have days) and filters by the leave start year', async () => {
     mockRequests([
       {
         _id: 'r1',
@@ -195,7 +225,7 @@ describe('getAnnualLeaveHistory', () => {
     ])
 
     const in2026 = await getAnnualLeaveHistory('emp1', 2026)
-    expect(in2026.map(item => [item.requestId, item.days])).toEqual([['r1', 2]])
+    expect(in2026.map(item => [item.requestId, item.hours, item.days])).toEqual([['r1', 16, 2]])
     const in2025 = await getAnnualLeaveHistory('emp1', 2025)
     expect(in2025.map(item => item.requestId)).toEqual(['r2'])
   })
@@ -233,10 +263,10 @@ describe('getAnnualLeaveHistory', () => {
 
     const history = await getAnnualLeaveHistory('emp1')
 
-    expect(history.map(item => [item.requestId, item.days, item.startDate, item.endDate, item.reason])).toEqual([
-      ['r-mix', 2.5, '2026-05-04', '2026-05-08', undefined],
-      ['r-new', 1, '2026-04-06', '2026-04-06', '新欄位的事由'],
-      ['r-old', 2, '2026-03-02', '2026-03-03', '舊欄位的事由'],
+    expect(history.map(item => [item.requestId, item.hours, item.startDate, item.endDate, item.reason])).toEqual([
+      ['r-mix', 20, '2026-05-04', '2026-05-08', undefined],
+      ['r-new', 8, '2026-04-06', '2026-04-06', '新欄位的事由'],
+      ['r-old', 16, '2026-03-02', '2026-03-03', '舊欄位的事由'],
     ])
   })
 

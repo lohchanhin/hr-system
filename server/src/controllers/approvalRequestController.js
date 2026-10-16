@@ -12,7 +12,6 @@ import { resolveFieldsOptions } from '../services/formFieldOptionsService.js'
 import {
   deductAnnualLeave,
   getAnnualLeaveBalance,
-  isAnnualLeaveConfigured,
   refundAnnualLeave,
 } from '../services/annualLeaveService.js'
 import {
@@ -41,14 +40,28 @@ import {
   releaseAttachments,
 } from '../services/approvalAttachmentService.js'
 import {
-  MAX_LEAVE_REQUEST_DAYS,
-  computeLeaveRequestDays,
+  MAX_LEAVE_REQUEST_HOURS,
+  collectLeaveTypeNames,
+  computeLeaveRequestHours,
   isAnnualLeaveType,
   leaveStartInstant,
 } from '../services/leaveRequestDays.js'
+import { getLeavePolicy, matchLeaveType } from '../services/leavePolicyService.js'
+import {
+  buildLeaveBalances,
+  currentTaipeiYear,
+  describeRequestFocus,
+  evaluateLeaveRequestAgainstBalance,
+} from '../services/leaveBalanceService.js'
+import { checkLeaveHours, LeaveHoursValidationError } from '../services/leaveHoursValidation.js'
+import { extraCeilings, loadScheduledShiftHours } from '../services/leaveShiftHours.js'
+import { parseLeaveInterval } from '../utils/leaveDuration.js'
+import { readAnnualLeaveHours } from '../utils/annualLeaveHours.js'
+import { daysToHours, formatHoursText, hoursToDays, isLeaveHoursFilled } from '../utils/leaveHours.js'
 import { normalizeSignTag } from '../utils/signTags.js'
 import { isLeaveFormTemplate } from '../utils/formSemantics.js'
 import { resolveLeaveFieldsForRequest } from '../utils/leaveFieldResolution.js'
+import { toTaipeiDateKey } from '../utils/taipeiTime.js'
 import { getAllowedScheduleEmployeeIds } from './schedule/scheduleShared.js'
 
 const OBJECT_ID_PATTERN = /^[a-f0-9]{24}$/i
@@ -407,7 +420,7 @@ export async function downloadApprovalAttachment(req, res) {
   }
 }
 
-/* ---------------------------- 特休 ---------------------------- */
+/* ---------------------------- 請假：時數、特休、假別額度 ---------------------------- */
 
 // 是不是請假單：與假勤日曆、勞動規範、薪資、報表同一套判斷（utils/formSemantics）——
 // 表單性質有設定時一律以它為準，管理員特地選「一般」的表單即使名稱叫「請假」也不扣特休；
@@ -416,47 +429,166 @@ function isAnnualLeaveFormTemplate(form) {
   return Boolean(form) && isLeaveFormTemplate(form)
 }
 
-/* 這張假單是不是特休、幾天；不是請假表單或不是特休回傳 null */
-async function analyzeAnnualLeave(form, formData) {
+const hoursWithDays = (hours) => `${formatHoursText(hours)}（${formatDays(hoursToDays(hours))} 天）`
+
+/*
+ * 這張假單的假別與請假時數（請假的單位是小時）；不是請假表單回傳 null。
+ * 欄位在單據還在簽核中時被停用、換成同標籤的新欄位，答案仍在舊欄位底下，所以逐張單據挑第一個有填值的欄位。
+ * 回傳 { leaveFields, names, isAnnual, hours, days, source, invalidRange }。
+ */
+async function analyzeLeaveRequest(form, formData) {
   if (!isAnnualLeaveFormTemplate(form)) return null
 
-  // 取得這張假單所屬表單的假別 / 日期 / 天數欄位設定；
-  // 欄位在單據還在簽核中時被停用、換成同標籤的新欄位，答案仍在舊欄位底下，所以逐張單據挑第一個有填值的欄位
+  // 取得這張假單所屬表單的假別 / 日期 / 時數欄位設定
   const leaveFields = resolveLeaveFieldsForRequest(await getLeaveFieldIdsForForm(form), formData)
   if (!leaveFields.typeId) {
     console.warn('[AnnualLeave] Leave type field not found')
     return null
   }
+  const typeValue = formData?.[leaveFields.typeId]
   // 檢查假別是否為特休（連結字典的欄位存的是字典項目名稱，例如「特休假」）
-  if (!isAnnualLeaveType(formData?.[leaveFields.typeId], leaveFields.typeOptions)) return null
-
-  return { leaveFields, ...computeLeaveRequestDays({ formData, leaveFields }) }
+  return {
+    leaveFields,
+    names: collectLeaveTypeNames(typeValue, leaveFields.typeOptions),
+    isAnnual: isAnnualLeaveType(typeValue, leaveFields.typeOptions),
+    ...computeLeaveRequestHours({ formData, leaveFields }),
+  }
 }
 
-/* 送出（或重新送出）時檢查特休：日期合理、餘額足夠；尚未設定特休天數的員工不以餘額擋下 */
-async function assertAnnualLeaveAllowed({ form, formData, applicantEmp }) {
-  const analysis = await analyzeAnnualLeave(form, formData)
-  if (!analysis) return
+/* 這張假單是不是特休、幾小時；不是請假表單或不是特休回傳 null */
+async function analyzeAnnualLeave(form, formData) {
+  const analysis = await analyzeLeaveRequest(form, formData)
+  return analysis?.isAnnual ? analysis : null
+}
+
+// 表單欄位清單裡某個欄位的型別（date / datetime…），判斷請假是整天還是有時分
+function fieldTypeOf(fields, fieldId) {
+  if (!fieldId) return undefined
+  return (fields || []).find(field => String(field._id) === String(fieldId))?.type_1
+}
+
+// 請假單的年度：以請假開始日（台灣時間）為準，沒有開始日就用今年
+function leaveYearOf(formData, leaveFields) {
+  const startKey = toTaipeiDateKey(leaveFields.startId ? formData?.[leaveFields.startId] : undefined)
+  return Number(startKey?.slice(0, 4)) || currentTaipeiYear()
+}
+
+// 班表查不到（例如資料庫暫時有問題）就用每日上限，不能因此擋住送出申請
+async function loadDayCeilings({ applicantEmp, startValue, endValue, startType, endType, policy }) {
+  try {
+    if (!applicantEmp?._id) return null
+    const interval = parseLeaveInterval(startValue, endValue, { startType, endType })
+    if (!interval || interval.reversed) return null
+    const schedule = await loadScheduledShiftHours(applicantEmp._id, interval.startKey, interval.lastKey)
+    return extraCeilings(schedule, policy.maxHoursPerDay)
+  } catch (error) {
+    console.error(`[LeaveHours] Schedule lookup skipped: ${error?.name || 'Error'}`)
+    return null
+  }
+}
+
+/*
+ * 送出（或重新送出）時檢查請假：日期與時數合理、特休餘額足夠，其他假別依假別規則檢查額度。
+ * - 時數欄位：大於 0、是最小單位（預設 0.5 小時）的倍數、不超過所選期間可請的上限（每日最多 8 小時，管理員可調）。
+ * - 特休：尚未設定特休時數的員工不以餘額擋下；超過剩餘時數擋下（400 ANNUAL_LEAVE_INSUFFICIENT）。
+ * - 事假、病假等：超額處理設為「禁止」時擋下（400 LEAVE_QUOTA_INSUFFICIENT），設為「警告」時照常送出並回傳警告。
+ * 回傳 { warnings }（給 201 回應附上）。
+ */
+async function assertLeaveAllowed({ form, formData, applicantEmp, fields = null }) {
+  const analysis = await analyzeLeaveRequest(form, formData)
+  if (!analysis) return { warnings: [] }
+  const { leaveFields } = analysis
   if (analysis.invalidRange) {
     throw fail(400, '請假結束日期不可早於開始日期', { code: 'INVALID_LEAVE_RANGE' })
   }
-  if (analysis.days > MAX_LEAVE_REQUEST_DAYS) {
-    throw fail(400, '請假天數超出合理範圍，請確認日期或天數', { code: 'INVALID_LEAVE_DAYS' })
+  if (analysis.hours > MAX_LEAVE_REQUEST_HOURS) {
+    throw fail(400, '請假時數超出合理範圍，請確認日期或時數', { code: 'INVALID_LEAVE_HOURS' })
   }
-  if (!isAnnualLeaveConfigured(applicantEmp)) return
-  const remaining = (applicantEmp.annualLeave?.totalDays || 0) - (applicantEmp.annualLeave?.usedDays || 0)
-  if (analysis.days > remaining) {
-    throw fail(
-      400,
-      `特休餘額不足：剩餘 ${formatDays(remaining)} 天，本次申請 ${formatDays(analysis.days)} 天`,
-      { code: 'ANNUAL_LEAVE_INSUFFICIENT', remaining, requested: analysis.days },
-    )
+
+  const policy = await getLeavePolicy()
+  const hoursValue = leaveFields.hoursId ? formData?.[leaveFields.hoursId] : undefined
+  const startValue = leaveFields.startId ? formData?.[leaveFields.startId] : undefined
+  const endValue = leaveFields.endId ? formData?.[leaveFields.endId] : undefined
+  const startType = fieldTypeOf(fields, leaveFields.startId)
+  const endType = fieldTypeOf(fields, leaveFields.endId)
+  // 班表上排了比每日上限更長的班（例如 12 小時班）的日子，那天可以請整個班的時數
+  const dayCeilings = isLeaveHoursFilled(hoursValue)
+    ? await loadDayCeilings({ applicantEmp, startValue, endValue, startType, endType, policy })
+    : null
+  const hoursViolations = checkLeaveHours({
+    hoursValue,
+    hoursFieldId: leaveFields.hoursId,
+    startValue,
+    endValue,
+    startType,
+    endType,
+    minUnitHours: policy.minUnitHours,
+    maxHoursPerDay: policy.maxHoursPerDay,
+    dayCeilings,
+  })
+  if (hoursViolations.length) throw new LeaveHoursValidationError(hoursViolations)
+
+  if (analysis.isAnnual) {
+    const annual = readAnnualLeaveHours(applicantEmp?.annualLeave)
+    if (!annual.configured) return { warnings: [] }
+    if (analysis.hours > annual.remainingHours) {
+      throw fail(
+        400,
+        `特休餘額不足：剩餘 ${hoursWithDays(Math.max(annual.remainingHours, 0))}，本次申請 ${hoursWithDays(analysis.hours)}`,
+        { code: 'ANNUAL_LEAVE_INSUFFICIENT', remainingHours: annual.remainingHours, requestedHours: analysis.hours },
+      )
+    }
+    return { warnings: [] }
   }
+
+  return { warnings: await checkLeaveQuota({ analysis, formData, applicantEmp, policy }) }
+}
+
+/* 事假、病假等有額度的假別：超額時依「超額處理」設定擋下（block）或回傳警告（warn） */
+async function checkLeaveQuota({ analysis, formData, applicantEmp, policy }) {
+  const matched = matchLeaveType(analysis.names, policy.types)
+  if (!matched || matched.source !== 'policy' || matched.enforcement === 'none' || !applicantEmp?._id) return []
+
+  let verdict = null
+  try {
+    const balances = await buildLeaveBalances({
+      employeeId: applicantEmp._id,
+      year: leaveYearOf(formData, analysis.leaveFields),
+      focusKey: matched.key,
+      employee: applicantEmp,
+      policy,
+    })
+    const items = balances?.items || []
+    const item = items.find(entry => entry.key === matched.key)
+    const parent = matched.countsAgainst ? items.find(entry => entry.key === matched.countsAgainst.key) : null
+    verdict = evaluateLeaveRequestAgainstBalance(item, analysis.hours, parent, matched.countsAgainst)
+    if (verdict.exceeded) verdict = { ...verdict, remainingHours: item?.availableHours ?? null }
+  } catch (error) {
+    // 餘額只是參考：算不出來（例如資料庫暫時有問題）不能擋住送出申請
+    console.error(`[LeaveQuota] Balance check skipped: ${error?.name || 'Error'}`)
+    return []
+  }
+  if (!verdict?.exceeded) return []
+  if (verdict.enforcement === 'block') {
+    throw fail(400, `${verdict.message}，無法送出`, {
+      code: 'LEAVE_QUOTA_INSUFFICIENT',
+      typeKey: matched.key,
+      remainingHours: verdict.remainingHours,
+      requestedHours: analysis.hours,
+    })
+  }
+  return [{
+    code: 'LEAVE_QUOTA_EXCEEDED',
+    message: verdict.message,
+    typeKey: matched.key,
+    remainingHours: verdict.remainingHours,
+    requestedHours: analysis.hours,
+  }]
 }
 
 function annualLeaveFailureMessage(error) {
   if (error?.code === 'INSUFFICIENT_BALANCE') {
-    return `特休扣減失敗：餘額不足（剩餘 ${formatDays(error.remaining)} 天，本次需扣 ${formatDays(error.requested)} 天），請人資確認特休天數後手動補登`
+    return `特休扣減失敗：餘額不足（剩餘 ${hoursWithDays(Math.max(Number(error.remainingHours) || 0, 0))}，本次需扣 ${hoursWithDays(error.requestedHours)}），請人資確認特休時數後手動補登`
   }
   if (error?.code === 'EMPLOYEE_NOT_FOUND') return '特休扣減失敗：找不到申請人的員工資料，請人資手動補登'
   return '特休扣減失敗：系統發生錯誤，請人資確認特休餘額後手動補登'
@@ -483,41 +615,42 @@ async function recordAnnualLeaveOutcome(doc, { annualLeave, logs }) {
   }
 }
 
-/* 處理特休扣減（當請假審核通過時）；回傳 { state, days, message }，不是特休回傳 null */
+/* 處理特休扣減（當請假審核通過時）；回傳 { state, hours, days, message }，不是特休回傳 null */
 async function handleAnnualLeaveDeduction(doc) {
   try {
     const form = await FormTemplate.findById(doc.form).lean()
     const analysis = await analyzeAnnualLeave(form, doc.form_data)
     if (!analysis) return null // 不是請假表單或不是特休，不處理
 
-    const days = analysis.days
-    if (!doc.applicant_employee || !(days > 0)) return null
+    const hours = analysis.hours
+    const days = hoursToDays(hours, undefined, 4)
+    if (!doc.applicant_employee || !(hours > 0)) return null
 
     const at = new Date()
     let deductError = null
     try {
-      await deductAnnualLeave(doc.applicant_employee, days, doc._id.toString())
-      console.log(`[AnnualLeave] Successfully deducted ${days} days for employee ${doc.applicant_employee}`)
+      await deductAnnualLeave(doc.applicant_employee, hours, doc._id.toString())
+      console.log(`[AnnualLeave] Successfully deducted ${hours} hours for employee ${doc.applicant_employee}`)
     } catch (error) {
       deductError = error
     }
 
     if (!deductError) {
       await recordAnnualLeaveOutcome(doc, {
-        annualLeave: { days, state: 'deducted', at },
-        logs: [{ action: 'annual_leave', message: `已扣除特休 ${formatDays(days)} 天` }],
+        annualLeave: { hours, days, state: 'deducted', at },
+        logs: [{ action: 'annual_leave', message: `已扣除特休 ${hoursWithDays(hours)}` }],
       })
-      return { state: 'deducted', days }
+      return { state: 'deducted', hours, days }
     }
 
     // 不影響審核結果，但要讓人看得到：寫進單據紀錄並回傳給核准的人
     console.error(`[AnnualLeave] Failed to deduct annual leave: ${deductError?.name || 'Error'}`, deductError?.message)
     const message = annualLeaveFailureMessage(deductError)
     await recordAnnualLeaveOutcome(doc, {
-      annualLeave: { days, state: 'failed', message, at },
+      annualLeave: { hours, days, state: 'failed', message, at },
       logs: [{ action: 'annual_leave_error', message }],
     })
-    return { state: 'failed', days, message }
+    return { state: 'failed', hours, days, message }
   } catch (error) {
     console.error(`[AnnualLeave] Deduction skipped: ${error?.name || 'Error'}`, error?.message)
     return null
@@ -579,7 +712,7 @@ export async function createApprovalRequest(req, res) {
       applicantEmployeeId: applicantEmp?._id || req.user?.id,
       checkLeaveConflicts: true,
     })
-    await assertAnnualLeaveAllowed({ form, formData: sanitized, applicantEmp })
+    const leaveCheck = await assertLeaveAllowed({ form, formData: sanitized, applicantEmp, fields })
 
     // 依每關解析審核人
     const { steps } = await buildRequestSteps({ wf, applicantEmp, form })
@@ -620,6 +753,8 @@ export async function createApprovalRequest(req, res) {
       .map(a => a.approver)
     await notifyUsers(approverIds, `有新的【${form.name}】待簽`)
 
+    // 事假、病假等超過額度但設定為「警告」時，單照常送出，回應多帶 warnings 讓畫面提醒申請人（沒有警告時內容與以前相同）
+    if (leaveCheck.warnings.length) return res.status(201).json({ ...toPlainDoc(doc), warnings: leaveCheck.warnings })
     return res.status(201).json(doc)
   } catch (e) {
     if (claimed.length) await releaseAttachments(requestId, claimed)
@@ -658,6 +793,29 @@ function lastReturnSummary(logs) {
 const DETAIL_APPLICANT_FIELDS = 'name employeeId department organization photo'
 const DETAIL_PERSON_FIELDS = 'name employeeId photo'
 
+/*
+ * 這張請假單的申請人在請假當年的各假別餘額。簽核中的單略過它自己（顯示的是「這張單核准前」的餘額），
+ * 並附上 focus：這張單的假別、時數、核准後剩多少、有沒有超額。已核准／其他狀態的單已經算在餘額裡，不略過也不附 focus。
+ */
+async function loadRequestLeaveBalances(doc) {
+  const analysis = await analyzeLeaveRequest(doc.form, doc.form_data)
+  const policy = await getLeavePolicy()
+  const matched = analysis ? matchLeaveType(analysis.names, policy.types) : null
+  const isPending = doc.status === 'pending'
+  const balances = await buildLeaveBalances({
+    employeeId: normalizeId(doc.applicant_employee),
+    year: analysis ? leaveYearOf(doc.form_data, analysis.leaveFields) : currentTaipeiYear(),
+    excludeRequestId: isPending ? doc._id : null,
+    focusKey: matched?.key || null,
+    policy,
+  })
+  if (!balances) return null
+  const focus = analysis && isPending
+    ? describeRequestFocus({ balances, policy, names: analysis.names, requestedHours: analysis.hours })
+    : null
+  return { ...balances, focus }
+}
+
 /* 取得送審單 */
 export async function getApprovalRequest(req, res) {
   try {
@@ -686,12 +844,19 @@ export async function getApprovalRequest(req, res) {
       const formId = typeof doc.populated === 'function' ? doc.populated('form') : null
       result.form = { _id: formId ? normalizeId(formId) : null, name: '（表單已刪除）', category: '', fields: [], deleted: true }
     }
-    if (doc.form?.semanticType === 'leave' && doc.applicant_employee?._id) {
+    if (doc.form && isLeaveFormTemplate(doc.form) && doc.applicant_employee?._id) {
       try {
         result.leave_balance = await getAnnualLeaveBalance(doc.applicant_employee._id)
       } catch (err) {
         // 特休餘額僅供顯示參考，查詢失敗不應阻擋簽核表單載入
         result.leave_balance = null
+      }
+      // 申請人所有假別的餘額（時數）：簽核人看得到這個人各種假還剩多少，這張單核准前後的差別也一併帶上
+      try {
+        result.leave_balances = await loadRequestLeaveBalances(doc)
+      } catch (err) {
+        console.error(`[LeaveBalance] Detail balances skipped: ${err?.name || 'Error'}`)
+        result.leave_balances = null
       }
     }
 
@@ -1113,22 +1278,25 @@ export async function cancelApprovalRequest(req, res) {
             throw fail(409, '假期已經開始（或無法判斷開始時間），無法自行撤回，請聯絡管理員', { code: 'LEAVE_STARTED' })
           }
         }
-        const days = doc.annual_leave?.state === 'deducted' && doc.annual_leave.days > 0
-          ? doc.annual_leave.days
-          : analysis.days
+        // 返還的是核准當時記下的扣減時數（以前以天數記錄的舊單只有 days，乘 8 換成小時）；沒有記錄才重新計算
+        const recorded = doc.annual_leave?.state === 'deducted'
+          ? (doc.annual_leave.hours > 0 ? doc.annual_leave.hours : daysToHours(doc.annual_leave.days))
+          : 0
+        const hours = recorded > 0 ? recorded : analysis.hours
         if (!refundOutcome) {
           try {
-            refundOutcome = await refundAnnualLeave(doc.applicant_employee, days, doc._id)
+            refundOutcome = await refundAnnualLeave(doc.applicant_employee, hours, doc._id)
           } catch (error) {
             console.error(`[AnnualLeave] Refund failed: ${error?.name || 'Error'}`, error?.message)
             throw fail(500, '返還特休失敗，單據未變更，請稍後再試或聯絡管理員')
           }
         }
         const refunded = refundOutcome.refunded
+        const refundedHours = refundOutcome.hours ?? daysToHours(refundOutcome.days)
         const detail = refunded
-          ? `已撤回已核准的特休，返還 ${formatDays(refundOutcome.days)} 天`
+          ? `已撤回已核准的特休，返還 ${hoursWithDays(refundedHours)}`
           : '已撤回已核准的特休（原核准時沒有扣減特休，無需返還）'
-        if (refunded) doc.annual_leave = { days: refundOutcome.days, state: 'refunded', at: new Date() }
+        if (refunded) doc.annual_leave = { hours: refundedHours, days: hoursToDays(refundedHours, undefined, 4), state: 'refunded', at: new Date() }
         doc.status = 'canceled'
         doc.logs.push({
           action: 'cancel',
@@ -1213,7 +1381,7 @@ export async function resubmitApprovalRequest(req, res) {
         checkLeaveConflicts: true,
         ignoreRequestId: doc._id,
       })
-      await assertAnnualLeaveAllowed({ form, formData, applicantEmp })
+      const leaveCheck = await assertLeaveAllowed({ form, formData, applicantEmp, fields })
 
       // 重新解析簽核人（人員、標籤、主管可能已經更動）；流程設定已不存在時沿用原本的簽核人
       const wf = (doc.workflow ? await ApprovalWorkflow.findById(doc.workflow) : null)
@@ -1253,16 +1421,16 @@ export async function resubmitApprovalRequest(req, res) {
       })
       const transition = restartRequest(doc, at)
       await doc.save()
-      return { doc, transition }
+      return { doc, transition, leaveWarnings: leaveCheck.warnings }
     })
 
-    const { doc, transition } = saved
+    const { doc, transition, leaveWarnings } = saved
     const currentApprovers = transition.nextApprovers.length
       ? transition.nextApprovers
       : (doc.steps[doc.current_step_index]?.approvers || []).map(approver => approver.approver)
     if (currentApprovers.length) await notifyUsers(currentApprovers, '有重新送出的簽核待處理')
-    let warnings = []
-    if (transition.completed) warnings = annualLeaveWarnings(await handleAnnualLeaveDeduction(doc))
+    let warnings = [...(leaveWarnings || [])]
+    if (transition.completed) warnings = [...warnings, ...annualLeaveWarnings(await handleAnnualLeaveDeduction(doc))]
     return respondDoc(res, doc, warnings)
   } catch (error) {
     if (claimed.length && requestId) await releaseAttachments(requestId, claimed)

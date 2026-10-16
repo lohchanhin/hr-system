@@ -22,6 +22,13 @@
           <div class="form-section">
             <h2 class="section-title">建立新申請</h2>
 
+            <!-- 每個人（員工、主管、管理員）申請前都看得到自己所有假別的剩餘時數 -->
+            <LeaveBalancePanel
+              ref="applyBalancePanel"
+              title="我的假別餘額"
+              @loaded="onOwnBalancesLoaded"
+            />
+
             <el-card class="form-card">
               <el-form label-width="140px" :model="applyState" class="apply-form">
                 <el-form-item label="選擇表單樣板" class="template-selector">
@@ -93,9 +100,16 @@
                       v-model="applyState.formData"
                       v-model:files="fileBuffers"
                       :fields="fieldList"
+                      :leave-hours="applyLeaveHoursConfig"
                       :user-options="userOptions"
                       :dept-options="deptOptions"
                       :org-options="orgOptions"
+                    />
+                    <LeaveRequestHint
+                      v-if="applyLeaveContext"
+                      :items="ownBalanceItems"
+                      :type-text="applyLeaveContext.typeText"
+                      :hours="applyLeaveContext.hours"
                     />
                   </div>
 
@@ -481,14 +495,21 @@
             被退簽{{ detailReturnInfo.by ? `（${detailReturnInfo.by}）` : '' }}：{{ detailReturnInfo.message || '簽核人未填寫原因' }}
           </template>
         </el-alert>
+        <!-- 申請人所有假別的剩餘時數（簽核人看到的是申請人的餘額，並標出這張單核准前後的差別） -->
+        <LeaveBalancePanel
+          v-if="detail.doc.leave_balances && typeof detail.doc.leave_balances === 'object'"
+          :balances="detail.doc.leave_balances"
+          title="申請人假別餘額"
+          class="mb-2"
+        />
         <el-alert
-          v-if="detail.doc.form?.semanticType === 'leave' && detail.doc.leave_balance"
+          v-else-if="isLeaveForm(detail.doc.form) && detail.doc.leave_balance"
           type="info"
           :closable="false"
           class="leave-balance-alert mb-2"
         >
           <template #title>
-            特休餘額：已使用 {{ detail.doc.leave_balance.usedDays }} 天／剩餘 {{ detail.doc.leave_balance.remainingDays }} 天（年度總天數 {{ detail.doc.leave_balance.totalDays }} 天）
+            特休餘額：已使用 {{ detail.doc.leave_balance.usedHours ?? detail.doc.leave_balance.usedDays }} 小時／剩餘 {{ detail.doc.leave_balance.remainingHours ?? detail.doc.leave_balance.remainingDays }} 小時（年度總時數 {{ detail.doc.leave_balance.totalHours ?? detail.doc.leave_balance.totalDays }} 小時）
           </template>
         </el-alert>
         <el-divider content-position="left">填寫內容</el-divider>
@@ -614,6 +635,12 @@
 
     <!-- 審核動作 Dialog -->
     <el-dialog v-model="actionDlg.visible" :title="actionTitle" width="520px">
+      <LeaveBalancePanel
+        v-if="actionLeaveEmployeeId"
+        :employee-id="actionLeaveEmployeeId"
+        compact
+        title="申請人假別餘額"
+      />
       <el-alert
         v-if="actionDlg.override"
         type="warning"
@@ -662,10 +689,17 @@
             v-model="editDlg.formData"
             v-model:files="editDlg.files"
             :fields="editDlg.fields"
+            :leave-hours="editLeaveHoursConfig"
             :kept-attachments="editDlg.kept"
             :user-options="userOptions"
             :dept-options="deptOptions"
             :org-options="orgOptions"
+          />
+          <LeaveRequestHint
+            v-if="editLeaveContext"
+            :items="ownBalanceItems"
+            :type-text="editLeaveContext.typeText"
+            :hours="editLeaveContext.hours"
           />
         </el-form>
         <div v-if="editDlg.error" class="error-message">
@@ -708,6 +742,8 @@ import { onBeforeRouteLeave } from 'vue-router'
 import { apiFetch } from '../../api'
 import { useAuthStore } from '../../stores/auth'
 import ApprovalFormFields from '../../components/ApprovalFormFields.vue'
+import LeaveBalancePanel from '../../components/LeaveBalancePanel.vue'
+import LeaveRequestHint from '../../components/LeaveRequestHint.vue'
 import EmployeeAvatar from '../../components/EmployeeAvatar.vue'
 import { formatTaipeiDateTime, formatFormValue, normalizeFieldOptions, personNameOrFallback } from '../../utils/approvalDisplay'
 import { describeError, readApiError, ApprovalApiError } from '../../utils/approvalErrors'
@@ -734,6 +770,8 @@ import {
   isPayrollConnectedForm,
 } from '../../utils/approvalForm'
 import { PAGE_SIZE, pagedListUrl, readListPayload } from '../../utils/approvalList'
+import { pickLeaveFormFields } from '../../utils/leaveHours'
+import { useLeaveHoursAutofill } from '../../utils/useLeaveHoursAutofill'
 
 /* -------------------- Tabs -------------------- */
 const activeTab = ref('inbox')
@@ -819,6 +857,62 @@ function selectLeave() {
   }
 }
 const fieldList = ref([])
+
+/* -------------------- 請假：自己的假別餘額、時數自動帶入與超額提示 -------------------- */
+// 自己的餘額（申請頁的餘額表載入後放在這裡）：請假單填寫時用它即時提示「還剩多少、會不會超額」
+const ownBalances = ref(null)
+const applyBalancePanel = ref(null)
+const ownBalanceItems = computed(() => (Array.isArray(ownBalances.value?.items) ? ownBalances.value.items : []))
+function onOwnBalancesLoaded(balances) {
+  ownBalances.value = balances && typeof balances === 'object' ? balances : null
+}
+async function refreshOwnBalances() {
+  try {
+    await applyBalancePanel.value?.load?.()
+  } catch {
+    // 餘額只是參考資訊，重新整理失敗不影響申請
+  }
+}
+
+// 假別欄位的值轉成名稱（下拉選項存的可能是代號，要換成顯示名稱才對得到假別規則）
+function leaveTypeText(typeField, value) {
+  const raw = value && typeof value === 'object' ? (value.label ?? value.name ?? value.value) : value
+  if (raw === undefined || raw === null || raw === '') return ''
+  const option = normalizeFieldOptions(typeField).find(opt => String(opt.value) === String(raw))
+  return String(option?.label ?? raw)
+}
+function leaveContextOf(fields, data) {
+  const { typeField, hoursField } = pickLeaveFormFields(fields)
+  if (!typeField || !hoursField) return null
+  return { typeText: leaveTypeText(typeField, data?.[typeField._id]), hours: data?.[hoursField._id] }
+}
+const leaveHoursPolicy = () => ({
+  maxHoursPerDay: Number(ownBalances.value?.maxHoursPerDay) > 0 ? Number(ownBalances.value.maxHoursPerDay) : 8,
+  minUnitHours: Number(ownBalances.value?.minUnitHours) > 0 ? Number(ownBalances.value.minUnitHours) : 0.5,
+})
+
+// 向伺服器取依班表算出的請假時數（排 12 小時班的日子算 12 小時、休息日算 0）；取不到就維持本機依日曆日的估算
+async function fetchLeaveHoursHint(startValue, endValue, { startType, endType } = {}) {
+  const toText = (value) => (value instanceof Date ? value.toISOString() : String(value ?? ''))
+  const query = new URLSearchParams({ start: toText(startValue), end: toText(endValue) })
+  if (startType) query.set('startType', startType)
+  if (endType) query.set('endType', endType)
+  const res = await apiFetch(`/api/approvals/leave-hours-hint?${query.toString()}`)
+  if (!res.ok) return null
+  const body = await res.json()
+  return body && typeof body === 'object' && !Array.isArray(body) ? body : null
+}
+
+const applyAutofill = useLeaveHoursAutofill({
+  fields: fieldList,
+  getFormData: () => applyState.formData,
+  setValue: (fieldId, value) => { applyState.formData = { ...applyState.formData, [fieldId]: value } },
+  getPolicy: leaveHoursPolicy,
+  fetchHint: fetchLeaveHoursHint,
+})
+const applyLeaveHoursConfig = computed(() => ({ max: applyAutofill.maxHours.value, ...leaveHoursPolicy() }))
+const applyLeaveContext = computed(() => leaveContextOf(fieldList.value, applyState.formData))
+
 const workflowSteps = ref([])
 const workflowWarning = ref('')
 const fileBuffers = ref({}) // { fieldId: [FileItem...] }
@@ -1108,9 +1202,12 @@ async function submitApply() {
       })
     })
     if (!res.ok) throw await readApiError(res)
+    const result = await res.json().catch(() => ({}))
 
     resetApplyForm()
-    alert('送出申請成功！')
+    // 事假、病假等超過額度但設定為「警告」時，單照常送出，伺服器會附上提醒
+    alert(['送出申請成功！', ...warningLines(result)].join('\n'))
+    refreshOwnBalances()
     activeTab.value = 'mine'
   } catch (error) {
     const info = describeError(error, '送出失敗，請稍後再試')
@@ -1182,6 +1279,13 @@ async function fetchInbox(page = inboxPage.page) {
 
 /* 審核動作 Dialog */
 const actionDlg = reactive({ visible: false, loading: false, decision: 'approve', comment: '', target: null, override: false, fromDetail: false })
+// 簽核請假單時，動作視窗上方顯示申請人各假別的剩餘時數（精簡版）
+const actionLeaveEmployeeId = computed(() => {
+  const row = actionDlg.target
+  if (!row || !isLeaveForm(formOfRow(row))) return ''
+  const applicant = row.applicant_employee
+  return String((applicant && typeof applicant === 'object' ? applicant._id : applicant) || '')
+})
 const actionTitle = computed(() => {
   const verb = actionDlg.decision === 'approve' ? '核可' : (actionDlg.decision === 'reject' ? '否決' : '退簽')
   return actionDlg.override ? `管理員代為${verb}` : verb
@@ -1430,6 +1534,17 @@ const editDlg = reactive({
 })
 let editSeq = 0
 
+// 修改並重新送出：同樣自動帶入時數與提示是否超額
+const editAutofill = useLeaveHoursAutofill({
+  fields: computed(() => editDlg.fields),
+  getFormData: () => editDlg.formData,
+  setValue: (fieldId, value) => { editDlg.formData = { ...editDlg.formData, [fieldId]: value } },
+  getPolicy: leaveHoursPolicy,
+  fetchHint: fetchLeaveHoursHint,
+})
+const editLeaveHoursConfig = computed(() => ({ max: editAutofill.maxHours.value, ...leaveHoursPolicy() }))
+const editLeaveContext = computed(() => leaveContextOf(editDlg.fields, editDlg.formData))
+
 function clearEditDialog() {
   editDlg.fields = []
   editDlg.formData = {}
@@ -1512,6 +1627,7 @@ async function submitResubmit() {
 
     closeEditDialog()
     alert(['已重新送出！', ...warningLines(result)].join('\n'))
+    refreshOwnBalances()
     await fetchMyList()
   } catch (error) {
     const info = describeError(error, '重新送出失敗，請稍後再試')
@@ -1605,6 +1721,8 @@ watch(activeTab, async (tab) => {
   if (tab === 'apply') {
     // 管理員新增 / 停用表單後，回到申請頁就能看到最新的表單清單
     await loadFormTemplates()
+    // 切回申請頁時餘額也重新取一次（別處剛核准的請假會影響剩餘時數）
+    await refreshOwnBalances()
   } else if (tab === 'inbox') {
     await fetchInbox()
   } else if (tab === 'mine') {

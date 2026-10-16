@@ -1134,3 +1134,290 @@ describe('assertScheduleRuleCompliance with several leave forms', () => {
     expect(mockApprovalRequest.find).not.toHaveBeenCalled();
   });
 });
+
+// 月初、月尾不足一整週（週一為起點、週日為終點）的週別：以鄰月已存的班表補齊；補不齊就違規，
+// 還補得上（鄰月沒排完）就回報 pendingWeeks 提醒「目前無法判斷」，不當成通過也不當成違規
+describe('assertScheduleRuleCompliance boundary weeks that cannot be judged yet', () => {
+  const JULY_RANGE = { start: utcDay('2026-07-01'), end: utcDay('2026-08-01') };
+  const WEEKLY_RULE = 'weekly-one-regular-rest-one-rest-day';
+  const weeklyOf = (violations) => violations.filter((item) => item.rule === WEEKLY_RULE);
+
+  beforeEach(() => {
+    mockAttendanceSetting.findOne.mockReturnValue(leanQuery(customerSetting()));
+    mockShiftSchedule.find.mockReturnValue(sortableLeanQuery([]));
+  });
+
+  // 7/1（週三）起的一個月：首週 6/29～7/5 只有 7/1～7/5 在本月，末週 7/27～8/2 只有 7/27～7/31 在本月
+  const julyRows = (employee = 'A0003', { first = ['日', '日', '日', '日', '日'], last = ['日', '日', '日', '日', '日'] } = {}) => [
+    ...rowsFromCodes(employee, '2026-07-01', first),
+    ...rowsFromCodes(employee, '2026-07-06', ['休', '日', '日', '日', '日', '例', '日']),
+    ...rowsFromCodes(employee, '2026-07-13', ['日', '日', '日', '日', '日', '例', '休']),
+    ...rowsFromCodes(employee, '2026-07-20', ['日', '日', '日', '日', '日', '例', '休']),
+    ...rowsFromCodes(employee, '2026-07-27', last),
+  ];
+
+  async function collectFindings(args) {
+    try {
+      const result = await assertScheduleRuleCompliance(args);
+      return { violations: result.violations, pendingWeeks: result.pendingWeeks || [], resolved: result };
+    } catch (error) {
+      if (Array.isArray(error?.violations)) {
+        return { violations: error.violations, pendingWeeks: error.pendingWeeks || [], error };
+      }
+      throw error;
+    }
+  }
+
+  it('reports both edge weeks of a month as pending (not as a pass) while neither neighbouring month has rows', async () => {
+    const { violations, pendingWeeks, resolved } = await collectFindings({
+      candidateSchedules: julyRows(), range: JULY_RANGE, strictWeeklyRest: true,
+    });
+
+    expect(violations).toEqual([]);
+    expect(resolved.ok).toBe(true);
+    expect(pendingWeeks).toEqual([
+      expect.objectContaining({
+        rule: 'weekly-rest-pending',
+        employee: 'A0003',
+        weekStart: '2026-06-29',
+        weekEnd: '2026-07-05',
+        regularRestCount: 0,
+        restDayCount: 0,
+        missingDates: ['2026-06-29', '2026-06-30'],
+        missingMonths: ['2026-06'],
+      }),
+      expect.objectContaining({
+        rule: 'weekly-rest-pending',
+        employee: 'A0003',
+        weekStart: '2026-07-27',
+        weekEnd: '2026-08-02',
+        missingDates: ['2026-08-01', '2026-08-02'],
+        missingMonths: ['2026-08'],
+      }),
+    ]);
+    // 提醒文字要說出是哪一週、哪幾天還沒排、目前缺什麼，以及排定哪個月之後會重新檢核
+    expect(pendingWeeks[0].message).toBe(
+      '跨月週（2026-06-29～2026-07-05）：2026-06-29～2026-06-30 尚未排班，暫時無法判斷每週一例一休（目前缺例假、休息日）；2026年6月 班表排定後會重新檢核',
+    );
+    expect(pendingWeeks[1].message).toBe(
+      '跨月週（2026-07-27～2026-08-02）：2026-08-01～2026-08-02 尚未排班，暫時無法判斷每週一例一休（目前缺例假、休息日）；2026年8月 班表排定後會重新檢核',
+    );
+  });
+
+  it('keeps the resolved value exactly { ok, violations } when no edge week is pending', async () => {
+    // 2027-02-01 是週一、2027-02-28 是週日：四整週，沒有跨月週
+    const rows = rowsFromCodes('A0003', '2027-02-01', Array.from({ length: 4 }, () => ['日', '日', '日', '日', '日', '例', '休']).flat());
+    await expect(assertScheduleRuleCompliance({
+      candidateSchedules: rows,
+      range: { start: utcDay('2027-02-01'), end: utcDay('2027-03-01') },
+      strictWeeklyRest: true,
+    })).resolves.toEqual({ ok: true, violations: [] });
+  });
+
+  it('adds nothing about pending weeks when the weekly check is off (partial import file)', async () => {
+    await expect(assertScheduleRuleCompliance({
+      candidateSchedules: julyRows(), range: JULY_RANGE, strictWeeklyRest: false,
+    })).resolves.toEqual({ ok: true, violations: [] });
+  });
+
+  it('does not report an edge week once its in-month days already hold a 例 and a 休', async () => {
+    const { violations, pendingWeeks } = await collectFindings({
+      candidateSchedules: julyRows('A0003', { first: ['例', '休', '日', '日', '日'], last: ['日', '日', '日', '例', '休'] }),
+      range: JULY_RANGE,
+      strictWeeklyRest: true,
+    });
+    expect(violations).toEqual([]);
+    expect(pendingWeeks).toEqual([]);
+  });
+
+  it('names only what is still missing when one of 例 / 休 is already there', async () => {
+    const { pendingWeeks } = await collectFindings({
+      candidateSchedules: julyRows('A0003', { first: ['例', '日', '日', '日', '日'], last: ['日', '日', '日', '日', '休'] }),
+      range: JULY_RANGE,
+      strictWeeklyRest: true,
+    });
+    expect(pendingWeeks).toEqual([
+      expect.objectContaining({ weekStart: '2026-06-29', regularRestCount: 1, restDayCount: 0 }),
+      expect.objectContaining({ weekStart: '2026-07-27', regularRestCount: 0, restDayCount: 1 }),
+    ]);
+    expect(pendingWeeks[0].message).toContain('（目前缺休息日）');
+    expect(pendingWeeks[1].message).toContain('（目前缺例假）');
+  });
+
+  it('lists exactly the days that are still empty when part of the next month is saved (June tail, 7/1-7/2 saved)', async () => {
+    mockShiftSchedule.find.mockReturnValue(sortableLeanQuery(rowsFromCodes('A0003', '2026-07-01', ['日', '日'])));
+    const { violations, pendingWeeks } = await collectFindings({
+      candidateSchedules: juneRows(['A0003']), range: JUNE_RANGE, strictWeeklyRest: true,
+    });
+    expect(violations).toEqual([]);
+    expect(pendingWeeks).toEqual([
+      expect.objectContaining({
+        weekStart: '2026-06-29',
+        weekEnd: '2026-07-05',
+        missingDates: ['2026-07-03', '2026-07-04', '2026-07-05'],
+        missingMonths: ['2026-07'],
+      }),
+    ]);
+    expect(pendingWeeks[0].message).toContain('2026-07-03～2026-07-05 尚未排班');
+    expect(pendingWeeks[0].message).toContain('2026年7月 班表排定後會重新檢核');
+  });
+
+  it('keeps a single empty day as it is in the notice', async () => {
+    // 6/30 已排班、6/29 沒排；7/1 例（首週已有 1 例）→ 缺休息日，6/29 一天還補得上
+    mockShiftSchedule.find.mockReturnValue(sortableLeanQuery(rowsFromCodes('A0003', '2026-06-30', ['日'])));
+    const { pendingWeeks } = await collectFindings({
+      candidateSchedules: julyRows('A0003', { first: ['例', '日', '日', '日', '日'], last: ['日', '日', '日', '例', '休'] }),
+      range: JULY_RANGE,
+      strictWeeklyRest: true,
+    });
+    expect(pendingWeeks).toEqual([
+      expect.objectContaining({ weekStart: '2026-06-29', missingDates: ['2026-06-29'] }),
+    ]);
+    expect(pendingWeeks[0].message).toContain('：2026-06-29 尚未排班，暫時無法判斷每週一例一休（目前缺休息日）');
+  });
+
+  it('judges the week from both sides: 休 on 6/29 plus 例 on 7/1 passes without any notice', async () => {
+    mockShiftSchedule.find.mockReturnValue(sortableLeanQuery(rowsFromCodes('A0003', '2026-07-01', ['例', '日', '日', '日', '日'])));
+    const codes = [...JUNE_CODES];
+    codes[28] = '休'; // 6/29
+    const { violations, pendingWeeks } = await collectFindings({
+      candidateSchedules: juneRows(['A0003'], codes), range: JUNE_RANGE, strictWeeklyRest: true,
+    });
+    expect(violations).toEqual([]);
+    expect(pendingWeeks).toEqual([]);
+  });
+
+  it('completes the first week from the saved previous month and reports the cross-month violation', async () => {
+    // 6/29、6/30 已排日班、7/1～7/5 也全是日班：整週 7 天都有資料卻沒有例也沒有休
+    mockShiftSchedule.find.mockReturnValue(sortableLeanQuery(rowsFromCodes('A0003', '2026-06-29', ['日', '日'])));
+    const { violations, pendingWeeks } = await collectFindings({
+      candidateSchedules: julyRows(), range: JULY_RANGE, strictWeeklyRest: true,
+    });
+    expect(weeklyOf(violations)).toEqual([
+      expect.objectContaining({
+        employee: 'A0003',
+        weekStart: '2026-06-29',
+        regularRestCount: 0,
+        restDayCount: 0,
+        crossMonth: true,
+        outsideDates: ['2026-06-29', '2026-06-30'],
+        missingDates: [],
+      }),
+    ]);
+    expect(weeklyOf(violations)[0].message).toBe(
+      '每週一至週日需至少1例1休：2026-06-29 週缺少例假與休息日（此週跨月：2026-06-29～2026-06-30 屬相鄰月份，已全部排班）',
+    );
+    // 末週（8/1、8/2 還沒排）仍然只是待判斷
+    expect(pendingWeeks).toEqual([expect.objectContaining({ weekStart: '2026-07-27' })]);
+  });
+
+  it('completes the last week from the saved next month, in the other direction', async () => {
+    // 從六月這邊看：7/1～7/5 已存、全是日班；6/29、6/30 也是日班 → 六月最後一週補不齊
+    mockShiftSchedule.find.mockReturnValue(sortableLeanQuery(rowsFromCodes('A0003', '2026-07-01', ['日', '日', '日', '日', '日'])));
+    const { violations, pendingWeeks } = await collectFindings({
+      candidateSchedules: juneRows(['A0003']), range: JUNE_RANGE, strictWeeklyRest: true,
+    });
+    expect(weeklyOf(violations)).toEqual([
+      expect.objectContaining({
+        weekStart: '2026-06-29',
+        crossMonth: true,
+        outsideDates: ['2026-07-01', '2026-07-02', '2026-07-03', '2026-07-04', '2026-07-05'],
+        missingDates: [],
+      }),
+    ]);
+    expect(weeklyOf(violations)[0].message).toContain('（此週跨月：2026-07-01～2026-07-05 屬相鄰月份，已全部排班）');
+    expect(pendingWeeks).toEqual([]);
+  });
+
+  it('explains how many days are still free when one empty day can no longer hold both 例 and 休', async () => {
+    mockShiftSchedule.find.mockReturnValue(sortableLeanQuery(rowsFromCodes('A0003', '2026-06-30', ['日'])));
+    const { violations } = await collectFindings({
+      candidateSchedules: julyRows(), range: JULY_RANGE, strictWeeklyRest: true,
+    });
+    expect(weeklyOf(violations)).toEqual([
+      expect.objectContaining({ weekStart: '2026-06-29', crossMonth: true, missingDates: ['2026-06-29'] }),
+    ]);
+    expect(weeklyOf(violations)[0].message).toContain(
+      '（此週跨月：2026-06-29～2026-06-30 屬相鄰月份，2026-06-30 已排班；2026-06-29 尚未排班，最多只能再補 1 天，仍補不齊缺少的例假與休息日）',
+    );
+  });
+
+  it('says the neighbouring days are not scheduled at all when only unscheduled days are left (October 2026 ends on Saturday)', async () => {
+    const range = { start: utcDay('2026-10-01'), end: utcDay('2026-11-01') };
+    const { violations } = await collectFindings({
+      candidateSchedules: [
+        ...rowsFromCodes('A0003', '2026-10-19', ['日', '日', '日', '日', '日', '例', '休']),
+        ...rowsFromCodes('A0003', '2026-10-26', ['日', '日', '日', '日', '日', '日']),
+      ],
+      range,
+      strictWeeklyRest: true,
+    });
+    expect(weeklyOf(violations)).toEqual([
+      expect.objectContaining({ weekStart: '2026-10-26', crossMonth: true, outsideDates: ['2026-11-01'], missingDates: ['2026-11-01'] }),
+    ]);
+    expect(weeklyOf(violations)[0].message).toContain(
+      '（此週跨月：2026-11-01 屬相鄰月份且尚未排班，最多只能再補 1 天，仍補不齊缺少的例假與休息日）',
+    );
+  });
+
+  it('leaves the text and fields of a week inside one month untouched', async () => {
+    const codes = [...JUNE_CODES];
+    codes[5] = '日'; // 6/6 的例換成日班：6/1 這週缺例假
+    const { violations } = await collectFindings({
+      candidateSchedules: juneRows(['A0003'], codes), range: JUNE_RANGE, strictWeeklyRest: true,
+    });
+    const first = weeklyOf(violations).find((item) => item.weekStart === '2026-06-01');
+    expect(first.message).toBe('每週一至週日需至少1例1休：2026-06-01 週缺少例假');
+    expect(first).not.toHaveProperty('crossMonth');
+    expect(first).not.toHaveProperty('outsideDates');
+  });
+
+  it('carries the pending weeks on the thrown error next to the violations', async () => {
+    const rows = julyRows();
+    const target = rows.findIndex((row) => row.shiftId === '例' && row.date.toISOString().startsWith('2026-07-18'));
+    rows[target] = { ...rows[target], shiftId: '日' }; // 7/13 週的 例 換成日班 → 一般週違規
+    const { violations, pendingWeeks, error } = await collectFindings({
+      candidateSchedules: rows, range: JULY_RANGE, strictWeeklyRest: true,
+    });
+    expect(error).toBeDefined();
+    expect(weeklyOf(violations).map((item) => item.weekStart)).toEqual(['2026-07-13']);
+    expect(pendingWeeks.map((item) => item.weekStart)).toEqual(['2026-06-29', '2026-07-27']);
+  });
+
+  it('sorts pending weeks by week then employee and judges every employee on their own rows', async () => {
+    const { pendingWeeks } = await collectFindings({
+      candidateSchedules: [
+        ...julyRows('A0069'),
+        ...julyRows('A0003', { first: ['例', '休', '日', '日', '日'] }),
+        ...julyRows('A0119'),
+      ],
+      range: JULY_RANGE,
+      strictWeeklyRest: true,
+    });
+    expect(pendingWeeks.map((item) => `${item.weekStart} ${item.employee}`)).toEqual([
+      '2026-06-29 A0069',
+      '2026-06-29 A0119',
+      '2026-07-27 A0003',
+      '2026-07-27 A0069',
+      '2026-07-27 A0119',
+    ]);
+  });
+
+  it('turns pending into a judgement once the neighbouring month is saved (re-check after the other month is imported)', async () => {
+    const args = { candidateSchedules: julyRows(), range: JULY_RANGE, strictWeeklyRest: true };
+    expect((await collectFindings(args)).pendingWeeks).toHaveLength(2);
+
+    // 六月補排：6/29 休、6/30 例 → 首週補齊，不再待判斷；八月還沒排，末週仍待判斷
+    mockShiftSchedule.find.mockReturnValue(sortableLeanQuery(rowsFromCodes('A0003', '2026-06-29', ['休', '例'])));
+    const afterJune = await collectFindings(args);
+    expect(afterJune.violations).toEqual([]);
+    expect(afterJune.pendingWeeks.map((item) => item.weekStart)).toEqual(['2026-07-27']);
+
+    // 八月也補排：8/1 例、8/2 休 → 全部判斷完成，回傳內容回到 { ok, violations }
+    mockShiftSchedule.find.mockReturnValue(sortableLeanQuery([
+      ...rowsFromCodes('A0003', '2026-06-29', ['休', '例']),
+      ...rowsFromCodes('A0003', '2026-08-01', ['例', '休']),
+    ]));
+    await expect(assertScheduleRuleCompliance(args)).resolves.toEqual({ ok: true, violations: [] });
+  });
+});

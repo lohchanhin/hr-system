@@ -46,6 +46,122 @@
         </el-form-item>
       </el-form>
     </div>
+
+    <!-- 假別額度與餘額規則：請假的單位是小時，員工與主管看到的各假別剩餘時數、超額時能不能送出都在這裡設定 -->
+    <div class="card policy-card" data-test="leave-policy-card">
+      <h3>假別額度與餘額規則</h3>
+      <p class="hint">
+        請假一律以小時為單位（1 天 = 8 小時）。額度預設是法定天數換成小時，特休與補休依員工資料。
+        超額時預設只警告（簽核人看得到），勾選「超額禁止送出」則直接擋下；特休一律以員工的剩餘時數檢查。
+      </p>
+      <el-alert v-if="policyError" type="error" :closable="false" show-icon class="policy-error" :title="policyError" />
+      <div v-loading="policyLoading">
+        <el-form v-if="policy" :model="policy" label-width="200px" class="rule-form">
+          <el-form-item label="每日最多可請時數">
+            <el-input-number v-model="policy.maxHoursPerDay" :min="1" :max="24" :step="0.5" data-test="policy-max-hours" />
+            <span class="unit">小時</span>
+            <span class="hint inline">請假單的時數不能超過所選期間（每天最多這麼多小時）；12 小時輪班的單位可以設 12</span>
+          </el-form-item>
+          <el-form-item label="最小請假單位">
+            <el-select v-model="policy.minUnitHours" style="width: 140px">
+              <el-option v-for="unit in minUnitChoices" :key="unit" :label="`${unit} 小時`" :value="unit" />
+            </el-select>
+          </el-form-item>
+        </el-form>
+
+        <el-table v-if="policy" :data="policy.types" size="small" border class="policy-table" data-test="policy-table">
+          <el-table-column label="假別" min-width="150">
+            <template #default="{ row }">
+              <el-input v-model="row.name" :disabled="row.key === 'annual'" size="small" maxlength="30" />
+              <span v-if="row.note" class="row-note">{{ row.note }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="額度（小時）" min-width="170">
+            <template #default="{ row }">
+              <template v-if="row.source === 'policy'">
+                <el-input-number v-model="row.quotaHours" :min="0" :max="10000" :step="0.5" size="small" controls-position="right" placeholder="不設上限" />
+                <div class="row-note">{{ quotaDaysText(row) }}</div>
+              </template>
+              <span v-else class="row-note">{{ row.source === 'employee_annual' ? '依員工的年度特休時數' : '依員工的補休時數（人資維護）' }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="計算期間" width="140">
+            <template #default="{ row }">
+              <el-select v-if="row.source === 'policy'" v-model="row.period" size="small">
+                <el-option v-for="item in periodChoices" :key="item.value" :label="item.label" :value="item.value" />
+              </el-select>
+              <span v-else class="row-note">每年</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="超額禁止送出" width="110" align="center">
+            <template #default="{ row }">
+              <el-switch
+                :model-value="row.enforcement === 'block'"
+                :disabled="row.source === 'employee_comp' || (row.source === 'policy' && (row.quotaHours === null || row.quotaHours === undefined))"
+                @update:model-value="setBlocking(row, $event)"
+              />
+            </template>
+          </el-table-column>
+          <el-table-column label="顯示" width="150">
+            <template #default="{ row }">
+              <el-select v-model="row.display" size="small">
+                <el-option v-for="item in displayChoices" :key="item.value" :label="item.label" :value="item.value" />
+              </el-select>
+            </template>
+          </el-table-column>
+          <el-table-column label="併入其他假別" min-width="190">
+            <template #default="{ row }">
+              <div class="counts-against">
+                <el-select :model-value="row.countsAgainst?.key || ''" size="small" clearable placeholder="不併入" @update:model-value="setCountsAgainst(row, $event)">
+                  <el-option v-for="other in otherTypes(row)" :key="other.key" :label="other.name" :value="other.key" />
+                </el-select>
+                <el-input-number
+                  v-if="row.countsAgainst"
+                  v-model="row.countsAgainst.exemptHours"
+                  :min="0"
+                  :step="0.5"
+                  size="small"
+                  controls-position="right"
+                />
+                <div v-if="row.countsAgainst" class="row-note">前 {{ row.countsAgainst.exemptHours }} 小時不併入</div>
+              </div>
+            </template>
+          </el-table-column>
+          <el-table-column label="別名" min-width="180">
+            <template #default="{ row }">
+              <el-select
+                v-if="row.key !== 'annual'"
+                v-model="row.aliases"
+                multiple
+                filterable
+                allow-create
+                default-first-option
+                size="small"
+                placeholder="員工填的假別名稱"
+              />
+              <span v-else class="row-note">{{ (row.aliases || []).join('、') }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="啟用" width="70" align="center">
+            <template #default="{ row }">
+              <el-switch v-model="row.enabled" :disabled="row.key === 'annual'" />
+            </template>
+          </el-table-column>
+          <el-table-column label="" width="70" align="center">
+            <template #default="{ row, $index }">
+              <el-button v-if="!row.builtin" link type="danger" size="small" @click="removeType($index)">刪除</el-button>
+            </template>
+          </el-table-column>
+        </el-table>
+
+        <div v-if="policy" class="policy-actions">
+          <el-button size="small" @click="addCustomType">新增自訂假別</el-button>
+          <el-button size="small" @click="restorePolicyDefaults">還原預設（尚未儲存）</el-button>
+          <el-button type="primary" :loading="policySaving" data-test="policy-save" @click="savePolicy">儲存假別規則</el-button>
+          <el-button v-if="policyError" size="small" @click="loadPolicy">重新載入</el-button>
+        </div>
+      </div>
+    </div>
   </div>
 
   <el-dialog v-model="showHelp" title="加班與簽核說明" width="520px">
@@ -64,6 +180,8 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
+import { apiFetch } from '../../api'
+import { formatDaysAndHours } from '../../utils/leaveBalance'
 
 const showHelp = ref(false)
 const overtimeRules = ref({
@@ -93,7 +211,130 @@ async function persistOvertimeRules() {
   }
 }
 
-onMounted(loadOvertimeRules)
+/* -------------------- 假別額度與餘額規則 -------------------- */
+const minUnitChoices = [0.25, 0.5, 1]
+const periodChoices = [
+  { value: 'year', label: '每年' },
+  { value: 'event', label: '每次事件上限' },
+  { value: 'none', label: '不設上限' }
+]
+const displayChoices = [
+  { value: 'always', label: '一律顯示' },
+  { value: 'when_used', label: '有使用才顯示' },
+  { value: 'hidden', label: '不顯示' }
+]
+
+const policy = ref(null)
+const policyDefaults = ref(null)
+const policyLoading = ref(false)
+const policySaving = ref(false)
+const policyError = ref('')
+
+const clonePolicy = (value) => JSON.parse(JSON.stringify(value))
+
+async function readError(res, fallback) {
+  try {
+    const body = await res.json()
+    return body?.error || fallback
+  } catch {
+    return fallback
+  }
+}
+
+async function loadPolicy() {
+  policyLoading.value = true
+  policyError.value = ''
+  try {
+    const res = await apiFetch('/api/other-control-settings/leave-policy')
+    if (!res.ok) throw new Error(await readError(res, '無法讀取假別額度規則'))
+    const body = await res.json()
+    policy.value = clonePolicy(body.policy)
+    policyDefaults.value = clonePolicy(body.defaults || body.policy)
+  } catch (error) {
+    policyError.value = error?.message || '無法讀取假別額度規則'
+  } finally {
+    policyLoading.value = false
+  }
+}
+
+function quotaDaysText(row) {
+  if (row.quotaHours === null || row.quotaHours === undefined || row.quotaHours === '') return '不設上限'
+  return `約 ${formatDaysAndHours(row.quotaHours)}${row.period === 'event' ? '（每次）' : ''}`
+}
+
+// 超額時「禁止送出」或「只警告」；沒有額度的假別沒有可以超過的東西
+function setBlocking(row, blocking) {
+  row.enforcement = blocking ? 'block' : (row.source === 'policy' && (row.quotaHours === null || row.quotaHours === undefined) ? 'none' : 'warn')
+}
+
+const otherTypes = (row) => (policy.value?.types || []).filter(item => item.key !== row.key)
+
+function setCountsAgainst(row, key) {
+  row.countsAgainst = key ? { key, exemptHours: row.countsAgainst?.exemptHours ?? 0 } : null
+}
+
+function addCustomType() {
+  const list = policy.value.types
+  let index = list.filter(item => !item.builtin).length + 1
+  while (list.some(item => item.key === `custom_${index}`)) index += 1
+  list.push({
+    key: `custom_${index}`,
+    name: `自訂假別${index}`,
+    aliases: [],
+    quotaHours: null,
+    period: 'year',
+    source: 'policy',
+    enforcement: 'none',
+    display: 'when_used',
+    countsAgainst: null,
+    builtin: false,
+    enabled: true,
+    note: ''
+  })
+}
+
+function removeType(index) {
+  const removed = policy.value.types[index]
+  policy.value.types.splice(index, 1)
+  // 被刪掉的假別不能再被別的假別併入
+  policy.value.types.forEach(item => {
+    if (item.countsAgainst?.key === removed?.key) item.countsAgainst = null
+  })
+}
+
+function restorePolicyDefaults() {
+  if (!policyDefaults.value) return
+  policy.value = clonePolicy(policyDefaults.value)
+  ElMessage.info('已還原成預設值，按「儲存假別規則」才會生效')
+}
+
+async function savePolicy() {
+  if (!policy.value || policySaving.value) return
+  policySaving.value = true
+  policyError.value = ''
+  try {
+    const res = await apiFetch('/api/other-control-settings/leave-policy', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(policy.value)
+    })
+    if (!res.ok) throw new Error(await readError(res, '儲存失敗'))
+    const body = await res.json()
+    policy.value = clonePolicy(body.policy)
+    ElMessage.success('已儲存假別額度規則')
+  } catch (error) {
+    const message = error?.message || '儲存失敗'
+    policyError.value = message
+    ElMessage.error(message)
+  } finally {
+    policySaving.value = false
+  }
+}
+
+onMounted(() => {
+  loadOvertimeRules()
+  loadPolicy()
+})
 </script>
 
 <style scoped>
@@ -120,6 +361,43 @@ onMounted(loadOvertimeRules)
   color: #909399;
   font-size: 13px;
   margin-bottom: 8px;
+}
+.hint.inline {
+  margin: 0 0 0 12px;
+}
+.card + .card {
+  margin-top: 16px;
+}
+.policy-card .rule-form {
+  max-width: none;
+}
+.policy-table {
+  width: 100%;
+  margin-top: 8px;
+}
+.policy-actions {
+  margin-top: 12px;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.policy-error {
+  margin-bottom: 12px;
+}
+.unit {
+  margin-left: 8px;
+  color: #606266;
+}
+.row-note {
+  display: block;
+  color: #909399;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.counts-against {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 .help-list {
   padding-left: 18px;

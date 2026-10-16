@@ -867,7 +867,7 @@ describe('直屬主管必須是可簽核的人（K1），而且編輯表單可�
   })
 })
 
-describe('編輯員工：已使用的特休天數不會被舊畫面蓋回去', () => {
+describe('編輯員工：已使用的特休時數不會被舊畫面蓋回去', () => {
   const EMP_ID = '507f1f77bcf86cd799439051'
 
   function stubExisting(annualLeave) {
@@ -875,100 +875,114 @@ describe('編輯員工：已使用的特休天數不會被舊畫面蓋回去', (
     mockEmployee.findById.mockResolvedValueOnce(existing).mockResolvedValueOnce({ ...existing, save: jest.fn() })
   }
 
-  it('送出的天數和目前存的相同就不寫入 usedDays（其他特休欄位照常更新）', async () => {
-    stubExisting({ totalDays: 10, usedDays: 3 })
+  it('送出的時數和目前存的相同就不寫入 usedHours（其他特休欄位照常更新）', async () => {
+    stubExisting({ totalHours: 80, usedHours: 24 })
 
     const res = await request(app)
       .put(`/api/employees/${EMP_ID}`)
-      .send({ annualLeave: { totalDays: 12, usedDays: 3, notes: '調整總天數' } })
+      .send({ annualLeave: { totalHours: 96, usedHours: 24, notes: '調整總時數' } })
 
     expect(res.status).toBe(200)
     const set = mockEmployee.updateOne.mock.calls[0][1].$set
-    expect(set['annualLeave.totalDays']).toBe(12)
-    expect(set['annualLeave.notes']).toBe('調整總天數')
-    expect(set).not.toHaveProperty(['annualLeave.usedDays'])
+    expect(set['annualLeave.totalHours']).toBe(96)
+    expect(set['annualLeave.notes']).toBe('調整總時數')
+    expect(set).not.toHaveProperty(['annualLeave.usedHours'])
   })
 
-  it('管理員真的改了天數才寫入，而且永遠不會從編輯表單寫入 appliedApprovalRequestIds', async () => {
-    stubExisting({ totalDays: 10, usedDays: 3 })
+  it('舊版畫面（快取）送來的天數乘 8 換成小時，不會把天數寫進時數欄位', async () => {
+    stubExisting({ totalHours: 80, usedHours: 24 })
 
     const res = await request(app)
       .put(`/api/employees/${EMP_ID}`)
-      .send({ annualLeave: { usedDays: 1, appliedApprovalRequestIds: [] } })
+      .send({ annualLeave: { totalDays: 12, usedDays: 3 } })
 
     expect(res.status).toBe(200)
     const set = mockEmployee.updateOne.mock.calls[0][1].$set
-    expect(set['annualLeave.usedDays']).toBe(1)
+    expect(set['annualLeave.totalHours']).toBe(96)
+    expect(set).not.toHaveProperty(['annualLeave.usedHours']) // 3 天 = 24 小時，和目前存的相同
+    expect(JSON.stringify(set)).not.toMatch(/totalDays|usedDays/)
+  })
+
+  it('管理員真的改了時數才寫入，而且永遠不會從編輯表單寫入 appliedApprovalRequestIds', async () => {
+    stubExisting({ totalHours: 80, usedHours: 24 })
+
+    const res = await request(app)
+      .put(`/api/employees/${EMP_ID}`)
+      .send({ annualLeave: { usedHours: 8, appliedApprovalRequestIds: [] } })
+
+    expect(res.status).toBe(200)
+    const set = mockEmployee.updateOne.mock.calls[0][1].$set
+    expect(set['annualLeave.usedHours']).toBe(8)
     expect(JSON.stringify(set)).not.toContain('appliedApprovalRequestIds')
   })
 
-  it('沒帶 usedDays（新版畫面沒改天數就不送）：不寫入也不累加，其他特休欄位照常更新', async () => {
-    stubExisting({ totalDays: 10, usedDays: 3 })
+  it('沒帶 usedHours（新版畫面沒改時數就不送）：不寫入也不累加，其他特休欄位照常更新', async () => {
+    stubExisting({ totalHours: 80, usedHours: 24 })
 
     const res = await request(app)
       .put(`/api/employees/${EMP_ID}`)
-      .send({ annualLeave: { totalDays: 12, notes: '調整總天數' } })
+      .send({ annualLeave: { totalHours: 96, notes: '調整總時數' } })
 
     expect(res.status).toBe(200)
     const update = mockEmployee.updateOne.mock.calls[0][1]
-    expect(update.$set['annualLeave.totalDays']).toBe(12)
-    expect(update.$set).not.toHaveProperty(['annualLeave.usedDays'])
+    expect(update.$set['annualLeave.totalHours']).toBe(96)
+    expect(update.$set).not.toHaveProperty(['annualLeave.usedHours'])
     expect(update).not.toHaveProperty('$inc')
     expect(mockEmployee.updateOne).toHaveBeenCalledTimes(1)
   })
 
-  it('過期的視窗：開啟時是 0、這段時間核准扣到 1，管理員沒改天數存檔，不會把扣減蓋回 0', async () => {
-    stubExisting({ totalDays: 10, usedDays: 1 })
+  it('過期的視窗：開啟時是 0、這段時間核准扣到 8 小時，管理員沒改時數存檔，不會把扣減蓋回 0', async () => {
+    stubExisting({ totalHours: 80, usedHours: 8 })
 
     const res = await request(app)
       .put(`/api/employees/${EMP_ID}`)
-      .send({ name: 'John', annualLeave: { totalDays: 12, usedDays: 0, usedDaysBase: 0 } })
+      .send({ name: 'John', annualLeave: { totalHours: 96, usedHours: 0, usedHoursBase: 0 } })
 
     expect(res.status).toBe(200)
     const update = mockEmployee.updateOne.mock.calls[0][1]
-    expect(update.$set['annualLeave.totalDays']).toBe(12)
-    expect(update.$set).not.toHaveProperty(['annualLeave.usedDays'])
+    expect(update.$set['annualLeave.totalHours']).toBe(96)
+    expect(update.$set).not.toHaveProperty(['annualLeave.usedHours'])
     expect(update).not.toHaveProperty('$inc')
   })
 
-  it('視窗開著時又被扣了天數，管理員自己改的差額用 $inc 加上去（不寫入絕對值，也不寫入 usedDaysBase）', async () => {
-    stubExisting({ totalDays: 10, usedDays: 1 })
+  it('視窗開著時又被扣了時數，管理員自己改的差額用 $inc 加上去（不寫入絕對值，也不寫入 usedHoursBase）', async () => {
+    stubExisting({ totalHours: 80, usedHours: 8 })
 
     const res = await request(app)
       .put(`/api/employees/${EMP_ID}`)
-      .send({ annualLeave: { usedDays: 2, usedDaysBase: 0 } })
+      .send({ annualLeave: { usedHours: 16, usedHoursBase: 0 } })
 
     expect(res.status).toBe(200)
     const update = mockEmployee.updateOne.mock.calls[0][1]
-    expect(update.$inc).toEqual({ 'annualLeave.usedDays': 2 })
-    expect(JSON.stringify(update)).not.toContain('usedDaysBase')
-    expect(update.$set ?? {}).not.toHaveProperty(['annualLeave.usedDays'])
+    expect(update.$inc).toEqual({ 'annualLeave.usedHours': 16 })
+    expect(JSON.stringify(update)).not.toContain('usedHoursBase')
+    expect(update.$set ?? {}).not.toHaveProperty(['annualLeave.usedHours'])
     expect(mockEmployee.updateOne).toHaveBeenCalledTimes(1)
   })
 
   it('差額更正和帳號異動（authVersion）合併成同一個 $inc', async () => {
-    stubExisting({ totalDays: 10, usedDays: 1 })
+    stubExisting({ totalHours: 80, usedHours: 8 })
 
     const res = await request(app)
       .put(`/api/employees/${EMP_ID}`)
-      .send({ role: 'supervisor', annualLeave: { usedDays: 2, usedDaysBase: 0 } })
+      .send({ role: 'supervisor', annualLeave: { usedHours: 16, usedHoursBase: 0 } })
 
     expect(res.status).toBe(200)
-    expect(mockEmployee.updateOne.mock.calls[0][1].$inc).toEqual({ 'annualLeave.usedDays': 2, authVersion: 1 })
+    expect(mockEmployee.updateOne.mock.calls[0][1].$inc).toEqual({ 'annualLeave.usedHours': 16, authVersion: 1 })
   })
 
-  it('負的差額寫入後再保險一次：已使用天數不會小於 0', async () => {
-    stubExisting({ totalDays: 10, usedDays: 2 })
+  it('負的差額寫入後再保險一次：已使用時數不會小於 0', async () => {
+    stubExisting({ totalHours: 80, usedHours: 16 })
 
     const res = await request(app)
       .put(`/api/employees/${EMP_ID}`)
-      .send({ annualLeave: { usedDays: 0, usedDaysBase: 3 } })
+      .send({ annualLeave: { usedHours: 0, usedHoursBase: 24 } })
 
     expect(res.status).toBe(200)
-    expect(mockEmployee.updateOne.mock.calls[0][1].$inc).toEqual({ 'annualLeave.usedDays': -2 })
+    expect(mockEmployee.updateOne.mock.calls[0][1].$inc).toEqual({ 'annualLeave.usedHours': -16 })
     expect(mockEmployee.updateOne.mock.calls[1]).toEqual([
-      { _id: EMP_ID, 'annualLeave.usedDays': { $lt: 0 } },
-      { $set: { 'annualLeave.usedDays': 0 } },
+      { _id: EMP_ID, 'annualLeave.usedHours': { $lt: 0 } },
+      { $set: { 'annualLeave.usedHours': 0 } },
     ])
   })
 })

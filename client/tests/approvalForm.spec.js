@@ -9,6 +9,7 @@ import {
   isActiveField,
   isActiveForm,
   isLeaveForm,
+  isLeaveHoursField,
   isPayrollConnectedForm,
   isSingleCheckbox,
   prefillFormData,
@@ -224,6 +225,23 @@ describe('approvalForm 簽核流程預覽文字', () => {
     expect(describeUnresolvedStep({ resolved_count: 0, unresolved_reason: '原因', is_required: false })).toBe('')
     expect(describeUnresolvedStep({ resolved_count: 3 })).toBe('')
     expect(describeUnresolvedStep({ approver_type: 'tag' })).toBe('')
+  })
+})
+
+describe('approvalForm 請假時數欄位判斷', () => {
+  it('標籤是時數的數字欄位才是請假時數欄位（含「請假時數」「時數(小時)」這類寫法）', () => {
+    expect(isLeaveHoursField({ type_1: 'number', label: '時數' })).toBe(true)
+    expect(isLeaveHoursField({ type_1: 'number', label: '請假時數' })).toBe(true)
+    expect(isLeaveHoursField({ type_1: 'number', label: ' 時數（小時） ' })).toBe(true)
+  })
+
+  it('天數、金額、其他標籤或不是數字欄位都不是；缺少資料也不會出錯', () => {
+    expect(isLeaveHoursField({ type_1: 'number', label: '天數' })).toBe(false)
+    expect(isLeaveHoursField({ type_1: 'number', label: '金額' })).toBe(false)
+    expect(isLeaveHoursField({ type_1: 'input', label: '時數' })).toBe(false)
+    expect(isLeaveHoursField({ type_1: 'number' })).toBe(false)
+    expect(isLeaveHoursField(null)).toBe(false)
+    expect(isLeaveHoursField(undefined)).toBe(false)
   })
 })
 

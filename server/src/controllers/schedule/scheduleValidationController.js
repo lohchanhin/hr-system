@@ -10,6 +10,7 @@ import {
 } from '../../services/scheduleValidationService.js';
 import {
   toEntityId,
+  describePendingWeeks,
   buildMonthRange,
   resolveScopedEmployeeIds,
   buildPublishQuery,
@@ -58,7 +59,7 @@ export async function validateScheduleRules(req, res) {
     }
 
     try {
-      await assertScheduleRuleCompliance({
+      const result = await assertScheduleRuleCompliance({
         candidateSchedules: schedules.map((schedule) => ({
           _id: schedule._id,
           employee: schedule.employee?._id || schedule.employee,
@@ -70,7 +71,9 @@ export async function validateScheduleRules(req, res) {
         range,
         strictWeeklyRest: true,
       });
-      return res.json({ ok: true, count: 0, violations: [] });
+      // pendingWeeks：跨月週（鄰月還沒排）目前無法判斷的週別，不算違規，ok/count 仍只代表違規
+      const pendingWeeks = await describePendingWeeks(result?.pendingWeeks);
+      return res.json({ ok: true, count: 0, violations: [], ...(pendingWeeks.length ? { pendingWeeks } : {}) });
     } catch (error) {
       if (!isLaborRuleValidationError(error)) throw error;
       const violations = (error.violations || []).map((violation) => ({
@@ -80,7 +83,13 @@ export async function validateScheduleRules(req, res) {
         date: violation.date || violation.startDate || violation.weekStart || null,
         message: violation.message || error.message,
       }));
-      return res.json({ ok: false, count: violations.length, violations });
+      const pendingWeeks = await describePendingWeeks(error.pendingWeeks);
+      return res.json({
+        ok: false,
+        count: violations.length,
+        violations,
+        ...(pendingWeeks.length ? { pendingWeeks } : {}),
+      });
     }
   } catch (error) {
     return res.status(error.message === 'unauthorized' ? 401 : 400).json({ error: error.message });

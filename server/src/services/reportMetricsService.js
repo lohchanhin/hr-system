@@ -655,6 +655,8 @@ async function loadMonthlyLeaveRows({ employeeIds, start, end }) {
     const endIds = resolveCandidateIds(leaveForm.endIds, endId);
     const typeIds = resolveCandidateIds(leaveForm.typeIds, typeId);
     const daysIds = resolveCandidateIds(leaveForm.daysIds, daysId);
+    // 「時數」欄位（請假以小時為單位）；舊表單沒有這個欄位時為空陣列
+    const hoursIds = resolveCandidateIds(leaveForm.hoursIds, leaveForm.hoursId);
     const approvals = await ApprovalRequest.find({
       form: formId,
       status: 'approved',
@@ -676,6 +678,7 @@ async function loadMonthlyLeaveRows({ employeeIds, start, end }) {
       const duration = computeLeaveDuration({
         startValue: pickFieldValue(formData, startIds),
         endValue: pickFieldValue(formData, endIds),
+        filledHours: pickFieldValue(formData, hoursIds),
         filledDays: pickFieldValue(formData, daysIds),
         literalDays: formData.days ?? formData.duration,
         literalHours: formData.hours,
@@ -754,9 +757,11 @@ async function buildApprovalRecords({
       .filter((row) => ANNUAL_LEAVE_TYPES.includes(row.leaveType));
     const records = [];
     let totalDays = 0;
+    let totalHours = 0;
     rows.forEach((row) => {
       if (!employeeMap.has(row.employeeId)) return;
       if (row.days) totalDays += row.days;
+      if (row.hours) totalHours += row.hours;
       records.push({
         approvalId: row.approvalId,
         employee: row.employeeId,
@@ -764,6 +769,7 @@ async function buildApprovalRecords({
         startDate: row.startDate,
         endDate: row.endDate,
         days: row.days,
+        hours: row.hours,
       });
     });
     return {
@@ -771,6 +777,7 @@ async function buildApprovalRecords({
       summary: {
         totalRequests: records.length,
         totalDays,
+        totalHours: Math.round(totalHours * 100) / 100,
       },
     };
   }
@@ -934,14 +941,16 @@ async function buildDepartmentReportData({ type, month, departmentId, actor }, c
       // Return empty data structure instead of throwing error
       return {
         records: [],
-        summary: { totalLeaves: 0, totalDays: 0, byType: [] }
+        summary: { totalLeaves: 0, totalDays: 0, totalHours: 0, byType: [] }
       };
     }
     const records = [];
     const typeSummary = new Map();
     let totalDays = 0;
+    let totalHours = 0;
     rows.forEach((row) => {
       totalDays += row.days;
+      totalHours += row.hours;
       records.push({
         approvalId: row.approvalId,
         employee: row.employeeId,
@@ -951,10 +960,12 @@ async function buildDepartmentReportData({ type, month, departmentId, actor }, c
         startDate: row.startDate,
         endDate: row.endDate,
         days: row.days,
+        hours: row.hours,
       });
-      const summaryEntry = typeSummary.get(row.leaveType) || { leaveType: row.leaveType, leaveCode: row.leaveCode, count: 0, days: 0 };
+      const summaryEntry = typeSummary.get(row.leaveType) || { leaveType: row.leaveType, leaveCode: row.leaveCode, count: 0, days: 0, hours: 0 };
       summaryEntry.count += 1;
       summaryEntry.days += row.days;
+      summaryEntry.hours = Math.round((summaryEntry.hours + row.hours) * 100) / 100;
       typeSummary.set(row.leaveType, summaryEntry);
     });
     return {
@@ -962,6 +973,7 @@ async function buildDepartmentReportData({ type, month, departmentId, actor }, c
       summary: {
         totalLeaves: records.length,
         totalDays,
+        totalHours: Math.round(totalHours * 100) / 100,
         byType: Array.from(typeSummary.values()),
       },
     };

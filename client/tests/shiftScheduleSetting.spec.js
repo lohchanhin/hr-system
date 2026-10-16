@@ -171,6 +171,16 @@ describe('ShiftScheduleSetting.vue', () => {
     expect(wrapper.vm.calendarDialogVisible).toBe(true)
   })
 
+  it('explains that this tab is the company-wide move and where individual moves are recorded', async () => {
+    const wrapper = mount(ShiftScheduleSetting, { global: { plugins: [ElementPlus] } })
+    await flushPromises()
+
+    const hint = wrapper.find('[data-test="holiday-move-hint"]').text()
+    expect(hint).toContain('全公司統一挪移')
+    expect(hint).toContain('個別人員的移休請直接在排班表排「國」')
+    expect(hint).toContain('排班頁「國定假日休假」')
+  })
+
   it('creates a same-month national holiday move through the settings API', async () => {
     const wrapper = mount(ShiftScheduleSetting, { global: { plugins: [ElementPlus] } })
     await flushPromises()

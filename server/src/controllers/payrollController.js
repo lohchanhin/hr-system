@@ -28,6 +28,7 @@ import { generatePayrollExcel, generateIndividualPayrollExcel } from '../service
 import { generateMonthlyPayrollOverviewPdf } from '../services/payrollPdfExportService.js';
 import { aggregateBonusFromApprovals, loadBonusFieldsByForm } from '../utils/payrollPreviewUtils.js';
 import { approvedInMonthFilter, payrollMonthRange } from '../utils/payrollMonth.js';
+import { readAnnualLeaveHours } from '../utils/annualLeaveHours.js';
 
 export async function listPayrolls(req, res) {
   try {
@@ -634,7 +635,8 @@ export async function getMonthlyPayrollOverview(req, res) {
                               (payroll?.otherBonuses || 0) +
                               recurringAllowance;
       const totalPaymentValue = netPayValue + totalBonusValue;
-      
+      const annualLeaveHours = readAnnualLeaveHours(employee.annualLeave);
+
       return {
         _id: employee._id,
         employeeId: employee.employeeId,
@@ -686,10 +688,13 @@ export async function getMonthlyPayrollOverview(req, res) {
         insuranceLevel: payroll?.insuranceLevel,
         insuranceRate: payroll?.insuranceRate,
         // Annual leave data
+        // 特休以小時儲存（readAnnualLeaveHours 讀不到時數欄位的舊資料會從天數欄位換算）；天數是 時數 / 8 的換算
         annualLeave: {
-          totalDays: employee.annualLeave?.totalDays || 0,
-          totalHours: (employee.annualLeave?.totalDays || 0) * WORK_HOURS_CONFIG.HOURS_PER_DAY,
-          usedDays: employee.annualLeave?.usedDays || 0,
+          totalDays: annualLeaveHours.totalHours / WORK_HOURS_CONFIG.HOURS_PER_DAY,
+          totalHours: annualLeaveHours.totalHours,
+          usedDays: annualLeaveHours.usedHours / WORK_HOURS_CONFIG.HOURS_PER_DAY,
+          usedHours: annualLeaveHours.usedHours,
+          remainingHours: annualLeaveHours.remainingHours,
           expiryDate: employee.annualLeave?.expiryDate || null,
           accumulatedLeave: employee.annualLeave?.accumulatedLeave || 0,
           notes: employee.annualLeave?.notes || ''

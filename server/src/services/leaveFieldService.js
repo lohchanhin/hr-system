@@ -7,6 +7,7 @@ import {
   isLeaveEndLabel,
   isLeaveTypeLabel,
   isLeaveDaysLabel,
+  isLeaveHoursLabel,
   pickLeaveFields,
 } from '../utils/leaveFieldLabels.js';
 import { orderFieldCandidateIds } from '../utils/fieldCandidates.js';
@@ -97,6 +98,7 @@ export {
   isLeaveEndLabel,
   isLeaveTypeLabel,
   isLeaveDaysLabel,
+  isLeaveHoursLabel,
 };
 
 // 挑中欄位的所有同標籤欄位 ID（啟用中的在前、停用的在後）。
@@ -109,7 +111,7 @@ function sameLabelFieldIds(fields, picked) {
 }
 
 function buildLeaveFieldBase(form, fields) {
-  const { startField, endField, typeField, daysField } = pickLeaveFields(fields);
+  const { startField, endField, typeField, daysField, hoursField } = pickLeaveFields(fields);
 
   return {
     formId: form._id?.toString(),
@@ -128,6 +130,10 @@ function buildLeaveFieldBase(form, fields) {
     endIds: sameLabelFieldIds(fields, endField),
     typeIds: sameLabelFieldIds(fields, typeField),
     daysIds: sameLabelFieldIds(fields, daysField),
+    // 「時數」欄位（請假的數量以小時為單位）；舊表單沒有這個欄位時為 undefined / 空陣列
+    hoursId: hoursField?._id?.toString(),
+    hoursLabel: hoursField?.label,
+    hoursIds: sameLabelFieldIds(fields, hoursField),
     // 假別欄位本身：選項要等到使用時才解析（連結字典的欄位選項會隨字典改變）
     typeField,
   };
@@ -146,8 +152,11 @@ async function resolveTypeOptions(typeField) {
 // withTypeOptions: false 給只需要欄位 ID 的呼叫端（例如假勤日曆），省下解析字典選項的查詢
 // withCandidates: true 才附上 isActive 與同標籤候選欄位（startIds…）；getLeaveFieldIds 的回傳形狀維持不變
 async function toLeaveFieldInfo(base, { withTypeOptions = true, withCandidates = false } = {}) {
-  const { typeField, isActive, startIds, endIds, typeIds, daysIds, ...fieldInfo } = base;
-  const info = withCandidates ? { ...fieldInfo, isActive, startIds, endIds, typeIds, daysIds } : fieldInfo;
+  const { typeField, isActive, startIds, endIds, typeIds, daysIds, hoursId, hoursLabel, hoursIds, ...fieldInfo } = base;
+  // getLeaveFieldIds（不帶候選欄位）的回傳形狀維持不變；時數欄位只隨候選欄位一起提供
+  const info = withCandidates
+    ? { ...fieldInfo, hoursId, hoursLabel, isActive, startIds, endIds, typeIds, daysIds, hoursIds }
+    : fieldInfo;
   if (!withTypeOptions) return info;
   return { ...info, typeOptions: await resolveTypeOptions(typeField) };
 }

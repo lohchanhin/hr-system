@@ -27,6 +27,24 @@
           @update:model-value="setValue(fld._id, $event)"
         />
 
+        <!-- 請假「時數」：以小時為單位（預設 0.5 的倍數），依起訖時間自動帶入，上限是所選期間最多可請的時數 -->
+        <div v-else-if="isHoursField(fld)" class="hours-field" data-test="leave-hours-field">
+          <el-input-number
+            :model-value="modelValue[fld._id]"
+            :min="hoursStep"
+            :max="leaveHours.max"
+            :step="hoursStep"
+            :precision="hoursPrecision"
+            :value-on-clear="null"
+            :placeholder="fld.placeholder || '請假時數（小時）'"
+            @update:model-value="setValue(fld._id, $event)"
+          />
+          <span class="hours-unit">小時</span>
+          <div class="field-help">
+            依起訖時間自動帶入，可調整（{{ hoursStep }} 小時為單位，每日最多 {{ leaveHours.maxHoursPerDay || 8 }} 小時）
+          </div>
+        </div>
+
         <!-- number：未填時保持空白（null），必填檢核才會生效 -->
         <el-input-number
           v-else-if="fld.type_1==='number'"
@@ -163,9 +181,14 @@
 <script setup>
 import { computed } from 'vue'
 import { normalizeFieldOptions } from '../utils/approvalDisplay'
-import { isActiveField } from '../utils/approvalForm'
+import { isActiveField, isLeaveHoursField } from '../utils/approvalForm'
 
 const props = defineProps({
+  // 請假單的時數欄位設定：max 是所選期間最多可請的時數（讀得出起訖時間才有），其餘取自假別規則
+  leaveHours: {
+    type: Object,
+    default: () => ({ max: undefined, maxHoursPerDay: 8, minUnitHours: 0.5 }),
+  },
   fields: { type: Array, default: () => [] },
   modelValue: { type: Object, default: () => ({}) },
   files: { type: Object, default: () => ({}) },
@@ -178,6 +201,12 @@ const props = defineProps({
 const emit = defineEmits(['update:modelValue', 'update:files'])
 
 const activeFields = computed(() => props.fields.filter(isActiveField))
+const isHoursField = (field) => isLeaveHoursField(field)
+const hoursStep = computed(() => (Number(props.leaveHours?.minUnitHours) > 0 ? Number(props.leaveHours.minUnitHours) : 0.5))
+const hoursPrecision = computed(() => {
+  const text = String(hoursStep.value)
+  return text.includes('.') ? text.split('.')[1].length : 0
+})
 const optionsOf = (field) => normalizeFieldOptions(field)
 const keptFor = (field) => {
   const kept = props.keptAttachments?.[field._id]
@@ -202,6 +231,12 @@ function setFiles(fieldId, list) {
   border-radius: 8px;
 }
 
+.hours-unit {
+  margin-left: 8px;
+  color: #606266;
+}
+
+.field-help,
 .file-tip,
 .kept-attachments {
   color: #64748b;

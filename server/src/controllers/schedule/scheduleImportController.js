@@ -12,14 +12,19 @@ import {
   parseScheduleWorkbook,
   ScheduleWorkbookValidationError,
 } from '../../services/scheduleWorkbookService.js';
+import { isScheduleRuleExempt } from '../../services/scheduleRuleExemptionService.js';
 import { normalizeEmployeeIdentifier } from '../../services/employeeIdentityService.js';
 import { buildShiftIdentityLookup } from '../../services/shiftIdentityService.js';
 import { isNonWorkShift } from '../../services/shiftSemanticService.js';
+import HolidayMoveSetting from '../../models/HolidayMoveSetting.js';
+import { buildEffectiveMonthHolidays } from '../../services/countedHolidayService.js';
+import { buildImportHolidayWarnings } from '../../services/holidayRestLedgerService.js';
 import {
   toEntityId,
   getAllowedScheduleEmployeeIds,
   buildMonthDays,
   buildMonthRange,
+  describePendingWeeks,
   IMPORT_HOLIDAY_CODES,
   IMPORT_LEAVE_CODES,
   isCountedHolidayRecord,
@@ -59,24 +64,29 @@ function unknownShiftMessage(entry) {
 /**
  * 對即將匯入的班表跑排班規範檢核（不寫入）；規範問題不阻擋匯入，只回報供管理員修正。
  * 檢核本身出錯時回傳 unavailable，由呼叫端決定要顯示的提醒。
+ * pendingWeeks 是跨月週（鄰月還沒排）目前無法判斷的週別，不算違規，只用來提醒。
  */
 async function checkImportRules({ candidates, range, columnCount }) {
   try {
-    await assertScheduleRuleCompliance({
+    const result = await assertScheduleRuleCompliance({
       candidateSchedules: candidates,
       ignoredScheduleIds: candidates.map((item) => item.existing?._id).filter(Boolean),
       range,
       strictWeeklyRest: columnCount === buildMonthDays(range.start).length,
     });
-    return { violations: [], unavailable: false };
+    return { violations: [], pendingWeeks: await describePendingWeeks(result?.pendingWeeks), unavailable: false };
   } catch (validationError) {
     if (isLaborRuleValidationError(validationError)) {
-      return { violations: validationError.violations || [], unavailable: false };
+      return {
+        violations: validationError.violations || [],
+        pendingWeeks: await describePendingWeeks(validationError.pendingWeeks),
+        unavailable: false,
+      };
     }
     console.error('Schedule import rule validation failed', {
       error: validationError?.name || 'Error',
     });
-    return { violations: [], unavailable: true };
+    return { violations: [], pendingWeeks: [], unavailable: true };
   }
 }
 
@@ -114,7 +124,7 @@ export async function importSchedules(req, res) {
     const employeeQuery = { department };
     if (subDepartment) employeeQuery.subDepartment = subDepartment;
     if (allowedEmployeeIds !== null) employeeQuery._id = { $in: allowedEmployeeIds };
-    let employeeFind = Employee.find(employeeQuery).select('_id employeeId name department subDepartment');
+    let employeeFind = Employee.find(employeeQuery).select('_id employeeId name department subDepartment partTime appointment status');
     const employees = employeeFind && typeof employeeFind.lean === 'function'
       ? await employeeFind.lean()
       : await employeeFind;
@@ -197,10 +207,15 @@ export async function importSchedules(req, res) {
         }).lean()
         : [],
     ]);
-    // 只有算入的國定假日才拿來核對（工作日、補班日不算）
-    const holidayDays = new Set((holidays || [])
-      .filter(isCountedHolidayRecord)
-      .map((holiday) => new Date(holiday.date).toISOString().slice(0, 10)));
+    // 國定假日核對用「有效的國定假日」（只算入真正的國定假日、含公司挪移）：
+    // 「國」可以排在當月任何一天（移休），所以不逐格比對日期，只提醒多出來的國與整月檔案裡沒休到的假日
+    let importHolidayMoves = [];
+    if ((holidays || []).some(isCountedHolidayRecord)) {
+      const moveQuery = HolidayMoveSetting.find({ enableHolidayMove: true });
+      importHolidayMoves = (moveQuery && typeof moveQuery.lean === 'function' ? await moveQuery.lean() : await moveQuery) || [];
+    }
+    const effectiveHolidays = buildEffectiveMonthHolidays({ holidays: holidays || [], moves: importHolidayMoves, month });
+    const holidayEmployeeStates = new Map();
     const existingByKey = new Map((existingSchedules || []).map((schedule) => [
       `${toEntityId(schedule.employee)}:${new Date(schedule.date).toISOString().slice(0, 10)}`,
       schedule,
@@ -210,6 +225,9 @@ export async function importSchedules(req, res) {
     const overwriteConflicts = [];
     const warnings = [];
     const candidates = [];
+    // 檔案裡不套用排班規範檢核的兼職人員（排班規範的免檢核由檢核服務統一處理，這裡只列出來讓管理員知道）
+    const ruleExemptEmployees = [];
+    const seenRuleExemptIds = new Set();
     // 國定假日／請假標示的天數（不論有沒有存成班表）；skippedDays 為其中班別設定沒定義、因此略過的天數
     let informationalDays = 0;
     let skippedDays = 0;
@@ -220,6 +238,20 @@ export async function importSchedules(req, res) {
         continue;
       }
       const employeeId = toEntityId(employee._id);
+      if (isScheduleRuleExempt(employee) && !seenRuleExemptIds.has(employeeId)) {
+        seenRuleExemptIds.add(employeeId);
+        ruleExemptEmployees.push({ employeeId: employee.employeeId || '', name: employee.name || '' });
+      }
+      if (!holidayEmployeeStates.has(employeeId)) {
+        holidayEmployeeStates.set(employeeId, {
+          id: employeeId,
+          employee,
+          rowNumber: row.rowNumber,
+          employeeCode: row.employeeId,
+          cells: [],
+          candidateKinds: new Map(),
+        });
+      }
       for (const entry of row.entries) {
         const dateKey = `${month}-${String(entry.day).padStart(2, '0')}`;
         const code = normalizeWorkbookCode(entry.code);
@@ -258,11 +290,11 @@ export async function importSchedules(req, res) {
           continue;
         }
         const kind = resolveImportShiftKind(shift);
+        const holidayState = holidayEmployeeStates.get(employeeId);
+        holidayState.candidateKinds.set(dateKey, kind);
         if (kind === 'holiday') {
           informationalDays += 1;
-          if (!holidayDays.has(dateKey)) {
-            warnings.push(scheduleImportError(row.rowNumber, entry.day, entry.code, `「${entry.code}」為國定假日班別，但系統假日日曆沒有該日期的國定假日，請確認假日設定`));
-          }
+          holidayState.cells.push({ rowNumber: row.rowNumber, day: entry.day, code: entry.code, dateKey });
         } else if (kind === 'leave') {
           informationalDays += 1;
           if (!onApprovedLeave) {
@@ -280,11 +312,35 @@ export async function importSchedules(req, res) {
       }
     }
 
+    const monthDayCount = buildMonthDays(range.start).length;
+    // 國定假日核對：只提醒多排的國；整月檔案另外提醒本月國定假日當天上班、卻沒有國可對應的員工（移休後仍沒休到）
+    warnings.push(...buildImportHolidayWarnings({
+      holidays: effectiveHolidays,
+      states: [...holidayEmployeeStates.values()],
+      existingSchedules,
+      setting,
+      leaveCalendar,
+      fullMonth: parsed.columns.length === monthDayCount,
+    }));
+
+    // 檔案的日期欄位不是整個月時，每週一例一休不檢核（缺的日子無從判斷），要明說，不能默默略過
+    if (!errors.length && candidates.length && parsed.columns.length !== monthDayCount) {
+      warnings.push(scheduleImportError(
+        null,
+        null,
+        '',
+        `此檔案只有 ${parsed.columns.length} 天的日期欄位（${month} 共 ${monthDayCount} 天），未檢核每週一例一休；請補齊整月日期欄位後再匯入，才能完整檢核`,
+      ));
+    }
+
     // 預覽也跑排班規範檢核（不寫入），讓管理員在確認匯入前就看到問題
     const violations = [];
+    // 跨月週（鄰月還沒排）目前無法判斷的週別：不算違規、不擋匯入，只提醒；鄰月排定後再檢核就會判斷
+    const pendingWeeks = [];
     if (mode === 'preview' && !errors.length && candidates.length) {
       const check = await checkImportRules({ candidates, range, columnCount: parsed.columns.length });
       violations.push(...check.violations);
+      pendingWeeks.push(...check.pendingWeeks);
       if (check.unavailable) {
         warnings.push(scheduleImportError(null, null, '', '排班規範檢核暫時無法完成，匯入後請按「排班檢核」重試'));
       }
@@ -300,11 +356,14 @@ export async function importSchedules(req, res) {
       errors,
       warnings,
       violations,
+      ruleExemptEmployees,
       overwriteConflicts,
       overwriteCount: overwriteConflicts.length,
     };
+    // pendingWeeks 只在有的時候才附上（沒有就維持原本的回應內容）
+    const withPendingWeeks = (body) => (pendingWeeks.length ? { ...body, pendingWeeks } : body);
     if (mode === 'preview' || errors.length) {
-      return res.status(errors.length ? 422 : 200).json(summary);
+      return res.status(errors.length ? 422 : 200).json(withPendingWeeks(summary));
     }
     if (!candidates.length) return res.status(400).json({ ...summary, error: 'no schedules to import' });
 
@@ -335,6 +394,7 @@ export async function importSchedules(req, res) {
 
     const check = await checkImportRules({ candidates, range, columnCount: parsed.columns.length });
     violations.push(...check.violations);
+    pendingWeeks.push(...check.pendingWeeks);
     if (check.unavailable) {
       warnings.push(scheduleImportError(
         null,
@@ -343,7 +403,7 @@ export async function importSchedules(req, res) {
         '匯入已完成，但排班規範檢核暫時無法完成，請按「排班檢核」重試',
       ));
     }
-    return res.status(201).json({ ...summary, imported: candidates.length, importBatchId });
+    return res.status(201).json(withPendingWeeks({ ...summary, imported: candidates.length, importBatchId }));
   } catch (error) {
     if (error instanceof ScheduleWorkbookValidationError) {
       return res.status(422).json({

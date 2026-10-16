@@ -443,6 +443,15 @@
             </el-button>
           </div>
 
+          <el-alert
+            class="holiday-move-hint"
+            type="info"
+            :closable="false"
+            show-icon
+            title="此處為全公司統一挪移；個別人員的移休請直接在排班表排「國」，並於排班頁「國定假日休假」查看紀錄。"
+            data-test="holiday-move-hint"
+          />
+
           <div class="table-container">
             <el-table
               :data="holidayMoveList"
@@ -1394,6 +1403,10 @@ function getHolidayTagType(type) {
 }
 
 .shift-conflict-alert {
+  margin-bottom: 16px;
+}
+
+.holiday-move-hint {
   margin-bottom: 16px;
 }
 

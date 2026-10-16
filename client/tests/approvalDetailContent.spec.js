@@ -258,3 +258,46 @@ describe('ApprovalDetailContent 附件下載', () => {
     expect(messageError.mock.calls[0][0]).toContain('沒有權限')
   })
 })
+
+// 排班頁「相關簽核」也用這個明細元件：請假單要顯示申請人各假別的剩餘時數
+describe('ApprovalDetailContent 假別餘額', () => {
+  const balances = {
+    employee: { _id: 'app1', name: 'Bob' },
+    year: 2026,
+    range: { start: '2026-01-01', end: '2026-12-31' },
+    dayHours: 8,
+    items: [
+      { key: 'annual', name: '特休', source: 'employee', period: 'year', status: 'ok', quotaHours: 80, usedHours: 16, pendingHours: 0, remainingHours: 64, availableHours: 64, includes: [] },
+      { key: 'sick', name: '病假', source: 'policy', period: 'year', status: 'ok', quotaHours: 240, usedHours: 4, pendingHours: 0, remainingHours: 236, availableHours: 236, includes: [] },
+    ],
+    unmatched: [],
+    focus: { typeKey: 'sick', typeName: '病假', requestedHours: 4, remainingBefore: 236, remainingAfter: 232, exceeded: false },
+  }
+
+  it('shows the applicant\'s balances in hours with the effect of this request, instead of the single 特休 line', async () => {
+    vi.spyOn(window, 'fetch').mockImplementation(() => Promise.resolve(jsonResponse(buildDoc({ leave_balances: balances, leave_balance: { totalHours: 80, usedHours: 16, remainingHours: 64 } }))))
+    const wrapper = mountContent('a1')
+    await flushPromises()
+
+    const panel = wrapper.find('[data-test="leave-balance-panel"]')
+    expect(panel.exists()).toBe(true)
+    expect(panel.text()).toContain('申請人假別餘額')
+    expect(panel.text()).toContain('64 小時（8 天）')
+    expect(panel.text()).toContain('236 小時')
+    expect(panel.find('[data-test="leave-balance-focus"]').text()).toContain('核准前剩 236 小時')
+    expect(wrapper.find('.leave-balance-alert').exists()).toBe(false)
+  })
+
+  it('falls back to the hours line when only the 特休 balance came back, and shows nothing for other forms', async () => {
+    vi.spyOn(window, 'fetch').mockImplementation(() => Promise.resolve(jsonResponse(buildDoc({ leave_balance: { totalHours: 80, usedHours: 16, remainingHours: 64 } }))))
+    const old = mountContent('a1')
+    await flushPromises()
+    expect(old.find('.leave-balance-alert').text()).toContain('特休餘額：已使用 16 小時／剩餘 64 小時（年度總時數 80 小時）')
+
+    vi.spyOn(window, 'fetch').mockImplementation(() => Promise.resolve(jsonResponse(buildDoc({ form: { name: '加班', category: '人事', semanticType: 'overtime', fields: [] } }))))
+    const other = mountContent('a2')
+    await flushPromises()
+    expect(other.find('[data-test="leave-balance-panel"]').exists()).toBe(false)
+    expect(other.find('.leave-balance-alert').exists()).toBe(false)
+  })
+})

@@ -23,6 +23,7 @@ export function resolveLeaveFieldsForRequest(leaveFields, formData) {
     startId: resolve(fields.startIds, fields.startId),
     endId: resolve(fields.endIds, fields.endId),
     daysId: resolve(fields.daysIds, fields.daysId),
+    hoursId: resolve(fields.hoursIds, fields.hoursId),
   };
 }
 

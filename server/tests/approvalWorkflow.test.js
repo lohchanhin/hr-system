@@ -25,11 +25,14 @@ const mockAssertApprovalRequestCompliance = jest.fn()
 const mockIsLaborRuleValidationError = jest.fn((error) => Array.isArray(error?.violations))
 const mockDeductAnnualLeave = jest.fn()
 const mockRefundAnnualLeave = jest.fn()
+// 假別額度規則存在其他控制設定：測試不連資料庫，讀不到設定就用預設值
+const mockGetSettings = jest.fn()
 
 let createApprovalRequest
 let actOnApproval
 let cancelApprovalRequest
 let resubmitApprovalRequest
+let resetLeavePolicyCache
 
 function seedEmployees() {
   return [
@@ -57,12 +60,18 @@ beforeAll(async () => {
     assertApprovalRequestCompliance: mockAssertApprovalRequestCompliance,
     isLaborRuleValidationError: mockIsLaborRuleValidationError,
   }))
+  await jest.unstable_mockModule('../src/services/otherControlSettingsStore.js', () => ({
+    getSettings: mockGetSettings,
+    getDictionaryItems: jest.fn(async () => []),
+    getDictionaryDefinitions: jest.fn(async () => []),
+  }))
   await jest.unstable_mockModule('../src/services/annualLeaveService.js', () => ({
     deductAnnualLeave: mockDeductAnnualLeave,
     refundAnnualLeave: mockRefundAnnualLeave,
     getAnnualLeaveBalance: jest.fn(),
     isAnnualLeaveConfigured: (employee) => Number(employee?.annualLeave?.totalDays) > 0 || Number(employee?.annualLeave?.usedDays) > 0,
   }))
+  ;({ resetLeavePolicyCache } = await import('../src/services/leavePolicyService.js'))
   const mod = await import('../src/controllers/approvalRequestController.js')
   createApprovalRequest = mod.createApprovalRequest
   actOnApproval = mod.actOnApproval
@@ -82,6 +91,9 @@ beforeEach(() => {
   mockIsLaborRuleValidationError.mockClear()
   mockDeductAnnualLeave.mockReset()
   mockRefundAnnualLeave.mockReset()
+  mockGetSettings.mockReset()
+  mockGetSettings.mockResolvedValue({})
+  resetLeavePolicyCache()
   jest.spyOn(console, 'log').mockImplementation(() => {})
   jest.spyOn(console, 'error').mockImplementation(() => {})
   jest.spyOn(console, 'warn').mockImplementation(() => {})
@@ -476,8 +488,8 @@ describe('createApprovalRequest - annual leave balance at filing', () => {
     return stubCreate()
   }
 
-  it('rejects a 特休 request that exceeds the remaining balance', async () => {
-    setupLeave({ annualLeave: { totalDays: 5, usedDays: 4 } })
+  it('rejects a 特休 request that exceeds the remaining balance (in hours)', async () => {
+    setupLeave({ annualLeave: { totalHours: 40, usedHours: 32 } })
     const res = makeRes()
 
     await createApprovalRequest(makeCreateReq({
@@ -487,16 +499,29 @@ describe('createApprovalRequest - annual leave balance at filing', () => {
 
     expect(res.status).toHaveBeenCalledWith(400)
     expect(res.json).toHaveBeenCalledWith({
-      error: '特休餘額不足：剩餘 1 天，本次申請 3 天',
+      error: '特休餘額不足：剩餘 8 小時（1 天），本次申請 24 小時（3 天）',
       code: 'ANNUAL_LEAVE_INSUFFICIENT',
-      remaining: 1,
-      requested: 3,
+      remainingHours: 8,
+      requestedHours: 24,
     })
     expect(mockApprovalRequest.create).not.toHaveBeenCalled()
   })
 
-  it('accepts a same-day 特休 request when one day is left (09:00-18:00 is one day, not two)', async () => {
-    const created = setupLeave({ annualLeave: { totalDays: 5, usedDays: 4 } })
+  it('still reads an employee that is on the old day fields (not migrated yet) as hours', async () => {
+    setupLeave({ annualLeave: { totalDays: 5, usedDays: 4 } })
+    const res = makeRes()
+
+    await createApprovalRequest(makeCreateReq({
+      form_id: FORM,
+      form_data: { 'l-type': '特休', 'l-start': '2026-03-02', 'l-end': '2026-03-04' },
+    }), res)
+
+    expect(res.status).toHaveBeenCalledWith(400)
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ code: 'ANNUAL_LEAVE_INSUFFICIENT', remainingHours: 8, requestedHours: 24 }))
+  })
+
+  it('accepts a same-day 特休 request when one day is left (09:00-18:00 is 8 hours, not 16)', async () => {
+    const created = setupLeave({ annualLeave: { totalHours: 40, usedHours: 32 } })
     const res = makeRes()
 
     await createApprovalRequest(makeCreateReq({
@@ -1280,20 +1305,20 @@ describe('actOnApproval - annual leave on final approval', () => {
     const doc = makeRequestDoc({ form_data: { 'l-type': '特休', 'l-start': '2026-03-02', 'l-end': '2026-03-03' } })
     const res = await act(doc, { user: supUser(), body: { decision: 'approve' } })
 
-    expect(mockDeductAnnualLeave).toHaveBeenCalledWith(APPLICANT, 2, REQ)
-    expect(doc.annual_leave).toEqual(expect.objectContaining({ days: 2, state: 'deducted' }))
+    expect(mockDeductAnnualLeave).toHaveBeenCalledWith(APPLICANT, 16, REQ)
+    expect(doc.annual_leave).toEqual(expect.objectContaining({ hours: 16, days: 2, state: 'deducted' }))
     expect(doc.logs.map(log => log.action)).toEqual(['approve', 'finish', 'annual_leave'])
     expect(res.json).toHaveBeenCalledWith(doc)
   })
 
   it('keeps the approval but reports a failed deduction in the log, on the request and in the response', async () => {
-    mockDeductAnnualLeave.mockRejectedValue(Object.assign(new Error('Insufficient'), { code: 'INSUFFICIENT_BALANCE', remaining: 1, requested: 2 }))
+    mockDeductAnnualLeave.mockRejectedValue(Object.assign(new Error('Insufficient'), { code: 'INSUFFICIENT_BALANCE', remainingHours: 8, requestedHours: 16 }))
     const doc = makeRequestDoc({ form_data: { 'l-type': '特休', 'l-start': '2026-03-02', 'l-end': '2026-03-03' } })
     const res = await act(doc, { user: supUser(), body: { decision: 'approve' } })
 
     expect(doc.status).toBe('approved')
-    const message = '特休扣減失敗：餘額不足（剩餘 1 天，本次需扣 2 天），請人資確認特休天數後手動補登'
-    expect(doc.annual_leave).toEqual(expect.objectContaining({ days: 2, state: 'failed', message }))
+    const message = '特休扣減失敗：餘額不足（剩餘 8 小時（1 天），本次需扣 16 小時（2 天）），請人資確認特休時數後手動補登'
+    expect(doc.annual_leave).toEqual(expect.objectContaining({ hours: 16, days: 2, state: 'failed', message }))
     expect(doc.logs).toEqual(expect.arrayContaining([expect.objectContaining({ action: 'annual_leave_error', message })]))
     const body = res.json.mock.calls[0][0]
     expect(body.warnings).toEqual([{ code: 'ANNUAL_LEAVE_DEDUCTION_FAILED', message }])
@@ -1365,22 +1390,22 @@ describe('cancelling an approved annual leave', () => {
   const approvedLeave = (start, extra = {}) => makeRequestDoc({
     status: 'approved',
     form_data: { 'l-type': '特休', 'l-start': start, 'l-end': start },
-    annual_leave: { days: 1, state: 'deducted' },
+    annual_leave: { hours: 8, days: 1, state: 'deducted' },
     ...extra,
   })
 
-  it('refunds the deducted days when the applicant withdraws before the leave starts', async () => {
-    mockRefundAnnualLeave.mockResolvedValue({ refunded: true, days: 1 })
+  it('refunds the deducted hours when the applicant withdraws before the leave starts', async () => {
+    mockRefundAnnualLeave.mockResolvedValue({ refunded: true, hours: 8, days: 1 })
     const doc = approvedLeave(FUTURE)
     mockApprovalRequest.findById.mockResolvedValue(doc)
     const res = makeRes()
 
     await cancelApprovalRequest({ params: { id: REQ }, user: employeeUser(APPLICANT), body: { comment: '行程取消' } }, res)
 
-    expect(mockRefundAnnualLeave).toHaveBeenCalledWith(APPLICANT, 1, REQ)
+    expect(mockRefundAnnualLeave).toHaveBeenCalledWith(APPLICANT, 8, REQ)
     expect(doc.status).toBe('canceled')
-    expect(doc.annual_leave).toEqual(expect.objectContaining({ state: 'refunded', days: 1 }))
-    expect(doc.logs[doc.logs.length - 1]).toEqual(expect.objectContaining({ action: 'cancel', message: '已撤回已核准的特休，返還 1 天：行程取消' }))
+    expect(doc.annual_leave).toEqual(expect.objectContaining({ state: 'refunded', hours: 8, days: 1 }))
+    expect(doc.logs[doc.logs.length - 1]).toEqual(expect.objectContaining({ action: 'cancel', message: '已撤回已核准的特休，返還 8 小時（1 天）：行程取消' }))
     expect(doc.save).toHaveBeenCalledTimes(1)
   })
 
@@ -1398,7 +1423,7 @@ describe('cancelling an approved annual leave', () => {
   })
 
   it('lets an admin withdraw an approved annual leave that already started', async () => {
-    mockRefundAnnualLeave.mockResolvedValue({ refunded: true, days: 1 })
+    mockRefundAnnualLeave.mockResolvedValue({ refunded: true, hours: 8, days: 1 })
     const doc = approvedLeave(PAST)
     mockApprovalRequest.findById.mockResolvedValue(doc)
     const res = makeRes()
@@ -1406,7 +1431,7 @@ describe('cancelling an approved annual leave', () => {
     await cancelApprovalRequest({ params: { id: REQ }, user: adminUser(), body: {} }, res)
 
     expect(res.status).not.toHaveBeenCalledWith(404)
-    expect(mockRefundAnnualLeave).toHaveBeenCalledWith(APPLICANT, 1, REQ)
+    expect(mockRefundAnnualLeave).toHaveBeenCalledWith(APPLICANT, 8, REQ)
     expect(doc.status).toBe('canceled')
   })
 
@@ -1424,8 +1449,8 @@ describe('cancelling an approved annual leave', () => {
   })
 
   it('cancels without a refund when the original approval never deducted anything', async () => {
-    mockRefundAnnualLeave.mockResolvedValue({ refunded: false, days: 0 })
-    const doc = approvedLeave(FUTURE, { annual_leave: { days: 1, state: 'failed' } })
+    mockRefundAnnualLeave.mockResolvedValue({ refunded: false, hours: 0, days: 0 })
+    const doc = approvedLeave(FUTURE, { annual_leave: { hours: 8, days: 1, state: 'failed' } })
     mockApprovalRequest.findById.mockResolvedValue(doc)
 
     await cancelApprovalRequest({ params: { id: REQ }, user: employeeUser(APPLICANT), body: {} }, makeRes())
@@ -1434,8 +1459,19 @@ describe('cancelling an approved annual leave', () => {
     expect(doc.logs[doc.logs.length - 1].message).toContain('無需返還')
   })
 
+  it('refunds the hours recorded when only the old day count was recorded (approved before hours existed): days x8', async () => {
+    mockRefundAnnualLeave.mockResolvedValue({ refunded: true, hours: 16, days: 2 })
+    const doc = approvedLeave(FUTURE, { annual_leave: { days: 2, state: 'deducted' } })
+    mockApprovalRequest.findById.mockResolvedValue(doc)
+
+    await cancelApprovalRequest({ params: { id: REQ }, user: employeeUser(APPLICANT), body: {} }, makeRes())
+
+    expect(mockRefundAnnualLeave).toHaveBeenCalledWith(APPLICANT, 16, REQ)
+    expect(doc.logs[doc.logs.length - 1].message).toBe('已撤回已核准的特休，返還 16 小時（2 天）')
+  })
+
   it('does not refund twice when the save has to be retried', async () => {
-    mockRefundAnnualLeave.mockResolvedValue({ refunded: true, days: 1 })
+    mockRefundAnnualLeave.mockResolvedValue({ refunded: true, hours: 8, days: 1 })
     const first = approvedLeave(FUTURE)
     first.save.mockRejectedValueOnce(versionError())
     const second = approvedLeave(FUTURE)
@@ -1688,13 +1724,13 @@ describe('annual leave only applies to leave forms: an explicit 一般 type wins
 
   it('still checks the balance of a leave-type form, and of an old form that only has the name', async () => {
     for (const semanticType of ['leave', undefined]) {
-      setupFiling({ semanticType }, { totalDays: 5, usedDays: 5 })
+      setupFiling({ semanticType }, { totalHours: 40, usedHours: 40 })
       const res = makeRes()
 
       await createApprovalRequest(makeCreateReq({ form_id: FORM, form_data: TWO_DAYS }), res)
 
       expect(res.status).toHaveBeenCalledWith(400)
-      expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ code: 'ANNUAL_LEAVE_INSUFFICIENT', remaining: 0, requested: 2 }))
+      expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ code: 'ANNUAL_LEAVE_INSUFFICIENT', remainingHours: 0, requestedHours: 16 }))
     }
   })
 
@@ -1724,7 +1760,7 @@ describe('annual leave only applies to leave forms: an explicit 一般 type wins
 
         await act(doc, { user: supUser(), body: { decision: 'approve' } })
 
-        expect(mockDeductAnnualLeave).toHaveBeenCalledWith(APPLICANT, 2, REQ)
+        expect(mockDeductAnnualLeave).toHaveBeenCalledWith(APPLICANT, 16, REQ)
       }
     })
 
@@ -1762,8 +1798,8 @@ describe('annual leave days are counted like payroll and reports (a 4-hour leave
     return stubCreate()
   }
 
-  it('lets a 4-hour 特休 through when half a day is left', async () => {
-    const created = setupFiling({ totalDays: 5, usedDays: 4.5 })
+  it('lets a 4-hour 特休 through when 4 hours are left', async () => {
+    const created = setupFiling({ totalHours: 40, usedHours: 36 })
     const res = makeRes()
 
     await createApprovalRequest(makeCreateReq({ form_id: FORM, form_data: FOUR_HOURS }), res)
@@ -1772,18 +1808,18 @@ describe('annual leave days are counted like payroll and reports (a 4-hour leave
     expect(created.doc).toBeTruthy()
   })
 
-  it('stops a 4-hour 特休 when less than half a day is left, naming 0.5 days', async () => {
-    setupFiling({ totalDays: 5, usedDays: 4.75 })
+  it('stops a 4-hour 特休 when less than 4 hours are left, naming the hours', async () => {
+    setupFiling({ totalHours: 40, usedHours: 38 })
     const res = makeRes()
 
     await createApprovalRequest(makeCreateReq({ form_id: FORM, form_data: FOUR_HOURS }), res)
 
     expect(res.status).toHaveBeenCalledWith(400)
     expect(res.json).toHaveBeenCalledWith({
-      error: '特休餘額不足：剩餘 0.25 天，本次申請 0.5 天',
+      error: '特休餘額不足：剩餘 2 小時（0.25 天），本次申請 4 小時（0.5 天）',
       code: 'ANNUAL_LEAVE_INSUFFICIENT',
-      remaining: 0.25,
-      requested: 0.5,
+      remainingHours: 2,
+      requestedHours: 4,
     })
   })
 
@@ -1794,22 +1830,22 @@ describe('annual leave days are counted like payroll and reports (a 4-hour leave
       mockDeductAnnualLeave.mockResolvedValue({})
     })
 
-    it('deducts 0.5 day for 4 hours and records exactly that', async () => {
+    it('deducts 4 hours for 4 hours and records exactly that', async () => {
       const doc = makeRequestDoc({ form_data: FOUR_HOURS })
 
       await act(doc, { user: supUser(), body: { decision: 'approve' } })
 
-      expect(mockDeductAnnualLeave).toHaveBeenCalledWith(APPLICANT, 0.5, REQ)
-      expect(doc.annual_leave).toEqual(expect.objectContaining({ days: 0.5, state: 'deducted' }))
-      expect(doc.logs).toEqual(expect.arrayContaining([expect.objectContaining({ action: 'annual_leave', message: '已扣除特休 0.5 天' })]))
+      expect(mockDeductAnnualLeave).toHaveBeenCalledWith(APPLICANT, 4, REQ)
+      expect(doc.annual_leave).toEqual(expect.objectContaining({ hours: 4, days: 0.5, state: 'deducted' }))
+      expect(doc.logs).toEqual(expect.arrayContaining([expect.objectContaining({ action: 'annual_leave', message: '已扣除特休 4 小時（0.5 天）' })]))
     })
 
     it('keeps whole days and date ranges as before, and a 09:00-18:00 day is one day', async () => {
       const cases = [
-        [{ 'l-start': '2099-03-02', 'l-end': '2099-03-04' }, 3],
-        [{ 'l-start': '2099-03-02T01:00:00.000Z', 'l-end': '2099-03-04T10:00:00.000Z' }, 3],
-        [{ 'l-start': '2099-03-02T01:00:00.000Z', 'l-end': '2099-03-02T10:00:00.000Z' }, 1],
-        [{ 'l-start': '2099-03-01T16:00:00.000Z', 'l-end': '2099-03-02T16:00:00.000Z' }, 2], // 日期選擇器的午夜
+        [{ 'l-start': '2099-03-02', 'l-end': '2099-03-04' }, 24],
+        [{ 'l-start': '2099-03-02T01:00:00.000Z', 'l-end': '2099-03-04T10:00:00.000Z' }, 24],
+        [{ 'l-start': '2099-03-02T01:00:00.000Z', 'l-end': '2099-03-02T10:00:00.000Z' }, 8],
+        [{ 'l-start': '2099-03-01T16:00:00.000Z', 'l-end': '2099-03-02T16:00:00.000Z' }, 16], // 日期選擇器的午夜
       ]
       for (const [dates, expected] of cases) {
         mockDeductAnnualLeave.mockClear()
@@ -1821,33 +1857,45 @@ describe('annual leave days are counted like payroll and reports (a 4-hour leave
       }
     })
 
-    it('still lets the 天數 field win over the times', async () => {
+    it('still lets the old 天數 field win over the times when the form has no 時數 field', async () => {
       const doc = makeRequestDoc({ form_data: { ...FOUR_HOURS, 'l-days': 1.5 } })
 
       await act(doc, { user: supUser(), body: { decision: 'approve' } })
 
-      expect(mockDeductAnnualLeave).toHaveBeenCalledWith(APPLICANT, 1.5, REQ)
+      expect(mockDeductAnnualLeave).toHaveBeenCalledWith(APPLICANT, 12, REQ)
     })
 
-    it('refunds exactly the recorded days when the leave is withdrawn, whatever the dates would count today', async () => {
-      mockRefundAnnualLeave.mockResolvedValue({ refunded: true, days: 0.5 })
-      const half = makeRequestDoc({ status: 'approved', form_data: { ...FOUR_HOURS, 'l-start': '2099-03-02T01:00:00.000Z' }, annual_leave: { days: 0.5, state: 'deducted' } })
+    it('lets the 時數 field win over the 天數 field and the times', async () => {
+      mockFormField.find.mockImplementation(() => ({
+        lean: async () => [...FORM_FIELDS, { _id: 'l-hours', form: FORM, label: '時數', type_1: 'number', order: 5 }],
+      }))
+      const doc = makeRequestDoc({ form_data: { ...FOUR_HOURS, 'l-days': 1.5, 'l-hours': 2.5 } })
+
+      await act(doc, { user: supUser(), body: { decision: 'approve' } })
+
+      expect(mockDeductAnnualLeave).toHaveBeenCalledWith(APPLICANT, 2.5, REQ)
+      expect(doc.annual_leave).toEqual(expect.objectContaining({ hours: 2.5, state: 'deducted' }))
+    })
+
+    it('refunds exactly the recorded hours when the leave is withdrawn, whatever the dates would count today', async () => {
+      mockRefundAnnualLeave.mockResolvedValue({ refunded: true, hours: 4, days: 0.5 })
+      const half = makeRequestDoc({ status: 'approved', form_data: { ...FOUR_HOURS, 'l-start': '2099-03-02T01:00:00.000Z' }, annual_leave: { hours: 4, days: 0.5, state: 'deducted' } })
       mockApprovalRequest.findById.mockResolvedValue(half)
 
       await cancelApprovalRequest({ params: { id: REQ }, user: employeeUser(APPLICANT), body: {} }, makeRes())
 
-      expect(mockRefundAnnualLeave).toHaveBeenCalledWith(APPLICANT, 0.5, REQ)
-      expect(half.annual_leave).toEqual(expect.objectContaining({ state: 'refunded', days: 0.5 }))
+      expect(mockRefundAnnualLeave).toHaveBeenCalledWith(APPLICANT, 4, REQ)
+      expect(half.annual_leave).toEqual(expect.objectContaining({ state: 'refunded', hours: 4, days: 0.5 }))
 
-      // 以前的算法把 4 小時扣成 1 天並記下了 1：返還的也是記錄的 1 天，不會因為現在算成 0.5 而少還
+      // 以前的算法把 4 小時扣成 1 天並記下了 1 天（沒有時數）：返還的也是記錄的 1 天 = 8 小時，不會因為現在算成 4 小時而少還
       mockRefundAnnualLeave.mockReset()
-      mockRefundAnnualLeave.mockResolvedValue({ refunded: true, days: 1 })
+      mockRefundAnnualLeave.mockResolvedValue({ refunded: true, hours: 8, days: 1 })
       const legacy = makeRequestDoc({ status: 'approved', form_data: FOUR_HOURS, annual_leave: { days: 1, state: 'deducted' } })
       mockApprovalRequest.findById.mockResolvedValue(legacy)
 
       await cancelApprovalRequest({ params: { id: REQ }, user: employeeUser(APPLICANT), body: {} }, makeRes())
 
-      expect(mockRefundAnnualLeave).toHaveBeenCalledWith(APPLICANT, 1, REQ)
+      expect(mockRefundAnnualLeave).toHaveBeenCalledWith(APPLICANT, 8, REQ)
     })
   })
 })
@@ -1880,8 +1928,8 @@ describe('annual leave when the leave fields were replaced while the request was
 
     expect(res.status).not.toHaveBeenCalledWith(409)
     expect(mockDeductAnnualLeave).toHaveBeenCalledTimes(1)
-    expect(mockDeductAnnualLeave).toHaveBeenCalledWith(APPLICANT, 2, REQ)
-    expect(doc.annual_leave).toEqual(expect.objectContaining({ state: 'deducted', days: 2 }))
+    expect(mockDeductAnnualLeave).toHaveBeenCalledWith(APPLICANT, 16, REQ)
+    expect(doc.annual_leave).toEqual(expect.objectContaining({ state: 'deducted', hours: 16, days: 2 }))
   })
 
   it('reads each request from the field set that holds its answers (old fields, new fields, a mix)', async () => {
@@ -1897,7 +1945,7 @@ describe('annual leave when the leave fields were replaced while the request was
       await act(doc, { user: supUser(), body: { decision: 'approve' } })
     }
 
-    expect(mockDeductAnnualLeave.mock.calls.map(([, days]) => days)).toEqual([2, 1, 3])
+    expect(mockDeductAnnualLeave.mock.calls.map(([, hours]) => hours)).toEqual([16, 8, 24])
   })
 
   it('prefers the active field when both the old and the new field hold an answer', async () => {
@@ -1911,11 +1959,11 @@ describe('annual leave when the leave fields were replaced while the request was
     })
     await act(doc, { user: supUser(), body: { decision: 'approve' } })
 
-    expect(mockDeductAnnualLeave).toHaveBeenCalledWith(APPLICANT, 1, REQ)
+    expect(mockDeductAnnualLeave).toHaveBeenCalledWith(APPLICANT, 8, REQ)
   })
 
-  it('lets the applicant withdraw an approved 特休 whose answers sit under the old fields, and refunds the deducted days', async () => {
-    mockRefundAnnualLeave.mockResolvedValue({ refunded: true, days: 2 })
+  it('lets the applicant withdraw an approved 特休 whose answers sit under the old fields, and refunds the deducted hours', async () => {
+    mockRefundAnnualLeave.mockResolvedValue({ refunded: true, hours: 16, days: 2 })
     const doc = makeRequestDoc({
       status: 'approved',
       form_data: { 'old-type': '特休', 'old-start': '2099-03-02', 'old-end': '2099-03-03' },
@@ -1927,7 +1975,8 @@ describe('annual leave when the leave fields were replaced while the request was
     await cancelApprovalRequest({ params: { id: REQ }, user: employeeUser(APPLICANT), body: {} }, res)
 
     expect(res.status).not.toHaveBeenCalledWith(409)
-    expect(mockRefundAnnualLeave).toHaveBeenCalledWith(APPLICANT, 2, REQ)
+    // 核准時只記了天數（改成小時之前）：返還 2 天 x 8 = 16 小時
+    expect(mockRefundAnnualLeave).toHaveBeenCalledWith(APPLICANT, 16, REQ)
     expect(doc.status).toBe('canceled')
   })
 

@@ -8,6 +8,7 @@ import FormField from '../models/form_field.js';
 import Holiday from '../models/Holiday.js';
 import HolidayMoveSetting from '../models/HolidayMoveSetting.js';
 import { isPayableNationalHoliday } from './countedHolidayService.js';
+import { loadScheduleRuleExemptEmployeeIds } from './scheduleRuleExemptionService.js';
 import { computeShiftSpan } from '../utils/timeWindow.js';
 import { getAllLeaveFieldInfos } from './leaveFieldService.js';
 import { isNonWorkShift, resolveShiftSemanticType } from './shiftSemanticService.js';
@@ -29,11 +30,13 @@ const MAX_CONTINUOUS_NON_REST_DAYS = 6;
 const MAX_DAILY_OVERTIME_MINUTES = 4 * 60;
 
 class LaborRuleValidationError extends Error {
-  constructor(message, violations = []) {
+  // pendingWeeks：目前還無法判斷的跨月週（鄰月尚未排班），不算違規，隨錯誤一起回報讓畫面提醒
+  constructor(message, violations = [], pendingWeeks = []) {
     super(message);
     this.name = 'LaborRuleValidationError';
     this.status = 400;
     this.violations = violations;
+    this.pendingWeeks = pendingWeeks;
   }
 }
 
@@ -73,6 +76,23 @@ function monthKey(value) {
   const date = startOfUtcDay(value);
   if (!date) return '';
   return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}`;
+}
+
+// 把日期鍵合併成「a～b、c」：連續的日子合成一段，用在跨月週的提示文字
+function dateRangeText(keys) {
+  const runs = [];
+  for (const key of Array.from(new Set(keys)).sort()) {
+    const last = runs[runs.length - 1];
+    if (last && dateKey(addUtcDays(new Date(`${last.end}T00:00:00.000Z`), 1)) === key) last.end = key;
+    else runs.push({ start: key, end: key });
+  }
+  return runs.map((run) => (run.start === run.end ? run.start : `${run.start}～${run.end}`)).join('、');
+}
+
+// 日期鍵所屬的月份，寫成「2026年7月」
+function monthText(keys) {
+  const months = Array.from(new Set(keys.map((key) => key.slice(0, 7)))).sort();
+  return months.map((month) => `${Number(month.slice(0, 4))}年${Number(month.slice(5, 7))}月`).join('、');
 }
 
 function weekStartMonday(date) {
@@ -424,20 +444,27 @@ async function loadCountedHolidayDays(start, end) {
   return holidayDays;
 }
 
+// 回傳 { violations, pendingWeeks }。
+// 一週（週一至週日）跨出檢核範圍（跨月）時，範圍外那幾天以資料庫裡鄰月已存的班表補齊（兩個方向都一樣）：
+//   - 例/休都齊了：通過，不回報
+//   - 缺的例/休比範圍外還沒排的天數多（再怎麼補也補不齊）：違規
+//   - 其餘（缺的例/休還補得上）：還無法判斷，回報 pendingWeeks 讓畫面提醒，鄰月排定後下次檢核自然會判斷
+// 範圍內的整週沒有範圍外的日子，維持原本行為（缺例或缺休就是違規）。
 function validateWeeklyRest(grouped, shiftMap, { strictStart, strictEnd }) {
   const violations = [];
+  const pendingWeeks = [];
   for (const [employee, schedules] of grouped) {
     const byDate = new Map(schedules.map((schedule) => [dateKey(schedule.date), schedule]));
     const firstWeekStart = weekStartMonday(strictStart);
     for (let weekStart = firstWeekStart; weekStart < strictEnd; weekStart = addUtcDays(weekStart, 7)) {
       const weekEnd = addUtcDays(weekStart, 7);
-      // 跨出檢核範圍（跨月）的那一週：範圍外還沒排的日子之後仍可以補上例假/休息日，
-      // 所以只有「缺的例/休已經超過範圍外還沒排的天數」（再怎麼補也補不齊）才算違規，
-      // 不能因為鄰月還沒排就誤報。範圍內的整週沒有未排的範圍外日子，維持原本行為。
-      let missingOutsideDays = 0;
+      const outsideDates = [];
+      const missingDates = [];
       for (let pointer = new Date(weekStart); pointer < weekEnd; pointer = addUtcDays(pointer, 1)) {
-        const outsideRange = pointer < strictStart || pointer >= strictEnd;
-        if (outsideRange && !byDate.has(dateKey(pointer))) missingOutsideDays += 1;
+        if (pointer >= strictStart && pointer < strictEnd) continue;
+        const key = dateKey(pointer);
+        outsideDates.push(key);
+        if (!byDate.has(key)) missingDates.push(key);
       }
       let hasScheduledInStrictRange = false;
       let regularRestCount = 0;
@@ -454,16 +481,56 @@ function validateWeeklyRest(grouped, shiftMap, { strictStart, strictEnd }) {
         else if (classification.isRestDay) restDayCount += 1;
       }
       const restShortfall = (regularRestCount < 1 ? 1 : 0) + (restDayCount < 1 ? 1 : 0);
-      if (hasScheduledInStrictRange && restShortfall > missingOutsideDays) {
+      if (!hasScheduledInStrictRange || restShortfall === 0) continue;
+      const weekStartKey = dateKey(weekStart);
+      if (restShortfall > missingDates.length) {
+        const lacking = `${regularRestCount < 1 ? '例假' : ''}${regularRestCount < 1 && restDayCount < 1 ? '與' : ''}${restDayCount < 1 ? '休息日' : ''}`;
+        const crossMonth = outsideDates.length > 0;
         violations.push(makeViolation(
           'weekly-one-regular-rest-one-rest-day',
-          `每週一至週日需至少1例1休：${dateKey(weekStart)} 週缺少${regularRestCount < 1 ? '例假' : ''}${regularRestCount < 1 && restDayCount < 1 ? '與' : ''}${restDayCount < 1 ? '休息日' : ''}`,
-          { employee, weekStart: dateKey(weekStart), regularRestCount, restDayCount },
+          `每週一至週日需至少1例1休：${weekStartKey} 週缺少${lacking}${crossMonth ? crossMonthViolationNote(outsideDates, missingDates, lacking) : ''}`,
+          {
+            employee,
+            weekStart: weekStartKey,
+            regularRestCount,
+            restDayCount,
+            ...(crossMonth ? { crossMonth: true, outsideDates, missingDates } : {}),
+          },
         ));
+        continue;
       }
+      const lackingList = [regularRestCount < 1 ? '例假' : '', restDayCount < 1 ? '休息日' : ''].filter(Boolean).join('、');
+      const weekEndKey = dateKey(addUtcDays(weekStart, 6));
+      pendingWeeks.push(makeViolation(
+        'weekly-rest-pending',
+        `跨月週（${weekStartKey}～${weekEndKey}）：${dateRangeText(missingDates)} 尚未排班，暫時無法判斷每週一例一休（目前缺${lackingList}）；${monthText(missingDates)} 班表排定後會重新檢核`,
+        {
+          employee,
+          weekStart: weekStartKey,
+          weekEnd: weekEndKey,
+          regularRestCount,
+          restDayCount,
+          missingDates,
+          missingMonths: Array.from(new Set(missingDates.map((key) => key.slice(0, 7)))).sort(),
+        },
+      ));
     }
   }
-  return violations;
+  pendingWeeks.sort((a, b) => (
+    a.weekStart.localeCompare(b.weekStart) || String(a.employee).localeCompare(String(b.employee))
+  ));
+  return { violations, pendingWeeks };
+}
+
+// 跨月週違規的補充說明：哪幾天屬於相鄰月份、哪幾天已排班或還沒排，讓人知道週別不只在本月
+function crossMonthViolationNote(outsideDates, missingDates, lacking) {
+  const outsideText = dateRangeText(outsideDates);
+  if (!missingDates.length) return `（此週跨月：${outsideText} 屬相鄰月份，已全部排班）`;
+  const missing = new Set(missingDates);
+  const scheduledOutside = outsideDates.filter((key) => !missing.has(key));
+  const shortfall = `尚未排班，最多只能再補 ${missingDates.length} 天，仍補不齊缺少的${lacking}`;
+  if (!scheduledOutside.length) return `（此週跨月：${outsideText} 屬相鄰月份且${shortfall}）`;
+  return `（此週跨月：${outsideText} 屬相鄰月份，${dateRangeText(scheduledOutside)} 已排班；${dateRangeText(missingDates)} ${shortfall}）`;
 }
 
 export async function assertScheduleRuleCompliance({
@@ -476,15 +543,24 @@ export async function assertScheduleRuleCompliance({
   if (!normalizedCandidates.length && !range) return { ok: true, violations: [] };
 
   const [shiftMap, policy] = await Promise.all([loadShiftMap(), loadLaborRulePolicy()]);
-  const employeeIds = Array.from(new Set(normalizedCandidates.map((item) => item.employee).filter(Boolean)));
-  if (!employeeIds.length) return { ok: true, violations: [] };
+  const allEmployeeIds = Array.from(new Set(normalizedCandidates.map((item) => item.employee).filter(Boolean)));
+  if (!allEmployeeIds.length) return { ok: true, violations: [] };
 
-  const validationRange = buildValidationRange(normalizedCandidates, range);
+  // 兼職人員不套用排班規範：整個人從檢核裡拿掉（班表不載入、不進任何一項規則），
+  // 單一出口，所以草稿預檢、匯入預覽與匯入、發布、完成發布都一致。
+  const exemptIds = await loadScheduleRuleExemptEmployeeIds(allEmployeeIds);
+  const employeeIds = allEmployeeIds.filter((id) => !exemptIds.has(id));
+  if (!employeeIds.length) return { ok: true, violations: [] };
+  const ruleCandidates = exemptIds.size
+    ? normalizedCandidates.filter((item) => !exemptIds.has(item.employee))
+    : normalizedCandidates;
+
+  const validationRange = buildValidationRange(ruleCandidates, range);
   const existing = await resolveLean(ShiftSchedule.find({
     employee: { $in: employeeIds },
     date: { $gte: validationRange.start, $lt: validationRange.end },
   }));
-  const allSchedules = mergeSchedules(existing, normalizedCandidates, ignoredScheduleIds);
+  const allSchedules = mergeSchedules(existing, ruleCandidates, ignoredScheduleIds);
   const grouped = groupSchedules(allSchedules);
   const [leaveDaysMap, holidayDays] = await Promise.all([
     loadApprovedLeaveDaysMap(
@@ -500,14 +576,18 @@ export async function assertScheduleRuleCompliance({
     ...validateContinuousNonRestDays(grouped, shiftMap, validationRange, leaveDaysMap, holidayDays),
   ];
   // The customer's internal policy remains stricter than flexible-work-time minima.
+  let pendingWeeks = [];
   if (strictWeeklyRest) {
-    violations.push(...validateWeeklyRest(grouped, shiftMap, validationRange));
+    const weekly = validateWeeklyRest(grouped, shiftMap, validationRange);
+    violations.push(...weekly.violations);
+    pendingWeeks = weekly.pendingWeeks;
   }
 
   if (violations.length) {
-    throw new LaborRuleValidationError('排班規範檢核未通過', violations);
+    throw new LaborRuleValidationError('排班規範檢核未通過', violations, pendingWeeks);
   }
-  return { ok: true, violations: [] };
+  // pendingWeeks 只在有跨月週還無法判斷時才附上，沒有的時候維持原本的 { ok, violations }
+  return { ok: true, violations: [], ...(pendingWeeks.length ? { pendingWeeks } : {}) };
 }
 
 function normalizeLabel(value) {

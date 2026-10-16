@@ -22,14 +22,21 @@
           被退簽{{ returnInfo.by ? `（${returnInfo.by}）` : '' }}：{{ returnInfo.message || '簽核人未填寫原因' }}
         </template>
       </el-alert>
+      <!-- 申請人所有假別的剩餘時數，並標出這張單核准前後的差別 -->
+      <LeaveBalancePanel
+        v-if="doc.leave_balances && typeof doc.leave_balances === 'object'"
+        :balances="doc.leave_balances"
+        title="申請人假別餘額"
+        class="mb-2"
+      />
       <el-alert
-        v-if="doc.form?.semanticType === 'leave' && doc.leave_balance"
+        v-else-if="doc.form?.semanticType === 'leave' && doc.leave_balance"
         type="info"
         :closable="false"
         class="leave-balance-alert mb-2"
       >
         <template #title>
-          特休餘額：已使用 {{ doc.leave_balance.usedDays }} 天／剩餘 {{ doc.leave_balance.remainingDays }} 天（年度總天數 {{ doc.leave_balance.totalDays }} 天）
+          特休餘額：已使用 {{ doc.leave_balance.usedHours ?? doc.leave_balance.usedDays }} 小時／剩餘 {{ doc.leave_balance.remainingHours ?? doc.leave_balance.remainingDays }} 小時（年度總時數 {{ doc.leave_balance.totalHours ?? doc.leave_balance.totalDays }} 小時）
         </template>
       </el-alert>
 
@@ -113,6 +120,7 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { apiFetch } from '../../api'
 import EmployeeAvatar from '../../components/EmployeeAvatar.vue'
+import LeaveBalancePanel from '../../components/LeaveBalancePanel.vue'
 import { formatFormValue, formatTaipeiDateTime, personNameOrFallback } from '../../utils/approvalDisplay'
 import { describeError, readApiError } from '../../utils/approvalErrors'
 import {

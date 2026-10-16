@@ -21,6 +21,8 @@ const mockEmployee = { find: jest.fn(), findById: jest.fn() };
 const mockAttendanceSetting = { findOne: jest.fn() };
 const mockDepartment = { find: jest.fn(), findById: jest.fn() };
 const mockHoliday = { find: jest.fn() };
+const mockHolidayMoveSetting = { find: jest.fn() };
+const mockHolidayRestResolution = { find: jest.fn() };
 const mockScheduleDayMemo = { find: jest.fn() };
 const mockGetLeaveFieldIds = jest.fn();
 const mockIsTokenBlacklisted = jest.fn();
@@ -33,6 +35,8 @@ jest.unstable_mockModule('../src/models/Employee.js', () => ({ default: mockEmpl
 jest.unstable_mockModule('../src/models/AttendanceSetting.js', () => ({ default: mockAttendanceSetting }));
 jest.unstable_mockModule('../src/models/Department.js', () => ({ default: mockDepartment }));
 jest.unstable_mockModule('../src/models/Holiday.js', () => ({ default: mockHoliday }));
+jest.unstable_mockModule('../src/models/HolidayMoveSetting.js', () => ({ default: mockHolidayMoveSetting }));
+jest.unstable_mockModule('../src/models/HolidayRestResolution.js', () => ({ default: mockHolidayRestResolution }));
 jest.unstable_mockModule('../src/models/ScheduleDayMemo.js', () => ({ default: mockScheduleDayMemo }));
 jest.unstable_mockModule('../src/services/leaveFieldService.js', () => buildLeaveFieldServiceMock(mockGetLeaveFieldIds));
 jest.unstable_mockModule('../src/services/laborRuleValidationService.js', () => ({
@@ -62,6 +66,12 @@ beforeAll(async () => {
 });
 
 const XLSX_TYPE = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+
+// 日期欄位不足整個月的檔案，每週一例一休無從檢核：匯入會多一則「未檢核」提醒（這些測試的檔案都只放前幾天）
+const partialColumnsWarning = () => expect.objectContaining({
+  row: null,
+  message: expect.stringContaining('未檢核每週一例一休'),
+});
 
 function authHeader(role = 'admin') {
   const token = jwt.sign({ id: 'tester', role, ver: 0 }, process.env.JWT_SECRET, {
@@ -102,6 +112,10 @@ function setApprovedLeave(days = [], type = '特休') {
 
 function setHolidays(holidays = []) {
   mockHoliday.find.mockReturnValue({ lean: jest.fn().mockResolvedValue(holidays) });
+}
+
+function setHolidayMoves(moves = []) {
+  mockHolidayMoveSetting.find.mockReturnValue({ lean: jest.fn().mockResolvedValue(moves) });
 }
 
 function setExistingSchedules(rows = []) {
@@ -149,6 +163,8 @@ beforeEach(() => {
   setShifts();
   setApprovedLeave([]);
   setHolidays([]);
+  setHolidayMoves([]);
+  mockHolidayRestResolution.find.mockReturnValue({ lean: jest.fn().mockResolvedValue([]) });
   setExistingSchedules([]);
 });
 
@@ -174,6 +190,7 @@ describe('schedule import of holiday and leave marks', () => {
     expect(preview.body.skippedDays).toBe(0);
     expect(preview.body.warnings).toEqual([
       expect.objectContaining({ row: 5, day: 10, code: '特', message: expect.stringContaining('已核准假單') }),
+      partialColumnsWarning(),
     ]);
     expect(mockShiftSchedule.bulkWrite).not.toHaveBeenCalled();
 
@@ -203,7 +220,7 @@ describe('schedule import of holiday and leave marks', () => {
     expect(preview.status).toBe(201);
     const shiftIds = mockShiftSchedule.bulkWrite.mock.calls[0][0].map(({ updateOne }) => updateOne.update.$set.shiftId);
     expect(shiftIds).toEqual(['day', 'holiday', 'special']);
-    expect(preview.body.warnings).toEqual([]);
+    expect(preview.body.warnings).toEqual([partialColumnsWarning()]);
     expect(preview.body.informationalDays).toBe(2);
   });
 
@@ -218,6 +235,7 @@ describe('schedule import of holiday and leave marks', () => {
     expect(preview.body.scheduleDays).toBe(2);
     expect(preview.body.warnings).toEqual([
       expect.objectContaining({ day: 2, code: '國', message: expect.stringContaining('假日日曆') }),
+      partialColumnsWarning(),
     ]);
   });
 
@@ -232,11 +250,12 @@ describe('schedule import of holiday and leave marks', () => {
     expect(preview.body.scheduleDays).toBe(2);
     expect(preview.body.informationalDays).toBe(2);
     expect(preview.body.skippedDays).toBe(2);
-    expect(preview.body.warnings).toHaveLength(2);
-    preview.body.warnings.forEach((warning) => {
+    expect(preview.body.warnings).toHaveLength(3);
+    preview.body.warnings.slice(0, 2).forEach((warning) => {
       expect(warning.message).toContain('班別設定');
     });
-    expect(preview.body.warnings.map((warning) => warning.code)).toEqual(['國', '事假']);
+    expect(preview.body.warnings.map((warning) => warning.code)).toEqual(['國', '事假', '']);
+    expect(preview.body.warnings[2]).toEqual(partialColumnsWarning());
   });
 
   it('still rejects unknown codes that are neither holiday nor leave marks', async () => {
@@ -267,7 +286,8 @@ describe('schedule import of holiday and leave marks', () => {
     expect(nonWorkOnly.body.errors).toEqual([]);
     expect(nonWorkOnly.body.scheduleDays).toBe(3);
     // 特 在核准請假日，不再提醒「沒有假單」；國 的日曆提醒仍在
-    expect(nonWorkOnly.body.warnings.map((warning) => warning.code)).toEqual(['國']);
+    expect(nonWorkOnly.body.warnings.map((warning) => warning.code)).toEqual(['國', '']);
+    expect(nonWorkOnly.body.warnings[1]).toEqual(partialColumnsWarning());
   });
 
   it('never treats a shift without working time as a working shift, even if it was saved as 上班', async () => {
@@ -366,6 +386,7 @@ describe('schedule import preview rule check', () => {
     expect(preview.status).toBe(200);
     expect(preview.body.violations).toEqual([]);
     expect(preview.body.warnings).toEqual([
+      partialColumnsWarning(),
       expect.objectContaining({ message: expect.stringContaining('排班規範檢核暫時無法完成') }),
     ]);
     consoleError.mockRestore();
@@ -644,5 +665,218 @@ describe('schedule import helpers', () => {
     expect(await shared.hasLeaveConflict('e1', day, SHIFTS.find((shift) => shift.code === '國'))).toBe(false);
     expect(await shared.hasLeaveConflict('e1', day, SHIFTS.find((shift) => shift.code === '特'))).toBe(false);
     expect(await shared.hasLeaveConflict('e1', new Date('2026-06-04T00:00:00.000Z'))).toBe(false);
+  });
+});
+
+/* ------------------- 國定假日休假紀錄：匯入提醒與匯出第二個工作表 ------------------- */
+describe('schedule import checks the national-holiday ledger instead of the holiday date', () => {
+  const monthCodes = (overrides = {}) => Array.from({ length: 30 }, (_, index) => overrides[index + 1] || '日');
+  const holidayWarnings = (body) => body.warnings.filter((warning) => String(warning.message).includes('假日日曆'));
+  const shortageWarnings = (body) => body.warnings.filter((warning) => String(warning.message).includes('只排了'));
+
+  it('does not warn about a 國 moved to another day of the month', async () => {
+    setHolidays([{ date: new Date('2026-06-19T00:00:00.000Z'), name: '端午節', type: '國定假日' }]);
+    const codes = Array.from({ length: 19 }, () => '日');
+    codes[4] = '國';
+
+    const preview = await importWorkbook(await buildWorkbook(codes));
+
+    expect(preview.status).toBe(200);
+    expect(holidayWarnings(preview.body)).toEqual([]);
+    expect(preview.body.informationalDays).toBe(1);
+  });
+
+  it('warns about each 國 beyond the number of national holidays and names the calendar', async () => {
+    setHolidays([{ date: new Date('2026-06-19T00:00:00.000Z'), name: '端午節', type: '國定假日' }]);
+    const codes = Array.from({ length: 19 }, () => '日');
+    codes[2] = '國';
+    codes[9] = '國';
+    codes[18] = '國';
+
+    const preview = await importWorkbook(await buildWorkbook(codes));
+
+    expect(preview.status).toBe(200);
+    expect(holidayWarnings(preview.body)).toEqual([
+      expect.objectContaining({ row: 5, day: 3, code: '國', message: expect.stringContaining('1 個國定假日') }),
+      expect.objectContaining({ row: 5, day: 10, code: '國' }),
+    ]);
+  });
+
+  it('follows a company holiday move when counting the national holidays', async () => {
+    setHolidays([{ date: new Date('2026-06-19T00:00:00.000Z'), name: '端午節', type: '國定假日' }]);
+    setHolidayMoves([{
+      enableHolidayMove: true,
+      sourceDate: new Date('2026-06-19T00:00:00.000Z'),
+      targetDate: new Date('2026-06-18T00:00:00.000Z'),
+    }]);
+    const codes = Array.from({ length: 19 }, () => '日');
+    codes[17] = '國';
+
+    const preview = await importWorkbook(await buildWorkbook(codes));
+
+    expect(holidayWarnings(preview.body)).toEqual([]);
+  });
+
+  it('only for a whole-month file, warns once per employee about national holidays without a 國 to match', async () => {
+    setHolidays([
+      { date: new Date('2026-06-19T00:00:00.000Z'), name: '端午節', type: '國定假日' },
+      { date: new Date('2026-06-22T00:00:00.000Z'), name: '補假', type: '國定假日' },
+    ]);
+
+    const whole = await importWorkbook(await buildWorkbook(monthCodes({ 5: '國' })));
+    expect(whole.body.errors).toEqual([]);
+    expect(shortageWarnings(whole.body)).toEqual([
+      expect.objectContaining({ row: 5, day: null, code: 'A001', message: expect.stringContaining('本月 2 個國定假日只排了 1 個「國」') }),
+    ]);
+    expect(shortageWarnings(whole.body)[0].message).toContain('補假 06/22');
+
+    const partial = await importWorkbook(await buildWorkbook(monthCodes({ 5: '國' }).slice(0, 25)));
+    expect(shortageWarnings(partial.body)).toEqual([]);
+
+    const settled = await importWorkbook(await buildWorkbook(monthCodes({ 5: '國', 19: '國' })));
+    expect(shortageWarnings(settled.body)).toEqual([]);
+  });
+
+  it('does not report a holiday that falls on a rest day as missing', async () => {
+    setHolidays([{ date: new Date('2026-06-19T00:00:00.000Z'), name: '端午節', type: '國定假日' }]);
+
+    const preview = await importWorkbook(await buildWorkbook(monthCodes({ 19: '休' })));
+
+    expect(shortageWarnings(preview.body)).toEqual([]);
+  });
+});
+
+describe('schedule Excel export carries the national-holiday ledger as the second worksheet', () => {
+  const chain = (rows) => ({
+    select: jest.fn().mockReturnThis(),
+    populate: jest.fn().mockReturnThis(),
+    lean: jest.fn().mockResolvedValue(rows),
+  });
+  const rowOf = (day, shiftId) => ({
+    employee: { _id: { toString: () => 'e1' }, name: '測試員工' },
+    date: new Date(`2026-06-${String(day).padStart(2, '0')}T00:00:00.000Z`),
+    shiftId,
+    department: 'd1',
+    state: 'finalized',
+  });
+
+  async function exportAll(schedules) {
+    mockEmployee.find.mockReturnValue({
+      select: jest.fn().mockReturnThis(),
+      populate: jest.fn().mockReturnThis(),
+      lean: jest.fn().mockResolvedValue([{
+        _id: { toString: () => 'e1' },
+        employeeId: 'A001',
+        name: '測試員工',
+        title: '',
+        practiceTitle: '護理師',
+        subDepartment: { name: 'A單位' },
+      }]),
+    });
+    mockDepartment.findById.mockReturnValue({ select: jest.fn().mockReturnThis(), lean: jest.fn().mockResolvedValue({ name: '護理' }) });
+    mockShiftSchedule.find.mockReturnValue(chain(schedules));
+    mockScheduleDayMemo.find.mockReturnValue({ sort: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue([]) }) });
+    const res = await request(app)
+      .get('/api/schedules/export?month=2026-06&department=d1&format=excel')
+      .set('Authorization', authHeader('admin'))
+      .buffer(true)
+      .parse((response, callback) => {
+        const chunks = [];
+        response.on('data', (chunk) => chunks.push(chunk));
+        response.on('end', () => callback(null, Buffer.concat(chunks)));
+      });
+    expect(res.status).toBe(200);
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(res.body);
+    return { workbook, buffer: res.body };
+  }
+
+  const twoHolidays = [
+    { date: new Date('2026-06-19T00:00:00.000Z'), name: '端午節', type: '國定假日' },
+    { date: new Date('2026-06-22T00:00:00.000Z'), name: '補假', type: '國定假日' },
+  ];
+
+  it('adds 國定假日休假紀錄 after the roster sheet: rested on the date, moved to another day, counts and legend', async () => {
+    setHolidays(twoHolidays);
+
+    const { workbook } = await exportAll([rowOf(19, 'holiday'), rowOf(10, 'holiday'), rowOf(1, 'day')]);
+
+    expect(workbook.worksheets.map((sheet) => sheet.name)).toEqual(['工作表1', '國定假日休假紀錄']);
+    const sheet = workbook.getWorksheet('國定假日休假紀錄');
+    expect(sheet.getRow(1).getCell(1).value).toBe('護理　2026年06月 國定假日休假紀錄');
+    expect(sheet.getRow(3).values.slice(1)).toEqual([
+      '員工代號', '姓名', '單位', '職稱', '端午節 06/19', '補假 06/22', '應休', '當日休', '移休', '未休', '待處理', '多排的國', '處理方式',
+    ]);
+    const row = sheet.getRow(4);
+    expect(row.getCell(1).value).toBe('A001');
+    expect(row.getCell(2).value).toBe('測試員工');
+    expect(row.getCell(3).value).toBe('A單位');
+    expect(row.getCell(4).value).toBe('護理師');
+    expect(row.getCell(5).value).toBe('當日休');
+    expect(row.getCell(6).value).toBe('移休 06/10');
+    expect([7, 8, 9, 10, 11].map((column) => row.getCell(column).value)).toEqual([2, 1, 1, 0, 0]);
+  });
+
+  it('matches 國 on other days to the holidays, lists the extra 國, and marks a worked holiday without a 國 in red', async () => {
+    setHolidays(twoHolidays);
+
+    const moved = await exportAll([rowOf(19, 'day'), rowOf(22, 'day'), rowOf(3, 'holiday'), rowOf(4, 'holiday'), rowOf(5, 'holiday')]);
+    const movedRow = moved.workbook.getWorksheet('國定假日休假紀錄').getRow(4);
+    expect(movedRow.getCell(5).value).toBe('移休 06/03');
+    expect(movedRow.getCell(6).value).toBe('移休 06/04');
+    expect(movedRow.getCell(12).value).toBe('06/05');
+
+    const worked = await exportAll([rowOf(19, 'day'), rowOf(22, 'day')]);
+    const workedRow = worked.workbook.getWorksheet('國定假日休假紀錄').getRow(4);
+    expect(workedRow.getCell(5).value).toBe('未休（上班）');
+    expect(workedRow.getCell(6).value).toBe('未休（上班）');
+    expect(workedRow.getCell(5).fill.fgColor.argb).toBe('FFF4CCCC');
+    expect([7, 8, 9, 10, 11].map((column) => workedRow.getCell(column).value)).toEqual([2, 0, 0, 2, 2]);
+  });
+
+  it('keeps the roster sheet importable: the importer still reads the first worksheet', async () => {
+    setHolidays(twoHolidays);
+    const { buffer } = await exportAll([rowOf(19, 'holiday'), rowOf(1, 'day')]);
+    const { parseScheduleWorkbook } = await import('../src/services/scheduleWorkbookService.js');
+
+    const parsed = await parseScheduleWorkbook(buffer, { month: '2026-06' });
+
+    expect(parsed.worksheetName).toBe('工作表1');
+    // 假日紀錄表（第二個工作表）的內容不會被當成員工列讀進來
+    expect(parsed.rows.filter((row) => row.employeeId === 'A001')).toHaveLength(1);
+    expect(parsed.rows.some((row) => ['員工代號', '端午節 06/19'].includes(row.employeeId))).toBe(false);
+    expect(parsed.rows[0].employeeId).toBe('A001');
+    expect(parsed.rows[0].entries.map((entry) => [entry.day, entry.code])).toEqual([[1, '日'], [19, '國']]);
+  });
+
+  it('shows a company-moved holiday on its new date in the calendar row and in the ledger header', async () => {
+    setHolidays(twoHolidays);
+    setHolidayMoves([{
+      enableHolidayMove: true,
+      sourceDate: new Date('2026-06-19T00:00:00.000Z'),
+      targetDate: new Date('2026-06-18T00:00:00.000Z'),
+    }]);
+
+    const { workbook } = await exportAll([rowOf(18, 'holiday')]);
+
+    const roster = workbook.getWorksheet('工作表1');
+    expect(roster.getRow(3).getCell(4 + 18).value).toBe('端午節');
+    expect(roster.getRow(3).getCell(4 + 19).value).toBeFalsy();
+    expect(roster.getRow(3).getCell(4 + 22).value).toBe('補假');
+    const ledger = workbook.getWorksheet('國定假日休假紀錄');
+    expect(ledger.getRow(3).getCell(5).value).toBe('端午節 06/18（原 06/19）');
+    expect(ledger.getRow(4).getCell(5).value).toBe('當日休');
+  });
+
+  it('still exports the roster when the ledger cannot be built', async () => {
+    setHolidays(twoHolidays);
+    mockHolidayRestResolution.find.mockImplementation(() => { throw new Error('boom'); });
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+    const { workbook } = await exportAll([rowOf(19, 'holiday')]);
+
+    expect(workbook.worksheets.map((sheet) => sheet.name)).toEqual(['工作表1']);
+    expect(errorSpy).toHaveBeenCalledWith('Schedule export holiday ledger sheet failed', 'Error');
+    errorSpy.mockRestore();
   });
 });

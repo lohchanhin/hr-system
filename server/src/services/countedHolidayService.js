@@ -73,3 +73,46 @@ export function buildCountedHolidayDays({ holidays = [], moves = [], start, end 
   }
   return days;
 }
+
+/**
+ * 某個月份「有效的國定假日」清單（國定假日休假紀錄、匯入核對用）。
+ * 只取算數的國定假日（isPayableNationalHoliday），同一天重複的紀錄只留一筆；
+ * 已啟用、來源日與目標日都在這個月份、且來源日確實有這個假日的挪移，會把假日移到目標日
+ * （和排班頁 GET /api/holidays-public/by-month 的規則一致）。
+ * 回傳 [{ id, name, originalDate, date, movedFrom }]，依有效日期排序：
+ * id = 原始日期（YYYY-MM-DD，不隨公司挪移改變），date = 有效日期，movedFrom = 被公司挪移前的日期或 null。
+ */
+export function buildEffectiveMonthHolidays({ holidays = [], moves = [], month } = {}) {
+  const prefix = String(month ?? '').trim();
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(prefix)) return [];
+
+  const byDate = new Map();
+  for (const holiday of holidays || []) {
+    if (!isPayableNationalHoliday(holiday)) continue;
+    const key = utcDateKey(holiday.date);
+    if (!key || !key.startsWith(prefix) || byDate.has(key)) continue;
+    byDate.set(key, {
+      id: key,
+      name: String(holiday.name || holiday.description || holiday.desc || '國定假日').trim() || '國定假日',
+      originalDate: key,
+      date: key,
+      movedFrom: null,
+    });
+  }
+
+  for (const move of moves || []) {
+    if (move?.enableHolidayMove === false) continue;
+    const source = move?.sourceDate ? utcDateKey(move.sourceDate) : '';
+    const target = move?.targetDate ? utcDateKey(move.targetDate) : '';
+    if (!source || !target || source === target) continue;
+    if (!source.startsWith(prefix) || !target.startsWith(prefix)) continue;
+    const holiday = byDate.get(source);
+    if (!holiday || holiday.movedFrom) continue;
+    holiday.date = target;
+    holiday.movedFrom = source;
+  }
+
+  return [...byDate.values()].sort((a, b) => (
+    a.date.localeCompare(b.date) || a.originalDate.localeCompare(b.originalDate)
+  ));
+}

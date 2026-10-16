@@ -92,10 +92,13 @@ describe('請假統計', () => {
     ])
     expect(result.summary.totalLeaves).toBe(3)
     expect(result.summary.totalDays).toBe(5.5)
+    // 請假的單位是小時：每筆與合計都另外帶時數（天數 x 8）
+    expect(result.records.map((record) => record.hours)).toEqual([24, 16, 4])
+    expect(result.summary.totalHours).toBe(44)
     expect(result.summary.byType).toEqual([
-      expect.objectContaining({ leaveType: '病假', count: 1, days: 3 }),
-      expect.objectContaining({ leaveType: '特休假', count: 1, days: 2 }),
-      expect.objectContaining({ leaveType: '事假', count: 1, days: 0.5 }),
+      expect.objectContaining({ leaveType: '病假', count: 1, days: 3, hours: 24 }),
+      expect.objectContaining({ leaveType: '特休假', count: 1, days: 2, hours: 16 }),
+      expect.objectContaining({ leaveType: '事假', count: 1, days: 0.5, hours: 4 }),
     ])
   })
 
@@ -153,13 +156,13 @@ describe('請假統計', () => {
   it('returns the empty structure when nothing falls in the month', async () => {
     approvalsByForm({})
 
-    expect(await report('leave')).toEqual({ records: [], summary: { totalLeaves: 0, totalDays: 0, byType: [] } })
+    expect(await report('leave')).toEqual({ records: [], summary: { totalLeaves: 0, totalDays: 0, totalHours: 0, byType: [] } })
   })
 
   it('returns the empty structure when there is no leave form at all', async () => {
     mockGetAllLeaveFieldInfos.mockResolvedValue([])
 
-    expect(await report('leave')).toEqual({ records: [], summary: { totalLeaves: 0, totalDays: 0, byType: [] } })
+    expect(await report('leave')).toEqual({ records: [], summary: { totalLeaves: 0, totalDays: 0, totalHours: 0, byType: [] } })
     expect(mockApprovalRequest.find).not.toHaveBeenCalled()
   })
 
@@ -177,7 +180,8 @@ describe('請假統計', () => {
     const result = await report('specialLeave')
 
     expect(result.records.map((record) => [record.approvalId, record.days])).toEqual([['a3', 1], ['a1', 2]])
-    expect(result.summary).toEqual({ totalRequests: 2, totalDays: 3 })
+    expect(result.records.map((record) => [record.approvalId, record.hours])).toEqual([['a3', 8], ['a1', 16]])
+    expect(result.summary).toEqual({ totalRequests: 2, totalDays: 3, totalHours: 24 })
   })
 })
 

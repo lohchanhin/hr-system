@@ -227,10 +227,10 @@ describeIntegration('security authorization with isolated MongoDB', () => {
     })).toBe(1)
   })
 
-  it('deducts annual leave once for the same approval request', async () => {
+  it('deducts annual leave hours once for the same approval request', async () => {
     await Employee.updateOne(
       { _id: attacker._id },
-      { $set: { annualLeave: { totalDays: 10, usedDays: 0, year: 2035 } } },
+      { $set: { annualLeave: { totalHours: 80, usedHours: 0, year: 2035 } } },
     )
     const requestId = new mongoose.Types.ObjectId().toString()
 
@@ -242,7 +242,27 @@ describeIntegration('security authorization with isolated MongoDB', () => {
     const persisted = await Employee.findById(attacker._id)
       .select('+annualLeave.appliedApprovalRequestIds')
       .lean()
-    expect(persisted.annualLeave.usedDays).toBe(2)
+    expect(persisted.annualLeave.usedHours).toBe(2)
+    expect(persisted.annualLeave.appliedApprovalRequestIds).toEqual([requestId])
+  })
+
+  it('converts an employee that is still on the old day fields exactly once and deducts once, even when two deductions race', async () => {
+    // 舊格式：10 天、已用 1 天（沒有 totalHours）；啟動時的搬移沒跑到（或搬移後才建立）時由扣減當下補上
+    await Employee.collection.updateOne(
+      { _id: attacker._id },
+      { $set: { annualLeave: { totalDays: 10, usedDays: 1, year: 2035, appliedApprovalRequestIds: [] } } },
+    )
+    const requestId = new mongoose.Types.ObjectId().toString()
+
+    await Promise.all([
+      deductAnnualLeave(attacker._id, 8, requestId),
+      deductAnnualLeave(attacker._id, 8, requestId),
+    ])
+
+    const persisted = await Employee.findById(attacker._id)
+      .select('+annualLeave.appliedApprovalRequestIds')
+      .lean()
+    expect(persisted.annualLeave).toMatchObject({ totalHours: 80, usedHours: 16, unitSource: 'migrated-days', totalDays: 10, usedDays: 1 })
     expect(persisted.annualLeave.appliedApprovalRequestIds).toEqual([requestId])
   })
 

@@ -1388,3 +1388,250 @@ describe('Approval.vue 申請單明細（C2、C5）', () => {
     expect(alertSpy.mock.calls.at(-1)[0]).toContain('沒有權限')
   })
 })
+
+// 請假以「小時」為單位：申請頁顯示自己所有假別的剩餘時數、時數欄位依起訖時間自動帶入、超額即時提示；
+// 簽核人（主管、人資）打開明細看到申請人的餘額，簽核動作視窗也有精簡的餘額
+describe('Approval.vue 請假：時數、假別餘額與超額提示', () => {
+  const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms))
+  const balancesBody = (patch = {}) => ({
+    employee: { _id: 'me', name: '我', employeeId: 'A001' },
+    year: 2026,
+    range: { start: '2026-01-01', end: '2026-12-31' },
+    maxHoursPerDay: 8,
+    minUnitHours: 0.5,
+    dayHours: 8,
+    items: [
+      { key: 'annual', name: '特休', aliases: ['特休假'], source: 'employee', period: 'year', enforcement: 'block', status: 'ok', quotaHours: 80, usedHours: 16, pendingHours: 0, remainingHours: 64, availableHours: 64, includes: [] },
+      { key: 'personal', name: '事假', aliases: [], source: 'policy', period: 'year', enforcement: 'warn', status: 'ok', quotaHours: 112, usedHours: 44, pendingHours: 0, remainingHours: 68, availableHours: 68, includes: [], countsAgainst: null },
+    ],
+    unmatched: [],
+    ...patch,
+  })
+  const leaveFields = [
+    { _id: 'type', label: '假別', type_1: 'select', required: true, order: 1, options: ['特休假', '事假'] },
+    { _id: 'start', label: '開始時間', type_1: 'datetime', required: true, order: 2 },
+    { _id: 'end', label: '結束時間', type_1: 'datetime', required: true, order: 3 },
+    { _id: 'hours', label: '時數', type_1: 'number', required: true, order: 4 },
+  ]
+  const leaveRoutes = (extra = []) => [
+    ...extra,
+    ['/api/approvals/leave-balances', json(balancesBody())],
+    [(url) => url.includes('/api/approvals/forms?'), json([{ _id: 'f1', name: '請假', category: '人事', semanticType: 'leave', default_key: 'leave' }])],
+    ['/api/approvals/forms/f1/fields', json(leaveFields)],
+    ['/api/approvals/forms/f1/workflow', json({ steps: [{ approver_type: 'manager', approver_value: 'APPLICANT_SUPERVISOR' }] })],
+  ]
+  async function selectLeave(wrapper) {
+    wrapper.vm.applyState.formId = 'f1'
+    await wrapper.vm.onSelectForm()
+    await flushPromises()
+  }
+  const fill = async (wrapper, patch) => {
+    wrapper.vm.applyState.formData = { ...wrapper.vm.applyState.formData, ...patch }
+    await flushPromises()
+  }
+  const balanceCalls = (calls) => callsTo(calls, c => /\/api\/approvals\/leave-balances/.test(c.url))
+
+  it.each(['employee', 'supervisor', 'admin'])('%s 一打開簽核頁就在申請表單看到自己所有假別的剩餘時數（時數為主，天數換算在旁）', async (role) => {
+    const calls = installFetch(leaveRoutes())
+    const wrapper = await mountPage({ role })
+
+    expect(balanceCalls(calls).length).toBeGreaterThanOrEqual(1)
+    const panel = wrapper.find('[data-test="leave-balance-panel"]')
+    expect(panel.exists()).toBe(true)
+    expect(panel.text()).toContain('我的假別餘額')
+    expect(panel.text()).toContain('特休')
+    expect(panel.text()).toContain('64 小時（8 天）')
+    expect(panel.text()).toContain('事假')
+    expect(panel.text()).toContain('112 小時（14 天）')
+  })
+
+  it('餘額載入失敗只在餘額區顯示一行提示，申請表單照常可以填寫，不跳出對話框', async () => {
+    installFetch(leaveRoutes([['/api/approvals/leave-balances', json({ error: 'boom' }, 500)]]))
+    const wrapper = await mountPage()
+    await selectLeave(wrapper)
+
+    expect(wrapper.find('[data-test="leave-balance-error"]').text()).toContain('假別餘額暫時無法載入')
+    expect(wrapper.vm.fieldList.map(f => f._id)).toEqual(['type', 'start', 'end', 'hours'])
+    expect(alertSpy).not.toHaveBeenCalled()
+  })
+
+  it('時數欄位是 0.5 小時為單位的輸入框，依起訖時間自動帶入，上限是所選期間最多可請的時數', async () => {
+    installFetch(leaveRoutes())
+    const wrapper = await mountPage()
+    await selectLeave(wrapper)
+
+    const hoursField = wrapper.find('[data-test="leave-hours-field"]')
+    expect(hoursField.exists()).toBe(true)
+    expect(hoursField.text()).toContain('依起訖時間自動帶入，可調整（0.5 小時為單位，每日最多 8 小時）')
+
+    await fill(wrapper, { start: '2026-08-03T09:00:00+08:00' })
+    expect(wrapper.vm.applyState.formData.hours).toBeNull()
+    await fill(wrapper, { end: '2026-08-03T13:00:00+08:00' })
+    expect(wrapper.vm.applyState.formData.hours).toBe(4)
+    expect(wrapper.vm.applyLeaveHoursConfig).toMatchObject({ max: 4, maxHoursPerDay: 8, minUnitHours: 0.5 })
+
+    // 申請人自己改成 2.5 之後，起訖時間再改也不會被蓋掉
+    await fill(wrapper, { hours: 2.5 })
+    await fill(wrapper, { end: '2026-08-03T18:00:00+08:00' })
+    expect(wrapper.vm.applyState.formData.hours).toBe(2.5)
+  })
+
+  it('依伺服器回傳的班表更新建議時數（12 小時班算 12，休息日算 0），伺服器答不出來就維持日曆日的估算', async () => {
+    const calls = installFetch(leaveRoutes([
+      [(url) => url.includes('/api/approvals/leave-hours-hint'), json({ valid: true, maxHours: 12, suggestedHours: 12 })],
+    ]))
+    const wrapper = await mountPage()
+    await selectLeave(wrapper)
+
+    // 日期選擇器給的是 Date：台灣 8/4 00:00 = UTC 8/3 16:00
+    const midnight = new Date('2026-08-03T16:00:00.000Z')
+    await fill(wrapper, { start: midnight, end: midnight })
+    expect(wrapper.vm.applyState.formData.hours).toBe(8) // 先用本機的日曆日估算
+    await sleep(400)
+    await flushPromises()
+
+    const hintCalls = callsTo(calls, c => c.url.includes('/api/approvals/leave-hours-hint'))
+    expect(hintCalls).toHaveLength(1)
+    expect(decodeURIComponent(hintCalls[0].url)).toContain('start=2026-08-03T16:00:00.000Z')
+    expect(wrapper.vm.applyState.formData.hours).toBe(12)
+    expect(wrapper.vm.applyLeaveHoursConfig.max).toBe(12)
+  })
+
+  it('即時提示：事假還剩多少、本次申請核准後剩多少；超過額度時是警告，特休超過則是無法送出', async () => {
+    installFetch(leaveRoutes())
+    const wrapper = await mountPage()
+    await selectLeave(wrapper)
+    // 台灣 8/3 到 8/14（日期選擇器的午夜）共 12 個日曆日，時數上限 96 小時，足夠試各種超額情況
+    await fill(wrapper, { type: '事假', start: new Date('2026-08-02T16:00:00.000Z'), end: new Date('2026-08-13T16:00:00.000Z'), hours: 8 })
+
+    let hint = wrapper.find('[data-test="leave-request-hint"]')
+    expect(hint.exists()).toBe(true)
+    expect(hint.text()).toContain('事假：目前可請 68 小時')
+    expect(hint.text()).toContain('核准後剩 60 小時')
+
+    await fill(wrapper, { hours: 80 })
+    expect(wrapper.find('.form-fields .el-alert--warning').text()).toContain('將超出 12 小時')
+
+    await fill(wrapper, { type: '特休假', hours: 72 })
+    expect(wrapper.find('.form-fields .el-alert--error').text()).toContain('無法送出')
+
+    // 換成沒有規則的假別就沒有提示
+    await fill(wrapper, { type: '神祕假', hours: 8 })
+    expect(wrapper.find('[data-test="leave-request-hint"]').exists()).toBe(false)
+  })
+
+  it('送出時帶上時數；超過額度但只是警告時，單照常送出，伺服器附上的提醒顯示給申請人，餘額重新整理', async () => {
+    const calls = installFetch(leaveRoutes([
+      [post('/api/approvals'), json({ _id: 'r9', status: 'pending', warnings: [{ code: 'LEAVE_QUOTA_EXCEEDED', message: '事假今年額度 112 小時，將超出 12 小時' }] }, 201)],
+    ]))
+    const wrapper = await mountPage()
+    await selectLeave(wrapper)
+    await fill(wrapper, { type: '事假', start: '2026-08-03T09:00:00+08:00', end: '2026-08-03T18:00:00+08:00', hours: 8 })
+    const before = balanceCalls(calls).length
+
+    await wrapper.vm.submitApply()
+    await flushPromises()
+
+    const submit = callsTo(calls, c => c.method === 'POST' && /\/api\/approvals$/.test(c.url))[0]
+    expect(JSON.parse(submit.body).form_data.hours).toBe(8)
+    expect(alertSpy).toHaveBeenCalledWith('送出申請成功！\n事假今年額度 112 小時，將超出 12 小時')
+    expect(balanceCalls(calls).length).toBeGreaterThan(before)
+    expect(wrapper.vm.activeTab).toBe('mine')
+  })
+
+  it('簽核人打開請假單明細，看到申請人所有假別的餘額，以及這張單的假別、核准前後的剩餘時數', async () => {
+    installFetch([[(url) => url.endsWith('/api/approvals/p1'), json({
+      _id: 'p1', status: 'pending',
+      form: { _id: 'f1', name: '請假', category: '人事', semanticType: 'leave', fields: [] },
+      form_data: {}, applicant_employee: { _id: 'u1', name: '王小明' }, steps: [], logs: [],
+      viewer: { can_act: true },
+      leave_balances: balancesBody({
+        employee: { _id: 'u1', name: '王小明' },
+        focus: { typeKey: 'personal', typeName: '事假', requestedHours: 80, remainingBefore: 68, remainingAfter: -12, exceeded: true, message: '事假今年額度 112 小時，已使用 44 小時，可請 68 小時，本次申請 80 小時，將超出 12 小時', enforcement: 'warn' },
+      }),
+      leave_balance: { totalHours: 80, usedHours: 16, remainingHours: 64 },
+    })]])
+    const wrapper = await mountPage({ role: 'supervisor' })
+    await wrapper.vm.openDetail('p1')
+    await flushPromises()
+
+    const dialog = wrapper.findAll('.el-dialog').find(d => d.text().includes('申請單明細'))
+    const panel = dialog.find('[data-test="leave-balance-panel"]')
+    expect(panel.exists()).toBe(true)
+    expect(panel.text()).toContain('申請人假別餘額')
+    expect(panel.text()).toContain('64 小時（8 天）')
+    const focus = panel.find('[data-test="leave-balance-focus"]')
+    expect(focus.text()).toContain('本次申請：事假 80 小時')
+    expect(focus.text()).toContain('核准前剩 68 小時')
+    expect(focus.text()).toContain('將超出 12 小時')
+    // 有各假別餘額時不再顯示舊的單行特休提示
+    expect(dialog.find('.leave-balance-alert').exists()).toBe(false)
+  })
+
+  it('舊版伺服器只回特休餘額時，明細仍顯示（以小時為單位）', async () => {
+    installFetch([[(url) => url.endsWith('/api/approvals/p1'), json({
+      _id: 'p1', status: 'pending', form: { _id: 'f1', name: '請假', semanticType: 'leave', fields: [] },
+      form_data: {}, applicant_employee: { _id: 'u1', name: '王小明' }, steps: [], logs: [],
+      leave_balance: { totalHours: 80, usedHours: 16, remainingHours: 64 },
+    })]])
+    const wrapper = await mountPage({ role: 'supervisor' })
+    await wrapper.vm.openDetail('p1')
+    await flushPromises()
+
+    const alertBox = wrapper.find('.leave-balance-alert')
+    expect(alertBox.text()).toContain('特休餘額：已使用 16 小時／剩餘 64 小時（年度總時數 80 小時）')
+  })
+
+  it('簽核請假單的動作視窗上方有申請人的精簡餘額（向伺服器取申請人的），其他表單沒有', async () => {
+    const calls = installFetch(leaveRoutes())
+    const wrapper = await mountPage({ role: 'supervisor' })
+    const leaveRow = {
+      _id: 'a1', status: 'pending', form: { _id: 'f1', name: '請假', semanticType: 'leave' },
+      applicant_employee: { _id: 'u7', name: '王小明' }, current_step_index: 0, steps: [{ can_return: true, approvers: [] }],
+    }
+    wrapper.vm.openAction(leaveRow, 'approve')
+    await flushPromises()
+
+    const own = balanceCalls(calls).filter(c => c.url.includes('employeeId=u7'))
+    expect(own).toHaveLength(1)
+    const dialog = wrapper.findAll('.el-dialog').find(d => d.text().includes('意見／備註'))
+    expect(dialog.text()).toContain('申請人假別餘額')
+
+    wrapper.vm.actionDlg.visible = false
+    const overtimeRow = { ...leaveRow, _id: 'a2', form: { _id: 'f2', name: '加班申請', semanticType: 'overtime' }, applicant_employee: { _id: 'u8', name: '李小華' } }
+    wrapper.vm.openAction(overtimeRow, 'approve')
+    await flushPromises()
+    expect(balanceCalls(calls).filter(c => c.url.includes('employeeId=u8'))).toHaveLength(0)
+  })
+
+  it('被退簽的請假單修改並重新送出時，同樣保留原本的時數、提示餘額，並顯示伺服器的警告', async () => {
+    const returned = {
+      _id: 'r1', status: 'returned',
+      form: { _id: 'f1', name: '請假', category: '人事', semanticType: 'leave', fields: leaveFields },
+      form_data: { type: '事假', start: '2026-08-03T09:00:00+08:00', end: '2026-08-03T18:00:00+08:00', hours: 8 },
+      applicant_employee: { _id: 'me', name: '我' }, current_step_index: 0,
+      steps: [{ approvers: [{ approver: { _id: 'u2', name: 'Alice' }, decision: 'pending' }] }],
+      logs: [{ action: 'return', by_employee: { _id: 'u2', name: 'Alice' }, message: '時數不對', at: '2026-06-19T02:00:00.000Z' }],
+    }
+    const calls = installFetch(leaveRoutes([
+      [(url) => /\/api\/approvals\?/.test(url), json([{ _id: 'r1', status: 'returned', form: { name: '請假' }, current_step_index: 0, steps: [{}], createdAt: '2026-06-19T00:00:00.000Z' }])],
+      [(url) => url.endsWith('/api/approvals/r1'), json(returned)],
+      [post('/r1/resubmit'), json({ _id: 'r1', status: 'pending', warnings: [{ code: 'LEAVE_QUOTA_EXCEEDED', message: '事假超額' }] })],
+    ]))
+    const wrapper = await mountPage()
+    await wrapper.vm.resubmitMyRequest({ _id: 'r1' })
+    await flushPromises()
+
+    expect(wrapper.vm.editDlg.formData.hours).toBe(8) // 原本的時數不會被自動帶入蓋掉
+    const dialog = wrapper.findAll('.el-dialog').find(d => d.text().includes('修改並重新送出'))
+    expect(dialog.find('[data-test="leave-hours-field"]').exists()).toBe(true)
+    expect(dialog.find('[data-test="leave-request-hint"]').text()).toContain('事假：目前可請 68 小時')
+
+    wrapper.vm.editDlg.formData = { ...wrapper.vm.editDlg.formData, hours: 4 }
+    await wrapper.vm.submitResubmit()
+    await flushPromises()
+    const call = callsTo(calls, c => c.url.endsWith('/r1/resubmit'))[0]
+    expect(JSON.parse(call.body).form_data.hours).toBe(4)
+    expect(alertSpy).toHaveBeenCalledWith('已重新送出！\n事假超額')
+  })
+})

@@ -221,7 +221,12 @@
             通知日誌
           </el-button>
         </el-badge>
-        <el-badge :value="scheduleRuleValidation.count" :hidden="!scheduleRuleValidation.count" :max="999">
+        <el-badge
+          :value="scheduleRuleValidation.count || scheduleRuleValidation.pendingCount"
+          :hidden="!scheduleRuleValidation.count && !scheduleRuleValidation.pendingCount"
+          :type="scheduleRuleValidation.count ? 'danger' : 'info'"
+          :max="999"
+        >
           <el-button
             class="action-btn secondary"
             data-test="schedule-rule-issues-button"
@@ -232,6 +237,15 @@
             排班檢核
           </el-button>
         </el-badge>
+        <el-button
+          v-if="canEditSchedule"
+          class="action-btn secondary"
+          data-test="holiday-ledger-button"
+          @click="openHolidayLedger"
+        >
+          <el-icon><Calendar /></el-icon>
+          國定假日休假
+        </el-button>
         <input
           ref="scheduleImportInput"
           type="file"
@@ -468,6 +482,13 @@
           <li v-for="(line, index) in scheduleIssues.lines" :key="index">{{ line }}</li>
         </ol>
       </section>
+      <section v-if="schedulePendingLines.length" class="schedule-rule-pending" aria-label="尚無法判斷的跨月週" data-test="schedule-rule-pending">
+        <h3>尚無法判斷的跨月週（共 {{ schedulePendingLines.length }} 項）</h3>
+        <p class="schedule-rule-pending-hint">{{ PENDING_WEEK_HINT }}</p>
+        <ol tabindex="0" aria-label="尚無法判斷的跨月週明細">
+          <li v-for="(line, index) in schedulePendingLines" :key="index">{{ line }}</li>
+        </ol>
+      </section>
       <div ref="scheduleTableWrapperRef" class="schedule-table-wrapper" :class="{ 'is-fullscreen': isTableFullscreen }"
         data-test="schedule-table-wrapper" @click.capture="handleTableDelegatedClick"
         @change.capture="handleTableDelegatedChange">
@@ -486,6 +507,9 @@
                 {{ row.name || '-' }}
               </span>
               <span class="employee-status-secondary" aria-label="排班狀態">
+                <el-tooltip v-if="row.partTime" content="兼職人員不套用排班規範檢核" placement="top">
+                  <span class="employee-status-badge part-time" data-test="part-time-badge">兼職</span>
+                </el-tooltip>
                 <el-tooltip
                   v-if="(employeeStatusMap[row._id] || employeeStatus(row._id)) === 'unscheduled'"
                   content="尚有未排班日期，仍可點擊日期格安排班別"
@@ -531,10 +555,10 @@
           <template #default="{ row }">
             <div v-if="row.annualLeave" class="annual-leave-info">
               <el-tag size="small" type="info">
-                {{ row.annualLeave.remainingDays || 0 }}天
+                {{ row.annualLeave.remainingHours || 0 }}小時
               </el-tag>
               <span class="leave-hours">
-                ({{ (row.annualLeave.remainingDays || 0) * 8 }}小時)
+                ({{ row.annualLeave.remainingDays || 0 }}天)
               </span>
             </div>
             <span v-else class="no-leave-info">-</span>
@@ -725,6 +749,14 @@
     </template>
   </el-dialog>
 
+  <HolidayLedgerDialog
+    v-if="holidayLedgerRequested"
+    v-model="holidayLedgerVisible"
+    :scope="holidayLedgerScope"
+    :can-resolve="canEditSchedule"
+    :append-to="toolbarPopperAppendTarget"
+  />
+
   <el-drawer v-model="notificationDrawerVisible" title="排班通知日誌" size="min(440px, 92vw)" append-to-body
     :append-to="toolbarPopperAppendTarget" class="schedule-notification-drawer">
     <div class="notification-log-toolbar">
@@ -809,6 +841,8 @@ import {
   formatScheduleImportPayloadIssues,
   formatScheduleImportWarning,
   buildScheduleImportConfirmMessage,
+  buildPendingWeekLines,
+  limitDialogLines,
   normalizeNotificationDetails,
   parseDelegatedBoolean,
   getEmployeeIssueLabel,
@@ -832,6 +866,8 @@ import {
 } from '../../utils/schedulePublishStatus'
 
 const ApprovalDetailContent = defineAsyncComponent(() => import('./ApprovalDetailContent.vue'))
+// 國定假日休假紀錄視窗：第一次按下按鈕才載入元件與資料，開啟排班頁時不多發任何請求
+const HolidayLedgerDialog = defineAsyncComponent(() => import('./HolidayLedgerDialog.vue'))
 const authStore = useAuthStore()
 const menuStore = useMenuStore()
 
@@ -868,10 +904,19 @@ const scheduleMap = shallowRef({})
 const dayMemos = ref({})
 const memoDialog = reactive({ visible: false, day: null, date: '', content: '', saving: false })
 const notificationDrawerVisible = ref(false)
+const holidayLedgerVisible = ref(false)
+const holidayLedgerRequested = ref(false)
+const holidayLedgerScope = computed(() => buildPublishPayload())
+const openHolidayLedger = () => {
+  holidayLedgerRequested.value = true
+  holidayLedgerVisible.value = true
+}
 const scheduleNotifications = ref([])
 const NOTIFICATION_LIMIT = 200
 const NOTIFICATION_STORAGE_BYTES = 900_000
-const scheduleRuleValidation = reactive({ checking: false, ok: true, count: 0, violations: [] })
+// pending：跨月週（鄰月還沒排）目前無法判斷的週別，不算違規，ok / count 仍只代表違規
+const scheduleRuleValidation = reactive({ checking: false, ok: true, count: 0, violations: [], pending: [], pendingCount: 0 })
+const schedulePendingLines = ref([])
 const scheduleIssues = reactive({ title: '', lines: [] })
 let scheduleRuleValidationTimer = null
 let lastLoggedRuleSignature = ''
@@ -1546,7 +1591,39 @@ function scheduleRuleQueryParams() {
   return params
 }
 
-async function fetchScheduleRuleValidation({ showIssues = false, notify = true } = {}) {
+// 跨月週（鄰月還沒排）無法判斷時的共同說明；每週一例一休要等整週的日子都有班表才判斷得了
+const PENDING_WEEK_HINT = '這些週別有部分日期落在相鄰月份且尚未排班，暫時無法判斷一例一休；相鄰月份排定後會重新檢核。'
+
+function pendingWeekConfirmNote(pendingWeeks) {
+  const count = Array.isArray(pendingWeeks) ? pendingWeeks.length : 0
+  return count
+    ? `另有 ${count} 項跨月週尚無法判斷一例一休（相鄰月份尚未排班），不影響發布，待相鄰月份班表排定後會重新檢核。`
+    : ''
+}
+
+function openPendingWeeksDialog(pendingWeeks) {
+  const count = pendingWeeks.length
+  const alertOptions = {
+    confirmButtonText: '關閉',
+    type: 'info',
+    customClass: 'schedule-issue-dialog',
+    modalClass: 'schedule-issue-overlay',
+    zIndex: 4000,
+    closeOnClickModal: false,
+    showClose: true
+  }
+  const appendTo = issueDialogAppendTarget()
+  if (appendTo) alertOptions.appendTo = appendTo
+  const lines = limitDialogLines(buildPendingWeekLines(pendingWeeks, employees.value))
+  const message = [PENDING_WEEK_HINT, ...lines.map(line => `・${line}`)].join('\n')
+  return Promise.resolve(
+    ElMessageBox.alert(message, `排班規範預檢已通過，另有 ${count} 項跨月週尚無法判斷`, alertOptions)
+  ).catch(() => {})
+}
+
+// quiet：切換月份後的背景重新檢核，只更新徽章、完整檢核結果與跨月週提醒，不彈窗、不跳提示、不寫通知
+// announcePending：預檢通過但有跨月週待判斷時，是否另外跳出說明視窗（發布／完成發布自己會在確認視窗註明，所以傳 false）
+async function fetchScheduleRuleValidation({ showIssues = false, notify = true, quiet = false, announcePending = true } = {}) {
   if (scheduleRuleValidation.checking) return null
   scheduleRuleValidation.checking = true
   const query = scheduleRuleQueryParams().toString()
@@ -1556,12 +1633,17 @@ async function fetchScheduleRuleValidation({ showIssues = false, notify = true }
     if (query !== scheduleRuleQueryParams().toString()) return null
     const violations = Array.isArray(payload.violations) ? payload.violations : []
     if ((!res.ok || !payload.ok) && !violations.length) throw new Error(payload.error || '排班規範預檢未完成，請重試')
+    const pendingWeeks = Array.isArray(payload.pendingWeeks) ? payload.pendingWeeks : []
     scheduleRuleValidation.ok = res.ok && Boolean(payload.ok) && violations.length === 0
     scheduleRuleValidation.count = Number(payload.count ?? violations.length)
     scheduleRuleValidation.violations = violations
+    scheduleRuleValidation.pending = pendingWeeks
+    scheduleRuleValidation.pendingCount = pendingWeeks.length
+    schedulePendingLines.value = pendingWeeks.map(formatLaborRuleViolation)
     const lines = violations.map(formatLaborRuleViolation)
     scheduleIssues.title = '排班規範檢核未通過'
     scheduleIssues.lines = lines
+    if (quiet) return { ...payload, ok: scheduleRuleValidation.ok, violations, pendingWeeks }
     const signature = lines.join('\n')
     if (notify && lines.length && signature !== lastLoggedRuleSignature) {
       appendScheduleNotification('warning', '排班草稿待修正', `目前共有 ${lines.length} 項排班規範問題。`, violations)
@@ -1575,11 +1657,13 @@ async function fetchScheduleRuleValidation({ showIssues = false, notify = true }
           type: 'warning',
           record: false
         })
+      } else if (pendingWeeks.length && announcePending) {
+        await openPendingWeeksDialog(pendingWeeks)
       } else {
         callSuccess('排班規範預檢已通過')
       }
     }
-    return { ...payload, ok: scheduleRuleValidation.ok, violations }
+    return { ...payload, ok: scheduleRuleValidation.ok, violations, pendingWeeks }
   } catch (error) {
     scheduleRuleValidation.ok = false
     if (showIssues) callWarning(error?.message || '排班規範預檢失敗')
@@ -1690,6 +1774,8 @@ async function onScheduleImportFile(event) {
     const previewViolations = Array.isArray(preview.payload.violations)
       ? preview.payload.violations.map(formatLaborRuleViolation)
       : []
+    // 跨月週（鄰月還沒排）目前無法判斷的週別：不擋匯入，確認視窗裡每週一行、列出員工與尚未排班的月份
+    const previewPendingWeeks = Array.isArray(preview.payload.pendingWeeks) ? preview.payload.pendingWeeks : []
     const confirmOptions = {
       confirmButtonText: overwrite ? '覆蓋匯入' : '確認匯入',
       cancelButtonText: '取消',
@@ -1709,7 +1795,10 @@ async function onScheduleImportFile(event) {
         skippedDays: preview.payload.skippedDays,
         overwriteCount: overwrite ? overwriteCount : 0,
         warnings: previewWarnings,
-        violations: previewViolations
+        violations: previewViolations,
+        ruleExemptEmployees: preview.payload.ruleExemptEmployees,
+        pendingWeekLines: buildPendingWeekLines(previewPendingWeeks, employees.value),
+        pendingWeekCount: previewPendingWeeks.length
       }),
       overwrite ? '確認覆蓋既有排班' : '確認匯入班表',
       confirmOptions
@@ -1754,6 +1843,15 @@ async function onScheduleImportFile(event) {
         '匯入草稿待修正',
         `匯入完成，但仍有 ${committedViolations.length} 項排班規範問題。`,
         committedViolationDetails
+      )
+    }
+    const committedPendingWeeks = Array.isArray(committed.payload.pendingWeeks) ? committed.payload.pendingWeeks : []
+    if (committedPendingWeeks.length) {
+      appendScheduleNotification(
+        'info',
+        '跨月週待判斷',
+        `匯入完成，另有 ${committedPendingWeeks.length} 項跨月週尚無法判斷一例一休（相鄰月份尚未排班）。`,
+        committedPendingWeeks
       )
     }
     await refreshScheduleData({ reset: true, reason: 'excel-import' })
@@ -2975,10 +3073,11 @@ async function confirmPublish() {
     callWarning('目前沒有可發布的班表')
     return
   }
-  const validation = await fetchScheduleRuleValidation({ showIssues: true, notify: true })
+  const validation = await fetchScheduleRuleValidation({ showIssues: true, notify: true, announcePending: false })
   if (!validation?.ok) return
   try {
-    await ElMessageBox.confirm('確認要將本月班表發送給員工確認嗎？', '批次發布', {
+    const pendingNote = pendingWeekConfirmNote(validation.pendingWeeks)
+    await ElMessageBox.confirm(`確認要將本月班表發送給員工確認嗎？${pendingNote ? `\n\n${pendingNote}` : ''}`, '批次發布', {
       type: 'warning',
       confirmButtonText: '送出',
       cancelButtonText: '取消'
@@ -2998,10 +3097,11 @@ async function confirmFinalize() {
     callWarning('仍有員工尚未回覆，請確認後再完成發布')
     return
   }
-  const validation = await fetchScheduleRuleValidation({ showIssues: true, notify: true })
+  const validation = await fetchScheduleRuleValidation({ showIssues: true, notify: true, announcePending: false })
   if (!validation?.ok) return
   try {
-    await ElMessageBox.confirm('全部員工已確認，是否完成發布並鎖定班表？', '完成發布', {
+    const pendingNote = pendingWeekConfirmNote(validation.pendingWeeks)
+    await ElMessageBox.confirm(`全部員工已確認，是否完成發布並鎖定班表？${pendingNote ? `\n\n${pendingNote}` : ''}`, '完成發布', {
       type: 'success',
       confirmButtonText: '完成',
       cancelButtonText: '取消'
@@ -4527,10 +4627,14 @@ async function fetchEmployees(
       const normalizedDept = deptId ? String(deptId) : ''
       const normalizedSub = subId ? String(subId) : ''
       
-      const remainingDays = Number(e?.annualLeave?.remainingDays || 0)
+      // 特休以小時為單位：伺服器給 remainingHours（天數是 時數 / 8 的換算）；舊版回應只有 remainingDays 就乘 8
+      const rawHours = e?.annualLeave?.remainingHours
+      const remainingHours = rawHours !== undefined && rawHours !== null && Number.isFinite(Number(rawHours))
+        ? Math.max(0, Number(rawHours))
+        : Math.max(0, Number(e?.annualLeave?.remainingDays || 0)) * 8
       const annualLeave = {
-        remainingDays,
-        remainingHours: Math.max(0, remainingDays) * 8
+        remainingDays: Math.round((remainingHours / 8) * 100) / 100,
+        remainingHours
       }
 
       return {
@@ -4546,6 +4650,8 @@ async function fetchEmployees(
         department: deptMap[normalizedDept] || '',
         subDepartment: subMap[normalizedSub] || '',
         annualLeave,
+        // 兼職人員不套用排班規範檢核，名單上標示出來
+        partTime: e?.partTime === true,
         scheduleRowColor: normalizeRowColorIndex(e?.scheduleRowColor)
       }
     })
@@ -4565,6 +4671,7 @@ async function fetchEmployees(
             name: supervisorProfile.value?.name || '主管本人',
             // 頭像用：個人資料帶的照片路徑（沒有照片是空字串），排班表裡主管本人那一列才看得到自己的照片
             photo: supervisorProfile.value?.photo || '',
+            partTime: supervisorProfile.value?.partTime === true,
             departmentId: supervisorDepartmentId.value || '',
             subDepartmentId:
               supervisorSubDepartmentId.value || '',
@@ -4650,6 +4757,9 @@ watch([currentMonth, selectedDepartment, selectedSubDepartment, includeSelf], ()
   scheduleRuleValidation.ok = false
   scheduleRuleValidation.violations = []
   scheduleRuleValidation.count = 0
+  scheduleRuleValidation.pending = []
+  scheduleRuleValidation.pendingCount = 0
+  schedulePendingLines.value = []
   lastLoggedRuleSignature = ''
 })
 
@@ -4661,6 +4771,14 @@ async function onMonthChange(value) {
   currentPage.value = 1
   await fetchHolidays()
   await refreshScheduleData({ reset: true, reason: 'month-change' })
+  // 相鄰月份可能已經排定或修改過：換到這個月時，在背景重新檢核一次，跨月週的結果才會跟上（只更新徽章與提醒，不彈窗）
+  if (canEditSchedule.value) {
+    try {
+      await fetchScheduleRuleValidation({ quiet: true })
+    } catch (error) {
+      // 背景檢核失敗不影響換月
+    }
+  }
 }
 
 // ========= 初始化 =========

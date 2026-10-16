@@ -629,6 +629,8 @@ describe('EmployeeManagement - 批量匯入流程', () => {
   it('預設欄位對應包含特休與勞健保投保薪資等新欄位，範本也帶有這些欄位', async () => {
     const wrapper = await mountComponent()
     const expected = {
+      'annualLeave.totalHours': 'annualLeave_totalHours',
+      'annualLeave.usedHours': 'annualLeave_usedHours',
       'annualLeave.totalDays': 'annualLeave_totalDays',
       'annualLeave.usedDays': 'annualLeave_usedDays',
       'annualLeave.accumulatedLeave': 'annualLeave_accumulatedLeave',
@@ -643,7 +645,10 @@ describe('EmployeeManagement - 批量匯入流程', () => {
 
     const [headerRow, descriptionRow] = wrapper.vm.buildBulkImportTemplateCsvContent().replace('﻿', '').split('\n')
     Object.values(expected).forEach(header => expect(headerRow).toContain(`"${header}"`))
-    expect(descriptionRow).toContain('年度特休總天數')
+    // 特休的單位是小時：範本帶「年度特休總時數／已使用時數」，舊的天數欄位仍可匯入但說明它是舊版欄位
+    expect(descriptionRow).toContain('年度特休總時數（小時）')
+    expect(descriptionRow).toContain('已使用時數（小時）')
+    expect(descriptionRow).toContain('年度特休總天數（舊版欄位')
     expect(descriptionRow).toContain('眷口數')
   })
 

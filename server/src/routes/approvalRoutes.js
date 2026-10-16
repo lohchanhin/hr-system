@@ -11,6 +11,8 @@ import {
   uploadApprovalAttachments, downloadApprovalAttachment, cancelApprovalRequest, resubmitApprovalRequest,
 } from '../controllers/approvalRequestController.js'
 
+import { getLeaveBalances, getLeaveHoursHint } from '../controllers/leaveBalanceController.js'
+
 import { authorizeRoles } from '../middleware/auth.js'
 import { uploadApprovalAttachmentFiles } from '../middleware/approvalAttachmentUpload.js'
 
@@ -51,6 +53,10 @@ router.post(
 router.post('/', authorizeRoles('employee', 'supervisor', 'admin'), createApprovalRequest)
 router.get('/inbox', authorizeRoles('employee', 'supervisor', 'admin'), inboxApprovals)
 router.get('/history', authorizeRoles('employee', 'supervisor', 'admin'), historyApprovals)
+// 假別餘額（小時）：一定要排在 GET /:id 之前，否則 "leave-balances" 會被當成簽核單編號而回 400
+router.get('/leave-balances', authorizeRoles('employee', 'supervisor', 'admin'), getLeaveBalances)
+// 填請假單時依班表算出時數的上限與建議值（同樣要排在 GET /:id 之前）
+router.get('/leave-hours-hint', authorizeRoles('employee', 'supervisor', 'admin'), getLeaveHoursHint)
 router.get('/:id/attachments/:filename', authorizeRoles('employee', 'supervisor', 'admin'), downloadApprovalAttachment)
 router.post('/:id/cancel', authorizeRoles('employee', 'supervisor', 'admin'), cancelApprovalRequest)
 router.post('/:id/resubmit', authorizeRoles('employee', 'supervisor', 'admin'), resubmitApprovalRequest)

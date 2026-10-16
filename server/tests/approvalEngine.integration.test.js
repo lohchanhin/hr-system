@@ -580,71 +580,71 @@ describeIntegration('approval engine against a real MongoDB through the real app
       daysId = fieldId(made, '天數')
     })
 
-    it('checks the balance at filing, counts days correctly, deducts on approval and refunds on withdrawal', async () => {
-      await Employee.updateOne({ _id: people.a1._id }, { $set: { 'annualLeave.totalDays': 3, 'annualLeave.usedDays': 0 } })
+    it('checks the balance at filing, counts hours correctly, deducts on approval and refunds on withdrawal', async () => {
+      await Employee.updateOne({ _id: people.a1._id }, { $set: { 'annualLeave.totalHours': 24, 'annualLeave.usedHours': 0 } })
 
-      // 2 天
+      // 2 天 = 16 小時
       const first = await createRequest('a1', made, leave('2099-03-02', '2099-03-03'))
       expect(first.status).toBe(201)
       expect((await act('boss', first.body._id, 'approve')).status).toBe(200)
-      expect((await Employee.findById(id('a1'))).annualLeave.usedDays).toBe(2)
-      expect((await load(first.body._id)).annual_leave).toMatchObject({ state: 'deducted', days: 2 })
+      expect((await Employee.findById(id('a1'))).annualLeave.usedHours).toBe(16)
+      expect((await load(first.body._id)).annual_leave).toMatchObject({ state: 'deducted', hours: 16, days: 2 })
 
-      // 剩 1 天：再申請 2 天被擋下，清楚的中文訊息
+      // 剩 8 小時：再申請 16 小時被擋下，清楚的中文訊息
       const tooMuch = await createRequest('a1', made, leave('2099-04-01', '2099-04-02'))
       expect(tooMuch.status).toBe(400)
-      expect(tooMuch.body).toMatchObject({ code: 'ANNUAL_LEAVE_INSUFFICIENT', remaining: 1, requested: 2 })
-      expect(tooMuch.body.error).toBe('特休餘額不足：剩餘 1 天，本次申請 2 天')
+      expect(tooMuch.body).toMatchObject({ code: 'ANNUAL_LEAVE_INSUFFICIENT', remainingHours: 8, requestedHours: 16 })
+      expect(tooMuch.body.error).toBe('特休餘額不足：剩餘 8 小時（1 天），本次申請 16 小時（2 天）')
 
-      // 同一天上午 9:00 到下午 6:00（台灣時間）算 1 天，不是 2 天
+      // 同一天上午 9:00 到下午 6:00（台灣時間）算 8 小時，不是 16 小時
       const oneDay = await createRequest('a1', made, leave('2099-05-04T01:00:00.000Z', '2099-05-04T10:00:00.000Z'))
       expect(oneDay.status).toBe(201)
       expect((await act('boss', oneDay.body._id, 'approve')).status).toBe(200)
-      expect((await Employee.findById(id('a1'))).annualLeave.usedDays).toBe(3)
+      expect((await Employee.findById(id('a1'))).annualLeave.usedHours).toBe(24)
 
-      // 假期還沒開始：申請人可以撤回，天數返還；重複撤回不會重複返還
+      // 假期還沒開始：申請人可以撤回，時數返還；重複撤回不會重複返還
       const withdraw = await post('a1', `/api/approvals/${first.body._id}/cancel`, { comment: '行程取消' })
       expect(withdraw.status).toBe(200)
       expect(withdraw.body.status).toBe('canceled')
       let employee = await Employee.findById(id('a1'))
-      expect(employee.annualLeave.usedDays).toBe(1)
+      expect(employee.annualLeave.usedHours).toBe(8)
       expect((await post('a1', `/api/approvals/${first.body._id}/cancel`)).status).toBe(200)
-      expect((await Employee.findById(id('a1'))).annualLeave.usedDays).toBe(1)
-      expect((await load(first.body._id)).annual_leave).toMatchObject({ state: 'refunded', days: 2 })
+      expect((await Employee.findById(id('a1'))).annualLeave.usedHours).toBe(8)
+      expect((await load(first.body._id)).annual_leave).toMatchObject({ state: 'refunded', hours: 16, days: 2 })
 
-      // 管理員也可以撤回核准的特休（返還 1 天）
+      // 管理員也可以撤回核准的特休（返還 8 小時）
       const adminCancel = await post('admin', `/api/approvals/${oneDay.body._id}/cancel`)
       expect(adminCancel.status).toBe(200)
       employee = await Employee.findById(id('a1'))
-      expect(employee.annualLeave.usedDays).toBe(0)
+      expect(employee.annualLeave.usedHours).toBe(0)
       expect(employee.annualLeave.appliedApprovalRequestIds ?? []).toEqual([])
       // 一般員工不能撤回別人的單
       expect((await post('stranger', `/api/approvals/${oneDay.body._id}/cancel`)).status).toBe(404)
     })
 
-    it('uses the 天數 field for half days and keeps the approval with a visible failure when the balance changed meanwhile', async () => {
-      await Employee.updateOne({ _id: people.a2._id }, { $set: { 'annualLeave.totalDays': 1, 'annualLeave.usedDays': 0 } })
+    it('uses the old 天數 field (x8 hours) on a form without 時數, and keeps the approval with a visible failure when the balance changed meanwhile', async () => {
+      await Employee.updateOne({ _id: people.a2._id }, { $set: { 'annualLeave.totalHours': 8, 'annualLeave.usedHours': 0 } })
 
       const halfDay = await createRequest('a2', made, leave('2099-06-01', '2099-06-01', { [daysId]: 0.5 }))
       expect(halfDay.status).toBe(201)
       const another = await createRequest('a2', made, leave('2099-06-08', '2099-06-08', { [daysId]: 1 }))
-      expect(another.status).toBe(201) // 送出當下餘額 1 天，足夠
+      expect(another.status).toBe(201) // 送出當下餘額 8 小時，足夠
 
       expect((await act('boss', halfDay.body._id, 'approve')).status).toBe(200)
-      expect((await Employee.findById(id('a2'))).annualLeave.usedDays).toBe(0.5)
+      expect((await Employee.findById(id('a2'))).annualLeave.usedHours).toBe(4)
 
-      // 第二張核准時餘額只剩 0.5 天：核准成立，但扣減失敗要清楚留下紀錄並回報
+      // 第二張核准時餘額只剩 4 小時：核准成立，但扣減失敗要清楚留下紀錄並回報
       const second = await act('boss', another.body._id, 'approve')
       expect(second.status).toBe(200)
       expect(second.body.status).toBe('approved')
       expect(second.body.warnings).toEqual([{
         code: 'ANNUAL_LEAVE_DEDUCTION_FAILED',
-        message: '特休扣減失敗：餘額不足（剩餘 0.5 天，本次需扣 1 天），請人資確認特休天數後手動補登',
+        message: '特休扣減失敗：餘額不足（剩餘 4 小時（0.5 天），本次需扣 8 小時（1 天）），請人資確認特休時數後手動補登',
       }])
       const doc = await load(another.body._id)
-      expect(doc.annual_leave).toMatchObject({ state: 'failed', days: 1 })
+      expect(doc.annual_leave).toMatchObject({ state: 'failed', hours: 8, days: 1 })
       expect(doc.logs.find(log => log.action === 'annual_leave_error').message).toContain('餘額不足')
-      expect((await Employee.findById(id('a2'))).annualLeave.usedDays).toBe(0.5)
+      expect((await Employee.findById(id('a2'))).annualLeave.usedHours).toBe(4)
     })
 
     it('does not block employees whose quota was never configured, and says so after approval', async () => {
@@ -655,19 +655,24 @@ describeIntegration('approval engine against a real MongoDB through the real app
       expect(approved.body.warnings[0].code).toBe('ANNUAL_LEAVE_DEDUCTION_FAILED')
     })
 
-    it('sets the yearly quota without touching the days already used, and resets on a new year', async () => {
+    it('sets the yearly quota in hours without touching the hours already used, and resets on a new year', async () => {
       await Employee.updateOne(
         { _id: people.a1._id },
-        { $set: { 'annualLeave.totalDays': 5, 'annualLeave.usedDays': 2, 'annualLeave.year': 2098, 'annualLeave.appliedApprovalRequestIds': ['x'] } },
+        { $set: { 'annualLeave.totalHours': 40, 'annualLeave.usedHours': 16, 'annualLeave.year': 2098, 'annualLeave.appliedApprovalRequestIds': ['x'], 'annualLeave.accumulatedLeave': 2, 'annualLeave.compensatoryHours': 6, 'annualLeave.notes': '備註' } },
       )
-      const sameYear = await request(app).patch(`/api/employees/${id('a1')}/annual-leave`).set(as('admin')).send({ totalDays: 12, year: 2098 })
+      const sameYear = await request(app).patch(`/api/employees/${id('a1')}/annual-leave`).set(as('admin')).send({ totalHours: 96, year: 2098 })
       expect(sameYear.status).toBe(200)
-      expect(sameYear.body.annualLeave).toMatchObject({ totalDays: 12, usedDays: 2, year: 2098 })
+      expect(sameYear.body.annualLeave).toMatchObject({ totalHours: 96, usedHours: 16, year: 2098 })
 
-      const newYear = await request(app).patch(`/api/employees/${id('a1')}/annual-leave`).set(as('admin')).send({ totalDays: 14, year: 2099 })
+      const newYear = await request(app).patch(`/api/employees/${id('a1')}/annual-leave`).set(as('admin')).send({ totalHours: 112, year: 2099 })
       expect(newYear.status).toBe(200)
-      expect(newYear.body.annualLeave).toMatchObject({ totalDays: 14, usedDays: 0, year: 2099 })
-      expect((await request(app).patch(`/api/employees/${new mongoose.Types.ObjectId()}/annual-leave`).set(as('admin')).send({ totalDays: 3, year: 2099 })).status).toBe(400)
+      expect(newYear.body.annualLeave).toMatchObject({ totalHours: 112, usedHours: 0, year: 2099 })
+      // 換年度只重設特休已用時數：積假、補休、備註不會被清掉
+      expect(newYear.body.annualLeave).toMatchObject({ accumulatedLeave: 2, compensatoryHours: 6, notes: '備註' })
+      // 舊版畫面送天數（totalDays）一樣乘 8 換成小時
+      const legacyBody = await request(app).patch(`/api/employees/${id('a1')}/annual-leave`).set(as('admin')).send({ totalDays: 15, year: 2099 })
+      expect(legacyBody.body.annualLeave).toMatchObject({ totalHours: 120 })
+      expect((await request(app).patch(`/api/employees/${new mongoose.Types.ObjectId()}/annual-leave`).set(as('admin')).send({ totalHours: 24, year: 2099 })).status).toBe(400)
     })
 
     it('rejects an end date before the start date', async () => {
@@ -681,6 +686,7 @@ describeIntegration('approval engine against a real MongoDB through the real app
       await Employee.updateOne({ _id: people.a2._id }, { $set: { 'annualLeave.year': 2099 } })
       const res = await get('admin', `/api/employees/${id('a2')}/annual-leave/history?year=2099`)
       expect(res.status).toBe(200)
+      expect(res.body.map(item => item.hours).sort((a, b) => a - b)).toEqual([4, 8])
       expect(res.body.map(item => item.days).sort()).toEqual([0.5, 1])
     })
   })
@@ -1065,46 +1071,46 @@ describeIntegration('approval engine against a real MongoDB through the real app
       leaveForm = await makeForm({ name: '特休時數單', semanticType: 'leave', fields: fieldsFor(), steps: bossStep })
       generalForm = await makeForm({ name: '請假', semanticType: 'general', fields: fieldsFor(), steps: bossStep })
       leaveIds = { days: fieldId(leaveForm, '天數') }
-      await addPerson('alHours', { supervisor: people.boss._id, annualLeave: { totalDays: 1, usedDays: 0 } })
-      await addPerson('alGeneral', { supervisor: people.boss._id, annualLeave: { totalDays: 1, usedDays: 0 } })
+      await addPerson('alHours', { supervisor: people.boss._id, annualLeave: { totalHours: 8, usedHours: 0 } })
+      await addPerson('alGeneral', { supervisor: people.boss._id, annualLeave: { totalHours: 8, usedHours: 0 } })
     })
 
-    it('deducts 0.5 day for a 4-hour 特休, refuses 4 hours when only 0.25 day is left, and refunds exactly what was deducted', async () => {
+    it('deducts 4 hours for a 4-hour 特休, refuses 4 hours when only 2 are left, and refunds exactly what was deducted', async () => {
       const fourHours = data(leaveForm, '2099-09-07T01:00:00.000Z', '2099-09-07T05:00:00.000Z') // 台灣 09:00-13:00
 
       const created = await createRequest('alHours', leaveForm, fourHours)
       expect(created.status).toBe(201)
       expect((await act('boss', created.body._id, 'approve')).status).toBe(200)
-      expect((await Employee.findById(id('alHours'))).annualLeave.usedDays).toBe(0.5)
-      expect((await load(created.body._id)).annual_leave).toMatchObject({ state: 'deducted', days: 0.5 })
+      expect((await Employee.findById(id('alHours'))).annualLeave.usedHours).toBe(4)
+      expect((await load(created.body._id)).annual_leave).toMatchObject({ state: 'deducted', hours: 4, days: 0.5 })
 
-      // 再申請一個上午（0.5 天）剛好用完；第三次就不夠了
+      // 再申請一個上午（4 小時）剛好用完；第三次就不夠了
       const second = await createRequest('alHours', leaveForm, data(leaveForm, '2099-09-08T01:00:00.000Z', '2099-09-08T05:00:00.000Z'))
       expect(second.status).toBe(201)
-      await Employee.updateOne({ _id: people.alHours._id }, { $set: { 'annualLeave.usedDays': 0.75 } })
+      await Employee.updateOne({ _id: people.alHours._id }, { $set: { 'annualLeave.usedHours': 6 } })
       const tooMuch = await createRequest('alHours', leaveForm, data(leaveForm, '2099-09-09T01:00:00.000Z', '2099-09-09T05:00:00.000Z'))
       expect(tooMuch.status).toBe(400)
-      expect(tooMuch.body).toMatchObject({ code: 'ANNUAL_LEAVE_INSUFFICIENT', remaining: 0.25, requested: 0.5 })
-      expect(tooMuch.body.error).toBe('特休餘額不足：剩餘 0.25 天，本次申請 0.5 天')
-      await Employee.updateOne({ _id: people.alHours._id }, { $set: { 'annualLeave.usedDays': 0.5 } })
+      expect(tooMuch.body).toMatchObject({ code: 'ANNUAL_LEAVE_INSUFFICIENT', remainingHours: 2, requestedHours: 4 })
+      expect(tooMuch.body.error).toBe('特休餘額不足：剩餘 2 小時（0.25 天），本次申請 4 小時（0.5 天）')
+      await Employee.updateOne({ _id: people.alHours._id }, { $set: { 'annualLeave.usedHours': 4 } })
 
-      // 撤回第一張：返還的是記下的 0.5 天
+      // 撤回第一張：返還的是記下的 4 小時
       const withdraw = await post('alHours', `/api/approvals/${created.body._id}/cancel`, { comment: '取消' })
       expect(withdraw.status).toBe(200)
-      expect((await Employee.findById(id('alHours'))).annualLeave.usedDays).toBe(0)
-      expect((await load(created.body._id)).annual_leave).toMatchObject({ state: 'refunded', days: 0.5 })
+      expect((await Employee.findById(id('alHours'))).annualLeave.usedHours).toBe(0)
+      expect((await load(created.body._id)).annual_leave).toMatchObject({ state: 'refunded', hours: 4, days: 0.5 })
     })
 
-    it('keeps whole days as before and lets the 天數 field win over the times', async () => {
-      await Employee.updateOne({ _id: people.alHours._id }, { $set: { 'annualLeave.totalDays': 10, 'annualLeave.usedDays': 0 } })
+    it('keeps whole days as 8 hours each and lets the old 天數 field (x8) win over the times', async () => {
+      await Employee.updateOne({ _id: people.alHours._id }, { $set: { 'annualLeave.totalHours': 80, 'annualLeave.usedHours': 0 } })
 
       const threeDays = await createRequest('alHours', leaveForm, data(leaveForm, '2099-10-05T01:00:00.000Z', '2099-10-07T10:00:00.000Z'))
       expect((await act('boss', threeDays.body._id, 'approve')).status).toBe(200)
-      expect((await Employee.findById(id('alHours'))).annualLeave.usedDays).toBe(3)
+      expect((await Employee.findById(id('alHours'))).annualLeave.usedHours).toBe(24)
 
       const filled = await createRequest('alHours', leaveForm, data(leaveForm, '2099-10-12T01:00:00.000Z', '2099-10-12T05:00:00.000Z', { [leaveIds.days]: 1.5 }))
       expect((await act('boss', filled.body._id, 'approve')).status).toBe(200)
-      expect((await Employee.findById(id('alHours'))).annualLeave.usedDays).toBe(4.5)
+      expect((await Employee.findById(id('alHours'))).annualLeave.usedHours).toBe(36)
     })
 
     it('a form named 請假 that an admin explicitly set to 一般 neither checks nor deducts the annual leave balance', async () => {
@@ -1114,7 +1120,7 @@ describeIntegration('approval engine against a real MongoDB through the real app
       expect(created.status).toBe(201)
       expect((await act('boss', created.body._id, 'approve')).status).toBe(200)
 
-      expect((await Employee.findById(id('alGeneral'))).annualLeave.usedDays).toBe(0)
+      expect((await Employee.findById(id('alGeneral'))).annualLeave.usedHours).toBe(0)
       expect((await load(created.body._id)).annual_leave).toBeUndefined()
       // 同樣的資料換成請假性質的表單就會被餘額擋下
       const asLeave = await createRequest('alGeneral', leaveForm, data(leaveForm, '2099-11-02', '2099-11-03'))
@@ -1209,9 +1215,9 @@ describeIntegration('approval engine against a real MongoDB through the real app
     })
   })
 
-  describe('employee edits: supervisor rules and the annual leave used days', () => {
-    it('refuses a departed supervisor, clears the supervisor with null, and only writes usedDays when it really changed', async () => {
-      await addPerson('editee', { supervisor: people.boss._id, annualLeave: { totalDays: 10, usedDays: 3 } })
+  describe('employee edits: supervisor rules and the annual leave used hours', () => {
+    it('refuses a departed supervisor, clears the supervisor with null, and only writes usedHours when it really changed', async () => {
+      await addPerson('editee', { supervisor: people.boss._id, annualLeave: { totalHours: 80, usedHours: 24 } })
       await Employee.updateOne({ _id: people.editee._id }, { $set: { 'annualLeave.appliedApprovalRequestIds': ['keep-me'] } })
       const put = (body) => request(app).put(`/api/employees/${id('editee')}`).set(as('admin')).send(body)
 
@@ -1222,40 +1228,40 @@ describeIntegration('approval engine against a real MongoDB through the real app
       expect(self.status).toBe(400)
       expect((await Employee.findById(id('editee'))).supervisor.toString()).toBe(id('boss'))
 
-      // 整包送出且天數沒變：不碰 usedDays，也不碰已記錄的簽核單
-      const unchanged = await put({ annualLeave: { totalDays: 12, usedDays: 3 } })
+      // 整包送出且時數沒變：不碰 usedHours，也不碰已記錄的簽核單
+      const unchanged = await put({ annualLeave: { totalHours: 96, usedHours: 24 } })
       expect(unchanged.status).toBe(200)
       let stored = await Employee.findById(id('editee')).select('+annualLeave.appliedApprovalRequestIds')
-      expect(stored.annualLeave).toMatchObject({ totalDays: 12, usedDays: 3 })
+      expect(stored.annualLeave).toMatchObject({ totalHours: 96, usedHours: 24 })
       expect(Array.from(stored.annualLeave.appliedApprovalRequestIds)).toEqual(['keep-me'])
 
-      const changed = await put({ annualLeave: { usedDays: 1 }, supervisor: null })
+      const changed = await put({ annualLeave: { usedHours: 8 }, supervisor: null })
       expect(changed.status).toBe(200)
       stored = await Employee.findById(id('editee')).select('+annualLeave.appliedApprovalRequestIds')
-      expect(stored.annualLeave.usedDays).toBe(1)
+      expect(stored.annualLeave.usedHours).toBe(8)
       expect(Array.from(stored.annualLeave.appliedApprovalRequestIds)).toEqual(['keep-me'])
       expect((await Employee.collection.findOne({ _id: people.editee._id })).supervisor).toBeUndefined() // $unset，不是存成 null
     })
 
-    it('an approval that deducts leave between loading and saving the employee is not overwritten by the form that still carries the old days', async () => {
-      await addPerson('raceEdit', { annualLeave: { totalDays: 10, usedDays: 3 } })
+    it('an approval that deducts leave between loading and saving the employee is not overwritten by the form that still carries the old hours', async () => {
+      await addPerson('raceEdit', { annualLeave: { totalHours: 80, usedHours: 24 } })
       const original = Employee.updateOne
       const spy = jest.spyOn(Employee, 'updateOne').mockImplementation(async function updateAfterDeduction(...args) {
         spy.mockRestore() // 只攔第一次（編輯員工的那次寫入）
-        await Employee.collection.updateOne({ _id: people.raceEdit._id }, { $inc: { 'annualLeave.usedDays': 1 } }) // 此時簽核通過、剛好扣了 1 天
+        await Employee.collection.updateOne({ _id: people.raceEdit._id }, { $inc: { 'annualLeave.usedHours': 8 } }) // 此時簽核通過、剛好扣了 8 小時
         return original.apply(this, args)
       })
 
       const res = await request(app)
         .put(`/api/employees/${id('raceEdit')}`)
         .set(as('admin'))
-        .send({ name: 'raceEdit', annualLeave: { totalDays: 12, usedDays: 3 } }) // 舊畫面整包送出，usedDays 還是 3
+        .send({ name: 'raceEdit', annualLeave: { totalHours: 96, usedHours: 24 } }) // 舊畫面整包送出，usedHours 還是 24
 
       spy.mockRestore()
       expect(res.status).toBe(200)
       const stored = await Employee.findById(id('raceEdit'))
-      expect(stored.annualLeave.totalDays).toBe(12)
-      expect(stored.annualLeave.usedDays).toBe(4) // 扣掉的那 1 天沒有被蓋回 3
+      expect(stored.annualLeave.totalHours).toBe(96)
+      expect(stored.annualLeave.usedHours).toBe(32) // 扣掉的那 8 小時沒有被蓋回 24
     })
 
     it('set-supervisors checks eligibility for the whole batch and clears with an empty value', async () => {

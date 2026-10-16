@@ -124,9 +124,10 @@ function positiveNumber(value) {
 
 /**
  * 一張假單的請假時數與每日分布。優先順序：
- *   1. 表單的「天數」欄位（填了正數就以它為準，可以是 0.5 天）
- *   2. 舊資料裡直接存的 days / duration / hours 鍵
- *   3. 由開始、結束時間推算（台灣時間，整天或實際時數）
+ *   1. 表單的「時數」欄位（請假以小時為單位，填了正數就以它為準，可以是 4.5 小時）
+ *   2. 舊表單的「天數」欄位（填了正數就以它為準，可以是 0.5 天，乘上每日時數換成時數）
+ *   3. 舊資料裡直接存的 days / duration / hours 鍵
+ *   4. 由開始、結束時間推算（台灣時間，整天或實際時數）
  * perDay 是這張假單落在每個台灣日曆日的時數（總和等於 hours），用來把跨月的假單拆到正確的月份；
  * 舊資料沒有日期時 perDay 是空陣列。
  */
@@ -135,6 +136,7 @@ export function computeLeaveDuration({
   endValue,
   startType,
   endType,
+  filledHours,
   filledDays,
   literalDays,
   literalHours,
@@ -147,11 +149,16 @@ export function computeLeaveDuration({
   let source = 'none';
   let days = 0;
   let hours = 0;
+  const filledByHours = positiveNumber(filledHours);
   const filled = positiveNumber(filledDays);
   const legacyDays = positiveNumber(literalDays);
   const legacyHours = positiveNumber(literalHours);
 
-  if (filled !== null) {
+  if (filledByHours !== null) {
+    source = 'hours-field';
+    hours = filledByHours;
+    days = hours / hoursPerDay;
+  } else if (filled !== null) {
     source = 'days-field';
     days = filled;
     hours = filled * hoursPerDay;

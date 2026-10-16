@@ -1,6 +1,7 @@
 // 簽核申請表單（動態欄位）共用邏輯：初始值、必填檢核、簽核流程預覽文字
 
 import { normalizeFieldOptions, isBlankValue } from './approvalDisplay'
+import { isLeaveHoursLabel } from './leaveHours'
 
 /** 停用的欄位不顯示也不檢核；伺服器未回 is_active 時視為啟用 */
 export function isActiveField(field) {
@@ -9,6 +10,11 @@ export function isActiveField(field) {
 
 export function isActiveForm(form) {
   return form?.is_active !== false
+}
+
+/** 請假單的「時數」欄位（數字欄位，標籤是時數／請假時數…）：以小時為單位，畫面用 0.5 小時為單位的輸入框並依起訖時間自動帶入 */
+export function isLeaveHoursField(field) {
+  return field?.type_1 === 'number' && isLeaveHoursLabel(field?.label)
 }
 
 /** 沒有選項的 checkbox 是單一勾選（是 / 否），有選項才是複選群組 */

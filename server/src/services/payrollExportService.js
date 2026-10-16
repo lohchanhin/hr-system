@@ -6,6 +6,7 @@ import { calculateEmployeePayroll } from './payrollService.js';
 import { calculateCompleteWorkData } from './workHoursCalculationService.js';
 import { aggregateBonusFromApprovals, loadBonusFieldsByForm } from '../utils/payrollPreviewUtils.js';
 import { approvedInMonthFilter, payrollMonthRange } from '../utils/payrollMonth.js';
+import { readAnnualLeaveHours } from '../utils/annualLeaveHours.js';
 
 /**
  * 格式化日期為 YYYYMMDD
@@ -707,7 +708,8 @@ export async function generateIndividualPayrollExcel(payrollRecord, employee, op
   const insuranceLevel = payrollRecord.insuranceLevel || 45800;
   const employerPension = Math.round(insuranceLevel * 0.06);
   
-  const annualLeaveHours = payrollRecord.annualLeave?.totalHours || employee.annualLeave?.totalHours || 0;
+  // 特休以小時儲存：薪資記錄裡有就用記錄的，否則讀員工資料（舊格式的天數欄位會換算成小時）
+  const annualLeaveHours = payrollRecord.annualLeave?.totalHours || readAnnualLeaveHours(employee.annualLeave).totalHours;
   // 加班補休時數：未實作，需要從考勤系統或加班補休模組取得
   // 此欄位保留供未來實作使用
   const overtimeCompHours = 0;

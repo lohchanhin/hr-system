@@ -35,6 +35,8 @@ const mockFormTemplate = { find: jest.fn() };
 const mockFormField = { find: jest.fn() };
 const mockDepartment = { find: jest.fn() };
 const mockHoliday = { find: jest.fn() };
+const mockHolidayMoveSetting = { find: jest.fn() };
+const mockHolidayRestResolution = { find: jest.fn() };
 const mockScheduleDayMemo = {
   find: jest.fn(),
   findOneAndUpdate: jest.fn(),
@@ -118,6 +120,8 @@ jest.unstable_mockModule('../src/models/form_template.js', () => ({ default: moc
 jest.unstable_mockModule('../src/models/form_field.js', () => ({ default: mockFormField }));
 jest.unstable_mockModule('../src/models/Department.js', () => ({ default: mockDepartment }));
 jest.unstable_mockModule('../src/models/Holiday.js', () => ({ default: mockHoliday }));
+jest.unstable_mockModule('../src/models/HolidayMoveSetting.js', () => ({ default: mockHolidayMoveSetting }));
+jest.unstable_mockModule('../src/models/HolidayRestResolution.js', () => ({ default: mockHolidayRestResolution }));
 jest.unstable_mockModule('../src/models/ScheduleDayMemo.js', () => ({ default: mockScheduleDayMemo }));
 jest.unstable_mockModule('../src/services/leaveFieldService.js', () => mockLeaveFieldService);
 jest.unstable_mockModule('../src/services/laborRuleValidationService.js', () => ({
@@ -228,6 +232,10 @@ beforeEach(() => {
   });
   mockHoliday.find.mockReset();
   mockHoliday.find.mockReturnValue({ lean: jest.fn().mockResolvedValue([]) });
+  mockHolidayMoveSetting.find.mockReset();
+  mockHolidayMoveSetting.find.mockReturnValue({ lean: jest.fn().mockResolvedValue([]) });
+  mockHolidayRestResolution.find.mockReset();
+  mockHolidayRestResolution.find.mockReturnValue({ lean: jest.fn().mockResolvedValue([]) });
 
 });
 
@@ -1494,7 +1502,11 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
       });
 
     expect(response.status).toBe(201);
-    expect(response.body).toEqual(expect.objectContaining({ imported: 2, warnings: [] }));
+    // 檔案只有一天的日期欄位，每週一例一休不檢核，匯入會多一則「未檢核」提醒
+    expect(response.body).toEqual(expect.objectContaining({
+      imported: 2,
+      warnings: [expect.objectContaining({ row: null, message: expect.stringContaining('未檢核每週一例一休') })],
+    }));
     const operations = mockShiftSchedule.bulkWrite.mock.calls[0][0];
     expect(operations.map((operation) => operation.updateOne.update.$set.employee)).toEqual(['e1', 'e2']);
   });
@@ -2735,6 +2747,344 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
         employee: 'e1',
         message: '單週應有一日例假',
       }));
+    });
+  });
+});
+
+/* ------------- 跨月週「目前無法判斷」提醒、兼職人員免排班規範的回應 ------------- */
+describe('Schedule API pending boundary weeks and part-time notice', () => {
+  const xlsxType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+  const buildAuthHeader = (role = 'supervisor') => {
+    currentRole = role;
+    const token = jwt.sign({ id: 'tester', role, ver: 0 }, process.env.JWT_SECRET || 'secret', {
+      algorithm: 'HS256',
+      issuer: 'hr-system',
+      audience: 'hr-system-api',
+    });
+    return `Bearer ${token}`;
+  };
+  const pending = (overrides = {}) => ({
+    rule: 'weekly-rest-pending',
+    employee: 'e1',
+    weekStart: '2026-06-29',
+    weekEnd: '2026-07-05',
+    regularRestCount: 0,
+    restDayCount: 0,
+    missingDates: ['2026-06-29', '2026-06-30'],
+    missingMonths: ['2026-06'],
+    message: '跨月週（2026-06-29～2026-07-05）：2026-06-29～2026-06-30 尚未排班，暫時無法判斷每週一例一休（目前缺例假、休息日）；2026年6月 班表排定後會重新檢核',
+    ...overrides,
+  });
+
+  /** 公版格式的班表檔：dayCount 個日期欄位，每個員工每天都是 D */
+  async function buildWorkbookFile(employeeIds, dayCount = 1, code = 'D') {
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet('工作表1');
+    const days = Array.from({ length: dayCount }, (_, index) => index + 1);
+    sheet.addRow(['公版班表']);
+    sheet.addRow(['', '', '行事曆']);
+    sheet.addRow(['', '', '日期', ...days]);
+    sheet.addRow(['員工代號', '姓名', '星期', ...days.map(() => '')]);
+    employeeIds.forEach((employeeId) => sheet.addRow([employeeId, '', '護理師', ...days.map(() => code)]));
+    return Buffer.from(await workbook.xlsx.writeBuffer());
+  }
+
+  function prepareImport(employees) {
+    mockEmployee.find.mockReturnValue({
+      select: jest.fn().mockReturnThis(),
+      lean: jest.fn().mockResolvedValue(employees),
+    });
+    mockAttendanceSetting.findOne.mockReturnValue({
+      lean: jest.fn().mockResolvedValue({ shifts: [{ _id: 'day', code: 'D', name: '日班' }] }),
+    });
+    mockShiftSchedule.find.mockReturnValue({ lean: jest.fn().mockResolvedValue([]) });
+    mockApprovalRequest.find.mockReturnValue({
+      select: jest.fn().mockReturnThis(),
+      lean: jest.fn().mockResolvedValue([]),
+    });
+    mockShiftSchedule.bulkWrite.mockResolvedValue({ upsertedCount: employees.length });
+  }
+
+  const importRequest = (file, mode = 'preview') => request(app)
+    .post('/api/schedules/import')
+    .set('Authorization', buildAuthHeader('admin'))
+    .field('month', '2026-07')
+    .field('department', 'd1')
+    .field('mode', mode)
+    .attach('file', file, { filename: 'schedule.xlsx', contentType: xlsxType });
+
+  const employeeRow = (overrides = {}) => ({
+    _id: 'e1', employeeId: 'A001', name: '王小明', department: 'd1', subDepartment: 'sd1', ...overrides,
+  });
+
+  describe('GET /rules/validate', () => {
+    const oneDraft = () => mockShiftSchedule.find.mockReturnValueOnce({
+      lean: jest.fn().mockResolvedValue([
+        { _id: 'sch1', employee: 'e1', date: new Date('2026-07-01'), shiftId: 's1', department: 'd1', subDepartment: 'sd1' },
+      ]),
+    });
+
+    it('lists the weeks that cannot be judged yet without turning the check into a failure', async () => {
+      oneDraft();
+      mockAssertScheduleRuleCompliance.mockResolvedValueOnce({
+        ok: true, violations: [], pendingWeeks: [pending({ employee: { toString: () => 'e1' } })],
+      });
+
+      const res = await request(app)
+        .get('/api/schedules/rules/validate?month=2026-07')
+        .set('Authorization', buildAuthHeader('admin'));
+
+      expect(res.status).toBe(200);
+      // ok / count / violations 只代表違規；待判斷的週別另外放，不會擋發布
+      expect(res.body).toEqual({
+        ok: true,
+        count: 0,
+        violations: [],
+        pendingWeeks: [expect.objectContaining({ employee: 'e1', weekStart: '2026-06-29', date: '2026-06-29' })],
+      });
+    });
+
+    it('returns the pending weeks next to the violations when both exist', async () => {
+      oneDraft();
+      mockAssertScheduleRuleCompliance.mockRejectedValueOnce(Object.assign(new Error('排班規範檢核未通過'), {
+        violations: [{ employee: 'e1', rule: 'continuous-work-days', message: '不得連續7日未安排休/例', dates: ['2026-07-01'] }],
+        pendingWeeks: [pending()],
+      }));
+
+      const res = await request(app)
+        .get('/api/schedules/rules/validate?month=2026-07')
+        .set('Authorization', buildAuthHeader('admin'));
+
+      expect(res.status).toBe(200);
+      expect(res.body.ok).toBe(false);
+      expect(res.body.count).toBe(1);
+      expect(res.body.pendingWeeks).toEqual([expect.objectContaining({ weekStart: '2026-06-29', date: '2026-06-29' })]);
+    });
+
+    it('adds the employee code and name to each pending week so employees outside the loaded page are named', async () => {
+      oneDraft();
+      const hexId = '64b64b64b64b64b64b64b64b';
+      mockEmployee.find.mockReturnValue({
+        select: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue([{ _id: hexId, employeeId: 'A0141', name: '陳小玲' }]),
+        }),
+      });
+      mockAssertScheduleRuleCompliance.mockResolvedValueOnce({
+        ok: true, violations: [], pendingWeeks: [pending({ employee: hexId })],
+      });
+
+      const res = await request(app)
+        .get('/api/schedules/rules/validate?month=2026-07')
+        .set('Authorization', buildAuthHeader('admin'));
+
+      expect(res.body.pendingWeeks).toEqual([
+        expect.objectContaining({ employee: hexId, employeeCode: 'A0141', employeeName: '陳小玲' }),
+      ]);
+      expect(mockEmployee.find).toHaveBeenCalledWith({ _id: { $in: [hexId] } });
+    });
+
+    it('still returns the pending weeks when looking up the employee names fails', async () => {
+      oneDraft();
+      const hexId = '64b64b64b64b64b64b64b64b';
+      mockEmployee.find.mockImplementation(() => { throw new Error('db down'); });
+      mockAssertScheduleRuleCompliance.mockResolvedValueOnce({
+        ok: true, violations: [], pendingWeeks: [pending({ employee: hexId })],
+      });
+
+      const res = await request(app)
+        .get('/api/schedules/rules/validate?month=2026-07')
+        .set('Authorization', buildAuthHeader('admin'));
+
+      expect(res.status).toBe(200);
+      expect(res.body.pendingWeeks).toEqual([expect.objectContaining({ employee: hexId, weekStart: '2026-06-29' })]);
+      expect(res.body.pendingWeeks[0]).not.toHaveProperty('employeeName');
+    });
+
+    it('omits pendingWeeks entirely when nothing is pending', async () => {
+      oneDraft();
+      const res = await request(app)
+        .get('/api/schedules/rules/validate?month=2026-07')
+        .set('Authorization', buildAuthHeader('admin'));
+
+      expect(res.body).toEqual({ ok: true, count: 0, violations: [] });
+    });
+  });
+
+  describe('publish and finalize', () => {
+    const publishDocs = () => mockShiftSchedule.find.mockReturnValue({
+      populate: jest.fn().mockReturnThis(),
+      lean: jest.fn().mockResolvedValue([{
+        _id: 'sch1',
+        employee: { _id: 'e1', name: '王小明' },
+        state: 'pending_confirmation',
+        employeeResponse: 'confirmed',
+        date: new Date('2026-07-01'),
+      }]),
+    });
+
+    it('publishes and reports the weeks that cannot be judged yet', async () => {
+      publishDocs();
+      mockShiftSchedule.updateMany.mockResolvedValue({ modifiedCount: 1 });
+      mockAssertScheduleRuleCompliance.mockResolvedValueOnce({ ok: true, violations: [], pendingWeeks: [pending()] });
+
+      const res = await request(app)
+        .post('/api/schedules/publish')
+        .set('Authorization', buildAuthHeader('admin'))
+        .send({ month: '2026-07' });
+
+      expect(res.status).toBe(200);
+      expect(res.body.updated).toBe(1);
+      expect(res.body.pendingWeeks).toEqual([expect.objectContaining({ employee: 'e1', weekStart: '2026-06-29' })]);
+      expect(mockShiftSchedule.updateMany).toHaveBeenCalled();
+    });
+
+    it('finalizes and reports the weeks that cannot be judged yet', async () => {
+      publishDocs();
+      mockShiftSchedule.updateMany.mockResolvedValue({ modifiedCount: 1 });
+      mockAssertScheduleRuleCompliance.mockResolvedValueOnce({ ok: true, violations: [], pendingWeeks: [pending()] });
+
+      const res = await request(app)
+        .post('/api/schedules/publish/finalize')
+        .set('Authorization', buildAuthHeader('admin'))
+        .send({ month: '2026-07' });
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ finalized: 1, pendingWeeks: [expect.objectContaining({ weekStart: '2026-06-29' })] });
+    });
+
+    it('keeps the response bodies unchanged when nothing is pending', async () => {
+      publishDocs();
+      mockShiftSchedule.updateMany.mockResolvedValue({ modifiedCount: 1 });
+
+      const published = await request(app)
+        .post('/api/schedules/publish')
+        .set('Authorization', buildAuthHeader('admin'))
+        .send({ month: '2026-07' });
+      const finalized = await request(app)
+        .post('/api/schedules/publish/finalize')
+        .set('Authorization', buildAuthHeader('admin'))
+        .send({ month: '2026-07' });
+
+      expect(published.body).not.toHaveProperty('pendingWeeks');
+      expect(finalized.body).toEqual({ finalized: 1 });
+    });
+
+    it('still blocks publishing on a violation and returns the pending weeks with the 400', async () => {
+      publishDocs();
+      mockAssertScheduleRuleCompliance.mockRejectedValueOnce(Object.assign(new Error('排班規範檢核未通過'), {
+        status: 400,
+        violations: [{ rule: 'continuous-work-days', employee: 'e1', message: '不得連續7日未安排休/例' }],
+        pendingWeeks: [pending()],
+      }));
+
+      const res = await request(app)
+        .post('/api/schedules/publish')
+        .set('Authorization', buildAuthHeader('admin'))
+        .send({ month: '2026-07' });
+
+      expect(res.status).toBe(400);
+      expect(res.body.violations).toHaveLength(1);
+      expect(res.body.pendingWeeks).toEqual([expect.objectContaining({ weekStart: '2026-06-29' })]);
+      expect(mockShiftSchedule.updateMany).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('schedule import', () => {
+    it('returns the pending weeks on preview and on commit, and never blocks the import with them', async () => {
+      prepareImport([employeeRow()]);
+      mockAssertScheduleRuleCompliance.mockResolvedValue({ ok: true, violations: [], pendingWeeks: [pending()] });
+      const file = await buildWorkbookFile(['A001'], 31);
+
+      const preview = await importRequest(file, 'preview');
+      expect(preview.status).toBe(200);
+      expect(preview.body.pendingWeeks).toEqual([expect.objectContaining({ employee: 'e1', weekStart: '2026-06-29' })]);
+      expect(preview.body.violations).toEqual([]);
+      expect(preview.body.warnings).toEqual([]);
+      expect(mockShiftSchedule.bulkWrite).not.toHaveBeenCalled();
+
+      const committed = await importRequest(file, 'commit');
+      expect(committed.status).toBe(201);
+      expect(committed.body.imported).toBe(31);
+      expect(committed.body.pendingWeeks).toEqual([expect.objectContaining({ weekStart: '2026-06-29' })]);
+      // 檢核的是整個月，每週一例一休要檢核
+      expect(mockAssertScheduleRuleCompliance.mock.calls.map(([args]) => args.strictWeeklyRest)).toEqual([true, true]);
+    });
+
+    it('returns the pending weeks together with violations', async () => {
+      prepareImport([employeeRow()]);
+      const violation = { rule: 'continuous-work-days', employee: 'e1', message: '不得連續7日未安排休/例' };
+      mockAssertScheduleRuleCompliance.mockRejectedValue(Object.assign(new Error('排班規範檢核未通過'), {
+        violations: [violation],
+        pendingWeeks: [pending()],
+      }));
+
+      const preview = await importRequest(await buildWorkbookFile(['A001'], 31), 'preview');
+
+      expect(preview.status).toBe(200);
+      expect(preview.body.violations).toEqual([violation]);
+      expect(preview.body.pendingWeeks).toEqual([expect.objectContaining({ weekStart: '2026-06-29' })]);
+    });
+
+    it('adds no pendingWeeks key when there is nothing to judge later', async () => {
+      prepareImport([employeeRow()]);
+
+      const preview = await importRequest(await buildWorkbookFile(['A001'], 31), 'preview');
+      const committed = await importRequest(await buildWorkbookFile(['A001'], 31), 'commit');
+
+      expect(preview.body).not.toHaveProperty('pendingWeeks');
+      expect(committed.body).not.toHaveProperty('pendingWeeks');
+    });
+
+    it('says so when the file has fewer day columns than the month and the weekly check is therefore skipped', async () => {
+      prepareImport([employeeRow()]);
+
+      const partial = await importRequest(await buildWorkbookFile(['A001'], 28), 'preview');
+      const whole = await importRequest(await buildWorkbookFile(['A001'], 31), 'preview');
+
+      expect(partial.status).toBe(200);
+      expect(partial.body.warnings).toEqual([
+        expect.objectContaining({
+          row: null,
+          message: '此檔案只有 28 天的日期欄位（2026-07 共 31 天），未檢核每週一例一休；請補齊整月日期欄位後再匯入，才能完整檢核',
+        }),
+      ]);
+      expect(whole.body.warnings).toEqual([]);
+      expect(mockAssertScheduleRuleCompliance.mock.calls.map(([args]) => args.strictWeeklyRest)).toEqual([false, true]);
+    });
+
+    it('lists part-time employees of the file as exempt but still hands every candidate to the rule check', async () => {
+      prepareImport([
+        employeeRow({ _id: 'e1', employeeId: 'A001', name: '王小明', partTime: true }),
+        employeeRow({ _id: 'e2', employeeId: 'A002', name: '李大華', partTime: false }),
+        employeeRow({ _id: 'e3', employeeId: 'A003', name: '舊資料' }),
+      ]);
+
+      const preview = await importRequest(await buildWorkbookFile(['A001', 'A002', 'A003'], 31), 'preview');
+
+      expect(preview.status).toBe(200);
+      expect(preview.body.ruleExemptEmployees).toEqual([{ employeeId: 'A001', name: '王小明' }]);
+      // 免檢核由檢核服務統一處理（單一出口），控制器不先濾掉
+      const args = mockAssertScheduleRuleCompliance.mock.calls[0][0];
+      expect([...new Set(args.candidateSchedules.map((item) => item.employee))]).toEqual(['e1', 'e2', 'e3']);
+    });
+
+    it('reports an empty exempt list when nobody in the file is part-time', async () => {
+      prepareImport([employeeRow()]);
+
+      const preview = await importRequest(await buildWorkbookFile(['A001'], 31), 'preview');
+
+      expect(preview.body.ruleExemptEmployees).toEqual([]);
+    });
+
+    it('still blocks a part-time employee’s file on data errors such as an unknown shift code', async () => {
+      prepareImport([employeeRow({ partTime: true })]);
+
+      const preview = await importRequest(await buildWorkbookFile(['A001'], 31, 'ZZ'), 'preview');
+
+      expect(preview.status).toBe(422);
+      expect(preview.body.errors.length).toBeGreaterThan(0);
+      expect(preview.body.ruleExemptEmployees).toEqual([{ employeeId: 'A001', name: '王小明' }]);
+      expect(mockAssertScheduleRuleCompliance).not.toHaveBeenCalled();
     });
   });
 });

@@ -67,7 +67,8 @@ describe('specialLeave report', () => {
     })
 
     expect(result.records.map((record) => record.approvalId)).toEqual(['a1', 'a2'])
-    expect(result.summary).toEqual({ totalRequests: 2, totalDays: 3 })
+    expect(result.records.map((record) => record.hours)).toEqual([8, 16])
+    expect(result.summary).toEqual({ totalRequests: 2, totalDays: 3, totalHours: 24 })
   })
 
   it('does not match a name that merely contains 特休', async () => {

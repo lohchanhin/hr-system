@@ -130,3 +130,56 @@ describe('ApprovalFormFields', () => {
     expect(wrapper.findAll('.el-select')).toHaveLength(4)
   })
 })
+
+// 請假「時數」欄位：以小時為單位（0.5 的倍數），上限是所選期間最多可請的時數
+describe('ApprovalFormFields 請假時數欄位', () => {
+  const fields = [
+    { _id: 'amount', label: '金額', type_1: 'number' },
+    { _id: 'hours', label: '時數', type_1: 'number', required: true },
+  ]
+
+  it('時數欄位用 0.5 小時為單位的輸入框，並說明自動帶入與每日上限；其他數字欄位不受影響', () => {
+    const wrapper = mountFields(fields, { leaveHours: { max: 12, maxHoursPerDay: 12, minUnitHours: 0.5 } })
+    const field = wrapper.find('[data-test="leave-hours-field"]')
+
+    expect(field.exists()).toBe(true)
+    expect(field.text()).toContain('小時')
+    expect(field.text()).toContain('依起訖時間自動帶入，可調整（0.5 小時為單位，每日最多 12 小時）')
+    expect(wrapper.findAll('.el-input-number')).toHaveLength(2)
+    expect(wrapper.findAll('[data-test="leave-hours-field"]')).toHaveLength(1)
+  })
+
+  it('輸入框的上限是所選期間最多可請的時數，超過會被夾回上限，步進是最小請假單位', async () => {
+    const wrapper = mountFields([fields[1]], { leaveHours: { max: 4, maxHoursPerDay: 8, minUnitHours: 0.5 } })
+    const input = wrapper.find('[data-test="leave-hours-field"] input')
+
+    await input.setValue('9')
+    await input.trigger('blur')
+    await flushPromises()
+    expect(wrapper.vm.formData.hours).toBe(4)
+
+    await wrapper.find('[data-test="leave-hours-field"] .el-input-number__decrease').trigger('mousedown')
+    document.dispatchEvent(new MouseEvent('mouseup'))
+    await flushPromises()
+    expect(wrapper.vm.formData.hours).toBe(3.5)
+  })
+
+  it('沒有設定時用預設的 0.5 小時為單位、每日 8 小時，也可以清空（必填檢核才會生效）', async () => {
+    const wrapper = mountFields([fields[1]])
+    expect(wrapper.find('[data-test="leave-hours-field"]').text()).toContain('0.5 小時為單位，每日最多 8 小時')
+
+    const input = wrapper.find('[data-test="leave-hours-field"] input')
+    await input.setValue('2')
+    await input.trigger('blur')
+    expect(wrapper.vm.formData.hours).toBe(2)
+    await input.setValue('')
+    await input.trigger('blur')
+    expect(wrapper.vm.formData.hours).toBeNull()
+  })
+
+  it('標籤不是時數的數字欄位仍是一般的數字輸入框', () => {
+    const wrapper = mountFields([{ _id: 'days', label: '天數', type_1: 'number' }])
+    expect(wrapper.find('[data-test="leave-hours-field"]').exists()).toBe(false)
+    expect(wrapper.findAll('.el-input-number')).toHaveLength(1)
+  })
+})
