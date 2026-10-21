@@ -1,18 +1,33 @@
-// 國定假日休假紀錄 API：查詢（與班表相同的權限範圍）、登記／刪除「沒休的處理方式」、匯出 Excel。
-// 休假紀錄本身由班表推算（holidayRestLedgerService），這裡只存人工的處理決定。
+// 國定假日休假紀錄 API：查詢（與班表相同的權限範圍）、登記／刪除「沒休的處理方式」、匯出 Excel，
+// 以及補假義務（排定補假日、年度未排補假清單、重新計算）與個人調移（須有員工本人的同意紀錄）。
+// 休假紀錄本身由班表推算（holidayRestLedgerService），這裡只存人工的處理決定；查詢時順便同步補假義務。
 import { Types } from 'mongoose';
 import Employee from '../models/Employee.js';
-import Holiday from '../models/Holiday.js';
 import Department from '../models/Department.js';
 import HolidayRestResolution, { HOLIDAY_RESOLUTION_KINDS } from '../models/HolidayRestResolution.js';
 import { WORK_HOURS_CONFIG } from '../config/salaryConfig.js';
-import { isPayableNationalHoliday } from '../services/countedHolidayService.js';
+import { isNationalHolidayFor, loadHolidayContext } from '../services/holidayResolver.js';
 import {
   buildHolidayRestLedger,
   parseLedgerMonth,
   serializeHolidayResolution,
   summarizeLedger,
 } from '../services/holidayRestLedgerService.js';
+import {
+  COMPENSATION_LIST_STATUSES,
+  HolidayCompensationError,
+  MAX_SYNC_MONTHS,
+  assignHolidayCompensation,
+  createHolidaySwap,
+  createManualHolidayCompensation,
+  listHolidayCompensations,
+  listHolidaySwaps,
+  listSyncMonths,
+  revokeHolidaySwap,
+  syncHolidayCompensationsForMonths,
+  unassignHolidayCompensation,
+} from '../services/holidayCompensationService.js';
+import { toTaipeiDateKey } from '../utils/taipeiTime.js';
 import { appendHolidayLedgerSheet } from '../services/holidayLedgerWorkbook.js';
 import { buildLiteralSearchRegex } from '../utils/safeSearch.js';
 import { getAllowedScheduleEmployeeIds, toEntityId } from './schedule/scheduleShared.js';
@@ -21,12 +36,17 @@ const MAX_LEDGER_MONTHS = 12;
 // 一次最多處理的員工數：全公司沒有選單位時可能很多人，請使用者縮小範圍
 const MAX_LEDGER_EMPLOYEES = 2000;
 const MAX_NOTE_LENGTH = 500;
-const EMPLOYEE_SELECT = '_id employeeId name title practiceTitle subDepartment partTime requiresScheduling status appointment role';
+const EMPLOYEE_SELECT = '_id employeeId name title practiceTitle subDepartment partTime requiresScheduling holidayRegime isIndigenous status appointment role';
+const RESOLUTION_EMPLOYEE_SELECT = '_id holidayRegime requiresScheduling isIndigenous';
+// 登記處理方式時，原始日期要是該員工的國定假日（或適用的指定應放假日）；被公司挪移、個人調移走的原日期也算
+const RESOLVABLE_REASONS = new Set(['statutory', 'designated', 'company_move']);
+const RESOLVABLE_NOT_HOLIDAY_REASONS = new Set(['moved_away', 'swapped_away']);
 
 class LedgerRequestError extends Error {
-  constructor(status, message) {
+  constructor(status, message, code = null) {
     super(message);
     this.status = status;
+    this.code = code;
   }
 }
 
@@ -74,10 +94,10 @@ function resolveMonths(query, { single = false } = {}) {
 }
 
 /**
- * 依登入者的權限（與班表相同：管理員全部、主管為自己與直屬部屬、員工只有自己）與篩選條件取出要列入的員工。
+ * 依登入者的權限（與班表相同：管理員全部、主管為自己與直屬部屬、員工只有自己）與篩選條件組出員工查詢條件。
  * 主管預設不含自己（和排班頁一樣，includeSelf=true 才含）。
  */
-async function loadLedgerEmployees(req) {
+async function buildLedgerEmployeeQuery(req) {
   const actorId = toEntityId(req.user?.id);
   if (!actorId) throw new LedgerRequestError(401, 'Invalid user');
   const allowed = await getAllowedScheduleEmployeeIds(req);
@@ -118,7 +138,12 @@ async function loadLedgerEmployees(req) {
     const rx = buildLiteralSearchRegex(search);
     query.$or = [{ name: rx }, { employeeId: rx }];
   }
+  return query;
+}
 
+/** 依權限範圍與篩選條件取出要列入的員工（一次最多 2000 人，超過時請使用者縮小範圍） */
+async function loadLedgerEmployees(req) {
+  const query = await buildLedgerEmployeeQuery(req);
   const find = Employee.find(query).select(EMPLOYEE_SELECT);
   const populated = typeof find.populate === 'function' ? find.populate({ path: 'subDepartment', select: 'name' }) : find;
   const employees = (await leanResult(populated)) || [];
@@ -128,8 +153,33 @@ async function loadLedgerEmployees(req) {
   return employees;
 }
 
+/**
+ * 重新計算用：依權限範圍分批讀員工（依 _id 排序，每批最多 2000 人），每批交給 handle 處理。
+ * 和每日排程一樣分批，管理員的員工資料（含離職員工）超過 2000 筆時也能完成，不必縮小範圍。
+ */
+async function forEachLedgerEmployeeBatch(req, handle) {
+  const query = await buildLedgerEmployeeQuery(req);
+  let lastId = null;
+  for (;;) {
+    let find = Employee.find(lastId === null ? query : { $and: [query, { _id: { $gt: lastId } }] }).select(EMPLOYEE_SELECT);
+    if (typeof find?.sort === 'function') find = find.sort({ _id: 1 });
+    if (typeof find?.limit === 'function') find = find.limit(MAX_LEDGER_EMPLOYEES);
+    const batch = (await leanResult(find)) || [];
+    if (!batch.length) break;
+    await handle(batch);
+    if (batch.length < MAX_LEDGER_EMPLOYEES) break;
+    const nextId = batch[batch.length - 1]._id;
+    // 防呆：游標沒有前進就停止，不會無限重複同一批
+    if (lastId !== null && String(nextId) === String(lastId)) break;
+    lastId = nextId;
+  }
+}
+
 function respondError(res, err, label) {
-  if (err instanceof LedgerRequestError) return res.status(err.status).json({ error: err.message });
+  if (err instanceof LedgerRequestError) {
+    return res.status(err.status).json(err.code ? { error: err.message, code: err.code } : { error: err.message });
+  }
+  if (err instanceof HolidayCompensationError) return res.status(err.status).json({ error: err.message, code: err.code });
   console.error(label, err?.name ?? 'Error');
   return res.status(500).json({ error: 'internal error' });
 }
@@ -140,6 +190,7 @@ const STATUS_FILTERS = new Map([
   ['notTaken', { label: '未休', matches: (employee) => employee.notTaken > 0 }],
   ['moved', { label: '移休', matches: (employee) => employee.moved > 0 }],
   ['extra', { label: '多排的國', matches: (employee) => employee.extraGuoDates.length > 0 }],
+  ['compensation', { label: '待排補假', matches: (employee) => employee.items.some((item) => item.needsAction === 'assign_compensation') }],
 ]);
 
 function statusFilterOf(query) {
@@ -166,8 +217,10 @@ function mergeSummaries(ledgers) {
     total.entitled += summary.entitled;
     total.rested += summary.rested;
     total.moved += summary.moved;
+    total.compensated += summary.compensated || 0;
     total.notTaken += summary.notTaken;
     total.open += summary.open;
+    total.compensationOpen += summary.compensationOpen || 0;
     total.extra += summary.extra;
     total.excluded.notScheduled += summary.excluded.notScheduled;
   }
@@ -181,7 +234,8 @@ export async function getHolidayLedger(req, res) {
     const filter = statusFilterOf(req.query);
     const ledgers = [];
     for (const month of months) {
-      const ledger = await buildHolidayRestLedger({ month, employees });
+      // 查詢時順便同步補假義務（國定假日落在休息日／例假的補假），班表改過之後不必另外觸發
+      const { sync, ...ledger } = await buildHolidayRestLedger({ month, employees, syncCompensations: true });
       ledgers.push(keepEmployees(ledger, filter));
     }
     return res.json({ months: ledgers, summary: mergeSummaries(ledgers) });
@@ -298,12 +352,16 @@ export async function saveHolidayLedgerResolution(req, res) {
     }
     if (kind === 'waived' && !note) throw new LedgerRequestError(400, 'note required when kind is waived');
 
-    const target = await leanResult(Employee.findById(employeeId).select('_id'));
+    const target = await leanResult(Employee.findById(employeeId).select(RESOLUTION_EMPLOYEE_SELECT));
     if (!target) throw new LedgerRequestError(404, 'employee not found');
-    const holidayDocs = (await leanResult(Holiday.find({ date: holiday.date }))) || [];
-    const holidayDoc = holidayDocs.find(isPayableNationalHoliday);
-    if (!holidayDoc) throw new LedgerRequestError(400, 'holidayDate is not a national holiday');
-    $set.holidayName = String(holidayDoc.name || holidayDoc.description || holidayDoc.desc || '國定假日').trim().slice(0, 100);
+    // 依該員工判斷（輪班人員的公務機關補假日不是國定假日）；鍵是國定假日的原始日期
+    const nextDay = new Date(holiday.date.getTime() + 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    const context = await loadHolidayContext({ start: holiday.key, end: nextDay, employees: [target] });
+    const verdict = isNationalHolidayFor(context, target, holiday.key);
+    const resolvable = verdict.originalDate === holiday.key
+      && (RESOLVABLE_REASONS.has(verdict.reason) || RESOLVABLE_NOT_HOLIDAY_REASONS.has(verdict.notHolidayReason));
+    if (!resolvable) throw new LedgerRequestError(400, 'holidayDate is not a national holiday');
+    $set.holidayName = String(verdict.name || '國定假日').trim().slice(0, 100);
 
     const update = { $set, $setOnInsert: { createdBy: actorId } };
     if (Object.keys($unset).length) update.$unset = $unset;
@@ -331,5 +389,149 @@ export async function deleteHolidayLedgerResolution(req, res) {
     return res.json({ success: true });
   } catch (err) {
     return respondError(res, err, 'Holiday ledger resolution delete failed');
+  }
+}
+
+/* ---------------------------- 補假義務 ---------------------------- */
+
+function currentTaipeiYear() {
+  return Number(String(toTaipeiDateKey(new Date()) || '').slice(0, 4)) || new Date().getUTCFullYear();
+}
+
+function parseYear(value) {
+  if (value === undefined || value === null || value === '') return currentTaipeiYear();
+  const year = Number(value);
+  if (!Number.isInteger(year) || year < 2000 || year > 2100) throw new LedgerRequestError(400, '年度不正確', 'INVALID_YEAR');
+  return year;
+}
+
+// 補假、調移的寫入：主管只能處理直屬部屬（不含自己），管理員不限
+const authorizeFor = (req) => (employeeId) => assertCanResolveFor(req, employeeId);
+
+/** GET /api/holiday-ledger/compensations?year=&status=open|assigned|void|all：年度未排補假（預設 open） */
+export async function listHolidayLedgerCompensations(req, res) {
+  try {
+    const year = parseYear(req.query.year);
+    const status = String(req.query.status || 'open').trim();
+    if (!COMPENSATION_LIST_STATUSES.includes(status)) throw new LedgerRequestError(400, '狀態篩選不正確', 'INVALID_STATUS');
+    const employees = await loadLedgerEmployees(req);
+    return res.json(await listHolidayCompensations({ employees, year, status }));
+  } catch (err) {
+    return respondError(res, err, 'Holiday compensation list failed');
+  }
+}
+
+/** POST /api/holiday-ledger/compensations/sync { from, to }：重新計算（最多 12 個月；權限範圍內的員工分批處理） */
+export async function syncHolidayLedgerCompensations(req, res) {
+  try {
+    const body = req.body || {};
+    const months = listSyncMonths(body.from, body.to);
+    if (!months) throw new LedgerRequestError(400, '請提供有效的起訖月份（YYYY-MM）', 'INVALID_RANGE');
+    if (months.length > MAX_SYNC_MONTHS) throw new LedgerRequestError(400, `一次最多重新計算 ${MAX_SYNC_MONTHS} 個月`, 'RANGE_TOO_LONG');
+    const result = { created: 0, voided: 0, reopened: 0, conflicts: 0 };
+    await forEachLedgerEmployeeBatch({ user: req.user, query: {} }, async (employees) => {
+      const part = await syncHolidayCompensationsForMonths({ months, employees });
+      for (const key of Object.keys(result)) result[key] += Number(part?.[key]) || 0;
+    });
+    return res.json({ months, ...result });
+  } catch (err) {
+    return respondError(res, err, 'Holiday compensation sync failed');
+  }
+}
+
+/** POST /api/holiday-ledger/compensations/:id/assign { assignedDate, agreementNote? }：排定補假日 */
+export async function assignHolidayLedgerCompensation(req, res) {
+  try {
+    const body = req.body || {};
+    const saved = await assignHolidayCompensation({
+      id: String(req.params.id ?? '').trim(),
+      assignedDate: body.assignedDate,
+      agreementNote: body.agreementNote,
+      actorId: toEntityId(req.user?.id) || null,
+      authorize: authorizeFor(req),
+    });
+    return res.json(saved);
+  } catch (err) {
+    return respondError(res, err, 'Holiday compensation assign failed');
+  }
+}
+
+/** POST /api/holiday-ledger/compensations/:id/unassign：取消排定 */
+export async function unassignHolidayLedgerCompensation(req, res) {
+  try {
+    const saved = await unassignHolidayCompensation({ id: String(req.params.id ?? '').trim(), authorize: authorizeFor(req) });
+    return res.json(saved);
+  } catch (err) {
+    return respondError(res, err, 'Holiday compensation unassign failed');
+  }
+}
+
+/** POST /api/holiday-ledger/compensations { employee, holidayDate, note }：人資手動新增補假義務 */
+export async function createHolidayLedgerCompensation(req, res) {
+  try {
+    const body = req.body || {};
+    const employeeId = String(body.employee ?? '').trim();
+    if (!isObjectId(employeeId)) throw new LedgerRequestError(400, 'invalid employee');
+    await assertCanResolveFor(req, employeeId);
+    const saved = await createManualHolidayCompensation({
+      employeeId,
+      holidayDate: body.holidayDate,
+      note: body.note,
+      actorId: toEntityId(req.user?.id) || null,
+    });
+    return res.status(201).json(saved);
+  } catch (err) {
+    return respondError(res, err, 'Holiday compensation create failed');
+  }
+}
+
+/* ---------------------------- 個人調移 ---------------------------- */
+
+/** GET /api/holiday-ledger/swaps?employee=&year=&status=active|all */
+export async function listHolidayLedgerSwaps(req, res) {
+  try {
+    const status = String(req.query.status || 'active').trim();
+    if (!['active', 'all'].includes(status)) throw new LedgerRequestError(400, '狀態篩選不正確', 'INVALID_STATUS');
+    const year = req.query.year === undefined || req.query.year === '' ? null : parseYear(req.query.year);
+    const employees = await loadLedgerEmployees(req);
+    return res.json(await listHolidaySwaps({ employees, year, status }));
+  } catch (err) {
+    return respondError(res, err, 'Holiday swap list failed');
+  }
+}
+
+/** POST /api/holiday-ledger/swaps { employee, originalDate, targetDate, reason?, consent }：建立個人調移 */
+export async function createHolidayLedgerSwap(req, res) {
+  try {
+    const body = req.body || {};
+    const employeeId = String(body.employee ?? '').trim();
+    if (!isObjectId(employeeId)) throw new LedgerRequestError(400, 'invalid employee');
+    await assertCanResolveFor(req, employeeId);
+    const saved = await createHolidaySwap({
+      employeeId,
+      originalDate: body.originalDate,
+      targetDate: body.targetDate,
+      reason: body.reason,
+      consent: body.consent,
+      actorId: toEntityId(req.user?.id) || null,
+    });
+    return res.status(201).json(saved);
+  } catch (err) {
+    return respondError(res, err, 'Holiday swap create failed');
+  }
+}
+
+/** POST /api/holiday-ledger/swaps/:id/revoke { reason }：撤銷（紀錄保留） */
+export async function revokeHolidayLedgerSwap(req, res) {
+  try {
+    const saved = await revokeHolidaySwap({
+      id: String(req.params.id ?? '').trim(),
+      reason: req.body?.reason,
+      actorId: toEntityId(req.user?.id) || null,
+      authorize: authorizeFor(req),
+    });
+    return res.json(saved);
+  } catch (err) {
+    return respondError(res, err, 'Holiday swap revoke failed');
   }
 }

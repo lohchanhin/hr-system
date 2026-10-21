@@ -3,6 +3,7 @@ import { jest } from '@jest/globals';
 import express from 'express';
 import request from 'supertest';
 import ExcelJS from 'exceljs';
+import { registerHolidayResolverModelMocks } from './helpers/holidayResolverMocks.js';
 
 const chain = (rows) => {
   const query = {
@@ -36,6 +37,8 @@ jest.unstable_mockModule('../src/services/approvedLeaveCalendarService.js', () =
 jest.unstable_mockModule('../src/services/laborRuleValidationService.js', () => ({
   isLaborRuleValidationError: jest.fn(() => false),
 }));
+// 國定假日判斷（holidayResolver）用到的年度行事曆、補假、個人調移
+const resolverMocks = await registerHolidayResolverModelMocks(jest);
 
 const { default: HolidayRestResolution } = await import('../src/models/HolidayRestResolution.js');
 const { default: holidayLedgerRoutes } = await import('../src/routes/holidayLedgerRoutes.js');
@@ -596,5 +599,125 @@ describe('GET /api/holiday-ledger/export', () => {
     loginAs('admin', ID.admin);
     expect((await download('')).status).toBe(400);
     expect((await download('?month=2026-00')).status).toBe(400);
+  });
+});
+
+describe('resolutions are checked per employee with the holiday resolver', () => {
+  it('refuses a resolution on a government make-up day (2026-02-20 is no national holiday for roster staff)', async () => {
+    mockHoliday.find.mockImplementation(() => chain([
+      { date: utc('2026-02-15'), name: '小年夜', kind: 'statutory' },
+      { date: utc('2026-02-20'), name: '補假', kind: 'gov_makeup_off', compensatesDate: utc('2026-02-15') },
+    ]));
+    const refused = await request(app).post('/api/holiday-ledger/resolutions').send({ employee: ID.nurseA, holidayDate: '2026-02-20', kind: 'paid' });
+    expect(refused.status).toBe(400);
+    expect(refused.body.error).toBe('holidayDate is not a national holiday');
+    const accepted = await request(app).post('/api/holiday-ledger/resolutions').send({ employee: ID.nurseA, holidayDate: '2026-02-15', kind: 'paid' });
+    expect(accepted.status).toBe(200);
+    expect(accepted.body.holidayName).toBe('小年夜');
+  });
+});
+
+describe('補假 and personal swap endpoints', () => {
+  const compensationRow = (employee, extra = {}) => ({
+    _id: oid(700), employee, holidayDate: utc('2026-10-10'), holidayName: '國慶日', status: 'open', origin: 'roster_rest_day', ...extra,
+  });
+
+  it('lets everyone read the year-end list within their schedule scope, and only managers write', async () => {
+    resolverMocks.HolidayCompensation.find.mockImplementation((filter) => chain([
+      compensationRow(ID.nurseA), compensationRow(ID.otherNurse, { _id: oid(701) }),
+    ].filter((doc) => filter.employee.$in.includes(doc.employee))));
+
+    loginAs('employee', ID.nurseA);
+    const own = await request(app).get('/api/holiday-ledger/compensations?year=2026');
+    expect(own.status).toBe(200);
+    expect(own.body.compensations.map((entry) => entry.employeeId)).toEqual([ID.nurseA]);
+    expect(own.body.summary).toEqual({ open: 1, assigned: 0, void: 0, conflict: 0 });
+    expect((await request(app).post(`/api/holiday-ledger/compensations/${oid(700)}/assign`).send({ assignedDate: '2026-10-14' })).status).toBe(403);
+    expect((await request(app).post('/api/holiday-ledger/compensations/sync').send({ from: '2026-10', to: '2026-10' })).status).toBe(403);
+    expect((await request(app).post('/api/holiday-ledger/swaps').send({ employee: ID.nurseA })).status).toBe(403);
+    expect((await request(app).get('/api/holiday-ledger/swaps')).status).toBe(200);
+
+    loginAs('supervisor', ID.boss);
+    const team = await request(app).get('/api/holiday-ledger/compensations?year=2026&status=all');
+    expect(team.body.compensations.map((entry) => entry.employeeId)).toEqual([ID.nurseA]);
+    expect((await request(app).get('/api/holiday-ledger/compensations?status=bogus')).body.code).toBe('INVALID_STATUS');
+  });
+
+  it('applies the resolution scope to assigning: a supervisor cannot assign for another team', async () => {
+    resolverMocks.HolidayCompensation.findById.mockImplementation(() => chain(compensationRow(ID.otherNurse)));
+    loginAs('supervisor', ID.boss);
+    const res = await request(app).post(`/api/holiday-ledger/compensations/${oid(700)}/assign`).send({ assignedDate: '2026-10-14' });
+    expect(res.status).toBe(403);
+    expect(resolverMocks.HolidayCompensation.findOneAndUpdate).not.toHaveBeenCalled();
+
+    const badId = await request(app).post('/api/holiday-ledger/compensations/not-an-id/assign').send({ assignedDate: '2026-10-14' });
+    expect(badId.status).toBe(400);
+    expect(badId.body.code).toBe('INVALID_ID');
+  });
+
+  it('answers the validation codes of the swap and sync endpoints', async () => {
+    loginAs('supervisor', ID.boss);
+    const noConsent = await request(app).post('/api/holiday-ledger/swaps').send({ employee: ID.nurseA, originalDate: '2026-09-28', targetDate: '2026-10-05' });
+    expect(noConsent.status).toBe(400);
+    expect(noConsent.body).toEqual({ error: '個人調移必須有員工本人的同意紀錄（簽名、同意書或電子紀錄）', code: 'CONSENT_REQUIRED' });
+    expect((await request(app).post('/api/holiday-ledger/swaps').send({ employee: ID.otherNurse })).status).toBe(403);
+    expect((await request(app).post('/api/holiday-ledger/swaps').send({ employee: 'bad' })).status).toBe(400);
+
+    const badRange = await request(app).post('/api/holiday-ledger/compensations/sync').send({ from: '2026-10', to: '2026-09' });
+    expect(badRange.body.code).toBe('INVALID_RANGE');
+    const tooLong = await request(app).post('/api/holiday-ledger/compensations/sync').send({ from: '2025-01', to: '2026-02' });
+    expect(tooLong.body.code).toBe('RANGE_TOO_LONG');
+    const synced = await request(app).post('/api/holiday-ledger/compensations/sync').send({ from: '2026-09', to: '2026-10' });
+    expect(synced.status).toBe(200);
+    expect(synced.body).toEqual({ months: ['2026-09', '2026-10'], created: 0, voided: 0, reopened: 0, conflicts: 0 });
+  });
+
+  it('recomputes in batches of 2000 employees instead of refusing an administrator with more employee records', async () => {
+    // 回歸：管理員的員工資料（含離職）超過 2000 筆時，「重新計算 YYYY 年」一律 400，而且沒有縮小範圍的方法
+    const many = Array.from({ length: 2300 }, (_, index) => person(oid(5000 + index), `員工${index}`));
+    const employeeQueries = [];
+    mockEmployee.find.mockImplementation((filter = {}) => {
+      employeeQueries.push(filter);
+      const after = filter.$and?.[1]?._id?.$gt;
+      let limit = Infinity;
+      const query = {
+        select: jest.fn(() => query),
+        populate: jest.fn(() => query),
+        sort: jest.fn(() => query),
+        limit: jest.fn((value) => { limit = value; return query; }),
+        lean: jest.fn(async () => (after ? many.filter((employee) => employee._id > after) : many).slice(0, limit)),
+      };
+      return query;
+    });
+    mockShiftSchedule.find.mockImplementation(() => chain([]));
+
+    const res = await request(app).post('/api/holiday-ledger/compensations/sync').send({ from: '2026-09', to: '2026-09' });
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ months: ['2026-09'], created: 0, voided: 0, reopened: 0, conflicts: 0 });
+    expect(employeeQueries).toHaveLength(2);
+    expect(employeeQueries[1].$and[1]._id.$gt).toBe(many[1999]._id);
+    // 每一批各自推算一次休假紀錄：2000 人與 300 人
+    const batchSizes = mockShiftSchedule.find.mock.calls
+      .map(([filter]) => filter)
+      .filter((filter) => filter.date?.$gte)
+      .map((filter) => filter.employee.$in.length);
+    expect(batchSizes).toEqual([2000, 300]);
+  });
+
+  it('filters the ledger by 待排補假 and syncs obligations on every GET', async () => {
+    mockShiftSchedule.find.mockImplementation((query) => chain([
+      rowOf(ID.nurseA, '2026-09-25', 'guo'), { employee: ID.nurseA, date: utc('2026-09-28'), shiftId: 'rest', state: 'finalized' },
+    ].filter((row) => query.employee.$in.includes(row.employee))));
+    mockAttendanceSetting.findOne.mockReturnValue(chain({ shifts: [...SHIFTS, { _id: 'rest', code: '休', name: '休假', semanticType: 'rest_day', startTime: '00:00', endTime: '00:00' }] }));
+    resolverMocks.HolidayCompensation.bulkWrite.mockResolvedValue({ upsertedCount: 1 });
+
+    const res = await request(app).get(url('&status=compensation'));
+    expect(res.status).toBe(200);
+    expect(idsOf(res.body)).toEqual([ID.nurseA]);
+    expect(ledgerRows(res.body)[0].items[1]).toMatchObject({ reason: 'on_rest_day', needsAction: 'assign_compensation' });
+    expect(res.body.summary.compensationOpen).toBe(1);
+    expect(res.body.months[0]).not.toHaveProperty('sync');
+    const [ops] = resolverMocks.HolidayCompensation.bulkWrite.mock.calls[0];
+    expect(ops.map((op) => [op.updateOne.filter.employee, op.updateOne.filter.holidayDate.toISOString().slice(0, 10)])).toEqual([[ID.nurseA, '2026-09-28']]);
   });
 });

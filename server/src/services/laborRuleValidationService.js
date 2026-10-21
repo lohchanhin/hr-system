@@ -5,9 +5,7 @@ import ShiftSchedule from '../models/ShiftSchedule.js';
 import AttendanceSetting from '../models/AttendanceSetting.js';
 import ApprovalRequest from '../models/approval_request.js';
 import FormField from '../models/form_field.js';
-import Holiday from '../models/Holiday.js';
-import HolidayMoveSetting from '../models/HolidayMoveSetting.js';
-import { isPayableNationalHoliday } from './countedHolidayService.js';
+import { buildEmployeeHolidayDaySet, loadHolidayContext } from './holidayResolver.js';
 import {
   isEmployedOn,
   loadScheduleRuleEmploymentWindows,
@@ -335,17 +333,20 @@ function validateShiftGap(grouped, shiftMap, minRestMinutes = MIN_REST_BETWEEN_S
   return violations;
 }
 
+// 沒排班的日子只有「請假」或「對這位員工是國定假日」（holidayDaysByEmployee，依 holidayResolver 判斷）才算進連續上班天數：
+// 公務機關補假只對行政人員是假日，輪班人員那天沒排班就是空班日，不會拉長連續天數
 function validateContinuousNonRestDays(
   grouped,
   shiftMap,
   { start, end },
   leaveDaysMap = new Map(),
-  holidayDays = new Set(),
+  holidayDaysByEmployee = new Map(),
 ) {
   const violations = [];
   for (const [employee, schedules] of grouped) {
     const byDate = new Map(schedules.map((schedule) => [dateKey(schedule.date), schedule]));
     const leaveDays = leaveDaysMap.get(employee) || new Set();
+    const holidayDays = holidayDaysByEmployee.get(employee) || new Set();
     let streak = [];
     for (let pointer = new Date(start); pointer < end; pointer = addUtcDays(pointer, 1)) {
       const key = dateKey(pointer);
@@ -419,33 +420,6 @@ async function loadApprovedLeaveDaysMap(employeeIds, start, end) {
   }
 
   return leaveDaysMap;
-}
-
-async function resolvePlainQuery(query) {
-  if (query && typeof query.lean === 'function') return query.lean();
-  return query || [];
-}
-
-async function loadCountedHolidayDays(start, end) {
-  const [holidays, moves] = await Promise.all([
-    resolvePlainQuery(Holiday.find({ date: { $gte: start, $lt: end } })),
-    resolvePlainQuery(HolidayMoveSetting.find({ enableHolidayMove: true })),
-  ]);
-  const holidayDays = new Set(
-    (holidays || [])
-      .filter(isPayableNationalHoliday)
-      .map((holiday) => dateKey(holiday.date))
-      .filter(Boolean),
-  );
-
-  for (const move of moves || []) {
-    const source = startOfUtcDay(move?.sourceDate);
-    const target = startOfUtcDay(move?.targetDate);
-    if (!source || !target || monthKey(source) !== monthKey(target)) continue;
-    holidayDays.delete(dateKey(source));
-    if (target >= start && target < end) holidayDays.add(dateKey(target));
-  }
-  return holidayDays;
 }
 
 // 回傳 { violations, pendingWeeks }。
@@ -586,20 +560,43 @@ export async function assertScheduleRuleCompliance({
   }));
   const allSchedules = mergeSchedules(existing, ruleCandidates, ignoredScheduleIds);
   const grouped = groupSchedules(allSchedules);
-  const [leaveDaysMap, holidayDays, employmentWindows] = await Promise.all([
+  // 班表的班別性質（沒排班為 none）：指定應放假日要知道當天原本是不是要上班
+  const scheduleByEmployeeDate = new Map();
+  for (const [employee, schedules] of grouped) {
+    for (const schedule of schedules) scheduleByEmployeeDate.set(`${employee}::${dateKey(schedule.date)}`, schedule);
+  }
+  const rosterKindOf = (employee, key) => {
+    const schedule = scheduleByEmployeeDate.get(`${employee}::${key}`);
+    return schedule ? classifyShift(shiftMap.get(normalizeId(schedule.shiftId))).semanticType : 'none';
+  };
+  const [leaveDaysMap, holidayContext, employmentWindows] = await Promise.all([
     loadApprovedLeaveDaysMap(
       employeeIds,
       validationRange.start,
       validationRange.end,
     ),
-    loadCountedHolidayDays(validationRange.start, validationRange.end),
+    loadHolidayContext({
+      start: validationRange.start,
+      end: validationRange.end,
+      employees: employeeIds,
+      rosterKindOf,
+    }),
     // 到職日、離職日只有判斷跨月週用得到（每週一例一休）
     strictWeeklyRest ? loadScheduleRuleEmploymentWindows(employeeIds) : new Map(),
   ]);
+  // 每位員工各自的國定假日（含個人調移、已排定的補假；公務機關補假只算行政人員）
+  const holidayDaysByEmployee = new Map(employeeIds.map((employee) => [
+    employee,
+    buildEmployeeHolidayDaySet(holidayContext, employee, {
+      start: validationRange.start,
+      end: validationRange.end,
+      rosterKindOf,
+    }),
+  ]));
   const violations = [
     ...validateDailyHours(grouped, shiftMap),
     ...validateShiftGap(grouped, shiftMap, policy.minShiftRestMinutes),
-    ...validateContinuousNonRestDays(grouped, shiftMap, validationRange, leaveDaysMap, holidayDays),
+    ...validateContinuousNonRestDays(grouped, shiftMap, validationRange, leaveDaysMap, holidayDaysByEmployee),
   ];
   // The customer's internal policy remains stricter than flexible-work-time minima.
   let pendingWeeks = [];

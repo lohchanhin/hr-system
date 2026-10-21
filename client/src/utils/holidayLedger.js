@@ -1,8 +1,9 @@
 // 國定假日休假紀錄（排班頁「國定假日休假」視窗）用的文字與狀態判斷。
 // 狀態值對應 server/src/services/holidayRestLedgerService.js：
-//   status：rested_on_date 當日休／moved 移休／not_taken 未休／na 不適用
+//   status：rested_on_date 當日休（implicit = 行政人員依行事曆放假）／moved 移休／compensated 已補假／not_taken 未休／na 不適用
 //   reason（未休時假日當天的狀態）：worked／unscheduled／on_rest_day／on_regular_rest／on_leave／shared_date
-//   needsAction：null／schedule（班表還沒排完，請排國）／resolve（請登記處理方式）
+//   needsAction：null／schedule（班表還沒排完，請排國）／resolve（請登記處理方式）／assign_compensation（落在休息日／例假，請排補假）
+//   compensation：補假（{ date, via: gov_makeup 公務機關補假日／assigned 人資排定, conflict, conflictReason: trigger_gone／date_not_workday }）或待排的補假義務（{ id, status: open, suggestedDate }）
 //   resolutionConflict：已登記過處理方式，但班表之後又排了「國」（變成當日休或移休），要人確認
 
 export const RESOLUTION_OPTIONS = [
@@ -19,6 +20,7 @@ export const LEDGER_FILTERS = [
   { value: 'moved', label: '移休' },
   { value: 'open', label: '待處理' },
   { value: 'extra', label: '多排的國' },
+  { value: 'compensation', label: '待排補假' },
 ]
 
 // 已登記處理方式、班表卻已經有「國」的格子要顯示的提醒
@@ -46,12 +48,15 @@ export function weekdayLabel(dateKey) {
   return Number.isNaN(day) ? '' : WEEKDAY_LABELS[day]
 }
 
-/** 假日欄位表頭：「中秋節」「09/25（五）」，公司挪移過的另外註明原本日期 */
+/** 假日欄位表頭：「中秋節」「09/25（五）」，公司挪移過的另外註明原本日期；只因個人調移出現的欄位註明「個人調移」 */
 export function describeHolidayHeader(holiday = {}) {
+  let note = ''
+  if (holiday.personal) note = '個人調移'
+  else if (holiday.movedFrom) note = `公司挪移自 ${formatMonthDay(holiday.movedFrom)}`
   return {
     name: holiday.name || '國定假日',
     date: `${formatMonthDay(holiday.date)}（${weekdayLabel(holiday.date)}）`,
-    note: holiday.movedFrom ? `公司挪移自 ${formatMonthDay(holiday.movedFrom)}` : '',
+    note,
   }
 }
 
@@ -99,8 +104,33 @@ export function describeLedgerCell(item) {
 
 function describeBaseCell(item) {
   if (!item) return { text: '', type: 'info', tooltip: '' }
+  // 已排補假、班表之後又改了：補假不會自動取消，請人確認
+  if (item.compensation?.conflict && item.compensation?.date) {
+    const date = formatMonthDay(item.compensation.date)
+    return {
+      text: `補假 ${date}（班表已變更，請確認）`,
+      type: 'warning',
+      // date_not_workday：補假日之後被排成休息日／例假（行政人員：公司行事曆不是上班日），員工並沒有因此多休一天
+      tooltip: item.compensation.conflictReason === 'date_not_workday'
+        ? `補假日 ${date} 現在是休息日／例假（不是原本要上班的日子），員工並沒有因此多休一天，請改排其他上班日`
+        : '已排定補假，但這個國定假日現在已經不是落在休息日／例假（班表改過），請確認補假是否仍需要',
+    }
+  }
+  if (item.status === 'rested_on_date' && item.implicit) {
+    return { text: '依行事曆放假', type: 'success', tooltip: '行政人員當天沒有班表，依公司行事曆放假' }
+  }
   if (item.status === 'rested_on_date') {
     return { text: '當日休', type: 'success', tooltip: `${formatMonthDay(item.guoDate)} 排了「國」` }
+  }
+  if (item.status === 'compensated') {
+    const government = item.compensation?.via === 'gov_makeup'
+    return {
+      text: `補假 ${formatMonthDay(item.compensation?.date)}${government ? '（公務機關補假日）' : ''}`,
+      type: 'success',
+      tooltip: government
+        ? '國定假日落在週末，行政人員依政府公告的補假日放假'
+        : '國定假日落在休息日／例假，已和員工協商另排補假',
+    }
   }
   if (item.status === 'moved') {
     const offset = Number(item.offsetDays)
@@ -118,6 +148,14 @@ function describeBaseCell(item) {
   }
   if (item.resolution) {
     return { text: `未休·${describeResolution(item.resolution)}`, type: 'info', tooltip: '已登記處理方式' }
+  }
+  if (item.needsAction === 'assign_compensation') {
+    const suggested = item.compensation?.suggestedDate ? `；系統建議 ${formatMonthDay(item.compensation.suggestedDate)}` : ''
+    return {
+      text: '待排補假',
+      type: 'danger',
+      tooltip: `國定假日剛好是${item.reason === 'on_regular_rest' ? '例假' : '休息日'}，依勞基法施行細則第 23-1 條要另排補假（日期由勞雇雙方協商）${suggested}`,
+    }
   }
   if (item.needsAction === 'schedule') {
     return { text: '尚未排國', type: 'warning', tooltip: '班表還是草稿，這個國定假日還沒有對應的「國」；排好「國」後會自動變成移休' }
@@ -164,7 +202,60 @@ export function canShowResolveButton({ canResolve, role, viewerId, row, item } =
   return !(role === 'supervisor' && viewerId && row?.employeeId === viewerId)
 }
 
-/** 員工列是否符合篩選（全部／未休／移休／待處理／多排的國） */
+/**
+ * 這個儲存格要不要顯示「排定補假」按鈕：待排補假（需要有補假義務的 id）或已由人資排定的補假（可以修改、取消），
+ * 權限規則和登記處理方式相同（主管不能處理自己）。
+ */
+export function canShowCompensationButton({ canResolve, role, viewerId, row, item } = {}) {
+  if (!canResolve || !item) return false
+  const waiting = item.needsAction === 'assign_compensation' && Boolean(item.compensation?.id)
+  const assigned = item.compensation?.via === 'assigned' && Boolean(item.compensation?.compensationId)
+  if (!waiting && !assigned) return false
+  return !(role === 'supervisor' && viewerId && row?.employeeId === viewerId)
+}
+
+/** 個人調移按鈕：要有權限，主管不能替自己登記 */
+export function canShowSwapButton({ canResolve, role, viewerId, row } = {}) {
+  if (!canResolve || !row) return false
+  return !(role === 'supervisor' && viewerId && row.employeeId === viewerId)
+}
+
+/** 補假視窗要顯示的原因：適逢休息日／例假 */
+export function compensationReasonText(item) {
+  if (item?.reason === 'on_regular_rest' || item?.dateKind === 'regular_rest') return '適逢例假'
+  return '適逢休息日'
+}
+
+export const CONSENT_REQUIRED_TEXT = '個人調移必須有員工本人的同意紀錄（簽名、同意書或電子紀錄）'
+export const SWAP_WARNING_TEXT = '依勞動部解釋，國定假日與工作日對調須經員工本人同意（工會同意不能取代）；調移後原假日為一般工作日'
+export const INDIGENOUS_TOOLTIP = '歲時祭儀 3 日，以原民假申請'
+
+/** 個人調移表單的檢查：回傳要提醒的訊息，沒問題回傳空字串 */
+export function validateSwapForm(form = {}) {
+  if (!form.originalDate) return '請選擇原國定假日'
+  if (!form.targetDate) return '請選擇調移到的日期'
+  if (form.originalDate === form.targetDate) return '調移日不能和原國定假日相同'
+  if (!form.consentMethod || !form.consentedAt || !String(form.evidenceRef ?? '').trim()) return CONSENT_REQUIRED_TEXT
+  return ''
+}
+
+/** 個人調移送給伺服器的內容 */
+export function buildSwapBody(form = {}) {
+  return {
+    employee: form.employee,
+    originalDate: form.originalDate,
+    targetDate: form.targetDate,
+    reason: String(form.reason ?? '').trim(),
+    consent: {
+      method: form.consentMethod,
+      consentedAt: form.consentedAt,
+      evidenceRef: String(form.evidenceRef ?? '').trim(),
+      note: String(form.consentNote ?? '').trim(),
+    },
+  }
+}
+
+/** 員工列是否符合篩選（全部／未休／移休／待處理／多排的國／待排補假） */
 export function ledgerRowMatchesFilter(row, filter) {
   if (!row) return false
   switch (filter) {
@@ -176,6 +267,8 @@ export function ledgerRowMatchesFilter(row, filter) {
       return row.open > 0
     case 'extra':
       return (row.extraGuoDates || []).length > 0
+    case 'compensation':
+      return (row.items || []).some((item) => item.needsAction === 'assign_compensation')
     default:
       return true
   }

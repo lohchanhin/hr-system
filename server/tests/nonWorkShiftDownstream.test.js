@@ -307,12 +307,27 @@ describe('countedHolidayService：國定假日判斷', () => {
 
   it('跟排班規則一樣：補班日、工作日不算假日，國定/假日才算', () => {
     expect(isCountedHoliday({ type: '國定假日', name: '中秋節' })).toBe(true);
-    expect(isCountedHoliday({ type: '假日', name: '調整放假' })).toBe(true);
+    // 刻意更新（行事曆分類）：政府的「調整放假」只是公務機關的放假日，勞基法不算國定假日（舊版算）
+    expect(isCountedHoliday({ type: '假日', name: '調整放假' })).toBe(false);
     expect(isCountedHoliday({ type: 'holiday' })).toBe(true);
     expect(isCountedHoliday({ type: '工作日', name: '補班日' })).toBe(false);
     expect(isCountedHoliday({ type: '國定假日', description: '補班' })).toBe(false);
     expect(isCountedHoliday({ type: 'makeup work' })).toBe(false);
     expect(isCountedHoliday({ type: '', name: '公司旅遊' })).toBe(false);
+  });
+
+  it('有 kind 的資料只認 statutory：公務機關補假、調整放假、補行上班、公司休息日、指定應放假日都不算', () => {
+    expect(isCountedHoliday({ kind: 'statutory', type: '國定假日', name: '和平紀念日' })).toBe(true);
+    // 名稱或類型文字不影響 kind 的判斷
+    expect(isCountedHoliday({ kind: 'statutory', type: '補班日', name: '公司活動' })).toBe(true);
+    for (const kind of ['gov_makeup_off', 'gov_bridge_off', 'gov_makeup_workday', 'company_off', 'company_workday', 'designated']) {
+      expect(isCountedHoliday({ kind, type: '國定假日', name: '國定假日' })).toBe(false);
+    }
+    // 沒有 kind 的舊資料：名稱「補假」（2026 年公務機關補假）與條例施行前的「小年夜」（調整放假）不算
+    expect(isCountedHoliday({ type: '國定假日', name: '補假', date: new Date('2026-02-20T00:00:00.000Z') })).toBe(false);
+    expect(isCountedHoliday({ type: '國定假日', name: '小年夜', date: new Date('2023-01-20T00:00:00.000Z') })).toBe(false);
+    expect(isCountedHoliday({ type: '國定假日', name: '小年夜', date: new Date('2026-02-15T00:00:00.000Z') })).toBe(true);
+    expect(isPayableNationalHoliday(doc('2026-02-27', { type: '國定假日', name: '補假', description: '補假', source: 'roc-calendar' }))).toBe(false);
   });
 
   it('說明為空的週末(舊版匯入把每個週末都寫成國定假日)不算', () => {

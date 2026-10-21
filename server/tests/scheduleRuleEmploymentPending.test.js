@@ -2,6 +2,7 @@
 // 鄰月那幾天要是在到職日之前或離職日之後，永遠不會有班表，不能一直掛著「待判斷」，也不能算成補得上的日子。
 // 員工的到職日（appointment.hireDate）、離職日（離職員工的 appointment.resignationDate / dismissalDate）現場讀 Employee。
 import { jest } from '@jest/globals';
+import { registerHolidayResolverModelMocks } from './helpers/holidayResolverMocks.js';
 import { oid } from './helpers/approvalTestKit.js';
 
 const mockShiftSchedule = { find: jest.fn(), findOne: jest.fn() };
@@ -19,6 +20,7 @@ jest.unstable_mockModule('../src/models/approval_request.js', () => ({ default: 
 jest.unstable_mockModule('../src/models/form_field.js', () => ({ default: mockFormField }));
 jest.unstable_mockModule('../src/models/Holiday.js', () => ({ default: mockHoliday }));
 jest.unstable_mockModule('../src/models/HolidayMoveSetting.js', () => ({ default: mockHolidayMoveSetting }));
+const holidayResolverMocks = await registerHolidayResolverModelMocks(jest);
 jest.unstable_mockModule('../src/models/Employee.js', () => ({ default: mockEmployee }));
 jest.unstable_mockModule('../src/services/leaveFieldService.js', () => ({
   getAllLeaveFieldInfos: mockGetAllLeaveFieldInfos,
@@ -379,13 +381,18 @@ describe('weekly rest: neighbouring days before the hire day / after the resign 
   it('queries the employment dates only for the weekly check, once, for the people who are not exempt', async () => {
     employeeRows.push({ _id: NEW_HIRE, status: '試用期員工', appointment: { hireDate: new Date('2026-07-01T00:00:00.000Z') } });
 
+    // 刻意更新（行事曆分類）：國定假日判斷（holidayResolver）另外讀一次假日制度（select 不同），
+    // 這裡只數讀到職日、離職日的查詢
+    const employmentQueries = () => mockEmployee.find.mock.calls
+      .map(([filter], index) => ({ filter, select: mockEmployee.find.mock.results[index].value.select.mock.calls[0]?.[0] || '' }))
+      .filter(({ filter, select }) => filter.partTime === undefined && /appointment/.test(select))
+      .map(({ filter }) => [filter]);
     await check(julyRows(NEW_HIRE));
-    const withoutPartTimeFilter = mockEmployee.find.mock.calls.filter(([filter]) => filter.partTime === undefined);
-    expect(withoutPartTimeFilter).toEqual([[{ _id: { $in: [NEW_HIRE] } }]]);
+    expect(employmentQueries()).toEqual([[{ _id: { $in: [NEW_HIRE] } }]]);
 
     mockEmployee.find.mockClear();
     await collect({ candidateSchedules: julyRows(NEW_HIRE), range: JULY_RANGE, strictWeeklyRest: false });
-    expect(mockEmployee.find.mock.calls.filter(([filter]) => filter.partTime === undefined)).toEqual([]);
+    expect(employmentQueries()).toEqual([]);
   });
 
   it('a failing employment lookup fails the check instead of being skipped', async () => {

@@ -80,6 +80,9 @@ export async function generateMonthlyPayrollOverviewPdf(month, filters = {}) {
     payrollMap[record.employee._id.toString()] = record;
   });
 
+  // 整批員工共用一份國定假日判斷資料（只讀一次，不會每位員工各查一次）
+  const payrollBatch = { employees };
+
   // Build the overview data
   const overviewData = await Promise.all(employees.map(async (employee) => {
     const employeeIdStr = employee._id.toString();
@@ -92,7 +95,7 @@ export async function generateMonthlyPayrollOverviewPdf(month, filters = {}) {
     // Calculate work data including night shift data dynamically
     let workData = null;
     try {
-      workData = await calculateCompleteWorkData(employeeIdStr, month);
+      workData = await calculateCompleteWorkData(employeeIdStr, month, { payrollBatch });
     } catch (error) {
       console.error(`Error calculating work data for employee ${employeeIdStr}:`, error);
     }
@@ -155,7 +158,9 @@ export async function generateMonthlyPayrollOverviewPdf(month, filters = {}) {
           console.error(`Error aggregating approvals for employee ${employeeIdStr}:`, error);
         }
 
-        const calculatedPayroll = await calculateEmployeePayroll(employeeIdStr, month, customData);
+        const calculatedPayroll = await calculateEmployeePayroll(employeeIdStr, month, customData, {
+          calculationContext: { payrollBatch },
+        });
         payroll = calculatedPayroll;
       } catch (error) {
         console.error(`Error calculating payroll for employee ${employeeIdStr}:`, error);

@@ -4,6 +4,7 @@
 import request from 'supertest';
 import express from 'express';
 import { jest } from '@jest/globals';
+import { registerHolidayResolverModelMocks } from './helpers/holidayResolverMocks.js';
 import ExcelJS from 'exceljs';
 import jwt from 'jsonwebtoken';
 import { buildLeaveFieldServiceMock } from './helpers/leaveFieldServiceMock.js';
@@ -39,6 +40,7 @@ jest.unstable_mockModule('../src/models/AttendanceSetting.js', () => ({ default:
 jest.unstable_mockModule('../src/models/Department.js', () => ({ default: mockDepartment }));
 jest.unstable_mockModule('../src/models/Holiday.js', () => ({ default: mockHoliday }));
 jest.unstable_mockModule('../src/models/HolidayMoveSetting.js', () => ({ default: mockHolidayMoveSetting }));
+const holidayResolverMocks = await registerHolidayResolverModelMocks(jest);
 jest.unstable_mockModule('../src/models/HolidayRestResolution.js', () => ({ default: mockHolidayRestResolution }));
 jest.unstable_mockModule('../src/models/ScheduleDayMemo.js', () => ({ default: mockScheduleDayMemo }));
 jest.unstable_mockModule('../src/services/leaveFieldService.js', () => buildLeaveFieldServiceMock(mockGetLeaveFieldIds));

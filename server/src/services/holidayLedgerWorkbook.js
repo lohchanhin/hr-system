@@ -8,7 +8,7 @@ import { LEDGER_RESOLUTION_LABELS, describeLedgerItem } from './holidayRestLedge
 export const HOLIDAY_LEDGER_SHEET_NAME = '國定假日休假紀錄';
 
 const FIXED_HEADERS = ['員工代號', '姓名', '單位', '職稱'];
-const SUMMARY_HEADERS = ['應休', '當日休', '移休', '未休', '待處理', '多排的國', '處理方式'];
+const SUMMARY_HEADERS = ['應休', '當日休', '移休', '補假', '未休', '待處理', '多排的國', '處理方式'];
 
 const HEADER_FILL = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFDCE6F1' } };
 const OPEN_FILL = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF4CCCC' } };
@@ -16,7 +16,9 @@ const MOVED_FILL = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE2EF
 const INFO_FILL = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF2F2F2' } };
 
 const LEGEND = '說明：當日休＝國定假日當天排「國」；移休＝同月其他日期排「國」（依日期先後配對，總數正確）；'
-  + '未休＝本月沒有對應的「國」；多排的國＝超過國定假日天數的「國」；紅底＝待處理；'
+  + '補假＝國定假日落在員工自己的休息日／例假，另排的補假日（註明「公務機關補假日」的是行政人員依政府補假日放假）；'
+  + '待排補假＝落在休息日／例假、還沒排補假；未休＝本月沒有對應的「國」；多排的國＝超過國定假日天數的「國」；紅底＝待處理；'
+  + '「—」＝該員工沒有這個項目（例如個人調移到其他日期）；'
   + '註明「已登記處理，請確認」＝先登記了未休的處理方式、班表之後又排了「國」，請確認是否重複補償。';
 
 function formatMonthDay(dateKey) {
@@ -25,6 +27,7 @@ function formatMonthDay(dateKey) {
 
 function holidayHeader(holiday) {
   const base = `${holiday.name} ${formatMonthDay(holiday.date)}`;
+  if (holiday.personal) return `${base}（個人調移）`;
   return holiday.movedFrom ? `${base}（原 ${formatMonthDay(holiday.movedFrom)}）` : base;
 }
 
@@ -68,7 +71,7 @@ export function appendHolidayLedgerSheet(workbook, ledger, { departmentName = ''
   employees.forEach((employee) => {
     const itemTexts = holidays.map((holiday) => {
       const item = (employee.items || []).find((entry) => entry.holidayId === holiday.id);
-      return describeLedgerItem(item);
+      return item ? describeLedgerItem(item) : '—';
     });
     const resolutionTexts = (employee.items || []).map(describeResolution).filter(Boolean);
     const extraText = (employee.extraGuoDates || []).map(formatMonthDay).join('、');
@@ -81,6 +84,7 @@ export function appendHolidayLedgerSheet(workbook, ledger, { departmentName = ''
       employee.entitled,
       employee.rested,
       employee.moved,
+      employee.compensated || 0,
       employee.notTaken,
       employee.open,
       extraText,
@@ -89,8 +93,8 @@ export function appendHolidayLedgerSheet(workbook, ledger, { departmentName = ''
     holidays.forEach((holiday, index) => {
       const item = (employee.items || []).find((entry) => entry.holidayId === holiday.id);
       const cell = row.getCell(FIXED_HEADERS.length + index + 1);
-      if (item?.needsAction || item?.resolutionConflict) cell.fill = OPEN_FILL;
-      else if (item?.status === 'moved') cell.fill = MOVED_FILL;
+      if (item?.needsAction || item?.resolutionConflict || item?.compensation?.conflict) cell.fill = OPEN_FILL;
+      else if (item?.status === 'moved' || item?.status === 'compensated') cell.fill = MOVED_FILL;
       else if (item?.status === 'na' || (item?.status === 'not_taken' && !item?.resolution)) cell.fill = INFO_FILL;
     });
   });

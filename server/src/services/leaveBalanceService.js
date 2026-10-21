@@ -244,6 +244,13 @@ export function composeLeaveBalanceItems({ policy, usage, employee, focusKey = n
       base.availableHours = roundHours(base.quotaHours - base.pendingHours)
       base.status = 'manual'
       base.note = base.note || '人資維護'
+    } else if (leaveType.eligibility === 'indigenous' && employee?.isIndigenous !== true) {
+      // 原民假（原住民族歲時祭儀）限具原住民身分者：其他員工沒有額度，簽核中的時數照列，畫面標示「限具原住民身分者」
+      base.quotaHours = 0
+      base.remainingHours = 0
+      base.availableHours = roundHours(-base.pendingHours)
+      base.status = 'ineligible'
+      base.note = '限具原住民身分者'
     } else if (leaveType.period === 'event') {
       // 每次事件的上限（婚假、喪假…）：不是年度餘額，沒有「剩餘」，列出今年已使用的時數
       base.quotaHours = leaveType.quotaHours
@@ -405,7 +412,7 @@ export async function buildLeaveBalances({
   policy = null,
   infos = null,
 } = {}) {
-  const person = employee || await Employee.findById(employeeId).select('name employeeId annualLeave').lean()
+  const person = employee || await Employee.findById(employeeId).select('name employeeId annualLeave isIndigenous').lean()
   if (!person) return null
   const activePolicy = policy || await getLeavePolicy()
   const usage = await computeLeaveUsage({

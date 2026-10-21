@@ -9,6 +9,7 @@ import { eligibleEmployeeFilter, isEligibleApprover } from '../services/approver
 import { normalizeSignTag, normalizeSignTags } from '../utils/signTags.js'
 import { presentAnnualLeave, readAnnualLeaveHours } from '../utils/annualLeaveHours.js'
 import { daysToHours, hoursToDays } from '../utils/leaveHours.js'
+import { parseHolidayRegime } from '../services/holidayCalendarRules.js'
 import {
   deleteEmployeePhoto,
   isManagedEmployeePhotoPath,
@@ -179,6 +180,20 @@ export function validateSignSettings(body = {}) {
   return null
 }
 
+// 假日制度（輪班／行政）：空白代表清除設定（改依「是否需要排班」決定），其他文字一律不接受
+export function validateHolidayRegime(body = {}) {
+  if (isDefined(body.holidayRegime) && parseHolidayRegime(body.holidayRegime) === undefined) {
+    return '假日制度只能是「輪班」或「行政」'
+  }
+  return null
+}
+
+// 'roster' / 'office' 才寫入；空白（null）與不認得的值都不寫入
+const holidayRegimeOrUndefined = (value) => {
+  const regime = parseHolidayRegime(value)
+  return regime === 'roster' || regime === 'office' ? regime : undefined
+}
+
 /* 把前端送來的 experiences/licenses/trainings 正規化成模型想要的形狀 */
 function normalizeExperiences(list) {
   if (!Array.isArray(list)) return undefined
@@ -297,6 +312,9 @@ export function buildEmployeeDoc(body = {}) {
     practiceTitle: body.practiceTitle,
     isPartTime: toBool(body.isPartTime),
     isClocking: toBool(body.isClocking),
+    // 假日制度：沒填就不存，實際適用的制度依「是否需要排班」推算（resolveHolidayRegime）
+    holidayRegime: isDefined(body.holidayRegime) ? holidayRegimeOrUndefined(body.holidayRegime) : undefined,
+    isIndigenous: isDefined(body.isIndigenous) ? toBool(body.isIndigenous) : undefined,
 
     /* 人員狀態與試用 */
     employmentStatus: sanitizeEnum(body.employmentStatus, EMPLOYMENT_STATUSES),        // alias → status
@@ -455,6 +473,13 @@ export function buildEmployeePatch(body = {}, existing = null) {
   put('practiceTitle', body.practiceTitle)
   if (isDefined(body.isPartTime)) put('partTime', toBool(body.isPartTime))
   if (isDefined(body.isClocking)) put('needClockIn', toBool(body.isClocking))
+  // 假日制度：空白（null）代表清除設定，改回依「是否需要排班」推算；不認得的值由 controller 先擋下（validateHolidayRegime）
+  if (isDefined(body.holidayRegime)) {
+    const regime = parseHolidayRegime(body.holidayRegime)
+    if (regime === null) un('holidayRegime')
+    else put('holidayRegime', holidayRegimeOrUndefined(body.holidayRegime))
+  }
+  if (isDefined(body.isIndigenous)) put('isIndigenous', toBool(body.isIndigenous))
 
   // 狀態/試用
   put('status', sanitizeEnum(body.employmentStatus ?? body.status, EMPLOYMENT_STATUSES))
@@ -628,7 +653,7 @@ export function buildEmployeePatch(body = {}, existing = null) {
 
 const SCHEDULE_VIEW_SELECT = '_id name employeeId photo title practiceTitle department subDepartment annualLeave supervisor role status requiresScheduling partTime'
 const SUPERVISOR_VIEW_SELECT = '_id name employeeId photo title practiceTitle department subDepartment annualLeave supervisor role status requiresScheduling partTime organization appointment.hireDate'
-const ADMIN_LIST_SELECT = '_id name employeeId username email mobile photo title practiceTitle department subDepartment organization supervisor role status annualLeave requiresScheduling partTime accountEnabled createdAt'
+const ADMIN_LIST_SELECT = '_id name employeeId username email mobile photo title practiceTitle department subDepartment organization supervisor role status annualLeave requiresScheduling partTime holidayRegime isIndigenous accountEnabled createdAt'
 const EMPLOYEE_LIST_PAGE_SIZE = 20
 const EMPLOYEE_LIST_MAX_PAGE_SIZE = 100
 const EMPLOYEE_SEARCH_MAX_LENGTH = 100
@@ -1180,6 +1205,8 @@ export async function createEmployee(req, res) {
     }
     const signSettingsError = validateSignSettings(body)
     if (signSettingsError) return rejectWithPhotoCleanup(req, res, 400, { error: signSettingsError })
+    const holidayRegimeError = validateHolidayRegime(body)
+    if (holidayRegimeError) return rejectWithPhotoCleanup(req, res, 400, { error: holidayRegimeError })
     const supervisorError = await checkSupervisorAssignment(body.supervisor)
     if (supervisorError) return rejectWithPhotoCleanup(req, res, 400, { error: supervisorError })
 
@@ -1391,6 +1418,8 @@ export async function updateEmployee(req, res) {
     }
     const signSettingsError = validateSignSettings(body)
     if (signSettingsError) return rejectWithPhotoCleanup(req, res, 400, { error: signSettingsError })
+    const holidayRegimeError = validateHolidayRegime(body)
+    if (holidayRegimeError) return rejectWithPhotoCleanup(req, res, 400, { error: holidayRegimeError })
     // 只在主管「有變更」時檢查：原本就存在的（可能已經失效的）設定不該擋住其他欄位的修改
     if (isDefined(body.supervisor) && toEntityId(body.supervisor) !== toEntityId(employee.supervisor)) {
       const supervisorError = await checkSupervisorAssignment(body.supervisor, employee._id)

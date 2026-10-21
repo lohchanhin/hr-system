@@ -376,6 +376,9 @@ export async function generatePayrollExcel(month, bankTypeOrFormat, companyInfo 
       throw new Error('No employees found');
     }
 
+    // 整批員工共用一份國定假日判斷資料（只讀一次，不會每位員工各查一次）
+    const payrollBatch = { employees };
+
     // 為每個員工計算薪資
     payrollRecords = await Promise.all(employees.map(async (employee) => {
       try {
@@ -384,7 +387,7 @@ export async function generatePayrollExcel(month, bankTypeOrFormat, companyInfo 
 
         // 計算工作時數資料
         try {
-          workData = await calculateCompleteWorkData(employee._id.toString(), month);
+          workData = await calculateCompleteWorkData(employee._id.toString(), month, { payrollBatch });
           Object.assign(customData, {
             workDays: workData.workDays,
             scheduledHours: workData.scheduledHours,
@@ -425,7 +428,9 @@ export async function generatePayrollExcel(month, bankTypeOrFormat, companyInfo 
         }
 
         // 計算薪資
-        const calculatedPayroll = await calculateEmployeePayroll(employee._id.toString(), month, customData);
+        const calculatedPayroll = await calculateEmployeePayroll(employee._id.toString(), month, customData, {
+          calculationContext: { payrollBatch },
+        });
         
         // 返回類似 PayrollRecord 的物件結構
         return {

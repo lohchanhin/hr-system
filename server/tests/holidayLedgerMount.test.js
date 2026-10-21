@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import jwt from 'jsonwebtoken'
 import request from 'supertest'
+import { registerHolidayResolverModelMocks } from './helpers/holidayResolverMocks.js'
 
 // 真實 Express app（src/index.js）在載入時會檢查這幾個環境變數，必須在動態 import 之前設定
 process.env.PORT = process.env.PORT || '3000'
@@ -30,8 +31,11 @@ const mockIsTokenBlacklisted = jest.fn()
 const mockResolution = { find: jest.fn(), findOneAndUpdate: jest.fn(), findById: jest.fn(), deleteOne: jest.fn(), createIndexes: jest.fn() }
 
 let app
+let resolverMocks
 
 beforeAll(async () => {
+  // 國定假日判斷（holidayResolver）用到的年度行事曆、補假、個人調移：沒有替身 mongoose 會一直等連線
+  resolverMocks = await registerHolidayResolverModelMocks(jest)
   await jest.unstable_mockModule('../src/models/Employee.js', () => ({ default: mockEmployee }))
   await jest.unstable_mockModule('../src/models/Holiday.js', () => ({ default: mockHoliday }))
   await jest.unstable_mockModule('../src/models/HolidayMoveSetting.js', () => ({ default: mockHolidayMove }))
@@ -104,6 +108,24 @@ describe('/api/holiday-ledger mount', () => {
     expect((await request(app).get('/api/holiday-ledger/export?month=2026-09')).status).toBe(401)
     expect((await request(app).post('/api/holiday-ledger/resolutions').send(resolutionBody)).status).toBe(401)
     expect((await request(app).delete('/api/holiday-ledger/resolutions/507f1f77bcf86c0000000900')).status).toBe(401)
+    expect((await request(app).get('/api/holiday-ledger/compensations')).status).toBe(401)
+    expect((await request(app).post('/api/holiday-ledger/compensations/507f1f77bcf86c0000000700/assign').send({ assignedDate: '2026-10-14' })).status).toBe(401)
+    expect((await request(app).get('/api/holiday-ledger/swaps')).status).toBe(401)
+    expect((await request(app).post('/api/holiday-ledger/swaps').send({})).status).toBe(401)
+  })
+
+  it('lets an employee read their own 補假 list and swaps but not assign, sync or create', async () => {
+    const header = authHeader('employee')
+    const list = await request(app).get('/api/holiday-ledger/compensations?year=2026').set('Authorization', header)
+    expect(list.status).toBe(200)
+    expect(list.body).toMatchObject({ year: 2026, compensations: [] })
+    expect((await request(app).get('/api/holiday-ledger/swaps').set('Authorization', header)).status).toBe(200)
+    expect((await request(app).post('/api/holiday-ledger/compensations/507f1f77bcf86c0000000700/assign').set('Authorization', header).send({ assignedDate: '2026-10-14' })).status).toBe(403)
+    expect((await request(app).post('/api/holiday-ledger/compensations/sync').set('Authorization', header).send({ from: '2026-10', to: '2026-10' })).status).toBe(403)
+    expect((await request(app).post('/api/holiday-ledger/compensations').set('Authorization', header).send({ employee: ACTOR, holidayDate: '2026-10-10' })).status).toBe(403)
+    expect((await request(app).post('/api/holiday-ledger/swaps').set('Authorization', header).send({ employee: ACTOR })).status).toBe(403)
+    expect((await request(app).post('/api/holiday-ledger/swaps/507f1f77bcf86c0000000800/revoke').set('Authorization', header).send({ reason: 'x' })).status).toBe(403)
+    expect(resolverMocks.HolidaySwap.create).not.toHaveBeenCalled()
   })
 
   it('lets an employee read their own ledger but nothing else', async () => {

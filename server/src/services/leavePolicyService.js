@@ -117,10 +117,10 @@ function enforcementOf(leaveType) {
   return leaveType.source === 'employee_annual' ? 'block' : leaveType.enforcement
 }
 
-// 已存的設定疊在假別的預設值上；欄位不合法時保留預設值。builtin / key / source 不能被改（特休、補休的額度來源固定）
+// 已存的設定疊在假別的預設值上；欄位不合法時保留預設值。builtin / key / source / eligibility 不能被改（特休、補休的額度來源與原民假的適用對象固定）
 function mergeType(base, stored) {
   if (!isPlainObject(stored)) return base
-  const merged = { ...base }
+  const merged = { ...base, eligibility: base.eligibility ?? null }
   const name = cleanText(stored.name, MAX_NAME_LENGTH)
   if (name && base.key !== 'annual') merged.name = name
   const aliases = cleanAliases(stored.aliases)
@@ -155,6 +155,7 @@ function customTypeBase(key) {
     builtin: false,
     enabled: true,
     note: '',
+    eligibility: null,
   }
 }
 
@@ -383,6 +384,45 @@ export function getDefaultLeavePolicy() {
   return cloneDefaultLeavePolicy()
 }
 
+/* ---------------------------- 啟動遷移：原民假改為每年 3 日 ---------------------------- */
+
+// 舊版預設：原民假每年 1 日（8 小時）；紀念日及節日實施條例改為原住民族歲時祭儀 3 日
+const LEGACY_INDIGENOUS_QUOTA_HOURS = 8
+const LEGACY_INDIGENOUS_NOTE = '每年 1 日，原住民族歲時祭儀'
+
+function findLegacyIndigenousType(leavePolicy) {
+  if (!isPlainObject(leavePolicy) || !Array.isArray(leavePolicy.types)) return null
+  const stored = leavePolicy.types.find(item => isPlainObject(item) && item.key === 'indigenous')
+  if (!stored) return null
+  return toFiniteNumber(stored.quotaHours) === LEGACY_INDIGENOUS_QUOTA_HOURS ? stored : null
+}
+
+/**
+ * 已存的假別規則中，原民假額度若還是舊預設值 8 小時，改成新的預設值（24 小時）；管理員改成其他數值的不動。
+ * 沒有存過假別規則的公司直接使用新預設值，不需要寫入。可重複執行，回傳 { updated: 0|1 }。
+ */
+export async function migrateIndigenousLeaveQuota() {
+  if (typeof settingsStore.getSettings !== 'function' || typeof settingsStore.updateSettings !== 'function') {
+    return { updated: 0 }
+  }
+  const settings = await settingsStore.getSettings()
+  if (!findLegacyIndigenousType(settings?.leavePolicy)) return { updated: 0 }
+
+  const defaults = cloneDefaultLeavePolicy().types.find(item => item.key === 'indigenous')
+  let updated = 0
+  await settingsStore.updateSettings((current) => {
+    // mutator 可能因樂觀鎖重試而重複執行，每次都重新判斷
+    updated = 0
+    const target = findLegacyIndigenousType(current.leavePolicy)
+    if (!target) return
+    target.quotaHours = defaults.quotaHours
+    if (typeof target.note === 'string' && target.note.trim() === LEGACY_INDIGENOUS_NOTE) target.note = defaults.note
+    updated = 1
+  })
+  if (updated) resetLeavePolicyCache()
+  return { updated }
+}
+
 export { ANNUAL_LEAVE_TYPE_ALIASES }
 
 export default {
@@ -395,4 +435,5 @@ export default {
   saveLeavePolicy,
   resetLeavePolicyCache,
   getDefaultLeavePolicy,
+  migrateIndigenousLeaveQuota,
 }

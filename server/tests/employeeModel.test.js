@@ -15,4 +15,12 @@ describe('Employee model validation', () => {
     expect(emp.verifyPassword('OldPass123')).toBe(false)
     expect(emp.verifyPassword('NewPass123')).toBe(true)
   })
+  it('accepts only roster or office as the holiday regime, with no stored default, and isIndigenous defaults to false', () => {
+    const plain = new Employee({ name: 'A', email: 'a@example.com' })
+    expect(plain.holidayRegime).toBeUndefined()
+    expect(plain.isIndigenous).toBe(false)
+    expect(new Employee({ name: 'B', email: 'b@example.com', holidayRegime: 'office', isIndigenous: true }).validateSync()).toBeUndefined()
+    const err = new Employee({ name: 'C', email: 'c@example.com', holidayRegime: 'x' }).validateSync()
+    expect(err.errors.holidayRegime.kind).toBe('enum')
+  })
 });

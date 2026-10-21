@@ -2,8 +2,6 @@ import ShiftSchedule from '../../models/ShiftSchedule.js';
 import Employee from '../../models/Employee.js';
 import AttendanceSetting from '../../models/AttendanceSetting.js';
 import Department from '../../models/Department.js';
-import Holiday from '../../models/Holiday.js';
-import HolidayMoveSetting from '../../models/HolidayMoveSetting.js';
 import ScheduleDayMemo from '../../models/ScheduleDayMemo.js';
 import dayjs from 'dayjs';
 import {
@@ -13,7 +11,7 @@ import {
 } from '../../services/approvedLeaveCalendarService.js';
 import { buildLeaveDayCheck } from '../../services/leaveCoverageService.js';
 import { isNonWorkShift } from '../../services/shiftSemanticService.js';
-import { buildEffectiveMonthHolidays } from '../../services/countedHolidayService.js';
+import { listCalendarHeaders, loadHolidayContext } from '../../services/holidayResolver.js';
 import { buildHolidayRestLedger } from '../../services/holidayRestLedgerService.js';
 import { appendHolidayLedgerSheet } from '../../services/holidayLedgerWorkbook.js';
 import { buildLiteralSearchRegex } from '../../utils/safeSearch.js';
@@ -191,7 +189,7 @@ export async function exportSchedules(req, res) {
       employeeQuery.practiceTitle = practiceTitle;
     }
     const employeeList = await Employee.find(employeeQuery)
-      .select('_id employeeId name title practiceTitle subDepartment status role appointment requiresScheduling partTime')
+      .select('_id employeeId name title practiceTitle subDepartment status role appointment requiresScheduling partTime holidayRegime isIndigenous')
       .populate({ path: 'subDepartment', select: 'name' })
       .lean();
     const employeeIds = employeeList.map((item) => item._id.toString());
@@ -241,39 +239,33 @@ export async function exportSchedules(req, res) {
     }
 
     const format = formatParam === 'excel' ? 'excel' : 'pdf';
-    const [memoRows, holidayRows] = await Promise.all([
-      ScheduleDayMemo.find({
-        date: { $gte: start, $lt: end },
-        department,
-        subDepartment: subDepartment || null,
-      }).sort({ date: 1 }).lean(),
-      Holiday.find({ date: { $gte: start, $lt: end } }).lean(),
-    ]);
+    const memoRows = await ScheduleDayMemo.find({
+      date: { $gte: start, $lt: end },
+      department,
+      subDepartment: subDepartment || null,
+    }).sort({ date: 1 }).lean();
     const memoByDay = new Map((memoRows || []).map((memo) => [
       new Date(memo.date).getUTCDate(),
       String(memo.content || '').trim(),
     ]));
-    const holidayByDay = new Map((holidayRows || []).map((holiday) => [
-      new Date(holiday.date).getUTCDate(),
-      String(holiday.name || '國定假日').trim(),
-    ]));
-    // 公司挪移過的國定假日，行事曆列要和排班畫面一樣顯示在挪移後的日期（讀不到挪移設定就維持原日期）
-    let holidayMoves = null;
-    if ((holidayRows || []).length) {
-      try {
-        const moveQuery = HolidayMoveSetting.find({ enableHolidayMove: true });
-        holidayMoves = (moveQuery && typeof moveQuery.lean === 'function' ? await moveQuery.lean() : await moveQuery) || [];
-        buildEffectiveMonthHolidays({ holidays: holidayRows, moves: holidayMoves, month })
-          .filter((holiday) => holiday.movedFrom)
-          .forEach((holiday) => {
-            const sourceDay = Number(holiday.movedFrom.slice(8));
-            if (holidayByDay.get(sourceDay) === holiday.name) holidayByDay.delete(sourceDay);
-            holidayByDay.set(Number(holiday.date.slice(8)), holiday.name);
-          });
-      } catch (moveError) {
-        holidayMoves = null;
-        console.error('Schedule export holiday moves unavailable', moveError?.name ?? 'Error');
+    // 行事曆列和排班頁標頭一樣（holidayResolver.listCalendarHeaders）：國定假日、公司挪移後的日期、
+    // 指定應放假日，公務機關補假等只是資訊。讀不到行事曆時這一列留白，班表照常匯出
+    const holidayByDay = new Map();
+    let holidayContext = null;
+    try {
+      holidayContext = await loadHolidayContext({ start, end, employees: filteredEmployees });
+      for (const entry of listCalendarHeaders(holidayContext, { start, end })) {
+        const text = entry.displayKind === 'holiday'
+          ? entry.name
+          : (entry.displayKind === 'designated' ? `${entry.name}（指定應放假）` : entry.label);
+        if (!text) continue;
+        const day = Number(entry.date.slice(8));
+        holidayByDay.set(day, holidayByDay.has(day) ? `${holidayByDay.get(day)}／${text}` : text);
       }
+    } catch (calendarError) {
+      holidayContext = null;
+      holidayByDay.clear();
+      console.error('Schedule export holiday calendar unavailable', calendarError?.name ?? 'Error');
     }
     const monthDays = Array.from({ length: daysInMonth }, (_, idx) => idx + 1);
     const [yearNumber, monthNumber] = month.split('-').map(Number);
@@ -508,8 +500,7 @@ export async function exportSchedules(req, res) {
         const ledger = await buildHolidayRestLedger({
           month,
           employees: filteredEmployees,
-          holidayDocs: holidayRows || [],
-          moves: holidayMoves,
+          holidayContext,
         });
         appendHolidayLedgerSheet(workbook, ledger, { departmentName });
       } catch (ledgerError) {

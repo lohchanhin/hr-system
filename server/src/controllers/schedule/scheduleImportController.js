@@ -1,7 +1,6 @@
 import ShiftSchedule from '../../models/ShiftSchedule.js';
 import Employee from '../../models/Employee.js';
 import AttendanceSetting from '../../models/AttendanceSetting.js';
-import Holiday from '../../models/Holiday.js';
 import { randomUUID } from 'node:crypto';
 import { loadApprovedLeaveIntervals } from '../../services/approvedLeaveCalendarService.js';
 import {
@@ -16,8 +15,7 @@ import { isScheduleRuleExempt } from '../../services/scheduleRuleExemptionServic
 import { normalizeEmployeeIdentifier } from '../../services/employeeIdentityService.js';
 import { buildShiftIdentityLookup } from '../../services/shiftIdentityService.js';
 import { ROSTER_LEAVE_BLOCK } from '../../services/leaveCoverageService.js';
-import HolidayMoveSetting from '../../models/HolidayMoveSetting.js';
-import { buildEffectiveMonthHolidays } from '../../services/countedHolidayService.js';
+import { calendarStatusFromContext, loadHolidayContext } from '../../services/holidayResolver.js';
 import { buildImportHolidayWarnings } from '../../services/holidayRestLedgerService.js';
 import {
   toEntityId,
@@ -28,7 +26,6 @@ import {
   describePendingWeeks,
   IMPORT_HOLIDAY_CODES,
   IMPORT_LEAVE_CODES,
-  isCountedHolidayRecord,
   normalizeWorkbookCode,
   resolveImportShiftKind,
   scheduleImportError,
@@ -38,6 +35,20 @@ import {
 // 簡體的「国」「国定假日」NFKC 不會轉成繁體；班別表定義的是「國」時，簡體檔案仍要對得上
 function foldSimplifiedHoliday(text) {
   return String(text ?? '').replace(/国/g, '國');
+}
+
+// 匯入預覽的年度行事曆提醒（依該年度的狀態）：
+//   已核定 -> 不提醒；草稿（含舊版轉換）-> 尚未核定、僅供參考；
+//   尚未建立、以固定日期的國定假日暫代 -> 說明農曆節日沒有核對；
+//   尚未建立、也沒有暫代（從來沒有建立過公司行事曆）-> 沒有可核定的東西，不提醒（排班頁標頭會顯示「尚未建立」）
+function buildImportCalendarWarning(yearStatus) {
+  if (!yearStatus || yearStatus.state === 'approved') return '';
+  if (yearStatus.state === 'none') {
+    return yearStatus.synthetic
+      ? `本月所屬年度（${yearStatus.year}）尚未建立公司行事曆，國定假日只核對固定日期的節日（農曆節日未列入）`
+      : '';
+  }
+  return `本月所屬年度（${yearStatus.year}）的公司行事曆尚未核定，國定假日核對僅供參考`;
 }
 
 function findImportShift(shiftByCode, entry) {
@@ -125,7 +136,7 @@ export async function importSchedules(req, res) {
     const employeeQuery = { department };
     if (subDepartment) employeeQuery.subDepartment = subDepartment;
     if (allowedEmployeeIds !== null) employeeQuery._id = { $in: allowedEmployeeIds };
-    let employeeFind = Employee.find(employeeQuery).select('_id employeeId name department subDepartment partTime appointment status');
+    let employeeFind = Employee.find(employeeQuery).select('_id employeeId name department subDepartment partTime appointment status holidayRegime requiresScheduling isIndigenous');
     const employees = employeeFind && typeof employeeFind.lean === 'function'
       ? await employeeFind.lean()
       : await employeeFind;
@@ -198,10 +209,14 @@ export async function importSchedules(req, res) {
       .map((row) => employeeByCode.get(normalizeEmployeeIdentifier(row.employeeId))?._id)
       .filter(Boolean)
       .map((employeeId) => [toEntityId(employeeId), employeeId])).values()];
-    // 核准請假只讀一次（時間區間）：每一格用自己的班別判斷，只請幾小時的假不擋上班班別；國定假日核對也共用這一份
-    const [approvedLeaveIntervals, holidays, existingSchedules] = await Promise.all([
+    const importedIdSet = new Set(importedEmployeeIds.map((employeeId) => toEntityId(employeeId)));
+    const importedEmployeeDocs = (employees || []).filter((employee) => importedIdSet.has(toEntityId(employee._id)));
+    // 核准請假只讀一次（時間區間）：每一格用自己的班別判斷，只請幾小時的假不擋上班班別；國定假日核對也共用這一份。
+    // 國定假日依員工判斷（holidayResolver：個人調移、已排定的補假、行政人員才有的公務機關補假），
+    // 「國」可以排在當月任何一天（移休），所以不逐格比對日期，只提醒多出來的國與整月檔案裡沒休到的假日
+    const [approvedLeaveIntervals, holidayContext, existingSchedules] = await Promise.all([
       loadApprovedLeaveIntervals({ employeeIds: importedEmployeeIds, start: range.start, end: range.end }),
-      Holiday.find({ date: { $gte: range.start, $lt: range.end } }).lean(),
+      loadHolidayContext({ start: range.start, end: range.end, employees: importedEmployeeDocs }),
       importedEmployeeIds.length
         ? ShiftSchedule.find({
           employee: { $in: importedEmployeeIds },
@@ -209,14 +224,6 @@ export async function importSchedules(req, res) {
         }).lean()
         : [],
     ]);
-    // 國定假日核對用「有效的國定假日」（只算入真正的國定假日、含公司挪移）：
-    // 「國」可以排在當月任何一天（移休），所以不逐格比對日期，只提醒多出來的國與整月檔案裡沒休到的假日
-    let importHolidayMoves = [];
-    if ((holidays || []).some(isCountedHolidayRecord)) {
-      const moveQuery = HolidayMoveSetting.find({ enableHolidayMove: true });
-      importHolidayMoves = (moveQuery && typeof moveQuery.lean === 'function' ? await moveQuery.lean() : await moveQuery) || [];
-    }
-    const effectiveHolidays = buildEffectiveMonthHolidays({ holidays: holidays || [], moves: importHolidayMoves, month });
     const holidayEmployeeStates = new Map();
     const leaveCheckOf = buildRosterLeaveChecks(approvedLeaveIntervals);
     const existingByKey = new Map((existingSchedules || []).map((schedule) => [
@@ -328,18 +335,24 @@ export async function importSchedules(req, res) {
     const fullMonthFile = parsed.columns.length === monthDayCount;
     // 國定假日有沒有休到要看請假的時間：只請幾小時的假不算整天請假。
     // 只有整月檔案才核對有沒有休到；請假區間上面已經讀過，不再多查一次假單
-    const leaveIntervals = fullMonthFile && effectiveHolidays.length && importedEmployeeIds.length
+    const leaveIntervals = fullMonthFile && importedEmployeeIds.length
       ? approvedLeaveIntervals
       : null;
     // 國定假日核對：只提醒多排的國；整月檔案另外提醒本月國定假日當天上班、卻沒有國可對應的員工（移休後仍沒休到）
     warnings.push(...buildImportHolidayWarnings({
-      holidays: effectiveHolidays,
+      month,
+      holidayContext,
       states: [...holidayEmployeeStates.values()],
       existingSchedules,
       setting,
       leaveIntervals,
       fullMonth: fullMonthFile,
     }));
+    // 這個月所屬年度的公司行事曆還沒核定（或還沒建立、只以固定日期的國定假日暫代）：國定假日核對只能參考
+    const calendarWarning = buildImportCalendarWarning(calendarStatusFromContext(holidayContext).years[0]);
+    if (calendarWarning) {
+      warnings.push(scheduleImportError(null, null, '', calendarWarning));
+    }
 
     // 檔案的日期欄位不是整個月時，每週一例一休不檢核（缺的日子無從判斷），要明說，不能默默略過
     if (!errors.length && candidates.length && parsed.columns.length !== monthDayCount) {

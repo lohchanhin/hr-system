@@ -1,7 +1,9 @@
 /**
  * 哪些 Holiday 文件算「要放假的國定假日」。
- * 純函式、不碰資料庫，方便加班費、排班檢查等不同地方共用同一套判斷。
+ * 純函式、不碰資料庫。每一筆行事曆的類型以 kind 為準（holidayCalendarRules.js），
+ * 還沒有 kind 的舊資料用 legacyKindOf 判斷；「對某位員工是不是假日」請用 holidayResolver。
  */
+import { effectiveHolidayKind } from './holidayCalendarRules.js';
 
 function utcDateKey(value) {
   const date = new Date(value);
@@ -14,20 +16,12 @@ function hasText(value) {
 }
 
 /**
- * 排班檢核、加班費、匯入提醒共用的國定假日判斷：
- * 工作日、補班日（makeup work）不算假日；類型/名稱/說明含「國定」「假日」或 holiday 才算。
+ * 行事曆層級的國定假日：只有 kind 為 statutory（勞基法第 37 條國定假日）的資料才算。
+ * 公務機關補假、調整放假、補行上班、公司休息日／上班日都不算；
+ * 指定應放假日只適用部分員工，也不在這裡算（依員工判斷請用 holidayResolver）。
  */
-const NOT_A_HOLIDAY_TYPES = new Set(['例假日', '公司休息日']);
-
 export function isCountedHoliday(holiday) {
-  // 行事曆裡的「例假日」「公司休息日」是公司自訂的休息紀錄，不是國定假日
-  if (NOT_A_HOLIDAY_TYPES.has(String(holiday?.type ?? '').trim())) return false;
-  const text = [holiday?.type, holiday?.name, holiday?.description, holiday?.desc]
-    .filter(Boolean)
-    .join(' ')
-    .toLowerCase();
-  if (/工作日|補班|makeup\s*work/.test(text)) return false;
-  return /國定|假日|holiday/.test(text);
+  return effectiveHolidayKind(holiday) === 'statutory';
 }
 
 /**
@@ -51,6 +45,7 @@ export function isPayableNationalHoliday(holiday) {
 }
 
 /**
+ * 公司層級舊介面（不含個人補假/調移），新程式請用 holidayResolver。
  * 取得 [start, end) 區間內的國定假日日期集合（YYYY-MM-DD）。
  * 已啟用的國定假日移置（HolidayMoveSetting）會把來源日移除、目標日加入。
  */
@@ -75,6 +70,7 @@ export function buildCountedHolidayDays({ holidays = [], moves = [], start, end 
 }
 
 /**
+ * 公司層級舊介面（不含個人補假/調移），新程式請用 holidayResolver。
  * 某個月份「有效的國定假日」清單（國定假日休假紀錄、匯入核對用）。
  * 只取算數的國定假日（isPayableNationalHoliday），同一天重複的紀錄只留一筆；
  * 已啟用、來源日與目標日都在這個月份、且來源日確實有這個假日的挪移，會把假日移到目標日

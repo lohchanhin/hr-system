@@ -506,6 +506,22 @@
                           active-color="#10b981" />
                       </el-form-item>
                     </div>
+
+                    <div class="form-row">
+                      <el-form-item label="假日制度">
+                        <el-select v-model="employeeForm.holidayRegime" placeholder="依預設"
+                          data-test="employee-holiday-regime">
+                          <el-option v-for="option in HOLIDAY_REGIME_OPTIONS" :key="option.value || 'default'"
+                            :label="option.label" :value="option.value" />
+                        </el-select>
+                        <div class="upload-tip">輪班：國定假日落在自己的休息日/例假時另排補假；行政：週一至週五上班，政府公告的補假日自動放假</div>
+                      </el-form-item>
+                      <el-form-item label="原住民身分">
+                        <el-switch v-model="employeeForm.isIndigenous" active-text="是" inactive-text="否"
+                          active-color="#10b981" data-test="employee-is-indigenous" />
+                        <div class="upload-tip">原住民族歲時祭儀每年 3 日，以「原民假」申請</div>
+                      </el-form-item>
+                    </div>
                   </div>
 
                   <div class="form-group">
@@ -1308,6 +1324,7 @@ import { apiFetch, importEmployeesBulk } from '../../api'
 import { REQUIRED_FIELDS } from './requiredFields'
 import EmployeeAvatar from '../EmployeeAvatar.vue'
 import { LEGACY_ANNUAL_LEAVE_DAYS_MAX, readAnnualLeaveHours } from '../../utils/leaveBalance'
+import { HOLIDAY_REGIME_OPTIONS } from '../../constants/holidayCalendar'
 import { useProfileStore } from '../../stores/profile'
 import {
   acquireEmployeePhoto,
@@ -1462,8 +1479,9 @@ function normalizeDateLike(value) {
 function normalizeBoolLike(value) {
   if (value == null || value === '') return ''
   const s = String(value).trim().toLowerCase()
-  if (['true', 'yes', 'y', '1'].includes(s)) return 'TRUE'
-  if (['false', 'no', 'n', '0'].includes(s)) return 'FALSE'
+  // 與伺服器匯入相同：是／否也接受
+  if (['true', 'yes', 'y', '1', '是'].includes(s)) return 'TRUE'
+  if (['false', 'no', 'n', '0', '否'].includes(s)) return 'FALSE'
   return String(value) // 不動
 }
 
@@ -1614,7 +1632,13 @@ function mapRowToFormShape(row, mappings) {
       // 布林/是非欄位
       case 'isPartTime':
       case 'isClocking':
+      case 'isIndigenous':
         out[sysKey] = normalizeBoolLike(raw)
+        break
+
+      // 假日制度（輪班/行政）：只去掉空白，是否合法由伺服器檢查
+      case 'holidayRegime':
+        out[sysKey] = String(raw ?? '').trim()
         break
 
       // 多值欄位（逗號分隔）
@@ -2075,6 +2099,20 @@ const BULK_IMPORT_FIELD_CONFIGS = Object.freeze([
     category: '雇用設定'
   },
   {
+    key: 'holidayRegime',
+    header: 'holidayRegime',
+    label: '假日制度',
+    description: '假日制度 (輪班/行政，空白依是否需排班)',
+    category: '雇用設定'
+  },
+  {
+    key: 'isIndigenous',
+    header: 'isIndigenous',
+    label: '原住民身分',
+    description: '原住民身分 (TRUE/FALSE)',
+    category: '雇用設定'
+  },
+  {
     key: 'educationLevel',
     header: 'education_level',
     label: '學歷程度',
@@ -2437,6 +2475,8 @@ const BULK_IMPORT_TEMPLATE_SAMPLE_EMPLOYEES = Object.freeze([
     hireDate: '2020-07-01',
     partTime: 'FALSE',
     needClockIn: 'TRUE',
+    holidayRegime: '行政',
+    isIndigenous: 'FALSE',
     lineId: 'hr-king',
     languages: '中文,英文',
     signTags: '人資',
@@ -2457,6 +2497,8 @@ const BULK_IMPORT_TEMPLATE_SAMPLE_EMPLOYEES = Object.freeze([
     hireDate: '2024-02-15',
     partTime: 'FALSE',
     needClockIn: 'TRUE',
+    holidayRegime: '輪班',
+    isIndigenous: 'TRUE',
     lineId: 'nurse-ruby',
     languages: '中文,台語',
     signTags: '排班負責人,支援單位主管'
@@ -3651,6 +3693,9 @@ function normalizeEmployeeRecord(e = {}) {
     ...(e?.annualLeave && typeof e.annualLeave === 'object' ? { annualLeave: normalizeAnnualLeaveRecord(e.annualLeave) } : {}),
     employeeNo: e?.employeeNo ?? e?.employeeId ?? '',
     employmentStatus: e?.employmentStatus ?? e?.status ?? '',
+    // 假日制度沒設定時顯示「依預設」（空字串），存檔送空字串會清除設定
+    holidayRegime: ['roster', 'office'].includes(e?.holidayRegime) ? e.holidayRegime : '',
+    isIndigenous: e?.isIndigenous === true,
     phone: e?.phone ?? e?.mobile ?? '',
     title: extractOptionValue(e?.title),
     practiceTitle: extractOptionValue(e?.practiceTitle),
@@ -3862,6 +3907,8 @@ const emptyEmployee = {
   practiceTitle: '',      // C04
   isPartTime: false,
   isClocking: false,
+  holidayRegime: '',      // 假日制度：'' 依預設（需排班＝輪班、不需排班＝行政）
+  isIndigenous: false,
 
   // 人員狀態
   employmentStatus: '',

@@ -1,10 +1,11 @@
 import { jest } from '@jest/globals'
+import { registerHolidayResolverModelMocks } from './helpers/holidayResolverMocks.js'
 
 const mockAttendanceRecord = { find: jest.fn() }
 const mockShiftSchedule = { find: jest.fn() }
 const mockAttendanceSetting = { findOne: jest.fn() }
 const mockApprovalRequest = { find: jest.fn() }
-const mockEmployee = { findById: jest.fn() }
+const mockEmployee = { findById: jest.fn(), find: jest.fn() }
 const mockHoliday = { find: jest.fn() }
 const mockHolidayMoveSetting = { find: jest.fn() }
 const mockFormField = { find: jest.fn() }
@@ -24,6 +25,8 @@ jest.unstable_mockModule('../src/services/leaveFieldService.js', () => ({
 jest.unstable_mockModule('../src/services/nightShiftAllowanceService.js', () => ({
   calculateNightShiftAllowance: jest.fn(),
 }))
+
+const { HolidaySwap, HolidayCompensation, CalendarYear } = await registerHolidayResolverModelMocks(jest)
 
 let calculateWorkHours
 let calculateOvertimePay
@@ -406,6 +409,249 @@ describe('overtime day type uses only counted national holidays', () => {
 
     expect(source.dayType).toBe('workday')
     expect(target.dayType).toBe('national_holiday')
+  })
+})
+
+// 行事曆分類後：國定假日依員工判斷（holidayResolver），加班費不再把公務機關補假當成所有人的國定假日
+describe('overtime day type follows the per-employee holiday resolver', () => {
+  const EMPLOYEE_ID = '64b7f0c2a1b2c3d4e5f6a001'
+  const REST_SHIFT = { _id: 'rest', code: '休', name: '休假', semanticType: 'rest_day', startTime: '00:00', endTime: '00:00' }
+  const DAY_SHIFT = { _id: 'day', code: '日', name: '日班', semanticType: 'work', startTime: '08:00', endTime: '17:00' }
+  const day = (key) => new Date(`${key}T00:00:00.000Z`)
+  // 2026 年 2 月：國定假日 2/15～2/19、2/28；公務機關補假 2/20（補 2/15）、2/27（補 2/28）
+  const FEBRUARY_2026 = [
+    ...['2026-02-15', '2026-02-16', '2026-02-17', '2026-02-18', '2026-02-19', '2026-02-28']
+      .map((key) => ({ date: day(key), kind: 'statutory', type: '國定假日', name: '國定假日', source: 'dgpa' })),
+    { date: day('2026-02-20'), kind: 'gov_makeup_off', type: '公務機關補假', name: '補假', source: 'dgpa', compensatesDate: day('2026-02-15') },
+    { date: day('2026-02-27'), kind: 'gov_makeup_off', type: '公務機關補假', name: '補假', source: 'dgpa', compensatesDate: day('2026-02-28') },
+  ]
+
+  async function overtimeOn({ date, month, employee = {}, storedRegime = null, holidays = FEBRUARY_2026, schedules = [] }) {
+    mockEmployee.findById.mockResolvedValue({
+      _id: EMPLOYEE_ID, autoOvertimeCalc: true, salaryAmount: 36000, salaryType: '月薪', ...employee,
+    })
+    // 員工資料沒有假日制度欄位時，判斷模組會自己讀（storedRegime 是資料庫裡的欄位）
+    mockEmployee.find.mockReturnValue({
+      select: jest.fn().mockReturnThis(),
+      lean: jest.fn().mockResolvedValue(storedRegime ? [{ _id: EMPLOYEE_ID, ...storedRegime }] : []),
+    })
+    mockApprovalRequest.find.mockReturnValue({
+      populate: jest.fn().mockReturnThis(),
+      lean: jest.fn().mockResolvedValue([{
+        form: { _id: 'form1', name: '加班申請', semanticType: 'overtime' },
+        form_data: { hoursField: 4, dateField: date, reasonField: '測試加班' },
+      }]),
+    })
+    mockFormField.find.mockReturnValue({
+      lean: jest.fn().mockResolvedValue([
+        { form: 'form1', _id: 'hoursField', label: '加班時數' },
+        { form: 'form1', _id: 'dateField', label: '加班日期' },
+        { form: 'form1', _id: 'reasonField', label: '加班原因' },
+      ]),
+    })
+    mockAttendanceSetting.findOne.mockReturnValue({ lean: jest.fn().mockResolvedValue({ shifts: [REST_SHIFT, DAY_SHIFT] }) })
+    mockShiftSchedule.find.mockReturnValue({ lean: jest.fn().mockResolvedValue(schedules) })
+    mockHoliday.find.mockReturnValue({ lean: jest.fn().mockResolvedValue(holidays) })
+    mockHolidayMoveSetting.find.mockReturnValue({ lean: jest.fn().mockResolvedValue([]) })
+    const result = await calculateOvertimePay(EMPLOYEE_ID, month)
+    return result.overtimeRecords[0]
+  }
+
+  beforeEach(() => {
+    HolidaySwap.__setRows([])
+    HolidayCompensation.__setRows([])
+  })
+
+  it('2026-02-20（公務機關補假）：輪班人員是平日，行政人員是國定假日', async () => {
+    const roster = await overtimeOn({
+      date: '2026-02-20',
+      month: '2026-02-01',
+      employee: { requiresScheduling: true },
+      schedules: [{ employee: EMPLOYEE_ID, date: day('2026-02-20'), shiftId: 'day' }],
+    })
+    expect(roster).toEqual(expect.objectContaining({ dayType: 'workday', holidayReason: null }))
+
+    const office = await overtimeOn({ date: '2026-02-20', month: '2026-02-01', employee: { requiresScheduling: false } })
+    expect(office).toEqual(expect.objectContaining({ dayType: 'national_holiday', holidayReason: 'gov_makeup', pay: 1200 }))
+  })
+
+  it('呼叫端帶入的員工資料沒有假日制度欄位（薪資總覽）：自己讀員工的假日制度', async () => {
+    mockEmployee.find.mockClear()
+    const office = await overtimeOn({ date: '2026-02-20', month: '2026-02-01', storedRegime: { requiresScheduling: false } })
+    expect(office).toEqual(expect.objectContaining({ dayType: 'national_holiday', holidayReason: 'gov_makeup' }))
+    expect(mockEmployee.find).toHaveBeenCalledWith({ _id: { $in: [EMPLOYEE_ID] } })
+    const roster = await overtimeOn({ date: '2026-02-20', month: '2026-02-01', storedRegime: { holidayRegime: 'roster', requiresScheduling: false } })
+    expect(roster.dayType).toBe('workday')
+  })
+
+  it('國定假日落在輪班人員的休息日仍以國定假日計（2/28 週六）', async () => {
+    const record = await overtimeOn({
+      date: '2026-02-28',
+      month: '2026-02-01',
+      schedules: [{ employee: EMPLOYEE_ID, date: day('2026-02-28'), shiftId: 'rest' }],
+    })
+    expect(record).toEqual(expect.objectContaining({ dayType: 'national_holiday', holidayReason: 'statutory' }))
+  })
+
+  it('個人調移：調移日以國定假日計，原國定假日變成平日', async () => {
+    HolidaySwap.__setRows([{
+      _id: 'swap1', employee: EMPLOYEE_ID, originalDate: day('2026-02-16'), originalName: '農曆除夕', targetDate: day('2026-02-24'), status: 'active',
+    }])
+    const schedules = [
+      { employee: EMPLOYEE_ID, date: day('2026-02-16'), shiftId: 'day' },
+      { employee: EMPLOYEE_ID, date: day('2026-02-24'), shiftId: 'day' },
+    ]
+    const target = await overtimeOn({ date: '2026-02-24', month: '2026-02-01', schedules })
+    expect(target).toEqual(expect.objectContaining({ dayType: 'national_holiday', holidayReason: 'swap' }))
+    const original = await overtimeOn({ date: '2026-02-16', month: '2026-02-01', schedules })
+    expect(original.dayType).toBe('workday')
+  })
+
+  it('已排定的補假日以國定假日計', async () => {
+    HolidayCompensation.__setRows([{
+      _id: 'comp1', employee: EMPLOYEE_ID, holidayDate: day('2026-02-28'), holidayName: '和平紀念日', status: 'assigned', assignedDate: day('2026-03-04'),
+    }])
+    const record = await overtimeOn({
+      date: '2026-03-04',
+      month: '2026-03-01',
+      schedules: [{ employee: EMPLOYEE_ID, date: day('2026-03-04'), shiftId: 'day' }],
+    })
+    expect(record).toEqual(expect.objectContaining({ dayType: 'national_holiday', holidayReason: 'compensation' }))
+  })
+
+  it('沒有班表的行政人員：週六以休息日計，輪班人員維持平日', async () => {
+    const office = await overtimeOn({ date: '2026-03-07', month: '2026-03-01', employee: { requiresScheduling: false } })
+    expect(office.dayType).toBe('rest_day')
+    const explicitOffice = await overtimeOn({ date: '2026-03-07', month: '2026-03-01', employee: { holidayRegime: 'office' } })
+    expect(explicitOffice.dayType).toBe('rest_day')
+    const roster = await overtimeOn({ date: '2026-03-07', month: '2026-03-01' })
+    expect(roster.dayType).toBe('workday')
+  })
+
+  describe('整批計算（薪資匯出、薪資總覽 PDF）共用一份國定假日資料', () => {
+    const ROSTER_ID = '64b7f0c2a1b2c3d4e5f6a101'
+    const OFFICE_ID = '64b7f0c2a1b2c3d4e5f6a102'
+    const SWAPPED_ID = '64b7f0c2a1b2c3d4e5f6a103'
+    const people = {
+      [ROSTER_ID]: { _id: ROSTER_ID, autoOvertimeCalc: true, salaryAmount: 36000, salaryType: '月薪', requiresScheduling: true },
+      [OFFICE_ID]: { _id: OFFICE_ID, autoOvertimeCalc: true, salaryAmount: 36000, salaryType: '月薪', requiresScheduling: false },
+      [SWAPPED_ID]: { _id: SWAPPED_ID, autoOvertimeCalc: true, salaryAmount: 36000, salaryType: '月薪', requiresScheduling: true },
+    }
+
+    // 三個人都在 2026-02-20（公務機關補假）加班 4 小時；SWAPPED 把 2/16 個人調移到 2/20
+    function mockBatchLookups() {
+      mockEmployee.find.mockClear()
+      HolidaySwap.find.mockClear()
+      HolidayCompensation.find.mockClear()
+      CalendarYear.find.mockClear()
+      mockEmployee.findById.mockImplementation(async (id) => people[String(id)] ?? null)
+      mockEmployee.find.mockReturnValue({ select: jest.fn().mockReturnThis(), lean: jest.fn().mockResolvedValue([]) })
+      mockApprovalRequest.find.mockImplementation(() => ({
+        populate: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockResolvedValue([{
+          form: { _id: 'form1', name: '加班申請', semanticType: 'overtime' },
+          form_data: { hoursField: 4, dateField: '2026-02-20', reasonField: '測試加班' },
+        }]),
+      }))
+      mockFormField.find.mockImplementation(() => ({
+        lean: jest.fn().mockResolvedValue([
+          { form: 'form1', _id: 'hoursField', label: '加班時數' },
+          { form: 'form1', _id: 'dateField', label: '加班日期' },
+          { form: 'form1', _id: 'reasonField', label: '加班原因' },
+        ]),
+      }))
+      mockAttendanceSetting.findOne.mockImplementation(() => ({ lean: jest.fn().mockResolvedValue({ shifts: [REST_SHIFT, DAY_SHIFT] }) }))
+      mockShiftSchedule.find.mockImplementation(() => ({ lean: jest.fn().mockResolvedValue([]) }))
+      mockHoliday.find.mockImplementation(() => ({ lean: jest.fn().mockResolvedValue(FEBRUARY_2026) }))
+      mockHolidayMoveSetting.find.mockImplementation(() => ({ lean: jest.fn().mockResolvedValue([]) }))
+      HolidaySwap.__setRows([{
+        _id: 'swap1', employee: SWAPPED_ID, originalDate: day('2026-02-16'), originalName: '農曆除夕', targetDate: day('2026-02-20'), status: 'active',
+      }])
+    }
+
+    const runBatch = (payrollBatch, ids) => Promise.all(ids.map((id) => (
+      calculateOvertimePay(id, '2026-02-01', { payrollBatch }).then((result) => result.overtimeRecords[0])
+    )))
+
+    it('reads the holiday calendar once for the whole batch and gives every employee the same answer as a single calculation', async () => {
+      mockBatchLookups()
+
+      const payrollBatch = { employees: Object.values(people) }
+      const [roster, office, swapped] = await runBatch(payrollBatch, [ROSTER_ID, OFFICE_ID, SWAPPED_ID])
+
+      expect(roster).toEqual(expect.objectContaining({ dayType: 'workday', holidayReason: null }))
+      expect(office).toEqual(expect.objectContaining({ dayType: 'national_holiday', holidayReason: 'gov_makeup', pay: 1200 }))
+      expect(swapped).toEqual(expect.objectContaining({ dayType: 'national_holiday', holidayReason: 'swap' }))
+      // 3 位員工，國定假日相關查詢各只有 1 次（逐人計算是各 3 次）
+      expect(mockHoliday.find).toHaveBeenCalledTimes(1)
+      expect(mockHolidayMoveSetting.find).toHaveBeenCalledTimes(1)
+      expect(CalendarYear.find).toHaveBeenCalledTimes(1)
+      expect(HolidaySwap.find).toHaveBeenCalledTimes(1)
+      expect(HolidayCompensation.find).toHaveBeenCalledTimes(1)
+      expect(HolidaySwap.find.mock.calls[0][0].employee.$in).toEqual([ROSTER_ID, OFFICE_ID, SWAPPED_ID])
+      // 員工資料已有假日制度欄位：不再另外讀員工
+      expect(mockEmployee.find).not.toHaveBeenCalled()
+
+      // 與單人計算（沒有 payrollBatch）結果相同
+      mockHoliday.find.mockClear()
+      const single = await Promise.all([ROSTER_ID, OFFICE_ID, SWAPPED_ID].map((id) => (
+        calculateOvertimePay(id, '2026-02-01').then((result) => result.overtimeRecords[0])
+      )))
+      expect(single).toEqual([roster, office, swapped])
+      expect(mockHoliday.find).toHaveBeenCalledTimes(3)
+    })
+
+    it('reads the holiday regime of employees loaded without holiday fields once for the batch (薪資總覽 PDF)', async () => {
+      mockBatchLookups()
+      mockEmployee.find.mockReturnValue({
+        select: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockResolvedValue([{ _id: OFFICE_ID, requiresScheduling: false }, { _id: ROSTER_ID, requiresScheduling: true }]),
+      })
+      // 只選了薪資欄位的員工資料（沒有假日制度欄位）
+      const payrollBatch = { employees: [{ _id: ROSTER_ID, salaryAmount: 36000 }, { _id: OFFICE_ID, salaryAmount: 36000 }] }
+      const [roster, office] = await runBatch(payrollBatch, [ROSTER_ID, OFFICE_ID])
+
+      expect(roster.dayType).toBe('workday')
+      expect(office).toEqual(expect.objectContaining({ dayType: 'national_holiday', holidayReason: 'gov_makeup' }))
+      expect(mockEmployee.find).toHaveBeenCalledTimes(1)
+      expect(mockEmployee.find).toHaveBeenCalledWith({ _id: { $in: [ROSTER_ID, OFFICE_ID] } })
+      expect(mockHoliday.find).toHaveBeenCalledTimes(1)
+    })
+
+    it('falls back to a per-employee read for an employee outside the batch or when the shared read fails', async () => {
+      mockBatchLookups()
+      // 不在這一批的員工：只讀他自己的資料（個人調移仍算得到）
+      const outside = await runBatch({ employees: [people[ROSTER_ID]] }, [ROSTER_ID, SWAPPED_ID])
+      expect(outside[1]).toEqual(expect.objectContaining({ dayType: 'national_holiday', holidayReason: 'swap' }))
+      expect(mockHoliday.find).toHaveBeenCalledTimes(2)
+
+      // 共用資料讀取失敗：只記錄錯誤類型，每位員工改為各自讀取，結果不變
+      mockHoliday.find.mockClear()
+      mockHoliday.find
+        .mockImplementationOnce(() => ({ lean: jest.fn().mockRejectedValue(new TypeError('connection reset')) }))
+        .mockImplementation(() => ({ lean: jest.fn().mockResolvedValue(FEBRUARY_2026) }))
+      const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {})
+      try {
+        const [roster, office] = await runBatch({ employees: [people[ROSTER_ID], people[OFFICE_ID]] }, [ROSTER_ID, OFFICE_ID])
+        expect(roster.dayType).toBe('workday')
+        expect(office).toEqual(expect.objectContaining({ dayType: 'national_holiday', holidayReason: 'gov_makeup' }))
+        expect(mockHoliday.find).toHaveBeenCalledTimes(3)
+        expect(errorSpy).toHaveBeenCalledTimes(1)
+        expect(errorSpy).toHaveBeenCalledWith('Failed to load the shared holiday calendar for a payroll batch', 'TypeError')
+      } finally {
+        errorSpy.mockRestore()
+      }
+    })
+  })
+
+  it('__testUtils.resolveOvertimeDayType(dateKey, holidayContext, employee, shift)', async () => {
+    const { createHolidayContext } = await import('../src/services/holidayResolver.js')
+    const ctx = createHolidayContext({ start: '2026-02-01', end: '2026-03-01', rows: FEBRUARY_2026 })
+    const { resolveOvertimeDayType } = __testUtils
+    expect(resolveOvertimeDayType('2026-02-20', ctx, { _id: 'n', requiresScheduling: true }, DAY_SHIFT)).toBe('workday')
+    expect(resolveOvertimeDayType('2026-02-20', ctx, { _id: 'o', requiresScheduling: false }, undefined)).toBe('national_holiday')
+    expect(resolveOvertimeDayType('2026-02-11', ctx, { _id: 'n' }, REST_SHIFT)).toBe('rest_day')
+    expect(resolveOvertimeDayType('2026-02-11', ctx, { _id: 'n' }, DAY_SHIFT)).toBe('workday')
   })
 })
 

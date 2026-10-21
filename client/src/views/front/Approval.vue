@@ -110,6 +110,7 @@
                       :items="ownBalanceItems"
                       :type-text="applyLeaveContext.typeText"
                       :hours="applyLeaveContext.hours"
+                      :end-date="applyLeaveContext.endValue"
                     />
                   </div>
 
@@ -700,6 +701,7 @@
             :items="ownBalanceItems"
             :type-text="editLeaveContext.typeText"
             :hours="editLeaveContext.hours"
+            :end-date="editLeaveContext.endValue"
           />
         </el-form>
         <div v-if="editDlg.error" class="error-message">
@@ -882,9 +884,14 @@ function leaveTypeText(typeField, value) {
   return String(option?.label ?? raw)
 }
 function leaveContextOf(fields, data) {
-  const { typeField, hoursField } = pickLeaveFormFields(fields)
+  const { typeField, hoursField, endField } = pickLeaveFormFields(fields)
   if (!typeField || !hoursField) return null
-  return { typeText: leaveTypeText(typeField, data?.[typeField._id]), hours: data?.[hoursField._id] }
+  return {
+    typeText: leaveTypeText(typeField, data?.[typeField._id]),
+    hours: data?.[hoursField._id],
+    // 請假結束日：提醒請假期間的年度公司行事曆是否尚未核定
+    endValue: endField ? data?.[endField._id] : null,
+  }
 }
 const leaveHoursPolicy = () => ({
   maxHoursPerDay: Number(ownBalances.value?.maxHoursPerDay) > 0 ? Number(ownBalances.value.maxHoursPerDay) : 8,

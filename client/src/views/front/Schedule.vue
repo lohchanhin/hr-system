@@ -489,6 +489,15 @@
           <li v-for="(line, index) in schedulePendingLines" :key="index">{{ line }}</li>
         </ol>
       </section>
+      <el-alert
+        v-if="calendarStatus?.provisional && calendarStatus?.message"
+        class="calendar-provisional-alert"
+        type="warning"
+        :closable="false"
+        show-icon
+        data-test="calendar-provisional-alert"
+        :title="calendarStatus.message"
+      />
       <div ref="scheduleTableWrapperRef" class="schedule-table-wrapper" :class="{ 'is-fullscreen': isTableFullscreen }"
         data-test="schedule-table-wrapper" @click.capture="handleTableDelegatedClick"
         @change.capture="handleTableDelegatedChange">
@@ -581,6 +590,12 @@
           <template #header>
             <div class="day-header">
               <span class="day-header-label">{{ d.label }}</span>
+              <span
+                v-for="info in d.infos || []"
+                :key="info"
+                class="day-header-info"
+                :data-test="`day-header-info-${d.date}`"
+              >{{ info }}</span>
               <div v-if="canEditSchedule" class="day-header-tools">
                 <el-checkbox class="day-checkbox" :model-value="selectedDaysSet.has(d.date)"
                   :data-schedule-action="'toggle-day'" :data-day="String(d.date)" />
@@ -925,6 +940,8 @@ let lastLoggedRuleSignature = ''
 const rawSchedules = ref([])
 const holidays = ref([])
 const holidayMap = ref({})
+// 本月所屬年度的公司行事曆狀態（尚未核定時顯示提醒）
+const calendarStatus = ref(null)
 
 const shifts = ref([])
 const employees = ref([])
@@ -3169,14 +3186,14 @@ const days = computed(() => buildMonthDays(currentMonth.value, holidayMap.value)
 
 async function fetchHolidays() {
   try {
-    // Fetch holidays for current month
-    const res = await apiFetch(`/api/holidays-public/by-month?month=${currentMonth.value}`)
+    // 本月的行事曆標頭：國定假日標 🎊、指定應放假日標 📌，公務機關補假等只顯示灰字資訊
+    const res = await apiFetch(`/api/holiday-calendar/headers?month=${currentMonth.value}`)
     if (res.ok) {
       const data = await res.json()
-      holidays.value = Array.isArray(data) ? data : []
-      
-      // Build holiday map by date string for quick lookup
-      holidayMap.value = buildHolidayMap(holidays.value)
+      const entries = Array.isArray(data) ? data : (Array.isArray(data?.entries) ? data.entries : [])
+      holidays.value = entries
+      calendarStatus.value = data && !Array.isArray(data) && data.status ? data.status : null
+      holidayMap.value = buildHolidayMap(entries)
     }
   } catch (err) {
     console.warn('Failed to fetch holidays:', err)
@@ -5040,4 +5057,18 @@ onUpdated(() => {
 
 
 <style scoped lang="scss" src="./ScheduleWorkspace.scss"></style>
+<style scoped>
+/* 公務機關補假、調整放假、公司休息日等：只是資訊，不是國定假日 */
+.day-header-info {
+  color: #98a2b3;
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.calendar-provisional-alert {
+  margin-bottom: 8px;
+}
+</style>
 <style lang="scss" src="./ScheduleNotificationDrawer.scss"></style>

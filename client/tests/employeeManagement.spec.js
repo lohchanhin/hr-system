@@ -492,3 +492,77 @@ describe('EmployeeManagement.vue', () => {
     expect(wrapper.vm.employeeForm.dischargeYear).toBe(2018)
   })
 })
+
+describe('EmployeeManagement.vue 假日制度與原住民身分', () => {
+  beforeEach(() => {
+    apiFetch.mockClear()
+    apiFetch.mockImplementation(() => Promise.resolve({ ok: true, json: async () => [] }))
+  })
+
+  it('renders the regime select and the indigenous switch in the employment settings', async () => {
+    // 只讓對話框、分頁與表單容器渲染內容，表格維持空白替身（不渲染列）
+    const stubs = {
+      ...Object.fromEntries(elStubs.map(name => [name, true])),
+      'el-dialog': { template: '<div><slot /><slot name="footer" /></div>' },
+      'el-tabs': { template: '<div><slot /></div>' },
+      'el-tab-pane': { template: '<div><slot /></div>' },
+      'el-form': { template: '<form><slot /></form>' },
+      'el-form-item': { template: '<div><slot /></div>' },
+      'el-select': { template: '<select v-bind="$attrs"><slot /></select>' },
+      'el-switch': { template: '<input type="checkbox" v-bind="$attrs" />' },
+    }
+    const wrapper = mount(EmployeeManagement, { global: { stubs } })
+    await flushPromises()
+    expect(wrapper.find('[data-test="employee-holiday-regime"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="employee-is-indigenous"]').exists()).toBe(true)
+    expect(wrapper.text()).toContain('輪班：國定假日落在自己的休息日/例假時另排補假；行政：週一至週五上班，政府公告的補假日自動放假')
+    expect(wrapper.vm.employeeForm.holidayRegime).toBe('')
+    expect(wrapper.vm.employeeForm.isIndigenous).toBe(false)
+  })
+
+  it('loads the stored values when editing and treats a missing regime as the default', async () => {
+    installEmployeeApiMock({
+      '/api/departments': [],
+      '/api/organizations': [],
+      '/api/sub-departments': [],
+      '/api/employees': [
+        { _id: 'e1', name: '行政甲', holidayRegime: 'office', isIndigenous: true },
+        { _id: 'e2', name: '護理乙' },
+      ],
+    })
+    const wrapper = mount(EmployeeManagement, { global: { stubs: elStubs } })
+    await flushPromises()
+    await wrapper.vm.openEmployeeDialog('e1')
+    expect(wrapper.vm.employeeForm.holidayRegime).toBe('office')
+    expect(wrapper.vm.employeeForm.isIndigenous).toBe(true)
+    await wrapper.vm.openEmployeeDialog('e2')
+    expect(wrapper.vm.employeeForm.holidayRegime).toBe('')
+    expect(wrapper.vm.employeeForm.isIndigenous).toBe(false)
+  })
+
+  it('sends the regime (empty clears it) and the indigenous flag when saving', async () => {
+    const wrapper = mount(EmployeeManagement, { global: { stubs: elStubs } })
+    wrapper.vm.formRef = { validate: vi.fn(() => Promise.resolve(true)) }
+    apiFetch.mockClear()
+    apiFetch.mockImplementation((url, opts) => Promise.resolve({ ok: true, json: async () => (opts?.method === 'POST' ? {} : []) }))
+    wrapper.vm.employeeForm = {
+      ...wrapper.vm.employeeForm,
+      name: 'n', username: 'u', password: 'p', email: 'a@a.com', gender: 'M',
+      holidayRegime: 'office',
+      isIndigenous: true,
+    }
+    wrapper.vm.editEmployeeIndex = null
+    await flushPromises()
+    await wrapper.vm.saveEmployee()
+    const body = JSON.parse(apiFetch.mock.calls.find(c => c[1]?.method === 'POST')[1].body)
+    expect(body.holidayRegime).toBe('office')
+    expect(body.isIndigenous).toBe(true)
+
+    apiFetch.mockClear()
+    wrapper.vm.employeeForm = { ...wrapper.vm.employeeForm, holidayRegime: '', isIndigenous: false }
+    await wrapper.vm.saveEmployee()
+    const cleared = JSON.parse(apiFetch.mock.calls.find(c => c[1]?.method === 'POST')[1].body)
+    expect(cleared.holidayRegime).toBe('')
+    expect(cleared.isIndigenous).toBe(false)
+  })
+})

@@ -41,6 +41,8 @@ function type(definition) {
     builtin: true,
     enabled: true,
     note: '',
+    // 適用對象：null 全體員工；'indigenous' 限具原住民身分者（其他員工額度為 0）
+    eligibility: null,
     ...definition,
   }
 }
@@ -147,10 +149,11 @@ export const DEFAULT_LEAVE_POLICY = {
       key: 'indigenous',
       name: '原民假',
       aliases: ['原住民歲時祭儀假'],
-      quotaHours: hoursOf(1),
+      quotaHours: hoursOf(3),
       period: 'year',
       display: 'when_used',
-      note: '每年 1 日，原住民族歲時祭儀',
+      eligibility: 'indigenous',
+      note: '原住民族歲時祭儀，每年 3 日（限具原住民身分者；紀念日及節日實施條例）',
     }),
     type({
       key: 'official',

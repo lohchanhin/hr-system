@@ -1477,3 +1477,78 @@ describe('POST /api/employees/bulk-import - annual leave in hours', () => {
     expect(JSON.stringify(update)).not.toMatch(/totalDays|usedDays/)
   })
 })
+
+describe('POST /api/employees/bulk-import - 假日制度與原住民身分', () => {
+  // 範本加上「假日制度」「原住民身分」兩欄；舊範本沒有這兩欄照樣可以匯入（其他測試都是舊範本）
+  async function createRegimeWorkbook(rows, { chineseOnly = false } = {}) {
+    const workbook = new ExcelJS.Workbook()
+    const worksheet = workbook.addWorksheet('員工資料')
+    const extraEn = chineseOnly ? ['', ''] : ['holidayRegime', 'isIndigenous']
+    worksheet.addRow([...EN_HEADERS, ...extraEn])
+    worksheet.addRow([...ZH_HEADERS, '假日制度', '原住民身分'])
+    rows.forEach((data) => {
+      worksheet.addRow([
+        ...EN_HEADERS.map((header) => (data[header] !== undefined ? data[header] : '')),
+        data.holidayRegime ?? '',
+        data.isIndigenous ?? ''
+      ])
+    })
+    return Buffer.from(await workbook.xlsx.writeBuffer())
+  }
+  const post = async (buffer, options = {}) => request(await setupApp())
+    .post('/api/employees/bulk-import')
+    .attach('file', buffer, { filename: 'import.xlsx' })
+    .field('options', JSON.stringify(options))
+  const base = (no, extra = {}) => ({ employeeId: no, name: `員工${no}`, idNumber: `A1${no.slice(-8).padStart(8, '0')}`, email: `${no.toLowerCase()}@example.com`, ...extra })
+
+  it('reads 輪班/行政 and 原住民身分 when creating employees, and leaves a blank regime unset', async () => {
+    const buffer = await createRegimeWorkbook([
+      base('E1001', { holidayRegime: '行政', isIndigenous: '是' }),
+      base('E1002', { holidayRegime: '輪班人員', isIndigenous: 'FALSE' }),
+      base('E1003', { holidayRegime: '', isIndigenous: 'TRUE' })
+    ])
+    const response = await post(buffer)
+
+    expect(response.status).toBe(200)
+    const docs = mockEmployeeModel.insertMany.mock.calls[0][0]
+    expect(docs.map((doc) => [doc.employeeNo, doc.holidayRegime, doc.isIndigenous])).toEqual([
+      ['E1001', 'office', true],
+      ['E1002', 'roster', false],
+      ['E1003', undefined, true]
+    ])
+  })
+
+  it('stops with a row error for a regime other than 輪班 or 行政', async () => {
+    const buffer = await createRegimeWorkbook([base('E1004', { holidayRegime: '夜班' })])
+    const response = await post(buffer)
+
+    expect(response.status).toBe(400)
+    expect(response.body.errors.join('')).toContain('假日制度只能填「輪班」或「行政」')
+    expect(mockEmployeeModel.insertMany).not.toHaveBeenCalled()
+  })
+
+  it('updates the regime from the file and does not touch it when the cell is blank', async () => {
+    setupEmployeeFind({
+      emailData: [
+        { _id: 'id-a', email: 'e1005@example.com', employeeId: 'E1005' },
+        { _id: 'id-b', email: 'e1006@example.com', employeeId: 'E1006' }
+      ],
+      existingByNo: [
+        { _id: 'id-a', employeeId: 'E1005', email: 'e1005@example.com' },
+        { _id: 'id-b', employeeId: 'E1006', email: 'e1006@example.com' }
+      ]
+    })
+    const buffer = await createRegimeWorkbook([
+      base('E1005', { holidayRegime: 'roster', isIndigenous: 'Y' }),
+      base('E1006', { holidayRegime: '' })
+    ], { chineseOnly: true })
+    const response = await post(buffer, { updateExisting: true })
+
+    expect(response.status).toBe(200)
+    const updates = Object.fromEntries(mockEmployeeModel.updateOne.mock.calls.map(([filter, update]) => [filter._id, update]))
+    expect(updates['id-a'].$set).toMatchObject({ holidayRegime: 'roster', isIndigenous: true })
+    expect(updates['id-b'].$set).not.toHaveProperty('holidayRegime')
+    expect(updates['id-b'].$set).not.toHaveProperty('isIndigenous')
+    expect(updates['id-b'].$unset || {}).not.toHaveProperty('holidayRegime')
+  })
+})

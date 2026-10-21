@@ -3,6 +3,7 @@ import os from 'os';
 import path from 'path';
 import { jest } from '@jest/globals';
 import mongoose from 'mongoose';
+import { registerHolidayResolverModelMocks } from './helpers/holidayResolverMocks.js';
 
 const mockShiftSchedule = {
   find: jest.fn(),
@@ -24,6 +25,8 @@ jest.unstable_mockModule('../src/models/HolidayMoveSetting.js', () => ({ default
 jest.unstable_mockModule('../src/services/leaveFieldService.js', () => ({
   getAllLeaveFieldInfos: mockGetAllLeaveFieldInfos,
 }));
+
+await registerHolidayResolverModelMocks(jest);
 
 const {
   assertScheduleRuleCompliance,
@@ -270,6 +273,56 @@ describe('assertScheduleRuleCompliance', () => {
       })),
       { _id: 'rest', employee: 'emp1', date: new Date('2024-04-14'), shiftId: 'REST' },
     ]));
+
+    await expect(assertScheduleRuleCompliance({
+      candidateSchedules: [{ employee: 'emp1', date: new Date('2024-04-13'), shiftId: 'D' }],
+    })).resolves.toEqual({ ok: true, violations: [] });
+  });
+
+  // 行事曆分類後：沒排班的日子只有「對這位員工是國定假日」才算進連續上班天數
+  const streakAround = () => sortableLeanQuery([
+    { _id: 'regular-rest', employee: 'emp1', date: new Date('2024-04-06'), shiftId: 'REG' },
+    ...['08', '09', '10', '11', '12'].map((day, index) => ({
+      _id: `work-${index}`,
+      employee: 'emp1',
+      date: new Date(`2024-04-${day}`),
+      shiftId: 'D',
+    })),
+    { _id: 'rest', employee: 'emp1', date: new Date('2024-04-14'), shiftId: 'REST' },
+  ]);
+
+  it('does not let an unscheduled government make-up day (公務機關補假) extend a roster employee\'s streak', async () => {
+    mockHoliday.find.mockReturnValue(leanQuery([
+      { name: '補假', type: '公務機關補假', kind: 'gov_makeup_off', date: new Date('2024-04-07'), compensatesDate: new Date('2024-04-06') },
+    ]));
+    mockShiftSchedule.find.mockReturnValue(streakAround());
+
+    await expect(assertScheduleRuleCompliance({
+      candidateSchedules: [{ employee: 'emp1', date: new Date('2024-04-13'), shiftId: 'D' }],
+    })).resolves.toEqual({ ok: true, violations: [] });
+  });
+
+  it('still counts an unscheduled statutory holiday (kind statutory) toward the streak', async () => {
+    mockHoliday.find.mockReturnValue(leanQuery([
+      { name: '兒童節', type: '國定假日', kind: 'statutory', date: new Date('2024-04-07') },
+    ]));
+    mockShiftSchedule.find.mockReturnValue(streakAround());
+
+    await expect(assertScheduleRuleCompliance({
+      candidateSchedules: [{ employee: 'emp1', date: new Date('2024-04-13'), shiftId: 'D' }],
+    })).rejects.toMatchObject({
+      violations: [expect.objectContaining({ rule: 'continuous-work-days', employee: 'emp1' })],
+    });
+  });
+
+  it('clears the streak when the statutory holiday was moved by the company to another month', async () => {
+    mockHoliday.find.mockReturnValue(leanQuery([
+      { name: '兒童節', type: '國定假日', kind: 'statutory', date: new Date('2024-04-07') },
+    ]));
+    mockHolidayMoveSetting.find.mockReturnValue(leanQuery([
+      { enableHolidayMove: true, sourceDate: new Date('2024-04-07'), targetDate: new Date('2024-05-06') },
+    ]));
+    mockShiftSchedule.find.mockReturnValue(streakAround());
 
     await expect(assertScheduleRuleCompliance({
       candidateSchedules: [{ employee: 'emp1', date: new Date('2024-04-13'), shiftId: 'D' }],

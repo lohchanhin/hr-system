@@ -1,4 +1,5 @@
 import { jest } from '@jest/globals'
+import { registerHolidayResolverModelMocks } from './helpers/holidayResolverMocks.js'
 
 // 請假與加班對薪資的影響：依請假日期（台灣時間）歸屬月份、跨月拆分、假別給薪對照表、日薪與時薪、凌晨加班。
 
@@ -26,6 +27,8 @@ jest.unstable_mockModule('../src/services/leaveFieldService.js', () => ({
 jest.unstable_mockModule('../src/services/nightShiftAllowanceService.js', () => ({
   calculateNightShiftAllowance: jest.fn(),
 }))
+
+await registerHolidayResolverModelMocks(jest)
 
 let calculateLeaveImpact
 let calculateOvertimePay

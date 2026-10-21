@@ -124,6 +124,8 @@ const employeeSchema = new Schema(
     
     // 排班設定（主管可選擇是否參與排班）
     requiresScheduling: { type: Boolean, default: true }, // 是否需要排班
+    holidayRegime: { type: String, enum: ['roster', 'office'] }, // 假日制度：未設定時依「是否需要排班」：需要＝輪班 roster、不需要＝行政 office
+    isIndigenous: { type: Boolean, default: false }, // 原住民身分：原住民族歲時祭儀每年 3 日（以「原民假」申請）
     schedulePreferences: {
       includeSelf: { type: Boolean, default: false },
     },

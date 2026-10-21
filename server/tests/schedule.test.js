@@ -4,6 +4,7 @@
 import request from 'supertest';
 import express from 'express';
 import { jest } from '@jest/globals';
+import { registerHolidayResolverModelMocks } from './helpers/holidayResolverMocks.js';
 import { buildLeaveFieldServiceMock } from './helpers/leaveFieldServiceMock.js';
 import ExcelJS from 'exceljs';
 import jwt from 'jsonwebtoken';
@@ -121,6 +122,9 @@ jest.unstable_mockModule('../src/models/form_field.js', () => ({ default: mockFo
 jest.unstable_mockModule('../src/models/Department.js', () => ({ default: mockDepartment }));
 jest.unstable_mockModule('../src/models/Holiday.js', () => ({ default: mockHoliday }));
 jest.unstable_mockModule('../src/models/HolidayMoveSetting.js', () => ({ default: mockHolidayMoveSetting }));
+const holidayResolverMocks = await registerHolidayResolverModelMocks(jest);
+// 測試用到的年度（2020–2030）公司行事曆都當作已核定：匯入不會多一則「尚未核定」提醒，也不會暫代固定日期的國定假日
+holidayResolverMocks.CalendarYear.__setRows(Array.from({ length: 11 }, (_, index) => ({ year: 2020 + index, state: 'approved' })));
 jest.unstable_mockModule('../src/models/HolidayRestResolution.js', () => ({ default: mockHolidayRestResolution }));
 jest.unstable_mockModule('../src/models/ScheduleDayMemo.js', () => ({ default: mockScheduleDayMemo }));
 jest.unstable_mockModule('../src/services/leaveFieldService.js', () => mockLeaveFieldService);

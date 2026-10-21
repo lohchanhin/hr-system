@@ -1234,20 +1234,26 @@ describe('Schedule.vue', () => {
     expect(textOnly['--shift-text-color']).toBe('#7c2d12')
   })
 
+  // 刻意更新（行事曆分類）：標頭改讀 GET /api/holiday-calendar/headers（不再讀 /api/holidays-public/by-month），
+  // 只有國定假日標 🎊；公務機關補假等以灰字資訊顯示在日期下方
   it('marks only counted holidays in the day header (not 補班日, 工作日 or 例假日 records)', async () => {
     const month = dayjs().add(1, 'month').format('YYYY-MM')
     setupSupervisorApiMock()
     const baseImplementation = apiFetch.getMockImplementation()
     apiFetch.mockImplementation(async (url, options) => {
-      if (String(url).startsWith('/api/holidays-public/by-month')) {
+      if (String(url).startsWith('/api/holiday-calendar/headers')) {
         return {
           ok: true,
-          json: async () => [
-            { date: `${month}-05T00:00:00.000Z`, type: '國定假日', name: '測試節日' },
-            { date: `${month}-06T00:00:00.000Z`, type: '補班日', name: '測試補班' },
-            { date: `${month}-07T00:00:00.000Z`, type: '工作日', name: '測試工作日' },
-            { date: `${month}-08T00:00:00.000Z`, type: '例假日', name: '測試週休' }
-          ]
+          json: async () => ({
+            month,
+            entries: [
+              { date: `${month}-05`, kind: 'statutory', displayKind: 'holiday', label: '測試節日', name: '測試節日' },
+              { date: `${month}-06`, kind: 'gov_makeup_workday', displayKind: 'gov_info', label: '公務機關補行上班', name: '測試補班' },
+              { date: `${month}-07`, kind: 'company_workday', displayKind: 'company_workday', label: '測試工作日', name: '測試工作日' },
+              { date: `${month}-08`, kind: 'company_off', displayKind: 'company_off', label: '測試週休', name: '測試週休' }
+            ],
+            status: { year: Number(month.slice(0, 4)), state: 'approved', migrated: false, provisional: false, synthetic: false, message: '' }
+          })
         }
       }
       return baseImplementation(url, options)
@@ -1255,6 +1261,8 @@ describe('Schedule.vue', () => {
     const wrapper = mountSchedule()
     await flush()
 
+    expect(apiFetch.mock.calls.some(([url]) => String(url) === `/api/holiday-calendar/headers?month=${wrapper.vm.currentMonth}`)).toBe(true)
+    expect(apiFetch.mock.calls.some(([url]) => String(url).startsWith('/api/holidays-public/by-month'))).toBe(false)
     const labels = wrapper.vm.days.map(day => day.label)
     expect(labels[4]).toContain('🎊測試節日')
     expect(labels[5]).not.toContain('🎊')
@@ -1265,6 +1273,55 @@ describe('Schedule.vue', () => {
     expect(headerText).not.toContain('測試補班')
     expect(headerText).not.toContain('測試工作日')
     expect(headerText).not.toContain('測試週休')
+    expect(wrapper.find('[data-test="calendar-provisional-alert"]').exists()).toBe(false)
+  })
+
+  it('shows government make-up days as grey info under the date and warns while the calendar is provisional', async () => {
+    setupSupervisorApiMock()
+    const baseImplementation = apiFetch.getMockImplementation()
+    let requestedMonth = ''
+    apiFetch.mockImplementation(async (url, options) => {
+      if (String(url).startsWith('/api/holiday-calendar/headers')) {
+        requestedMonth = new URL(String(url), 'http://local').searchParams.get('month')
+        const date = (day) => `${requestedMonth}-${String(day).padStart(2, '0')}`
+        return {
+          ok: true,
+          json: async () => ({
+            month: requestedMonth,
+            entries: [
+              { date: date(20), kind: 'gov_makeup_off', displayKind: 'gov_info', label: '公務機關補假', name: '補假', compensatesDate: date(15) },
+              { date: date(28), kind: 'statutory', displayKind: 'holiday', label: '和平紀念日', name: '和平紀念日' }
+            ],
+            status: {
+              year: Number(requestedMonth.slice(0, 4)),
+              state: 'draft',
+              migrated: true,
+              provisional: true,
+              synthetic: false,
+              message: '公司行事曆由舊版資料轉換、尚未核定，國定假日標示僅供參考'
+            }
+          })
+        }
+      }
+      return baseImplementation(url, options)
+    })
+    const wrapper = mountSchedule()
+    await flush()
+
+    const day20 = wrapper.vm.days[19]
+    expect(day20.label).not.toContain('🎊')
+    expect(day20.infos).toEqual(['公務機關補假'])
+    expect(wrapper.vm.days[27].label).toContain('🎊和平紀念日')
+    const info = wrapper.findAll('[data-test="day-header-info-20"]')
+    if (wrapper.vm.virtualVisibleDays.some(day => day.date === 20)) {
+      expect(info.map(node => node.text())).toEqual(['公務機關補假'])
+    }
+    const alert = wrapper.find('[data-test="calendar-provisional-alert"]')
+    expect(alert.exists()).toBe(true)
+    expect(wrapper.vm.calendarStatus).toMatchObject({
+      provisional: true,
+      message: '公司行事曆由舊版資料轉換、尚未核定，國定假日標示僅供參考'
+    })
   })
 
   it('shows loading state while applying batch schedules', async () => {

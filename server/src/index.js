@@ -10,6 +10,10 @@ import attendanceRoutes from './routes/attendanceRoutes.js';
 import authRoutes from './routes/authRoutes.js';
 import { migrateMissingShiftSemantics } from './services/shiftSemanticService.js';
 import { purgeLegacyRocWeekendHolidays } from './controllers/holidayController.js';
+import { migrateHolidayCalendarKinds, ensureHolidayCalendarIndexes } from './services/holidayCalendarMigration.js';
+import { startHolidayCalendarWatcher } from './services/companyCalendarService.js';
+import { syncRecentHolidayCompensations } from './services/holidayCompensationService.js';
+import { migrateIndigenousLeaveQuota } from './services/leavePolicyService.js';
 import { migrateLeaveFormSemantics, migrateLeaveKeywordForms } from './controllers/approvalTemplateController.js';
 import { normalizeStoredSignTags } from './controllers/employeeController.js';
 import { migrateAnnualLeaveToHours, migrateLeaveFormsToHours } from './services/leaveHoursMigration.js';
@@ -31,6 +35,8 @@ import otherControlSettingRoutes from './routes/otherControlSettingRoutes.js';
 import salarySettingRoutes from './routes/salarySettingRoutes.js';
 import holidayMoveSettingRoutes from './routes/holidayMoveSettingRoutes.js';
 import holidayLedgerRoutes from './routes/holidayLedgerRoutes.js';
+import companyCalendarRoutes from './routes/companyCalendarRoutes.js';
+import holidayCalendarViewRoutes from './routes/holidayCalendarViewRoutes.js';
 import HolidayRestResolution from './models/HolidayRestResolution.js';
 
 import attendanceSettingRoutes from './routes/attendanceSettingRoutes.js';
@@ -309,6 +315,9 @@ app.use(
   },
   holidayRoutes
 );
+// 行事曆設定（年度草稿、政府資料差異、核定）只有管理員；國定假日的標示與年度狀態給所有已登入使用者讀取
+app.use('/api/company-calendar', authenticate, authorizeRoles('admin'), companyCalendarRoutes);
+app.use('/api/holiday-calendar', authenticate, authorizeRoles('employee', 'supervisor', 'admin'), holidayCalendarViewRoutes);
 
 app.use('/api/salary-settings', authenticate, authorizeRoles('admin'), salarySettingRoutes);
 app.use('/api/holiday-move-settings', authenticate, authorizeRoles('admin'), holidayMoveSettingRoutes);
@@ -358,6 +367,15 @@ async function start() {
     } catch (purgeError) {
       console.error('Failed to purge legacy weekend holidays', purgeError?.name ?? 'Error');
     }
+    // 舊版行事曆資料補上類型（國定假日／公務機關補假／調整放假…），轉換過的年度成為待核定的草稿（冪等，只記錄筆數）
+    try {
+      const calendarMigration = await migrateHolidayCalendarKinds();
+      if (calendarMigration?.rows) console.log(`Migrated holiday calendar kinds for ${calendarMigration.rows} rows in ${calendarMigration.years} years (statutory ${calendarMigration.statutory}, government make-up days ${calendarMigration.govMakeupOff}, bridge days ${calendarMigration.govBridgeOff}, workdays ${calendarMigration.workdays}, company rest days ${calendarMigration.companyOff}, added ${calendarMigration.added}, duplicates archived ${calendarMigration.duplicates}, to review ${calendarMigration.needsReview})`);
+      if (calendarMigration?.orphanResolutions) console.log(`Holiday rest resolutions on non-statutory dates: ${calendarMigration.orphanResolutions}`);
+      if (calendarMigration?.orphanMoves) console.log(`Holiday moves whose source is not a statutory holiday: ${calendarMigration.orphanMoves}`);
+      if (calendarMigration?.normalizedDates) console.log(`Normalized ${calendarMigration.normalizedDates} legacy holiday dates to Taipei calendar days`);
+    } catch (calendarError) { console.error('Failed to migrate holiday calendar kinds', calendarError?.name ?? 'Error'); }
+    try { await ensureHolidayCalendarIndexes(); } catch (indexError) { console.error('Failed to ensure holiday calendar indexes', indexError?.name ?? 'Error'); }
     // 名稱看起來是請假單、表單性質卻還是預設「一般」的舊表單（例如客戶的「休假/事假/公假申請單」）補成請假（冪等）
     try {
       const migratedLeaveForms = await migrateLeaveFormSemantics();
@@ -400,6 +418,8 @@ async function start() {
     } catch (leaveHoursError) {
       console.error('Failed to migrate leave forms to hours', leaveHoursError?.name ?? 'Error');
     }
+    // 原民假（原住民族歲時祭儀）由每年 1 日改為 3 日：只改仍是舊預設值的設定（冪等，只記錄筆數）
+    try { const indigenousQuota = await migrateIndigenousLeaveQuota(); if (indigenousQuota?.updated) console.log(`Updated indigenous leave quota to 3 days in ${indigenousQuota.updated} stored leave policies`); } catch (quotaError) { console.error('Failed to migrate indigenous leave quota', quotaError?.name ?? 'Error'); }
     // 國定假日休假紀錄的處理方式集合：確保唯一索引存在（冪等；失敗不擋啟動，之後寫入時 Mongoose 仍會再試建立）
     try {
       await HolidayRestResolution.createIndexes();
@@ -411,6 +431,8 @@ async function start() {
     await initializeLaborInsuranceRates();
     app.listen(PORT, () => {
       console.log(`Server running on port ${PORT}`);
+      // 每天檢查政府辦公日曆表（5 月起）並重新計算國定假日補假；HOLIDAY_CALENDAR_WATCHER=off 可停用
+      if (process.env.HOLIDAY_CALENDAR_WATCHER !== 'off') startHolidayCalendarWatcher({ dailyTasks: [syncRecentHolidayCompensations] });
     });
   } catch (err) {
     console.error('Failed to start server:', err);

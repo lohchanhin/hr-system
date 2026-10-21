@@ -4,6 +4,7 @@
 import request from 'supertest';
 import express from 'express';
 import { jest } from '@jest/globals';
+import { registerHolidayResolverModelMocks } from './helpers/holidayResolverMocks.js';
 import { buildLeaveFieldServiceMock } from './helpers/leaveFieldServiceMock.js';
 import ExcelJS from 'exceljs';
 import jwt from 'jsonwebtoken';
@@ -36,6 +37,7 @@ jest.unstable_mockModule('../src/models/AttendanceSetting.js', () => ({ default:
 jest.unstable_mockModule('../src/models/Department.js', () => ({ default: mockDepartment }));
 jest.unstable_mockModule('../src/models/Holiday.js', () => ({ default: mockHoliday }));
 jest.unstable_mockModule('../src/models/HolidayMoveSetting.js', () => ({ default: mockHolidayMoveSetting }));
+const holidayResolverMocks = await registerHolidayResolverModelMocks(jest);
 jest.unstable_mockModule('../src/models/HolidayRestResolution.js', () => ({ default: mockHolidayRestResolution }));
 jest.unstable_mockModule('../src/models/ScheduleDayMemo.js', () => ({ default: mockScheduleDayMemo }));
 jest.unstable_mockModule('../src/services/leaveFieldService.js', () => buildLeaveFieldServiceMock(mockGetLeaveFieldIds));
@@ -122,6 +124,11 @@ function setExistingSchedules(rows = []) {
   mockShiftSchedule.find.mockReturnValue({ lean: jest.fn().mockResolvedValue(rows) });
 }
 
+// 公司行事曆的年度狀態（CalendarYear）：預設 2026 年已核定，匯入不會多一則「尚未核定」提醒
+function setCalendarYears(years = [{ year: 2026, state: 'approved' }]) {
+  holidayResolverMocks.CalendarYear.find.mockReturnValue({ lean: jest.fn().mockResolvedValue(years) });
+}
+
 /** 依公版格式建立班表：codes 為從 1 日起的儲存格內容，Date 物件會存成日期儲存格 */
 async function buildWorkbook(codes, { employeeId = 'A001' } = {}) {
   const workbook = new ExcelJS.Workbook();
@@ -166,6 +173,7 @@ beforeEach(() => {
   setHolidayMoves([]);
   mockHolidayRestResolution.find.mockReturnValue({ lean: jest.fn().mockResolvedValue([]) });
   setExistingSchedules([]);
+  setCalendarYears();
 });
 
 /* ------------------------------ 匯入：國／請假 ------------------------------ */
@@ -211,7 +219,9 @@ describe('schedule import of holiday and leave marks', () => {
   });
 
   it('resolves 國定假日 and 特休 written by their names', async () => {
-    setHolidays([{ date: new Date('2026-06-02T00:00:00.000Z'), name: '補假', type: '國定假日' }]);
+    // 刻意更新（行事曆分類）：原本用名稱「補假」的資料當國定假日；沒有 kind 的「補假」現在是公務機關補假，
+    // 對輪班人員不是國定假日，所以改成明確標示 kind 的國定假日
+    setHolidays([{ date: new Date('2026-06-02T00:00:00.000Z'), name: '測試假日', type: '國定假日', kind: 'statutory' }]);
     setApprovedLeave(['2026-06-03']);
     const file = await buildWorkbook(['日', '國定假日', '特休']);
 
@@ -650,7 +660,10 @@ describe('schedule import helpers', () => {
 
   it('counts only real holidays, not 補班日 or 工作日 entries', () => {
     expect(shared.isCountedHolidayRecord({ type: '國定假日', name: '端午節' })).toBe(true);
-    expect(shared.isCountedHolidayRecord({ type: '假日', name: '補假' })).toBe(true);
+    // 刻意更新（行事曆分類）：名稱「補假」是公務機關補假，勞基法不算國定假日（舊版算）
+    expect(shared.isCountedHolidayRecord({ type: '假日', name: '補假' })).toBe(false);
+    expect(shared.isCountedHolidayRecord({ type: '國定假日', name: '補假', kind: 'gov_makeup_off' })).toBe(false);
+    expect(shared.isCountedHolidayRecord({ type: '國定假日', name: '測試假日', kind: 'statutory' })).toBe(true);
     expect(shared.isCountedHolidayRecord({ type: '補班日', name: '補行上班' })).toBe(false);
     expect(shared.isCountedHolidayRecord({ type: '工作日', name: '' })).toBe(false);
     expect(shared.isCountedHolidayRecord({ name: '補班', description: '補行上班' })).toBe(false);
@@ -718,9 +731,10 @@ describe('schedule import checks the national-holiday ledger instead of the holi
   });
 
   it('only for a whole-month file, warns once per employee about national holidays without a 國 to match', async () => {
+    // 刻意更新（行事曆分類）：第二個假日原本是名稱「補假」的資料，現在要明確標成國定假日（kind）才算
     setHolidays([
       { date: new Date('2026-06-19T00:00:00.000Z'), name: '端午節', type: '國定假日' },
-      { date: new Date('2026-06-22T00:00:00.000Z'), name: '補假', type: '國定假日' },
+      { date: new Date('2026-06-22T00:00:00.000Z'), name: '測試假日', type: '國定假日', kind: 'statutory' },
     ]);
 
     const whole = await importWorkbook(await buildWorkbook(monthCodes({ 5: '國' })));
@@ -728,7 +742,7 @@ describe('schedule import checks the national-holiday ledger instead of the holi
     expect(shortageWarnings(whole.body)).toEqual([
       expect.objectContaining({ row: 5, day: null, code: 'A001', message: expect.stringContaining('本月 2 個國定假日只排了 1 個「國」') }),
     ]);
-    expect(shortageWarnings(whole.body)[0].message).toContain('補假 06/22');
+    expect(shortageWarnings(whole.body)[0].message).toContain('測試假日 06/22');
 
     const partial = await importWorkbook(await buildWorkbook(monthCodes({ 5: '國' }).slice(0, 25)));
     expect(shortageWarnings(partial.body)).toEqual([]);
@@ -743,6 +757,70 @@ describe('schedule import checks the national-holiday ledger instead of the holi
     const preview = await importWorkbook(await buildWorkbook(monthCodes({ 19: '休' })));
 
     expect(shortageWarnings(preview.body)).toEqual([]);
+  });
+
+  it('does not count a government make-up day (公務機關補假) as a national holiday for roster staff', async () => {
+    // 2026 年的公務機關補假（舊資料只有名稱「補假」、新資料 kind = gov_makeup_off）：輪班人員不用排國
+    setHolidays([
+      { date: new Date('2026-06-19T00:00:00.000Z'), name: '端午節', type: '國定假日', kind: 'statutory' },
+      { date: new Date('2026-06-22T00:00:00.000Z'), name: '補假', type: '公務機關補假', kind: 'gov_makeup_off', compensatesDate: new Date('2026-06-21T00:00:00.000Z') },
+      { date: new Date('2026-06-26T00:00:00.000Z'), name: '補假', type: '國定假日', description: '補假', source: 'roc-calendar' },
+    ]);
+
+    const whole = await importWorkbook(await buildWorkbook(monthCodes({ 5: '國' })));
+    expect(shortageWarnings(whole.body)).toEqual([]);
+
+    // 只有 1 個國定假日：第二個「國」就是多排的
+    const extra = await importWorkbook(await buildWorkbook(monthCodes({ 5: '國', 22: '國' })));
+    expect(holidayWarnings(extra.body)).toEqual([
+      expect.objectContaining({ row: 5, day: 22, code: '國', message: expect.stringContaining('1 個國定假日') }),
+    ]);
+  });
+
+  it('adds one preview warning while the company calendar of that year is not approved yet', async () => {
+    setHolidays([{ date: new Date('2026-06-19T00:00:00.000Z'), name: '端午節', type: '國定假日', kind: 'statutory' }]);
+    const provisional = (body) => body.warnings.filter((warning) => String(warning.message).includes('尚未核定'));
+
+    setCalendarYears([{ year: 2026, state: 'draft' }]);
+    const draft = await importWorkbook(await buildWorkbook(monthCodes({ 19: '國' })));
+    expect(provisional(draft.body)).toEqual([{
+      row: null,
+      day: null,
+      code: '',
+      message: '本月所屬年度（2026）的公司行事曆尚未核定，國定假日核對僅供參考',
+    }]);
+
+    setCalendarYears([{ year: 2026, state: 'approved' }]);
+    const approved = await importWorkbook(await buildWorkbook(monthCodes({ 19: '國' })));
+    expect(provisional(approved.body)).toEqual([]);
+  });
+
+  it('does not ask to approve a calendar that was never created, and explains a fixed-date stand-in year', async () => {
+    const calendarLines = (body) => body.warnings.filter((warning) => String(warning.message).includes('公司行事曆'));
+
+    // 從來沒有建立過公司行事曆（沒有年度資料、也沒有假日，例如新安裝）：沒有可核定的東西，不提醒「尚未核定」
+    setCalendarYears([]);
+    const fresh = await importWorkbook(await buildWorkbook(monthCodes()));
+    expect(fresh.status).toBe(200);
+    expect(calendarLines(fresh.body)).toEqual([]);
+
+    // 前一年已建立、今年還沒建立：以固定日期的國定假日暫代，說明農曆節日沒有核對（不是「尚未核定」）
+    setCalendarYears([{ year: 2025, state: 'approved' }]);
+    const standIn = await importWorkbook(await buildWorkbook(monthCodes()));
+    expect(calendarLines(standIn.body)).toEqual([{
+      row: null,
+      day: null,
+      code: '',
+      message: '本月所屬年度（2026）尚未建立公司行事曆，國定假日只核對固定日期的節日（農曆節日未列入）',
+    }]);
+
+    // 有假日資料、但年度還沒有行事曆紀錄（草稿）：仍提醒尚未核定
+    setHolidays([{ date: new Date('2026-06-19T00:00:00.000Z'), name: '端午節', type: '國定假日', kind: 'statutory' }]);
+    setCalendarYears([]);
+    const rowsOnly = await importWorkbook(await buildWorkbook(monthCodes({ 19: '國' })));
+    expect(calendarLines(rowsOnly.body)).toEqual([
+      expect.objectContaining({ row: null, message: '本月所屬年度（2026）的公司行事曆尚未核定，國定假日核對僅供參考' }),
+    ]);
   });
 });
 
@@ -861,9 +939,11 @@ describe('schedule Excel export carries the national-holiday ledger as the secon
     return { workbook, buffer: res.body };
   }
 
+  // 刻意更新（行事曆分類）：第二個假日原本是名稱「補假」的資料（舊版當國定假日），
+  // 現在要明確標成國定假日（kind）；統計欄位多了「補假」（國定假日落在休息日／例假另排的補假）
   const twoHolidays = [
     { date: new Date('2026-06-19T00:00:00.000Z'), name: '端午節', type: '國定假日' },
-    { date: new Date('2026-06-22T00:00:00.000Z'), name: '補假', type: '國定假日' },
+    { date: new Date('2026-06-22T00:00:00.000Z'), name: '測試假日', type: '國定假日', kind: 'statutory' },
   ];
 
   it('adds 國定假日休假紀錄 after the roster sheet: rested on the date, moved to another day, counts and legend', async () => {
@@ -875,7 +955,7 @@ describe('schedule Excel export carries the national-holiday ledger as the secon
     const sheet = workbook.getWorksheet('國定假日休假紀錄');
     expect(sheet.getRow(1).getCell(1).value).toBe('護理　2026年06月 國定假日休假紀錄');
     expect(sheet.getRow(3).values.slice(1)).toEqual([
-      '員工代號', '姓名', '單位', '職稱', '端午節 06/19', '補假 06/22', '應休', '當日休', '移休', '未休', '待處理', '多排的國', '處理方式',
+      '員工代號', '姓名', '單位', '職稱', '端午節 06/19', '測試假日 06/22', '應休', '當日休', '移休', '補假', '未休', '待處理', '多排的國', '處理方式',
     ]);
     const row = sheet.getRow(4);
     expect(row.getCell(1).value).toBe('A001');
@@ -884,7 +964,7 @@ describe('schedule Excel export carries the national-holiday ledger as the secon
     expect(row.getCell(4).value).toBe('護理師');
     expect(row.getCell(5).value).toBe('當日休');
     expect(row.getCell(6).value).toBe('移休 06/10');
-    expect([7, 8, 9, 10, 11].map((column) => row.getCell(column).value)).toEqual([2, 1, 1, 0, 0]);
+    expect([7, 8, 9, 10, 11, 12].map((column) => row.getCell(column).value)).toEqual([2, 1, 1, 0, 0, 0]);
   });
 
   it('matches 國 on other days to the holidays, lists the extra 國, and marks a worked holiday without a 國 in red', async () => {
@@ -894,14 +974,29 @@ describe('schedule Excel export carries the national-holiday ledger as the secon
     const movedRow = moved.workbook.getWorksheet('國定假日休假紀錄').getRow(4);
     expect(movedRow.getCell(5).value).toBe('移休 06/03');
     expect(movedRow.getCell(6).value).toBe('移休 06/04');
-    expect(movedRow.getCell(12).value).toBe('06/05');
+    expect(movedRow.getCell(13).value).toBe('06/05');
 
     const worked = await exportAll([rowOf(19, 'day'), rowOf(22, 'day')]);
     const workedRow = worked.workbook.getWorksheet('國定假日休假紀錄').getRow(4);
     expect(workedRow.getCell(5).value).toBe('未休（上班）');
     expect(workedRow.getCell(6).value).toBe('未休（上班）');
     expect(workedRow.getCell(5).fill.fgColor.argb).toBe('FFF4CCCC');
-    expect([7, 8, 9, 10, 11].map((column) => workedRow.getCell(column).value)).toEqual([2, 0, 0, 2, 2]);
+    expect([7, 8, 9, 10, 11, 12].map((column) => workedRow.getCell(column).value)).toEqual([2, 0, 0, 0, 2, 2]);
+  });
+
+  it('shows a government make-up day (公務機關補假) only as information in the calendar row, not as a ledger column', async () => {
+    setHolidays([
+      { date: new Date('2026-06-19T00:00:00.000Z'), name: '端午節', type: '國定假日', kind: 'statutory' },
+      { date: new Date('2026-06-22T00:00:00.000Z'), name: '補假', type: '公務機關補假', kind: 'gov_makeup_off', compensatesDate: new Date('2026-06-21T00:00:00.000Z') },
+    ]);
+
+    const { workbook } = await exportAll([rowOf(19, 'holiday')]);
+
+    const roster = workbook.getWorksheet('工作表1');
+    expect(roster.getRow(3).getCell(4 + 19).value).toBe('端午節');
+    expect(roster.getRow(3).getCell(4 + 22).value).toBe('公務機關補假');
+    const ledger = workbook.getWorksheet('國定假日休假紀錄');
+    expect(ledger.getRow(3).values.slice(1, 7)).toEqual(['員工代號', '姓名', '單位', '職稱', '端午節 06/19', '應休']);
   });
 
   it('keeps the roster sheet importable: the importer still reads the first worksheet', async () => {
@@ -931,8 +1026,9 @@ describe('schedule Excel export carries the national-holiday ledger as the secon
 
     const roster = workbook.getWorksheet('工作表1');
     expect(roster.getRow(3).getCell(4 + 18).value).toBe('端午節');
-    expect(roster.getRow(3).getCell(4 + 19).value).toBeFalsy();
-    expect(roster.getRow(3).getCell(4 + 22).value).toBe('補假');
+    // 刻意更新（行事曆分類）：原日期和排班頁標頭一樣標示「已調移至」（以前留白）
+    expect(roster.getRow(3).getCell(4 + 19).value).toBe('已調移至 06/18');
+    expect(roster.getRow(3).getCell(4 + 22).value).toBe('測試假日');
     const ledger = workbook.getWorksheet('國定假日休假紀錄');
     expect(ledger.getRow(3).getCell(5).value).toBe('端午節 06/18（原 06/19）');
     expect(ledger.getRow(4).getCell(5).value).toBe('當日休');

@@ -1,9 +1,14 @@
 import mongoose from 'mongoose';
 
+// 全公司統一的國定假日調移（例如經勞資會議同意把某個國定假日改到另一天放）：可以跨月，但一律要有協議文號與同意日期。
+// 個別員工的調移需本人同意，記在 HolidaySwap，不在這裡。
+const MAX_MOVE_DISTANCE_MS = 366 * 24 * 60 * 60 * 1000;
+
 const holidayMoveSettingSchema = new mongoose.Schema(
   {
     enableHolidayMove: { type: Boolean, default: false },
-    needSignature: { type: Boolean, default: false },
+    // 保留欄位相容舊資料；調移一律需要協議資料，所以預設為 true
+    needSignature: { type: Boolean, default: true },
     needMakeup: { type: Boolean, default: false },
     sourceDate: { type: Date, default: null },
     targetDate: { type: Date, default: null },
@@ -31,7 +36,8 @@ holidayMoveSettingSchema.pre('validate', function validateMove(next) {
   }
   if (!hasSource) return next();
 
-  if (this.needSignature && (!this.agreementReference || !this.agreementDate)) {
+  // 調移國定假日一律需要勞資會議（或工會）同意的協議文號與日期
+  if (!String(this.agreementReference ?? '').trim() || !this.agreementDate) {
     return next(new Error('labor agreement reference and date are required'));
   }
   if (this.needMakeup && !this.makeupConfirmed) {
@@ -49,11 +55,9 @@ holidayMoveSettingSchema.pre('validate', function validateMove(next) {
   if (source.getTime() === target.getTime()) {
     return next(new Error('targetDate must differ from sourceDate'));
   }
-  if (
-    source.getUTCFullYear() !== target.getUTCFullYear()
-    || source.getUTCMonth() !== target.getUTCMonth()
-  ) {
-    return next(new Error('national holidays may only move within the same month'));
+  // 可以跨月（例如 2027-02-28 週日的和平紀念日移到 3/2），但不能超過一年
+  if (Math.abs(target.getTime() - source.getTime()) > MAX_MOVE_DISTANCE_MS) {
+    return next(new Error('national holiday moves must stay within 366 days'));
   }
   this.sourceDate = source;
   this.targetDate = target;

@@ -9,8 +9,8 @@
       </div>
       <div class="header-stats">
         <div class="stat-item">
-          <div class="stat-number">{{ holidayList.length }}</div>
-          <div class="stat-label">假日</div>
+          <div class="stat-number" data-test="stat-statutory-this-year">{{ statutoryThisYear }}</div>
+          <div class="stat-label">國定假日（今年）</div>
         </div>
         <div class="stat-item">
           <div class="stat-number">{{ shiftList.length }}</div>
@@ -35,99 +35,8 @@
         </template>
         
         <div class="tab-content">
-           <div class="content-header">
-            <h2 class="section-title">假日管理</h2>
-            <div class="header-actions">
-              <el-button type="primary" @click="openCalendarDialog()" class="add-btn">
-              <i class="el-icon-plus"></i>
-              新增假日
-              </el-button>
-              <el-button plain size="small" @click="loadRocHolidays" :loading="loadingHolidays">
-                一鍵載入當年國定假日
-              </el-button>
-            </div>
-          </div>
-          
-          <div class="table-container">
-            <el-table 
-              :data="holidayList" 
-              class="data-table"
-              :header-cell-style="{ background: '#f8fafc', color: '#475569', fontWeight: '600' }"
-              :row-style="{ height: '56px' }"
-            >
-              <el-table-column prop="date" label="日期" width="160">
-                <template #default="{ row }">
-                  <div class="date-info">
-                    <i class="el-icon-date"></i>
-                    {{ row.date }}
-                  </div>
-                </template>
-              </el-table-column>
-              <el-table-column prop="type" label="假日類型" width="140">
-                <template #default="{ row }">
-                  <el-tag :type="getHolidayTagType(row.type)" class="holiday-tag">
-                    {{ row.type }}
-                  </el-tag>
-                </template>
-              </el-table-column>
-              <el-table-column prop="desc" label="描述" min-width="200" />
-              <el-table-column label="操作" width="200" fixed="right">
-                <template #default="{ row, $index }">
-                  <div class="action-buttons">
-                    <el-button type="primary" size="small" @click="openCalendarDialog($index)" class="edit-btn">
-                      <i class="el-icon-edit"></i>
-                      編輯
-                    </el-button>
-                    <el-button type="danger" size="small" @click="deleteHoliday($index)" class="delete-btn">
-                      <i class="el-icon-delete"></i>
-                      刪除
-                    </el-button>
-                  </div>
-                </template>
-              </el-table-column>
-            </el-table>
-          </div>
-
-          <!-- 美化假日對話框 -->
-          <el-dialog v-model="calendarDialogVisible" title="假日資料" width="500px" class="form-dialog">
-            <el-form :model="calendarForm" label-width="120px" class="dialog-form">
-              <el-form-item label="日期" required>
-                <el-date-picker
-                  v-model="calendarForm.date"
-                  type="date"
-                  placeholder="選擇日期"
-                  :format="dateFormat"
-                  :value-format="dateFormat"
-                  style="width: 100%"
-                />
-              </el-form-item>
-              <el-form-item label="假日類型" required>
-                <el-select v-model="calendarForm.type" placeholder="選擇類型" style="width: 100%">
-                  <el-option label="國定假日" value="國定假日" />
-                  <el-option label="例假日" value="例假日" />
-                  <el-option label="公司休息日" value="公司休息日" />
-                  <el-option label="補班日" value="補班日" />
-                </el-select>
-              </el-form-item>
-              <el-form-item label="描述">
-                <el-input 
-                  v-model="calendarForm.desc" 
-                  placeholder="例如：中秋節 / 週休 等"
-                  type="textarea"
-                  :rows="3"
-                />
-              </el-form-item>
-            </el-form>
-            <template #footer>
-              <div class="dialog-footer">
-                <el-button @click="calendarDialogVisible = false" class="cancel-btn">取消</el-button>
-                <el-button type="primary" @click="saveHoliday" class="save-btn">
-                  <i class="el-icon-check"></i>
-                  儲存
-                </el-button>
-              </div>
-            </template>
-          </el-dialog>
+          <!-- 每年由政府辦公日曆表建立草稿，人資檢查後核定；公務機關補假只對行政人員生效 -->
+          <CompanyCalendarPanel @years-loaded="onCalendarYearsLoaded" @calendar-changed="fetchMovableHolidays" />
         </div>
       </el-tab-pane>
 
@@ -448,7 +357,7 @@
             type="info"
             :closable="false"
             show-icon
-            title="此處為全公司統一挪移；個別人員的移休請直接在排班表排「國」，並於排班頁「國定假日休假」查看紀錄。"
+            title="此處為全公司統一調移（可跨月）；個別員工的調移需本人同意，請在排班頁「國定假日休假」的「個人調移」登記。"
             data-test="holiday-move-hint"
           />
 
@@ -462,11 +371,13 @@
               <el-table-column prop="sourceDate" label="原國定假日" width="170" />
               <el-table-column prop="targetDate" label="挪移日期" width="170" />
               <el-table-column prop="reason" label="原因" min-width="220" />
-              <el-table-column label="需簽核" width="100">
+              <el-table-column label="協議資料" width="200">
                 <template #default="{ row }">
-                  <el-tag :type="row.needSignature ? 'warning' : 'info'">
-                    {{ row.needSignature ? '是' : '否' }}
+                  <!-- 調移國定假日一律需要勞資會議（或工會）同意；舊資料沒有填的要補上 -->
+                  <el-tag v-if="!row.agreementReference || !row.agreementDate" type="warning" data-test="holiday-move-missing-agreement">
+                    缺少協議資料
                   </el-tag>
+                  <span v-else class="agreement-info">{{ row.agreementReference }}（{{ toApiDate(row.agreementDate) }}）</span>
                 </template>
               </el-table-column>
               <el-table-column label="需補班" width="100">
@@ -494,14 +405,15 @@
           <el-dialog v-model="holidayMoveDialogVisible" title="國定假日挪移" width="520px" class="form-dialog">
             <el-form :model="holidayMoveForm" label-width="120px" class="dialog-form">
               <el-form-item label="原國定假日" required>
-                <el-select v-model="holidayMoveForm.sourceDate" placeholder="選擇國定假日" style="width: 100%">
+                <el-select v-model="holidayMoveForm.sourceDate" placeholder="選擇國定假日" style="width: 100%" data-test="holiday-move-source">
                   <el-option
                     v-for="holiday in movableHolidayOptions"
-                    :key="holiday._id || `${holiday.date}-${holiday.desc}`"
-                    :label="`${holiday.date} ${holiday.desc || holiday.name || ''}`"
+                    :key="holiday._id || holiday.date"
+                    :label="`${toApiDate(holiday.date).replace(/-/g, '/')} ${holiday.name || holiday.desc || ''}`"
                     :value="toApiDate(holiday.date)"
                   />
                 </el-select>
+                <div class="form-help">只能選擇行事曆上的國定假日（公務機關補假、調整放假不是國定假日）</div>
               </el-form-item>
               <el-form-item label="挪移日期" required>
                 <el-date-picker
@@ -516,15 +428,16 @@
                 <el-input v-model="holidayMoveForm.reason" type="textarea" :rows="3" maxlength="500" show-word-limit />
               </el-form-item>
               <el-form-item label="需經簽核">
-                <el-switch v-model="holidayMoveForm.needSignature" />
+                <!-- 調移國定假日一律需要協議資料，固定為開啟 -->
+                <el-switch :model-value="true" disabled data-test="holiday-move-need-signature" />
               </el-form-item>
               <el-form-item label="安排補班">
                 <el-switch v-model="holidayMoveForm.needMakeup" />
               </el-form-item>
-              <el-form-item v-if="holidayMoveForm.needSignature" label="同意文件編號" required>
-                <el-input v-model="holidayMoveForm.agreementReference" maxlength="200" />
+              <el-form-item label="同意文件編號" required>
+                <el-input v-model="holidayMoveForm.agreementReference" maxlength="200" data-test="holiday-move-agreement-reference" />
               </el-form-item>
-              <el-form-item v-if="holidayMoveForm.needSignature" label="同意日期" required>
+              <el-form-item label="同意日期" required>
                 <el-date-picker
                   v-model="holidayMoveForm.agreementDate"
                   type="date"
@@ -557,6 +470,8 @@ import { ElMessage } from 'element-plus'
 import { apiFetch } from '../../api'
 import { getToken } from '../../utils/tokenService'
 import { buildShiftStyle } from '../../utils/shiftColors'
+import { currentTaipeiYear, statutoryCountOfYear } from '../../utils/companyCalendar'
+import CompanyCalendarPanel from './CompanyCalendarPanel.vue'
 import {
   SHIFT_SEMANTIC_OPTIONS,
   SHIFT_SEMANTIC_LABELS,
@@ -570,30 +485,24 @@ import {
 } from '../../utils/shiftSemantics'
 
 const activeTab = ref('calendar')
-const dateFormat = 'YYYY/MM/DD'
 const timeFormat = 'HH:mm'
 
-// =========== 1) 年度行事曆/休假日設定 ===========
-const holidayList = ref([])
-const calendarDialogVisible = ref(false)
-let calendarEditIndex = null
-const loadingHolidays = ref(false)
+// =========== 1) 年度行事曆（CompanyCalendarPanel）與國定假日挪移 ===========
+// 行事曆的新增、修改、核定都在 CompanyCalendarPanel；這裡只需要今年的國定假日數量與可挪移的國定假日
+const calendarYears = ref([])
+const movableHolidayOptions = ref([])
 const holidayMoveList = ref([])
 const holidayMoveDialogVisible = ref(false)
 let holidayMoveEditIndex = null
 
-const calendarForm = ref({
-  name: '',
-  date: '',
-  type: '',
-  desc: ''
-})
+const statutoryThisYear = computed(() => statutoryCountOfYear(calendarYears.value, currentTaipeiYear()))
 
 const createHolidayMoveForm = () => ({
   sourceDate: '',
   targetDate: '',
   reason: '',
-  needSignature: false,
+  // 調移國定假日一律需要協議資料（保留欄位相容舊資料）
+  needSignature: true,
   needMakeup: false,
   agreementReference: '',
   agreementDate: '',
@@ -601,109 +510,27 @@ const createHolidayMoveForm = () => ({
 })
 const holidayMoveForm = ref(createHolidayMoveForm())
 
-const movableHolidayOptions = computed(() => (
-  holidayList.value.filter((holiday) => (
-    String(holiday.type || '').includes('國定假日')
-  ))
-))
-
 function toApiDate(value) {
   return String(value || '').slice(0, 10).replace(/\//g, '-')
 }
 
-function formatHolidayDate(value) {
-  if (!value) return ''
-  const dt = new Date(value)
-  if (Number.isNaN(dt.getTime())) return ''
-  const year = dt.getFullYear()
-  const month = String(dt.getMonth() + 1).padStart(2, '0')
-  const day = String(dt.getDate()).padStart(2, '0')
-  return `${year}/${month}/${day}`
+function onCalendarYearsLoaded(years) {
+  calendarYears.value = Array.isArray(years) ? years : []
 }
 
-async function fetchHolidays() {
-  const res = await apiFetch('/api/holidays', {
-    headers: {
-      'Content-Type': 'application/json'
-    }
-  })
-  if (res.ok) {
-    const data = await res.json()
-    holidayList.value = Array.isArray(data)
-      ? data.map((item) => ({
-          ...item,
-          type: item.type || item.holidayCategory || '國定假日',
-          desc: item.desc ?? item.description ?? item.name ?? '',
-          date: formatHolidayDate(item.date)
-        }))
-      : []
-  }
-}
-  
-function openCalendarDialog(index = null) {
-  if (index !== null) {
-    // 編輯模式
-    calendarEditIndex = index
-    calendarForm.value = { ...holidayList.value[index] }
-  } else {
-    // 新增模式
-    calendarEditIndex = null
-    calendarForm.value = { name: '', date: '', type: '', desc: '' }
-  }
-  calendarDialogVisible.value = true
-}
-  
-// 讀取回應內容；沒有 JSON 時回傳空物件
-async function readJsonBody(res) {
-  if (!res || typeof res.json !== 'function') return {}
-  return (await res.json().catch(() => ({}))) || {}
-}
-
-async function saveHoliday() {
-  const method = calendarEditIndex === null ? 'POST' : 'PUT'
-  let url = '/api/holidays'
-  if (method === 'PUT') {
-    const id = holidayList.value[calendarEditIndex]._id
-    url += `/${id}`
-  }
-  const payload = {
-    ...calendarForm.value,
-    description: calendarForm.value.desc,
-    type: calendarForm.value.type || '國定假日'
-  }
-  if (payload.date?.includes('/')) {
-    payload.date = payload.date.replace(/\//g, '-')
-  }
-  const res = await apiFetch(url, {
-    method,
-    headers: {
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify(payload)
-  })
-  if (res && res.ok === false) {
-    const body = await readJsonBody(res)
-    ElMessage.error(body.error || '假日儲存失敗')
-    return
-  }
-  await fetchHolidays()
-  calendarDialogVisible.value = false
-}
-
-async function deleteHoliday(index) {
-  const id = holidayList.value[index]._id
-  const res = await apiFetch(`/api/holidays/${id}`, {
-    method: 'DELETE',
-    headers: {
-      'Content-Type': 'application/json'
-    }
-  })
-  if (res && res.ok === false) {
-    const body = await readJsonBody(res)
-    ElMessage.error(body.error || '假日刪除失敗')
-    return
-  }
-  await fetchHolidays()
+// 原國定假日的選項：去年到明年行事曆上的國定假日（公務機關補假、調整放假不是國定假日，不能當成挪移來源）
+async function fetchMovableHolidays() {
+  const current = currentTaipeiYear()
+  const results = await Promise.all([current - 1, current, current + 1].map(async (year) => {
+    const res = await apiFetch(`/api/holidays?kind=statutory&year=${year}`)
+    if (!res?.ok) return []
+    const data = await res.json().catch(() => [])
+    return Array.isArray(data) ? data : []
+  }))
+  movableHolidayOptions.value = results
+    .flat()
+    .map((item) => ({ ...item, date: toApiDate(item.date) }))
+    .sort((a, b) => a.date.localeCompare(b.date))
 }
 
 async function fetchHolidayMoves() {
@@ -715,7 +542,8 @@ async function fetchHolidayMoves() {
     .map((item) => ({
       ...item,
       sourceDate: toApiDate(item.sourceDate),
-      targetDate: toApiDate(item.targetDate)
+      targetDate: toApiDate(item.targetDate),
+      agreementDate: item.agreementDate ? toApiDate(item.agreementDate) : ''
     }))
 }
 
@@ -723,7 +551,7 @@ function openHolidayMoveDialog(index = null) {
   holidayMoveEditIndex = index
   holidayMoveForm.value = index === null
     ? createHolidayMoveForm()
-    : { ...createHolidayMoveForm(), ...holidayMoveList.value[index] }
+    : { ...createHolidayMoveForm(), ...holidayMoveList.value[index], needSignature: true }
   holidayMoveDialogVisible.value = true
 }
 
@@ -734,8 +562,11 @@ async function saveHolidayMove() {
     ElMessage.error('請選擇原國定假日與挪移日期')
     return
   }
-  if (sourceDate.slice(0, 7) !== targetDate.slice(0, 7)) {
-    ElMessage.error('國定假日只能在同一月份內挪移')
+  // 可以跨月（例如 2027-02-28 週日的和平紀念日改到 3/2），但一律要有勞資會議（或工會）同意的文件編號與日期
+  const agreementReference = String(holidayMoveForm.value.agreementReference || '').trim()
+  const agreementDate = toApiDate(holidayMoveForm.value.agreementDate)
+  if (!agreementReference || !agreementDate) {
+    ElMessage.error('請填寫同意文件編號與同意日期')
     return
   }
 
@@ -751,10 +582,10 @@ async function saveHolidayMove() {
         sourceDate,
         targetDate,
         reason: holidayMoveForm.value.reason,
-        needSignature: Boolean(holidayMoveForm.value.needSignature),
+        needSignature: true,
         needMakeup: Boolean(holidayMoveForm.value.needMakeup),
-        agreementReference: holidayMoveForm.value.agreementReference || '',
-        agreementDate: holidayMoveForm.value.agreementDate || null,
+        agreementReference,
+        agreementDate,
         makeupConfirmed: Boolean(holidayMoveForm.value.makeupConfirmed)
       })
     }
@@ -778,34 +609,6 @@ async function deleteHolidayMove(index) {
     return
   }
   await fetchHolidayMoves()
-}
-
-// 一鍵載入當年國定假日：由伺服器從行事曆來源匯入。
-// 匯入失敗時只顯示錯誤，不寫入任何預設或示例資料（寫入錯誤的假日會直接影響排班檢核與加班計算）。
-async function loadRocHolidays() {
-  loadingHolidays.value = true
-  const currentYear = new Date().getFullYear()
-  try {
-    const res = await apiFetch(`/api/holidays/import/roc?year=${currentYear}`, { method: 'POST' })
-    const body = await readJsonBody(res)
-    if (!res?.ok) {
-      throw new Error(body.error || `連線失敗（${res?.status ?? '無回應'}）`)
-    }
-    const count = Number(body.imported ?? body.count)
-    ElMessage.success(
-      Number.isFinite(count)
-        ? `已載入 ${currentYear} 年國定假日（${count} 筆）`
-        : `已載入 ${currentYear} 年國定假日`
-    )
-  } catch (e) {
-    console.error('載入國定假日失敗', e)
-    ElMessage.error(
-      `無法載入 ${currentYear} 年國定假日，未寫入任何資料。請稍後再試，或使用「新增假日」手動輸入。（${e?.message || '連線失敗'}）`
-    )
-  } finally {
-    await fetchHolidays()
-    loadingHolidays.value = false
-  }
 }
 
 // =========== 2) 班別管理 (排班用) ===========
@@ -1115,20 +918,10 @@ async function deleteShift(index) {
 }
   
 onMounted(() => {
-  fetchHolidays()
+  fetchMovableHolidays()
   fetchShifts()
   fetchHolidayMoves()
 })
-  
-function getHolidayTagType(type) {
-  const typeMap = {
-    '國定假日': 'danger',
-    '例假日': 'success',
-    '公司休息日': 'warning',
-    '補班日': 'info'
-  }
-  return typeMap[type] || 'default'
-}
 </script>
 
 <style scoped>

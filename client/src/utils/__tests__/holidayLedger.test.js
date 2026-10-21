@@ -1,10 +1,15 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import {
+  CONSENT_REQUIRED_TEXT,
   LEDGER_CONFLICT_TEXT,
   LEDGER_FILTERS,
   buildLedgerQuery,
+  buildSwapBody,
   canRecordResolution,
+  canShowCompensationButton,
   canShowResolveButton,
+  canShowSwapButton,
+  compensationReasonText,
   countLedgerFilters,
   describeHolidayHeader,
   describeLedgerCell,
@@ -14,6 +19,7 @@ import {
   getViewerEmployeeId,
   ledgerRowMatchesFilter,
   resolveButtonLabel,
+  validateSwapForm,
   weekdayLabel,
 } from '../holidayLedger'
 
@@ -114,8 +120,15 @@ describe('filters', () => {
   })
 
   it('counts every filter', () => {
-    expect(countLedgerFilters(rows)).toEqual({ all: 3, notTaken: 2, moved: 2, open: 1, extra: 1 })
-    expect(LEDGER_FILTERS.map((filter) => filter.value)).toEqual(['all', 'notTaken', 'moved', 'open', 'extra'])
+    // 新增「待排補假」（compensation）篩選，與伺服器的 status=compensation 一致
+    expect(countLedgerFilters(rows)).toEqual({ all: 3, notTaken: 2, moved: 2, open: 1, extra: 1, compensation: 0 })
+    expect(LEDGER_FILTERS.map((filter) => filter.value)).toEqual(['all', 'notTaken', 'moved', 'open', 'extra', 'compensation'])
+  })
+
+  it('keeps the rows with a 補假 still to be assigned for 待排補假', () => {
+    const withCompensation = [...rows, { employeeId: 'd', notTaken: 1, moved: 0, open: 1, extraGuoDates: [], items: [{ needsAction: 'assign_compensation' }] }]
+    expect(withCompensation.filter((row) => ledgerRowMatchesFilter(row, 'compensation')).map((row) => row.employeeId)).toEqual(['d'])
+    expect(LEDGER_FILTERS.find((filter) => filter.value === 'compensation').label).toBe('待排補假')
   })
 })
 
@@ -134,8 +147,8 @@ describe('buildLedgerQuery', () => {
     expect(buildLedgerQuery({ month: '2026-09', search: 'N001' })).toBe('month=2026-09&search=N001')
   })
 
-  it('uses filter names the server understands', () => {
-    expect(LEDGER_FILTERS.map((filter) => filter.value).filter((value) => value !== 'all')).toEqual(['notTaken', 'moved', 'open', 'extra'])
+  it('uses filter names the server understands (待排補假 = compensation)', () => {
+    expect(LEDGER_FILTERS.map((filter) => filter.value).filter((value) => value !== 'all')).toEqual(['notTaken', 'moved', 'open', 'extra', 'compensation'])
   })
 })
 
@@ -235,5 +248,62 @@ describe('getViewerEmployeeId', () => {
 
     vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => { throw new Error('blocked') })
     expect(getViewerEmployeeId()).toBe('')
+  })
+})
+
+describe('補假、行事曆放假與個人調移欄位', () => {
+  it('describes the new cell states with text', () => {
+    expect(describeLedgerCell({ status: 'rested_on_date', implicit: true })).toMatchObject({ text: '依行事曆放假', type: 'success' })
+    expect(describeLedgerCell({ status: 'compensated', compensation: { date: '2026-10-14', via: 'assigned' } })).toMatchObject({ text: '補假 10/14', type: 'success' })
+    expect(describeLedgerCell({ status: 'compensated', compensation: { date: '2026-02-27', via: 'gov_makeup' } }).text).toBe('補假 02/27（公務機關補假日）')
+    const waiting = describeLedgerCell({ status: 'not_taken', reason: 'on_rest_day', needsAction: 'assign_compensation', compensation: { id: 'c1', status: 'open', suggestedDate: '2026-10-12' } })
+    expect(waiting).toMatchObject({ text: '待排補假', type: 'danger' })
+    expect(waiting.tooltip).toContain('系統建議 10/12')
+    expect(describeLedgerCell({ status: 'rested_on_date', guoDate: '2026-10-10', compensation: { date: '2026-10-14', via: 'assigned', conflict: true } }))
+      .toMatchObject({ text: '補假 10/14（班表已變更，請確認）', type: 'warning' })
+  })
+
+  it('warns when the assigned 補假 date itself became a rest day, and keeps the 修改補假 button', () => {
+    const item = { status: 'compensated', compensation: { date: '2026-10-14', via: 'assigned', compensationId: 'c1', conflict: true, conflictReason: 'date_not_workday' } }
+    const cell = describeLedgerCell(item)
+    expect(cell).toMatchObject({ text: '補假 10/14（班表已變更，請確認）', type: 'warning' })
+    expect(cell.tooltip).toBe('補假日 10/14 現在是休息日／例假（不是原本要上班的日子），員工並沒有因此多休一天，請改排其他上班日')
+    expect(canShowCompensationButton({ canResolve: true, row: { employeeId: 'a' }, item })).toBe(true)
+  })
+
+  it('notes a column that exists only because of a personal swap', () => {
+    expect(describeHolidayHeader({ name: '教師節', date: '2026-09-28', personal: true }).note).toBe('個人調移')
+  })
+
+  it('offers 排定補假 for an open obligation or an assigned 補假, with the same scope rules as resolutions', () => {
+    const row = { employeeId: 'a' }
+    const waiting = { needsAction: 'assign_compensation', compensation: { id: 'c1', status: 'open' } }
+    const assigned = { status: 'compensated', compensation: { via: 'assigned', compensationId: 'c1', date: '2026-10-14' } }
+    expect(canShowCompensationButton({ canResolve: true, row, item: waiting })).toBe(true)
+    expect(canShowCompensationButton({ canResolve: true, row, item: assigned })).toBe(true)
+    expect(canShowCompensationButton({ canResolve: true, row, item: { status: 'compensated', compensation: { via: 'gov_makeup', date: '2026-02-27' } } })).toBe(false)
+    expect(canShowCompensationButton({ canResolve: true, row, item: { needsAction: 'assign_compensation', compensation: null } })).toBe(false)
+    expect(canShowCompensationButton({ canResolve: false, row, item: waiting })).toBe(false)
+    expect(canShowCompensationButton({ canResolve: true, role: 'supervisor', viewerId: 'a', row, item: waiting })).toBe(false)
+    expect(canShowSwapButton({ canResolve: true, role: 'supervisor', viewerId: 'a', row })).toBe(false)
+    expect(canShowSwapButton({ canResolve: true, role: 'admin', viewerId: 'a', row })).toBe(true)
+    expect(compensationReasonText({ reason: 'on_regular_rest' })).toBe('適逢例假')
+    expect(compensationReasonText({ reason: 'on_rest_day' })).toBe('適逢休息日')
+  })
+
+  it('refuses a personal swap without the employee\'s own consent and builds the request body', () => {
+    const form = { employee: 'a', originalDate: '2026-09-28', targetDate: '2026-10-05', consentMethod: 'signature', consentedAt: '2026-09-15', evidenceRef: ' 同意書 01 ', reason: ' 連休 ', consentNote: '' }
+    expect(validateSwapForm(form)).toBe('')
+    expect(validateSwapForm({ ...form, evidenceRef: '  ' })).toBe(CONSENT_REQUIRED_TEXT)
+    expect(validateSwapForm({ ...form, consentedAt: '' })).toBe(CONSENT_REQUIRED_TEXT)
+    expect(validateSwapForm({ ...form, targetDate: '' })).toBe('請選擇調移到的日期')
+    expect(validateSwapForm({ ...form, targetDate: '2026-09-28' })).toBe('調移日不能和原國定假日相同')
+    expect(buildSwapBody(form)).toEqual({
+      employee: 'a',
+      originalDate: '2026-09-28',
+      targetDate: '2026-10-05',
+      reason: '連休',
+      consent: { method: 'signature', consentedAt: '2026-09-15', evidenceRef: '同意書 01', note: '' },
+    })
   })
 })

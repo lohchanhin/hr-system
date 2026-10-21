@@ -8,6 +8,7 @@ import {
   formatHoursWithDays,
   matchBalanceItem,
   readAnnualLeaveHours,
+  STATUS_LABELS,
 } from '../src/utils/leaveBalance'
 
 const item = (patch) => ({
@@ -136,5 +137,16 @@ describe('readAnnualLeaveHours (same reading as the server)', () => {
     expect(readAnnualLeaveHours({ totalDays: 14, usedDays: 3 })).toMatchObject({ totalHours: 112, usedHours: 24, unitSource: 'migrated-days', legacy: true })
     expect(readAnnualLeaveHours({ totalDays: 170, usedDays: 8 })).toMatchObject({ totalHours: 170, usedHours: 8, unitSource: 'migrated-hours' })
     expect(readAnnualLeaveHours(undefined)).toMatchObject({ totalHours: 0, usedHours: 0, remainingHours: 0 })
+  })
+})
+
+describe('原民假 for employees without indigenous status', () => {
+  it('labels the ineligible status and explains it under the form instead of a quota of 0', () => {
+    expect(STATUS_LABELS.ineligible).toBe('限具原住民身分者')
+    const ineligible = item({ key: 'indigenous', name: '原民假', quotaHours: 0, usedHours: 0, remainingHours: 0, availableHours: 0, status: 'ineligible' })
+    const hint = evaluateRequest(ineligible, [ineligible], 8)
+    expect(hint).toMatchObject({ level: 'warning', exceeded: true, blocking: false })
+    expect(hint.text).toContain('原民假限具原住民身分者')
+    expect(evaluateRequest({ ...ineligible, enforcement: 'block' }, [], 8)).toMatchObject({ level: 'error', blocking: true })
   })
 })

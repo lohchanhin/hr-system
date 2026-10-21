@@ -452,3 +452,31 @@ describe('describeRequestFocus', () => {
       .toMatchObject({ typeKey: null, typeName: '神祕假', exceeded: false })
   })
 })
+
+describe('buildLeaveBalances: 原民假 is limited to indigenous employees', () => {
+  const indigenousRequest = (status = 'pending') => request('ri', status, { 'd-type': '原民假', 'd-start': '2026-08-03', 'd-end': '2026-08-03', 'd-hours': 8 })
+
+  it('gives a non-indigenous employee no quota and marks the type ineligible once it shows up', async () => {
+    requestsByForm['form-default'] = [indigenousRequest('pending')]
+    const balances = await balanceService.buildLeaveBalances({ employeeId: 'emp1', year: 2026 })
+    expect(itemOf(balances, 'indigenous')).toMatchObject({
+      quotaHours: 0, remainingHours: 0, availableHours: -8, pendingHours: 8, status: 'ineligible', note: '限具原住民身分者',
+    })
+    const verdict = balanceService.evaluateLeaveRequestAgainstBalance(itemOf(balances, 'indigenous'), 8)
+    expect(verdict.exceeded).toBe(true)
+  })
+
+  it('gives an indigenous employee 3 days (24 hours) a year', async () => {
+    currentEmployee = employeeDoc({ totalHours: 80, usedHours: 16, year: 2026 }, { isIndigenous: true })
+    requestsByForm['form-default'] = [indigenousRequest('approved')]
+    const balances = await balanceService.buildLeaveBalances({ employeeId: 'emp1', year: 2026 })
+    expect(itemOf(balances, 'indigenous')).toMatchObject({ quotaHours: 24, usedHours: 8, remainingHours: 16, availableHours: 16, status: 'ok' })
+  })
+
+  it('reads the indigenous flag together with the annual leave record', async () => {
+    const select = jest.fn(() => ({ lean: async () => currentEmployee }))
+    mockEmployee.findById.mockImplementation(() => ({ select }))
+    await balanceService.buildLeaveBalances({ employeeId: 'emp1', year: 2026 })
+    expect(select).toHaveBeenCalledWith(expect.stringContaining('isIndigenous'))
+  })
+})

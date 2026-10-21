@@ -463,3 +463,51 @@ describe('Employee authorization middleware', () => {
     expect(resCreate.status).toBe(403);
   });
 });
+
+describe('假日制度與原住民身分', () => {
+  it('maps the regime text and the indigenous flag on update, and an empty regime clears the setting', async () => {
+    mockEmployee.findById
+      .mockResolvedValueOnce({ _id: '1', name: 'John' })
+      .mockResolvedValueOnce({ _id: '1', name: 'John', holidayRegime: 'office', isIndigenous: true });
+    mockEmployee.updateOne.mockResolvedValue();
+    const res = await request(app).put('/api/employees/1').send({ holidayRegime: '行政', isIndigenous: 'true' });
+    expect(res.status).toBe(200);
+    expect(mockEmployee.updateOne).toHaveBeenCalledWith({ _id: '1' }, { $set: { holidayRegime: 'office', isIndigenous: true } });
+
+    mockEmployee.findById
+      .mockResolvedValueOnce({ _id: '1', name: 'John', holidayRegime: 'office' })
+      .mockResolvedValueOnce({ _id: '1', name: 'John' });
+    const cleared = await request(app).put('/api/employees/1').send({ holidayRegime: '', isIndigenous: false });
+    expect(cleared.status).toBe(200);
+    expect(mockEmployee.updateOne).toHaveBeenLastCalledWith({ _id: '1' }, { $set: { isIndigenous: false }, $unset: { holidayRegime: 1 } });
+  });
+
+  it('rejects an unknown regime before writing anything', async () => {
+    mockEmployee.findById.mockResolvedValue({ _id: '1', name: 'John' });
+    const res = await request(app).put('/api/employees/1').send({ holidayRegime: '夜班' });
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({ error: '假日制度只能是「輪班」或「行政」' });
+    expect(mockEmployee.updateOne).not.toHaveBeenCalled();
+
+    const created = await request(app).post('/api/employees').send({
+      name: 'Kim', email: 'kim@example.com', employeeNo: 'E009', username: 'kim', password: 'secret', holidayRegime: 'x',
+    });
+    expect(created.status).toBe(400);
+    expect(mockEmployee.create).not.toHaveBeenCalled();
+  });
+
+  it('stores the regime and the flag on create, and the admin list returns them', async () => {
+    mockEmployee.create.mockImplementation(async (doc) => ({ _id: '3', ...doc }));
+    const res = await request(app).post('/api/employees').send({
+      name: 'Lee', email: 'lee@example.com', employeeNo: 'E010', username: 'lee', password: 'secret', holidayRegime: '輪班', isIndigenous: true,
+    });
+    expect(res.status).toBe(201);
+    expect(mockEmployee.create.mock.calls[0][0]).toMatchObject({ holidayRegime: 'roster', isIndigenous: true });
+
+    const query = makeEmployeeListQuery(Promise.resolve([]));
+    mockEmployee.find.mockReturnValue(query);
+    mockEmployee.countDocuments.mockResolvedValue(0);
+    await request(app).get('/api/employees');
+    expect(query.select).toHaveBeenCalledWith(expect.stringContaining('holidayRegime isIndigenous'));
+  });
+});

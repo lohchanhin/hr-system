@@ -652,6 +652,18 @@ describe('EmployeeManagement - 批量匯入流程', () => {
     expect(descriptionRow).toContain('眷口數')
   })
 
+  it('預設欄位對應與範本包含假日制度與原住民身分（雇用設定）', async () => {
+    const wrapper = await mountComponent()
+    expect(wrapper.vm.bulkImportForm.columnMappings).toMatchObject({ holidayRegime: 'holidayRegime', isIndigenous: 'isIndigenous' })
+    const [headerRow, descriptionRow, ...samples] = wrapper.vm.buildBulkImportTemplateCsvContent().replace('\uFEFF', '').split('\n')
+    expect(headerRow).toContain('"holidayRegime"')
+    expect(headerRow).toContain('"isIndigenous"')
+    expect(descriptionRow).toContain('假日制度 (輪班/行政，空白依是否需排班)')
+    expect(descriptionRow).toContain('原住民身分 (TRUE/FALSE)')
+    expect(samples[0]).toContain('行政')
+    expect(samples[1]).toContain('輪班')
+  })
+
   it('勾選「更新已存在的員工資料」會在 options 帶出 updateExisting，並顯示新增/更新筆數與提醒', async () => {
     importEmployeesBulkMock.mockResolvedValue(
       createApiResponse({

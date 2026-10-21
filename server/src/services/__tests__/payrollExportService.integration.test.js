@@ -111,8 +111,11 @@ describe('generatePayrollExcel with dynamic calculation', () => {
     const buffer = await generatePayrollExcel('2024-05-01', 'bonusSlip', { companyName: '測試公司' });
 
     // Verify calculation was called
-    expect(mockCalculateCompleteWorkData).toHaveBeenCalledWith('emp123', '2024-05-01');
-    expect(mockCalculateEmployeePayroll).toHaveBeenCalledWith('emp123', '2024-05-01', expect.any(Object));
+    // 整批員工共用同一個 payrollBatch（國定假日判斷資料整批只讀一次）
+    expect(mockCalculateCompleteWorkData).toHaveBeenCalledWith('emp123', '2024-05-01', { payrollBatch: { employees: [mockEmployee] } });
+    expect(mockCalculateEmployeePayroll).toHaveBeenCalledWith('emp123', '2024-05-01', expect.any(Object), {
+      calculationContext: { payrollBatch: { employees: [mockEmployee] } },
+    });
 
     // Verify Excel was generated
     expect(buffer).toBeDefined();

@@ -1,6 +1,7 @@
 // 兼職人員（Employee.partTime === true）不套用排班規範檢核：
 // 單一出口在 assertScheduleRuleCompliance，草稿預檢、匯入預覽與匯入、發布、完成發布都走它。
 import { jest } from '@jest/globals';
+import { registerHolidayResolverModelMocks } from './helpers/holidayResolverMocks.js';
 import { oid } from './helpers/approvalTestKit.js';
 
 const mockShiftSchedule = { find: jest.fn(), findOne: jest.fn() };
@@ -18,6 +19,7 @@ jest.unstable_mockModule('../src/models/approval_request.js', () => ({ default: 
 jest.unstable_mockModule('../src/models/form_field.js', () => ({ default: mockFormField }));
 jest.unstable_mockModule('../src/models/Holiday.js', () => ({ default: mockHoliday }));
 jest.unstable_mockModule('../src/models/HolidayMoveSetting.js', () => ({ default: mockHolidayMoveSetting }));
+const holidayResolverMocks = await registerHolidayResolverModelMocks(jest);
 jest.unstable_mockModule('../src/models/Employee.js', () => ({ default: mockEmployee }));
 jest.unstable_mockModule('../src/services/leaveFieldService.js', () => ({
   getAllLeaveFieldInfos: mockGetAllLeaveFieldInfos,

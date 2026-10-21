@@ -585,3 +585,278 @@ describe('HolidayLedgerDialog', () => {
     vi.unstubAllGlobals()
   })
 })
+
+describe('HolidayLedgerDialog: 補假, personal swaps and the year-end list', () => {
+  const H10 = { id: 'statutory:2026-10-10', type: 'statutory', name: '國慶日', date: '2026-10-10', originalDate: '2026-10-10', movedFrom: null, personal: false }
+  const H25 = { id: 'statutory:2026-10-25', type: 'statutory', name: '臺灣光復暨金門古寧頭大捷紀念日', date: '2026-10-25', originalDate: '2026-10-25', movedFrom: null, personal: false }
+  const HSWAP = { id: 'statutory:2026-09-28', type: 'statutory', name: '孔子誕辰紀念日/教師節', date: '2026-09-28', originalDate: '2026-09-28', movedFrom: null, personal: true }
+  const HVOTE = { id: 'designated:2026-10-24', type: 'designated', name: '公民投票日', date: '2026-10-24', originalDate: '2026-10-24', movedFrom: null, personal: false }
+  const ledgerItem = (holiday, overrides = {}) => item({
+    holidayId: holiday.id, type: holiday.type, holidayName: holiday.name, holidayDate: holiday.date, originalDate: holiday.originalDate, compensation: null, implicit: false, ...overrides,
+  })
+  const OCTOBER = {
+    months: [{
+      month: '2026-10',
+      holidays: [HSWAP, H10, HVOTE, H25],
+      calendar: { year: 2026, state: 'draft', provisional: true },
+      employees: [
+        person('n1', '輪班甲', [
+          ledgerItem(H10, { status: 'not_taken', guoDate: null, reason: 'on_rest_day', dateKind: 'rest_day', needsAction: 'assign_compensation', compensation: { id: 'c1', status: 'open', suggestedDate: '2026-10-12', conflict: false } }),
+          ledgerItem(HVOTE, { status: 'rested_on_date', guoDate: '2026-10-24' }),
+          ledgerItem(H25, { status: 'compensated', guoDate: null, reason: 'on_rest_day', dateKind: 'rest_day', compensation: { date: '2026-10-28', via: 'assigned', compensationId: 'c2', conflict: false } }),
+        ]),
+        person('o2', '行政乙', [
+          ledgerItem(H10, { status: 'compensated', guoDate: null, reason: 'on_rest_day', dateKind: 'rest_day', compensation: { date: '2026-10-09', via: 'gov_makeup', compensationId: null, conflict: false } }),
+          ledgerItem(H25, { status: 'rested_on_date', guoDate: null, implicit: true }),
+        ], { regime: 'office', isIndigenous: true }),
+        person('s3', '調移丙', [
+          ledgerItem(HSWAP, { holidayDate: '2026-10-05', via: 'swap', status: 'rested_on_date', guoDate: '2026-10-05' }),
+          ledgerItem(H10, { status: 'rested_on_date', guoDate: '2026-10-10' }),
+          ledgerItem(H25, { status: 'rested_on_date', guoDate: '2026-10-25' }),
+        ]),
+      ],
+      summary: { employees: 3, holidays: 4, entitled: 8, rested: 5, moved: 0, compensated: 2, notTaken: 1, open: 1, compensationOpen: 1, extra: 0, excluded: { notScheduled: 0 } },
+    }],
+    summary: {},
+  }
+  const OCT_SCOPE = { ...SCOPE, month: '2026-10' }
+  const routeFetch = (routes) => apiFetch.mockImplementation(async (url, options = {}) => {
+    for (const [pattern, handler] of routes) {
+      if (pattern.test(`${options.method || 'GET'} ${url}`)) return handler(url, options)
+    }
+    return jsonResponse(OCTOBER)
+  })
+
+  it('shows 補假 cells, the government make-up day, calendar rest, a designated tag, missing items and the row tags', async () => {
+    apiFetch.mockResolvedValue(jsonResponse(OCTOBER))
+    const wrapper = mountDialog({ scope: OCT_SCOPE })
+    await flushPromises()
+
+    expect(cellText(wrapper, 'n1', H10.id)).toBe('待排補假')
+    expect(cellText(wrapper, 'n1', H25.id)).toBe('補假 10/28')
+    expect(cellText(wrapper, 'o2', H10.id)).toBe('補假 10/09（公務機關補假日）')
+    expect(cellText(wrapper, 'o2', H25.id)).toBe('依行事曆放假')
+    // 個人調移進來的欄位：別人沒有這個項目
+    expect(cellText(wrapper, 'n1', HSWAP.id)).toBe('—')
+    expect(cellText(wrapper, 's3', HSWAP.id)).toBe('當日休')
+    expect(wrapper.findAll('.col-header')[1].text()).toContain('個人調移')
+    expect(wrapper.text()).toContain('指定')
+    expect(wrapper.find('[data-test="ledger-regime-o2"]').text()).toBe('行政')
+    expect(wrapper.find('[data-test="ledger-indigenous-o2"]').text()).toBe('原住民')
+    expect(wrapper.find('[data-test="ledger-regime-n1"]').exists()).toBe(false)
+    const summary = wrapper.find('[data-test="holiday-ledger-summary"]').text()
+    expect(summary).toContain('補假 2')
+    expect(summary).toContain('待排補假 1')
+    expect(wrapper.find('[data-test="holiday-ledger-calendar-provisional"]').text()).toContain('2026 年公司行事曆尚未核定')
+  })
+
+  it('filters by 待排補假', async () => {
+    apiFetch.mockResolvedValue(jsonResponse(OCTOBER))
+    const wrapper = mountDialog({ scope: OCT_SCOPE })
+    await flushPromises()
+    const radio = wrapper.findAll('label.el-radio-button').find((node) => node.text().startsWith('待排補假'))
+    expect(radio.text()).toBe('待排補假（1）')
+    await radio.find('input').setValue(true)
+    await flushPromises()
+    expect(wrapper.findAll('.col:first-child .cell').map((cell) => cell.find('strong').text())).toEqual(['輪班甲'])
+  })
+
+  it('opens the 補假 dialog with the suggested date, posts the assignment and reloads', async () => {
+    apiFetch.mockResolvedValue(jsonResponse(OCTOBER))
+    const wrapper = mountDialog({ scope: OCT_SCOPE }, { role: 'admin' })
+    await flushPromises()
+    const buttons = wrapper.findAll('[data-test="holiday-ledger-assign-compensation"]')
+    expect(buttons.map((button) => button.attributes('data-cell'))).toEqual([`n1-${H10.id}`, `n1-${H25.id}`])
+    expect(buttons[0].text()).toBe('排定補假')
+    expect(buttons[1].text()).toBe('修改補假')
+
+    apiFetch.mockClear()
+    apiFetch.mockResolvedValueOnce(jsonResponse({ id: 'c1', status: 'assigned' })).mockResolvedValue(jsonResponse(OCTOBER))
+    await buttons[0].trigger('click')
+    const dialog = wrapper.find('[data-test="holiday-ledger-compensation-dialog"]')
+    expect(dialog.exists()).toBe(true)
+    expect(dialog.text()).toContain('國慶日 10/10（六）')
+    expect(dialog.text()).toContain('適逢休息日')
+    expect(wrapper.find('[data-test="holiday-ledger-compensation-date"]').element.value).toBe('2026-10-12')
+    expect(fieldOf(wrapper, 'holiday-ledger-compensation-note').attributes('placeholder')).toBe('例：與員工協商於 3/2 補假')
+    await fieldOf(wrapper, 'holiday-ledger-compensation-note').setValue('與員工協商於 10/12 補假')
+    await wrapper.find('[data-test="holiday-ledger-compensation-save"]').trigger('click')
+    await flushPromises()
+
+    expect(apiFetch.mock.calls[0][0]).toBe('/api/holiday-ledger/compensations/c1/assign')
+    expect(JSON.parse(apiFetch.mock.calls[0][1].body)).toEqual({ assignedDate: '2026-10-12', agreementNote: '與員工協商於 10/12 補假' })
+    expect(messageSuccess).toHaveBeenCalledWith('已排定補假')
+    expect(apiFetch.mock.calls[1][0]).toContain('/api/holiday-ledger?month=2026-10')
+  })
+
+  it('shows the server message for a refused date, and can cancel an assigned 補假', async () => {
+    apiFetch.mockResolvedValue(jsonResponse(OCTOBER))
+    const wrapper = mountDialog({ scope: OCT_SCOPE }, { role: 'admin' })
+    await flushPromises()
+    apiFetch.mockClear()
+    apiFetch.mockResolvedValueOnce(jsonResponse({ error: '補假須排在原本要上班的日子', code: 'TARGET_NOT_WORKDAY' }, 400))
+    await wrapper.findAll('[data-test="holiday-ledger-assign-compensation"]')[0].trigger('click')
+    await wrapper.find('[data-test="holiday-ledger-compensation-save"]').trigger('click')
+    await flushPromises()
+    expect(messageError).toHaveBeenCalledWith('補假須排在原本要上班的日子')
+    expect(wrapper.find('[data-test="holiday-ledger-compensation-dialog"]').exists()).toBe(true)
+
+    apiFetch.mockClear()
+    apiFetch.mockResolvedValueOnce(jsonResponse({ id: 'c2', status: 'open' })).mockResolvedValue(jsonResponse(OCTOBER))
+    await wrapper.findAll('[data-test="holiday-ledger-assign-compensation"]')[1].trigger('click')
+    expect(wrapper.find('[data-test="holiday-ledger-compensation-date"]').element.value).toBe('2026-10-28')
+    await wrapper.find('[data-test="holiday-ledger-compensation-unassign"]').trigger('click')
+    await flushPromises()
+    expect(apiFetch.mock.calls[0]).toEqual(['/api/holiday-ledger/compensations/c2/unassign', { method: 'POST' }])
+  })
+
+  it('blocks a personal swap without the employee\'s consent, then posts it with the consent record', async () => {
+    const posted = []
+    routeFetch([
+      [/^GET \/api\/holiday-ledger\/swaps/, () => jsonResponse({ swaps: [] })],
+      [/^POST \/api\/holiday-ledger\/swaps$/, (url, options) => { posted.push(JSON.parse(options.body)); return jsonResponse({ id: 's9' }, 201) }],
+    ])
+    const wrapper = mountDialog({ scope: OCT_SCOPE }, { role: 'admin' })
+    await flushPromises()
+    const swapButton = wrapper.findAll('[data-test="holiday-ledger-swap-button"]').find((button) => button.attributes('data-employee') === 'n1')
+    await swapButton.trigger('click')
+    await flushPromises()
+    const dialog = wrapper.find('[data-test="holiday-ledger-swap-dialog"]')
+    expect(dialog.text()).toContain('依勞動部解釋，國定假日與工作日對調須經員工本人同意（工會同意不能取代）；調移後原假日為一般工作日')
+    expect(apiFetch.mock.calls.some(([url]) => url === '/api/holiday-ledger/swaps?employee=n1&status=active')).toBe(true)
+
+    await wrapper.find('[data-test="holiday-ledger-swap-target"]').setValue('2026-10-14')
+    await wrapper.find('[data-test="holiday-ledger-swap-save"]').trigger('click')
+    expect(messageWarning).toHaveBeenCalledWith('個人調移必須有員工本人的同意紀錄（簽名、同意書或電子紀錄）')
+    expect(posted).toEqual([])
+
+    await wrapper.find('[data-test="holiday-ledger-swap-consent-date"]').setValue('2026-10-01')
+    await fieldOf(wrapper, 'holiday-ledger-swap-evidence').setValue('同意書 115-1001')
+    await wrapper.find('[data-test="holiday-ledger-swap-save"]').trigger('click')
+    await flushPromises()
+    expect(posted).toEqual([{
+      employee: 'n1',
+      originalDate: '2026-10-10',
+      targetDate: '2026-10-14',
+      reason: '',
+      consent: { method: 'signature', consentedAt: '2026-10-01', evidenceRef: '同意書 115-1001', note: '' },
+    }])
+    expect(messageSuccess).toHaveBeenCalledWith('已登記個人調移')
+  })
+
+  it('lists active swaps and needs a reason to revoke one', async () => {
+    const revoked = []
+    routeFetch([
+      [/^GET \/api\/holiday-ledger\/swaps/, () => jsonResponse({ swaps: [{ id: 'sw1', originalDate: '2026-09-28', originalName: '教師節', targetDate: '2026-10-05', consent: { evidenceRef: '同意書 01' } }] })],
+      [/^POST \/api\/holiday-ledger\/swaps\/sw1\/revoke$/, (url, options) => { revoked.push(JSON.parse(options.body)); return jsonResponse({ id: 'sw1', status: 'revoked' }) }],
+    ])
+    const wrapper = mountDialog({ scope: OCT_SCOPE }, { role: 'admin' })
+    await flushPromises()
+    await wrapper.findAll('[data-test="holiday-ledger-swap-button"]').find((button) => button.attributes('data-employee') === 's3').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-test="holiday-ledger-swap-list"]').text()).toContain('教師節 09/28 → 10/05')
+
+    await wrapper.find('[data-test="holiday-ledger-swap-revoke"]').trigger('click')
+    expect(messageWarning).toHaveBeenCalledWith('撤銷個人調移需填寫原因')
+    await fieldOf(wrapper, 'holiday-ledger-swap-revoke-reason').setValue('員工改變心意')
+    await wrapper.find('[data-test="holiday-ledger-swap-revoke"]').trigger('click')
+    await flushPromises()
+    expect(revoked).toEqual([{ reason: '員工改變心意' }])
+  })
+
+  it('hides 排定補假 and 個人調移 for people who cannot resolve and on the supervisor\'s own row', async () => {
+    apiFetch.mockResolvedValue(jsonResponse(OCTOBER))
+    const readOnly = mountDialog({ scope: OCT_SCOPE, canResolve: false })
+    await flushPromises()
+    expect(readOnly.find('[data-test="holiday-ledger-assign-compensation"]').exists()).toBe(false)
+    expect(readOnly.find('[data-test="holiday-ledger-swap-button"]').exists()).toBe(false)
+
+    const own = mountDialog({ scope: { ...OCT_SCOPE, includeSelf: true } }, { role: 'supervisor', viewerId: 'n1' })
+    await flushPromises()
+    expect(own.find('[data-test="holiday-ledger-assign-compensation"]').exists()).toBe(false)
+    expect(own.findAll('[data-test="holiday-ledger-swap-button"]').map((button) => button.attributes('data-employee'))).toEqual(['o2', 's3'])
+  })
+
+  it('lists the open 補假 of the year only when asked, and recomputes the whole year', async () => {
+    const syncBodies = []
+    routeFetch([
+      [/^GET \/api\/holiday-ledger\/compensations\?/, () => jsonResponse({
+        year: 2026,
+        compensations: [{ id: 'c1', employeeId: 'n1', employeeNo: 'Nn1', name: '輪班甲', holidayDate: '2026-10-10', holidayName: '國慶日', status: 'open', origin: 'roster_rest_day', suggestedDate: '2026-10-12', agreementNote: '' }],
+        summary: { open: 1, assigned: 0, void: 0, conflict: 0 },
+      })],
+      [/^POST \/api\/holiday-ledger\/compensations\/sync$/, (url, options) => { syncBodies.push(JSON.parse(options.body)); return jsonResponse({ months: [], created: 1, voided: 0, reopened: 0, conflicts: 0 }) }],
+    ])
+    const wrapper = mountDialog({ scope: OCT_SCOPE }, { role: 'admin' })
+    await flushPromises()
+    expect(apiFetch).toHaveBeenCalledTimes(1)
+    expect(wrapper.find('[data-test="holiday-ledger-year-end"]').exists()).toBe(false)
+
+    await wrapper.find('[data-test="holiday-ledger-year-end-toggle"]').trigger('click')
+    await flushPromises()
+    const section = wrapper.find('[data-test="holiday-ledger-year-end"]')
+    expect(section.exists()).toBe(true)
+    expect(apiFetch.mock.calls.map(([url]) => url)).toContain('/api/holiday-ledger/compensations?department=d1&subDepartment=s1&year=2026&status=open')
+    expect(section.text()).toContain('輪班甲')
+    expect(section.text()).toContain('國慶日 10/10')
+
+    await wrapper.find('[data-test="holiday-ledger-year-end-sync"]').trigger('click')
+    await flushPromises()
+    expect(syncBodies).toEqual([{ from: '2026-01', to: '2026-12' }])
+    expect(wrapper.find('[data-test="holiday-ledger-year-end-sync"]').text()).toBe('重新計算 2026 年')
+
+    await wrapper.find('[data-test="holiday-ledger-year-end-assign"]').trigger('click')
+    expect(wrapper.find('[data-test="holiday-ledger-compensation-date"]').element.value).toBe('2026-10-12')
+    expect(wrapper.find('[data-test="holiday-ledger-year-end-conflicts"]').exists()).toBe(false)
+  })
+
+  it('tells how many assigned 補假 need a check, since they are not in the open list', async () => {
+    routeFetch([
+      [/^GET \/api\/holiday-ledger\/compensations\?/, () => jsonResponse({ year: 2026, compensations: [], summary: { open: 0, assigned: 3, void: 0, conflict: 2 } })],
+    ])
+    const wrapper = mountDialog({ scope: OCT_SCOPE }, { role: 'admin' })
+    await flushPromises()
+    await wrapper.find('[data-test="holiday-ledger-year-end-toggle"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-test="holiday-ledger-year-end-conflicts"]').text()).toContain('另有 2 筆已排定的補假需要確認')
+  })
+
+  it('does not offer a holiday the company already moved as the original day of a personal swap', async () => {
+    // 回歸：公司統一調移過的國定假日也出現在選項裡，選了一定被伺服器以 MOVE_EXISTS 拒絕
+    const H25_MOVED = { ...H25, date: '2026-10-26', movedFrom: '2026-10-25' }
+    const MOVED = {
+      months: [{
+        ...OCTOBER.months[0],
+        holidays: [H10, H25_MOVED],
+        employees: [person('m4', '挪移丁', [
+          ledgerItem(H25_MOVED, { holidayDate: '2026-10-26', movedFrom: '2026-10-25', via: 'company_move', status: 'rested_on_date', guoDate: '2026-10-26' }),
+          ledgerItem(H10, { status: 'rested_on_date', guoDate: '2026-10-10' }),
+        ])],
+      }],
+      summary: {},
+    }
+    const posted = []
+    apiFetch.mockImplementation(async (url, options = {}) => {
+      if (/^\/api\/holiday-ledger\/swaps\?/.test(url)) return jsonResponse({ swaps: [] })
+      if (url === '/api/holiday-ledger/swaps' && options.method === 'POST') {
+        posted.push(JSON.parse(options.body))
+        return jsonResponse({ id: 's9' }, 201)
+      }
+      return jsonResponse(MOVED)
+    })
+    const wrapper = mountDialog({ scope: OCT_SCOPE }, { role: 'admin' })
+    await flushPromises()
+    await wrapper.find('[data-test="holiday-ledger-swap-button"]').trigger('click')
+    await flushPromises()
+    // el-tooltip 被替換成只顯示觸發元素的替身，下拉選項不會產生，直接看元件的選項清單
+    expect(wrapper.find('[data-test="holiday-ledger-swap-original"]').exists()).toBe(true)
+    expect(wrapper.vm.swap.options).toEqual([{ value: '2026-10-10', label: '國慶日 10/10' }])
+
+    await wrapper.find('[data-test="holiday-ledger-swap-target"]').setValue('2026-10-14')
+    await wrapper.find('[data-test="holiday-ledger-swap-consent-date"]').setValue('2026-10-01')
+    await fieldOf(wrapper, 'holiday-ledger-swap-evidence').setValue('同意書 115-1001')
+    await wrapper.find('[data-test="holiday-ledger-swap-save"]').trigger('click')
+    await flushPromises()
+    expect(posted.map((body) => body.originalDate)).toEqual(['2026-10-10'])
+  })
+})

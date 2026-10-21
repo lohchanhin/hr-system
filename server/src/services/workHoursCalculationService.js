@@ -3,13 +3,11 @@ import ShiftSchedule from '../models/ShiftSchedule.js';
 import AttendanceSetting from '../models/AttendanceSetting.js';
 import ApprovalRequest from '../models/approval_request.js';
 import Employee from '../models/Employee.js';
-import Holiday from '../models/Holiday.js';
-import HolidayMoveSetting from '../models/HolidayMoveSetting.js';
 import FormField from '../models/form_field.js';
 import { getAllLeaveFieldInfos } from './leaveFieldService.js';
 import { calculateNightShiftAllowance } from './nightShiftAllowanceService.js';
 import { isNonWorkShift, resolveShiftSemanticType } from './shiftSemanticService.js';
-import { buildCountedHolidayDays } from './countedHolidayService.js';
+import { loadHolidayContext, resolveDayType } from './holidayResolver.js';
 import { toTaipeiDateKey } from '../utils/taipeiTime.js';
 import { computeLeaveDuration, sumLeaveHoursInRange } from '../utils/leaveDuration.js';
 import { isOvertimeFormTemplate } from '../utils/formSemantics.js';
@@ -589,12 +587,54 @@ export async function calculateLeaveImpact(employeeId, month, context = {}, { wi
 }
 
 /**
- * 判斷加班日的日別：國定假日 > 休息日 > 平日。
- * 國定假日只看 holidayDays（已排除補班日與說明為空的週末），排班上的「國」班別不會自己變成國定假日。
+ * 判斷加班日的日別：國定假日 > 休息日 > 平日（holidayResolver.resolveDayType）。
+ * 國定假日依員工判斷：國定假日、公司挪移或個人調移的目標日、已排定的補假日，
+ * 公務機關補假只對行政人員算；排班上的「國」班別不會自己變成國定假日。
+ * 沒有班表的行政人員在週末、公司休息日（依政府調整時含調整放假）以休息日計。
  */
-function resolveOvertimeDayType(dateKey, holidayDays, shift) {
-  if (holidayDays.has(dateKey)) return 'national_holiday';
-  return shift && resolveShiftSemanticType(shift) === 'rest_day' ? 'rest_day' : 'workday';
+function resolveOvertimeDayType(dateKey, holidayContext, employee, shift) {
+  return resolveOvertimeDay(dateKey, holidayContext, employee, shift).dayType;
+}
+
+function resolveOvertimeDay(dateKey, holidayContext, employee, shift) {
+  return resolveDayType(holidayContext, employee, dateKey, {
+    rosterKind: shift ? resolveShiftSemanticType(shift) : undefined,
+  });
+}
+
+// 員工資料有假日制度欄位時直接帶入；只選了薪資欄位（例如薪資總覽）時只帶 id，讓判斷模組自己讀
+function holidayContextEmployee(employee, fallbackId) {
+  const hasHolidayFields = ['holidayRegime', 'requiresScheduling', 'isIndigenous'].some((key) => employee?.[key] !== undefined);
+  return hasHolidayFields ? employee : (employee?._id ?? fallbackId);
+}
+
+/**
+ * 批次計算薪資（薪資匯出、薪資總覽 PDF）：呼叫端每次請求建立一個 payrollBatch = { employees }，
+ * 同一批員工共用一份國定假日判斷資料，第一次需要時才讀一次（查詢次數固定，與人數無關），不跨請求保留。
+ * 指定應放假日當天的班表由判斷模組一次讀齊；每筆加班的班別仍由呼叫端逐筆帶入。
+ * 員工不在這一批、或共用資料讀取失敗時回傳 null，改為只讀這位員工的資料（與單人計算相同）。
+ */
+function loadBatchHolidayContext(batch, employeeId, startDate, endDate) {
+  if (!batch || !Array.isArray(batch.employees) || !employeeId) return null;
+  if (!batch.holidayEmployeeIds) {
+    batch.holidayEmployeeIds = new Set(batch.employees
+      .map((employee) => String(employee?._id ?? employee ?? ''))
+      .filter(Boolean));
+  }
+  if (!batch.holidayEmployeeIds.has(String(employeeId))) return null;
+  if (!batch.holidayContexts) batch.holidayContexts = new Map();
+  const key = `${startDate.toISOString()}|${endDate.toISOString()}`;
+  if (!batch.holidayContexts.has(key)) {
+    batch.holidayContexts.set(key, loadHolidayContext({
+      start: startDate,
+      end: endDate,
+      employees: batch.employees.map((employee) => holidayContextEmployee(employee, employee)),
+    }).catch((error) => {
+      console.error('Failed to load the shared holiday calendar for a payroll batch', error?.name ?? 'Error');
+      return null;
+    }));
+  }
+  return batch.holidayContexts.get(key);
 }
 
 /**
@@ -660,17 +700,22 @@ export async function calculateOvertimePay(employeeId, month, context = {}) {
     new Date(schedule.date).toISOString().slice(0, 10),
     schedule,
   ]));
-  const [holidays, holidayMoves] = await Promise.all([
-    Holiday.find({ date: { $gte: startDate, $lt: endDate } }).lean(),
-    HolidayMoveSetting.find({ enableHolidayMove: true }).lean(),
-  ]);
-  // 只讀「算數的國定假日」：補班日、工作日、說明為空的週末都不是國定假日
-  const holidayDays = buildCountedHolidayDays({
-    holidays,
-    moves: holidayMoves,
-    start: startDate,
-    end: endDate,
-  });
+  // 國定假日依員工判斷（含個人調移、已排定的補假），呼叫端已經讀好時直接沿用
+  const rosterKindOf = (_employeeId, dateKey) => {
+    const schedule = scheduleByDate.get(dateKey);
+    if (!schedule) return 'none';
+    const shift = shiftMap.get(String(schedule.shiftId || ''));
+    return shift ? resolveShiftSemanticType(shift) : 'work';
+  };
+  // 批次計算時整批共用一份（payrollBatch），否則只讀這位員工的資料
+  const holidayContext = context.holidayContext
+    ?? await loadBatchHolidayContext(context.payrollBatch, employee?._id ?? employeeId, startDate, endDate)
+    ?? await loadHolidayContext({
+      start: startDate,
+      end: endDate,
+      employees: [holidayContextEmployee(employee, employeeId)],
+      rosterKindOf,
+    });
   
   let totalOvertimeHours = 0;
   let overtimePay = 0;
@@ -755,9 +800,10 @@ export async function calculateOvertimePay(employeeId, month, context = {}) {
       continue;
     }
     const schedule = scheduleByDate.get(overtimeDateKey);
-    const dayType = resolveOvertimeDayType(
+    const { dayType, verdict } = resolveOvertimeDay(
       overtimeDateKey,
-      holidayDays,
+      holidayContext,
+      employee,
       shiftMap.get(String(schedule?.shiftId || '')),
     );
     const calculation = calculateTaiwanOvertimeAmount(hours, hourlyRate, dayType);
@@ -769,6 +815,7 @@ export async function calculateOvertimePay(employeeId, month, context = {}) {
       hours,
       reason,
       dayType,
+      holidayReason: verdict?.holiday ? verdict.reason : null,
       pay: calculation.amount,
       rateSegments: calculation.segments,
       hasIssue: Boolean(recordIssue),
@@ -819,6 +866,7 @@ function countPaidLeaveOnlyDays(dailyDetails, leaveImpact) {
  * 整合計算員工的完整工作時數和薪資數據
  * @param {String} employeeId - 員工 ID
  * @param {String} month - 月份 (YYYY-MM-DD 格式)
+ * @param {Object} context - 每位員工一個新物件；整批計算時帶 { payrollBatch }（同一個 { employees } 物件），國定假日資料整批只讀一次
  * @returns {Object} - 完整的工作時數和薪資計算結果
  */
 export async function calculateCompleteWorkData(employeeId, month, context = {}) {

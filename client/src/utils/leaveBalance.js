@@ -10,6 +10,8 @@ export const STATUS_LABELS = {
   unlimited: '不設上限',
   unconfigured: '尚未設定',
   manual: '人資維護',
+  // 原民假：只有具原住民身分的員工有額度
+  ineligible: '限具原住民身分者',
 }
 
 function trimNumber(value, digits = 2) {
@@ -93,6 +95,18 @@ export function evaluateRequest(item, items, requestedHours) {
 
   if (item.status === 'unconfigured') {
     return { level: 'info', exceeded: false, blocking: false, remainingAfter: null, text: `${name}：尚未設定特休時數，系統不會用餘額擋下，請洽人資` }
+  }
+
+  // 原民假只給具原住民身分的員工（伺服器以額度 0 檢查超額）
+  if (item.status === 'ineligible') {
+    const blocking = enforcement === 'block'
+    return {
+      level: blocking ? 'error' : 'warning',
+      exceeded: true,
+      blocking,
+      remainingAfter: null,
+      text: `${name}限具原住民身分者，員工資料沒有原住民身分${blocking ? '，無法送出' : '，仍可送出，簽核人會看到超額'}；如有疑問請洽人資`,
+    }
   }
 
   if (item.period === 'event') {

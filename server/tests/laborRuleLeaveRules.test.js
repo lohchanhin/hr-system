@@ -2,6 +2,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { jest } from '@jest/globals';
+import { registerHolidayResolverModelMocks } from './helpers/holidayResolverMocks.js';
 
 // 請假與加班檢核的新規則：附件必須是真的上傳檔案、停用欄位不擋送簽、請假時間順序與重複申請、
 // 表單性質決定套用哪組規則、加班與請假的日期以台灣時間判斷。
@@ -23,6 +24,8 @@ jest.unstable_mockModule('../src/models/HolidayMoveSetting.js', () => ({ default
 jest.unstable_mockModule('../src/services/leaveFieldService.js', () => ({
   getAllLeaveFieldInfos: mockGetAllLeaveFieldInfos,
 }));
+
+await registerHolidayResolverModelMocks(jest);
 
 const {
   assertScheduleRuleCompliance,

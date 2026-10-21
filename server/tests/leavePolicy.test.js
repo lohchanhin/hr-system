@@ -266,3 +266,41 @@ describe('getLeavePolicy / saveLeavePolicy', () => {
     expect(mockUpdateSettings).not.toHaveBeenCalled()
   })
 })
+
+describe('原民假（原住民族歲時祭儀）', () => {
+  it('ships 3 days (24 hours) per year, limited to indigenous employees, and the stored settings cannot change who it applies to', () => {
+    const policy = service.normalizeLeavePolicy(null)
+    expect(typeOf(policy, 'indigenous')).toMatchObject({ name: '原民假', quotaHours: 24, period: 'year', eligibility: 'indigenous' })
+    expect(typeOf(policy, 'indigenous').note).toContain('每年 3 日')
+    expect(policy.types.filter(item => item.eligibility).map(item => item.key)).toEqual(['indigenous'])
+    const stored = service.normalizeLeavePolicy({ types: [{ key: 'indigenous', quotaHours: 16, eligibility: null }, { key: 'study_leave', name: '進修假', eligibility: 'indigenous' }] })
+    expect(typeOf(stored, 'indigenous')).toMatchObject({ quotaHours: 16, eligibility: 'indigenous' })
+    expect(typeOf(stored, 'study_leave').eligibility).toBeNull()
+  })
+
+  it('keeps the eligibility when an admin saves the policy', () => {
+    const saved = service.validateLeavePolicyInput({ types: [{ key: 'indigenous', quotaHours: 40 }] })
+    expect(typeOf(saved, 'indigenous')).toMatchObject({ quotaHours: 40, eligibility: 'indigenous' })
+  })
+
+  it('migrates a stored quota of exactly 8 hours (the old 1-day default) to 24, leaves other values alone, and is idempotent', async () => {
+    expect(await service.migrateIndigenousLeaveQuota()).toEqual({ updated: 0 })
+    expect(mockUpdateSettings).not.toHaveBeenCalled()
+
+    storedSettings = { leavePolicy: { types: [{ key: 'indigenous', name: '原民假', quotaHours: 8, note: '每年 1 日，原住民族歲時祭儀' }, { key: 'sick', quotaHours: 240 }] } }
+    expect(await service.migrateIndigenousLeaveQuota()).toEqual({ updated: 1 })
+    const migrated = storedSettings.leavePolicy.types.find(item => item.key === 'indigenous')
+    expect(migrated.quotaHours).toBe(24)
+    expect(migrated.note).toContain('每年 3 日')
+    expect(storedSettings.leavePolicy.types.find(item => item.key === 'sick').quotaHours).toBe(240)
+    expect(typeOf(await service.getLeavePolicy(), 'indigenous').quotaHours).toBe(24)
+
+    mockUpdateSettings.mockClear()
+    expect(await service.migrateIndigenousLeaveQuota()).toEqual({ updated: 0 })
+    expect(mockUpdateSettings).not.toHaveBeenCalled()
+
+    storedSettings = { leavePolicy: { types: [{ key: 'indigenous', quotaHours: 16, note: '公司給 2 天' }] } }
+    expect(await service.migrateIndigenousLeaveQuota()).toEqual({ updated: 0 })
+    expect(storedSettings.leavePolicy.types[0]).toEqual({ key: 'indigenous', quotaHours: 16, note: '公司給 2 天' })
+  })
+})

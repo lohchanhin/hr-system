@@ -170,3 +170,100 @@ describe('server startup: leave hours migrations', () => {
     expect(body.slice(call, catchStart)).toContain('Added leave hours field to ${leaveFormMigration.added} leave forms')
   })
 })
+
+// 公司行事曆（國定假日分類）的資料轉換、索引、原民假額度與每日檢查（各自獨立的 try/catch，只記錄筆數或錯誤名稱）
+describe('server startup: holiday calendar', () => {
+  function blockAround(body, call, catchMarker) {
+    const callIndex = body.indexOf(call)
+    const tryStart = body.lastIndexOf('try {', callIndex)
+    const catchStart = body.indexOf(catchMarker, callIndex)
+    const catchEnd = body.indexOf('}', body.indexOf('{', catchStart + catchMarker.length - 1) + 1)
+    return { callIndex, tryStart, catchStart, handler: body.slice(catchStart, catchEnd + 1), success: body.slice(callIndex, catchStart) }
+  }
+
+  it('imports the calendar migration, the watcher, the daily compensation sync and the leave quota migration (the purge import stays as it is)', () => {
+    expect(indexSource).toMatch(/import \{ purgeLegacyRocWeekendHolidays \} from '\.\/controllers\/holidayController\.js';/)
+    expect(indexSource).toMatch(/import \{ migrateHolidayCalendarKinds, ensureHolidayCalendarIndexes \} from '\.\/services\/holidayCalendarMigration\.js';/)
+    expect(indexSource).toMatch(/import \{ startHolidayCalendarWatcher \} from '\.\/services\/companyCalendarService\.js';/)
+    expect(indexSource).toMatch(/import \{ syncRecentHolidayCompensations \} from '\.\/services\/holidayCompensationService\.js';/)
+    expect(indexSource).toMatch(/import \{ migrateIndigenousLeaveQuota \} from '\.\/services\/leavePolicyService\.js';/)
+    expect(indexSource).toMatch(/import companyCalendarRoutes from '\.\/routes\/companyCalendarRoutes\.js';/)
+    expect(indexSource).toMatch(/import holidayCalendarViewRoutes from '\.\/routes\/holidayCalendarViewRoutes\.js';/)
+  })
+
+  it('mounts the admin calendar settings and the read-only holiday calendar before the API 404 handler', () => {
+    const settings = indexSource.indexOf("app.use('/api/company-calendar', authenticate, authorizeRoles('admin'), companyCalendarRoutes);")
+    const view = indexSource.indexOf("app.use('/api/holiday-calendar', authenticate, authorizeRoles('employee', 'supervisor', 'admin'), holidayCalendarViewRoutes);")
+    const notFound = indexSource.indexOf("app.use('/api', apiNotFound);")
+
+    expect(settings).toBeGreaterThan(-1)
+    expect(view).toBeGreaterThan(-1)
+    expect(settings).toBeLessThan(notFound)
+    expect(view).toBeLessThan(notFound)
+  })
+
+  it('runs purge < calendar kinds < calendar indexes < leave form semantics', () => {
+    const body = startBody()
+    const purge = body.indexOf('await purgeLegacyRocWeekendHolidays()')
+    const kinds = body.indexOf('await migrateHolidayCalendarKinds()')
+    const indexes = body.indexOf('await ensureHolidayCalendarIndexes()')
+    const leaveMigration = body.indexOf('await migrateLeaveFormSemantics()')
+
+    expect(purge).toBeGreaterThan(-1)
+    expect(purge).toBeLessThan(kinds)
+    expect(kinds).toBeLessThan(indexes)
+    expect(indexes).toBeLessThan(leaveMigration)
+  })
+
+  it('runs the indigenous leave quota migration after the leave form hours migration and before the admin bootstrap', () => {
+    const body = startBody()
+    const forms = body.indexOf('await migrateLeaveFormsToHours()')
+    const quota = body.indexOf('await migrateIndigenousLeaveQuota()')
+    const admin = body.indexOf('await ensureAdminUser()')
+
+    expect(quota).toBeGreaterThan(forms)
+    expect(quota).toBeLessThan(admin)
+  })
+
+  it.each([
+    ['await migrateHolidayCalendarKinds()', '} catch (calendarError) {', "console.error('Failed to migrate holiday calendar kinds', calendarError?.name ?? 'Error')"],
+    ['await ensureHolidayCalendarIndexes()', '} catch (indexError) {', "console.error('Failed to ensure holiday calendar indexes', indexError?.name ?? 'Error')"],
+    ['await migrateIndigenousLeaveQuota()', '} catch (quotaError) {', "console.error('Failed to migrate indigenous leave quota', quotaError?.name ?? 'Error')"],
+  ])('guards %s with its own try/catch that only logs the error name', (call, catchMarker, logLine) => {
+    const body = startBody()
+    const { callIndex, tryStart, catchStart, handler } = blockAround(body, call, catchMarker)
+
+    expect(callIndex).toBeGreaterThan(-1)
+    expect(tryStart).toBeGreaterThan(-1)
+    expect(body.slice(tryStart, callIndex)).not.toContain('}')
+    expect(catchStart).toBeGreaterThan(callIndex)
+    expect(handler).toContain(logLine)
+    expect(handler).not.toMatch(/process\.exit|throw /)
+  })
+
+  it('logs only counts after the calendar migration and the quota migration', () => {
+    const body = startBody()
+    const kinds = blockAround(body, 'await migrateHolidayCalendarKinds()', '} catch (calendarError) {').success
+    expect(kinds).toContain('if (calendarMigration?.rows) console.log(`Migrated holiday calendar kinds for ${calendarMigration.rows} rows in ${calendarMigration.years} years')
+    expect(kinds).toContain('Holiday rest resolutions on non-statutory dates: ${calendarMigration.orphanResolutions}')
+    expect(kinds).toContain('Holiday moves whose source is not a statutory holiday: ${calendarMigration.orphanMoves}')
+    expect(kinds).not.toMatch(/\.name\b|holidayName|employee/)
+
+    const quota = blockAround(body, 'await migrateIndigenousLeaveQuota()', '} catch (quotaError) {').success
+    expect(quota).toContain('Updated indigenous leave quota to 3 days in ${indigenousQuota.updated} stored leave policies')
+  })
+
+  it('starts the daily holiday calendar watcher inside app.listen, with the compensation sync, unless switched off', () => {
+    const body = startBody()
+    const listen = body.indexOf('app.listen(PORT, () => {')
+    const running = body.indexOf('console.log(`Server running on port ${PORT}`);')
+    const watcher = body.indexOf("if (process.env.HOLIDAY_CALENDAR_WATCHER !== 'off') startHolidayCalendarWatcher({ dailyTasks: [syncRecentHolidayCompensations] });")
+
+    expect(listen).toBeGreaterThan(-1)
+    expect(running).toBeGreaterThan(listen)
+    expect(watcher).toBeGreaterThan(running)
+    expect(body.slice(running, watcher)).not.toContain('});')
+    // 匯入 index.js 的測試很多：模組層級不能啟動計時器或連網路
+    expect(indexSource.slice(0, indexSource.indexOf('async function start()'))).not.toMatch(/startHolidayCalendarWatcher\(/)
+  })
+})

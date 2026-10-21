@@ -1,5 +1,6 @@
 // 國定假日休假紀錄：班表的「國」與國定假日的對應規則、有效假日清單、整月紀錄與匯入提醒。
 import { jest } from '@jest/globals';
+import { registerHolidayResolverModelMocks } from './helpers/holidayResolverMocks.js';
 
 const chain = (rows) => {
   const query = {
@@ -27,6 +28,8 @@ jest.unstable_mockModule('../src/models/HolidayRestResolution.js', () => ({ defa
 jest.unstable_mockModule('../src/services/approvedLeaveCalendarService.js', () => ({
   loadApprovedLeaveIntervals: mockLoadApprovedLeaveIntervals,
 }));
+// 國定假日判斷（holidayResolver）用到的年度行事曆、補假、個人調移：沒有替身 mongoose 會一直等連線
+const resolverMocks = await registerHolidayResolverModelMocks(jest);
 
 const {
   assignHolidayRests,
@@ -41,6 +44,7 @@ const {
   buildCountedHolidayDays,
   buildEffectiveMonthHolidays,
 } = await import('../src/services/countedHolidayService.js');
+const { createHolidayContext } = await import('../src/services/holidayResolver.js');
 
 const utc = (key) => new Date(`${key}T00:00:00.000Z`);
 // 台灣時間的時間點（毫秒）；請假區間的格式與 loadApprovedLeaveIntervals 相同（整天的假是台灣當天 00:00 到最後一天隔天 00:00）
@@ -347,8 +351,9 @@ describe('buildHolidayRestLedger (September 2026)', () => {
 
     expect(brief('A')).toEqual([['09-25', 'rested_on_date', '09-25', null, null], ['09-28', 'moved', '09-20', null, null]]);
     expect(byId.A).toMatchObject({ entitled: 2, rested: 1, moved: 1, notTaken: 0, open: 0, extraGuoDates: [] });
-    expect(brief('C')).toEqual([['09-25', 'not_taken', null, 'worked', 'resolve'], ['09-28', 'not_taken', null, 'on_rest_day', null]]);
-    expect(byId.C).toMatchObject({ entitled: 2, notTaken: 2, open: 1 });
+    // 9/28 剛好是 C 的休息日：依勞基法施行細則 §23-1 要另排補假，改成待處理的「待排補假」（以前只是提示）
+    expect(brief('C')).toEqual([['09-25', 'not_taken', null, 'worked', 'resolve'], ['09-28', 'not_taken', null, 'on_rest_day', 'assign_compensation']]);
+    expect(byId.C).toMatchObject({ entitled: 2, notTaken: 2, open: 2 });
     expect(brief('D')).toEqual([['09-25', 'na', null, 'before_hire', null], ['09-28', 'rested_on_date', '09-28', null, null]]);
     expect(byId.D.entitled).toBe(1);
     expect(byId.F).toMatchObject({ rested: 2, moved: 0, extraGuoDates: ['2026-09-30'] });
@@ -358,7 +363,7 @@ describe('buildHolidayRestLedger (September 2026)', () => {
     expect(brief('E').map((item) => item[3])).toEqual(['unscheduled', 'unscheduled']);
     expect(brief('E').map((item) => item[4])).toEqual([null, null]);
     expect(ledger.summary).toEqual({
-      employees: 5, holidays: 2, entitled: 9, rested: 4, moved: 1, notTaken: 4, open: 1, extra: 1, excluded: { notScheduled: 0 },
+      employees: 5, holidays: 2, entitled: 9, rested: 4, moved: 1, compensated: 0, notTaken: 4, open: 2, compensationOpen: 1, extra: 1, excluded: { notScheduled: 0 },
     });
     expect(byId.A).toMatchObject({ employeeNo: 'NA', name: '員工A', title: '護理師', subDepartmentName: '內科', partTime: false });
   });
@@ -374,7 +379,7 @@ describe('buildHolidayRestLedger (September 2026)', () => {
     expect(ledger.holidays[0]).toMatchObject({ date: '2026-09-24', originalDate: '2026-09-25', movedFrom: '2026-09-25' });
     const a = ledger.employees.find((entry) => entry.employeeId === 'A');
     const b = ledger.employees.find((entry) => entry.employeeId === 'B');
-    expect(a.items[0]).toMatchObject({ holidayId: '2026-09-25', holidayDate: '2026-09-24', status: 'rested_on_date', guoDate: '2026-09-24' });
+    expect(a.items[0]).toMatchObject({ holidayId: 'statutory:2026-09-25', holidayDate: '2026-09-24', status: 'rested_on_date', guoDate: '2026-09-24' });
     // B 把國留在原本的 9/25：算移休（比公司挪移後的日期晚一天）
     expect(b.items[0]).toMatchObject({ status: 'moved', guoDate: '2026-09-25', offsetDays: 1 });
   });
@@ -427,7 +432,9 @@ describe('buildHolidayRestLedger (September 2026)', () => {
     expect(item.status).toBe('not_taken');
     expect(item.needsAction).toBeNull();
     expect(item.resolution).toMatchObject({ id: 'r1', kind: 'compensatory_leave', compensatoryHours: 8, note: '改補休', resolvedByName: '主管王' });
-    expect(ledger.employees[0].open).toBe(0);
+    // 9/25 已登記不再算待處理；9/28 剛好是休息日，要排補假（以前休息日只是提示，所以原本是 0）
+    expect(ledger.employees[0].items[1]).toMatchObject({ reason: 'on_rest_day', needsAction: 'assign_compensation' });
+    expect(ledger.employees[0].open).toBe(1);
     expect(describeLedgerItem(item)).toBe('未休（補休）');
   });
 
@@ -470,7 +477,9 @@ describe('buildHolidayRestLedger (September 2026)', () => {
     const d = ledger.employees.find((entry) => entry.employeeId === 'D');
     expect(c.items[0]).toMatchObject({ status: 'rested_on_date', resolutionConflict: true, resolution: { id: 'r1', kind: 'waived' } });
     expect(d.items[0]).toMatchObject({ status: 'not_taken', resolutionConflict: false, resolution: { id: 'r2' }, needsAction: null });
-    expect(d.open).toBe(0);
+    // 登記過的 9/25 不算待處理；9/28 落在休息日要排補假（以前休息日只是提示）
+    expect(d.items[1]).toMatchObject({ reason: 'on_rest_day', needsAction: 'assign_compensation' });
+    expect(d.open).toBe(1);
   });
 
   it('leaves out resigned, unpaid-leave and no-scheduling employees who have no schedule, but keeps them when they do', async () => {
@@ -510,7 +519,8 @@ describe('buildHolidayRestLedger (September 2026)', () => {
       const without = await ledgerWithLeave([]);
 
       expect(itemOn925(withLeave)).toMatchObject({ status: 'not_taken', reason: 'worked', needsAction: 'resolve', dateKind: 'work' });
-      expect(withLeave.open).toBe(1);
+      // 另外 9/28 是休息日、要排補假（以前休息日只是提示，所以原本是 1）
+      expect(withLeave.open).toBe(2);
       expect(itemOn925(without)).toMatchObject({ reason: 'worked', needsAction: 'resolve' });
     });
 
@@ -518,7 +528,9 @@ describe('buildHolidayRestLedger (September 2026)', () => {
       const entry = await ledgerWithLeave([allDayLeave('2026-09-25')]);
 
       expect(itemOn925(entry)).toMatchObject({ status: 'not_taken', reason: 'on_leave', needsAction: null, dateKind: 'leave' });
-      expect(entry.open).toBe(0);
+      // 請假的 9/25 不是待處理；剩下的 1 件是 9/28 休息日要排補假（以前休息日只是提示，所以原本是 0）
+      expect(entry.items[1]).toMatchObject({ reason: 'on_rest_day', needsAction: 'assign_compensation' });
+      expect(entry.open).toBe(1);
     });
 
     it('treats a multi-day full leave that spans the holiday as leave', async () => {
@@ -694,7 +706,8 @@ describe('buildHolidayRestLedger (September 2026)', () => {
 
     expect(ledger).toMatchObject({ holidays: [], employees: [] });
     expect(mockShiftSchedule.find).not.toHaveBeenCalled();
-    expect(mockHolidayMoveSetting.find).not.toHaveBeenCalled();
+    // 公司挪移設定現在由 holidayResolver 和行事曆一起讀（每次固定一次查詢，挪移可以跨月），以前沒有國定假日時不讀
+    expect(mockHolidayMoveSetting.find).toHaveBeenCalledTimes(1);
   });
 
   it('uses preloaded holidays and moves without querying again, and rejects an invalid month', async () => {
@@ -920,5 +933,292 @@ describe('buildImportHolidayWarnings', () => {
     expect(partTime[0]).toContain('中秋節 09/25');
     expect(partTime[0]).not.toContain('教師節');
     expect(run({ status: '正職員工', partTime: true, appointment: { hireDate: new Date('2026-09-26T00:00:00.000Z') } })).toEqual([]);
+  });
+});
+
+/* ------------- 依員工判斷的應休國定假日（2026 年行事曆：16 個國定假日 + 6 個公務機關補假日） ------------- */
+describe('buildHolidayRestLedger with the per-employee holiday resolver (2026 calendar)', () => {
+  const STATUTORY_2026 = [
+    ['2026-01-01', '開國紀念日'], ['2026-02-15', '小年夜'], ['2026-02-16', '農曆除夕'], ['2026-02-17', '春節'],
+    ['2026-02-18', '春節'], ['2026-02-19', '春節'], ['2026-02-28', '和平紀念日'], ['2026-04-04', '兒童節'],
+    ['2026-04-05', '民族掃墓節'], ['2026-05-01', '勞動節'], ['2026-06-19', '端午節'], ['2026-09-25', '中秋節'],
+    ['2026-09-28', '孔子誕辰紀念日/教師節'], ['2026-10-10', '國慶日'], ['2026-10-25', '臺灣光復暨金門古寧頭大捷紀念日'],
+    ['2026-12-25', '行憲紀念日'],
+  ];
+  const GOVERNMENT_2026 = [
+    ['2026-02-20', '2026-02-15', '小年夜'], ['2026-02-27', '2026-02-28', '和平紀念日'], ['2026-04-03', '2026-04-04', '兒童節'],
+    ['2026-04-06', '2026-04-05', '民族掃墓節'], ['2026-10-09', '2026-10-10', '國慶日'], ['2026-10-26', '2026-10-25', '臺灣光復暨金門古寧頭大捷紀念日'],
+  ];
+  const rows2026 = () => [
+    ...STATUTORY_2026.map(([key, name]) => ({ _id: `h${key}`, date: utc(key), name, kind: 'statutory', archived: false })),
+    ...GOVERNMENT_2026.map(([key, link, linkName]) => ({
+      _id: `g${key}`, date: utc(key), name: '補假', kind: 'gov_makeup_off', compensatesDate: utc(link), compensatesName: linkName, archived: false,
+    })),
+  ];
+  const SHIFTS = [
+    { _id: 'day', code: '日', name: '日班', semanticType: 'work', startTime: '08:00', endTime: '17:00' },
+    { _id: 'rest', code: '休', name: '休假', semanticType: 'rest_day', startTime: '00:00', endTime: '00:00' },
+    { _id: 'off', code: '例', name: '例假', semanticType: 'regular_rest', startTime: '00:00', endTime: '00:00' },
+    { _id: 'guo', code: '國', name: '國定假日', semanticType: 'holiday', startTime: '00:00', endTime: '00:00' },
+  ];
+  const row = (employee, key, shiftId, state = 'finalized') => ({ employee, date: utc(key), shiftId, state });
+  const nurse = (id, extra = {}) => ({ _id: id, employeeId: `N${id}`, name: `護理${id}`, status: '正職員工', ...extra });
+  const office = (id, extra = {}) => ({ _id: id, employeeId: `O${id}`, name: `行政${id}`, status: '正職員工', requiresScheduling: false, ...extra });
+  const contextFor = (start, end, extra = {}) => createHolidayContext({
+    start, end, rows: rows2026(), years: [{ year: 2026, state: 'approved' }], ...extra,
+  });
+  const brief = (entry) => entry.items.map((item) => [item.holidayDate.slice(5), item.status, item.needsAction]);
+
+  beforeEach(() => {
+    jest.resetAllMocks();
+    mockAttendanceSetting.findOne.mockReturnValue(chain({ shifts: SHIFTS }));
+    mockLoadApprovedLeaveIntervals.mockResolvedValue(new Map());
+    mockHolidayRestResolution.find.mockReturnValue(chain([]));
+    mockEmployee.find.mockReturnValue(chain([]));
+    mockShiftSchedule.find.mockReturnValue(chain([]));
+  });
+
+  it('gives a roster nurse the 6 statutory days of February 2026 (not 8): government make-up days are no columns', async () => {
+    mockShiftSchedule.find.mockReturnValue(chain([
+      ...['2026-02-15', '2026-02-16', '2026-02-17', '2026-02-18', '2026-02-19'].map((key) => row('A', key, 'guo')),
+      row('A', '2026-02-20', 'day'), row('A', '2026-02-27', 'day'), row('A', '2026-02-28', 'rest'),
+    ]));
+
+    const ledger = await buildHolidayRestLedger({
+      month: '2026-02', employees: [nurse('A')], today: new Date('2026-03-05T04:00:00.000Z'), holidayContext: contextFor('2026-02-01', '2026-03-01'),
+    });
+
+    expect(ledger.holidays.map((holiday) => holiday.date)).toEqual(['2026-02-15', '2026-02-16', '2026-02-17', '2026-02-18', '2026-02-19', '2026-02-28']);
+    expect(ledger.holidays.every((holiday) => holiday.id.startsWith('statutory:') && holiday.personal === false)).toBe(true);
+    const [a] = ledger.employees;
+    expect(a).toMatchObject({ regime: 'roster', entitled: 6, rested: 5, compensated: 0, notTaken: 1, open: 1 });
+    // 2/28 和平紀念日是 A 的休息日：要另排補假，不是用公務機關的 2/27
+    expect(a.items.at(-1)).toMatchObject({ holidayDate: '2026-02-28', status: 'not_taken', reason: 'on_rest_day', needsAction: 'assign_compensation', compensation: null });
+    expect(describeLedgerItem(a.items.at(-1))).toBe('待排補假');
+    expect(ledger.summary).toMatchObject({ entitled: 6, compensationOpen: 1 });
+    expect(ledger.calendar).toEqual({ year: 2026, state: 'approved', provisional: false });
+  });
+
+  it('counts 16 statutory days for a roster nurse over 2026, and 16 + 6 government make-up days off for office staff', async () => {
+    const context = contextFor('2025-12-25', '2027-01-08');
+    const months = Array.from({ length: 12 }, (_, index) => `2026-${String(index + 1).padStart(2, '0')}`);
+    const totals = { nurse: { entitled: 0, rested: 0 }, office: { entitled: 0, rested: 0, compensated: 0 } };
+    for (const month of months) {
+      // 護理 A 每個國定假日當天都排「國」；行政 O 每月 2 日有一筆班表（才會列入），其餘依行事曆
+      mockShiftSchedule.find.mockReturnValue(chain([
+        ...STATUTORY_2026.filter(([key]) => key.startsWith(month)).map(([key]) => row('A', key, 'guo')),
+        row('O', `${month}-02`, 'day'),
+      ]));
+      const ledger = await buildHolidayRestLedger({
+        month, employees: [nurse('A'), office('O')], today: new Date('2027-01-05T04:00:00.000Z'), holidayContext: context,
+      });
+      const a = ledger.employees.find((entry) => entry.employeeId === 'A');
+      const o = ledger.employees.find((entry) => entry.employeeId === 'O');
+      totals.nurse.entitled += a?.entitled || 0;
+      totals.nurse.rested += a?.rested || 0;
+      totals.office.entitled += o?.entitled || 0;
+      totals.office.rested += o?.rested || 0;
+      totals.office.compensated += o?.compensated || 0;
+    }
+    expect(totals.nurse).toEqual({ entitled: 16, rested: 16 });
+    // 行政人員：16 個國定假日都應休；落在週末的 6 個用公務機關補假日補（2/20、2/27、4/3、4/6、10/9、10/26），全年放假 22 天
+    expect(totals.office).toEqual({ entitled: 16, rested: 10, compensated: 6 });
+  });
+
+  it('lets office staff without a roster rest by the calendar, uses the government make-up day for a weekend holiday, and leaves them out when nothing is to do', async () => {
+    const ledger = await buildHolidayRestLedger({
+      month: '2026-02', employees: [office('O1')], today: new Date('2026-03-05T04:00:00.000Z'), holidayContext: contextFor('2026-02-01', '2026-03-01'),
+    });
+    // 2/15（週日）、2/28（週六）都有公務機關補假日（2/20、2/27），其餘是平日依行事曆放假：沒有要處理的事，不列入
+    expect(ledger.employees).toEqual([]);
+    expect(ledger.summary.excluded.notScheduled).toBe(1);
+  });
+
+  it('shows the government make-up date as the 補假 of an office employee who has some roster rows', async () => {
+    mockShiftSchedule.find.mockReturnValue(chain([row('O2', '2026-02-02', 'day')]));
+    const ledger = await buildHolidayRestLedger({
+      month: '2026-02', employees: [office('O2', { holidayRegime: 'office' })], today: new Date('2026-03-05T04:00:00.000Z'),
+      holidayContext: contextFor('2026-02-01', '2026-03-01'),
+    });
+    const [o2] = ledger.employees;
+    expect(o2.regime).toBe('office');
+    expect(brief(o2)).toEqual([
+      ['02-15', 'compensated', null], ['02-16', 'rested_on_date', null], ['02-17', 'rested_on_date', null],
+      ['02-18', 'rested_on_date', null], ['02-19', 'rested_on_date', null], ['02-28', 'compensated', null],
+    ]);
+    expect(o2.items[1].implicit).toBe(true);
+    expect(describeLedgerItem(o2.items[1])).toBe('依行事曆放假');
+    expect(o2.items[5].compensation).toMatchObject({ date: '2026-02-27', via: 'gov_makeup', conflict: false });
+    expect(describeLedgerItem(o2.items[5])).toBe('補假 02/27（公務機關補假日）');
+    expect(o2.compensations.map((entry) => [entry.date, entry.via, entry.taken])).toEqual([['2026-02-20', 'gov_makeup', true], ['2026-02-27', 'gov_makeup', true]]);
+    expect(o2).toMatchObject({ entitled: 6, rested: 4, compensated: 2, notTaken: 0, open: 0 });
+  });
+
+  it('lists an office employee for a weekend statutory day without a government make-up day and syncs an office_weekend obligation (2021-05-01)', async () => {
+    const context = createHolidayContext({
+      start: '2021-04-24',
+      end: '2021-06-08',
+      rows: [{ _id: 'labor', date: utc('2021-05-01'), name: '勞動節', kind: 'statutory', archived: false }],
+      years: [{ year: 2021, state: 'approved' }],
+    });
+    resolverMocks.HolidayCompensation.bulkWrite.mockResolvedValue({ upsertedCount: 1 });
+    const ledger = await buildHolidayRestLedger({
+      month: '2021-05', employees: [office('O3')], today: new Date('2021-06-02T04:00:00.000Z'), holidayContext: context, syncCompensations: true,
+    });
+
+    expect(ledger.employees.map((entry) => entry.employeeId)).toEqual(['O3']);
+    expect(ledger.employees[0].items[0]).toMatchObject({ status: 'not_taken', reason: 'on_rest_day', needsAction: 'assign_compensation' });
+    const [ops] = resolverMocks.HolidayCompensation.bulkWrite.mock.calls[0];
+    expect(ops).toHaveLength(1);
+    expect(ops[0].updateOne.upsert).toBe(true);
+    expect(ops[0].updateOne.filter).toEqual({ employee: 'O3', holidayDate: utc('2021-05-01') });
+    expect(ops[0].updateOne.update.$setOnInsert).toMatchObject({
+      status: 'open', origin: 'office_weekend', dayKindAtDetection: 'office_rest_day', holidayName: '勞動節', suggestedDate: utc('2021-05-03'),
+    });
+    expect(ledger.sync).toEqual({ created: 1, voided: 0, reopened: 0, conflicts: 0 });
+  });
+
+  it('marks a holiday on a rostered rest day as compensated once HR assigned the 補假, and the 國 on that day is not an extra 國', async () => {
+    mockShiftSchedule.find.mockReturnValue(chain([
+      row('A', '2026-10-10', 'rest'), row('A', '2026-10-14', 'guo'), row('A', '2026-10-25', 'guo'),
+    ]));
+    const context = contextFor('2026-10-01', '2026-11-01', {
+      compensations: [{ _id: 'c1', employee: 'A', holidayDate: utc('2026-10-10'), assignedDate: utc('2026-10-14'), status: 'assigned', holidayName: '國慶日' }],
+    });
+    const ledger = await buildHolidayRestLedger({ month: '2026-10', employees: [nurse('A')], today: new Date('2026-11-03T04:00:00.000Z'), holidayContext: context });
+
+    const [a] = ledger.employees;
+    expect(brief(a)).toEqual([['10-10', 'compensated', null], ['10-25', 'rested_on_date', null]]);
+    expect(a.items[0].compensation).toMatchObject({ date: '2026-10-14', via: 'assigned', compensationId: 'c1', conflict: false });
+    expect(describeLedgerItem(a.items[0])).toBe('補假 10/14');
+    expect(a.extraGuoDates).toEqual([]);
+    expect(a.compensations).toEqual([{ date: '2026-10-14', originalDate: '2026-10-10', holidayName: '國慶日', via: 'assigned', compensationId: 'c1', taken: true }]);
+    expect(a).toMatchObject({ compensated: 1, open: 0 });
+  });
+
+  it('keeps an assigned 補假 when the roster changes afterwards and flags it for review instead', async () => {
+    mockShiftSchedule.find.mockReturnValue(chain([row('A', '2026-10-10', 'guo'), row('A', '2026-10-25', 'guo')]));
+    const context = contextFor('2026-10-01', '2026-11-01', {
+      compensations: [{ _id: 'c1', employee: 'A', holidayDate: utc('2026-10-10'), assignedDate: utc('2026-10-14'), status: 'assigned', holidayName: '國慶日' }],
+    });
+    const ledger = await buildHolidayRestLedger({ month: '2026-10', employees: [nurse('A')], today: new Date('2026-11-03T04:00:00.000Z'), holidayContext: context });
+    const item = ledger.employees[0].items[0];
+    expect(item).toMatchObject({ status: 'rested_on_date', compensation: { date: '2026-10-14', conflict: true } });
+    expect(describeLedgerItem(item)).toBe('補假 10/14（班表已變更，請確認）');
+    expect(ledger.employees[0].open).toBe(1);
+  });
+
+  it('lists a designated day only for employees scheduled to work it and not excluded', async () => {
+    const designated = { _id: 'd1', date: utc('2026-11-28'), name: '公民投票日', kind: 'designated', excludedEmployees: ['C'], archived: false };
+    mockShiftSchedule.find.mockReturnValue(chain([row('A', '2026-11-28', 'day'), row('B', '2026-11-28', 'rest'), row('C', '2026-11-28', 'day')]));
+    const context = createHolidayContext({ start: '2026-11-01', end: '2026-12-01', rows: [...rows2026(), designated], years: [{ year: 2026, state: 'approved' }] });
+    const ledger = await buildHolidayRestLedger({
+      month: '2026-11', employees: [nurse('A'), nurse('B'), nurse('C')], today: new Date('2026-12-03T04:00:00.000Z'), holidayContext: context,
+    });
+    expect(ledger.holidays.map((holiday) => [holiday.id, holiday.type])).toEqual([['designated:2026-11-28', 'designated']]);
+    const byId = Object.fromEntries(ledger.employees.map((entry) => [entry.employeeId, entry]));
+    expect(byId.A.items).toEqual([expect.objectContaining({ type: 'designated', status: 'not_taken', reason: 'worked', needsAction: 'resolve' })]);
+    // B 當天休息、C 沒有投票權（排除）：沒有這個項目，也沒有其他國定假日，不列入
+    expect(byId.B).toBeUndefined();
+    expect(byId.C).toBeUndefined();
+    expect(ledger.summary.excluded.notScheduled).toBe(2);
+  });
+
+  it('builds the columns as the union of everyone, with a personal column for a swap into another month', async () => {
+    const swaps = [{ _id: 's1', employee: 'A', originalDate: utc('2026-09-28'), targetDate: utc('2026-10-05'), status: 'active', originalName: '孔子誕辰紀念日/教師節' }];
+    mockShiftSchedule.find.mockReturnValue(chain([
+      row('A', '2026-10-05', 'guo'), row('A', '2026-10-10', 'guo'), row('A', '2026-10-25', 'guo'),
+      row('B', '2026-10-10', 'guo'), row('B', '2026-10-25', 'guo'),
+    ]));
+    const october = await buildHolidayRestLedger({
+      month: '2026-10', employees: [nurse('A'), nurse('B')], today: new Date('2026-11-03T04:00:00.000Z'), holidayContext: contextFor('2026-10-01', '2026-11-01', { swaps }),
+    });
+    expect(october.holidays.map((holiday) => [holiday.id, holiday.date, holiday.personal])).toEqual([
+      ['statutory:2026-09-28', '2026-09-28', true],
+      ['statutory:2026-10-10', '2026-10-10', false],
+      ['statutory:2026-10-25', '2026-10-25', false],
+    ]);
+    const a = october.employees.find((entry) => entry.employeeId === 'A');
+    const b = october.employees.find((entry) => entry.employeeId === 'B');
+    expect(a.items[0]).toMatchObject({ holidayId: 'statutory:2026-09-28', holidayDate: '2026-10-05', via: 'swap', status: 'rested_on_date' });
+    expect(a.swaps).toEqual([{ id: 's1', originalDate: '2026-09-28', targetDate: '2026-10-05' }]);
+    expect(b.items.map((item) => item.holidayId)).toEqual(['statutory:2026-10-10', 'statutory:2026-10-25']);
+
+    mockShiftSchedule.find.mockReturnValue(chain([row('A', '2026-09-28', 'day'), row('B', '2026-09-28', 'guo'), row('A', '2026-09-25', 'guo'), row('B', '2026-09-25', 'guo')]));
+    const september = await buildHolidayRestLedger({
+      month: '2026-09', employees: [nurse('A'), nurse('B')], today: new Date('2026-10-03T04:00:00.000Z'), holidayContext: contextFor('2026-09-01', '2026-10-01', { swaps }),
+    });
+    const aSep = september.employees.find((entry) => entry.employeeId === 'A');
+    // 9/28 對 A 是一般工作日（已調移到 10/5），沒有這個項目；B 照常
+    expect(aSep.items.map((item) => item.holidayId)).toEqual(['statutory:2026-09-25']);
+    expect(aSep.swaps).toEqual([{ id: null, originalDate: '2026-09-28', targetDate: '2026-10-05' }]);
+    expect(september.holidays.find((holiday) => holiday.id === 'statutory:2026-09-28').personal).toBe(false);
+  });
+
+  it('does not write anything while the roster is still a draft, and creates one open obligation per holiday once it is final', async () => {
+    const context = contextFor('2026-10-01', '2026-11-01');
+    resolverMocks.HolidayCompensation.bulkWrite.mockResolvedValue({ upsertedCount: 1 });
+    mockShiftSchedule.find.mockReturnValue(chain([row('A', '2026-10-10', 'rest', 'draft'), row('A', '2026-10-25', 'guo', 'draft')]));
+    const draft = await buildHolidayRestLedger({
+      month: '2026-10', employees: [nurse('A')], today: new Date('2026-10-05T04:00:00.000Z'), holidayContext: context, syncCompensations: true,
+    });
+    expect(draft.employees[0].items[0]).toMatchObject({ reason: 'on_rest_day', needsAction: 'schedule' });
+    expect(resolverMocks.HolidayCompensation.bulkWrite).not.toHaveBeenCalled();
+
+    mockShiftSchedule.find.mockReturnValue(chain([
+      row('A', '2026-10-10', 'rest'), row('A', '2026-10-12', 'day'), row('A', '2026-10-25', 'guo'),
+    ]));
+    const final = await buildHolidayRestLedger({
+      month: '2026-10', employees: [nurse('A')], today: new Date('2026-10-05T04:00:00.000Z'), holidayContext: context, syncCompensations: true,
+    });
+    expect(final.sync.created).toBe(1);
+    const [ops] = resolverMocks.HolidayCompensation.bulkWrite.mock.calls[0];
+    // 建議日：國定假日之後第一個排上班的日子（10/12）
+    expect(ops[0].updateOne.update.$setOnInsert).toMatchObject({ origin: 'roster_rest_day', dayKindAtDetection: 'rest_day', suggestedDate: utc('2026-10-12') });
+  });
+});
+
+describe('buildImportHolidayWarnings with the per-employee holiday resolver', () => {
+  const rows = [
+    ...['2026-02-15', '2026-02-16', '2026-02-17', '2026-02-18', '2026-02-19', '2026-02-28'].map((key) => ({ date: utc(key), name: key === '2026-02-28' ? '和平紀念日' : '春節', kind: 'statutory' })),
+    { date: utc('2026-02-20'), name: '補假', kind: 'gov_makeup_off', compensatesDate: utc('2026-02-15') },
+    { date: utc('2026-02-27'), name: '補假', kind: 'gov_makeup_off', compensatesDate: utc('2026-02-28') },
+  ];
+  const context = () => createHolidayContext({ start: '2026-02-01', end: '2026-03-01', rows, years: [{ year: 2026, state: 'approved' }] });
+  const guoCells = (keys) => keys.map((key) => ({ rowNumber: 5, day: Number(key.slice(8)), code: '國', dateKey: key }));
+
+  it('counts the statutory days of that employee only: a 國 on a government make-up day is an extra 國 for a roster nurse', () => {
+    const keys = ['2026-02-15', '2026-02-16', '2026-02-17', '2026-02-18', '2026-02-19', '2026-02-20', '2026-02-27'];
+    const warnings = buildImportHolidayWarnings({
+      month: '2026-02',
+      holidayContext: context(),
+      states: [{
+        id: 'A', employee: { _id: 'A', status: '正職員工' }, rowNumber: 5, employeeCode: 'NA',
+        cells: guoCells(keys), candidateKinds: new Map([...keys.map((key) => [key, 'holiday']), ['2026-02-28', 'rest_day']]),
+      }],
+      fullMonth: false,
+    });
+    // 輪班人員只有 6 個國定假日（2/20、2/27 是公務機關補假日，不算）：7 個國配完 6 個（2/20 的國配給 2/28），2/27 的國多出來
+    expect(warnings.map((warning) => warning.day)).toEqual([27]);
+    expect(warnings[0].message).toContain('只有 6 個國定假日');
+  });
+
+  it('keeps the old company-level list when no context is given', () => {
+    const warnings = buildImportHolidayWarnings({
+      holidays: [{ id: '2026-02-16', name: '春節', date: '2026-02-16', originalDate: '2026-02-16', movedFrom: null }],
+      states: [{ id: 'A', employee: { status: '正職員工' }, rowNumber: 5, employeeCode: 'NA', cells: guoCells(['2026-02-16', '2026-02-17']), candidateKinds: new Map([['2026-02-16', 'holiday'], ['2026-02-17', 'holiday']]) }],
+    });
+    expect(warnings.map((warning) => warning.day)).toEqual([17]);
+    expect(warnings[0].message).toContain('只有 1 個國定假日');
+  });
+});
+
+describe('describeLedgerItem for 補假', () => {
+  it('describes compensated, waiting and conflicting 補假 cells', () => {
+    expect(describeLedgerItem({ status: 'compensated', compensation: { date: '2026-10-14', via: 'assigned' } })).toBe('補假 10/14');
+    expect(describeLedgerItem({ status: 'compensated', compensation: { date: '2026-02-27', via: 'gov_makeup' } })).toBe('補假 02/27（公務機關補假日）');
+    expect(describeLedgerItem({ status: 'not_taken', reason: 'on_rest_day', needsAction: 'assign_compensation' })).toBe('待排補假');
+    expect(describeLedgerItem({ status: 'rested_on_date', implicit: true })).toBe('依行事曆放假');
+    expect(describeLedgerItem({ status: 'moved', guoDate: '2026-10-03', compensation: { date: '2026-10-14', conflict: true } })).toBe('補假 10/14（班表已變更，請確認）');
   });
 });

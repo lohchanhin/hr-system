@@ -16,6 +16,7 @@ import { INACTIVE_EMPLOYMENT_STATUSES } from '../services/approverEligibility.js
 import { splitSignTagText } from '../utils/signTags.js'
 import { exceedsLegacyDaysMax, interpretLegacyAnnualLeave } from '../utils/annualLeaveHours.js'
 import { LEGACY_ANNUAL_LEAVE_DAYS_MAX } from '../config/leavePolicyConfig.js'
+import { parseHolidayRegime } from '../services/holidayCalendarRules.js'
 
 const REQUIRED_MAPPING_KEYS = ['employeeNo', 'name', 'email']
 const VALID_ROLES = ['employee', 'supervisor', 'admin']
@@ -49,6 +50,8 @@ const DEFAULT_COLUMN_MAPPINGS = Object.freeze({
   probationDays: 'probationDays',
   isPartTime: 'partTime',
   isClocking: 'needClockIn',
+  holidayRegime: 'holidayRegime',
+  isIndigenous: 'isIndigenous',
   educationLevel: 'education_level',
   schoolName: 'education_school',
   major: 'education_major',
@@ -108,7 +111,7 @@ const CHINESE_HEADER_HINTS = new Set([
   '人員狀態 (正職員工/試用期/離職/留職停薪)'
 ])
 
-const BOOLEAN_FIELDS = new Set(['isPartTime', 'partTime', 'isClocking', 'needClockIn'])
+const BOOLEAN_FIELDS = new Set(['isPartTime', 'partTime', 'isClocking', 'needClockIn', 'isIndigenous'])
 const DATE_FIELDS = new Set([
   'birthday',
   'hireDate',
@@ -159,7 +162,9 @@ const OPTIONAL_COLUMN_KEYS = new Set([
   'dependentCount',
   'signTags',
   'signRole',
-  'signLevel'
+  'signLevel',
+  'holidayRegime',
+  'isIndigenous'
 ])
 
 // 客戶實際拿到的 Excel，第 1 列是英文欄位名，但後加的欄位只有第 2 列的中文說明。
@@ -178,7 +183,9 @@ const HEADER_LABEL_FALLBACKS = Object.freeze({
   dependentCount: ['眷口數'],
   signTags: ['簽核標籤', '員工標籤'],
   signRole: ['簽核角色'],
-  signLevel: ['簽核層級']
+  signLevel: ['簽核層級'],
+  holidayRegime: ['假日制度'],
+  isIndigenous: ['原住民身分', '原住民']
 })
 
 const NUMBER_FIELD_LABELS = Object.freeze({
@@ -1668,6 +1675,14 @@ export async function bulkImportEmployees(req, res) {
 
     if (!VALID_ROLES.includes(row.normalized.role)) {
       row.errors.push('權限設定不正確')
+    }
+
+    // 假日制度：輪班／行政；空白不動（更新）或不設定（新增，依是否需要排班推算）
+    if ('holidayRegime' in row.normalized) {
+      const regime = parseHolidayRegime(row.normalized.holidayRegime)
+      if (regime === undefined) row.errors.push('假日制度只能填「輪班」或「行政」')
+      else if (regime === null) delete row.normalized.holidayRegime
+      else row.normalized.holidayRegime = regime
     }
   })
 
