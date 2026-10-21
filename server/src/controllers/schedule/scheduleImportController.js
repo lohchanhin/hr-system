@@ -3,7 +3,7 @@ import Employee from '../../models/Employee.js';
 import AttendanceSetting from '../../models/AttendanceSetting.js';
 import Holiday from '../../models/Holiday.js';
 import { randomUUID } from 'node:crypto';
-import { loadApprovedLeaveCalendar, loadApprovedLeaveIntervals } from '../../services/approvedLeaveCalendarService.js';
+import { loadApprovedLeaveIntervals } from '../../services/approvedLeaveCalendarService.js';
 import {
   assertScheduleRuleCompliance,
   isLaborRuleValidationError,
@@ -15,13 +15,14 @@ import {
 import { isScheduleRuleExempt } from '../../services/scheduleRuleExemptionService.js';
 import { normalizeEmployeeIdentifier } from '../../services/employeeIdentityService.js';
 import { buildShiftIdentityLookup } from '../../services/shiftIdentityService.js';
-import { isNonWorkShift } from '../../services/shiftSemanticService.js';
+import { ROSTER_LEAVE_BLOCK } from '../../services/leaveCoverageService.js';
 import HolidayMoveSetting from '../../models/HolidayMoveSetting.js';
 import { buildEffectiveMonthHolidays } from '../../services/countedHolidayService.js';
 import { buildImportHolidayWarnings } from '../../services/holidayRestLedgerService.js';
 import {
   toEntityId,
   getAllowedScheduleEmployeeIds,
+  buildRosterLeaveChecks,
   buildMonthDays,
   buildMonthRange,
   describePendingWeeks,
@@ -197,8 +198,9 @@ export async function importSchedules(req, res) {
       .map((row) => employeeByCode.get(normalizeEmployeeIdentifier(row.employeeId))?._id)
       .filter(Boolean)
       .map((employeeId) => [toEntityId(employeeId), employeeId])).values()];
-    const [leaveCalendar, holidays, existingSchedules] = await Promise.all([
-      loadApprovedLeaveCalendar({ employeeIds: importedEmployeeIds, start: range.start, end: range.end }),
+    // 核准請假只讀一次（時間區間）：每一格用自己的班別判斷，只請幾小時的假不擋上班班別；國定假日核對也共用這一份
+    const [approvedLeaveIntervals, holidays, existingSchedules] = await Promise.all([
+      loadApprovedLeaveIntervals({ employeeIds: importedEmployeeIds, start: range.start, end: range.end }),
       Holiday.find({ date: { $gte: range.start, $lt: range.end } }).lean(),
       importedEmployeeIds.length
         ? ShiftSchedule.find({
@@ -216,6 +218,7 @@ export async function importSchedules(req, res) {
     }
     const effectiveHolidays = buildEffectiveMonthHolidays({ holidays: holidays || [], moves: importHolidayMoves, month });
     const holidayEmployeeStates = new Map();
+    const leaveCheckOf = buildRosterLeaveChecks(approvedLeaveIntervals);
     const existingByKey = new Map((existingSchedules || []).map((schedule) => [
       `${toEntityId(schedule.employee)}:${new Date(schedule.date).toISOString().slice(0, 10)}`,
       schedule,
@@ -256,7 +259,9 @@ export async function importSchedules(req, res) {
       for (const entry of row.entries) {
         const dateKey = `${month}-${String(entry.day).padStart(2, '0')}`;
         const code = normalizeWorkbookCode(entry.code);
-        const onApprovedLeave = Boolean(leaveCalendar.get(employeeId)?.has(dateKey));
+        const leaveCheck = leaveCheckOf(employeeId);
+        // 當天有沒有任何核准請假（不論幾小時）：請假班別沒有對應假單的提醒用
+        const onApprovedLeave = leaveCheck.hasLeaveOn(dateKey);
         const shift = findImportShift(shiftByCode, entry);
         if (!shift) {
           // 國定假日／請假代碼：班別設定裡沒定義才退回「僅供核對」的舊行為，並提醒管理員去定義
@@ -275,9 +280,14 @@ export async function importSchedules(req, res) {
           errors.push(scheduleImportError(row.rowNumber, entry.day, entry.code, unknownShiftMessage(entry)));
           continue;
         }
-        // 已核准請假日：不用上班的班別（休息日、例假、國定假日、請假）不算衝突，上班班別才擋
-        if (onApprovedLeave && !isNonWorkShift(shift)) {
-          errors.push(scheduleImportError(row.rowNumber, entry.day, entry.code, '該日期已有核准請假，無法匯入班別'));
+        // 已核准請假：不用上班的班別（休息日、例假、國定假日、請假）不算衝突；上班班別只有核准的整天請假、
+        // 或有時分的請假涵蓋整個班次時才擋，只請幾小時的假不擋（與國定假日休假紀錄同一個判斷）
+        const leaveBlock = leaveCheck.reason(dateKey, shift);
+        if (leaveBlock) {
+          const message = leaveBlock === ROSTER_LEAVE_BLOCK.COVERS_SHIFT
+            ? '該日期已有核准請假涵蓋整個班別，無法匯入班別'
+            : '該日期已有核准請假，無法匯入班別';
+          errors.push(scheduleImportError(row.rowNumber, entry.day, entry.code, message));
           continue;
         }
         const existing = existingByKey.get(`${employeeId}:${dateKey}`);
@@ -316,10 +326,10 @@ export async function importSchedules(req, res) {
 
     const monthDayCount = buildMonthDays(range.start).length;
     const fullMonthFile = parsed.columns.length === monthDayCount;
-    // 國定假日有沒有休到要看請假的時間：只請幾小時的假不算整天請假（日曆版的 leaveCalendar 只知道哪幾天有假）。
-    // 只有整月檔案才核對有沒有休到，所以其他情況不多查一次假單
+    // 國定假日有沒有休到要看請假的時間：只請幾小時的假不算整天請假。
+    // 只有整月檔案才核對有沒有休到；請假區間上面已經讀過，不再多查一次假單
     const leaveIntervals = fullMonthFile && effectiveHolidays.length && importedEmployeeIds.length
-      ? await loadApprovedLeaveIntervals({ employeeIds: importedEmployeeIds, start: range.start, end: range.end })
+      ? approvedLeaveIntervals
       : null;
     // 國定假日核對：只提醒多排的國；整月檔案另外提醒本月國定假日當天上班、卻沒有國可對應的員工（移休後仍沒休到）
     warnings.push(...buildImportHolidayWarnings({

@@ -829,6 +829,8 @@ import { buildShiftStyle } from '../../utils/shiftColors'
 import { ROW_COLOR_PALETTE, normalizeRowColorIndex, resolveRowColor } from '../../utils/rowColors'
 import { buildMonthDays, buildHolidayMap } from '../../utils/scheduleCalendar'
 import { formatTaipeiDate } from '../../utils/approvalDisplay'
+import { describeLeaveDays, parseLeaveInterval } from '../../utils/leaveHours'
+import { leaveCoversRosteredShift, isNonWorkShift as isCoverageNonWorkShift } from '../../utils/leaveCoverage'
 import {
   buildCellKey,
   parseCellKey,
@@ -1148,8 +1150,14 @@ const canApplyRowColor = computed(() => {
 
 // ✅ 用 "::" 當分隔，避免 ObjectId 裡面的 "-" 把字串拆爛
 
-// ✅ 這個月所有「已核准」請假的快取：{ [empId]: { [dayNumber]: true } }
+// ✅ 這個月所有「已核准」請假的快取：{ [empId]: { [dayNumber]: true | LEAVE_COVERS_SHIFT } }
+// true：整天請假（含有時分的假整天都在請假中的日子）；LEAVE_COVERS_SHIFT：有時分的假涵蓋了這天排的整個上班班別。
+// 兩種都和以前一樣當作請假日（休假中、不能排班），與伺服器的完整性檢查、匯出、國定假日休假紀錄一致
 const leaveIndex = shallowRef({})
+const LEAVE_COVERS_SHIFT = 'covers_shift'
+// 只請幾小時的假（沒有整天都在請假中，也沒有涵蓋這天排的整個上班班別）：{ [empId]: { [dayNumber]: 請假時數 } }。
+// 這些日子仍可排班（存檔時伺服器用所選的班別判斷），格子上只提示有請假
+const partialLeaveHours = shallowRef({})
 
 // 只用 leaveIndex 判斷該格是不是請假日
 const isLeaveCell = (empId, day) => {
@@ -1157,6 +1165,9 @@ const isLeaveCell = (empId, day) => {
   if (!empLeaves) return false
   return !!empLeaves[Number(day)]
 }
+
+// 只請幾小時的日子：仍可排班，但員工狀態（排班中／未排班／請假中）和以前、和伺服器的狀態篩選一樣算「有請假」
+const hasPartialLeave = (empId, day) => !!partialLeaveHours.value[String(empId)]?.[Number(day)]
 
 const shiftInfoMap = computed(() => {
   const map = new Map()
@@ -1200,8 +1211,8 @@ const recomputeEmployeeStatusFor = empId => {
   if (!cells.length) {
     status = 'unscheduled'
   } else {
-    const hasAnyEmptyDay = cells.some(c => !c.shiftId && !c.leave && !isLeaveCell(safeEmpId, c.day))
-    const hasAnyLeave = cells.some(c => c.leave || isLeaveCell(safeEmpId, c.day))
+    const hasAnyEmptyDay = cells.some(c => !c.shiftId && !c.leave && !isLeaveCell(safeEmpId, c.day) && !hasPartialLeave(safeEmpId, c.day))
+    const hasAnyLeave = cells.some(c => c.leave || isLeaveCell(safeEmpId, c.day) || hasPartialLeave(safeEmpId, c.day))
     if (hasAnyEmptyDay) status = 'unscheduled'
     else if (hasAnyLeave) status = 'onLeave'
   }
@@ -1227,6 +1238,7 @@ const getCellMeta = (empId, day) => {
   const shiftId = scheduleMap.value?.[empId]?.[day]?.shiftId
   const computedMeta = {
     isLeave,
+    partialLeaveHours: isLeave ? 0 : Number(partialLeaveHours.value[String(empId)]?.[Number(day)] || 0),
     hasShift: !isLeave && !!shiftId,
     missingShift: !isLeave && !shiftId,
     style: !isLeave ? shiftClass(shiftId) : {}
@@ -1238,6 +1250,13 @@ const getCellMeta = (empId, day) => {
   perfMetrics.cellMetaComputeCount += 1
   perfMetrics.cellMetaTotalMs += endAt - startAt
   return computedMeta
+}
+
+const formatLeaveHours = hours => String(Number(Number(hours).toFixed(2)))
+// 格子的提示文字：整天請假的格子不能排班；只請幾小時的格子可以排班，只提示當天有請假
+const leaveTitleOf = cellMeta => {
+  if (cellMeta.isLeave) return '已核准請假，該日不列入工作時數'
+  return cellMeta.partialLeaveHours ? `當天有 ${formatLeaveHours(cellMeta.partialLeaveHours)} 小時核准請假` : ''
 }
 
 const cellViewMap = computed(() => {
@@ -1259,7 +1278,7 @@ const cellViewMap = computed(() => {
       map.set(cellKey, {
         key: cellKey,
         cellMeta,
-        leaveTitle: cellMeta.isLeave ? '已核准請假，該日不列入工作時數' : '',
+        leaveTitle: leaveTitleOf(cellMeta),
         isSelected: isCellSelected(empId, day),
         isManualSelected: manualSelectedCellsSet.value.has(cellKey),
         scheduleCell,
@@ -1281,7 +1300,7 @@ const getRenderedCell = (empId, day) => {
   return {
     key: cellKey,
     cellMeta,
-    leaveTitle: cellMeta.isLeave ? '已核准請假，該日不列入工作時數' : '',
+    leaveTitle: leaveTitleOf(cellMeta),
     isSelected: isCellSelected(safeEmpId, safeDay),
     isManualSelected: manualSelectedCellsSet.value.has(cellKey),
     scheduleCell,
@@ -2387,8 +2406,8 @@ const employeeStatus = empId => {
     return 'unscheduled'
   }
 
-  const hasAnyEmptyDay = cells.some(c => !c.shiftId && !c.leave && !isLeaveCell(empId, c.day))
-  const hasAnyLeave = cells.some(c => c.leave || isLeaveCell(empId, c.day))
+  const hasAnyEmptyDay = cells.some(c => !c.shiftId && !c.leave && !isLeaveCell(empId, c.day) && !hasPartialLeave(empId, c.day))
+  const hasAnyLeave = cells.some(c => c.leave || isLeaveCell(empId, c.day) || hasPartialLeave(empId, c.day))
 
   if (hasAnyEmptyDay) return 'unscheduled'
   if (hasAnyLeave) return 'onLeave'
@@ -2788,6 +2807,7 @@ const seedStressScenario = () => {
     }
   })
   leaveIndex.value = nextLeaveIndex
+  partialLeaveHours.value = {}
   scheduleMap.value = nextMap
   markLeaveIndexDirty()
   recomputeEmployeeStatuses(employees.value.map(emp => emp._id))
@@ -3612,6 +3632,9 @@ const patchScheduleMapForEmployees = (targetEmployees, daysList, employeeMap, sc
   markScheduleMapDirty()
 }
 
+// 一天最多算幾小時的請假（與請假時數換算相同）
+const LEAVE_HOURS_PER_DAY = 8
+
 const buildLeaveIndexAndScheduleMap = ({
   leaves,
   targetSet,
@@ -3621,6 +3644,31 @@ const buildLeaveIndexAndScheduleMap = ({
   const nextLeaveIndex = {}
   const monthStart = dayjs(`${month}-01`).startOf('day')
   const monthEnd = monthStart.endOf('month').startOf('day')
+
+  const nextPartialLeaveHours = {}
+  // 有時分的請假區間（每位員工）與只請幾小時的日子是哪一張假單，用來判斷請假有沒有涵蓋那天排的整個班別
+  const timedLeaveIntervals = {}
+  const partialLeaveSource = {}
+  const markLeaveDay = (empId, dayNum, l, reason = true) => {
+    if (!nextLeaveIndex[empId]) nextLeaveIndex[empId] = {}
+    nextLeaveIndex[empId][dayNum] = reason
+
+    const employeeSchedule = scheduleMap.value[empId]
+    if (employeeSchedule?.[dayNum]) {
+      scheduleMap.value[empId] = {
+        ...employeeSchedule,
+        [dayNum]: {
+          ...employeeSchedule[dayNum],
+          leave: {
+            type: l.leaveType,
+            startDate: l.startDate,
+            endDate: l.endDate,
+            excludesHours: true
+          }
+        }
+      }
+    }
+  }
 
   leaves.forEach(l => {
     const leaveStatus = String(l.status || l.decision || '').toLowerCase()
@@ -3635,6 +3683,37 @@ const buildLeaveIndexAndScheduleMap = ({
         : employeesList.some(e => String(e?._id) === empId)
     if (!isVisibleEmployee) return
 
+    // 請假以小時計：有時分的請假在整天都在請假中的日子，或涵蓋了那天排的整個上班班別（下面判斷）時，才當作請假日（不能排班）；
+    // 只請幾小時的日子仍可排班，格子上提示請假時數。整天的假（日期選擇器的午夜）維持原本每一天都是請假日
+    const interval = parseLeaveInterval(l.startDate, l.endDate)
+    // 判斷班次是否被涵蓋時要用這位員工所有的請假（含整天的假）：跨日班別的隔天部分可能落在隔天的整天假裡，和伺服器一致
+    if (interval && !interval.reversed) {
+      if (!timedLeaveIntervals[empId]) timedLeaveIntervals[empId] = []
+      timedLeaveIntervals[empId].push(interval)
+    }
+    if (interval && !interval.reversed && !interval.allDay) {
+      describeLeaveDays(interval).forEach(({ dateKey, hours, wholeDay }) => {
+        if (!dateKey.startsWith(`${month}-`)) return
+        const dayNum = Number(dateKey.slice(8))
+        // 有時分的請假涵蓋整個日曆日：當天沒排班、排的是休息類或認不得的班別就直接是請假日；
+        // 排了認得的上班班別（例如跨日夜班）則交給下面的班次涵蓋判斷，和伺服器一樣
+        const rosteredShiftId = scheduleMap.value[empId]?.[dayNum]?.shiftId
+        const rosteredShift = rosteredShiftId ? shiftInfoMap.value.get(String(rosteredShiftId)) || null : null
+        if (wholeDay && !(rosteredShift && !isCoverageNonWorkShift(rosteredShift))) {
+          markLeaveDay(empId, dayNum, l)
+          return
+        }
+        if (!nextPartialLeaveHours[empId]) nextPartialLeaveHours[empId] = {}
+        nextPartialLeaveHours[empId][dayNum] = Math.min(
+          (nextPartialLeaveHours[empId][dayNum] || 0) + hours,
+          LEAVE_HOURS_PER_DAY
+        )
+        if (!partialLeaveSource[empId]) partialLeaveSource[empId] = {}
+        if (!partialLeaveSource[empId][dayNum]) partialLeaveSource[empId][dayNum] = l
+      })
+      return
+    }
+
     const startDate = dayjs(l.startDate).startOf('day')
     const endDate = dayjs(l.endDate).startOf('day')
     if (!startDate.isValid() || !endDate.isValid()) return
@@ -3643,31 +3722,30 @@ const buildLeaveIndexAndScheduleMap = ({
     const boundary = endDate.isAfter(monthEnd) ? monthEnd : endDate
 
     while (!pointer.isAfter(boundary)) {
-      const dayNum = pointer.date()
-      if (!nextLeaveIndex[empId]) nextLeaveIndex[empId] = {}
-      nextLeaveIndex[empId][dayNum] = true
-
-      const employeeSchedule = scheduleMap.value[empId]
-      if (employeeSchedule?.[dayNum]) {
-        scheduleMap.value[empId] = {
-          ...employeeSchedule,
-          [dayNum]: {
-            ...employeeSchedule[dayNum],
-            leave: {
-              type: l.leaveType,
-              startDate: l.startDate,
-              endDate: l.endDate,
-              excludesHours: true
-            }
-          }
-        }
-      }
-
+      markLeaveDay(empId, pointer.date(), l)
       pointer = pointer.add(1, 'day')
     }
   })
 
-  return { nextLeaveIndex }
+  // 只請幾小時的日子排了上班班別、而當天（含跨日班別的隔天）的請假合起來涵蓋整個班次（休息時間可以不在請假內）：
+  // 伺服器的完整性檢查、匯出、國定假日休假紀錄都把這天當請假（leaveCoverageService.buildLeaveDayCheck，前端同一規則），
+  // 畫面也和以前、和整天請假一樣顯示成請假、不能排班。沒排班的日子仍可排班（存檔時伺服器用所選的班別判斷）；
+  // 班別設定裡找不到的班別無法判斷班次時間，不當成被涵蓋（不猜），維持請假時數的提示
+  Object.entries(nextPartialLeaveHours).forEach(([empId, hoursByDay]) => {
+    Object.keys(hoursByDay).forEach(dayKey => {
+      const dayNum = Number(dayKey)
+      if (nextLeaveIndex[empId]?.[dayNum]) return
+      const shiftId = scheduleMap.value[empId]?.[dayNum]?.shiftId
+      if (!shiftId) return
+      const shift = shiftInfoMap.value.get(String(shiftId)) || null
+      const dateKey = `${month}-${String(dayNum).padStart(2, '0')}`
+      if (!leaveCoversRosteredShift(timedLeaveIntervals[empId], dateKey, shift)) return
+      markLeaveDay(empId, dayNum, partialLeaveSource[empId][dayNum], LEAVE_COVERS_SHIFT)
+      delete hoursByDay[dayKey]
+    })
+  })
+
+  return { nextLeaveIndex, nextPartialLeaveHours }
 }
 
 function resetScheduleCache() {
@@ -3680,6 +3758,7 @@ function resetScheduleCache() {
   approvalList.value = []
   approvalTruncated.value = false
   leaveIndex.value = {}
+  partialLeaveHours.value = {}
   markLeaveIndexDirty()
   employeeStatusMap.value = {}
   cellMetaCache.value = new Map()
@@ -3842,7 +3921,7 @@ async function fetchSchedules({ reset = false, fetchAll = false, reason = 'unkno
         ? extra.approvals
         : []
       const leaves = Array.isArray(extra?.leaves) ? extra.leaves : []
-      const { nextLeaveIndex } = buildLeaveIndexAndScheduleMap({
+      const { nextLeaveIndex, nextPartialLeaveHours } = buildLeaveIndexAndScheduleMap({
         leaves,
         targetSet,
         month: currentMonth.value,
@@ -3853,6 +3932,7 @@ async function fetchSchedules({ reset = false, fetchAll = false, reason = 'unkno
       approvalList.value = approvals
       approvalTruncated.value = res2.headers?.get?.('X-Approvals-Truncated') === 'true'
       leaveIndex.value = nextLeaveIndex
+      partialLeaveHours.value = nextPartialLeaveHours
       markLeaveIndexDirty()
       recomputeEmployeeStatuses(targetEmployees)
       targetEmployees.forEach(empId => invalidateCellMetaCache(empId))
@@ -3863,6 +3943,7 @@ async function fetchSchedules({ reset = false, fetchAll = false, reason = 'unkno
       approvalList.value = previousApprovalList
       approvalFetchError.value = '簽核資料載入失敗，已保留上一筆資料，請稍後重試。'
       leaveIndex.value = {}
+      partialLeaveHours.value = {}
       markLeaveIndexDirty()
       recomputeEmployeeStatuses(targetEmployees)
       targetEmployees.forEach(empId => invalidateCellMetaCache(empId))
@@ -4067,7 +4148,11 @@ async function onSelect(empId, day, value) {
 
   // 該格只要被視為請假，就直接擋掉
   if (existing?.leave || isLeaveCell(empId, day)) {
-    callInfo('該日已核准請假，無法調整排班')
+    callInfo(
+      leaveIndex.value[String(empId)]?.[Number(day)] === LEAVE_COVERS_SHIFT
+        ? '該日的核准請假涵蓋整個班別，無法調整排班'
+        : '該日已有核准的全天請假，無法調整排班'
+    )
     return
   }
 
@@ -4285,7 +4370,7 @@ async function handleScheduleError(
   } else if (msg === 'leave conflict') {
     await openScheduleIssueDialog(
       '核准請假衝突',
-      [`${employee}：${date} 已有核准請假，無法安排班別${requestedLabel ? `「${requestedLabel}」` : ''}。`],
+      [`${employee}：${date} 已有核准的全天請假，或請假時間涵蓋整個班別，無法安排班別${requestedLabel ? `「${requestedLabel}」` : ''}。`],
       defaultMsg
     )
   } else if (msg) {
@@ -4328,7 +4413,7 @@ async function handleBatchApiError(res, defaultMsg = '批次套用失敗') {
   } else if (msg === 'department overlap') {
     await openScheduleIssueDialog('部門或單位不一致', ['部門或單位與既有資料不一致，無法套用'], defaultMsg)
   } else if (msg === 'leave conflict') {
-    await openScheduleIssueDialog('核准請假衝突', ['選取日期包含已核准請假，無法套用'], defaultMsg)
+    await openScheduleIssueDialog('核准請假衝突', ['選取日期包含已核准的全天請假，或請假時間涵蓋整個班別的日子，無法套用'], defaultMsg)
   } else if (msg) {
     await openScheduleIssueDialog('批次套用失敗', [msg], defaultMsg)
   } else {
@@ -4428,7 +4513,7 @@ async function applyBatch() {
   })
 
   if (!batchPayload.length) {
-    callInfo('選取的儲存格皆無需更新（或皆為請假日）')
+    callInfo('選取的儲存格皆無需更新（或皆為全天請假、請假涵蓋整個班別的日子）')
     return
   }
 

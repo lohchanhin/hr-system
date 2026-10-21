@@ -2089,7 +2089,335 @@ describe('Schedule.vue', () => {
     await wrapper.vm.onSelect('e1', 1, 'shift1')
     await flush()
     expect(apiFetch.mock.calls.length).toBe(initialCalls)
-    expect(ElMessage.info).toHaveBeenCalledWith('該日已核准請假，無法調整排班')
+    expect(ElMessage.info).toHaveBeenCalledWith('該日已有核准的全天請假，無法調整排班')
+  })
+
+  describe('leave counted in hours', () => {
+    const nextMonth = () => dayjs().add(1, 'month').format('YYYY-MM')
+    // 台灣時間的 UTC ISO 字串（前端日期選擇器送出的格式）
+    const taipeiIso = (month, day, time) => new Date(`${month}-${String(day).padStart(2, '0')}T${time}:00+08:00`).toISOString()
+    const cellOf = (wrapper, day) => wrapper.findAllComponents({ name: 'ScheduleGridVirtualBody' })
+      .find(component => component.props('row')?._id === 'e1' && component.props('day')?.date === day)
+
+    function mountWithLeaves(month, leaves) {
+      setRoleToken('supervisor')
+      localStorage.setItem('employeeId', 'sup1')
+      setupSupervisorApiMock({
+        shifts: [
+          { _id: 'shift1', code: 'A', name: '早班', startTime: '08:00', endTime: '17:00' },
+          { _id: 'shift2', code: 'B', name: '晚班', startTime: '13:00', endTime: '21:00' }
+        ],
+        employees: [{ _id: 'e1', name: 'Emp1', department: 'd1', subDepartment: 'sd1' }],
+        directReports: [{ _id: 'e1', subDepartment: { _id: 'sd1' } }],
+        monthlyWithoutSelf: [1, 2, 3, 4, 5].map(day => ({
+          _id: `sch${day}`,
+          employee: 'e1',
+          date: `${month}-0${day}`,
+          shiftId: 'shift1',
+          department: 'd1',
+          subDepartment: 'sd1'
+        })),
+        leaves
+      })
+      return mountSchedule()
+    }
+
+    it('keeps a day with only a 2-hour leave editable and notes the leave hours', async () => {
+      const month = nextMonth()
+      const wrapper = mountWithLeaves(month, [{
+        employee: 'e1',
+        leaveType: '事假',
+        status: 'approved',
+        startDate: taipeiIso(month, 1, '09:00'),
+        endDate: taipeiIso(month, 1, '11:00')
+      }])
+      await flush()
+
+      const cell = cellOf(wrapper, 1)
+      expect(cell).toBeTruthy()
+      const cellView = cell.props('cellView')
+      expect(cellView.cellMeta.isLeave).toBe(false)
+      expect(cellView.cellMeta.partialLeaveHours).toBe(2)
+      expect(cellView.cellMeta.hasShift).toBe(true)
+      expect(cellView.leaveTitle).toBe('當天有 2 小時核准請假')
+      expect(wrapper.vm.scheduleMap.e1[1].leave).toBeUndefined()
+
+      apiFetch.mockClear()
+      await wrapper.vm.onSelect('e1', 1, 'shift2')
+      await flush()
+      expect(ElMessage.info).not.toHaveBeenCalledWith(expect.stringContaining('全天請假'))
+      expect(apiFetch).toHaveBeenCalledWith(
+        '/api/schedules/sch1',
+        expect.objectContaining({ method: 'PUT', body: expect.stringContaining('"shiftId":"shift2"') })
+      )
+    })
+
+    it('turns only the days entirely on leave into leave days when a timed leave runs over several days', async () => {
+      const month = nextMonth()
+      const wrapper = mountWithLeaves(month, [{
+        employee: 'e1',
+        leaveType: '特休',
+        status: 'approved',
+        startDate: taipeiIso(month, 2, '13:00'),
+        endDate: taipeiIso(month, 4, '10:00')
+      }])
+      await flush()
+
+      const meta = day => cellOf(wrapper, day).props('cellView').cellMeta
+      expect(meta(1)).toEqual(expect.objectContaining({ isLeave: false, partialLeaveHours: 0 }))
+      expect(meta(2)).toEqual(expect.objectContaining({ isLeave: false, partialLeaveHours: 8 }))
+      expect(meta(3)).toEqual(expect.objectContaining({ isLeave: true, partialLeaveHours: 0 }))
+      expect(meta(4)).toEqual(expect.objectContaining({ isLeave: false, partialLeaveHours: 8 }))
+      expect(wrapper.vm.scheduleMap.e1[3].leave.excludesHours).toBe(true)
+      expect(wrapper.vm.scheduleMap.e1[2].leave).toBeUndefined()
+
+      apiFetch.mockClear()
+      await wrapper.vm.onSelect('e1', 3, 'shift2')
+      expect(apiFetch).not.toHaveBeenCalled()
+      // 3 日排了早班、請假從 00:00 到 24:00 涵蓋整個班次：和伺服器一樣用「涵蓋整個班別」判斷，所以是這句提示
+      expect(ElMessage.info).toHaveBeenCalledWith('該日的核准請假涵蓋整個班別，無法調整排班')
+    })
+
+    it('adds up several leaves on the same day, never above one day of 8 hours', async () => {
+      const month = nextMonth()
+      // 2 日從 09:00 開始請：早班 08:00-17:00 沒有被整個涵蓋，仍是只請幾小時的日子（08:00 開始就涵蓋整個早班，那天會變成請假日）
+      const wrapper = mountWithLeaves(month, [
+        { employee: 'e1', leaveType: '事假', status: 'approved', startDate: taipeiIso(month, 1, '09:00'), endDate: taipeiIso(month, 1, '11:00') },
+        { employee: 'e1', leaveType: '病假', status: 'approved', startDate: taipeiIso(month, 1, '14:00'), endDate: taipeiIso(month, 1, '15:30') },
+        { employee: 'e1', leaveType: '事假', status: 'approved', startDate: taipeiIso(month, 2, '09:00'), endDate: taipeiIso(month, 2, '17:00') },
+        { employee: 'e1', leaveType: '事假', status: 'approved', startDate: taipeiIso(month, 2, '17:00'), endDate: taipeiIso(month, 2, '20:00') }
+      ])
+      await flush()
+
+      expect(cellOf(wrapper, 1).props('cellView').leaveTitle).toBe('當天有 3.5 小時核准請假')
+      expect(cellOf(wrapper, 2).props('cellView').cellMeta.partialLeaveHours).toBe(8)
+    })
+
+    it('does not make the leave cell look like a partial leave when the leave is a whole day', async () => {
+      const month = nextMonth()
+      const wrapper = mountWithLeaves(month, [{
+        employee: 'e1',
+        leaveType: '特休',
+        status: 'approved',
+        startDate: `${month}-01`,
+        endDate: `${month}-01`
+      }])
+      await flush()
+
+      const cellView = cellOf(wrapper, 1).props('cellView')
+      expect(cellView.cellMeta).toEqual(expect.objectContaining({ isLeave: true, partialLeaveHours: 0 }))
+      expect(cellView.leaveTitle).toContain('已核准請假')
+    })
+
+    describe('a rostered working shift that the leave covers is a leave day, as on the server', () => {
+      // 與伺服器（完整性檢查、匯出、國定假日休假紀錄、存檔）同一組班別：日班休息 60 分鐘、日班（無休息）、下午班、跨日夜班、休息日
+      const ROSTER_SHIFTS = [
+        { _id: 'D', code: 'D', name: '日班', semanticType: 'work', startTime: '08:00', endTime: '17:00', breakMinutes: 60 },
+        { _id: 'D0', code: 'D0', name: '日班無休', semanticType: 'work', startTime: '08:00', endTime: '17:00' },
+        { _id: 'P', code: 'P', name: '下午班', semanticType: 'work', startTime: '13:00', endTime: '17:00' },
+        { _id: 'N', code: 'N', name: '夜班', semanticType: 'work', startTime: '22:00', endTime: '06:00', crossDay: true },
+        { _id: 'R', code: '休', name: '休息日', semanticType: 'rest_day', startTime: '00:00', endTime: '00:00' }
+      ]
+      const WHOLE_DAY_TITLE = '已核准請假，該日不列入工作時數'
+
+      // roster：{ 日: 班別 ID }；leaves：[[開始日, 開始時間, 結束日, 結束時間], ...]（台灣時間）
+      function mountRoster(month, roster, leaves) {
+        setRoleToken('supervisor')
+        localStorage.setItem('employeeId', 'sup1')
+        setupSupervisorApiMock({
+          shifts: ROSTER_SHIFTS,
+          employees: [{ _id: 'e1', name: 'Emp1', department: 'd1', subDepartment: 'sd1' }],
+          directReports: [{ _id: 'e1', subDepartment: { _id: 'sd1' } }],
+          monthlyWithoutSelf: Object.entries(roster).map(([day, shiftId]) => ({
+            _id: `sch${day}`,
+            employee: 'e1',
+            date: `${month}-${String(day).padStart(2, '0')}`,
+            shiftId,
+            department: 'd1',
+            subDepartment: 'sd1'
+          })),
+          // 時間給 null 代表整天的假（日期選擇器只有日期）
+          leaves: leaves.map(([fromDay, fromTime, toDay, toTime]) => ({
+            employee: 'e1',
+            leaveType: '事假',
+            status: 'approved',
+            startDate: fromTime ? taipeiIso(month, fromDay, fromTime) : `${month}-${String(fromDay).padStart(2, '0')}`,
+            endDate: toTime ? taipeiIso(month, toDay, toTime) : `${month}-${String(toDay).padStart(2, '0')}`
+          }))
+        })
+        return mountSchedule()
+      }
+      const viewOf = (wrapper, day) => cellOf(wrapper, day).props('cellView')
+      const expectLeaveDay = (wrapper, day) => {
+        const view = viewOf(wrapper, day)
+        expect({ day, ...view.cellMeta, leaveTitle: view.leaveTitle }).toEqual(expect.objectContaining({
+          day, isLeave: true, partialLeaveHours: 0, hasShift: false, missingShift: false, leaveTitle: WHOLE_DAY_TITLE
+        }))
+        expect(wrapper.vm.scheduleMap.e1[day].leave).toEqual(expect.objectContaining({ type: '事假', excludesHours: true }))
+      }
+      const expectPartialDay = (wrapper, day, hours) => {
+        const view = viewOf(wrapper, day)
+        expect({ day, ...view.cellMeta, leaveTitle: view.leaveTitle }).toEqual(expect.objectContaining({
+          day, isLeave: false, partialLeaveHours: hours, leaveTitle: `當天有 ${hours} 小時核准請假`
+        }))
+        expect(wrapper.vm.scheduleMap.e1[day].leave).toBeUndefined()
+      }
+
+      it('shows a 日班 08-17 on a leave of 08:00-17:00 as leave, also when only the unpaid break is left out', async () => {
+        const month = nextMonth()
+        const wrapper = mountRoster(month, { 1: 'D', 2: 'D', 3: 'D', 4: 'D0' }, [
+          [1, '08:00', 1, '17:00'],
+          [2, '09:00', 2, '17:00'],
+          [3, '09:30', 3, '17:00'],
+          [4, '09:00', 4, '17:00']
+        ])
+        await flush()
+
+        expectLeaveDay(wrapper, 1)
+        // 日班休息 60 分鐘：09:00-17:00 只剩休息時間沒請，仍是請假日
+        expectLeaveDay(wrapper, 2)
+        // 差 90 分鐘、或沒有休息時間的日班差 1 小時：只是請幾小時，仍可排班
+        expectPartialDay(wrapper, 3, 7.5)
+        expectPartialDay(wrapper, 4, 8)
+        expect(wrapper.vm.isSelectableCell('e1', 1)).toBe(false)
+        expect(wrapper.vm.isSelectableCell('e1', 3)).toBe(true)
+
+        apiFetch.mockClear()
+        await wrapper.vm.onSelect('e1', 1, 'P')
+        expect(apiFetch).not.toHaveBeenCalled()
+        expect(ElMessage.info).toHaveBeenCalledWith('該日的核准請假涵蓋整個班別，無法調整排班')
+
+        await wrapper.vm.onSelect('e1', 3, 'N')
+        await flush()
+        expect(apiFetch).toHaveBeenCalledWith(
+          '/api/schedules/sch3',
+          expect.objectContaining({ method: 'PUT', body: expect.stringContaining('"shiftId":"N"') })
+        )
+      })
+
+      it('shows an afternoon shift on an afternoon leave as leave, but keeps a 日班 that the leave only overlaps', async () => {
+        const month = nextMonth()
+        const wrapper = mountRoster(month, { 1: 'P', 2: 'D' }, [
+          [1, '13:00', 1, '17:00'],
+          [2, '13:00', 2, '17:00']
+        ])
+        await flush()
+
+        expectLeaveDay(wrapper, 1)
+        expectPartialDay(wrapper, 2, 4)
+      })
+
+      it('adds up two leaves (08-12 and 13-17) that together leave only the break of the 日班 uncovered', async () => {
+        const month = nextMonth()
+        const wrapper = mountRoster(month, { 1: 'D', 2: 'D0' }, [
+          [1, '08:00', 1, '12:00'],
+          [1, '13:00', 1, '17:00'],
+          [2, '08:00', 2, '12:00'],
+          [2, '13:00', 2, '17:00']
+        ])
+        await flush()
+
+        expectLeaveDay(wrapper, 1)
+        // 沒有休息時間的日班：12:00-13:00 沒請，只是請 8 小時
+        expectPartialDay(wrapper, 2, 8)
+      })
+
+      it('counts an all-day leave on the next day when judging the tail of a night shift, as the server does', async () => {
+        const month = nextMonth()
+        // 10 日夜班 22:00-翌日 06:00：10 日 22:00-24:00 有時分的假 + 11 日整天的假，整個班次都在請假中
+        const wrapper = mountRoster(month, { 10: 'N' }, [
+          [10, '22:00', 11, '00:00'],
+          [11, null, 11, null]
+        ])
+        await flush()
+
+        expectLeaveDay(wrapper, 10)
+      })
+
+      it('keeps a night shift editable on a day a timed leave covers from 00:00 to 24:00 when its tail runs past the leave', async () => {
+        const month = nextMonth()
+        // 請假 2 日 13:00 到 4 日 00:00：3 日整個日曆日都在請假中，但 3 日夜班的 4 日 00:00-06:00 沒請，伺服器不當請假日
+        const wrapper = mountRoster(month, { 3: 'N', 5: 'D' }, [
+          [2, '13:00', 4, '00:00'],
+          [5, '00:00', 6, '00:00']
+        ])
+        await flush()
+
+        expectPartialDay(wrapper, 3, 8)
+        expect(wrapper.vm.isSelectableCell('e1', 3)).toBe(true)
+        // 同樣整天的有時分請假、排的是日班：整個班次都在請假中，是請假日
+        expectLeaveDay(wrapper, 5)
+      })
+
+      it('covers a night shift that crosses midnight only when the leave runs to the end of the shift', async () => {
+        const month = nextMonth()
+        const wrapper = mountRoster(month, { 1: 'N', 2: 'D', 3: 'N' }, [
+          [1, '22:00', 2, '06:00'],
+          [3, '22:00', 4, '00:00']
+        ])
+        await flush()
+
+        expectLeaveDay(wrapper, 1)
+        // 隔天凌晨的 6 小時不影響隔天的日班
+        expectPartialDay(wrapper, 2, 6)
+        // 只請到午夜：夜班後半段沒請
+        expectPartialDay(wrapper, 3, 2)
+      })
+
+      it('never guesses: a shift missing from the shift table, a rest day or an empty day keeps the leave-hours note and stays editable', async () => {
+        const month = nextMonth()
+        const wrapper = mountRoster(month, { 1: 'ghost-shift', 2: 'R' }, [
+          [1, '08:00', 1, '17:00'],
+          [2, '08:00', 2, '17:00'],
+          [3, '08:00', 3, '17:00']
+        ])
+        await flush()
+
+        expectPartialDay(wrapper, 1, 8)
+        expect(viewOf(wrapper, 1).cellMeta.hasShift).toBe(true)
+        expectPartialDay(wrapper, 2, 8)
+        expectPartialDay(wrapper, 3, 8)
+        expect(viewOf(wrapper, 3).cellMeta.missingShift).toBe(true)
+        expect(wrapper.vm.isSelectableCell('e1', 1)).toBe(true)
+      })
+    })
+
+    it('says a leave conflict from the server is a whole-day leave or a leave covering the shift', async () => {
+      apiFetch.mockResolvedValue({ ok: true, json: async () => [] })
+      const wrapper = mountSchedule()
+      await flush()
+      wrapper.vm.currentMonth = '2026-08'
+      wrapper.vm.employees = [
+        { _id: 'e1', employeeId: 'A0077', name: '石靜嫻', departmentId: 'd1', subDepartmentId: 'sd1' }
+      ]
+      wrapper.vm.shifts = [{ _id: 'day', code: 'D', name: '日班' }]
+      wrapper.vm.scheduleMap = { e1: { 21: { shiftId: '', department: 'd1', subDepartment: 'sd1' } } }
+      apiFetch.mockReset()
+      apiFetch.mockResolvedValue({ ok: false, status: 400, json: async () => ({ error: 'leave conflict' }) })
+
+      await wrapper.vm.onSelect('e1', 21, 'day')
+
+      expect(ElMessageBox.alert).toHaveBeenCalledWith(
+        expect.stringContaining('A0077 石靜嫻：2026-08-21 已有核准的全天請假，或請假時間涵蓋整個班別，無法安排班別「D(日班)」'),
+        '核准請假衝突',
+        expect.objectContaining({ customClass: 'schedule-issue-dialog' })
+      )
+    })
+
+    it('says the same for a batch apply that the server rejects over leave', async () => {
+      apiFetch.mockResolvedValue({ ok: true, json: async () => [] })
+      const wrapper = mountSchedule()
+      await flush()
+      ElMessageBox.alert.mockClear()
+
+      await wrapper.vm.handleBatchApiError({ json: async () => ({ error: 'leave conflict' }) })
+
+      expect(ElMessageBox.alert).toHaveBeenCalledWith(
+        expect.stringContaining('已核准的全天請假，或請假時間涵蓋整個班別的日子，無法套用'),
+        '核准請假衝突',
+        expect.objectContaining({ customClass: 'schedule-issue-dialog' })
+      )
+    })
   })
 
   it('editable cells only show shift selector without department/sub-department selectors', async () => {

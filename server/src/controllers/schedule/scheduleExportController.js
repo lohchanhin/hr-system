@@ -6,7 +6,13 @@ import Holiday from '../../models/Holiday.js';
 import HolidayMoveSetting from '../../models/HolidayMoveSetting.js';
 import ScheduleDayMemo from '../../models/ScheduleDayMemo.js';
 import dayjs from 'dayjs';
-import { leaveDaysFromCalendar, loadApprovedLeaveCalendar } from '../../services/approvedLeaveCalendarService.js';
+import {
+  leaveDaysFromCalendar,
+  loadApprovedLeaveCalendar,
+  loadApprovedLeaveIntervals,
+} from '../../services/approvedLeaveCalendarService.js';
+import { buildLeaveDayCheck } from '../../services/leaveCoverageService.js';
+import { isNonWorkShift } from '../../services/shiftSemanticService.js';
 import { buildEffectiveMonthHolidays } from '../../services/countedHolidayService.js';
 import { buildHolidayRestLedger } from '../../services/holidayRestLedgerService.js';
 import { appendHolidayLedgerSheet } from '../../services/holidayLedgerWorkbook.js';
@@ -201,6 +207,10 @@ export async function exportSchedules(req, res) {
       employeeId,
       leaveDaysFromCalendar(leaveCalendar, employeeId, '/'),
     ]));
+    // 請假以小時計：只請幾小時的假不會把整天的班別換成請假代碼（下面判斷），所以有請假的月份才多讀一次請假時間區間
+    const leaveIntervals = [...leaveDaysMap.values()].some((days) => days.size > 0)
+      ? await loadApprovedLeaveIntervals({ employeeIds, start, end })
+      : new Map();
     const grouped = new Map();
     schedules.forEach((item) => {
       const empId = item?.employee?._id?.toString?.() || '';
@@ -269,12 +279,15 @@ export async function exportSchedules(req, res) {
     const [yearNumber, monthNumber] = month.split('-').map(Number);
     const weekLabels = ['日', '一', '二', '三', '四', '五', '六'];
     const scheduleMap = new Map();
+    const shiftIdMap = new Map();
     schedules.forEach((item) => {
       const empId = item?.employee?._id?.toString?.() || '';
       if (!empId) return;
       if (!scheduleMap.has(empId)) scheduleMap.set(empId, new Map());
+      if (!shiftIdMap.has(empId)) shiftIdMap.set(empId, new Map());
       const dateKey = dayjs(item.date, 'YYYY/MM/DD').date();
       scheduleMap.get(empId).set(dateKey, item.shiftCode || item.shiftName || '');
+      shiftIdMap.get(empId).set(dateKey, toEntityId(item.shiftId));
     });
     const exportSettingQuery = AttendanceSetting.findOne();
     const exportSetting = exportSettingQuery && typeof exportSettingQuery.lean === 'function'
@@ -307,10 +320,19 @@ export async function exportSchedules(req, res) {
                       : leaveType.includes('補') ? '補' : leaveType
       )
     );
+    const exportShiftById = new Map((exportSetting?.shifts || [])
+      .filter((shift) => shift?._id)
+      .map((shift) => [toEntityId(shift._id), shift]));
     const exportRows = filteredEmployees.map((employee) => {
       const empId = employee._id.toString();
       const employeeLeaveCalendar = leaveCalendar.get(empId) || new Map();
       const employeeScheduleMap = scheduleMap.get(empId) || new Map();
+      // 核准請假會蓋掉班表代碼的日子：整天的假、當天沒排班（或找不到班別），或請假涵蓋整個上班班別；
+      // 只請幾小時、沒涵蓋整個班次的日子，或排的是休息日／例假等不用上班的班別（沒有整天的假）仍顯示班表（與國定假日休假紀錄同一個判斷）
+      const coveredByLeave = buildLeaveDayCheck(leaveIntervals.get(empId), (key) => {
+        const shift = exportShiftById.get(shiftIdMap.get(empId)?.get(Number(key.slice(8))) || '');
+        return shift ? { kind: isNonWorkShift(shift) ? 'rest' : 'work', shift } : null;
+      });
       return {
         employeeId: employee.employeeId || '',
         name: employee.name || '',
@@ -319,7 +341,7 @@ export async function exportSchedules(req, res) {
         days: monthDays.map((day) => {
           const dateKey = `${month}-${String(day).padStart(2, '0')}`;
           const approvedLeave = employeeLeaveCalendar.get(dateKey);
-          return approvedLeave ? leaveCode(approvedLeave) : (employeeScheduleMap.get(day) || '');
+          return approvedLeave && coveredByLeave(dateKey) ? leaveCode(approvedLeave) : (employeeScheduleMap.get(day) || '');
         }),
       };
     });

@@ -44,6 +44,11 @@
           :shift-info="cellView.shiftInfo"
           :format-shift-label="formatShiftLabel"
         />
+        <div
+          v-if="cellView.cellMeta.partialLeaveHours"
+          class="partial-leave-note"
+          data-test="partial-leave-note"
+        >請假 {{ partialLeaveText }} 小時</div>
         <div v-if="showEmptyHint" class="empty-hint">點擊排班</div>
         <div v-else-if="cellView.cellMeta.missingShift" class="missing-label">未排班</div>
       </div>
@@ -75,6 +80,8 @@ const isEditing = ref(false)
 
 const isEditableCell = computed(() => props.canEdit && !props.cellView.cellMeta.isLeave)
 const showEmptyHint = computed(() => isEditableCell.value && props.cellView.cellMeta.missingShift)
+// 只請幾小時的假：這一天仍可排班，格子上只提示請假時數
+const partialLeaveText = computed(() => String(Number(Number(props.cellView.cellMeta.partialLeaveHours || 0).toFixed(2))))
 
 const handleSelectShift = value => {
   emit('select-shift', props.row._id, props.day.date, value)
@@ -113,6 +120,13 @@ watch(
   justify-content: center;
   gap: 5px;
   min-height: 44px;
+}
+
+.partial-leave-note {
+  font-size: 11px;
+  line-height: 1.3;
+  color: #8a5a00;
+  text-align: center;
 }
 
 .empty-hint {

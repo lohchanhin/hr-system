@@ -259,6 +259,30 @@ describe('ScheduleGridVirtualBody 可編輯行為', () => {
     expect(wrapper.emitted('select-shift')).toBeFalsy()
   })
 
+  it('只請幾小時假的格子仍可編輯，並提示請假時數', async () => {
+    const cellView = { ...createCellView({ shiftId: 's1' }), leaveTitle: '當天有 2 小時核准請假' }
+    cellView.cellMeta = { ...cellView.cellMeta, partialLeaveHours: 2 }
+    const wrapper = mountCell({ canEdit: true, cellView })
+
+    expect(wrapper.get('[data-test="partial-leave-note"]').text()).toContain('請假 2 小時')
+    expect(wrapper.find('[data-test="leave-indicator"]').exists()).toBe(false)
+    expect(wrapper.get('[data-schedule-cell="1"]').attributes('title')).toBe('當天有 2 小時核准請假')
+
+    await wrapper.get('[data-schedule-cell="1"]').trigger('click')
+    const editor = wrapper.get('.schedule-editor-select')
+    await editor.setValue('s2')
+    expect(wrapper.emitted('select-shift')[0]).toEqual(['emp-1', '2026-03-05', 's2'])
+  })
+
+  it('沒有請假時數時不顯示請假提示，整天請假的格子也只顯示休假中', () => {
+    const none = mountCell({ canEdit: true, cellView: createCellView({ shiftId: 's1' }) })
+    expect(none.find('[data-test="partial-leave-note"]').exists()).toBe(false)
+
+    const wholeDay = mountCell({ canEdit: true, cellView: createCellView({ shiftId: '', isLeave: true }) })
+    expect(wholeDay.find('[data-test="partial-leave-note"]').exists()).toBe(false)
+    expect(wholeDay.find('[data-test="leave-indicator"]').exists()).toBe(true)
+  })
+
   it('編輯後畫面與資料同步更新（含 scheduleMap 對應格）', async () => {
     const EditorSyncHarness = defineComponent({
       components: { ScheduleGridVirtualBody },

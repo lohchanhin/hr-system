@@ -787,13 +787,13 @@ describe('schedule import judges the national-holiday shortfall by the length of
     expect(shortageWarnings((await importWorkbook(await buildWorkbook(monthCodes()))).body)).toEqual([]);
   });
 
-  it('reports it without any leave, and only looks up the leave times for a whole-month file', async () => {
+  it('reports it without any leave, and reads the approved leave only once per import', async () => {
     setApprovedLeaveRanges([]);
 
     const whole = await importWorkbook(await buildWorkbook(monthCodes()));
     expect(shortageWarnings(whole.body)).toHaveLength(1);
-    // 日曆版本（衝突檢查）與時間區間版本各查一次假單
-    expect(mockApprovalRequest.find).toHaveBeenCalledTimes(2);
+    // 排班的衝突檢查與國定假日核對共用同一份請假時間區間，只查一次假單（以前日曆版本與時間區間版本各查一次，共兩次）
+    expect(mockApprovalRequest.find).toHaveBeenCalledTimes(1);
 
     mockApprovalRequest.find.mockClear();
     const partial = await importWorkbook(await buildWorkbook(monthCodes().slice(0, 25)));

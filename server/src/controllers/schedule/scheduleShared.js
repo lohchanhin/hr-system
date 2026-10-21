@@ -3,7 +3,12 @@ import ShiftSchedule from '../../models/ShiftSchedule.js';
 import Employee from '../../models/Employee.js';
 import AttendanceSetting from '../../models/AttendanceSetting.js';
 import Department from '../../models/Department.js';
-import { leaveDaysFromCalendar, loadApprovedLeaveCalendar } from '../../services/approvedLeaveCalendarService.js';
+import {
+  leaveDaysFromCalendar,
+  loadApprovedLeaveCalendar,
+  loadApprovedLeaveIntervals,
+} from '../../services/approvedLeaveCalendarService.js';
+import { buildRosterLeaveCheck } from '../../services/leaveCoverageService.js';
 import { isLaborRuleValidationError } from '../../services/laborRuleValidationService.js';
 import { normalizeShiftIdentifier } from '../../services/shiftIdentityService.js';
 import {
@@ -98,17 +103,49 @@ export function normalizeScheduleMemoDate(value) {
 }
 
 /**
- * 該日是否已有核准請假而不能再排班。
- * 傳入 shift 且它不用上班（休息日／例假／國定假日／請假）時，不算衝突；沒傳 shift 維持原本「任何排班都衝突」。
+ * 班別設定 -> Map(班別 ID 字串, 班別)。找不到的班別 ID（或設定讀不到）不在表裡，
+ * 排班判斷請假時就維持最嚴格的「當天有任何核准請假都不能排」。
  */
-export async function hasLeaveConflict(employeeId, date, shift = null) {
-  if (shift && isNonWorkShift(shift)) return false;
+export async function loadShiftLookup() {
+  const query = AttendanceSetting.findOne();
+  const setting = query && typeof query.lean === 'function' ? await query.lean() : await query;
+  return new Map((setting?.shifts || [])
+    .filter((shift) => shift?._id)
+    .map((shift) => [toEntityId(shift._id), shift]));
+}
+
+/**
+ * loadApprovedLeaveIntervals 的結果 -> (員工 ID) => 排班用的請假檢查（buildRosterLeaveCheck，每位員工只建一次）。
+ * 檢查的 blocks(日期, 班別) / reason(日期, 班別) 看核准請假是否擋住這個班別，規則與國定假日休假紀錄共用（leaveCoverageService）。
+ */
+export function buildRosterLeaveChecks(intervalsByEmployee) {
+  const checks = new Map();
+  return (employeeId) => {
+    const id = toEntityId(employeeId);
+    if (!checks.has(id)) checks.set(id, buildRosterLeaveCheck(intervalsByEmployee?.get?.(id)));
+    return checks.get(id);
+  };
+}
+
+/**
+ * 該日的核准請假是否擋住這個班別而不能排班。
+ * 傳入 shift：不用上班的班別（休息日／例假／國定假日／請假）不擋；上班班別只有在核准的整天請假、
+ * 或有時分的請假涵蓋整個班次時才擋，只請幾小時的假不擋（與國定假日休假紀錄同一個判斷）。
+ * 沒傳 shift 維持原本「當天有任何核准請假都衝突」。
+ * 選項 strictNonWork（手動新增、修改排班用）：不用上班的班別遇到整天都在請假中的日子仍然擋（原本的行為，匯入不擋）。
+ */
+export async function hasLeaveConflict(employeeId, date, shift = null, { strictNonWork = false } = {}) {
+  if (shift && isNonWorkShift(shift) && !strictNonWork) return false;
   const day = new Date(date);
   if (Number.isNaN(day.getTime())) return false;
   day.setUTCHours(0, 0, 0, 0);
   const end = new Date(day.getTime() + 86400000);
-  const calendar = await loadApprovedLeaveCalendar({ employeeIds: [employeeId], start: day, end });
-  return (calendar.get(toEntityId(employeeId))?.size || 0) > 0;
+  if (!shift) {
+    const calendar = await loadApprovedLeaveCalendar({ employeeIds: [employeeId], start: day, end });
+    return (calendar.get(toEntityId(employeeId))?.size || 0) > 0;
+  }
+  const intervals = await loadApprovedLeaveIntervals({ employeeIds: [employeeId], start: day, end });
+  return buildRosterLeaveChecks(intervals)(employeeId).blocks(day.toISOString().slice(0, 10), shift, { strictNonWork });
 }
 
 export function buildMonthDays(startDate) {

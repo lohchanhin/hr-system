@@ -1,11 +1,13 @@
 import ShiftSchedule from '../../models/ShiftSchedule.js';
-import { loadApprovedLeaveCalendar } from '../../services/approvedLeaveCalendarService.js';
+import { loadApprovedLeaveIntervals } from '../../services/approvedLeaveCalendarService.js';
 import {
   SCHEDULE_EMPLOYEE_SELECT,
   toEntityId,
   getAllowedScheduleEmployeeIds,
   attachShiftInfo,
+  buildRosterLeaveChecks,
   hasLeaveConflict,
+  loadShiftLookup,
   resetScheduleProgress,
   hasScheduleDiff,
   normalizeOptionalId,
@@ -46,19 +48,28 @@ export async function createSchedulesBatch(req, res) {
     const timestamps = uniqueSchedules.map((item) => item.date.getTime());
     const rangeStart = new Date(Math.min(...timestamps));
     const rangeEnd = new Date(Math.max(...timestamps) + 86400000);
-    const [leaveCalendar, existingRows] = await Promise.all([
-      loadApprovedLeaveCalendar({ employeeIds, start: rangeStart, end: rangeEnd }),
+    // 請假只讀一次（每個請假表單一個查詢），每一格再用自己的班別判斷：
+    // 只請幾小時的假不擋，核准的整天請假或涵蓋整個班次的請假才擋上班班別；
+    // 不用上班的班別（休/例/國/請假）手動排班時只擋整天都在請假中的日子（原本的行為）
+    const [leaveIntervals, existingRows, shiftLookup] = await Promise.all([
+      loadApprovedLeaveIntervals({ employeeIds, start: rangeStart, end: rangeEnd }),
       ShiftSchedule.find({
         employee: { $in: employeeIds },
         date: { $gte: rangeStart, $lt: rangeEnd },
       }).lean(),
+      loadShiftLookup(),
     ]);
 
     const scheduleKey = (employee, date) => (
       `${toEntityId(employee)}:${new Date(date).toISOString().slice(0, 10)}`
     );
+    const leaveCheckOf = buildRosterLeaveChecks(leaveIntervals);
     const conflictingLeave = uniqueSchedules.find((entry) => (
-      leaveCalendar.get(toEntityId(entry.employee))?.has(entry.date.toISOString().slice(0, 10))
+      leaveCheckOf(entry.employee).blocks(
+        entry.date.toISOString().slice(0, 10),
+        shiftLookup.get(toEntityId(entry.shiftId)) || null,
+        { strictNonWork: true },
+      )
     ));
     if (conflictingLeave) {
       return res.status(400).json({ error: 'leave conflict' });
@@ -154,7 +165,9 @@ export async function createSchedule(req, res) {
       return res.status(400).json({ error: 'employee conflict', conflict });
     }
 
-    if (await hasLeaveConflict(employee, dt)) {
+    // 找不到班別（班別設定裡沒有這個 ID）就維持最嚴格的整天判斷
+    const requestedShift = (await loadShiftLookup()).get(toEntityId(shiftId)) || null;
+    if (await hasLeaveConflict(employee, dt, requestedShift, { strictNonWork: true })) {
       return res.status(400).json({ error: 'leave conflict' });
     }
 
@@ -224,7 +237,9 @@ export async function updateSchedule(req, res) {
       return res.status(400).json({ error: 'employee conflict', conflict: conflictDetails });
     }
 
-    if (await hasLeaveConflict(newEmployee, newDate)) {
+    const nextShiftId = shiftId !== undefined ? shiftId : schedule.shiftId;
+    const nextShift = (await loadShiftLookup()).get(toEntityId(nextShiftId)) || null;
+    if (await hasLeaveConflict(newEmployee, newDate, nextShift, { strictNonWork: true })) {
       return res.status(400).json({ error: 'leave conflict' });
     }
 

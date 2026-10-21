@@ -24,9 +24,11 @@ import { buildEffectiveMonthHolidays, isPayableNationalHoliday } from './counted
 import { loadApprovedLeaveIntervals } from './approvedLeaveCalendarService.js';
 import { resolveShiftSemanticType } from './shiftSemanticService.js';
 import { isScheduleRuleExempt } from './scheduleRuleExemptionService.js';
-import { taipeiMidnightMs } from '../utils/leaveDuration.js';
-import { computeShiftSpan } from '../utils/timeWindow.js';
-import { dateKeyToUtcMidnight, toTaipeiDateKey } from '../utils/taipeiTime.js';
+import { buildLeaveDayCheck } from './leaveCoverageService.js';
+import { toTaipeiDateKey } from '../utils/taipeiTime.js';
+
+// 請假有沒有涵蓋班次的判斷與排班共用（leaveCoverageService），這裡照舊匯出，原本從這裡匯入的地方不用改
+export { buildLeaveDayCheck };
 
 export const LEDGER_STATUS = Object.freeze({
   RESTED_ON_DATE: 'rested_on_date',
@@ -83,7 +85,6 @@ const NEEDS_REST_DAY_KINDS = new Set(['work', 'none']);
 const ROSTER_OPTIONAL_ROLES = new Set(['admin', 'supervisor']);
 const ROSTER_LOOKBACK_MONTHS = 3;
 
-const MINUTE_MS = 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 function utcDateKey(value) {
@@ -142,62 +143,6 @@ export function buildShiftDocLookup(setting) {
 export function isActionableReason(reason, employee = null) {
   if (!ACTIONABLE_REASONS.has(reason)) return false;
   return !(reason === 'unscheduled' && isScheduleRuleExempt(employee));
-}
-
-function shiftBreakMs(shift) {
-  for (const value of [shift?.breakDuration, shift?.breakMinutes]) {
-    const minutes = Number(value);
-    if (Number.isFinite(minutes) && minutes > 0) return minutes * MINUTE_MS;
-  }
-  return 0;
-}
-
-// 班次時間內沒有被請假涵蓋到的毫秒數（多張假單先合併重疊的部分）
-function uncoveredShiftMs(intervals, span) {
-  const start = span.start.getTime();
-  const end = span.end.getTime();
-  const clipped = intervals
-    .map((interval) => [Math.max(interval.startMs, start), Math.min(interval.endMs, end)])
-    .filter(([from, to]) => to > from)
-    .sort((a, b) => a[0] - b[0]);
-  let covered = 0;
-  let cursor = start;
-  for (const [from, to] of clipped) {
-    if (to <= cursor) continue;
-    covered += to - Math.max(from, cursor);
-    cursor = to;
-  }
-  return end - start - covered;
-}
-
-/**
- * 國定假日當天算不算請假：回傳 (日期 YYYY-MM-DD) => boolean。請假改以小時計之後，只請幾小時的假不能讓整天都變成「請假」。
- *  - 整天的假（allDay）一律算請假：假單核准的日子，班表上就算還排著班也是請假。
- *  - 有時分的假：當天沒有排班就算請假；排了工作班，要整個班次都在請假中才算（班別的休息時間可以不在請假內）。
- *  - 排的是休息日、例假、國定假日、請假，或只請了班次的一部分，都維持班表自己的狀態。
- * intervals：loadApprovedLeaveIntervals 回傳的這位員工的請假區間；scheduleOf(日期)：該日的 { kind, shift }，沒排班回傳 null。
- */
-export function buildLeaveDayCheck(intervals = [], scheduleOf = () => null) {
-  const leaves = (intervals || []).filter((leave) => (
-    Number.isFinite(leave?.startMs) && Number.isFinite(leave?.endMs) && leave.endMs > leave.startMs
-  ));
-  if (!leaves.length) return () => false;
-  return (dateKey) => {
-    const dayStart = taipeiMidnightMs(dateKey);
-    if (dayStart === null) return false;
-    const dayEnd = dayStart + DAY_MS;
-    const onDay = leaves.filter((leave) => leave.startMs < dayEnd && leave.endMs > dayStart);
-    if (!onDay.length) return false;
-    if (onDay.some((leave) => leave.allDay)) return true;
-
-    const scheduled = scheduleOf(dateKey);
-    if (!scheduled) return true;
-    if (scheduled.kind !== 'work') return false;
-    const span = scheduled.shift ? computeShiftSpan(dateKeyToUtcMidnight(dateKey), scheduled.shift) : null;
-    const spanMs = span ? span.end.getTime() - span.start.getTime() : 0;
-    if (spanMs <= 0) return false;
-    return uncoveredShiftMs(leaves, span) <= Math.min(shiftBreakMs(scheduled.shift), spanMs - 1);
-  };
 }
 
 /**

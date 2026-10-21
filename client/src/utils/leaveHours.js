@@ -114,6 +114,20 @@ export function splitLeaveByDay(interval, { hoursPerDay = DEFAULT_MAX_HOURS_PER_
   return result
 }
 
+/**
+ * 一段請假落在每個台灣日曆日的情形：[{ dateKey, hours, wholeDay }]。
+ * wholeDay：整天請假（allDay），或有時分的請假剛好涵蓋當天 00:00 到隔天 00:00（跨多日的假中間那幾天）。
+ * 排班用：wholeDay 的日子不能再排班；只請幾小時（wholeDay 為 false）的日子仍可排班，
+ * 排了上班班別的日子，請假有沒有涵蓋整個班次另外由 leaveCoverage.js 判斷（與伺服器、國定假日休假紀錄同一個規則）。hours 是當天的請假時數（每日最多 hoursPerDay）。
+ */
+export function describeLeaveDays(interval, { hoursPerDay = DEFAULT_MAX_HOURS_PER_DAY } = {}) {
+  return splitLeaveByDay(interval, { hoursPerDay }).map(({ dateKey, hours }) => {
+    if (interval.allDay) return { dateKey, hours, wholeDay: true }
+    const dayStart = taipeiMidnightMs(dateKey)
+    return { dateKey, hours, wholeDay: interval.startMs <= dayStart && interval.endMs >= dayStart + MS_PER_DAY }
+  })
+}
+
 /** 區間最多能容納幾小時（每個台灣日曆日最多 maxHoursPerDay） */
 export function maxHoursOfInterval(interval, maxHoursPerDay = DEFAULT_MAX_HOURS_PER_DAY) {
   if (!interval || interval.reversed) return 0
@@ -193,6 +207,7 @@ export default {
   estimateLeaveHours,
   parseLeaveInterval,
   splitLeaveByDay,
+  describeLeaveDays,
   maxHoursOfInterval,
   floorToStep,
   toTaipeiDateKey,

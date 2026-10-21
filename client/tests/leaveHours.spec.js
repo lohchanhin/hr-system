@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { nextTick, reactive, ref } from 'vue'
 import {
+  describeLeaveDays,
   estimateLeaveHours,
   floorToStep,
   isLeaveHoursLabel,
@@ -59,6 +60,39 @@ describe('estimateLeaveHours / maxHoursOfInterval (same maths as the server)', (
     expect(estimateLeaveHours('', '2026-03-02')).toMatchObject({ valid: false, reversed: false })
     expect(floorToStep(7.99, 0.5)).toBe(7.5)
     expect(floorToStep(7.99, 1)).toBe(7)
+  })
+})
+
+describe('describeLeaveDays (which days a leave takes the whole day away from rostering)', () => {
+  const daysOf = (start, end) => describeLeaveDays(parseLeaveInterval(start, end))
+
+  it('treats every day of a whole-day leave as a whole day', () => {
+    expect(daysOf('2026-03-02', '2026-03-03')).toEqual([
+      { dateKey: '2026-03-02', hours: 8, wholeDay: true },
+      { dateKey: '2026-03-03', hours: 8, wholeDay: true },
+    ])
+    // 日期選擇器送出的台灣午夜（UTC ISO 字串）也是整天
+    expect(daysOf('2026-03-01T16:00:00.000Z', '2026-03-01T16:00:00.000Z')).toEqual([
+      { dateKey: '2026-03-02', hours: 8, wholeDay: true },
+    ])
+  })
+
+  it('keeps a 2-hour or afternoon leave as a partial day with its hours', () => {
+    expect(daysOf(tw('02', '09:00'), tw('02', '11:00'))).toEqual([{ dateKey: '2026-03-02', hours: 2, wholeDay: false }])
+    expect(daysOf(tw('02', '13:00'), tw('02', '17:00'))).toEqual([{ dateKey: '2026-03-02', hours: 4, wholeDay: false }])
+  })
+
+  it('makes only the days in the middle of a timed multi-day leave whole days', () => {
+    expect(daysOf(tw('02', '13:00'), tw('04', '10:00'))).toEqual([
+      { dateKey: '2026-03-02', hours: 8, wholeDay: false },
+      { dateKey: '2026-03-03', hours: 8, wholeDay: true },
+      { dateKey: '2026-03-04', hours: 8, wholeDay: false },
+    ])
+  })
+
+  it('is empty for a reversed or missing interval', () => {
+    expect(daysOf(tw('04', '10:00'), tw('02', '10:00'))).toEqual([])
+    expect(describeLeaveDays(null)).toEqual([])
   })
 })
 

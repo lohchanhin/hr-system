@@ -7,6 +7,7 @@ const mockEmployee = { find: jest.fn() };
 const mockShiftSchedule = { find: jest.fn() };
 const mockAttendanceSetting = { findOne: jest.fn() };
 const mockLoadApprovedLeaveCalendar = jest.fn();
+const mockLoadApprovedLeaveIntervals = jest.fn();
 const mockLeaveDaysFromCalendar = jest.fn();
 
 jest.unstable_mockModule('../src/models/Employee.js', () => ({ default: mockEmployee }));
@@ -14,6 +15,7 @@ jest.unstable_mockModule('../src/models/ShiftSchedule.js', () => ({ default: moc
 jest.unstable_mockModule('../src/models/AttendanceSetting.js', () => ({ default: mockAttendanceSetting }));
 jest.unstable_mockModule('../src/services/approvedLeaveCalendarService.js', () => ({
   loadApprovedLeaveCalendar: mockLoadApprovedLeaveCalendar,
+  loadApprovedLeaveIntervals: mockLoadApprovedLeaveIntervals,
   leaveDaysFromCalendar: mockLeaveDaysFromCalendar,
 }));
 
@@ -34,7 +36,7 @@ function septemberRows(employeeId, days) {
 }
 
 beforeEach(() => {
-  [mockEmployee.find, mockShiftSchedule.find, mockAttendanceSetting.findOne, mockLoadApprovedLeaveCalendar, mockLeaveDaysFromCalendar]
+  [mockEmployee.find, mockShiftSchedule.find, mockAttendanceSetting.findOne, mockLoadApprovedLeaveCalendar, mockLoadApprovedLeaveIntervals, mockLeaveDaysFromCalendar]
     .forEach((fn) => fn.mockReset());
   mockEmployee.find.mockReturnValue(leanQuery([
     { _id: ids.fullTime, name: '正職', role: 'employee', partTime: false },
@@ -46,6 +48,7 @@ beforeEach(() => {
     String(filter.employee) === ids.partTime ? septemberRows(ids.partTime, 3) : septemberRows(ids.fullTime, 30),
   ));
   mockLoadApprovedLeaveCalendar.mockResolvedValue({});
+  mockLoadApprovedLeaveIntervals.mockResolvedValue(new Map());
   mockLeaveDaysFromCalendar.mockReturnValue(new Set());
 });
 
