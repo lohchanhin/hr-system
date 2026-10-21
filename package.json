@@ -16,7 +16,7 @@
     "pm2:status": "pm2 status"
   },
   "engines": {
-    "node": ">=20.19.0"
+    "node": ">=22.23.4"
   },
   "devDependencies": {
     "concurrently": "^9.2.4",
