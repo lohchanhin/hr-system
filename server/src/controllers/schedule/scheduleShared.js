@@ -251,23 +251,28 @@ export function formatPendingWeeks(items) {
   }));
 }
 
-// 跨月週待判斷的項目再附上員工代號與姓名：畫面只載入一頁員工，不在那一頁的員工也要能直接看到是誰。
+// 檢核結果的每一項（違規、跨月週待判斷）附上員工代號與姓名：畫面只載入一頁員工，不在那一頁的員工也要能直接看到是誰。
 // 名字只是顯示用，查不到或查詢失敗都不影響檢核結果。
-export async function describePendingWeeks(items) {
-  const pending = formatPendingWeeks(items);
-  const ids = [...new Set(pending.map((item) => item.employee))].filter((id) => /^[0-9a-fA-F]{24}$/.test(id));
-  if (!ids.length) return pending;
+export async function attachEmployeeLabels(items) {
+  const list = Array.isArray(items) ? items : [];
+  const ids = [...new Set(list.map((item) => toEntityId(item.employee)))].filter((id) => /^[0-9a-fA-F]{24}$/.test(id));
+  if (!ids.length) return list;
   try {
     const query = Employee.find({ _id: { $in: ids } }).select('_id employeeId name');
     const rows = query && typeof query.lean === 'function' ? await query.lean() : await query;
     const byId = new Map((rows || []).map((row) => [toEntityId(row._id), row]));
-    return pending.map((item) => {
-      const row = byId.get(item.employee);
+    return list.map((item) => {
+      const row = byId.get(toEntityId(item.employee));
       return row ? { ...item, employeeCode: row.employeeId || '', employeeName: row.name || '' } : item;
     });
   } catch {
-    return pending;
+    return list;
   }
+}
+
+// 跨月週待判斷的項目：整理成回給前端的樣子，再附上員工代號與姓名
+export async function describePendingWeeks(items) {
+  return attachEmployeeLabels(formatPendingWeeks(items));
 }
 
 export function respondLaborRuleError(res, err) {

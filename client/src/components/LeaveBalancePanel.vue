@@ -1,6 +1,7 @@
 <!-- src/components/LeaveBalancePanel.vue：各假別的額度、已使用、簽核中、剩餘（單位是小時，天數只是 時數 / 8 的換算）。
      申請頁（自己的餘額）、簽核明細（申請人的餘額，並標出這張單的影響）、待簽核的動作視窗共用。
-     傳 balances 就直接顯示（簽核明細已經帶在回應裡）；傳 employeeId 或什麼都不傳就自己向伺服器取。 -->
+     傳 balances 就直接顯示（簽核明細已經帶在回應裡）；傳 employeeId 或什麼都不傳就自己向伺服器取。
+     簽核明細的 balances 帶有 compensatory（申請人的調休存摺）時，在下方列出每一筆調休的來源、狀態與用在哪張單。 -->
 <template>
   <div class="leave-balance-panel" :class="{ compact }" data-test="leave-balance-panel">
     <div class="panel-header">
@@ -50,6 +51,7 @@
           <span class="type-name">{{ row.name }}</span>
           <el-tag v-if="row.focus" size="small" type="primary" effect="plain" class="row-tag">本次申請</el-tag>
           <el-tag v-if="row.status === 'manual'" size="small" type="info" effect="plain" class="row-tag">人資維護</el-tag>
+          <el-tag v-if="row.source === 'bank'" size="small" type="success" effect="plain" class="row-tag">存摺</el-tag>
         </template>
       </el-table-column>
       <el-table-column label="年度額度" min-width="130">
@@ -85,6 +87,17 @@
 
     <div v-else-if="data && !error" class="panel-empty" data-test="leave-balance-empty">目前沒有可顯示的假別餘額</div>
 
+    <!-- 申請人的調休存摺（簽核明細）：調休單一定附上，其他請假單在申請人有調休時附上 -->
+    <CompensatoryLeavePanel
+      v-if="compensatory"
+      :bank="compensatory"
+      compact
+      :title="compensatory.focus ? '申請人的調休存摺（本次申請調休）' : '申請人的調休存摺'"
+      class="compensatory-detail"
+      data-test="leave-balance-compensatory"
+    />
+    <p v-if="thisRequestText" class="panel-footer" data-test="leave-balance-comp-this">{{ thisRequestText }}</p>
+
     <ul v-if="data && data.unmatched && data.unmatched.length" class="unmatched-list" data-test="leave-balance-unmatched">
       <li v-for="item in data.unmatched" :key="item.name">
         「{{ item.name }}」尚未設定額度：已使用 {{ hoursText(item.usedHours) }}<template v-if="item.pendingHours > 0">、簽核中 {{ hoursText(item.pendingHours) }}</template>
@@ -92,7 +105,7 @@
     </ul>
 
     <p v-if="data" class="panel-footer">
-      1 天 = {{ data.dayHours || 8 }} 小時；統計期間 {{ rangeText }}；特休依員工資料，其餘假別依法定額度（人資可調整）
+      1 天 = {{ data.dayHours || 8 }} 小時；統計期間 {{ rangeText }}；特休依員工資料，調休依調休存摺（不分年度），其餘假別依法定額度（人資可調整）
     </p>
   </div>
 </template>
@@ -100,6 +113,7 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
 import { apiFetch } from '../api'
+import CompensatoryLeavePanel from './CompensatoryLeavePanel.vue'
 import {
   STATUS_LABELS,
   describeOver,
@@ -136,6 +150,15 @@ const data = computed(() => {
 
 const focus = computed(() => (isObject(data.value?.focus) ? data.value.focus : null))
 
+// 申請人的調休存摺（簽核明細才有）
+const compensatory = computed(() => (isObject(data.value?.compensatory) && Array.isArray(data.value.compensatory.credits) ? data.value.compensatory : null))
+const thisRequestText = computed(() => {
+  const used = compensatory.value?.thisRequest
+  if (!isObject(used) || !(Number(used.hours) > 0)) return ''
+  const parts = (used.credits || []).map(part => `${part.sourceText} ${formatHours(part.hours)}`).join('、')
+  return `這張單已扣用調休 ${formatHours(used.hours)}${parts ? `：${parts}` : ''}`
+})
+
 const rows = computed(() => (data.value?.items || []).map(item => ({
   ...item,
   focus: Boolean(focus.value && focus.value.typeKey && focus.value.typeKey === item.key),
@@ -152,6 +175,8 @@ const rangeText = computed(() => {
 const hoursText = (hours) => formatHoursWithDays(hours)
 
 function quotaText(row) {
+  // 調休存摺不是年度額度：顯示累計取得的時數
+  if (row.source === 'bank') return `累計取得 ${formatHoursWithDays(row.quotaHours || 0)}`
   if (row.period === 'event') return row.quotaHours == null ? '不設上限' : `每次上限 ${formatHours(row.quotaHours)}`
   if (row.quotaHours == null) return '不設上限'
   return formatHoursWithDays(row.quotaHours)
@@ -260,6 +285,9 @@ watch(() => [props.employeeId, props.year], () => {
 }
 .focus-note {
   margin-bottom: 8px;
+}
+.compensatory-detail {
+  margin-top: 10px;
 }
 .panel-error {
   color: #e6a23c;

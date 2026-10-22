@@ -15,7 +15,7 @@ jest.unstable_mockModule('../src/models/HolidayMoveSetting.js', () => ({ default
 jest.unstable_mockModule('../src/models/Employee.js', () => ({ default: mockEmployee }));
 jest.unstable_mockModule('../src/models/ShiftSchedule.js', () => ({ default: mockShiftSchedule }));
 jest.unstable_mockModule('../src/models/AttendanceSetting.js', () => ({ default: mockAttendanceSetting }));
-const { CalendarYear, HolidayCompensation, HolidaySwap } = await registerHolidayResolverModelMocks(jest);
+const { CalendarYear, HolidaySwap, CompensatoryCredit, CompensatoryLeaveState } = await registerHolidayResolverModelMocks(jest);
 
 const {
   HOLIDAY_REASONS,
@@ -30,6 +30,8 @@ const {
   loadHolidayContext,
   officeDayKind,
   resolveDayType,
+  isGovMakeupAutomatic,
+  suggestedGovMakeupDate,
 } = await import('../src/services/holidayResolver.js');
 
 const day = (key) => new Date(`${key}T00:00:00.000Z`);
@@ -544,6 +546,106 @@ function leanQuery(value) {
   return query;
 }
 
+describe('調休存摺：整天調休日與行政人員的建議調休日', () => {
+  const OFFICE_ID = 'office-a';
+  const credit = (extra = {}) => ({
+    _id: 'cr1',
+    employee: 'nurse-a',
+    sourceType: 'holiday_rest',
+    holidayDate: day('2026-10-10'),
+    holidayName: '國慶日',
+    status: 'used',
+    hours: 8,
+    usedHours: 8,
+    usages: [{ kind: 'leave_request', hours: 8, approvalRequest: 'req1', days: [{ date: '2026-10-14', hours: 8 }], fullDayDates: ['2026-10-14'] }],
+    ...extra,
+  });
+
+  it('整天調休的日子是該員工的假日（調休簽核），國定假日也知道它用哪一天調休', () => {
+    const ctx = context2026({ credits: [credit()], employees: ['nurse-a'] });
+    expect(isNationalHolidayFor(ctx, 'nurse-a', '2026-10-14')).toMatchObject({
+      holiday: true, reason: 'compensation', via: 'comp_leave', name: '調休（國慶日）', compensatesDate: '2026-10-10', sourceId: 'cr1',
+    });
+    expect(isNationalHolidayFor(ctx, 'nurse-b', '2026-10-14').holiday).toBe(false);
+    expect(resolveDayType(ctx, 'nurse-a', '2026-10-14', { rosterKind: 'work' }).dayType).toBe('national_holiday');
+    const october = listEmployeeHolidays(ctx, 'nurse-a', { start: '2026-10-01', end: '2026-11-01' });
+    expect(october.find((entry) => entry.id === 'statutory:2026-10-10').compensation).toMatchObject({ date: '2026-10-14', via: 'comp_leave', compensationId: 'cr1' });
+    expect(october.find((entry) => entry.type === 'compensation')).toMatchObject({ date: '2026-10-14', name: '調休（國慶日）', holidayName: '國慶日', via: 'comp_leave' });
+  });
+
+  it('HR 指定的日子是「補假」；只用了幾小時（不是整天）、作廢的額度都不算假日；沒有國定假日來源的調休以日期當鍵', () => {
+    const ctx = context2026({
+      credits: [
+        credit({ _id: 'cr2', usages: [{ kind: 'hr_assigned', hours: 8, fullDayDates: ['2026-10-15'], days: [{ date: '2026-10-15', hours: 8 }] }] }),
+        credit({ _id: 'cr3', holidayDate: day('2026-09-28'), holidayName: '教師節', usages: [{ kind: 'leave_request', hours: 4, fullDayDates: [], days: [{ date: '2026-10-16', hours: 4 }] }] }),
+        credit({ _id: 'cr4', holidayDate: day('2026-06-19'), status: 'void', usages: [{ kind: 'leave_request', hours: 8, fullDayDates: ['2026-10-19'] }] }),
+        credit({ _id: 'cr5', sourceType: 'manual', holidayDate: null, holidayName: '', usages: [{ kind: 'leave_request', hours: 8, fullDayDates: ['2026-10-20'] }] }),
+      ],
+      employees: ['nurse-a'],
+    });
+    expect(isNationalHolidayFor(ctx, 'nurse-a', '2026-10-15')).toMatchObject({ holiday: true, reason: 'compensation', via: 'hr_assigned', name: '國慶日補假' });
+    expect(isNationalHolidayFor(ctx, 'nurse-a', '2026-10-16').holiday).toBe(false);
+    expect(isNationalHolidayFor(ctx, 'nurse-a', '2026-10-19').holiday).toBe(false);
+    expect(isNationalHolidayFor(ctx, 'nurse-a', '2026-10-20')).toMatchObject({ holiday: true, name: '調休', compensatesDate: null });
+    const entries = listEmployeeHolidays(ctx, 'nurse-a', { start: '2026-10-01', end: '2026-11-01' }).filter((entry) => entry.type === 'compensation');
+    expect(entries.map((entry) => [entry.id, entry.date, entry.via])).toEqual([
+      ['compensation:2026-10-10', '2026-10-15', 'hr_assigned'],
+      ['compensation:2026-10-20', '2026-10-20', 'comp_leave'],
+    ]);
+  });
+
+  it('切換日之後，行政人員的公務機關補假日不再自動放假（只是建議調休日），之前的照舊', () => {
+    const ctx = context2026({ employees: [{ _id: OFFICE_ID, holidayRegime: 'office' }], officeGovMakeupCutover: '2026-10-23' });
+    expect(isNationalHolidayFor(ctx, OFFICE_ID, '2026-10-09')).toMatchObject({ holiday: true, reason: 'gov_makeup' });
+    expect(isNationalHolidayFor(ctx, OFFICE_ID, '2026-10-26').holiday).toBe(false);
+    expect(resolveDayType(ctx, OFFICE_ID, '2026-10-26').dayType).toBe('workday');
+    // 國定假日（週日）本身照樣是國定假日
+    expect(isNationalHolidayFor(ctx, OFFICE_ID, '2026-10-25').reason).toBe('statutory');
+    const october = listEmployeeHolidays(ctx, OFFICE_ID, { start: '2026-10-01', end: '2026-11-01' });
+    expect(october.find((entry) => entry.id === 'statutory:2026-10-10').compensation).toMatchObject({ date: '2026-10-09', via: 'gov_makeup' });
+    expect(october.find((entry) => entry.id === 'statutory:2026-10-25').compensation).toBeNull();
+    expect(october.filter((entry) => entry.type === 'compensation').map((entry) => entry.date)).toEqual(['2026-10-09']);
+    expect(suggestedGovMakeupDate(ctx, '2026-10-25')).toBe('2026-10-26');
+    expect(suggestedGovMakeupDate(ctx, '2026-10-10')).toBeNull();
+    expect(isGovMakeupAutomatic(ctx, '2026-10-22')).toBe(true);
+    expect(isGovMakeupAutomatic(ctx, '2026-10-23')).toBe(false);
+    // 沒有切換日（舊資料）一律照舊
+    expect(isNationalHolidayFor(context2026({ employees: [{ _id: OFFICE_ID, holidayRegime: 'office' }] }), OFFICE_ID, '2026-10-26').reason).toBe('gov_makeup');
+  });
+
+  it('排班頁標頭：切換日之後的公務機關補假日分成「公務機關補假」（輪班）與「建議調休日」（行政）兩行', () => {
+    const ctx = context2026({ officeGovMakeupCutover: '2026-10-23' });
+    const october = listCalendarHeaders(ctx, { start: '2026-10-01', end: '2026-11-01' }).filter((entry) => entry.kind === 'gov_makeup_off');
+    expect(october.map((entry) => [entry.date, entry.label, entry.appliesTo])).toEqual([
+      ['2026-10-09', '公務機關補假', 'office'],
+      ['2026-10-26', '公務機關補假', 'roster'],
+      ['2026-10-26', '建議調休日', 'office'],
+    ]);
+    expect(october[2]).toMatchObject({ displayKind: 'gov_info', compensatesDate: '2026-10-25' });
+  });
+
+  it('loadHolidayContext 讀取切換日與整天調休日在範圍內、或來源國定假日在範圍內的額度', async () => {
+    mockHoliday.find.mockReset().mockReturnValue(leanQuery(rows2026()));
+    mockHolidayMoveSetting.find.mockReset().mockReturnValue(leanQuery([]));
+    mockEmployee.find.mockReset().mockReturnValue(leanQuery([]));
+    CalendarYear.__setRows([{ year: 2026, state: 'approved' }]);
+    CompensatoryLeaveState.__setRows([{ key: 'bank', officeGovMakeupCutover: '2026-10-23' }]);
+    CompensatoryCredit.find.mockClear();
+    CompensatoryCredit.__setRows([credit({ employee: '64b7f0c2a1b2c3d4e5f60001' })]);
+    const ctx = await loadHolidayContext({
+      start: '2026-10-01',
+      end: '2026-11-01',
+      employees: [{ _id: '64b7f0c2a1b2c3d4e5f60001', holidayRegime: 'office' }],
+    });
+    expect(ctx.officeGovMakeupCutover).toBe('2026-10-23');
+    expect(isNationalHolidayFor(ctx, '64b7f0c2a1b2c3d4e5f60001', '2026-10-26').holiday).toBe(false);
+    expect(isNationalHolidayFor(ctx, '64b7f0c2a1b2c3d4e5f60001', '2026-10-14')).toMatchObject({ reason: 'compensation', via: 'comp_leave' });
+    const filter = CompensatoryCredit.find.mock.calls[0][0];
+    expect(filter.$or[1].holidayDate).toEqual({ $gte: new Date('2026-09-24T00:00:00.000Z'), $lt: new Date('2026-11-08T00:00:00.000Z') });
+    CompensatoryLeaveState.__setRows([]);
+  });
+});
+
 describe('loadHolidayContext（替身模型）', () => {
   const nurseId = '64b7f0c2a1b2c3d4e5f60001';
   const clerkId = '64b7f0c2a1b2c3d4e5f60002';
@@ -557,8 +659,10 @@ describe('loadHolidayContext（替身模型）', () => {
     mockAttendanceSetting.findOne.mockReset().mockReturnValue(leanQuery({ shifts: [] }));
     CalendarYear.find.mockClear();
     CalendarYear.__setRows([{ year: 2026, state: 'approved' }]);
-    HolidayCompensation.find.mockClear();
-    HolidayCompensation.__setRows([]);
+    CompensatoryCredit.find.mockClear();
+    CompensatoryCredit.__setRows([]);
+    CompensatoryLeaveState.findOne.mockClear();
+    CompensatoryLeaveState.__setRows([]);
     HolidaySwap.find.mockClear();
     HolidaySwap.__setRows([]);
     fetchSpy = jest.spyOn(global, 'fetch').mockImplementation(() => {
@@ -579,7 +683,9 @@ describe('loadHolidayContext（替身模型）', () => {
     expect(mockHoliday.find).toHaveBeenCalledTimes(1);
     expect(mockHolidayMoveSetting.find).toHaveBeenCalledTimes(1);
     expect(CalendarYear.find).toHaveBeenCalledTimes(1);
-    expect(HolidayCompensation.find).toHaveBeenCalledTimes(1);
+    // 已排定的補假改成讀調休存摺（整天調休日）；調休存摺的切換日也只讀一次
+    expect(CompensatoryCredit.find).toHaveBeenCalledTimes(1);
+    expect(CompensatoryLeaveState.findOne).toHaveBeenCalledTimes(1);
     expect(HolidaySwap.find).toHaveBeenCalledTimes(1);
     expect(mockEmployee.find).toHaveBeenCalledTimes(1);
     expect(mockShiftSchedule.find).not.toHaveBeenCalled();
@@ -592,7 +698,8 @@ describe('loadHolidayContext（替身模型）', () => {
     expect(holidayFilter.date.$lt).toEqual(new Date('2027-01-08T00:00:00.000Z'));
     expect(mockEmployee.find.mock.calls[0][0]).toEqual({ _id: { $in: [nurseId, clerkId] } });
     expect(HolidaySwap.find.mock.calls[0][0]).toMatchObject({ employee: { $in: [nurseId, clerkId] }, status: 'active' });
-    expect(HolidayCompensation.find.mock.calls[0][0]).toMatchObject({ employee: { $in: [nurseId, clerkId] }, status: 'assigned' });
+    expect(CompensatoryCredit.find.mock.calls[0][0]).toMatchObject({ employee: { $in: [nurseId, clerkId] }, status: { $ne: 'void' } });
+    expect(CompensatoryCredit.find.mock.calls[0][0].$or[0]['usages.fullDayDates']).toEqual({ $gte: '2026-01-25', $lt: '2026-03-08' });
 
     // 讀到的假日制度生效：行政人員有公務機關補假
     expect(isNationalHolidayFor(ctx, clerkId, '2026-02-20').reason).toBe('gov_makeup');
@@ -603,7 +710,7 @@ describe('loadHolidayContext（替身模型）', () => {
   it('不是 ObjectId 的員工 id 不查員工、補假與調移', async () => {
     await loadHolidayContext({ start: '2026-02-01', end: '2026-03-01', employees: ['emp1', 'emp2'] });
     expect(mockEmployee.find).not.toHaveBeenCalled();
-    expect(HolidayCompensation.find).not.toHaveBeenCalled();
+    expect(CompensatoryCredit.find).not.toHaveBeenCalled();
     expect(HolidaySwap.find).not.toHaveBeenCalled();
     expect(CalendarYear.find).toHaveBeenCalledTimes(1);
   });

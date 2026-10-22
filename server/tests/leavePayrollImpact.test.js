@@ -214,6 +214,8 @@ describe('paid / unpaid / half pay follows the leave type table', () => {
 
   it.each([
     '特休', '特休假', '公假', '補休', '休假', '公傷假', '婚假', '喪假', '產假', '陪產假', '產檢假', '年假',
+    // 調休存摺的假（國定假日適逢休息日／例假的補假）是有薪假
+    '調休', '補假',
   ])('pays %s in full', async (leaveType) => {
     const result = await impactOf(leaveType)
 

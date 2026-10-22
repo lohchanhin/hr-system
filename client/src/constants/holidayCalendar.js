@@ -32,7 +32,7 @@ export const HOLIDAY_KIND_TAG_TYPES = {
 
 export const HOLIDAY_KIND_DESCRIPTIONS = {
   statutory: '勞基法第 37 條國定假日，全體員工適用（含落在週末的日子）',
-  gov_makeup_off: '政府機關的補假日：行政人員自動當作補假；輪班人員僅供參考，補假依班表另行排定',
+  gov_makeup_off: '政府機關的補假日：調休存摺上線後只是行政人員的建議調休日（國定假日落在週末改存入調休，要用時申請調休）；輪班人員僅供參考',
   gov_bridge_off: '政府機關調整放假：只有啟用「依政府調整放假」並有勞資會議同意時，行政人員改為休息日',
   gov_makeup_workday: '政府機關補行上班：只有啟用「依政府調整放假」時，行政人員改為上班日',
   company_off: '公司自訂休息日（不是國定假日）',

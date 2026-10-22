@@ -515,7 +515,7 @@ describe('EmployeeManagement.vue 假日制度與原住民身分', () => {
     await flushPromises()
     expect(wrapper.find('[data-test="employee-holiday-regime"]').exists()).toBe(true)
     expect(wrapper.find('[data-test="employee-is-indigenous"]').exists()).toBe(true)
-    expect(wrapper.text()).toContain('輪班：國定假日落在自己的休息日/例假時另排補假；行政：週一至週五上班，政府公告的補假日自動放假')
+    expect(wrapper.text()).toContain('輪班：國定假日落在自己的休息日/例假時存入調休；行政：週一至週五上班，國定假日落在週末時存入調休（政府補假日為建議調休日）')
     expect(wrapper.vm.employeeForm.holidayRegime).toBe('')
     expect(wrapper.vm.employeeForm.isIndigenous).toBe(false)
   })

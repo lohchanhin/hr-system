@@ -1,6 +1,6 @@
 // 國定假日休假紀錄 API：查詢（與班表相同的權限範圍）、登記／刪除「沒休的處理方式」、匯出 Excel，
-// 以及補假義務（排定補假日、年度未排補假清單、重新計算）與個人調移（須有員工本人的同意紀錄）。
-// 休假紀錄本身由班表推算（holidayRestLedgerService），這裡只存人工的處理決定；查詢時順便同步補假義務。
+// 以及國定假日的調休（年度調休清單、重新計算、管理員的 HR 指定調休日與手動補登）與個人調移（須有員工本人的同意紀錄）。
+// 休假紀錄本身由班表推算（holidayRestLedgerService），這裡只存人工的處理決定；查詢時順便同步調休存摺。
 import { Types } from 'mongoose';
 import Employee from '../models/Employee.js';
 import Department from '../models/Department.js';
@@ -190,8 +190,15 @@ const STATUS_FILTERS = new Map([
   ['notTaken', { label: '未休', matches: (employee) => employee.notTaken > 0 }],
   ['moved', { label: '移休', matches: (employee) => employee.moved > 0 }],
   ['extra', { label: '多排的國', matches: (employee) => employee.extraGuoDates.length > 0 }],
-  ['compensation', { label: '待排補假', matches: (employee) => employee.items.some((item) => item.needsAction === 'assign_compensation') }],
+  // 國定假日適逢休息日／例假：已存入調休（含已用掉的整天調休、HR 指定），或還沒存入的
+  ['compensation', { label: '調休', matches: (employee) => employee.items.some(isCompensationItem) }],
 ]);
+
+const BANK_VIAS = new Set(['bank', 'comp_leave', 'hr_assigned', 'assigned']);
+
+function isCompensationItem(item) {
+  return item.needsAction === 'assign_compensation' || BANK_VIAS.has(item.compensation?.via);
+}
 
 function statusFilterOf(query) {
   return STATUS_FILTERS.get(String(query.status || '').trim()) || null;
@@ -221,6 +228,7 @@ function mergeSummaries(ledgers) {
     total.notTaken += summary.notTaken;
     total.open += summary.open;
     total.compensationOpen += summary.compensationOpen || 0;
+    total.banked += summary.banked || 0;
     total.extra += summary.extra;
     total.excluded.notScheduled += summary.excluded.notScheduled;
   }
@@ -234,7 +242,7 @@ export async function getHolidayLedger(req, res) {
     const filter = statusFilterOf(req.query);
     const ledgers = [];
     for (const month of months) {
-      // 查詢時順便同步補假義務（國定假日落在休息日／例假的補假），班表改過之後不必另外觸發
+      // 查詢時順便同步調休存摺（國定假日落在休息日／例假存入的調休），班表改過之後不必另外觸發
       const { sync, ...ledger } = await buildHolidayRestLedger({ month, employees, syncCompensations: true });
       ledgers.push(keepEmployees(ledger, filter));
     }
@@ -392,7 +400,7 @@ export async function deleteHolidayLedgerResolution(req, res) {
   }
 }
 
-/* ---------------------------- 補假義務 ---------------------------- */
+/* ---------------------------- 國定假日的調休 ---------------------------- */
 
 function currentTaipeiYear() {
   return Number(String(toTaipeiDateKey(new Date()) || '').slice(0, 4)) || new Date().getUTCFullYear();
@@ -405,14 +413,14 @@ function parseYear(value) {
   return year;
 }
 
-// 補假、調移的寫入：主管只能處理直屬部屬（不含自己），管理員不限
+// 調休、調移的寫入：主管只能處理直屬部屬（不含自己），管理員不限（HR 指定與手動補登在路由只開放管理員）
 const authorizeFor = (req) => (employeeId) => assertCanResolveFor(req, employeeId);
 
-/** GET /api/holiday-ledger/compensations?year=&status=open|assigned|void|all：年度未排補假（預設 open） */
+/** GET /api/holiday-ledger/compensations?year=&status=available|used|expired|void|all：年度調休清單（預設未使用） */
 export async function listHolidayLedgerCompensations(req, res) {
   try {
     const year = parseYear(req.query.year);
-    const status = String(req.query.status || 'open').trim();
+    const status = String(req.query.status || 'available').trim();
     if (!COMPENSATION_LIST_STATUSES.includes(status)) throw new LedgerRequestError(400, '狀態篩選不正確', 'INVALID_STATUS');
     const employees = await loadLedgerEmployees(req);
     return res.json(await listHolidayCompensations({ employees, year, status }));
@@ -439,7 +447,7 @@ export async function syncHolidayLedgerCompensations(req, res) {
   }
 }
 
-/** POST /api/holiday-ledger/compensations/:id/assign { assignedDate, agreementNote? }：排定補假日 */
+/** POST /api/holiday-ledger/compensations/:id/assign { assignedDate, agreementNote }：HR 指定調休日（用掉這筆調休，協商紀錄必填） */
 export async function assignHolidayLedgerCompensation(req, res) {
   try {
     const body = req.body || {};
@@ -456,7 +464,7 @@ export async function assignHolidayLedgerCompensation(req, res) {
   }
 }
 
-/** POST /api/holiday-ledger/compensations/:id/unassign：取消排定 */
+/** POST /api/holiday-ledger/compensations/:id/unassign：取消 HR 指定（這筆調休回到未使用） */
 export async function unassignHolidayLedgerCompensation(req, res) {
   try {
     const saved = await unassignHolidayCompensation({ id: String(req.params.id ?? '').trim(), authorize: authorizeFor(req) });
@@ -466,7 +474,7 @@ export async function unassignHolidayLedgerCompensation(req, res) {
   }
 }
 
-/** POST /api/holiday-ledger/compensations { employee, holidayDate, note }：人資手動新增補假義務 */
+/** POST /api/holiday-ledger/compensations { employee, holidayDate, note }：人資手動補登國定假日的調休 */
 export async function createHolidayLedgerCompensation(req, res) {
   try {
     const body = req.body || {};

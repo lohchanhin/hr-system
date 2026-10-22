@@ -303,7 +303,12 @@ describeIntegration('leave hours, balances, quotas and migrations against a real
       expect(item(res.body, 'menstrual')).toMatchObject({ quotaHours: 96, usedHours: 8, remainingHours: 88 })
       expect(item(res.body, 'marriage')).toMatchObject({ period: 'event', quotaHours: 64, usedHours: 24, remainingHours: null })
       expect(item(res.body, 'official')).toMatchObject({ quotaHours: null, usedHours: 8, status: 'unlimited' })
-      expect(item(res.body, 'comp')).toMatchObject({ quotaHours: 6, status: 'manual' })
+      // 調休存摺上線後：員工資料的補休時數部署時轉入存摺（只做一次），之後調休的餘額來自存摺
+      expect(item(res.body, 'comp')).toBeUndefined()
+      const { migrateLegacyCompensatoryHours } = await import('../src/services/compensatoryLeaveService.js')
+      expect(await migrateLegacyCompensatoryHours()).toMatchObject({ skipped: false, employees: 1 })
+      const migrated = await get('balEmp', '/api/approvals/leave-balances?year=2099')
+      expect(item(migrated.body, 'comp')).toMatchObject({ name: '調休', quotaHours: 6, remainingHours: 6, availableHours: 6, source: 'bank', status: 'bank', enforcement: 'block' })
       expect(item(res.body, 'accumulated')).toMatchObject({ quotaHours: 8, status: 'manual' })
       expect(res.body.unmatched).toEqual([])
     })

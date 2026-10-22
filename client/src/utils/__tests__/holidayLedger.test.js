@@ -7,6 +7,7 @@ import {
   buildSwapBody,
   canRecordResolution,
   canShowCompensationButton,
+  isHrAssigned,
   canShowResolveButton,
   canShowSwapButton,
   compensationReasonText,
@@ -120,15 +121,22 @@ describe('filters', () => {
   })
 
   it('counts every filter', () => {
-    // 新增「待排補假」（compensation）篩選，與伺服器的 status=compensation 一致
+    // 「調休」（compensation）篩選，與伺服器的 status=compensation 一致
     expect(countLedgerFilters(rows)).toEqual({ all: 3, notTaken: 2, moved: 2, open: 1, extra: 1, compensation: 0 })
     expect(LEDGER_FILTERS.map((filter) => filter.value)).toEqual(['all', 'notTaken', 'moved', 'open', 'extra', 'compensation'])
   })
 
-  it('keeps the rows with a 補假 still to be assigned for 待排補假', () => {
-    const withCompensation = [...rows, { employeeId: 'd', notTaken: 1, moved: 0, open: 1, extraGuoDates: [], items: [{ needsAction: 'assign_compensation' }] }]
-    expect(withCompensation.filter((row) => ledgerRowMatchesFilter(row, 'compensation')).map((row) => row.employeeId)).toEqual(['d'])
-    expect(LEDGER_FILTERS.find((filter) => filter.value === 'compensation').label).toBe('待排補假')
+  // 調休存摺上線後：「待排補假」改成「調休」，列出國定假日落在休息日／例假、已存入（或還沒存入）調休的員工
+  it('keeps the rows with a 調休 (banked, used, HR 指定, or not banked yet) for 調休', () => {
+    const withCompensation = [
+      ...rows,
+      { employeeId: 'd', notTaken: 1, moved: 0, open: 1, extraGuoDates: [], items: [{ needsAction: 'assign_compensation' }] },
+      { employeeId: 'e', notTaken: 0, moved: 0, open: 0, extraGuoDates: [], items: [{ status: 'compensated', compensation: { via: 'bank', creditStatus: 'available' } }] },
+      { employeeId: 'f', notTaken: 0, moved: 0, open: 0, extraGuoDates: [], items: [{ status: 'compensated', compensation: { via: 'comp_leave', date: '2026-10-26' } }] },
+      { employeeId: 'g', notTaken: 0, moved: 0, open: 0, extraGuoDates: [], items: [{ status: 'compensated', compensation: { via: 'gov_makeup', date: '2026-10-09' } }] },
+    ]
+    expect(withCompensation.filter((row) => ledgerRowMatchesFilter(row, 'compensation')).map((row) => row.employeeId)).toEqual(['d', 'e', 'f'])
+    expect(LEDGER_FILTERS.find((filter) => filter.value === 'compensation').label).toBe('調休')
   })
 })
 
@@ -147,7 +155,7 @@ describe('buildLedgerQuery', () => {
     expect(buildLedgerQuery({ month: '2026-09', search: 'N001' })).toBe('month=2026-09&search=N001')
   })
 
-  it('uses filter names the server understands (待排補假 = compensation)', () => {
+  it('uses filter names the server understands (調休 = compensation)', () => {
     expect(LEDGER_FILTERS.map((filter) => filter.value).filter((value) => value !== 'all')).toEqual(['notTaken', 'moved', 'open', 'extra', 'compensation'])
   })
 })
@@ -255,36 +263,67 @@ describe('補假、行事曆放假與個人調移欄位', () => {
   it('describes the new cell states with text', () => {
     expect(describeLedgerCell({ status: 'rested_on_date', implicit: true })).toMatchObject({ text: '依行事曆放假', type: 'success' })
     expect(describeLedgerCell({ status: 'compensated', compensation: { date: '2026-10-14', via: 'assigned' } })).toMatchObject({ text: '補假 10/14', type: 'success' })
+    expect(describeLedgerCell({ status: 'compensated', compensation: { date: '2026-10-14', via: 'hr_assigned' } })).toMatchObject({ text: '補假 10/14', type: 'success' })
     expect(describeLedgerCell({ status: 'compensated', compensation: { date: '2026-02-27', via: 'gov_makeup' } }).text).toBe('補假 02/27（公務機關補假日）')
-    const waiting = describeLedgerCell({ status: 'not_taken', reason: 'on_rest_day', needsAction: 'assign_compensation', compensation: { id: 'c1', status: 'open', suggestedDate: '2026-10-12' } })
-    expect(waiting).toMatchObject({ text: '待排補假', type: 'danger' })
-    expect(waiting.tooltip).toContain('系統建議 10/12')
+    // 調休存摺：存入、部分使用、用完、用在整天的調休
+    const banked = describeLedgerCell({ status: 'compensated', compensation: { via: 'bank', creditStatus: 'available', usedHours: 0, suggestedDate: '2026-10-26' } })
+    expect(banked).toMatchObject({ text: '已存入調休', type: 'success' })
+    expect(banked.tooltip).toContain('建議調休日 10/26')
+    expect(describeLedgerCell({ status: 'compensated', compensation: { via: 'bank', creditStatus: 'partial', usedHours: 4 } }).text).toBe('已存入調休（已用 4 小時）')
+    expect(describeLedgerCell({ status: 'compensated', compensation: { via: 'bank', creditStatus: 'used', usedHours: 8 } })).toMatchObject({ text: '調休已使用', type: 'info' })
+    expect(describeLedgerCell({ status: 'compensated', compensation: { via: 'comp_leave', date: '2026-10-26' } })).toMatchObject({ text: '調休 10/26', type: 'success' })
+    // 還沒存入（沒有同步的檢視）
+    const waiting = describeLedgerCell({ status: 'not_taken', reason: 'on_rest_day', needsAction: 'assign_compensation', compensation: null })
+    expect(waiting).toMatchObject({ text: '待存入調休', type: 'warning' })
+    expect(waiting.tooltip).toContain('存入一筆調休')
     expect(describeLedgerCell({ status: 'rested_on_date', guoDate: '2026-10-10', compensation: { date: '2026-10-14', via: 'assigned', conflict: true } }))
       .toMatchObject({ text: '補假 10/14（班表已變更，請確認）', type: 'warning' })
+    expect(describeLedgerCell({ status: 'moved', guoDate: '2026-10-03', compensation: { via: 'bank', creditStatus: 'used', usedHours: 8, conflict: true, conflictReason: 'trigger_gone' } }))
+      .toMatchObject({ text: '調休已使用（班表已變更，請確認）', type: 'warning' })
   })
 
-  it('warns when the assigned 補假 date itself became a rest day, and keeps the 修改補假 button', () => {
-    const item = { status: 'compensated', compensation: { date: '2026-10-14', via: 'assigned', compensationId: 'c1', conflict: true, conflictReason: 'date_not_workday' } }
+  it('warns when the date of a used 調休 itself became a rest day, and keeps the 修改 HR 指定 button for an admin', () => {
+    const item = { status: 'compensated', compensation: { date: '2026-10-14', via: 'hr_assigned', compensationId: 'c1', conflict: true, conflictReason: 'date_not_workday' } }
     const cell = describeLedgerCell(item)
     expect(cell).toMatchObject({ text: '補假 10/14（班表已變更，請確認）', type: 'warning' })
-    expect(cell.tooltip).toBe('補假日 10/14 現在是休息日／例假（不是原本要上班的日子），員工並沒有因此多休一天，請改排其他上班日')
-    expect(canShowCompensationButton({ canResolve: true, row: { employeeId: 'a' }, item })).toBe(true)
+    expect(cell.tooltip).toBe('調休日 10/14 現在是休息日／例假（不是原本要上班的日子），員工並沒有因此多休一天，請改排其他上班日')
+    expect(canShowCompensationButton({ canResolve: true, role: 'admin', row: { employeeId: 'a' }, item })).toBe(true)
+  })
+
+  // 審查發現：人資作廢的調休之前會被同步重新開啟；現在伺服器保持作廢，格子顯示已處理、不是待處理，也不開放 HR 指定
+  it('shows a credit HR voided by hand as handled (調休已作廢), not as 待存入調休, without the HR 指定 button', () => {
+    const item = {
+      status: 'not_taken', reason: 'on_rest_day', needsAction: null,
+      compensation: { via: 'bank', compensationId: 'c1', creditStatus: 'void', voidReason: 'manual', usedHours: 0, conflict: false },
+    }
+    const cell = describeLedgerCell(item)
+    expect(cell).toMatchObject({ text: '調休已作廢', type: 'info' })
+    expect(cell.tooltip).toContain('人資已作廢這筆調休')
+    expect(canShowCompensationButton({ canResolve: true, role: 'admin', row: { employeeId: 'a' }, item })).toBe(false)
   })
 
   it('notes a column that exists only because of a personal swap', () => {
     expect(describeHolidayHeader({ name: '教師節', date: '2026-09-28', personal: true }).note).toBe('個人調移')
   })
 
-  it('offers 排定補假 for an open obligation or an assigned 補假, with the same scope rules as resolutions', () => {
+  // 調休存摺上線後：HR 指定調休日只有管理員（主管不再能排定），可以指定還沒用過的調休或修改已指定的
+  it('offers HR 指定 to an administrator for an unused banked 調休 or one HR already assigned', () => {
     const row = { employeeId: 'a' }
-    const waiting = { needsAction: 'assign_compensation', compensation: { id: 'c1', status: 'open' } }
-    const assigned = { status: 'compensated', compensation: { via: 'assigned', compensationId: 'c1', date: '2026-10-14' } }
-    expect(canShowCompensationButton({ canResolve: true, row, item: waiting })).toBe(true)
-    expect(canShowCompensationButton({ canResolve: true, row, item: assigned })).toBe(true)
-    expect(canShowCompensationButton({ canResolve: true, row, item: { status: 'compensated', compensation: { via: 'gov_makeup', date: '2026-02-27' } } })).toBe(false)
-    expect(canShowCompensationButton({ canResolve: true, row, item: { needsAction: 'assign_compensation', compensation: null } })).toBe(false)
-    expect(canShowCompensationButton({ canResolve: false, row, item: waiting })).toBe(false)
-    expect(canShowCompensationButton({ canResolve: true, role: 'supervisor', viewerId: 'a', row, item: waiting })).toBe(false)
+    const banked = { status: 'compensated', compensation: { via: 'bank', compensationId: 'c1', creditStatus: 'available', usedHours: 0 } }
+    const assigned = { status: 'compensated', compensation: { via: 'hr_assigned', compensationId: 'c1', date: '2026-10-14' } }
+    const legacy = { status: 'compensated', compensation: { via: 'assigned', compensationId: 'c1', date: '2026-10-14' } }
+    expect(canShowCompensationButton({ canResolve: true, role: 'admin', row, item: banked })).toBe(true)
+    expect(canShowCompensationButton({ canResolve: true, role: 'admin', row, item: assigned })).toBe(true)
+    expect(canShowCompensationButton({ canResolve: true, role: 'admin', row, item: legacy })).toBe(true)
+    expect(isHrAssigned(assigned.compensation)).toBe(true)
+    expect(isHrAssigned(banked.compensation)).toBe(false)
+    // 員工已經用了一部分、用在整天的調休、政府補假日、還沒存入的：不開放指定
+    expect(canShowCompensationButton({ canResolve: true, role: 'admin', row, item: { compensation: { ...banked.compensation, creditStatus: 'partial', usedHours: 4 } } })).toBe(false)
+    expect(canShowCompensationButton({ canResolve: true, role: 'admin', row, item: { compensation: { via: 'comp_leave', compensationId: 'c1', date: '2026-10-26' } } })).toBe(false)
+    expect(canShowCompensationButton({ canResolve: true, role: 'admin', row, item: { status: 'compensated', compensation: { via: 'gov_makeup', date: '2026-02-27' } } })).toBe(false)
+    expect(canShowCompensationButton({ canResolve: true, role: 'admin', row, item: { needsAction: 'assign_compensation', compensation: null } })).toBe(false)
+    expect(canShowCompensationButton({ canResolve: false, role: 'admin', row, item: banked })).toBe(false)
+    expect(canShowCompensationButton({ canResolve: true, role: 'supervisor', viewerId: 'b', row, item: banked })).toBe(false)
     expect(canShowSwapButton({ canResolve: true, role: 'supervisor', viewerId: 'a', row })).toBe(false)
     expect(canShowSwapButton({ canResolve: true, role: 'admin', viewerId: 'a', row })).toBe(true)
     expect(compensationReasonText({ reason: 'on_regular_rest' })).toBe('適逢例假')

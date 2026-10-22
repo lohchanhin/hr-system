@@ -45,12 +45,15 @@ describe('default leave policy (Taiwan statutory limits in hours)', () => {
     expect(typeOf(policy, 'official')).toMatchObject({ quotaHours: null, period: 'none', enforcement: 'none' })
   })
 
-  it('takes 特休 and 補休 from the employee record and blocks 特休 by default while every other quota only warns', () => {
+  // 調休存摺上線後（2026-10 客戶要求）：補休不再是人資手動維護的數字，改成系統累計的調休存摺，超過可用時數和特休一樣不能送出
+  it('takes 特休 from the employee record and 調休 from the compensatory leave bank, blocking both by default while every other quota only warns', () => {
     const policy = service.normalizeLeavePolicy(null)
     expect(typeOf(policy, 'annual')).toMatchObject({ source: 'employee_annual', enforcement: 'block', name: '特休' })
-    expect(typeOf(policy, 'comp')).toMatchObject({ source: 'employee_comp', enforcement: 'none' })
+    expect(typeOf(policy, 'comp')).toMatchObject({ source: 'comp_bank', enforcement: 'block', name: '調休', period: 'none' })
+    expect(typeOf(policy, 'comp').aliases).toEqual(expect.arrayContaining(['補休', '補假']))
     const blocking = policy.types.filter(item => item.enforcement === 'block').map(item => item.key)
-    expect(blocking).toEqual(['annual'])
+    expect(blocking).toEqual(['annual', 'comp'])
+    expect(policy).toMatchObject({ compensationHoursPerCredit: 8, compensationExpiryMonths: 0 })
   })
 
   it('uses the same 特休 spellings as the deduction code', () => {
@@ -61,6 +64,13 @@ describe('default leave policy (Taiwan statutory limits in hours)', () => {
 
 describe('matchLeaveType', () => {
   const match = (names) => service.matchLeaveType(names, service.normalizeLeavePolicy(null).types)?.key ?? null
+
+  it('maps 調休, 補休 and 補假 (and names containing them) to the compensatory leave bank', () => {
+    expect(match(['調休'])).toBe('comp')
+    expect(match(['補休'])).toBe('comp')
+    expect(match(['補假'])).toBe('comp')
+    expect(match(['國定假日補假'])).toBe('comp')
+  })
 
   it('matches names, aliases and spellings with brackets or spaces', () => {
     expect(match(['事假'])).toBe('personal')
@@ -156,6 +166,45 @@ describe('normalizeLeavePolicy (merge stored settings over the defaults by key)'
     })
     expect(typeOf(policy, 'family_care').countsAgainst).toBeNull()
     expect(typeOf(policy, 'sick').countsAgainst).toBeNull()
+  })
+})
+
+describe('調休存摺的設定', () => {
+  it('keeps the name 調休 and its fixed aliases, and keeps the type enabled, whatever was stored', () => {
+    const policy = service.normalizeLeavePolicy({
+      types: [{ key: 'comp', name: '補休', aliases: ['加班補休'], enabled: false, enforcement: 'none', display: 'always' }],
+    })
+    const comp = typeOf(policy, 'comp')
+    expect(comp).toMatchObject({ name: '調休', enabled: true, enforcement: 'block', source: 'comp_bank', display: 'always' })
+    expect(comp.aliases).toEqual(expect.arrayContaining(['補休', '補假', '加班補休']))
+    expect(service.matchLeaveType(['加班補休'], policy.types)?.key).toBe('comp')
+  })
+
+  it('drops the old 補休 note saved by the previous admin screen: 調休 always shows its default description', () => {
+    const defaultNote = typeOf(service.normalizeLeavePolicy(null), 'comp').note
+    const legacy = service.normalizeLeavePolicy({ types: [{ key: 'comp', note: '依員工資料的補休時數，由人資維護' }] })
+    expect(typeOf(legacy, 'comp').note).toBe(defaultNote)
+    const saved = service.validateLeavePolicyInput({ types: [{ key: 'comp', note: '依員工資料的補休時數，由人資維護' }] })
+    expect(typeOf(saved, 'comp').note).toBe(defaultNote)
+    // 其他假別的說明照舊可以自訂
+    expect(typeOf(service.normalizeLeavePolicy({ types: [{ key: 'personal', note: '公司規定' }] }), 'personal').note).toBe('公司規定')
+  })
+
+  it('reads the hours per credit and the expiry months, falling back to the defaults on bad data', () => {
+    expect(service.normalizeLeavePolicy({ compensationHoursPerCredit: 12, compensationExpiryMonths: 6 }))
+      .toMatchObject({ compensationHoursPerCredit: 12, compensationExpiryMonths: 6 })
+    expect(service.normalizeLeavePolicy({ compensationHoursPerCredit: -1, compensationExpiryMonths: 1.5 }))
+      .toMatchObject({ compensationHoursPerCredit: 8, compensationExpiryMonths: 0 })
+  })
+
+  it('validates the hours per credit and the expiry months when an admin saves, and refuses to disable 調休', () => {
+    expect(service.validateLeavePolicyInput({ compensationHoursPerCredit: 4, compensationExpiryMonths: 12 }))
+      .toMatchObject({ compensationHoursPerCredit: 4, compensationExpiryMonths: 12 })
+    expect(() => service.validateLeavePolicyInput({ compensationHoursPerCredit: 0 })).toThrow('每筆調休的時數必須大於 0')
+    expect(() => service.validateLeavePolicyInput({ compensationExpiryMonths: 2.5 })).toThrow('調休期限必須是')
+    expect(() => service.validateLeavePolicyInput({ types: [{ key: 'comp', enabled: false }] })).toThrow('調休不能停用')
+    const saved = service.validateLeavePolicyInput({ types: [{ key: 'comp', name: '補休', enforcement: 'warn' }] })
+    expect(typeOf(saved, 'comp')).toMatchObject({ name: '調休', enforcement: 'block' })
   })
 })
 

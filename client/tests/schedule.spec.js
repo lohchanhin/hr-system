@@ -4398,8 +4398,12 @@ describe('Schedule.vue', () => {
         wrapper.unmount()
       })
 
-      it('judges the publish by its own check: a violation found after waiting blocks the publish and says why', async () => {
-        const wrapper = await mountSupervisor({ publishSummary: draftSummary })
+      // 客戶要求變更（排班規範不擋發布）：原本等到的違規會擋下發布，現在列在同一個確認視窗裡，按「仍要發布」照樣送出
+      it('judges the publish by its own check: a violation found after waiting is listed in the confirmation, and the publish still goes ahead', async () => {
+        const wrapper = await mountSupervisor({
+          publishSummary: draftSummary,
+          publishResult: { updated: 1, publishedAt: new Date().toISOString(), employees: [] }
+        })
         await flush()
         const calls = holdValidate()
 
@@ -4419,10 +4423,13 @@ describe('Schedule.vue', () => {
         }))
         await publishing
 
-        expect(ElMessageBox.confirm).not.toHaveBeenCalled()
-        expect(ElMessageBox.alert).toHaveBeenCalledTimes(1)
-        expect(ElMessageBox.alert.mock.calls[0][1]).toBe('排班規範檢核未通過')
-        expect(publishPosts()).toHaveLength(0)
+        expect(ElMessageBox.alert).not.toHaveBeenCalled()
+        expect(ElMessageBox.confirm).toHaveBeenCalledTimes(1)
+        const [message, title, options] = ElMessageBox.confirm.mock.calls[0]
+        expect(title).toBe('有 1 項排班規範提醒（不影響發布）')
+        expect(message).toContain('・A0069 林小華 2026-07-06 [連續出勤限制]：不得連續7日未安排休/例')
+        expect(options).toMatchObject({ confirmButtonText: '仍要發布', cancelButtonText: '取消' })
+        expect(publishPosts()).toHaveLength(1)
         wrapper.unmount()
       })
 
@@ -4655,20 +4662,338 @@ describe('Schedule.vue', () => {
         wrapper.unmount()
       })
 
-      it('does not publish when a violation exists, even if weeks are pending as well', async () => {
-        const wrapper = await mountSupervisor({ publishSummary: draftSummary })
+      const publishPosts = () => apiFetch.mock.calls.filter(([url, options]) => url === '/api/schedules/publish' && options?.method === 'POST')
+      const finalizePosts = () => apiFetch.mock.calls.filter(([url, options]) => url === '/api/schedules/publish/finalize' && options?.method === 'POST')
+      const continuousViolation = { employee: 'e2', date: '2026-07-06', rule: 'continuous-work-days', message: '不得連續7日未安排休/例' }
+      const weeklyViolation = { employee: 'e1', date: '2026-07-13', rule: 'weekly-one-regular-rest-one-rest-day', message: '該週沒有例假' }
+
+      // 客戶要求變更（「可以顯示規範，可是不要阻止發布」）：原本有違規時不跳確認、不發布，
+      // 現在同一個確認視窗列出違規與跨月週說明，按「仍要發布」照樣發布
+      it('lists the violations and the pending weeks in one publish confirmation, and publishes on 仍要發布', async () => {
+        const wrapper = await mountSupervisor({
+          publishSummary: draftSummary,
+          publishResult: { updated: 1, publishedAt: new Date().toISOString(), employees: [] }
+        })
         await flush()
         answerValidateWith(validateResponse({
           ok: false,
-          count: 1,
-          violations: [{ employee: 'e2', date: '2026-07-06', rule: 'continuous-work-days', message: '不得連續7日未安排休/例' }],
+          count: 2,
+          violations: [continuousViolation, weeklyViolation],
           pendingWeeks: [pendingItem()]
         }))
 
         await wrapper.vm.confirmPublish()
 
-        expect(ElMessageBox.confirm).not.toHaveBeenCalled()
-        expect(apiFetch.mock.calls.some(([url]) => url === '/api/schedules/publish')).toBe(false)
+        // 只有一個視窗：不再先跳「排班規範檢核未通過」，也不跳「預檢已通過」
+        expect(ElMessageBox.alert).not.toHaveBeenCalled()
+        expect(ElMessage.success).not.toHaveBeenCalledWith('排班規範預檢已通過')
+        expect(ElMessageBox.confirm).toHaveBeenCalledTimes(1)
+        const [message, title, options] = ElMessageBox.confirm.mock.calls[0]
+        expect(title).toBe('有 2 項排班規範提醒（不影響發布）')
+        expect(message).toBe([
+          '確認要將本月班表發送給員工確認嗎？',
+          [
+            '以下 2 項排班規範問題不影響發布，建議儘快修正：',
+            '・A0069 林小華 2026-07-06 [連續出勤限制]：不得連續7日未安排休/例',
+            '・A0003 王小美 2026-07-13 [每週一例一休]：該週沒有例假'
+          ].join('\n'),
+          '另有 1 項跨月週尚無法判斷一例一休（相鄰月份尚未排班），不影響發布，待相鄰月份班表排定後會重新檢核。'
+        ].join('\n\n'))
+        expect(options).toMatchObject({
+          type: 'warning',
+          confirmButtonText: '仍要發布',
+          cancelButtonText: '取消',
+          customClass: 'schedule-issue-dialog',
+          modalClass: 'schedule-issue-overlay',
+          closeOnClickModal: false
+        })
+        expect(publishPosts()).toHaveLength(1)
+        wrapper.unmount()
+      })
+
+      it('does not publish when the violation confirmation is cancelled', async () => {
+        const wrapper = await mountSupervisor({ publishSummary: draftSummary })
+        await flush()
+        answerValidateWith(validateResponse({ ok: false, count: 1, violations: [continuousViolation], pendingWeeks: [pendingItem()] }))
+        ElMessageBox.confirm.mockRejectedValueOnce('cancel')
+
+        await wrapper.vm.confirmPublish()
+
+        expect(ElMessageBox.confirm).toHaveBeenCalledTimes(1)
+        expect(publishPosts()).toHaveLength(0)
+        expect(wrapper.vm.isPublishing).toBe(false)
+        expect(wrapper.vm.scheduleNotifications.some(item => item.title.startsWith('已發布'))).toBe(false)
+        wrapper.unmount()
+      })
+
+      it('says the check could not be completed when the precheck fails, and still lets the user publish', async () => {
+        const wrapper = await mountSupervisor({
+          publishSummary: draftSummary,
+          publishResult: { updated: 1, publishedAt: new Date().toISOString(), employees: [] }
+        })
+        await flush()
+        answerValidateWith(() => { throw new Error('network down') })
+
+        await wrapper.vm.confirmPublish()
+
+        expect(ElMessage.warning).not.toHaveBeenCalled()
+        expect(ElMessageBox.confirm).toHaveBeenCalledTimes(1)
+        const [message, title, options] = ElMessageBox.confirm.mock.calls[0]
+        expect(title).toBe('排班規範檢核未完成')
+        expect(message).toContain('排班規範檢核暫時無法完成')
+        expect(message).toContain('排班規範不影響發布，仍可繼續；發布後請按「排班檢核」重新檢核。')
+        expect(message).toContain('確認要將本月班表發送給員工確認嗎？')
+        expect(options).toMatchObject({ confirmButtonText: '仍要發布', cancelButtonText: '取消' })
+        expect(publishPosts()).toHaveLength(1)
+        wrapper.unmount()
+      })
+
+      it('treats a server error from the precheck the same way (check not completed, finalize still possible)', async () => {
+        const wrapper = await mountSupervisor({
+          publishSummary: { ...draftSummary, status: 'ready', allEmployeesConfirmed: true },
+          finalizeResult: { finalized: 1 }
+        })
+        await flush()
+        answerValidateWith(validateResponse({ error: 'internal error' }, 500))
+
+        await wrapper.vm.confirmFinalize()
+
+        const [message, title, options] = ElMessageBox.confirm.mock.calls[0]
+        expect(title).toBe('排班規範檢核未完成')
+        expect(message).toContain('排班規範不影響完成發布，仍可繼續；完成發布後請按「排班檢核」重新檢核。')
+        expect(message).toContain('全部員工已確認，是否完成發布並鎖定班表？')
+        expect(options).toMatchObject({ confirmButtonText: '仍要完成發布', cancelButtonText: '取消' })
+        expect(finalizePosts()).toHaveLength(1)
+        wrapper.unmount()
+      })
+
+      it('records the violations the server reports after publishing as a warning, and keeps the rule badge in sync', async () => {
+        const wrapper = await mountSupervisor({
+          publishSummary: draftSummary,
+          publishResult: {
+            updated: 2,
+            publishedAt: new Date().toISOString(),
+            employees: [],
+            // e9 不在目前載入的那一頁：用伺服器附上的代號與姓名
+            violations: [continuousViolation, { ...weeklyViolation, employee: 'e9', employeeCode: 'A0999', employeeName: '張大明' }],
+            pendingWeeks: [pendingItem()]
+          }
+        })
+        await flush()
+        answerValidateWith(validateResponse({ ok: false, count: 1, violations: [continuousViolation] }))
+
+        await wrapper.vm.confirmPublish()
+
+        const notification = wrapper.vm.scheduleNotifications.find(item => item.title === '已發布，仍有 2 項排班規範問題')
+        expect(notification).toMatchObject({
+          type: 'warning',
+          message: '班表已發送給員工確認；以下 2 項排班規範問題不影響發布，建議儘快修正。'
+        })
+        expect(notification.details.map(detail => wrapper.vm.formatLaborRuleViolation(detail))).toEqual([
+          'A0069 林小華 2026-07-06 [連續出勤限制]：不得連續7日未安排休/例',
+          'A0999 張大明 2026-07-13 [每週一例一休]：該週沒有例假'
+        ])
+        expect(ElMessage.success).toHaveBeenCalledWith('已將班表發送給員工確認')
+        // 徽章與完整檢核結果以伺服器發布當下的檢核為準
+        expect(wrapper.vm.scheduleRuleValidation).toMatchObject({ ok: false, count: 2, pendingCount: 1 })
+        expect(wrapper.vm.scheduleIssues.lines).toHaveLength(2)
+        wrapper.unmount()
+      })
+
+      it('reloads the schedules after publishing and after finalizing, so the status does not stay at the old step', async () => {
+        const wrapper = await mountSupervisor({
+          publishSummary: { ...draftSummary, status: 'ready', allEmployeesConfirmed: true },
+          publishResult: { updated: 1, publishedAt: new Date().toISOString(), employees: [] },
+          finalizeResult: { finalized: 1 }
+        })
+        await flush()
+        answerValidateWith(validateResponse({ ok: false, count: 1, violations: [continuousViolation] }))
+        const monthlyFetches = () => apiFetch.mock.calls.filter(([url]) => String(url).startsWith('/api/schedules/monthly')).length
+        // 先把畫面上的員工都載入：之後一般的重新整理不會再抓，只有 reset 才會
+        await wrapper.vm.refreshScheduleData({ reset: true })
+        await flush()
+        const loaded = monthlyFetches()
+        await wrapper.vm.refreshScheduleData({ reason: 'probe' })
+        expect(monthlyFetches()).toBe(loaded)
+
+        const beforePublish = monthlyFetches()
+        await wrapper.vm.publishSchedulesForMonth()
+        await flush()
+        expect(monthlyFetches()).toBeGreaterThan(beforePublish)
+
+        const beforeFinalize = monthlyFetches()
+        await wrapper.vm.finalizeSchedulesForMonth()
+        await flush()
+        expect(monthlyFetches()).toBeGreaterThan(beforeFinalize)
+        wrapper.unmount()
+      })
+
+      it('clears the badge when the server reports no violation at publish time, and records no warning', async () => {
+        const wrapper = await mountSupervisor({
+          publishSummary: draftSummary,
+          publishResult: { updated: 1, publishedAt: new Date().toISOString(), employees: [] }
+        })
+        await flush()
+        answerValidateWith(validateResponse({ ok: false, count: 1, violations: [continuousViolation] }))
+
+        await wrapper.vm.confirmPublish()
+
+        expect(publishPosts()).toHaveLength(1)
+        expect(wrapper.vm.scheduleRuleValidation).toMatchObject({ ok: true, count: 0, pendingCount: 0 })
+        expect(wrapper.vm.scheduleIssues.lines).toEqual([])
+        expect(wrapper.vm.scheduleNotifications.some(item => item.title.startsWith('已發布'))).toBe(false)
+        wrapper.unmount()
+      })
+
+      it('lists the violations in the finalize confirmation, finalizes on 仍要完成發布 and records what the server reports', async () => {
+        const wrapper = await mountSupervisor({
+          publishSummary: { ...draftSummary, status: 'ready', allEmployeesConfirmed: true },
+          finalizeResult: { finalized: 1, violations: [weeklyViolation] }
+        })
+        await flush()
+        answerValidateWith(validateResponse({ ok: false, count: 1, violations: [weeklyViolation] }))
+
+        await wrapper.vm.confirmFinalize()
+
+        expect(ElMessageBox.alert).not.toHaveBeenCalled()
+        const [message, title, options] = ElMessageBox.confirm.mock.calls[0]
+        expect(title).toBe('有 1 項排班規範提醒（不影響完成發布）')
+        expect(message).toBe([
+          '全部員工已確認，是否完成發布並鎖定班表？',
+          '以下 1 項排班規範問題不影響完成發布，建議儘快修正：\n・A0003 王小美 2026-07-13 [每週一例一休]：該週沒有例假'
+        ].join('\n\n'))
+        expect(options).toMatchObject({ type: 'warning', confirmButtonText: '仍要完成發布', cancelButtonText: '取消' })
+        expect(finalizePosts()).toHaveLength(1)
+        expect(ElMessage.success).toHaveBeenCalledWith('班表已完成發布')
+        expect(wrapper.vm.scheduleNotifications.find(item => item.title === '已完成發布，仍有 1 項排班規範問題')).toMatchObject({
+          type: 'warning',
+          details: [expect.objectContaining({ message: 'A0003 王小美 2026-07-13 [每週一例一休]：該週沒有例假' })]
+        })
+        wrapper.unmount()
+      })
+
+      it('mounts the violation confirmation inside the schedule card in fullscreen mode', async () => {
+        const wrapper = await mountSupervisor({ publishSummary: draftSummary })
+        await flush()
+        wrapper.vm.toggleTableFullscreen()
+        await wrapper.vm.$nextTick()
+        answerValidateWith(validateResponse({ ok: false, count: 1, violations: [continuousViolation] }))
+
+        await wrapper.vm.confirmPublish()
+
+        expect(ElMessageBox.confirm.mock.calls[0][2]).toMatchObject({
+          confirmButtonText: '仍要發布',
+          appendTo: wrapper.find('[data-test="schedule-card"]').element
+        })
+        wrapper.unmount()
+      })
+
+      it('does not finalize when the violation confirmation is closed', async () => {
+        const wrapper = await mountSupervisor({
+          publishSummary: { ...draftSummary, status: 'ready', allEmployeesConfirmed: true },
+          finalizeResult: { finalized: 1 }
+        })
+        await flush()
+        answerValidateWith(validateResponse({ ok: false, count: 1, violations: [weeklyViolation] }))
+        ElMessageBox.confirm.mockRejectedValueOnce('close')
+
+        await wrapper.vm.confirmFinalize()
+
+        expect(ElMessageBox.confirm).toHaveBeenCalledTimes(1)
+        expect(finalizePosts()).toHaveLength(0)
+        wrapper.unmount()
+      })
+
+      // 員工不在目前載入的那一頁（分頁、搜尋）：預檢的違規帶著伺服器附上的代號與姓名，確認視窗顯示「代號 姓名」而不是「員工 <id>」
+      it('names an employee outside the loaded page in the publish confirmation with the code and name from the precheck', async () => {
+        const wrapper = await mountSupervisor({ publishSummary: draftSummary })
+        await flush()
+        answerValidateWith(validateResponse({
+          ok: false,
+          count: 1,
+          violations: [{ ...continuousViolation, employee: '6ada31e22336f157fecd25c5', employeeCode: 'N001', employeeName: '王違規' }]
+        }))
+        ElMessageBox.confirm.mockRejectedValueOnce('cancel')
+
+        await wrapper.vm.confirmPublish()
+
+        const [message] = ElMessageBox.confirm.mock.calls[0]
+        expect(message).toContain('・N001 王違規 2026-07-06 [連續出勤限制]：不得連續7日未安排休/例')
+        expect(message).not.toContain('員工 6ada31e22336f157fecd25c5')
+        expect(publishPosts()).toHaveLength(0)
+        wrapper.unmount()
+      })
+
+      // 完成發布不被違規擋下之後，鎖定的月份按「排班檢核」：伺服器改檢核已鎖定的班表（finalized: true），
+      // 畫面照實列出違規、徽章維持，不會變成「排班規範預檢已通過」，也不會把同一批問題再記一次
+      it('keeps listing the violations of a month finalized despite them when 排班檢核 is pressed afterwards', async () => {
+        const wrapper = await mountSupervisor({
+          publishSummary: { ...draftSummary, status: 'ready', allEmployeesConfirmed: true },
+          finalizeResult: { finalized: 1, violations: [weeklyViolation] }
+        })
+        await flush()
+        let finalizedOnServer = false
+        answerValidateWith(() => validateResponse(finalizedOnServer
+          ? { ok: false, count: 1, violations: [weeklyViolation], finalized: true }
+          : { ok: false, count: 1, violations: [weeklyViolation] }))
+        const base = apiFetch.getMockImplementation()
+        apiFetch.mockImplementation(async (url, options) => {
+          if (url === '/api/schedules/publish/finalize' && options?.method === 'POST') finalizedOnServer = true
+          return base(url, options)
+        })
+
+        await wrapper.vm.confirmFinalize()
+        expect(finalizePosts()).toHaveLength(1)
+        ElMessageBox.alert.mockClear()
+        ElMessage.success.mockClear()
+        const notificationsBefore = wrapper.vm.scheduleNotifications.map(item => item.title)
+        expect(notificationsBefore).toContain('已完成發布，仍有 1 項排班規範問題')
+
+        await wrapper.vm.inspectScheduleRules()
+
+        expect(ElMessage.success).not.toHaveBeenCalledWith('排班規範預檢已通過')
+        expect(ElMessageBox.alert).toHaveBeenCalledTimes(1)
+        const [message, title] = ElMessageBox.alert.mock.calls[0]
+        expect(title).toBe('排班規範檢核未通過')
+        expect(message).toBe('A0003 王小美 2026-07-13 [每週一例一休]：該週沒有例假')
+        expect(wrapper.vm.scheduleRuleValidation).toMatchObject({ ok: false, count: 1 })
+        expect(wrapper.vm.scheduleIssues.lines).toEqual(['A0003 王小美 2026-07-13 [每週一例一休]：該週沒有例假'])
+        expect(wrapper.find('[data-test="schedule-rule-results"]').exists()).toBe(true)
+        // 完成發布時已記過「已完成發布，仍有 1 項排班規範問題」，同一批問題不再另記一筆
+        expect(wrapper.vm.scheduleNotifications.map(item => item.title)).toEqual(notificationsBefore)
+        wrapper.unmount()
+      })
+
+      it('after a reload, the badge and 排班檢核 of a locked month still show its violations, logged as a finalized month, not a draft', async () => {
+        const wrapper = await mountSupervisor({ publishSummary: { ...draftSummary, status: 'finalized', allEmployeesConfirmed: true } })
+        await flush()
+        answerValidateWith(validateResponse({ ok: false, count: 1, violations: [weeklyViolation], finalized: true }))
+
+        // 換月或重新整理後的背景檢核：徽章顯示違規數
+        await wrapper.vm.fetchScheduleRuleValidation({ quiet: true })
+        expect(wrapper.vm.scheduleRuleValidation).toMatchObject({ ok: false, count: 1 })
+
+        await wrapper.vm.inspectScheduleRules()
+
+        expect(ElMessage.success).not.toHaveBeenCalledWith('排班規範預檢已通過')
+        expect(ElMessageBox.alert.mock.calls[0][1]).toBe('排班規範檢核未通過')
+        const titles = wrapper.vm.scheduleNotifications.map(item => item.title)
+        expect(titles).toContain('已完成發布的班表仍有排班規範問題')
+        expect(titles).not.toContain('排班草稿待修正')
+        wrapper.unmount()
+      })
+
+      it('still logs open drafts as 排班草稿待修正', async () => {
+        const wrapper = await mountSupervisor({ publishSummary: draftSummary })
+        await flush()
+        answerValidateWith(validateResponse({ ok: false, count: 1, violations: [weeklyViolation] }))
+
+        await wrapper.vm.inspectScheduleRules()
+
+        expect(wrapper.vm.scheduleNotifications.find(item => item.title === '排班草稿待修正')).toMatchObject({
+          type: 'warning',
+          message: '目前共有 1 項排班規範問題。'
+        })
         wrapper.unmount()
       })
 

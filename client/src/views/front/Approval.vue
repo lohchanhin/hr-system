@@ -28,6 +28,11 @@
               title="我的假別餘額"
               @loaded="onOwnBalancesLoaded"
             />
+            <!-- 我的調休：國定假日適逢休息日／例假存入的調休（來源、狀態、用在哪張單）；要用時在下方選假別「調休」發起簽核 -->
+            <CompensatoryLeavePanel
+              ref="applyCompPanel"
+              title="我的調休"
+            />
 
             <el-card class="form-card">
               <el-form label-width="140px" :model="applyState" class="apply-form">
@@ -746,6 +751,7 @@ import { useAuthStore } from '../../stores/auth'
 import ApprovalFormFields from '../../components/ApprovalFormFields.vue'
 import LeaveBalancePanel from '../../components/LeaveBalancePanel.vue'
 import LeaveRequestHint from '../../components/LeaveRequestHint.vue'
+import CompensatoryLeavePanel from '../../components/CompensatoryLeavePanel.vue'
 import EmployeeAvatar from '../../components/EmployeeAvatar.vue'
 import { formatTaipeiDateTime, formatFormValue, normalizeFieldOptions, personNameOrFallback } from '../../utils/approvalDisplay'
 import { describeError, readApiError, ApprovalApiError } from '../../utils/approvalErrors'
@@ -864,13 +870,15 @@ const fieldList = ref([])
 // 自己的餘額（申請頁的餘額表載入後放在這裡）：請假單填寫時用它即時提示「還剩多少、會不會超額」
 const ownBalances = ref(null)
 const applyBalancePanel = ref(null)
+const applyCompPanel = ref(null)
 const ownBalanceItems = computed(() => (Array.isArray(ownBalances.value?.items) ? ownBalances.value.items : []))
 function onOwnBalancesLoaded(balances) {
   ownBalances.value = balances && typeof balances === 'object' ? balances : null
 }
 async function refreshOwnBalances() {
   try {
-    await applyBalancePanel.value?.load?.()
+    // 調休存摺跟著重新整理：送出、撤回調休單後簽核中與可用時數會變
+    await Promise.all([applyBalancePanel.value?.load?.(), applyCompPanel.value?.load?.()])
   } catch {
     // 餘額只是參考資訊，重新整理失敗不影響申請
   }

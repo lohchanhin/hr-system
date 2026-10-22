@@ -26,7 +26,7 @@ jest.unstable_mockModule('../src/services/nightShiftAllowanceService.js', () => 
   calculateNightShiftAllowance: jest.fn(),
 }))
 
-const { HolidaySwap, HolidayCompensation, CalendarYear } = await registerHolidayResolverModelMocks(jest)
+const { HolidaySwap, CalendarYear, CompensatoryCredit, CompensatoryLeaveState } = await registerHolidayResolverModelMocks(jest)
 
 let calculateWorkHours
 let calculateOvertimePay
@@ -459,7 +459,8 @@ describe('overtime day type follows the per-employee holiday resolver', () => {
 
   beforeEach(() => {
     HolidaySwap.__setRows([])
-    HolidayCompensation.__setRows([])
+    CompensatoryCredit.__setRows([])
+    CompensatoryLeaveState.__setRows([])
   })
 
   it('2026-02-20（公務機關補假）：輪班人員是平日，行政人員是國定假日', async () => {
@@ -507,9 +508,11 @@ describe('overtime day type follows the per-employee holiday resolver', () => {
     expect(original.dayType).toBe('workday')
   })
 
-  it('已排定的補假日以國定假日計', async () => {
-    HolidayCompensation.__setRows([{
-      _id: 'comp1', employee: EMPLOYEE_ID, holidayDate: day('2026-02-28'), holidayName: '和平紀念日', status: 'assigned', assignedDate: day('2026-03-04'),
+  // 已排定的補假改存在調休存摺（HR 指定的使用紀錄），和員工自己申請的整天調休一樣以國定假日計
+  it('HR 指定的補假日以國定假日計', async () => {
+    CompensatoryCredit.__setRows([{
+      _id: 'comp1', employee: EMPLOYEE_ID, sourceType: 'holiday_rest', holidayDate: day('2026-02-28'), holidayName: '和平紀念日', status: 'used', hours: 8, usedHours: 8,
+      usages: [{ kind: 'hr_assigned', hours: 8, days: [{ date: '2026-03-04', hours: 8 }], fullDayDates: ['2026-03-04'] }],
     }])
     const record = await overtimeOn({
       date: '2026-03-04',
@@ -517,6 +520,51 @@ describe('overtime day type follows the per-employee holiday resolver', () => {
       schedules: [{ employee: EMPLOYEE_ID, date: day('2026-03-04'), shiftId: 'day' }],
     })
     expect(record).toEqual(expect.objectContaining({ dayType: 'national_holiday', holidayReason: 'compensation' }))
+  })
+
+  it('調休簽核核准的整天調休日以國定假日計（當天上班是國定假日出勤），只請幾小時的日子仍是平日', async () => {
+    CompensatoryCredit.__setRows([
+      {
+        _id: 'comp2', employee: EMPLOYEE_ID, sourceType: 'holiday_rest', holidayDate: day('2026-02-28'), holidayName: '和平紀念日', status: 'used', hours: 8, usedHours: 8,
+        usages: [{ kind: 'leave_request', hours: 8, approvalRequest: 'req1', days: [{ date: '2026-03-05', hours: 8 }], fullDayDates: ['2026-03-05'] }],
+      },
+      {
+        _id: 'comp3', employee: EMPLOYEE_ID, sourceType: 'manual', holidayDate: null, status: 'available', hours: 8, usedHours: 4,
+        usages: [{ kind: 'leave_request', hours: 4, approvalRequest: 'req2', days: [{ date: '2026-03-06', hours: 4 }], fullDayDates: [] }],
+      },
+    ])
+    const schedules = [
+      { employee: EMPLOYEE_ID, date: day('2026-03-05'), shiftId: 'day' },
+      { employee: EMPLOYEE_ID, date: day('2026-03-06'), shiftId: 'day' },
+    ]
+    const fullDay = await overtimeOn({ date: '2026-03-05', month: '2026-03-01', schedules })
+    expect(fullDay).toEqual(expect.objectContaining({ dayType: 'national_holiday', holidayReason: 'compensation', pay: 1200 }))
+    const partial = await overtimeOn({ date: '2026-03-06', month: '2026-03-01', schedules })
+    expect(partial.dayType).toBe('workday')
+  })
+
+  it('調休存摺上線後（切換日之後），行政人員的公務機關補假日（2026-10-26）是平日；用了調休才是國定假日', async () => {
+    const OCTOBER_2026 = [
+      { date: day('2026-10-10'), kind: 'statutory', type: '國定假日', name: '國慶日', source: 'dgpa' },
+      { date: day('2026-10-25'), kind: 'statutory', type: '國定假日', name: '臺灣光復暨金門古寧頭大捷紀念日', source: 'dgpa' },
+      { date: day('2026-10-09'), kind: 'gov_makeup_off', type: '公務機關補假', name: '補假', source: 'dgpa', compensatesDate: day('2026-10-10') },
+      { date: day('2026-10-26'), kind: 'gov_makeup_off', type: '公務機關補假', name: '補假', source: 'dgpa', compensatesDate: day('2026-10-25') },
+    ]
+    const office = { date: '2026-10-26', month: '2026-10-01', employee: { requiresScheduling: false }, holidays: OCTOBER_2026 }
+    // 沒有切換日（舊資料）：照舊是行政人員的國定假日
+    expect(await overtimeOn(office)).toEqual(expect.objectContaining({ dayType: 'national_holiday', holidayReason: 'gov_makeup' }))
+    CompensatoryLeaveState.__setRows([{ key: 'bank', officeGovMakeupCutover: '2026-10-23' }])
+    const plain = await overtimeOn(office)
+    expect(plain).toEqual(expect.objectContaining({ dayType: 'workday', holidayReason: null }))
+    // 切換日之前的公務機關補假日照舊（10/9）
+    const before = await overtimeOn({ ...office, date: '2026-10-09' })
+    expect(before).toEqual(expect.objectContaining({ dayType: 'national_holiday', holidayReason: 'gov_makeup' }))
+    CompensatoryCredit.__setRows([{
+      _id: 'comp4', employee: EMPLOYEE_ID, sourceType: 'holiday_rest', holidayDate: day('2026-10-25'), holidayName: '臺灣光復暨金門古寧頭大捷紀念日', status: 'used', hours: 8, usedHours: 8,
+      usages: [{ kind: 'leave_request', hours: 8, approvalRequest: 'req3', days: [{ date: '2026-10-26', hours: 8 }], fullDayDates: ['2026-10-26'] }],
+    }])
+    const used = await overtimeOn(office)
+    expect(used).toEqual(expect.objectContaining({ dayType: 'national_holiday', holidayReason: 'compensation' }))
   })
 
   it('沒有班表的行政人員：週六以休息日計，輪班人員維持平日', async () => {
@@ -542,7 +590,7 @@ describe('overtime day type follows the per-employee holiday resolver', () => {
     function mockBatchLookups() {
       mockEmployee.find.mockClear()
       HolidaySwap.find.mockClear()
-      HolidayCompensation.find.mockClear()
+      CompensatoryCredit.find.mockClear()
       CalendarYear.find.mockClear()
       mockEmployee.findById.mockImplementation(async (id) => people[String(id)] ?? null)
       mockEmployee.find.mockReturnValue({ select: jest.fn().mockReturnThis(), lean: jest.fn().mockResolvedValue([]) })
@@ -587,7 +635,7 @@ describe('overtime day type follows the per-employee holiday resolver', () => {
       expect(mockHolidayMoveSetting.find).toHaveBeenCalledTimes(1)
       expect(CalendarYear.find).toHaveBeenCalledTimes(1)
       expect(HolidaySwap.find).toHaveBeenCalledTimes(1)
-      expect(HolidayCompensation.find).toHaveBeenCalledTimes(1)
+      expect(CompensatoryCredit.find).toHaveBeenCalledTimes(1)
       expect(HolidaySwap.find.mock.calls[0][0].employee.$in).toEqual([ROSTER_ID, OFFICE_ID, SWAPPED_ID])
       // 員工資料已有假日制度欄位：不再另外讀員工
       expect(mockEmployee.find).not.toHaveBeenCalled()

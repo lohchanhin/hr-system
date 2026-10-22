@@ -10,6 +10,7 @@ import {
 } from '../../services/scheduleValidationService.js';
 import {
   toEntityId,
+  attachEmployeeLabels,
   describePendingWeeks,
   buildMonthRange,
   resolveScopedEmployeeIds,
@@ -39,7 +40,10 @@ export async function validateScheduleCompleteness(req, res) {
 }
 
 /**
- * 非阻塞檢查目前範圍內的排班草稿；發布路由仍會再次強制檢核。
+ * 非阻塞檢查目前範圍內還沒鎖定的排班草稿（與發布同一個範圍）；發布、完成發布時會再檢核一次，同樣只提醒、不擋。
+ * 整個範圍都已完成發布（沒有待發布的班表）時，改檢核這個月已鎖定的班表，回應另附 finalized: true：
+ * 完成發布不再被排班規範擋下，鎖定的班表可能仍有違規，排班檢核要照實列出，不能回「已通過」。
+ * 每項違規附上員工代號與姓名（畫面只載入一頁員工，發布前的確認視窗也要看得到是誰）。
  */
 export async function validateScheduleRules(req, res) {
   try {
@@ -53,7 +57,15 @@ export async function validateScheduleRules(req, res) {
 
     const query = buildPublishQuery(range, { department, subDepartment });
     if (Array.isArray(scopedIds)) query.employee = { $in: scopedIds };
-    const schedules = await ShiftSchedule.find(query).lean();
+    let schedules = await ShiftSchedule.find(query).lean();
+    let lockedScope = {};
+    if (!schedules.length) {
+      // 同一個月份、部門／單位與權限範圍，只換成已完成發布的班表
+      const lockedQuery = { ...query, state: 'finalized' };
+      delete lockedQuery.needsReconfirm;
+      schedules = await ShiftSchedule.find(lockedQuery).lean();
+      if (schedules.length) lockedScope = { finalized: true };
+    }
     if (!schedules.length) {
       return res.json({ ok: true, count: 0, violations: [] });
     }
@@ -73,21 +85,28 @@ export async function validateScheduleRules(req, res) {
       });
       // pendingWeeks：跨月週（鄰月還沒排）目前無法判斷的週別，不算違規，ok/count 仍只代表違規
       const pendingWeeks = await describePendingWeeks(result?.pendingWeeks);
-      return res.json({ ok: true, count: 0, violations: [], ...(pendingWeeks.length ? { pendingWeeks } : {}) });
+      return res.json({
+        ok: true,
+        count: 0,
+        violations: [],
+        ...lockedScope,
+        ...(pendingWeeks.length ? { pendingWeeks } : {}),
+      });
     } catch (error) {
       if (!isLaborRuleValidationError(error)) throw error;
-      const violations = (error.violations || []).map((violation) => ({
+      const violations = await attachEmployeeLabels((error.violations || []).map((violation) => ({
         ...violation,
         rule: violation.rule || violation.code || 'SCHEDULE_RULE',
         employee: toEntityId(violation.employee),
         date: violation.date || violation.startDate || violation.weekStart || null,
         message: violation.message || error.message,
-      }));
+      })));
       const pendingWeeks = await describePendingWeeks(error.pendingWeeks);
       return res.json({
         ok: false,
         count: violations.length,
         violations,
+        ...lockedScope,
         ...(pendingWeeks.length ? { pendingWeeks } : {}),
       });
     }

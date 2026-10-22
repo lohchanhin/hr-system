@@ -2,8 +2,11 @@ import { jest } from '@jest/globals'
 
 const mockEmployee = { findById: jest.fn() }
 const mockApprovalRequest = { find: jest.fn() }
+const mockCompensatoryCredit = { find: jest.fn() }
 const mockGetAllLeaveFieldInfos = jest.fn()
 const mockGetSettings = jest.fn()
+// 調休存摺的額度（CompensatoryCredit.find 回傳）
+let bankCredits = []
 
 let balanceService
 let policyService
@@ -33,6 +36,7 @@ const customerFormInfo = {
 beforeAll(async () => {
   await jest.unstable_mockModule('../src/models/Employee.js', () => ({ default: mockEmployee }))
   await jest.unstable_mockModule('../src/models/approval_request.js', () => ({ default: mockApprovalRequest }))
+  await jest.unstable_mockModule('../src/models/CompensatoryCredit.js', () => ({ default: mockCompensatoryCredit }))
   await jest.unstable_mockModule('../src/services/leaveFieldService.js', () => ({ getAllLeaveFieldInfos: mockGetAllLeaveFieldInfos }))
   await jest.unstable_mockModule('../src/services/otherControlSettingsStore.js', () => ({ getSettings: mockGetSettings }))
   balanceService = await import('../src/services/leaveBalanceService.js')
@@ -56,6 +60,13 @@ beforeEach(() => {
   })
   mockGetAllLeaveFieldInfos.mockResolvedValue([defaultFormInfo, customerFormInfo])
   currentEmployee = employeeDoc({ totalHours: 80, usedHours: 16, year: 2026 })
+  bankCredits = []
+  mockCompensatoryCredit.find.mockReset()
+  mockCompensatoryCredit.find.mockImplementation((filter) => {
+    const rows = bankCredits.filter(credit => !filter.status?.$ne || credit.status !== filter.status.$ne)
+    const query = { sort: () => query, lean: async () => rows }
+    return query
+  })
 })
 
 let currentEmployee
@@ -280,14 +291,28 @@ describe('buildLeaveBalances: 特休, 補休 and 積假 come from the employee r
     expect(itemOf(await balanceService.buildLeaveBalances({ employeeId: 'emp1', year: 2026 }), 'annual')).toMatchObject({ status: 'over', remainingHours: -8 })
   })
 
-  it('shows 補休 as a manual balance only when the employee holds some or has used it, and 積假 (days x8) as a manual row', async () => {
+  // 調休存摺上線後：調休（補休）來自存摺，不再讀員工資料的補休時數（部署時已轉入存摺）
+  it('shows 調休 from the compensatory leave bank once the employee holds some, and 積假 (days x8) as a manual row', async () => {
     currentEmployee = employeeDoc({ totalHours: 80, usedHours: 0, compensatoryHours: 6, accumulatedLeave: 2 })
+    bankCredits = [
+      { _id: 'c1', status: 'used', hours: 8, usedHours: 8, earnedDate: new Date('2026-02-28T00:00:00.000Z') },
+      { _id: 'c2', status: 'available', hours: 8, usedHours: 4, earnedDate: new Date('2026-10-25T00:00:00.000Z') },
+      { _id: 'c3', status: 'void', hours: 8, usedHours: 0, earnedDate: new Date('2026-10-10T00:00:00.000Z') },
+    ]
+    requestsByForm['form-default'] = [
+      // 簽核中的調休不分年度（明年的也算）
+      request('p1', 'pending', { 'd-type': '調休', 'd-start': '2027-01-04', 'd-end': '2027-01-04', 'd-hours': 2 }),
+    ]
     const balances = await balanceService.buildLeaveBalances({ employeeId: 'emp1', year: 2026 })
 
-    expect(itemOf(balances, 'comp')).toMatchObject({ source: 'employee-manual', quotaHours: 6, remainingHours: 6, status: 'manual', note: expect.stringContaining('人資') })
+    expect(itemOf(balances, 'comp')).toMatchObject({
+      name: '調休', source: 'bank', enforcement: 'block', quotaHours: 16, usedHours: 12, remainingHours: 4, pendingHours: 2, availableHours: 2, status: 'bank',
+    })
     expect(itemOf(balances, 'accumulated')).toMatchObject({ name: '積假', quotaHours: 16, remainingHours: 16, source: 'employee-manual', status: 'manual' })
 
-    currentEmployee = employeeDoc({ totalHours: 80, usedHours: 0 })
+    bankCredits = []
+    requestsByForm['form-default'] = []
+    currentEmployee = employeeDoc({ totalHours: 80, usedHours: 0, compensatoryHours: 6 })
     const none = await balanceService.buildLeaveBalances({ employeeId: 'emp1', year: 2026 })
     expect(itemOf(none, 'comp')).toBeUndefined()
     expect(itemOf(none, 'accumulated')).toBeUndefined()
@@ -432,9 +457,33 @@ describe('evaluateLeaveRequestAgainstBalance', () => {
   it('never reports an excess for types that are not checked, manual balances or an unconfigured 特休', () => {
     const items = compose({}, employeeDoc({ totalHours: 0, usedHours: 0, compensatoryHours: 4 }))
     expect(balanceService.evaluateLeaveRequestAgainstBalance(find(items, 'annual'), 100).exceeded).toBe(false)
-    expect(balanceService.evaluateLeaveRequestAgainstBalance(find(items, 'comp'), 100).exceeded).toBe(false)
     expect(balanceService.evaluateLeaveRequestAgainstBalance(undefined, 100).exceeded).toBe(false)
     expect(balanceService.evaluateLeaveRequestAgainstBalance({ key: 'official', enforcement: 'none' }, 100).exceeded).toBe(false)
+    expect(balanceService.evaluateLeaveRequestAgainstBalance({ key: 'accumulated', status: 'manual', enforcement: 'none', quotaHours: 8, availableHours: 8 }, 100).exceeded).toBe(false)
+  })
+
+  // 調休存摺上線後：調休不再是「不檢查」的人資手動餘額，超過存摺可用時數（剩餘 - 簽核中）一律不能送出
+  it('compares 調休 with the hours available in the bank (balance - pending) and always blocks', () => {
+    const items = balanceService.composeLeaveBalanceItems({
+      policy: policy(),
+      usage: { byKey: new Map(), unmatched: new Map(), dictionaryNames: [] },
+      employee: employeeDoc({ totalHours: 80, usedHours: 0 }),
+      bank: { earnedHours: 16, usedHours: 4, balanceHours: 12, expiredHours: 0, pendingHours: 4 },
+    }).items
+    const comp = find(items, 'comp')
+    expect(comp).toMatchObject({ source: 'bank', remainingHours: 12, pendingHours: 4, availableHours: 8, enforcement: 'block' })
+    expect(balanceService.evaluateLeaveRequestAgainstBalance(comp, 8).exceeded).toBe(false)
+    const over = balanceService.evaluateLeaveRequestAgainstBalance(comp, 12)
+    expect(over).toMatchObject({ exceeded: true, shortByHours: 4, enforcement: 'block', typeKey: 'comp' })
+    expect(over.message).toBe('調休存摺剩餘 12 小時、簽核中 4 小時，可用 8 小時，本次申請 12 小時，將超出 4 小時')
+    // 沒有存摺（0 小時）的人一定擋下
+    const empty = find(balanceService.composeLeaveBalanceItems({
+      policy: policy(),
+      usage: { byKey: new Map(), unmatched: new Map(), dictionaryNames: [] },
+      employee: employeeDoc({ totalHours: 80, usedHours: 0 }),
+      focusKey: 'comp',
+    }).items, 'comp')
+    expect(balanceService.evaluateLeaveRequestAgainstBalance(empty, 8)).toMatchObject({ exceeded: true, enforcement: 'block' })
   })
 })
 

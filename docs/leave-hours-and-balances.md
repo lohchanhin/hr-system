@@ -25,6 +25,8 @@
 - `leave-hours-invalid`：請假時數必須是大於 0 的數字，且以 0.5 小時為單位。
 - `leave-hours-range`：請假時數超過所選期間可請的上限（每個日曆日最多「每日上限」小時，預設 8；當天排了更長的班就以班別的工作時數（扣掉休息）為準）。時數可以比期間少（半天、扣掉休息日），不能比期間多。只在送出與重新送出時嚴格檢查，核准時不再檢查，管理員事後調低每日上限不會讓簽核中的單卡住。
 - 特休額度不足（HTTP 409，`ANNUAL_LEAVE_INSUFFICIENT`）：訊息例如「特休餘額不足：剩餘 8 小時（1 天），本次申請 16 小時（2 天）」，同時回傳 `remainingHours`、`requestedHours`。
+- 調休（假別「調休」「補休」「補假」）超過調休存摺的可用時數（剩餘 - 其他簽核中的調休）：一律擋下（HTTP 400，`COMP_LEAVE_INSUFFICIENT`），同時回傳 `availableHours`、`balanceHours`、`pendingHours`、`requestedHours`；
+  同一位員工同時送出兩筆時一次只檢查一筆（第二筆會把第一筆算進簽核中的時數）；最後一關核准時再檢查一次（不夠時 409、單據維持簽核中），核准時從存摺扣用。詳見 [調休存摺](compensatory-leave.md)。
 - 其他假別超過額度：預設只是**警告**（HTTP 201，回應 `warnings` 裡有 `LEAVE_QUOTA_EXCEEDED`，申請仍成立）；該假別的「超額時不能送出」開關打開後，改回 HTTP 400 `LEAVE_QUOTA_INSUFFICIENT`。
 
 ## 假別額度與餘額規則
@@ -36,7 +38,7 @@
 | 假別 | 額度 | 計算方式 | 超額 |
 | --- | --- | --- | --- |
 | 特休 | 員工資料的年度特休時數 | 年度 | 不能送出 |
-| 補休 | 員工資料的補休時數 | 年度 | 不檢查，用過才顯示 |
+| 調休（別名補休、補假） | 調休存摺（國定假日適逢休息日／例假自動存入，人資可手動給予或扣除），不分年度 | 不分年度 | 不能送出（固定；畫面上名稱、超額開關、啟用都不能改），存摺有額度或用過才顯示 |
 | 事假 | 112（14 天） | 年度 | 警告 |
 | 家庭照顧假 | 56（7 天），併入事假計算 | 年度 | 警告 |
 | 病假 | 240（30 天） | 年度 | 警告 |
@@ -53,6 +55,8 @@
 
 管理員可以調整：每個假別的額度、計算方式、超額處理（「超額時不能送出」開關，預設關閉）、顯示方式（一律／用過才顯示／隱藏）、併入哪個假別計算；也可以新增自訂假別、還原預設值。每日最多可請時數與最小請假單位同樣在這裡設定。
 
+**調休的名稱固定**（調休，別名一定包含補休、補休假、補假、調休假），不能停用，超額處理固定是「禁止」；每筆調休的時數（`compensationHoursPerCredit`，預設 8）與期限（`compensationExpiryMonths`，預設 0 = 不設期限）也存在這個區塊（見 [調休存摺](compensatory-leave.md)）。
+
 **特休的名稱固定**（特休、特休假、特別休假；特休統計報表與薪資對照表也認這三個名稱），特休超過剩餘時數一律不能送出：超額處理固定是「禁止」，管理頁的開關停用（顯示為開啟），儲存或讀到 `warn`／`none` 都會變成 `block`，餘額 API 與畫面提示也一律回報無法送出。假別比對只認完整名稱，名稱裡「剛好含有特休兩個字」的其他假別不會被當成特休。
 
 ## 剩餘餘額怎麼算
@@ -60,6 +64,7 @@
 - 資料來源是**所有請假類表單**的申請（包含已停用的表單、已被替換的舊欄位），不是只看某一張表單。
 - 已核准的算「已使用」，簽核中的算「申請中」，剩餘 = 額度 - 已使用 - 申請中（`availableHours`）；駁回與撤回的不算。
 - 特休直接使用員工資料的計數器，與核准時的扣減一致。
+- 調休直接使用調休存摺：額度欄是累計取得的時數、已使用是存摺扣用的時數（核准、HR 指定、人資扣除）、剩餘不含已過期的時數；簽核中是所有年度的調休申請（同一次查詢算出）。
 - 有「併入」設定的假別（家庭照顧假併入事假、生理假超過 24 小時併入病假）會一起算進被併入的假別。
 - 對不到任何假別規則的請假（例如自訂的特殊名稱）會列在 `unmatched`，不會悄悄消失。
 
@@ -69,6 +74,7 @@
 | --- | --- |
 | `GET /api/approvals/leave-balances?employeeId=&year=` | 回傳各假別的額度、已使用、申請中、剩餘（小時）。`employeeId` 不帶就是本人。 |
 | `GET /api/approvals/leave-hours-hint?start=&end=&startType=&endType=` | 依本人班表算這段期間建議填的時數（只是預設值）：排工作班算班別的工作時數（扣掉休息：早班 08:30-17:30 休息 60 分鐘是 8；12 小時班沒有休息就是 12）、休息日與國定假日算 0、沒排班的日子算每日上限。 |
+| `GET /api/compensatory-leave/mine`、`GET /api/compensatory-leave?employeeId=` | 調休存摺（每一筆的來源、狀態、用在哪張單），見 [調休存摺](compensatory-leave.md)。 |
 | `GET /api/other-control-settings/leave-policy` | 管理員：讀取假別額度規則（含預設值）。 |
 | `PUT /api/other-control-settings/leave-policy` | 管理員：儲存假別額度規則，驗證失敗回中文訊息。 |
 
@@ -77,8 +83,8 @@
 ### 畫面
 
 - **只有請假表單**才有時數自動帶入、每日上限的說明與剩餘時數提示（表單性質為請假）；客戶自建的加班、補休表單即使有「時數」欄位，也維持一般的數字欄位（加班一天可以超過 8 小時，不會被自動帶入蓋掉）。
-- **簽核申請頁（員工與主管）**：頂端的「我的假別餘額」面板顯示所有假別剩餘的小時與天數；選好假別、填好時數後，欄位下方顯示「事假：目前可請 N 小時（約 X 天）；本次申請 H 小時，核准後剩 M 小時」，超過額度時顯示警告（特休與已打開「不能送出」開關的假別顯示紅色錯誤、送出會被擋下）。
-- **請假單明細（簽核人看）**：顯示申請人各假別餘額與這張單的影響（核准前剩多少、核准後剩多少）。
+- **簽核申請頁（員工與主管）**：頂端的「我的假別餘額」面板顯示所有假別剩餘的小時與天數，下方的「我的調休」列出調休存摺的每一筆；選好假別、填好時數後，欄位下方顯示「事假：目前可請 N 小時（約 X 天）；本次申請 H 小時，核准後剩 M 小時」，超過額度時顯示警告（特休與已打開「不能送出」開關的假別顯示紅色錯誤、送出會被擋下）。
+- **請假單明細（簽核人看）**：顯示申請人各假別餘額與這張單的影響（核准前剩多少、核准後剩多少）；調休單（或申請人有調休時）另外列出申請人的調休存摺。
 - **假別餘額的「含…」說明**：併入其他假別計算的子假別（家庭照顧假併入事假）在「已使用」底下只列已核准的部分（`includes[].approvedHours`），簽核中的部分（`includes[].pendingHours`）列在「簽核中」那一欄，不會被當成已使用的一部分；`hours` 是兩者合計（舊畫面相容）。
 - **員工管理與排班頁**：特休欄位全部以小時顯示。
 
@@ -96,6 +102,7 @@
    - 啟動記錄（只有筆數）：`Migrated annual leave to hours for N employees (days x8: A, already hours: B, repaired: C)`，標記時另有 `Flagged N employees for annual leave unit confirmation (this data has hour-sized values in the days column)`。
    - 員工特休匯入檔（批次匯入）同一個規則，以**整份檔案**判斷：只要有任何一列的天數欄位大於 40，整份檔案的天數欄位都當成小時，並提醒人資確認（說明各有幾列依小時、依天數乘 8 讀取）。有填「年度特休總時數／已使用時數」的列以時數為準，不參與判斷。
 2. **請假表單：補上「時數」欄位**（`migrateLeaveFormsToHours`）：請假單加上必填的「時數」欄位、停用「天數」欄位，已核准的申請內容完全不動，薪資以原本的計算結果為準；用 `leave_hours_migrated` 標記，已處理的表單不會再動。啟動記錄：`Added leave hours field to N leave forms (deactivated days field on M, forms checked: K)`。
+3. **補休時數轉入調休存摺**（`migrateLegacyCompensatoryHours`，調休存摺上線時，只做一次）：員工資料的「補休時數」大於 0 的員工各轉成一筆「轉入既有補休時數」的調休，員工資料的欄位不修改；之後補休改由調休存摺管理（見 [調休存摺](compensatory-leave.md) 的「部署」）。
 
 手動工具：`node scripts/migrate-annual-leave-hours.js --dry-run`（只統計：待搬移幾位、整份資料是否小時慣例、會標記幾位）、不帶參數（立刻執行）、`--report`（列出單位是推斷出來的員工：員工編號、姓名、凍結的舊天數、現在的時數、`unitSource`、`reading`，tab 分隔可貼進試算表給人資核對；`reading` 是現在的總時數相當於舊數字乘 8（`days x8`）、原值（`as hours`）或已被改過（`edited`）；只在維運人員自己的終端機使用）、`--rollback`（把時數寫回天數欄位，回復到舊版程式前使用）。
 
@@ -106,5 +113,5 @@
 
 ## 對應的測試
 
-- 伺服器：`leaveHours`、`leavePolicy`、`leaveBalanceService`、`leaveBalancesApi`、`leaveHoursMigration`（含整份資料判斷、修復旗標、`--report`）、`leaveShiftHours`（扣掉休息的班別時數）、`employeeBulkImport`（整份檔案判斷）、`salaryConfigLeavePay`／`reportSpecialLeave`（特別休假）、`annualLeave*`、`approvalWorkflow` 等；真實 mongod 的端對端測試是 `leaveHoursBalances.integration.test.js`（設定 `APPROVAL_ENGINE_TEST_MONGODB_URI` 才會執行）。
+- 伺服器：`leaveHours`、`leavePolicy`、`leaveBalanceService`、`leaveBalancesApi`、`compensatoryLeaveService`、`compensatoryLeaveApi`、`leaveHoursMigration`（含整份資料判斷、修復旗標、`--report`）、`leaveShiftHours`（扣掉休息的班別時數）、`employeeBulkImport`（整份檔案判斷）、`salaryConfigLeavePay`／`reportSpecialLeave`（特別休假）、`annualLeave*`、`approvalWorkflow` 等；真實 mongod 的端對端測試是 `leaveHoursBalances.integration.test.js`（設定 `APPROVAL_ENGINE_TEST_MONGODB_URI` 才會執行）。
 - 前端：`leaveHours`、`leaveBalance`、`leaveBalancePanel`、`leaveOvertimeSetting`、`approvalPage`、`approvalFormFields`、`approvalDetailContent`、`EmployeeManagementAnnualLeave`。

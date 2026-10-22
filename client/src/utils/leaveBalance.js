@@ -12,6 +12,8 @@ export const STATUS_LABELS = {
   manual: '人資維護',
   // 原民假：只有具原住民身分的員工有額度
   ineligible: '限具原住民身分者',
+  // 調休：餘額來自調休存摺（國定假日適逢休息日／例假自動存入），不分年度
+  bank: '調休存摺',
 }
 
 function trimNumber(value, digits = 2) {
@@ -88,8 +90,8 @@ export function evaluateRequest(item, items, requestedHours) {
   const requested = toNumber(requestedHours)
   if (!item || !(requested > 0)) return null
   const name = item.name
-  // 特休超過剩餘時數一律無法送出（伺服器不看超額處理的設定），設定值是 warn 的舊資料也一樣顯示成無法送出
-  const enforcement = item.source === 'employee' ? 'block' : (item.enforcement || 'none')
+  // 特休、調休超過可用時數一律無法送出（伺服器不看超額處理的設定），設定值是 warn 的舊資料也一樣顯示成無法送出
+  const enforcement = item.source === 'employee' || item.source === 'bank' ? 'block' : (item.enforcement || 'none')
   const reasons = []
   let remainingAfter = null
 
@@ -109,7 +111,18 @@ export function evaluateRequest(item, items, requestedHours) {
     }
   }
 
-  if (item.period === 'event') {
+  if (item.source === 'bank') {
+    // 調休：和存摺的可用時數（剩餘 - 簽核中）比，與伺服器送出時的檢查相同
+    const basis = toNumber(item.availableHours)
+    remainingAfter = Math.round((basis - requested) * 100) / 100
+    if (requested > basis) {
+      const pending = toNumber(item.pendingHours) > 0 ? `、簽核中 ${formatHours(item.pendingHours)}` : ''
+      reasons.push(
+        `${name}存摺剩餘 ${formatHours(item.remainingHours)}${pending}，可用 ${formatHours(Math.max(basis, 0))}，` +
+        `本次申請 ${formatHours(requested)}，將超出 ${formatHours(requested - Math.max(basis, 0))}`
+      )
+    }
+  } else if (item.period === 'event') {
     if (item.quotaHours != null) {
       const over = requested - toNumber(item.quotaHours)
       if (over > 0) reasons.push(`${name}每次最多 ${formatHours(item.quotaHours)}，本次申請 ${formatHours(requested)}，超出 ${formatHours(over)}`)

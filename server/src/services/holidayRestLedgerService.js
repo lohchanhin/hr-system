@@ -8,12 +8,14 @@
  * 每個員工 × 每個應休的國定假日得到下列狀態：
  *   rested_on_date  國定假日當天就排了「國」（行政人員沒有班表、當天本來要上班時依行事曆放假，implicit）
  *   moved           國定假日當天沒有休，但同月其他日期排了「國」（移休，會記錄是哪一天）
- *   compensated     國定假日落在員工自己的休息日／例假，已經有補假（行政人員的公務機關補假日，或人資排定的補假日）
+ *   compensated     國定假日落在員工自己的休息日／例假，已經有補償：存入調休存摺（via bank，員工自己決定什麼時候用）、
+ *                   已用掉的整天調休（via comp_leave 調休簽核／hr_assigned HR 指定），或調休存摺上線前行政人員的公務機關補假日（via gov_makeup）
  *   not_taken       本月沒有對應的「國」（沒休；reason 說明當天是上班、沒排班、休息日、請假…）
  *   na              不在職（到職前、離職後、留職停薪），不計入應休
- * 國定假日落在員工自己的休息日／例假又沒有補假時，依勞基法施行細則第 23-1 條應另給補假：
- * 系統建立補假義務（HolidayCompensation，見 holidayCompensationService），由人資排定日期（needsAction = assign_compensation）。
- * 本月多出來、沒有對應到任何國定假日的「國」另外列為 extraGuoDates（多排的國）；排定的補假日上的「國」由該補假使用，不算多排。
+ * 國定假日落在員工自己的休息日／例假時，依勞基法施行細則第 23-1 條應另給補假：
+ * 系統在調休存摺建立一筆調休（CompensatoryCredit，見 holidayCompensationService）；還沒建立（沒有同步的檢視，例如匯出）時是
+ * needsAction = assign_compensation（待存入調休）。人資作廢的調休（voidReason manual）算已處理：compensation.creditStatus = 'void'，不列入待處理。
+ * 本月多出來、沒有對應到任何國定假日的「國」另外列為 extraGuoDates（多排的國）；整天調休日上的「國」由該調休使用，不算多排。
  * 「沒休的國定假日後續怎麼處理」這種人工決定存在 HolidayRestResolution；
  * 登記之後班表又排了「國」（變成當日休、移休或已補假）時，登記的紀錄不會被藏起來，項目會帶 resolutionConflict 請人確認。
  */
@@ -21,7 +23,7 @@ import ShiftSchedule from '../models/ShiftSchedule.js';
 import AttendanceSetting from '../models/AttendanceSetting.js';
 import Employee from '../models/Employee.js';
 import HolidayRestResolution from '../models/HolidayRestResolution.js';
-import HolidayCompensation from '../models/HolidayCompensation.js';
+import CompensatoryCredit from '../models/CompensatoryCredit.js';
 import { loadApprovedLeaveIntervals } from './approvedLeaveCalendarService.js';
 import { resolveShiftSemanticType } from './shiftSemanticService.js';
 import { isScheduleRuleExempt } from './scheduleRuleExemptionService.js';
@@ -34,6 +36,7 @@ import {
   listEmployeeHolidays,
   loadHolidayContext,
   officeDayKind,
+  suggestedGovMakeupDate,
 } from './holidayResolver.js';
 import { toTaipeiDateKey } from '../utils/taipeiTime.js';
 
@@ -257,25 +260,42 @@ function monthDayOf(dateKey) {
   return String(dateKey || '').slice(5).replace('-', '/');
 }
 
+// 調休存摺的額度在休假紀錄上的文字：沒有日期的（還沒用、部分使用、用在沒有整天的請假、過期）
+function describeBankCompensation(compensation) {
+  const used = Number(compensation?.usedHours) || 0;
+  if (compensation?.creditStatus === 'used') return '調休已使用';
+  if (compensation?.creditStatus === 'expired') return '調休已過期';
+  return used > 0 ? `已存入調休（已用 ${used} 小時）` : '已存入調休';
+}
+
+// 有日期的補償：調休簽核的整天調休是「調休 MM/DD」，HR 指定與舊的已排定補假是「補假 MM/DD」
+function describeDatedCompensation(compensation) {
+  const prefix = compensation?.via === 'comp_leave' ? '調休' : '補假';
+  return `${prefix} ${monthDayOf(compensation?.date)}`;
+}
+
 /**
  * 一個項目在報表（Excel）上顯示的文字；班表還是草稿、本月還沒結束的待處理項目（needsAction = schedule）顯示「尚未排國」，
- * 國定假日落在休息日／例假、還沒排補假的顯示「待排補假」。
+ * 國定假日落在休息日／例假、調休還沒存入存摺的顯示「待存入調休」，已存入的顯示「已存入調休」。
  */
 export function describeLedgerItem(item) {
   if (!item) return '';
   // 已登記處理方式、班表之後卻排了「國」：照常顯示休假狀態，另外註明要確認（不能讓登記的紀錄默默消失）
   const conflict = item.resolutionConflict ? '（已登記處理，請確認）' : '';
-  // 已排補假、班表之後又改了：補假不會自動取消，註明要確認
-  if (item.compensation?.conflict && item.compensation?.date) return `補假 ${monthDayOf(item.compensation.date)}（班表已變更，請確認）`;
+  // 已用掉的調休／補假、班表之後又改了：不會自動收回，註明要確認
+  if (item.compensation?.conflict && item.compensation?.date) return `${describeDatedCompensation(item.compensation)}（班表已變更，請確認）`;
+  if (item.compensation?.conflict && item.compensation?.via === 'bank') return `${describeBankCompensation(item.compensation)}（班表已變更，請確認）`;
   if (item.status === LEDGER_STATUS.RESTED_ON_DATE) return `${item.implicit ? '依行事曆放假' : '當日休'}${conflict}`;
   if (item.status === LEDGER_STATUS.MOVED) return `移休 ${monthDayOf(item.guoDate)}${conflict}`;
   if (item.status === LEDGER_STATUS.COMPENSATED) {
+    if (item.compensation?.via === 'bank') return `${describeBankCompensation(item.compensation)}${conflict}`;
     const government = item.compensation?.via === 'gov_makeup' ? '（公務機關補假日）' : '';
-    return `補假 ${monthDayOf(item.compensation?.date)}${government}${conflict}`;
+    return `${describeDatedCompensation(item.compensation)}${government}${conflict}`;
   }
   if (item.status === LEDGER_STATUS.NA) return '—';
   if (item.resolution) return `未休（${LEDGER_RESOLUTION_LABELS[item.resolution.kind] || '已處理'}）`;
-  if (item.needsAction === 'assign_compensation') return '待排補假';
+  if (item.compensation?.via === 'bank' && item.compensation.creditStatus === 'void') return '調休已作廢（人資）';
+  if (item.needsAction === 'assign_compensation') return '待存入調休';
   if (item.needsAction === 'schedule') return '尚未排國';
   if (item.reason === 'worked') return '未休（上班）';
   if (item.reason === 'unscheduled') return '未休（未排班）';
@@ -295,6 +315,7 @@ export function summarizeLedger(rows = [], holidayCount = 0, notScheduled = 0) {
     notTaken: 0,
     open: 0,
     compensationOpen: 0,
+    banked: 0,
     extra: 0,
     excluded: { notScheduled },
   };
@@ -306,6 +327,10 @@ export function summarizeLedger(rows = [], holidayCount = 0, notScheduled = 0) {
     summary.notTaken += row.notTaken;
     summary.open += row.open;
     summary.compensationOpen += (row.items || []).filter((item) => item.needsAction === 'assign_compensation').length;
+    // 已存入調休、員工還沒用完的
+    summary.banked += (row.items || []).filter((item) => (
+      item.compensation?.via === 'bank' && ['available', 'partial'].includes(item.compensation.creditStatus)
+    )).length;
     summary.extra += row.extraGuoDates.length;
   }
   return summary;
@@ -452,16 +477,48 @@ function voidReasonOf({ base, storedDoc, governmentCompensated }) {
   return 'roster_changed';
 }
 
+// 本月相關的調休額度：來源國定假日在本月（含作廢的，同步要能重新開啟）、整天調休日在本月、或跨月的原始日期
 async function loadCompensationDocs({ ids, start, end, outsideOriginals = [] }) {
   const monthRange = { $gte: start, $lt: end };
-  const or = [{ holidayDate: monthRange }, { assignedDate: monthRange }];
+  const keyRange = { $gte: utcDateKey(start), $lt: utcDateKey(end) };
+  const or = [{ holidayDate: monthRange }, { 'usages.fullDayDates': keyRange }];
   if (outsideOriginals.length) or.push({ holidayDate: { $in: outsideOriginals.map(keyToDate) } });
-  return (await leanResult(HolidayCompensation.find({ employee: { $in: ids }, $or: or }))) || [];
+  return (await leanResult(CompensatoryCredit.find({ employee: { $in: ids }, $or: or }))) || [];
+}
+
+// 一筆調休額度的整天調休日（HR 指定優先）
+function datedUsageDates(doc) {
+  const usages = [...(doc?.usages || [])].sort((a, b) => (a?.kind === 'hr_assigned' ? 0 : 1) - (b?.kind === 'hr_assigned' ? 0 : 1));
+  return usages.flatMap((usage) => (usage?.fullDayDates || []).map((date) => ({ date, via: usage.kind === 'hr_assigned' ? 'hr_assigned' : 'comp_leave' })));
+}
+
+function isCreditUsed(doc) {
+  return (Number(doc?.usedHours) || 0) > 0 || doc?.status === 'used';
+}
+
+/** 調休額度在休假紀錄上的樣子（沒有日期的部分）：額度狀態、時數、建議調休日；不看期限（期限在調休存摺顯示） */
+function bankCompensationOf(doc) {
+  const hours = Number(doc?.hours) || 0;
+  const usedHours = Math.min(Math.max(Number(doc?.usedHours) || 0, 0), hours);
+  let creditStatus = 'available';
+  if (usedHours >= hours && hours > 0) creditStatus = 'used';
+  else if (usedHours > 0) creditStatus = 'partial';
+  return {
+    via: 'bank',
+    date: null,
+    compensationId: toId(doc._id),
+    calendarDayId: toId(doc.calendarDay) || null,
+    creditStatus,
+    hours,
+    usedHours,
+    remainingHours: Math.max(hours - usedHours, 0),
+    suggestedDate: doc.suggestedDate ? utcDateKey(doc.suggestedDate) : null,
+  };
 }
 
 /**
- * 已排定、補假日不在本月的補假：另外讀那幾天的班表（一次查詢），回傳 Map('員工 id:日期' -> 班別性質)。
- * 用來確認補假日仍是原本要上班的日子（之後被排成休、例時要提醒）；沒有這種補假時不查詢。
+ * 整天調休日不在本月的調休：另外讀那幾天的班表（一次查詢），回傳 Map('員工 id:日期' -> 班別性質)。
+ * 用來確認調休日仍是原本要上班的日子（之後被排成休、例時要提醒）；沒有這種調休時不查詢。
  */
 async function loadOutsideAssignedRosterKinds({ docs = [], startKey, endKey, semanticByShiftId }) {
   const kinds = new Map();
@@ -469,13 +526,14 @@ async function loadOutsideAssignedRosterKinds({ docs = [], startKey, endKey, sem
   const employeeIds = new Set();
   const dateKeys = new Set();
   for (const doc of docs) {
-    if (doc?.status !== 'assigned' || !doc.assignedDate) continue;
-    const key = utcDateKey(doc.assignedDate);
-    if (!key || (key >= startKey && key < endKey)) continue;
-    const employeeId = toId(doc.employee);
-    wanted.add(`${employeeId}:${key}`);
-    employeeIds.add(employeeId);
-    dateKeys.add(key);
+    if (doc?.status === 'void') continue;
+    for (const { date: key } of datedUsageDates(doc)) {
+      if (!key || (key >= startKey && key < endKey)) continue;
+      const employeeId = toId(doc.employee);
+      wanted.add(`${employeeId}:${key}`);
+      employeeIds.add(employeeId);
+      dateKeys.add(key);
+    }
   }
   if (!wanted.size) return kinds;
   const rows = (await leanResult(ShiftSchedule.find({
@@ -487,15 +545,6 @@ async function loadOutsideAssignedRosterKinds({ docs = [], startKey, endKey, sem
     if (wanted.has(pair)) kinds.set(pair, semanticByShiftId.get(toId(row.shiftId)) || 'work');
   }
   return kinds;
-}
-
-function serializeOpenObligation(doc) {
-  return {
-    id: toId(doc._id),
-    status: doc.status,
-    suggestedDate: doc.suggestedDate ? utcDateKey(doc.suggestedDate) : null,
-    conflict: doc.conflict === true,
-  };
 }
 
 // 國定假日在公司層級（只看公司挪移，不看個人調移）的有效日期
@@ -661,7 +710,8 @@ export async function buildHolidayRestLedger({
   const detections = [];
   const processedEmployeeIds = new Set();
   let notScheduled = 0;
-  const initialDocByKey = new Map((compensationRows || []).map((doc) => [`${toId(doc.employee)}:${utcDateKey(doc.holidayDate)}`, doc]));
+  const holidayDocKey = (doc) => (doc?.sourceType === 'holiday_rest' && doc.holidayDate ? `${toId(doc.employee)}:${utcDateKey(doc.holidayDate)}` : null);
+  const initialDocByKey = new Map((compensationRows || []).map((doc) => [holidayDocKey(doc), doc]).filter(([key]) => key));
 
   for (const employee of employees) {
     const employeeId = toId(employee._id);
@@ -720,7 +770,10 @@ export async function buildHolidayRestLedger({
         const officeDay = regime === 'office' && !scheduled.has(entry.date);
         const existing = initialDocByKey.get(`${employeeId}:${entry.originalDate}`);
         const needsSuggestion = trigger && !provisional && (!existing || existing.status === 'void');
-        const assignedKey = existing?.status === 'assigned' && existing.assignedDate ? utcDateKey(existing.assignedDate) : '';
+        const weekday = weekdayOfKey(entry.date);
+        let reason = dateKind === 'regular_rest' ? 'regular_rest' : 'rest_day';
+        if (officeDay) reason = weekday === 6 ? 'office_saturday' : (weekday === 0 ? 'office_sunday' : 'office_rest_day');
+        const usedDates = existing && existing.status !== 'void' ? datedUsageDates(existing).map((usage) => usage.date) : [];
         detections.push({
           employeeId,
           holidayDate: entry.originalDate,
@@ -728,12 +781,16 @@ export async function buildHolidayRestLedger({
           calendarDayId: entry.calendarDayId || null,
           trigger,
           skip: provisional,
+          reason,
           origin: officeDay ? 'office_weekend' : 'roster_rest_day',
           dayKindAtDetection: officeDay ? 'office_rest_day' : (dateKind === 'regular_rest' ? 'regular_rest' : 'rest_day'),
           voidReason: trigger ? null : voidReasonOf({ base, storedDoc, governmentCompensated }),
-          assignedDateRest: Boolean(assignedKey) && assignedDateIsRest({ employeeId, regime, scheduled, key: assignedKey }),
+          // 已用掉的整天調休日之後被排成休息日／例假：員工並沒有因此多休一天
+          usedDateRest: usedDates.some((key) => assignedDateIsRest({ employeeId, regime, scheduled, key })),
+          // 建議調休日：行政人員是公務機關補假日（調休存摺上線後），其他是國定假日之後第一個上班日
           suggestedDate: needsSuggestion
-            ? suggestCompensationDate({ context, employee, fromKey: entry.date, scheduled, regime, monthLastKey: lastKey })
+            ? ((regime === 'office' ? suggestedGovMakeupDate(context, entry.originalDate) : null)
+              || suggestCompensationDate({ context, employee, fromKey: entry.date, scheduled, regime, monthLastKey: lastKey }))
             : null,
         });
       }
@@ -758,7 +815,7 @@ export async function buildHolidayRestLedger({
       created: sync?.created || 0, voided: sync?.voided || 0, reopened: sync?.reopened || 0, conflicts: sync?.conflicts || 0,
     };
   }
-  const docByKey = new Map(compensationDocs.map((doc) => [`${toId(doc.employee)}:${utcDateKey(doc.holidayDate)}`, doc]));
+  const docByKey = new Map(compensationDocs.map((doc) => [holidayDocKey(doc), doc]).filter(([key]) => key));
   const docsByEmployee = new Map();
   for (const doc of compensationDocs) {
     const employeeId = toId(doc.employee);
@@ -775,27 +832,43 @@ export async function buildHolidayRestLedger({
     const { employee, employeeId, regime, scheduled, dayKindOf, provisional, drafts, extraGuoDates } = plan;
     const list = drafts.map(({ entry, base, dateKind, storedDoc, onRestDay, governmentCompensated }) => {
       const obligation = docByKey.get(`${employeeId}:${entry.originalDate}`) || null;
+      const credit = obligation && obligation.status !== 'void' ? obligation : null;
+      // 人資作廢的調休（例如已改發加倍工資）：已處理，不再顯示「待存入調休」（同步也不會重新開啟）
+      const manualVoid = obligation?.status === 'void' && obligation.voidReason === 'manual' ? obligation : null;
       let status = base.status;
       let compensation = null;
-      const assigned = entry.compensation?.via === 'assigned'
+      const firstDated = credit ? datedUsageDates(credit)[0] : null;
+      // 有日期的補償：resolver 已經連結到的（整天調休、HR 指定，或記憶體資料的已排定補假），或這筆額度上的第一個整天調休日
+      const dated = entry.compensation && entry.compensation.via !== 'gov_makeup'
         ? entry.compensation
-        : (!governmentCompensated && obligation?.status === 'assigned' && obligation.assignedDate
-          ? {
-            date: utcDateKey(obligation.assignedDate),
-            via: 'assigned',
-            compensationId: toId(obligation._id),
-            calendarDayId: toId(obligation.calendarDay) || null,
-          }
+        : (!governmentCompensated && firstDated
+          ? { date: firstDated.date, via: firstDated.via, compensationId: toId(credit._id), calendarDayId: toId(credit.calendarDay) || null }
           : null);
-      if (entry.type === 'statutory' && onRestDay && (governmentCompensated || assigned)) {
+      const bankFields = credit ? bankCompensationOf(credit) : null;
+      const withBank = (value) => (bankFields
+        ? { ...value, creditStatus: bankFields.creditStatus, hours: bankFields.hours, usedHours: bankFields.usedHours, remainingHours: bankFields.remainingHours }
+        : value);
+      if (entry.type === 'statutory' && onRestDay && (governmentCompensated || dated || credit)) {
         status = LEDGER_STATUS.COMPENSATED;
-        // 排定的補假日之後被排成休息日／例假：仍算已排補假，但標示衝突請人改排（員工並沒有因此多休一天）
-        const dateRest = !governmentCompensated && assignedDateIsRest({ employeeId, regime, scheduled, key: assigned.date });
-        compensation = { ...(governmentCompensated ? entry.compensation : assigned), conflict: dateRest };
-        if (dateRest) compensation.conflictReason = 'date_not_workday';
-      } else if (assigned) {
-        // 已排補假、班表之後又改了（觸發條件不成立）：不自動取消，標示請人確認
-        compensation = { ...assigned, conflict: true, conflictReason: 'trigger_gone' };
+        if (governmentCompensated) {
+          compensation = { ...entry.compensation, conflict: false };
+        } else if (dated) {
+          // 整天調休日之後被排成休息日／例假：仍算已補償，但標示衝突請人改排（員工並沒有因此多休一天）
+          const dateRest = assignedDateIsRest({ employeeId, regime, scheduled, key: dated.date });
+          compensation = withBank({ ...dated, conflict: dateRest });
+          if (dateRest) compensation.conflictReason = 'date_not_workday';
+        } else {
+          compensation = { ...bankFields, conflict: false };
+        }
+      } else if (dated) {
+        // 已用掉的調休、班表之後又改了（觸發條件不成立）：不自動收回，標示請人確認
+        compensation = withBank({ ...dated, conflict: true, conflictReason: 'trigger_gone' });
+      } else if (credit && isCreditUsed(credit)) {
+        compensation = { ...bankFields, conflict: true, conflictReason: 'trigger_gone' };
+      } else if (manualVoid && entry.type === 'statutory' && onRestDay && status === LEDGER_STATUS.NOT_TAKEN) {
+        compensation = {
+          ...bankCompensationOf(manualVoid), creditStatus: 'void', voidReason: 'manual', usedHours: 0, remainingHours: 0, suggestedDate: null, conflict: false,
+        };
       }
       // 登記之後班表又排了「國」或已經補假：登記的紀錄不隱藏，標成衝突請人確認（可能重複補償）
       const resolutionConflict = Boolean(storedDoc) && [
@@ -806,8 +879,8 @@ export async function buildHolidayRestLedger({
       let needsAction = null;
       if (status === LEDGER_STATUS.NOT_TAKEN && !resolution) {
         if (entry.type === 'statutory' && onRestDay) {
-          needsAction = provisional ? 'schedule' : 'assign_compensation';
-          if (obligation?.status === 'open') compensation = serializeOpenObligation(obligation);
+          // 還沒存入調休（沒有同步的檢視）；班表草稿時是「尚未排國」；人資作廢的調休已處理
+          if (!manualVoid) needsAction = provisional ? 'schedule' : 'assign_compensation';
         } else if (isActionableReason(base.reason, employee)) {
           needsAction = provisional ? 'schedule' : 'resolve';
         }
@@ -846,9 +919,9 @@ export async function buildHolidayRestLedger({
       continue;
     }
     if (regime === 'office' && !plan.employeeRows.length) {
-      // 行政人員沒有班表：國定假日都依行事曆放假，只有本月有補假要處理才列入
+      // 行政人員沒有班表：國定假日都依行事曆放假，只有本月有調休（來源或整天調休日在本月）才列入
       const touchesObligation = (docsByEmployee.get(employeeId) || []).some((doc) => (
-        (doc.status === 'open' || doc.status === 'assigned') && (inMonth(doc.holidayDate) || inMonth(doc.assignedDate))
+        doc.status !== 'void' && (inMonth(doc.holidayDate) || datedUsageDates(doc).some((usage) => inMonth(usage.date)))
       ));
       const weekendWithoutLink = list.some((item) => (
         item.type === 'statutory'
@@ -895,7 +968,7 @@ export async function buildHolidayRestLedger({
       compensations: plan.compensationEntries.map((entry) => ({
         date: entry.date,
         originalDate: entry.originalDate,
-        holidayName: String(entry.name || '').replace(/補假$/, ''),
+        holidayName: entry.holidayName ?? String(entry.name || '').replace(/補假$/, ''),
         via: entry.via,
         compensationId: entry.compensationId || null,
         // 補假當天有排「國」，或行政人員當天沒有班表（依行事曆放假）就算休到了

@@ -13,6 +13,13 @@ import { purgeLegacyRocWeekendHolidays } from './controllers/holidayController.j
 import { migrateHolidayCalendarKinds, ensureHolidayCalendarIndexes } from './services/holidayCalendarMigration.js';
 import { startHolidayCalendarWatcher } from './services/companyCalendarService.js';
 import { syncRecentHolidayCompensations } from './services/holidayCompensationService.js';
+import {
+  ensureCompensatoryLeaveState,
+  migrateHolidayCompensationsToCredits,
+  migrateLegacyCompensatoryHours,
+} from './services/compensatoryLeaveService.js';
+import CompensatoryCredit from './models/CompensatoryCredit.js';
+import CompensatoryLeaveState from './models/CompensatoryLeaveState.js';
 import { migrateIndigenousLeaveQuota } from './services/leavePolicyService.js';
 import { migrateLeaveFormSemantics, migrateLeaveKeywordForms } from './controllers/approvalTemplateController.js';
 import { normalizeStoredSignTags } from './controllers/employeeController.js';
@@ -37,6 +44,7 @@ import holidayMoveSettingRoutes from './routes/holidayMoveSettingRoutes.js';
 import holidayLedgerRoutes from './routes/holidayLedgerRoutes.js';
 import companyCalendarRoutes from './routes/companyCalendarRoutes.js';
 import holidayCalendarViewRoutes from './routes/holidayCalendarViewRoutes.js';
+import compensatoryLeaveRoutes from './routes/compensatoryLeaveRoutes.js';
 import HolidayRestResolution from './models/HolidayRestResolution.js';
 
 import attendanceSettingRoutes from './routes/attendanceSettingRoutes.js';
@@ -333,6 +341,8 @@ app.use(
   },
   holidayLedgerRoutes
 );
+// 調休存摺：員工看自己的、主管看直屬部屬的、管理員看所有人；手動給予、扣除、作廢只有管理員（路由檔內再擋一次）
+app.use('/api/compensatory-leave', authenticate, authorizeRoles('employee', 'supervisor', 'admin'), compensatoryLeaveRoutes);
 
 app.use('/api', apiNotFound);
 app.get('*', (req, res, next) => {
@@ -425,6 +435,26 @@ async function start() {
       await HolidayRestResolution.createIndexes();
     } catch (indexError) {
       console.error('Failed to ensure holiday rest resolution indexes', indexError?.name ?? 'Error');
+    }
+    // 調休存摺：確保索引、記下行政人員公務機關補假日停止自動放假的第一天（第一次啟動新版的隔天），
+    // 舊的補假義務與員工資料的「補休時數」轉入存摺（各只做一次、冪等，舊資料不修改；只記錄筆數）
+    try {
+      await Promise.all([CompensatoryCredit.createIndexes(), CompensatoryLeaveState.createIndexes()]);
+      const bankState = await ensureCompensatoryLeaveState();
+      const compensationMigration = await migrateHolidayCompensationsToCredits();
+      if (!compensationMigration?.skipped) {
+        console.log(
+          `Migrated ${compensationMigration.checked} holiday compensations into compensatory leave credits ` +
+          `(created ${compensationMigration.created}; open ${compensationMigration.open}, assigned ${compensationMigration.assigned}, void ${compensationMigration.void}); ` +
+          `office government make-up days are suggestions from ${bankState?.officeGovMakeupCutover}`
+        );
+      }
+      const legacyHoursMigration = await migrateLegacyCompensatoryHours();
+      if (!legacyHoursMigration?.skipped) {
+        console.log(`Moved compensatory hours of ${legacyHoursMigration.employees} employees into the compensatory leave bank (created ${legacyHoursMigration.created})`);
+      }
+    } catch (compLeaveError) {
+      console.error('Failed to migrate compensatory leave bank', compLeaveError?.name ?? 'Error');
     }
     await ensureAdminUser();
     await ensureDefaultSupervisorReports();

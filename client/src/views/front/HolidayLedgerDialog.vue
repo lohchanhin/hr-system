@@ -36,14 +36,15 @@
         匯出 Excel
       </el-button>
       <el-button :type="yearEnd.visible ? 'primary' : 'default'" plain data-test="holiday-ledger-year-end-toggle" @click="toggleYearEnd">
-        年度未排補假
+        年度調休
       </el-button>
     </div>
 
     <p class="ledger-help">
       班表上的「國」排在假日當天是<strong>當日休</strong>，排在當月其他日期是<strong>移休</strong>（顯示是哪一天）；
       本月沒有對應的「國」就是<strong>未休</strong>。「國」與假日依日期先後配對，總數一定正確，個別日期僅供參考。
-      國定假日剛好是員工自己的休息日／例假時要另排<strong>補假</strong>（日期由勞雇雙方協商）；行政人員依政府公告的補假日放假。
+      國定假日剛好是員工自己的休息日／例假時，系統存入一筆<strong>調休</strong>到員工的調休存摺，由員工自己發起調休簽核決定哪一天休
+      （行政人員的公務機關補假日只是建議調休日）；管理員也可以按「HR 指定」替員工指定日期。
       公司統一挪移假日請到「班別設定 &gt; 國定假日挪移」，個別員工的調移請按員工下方的「個人調移」（須本人同意）。匯出 Excel 會依目前的篩選與搜尋匯出。
     </p>
 
@@ -59,10 +60,11 @@
       <el-tag effect="plain">應休 {{ summary.entitled }}</el-tag>
       <el-tag type="success" effect="plain">當日休 {{ summary.rested }}</el-tag>
       <el-tag type="primary" effect="plain">移休 {{ summary.moved }}</el-tag>
-      <el-tag type="success" effect="plain">補假 {{ summary.compensated ?? 0 }}</el-tag>
+      <el-tag type="success" effect="plain">補假／調休 {{ summary.compensated ?? 0 }}</el-tag>
       <el-tag type="danger" effect="plain">未休 {{ summary.notTaken }}</el-tag>
       <el-tag type="warning" effect="plain">待處理 {{ summary.open }}</el-tag>
-      <el-tag type="danger" effect="plain">待排補假 {{ summary.compensationOpen ?? 0 }}</el-tag>
+      <el-tag type="success" effect="plain" data-test="holiday-ledger-banked">已存入調休 {{ summary.banked ?? 0 }}</el-tag>
+      <el-tag v-if="summary.compensationOpen" type="warning" effect="plain">待存入調休 {{ summary.compensationOpen }}</el-tag>
       <el-tag type="info" effect="plain">多排的國 {{ summary.extra }}</el-tag>
       <span v-if="summary.excluded?.notScheduled" class="ledger-excluded">
         另有 {{ summary.excluded.notScheduled }} 人未排班或不在職，未列入
@@ -74,9 +76,12 @@
 
     <section v-if="yearEnd.visible" class="ledger-year-end" data-test="holiday-ledger-year-end">
       <div class="ledger-year-end__toolbar">
-        <strong>年度未排補假</strong>
+        <strong>年度調休</strong>
         <el-select v-model="yearEnd.year" class="ledger-year-end__year" data-test="holiday-ledger-year-end-year" @change="loadYearEnd">
           <el-option v-for="year in yearOptions" :key="year" :label="`${year} 年`" :value="year" />
+        </el-select>
+        <el-select v-model="yearEnd.status" class="ledger-year-end__year" data-test="holiday-ledger-year-end-status" @change="loadYearEnd">
+          <el-option v-for="option in YEAR_STATUS_OPTIONS" :key="option.value" :label="option.label" :value="option.value" />
         </el-select>
         <el-button
           v-if="canResolve"
@@ -86,29 +91,41 @@
         >
           重新計算 {{ yearEnd.year }} 年
         </el-button>
-        <span class="ledger-excluded">國定假日落在休息日／例假、還沒排補假的員工（沒有期限，請和員工協商補假日）</span>
+        <span class="ledger-excluded">員工調休存摺裡今年取得的調休（含人資手動給予）；員工自己發起調休簽核使用</span>
       </div>
       <p v-if="!yearEnd.error && yearEnd.conflicts > 0" class="ledger-excluded" data-test="holiday-ledger-year-end-conflicts">
-        另有 {{ yearEnd.conflicts }} 筆已排定的補假需要確認（班表已變更，例如補假日被排成休息日），請到該國定假日所在月份的休假紀錄修改補假
+        另有 {{ yearEnd.conflicts }} 筆已使用的調休需要確認（班表已變更，例如取得條件已不成立或調休日被排成休息日），系統不會自動收回，請人資確認
       </p>
       <el-alert v-if="yearEnd.error" :title="yearEnd.error" type="error" show-icon :closable="false" />
-      <el-table v-else v-loading="yearEnd.loading" :data="yearEnd.rows" :max-height="260" border empty-text="沒有待排的補假">
+      <el-table v-else v-loading="yearEnd.loading" :data="yearEnd.rows" :max-height="260" border empty-text="沒有符合的調休">
         <el-table-column label="員工" min-width="140">
           <template #default="{ row }">
             <span :data-test="`year-end-row-${row.id}`">{{ row.name }}</span>
             <span class="ledger-person__meta">{{ [row.employeeNo, row.subDepartmentName].filter(Boolean).join('・') }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="國定假日" min-width="150">
-          <template #default="{ row }">{{ row.holidayName }} {{ formatMonthDay(row.holidayDate) }}</template>
+        <el-table-column label="來源" min-width="200">
+          <template #default="{ row }">
+            {{ row.sourceText }}
+            <el-tag v-if="row.conflict" size="small" type="warning" effect="plain">請確認</el-tag>
+          </template>
         </el-table-column>
-        <el-table-column label="建議補假日" min-width="110">
+        <el-table-column label="時數" min-width="130">
+          <template #default="{ row }">{{ describeCreditHours(row) }}</template>
+        </el-table-column>
+        <el-table-column label="狀態" min-width="110">
+          <template #default="{ row }">
+            {{ row.statusLabel }}
+            <span v-if="row.assignedDate" class="ledger-person__meta">HR 指定 {{ formatMonthDay(row.assignedDate) }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="建議調休日" min-width="100">
           <template #default="{ row }">{{ row.suggestedDate ? formatMonthDay(row.suggestedDate) : '—' }}</template>
         </el-table-column>
         <el-table-column label="" min-width="100">
           <template #default="{ row }">
             <el-button
-              v-if="canResolve"
+              v-if="canAssignRecord(row)"
               link
               type="primary"
               size="small"
@@ -116,7 +133,7 @@
               :data-compensation="row.id"
               @click="openCompensationRecord(row)"
             >
-              排定補假
+              {{ row.assignedDate ? '修改 HR 指定' : 'HR 指定' }}
             </el-button>
           </template>
         </el-table-column>
@@ -205,7 +222,7 @@
                 :data-cell="`${row.employeeId}-${holiday.id}`"
                 @click="openCompensation(row, itemOf(row, holiday))"
               >
-                {{ itemOf(row, holiday).compensation?.via === 'assigned' ? '修改補假' : '排定補假' }}
+                {{ isHrAssigned(itemOf(row, holiday).compensation) ? '修改 HR 指定' : 'HR 指定' }}
               </el-button>
             </div>
             <div
@@ -269,7 +286,7 @@
         <el-form-item :label="form.kind === 'waived' ? '備註（必填）' : '備註'">
           <el-input v-model="form.note" type="textarea" :rows="3" maxlength="500" show-word-limit data-test="holiday-ledger-note" />
         </el-form-item>
-        <p class="ledger-help">這裡只登記處理方式，不會自動改動薪資或員工的補休時數餘額。</p>
+        <p class="ledger-help">這裡只登記處理方式，不會自動改動薪資或員工的調休存摺（要給調休請到員工管理的調休存摺手動給予）。</p>
       </el-form>
       <template #footer>
         <el-button
@@ -289,7 +306,7 @@
 
     <el-dialog
       v-model="compensation.visible"
-      :title="`排定補假：${compensation.employeeName}　${compensation.holidayName}`"
+      :title="`HR 指定調休日：${compensation.employeeName}　${compensation.holidayName}`"
       width="min(460px, 92vw)"
       :append-to="appendTo"
       destroy-on-close
@@ -300,16 +317,16 @@
           <span>{{ compensation.holidayName }} {{ formatMonthDay(compensation.holidayDate) }}（{{ weekdayLabel(compensation.holidayDate) }}）</span>
           <el-tag size="small" type="info" effect="plain" class="ledger-unit">{{ compensation.reasonText }}</el-tag>
         </el-form-item>
-        <el-form-item label="補假日期">
+        <el-form-item label="調休日期">
           <el-date-picker
             v-model="compensation.assignedDate"
             type="date"
             value-format="YYYY-MM-DD"
-            placeholder="選擇補假日期"
+            placeholder="選擇調休日期"
             data-test="holiday-ledger-compensation-date"
           />
         </el-form-item>
-        <el-form-item label="協商紀錄">
+        <el-form-item label="協商紀錄（必填）">
           <el-input
             v-model="compensation.agreementNote"
             type="textarea"
@@ -320,7 +337,7 @@
             data-test="holiday-ledger-compensation-note"
           />
         </el-form-item>
-        <p class="ledger-help">補假日須是員工原本要上班的日子；排定後當天就是該員工的國定假日（不會自動產生薪資，出勤仍需加班單）。</p>
+        <p class="ledger-help">HR 指定會用掉這筆調休（整筆時數），指定的日子須是員工原本要上班的日子，當天就是該員工的國定假日（不會自動產生薪資，出勤仍需加班單）。員工也可以自己發起調休簽核。</p>
       </el-form>
       <template #footer>
         <el-button
@@ -331,7 +348,7 @@
           data-test="holiday-ledger-compensation-unassign"
           @click="unassignCompensation"
         >
-          取消排定
+          取消 HR 指定
         </el-button>
         <el-button @click="compensation.visible = false">取消</el-button>
         <el-button type="primary" :loading="compensation.saving" data-test="holiday-ledger-compensation-save" @click="saveCompensation">儲存</el-button>
@@ -416,6 +433,7 @@ import {
   canShowResolveButton,
   canShowSwapButton,
   compensationReasonText,
+  isHrAssigned,
   countLedgerFilters,
   describeHolidayHeader,
   describeLedgerCell,
@@ -427,6 +445,16 @@ import {
   validateSwapForm,
   weekdayLabel,
 } from '../../utils/holidayLedger'
+import { describeCreditHours } from '../../utils/compensatoryLeave'
+
+// 年度調休清單的狀態篩選（與 GET /api/holiday-ledger/compensations?status= 相同）
+const YEAR_STATUS_OPTIONS = [
+  { value: 'available', label: '未使用' },
+  { value: 'used', label: '已使用' },
+  { value: 'expired', label: '已過期' },
+  { value: 'void', label: '已失效' },
+  { value: 'all', label: '全部' },
+]
 
 defineOptions({ name: 'HolidayLedgerDialog' })
 
@@ -665,29 +693,33 @@ function fillCompensation({ id, status, employeeName, holidayName, holidayDate, 
 }
 
 function openCompensation(row, item) {
-  const assigned = item.compensation?.via === 'assigned'
+  const assigned = isHrAssigned(item.compensation)
   fillCompensation({
-    id: assigned ? item.compensation.compensationId : item.compensation?.id,
+    id: item.compensation?.compensationId,
     status: assigned ? 'assigned' : 'open',
     employeeName: row.name,
     holidayName: item.holidayName,
     holidayDate: item.originalDate,
     reasonText: compensationReasonText(item),
-    // 待排的預填系統建議日；已排的帶目前的補假日
+    // 還沒指定的預填建議調休日；已指定的帶目前的日子
     assignedDate: assigned ? item.compensation.date : (item.compensation?.suggestedDate || ''),
   })
 }
 
+// 年度調休清單：管理員可以替還沒用過的調休指定日期，或修改已指定的
+const canAssignRecord = (record) => props.canResolve && authStore.role === 'admin'
+  && (Boolean(record.assignedDate) || (record.status === 'available' && !(record.usedHours > 0)))
+
 function openCompensationRecord(record) {
   fillCompensation({
     id: record.id,
-    status: record.status,
+    status: record.assignedDate ? 'assigned' : 'open',
     employeeName: record.name,
-    holidayName: record.holidayName,
-    holidayDate: record.holidayDate,
-    reasonText: record.origin === 'office_weekend' ? '適逢週末' : '適逢休息日／例假',
-    assignedDate: record.status === 'assigned' ? record.assignedDate : (record.suggestedDate || ''),
-    agreementNote: record.agreementNote,
+    holidayName: record.holidayName || record.sourceText,
+    holidayDate: record.holidayDate || record.earnedDate,
+    reasonText: record.reasonText || '調休',
+    assignedDate: record.assignedDate || record.suggestedDate || '',
+    agreementNote: record.assignNote,
   })
 }
 
@@ -701,7 +733,11 @@ async function afterCompensationChange(message) {
 async function saveCompensation() {
   if (compensation.saving || !compensation.id) return
   if (!compensation.assignedDate) {
-    ElMessage.warning('請選擇補假日期')
+    ElMessage.warning('請選擇調休日期')
+    return
+  }
+  if (compensation.status !== 'assigned' && !compensation.agreementNote.trim()) {
+    ElMessage.warning('請填寫協商紀錄')
     return
   }
   compensation.saving = true
@@ -716,12 +752,12 @@ async function saveCompensation() {
       body: JSON.stringify(body),
     })
     if (!res.ok) {
-      ElMessage.error(await failureMessage(res, '排定補假失敗'))
+      ElMessage.error(await failureMessage(res, 'HR 指定調休日失敗'))
       return
     }
-    await afterCompensationChange('已排定補假')
+    await afterCompensationChange('已指定調休日')
   } catch (error) {
-    ElMessage.error('排定補假失敗，請稍後再試')
+    ElMessage.error('HR 指定調休日失敗，請稍後再試')
   } finally {
     compensation.saving = false
   }
@@ -733,20 +769,20 @@ async function unassignCompensation() {
   try {
     const res = await apiFetch(`/api/holiday-ledger/compensations/${compensation.id}/unassign`, { method: 'POST' })
     if (!res.ok) {
-      ElMessage.error(await failureMessage(res, '取消排定失敗'))
+      ElMessage.error(await failureMessage(res, '取消 HR 指定失敗'))
       return
     }
-    await afterCompensationChange('已取消排定，回到待排補假')
+    await afterCompensationChange('已取消 HR 指定，調休回到未使用')
   } catch (error) {
-    ElMessage.error('取消排定失敗，請稍後再試')
+    ElMessage.error('取消 HR 指定失敗，請稍後再試')
   } finally {
     compensation.saving = false
   }
 }
 
-/* ---------------- 年度未排補假 ---------------- */
+/* ---------------- 年度調休 ---------------- */
 
-const yearEnd = reactive({ visible: false, loading: false, syncing: false, error: '', year: 0, rows: [], conflicts: 0 })
+const yearEnd = reactive({ visible: false, loading: false, syncing: false, error: '', year: 0, status: 'available', rows: [], conflicts: 0 })
 const yearOptions = computed(() => {
   const base = Number(String(month.value || '').slice(0, 4)) || new Date().getFullYear()
   return [base - 1, base, base + 1]
@@ -762,19 +798,19 @@ async function loadYearEnd() {
   yearEnd.loading = true
   yearEnd.error = ''
   try {
-    const res = await apiFetch(`/api/holiday-ledger/compensations?${yearEndQuery({ year: String(yearEnd.year), status: 'open' })}`)
+    const res = await apiFetch(`/api/holiday-ledger/compensations?${yearEndQuery({ year: String(yearEnd.year), status: yearEnd.status || 'available' })}`)
     if (!res.ok) {
-      yearEnd.error = await failureMessage(res, '載入年度未排補假失敗')
+      yearEnd.error = await failureMessage(res, '載入年度調休失敗')
       yearEnd.rows = []
       yearEnd.conflicts = 0
       return
     }
     const body = await res.json()
     yearEnd.rows = body?.compensations || []
-    // 已排定但需要確認的補假不在待排清單裡，另外提示件數
+    // 已使用但取得條件已不成立的調休，另外提示件數
     yearEnd.conflicts = Number(body?.summary?.conflict) || 0
   } catch (error) {
-    yearEnd.error = '載入年度未排補假失敗，請稍後再試'
+    yearEnd.error = '載入年度調休失敗，請稍後再試'
     yearEnd.rows = []
     yearEnd.conflicts = 0
   } finally {

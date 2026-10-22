@@ -224,7 +224,7 @@ describe('CompanyCalendarPanel.vue', () => {
     for (const label of ['國定假日', '公務機關補假', '公務機關調整放假', '公務機關補行上班', '公司休息日', '公司上班日', '指定應放假日']) {
       expect(legend.text()).toContain(label)
     }
-    expect(legend.text()).toContain('行政人員自動當作補假')
+    expect(legend.text()).toContain('行政人員的建議調休日')
   })
 
   it('requires an agreement reference and date to follow government adjustments', async () => {

@@ -586,7 +586,8 @@ describe('HolidayLedgerDialog', () => {
   })
 })
 
-describe('HolidayLedgerDialog: 補假, personal swaps and the year-end list', () => {
+// 調休存摺上線後（客戶 2026-10）：國定假日落在休息日／例假存入調休（員工自己發起簽核使用），HR 指定只有管理員；年度清單改成年度調休
+describe('HolidayLedgerDialog: 調休, personal swaps and the year list', () => {
   const H10 = { id: 'statutory:2026-10-10', type: 'statutory', name: '國慶日', date: '2026-10-10', originalDate: '2026-10-10', movedFrom: null, personal: false }
   const H25 = { id: 'statutory:2026-10-25', type: 'statutory', name: '臺灣光復暨金門古寧頭大捷紀念日', date: '2026-10-25', originalDate: '2026-10-25', movedFrom: null, personal: false }
   const HSWAP = { id: 'statutory:2026-09-28', type: 'statutory', name: '孔子誕辰紀念日/教師節', date: '2026-09-28', originalDate: '2026-09-28', movedFrom: null, personal: true }
@@ -601,9 +602,9 @@ describe('HolidayLedgerDialog: 補假, personal swaps and the year-end list', ()
       calendar: { year: 2026, state: 'draft', provisional: true },
       employees: [
         person('n1', '輪班甲', [
-          ledgerItem(H10, { status: 'not_taken', guoDate: null, reason: 'on_rest_day', dateKind: 'rest_day', needsAction: 'assign_compensation', compensation: { id: 'c1', status: 'open', suggestedDate: '2026-10-12', conflict: false } }),
+          ledgerItem(H10, { status: 'compensated', guoDate: null, reason: 'on_rest_day', dateKind: 'rest_day', compensation: { via: 'bank', date: null, compensationId: 'c1', creditStatus: 'available', hours: 8, usedHours: 0, remainingHours: 8, suggestedDate: '2026-10-12', conflict: false } }),
           ledgerItem(HVOTE, { status: 'rested_on_date', guoDate: '2026-10-24' }),
-          ledgerItem(H25, { status: 'compensated', guoDate: null, reason: 'on_rest_day', dateKind: 'rest_day', compensation: { date: '2026-10-28', via: 'assigned', compensationId: 'c2', conflict: false } }),
+          ledgerItem(H25, { status: 'compensated', guoDate: null, reason: 'on_rest_day', dateKind: 'rest_day', compensation: { date: '2026-10-28', via: 'hr_assigned', compensationId: 'c2', conflict: false } }),
         ]),
         person('o2', '行政乙', [
           ledgerItem(H10, { status: 'compensated', guoDate: null, reason: 'on_rest_day', dateKind: 'rest_day', compensation: { date: '2026-10-09', via: 'gov_makeup', compensationId: null, conflict: false } }),
@@ -615,7 +616,7 @@ describe('HolidayLedgerDialog: 補假, personal swaps and the year-end list', ()
           ledgerItem(H25, { status: 'rested_on_date', guoDate: '2026-10-25' }),
         ]),
       ],
-      summary: { employees: 3, holidays: 4, entitled: 8, rested: 5, moved: 0, compensated: 2, notTaken: 1, open: 1, compensationOpen: 1, extra: 0, excluded: { notScheduled: 0 } },
+      summary: { employees: 3, holidays: 4, entitled: 8, rested: 5, moved: 0, compensated: 3, notTaken: 0, open: 0, compensationOpen: 0, banked: 1, extra: 0, excluded: { notScheduled: 0 } },
     }],
     summary: {},
   }
@@ -627,12 +628,12 @@ describe('HolidayLedgerDialog: 補假, personal swaps and the year-end list', ()
     return jsonResponse(OCTOBER)
   })
 
-  it('shows 補假 cells, the government make-up day, calendar rest, a designated tag, missing items and the row tags', async () => {
+  it('shows 調休 cells, the government make-up day, calendar rest, a designated tag, missing items and the row tags', async () => {
     apiFetch.mockResolvedValue(jsonResponse(OCTOBER))
     const wrapper = mountDialog({ scope: OCT_SCOPE })
     await flushPromises()
 
-    expect(cellText(wrapper, 'n1', H10.id)).toBe('待排補假')
+    expect(cellText(wrapper, 'n1', H10.id)).toBe('已存入調休')
     expect(cellText(wrapper, 'n1', H25.id)).toBe('補假 10/28')
     expect(cellText(wrapper, 'o2', H10.id)).toBe('補假 10/09（公務機關補假日）')
     expect(cellText(wrapper, 'o2', H25.id)).toBe('依行事曆放假')
@@ -645,30 +646,31 @@ describe('HolidayLedgerDialog: 補假, personal swaps and the year-end list', ()
     expect(wrapper.find('[data-test="ledger-indigenous-o2"]').text()).toBe('原住民')
     expect(wrapper.find('[data-test="ledger-regime-n1"]').exists()).toBe(false)
     const summary = wrapper.find('[data-test="holiday-ledger-summary"]').text()
-    expect(summary).toContain('補假 2')
-    expect(summary).toContain('待排補假 1')
+    expect(summary).toContain('補假／調休 3')
+    expect(summary).toContain('已存入調休 1')
+    expect(summary).not.toContain('待存入調休')
     expect(wrapper.find('[data-test="holiday-ledger-calendar-provisional"]').text()).toContain('2026 年公司行事曆尚未核定')
   })
 
-  it('filters by 待排補假', async () => {
+  it('filters by 調休', async () => {
     apiFetch.mockResolvedValue(jsonResponse(OCTOBER))
     const wrapper = mountDialog({ scope: OCT_SCOPE })
     await flushPromises()
-    const radio = wrapper.findAll('label.el-radio-button').find((node) => node.text().startsWith('待排補假'))
-    expect(radio.text()).toBe('待排補假（1）')
+    const radio = wrapper.findAll('label.el-radio-button').find((node) => node.text().startsWith('調休'))
+    expect(radio.text()).toBe('調休（1）')
     await radio.find('input').setValue(true)
     await flushPromises()
     expect(wrapper.findAll('.col:first-child .cell').map((cell) => cell.find('strong').text())).toEqual(['輪班甲'])
   })
 
-  it('opens the 補假 dialog with the suggested date, posts the assignment and reloads', async () => {
+  it('opens the HR 指定 dialog with the suggested date, posts the assignment with the required note and reloads', async () => {
     apiFetch.mockResolvedValue(jsonResponse(OCTOBER))
     const wrapper = mountDialog({ scope: OCT_SCOPE }, { role: 'admin' })
     await flushPromises()
     const buttons = wrapper.findAll('[data-test="holiday-ledger-assign-compensation"]')
     expect(buttons.map((button) => button.attributes('data-cell'))).toEqual([`n1-${H10.id}`, `n1-${H25.id}`])
-    expect(buttons[0].text()).toBe('排定補假')
-    expect(buttons[1].text()).toBe('修改補假')
+    expect(buttons[0].text()).toBe('HR 指定')
+    expect(buttons[1].text()).toBe('修改 HR 指定')
 
     apiFetch.mockClear()
     apiFetch.mockResolvedValueOnce(jsonResponse({ id: 'c1', status: 'assigned' })).mockResolvedValue(jsonResponse(OCTOBER))
@@ -679,23 +681,28 @@ describe('HolidayLedgerDialog: 補假, personal swaps and the year-end list', ()
     expect(dialog.text()).toContain('適逢休息日')
     expect(wrapper.find('[data-test="holiday-ledger-compensation-date"]').element.value).toBe('2026-10-12')
     expect(fieldOf(wrapper, 'holiday-ledger-compensation-note').attributes('placeholder')).toBe('例：與員工協商於 3/2 補假')
+    // 協商紀錄必填：沒填不送出
+    await wrapper.find('[data-test="holiday-ledger-compensation-save"]').trigger('click')
+    expect(messageWarning).toHaveBeenCalledWith('請填寫協商紀錄')
+    expect(apiFetch).not.toHaveBeenCalled()
     await fieldOf(wrapper, 'holiday-ledger-compensation-note').setValue('與員工協商於 10/12 補假')
     await wrapper.find('[data-test="holiday-ledger-compensation-save"]').trigger('click')
     await flushPromises()
 
     expect(apiFetch.mock.calls[0][0]).toBe('/api/holiday-ledger/compensations/c1/assign')
     expect(JSON.parse(apiFetch.mock.calls[0][1].body)).toEqual({ assignedDate: '2026-10-12', agreementNote: '與員工協商於 10/12 補假' })
-    expect(messageSuccess).toHaveBeenCalledWith('已排定補假')
+    expect(messageSuccess).toHaveBeenCalledWith('已指定調休日')
     expect(apiFetch.mock.calls[1][0]).toContain('/api/holiday-ledger?month=2026-10')
   })
 
-  it('shows the server message for a refused date, and can cancel an assigned 補假', async () => {
+  it('shows the server message for a refused date, and can cancel an HR assignment', async () => {
     apiFetch.mockResolvedValue(jsonResponse(OCTOBER))
     const wrapper = mountDialog({ scope: OCT_SCOPE }, { role: 'admin' })
     await flushPromises()
     apiFetch.mockClear()
     apiFetch.mockResolvedValueOnce(jsonResponse({ error: '補假須排在原本要上班的日子', code: 'TARGET_NOT_WORKDAY' }, 400))
     await wrapper.findAll('[data-test="holiday-ledger-assign-compensation"]')[0].trigger('click')
+    await fieldOf(wrapper, 'holiday-ledger-compensation-note').setValue('協商')
     await wrapper.find('[data-test="holiday-ledger-compensation-save"]').trigger('click')
     await flushPromises()
     expect(messageError).toHaveBeenCalledWith('補假須排在原本要上班的日子')
@@ -764,12 +771,16 @@ describe('HolidayLedgerDialog: 補假, personal swaps and the year-end list', ()
     expect(revoked).toEqual([{ reason: '員工改變心意' }])
   })
 
-  it('hides 排定補假 and 個人調移 for people who cannot resolve and on the supervisor\'s own row', async () => {
+  it('hides HR 指定 from everyone but administrators, and 個人調移 for people who cannot resolve and on the supervisor\'s own row', async () => {
     apiFetch.mockResolvedValue(jsonResponse(OCTOBER))
     const readOnly = mountDialog({ scope: OCT_SCOPE, canResolve: false })
     await flushPromises()
     expect(readOnly.find('[data-test="holiday-ledger-assign-compensation"]').exists()).toBe(false)
     expect(readOnly.find('[data-test="holiday-ledger-swap-button"]').exists()).toBe(false)
+
+    const supervisor = mountDialog({ scope: OCT_SCOPE }, { role: 'supervisor', viewerId: 'boss' })
+    await flushPromises()
+    expect(supervisor.find('[data-test="holiday-ledger-assign-compensation"]').exists()).toBe(false)
 
     const own = mountDialog({ scope: { ...OCT_SCOPE, includeSelf: true } }, { role: 'supervisor', viewerId: 'n1' })
     await flushPromises()
@@ -777,13 +788,17 @@ describe('HolidayLedgerDialog: 補假, personal swaps and the year-end list', ()
     expect(own.findAll('[data-test="holiday-ledger-swap-button"]').map((button) => button.attributes('data-employee'))).toEqual(['o2', 's3'])
   })
 
-  it('lists the open 補假 of the year only when asked, and recomputes the whole year', async () => {
+  it('lists the 調休 of the year only when asked, and recomputes the whole year', async () => {
     const syncBodies = []
     routeFetch([
       [/^GET \/api\/holiday-ledger\/compensations\?/, () => jsonResponse({
         year: 2026,
-        compensations: [{ id: 'c1', employeeId: 'n1', employeeNo: 'Nn1', name: '輪班甲', holidayDate: '2026-10-10', holidayName: '國慶日', status: 'open', origin: 'roster_rest_day', suggestedDate: '2026-10-12', agreementNote: '' }],
-        summary: { open: 1, assigned: 0, void: 0, conflict: 0 },
+        compensations: [{
+          id: 'c1', employeeId: 'n1', employeeNo: 'Nn1', name: '輪班甲', holidayDate: '2026-10-10', holidayName: '國慶日', earnedDate: '2026-10-10',
+          sourceText: '2026-10-10 國慶日 適逢休息日', reasonText: '適逢休息日', status: 'available', statusLabel: '未使用',
+          hours: 8, usedHours: 0, remainingHours: 8, suggestedDate: '2026-10-12', assignedDate: null, assignNote: '',
+        }],
+        summary: { available: 1, used: 0, expired: 0, void: 0, conflict: 0 },
       })],
       [/^POST \/api\/holiday-ledger\/compensations\/sync$/, (url, options) => { syncBodies.push(JSON.parse(options.body)); return jsonResponse({ months: [], created: 1, voided: 0, reopened: 0, conflicts: 0 }) }],
     ])
@@ -796,9 +811,10 @@ describe('HolidayLedgerDialog: 補假, personal swaps and the year-end list', ()
     await flushPromises()
     const section = wrapper.find('[data-test="holiday-ledger-year-end"]')
     expect(section.exists()).toBe(true)
-    expect(apiFetch.mock.calls.map(([url]) => url)).toContain('/api/holiday-ledger/compensations?department=d1&subDepartment=s1&year=2026&status=open')
+    expect(apiFetch.mock.calls.map(([url]) => url)).toContain('/api/holiday-ledger/compensations?department=d1&subDepartment=s1&year=2026&status=available')
     expect(section.text()).toContain('輪班甲')
-    expect(section.text()).toContain('國慶日 10/10')
+    expect(section.text()).toContain('2026-10-10 國慶日 適逢休息日')
+    expect(section.text()).toContain('8 小時，剩 8 小時')
 
     await wrapper.find('[data-test="holiday-ledger-year-end-sync"]').trigger('click')
     await flushPromises()
@@ -810,15 +826,15 @@ describe('HolidayLedgerDialog: 補假, personal swaps and the year-end list', ()
     expect(wrapper.find('[data-test="holiday-ledger-year-end-conflicts"]').exists()).toBe(false)
   })
 
-  it('tells how many assigned 補假 need a check, since they are not in the open list', async () => {
+  it('tells how many used 調休 need a check, since they are not in the available list', async () => {
     routeFetch([
-      [/^GET \/api\/holiday-ledger\/compensations\?/, () => jsonResponse({ year: 2026, compensations: [], summary: { open: 0, assigned: 3, void: 0, conflict: 2 } })],
+      [/^GET \/api\/holiday-ledger\/compensations\?/, () => jsonResponse({ year: 2026, compensations: [], summary: { available: 0, used: 3, expired: 0, void: 0, conflict: 2 } })],
     ])
     const wrapper = mountDialog({ scope: OCT_SCOPE }, { role: 'admin' })
     await flushPromises()
     await wrapper.find('[data-test="holiday-ledger-year-end-toggle"]').trigger('click')
     await flushPromises()
-    expect(wrapper.find('[data-test="holiday-ledger-year-end-conflicts"]').text()).toContain('另有 2 筆已排定的補假需要確認')
+    expect(wrapper.find('[data-test="holiday-ledger-year-end-conflicts"]').text()).toContain('另有 2 筆已使用的調休需要確認')
   })
 
   it('does not offer a holiday the company already moved as the original day of a personal swap', async () => {

@@ -97,7 +97,7 @@ jest.unstable_mockModule('../src/models/HolidayRestResolution.js', () => ({ defa
 jest.unstable_mockModule('../src/services/approvedLeaveCalendarService.js', () => ({
   loadApprovedLeaveIntervals: mockLoadApprovedLeaveIntervals,
 }));
-const { CalendarYear, HolidayCompensation, HolidaySwap } = await registerHolidayResolverModelMocks(jest);
+const { CalendarYear, HolidaySwap, CompensatoryCredit } = await registerHolidayResolverModelMocks(jest);
 
 const { createHolidaySwap, listHolidaySwaps, revokeHolidaySwap } = await import('../src/services/holidayCompensationService.js');
 const { buildHolidayRestLedger } = await import('../src/services/holidayRestLedgerService.js');
@@ -136,8 +136,9 @@ beforeEach(() => {
   jest.clearAllMocks();
   roster = [];
   moves = [];
-  compensations = createStore(HolidayCompensation, {
-    unique: (a, b) => sameValue(a.employee, b.employee) && sameValue(a.holidayDate, b.holidayDate),
+  // 已排定的補假改存在調休存摺（HR 指定的使用紀錄）
+  compensations = createStore(CompensatoryCredit, {
+    unique: (a, b) => sameValue(a.employee, b.employee) && a.sourceKey === b.sourceKey,
   });
   swaps = createStore(HolidaySwap, {
     unique: (a, b) => a.status === 'active' && b.status === 'active' && sameValue(a.employee, b.employee) && sameValue(a.originalDate, b.originalDate),
@@ -187,7 +188,10 @@ describe('creating a personal holiday swap', () => {
     expect(await codeOf(createHolidaySwap(swapBody({ originalDate: '2026-09-25', targetDate: '2026-10-10' })))).toBe('ALREADY_HOLIDAY');
     // 10/5 已經是 9/28 的調移日
     expect(await codeOf(createHolidaySwap(swapBody({ originalDate: '2026-09-25', targetDate: '2026-10-05' })))).toBe('DATE_TAKEN');
-    compensations.push({ _id: oid(0x400), employee: ID.nurseA, holidayDate: utc('2026-10-10'), assignedDate: utc('2026-10-14'), status: 'assigned', origin: 'roster_rest_day' });
+    compensations.push({
+      _id: oid(0x400), employee: ID.nurseA, sourceType: 'holiday_rest', sourceKey: 'holiday_rest:2026-10-10', holidayDate: utc('2026-10-10'), status: 'used', hours: 8, usedHours: 8,
+      usages: [{ kind: 'hr_assigned', hours: 8, days: [{ date: '2026-10-14', hours: 8 }], fullDayDates: ['2026-10-14'] }],
+    });
     expect(await codeOf(createHolidaySwap(swapBody({ originalDate: '2026-09-25', targetDate: '2026-10-14' })))).toBe('DATE_TAKEN');
     roster = [rosterRow(ID.nurseA, '2026-10-13', 'rest')];
     expect(await codeOf(createHolidaySwap(swapBody({ originalDate: '2026-09-25', targetDate: '2026-10-13' })))).toBe('TARGET_NOT_WORKDAY');

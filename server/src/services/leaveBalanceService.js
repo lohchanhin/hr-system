@@ -1,5 +1,6 @@
 // 假別餘額：每位員工、每個假別的「額度 / 已使用 / 簽核中 / 剩餘」（單位是小時，天數是 時數 / 8 的換算）。
 // - 特休：額度與已使用取自員工資料（系統在簽核核准時原子扣減的計數），簽核中的時數從單據算。
+// - 調休：取自調休存摺（services/compensatoryLeaveService，不分年度），簽核中的時數從所有年度的調休單據算。
 // - 其他假別：額度取自假別規則（services/leavePolicyService，預設是法定天數），已使用從「已核准」的單據即時加總，
 //   簽核中從「簽核中」的單據加總；不另外存計數，所以撤回、退簽、否決後數字會自己回來。
 // 所有請假表單（預設的「請假」與客戶自建的，包含已停用的表單與被換掉的欄位）都納入；日期一律以台灣時間判斷是哪一年。
@@ -13,6 +14,7 @@ import { computeLeaveDuration, sumLeaveHoursInRange } from '../utils/leaveDurati
 import { candidateSelectKeys, pickFieldValue, resolveCandidateIds } from '../utils/fieldCandidates.js'
 import { readAnnualLeaveHours } from '../utils/annualLeaveHours.js'
 import { toTaipeiDateKey } from '../utils/taipeiTime.js'
+import { creditPolicyOf, loadEmployeeCredits, summarizeCredits } from './compensatoryLeaveService.js'
 import { LEAVE_DAY_EQUIVALENT_HOURS, formatHoursText, hoursToDays, roundHours } from '../utils/leaveHours.js'
 
 const COUNTED_STATUSES = ['approved', 'pending']
@@ -44,8 +46,15 @@ function addToBucket(map, key, status, hours) {
   map.get(key)[status] = roundHours((map.get(key)[status] || 0) + hours)
 }
 
-// 這張單落在指定年度（台灣曆年）的時數：有請假日期就逐日加總，沒有日期的舊資料用送簽日期歸屬年度（與薪資、報表相同）
+// 這張單落在指定年度（台灣曆年）的時數：有請假日期就逐日加總，沒有日期的舊資料用送簽日期歸屬年度（與薪資、報表相同）；
+// year 是 null 時不分年度（調休存摺），回傳整張單的時數
 function hoursInYear({ row, formData, ids, year, hoursPerDay }) {
+  if (year === null) {
+    return computeLeaveRequestHours({
+      formData,
+      leaveFields: { startId: ids.startIds[0], endId: ids.endIds[0], daysId: ids.daysIds[0], hoursId: ids.hoursIds[0] },
+    }).hours
+  }
   const duration = computeLeaveDuration({
     startValue: pickFieldValue(formData, ids.startIds),
     endValue: pickFieldValue(formData, ids.endIds),
@@ -70,15 +79,18 @@ function hoursInYear({ row, formData, ids, year, hoursPerDay }) {
 }
 
 /**
- * 員工在 year 年（台灣曆年）已核准與簽核中的請假時數，依假別規則分類。
- * 回傳 { byKey: Map(假別代號 -> { approved, pending }), unmatched: Map(假別名稱 -> { approved, pending }), dictionaryNames: [] }；
- * dictionaryNames 是所有請假表單的假別選項名稱（員工選得到的假別）。
+ * 員工在 year 年（台灣曆年；null 表示不分年度）已核准與簽核中的請假時數，依假別規則分類。
+ * statuses 預設是已核准與簽核中（只算簽核中時傳 ['pending']）。
+ * 回傳 { byKey: Map(假別代號 -> { approved, pending }), unmatched: Map(假別名稱 -> { approved, pending }), dictionaryNames: [],
+ *   pendingAnyYear: Map(假別代號 -> 不分年度的簽核中時數) }；
+ * dictionaryNames 是所有請假表單的假別選項名稱（員工選得到的假別）；pendingAnyYear 給不分年度的調休存摺用（同一次查詢算出來，不另外查）。
  */
-export async function computeLeaveUsage({ employeeId, policy, year, excludeRequestId = null, infos = null }) {
+export async function computeLeaveUsage({ employeeId, policy, year, excludeRequestId = null, infos = null, statuses = COUNTED_STATUSES }) {
   const leaveInfos = infos || await leaveFieldService.getAllLeaveFieldInfos()
   const hoursPerDay = LEAVE_DAY_EQUIVALENT_HOURS
   const byKey = new Map()
   const unmatched = new Map()
+  const pendingAnyYear = new Map()
   const dictionaryNames = new Set()
   const exclude = normalizeId(excludeRequestId)
 
@@ -100,7 +112,7 @@ export async function computeLeaveUsage({ employeeId, policy, year, excludeReque
     let query = ApprovalRequest.find({
       form: info.formId,
       applicant_employee: employeeId,
-      status: { $in: COUNTED_STATUSES },
+      status: { $in: statuses },
     })
     if (query && typeof query.select === 'function') {
       query = query.select(['status', 'createdAt', 'form_data.days', 'form_data.duration', 'form_data.hours']
@@ -111,25 +123,58 @@ export async function computeLeaveUsage({ employeeId, policy, year, excludeReque
 
     for (const row of rows) {
       if (exclude && normalizeId(row._id) === exclude) continue
-      if (!COUNTED_STATUSES.includes(row.status)) continue
+      if (!statuses.includes(row.status)) continue
       const formData = row.form_data && typeof row.form_data === 'object' ? row.form_data : {}
       const names = collectLeaveTypeNames(pickFieldValue(formData, ids.typeIds), info.typeOptions)
       if (!names.length) continue
+      const matched = matchLeaveType(names, policy.types)
+      if (matched && row.status === 'pending') {
+        const anyYear = year === null ? null : hoursInYear({ row, formData, ids, year: null, hoursPerDay })
+        if (anyYear > 0) pendingAnyYear.set(matched.key, roundHours((pendingAnyYear.get(matched.key) || 0) + anyYear))
+      }
       const hours = hoursInYear({ row, formData, ids, year, hoursPerDay })
       if (!(hours > 0)) continue
-      const matched = matchLeaveType(names, policy.types)
+      if (year === null && matched && row.status === 'pending') {
+        pendingAnyYear.set(matched.key, roundHours((pendingAnyYear.get(matched.key) || 0) + hours))
+      }
       if (matched) addToBucket(byKey, matched.key, row.status, hours)
       else addToBucket(unmatched, names[names.length - 1], row.status, hours)
     }
   }
-  return { byKey, unmatched, dictionaryNames: [...dictionaryNames] }
+  return { byKey, unmatched, dictionaryNames: [...dictionaryNames], pendingAnyYear }
+}
+
+/** 調休假別（調休存摺）在假別規則裡的那一筆；沒有回傳 null */
+export function findCompLeaveType(policy) {
+  return (policy?.types || []).find(leaveType => leaveType.source === 'comp_bank' && leaveType.enabled !== false) || null
+}
+
+/**
+ * 員工簽核中的調休申請時數（不分年度：調休存摺不是年度額度）。excludeRequestId：略過這張單（簽核畫面看「核准前」）。
+ */
+export async function computeCompLeavePendingHours({ employeeId, policy, excludeRequestId = null, infos = null }) {
+  const compType = findCompLeaveType(policy)
+  if (!compType) return 0
+  const usage = await computeLeaveUsage({ employeeId, policy, year: null, excludeRequestId, infos, statuses: ['pending'] })
+  return roundHours(usage.byKey.get(compType.key)?.pending || 0)
+}
+
+/**
+ * 員工調休存摺的合計（不含每一筆的明細）：{ earnedHours, usedHours, balanceHours, expiredHours, credits, conflicts, pendingHours, availableHours, expiryMonths }。
+ */
+export async function summarizeCompLeaveBank({ employeeId, policy, pendingHours = 0, now = new Date() }) {
+  const { expiryMonths } = creditPolicyOf(policy)
+  const credits = await loadEmployeeCredits(employeeId, { includeVoid: false })
+  const summary = summarizeCredits(credits, { todayKey: toTaipeiDateKey(now), expiryMonths })
+  const pending = roundHours(Math.max(Number(pendingHours) || 0, 0))
+  return { ...summary, pendingHours: pending, availableHours: roundHours(summary.balanceHours - pending), expiryMonths }
 }
 
 /* ---------------------------- 組成餘額列表（純函式） ---------------------------- */
 
 /**
  * 員工資料裡由人資維護的餘額（不是從單據算出來的）：目前只有積假（天數）。
- * 假日補休、國定假日移休等日後的餘額來源也從這裡接進來。
+ * 補休已改成調休存摺（系統累計，見 compensatoryLeaveService），員工資料的「補休時數」部署時轉入存摺，不再列在這裡。
  */
 export function collectEmployeeHeldBalances(employee) {
   const held = []
@@ -164,8 +209,9 @@ function withDays(item) {
 /**
  * 把使用量與假別規則、員工資料組成餘額列表。
  * 併入計算（countsAgainst）：子假別超過免計時數的部分，算進它併入的假別（家庭照顧假全部併入事假；生理假超過 3 日的部分併入病假）。
+ * bank：調休存摺的合計（summarizeCompLeaveBank）；沒有傳時調休顯示為 0。
  */
-export function composeLeaveBalanceItems({ policy, usage, employee, focusKey = null }) {
+export function composeLeaveBalanceItems({ policy, usage, employee, focusKey = null, bank = null }) {
   const types = (policy.types || []).filter(leaveType => leaveType.enabled !== false)
   const bucketOf = (key) => usage.byKey.get(key) || emptyBucket()
   const dictionary = new Set((usage.dictionaryNames || []).map(normalizeLeaveName))
@@ -235,15 +281,19 @@ export function composeLeaveBalanceItems({ policy, usage, employee, focusKey = n
         ? 'unconfigured'
         : statusOf({ quotaHours: annual.totalHours, remainingHours: annual.remainingHours })
       if (!annual.configured) base.note = '尚未設定特休時數，請洽人資'
-    } else if (leaveType.source === 'employee_comp') {
-      // 補休沒有加班累計的模組，餘額由人資在員工管理維護；單據只當作參考的已使用／簽核中
-      const held = Number(employee?.annualLeave?.compensatoryHours)
-      base.source = 'employee-manual'
-      base.quotaHours = Number.isFinite(held) && held > 0 ? roundHours(held) : 0
-      base.remainingHours = base.quotaHours
-      base.availableHours = roundHours(base.quotaHours - base.pendingHours)
-      base.status = 'manual'
-      base.note = base.note || '人資維護'
+    } else if (leaveType.source === 'comp_bank') {
+      // 調休存摺：累計取得、已使用（核准扣用、HR 指定、人資扣除）、剩餘都來自存摺，不分年度；簽核中的是所有年度的調休申請
+      base.source = 'bank'
+      base.enforcement = 'block'
+      base.period = 'none'
+      base.quotaHours = roundHours(bank?.earnedHours || 0)
+      base.usedHours = roundHours(bank?.usedHours || 0)
+      base.pendingHours = roundHours(bank?.pendingHours ?? own.pending)
+      base.remainingHours = roundHours(bank?.balanceHours || 0)
+      base.availableHours = roundHours(base.remainingHours - base.pendingHours)
+      base.expiredHours = roundHours(bank?.expiredHours || 0)
+      base.status = base.availableHours < 0 ? 'over' : 'bank'
+      base.note = '調休存摺（不分年度）：國定假日適逢休息日／例假自動存入；超過可用時數不能送出'
     } else if (leaveType.eligibility === 'indigenous' && employee?.isIndigenous !== true) {
       // 原民假（原住民族歲時祭儀）限具原住民身分者：其他員工沒有額度，簽核中的時數照列，畫面標示「限具原住民身分者」
       base.quotaHours = 0
@@ -264,7 +314,8 @@ export function composeLeaveBalanceItems({ policy, usage, employee, focusKey = n
 
     const named = [leaveType.name, ...(leaveType.aliases || [])].map(normalizeLeaveName)
     const inDictionary = named.some(name => dictionary.has(name))
-    const heldAnnual = leaveType.source === 'employee_comp' && base.quotaHours > 0
+    // 存摺裡有任何額度（含已用完）就列出調休
+    const heldAnnual = leaveType.source === 'comp_bank' && (base.quotaHours > 0 || base.remainingHours > 0)
     const visible = leaveType.display !== 'hidden' && (
       leaveType.display === 'always'
       || base.usedHours > 0 || base.pendingHours > 0
@@ -336,6 +387,7 @@ function sentence(parts) {
  * 這次申請 requestedHours 小時，對這個假別的餘額是否超額。
  * - 一般年度假別（事假、病假…）：和「可請時數」(額度 - 已使用 - 簽核中) 比。
  * - 特休：和剩餘時數比（核准時系統另外用原子操作再把關一次）。
+ * - 調休：和存摺的可用時數（剩餘 - 簽核中）比（核准時扣用存摺再把關一次）。
  * - 每次事件的上限（婚假、喪假…）：和每次上限比。
  * - 併入其他假別的子假別：另外檢查併入的那一個（家庭照顧假併入事假、生理假超過免計時數的部分併入病假）。
  * 不檢查（enforcement 為 none、尚未設定特休、沒有額度）時 exceeded 為 false。
@@ -349,7 +401,17 @@ export function evaluateLeaveRequestAgainstBalance(item, requestedHours, parentI
 
   const reasons = []
   let short = 0
-  if (item.period === 'event') {
+  if (item.source === 'bank') {
+    const basis = item.availableHours ?? 0
+    if (requested > basis) {
+      short = roundHours(requested - Math.max(basis, 0))
+      reasons.push(sentence([
+        `${item.name}存摺剩餘 ${formatHoursText(item.remainingHours ?? 0)}${item.pendingHours > 0 ? `、簽核中 ${formatHoursText(item.pendingHours)}` : ''}`,
+        `可用 ${formatHoursText(Math.max(basis, 0))}`,
+        `本次申請 ${formatHoursText(requested)}，將超出 ${formatHoursText(short)}`,
+      ]))
+    }
+  } else if (item.period === 'event') {
     if (item.quotaHours != null && requested > item.quotaHours) {
       short = roundHours(requested - item.quotaHours)
       reasons.push(`${item.name}每次最多 ${formatHoursText(item.quotaHours)}，本次申請 ${formatHoursText(requested)}，超出 ${formatHoursText(short)}`)
@@ -415,14 +477,29 @@ export async function buildLeaveBalances({
   const person = employee || await Employee.findById(employeeId).select('name employeeId annualLeave isIndigenous').lean()
   if (!person) return null
   const activePolicy = policy || await getLeavePolicy()
+  const personId = normalizeId(person._id ?? employeeId)
+  const leaveInfos = infos || await leaveFieldService.getAllLeaveFieldInfos()
   const usage = await computeLeaveUsage({
-    employeeId: normalizeId(person._id ?? employeeId),
+    employeeId: personId,
     policy: activePolicy,
     year,
     excludeRequestId,
-    infos,
+    infos: leaveInfos,
   })
-  const { items, unmatched } = composeLeaveBalanceItems({ policy: activePolicy, usage, employee: person, focusKey })
+  let bank = null
+  const compType = findCompLeaveType(activePolicy)
+  if (compType) {
+    // 調休存摺不分年度：簽核中的時數用同一次查詢算出的「不分年度」時數
+    const pendingHours = usage.pendingAnyYear?.get(compType.key) || 0
+    try {
+      bank = await summarizeCompLeaveBank({ employeeId: personId, policy: activePolicy, pendingHours })
+    } catch (error) {
+      // 餘額列表只是參考：存摺讀不到時調休先顯示 0（送出調休單時會另外讀存摺把關，讀不到就不放行）
+      console.error(`[LeaveBalance] Compensatory leave bank skipped: ${error?.name || 'Error'}`)
+      bank = { earnedHours: 0, usedHours: 0, balanceHours: 0, expiredHours: 0, pendingHours, availableHours: -pendingHours, unavailable: true }
+    }
+  }
+  const { items, unmatched } = composeLeaveBalanceItems({ policy: activePolicy, usage, employee: person, focusKey, bank })
   return {
     employee: { _id: normalizeId(person._id ?? employeeId), name: person.name ?? '', employeeId: person.employeeId ?? '' },
     year,
@@ -446,6 +523,7 @@ export function describeRequestFocus({ balances, policy, names, requestedHours }
   const item = (balances?.items || []).find(entry => entry.key === matched.key)
   const parent = matched.countsAgainst ? (balances?.items || []).find(entry => entry.key === matched.countsAgainst.key) : null
   const verdict = evaluateLeaveRequestAgainstBalance(item, requestedHours, parent, matched.countsAgainst)
+  // 簽核中的單：remainingBefore 是「這張單核准前」可用的時數（特休看剩餘、其他看可請時數）
   const before = item ? (item.source === 'employee' ? item.remainingHours : item.availableHours) : null
   return {
     typeKey: matched.key,
@@ -463,6 +541,9 @@ export function describeRequestFocus({ balances, policy, names, requestedHours }
 export default {
   currentTaipeiYear,
   computeLeaveUsage,
+  computeCompLeavePendingHours,
+  summarizeCompLeaveBank,
+  findCompLeaveType,
   collectEmployeeHeldBalances,
   composeLeaveBalanceItems,
   evaluateLeaveRequestAgainstBalance,

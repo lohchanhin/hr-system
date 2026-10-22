@@ -4,9 +4,10 @@
  * 排班頁標頭、排班規範（連續 7 日）、班表匯入提醒、加班費日別、國定假日休假紀錄與匯出都呼叫這裡，
  * 不再各自從假日名稱或類型文字猜。行事曆每一筆的類型 kind 見 holidayCalendarRules.js：
  *  - 國定假日（statutory）對所有員工都是假日，包括落在週末、落在員工自己休息日的日子；
- *  - 公務機關補假（gov_makeup_off）只有「行政」制度的員工自動放假，輪班人員依班表另排補假；
+ *  - 公務機關補假（gov_makeup_off）只是政府機關的補假：行政人員在調休存摺上線（officeGovMakeupCutover）之前照舊自動放假，
+ *    之後只是「建議調休日」，國定假日落在週末改為存入調休（CompensatoryCredit），由員工發起調休簽核；輪班人員一律依班表；
  *  - 公司挪移（HolidayMoveSetting）、個人調移（HolidaySwap）讓原日期變成一般工作日、目標日變成假日；
- *  - 已排定的補假（HolidayCompensation）當天是該員工的假日；
+ *  - 整天的調休（調休簽核核准、HR 指定日期，見 compensatoryLeaveService）當天是該員工的假日（reason = compensation）；
  *  - 指定應放假日（designated）只適用當天原應出勤、沒有被排除的員工，不補假、不可調移；
  *  - 調整放假、補行上班、公司休息日／上班日永遠不是國定假日（只影響行政人員的上班日／休息日）。
  * createHolidayContext 是純函式（同步、不碰資料庫），loadHolidayContext 一次把需要的資料讀齊：
@@ -15,7 +16,8 @@
 import Holiday from '../models/Holiday.js';
 import HolidayMoveSetting from '../models/HolidayMoveSetting.js';
 import CalendarYear from '../models/CalendarYear.js';
-import HolidayCompensation from '../models/HolidayCompensation.js';
+import CompensatoryCredit from '../models/CompensatoryCredit.js';
+import CompensatoryLeaveState, { COMPENSATORY_LEAVE_STATE_KEY } from '../models/CompensatoryLeaveState.js';
 import HolidaySwap from '../models/HolidaySwap.js';
 import Employee from '../models/Employee.js';
 import ShiftSchedule from '../models/ShiftSchedule.js';
@@ -172,7 +174,9 @@ function isSyntheticYear(yearDocs, yearsWithRows, year) {
 /**
  * 依已經讀好的資料建立判斷用的 context（純函式、同步，測試與其他服務可以直接用記憶體資料建立）。
  * rows：Holiday 資料（含舊資料，kind 依 effectiveHolidayKind 判斷）；years：CalendarYear 文件；
- * moves：HolidayMoveSetting；compensations：HolidayCompensation；swaps：HolidaySwap；
+ * moves：HolidayMoveSetting；credits：調休存摺（CompensatoryCredit，整天調休的日子是假日）；
+ * compensations：舊格式的已排定補假（{ employee, holidayDate, assignedDate, status: 'assigned' }，記憶體資料用；資料庫已改讀 credits）；
+ * swaps：HolidaySwap；officeGovMakeupCutover：行政人員公務機關補假日停止自動放假的第一天（YYYY-MM-DD，沒有就一律照舊放假）；
  * employees：員工資料或 id；rosterKindOf(員工 id, 日期) -> 班別性質（work/rest_day/regular_rest/holiday/leave/none）；
  * leaveTypeOf(員工 id, 日期) -> 請假假別（判斷原住民族歲時祭儀用）。
  */
@@ -183,12 +187,14 @@ export function createHolidayContext({
   years = [],
   moves = [],
   compensations = [],
+  credits = [],
   swaps = [],
   employees = [],
   rosterKindOf = null,
   leaveTypeOf = null,
   today = new Date(),
   designatedRosterKinds = null,
+  officeGovMakeupCutover = null,
 } = {}) {
   const startKey = toKey(start);
   const endKey = toKey(end);
@@ -265,17 +271,21 @@ export function createHolidayContext({
     bucket.byTarget.set(target, entry);
   }
 
+  // 員工的補假／整天調休：byAssigned（那一天是假日）、byHoliday（國定假日已經用哪一天補）
   const compensationsByEmployee = new Map();
+  const bucketOf = (employeeId) => {
+    if (!compensationsByEmployee.has(employeeId)) {
+      compensationsByEmployee.set(employeeId, { byAssigned: new Map(), byHoliday: new Map() });
+    }
+    return compensationsByEmployee.get(employeeId);
+  };
   for (const compensation of compensations || []) {
     if (compensation?.status && compensation.status !== 'assigned') continue;
     const employeeId = toId(compensation?.employee);
     const holidayDate = toKey(compensation?.holidayDate);
     const assignedDate = toKey(compensation?.assignedDate);
     if (!employeeId || !holidayDate || !assignedDate) continue;
-    if (!compensationsByEmployee.has(employeeId)) {
-      compensationsByEmployee.set(employeeId, { byAssigned: new Map(), byHoliday: new Map() });
-    }
-    const bucket = compensationsByEmployee.get(employeeId);
+    const bucket = bucketOf(employeeId);
     if (bucket.byAssigned.has(assignedDate) || bucket.byHoliday.has(holidayDate)) continue;
     const entry = {
       id: toId(compensation._id) || null,
@@ -284,9 +294,41 @@ export function createHolidayContext({
       assignedDate,
       holidayName: String(compensation.holidayName || '').trim() || byKind.statutory.get(holidayDate)?.name || defaultNameOf('statutory'),
       calendarDayId: toId(compensation.calendarDay) || null,
+      via: 'assigned',
+      requestId: null,
     };
     bucket.byAssigned.set(assignedDate, entry);
     bucket.byHoliday.set(holidayDate, entry);
+  }
+  // 調休存摺：每一筆使用紀錄的整天調休日都是假日；HR 指定的日子排在前面（國定假日「補到哪一天」優先顯示它）
+  for (const credit of credits || []) {
+    if (!credit || credit.status === 'void') continue;
+    const employeeId = toId(credit.employee);
+    if (!employeeId) continue;
+    const holidayDate = toKey(credit.holidayDate) || null;
+    const holidayName = String(credit.holidayName || '').trim()
+      || (holidayDate ? byKind.statutory.get(holidayDate)?.name || '' : '');
+    const usages = [...(credit.usages || [])]
+      .sort((a, b) => (a?.kind === 'hr_assigned' ? 0 : 1) - (b?.kind === 'hr_assigned' ? 0 : 1));
+    for (const usage of usages) {
+      for (const date of [...(usage?.fullDayDates || [])].sort()) {
+        const assignedDate = toKey(date);
+        if (!assignedDate) continue;
+        const bucket = bucketOf(employeeId);
+        const entry = {
+          id: toId(credit._id) || null,
+          employeeId,
+          holidayDate,
+          assignedDate,
+          holidayName,
+          calendarDayId: toId(credit.calendarDay) || null,
+          via: usage.kind === 'hr_assigned' ? 'hr_assigned' : 'comp_leave',
+          requestId: toId(usage.approvalRequest) || null,
+        };
+        if (!bucket.byAssigned.has(assignedDate)) bucket.byAssigned.set(assignedDate, entry);
+        if (holidayDate && !bucket.byHoliday.has(holidayDate)) bucket.byHoliday.set(holidayDate, entry);
+      }
+    }
   }
 
   const employeesById = new Map();
@@ -317,6 +359,7 @@ export function createHolidayContext({
     rosterKindOf: typeof rosterKindOf === 'function' ? rosterKindOf : null,
     leaveTypeOf: typeof leaveTypeOf === 'function' ? leaveTypeOf : null,
     designatedRosterKinds: designatedRosterKinds instanceof Map ? designatedRosterKinds : null,
+    officeGovMakeupCutover: toKey(officeGovMakeupCutover) || null,
     warnings,
   };
 }
@@ -349,15 +392,17 @@ export async function loadHolidayContext({
   const personalTo = keyToDate(addDays(endKey, LINK_WINDOW_DAYS));
   const personalRange = { $gte: personalFrom, $lt: personalTo };
 
-  const [moves, years, compensations, swaps, fetchedEmployees] = await Promise.all([
+  const personalKeyRange = { $gte: addDays(startKey, -LINK_WINDOW_DAYS), $lt: addDays(endKey, LINK_WINDOW_DAYS) };
+
+  const [moves, years, credits, swaps, fetchedEmployees, state] = await Promise.all([
     leanResult(HolidayMoveSetting.find({ enableHolidayMove: true })),
     leanResult(CalendarYear.find({})),
     validIds.length
-      ? leanResult(HolidayCompensation.find({
+      ? leanResult(CompensatoryCredit.find({
         employee: { $in: validIds },
-        status: 'assigned',
-        // 補假日在範圍內（當天是假日），或補的國定假日在範圍內（休假紀錄要知道它已經補了哪一天）
-        $or: [{ assignedDate: personalRange }, { holidayDate: personalRange }],
+        status: { $ne: 'void' },
+        // 整天調休日在範圍內（當天是假日），或來源的國定假日在範圍內（休假紀錄要知道它用哪一天調休，可能隔好幾個月）
+        $or: [{ 'usages.fullDayDates': personalKeyRange }, { holidayDate: personalRange }],
       }))
       : [],
     validIds.length
@@ -370,6 +415,7 @@ export async function loadHolidayContext({
     missingIds.length
       ? leanResult(withSelect(Employee.find({ _id: { $in: missingIds } }), '_id holidayRegime requiresScheduling isIndigenous'))
       : [],
+    leanOne(withSelect(CompensatoryLeaveState.findOne({ key: COMPENSATORY_LEAVE_STATE_KEY }), 'officeGovMakeupCutover')),
   ]);
 
   // 整個年度（約 40 筆）都讀：才知道年度有沒有資料，補假與國定假日的連結也能跨月、跨年
@@ -429,13 +475,14 @@ export async function loadHolidayContext({
     rows,
     years,
     moves,
-    compensations,
+    credits,
     swaps,
     employees: mergedEmployees,
     rosterKindOf,
     leaveTypeOf,
     today,
     designatedRosterKinds,
+    officeGovMakeupCutover: state?.officeGovMakeupCutover || null,
   });
 }
 
@@ -508,6 +555,27 @@ function linkedStatutoryEffective(context, employeeId, linkedDate) {
   return true;
 }
 
+/**
+ * 這一天的公務機關補假日還是不是行政人員自動放假的日子：調休存摺上線（officeGovMakeupCutover）之前的照舊放假，
+ * 之後的只是建議調休日（國定假日落在週末改存入調休）。沒有切換日（舊資料、記憶體測試資料）一律照舊。
+ */
+export function isGovMakeupAutomatic(context, dateKey) {
+  const cutover = context?.officeGovMakeupCutover;
+  return !cutover || String(dateKey) < cutover;
+}
+
+/**
+ * 國定假日 holidayKey 對應的「建議調休日」：連結到它、在切換日（含）之後的公務機關補假日；沒有回傳 null。
+ * 切換日之前的公務機關補假日是行政人員自動放假的日子（不是建議），也回傳 null。
+ */
+export function suggestedGovMakeupDate(context, holidayKey) {
+  if (!context || !holidayKey) return null;
+  for (const row of context.byKind.gov_makeup_off.values()) {
+    if (row.compensatesDate === holidayKey && !isGovMakeupAutomatic(context, row.date)) return row.date;
+  }
+  return null;
+}
+
 function emptyVerdict(context, dateKey) {
   return {
     holiday: false,
@@ -526,9 +594,9 @@ function emptyVerdict(context, dateKey) {
 
 /**
  * 這一天對這位員工是不是國定假日（依序取第一個成立的）：
- * 1 個人調移的目標日 2 已排定的補假日 3 公司挪移的目標日 4 國定假日（被個人調移或公司挪移走的不算）
- * 5 行政人員的公務機關補假（連結的國定假日仍在原日期生效）6 指定應放假日（當天原應出勤且未被排除）
- * 7 原住民族歲時祭儀（具原住民身分且當天請原民假）8 其餘都不是。
+ * 1 個人調移的目標日 2 整天的調休日（調休簽核核准、HR 指定，via = comp_leave／hr_assigned）3 公司挪移的目標日
+ * 4 國定假日（被個人調移或公司挪移走的不算）5 行政人員的公務機關補假（連結的國定假日仍在原日期生效，而且在調休存摺上線之前）
+ * 6 指定應放假日（當天原應出勤且未被排除）7 原住民族歲時祭儀（具原住民身分且當天請原民假）8 其餘都不是。
  */
 export function isNationalHolidayFor(context, employee, dateKey, { rosterKind } = {}) {
   const day = toKey(dateKey);
@@ -548,10 +616,11 @@ export function isNationalHolidayFor(context, employee, dateKey, { rosterKind } 
       ...verdict,
       holiday: true,
       reason: 'compensation',
-      name: `${compensation.holidayName}補假`,
+      name: compensationNameOf(compensation),
       compensatesDate: compensation.holidayDate,
       compensatesName: compensation.holidayName,
       sourceId: compensation.id,
+      via: compensation.via,
     };
   }
   const moveIn = context.movesByTarget.get(day);
@@ -580,7 +649,8 @@ export function isNationalHolidayFor(context, employee, dateKey, { rosterKind } 
 
   const regime = resolveHolidayRegime(info);
   const government = context.byKind.gov_makeup_off.get(day);
-  if (government && regime === 'office' && linkedStatutoryEffective(context, id, government.compensatesDate)) {
+  if (government && regime === 'office' && isGovMakeupAutomatic(context, day)
+    && linkedStatutoryEffective(context, id, government.compensatesDate)) {
     return {
       ...verdict,
       holiday: true,
@@ -642,6 +712,12 @@ export function resolveDayType(context, employee, dateKey, { rosterKind } = {}) 
   return { dayType: 'workday', verdict };
 }
 
+// 補假／調休日的名稱：HR 指定與舊的已排定補假是「國慶日補假」，員工的調休是「調休（國慶日）」
+function compensationNameOf(entry) {
+  if (entry.via === 'comp_leave') return entry.holidayName ? `調休（${entry.holidayName}）` : '調休';
+  return `${entry.holidayName || '國定假日'}補假`;
+}
+
 function rangeOf(context, start, end) {
   return { startKey: toKey(start) || context.start, endKey: toKey(end) || context.end };
 }
@@ -662,10 +738,11 @@ export function listEmployeeHolidays(context, employee, { start, end, rosterKind
   const swaps = id ? context.swapsByEmployee.get(id) : null;
   const compensations = id ? context.compensationsByEmployee.get(id) : null;
 
-  // 行政人員：國定假日 -> 對應的公務機關補假日
+  // 行政人員：國定假日 -> 對應的公務機關補假日（只有調休存摺上線之前、自動放假的那些）
   const governmentByLink = new Map();
   if (regime === 'office') {
     for (const row of context.byKind.gov_makeup_off.values()) {
+      if (!isGovMakeupAutomatic(context, row.date)) continue;
       if (row.compensatesDate && !governmentByLink.has(row.compensatesDate)) governmentByLink.set(row.compensatesDate, row);
     }
   }
@@ -684,7 +761,7 @@ export function listEmployeeHolidays(context, employee, { start, end, rosterKind
     } else {
       const assigned = compensations?.byHoliday.get(original);
       if (assigned) {
-        compensation = { date: assigned.assignedDate, via: 'assigned', compensationId: assigned.id, calendarDayId: assigned.calendarDayId };
+        compensation = { date: assigned.assignedDate, via: assigned.via, compensationId: assigned.id, calendarDayId: assigned.calendarDayId };
       }
     }
     entries.push({
@@ -729,23 +806,27 @@ export function listEmployeeHolidays(context, employee, { start, end, rosterKind
     for (const assigned of compensations?.byAssigned.values() || []) {
       if (!inRange(assigned.assignedDate)) continue;
       entries.push({
-        id: `compensation:${assigned.holidayDate}`,
+        // 沒有國定假日來源的調休（人資手動給予、轉入的補休時數）以日期當鍵
+        id: `compensation:${assigned.holidayDate || assigned.assignedDate}`,
         type: 'compensation',
-        name: `${assigned.holidayName}補假`,
+        name: compensationNameOf(assigned),
+        holidayName: assigned.holidayName || '',
         originalDate: assigned.holidayDate,
         date: assigned.assignedDate,
-        via: 'assigned',
+        via: assigned.via,
         compensationId: assigned.id,
         calendarDayId: assigned.calendarDayId,
       });
     }
     if (regime === 'office') {
       for (const row of context.byKind.gov_makeup_off.values()) {
-        if (!inRange(row.date) || !linkedStatutoryEffective(context, id, row.compensatesDate)) continue;
+        if (!inRange(row.date) || !isGovMakeupAutomatic(context, row.date)) continue;
+        if (!linkedStatutoryEffective(context, id, row.compensatesDate)) continue;
         entries.push({
           id: `compensation:${row.compensatesDate || row.date}`,
           type: 'compensation',
           name: row.compensatesName ? `${row.compensatesName}補假` : row.name,
+          holidayName: row.compensatesName || '',
           originalDate: row.compensatesDate,
           date: row.date,
           via: 'gov_makeup',
@@ -814,14 +895,14 @@ export function listCalendarHeaders(context, { start, end } = {}) {
       } else if (kind === 'designated') {
         push({ ...base, displayKind: 'designated', label: row.name, appliesTo: 'eligible' });
       } else if (kind === 'gov_makeup_off') {
-        push({
-          ...base,
-          displayKind: 'gov_info',
-          label: '公務機關補假',
-          compensatesDate: row.compensatesDate,
-          compensatesName: row.compensatesName,
-          appliesTo: 'office',
-        });
+        const link = { compensatesDate: row.compensatesDate, compensatesName: row.compensatesName };
+        if (isGovMakeupAutomatic(context, row.date)) {
+          push({ ...base, ...link, displayKind: 'gov_info', label: '公務機關補假', appliesTo: 'office' });
+        } else {
+          // 調休存摺上線後：輪班人員看到的是公務機關的補假（僅供參考），行政人員看到的是建議調休日（不是自動放假）
+          push({ ...base, ...link, displayKind: 'gov_info', label: '公務機關補假', appliesTo: 'roster' });
+          push({ ...base, ...link, displayKind: 'gov_info', label: '建議調休日', appliesTo: 'office' });
+        }
       } else if (kind === 'gov_bridge_off') {
         push({ ...base, displayKind: 'gov_info', label: follow ? '行政人員休息日（調整放假）' : '公務機關調整放假', appliesTo: follow ? 'office' : 'info' });
       } else if (kind === 'gov_makeup_workday') {

@@ -15,10 +15,20 @@ export const ANNUAL_LEAVE_TYPE_ALIASES = ['特休', '特休假', '特別休假']
 // 舊資料「年度特休總天數」的數字大於這個值就不可能是天數（法定上限 30 天，公司再給也到不了 40 天），視為已經是小時
 export const LEGACY_ANNUAL_LEAVE_DAYS_MAX = 40
 
+// 調休（國定假日適逢休息日／例假存入的調休存摺）的名稱：簽核單的假別寫「調休」「補休」「補假」都從存摺扣用。
+// 名稱固定（管理員不能改掉），否則員工選的假別會對不到存摺、送出時就不會檢查餘額
+export const COMP_LEAVE_TYPE_NAME = '調休'
+export const COMP_LEAVE_TYPE_ALIASES = ['補休', '補休假', '補假', '調休假']
+
+// 調休存摺的預設：每筆 8 小時、不設期限（0 = 不設期限；設定 N 個月時，從取得日起算 N 個月，過期的時數不列入餘額）
+export const DEFAULT_COMPENSATION_HOURS_PER_CREDIT = 8
+export const MAX_COMPENSATION_HOURS_PER_CREDIT = 24
+export const MAX_COMPENSATION_EXPIRY_MONTHS = 60
+
 // 計算期間：year 每年（曆年 1/1-12/31）、event 每次事件的上限（婚假、喪假…）、none 不設上限
 export const LEAVE_PERIODS = ['year', 'event', 'none']
-// 額度來源：policy 依這份規則、employee_annual 依員工資料的特休、employee_comp 依員工資料的補休（人資維護）
-export const LEAVE_SOURCES = ['policy', 'employee_annual', 'employee_comp']
+// 額度來源：policy 依這份規則、employee_annual 依員工資料的特休、comp_bank 依調休存摺（系統累計，人資可手動調整）
+export const LEAVE_SOURCES = ['policy', 'employee_annual', 'comp_bank']
 // 超額處理：block 超額不能送出、warn 超額仍可送出但顯示警告、none 不檢查
 export const LEAVE_ENFORCEMENTS = ['block', 'warn', 'none']
 // 顯示方式：always 一律顯示、when_used 有使用或簽核中才顯示（或字典有這個假別）、hidden 不顯示
@@ -54,6 +64,9 @@ export const DEFAULT_LEAVE_POLICY = {
   maxHoursPerDay: LEAVE_DAY_EQUIVALENT_HOURS,
   // 請假時數的最小單位（小時）
   minUnitHours: 0.5,
+  // 調休存摺：國定假日適逢休息日／例假時每筆存入幾小時、期限幾個月（0 = 不設期限）
+  compensationHoursPerCredit: DEFAULT_COMPENSATION_HOURS_PER_CREDIT,
+  compensationExpiryMonths: 0,
   types: [
     type({
       key: 'annual',
@@ -65,12 +78,13 @@ export const DEFAULT_LEAVE_POLICY = {
     }),
     type({
       key: 'comp',
-      name: '補休',
-      aliases: ['補休假'],
-      source: 'employee_comp',
-      enforcement: 'none',
+      name: COMP_LEAVE_TYPE_NAME,
+      aliases: [...COMP_LEAVE_TYPE_ALIASES],
+      source: 'comp_bank',
+      enforcement: 'block',
+      period: 'none',
       display: 'when_used',
-      note: '依員工資料的補休時數，由人資維護',
+      note: '調休存摺：國定假日適逢休息日／例假自動存入，人資可手動給予或扣除；超過可用時數不能送出',
     }),
     type({
       key: 'personal',
@@ -191,6 +205,11 @@ export function cloneDefaultLeavePolicy() {
 export default {
   LEAVE_POLICY_VERSION,
   ANNUAL_LEAVE_TYPE_ALIASES,
+  COMP_LEAVE_TYPE_NAME,
+  COMP_LEAVE_TYPE_ALIASES,
+  DEFAULT_COMPENSATION_HOURS_PER_CREDIT,
+  MAX_COMPENSATION_HOURS_PER_CREDIT,
+  MAX_COMPENSATION_EXPIRY_MONTHS,
   LEGACY_ANNUAL_LEAVE_DAYS_MAX,
   LEAVE_PERIODS,
   LEAVE_SOURCES,

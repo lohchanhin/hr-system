@@ -1,10 +1,13 @@
 import ShiftSchedule from '../../models/ShiftSchedule.js';
-import { assertScheduleRuleCompliance } from '../../services/laborRuleValidationService.js';
+import {
+  assertScheduleRuleCompliance,
+  isLaborRuleValidationError,
+} from '../../services/laborRuleValidationService.js';
 import {
   buildMonthRange,
   resolveScopedEmployeeIds,
   normalizeId,
-  respondLaborRuleError,
+  toEntityId,
   describePendingWeeks,
   buildPublishQuery,
   summarizeEmployees,
@@ -14,6 +17,59 @@ import {
   isTransactionNotSupportedError,
   applyEmployeeResponse,
 } from './scheduleShared.js';
+
+/**
+ * 發布、完成發布的排班規範檢核：只提醒、不擋（客戶：「可以顯示規範，可是不要阻止發布」；匯入照舊檢核）。
+ * 違規整理成與預檢（/api/schedules/rules/validate）同一種形狀，再附上員工代號與姓名
+ * （取自已 populate 的班表員工；畫面只載入一頁員工，不在那一頁的員工也看得到是誰）。
+ * 不是排班規範的錯誤（例如讀取資料失敗）照樣丟出，由呼叫端回 400、不改任何班表，和原本一樣。
+ */
+async function checkScheduleRulesWithoutBlocking(docs, range) {
+  try {
+    const result = await assertScheduleRuleCompliance({
+      candidateSchedules: docs.map((doc) => ({
+        _id: doc._id,
+        employee: doc.employee?._id || doc.employee,
+        date: doc.date,
+        shiftId: doc.shiftId,
+        department: doc.department,
+        subDepartment: doc.subDepartment,
+      })),
+      range,
+      strictWeeklyRest: true,
+    });
+    return { violations: [], pendingWeeks: await describePendingWeeks(result?.pendingWeeks) };
+  } catch (err) {
+    if (!isLaborRuleValidationError(err)) throw err;
+    const employeesById = new Map();
+    docs.forEach((doc) => {
+      const id = toEntityId(doc.employee);
+      if (id && (doc.employee?.employeeId || doc.employee?.name)) employeesById.set(id, doc.employee);
+    });
+    const violations = (err.violations || []).map((violation) => {
+      const employee = toEntityId(violation.employee);
+      const known = employeesById.get(employee);
+      return {
+        ...violation,
+        rule: violation.rule || violation.code || 'SCHEDULE_RULE',
+        employee,
+        date: violation.date || violation.startDate || violation.weekStart || null,
+        message: violation.message || err.message,
+        ...(known ? { employeeCode: known.employeeId || '', employeeName: known.name || '' } : {}),
+      };
+    });
+    return { violations, pendingWeeks: await describePendingWeeks(err.pendingWeeks) };
+  }
+}
+
+// violations／pendingWeeks 只在有的時候才附上，沒有的時候回應內容維持原本的樣子
+function withRuleFindings(body, { violations, pendingWeeks }) {
+  return {
+    ...body,
+    ...(violations.length ? { violations } : {}),
+    ...(pendingWeeks.length ? { pendingWeeks } : {}),
+  };
+}
 
 export async function publishSchedules(req, res) {
   try {
@@ -45,18 +101,8 @@ export async function publishSchedules(req, res) {
       return res.status(404).json({ error: 'no schedules found' });
     }
 
-    const ruleResult = await assertScheduleRuleCompliance({
-      candidateSchedules: docs.map((doc) => ({
-        _id: doc._id,
-        employee: doc.employee?._id || doc.employee,
-        date: doc.date,
-        shiftId: doc.shiftId,
-        department: doc.department,
-        subDepartment: doc.subDepartment,
-      })),
-      range,
-      strictWeeklyRest: true,
-    });
+    // 排班規範的違規不擋發布：照樣發送給員工確認，違規隨回應回報讓畫面提醒
+    const ruleFindings = await checkScheduleRulesWithoutBlocking(docs, range);
 
     const now = new Date();
     const ids = docs.map((doc) => doc._id);
@@ -76,17 +122,14 @@ export async function publishSchedules(req, res) {
       state: 'pending_confirmation',
     }));
 
-    // 跨月週（鄰月還沒排）目前無法判斷的週別不擋發布，只回報讓畫面提醒；沒有的時候回應內容不變
-    const pendingWeeks = await describePendingWeeks(ruleResult?.pendingWeeks);
-    res.json({
+    // 排班規範違規、跨月週（鄰月還沒排）目前無法判斷的週別都不擋發布，只回報讓畫面提醒；沒有的時候回應內容不變
+    res.json(withRuleFindings({
       updated: ids.length,
       employees,
       publishedAt: now.toISOString(),
       publishedMonth: month,
-      ...(pendingWeeks.length ? { pendingWeeks } : {}),
-    });
+    }, ruleFindings));
   } catch (err) {
-    if (respondLaborRuleError(res, err)) return;
     res.status(400).json({ error: err.message });
   }
 }
@@ -172,28 +215,16 @@ export async function finalizeSchedules(req, res) {
       return res.status(400).json({ error: 'no pending schedules to finalize' });
     }
 
-    const ruleResult = await assertScheduleRuleCompliance({
-      candidateSchedules: pendingDocs.map((doc) => ({
-        _id: doc._id,
-        employee: doc.employee?._id || doc.employee,
-        date: doc.date,
-        shiftId: doc.shiftId,
-        department: doc.department,
-        subDepartment: doc.subDepartment,
-      })),
-      range,
-      strictWeeklyRest: true,
-    });
+    // 完成發布同樣不被排班規範的違規擋住（員工未確認、沒有待完成的班表等資料問題仍照上面擋下）
+    const ruleFindings = await checkScheduleRulesWithoutBlocking(pendingDocs, range);
 
     const ids = pendingDocs.map((doc) => doc._id);
     await ShiftSchedule.updateMany({ _id: { $in: ids } }, {
       $set: { state: 'finalized', needsReconfirm: false },
     });
 
-    const pendingWeeks = await describePendingWeeks(ruleResult?.pendingWeeks);
-    res.json({ finalized: ids.length, ...(pendingWeeks.length ? { pendingWeeks } : {}) });
+    res.json(withRuleFindings({ finalized: ids.length }, ruleFindings));
   } catch (err) {
-    if (respondLaborRuleError(res, err)) return;
     res.status(400).json({ error: err.message });
   }
 }

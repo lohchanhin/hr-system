@@ -2,10 +2,15 @@
 // 這裡負責：合併預設值與已存的設定（依 key）、驗證管理員送來的設定、假別名稱比對、帶快取的讀取。
 import {
   ANNUAL_LEAVE_TYPE_ALIASES,
+  COMP_LEAVE_TYPE_ALIASES,
+  COMP_LEAVE_TYPE_NAME,
+  DEFAULT_COMPENSATION_HOURS_PER_CREDIT,
   LEAVE_DISPLAYS,
   LEAVE_ENFORCEMENTS,
   LEAVE_PERIODS,
   LEAVE_POLICY_VERSION,
+  MAX_COMPENSATION_EXPIRY_MONTHS,
+  MAX_COMPENSATION_HOURS_PER_CREDIT,
   MAX_HOURS_PER_DAY_RANGE,
   MIN_UNIT_HOUR_CHOICES,
   cloneDefaultLeavePolicy,
@@ -111,18 +116,35 @@ function cleanCountsAgainst(value) {
   return { key: value.key, exemptHours: Math.min(Math.max(exemptHours, 0), MAX_QUOTA_HOURS) }
 }
 
-// 特休超過剩餘時數一律擋下（送出時 assertLeaveAllowed 不看超額處理的設定），所以特休的超額處理固定是 block，
-// 不讓設定值（舊資料或直接呼叫 API 存進去的 warn / none）和實際行為不一致；畫面上那個開關對特休也是停用的。
+// 特休、調休超過可用時數一律擋下（送出時 assertLeaveAllowed 不看超額處理的設定），所以超額處理固定是 block，
+// 不讓設定值（舊資料或直接呼叫 API 存進去的 warn / none）和實際行為不一致；畫面上那個開關對它們也是停用的。
 function enforcementOf(leaveType) {
-  return leaveType.source === 'employee_annual' ? 'block' : leaveType.enforcement
+  return leaveType.source === 'employee_annual' || leaveType.source === 'comp_bank' ? 'block' : leaveType.enforcement
 }
 
-// 已存的設定疊在假別的預設值上；欄位不合法時保留預設值。builtin / key / source / eligibility 不能被改（特休、補休的額度來源與原民假的適用對象固定）
+// 名稱固定的內建假別：特休（扣特休時數）、調休（扣調休存摺）。改名或拿掉別名會讓員工選的假別對不到餘額
+const FIXED_NAME_KEYS = new Set(['annual', 'comp'])
+
+// 調休一定認得「調休」「補休」「補假」：管理員存過的別名再多也可以，但固定的這幾個一定在
+function withFixedAliases(leaveType) {
+  if (leaveType.key !== 'comp') return leaveType
+  const seen = new Set([normalizeLeaveName(COMP_LEAVE_TYPE_NAME)])
+  const aliases = []
+  for (const alias of [...COMP_LEAVE_TYPE_ALIASES, ...(leaveType.aliases || [])]) {
+    const key = normalizeLeaveName(alias)
+    if (!key || seen.has(key)) continue
+    seen.add(key)
+    aliases.push(alias)
+  }
+  return { ...leaveType, name: COMP_LEAVE_TYPE_NAME, aliases: aliases.slice(0, MAX_ALIASES), period: 'none' }
+}
+
+// 已存的設定疊在假別的預設值上；欄位不合法時保留預設值。builtin / key / source / eligibility 不能被改（特休、調休的額度來源與原民假的適用對象固定）
 function mergeType(base, stored) {
   if (!isPlainObject(stored)) return base
   const merged = { ...base, eligibility: base.eligibility ?? null }
   const name = cleanText(stored.name, MAX_NAME_LENGTH)
-  if (name && base.key !== 'annual') merged.name = name
+  if (name && !FIXED_NAME_KEYS.has(base.key)) merged.name = name
   const aliases = cleanAliases(stored.aliases)
   if (aliases && base.key !== 'annual') merged.aliases = aliases
   if (stored.quotaHours === null) merged.quotaHours = null
@@ -137,8 +159,11 @@ function mergeType(base, stored) {
   const countsAgainst = cleanCountsAgainst(stored.countsAgainst)
   if (countsAgainst !== undefined) merged.countsAgainst = countsAgainst
   if (typeof stored.enabled === 'boolean') merged.enabled = stored.enabled
-  if (typeof stored.note === 'string') merged.note = stored.note.slice(0, MAX_NOTE_LENGTH)
-  return merged
+  // 調休存摺由系統累計，不能停用（停用後員工選「調休」就對不到存摺，送出時不檢查餘額）
+  if (base.key === 'comp') merged.enabled = true
+  // 調休的說明固定用預設文字：舊版存下的「依員工資料的補休時數，由人資維護」已不正確（調休改由系統的調休存摺累計）
+  if (typeof stored.note === 'string' && base.key !== 'comp') merged.note = stored.note.slice(0, MAX_NOTE_LENGTH)
+  return withFixedAliases(merged)
 }
 
 function customTypeBase(key) {
@@ -173,13 +198,21 @@ export function normalizeLeavePolicy(stored) {
   }
   const minUnitHours = toFiniteNumber(source.minUnitHours)
   if (minUnitHours !== null && MIN_UNIT_HOUR_CHOICES.includes(minUnitHours)) policy.minUnitHours = minUnitHours
+  const hoursPerCredit = toFiniteNumber(source.compensationHoursPerCredit)
+  if (hoursPerCredit !== null && hoursPerCredit > 0 && hoursPerCredit <= MAX_COMPENSATION_HOURS_PER_CREDIT) {
+    policy.compensationHoursPerCredit = hoursPerCredit
+  }
+  const expiryMonths = toFiniteNumber(source.compensationExpiryMonths)
+  if (expiryMonths !== null && Number.isInteger(expiryMonths) && expiryMonths >= 0 && expiryMonths <= MAX_COMPENSATION_EXPIRY_MONTHS) {
+    policy.compensationExpiryMonths = expiryMonths
+  }
 
   const storedTypes = Array.isArray(source.types) ? source.types.filter(item => isPlainObject(item) && typeof item.key === 'string') : []
   const byKey = new Map()
   for (const item of storedTypes) if (!byKey.has(item.key)) byKey.set(item.key, item)
 
   const builtinKeys = new Set(policy.types.map(item => item.key))
-  const types = policy.types.map(base => mergeType(base, byKey.get(base.key)))
+  const types = policy.types.map(base => withFixedAliases(mergeType(base, byKey.get(base.key))))
   for (const item of storedTypes) {
     if (builtinKeys.has(item.key) || !CUSTOM_KEY_PATTERN.test(item.key)) continue
     if (types.some(existing => existing.key === item.key)) continue
@@ -231,6 +264,20 @@ export function validateLeavePolicyInput(input) {
     }
     policy.minUnitHours = value
   }
+  if (input.compensationHoursPerCredit !== undefined) {
+    const value = toFiniteNumber(input.compensationHoursPerCredit)
+    if (value === null || value <= 0 || value > MAX_COMPENSATION_HOURS_PER_CREDIT) {
+      fail(`每筆調休的時數必須大於 0、不超過 ${MAX_COMPENSATION_HOURS_PER_CREDIT} 小時`)
+    }
+    policy.compensationHoursPerCredit = value
+  }
+  if (input.compensationExpiryMonths !== undefined) {
+    const value = toFiniteNumber(input.compensationExpiryMonths)
+    if (value === null || !Number.isInteger(value) || value < 0 || value > MAX_COMPENSATION_EXPIRY_MONTHS) {
+      fail(`調休期限必須是 0 至 ${MAX_COMPENSATION_EXPIRY_MONTHS} 個月的整數（0 表示不設期限）`)
+    }
+    policy.compensationExpiryMonths = value
+  }
 
   if (input.types !== undefined) {
     if (!Array.isArray(input.types)) fail('假別清單格式不正確')
@@ -251,7 +298,7 @@ export function validateLeavePolicyInput(input) {
       const base = builtin ? { ...builtin } : customTypeBase(key)
       const item = { ...base }
       const isAnnual = key === 'annual'
-      if (raw.name !== undefined && !isAnnual) item.name = requireText(raw.name, '假別名稱', MAX_NAME_LENGTH)
+      if (raw.name !== undefined && !FIXED_NAME_KEYS.has(key)) item.name = requireText(raw.name, '假別名稱', MAX_NAME_LENGTH)
       if (!builtin && raw.name === undefined) fail('自訂假別需要名稱')
       if (raw.aliases !== undefined && !isAnnual) {
         if (!Array.isArray(raw.aliases)) fail(`「${item.name}」的別名格式不正確`)
@@ -279,9 +326,10 @@ export function validateLeavePolicyInput(input) {
       if (raw.enabled !== undefined) {
         if (typeof raw.enabled !== 'boolean') fail(`「${item.name}」的啟用設定不正確`)
         if (isAnnual && raw.enabled === false) fail('特休不能停用')
+        if (key === 'comp' && raw.enabled === false) fail('調休不能停用（國定假日適逢休息日／例假的調休由系統自動存入）')
         item.enabled = raw.enabled
       }
-      if (raw.note !== undefined) {
+      if (raw.note !== undefined && key !== 'comp') {
         if (typeof raw.note !== 'string') fail(`「${item.name}」的備註格式不正確`)
         if (raw.note.length > MAX_NOTE_LENGTH) fail(`「${item.name}」的備註不可超過 ${MAX_NOTE_LENGTH} 個字`)
         item.note = raw.note
@@ -296,7 +344,7 @@ export function validateLeavePolicyInput(input) {
         }
       }
       // 自訂假別的額度來源固定是 policy；沒有額度的假別（不設上限）不需要檢查超額
-      submitted.push(item)
+      submitted.push(withFixedAliases(item))
     }
 
     // 內建假別沒送的維持預設；自訂假別接在後面（依送來的順序）
@@ -383,6 +431,8 @@ export async function saveLeavePolicy(input) {
 export function getDefaultLeavePolicy() {
   return cloneDefaultLeavePolicy()
 }
+
+export { DEFAULT_COMPENSATION_HOURS_PER_CREDIT }
 
 /* ---------------------------- 啟動遷移：原民假改為每年 3 日 ---------------------------- */
 

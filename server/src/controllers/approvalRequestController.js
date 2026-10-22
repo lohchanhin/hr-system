@@ -53,6 +53,16 @@ import {
   describeRequestFocus,
   evaluateLeaveRequestAgainstBalance,
 } from '../services/leaveBalanceService.js'
+// 調休存摺的餘額函式用命名空間取用：別的測試把 leaveBalanceService 換成只有部分函式的替身時，這裡不會因為缺少匯出而載入失敗
+import * as leaveBalanceModule from '../services/leaveBalanceService.js'
+import {
+  acquireCompLeaveFilingLease,
+  buildCompLeaveDayPlan,
+  buildCompensatoryBank,
+  consumeCreditsForRequest,
+  findRequestConsumption,
+  refundCreditsForRequest,
+} from '../services/compensatoryLeaveService.js'
 import { checkLeaveHours, LeaveHoursValidationError } from '../services/leaveHoursValidation.js'
 import { extraCeilings, loadScheduledShiftHours } from '../services/leaveShiftHours.js'
 import { parseLeaveInterval } from '../utils/leaveDuration.js'
@@ -461,6 +471,20 @@ async function analyzeAnnualLeave(form, formData) {
   return analysis?.isAnnual ? analysis : null
 }
 
+/* 這張假單的假別是不是調休（調休存摺：調休、補休、補假）；analysis 是 analyzeLeaveRequest 的結果 */
+function isCompLeaveAnalysis(analysis, policy) {
+  if (!analysis || analysis.isAnnual) return false
+  return matchLeaveType(analysis.names, policy?.types || [])?.source === 'comp_bank'
+}
+
+/* 這張假單是不是調休、幾小時；不是請假表單或不是調休回傳 null（不是請假單時不讀假別規則） */
+async function analyzeCompLeave(form, formData) {
+  const analysis = await analyzeLeaveRequest(form, formData)
+  if (!analysis || analysis.isAnnual) return null
+  const policy = await getLeavePolicy()
+  return isCompLeaveAnalysis(analysis, policy) ? { ...analysis, policy } : null
+}
+
 // 表單欄位清單裡某個欄位的型別（date / datetime…），判斷請假是整天還是有時分
 function fieldTypeOf(fields, fieldId) {
   if (!fieldId) return undefined
@@ -492,9 +516,10 @@ async function loadDayCeilings({ applicantEmp, startValue, endValue, startType, 
  * - 時數欄位：大於 0、是最小單位（預設 0.5 小時）的倍數、不超過所選期間可請的上限（每日最多 8 小時，管理員可調）。
  * - 特休：尚未設定特休時數的員工不以餘額擋下；超過剩餘時數擋下（400 ANNUAL_LEAVE_INSUFFICIENT）。
  * - 事假、病假等：超額處理設為「禁止」時擋下（400 LEAVE_QUOTA_INSUFFICIENT），設為「警告」時照常送出並回傳警告。
+ * - 調休：超過可用時數擋下（400 COMP_LEAVE_INSUFFICIENT）；lockCompLeave(員工 _id) 在檢查存摺前呼叫（拿調休申請鎖，見 acquireCompFilingLease）。
  * 回傳 { warnings }（給 201 回應附上）。
  */
-async function assertLeaveAllowed({ form, formData, applicantEmp, fields = null }) {
+async function assertLeaveAllowed({ form, formData, applicantEmp, fields = null, lockCompLeave = null }) {
   const analysis = await analyzeLeaveRequest(form, formData)
   if (!analysis) return { warnings: [] }
   const { leaveFields } = analysis
@@ -541,7 +566,51 @@ async function assertLeaveAllowed({ form, formData, applicantEmp, fields = null 
     return { warnings: [] }
   }
 
+  if (isCompLeaveAnalysis(analysis, policy)) {
+    // 先拿這位員工的調休申請鎖（呼叫端建立單據後才放開），同時送出的另一筆會等這筆建立好再檢查
+    if (lockCompLeave && applicantEmp?._id) await lockCompLeave(applicantEmp._id)
+    await assertCompLeaveAvailable({ hours: analysis.hours, employeeId: applicantEmp?._id, policy })
+    return { warnings: [] }
+  }
+
   return { warnings: await checkLeaveQuota({ analysis, formData, applicantEmp, policy }) }
+}
+
+/*
+ * 調休一定要有存摺：申請的時數超過可用時數（存摺剩餘 - 其他簽核中的調休）就擋下（400 COMP_LEAVE_INSUFFICIENT）。
+ * 和特休一樣不看「超額處理」的設定；讀不到存摺時也不放行（錯誤往外丟），不然沒有額度的人也能請調休。
+ * excludeRequestId：核准時略過這張單本身（它還在簽核中）。
+ */
+async function assertCompLeaveAvailable({ hours, employeeId, policy, excludeRequestId = null, status = 400, verb = '本次申請' }) {
+  if (!employeeId) return
+  const pendingHours = await leaveBalanceModule.computeCompLeavePendingHours({ employeeId, policy, excludeRequestId })
+  const bank = await leaveBalanceModule.summarizeCompLeaveBank({ employeeId, policy, pendingHours })
+  if (hours <= bank.availableHours + 1e-9) return
+  const pendingText = pendingHours > 0 ? `、其他簽核中的調休 ${hoursWithDays(pendingHours)}` : ''
+  throw fail(
+    status,
+    `調休餘額不足：存摺剩餘 ${hoursWithDays(Math.max(bank.balanceHours, 0))}${pendingText}，可用 ${hoursWithDays(Math.max(bank.availableHours, 0))}，${verb} ${hoursWithDays(hours)}`,
+    {
+      code: 'COMP_LEAVE_INSUFFICIENT',
+      availableHours: bank.availableHours,
+      balanceHours: bank.balanceHours,
+      pendingHours,
+      requestedHours: hours,
+    },
+  )
+}
+
+/*
+ * 調休申請：檢查存摺之前先拿這位員工的鎖，建立（或重新送出）單據後才放開（呼叫端在 finally 呼叫 release）。
+ * 同時送出兩筆時第二筆會等第一筆建立好再檢查，把第一筆算進簽核中的時數，不會兩筆都通過、合計超過存摺而之後都核准不了。
+ */
+async function acquireCompFilingLease(employeeId) {
+  try {
+    return await acquireCompLeaveFilingLease({ employeeId })
+  } catch (error) {
+    if (error?.code === 'COMP_LEAVE_FILING_BUSY') throw fail(409, error.message, { code: error.code })
+    throw error
+  }
 }
 
 /* 事假、病假等有額度的假別：超額時依「超額處理」設定擋下（block）或回傳警告（warn） */
@@ -662,6 +731,111 @@ function annualLeaveWarnings(outcome) {
   return [{ code: 'ANNUAL_LEAVE_DEDUCTION_FAILED', message: outcome.message }]
 }
 
+/* ---------------------------- 調休：核准扣用存摺、撤回返還 ---------------------------- */
+
+// 只在單據上加紀錄（扣用的明細在存摺上）；剛核准後極少數遇到並行更新時，重新載入再寫一次
+async function appendRequestLogs(doc, logs) {
+  let target = doc
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    logs.forEach(log => target.logs.push(log))
+    try {
+      await target.save()
+      return
+    } catch (error) {
+      if (error?.name !== 'VersionError' || attempt === 1) {
+        console.error(`[CompLeave] Failed to record outcome: ${error?.name || 'Error'}`)
+        return
+      }
+      const fresh = await ApprovalRequest.findById(doc._id)
+      if (!fresh) return
+      target = fresh
+    }
+  }
+}
+
+function compLeaveFailureMessage(error) {
+  if (error?.code === 'COMP_LEAVE_INSUFFICIENT') {
+    return `調休扣用失敗：存摺可用 ${hoursWithDays(Math.max(Number(error.availableHours) || 0, 0))}，本次需扣 ${hoursWithDays(error.requestedHours)}，請人資確認調休存摺後手動調整`
+  }
+  return '調休扣用失敗：系統發生錯誤，請人資確認調休存摺後手動調整'
+}
+
+// 單據上的時間欄位型別（date / datetime）：判斷整天或有時分
+async function leaveFieldTypes(form, leaveFields) {
+  const fields = await loadFormFields(form._id)
+  return { startType: fieldTypeOf(fields, leaveFields.startId), endType: fieldTypeOf(fields, leaveFields.endId) }
+}
+
+/*
+ * 調休單核准時扣用存摺（依到期日、取得日先後，可跨好幾筆額度）；整天調休的日子當天具國定假日性質（holidayResolver）。
+ * 回傳 { state, hours, message }，不是調休回傳 null。扣用失敗不影響審核結果（核准前已檢查過餘額），寫進單據紀錄並回傳警告給核准的人。
+ */
+async function handleCompLeaveConsumption(doc) {
+  try {
+    const form = await FormTemplate.findById(doc.form).lean()
+    const analysis = await analyzeCompLeave(form, doc.form_data)
+    if (!analysis || !doc.applicant_employee || !(analysis.hours > 0)) return null
+    const hours = analysis.hours
+    const { leaveFields, policy } = analysis
+    const applicant = await Employee.findById(normalizeId(doc.applicant_employee)).select('_id holidayRegime requiresScheduling isIndigenous').lean()
+    const { startType, endType } = await leaveFieldTypes(form, leaveFields)
+    const plan = await buildCompLeaveDayPlan({
+      employee: applicant || normalizeId(doc.applicant_employee),
+      startValue: leaveFields.startId ? doc.form_data?.[leaveFields.startId] : undefined,
+      endValue: leaveFields.endId ? doc.form_data?.[leaveFields.endId] : undefined,
+      startType,
+      endType,
+      hours,
+    })
+    try {
+      const outcome = await consumeCreditsForRequest({
+        employeeId: doc.applicant_employee,
+        requestId: doc._id,
+        hours,
+        days: plan.days,
+        fullDayDates: plan.fullDayDates,
+        policy,
+      })
+      if (outcome.state === 'consumed') {
+        const dates = outcome.fullDayDates?.length ? `，整天調休：${outcome.fullDayDates.join('、')}` : ''
+        await appendRequestLogs(doc, [{ action: 'comp_leave', message: `已扣用調休 ${hoursWithDays(hours)}${dates}` }])
+      }
+      return { state: outcome.state, hours }
+    } catch (error) {
+      console.error(`[CompLeave] Failed to consume: ${error?.name || 'Error'}`, error?.code || '')
+      const message = compLeaveFailureMessage(error)
+      await appendRequestLogs(doc, [{ action: 'comp_leave_error', message }])
+      return { state: 'failed', hours, message }
+    }
+  } catch (error) {
+    console.error(`[CompLeave] Consumption skipped: ${error?.name || 'Error'}`, error?.message)
+    return null
+  }
+}
+
+function compLeaveWarnings(outcome) {
+  if (outcome?.state !== 'failed') return []
+  return [{ code: 'COMP_LEAVE_CONSUMPTION_FAILED', message: outcome.message }]
+}
+
+/*
+ * 核准到最後一關前（這次核准會讓單據變成已核准）再檢查一次調休存摺：送出之後存摺可能被人資扣除、其他調休單先核准，
+ * 不夠時不核准（409 COMP_LEAVE_INSUFFICIENT），單據維持簽核中。不是調休單不檢查。
+ */
+async function assertCompLeaveCoversApproval({ doc, form }) {
+  if (!form || !doc?.applicant_employee) return
+  const analysis = await analyzeCompLeave(form, doc.form_data)
+  if (!analysis) return
+  await assertCompLeaveAvailable({
+    hours: analysis.hours,
+    employeeId: doc.applicant_employee,
+    policy: analysis.policy,
+    excludeRequestId: doc._id,
+    status: 409,
+    verb: '這張單需要',
+  })
+}
+
 /* ---------------------------- 建立送審單 ---------------------------- */
 
 export async function createApprovalRequest(req, res) {
@@ -669,6 +843,7 @@ export async function createApprovalRequest(req, res) {
   let idempotencyKey = ''
   let requestId = null
   let claimed = []
+  let compLease = null
   try {
     const body = req.body || {}
     const { form_id, form_data, applicant_employee_id } = body
@@ -712,7 +887,14 @@ export async function createApprovalRequest(req, res) {
       applicantEmployeeId: applicantEmp?._id || req.user?.id,
       checkLeaveConflicts: true,
     })
-    const leaveCheck = await assertLeaveAllowed({ form, formData: sanitized, applicantEmp, fields })
+    // 調休：檢查存摺到建立單據之間同一位員工只處理一筆（連點、兩個分頁同時送出不會一起超過存摺）
+    const leaveCheck = await assertLeaveAllowed({
+      form,
+      formData: sanitized,
+      applicantEmp,
+      fields,
+      lockCompLeave: async (employeeId) => { compLease = await acquireCompFilingLease(employeeId) },
+    })
 
     // 依每關解析審核人
     const { steps } = await buildRequestSteps({ wf, applicantEmp, form })
@@ -766,6 +948,8 @@ export async function createApprovalRequest(req, res) {
       if (existing) return res.status(200).json(existing)
     }
     return respondError(res, e, 'create')
+  } finally {
+    if (compLease) await compLease.release()
   }
 }
 
@@ -813,7 +997,27 @@ async function loadRequestLeaveBalances(doc) {
   const focus = analysis && isPending
     ? describeRequestFocus({ balances, policy, names: analysis.names, requestedHours: analysis.hours })
     : null
-  return { ...balances, focus }
+  const compensatory = await loadRequestCompensatoryBank({ doc, policy, matched, balances })
+  return compensatory ? { ...balances, focus, compensatory } : { ...balances, focus }
+}
+
+/*
+ * 簽核人看得到申請人的調休存摺（每一筆額度的來源、狀態、用在哪張單）：調休單一定附上，其他請假單在申請人有任何額度時附上。
+ * thisRequest：這張單已經在存摺上扣了哪些額度（核准後才有）。
+ */
+async function loadRequestCompensatoryBank({ doc, policy, matched, balances }) {
+  const compType = typeof leaveBalanceModule.findCompLeaveType === 'function' ? leaveBalanceModule.findCompLeaveType(policy) : null
+  if (!compType) return null
+  const isCompRequest = matched?.key === compType.key
+  const item = (balances?.items || []).find(entry => entry.key === compType.key)
+  const bank = await buildCompensatoryBank({
+    employeeId: normalizeId(doc.applicant_employee),
+    pendingHours: item?.pendingHours || 0,
+    policy,
+    includeVoid: false,
+  })
+  if (!isCompRequest && !bank.credits.length) return null
+  return { ...bank, focus: isCompRequest, thisRequest: isCompRequest ? await findRequestConsumption(doc._id) : null }
 }
 
 /* 取得送審單 */
@@ -1166,6 +1370,7 @@ export async function actOnApproval(req, res) {
         throw fail(400, '這一關不允許退簽，請改用核可或否決', { code: 'RETURN_NOT_ALLOWED' })
       }
 
+      let approveForm = null
       if (decision === 'approve') {
         // 核可時重新檢核勞動規範（加班時數、班表等）；送簽之後才新增／改為必填的欄位不追溯，
         // 否則管理員加一個必填欄位就會讓所有待簽的單都無法核可
@@ -1173,6 +1378,7 @@ export async function actOnApproval(req, res) {
         if (!form) {
           throw fail(409, '這張單的表單已被刪除或停用，無法核可；請改用否決或退簽', { code: 'FORM_NOT_AVAILABLE' })
         }
+        approveForm = form
         await assertApprovalRequestCompliance({
           form,
           formData: doc.form_data || {},
@@ -1227,6 +1433,8 @@ export async function actOnApproval(req, res) {
           doc.logs.push({ action: 'approve', message: comment, comment, by_employee: empId, step_order: stepOrder, decision })
         }
         transition = advanceApprovalState(doc, at)
+        // 這次核准讓調休單變成已核准：存摺不夠就不核准（送出之後存摺可能被扣除或用掉）
+        if (doc.status === 'approved') await assertCompLeaveCoversApproval({ doc, form: approveForm })
       }
 
       await doc.save()
@@ -1240,6 +1448,7 @@ export async function actOnApproval(req, res) {
     let warnings = []
     if (transition.completed) {
       warnings = annualLeaveWarnings(await handleAnnualLeaveDeduction(doc))
+      warnings = [...warnings, ...compLeaveWarnings(await handleCompLeaveConsumption(doc))]
     }
 
     const fresh = await ApprovalRequest.findById(doc._id)
@@ -1263,20 +1472,46 @@ export async function cancelApprovalRequest(req, res) {
     const doc = await withVersionRetry(async () => {
       const doc = await ApprovalRequest.findById(requestId)
       const isApplicant = Boolean(doc) && normalizeId(doc.applicant_employee) === normalizeId(actorId)
-      // 申請人可撤回自己的單；管理員只能處理「已核准的特休」（返還天數），其餘仍只有申請人能撤回
+      // 申請人可撤回自己的單；管理員只能處理「已核准的特休、調休」（返還時數），其餘仍只有申請人能撤回
       if (!doc || (!isApplicant && !(isAdmin && doc.status === 'approved'))) throw fail(404, MESSAGES.notFound)
       if (doc.status === 'canceled') return doc
 
       if (doc.status === 'approved') {
         const form = await FormTemplate.findById(doc.form).lean()
-        const analysis = await analyzeAnnualLeave(form, doc.form_data)
-        if (!analysis) throw fail(409, '已核准的申請單無法撤回，請聯絡管理員', { code: 'CANNOT_CANCEL' })
+        const leaveAnalysis = await analyzeLeaveRequest(form, doc.form_data)
+        const analysis = leaveAnalysis?.isAnnual ? leaveAnalysis : null
+        const compAnalysis = analysis || !leaveAnalysis ? null : (isCompLeaveAnalysis(leaveAnalysis, await getLeavePolicy()) ? leaveAnalysis : null)
+        if (!analysis && !compAnalysis) throw fail(409, '已核准的申請單無法撤回，請聯絡管理員', { code: 'CANNOT_CANCEL' })
         if (!isAdmin) {
-          const startValue = analysis.leaveFields.startId ? doc.form_data?.[analysis.leaveFields.startId] : undefined
+          const fields = (analysis || compAnalysis).leaveFields
+          const startValue = fields.startId ? doc.form_data?.[fields.startId] : undefined
           const start = leaveStartInstant(startValue)
           if (!start || start.getTime() <= Date.now()) {
             throw fail(409, '假期已經開始（或無法判斷開始時間），無法自行撤回，請聯絡管理員', { code: 'LEAVE_STARTED' })
           }
+        }
+        if (compAnalysis) {
+          // 調休：返還這張單在存摺上扣過的時數（只退確實扣過的，重試不會重複返還）
+          if (!refundOutcome) {
+            try {
+              refundOutcome = await refundCreditsForRequest({ requestId: doc._id })
+            } catch (error) {
+              console.error(`[CompLeave] Refund failed: ${error?.name || 'Error'}`, error?.message)
+              throw fail(500, '返還調休失敗，單據未變更，請稍後再試或聯絡管理員')
+            }
+          }
+          const detail = refundOutcome.refunded
+            ? `已撤回已核准的調休，返還 ${hoursWithDays(refundOutcome.hours)}`
+            : '已撤回已核准的調休（原核准時沒有扣用調休存摺，無需返還）'
+          doc.status = 'canceled'
+          doc.logs.push({
+            action: 'cancel',
+            message: comment ? `${detail}：${comment}` : detail,
+            comment,
+            by_employee: actorId,
+          })
+          await doc.save()
+          return doc
         }
         // 返還的是核准當時記下的扣減時數（以前以天數記錄的舊單只有 days，乘 8 換成小時）；沒有記錄才重新計算
         const recorded = doc.annual_leave?.state === 'deducted'
@@ -1339,6 +1574,7 @@ function keepUneditedAnswers(stored, submitted, fields) {
 export async function resubmitApprovalRequest(req, res) {
   let requestId = null
   let claimed = []
+  let compLease = null
   try {
     const actorId = getAuthenticatedEmployeeId(req)
     if (!actorId) return res.status(401).json({ error: MESSAGES.invalidUser })
@@ -1381,7 +1617,14 @@ export async function resubmitApprovalRequest(req, res) {
         checkLeaveConflicts: true,
         ignoreRequestId: doc._id,
       })
-      const leaveCheck = await assertLeaveAllowed({ form, formData, applicantEmp, fields })
+      // 調休：和新申請一樣，檢查存摺到存檔之間同一位員工只處理一筆（重試時沿用已拿到的鎖）
+      const leaveCheck = await assertLeaveAllowed({
+        form,
+        formData,
+        applicantEmp,
+        fields,
+        lockCompLeave: async (employeeId) => { if (!compLease) compLease = await acquireCompFilingLease(employeeId) },
+      })
 
       // 重新解析簽核人（人員、標籤、主管可能已經更動）；流程設定已不存在時沿用原本的簽核人
       const wf = (doc.workflow ? await ApprovalWorkflow.findById(doc.workflow) : null)
@@ -1430,10 +1673,15 @@ export async function resubmitApprovalRequest(req, res) {
       : (doc.steps[doc.current_step_index]?.approvers || []).map(approver => approver.approver)
     if (currentApprovers.length) await notifyUsers(currentApprovers, '有重新送出的簽核待處理')
     let warnings = [...(leaveWarnings || [])]
-    if (transition.completed) warnings = [...warnings, ...annualLeaveWarnings(await handleAnnualLeaveDeduction(doc))]
+    if (transition.completed) {
+      warnings = [...warnings, ...annualLeaveWarnings(await handleAnnualLeaveDeduction(doc))]
+      warnings = [...warnings, ...compLeaveWarnings(await handleCompLeaveConsumption(doc))]
+    }
     return respondDoc(res, doc, warnings)
   } catch (error) {
     if (claimed.length && requestId) await releaseAttachments(requestId, claimed)
     return respondError(res, error, 'resubmit')
+  } finally {
+    if (compLease) await compLease.release()
   }
 }

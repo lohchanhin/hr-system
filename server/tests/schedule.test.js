@@ -696,11 +696,12 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
       });
     });
 
-    it('keeps draft state unchanged when publish labor validation fails', async () => {
+    // 客戶要求變更（「可以顯示規範，可是不要阻止發布」）：原本違規會回 400、班表維持草稿，現在照樣發布並回報違規
+    it('publishes even when labor validation finds violations, and returns them with the 200', async () => {
       const docs = [
         {
           _id: 'sch1',
-          employee: { _id: 'emp1', name: '王小明' },
+          employee: { _id: 'emp1', employeeId: 'A0001', name: '王小明' },
           state: 'draft',
           employeeResponse: 'pending',
           publishedAt: null,
@@ -711,6 +712,7 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
         populate: jest.fn().mockReturnThis(),
         lean: jest.fn().mockResolvedValue(docs),
       });
+      mockShiftSchedule.updateMany.mockResolvedValue({ modifiedCount: 1 });
       mockEmployee.find.mockReturnValue({
         select: jest.fn().mockResolvedValue([{ _id: 'emp1' }]),
       });
@@ -729,11 +731,62 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
         .set('Authorization', buildAuthHeader('supervisor'))
         .send({ month: '2024-05' });
 
-      expect(res.status).toBe(400);
+      expect(res.status).toBe(200);
       expect(res.body).toEqual({
-        error: '排班規範檢核未通過',
-        violations: validationError.violations,
+        updated: 1,
+        employees: [
+          { id: 'emp1', name: '王小明', response: 'pending', state: 'pending_confirmation' },
+        ],
+        publishedAt: expect.any(String),
+        publishedMonth: '2024-05',
+        violations: [{
+          rule: 'minimum-shift-gap',
+          employee: 'emp1',
+          date: '2024-05-01',
+          message: '換班間隔不足 11 小時',
+          employeeCode: 'A0001',
+          employeeName: '王小明',
+        }],
       });
+      expect(res.body).not.toHaveProperty('error');
+      expect(mockShiftSchedule.updateMany).toHaveBeenCalledWith({
+        _id: { $in: ['sch1'] },
+      }, {
+        $set: expect.objectContaining({
+          state: 'pending_confirmation',
+          employeeResponse: 'pending',
+          responseNote: '',
+        }),
+      });
+    });
+
+    it('still blocks publishing (400, nothing changed) when the rule check fails for a reason that is not a labor rule', async () => {
+      const docs = [
+        {
+          _id: 'sch1',
+          employee: { _id: 'emp1', name: '王小明' },
+          state: 'draft',
+          employeeResponse: 'pending',
+          publishedAt: null,
+          date: new Date('2024-05-01'),
+        },
+      ];
+      mockShiftSchedule.find.mockReturnValue({
+        populate: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockResolvedValue(docs),
+      });
+      mockEmployee.find.mockReturnValue({
+        select: jest.fn().mockResolvedValue([{ _id: 'emp1' }]),
+      });
+      mockAssertScheduleRuleCompliance.mockRejectedValueOnce(new Error('connection reset'));
+
+      const res = await request(app)
+        .post('/api/schedules/publish')
+        .set('Authorization', buildAuthHeader('supervisor'))
+        .send({ month: '2024-05' });
+
+      expect(res.status).toBe(400);
+      expect(res.body).toEqual({ error: 'connection reset' });
       expect(mockShiftSchedule.updateMany).not.toHaveBeenCalled();
       expect(docs[0]).toEqual(expect.objectContaining({
         state: 'draft',
@@ -880,7 +933,8 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
       expect(mockShiftSchedule.updateMany).not.toHaveBeenCalled();
     });
 
-    it('returns labor-rule details when finalize validation fails', async () => {
+    // 客戶要求變更：原本完成發布遇到違規回 400、不鎖定，現在照樣完成發布並回報違規的完整內容
+    it('finalizes even when labor validation finds violations, and returns the labor-rule details with the 200', async () => {
       const docs = [
         {
           _id: 'sch1',
@@ -895,6 +949,7 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
         populate: jest.fn().mockReturnThis(),
         lean: jest.fn().mockResolvedValue(docs),
       });
+      mockShiftSchedule.updateMany.mockResolvedValue({ modifiedCount: 1 });
       const selectMock = jest.fn().mockResolvedValue([{ _id: 'emp1' }]);
       mockEmployee.find.mockReturnValue({ select: selectMock });
       const validationError = new Error('排班規範檢核未通過');
@@ -914,11 +969,52 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
         .set('Authorization', buildAuthHeader('supervisor'))
         .send({ month: '2024-05' });
 
-      expect(res.status).toBe(400);
+      expect(res.status).toBe(200);
       expect(res.body).toEqual({
-        error: '排班規範檢核未通過',
-        violations: validationError.violations,
+        finalized: 1,
+        violations: [{
+          rule: 'minimum-shift-gap',
+          employee: 'emp1',
+          date: '2024-05-03',
+          message: '2024-05-03 換班間隔僅 8 小時，至少須 11 小時',
+          employeeCode: '',
+          employeeName: '王小明',
+        }],
       });
+      expect(mockShiftSchedule.updateMany).toHaveBeenCalledWith({
+        _id: { $in: ['sch1'] },
+      }, { $set: { state: 'finalized', needsReconfirm: false } });
+    });
+
+    it('still blocks finalize on unconfirmed employees before looking at the labor rules', async () => {
+      const docs = [
+        {
+          _id: 'sch1',
+          employee: { _id: 'emp1', name: '王小明' },
+          state: 'changes_requested',
+          employeeResponse: 'disputed',
+          responseNote: '想換班',
+          date: new Date('2024-05-03'),
+        },
+      ];
+      mockShiftSchedule.find.mockReturnValue({
+        populate: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockResolvedValue(docs),
+      });
+      mockEmployee.find.mockReturnValue({ select: jest.fn().mockResolvedValue([{ _id: 'emp1' }]) });
+      mockAssertScheduleRuleCompliance.mockRejectedValueOnce(Object.assign(new Error('排班規範檢核未通過'), {
+        violations: [{ rule: 'continuous-work-days', employee: 'emp1', message: '不得連續7日未安排休/例' }],
+      }));
+
+      const res = await request(app)
+        .post('/api/schedules/publish/finalize')
+        .set('Authorization', buildAuthHeader('supervisor'))
+        .send({ month: '2024-05' });
+
+      expect(res.status).toBe(409);
+      expect(res.body.disputedEmployees).toEqual([expect.objectContaining({ id: 'emp1' })]);
+      expect(res.body).not.toHaveProperty('violations');
+      expect(mockAssertScheduleRuleCompliance).not.toHaveBeenCalled();
       expect(mockShiftSchedule.updateMany).not.toHaveBeenCalled();
     });
 
@@ -2716,8 +2812,11 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
       expect(res.body.error).toMatch(/Invalid month format/);
     });
 
-    it('validateScheduleRules returns ok with no violations when there are no draft schedules in scope', async () => {
-      mockShiftSchedule.find.mockReturnValueOnce({ lean: jest.fn().mockResolvedValue([]) });
+    // 沒有待發布的草稿時會再查一次已完成發布的班表（完成發布後的檢核），兩次都沒有才回「沒有違規」
+    it('validateScheduleRules returns ok with no violations when there are no draft or finalized schedules in scope', async () => {
+      mockShiftSchedule.find
+        .mockReturnValueOnce({ lean: jest.fn().mockResolvedValue([]) })
+        .mockReturnValueOnce({ lean: jest.fn().mockResolvedValue([]) });
 
       const res = await request(app)
         .get('/api/schedules/rules/validate?month=2025-02')
@@ -2726,6 +2825,74 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
       expect(res.status).toBe(200);
       expect(res.body).toEqual({ ok: true, count: 0, violations: [] });
       expect(mockAssertScheduleRuleCompliance).not.toHaveBeenCalled();
+      expect(mockShiftSchedule.find).toHaveBeenCalledTimes(2);
+      expect(mockShiftSchedule.find.mock.calls[1][0]).toEqual(expect.objectContaining({ state: 'finalized' }));
+    });
+
+    // 完成發布不再被排班規範擋下：整個月都已鎖定時，排班檢核改檢核已鎖定的班表，不能回「已通過」
+    it('validateScheduleRules checks the finalized schedules of a locked month and still reports their violations', async () => {
+      const lockedDoc = {
+        _id: 'sch1', employee: 'e1', date: new Date('2025-02-10'), shiftId: 's1', department: 'd1', subDepartment: 'sd1', state: 'finalized',
+      };
+      mockShiftSchedule.find
+        .mockReturnValueOnce({ lean: jest.fn().mockResolvedValue([]) })
+        .mockReturnValueOnce({ lean: jest.fn().mockResolvedValue([lockedDoc]) });
+      mockAssertScheduleRuleCompliance.mockRejectedValueOnce(Object.assign(new Error('排班規範檢核未通過'), {
+        violations: [{ employee: 'e1', rule: 'continuous-work-days', message: '不得連續7日未安排休/例', dates: ['2025-02-10'] }],
+      }));
+
+      const res = await request(app)
+        .get('/api/schedules/rules/validate?month=2025-02&department=d1&subDepartment=sd1')
+        .set('Authorization', buildAuthHeader('admin'));
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual(expect.objectContaining({ ok: false, count: 1, finalized: true }));
+      expect(res.body.violations[0]).toEqual(expect.objectContaining({ employee: 'e1', rule: 'continuous-work-days' }));
+      // 第一次查待發布的草稿，第二次只換成已完成發布的班表：同月份、同部門／單位，不再要求 needsReconfirm
+      const [draftQuery, lockedQuery] = mockShiftSchedule.find.mock.calls.map(([query]) => query);
+      expect(draftQuery).toEqual(expect.objectContaining({ state: { $ne: 'finalized' }, needsReconfirm: true }));
+      expect(lockedQuery).toEqual({
+        date: draftQuery.date,
+        department: 'd1',
+        subDepartment: 'sd1',
+        state: 'finalized',
+      });
+      expect(mockAssertScheduleRuleCompliance).toHaveBeenCalledWith(expect.objectContaining({
+        candidateSchedules: [expect.objectContaining({ _id: 'sch1', employee: 'e1' })],
+        strictWeeklyRest: true,
+      }));
+      expect(mockShiftSchedule.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('validateScheduleRules marks a passing locked month as finalized too, and keeps checking only drafts while any are open', async () => {
+      mockShiftSchedule.find
+        .mockReturnValueOnce({ lean: jest.fn().mockResolvedValue([]) })
+        .mockReturnValueOnce({
+          lean: jest.fn().mockResolvedValue([
+            { _id: 'sch1', employee: 'e1', date: new Date('2025-02-10'), shiftId: 's1', state: 'finalized' },
+          ]),
+        });
+
+      const locked = await request(app)
+        .get('/api/schedules/rules/validate?month=2025-02')
+        .set('Authorization', buildAuthHeader('admin'));
+
+      expect(locked.status).toBe(200);
+      expect(locked.body).toEqual({ ok: true, count: 0, violations: [], finalized: true });
+
+      mockShiftSchedule.find.mockReset();
+      mockShiftSchedule.find.mockReturnValueOnce({
+        lean: jest.fn().mockResolvedValue([
+          { _id: 'sch2', employee: 'e1', date: new Date('2025-02-11'), shiftId: 's1', state: 'draft', needsReconfirm: true },
+        ]),
+      });
+
+      const open = await request(app)
+        .get('/api/schedules/rules/validate?month=2025-02')
+        .set('Authorization', buildAuthHeader('admin'));
+
+      expect(open.body).toEqual({ ok: true, count: 0, violations: [] });
+      expect(mockShiftSchedule.find).toHaveBeenCalledTimes(1);
     });
 
     it('validateScheduleRules surfaces labor-rule violations reported by the compliance check', async () => {
@@ -2887,6 +3054,56 @@ describe('Schedule API pending boundary weeks and part-time notice', () => {
       expect(mockEmployee.find).toHaveBeenCalledWith({ _id: { $in: [hexId] } });
     });
 
+    // 發布前的確認視窗用這份預檢結果：員工不在目前載入的那一頁（分頁、搜尋）時也要看得到代號與姓名
+    it('adds the employee code and name to each violation so the release confirm dialog names employees outside the loaded page', async () => {
+      oneDraft();
+      const hexId = '64b64b64b64b64b64b64b64b';
+      const otherHexId = '75c75c75c75c75c75c75c75c';
+      mockEmployee.find.mockReturnValue({
+        select: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue([{ _id: hexId, employeeId: 'N001', name: '王違規' }]),
+        }),
+      });
+      mockAssertScheduleRuleCompliance.mockRejectedValueOnce(Object.assign(new Error('排班規範檢核未通過'), {
+        violations: [
+          { employee: { _id: hexId }, rule: 'continuous-work-days', message: '不得連續7日未安排休/例', dates: ['2026-07-09'] },
+          { employee: otherHexId, rule: 'shift-gap', message: '班與班間隔不足', date: '2026-07-10' },
+        ],
+      }));
+
+      const res = await request(app)
+        .get('/api/schedules/rules/validate?month=2026-07')
+        .set('Authorization', buildAuthHeader('admin'));
+
+      expect(res.status).toBe(200);
+      expect(res.body.count).toBe(2);
+      expect(res.body.violations[0]).toEqual(expect.objectContaining({
+        employee: hexId, employeeCode: 'N001', employeeName: '王違規', rule: 'continuous-work-days',
+      }));
+      // 查不到的員工維持原樣（畫面再用已載入的名單或 id 顯示）
+      expect(res.body.violations[1]).toEqual(expect.objectContaining({ employee: otherHexId, rule: 'shift-gap' }));
+      expect(res.body.violations[1]).not.toHaveProperty('employeeName');
+      expect(mockEmployee.find).toHaveBeenCalledWith({ _id: { $in: [hexId, otherHexId] } });
+    });
+
+    it('still returns every violation when looking up the employee names fails', async () => {
+      oneDraft();
+      const hexId = '64b64b64b64b64b64b64b64b';
+      mockEmployee.find.mockImplementation(() => { throw new Error('db down'); });
+      mockAssertScheduleRuleCompliance.mockRejectedValueOnce(Object.assign(new Error('排班規範檢核未通過'), {
+        violations: [{ employee: hexId, rule: 'continuous-work-days', message: '不得連續7日未安排休/例' }],
+      }));
+
+      const res = await request(app)
+        .get('/api/schedules/rules/validate?month=2026-07')
+        .set('Authorization', buildAuthHeader('admin'));
+
+      expect(res.status).toBe(200);
+      expect(res.body.ok).toBe(false);
+      expect(res.body.violations).toEqual([expect.objectContaining({ employee: hexId, rule: 'continuous-work-days' })]);
+      expect(res.body.violations[0]).not.toHaveProperty('employeeName');
+    });
+
     it('still returns the pending weeks when looking up the employee names fails', async () => {
       oneDraft();
       const hexId = '64b64b64b64b64b64b64b64b';
@@ -2973,11 +3190,13 @@ describe('Schedule API pending boundary weeks and part-time notice', () => {
       expect(finalized.body).toEqual({ finalized: 1 });
     });
 
-    it('still blocks publishing on a violation and returns the pending weeks with the 400', async () => {
+    // 客戶要求變更：違規原本擋發布（400），現在照樣發布，違規與待判斷週別一起隨 200 回報
+    it('publishes despite a violation and returns the violation together with the pending weeks', async () => {
       publishDocs();
+      mockShiftSchedule.updateMany.mockResolvedValue({ modifiedCount: 1 });
       mockAssertScheduleRuleCompliance.mockRejectedValueOnce(Object.assign(new Error('排班規範檢核未通過'), {
         status: 400,
-        violations: [{ rule: 'continuous-work-days', employee: 'e1', message: '不得連續7日未安排休/例' }],
+        violations: [{ rule: 'continuous-work-days', employee: 'e1', startDate: '2026-07-01', message: '不得連續7日未安排休/例' }],
         pendingWeeks: [pending()],
       }));
 
@@ -2986,10 +3205,45 @@ describe('Schedule API pending boundary weeks and part-time notice', () => {
         .set('Authorization', buildAuthHeader('admin'))
         .send({ month: '2026-07' });
 
-      expect(res.status).toBe(400);
-      expect(res.body.violations).toHaveLength(1);
+      expect(res.status).toBe(200);
+      expect(res.body.updated).toBe(1);
+      expect(res.body.violations).toEqual([expect.objectContaining({
+        rule: 'continuous-work-days',
+        employee: 'e1',
+        date: '2026-07-01',
+        employeeName: '王小明',
+        message: '不得連續7日未安排休/例',
+      })]);
       expect(res.body.pendingWeeks).toEqual([expect.objectContaining({ weekStart: '2026-06-29' })]);
-      expect(mockShiftSchedule.updateMany).not.toHaveBeenCalled();
+      expect(mockShiftSchedule.updateMany).toHaveBeenCalledWith(
+        { _id: { $in: ['sch1'] } },
+        { $set: expect.objectContaining({ state: 'pending_confirmation' }) },
+      );
+    });
+
+    it('finalizes despite a violation and returns the violation together with the pending weeks', async () => {
+      publishDocs();
+      mockShiftSchedule.updateMany.mockResolvedValue({ modifiedCount: 1 });
+      mockAssertScheduleRuleCompliance.mockRejectedValueOnce(Object.assign(new Error('排班規範檢核未通過'), {
+        violations: [{ rule: 'weekly-one-regular-rest-one-rest-day', employee: 'e1', weekStart: '2026-07-13', message: '該週沒有例假' }],
+        pendingWeeks: [pending()],
+      }));
+
+      const res = await request(app)
+        .post('/api/schedules/publish/finalize')
+        .set('Authorization', buildAuthHeader('admin'))
+        .send({ month: '2026-07' });
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({
+        finalized: 1,
+        violations: [expect.objectContaining({ employee: 'e1', date: '2026-07-13', weekStart: '2026-07-13', message: '該週沒有例假' })],
+        pendingWeeks: [expect.objectContaining({ weekStart: '2026-06-29' })],
+      });
+      expect(mockShiftSchedule.updateMany).toHaveBeenCalledWith(
+        { _id: { $in: ['sch1'] } },
+        { $set: { state: 'finalized', needsReconfirm: false } },
+      );
     });
   });
 

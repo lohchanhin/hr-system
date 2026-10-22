@@ -37,6 +37,8 @@ jest.unstable_mockModule('../src/services/approvedLeaveCalendarService.js', () =
 jest.unstable_mockModule('../src/services/laborRuleValidationService.js', () => ({
   isLaborRuleValidationError: jest.fn(() => false),
 }));
+// 假別規則（調休的時數與期限）：沒有存過設定，用預設值
+jest.unstable_mockModule('../src/services/otherControlSettingsStore.js', () => ({ getSettings: async () => ({}) }));
 // 國定假日判斷（holidayResolver）用到的年度行事曆、補假、個人調移
 const resolverMocks = await registerHolidayResolverModelMocks(jest);
 
@@ -617,13 +619,20 @@ describe('resolutions are checked per employee with the holiday resolver', () =>
   });
 });
 
-describe('補假 and personal swap endpoints', () => {
+describe('調休 and personal swap endpoints', () => {
+  // 國定假日的調休已改存在調休存摺（CompensatoryCredit）
   const compensationRow = (employee, extra = {}) => ({
-    _id: oid(700), employee, holidayDate: utc('2026-10-10'), holidayName: '國慶日', status: 'open', origin: 'roster_rest_day', ...extra,
+    _id: oid(700), employee, sourceType: 'holiday_rest', sourceKey: 'holiday_rest:2026-10-10', reason: 'rest_day',
+    holidayDate: utc('2026-10-10'), earnedDate: utc('2026-10-10'), holidayName: '國慶日', status: 'available', hours: 8, usedHours: 0, usages: [], ...extra,
   });
+  const sortableChain = (rows) => {
+    const query = chain(rows);
+    query.sort = jest.fn(() => query);
+    return query;
+  };
 
-  it('lets everyone read the year-end list within their schedule scope, and only managers write', async () => {
-    resolverMocks.HolidayCompensation.find.mockImplementation((filter) => chain([
+  it('lets everyone read the year list within their schedule scope, and only managers write', async () => {
+    resolverMocks.CompensatoryCredit.find.mockImplementation((filter) => sortableChain([
       compensationRow(ID.nurseA), compensationRow(ID.otherNurse, { _id: oid(701) }),
     ].filter((doc) => filter.employee.$in.includes(doc.employee))));
 
@@ -631,7 +640,8 @@ describe('補假 and personal swap endpoints', () => {
     const own = await request(app).get('/api/holiday-ledger/compensations?year=2026');
     expect(own.status).toBe(200);
     expect(own.body.compensations.map((entry) => entry.employeeId)).toEqual([ID.nurseA]);
-    expect(own.body.summary).toEqual({ open: 1, assigned: 0, void: 0, conflict: 0 });
+    expect(own.body.compensations[0]).toMatchObject({ status: 'available', sourceText: '2026-10-10 國慶日 適逢休息日', remainingHours: 8 });
+    expect(own.body.summary).toEqual({ available: 1, used: 0, expired: 0, void: 0, conflict: 0 });
     expect((await request(app).post(`/api/holiday-ledger/compensations/${oid(700)}/assign`).send({ assignedDate: '2026-10-14' })).status).toBe(403);
     expect((await request(app).post('/api/holiday-ledger/compensations/sync').send({ from: '2026-10', to: '2026-10' })).status).toBe(403);
     expect((await request(app).post('/api/holiday-ledger/swaps').send({ employee: ID.nurseA })).status).toBe(403);
@@ -643,16 +653,23 @@ describe('補假 and personal swap endpoints', () => {
     expect((await request(app).get('/api/holiday-ledger/compensations?status=bogus')).body.code).toBe('INVALID_STATUS');
   });
 
-  it('applies the resolution scope to assigning: a supervisor cannot assign for another team', async () => {
-    resolverMocks.HolidayCompensation.findById.mockImplementation(() => chain(compensationRow(ID.otherNurse)));
+  // HR 指定調休日與手動補登調休只有管理員（客戶 2026-10：調休由員工自己發起簽核，人資指定是管理員的動作）
+  it('lets only an administrator assign a 調休 date or add a credit by hand: supervisors are refused even for their own team', async () => {
+    resolverMocks.CompensatoryCredit.findById.mockImplementation(() => chain(compensationRow(ID.nurseA)));
     loginAs('supervisor', ID.boss);
-    const res = await request(app).post(`/api/holiday-ledger/compensations/${oid(700)}/assign`).send({ assignedDate: '2026-10-14' });
+    const res = await request(app).post(`/api/holiday-ledger/compensations/${oid(700)}/assign`).send({ assignedDate: '2026-10-14', agreementNote: '協商' });
     expect(res.status).toBe(403);
-    expect(resolverMocks.HolidayCompensation.findOneAndUpdate).not.toHaveBeenCalled();
+    expect((await request(app).post(`/api/holiday-ledger/compensations/${oid(700)}/unassign`)).status).toBe(403);
+    expect((await request(app).post('/api/holiday-ledger/compensations').send({ employee: ID.nurseA, holidayDate: '2026-10-10' })).status).toBe(403);
+    expect(resolverMocks.CompensatoryCredit.findOneAndUpdate).not.toHaveBeenCalled();
 
+    loginAs('admin', ID.admin);
     const badId = await request(app).post('/api/holiday-ledger/compensations/not-an-id/assign').send({ assignedDate: '2026-10-14' });
     expect(badId.status).toBe(400);
     expect(badId.body.code).toBe('INVALID_ID');
+    const noNote = await request(app).post(`/api/holiday-ledger/compensations/${oid(700)}/assign`).send({ assignedDate: '2026-10-14' });
+    expect(noNote.status).toBe(400);
+    expect(noNote.body.code).toBe('NOTE_REQUIRED');
   });
 
   it('answers the validation codes of the swap and sync endpoints', async () => {
@@ -704,12 +721,12 @@ describe('補假 and personal swap endpoints', () => {
     expect(batchSizes).toEqual([2000, 300]);
   });
 
-  it('filters the ledger by 待排補假 and syncs obligations on every GET', async () => {
+  it('filters the ledger by 調休 and syncs the compensatory leave bank on every GET', async () => {
     mockShiftSchedule.find.mockImplementation((query) => chain([
       rowOf(ID.nurseA, '2026-09-25', 'guo'), { employee: ID.nurseA, date: utc('2026-09-28'), shiftId: 'rest', state: 'finalized' },
     ].filter((row) => query.employee.$in.includes(row.employee))));
     mockAttendanceSetting.findOne.mockReturnValue(chain({ shifts: [...SHIFTS, { _id: 'rest', code: '休', name: '休假', semanticType: 'rest_day', startTime: '00:00', endTime: '00:00' }] }));
-    resolverMocks.HolidayCompensation.bulkWrite.mockResolvedValue({ upsertedCount: 1 });
+    resolverMocks.CompensatoryCredit.bulkWrite.mockResolvedValue({ upsertedCount: 1 });
 
     const res = await request(app).get(url('&status=compensation'));
     expect(res.status).toBe(200);
@@ -717,7 +734,25 @@ describe('補假 and personal swap endpoints', () => {
     expect(ledgerRows(res.body)[0].items[1]).toMatchObject({ reason: 'on_rest_day', needsAction: 'assign_compensation' });
     expect(res.body.summary.compensationOpen).toBe(1);
     expect(res.body.months[0]).not.toHaveProperty('sync');
-    const [ops] = resolverMocks.HolidayCompensation.bulkWrite.mock.calls[0];
-    expect(ops.map((op) => [op.updateOne.filter.employee, op.updateOne.filter.holidayDate.toISOString().slice(0, 10)])).toEqual([[ID.nurseA, '2026-09-28']]);
+    const [ops] = resolverMocks.CompensatoryCredit.bulkWrite.mock.calls[0];
+    expect(ops.map((op) => [op.updateOne.filter.employee, op.updateOne.filter.sourceKey])).toEqual([[ID.nurseA, 'holiday_rest:2026-09-28']]);
+    expect(ops[0].updateOne.update.$setOnInsert).toMatchObject({ status: 'available', hours: 8, reason: 'rest_day' });
+  });
+
+  it('counts a banked credit in the 調休 filter and the summary, without anything for HR to handle', async () => {
+    mockShiftSchedule.find.mockImplementation((query) => chain([
+      rowOf(ID.nurseA, '2026-09-25', 'guo'), { employee: ID.nurseA, date: utc('2026-09-28'), shiftId: 'rest', state: 'finalized' },
+    ].filter((row) => query.employee.$in.includes(row.employee))));
+    mockAttendanceSetting.findOne.mockReturnValue(chain({ shifts: [...SHIFTS, { _id: 'rest', code: '休', name: '休假', semanticType: 'rest_day', startTime: '00:00', endTime: '00:00' }] }));
+    resolverMocks.CompensatoryCredit.find.mockImplementation(() => chain([compensationRow(ID.nurseA, {
+      sourceKey: 'holiday_rest:2026-09-28', holidayDate: utc('2026-09-28'), earnedDate: utc('2026-09-28'), holidayName: '教師節',
+    })]));
+
+    const res = await request(app).get(url('&status=compensation'));
+    expect(res.status).toBe(200);
+    expect(idsOf(res.body)).toEqual([ID.nurseA]);
+    expect(ledgerRows(res.body)[0].items[1]).toMatchObject({ status: 'compensated', needsAction: null, compensation: { via: 'bank', creditStatus: 'available' } });
+    expect(res.body.summary).toMatchObject({ banked: 1, compensationOpen: 0 });
+    expect(resolverMocks.CompensatoryCredit.bulkWrite).not.toHaveBeenCalled();
   });
 });

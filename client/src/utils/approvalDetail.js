@@ -107,6 +107,9 @@ const ACTION_LABELS = {
   admin_override: '管理員代為處理',
   annual_leave: '特休扣減',
   annual_leave_error: '特休扣減失敗',
+  // 調休單核准時從調休存摺扣用（失敗時請人資手動調整）
+  comp_leave: '調休扣用',
+  comp_leave_error: '調休扣用失敗',
 }
 
 export function actionLabel(action) {

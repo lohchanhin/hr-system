@@ -1713,9 +1713,16 @@ async function runScheduleRuleValidation({ showIssues, notify, quiet, announcePe
     scheduleIssues.title = '排班規範檢核未通過'
     scheduleIssues.lines = lines
     if (quiet) return { ...payload, ok: scheduleRuleValidation.ok, violations, pendingWeeks }
+    // finalized：整個範圍都已完成發布，伺服器檢核的是已鎖定的班表（完成發布不被排班規範擋下，鎖定後仍可能有違規）
+    const lockedMonth = payload.finalized === true
     const signature = lines.join('\n')
     if (notify && lines.length && signature !== lastLoggedRuleSignature) {
-      appendScheduleNotification('warning', '排班草稿待修正', `目前共有 ${lines.length} 項排班規範問題。`, violations)
+      appendScheduleNotification(
+        'warning',
+        lockedMonth ? '已完成發布的班表仍有排班規範問題' : '排班草稿待修正',
+        `目前共有 ${lines.length} 項排班規範問題。`,
+        violations
+      )
       lastLoggedRuleSignature = signature
     } else if (!lines.length) {
       lastLoggedRuleSignature = ''
@@ -3073,10 +3080,33 @@ function buildPublishPayload() {
 
 // ========= 發布 / 完成 =========
 
+// 排班規範只提醒、不擋發布與完成發布（客戶：「可以顯示規範，可是不要阻止發布」；匯入照舊檢核）。
+// 兩者的回應帶著伺服器當下的檢核結果（violations／pendingWeeks 只在有的時候才出現）：
+//   - 有違規時在通知日誌留一筆提醒，明細存成已格式化的文字（換頁、換月後仍看得到員工代號與姓名）
+//   - 排班檢核徽章與完整檢核結果跟著更新；送出後已切換月份或篩選時不覆蓋別的範圍
+function recordScheduleReleaseFindings(payload, { queryKey, title, message }) {
+  const violations = Array.isArray(payload?.violations) ? payload.violations : []
+  const pendingWeeks = Array.isArray(payload?.pendingWeeks) ? payload.pendingWeeks : []
+  const lines = violations.map(formatLaborRuleViolation)
+  if (lines.length) appendScheduleNotification('warning', title(lines.length), message(lines.length), lines)
+  if (queryKey !== scheduleRuleQueryParams().toString()) return
+  scheduleRuleValidation.ok = violations.length === 0
+  scheduleRuleValidation.count = violations.length
+  scheduleRuleValidation.violations = violations
+  scheduleRuleValidation.pending = pendingWeeks
+  scheduleRuleValidation.pendingCount = pendingWeeks.length
+  schedulePendingLines.value = pendingWeeks.map(formatLaborRuleViolation)
+  scheduleIssues.title = '排班規範檢核未通過'
+  scheduleIssues.lines = lines
+  // 同一批問題已經記錄過，之後的自動檢核不再重複寫「排班草稿待修正」
+  lastLoggedRuleSignature = lines.join('\n')
+}
+
 async function publishSchedulesForMonth() {
   if (isPublishing.value) return
   try {
     isPublishing.value = true
+    const queryKey = scheduleRuleQueryParams().toString()
     const res = await apiFetch('/api/schedules/publish', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -3092,8 +3122,14 @@ async function publishSchedulesForMonth() {
       localStorage.setItem(PUBLISHED_MONTH_HINT_KEY, publishedMonth)
     }
     callSuccess('已將班表發送給員工確認')
+    recordScheduleReleaseFindings(payload, {
+      queryKey,
+      title: count => `已發布，仍有 ${count} 項排班規範問題`,
+      message: count => `班表已發送給員工確認；以下 ${count} 項排班規範問題不影響發布，建議儘快修正。`
+    })
     invalidateFetchAllCache()
-    await refreshScheduleData({ reason: 'publish-success' })
+    // 班表狀態已在伺服器改變：重新載入（reset），否則員工都已載入時不會重抓，發布狀態會停在「尚未發布」直到重新整理
+    await refreshScheduleData({ reset: true, reason: 'publish-success' })
   } catch (err) {
     callWarning(err?.message || '發布失敗')
   } finally {
@@ -3105,6 +3141,7 @@ async function finalizeSchedulesForMonth() {
   if (isFinalizing.value) return
   try {
     isFinalizing.value = true
+    const queryKey = scheduleRuleQueryParams().toString()
     const res = await apiFetch('/api/schedules/publish/finalize', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -3119,16 +3156,27 @@ async function finalizeSchedulesForMonth() {
         // ignore
       }
       callWarning(message)
-      await refreshScheduleData({ reason: 'finalize-conflict' })
+      await refreshScheduleData({ reset: true, reason: 'finalize-conflict' })
       return
     }
     if (!res.ok) {
       await handleScheduleActionApiError(res, '完成發布失敗')
       return
     }
+    let payload = null
+    try {
+      payload = await res.json()
+    } catch (err) {
+      // 回應不是 JSON 也算完成發布，只是沒有檢核結果可以顯示
+    }
     callSuccess('班表已完成發布')
+    recordScheduleReleaseFindings(payload, {
+      queryKey,
+      title: count => `已完成發布，仍有 ${count} 項排班規範問題`,
+      message: count => `班表已完成發布並鎖定；以下 ${count} 項排班規範問題不影響完成發布，僅供後續調整參考。`
+    })
     invalidateFetchAllCache()
-    await refreshScheduleData({ reason: 'finalize-success' })
+    await refreshScheduleData({ reset: true, reason: 'finalize-success' })
   } catch (err) {
     callWarning(err?.message || '完成發布失敗')
   } finally {
@@ -3136,19 +3184,66 @@ async function finalizeSchedulesForMonth() {
   }
 }
 
+/**
+ * 發布、完成發布前的確認視窗（只有一個視窗）。排班規範只提醒、不擋：
+ *   - 預檢沒有違規：維持原本的確認文字與按鈕（跨月週待判斷時另加一段說明）
+ *   - 預檢有違規：逐項列出（與排班檢核同一種文字，視窗可捲動），按鈕是「仍要發布／仍要完成發布」與「取消」
+ *   - 預檢本身失敗（網路、伺服器）：說明檢核沒有完成，仍可發布
+ * 使用者按確認時 resolve，取消或關閉時 reject（與 ElMessageBox.confirm 相同）。
+ */
+function confirmScheduleRelease(validation, { title, question, confirmButtonText, type, forceButtonText, actionLabel }) {
+  const violations = Array.isArray(validation?.violations) ? validation.violations : []
+  const pendingNote = validation ? pendingWeekConfirmNote(validation.pendingWeeks) : ''
+  if (validation && !violations.length) {
+    return ElMessageBox.confirm(`${question}${pendingNote ? `\n\n${pendingNote}` : ''}`, title, {
+      type,
+      confirmButtonText,
+      cancelButtonText: '取消'
+    })
+  }
+  const options = {
+    type: 'warning',
+    confirmButtonText: forceButtonText,
+    cancelButtonText: '取消',
+    customClass: 'schedule-issue-dialog',
+    modalClass: 'schedule-issue-overlay',
+    zIndex: 4000,
+    closeOnClickModal: false
+  }
+  const appendTo = issueDialogAppendTarget()
+  if (appendTo) options.appendTo = appendTo
+  if (!validation) {
+    return ElMessageBox.confirm(
+      `排班規範檢核暫時無法完成，無法列出目前的排班規範問題。排班規範不影響${actionLabel}，仍可繼續；${actionLabel}後請按「排班檢核」重新檢核。\n\n${question}`,
+      '排班規範檢核未完成',
+      options
+    )
+  }
+  const lines = violations.map(formatLaborRuleViolation)
+  const blocks = [
+    question,
+    [`以下 ${lines.length} 項排班規範問題不影響${actionLabel}，建議儘快修正：`, ...lines.map(line => `・${line}`)].join('\n')
+  ]
+  if (pendingNote) blocks.push(pendingNote)
+  return ElMessageBox.confirm(blocks.join('\n\n'), `有 ${lines.length} 項排班規範提醒（不影響${actionLabel}）`, options)
+}
+
 async function confirmPublish() {
   if (publishDisabled.value) {
     callWarning('目前沒有可發布的班表')
     return
   }
-  const validation = await fetchScheduleRuleValidation({ showIssues: true, notify: true, announcePending: false })
-  if (!validation?.ok) return
+  // 預檢只用來在確認視窗列出問題，不另外跳出「檢核未通過」或「預檢已通過」的提示
+  const validation = await fetchScheduleRuleValidation({ showIssues: false, notify: true, announcePending: false })
+  if (scheduleRuleCheckDisposed) return
   try {
-    const pendingNote = pendingWeekConfirmNote(validation.pendingWeeks)
-    await ElMessageBox.confirm(`確認要將本月班表發送給員工確認嗎？${pendingNote ? `\n\n${pendingNote}` : ''}`, '批次發布', {
-      type: 'warning',
+    await confirmScheduleRelease(validation, {
+      title: '批次發布',
+      question: '確認要將本月班表發送給員工確認嗎？',
       confirmButtonText: '送出',
-      cancelButtonText: '取消'
+      type: 'warning',
+      forceButtonText: '仍要發布',
+      actionLabel: '發布'
     })
   } catch (err) {
     return
@@ -3165,14 +3260,16 @@ async function confirmFinalize() {
     callWarning('仍有員工尚未回覆，請確認後再完成發布')
     return
   }
-  const validation = await fetchScheduleRuleValidation({ showIssues: true, notify: true, announcePending: false })
-  if (!validation?.ok) return
+  const validation = await fetchScheduleRuleValidation({ showIssues: false, notify: true, announcePending: false })
+  if (scheduleRuleCheckDisposed) return
   try {
-    const pendingNote = pendingWeekConfirmNote(validation.pendingWeeks)
-    await ElMessageBox.confirm(`全部員工已確認，是否完成發布並鎖定班表？${pendingNote ? `\n\n${pendingNote}` : ''}`, '完成發布', {
-      type: 'success',
+    await confirmScheduleRelease(validation, {
+      title: '完成發布',
+      question: '全部員工已確認，是否完成發布並鎖定班表？',
       confirmButtonText: '完成',
-      cancelButtonText: '取消'
+      type: 'success',
+      forceButtonText: '仍要完成發布',
+      actionLabel: '完成發布'
     })
   } catch (err) {
     return

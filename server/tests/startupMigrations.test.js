@@ -267,3 +267,45 @@ describe('server startup: holiday calendar', () => {
     expect(indexSource.slice(0, indexSource.indexOf('async function start()'))).not.toMatch(/startHolidayCalendarWatcher\(/)
   })
 })
+
+// 調休存摺（2026-10）：索引、切換日、舊補假義務與補休時數的轉入，各只做一次；失敗只記錄錯誤名稱、不擋啟動
+describe('server startup: compensatory leave bank', () => {
+  it('imports the bank migrations, the two models and the routes, and mounts the routes before the API 404 handler', () => {
+    expect(indexSource).toContain("from './services/compensatoryLeaveService.js';")
+    expect(indexSource).toMatch(/ensureCompensatoryLeaveState,\n\s+migrateHolidayCompensationsToCredits,\n\s+migrateLegacyCompensatoryHours,/)
+    expect(indexSource).toMatch(/import CompensatoryCredit from '\.\/models\/CompensatoryCredit\.js';/)
+    expect(indexSource).toMatch(/import CompensatoryLeaveState from '\.\/models\/CompensatoryLeaveState\.js';/)
+    expect(indexSource).toMatch(/import compensatoryLeaveRoutes from '\.\/routes\/compensatoryLeaveRoutes\.js';/)
+    const mount = indexSource.indexOf("app.use('/api/compensatory-leave', authenticate, authorizeRoles('employee', 'supervisor', 'admin'), compensatoryLeaveRoutes);")
+    expect(mount).toBeGreaterThan(-1)
+    expect(mount).toBeLessThan(indexSource.indexOf("app.use('/api', apiNotFound);"))
+  })
+
+  it('runs after the holiday rest resolution indexes and before the admin bootstrap, inside its own try/catch that only logs the error name', () => {
+    const body = startBody()
+    const resolutions = body.indexOf('await HolidayRestResolution.createIndexes()')
+    const indexes = body.indexOf('await Promise.all([CompensatoryCredit.createIndexes(), CompensatoryLeaveState.createIndexes()])')
+    const state = body.indexOf('await ensureCompensatoryLeaveState()')
+    const compensations = body.indexOf('await migrateHolidayCompensationsToCredits()')
+    const hours = body.indexOf('await migrateLegacyCompensatoryHours()')
+    const admin = body.indexOf('await ensureAdminUser()')
+    expect(resolutions).toBeGreaterThan(-1)
+    expect(resolutions).toBeLessThan(indexes)
+    expect(indexes).toBeLessThan(state)
+    expect(state).toBeLessThan(compensations)
+    expect(compensations).toBeLessThan(hours)
+    expect(hours).toBeLessThan(admin)
+
+    const tryStart = body.lastIndexOf('try {', indexes)
+    const catchStart = body.indexOf('} catch (compLeaveError) {', hours)
+    expect(body.slice(tryStart, indexes)).not.toContain('}')
+    const handler = body.slice(catchStart, body.indexOf('}', catchStart + 30) + 1)
+    expect(handler).toContain("console.error('Failed to migrate compensatory leave bank', compLeaveError?.name ?? 'Error')")
+    expect(handler).not.toMatch(/process\.exit|throw /)
+    // 只記錄筆數與切換日，不記錄員工
+    const success = body.slice(indexes, catchStart)
+    expect(success).toContain('Migrated ${compensationMigration.checked} holiday compensations into compensatory leave credits')
+    expect(success).toContain('Moved compensatory hours of ${legacyHoursMigration.employees} employees into the compensatory leave bank')
+    expect(success).not.toMatch(/\.name\b|holidayName|employeeId/)
+  })
+})

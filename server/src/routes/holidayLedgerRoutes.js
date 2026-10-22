@@ -18,20 +18,21 @@ import { authorizeRoles } from '../middleware/auth.js';
 const router = Router();
 
 // 查詢開放給員工（只看得到自己）、主管（自己與直屬部屬）、管理員；
-// 匯出、登記與刪除處理方式、排定補假、個人調移只有主管與管理員，不論這個 router 掛在哪個路徑下。
+// 匯出、登記與刪除處理方式、重新計算、個人調移只有主管與管理員；HR 指定調休日、手動補登調休只有管理員，不論這個 router 掛在哪個路徑下。
 const managersOnly = authorizeRoles('supervisor', 'admin');
+const adminOnly = authorizeRoles('admin');
 
 router.get('/', getHolidayLedger);
 router.get('/export', managersOnly, exportHolidayLedger);
 router.post('/resolutions', managersOnly, saveHolidayLedgerResolution);
 router.delete('/resolutions/:id', managersOnly, deleteHolidayLedgerResolution);
 
-// 補假義務（國定假日落在休息日／例假）：年度清單、重新計算、手動新增、排定與取消
+// 國定假日的調休（國定假日落在休息日／例假，存入調休存摺）：年度清單、重新計算、手動補登、HR 指定調休日與取消
 router.get('/compensations', listHolidayLedgerCompensations);
 router.post('/compensations/sync', managersOnly, syncHolidayLedgerCompensations);
-router.post('/compensations', managersOnly, createHolidayLedgerCompensation);
-router.post('/compensations/:id/assign', managersOnly, assignHolidayLedgerCompensation);
-router.post('/compensations/:id/unassign', managersOnly, unassignHolidayLedgerCompensation);
+router.post('/compensations', adminOnly, createHolidayLedgerCompensation);
+router.post('/compensations/:id/assign', adminOnly, assignHolidayLedgerCompensation);
+router.post('/compensations/:id/unassign', adminOnly, unassignHolidayLedgerCompensation);
 
 // 個人調移（須有員工本人的同意紀錄）
 router.get('/swaps', listHolidayLedgerSwaps);

@@ -170,6 +170,41 @@ describe('LeaveOvertimeSetting 假別額度與餘額規則', () => {
     expect(JSON.parse(put.body).types.find(item => item.key === 'annual').enforcement).toBe('block')
   })
 
+  // 審查發現：調休改成調休存摺（comp_bank，不分年度、一律禁止超額、名稱固定、不能停用）後，這個畫面還寫「依員工的補休時數（人資維護）」，
+  // 名稱與超額開關也能改，存檔時伺服器照樣存回「調休／禁止」，重新整理後又變回來
+  it('shows 調休 as the system-kept bank: fixed name, no year, always blocking, cannot be disabled', async () => {
+    const comp = type({
+      key: 'comp', name: '調休', aliases: ['補休', '補假'], source: 'comp_bank', enforcement: 'block', period: 'none', display: 'when_used',
+      note: '調休存摺：國定假日適逢休息日／例假自動存入，人資可手動給予或扣除；超過可用時數不能送出',
+    })
+    const stored = { ...defaultPolicy(), types: [defaultPolicy().types[0], { ...comp, enforcement: 'warn' }, ...defaultPolicy().types.slice(1)] }
+    const calls = installFetch({ policy: stored })
+    const wrapper = await mountSetting()
+    const compRow = wrapper.findAll('[data-test="policy-table"] .el-table__body tr')[1]
+
+    expect(compRow.text()).toContain('依調休存摺（不分年度）')
+    expect(compRow.text()).toContain('不分年度')
+    expect(compRow.text()).not.toContain('人資維護')
+    expect(compRow.text()).not.toContain('每年')
+    expect(compRow.find('[data-test="comp-block-note"]').text()).toContain('一律無法送出')
+    expect(compRow.find('.el-input').classes()).toContain('is-disabled')
+    const [blockSwitch, enabledSwitch] = compRow.findAll('.el-switch')
+    expect(blockSwitch.classes()).toEqual(expect.arrayContaining(['is-checked', 'is-disabled']))
+    expect(enabledSwitch.classes()).toContain('is-disabled')
+    expect(wrapper.find('[data-test="leave-policy-card"]').text()).toContain('調休依調休存摺')
+    expect(wrapper.find('[data-test="leave-policy-card"]').text()).not.toContain('特休與補休依員工資料')
+
+    // 舊資料存成 warn 也顯示、儲存成 block；開關關不掉
+    const compType = wrapper.vm.policy.types[1]
+    expect(compType.enforcement).toBe('block')
+    wrapper.vm.setBlocking(compType, false)
+    expect(compType.enforcement).toBe('block')
+    expect(wrapper.vm.isBlocking(compType)).toBe(true)
+    await wrapper.find('[data-test="policy-save"]').trigger('click')
+    await flushPromises()
+    expect(JSON.parse(calls.find(call => call.method === 'PUT').body).types.find(item => item.key === 'comp')).toMatchObject({ name: '調休', enforcement: 'block', enabled: true })
+  })
+
   it('adds a custom type, restores the defaults without saving, and removing a type clears what counted against it', async () => {
     installFetch()
     const wrapper = await mountSetting()

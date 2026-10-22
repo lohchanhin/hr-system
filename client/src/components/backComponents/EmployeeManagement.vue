@@ -514,7 +514,7 @@
                           <el-option v-for="option in HOLIDAY_REGIME_OPTIONS" :key="option.value || 'default'"
                             :label="option.label" :value="option.value" />
                         </el-select>
-                        <div class="upload-tip">輪班：國定假日落在自己的休息日/例假時另排補假；行政：週一至週五上班，政府公告的補假日自動放假</div>
+                        <div class="upload-tip">輪班：國定假日落在自己的休息日/例假時存入調休；行政：週一至週五上班，國定假日落在週末時存入調休（政府補假日為建議調休日）</div>
                       </el-form-item>
                       <el-form-item label="原住民身分">
                         <el-switch v-model="employeeForm.isIndigenous" active-text="是" inactive-text="否"
@@ -1087,17 +1087,25 @@
                           placeholder="0" />
                         <span style="margin-left: 8px; color: #909399;">天</span>
                       </el-form-item>
-                      <el-form-item label="補休時數" prop="annualLeave.compensatoryHours">
-                        <el-input-number v-model="employeeForm.annualLeave.compensatoryHours" :min="0" :step="0.5"
-                          placeholder="0" />
-                        <span style="margin-left: 8px; color: #909399;">小時</span>
-                      </el-form-item>
                     </div>
                     <div class="form-row">
                       <el-form-item label="備註" class="full-width-item" prop="annualLeave.notes">
                         <el-input v-model="employeeForm.annualLeave.notes" type="textarea" :rows="2"
                           placeholder="請輸入特休相關備註" />
                       </el-form-item>
+                    </div>
+                    <!-- 調休存摺（取代以前人資手動填的「補休時數」）：國定假日適逢休息日／例假自動存入；管理員可手動給予、扣除、作廢 -->
+                    <div class="form-row" data-test="employee-comp-leave">
+                      <div class="full-width-item">
+                        <CompensatoryLeavePanel
+                          v-if="employeeDialogTab === 'salary' && isEditingEmployee && editingEmployeeId"
+                          :employee-id="editingEmployeeId"
+                          title="調休存摺"
+                          :can-manage="canManageCompLeave"
+                        />
+                        <el-alert v-else-if="!isEditingEmployee" type="info" :closable="false" show-icon
+                          title="員工建立後可在這裡查看調休存摺；國定假日適逢休息日／例假會自動存入調休，管理員也可以手動給予" />
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -1323,6 +1331,8 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { apiFetch, importEmployeesBulk } from '../../api'
 import { REQUIRED_FIELDS } from './requiredFields'
 import EmployeeAvatar from '../EmployeeAvatar.vue'
+import CompensatoryLeavePanel from '../CompensatoryLeavePanel.vue'
+import { resolveUserRole } from '../../utils/roleResolver'
 import { LEGACY_ANNUAL_LEAVE_DAYS_MAX, readAnnualLeaveHours } from '../../utils/leaveBalance'
 import { HOLIDAY_REGIME_OPTIONS } from '../../constants/holidayCalendar'
 import { useProfileStore } from '../../stores/profile'
@@ -3153,6 +3163,10 @@ const photoUploading = ref(false)
 const employeeSaving = ref(false)
 let editEmployeeIndex = null
 let editEmployeeId = ''
+// 編輯中的員工 _id（畫面用：調休存摺依它載入）
+const editingEmployeeId = ref('')
+// 只有管理員能手動給予、扣除、作廢調休（伺服器也只開放管理員）；讀登入者的角色不經過 pinia（這個元件不依賴 store 啟動）
+const canManageCompLeave = computed(() => editingEmployeeId.value !== '' && resolveUserRole({ defaultRole: 'employee' }) === 'admin')
 // 編輯視窗打開當下的特休「已使用時數」與已套用的簽核單編號（新增員工時為 null）
 let annualLeaveSnapshot = null
 // 員工照片的顯示（列表頭像、編輯視窗的縮圖）都交給 utils/photoUrl 的共用快取與 EmployeeAvatar；
@@ -5090,6 +5104,7 @@ async function openEmployeeDialog(employeeId = null) {
     editEmployeeIndex = index
     isEditingEmployee.value = true
     editEmployeeId = emp._id || ''
+    editingEmployeeId.value = editEmployeeId
     currentSupervisorInfo.value = emp.supervisorInfo ?? null
     // 以 emptyEmployee 為基底，可避免漏欄位
     employeeForm.value = { ...structuredClone(emptyEmployee), ...emp, password: '', photoList: [] }
@@ -5171,6 +5186,7 @@ async function openEmployeeDialog(employeeId = null) {
     editEmployeeIndex = null
     isEditingEmployee.value = false
     editEmployeeId = ''
+    editingEmployeeId.value = ''
     annualLeaveSnapshot = null
     currentSupervisorInfo.value = null
     employeeDialogTab.value = 'account'

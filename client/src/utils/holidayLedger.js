@@ -1,9 +1,15 @@
 // 國定假日休假紀錄（排班頁「國定假日休假」視窗）用的文字與狀態判斷。
 // 狀態值對應 server/src/services/holidayRestLedgerService.js：
-//   status：rested_on_date 當日休（implicit = 行政人員依行事曆放假）／moved 移休／compensated 已補假／not_taken 未休／na 不適用
+//   status：rested_on_date 當日休（implicit = 行政人員依行事曆放假）／moved 移休／compensated 已補償（存入調休、已調休、補假）／not_taken 未休／na 不適用
 //   reason（未休時假日當天的狀態）：worked／unscheduled／on_rest_day／on_regular_rest／on_leave／shared_date
-//   needsAction：null／schedule（班表還沒排完，請排國）／resolve（請登記處理方式）／assign_compensation（落在休息日／例假，請排補假）
-//   compensation：補假（{ date, via: gov_makeup 公務機關補假日／assigned 人資排定, conflict, conflictReason: trigger_gone／date_not_workday }）或待排的補假義務（{ id, status: open, suggestedDate }）
+//   needsAction：null／schedule（班表還沒排完，請排國）／resolve（請登記處理方式）／assign_compensation（落在休息日／例假，調休還沒存入）
+//   compensation（國定假日落在休息日／例假的補償）：
+//     { via: bank, compensationId, creditStatus: available／partial／used, hours, usedHours, suggestedDate }  已存入調休存摺（員工自己決定什麼時候用）
+//     { via: bank, compensationId, creditStatus: void, voidReason: manual }  人資作廢的調休（status 仍是 not_taken，已處理、不列入待處理）
+//     { via: comp_leave, date, compensationId }   員工以調休簽核休了整天（date）
+//     { via: hr_assigned（舊資料 assigned）, date, compensationId }  HR 指定的補假日
+//     { via: gov_makeup, date }   調休存摺上線前，行政人員依公務機關補假日放假
+//     conflict／conflictReason（trigger_gone／date_not_workday）：已用掉的調休，班表之後又改了，請人資確認（不會自動收回）
 //   resolutionConflict：已登記過處理方式，但班表之後又排了「國」（變成當日休或移休），要人確認
 
 export const RESOLUTION_OPTIONS = [
@@ -20,8 +26,11 @@ export const LEDGER_FILTERS = [
   { value: 'moved', label: '移休' },
   { value: 'open', label: '待處理' },
   { value: 'extra', label: '多排的國' },
-  { value: 'compensation', label: '待排補假' },
+  { value: 'compensation', label: '調休' },
 ]
+
+// 國定假日落在休息日／例假、已經有調休（存入、已用、HR 指定）的補償方式
+const BANK_VIAS = new Set(['bank', 'comp_leave', 'hr_assigned', 'assigned'])
 
 // 已登記處理方式、班表卻已經有「國」的格子要顯示的提醒
 export const LEDGER_CONFLICT_TEXT = '已登記處理但班表已有國，請確認'
@@ -102,18 +111,32 @@ export function describeLedgerCell(item) {
   return { ...cell, type: 'warning', tooltip: [cell.tooltip, LEDGER_CONFLICT_TEXT].filter(Boolean).join('；') }
 }
 
+/** 存入調休存摺、還沒有整天調休日的額度：「已存入調休」「已存入調休（已用 4 小時）」「調休已使用」 */
+export function describeBankCompensation(compensation) {
+  const used = Number(compensation?.usedHours) || 0
+  if (compensation?.creditStatus === 'used') return '調休已使用'
+  if (compensation?.creditStatus === 'expired') return '調休已過期'
+  return used > 0 ? `已存入調休（已用 ${used} 小時）` : '已存入調休'
+}
+
+// 有日期的補償：員工的調休是「調休 MM/DD」，HR 指定與政府補假日是「補假 MM/DD」
+function datedText(compensation) {
+  return `${compensation?.via === 'comp_leave' ? '調休' : '補假'} ${formatMonthDay(compensation?.date)}`
+}
+
 function describeBaseCell(item) {
   if (!item) return { text: '', type: 'info', tooltip: '' }
-  // 已排補假、班表之後又改了：補假不會自動取消，請人確認
-  if (item.compensation?.conflict && item.compensation?.date) {
+  // 已用掉的調休／補假、班表之後又改了：不會自動收回，請人資確認
+  if (item.compensation?.conflict && (item.compensation?.date || item.compensation?.via === 'bank')) {
     const date = formatMonthDay(item.compensation.date)
+    const text = item.compensation.date ? datedText(item.compensation) : describeBankCompensation(item.compensation)
     return {
-      text: `補假 ${date}（班表已變更，請確認）`,
+      text: `${text}（班表已變更，請確認）`,
       type: 'warning',
-      // date_not_workday：補假日之後被排成休息日／例假（行政人員：公司行事曆不是上班日），員工並沒有因此多休一天
+      // date_not_workday：調休日之後被排成休息日／例假（行政人員：公司行事曆不是上班日），員工並沒有因此多休一天
       tooltip: item.compensation.conflictReason === 'date_not_workday'
-        ? `補假日 ${date} 現在是休息日／例假（不是原本要上班的日子），員工並沒有因此多休一天，請改排其他上班日`
-        : '已排定補假，但這個國定假日現在已經不是落在休息日／例假（班表改過），請確認補假是否仍需要',
+        ? `調休日 ${date} 現在是休息日／例假（不是原本要上班的日子），員工並沒有因此多休一天，請改排其他上班日`
+        : '這筆調休已經使用，但這個國定假日現在已經不是落在休息日／例假（班表改過），系統不會自動收回，請人資確認是否扣除',
     }
   }
   if (item.status === 'rested_on_date' && item.implicit) {
@@ -123,14 +146,22 @@ function describeBaseCell(item) {
     return { text: '當日休', type: 'success', tooltip: `${formatMonthDay(item.guoDate)} 排了「國」` }
   }
   if (item.status === 'compensated') {
-    const government = item.compensation?.via === 'gov_makeup'
-    return {
-      text: `補假 ${formatMonthDay(item.compensation?.date)}${government ? '（公務機關補假日）' : ''}`,
-      type: 'success',
-      tooltip: government
-        ? '國定假日落在週末，行政人員依政府公告的補假日放假'
-        : '國定假日落在休息日／例假，已和員工協商另排補假',
+    const via = item.compensation?.via
+    if (via === 'bank') {
+      const suggested = item.compensation?.suggestedDate ? `；建議調休日 ${formatMonthDay(item.compensation.suggestedDate)}` : ''
+      return {
+        text: describeBankCompensation(item.compensation),
+        type: item.compensation?.creditStatus === 'used' ? 'info' : 'success',
+        tooltip: `國定假日落在休息日／例假，已存入員工的調休存摺，由員工發起調休簽核決定哪一天休${suggested}`,
+      }
     }
+    if (via === 'gov_makeup') {
+      return { text: `補假 ${formatMonthDay(item.compensation?.date)}（公務機關補假日）`, type: 'success', tooltip: '國定假日落在週末，行政人員依政府公告的補假日放假（調休存摺上線前）' }
+    }
+    if (via === 'comp_leave') {
+      return { text: datedText(item.compensation), type: 'success', tooltip: '國定假日落在休息日／例假，員工以調休簽核休了這一天' }
+    }
+    return { text: datedText(item.compensation), type: 'success', tooltip: '國定假日落在休息日／例假，HR 指定的補假日（已和員工協商）' }
   }
   if (item.status === 'moved') {
     const offset = Number(item.offsetDays)
@@ -149,12 +180,14 @@ function describeBaseCell(item) {
   if (item.resolution) {
     return { text: `未休·${describeResolution(item.resolution)}`, type: 'info', tooltip: '已登記處理方式' }
   }
+  if (item.compensation?.via === 'bank' && item.compensation.creditStatus === 'void') {
+    return { text: '調休已作廢', type: 'info', tooltip: '人資已作廢這筆調休（例如已改發加倍工資），不列入待處理；之後重新整理也不會再存入' }
+  }
   if (item.needsAction === 'assign_compensation') {
-    const suggested = item.compensation?.suggestedDate ? `；系統建議 ${formatMonthDay(item.compensation.suggestedDate)}` : ''
     return {
-      text: '待排補假',
-      type: 'danger',
-      tooltip: `國定假日剛好是${item.reason === 'on_regular_rest' ? '例假' : '休息日'}，依勞基法施行細則第 23-1 條要另排補假（日期由勞雇雙方協商）${suggested}`,
+      text: '待存入調休',
+      type: 'warning',
+      tooltip: `國定假日剛好是${item.reason === 'on_regular_rest' ? '例假' : '休息日'}，依勞基法施行細則第 23-1 條要另給補假：重新整理後系統會存入一筆調休，由員工自己決定什麼時候用`,
     }
   }
   if (item.needsAction === 'schedule') {
@@ -202,16 +235,21 @@ export function canShowResolveButton({ canResolve, role, viewerId, row, item } =
   return !(role === 'supervisor' && viewerId && row?.employeeId === viewerId)
 }
 
+/** HR 指定過日期的補償（可以修改、取消） */
+export function isHrAssigned(compensation) {
+  return (compensation?.via === 'hr_assigned' || compensation?.via === 'assigned') && Boolean(compensation?.compensationId)
+}
+
 /**
- * 這個儲存格要不要顯示「排定補假」按鈕：待排補假（需要有補假義務的 id）或已由人資排定的補假（可以修改、取消），
- * 權限規則和登記處理方式相同（主管不能處理自己）。
+ * 這個儲存格要不要顯示「HR 指定」按鈕：只有管理員（調休由員工自己發起簽核，HR 指定是管理員的動作）。
+ * 存入調休、還沒用過的額度可以指定日期；HR 指定過的可以修改、取消。
  */
-export function canShowCompensationButton({ canResolve, role, viewerId, row, item } = {}) {
-  if (!canResolve || !item) return false
-  const waiting = item.needsAction === 'assign_compensation' && Boolean(item.compensation?.id)
-  const assigned = item.compensation?.via === 'assigned' && Boolean(item.compensation?.compensationId)
-  if (!waiting && !assigned) return false
-  return !(role === 'supervisor' && viewerId && row?.employeeId === viewerId)
+export function canShowCompensationButton({ canResolve, role, item } = {}) {
+  if (!canResolve || role !== 'admin' || !item) return false
+  const compensation = item.compensation
+  const unused = compensation?.via === 'bank' && compensation.creditStatus === 'available'
+    && !(Number(compensation.usedHours) > 0) && Boolean(compensation.compensationId)
+  return unused || isHrAssigned(compensation)
 }
 
 /** 個人調移按鈕：要有權限，主管不能替自己登記 */
@@ -268,7 +306,7 @@ export function ledgerRowMatchesFilter(row, filter) {
     case 'extra':
       return (row.extraGuoDates || []).length > 0
     case 'compensation':
-      return (row.items || []).some((item) => item.needsAction === 'assign_compensation')
+      return (row.items || []).some((item) => item.needsAction === 'assign_compensation' || BANK_VIAS.has(item.compensation?.via))
     default:
       return true
   }

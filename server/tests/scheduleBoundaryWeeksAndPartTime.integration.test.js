@@ -258,7 +258,8 @@ describeIntegration('schedule rules (part-time exemption, month-edge weeks) agai
       expect(checked.body.pendingWeeks.map((item) => item.weekStart)).toEqual(['2026-07-27'])
     })
 
-    it('publish is not blocked by weeks that cannot be judged yet but reports them; a real violation still blocks', async () => {
+    // 客戶要求變更（「可以顯示規範，可是不要阻止發布」）：真的違規原本會擋發布（400、維持草稿），現在照樣發布、完成發布並回報違規
+    it('publish is not blocked by weeks that cannot be judged yet but reports them; a real violation is reported and does not block either', async () => {
       const department = newDepartment()
       const nurse = await addEmployee(department)
       const file = await workbookFor('2026-07', [{ employee: nurse, codes: monthCodes('2026-07') }])
@@ -269,6 +270,7 @@ describeIntegration('schedule rules (part-time exemption, month-edge weeks) agai
       expect(published.status).toBe(200)
       expect(published.body.updated).toBe(31)
       expect(published.body.pendingWeeks).toEqual([expect.objectContaining({ weekStart: '2026-07-27', employeeCode: nurse.employeeId })])
+      expect(published.body).not.toHaveProperty('violations')
       expect(await ShiftSchedule.countDocuments({ employee: nurse._id, state: 'pending_confirmation' })).toBe(31)
 
       // 全員確認後完成發布：同樣不被待判斷的週別擋住，也回報它們
@@ -278,15 +280,69 @@ describeIntegration('schedule rules (part-time exemption, month-edge weeks) agai
       expect(finalized.body.finalized).toBe(31)
       expect(finalized.body.pendingWeeks).toEqual([expect.objectContaining({ weekStart: '2026-07-27' })])
 
-      // 另一個部門：7/13 那週整週日班（沒有例也沒有休）→ 違規，發布被擋下，班表維持草稿
+      // 另一個部門：7/13 那週整週日班（沒有例也沒有休）→ 違規，但不擋發布：照樣發送員工確認，回應列出違規（含員工代號、姓名）
       const otherDepartment = newDepartment()
       const other = await addEmployee(otherDepartment)
       const broken = await workbookFor('2026-07', [{ employee: other, codes: monthCodes('2026-07', { 18: '日', 19: '日' }) }])
       await importWorkbook(broken, otherDepartment, '2026-07', 'commit')
-      const blocked = await post('/api/schedules/publish', { month: '2026-07', department: String(otherDepartment) })
-      expect(blocked.status).toBe(400)
-      expect(weeklyOf(blocked.body.violations)).toEqual([expect.objectContaining({ weekStart: '2026-07-13' })])
-      expect(await ShiftSchedule.countDocuments({ employee: other._id, state: 'draft' })).toBe(31)
+      const withViolation = await post('/api/schedules/publish', { month: '2026-07', department: String(otherDepartment) })
+      expect(withViolation.status).toBe(200)
+      expect(withViolation.body.updated).toBe(31)
+      expect(weeklyOf(withViolation.body.violations)).toEqual([expect.objectContaining({
+        weekStart: '2026-07-13',
+        employee: idOf(other),
+        employeeCode: other.employeeId,
+        employeeName: other.name,
+      })])
+      expect(await ShiftSchedule.countDocuments({ employee: other._id, state: 'pending_confirmation' })).toBe(31)
+
+      // 完成發布同樣不擋，照樣鎖定並再回報一次
+      await ShiftSchedule.updateMany({ employee: other._id }, { $set: { employeeResponse: 'confirmed' } })
+      const finalizedWithViolation = await post('/api/schedules/publish/finalize', { month: '2026-07', department: String(otherDepartment) })
+      expect(finalizedWithViolation.status).toBe(200)
+      expect(finalizedWithViolation.body.finalized).toBe(31)
+      expect(weeklyOf(finalizedWithViolation.body.violations)).toEqual([expect.objectContaining({ weekStart: '2026-07-13' })])
+      expect(await ShiftSchedule.countDocuments({ employee: other._id, state: 'finalized' })).toBe(31)
+    })
+
+    // 完成發布不被違規擋下之後：鎖定的月份按「排班檢核」仍要列出違規（含員工代號、姓名），不能回「已通過」
+    it('after finalizing despite a violation, the rule check of the locked month still lists it and names the employee', async () => {
+      const department = newDepartment()
+      const nurse = await addEmployee(department, { name: '王違規' })
+      const broken = await workbookFor('2026-07', [{ employee: nurse, codes: monthCodes('2026-07', { 18: '日', 19: '日' }) }])
+      await importWorkbook(broken, department, '2026-07', 'commit')
+
+      // 發布前的預檢：每項違規附上員工代號、姓名（確認視窗用這份結果，員工不在目前這一頁也看得到是誰）
+      const before = await validate(department, '2026-07')
+      expect(before.body.ok).toBe(false)
+      expect(before.body).not.toHaveProperty('finalized')
+      expect(before.body.violations.every((item) => item.employeeCode === nurse.employeeId && item.employeeName === '王違規')).toBe(true)
+      expect(weeklyOf(before.body.violations)).toEqual([expect.objectContaining({ weekStart: '2026-07-13', employee: idOf(nurse) })])
+
+      expect((await post('/api/schedules/publish', { month: '2026-07', department: String(department) })).status).toBe(200)
+      await ShiftSchedule.updateMany({ employee: nurse._id }, { $set: { employeeResponse: 'confirmed' } })
+      const finalized = await post('/api/schedules/publish/finalize', { month: '2026-07', department: String(department) })
+      expect(finalized.status).toBe(200)
+      expect(await ShiftSchedule.countDocuments({ employee: nurse._id, state: 'finalized', needsReconfirm: false })).toBe(31)
+
+      // 整個月都已鎖定：改檢核已鎖定的班表，結果和完成發布當下回報的一樣
+      const after = await validate(department, '2026-07')
+      expect(after.status).toBe(200)
+      expect(after.body).toEqual(expect.objectContaining({ ok: false, finalized: true }))
+      expect(after.body.count).toBe(finalized.body.violations.length)
+      expect(after.body.violations.map((item) => item.rule).sort()).toEqual(finalized.body.violations.map((item) => item.rule).sort())
+      expect(weeklyOf(after.body.violations)).toEqual([expect.objectContaining({
+        weekStart: '2026-07-13', employeeCode: nurse.employeeId, employeeName: '王違規',
+      })])
+      // 只檢核、不改：班表仍是鎖定的
+      expect(await ShiftSchedule.countDocuments({ employee: nurse._id, state: 'finalized' })).toBe(31)
+
+      // 鎖定之後又改了其中一格（變回待發布）：檢核範圍回到待發布的班表（和發布一致），回應不再標 finalized
+      const edited = await ShiftSchedule.findOne({ employee: nurse._id }).sort({ date: 1 })
+      await ShiftSchedule.updateOne({ _id: edited._id }, { $set: { state: 'draft', needsReconfirm: true } })
+      const reopened = await validate(department, '2026-07')
+      expect(reopened.body.ok).toBe(false)
+      expect(reopened.body).not.toHaveProperty('finalized')
     })
 
     it('a file with fewer day columns than the month says so instead of silently skipping the weekly check', async () => {
@@ -362,7 +418,8 @@ describeIntegration('schedule rules (part-time exemption, month-edge weeks) agai
       expect(preview.body.errors).toEqual([expect.objectContaining({ day: 3, code: 'ZZ' })])
     })
 
-    it('publish and finalize pass for a part-time-only scope and are blocked for the same rows of a full-time employee', async () => {
+    // 客戶要求變更：正職的同一份班表原本發布會被擋（400），現在照樣發布、只回報違規；兼職人員一樣完全沒有違規
+    it('publish and finalize pass for a part-time-only scope without any finding; the same rows of a full-time employee publish too but report the violations', async () => {
       const partDepartment = newDepartment()
       const fullDepartment = newDepartment()
       const partTime = await addEmployee(partDepartment, { partTime: true })
@@ -371,14 +428,17 @@ describeIntegration('schedule rules (part-time exemption, month-edge weeks) agai
       await importWorkbook(await workbookFor('2026-07', [{ employee: partTime, codes }]), partDepartment, '2026-07', 'commit')
       await importWorkbook(await workbookFor('2026-07', [{ employee: fullTime, codes }]), fullDepartment, '2026-07', 'commit')
 
-      const blocked = await post('/api/schedules/publish', { month: '2026-07', department: String(fullDepartment) })
-      expect(blocked.status).toBe(400)
-      expect(blocked.body.violations.length).toBeGreaterThan(0)
-      expect(await ShiftSchedule.countDocuments({ employee: fullTime._id, state: 'draft' })).toBe(31)
+      const fullPublished = await post('/api/schedules/publish', { month: '2026-07', department: String(fullDepartment) })
+      expect(fullPublished.status).toBe(200)
+      expect(fullPublished.body.updated).toBe(31)
+      expect(fullPublished.body.violations.length).toBeGreaterThan(0)
+      expect(fullPublished.body.violations.every((item) => item.employee === idOf(fullTime))).toBe(true)
+      expect(await ShiftSchedule.countDocuments({ employee: fullTime._id, state: 'pending_confirmation' })).toBe(31)
 
       const published = await post('/api/schedules/publish', { month: '2026-07', department: String(partDepartment) })
       expect(published.status).toBe(200)
       expect(published.body.updated).toBe(31)
+      expect(published.body).not.toHaveProperty('violations')
 
       await ShiftSchedule.updateMany({ employee: partTime._id }, { $set: { employeeResponse: 'confirmed' } })
       const finalized = await post('/api/schedules/publish/finalize', { month: '2026-07', department: String(partDepartment) })
