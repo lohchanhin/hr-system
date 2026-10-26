@@ -59,14 +59,14 @@
       </el-table-column>
       <el-table-column label="已使用" min-width="120">
         <template #default="{ row }">
-          {{ hoursText(row.usedHours) }}
+          {{ rowHoursText(row, row.usedHours) }}
           <!-- 已使用只含已核准的：併入的子假別（家庭照顧假…）簽核中的部分放在「簽核中」那一欄，不然會被當成已使用的一部分 -->
           <div v-for="part in approvedIncludes(row)" :key="part.key" class="row-note" data-test="leave-balance-includes">含{{ part.name }} {{ hoursText(part.hours) }}</div>
         </template>
       </el-table-column>
       <el-table-column v-if="!compact" label="簽核中" min-width="90">
         <template #default="{ row }">
-          {{ row.pendingHours > 0 ? hoursText(row.pendingHours) : '—' }}
+          {{ row.pendingHours > 0 ? rowHoursText(row, row.pendingHours) : '—' }}
           <div v-for="part in pendingIncludes(row)" :key="part.key" class="row-note" data-test="leave-balance-includes-pending">含{{ part.name }} {{ hoursText(part.hours) }}</div>
         </template>
       </el-table-column>
@@ -105,7 +105,7 @@
     </ul>
 
     <p v-if="data" class="panel-footer">
-      1 天 = {{ data.dayHours || 8 }} 小時；統計期間 {{ rangeText }}；特休依員工資料，調休依調休存摺（不分年度），其餘假別依法定額度（人資可調整）
+      1 天 = {{ data.dayHours || 8 }} 小時；統計期間 {{ rangeText }}；特休依員工資料，調休（移休）依調休存摺（不分年度），其餘假別依法定額度（人資可調整）
     </p>
   </div>
 </template>
@@ -117,6 +117,7 @@ import CompensatoryLeavePanel from './CompensatoryLeavePanel.vue'
 import {
   STATUS_LABELS,
   describeOver,
+  formatBankHours,
   formatDaysAndHours,
   formatHours,
   formatHoursWithDays,
@@ -155,8 +156,8 @@ const compensatory = computed(() => (isObject(data.value?.compensatory) && Array
 const thisRequestText = computed(() => {
   const used = compensatory.value?.thisRequest
   if (!isObject(used) || !(Number(used.hours) > 0)) return ''
-  const parts = (used.credits || []).map(part => `${part.sourceText} ${formatHours(part.hours)}`).join('、')
-  return `這張單已扣用調休 ${formatHours(used.hours)}${parts ? `：${parts}` : ''}`
+  const parts = (used.credits || []).map(part => `${part.sourceText} ${formatBankHours(part.hours)}`).join('、')
+  return `這張單已扣用調休 ${formatBankHours(used.hours)}${parts ? `：${parts}` : ''}`
 })
 
 const rows = computed(() => (data.value?.items || []).map(item => ({
@@ -173,10 +174,12 @@ const rangeText = computed(() => {
 })
 
 const hoursText = (hours) => formatHoursWithDays(hours)
+// 調休存摺（移休，以天計）的那一列：天數用小數（4 小時 = 0.5 天），其他假別維持「N 天 M 小時」
+const rowHoursText = (row, hours) => (row?.source === 'bank' ? formatBankHours(hours) : formatHoursWithDays(hours))
 
 function quotaText(row) {
   // 調休存摺不是年度額度：顯示累計取得的時數
-  if (row.source === 'bank') return `累計取得 ${formatHoursWithDays(row.quotaHours || 0)}`
+  if (row.source === 'bank') return `累計取得 ${formatBankHours(row.quotaHours || 0)}`
   if (row.period === 'event') return row.quotaHours == null ? '不設上限' : `每次上限 ${formatHours(row.quotaHours)}`
   if (row.quotaHours == null) return '不設上限'
   return formatHoursWithDays(row.quotaHours)
@@ -184,8 +187,8 @@ function quotaText(row) {
 
 function remainingText(row) {
   if (row.period === 'event' || row.remainingHours == null) return '—'
-  if (row.remainingHours < 0) return formatHoursWithDays(0)
-  return formatHoursWithDays(row.remainingHours)
+  if (row.remainingHours < 0) return rowHoursText(row, 0)
+  return rowHoursText(row, row.remainingHours)
 }
 
 // 併入這個假別的子假別（含家庭照顧假 N 小時）：已核准與簽核中分開帶（approvedHours / pendingHours）；

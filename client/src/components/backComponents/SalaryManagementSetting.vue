@@ -467,16 +467,19 @@
                     <el-table :data="employeeDetailData.dailyDetails" border size="small" max-height="300">
                       <el-table-column prop="date" label="日期" width="120" />
                       <el-table-column prop="shiftName" label="班別" width="120" />
+                      <!-- 線上打卡與指紋匯入一起比對：上班取最早、下班取最晚，下方小字是該筆打卡的來源 -->
                       <el-table-column label="上班時間" width="100" align="center">
                         <template #default="{ row }">
                           <span v-if="row.clockInTime">{{ formatTime(row.clockInTime) }}</span>
                           <span v-else style="color: #999">-</span>
+                          <div v-if="row.clockInTime && row.clockInSource" class="punch-source">{{ attendanceSourceLabel(row.clockInSource) }}</div>
                         </template>
                       </el-table-column>
                       <el-table-column label="下班時間" width="100" align="center">
                         <template #default="{ row }">
                           <span v-if="row.clockOutTime">{{ formatTime(row.clockOutTime) }}</span>
                           <span v-else style="color: #999">-</span>
+                          <div v-if="row.clockOutTime && row.clockOutSource" class="punch-source">{{ attendanceSourceLabel(row.clockOutSource) }}</div>
                         </template>
                       </el-table-column>
                       <el-table-column prop="scheduledHours" label="排班時數" width="100" align="right">
@@ -1102,6 +1105,7 @@
 import { ref, onMounted, onBeforeUnmount, computed, reactive } from 'vue'
 import { apiFetch } from '../../api'
 import { formatDate } from '../../utils/dateFormatter'
+import { attendanceSourceLabel } from '../../utils/attendanceSource'
 import { ElMessage } from 'element-plus'
 import EmployeeAvatar from '../EmployeeAvatar.vue'
 import { 
@@ -1887,6 +1891,13 @@ const showExplanationDialog = ref(false)
   <style scoped>
   .salary-management-setting {
     padding: 20px;
+  }
+
+  /* 每日出勤明細：打卡來源（線上 / 指紋匯入） */
+  .punch-source {
+    font-size: 12px;
+    color: #909399;
+    line-height: 1.2;
   }
   
   .tab-content {

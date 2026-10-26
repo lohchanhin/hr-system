@@ -9,6 +9,8 @@ import {
   createManualCredit,
   voidCredit,
 } from '../services/compensatoryLeaveService.js';
+// 存摺備註用命名空間取用：別的測試把 compensatoryLeaveService 換成只有部分函式的替身時，這裡不會因為缺少匯出而載入失敗
+import * as bankService from '../services/compensatoryLeaveService.js';
 import { computeCompLeavePendingHours } from '../services/leaveBalanceService.js';
 import { getLeavePolicy } from '../services/leavePolicyService.js';
 import { getAllowedScheduleEmployeeIds, toEntityId } from './schedule/scheduleShared.js';
@@ -33,13 +35,12 @@ function parseEmployeeId(value) {
 }
 
 /*
- * 誰可以看某位員工的調休存摺：本人、管理員、該員工的主管（排班範圍內的直屬部屬，與排班頁同一個範圍）。
+ * 誰可以看某位員工的調休存摺：本人、管理員、排班範圍內的人（主管的直屬部屬、排班人員被指定小單位的員工，與排班頁同一個範圍）。
  * 其他人一律 404（與查不到相同，不洩漏員工是否存在）。
  */
 async function canReadBank(req, actorId, targetId) {
   if (actorId === targetId) return true;
   if (req.user?.role === 'admin') return true;
-  if (req.user?.role !== 'supervisor') return false;
   const allowedIds = await getAllowedScheduleEmployeeIds(req);
   return allowedIds === null || allowedIds.includes(targetId);
 }
@@ -47,7 +48,10 @@ async function canReadBank(req, actorId, targetId) {
 async function bankOf(employeeId) {
   const policy = await getLeavePolicy();
   const pendingHours = await computeCompLeavePendingHours({ employeeId, policy });
-  return buildCompensatoryBank({ employeeId, pendingHours, policy });
+  const bank = await buildCompensatoryBank({ employeeId, pendingHours, policy });
+  // 管理員在員工管理填的存摺備註（看得到存摺的人都看得到；員工唯讀）
+  if (typeof bankService.getEmployeeBankNote !== 'function') return bank;
+  return { ...bank, note: await bankService.getEmployeeBankNote(employeeId) };
 }
 
 /** GET /api/compensatory-leave/mine - 我的調休 */
@@ -124,10 +128,27 @@ export async function voidCompensatoryCredit(req, res) {
   }
 }
 
+/** PUT /api/compensatory-leave/note { employeeId, note } - 管理員填寫（或清除）員工存摺的備註，員工在「我的調休」唯讀看得到 */
+export async function updateCompensatoryNote(req, res) {
+  try {
+    if (typeof bankService.saveEmployeeBankNote !== 'function') throw new Error('bank note unavailable');
+    const body = req.body || {};
+    const note = await bankService.saveEmployeeBankNote({
+      employeeId: body.employeeId,
+      note: body.note,
+      actorId: toEntityId(req.user?.id) || null,
+    });
+    return res.json(note);
+  } catch (error) {
+    return respondError(res, error, 'note');
+  }
+}
+
 export default {
   getMyCompensatoryLeave,
   getEmployeeCompensatoryLeave,
   createCompensatoryCredit,
   createCompensatoryAdjustment,
   voidCompensatoryCredit,
+  updateCompensatoryNote,
 };

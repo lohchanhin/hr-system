@@ -67,7 +67,12 @@ const subDepartmentSchema = new mongoose.Schema({
   manager: { type: String, trim: true, maxlength: 120 },
   headcount: { type: Number, min: 0 },
   shift: { type: mongoose.Schema.Types.ObjectId, ref: 'Shift' },
-  scheduleSetting: { type: String, trim: true }
+  scheduleSetting: { type: String, trim: true },
+  // 排班人員：可以排這個小單位班表的員工（任何角色都可以，不受組織架構限制）；
+  // 主管欄位仍只作為簽核使用。舊資料沒有這個欄位，讀到時視為沒有指定
+  schedulers: { type: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Employee' }], default: [] },
+  // 使用班別：這個小單位排班時可用的班別（班別設定 AttendanceSetting.shifts 的 _id 字串）；空陣列代表全部班別
+  allowedShiftIds: { type: [{ type: String, trim: true }], default: [] }
 }, { timestamps: true });
 
 export default mongoose.model('SubDepartment', subDepartmentSchema);

@@ -5,6 +5,7 @@ import { ipKeyGenerator, rateLimit } from 'express-rate-limit'
 import Employee from '../models/Employee.js'
 import { blacklistToken } from '../utils/tokenBlacklist.js'
 import { authenticate } from '../middleware/auth.js'
+import { getScheduleAccessSummary } from '../services/scheduleAccessService.js'
 
 const router = Router();
 const JWT_OPTIONS = {
@@ -100,6 +101,30 @@ function buildUserProfile(employee) {
   }
 }
 
+// 排班權限（前台用來決定要不要顯示排班頁與選單）：被指定為排班人員的員工任何角色都能排班。
+// 讀不到時回傳 null 不附上，前台退回依角色判斷；各排班 API 仍會再檢查
+async function buildScheduleAccessProfile(employee) {
+  try {
+    const access = await getScheduleAccessSummary({ id: employee?._id ?? employee?.id, role: employee?.role })
+    return {
+      canSchedule: access.canSchedule,
+      supervisorScope: access.supervisorScope,
+      subDepartmentIds: access.subDepartmentIds,
+      departmentIds: access.departmentIds,
+      wholeDepartmentIds: access.wholeDepartmentIds,
+    }
+  } catch (error) {
+    console.error('Failed to resolve schedule access for profile', { error: error?.name ?? 'Error' })
+    return null
+  }
+}
+
+async function withScheduleAccess(profile, employee) {
+  if (!profile) return profile
+  const scheduleAccess = await buildScheduleAccessProfile(employee)
+  return scheduleAccess ? { ...profile, scheduleAccess } : profile
+}
+
 router.post('/login', loginIpRateLimiter, loginAccountRateLimiter, async (req, res) => {
   try {
     const { username, password, role } = req.body ?? {}
@@ -135,7 +160,7 @@ router.post('/login', loginIpRateLimiter, loginAccountRateLimiter, async (req, r
       }
     }
 
-    const profile = buildUserProfile(employee)
+    const profile = await withScheduleAccess(buildUserProfile(employee), employee)
     const employeeId = employee._id?.toString?.() ?? String(employee._id)
     const token = jwt.sign(
       {
@@ -239,7 +264,7 @@ router.get('/profile', authenticate, async (req, res) => {
       }
     }
 
-    const profile = buildUserProfile(employee)
+    const profile = await withScheduleAccess(buildUserProfile(employee), employee)
     res.json(profile)
   } catch (error) {
     if (error?.name === 'CastError') {

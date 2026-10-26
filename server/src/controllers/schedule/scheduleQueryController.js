@@ -10,6 +10,10 @@ import { buildLiteralSearchRegex } from '../../utils/safeSearch.js';
 import { dateKeyToUtcMidnight, toTaipeiDateKey } from '../../utils/taipeiTime.js';
 import { candidateSelectKeys, pickFieldValue, resolveCandidateIds } from '../../utils/fieldCandidates.js';
 import {
+  getScheduleAccessSummaryForRequest,
+  schedulerEmployeeFilters,
+} from '../../services/scheduleAccessService.js';
+import {
   toEntityId,
   getAllowedScheduleEmployeeIds,
   attachShiftInfo,
@@ -92,15 +96,8 @@ export async function listMonthlySchedules(req, res) {
     if (!actorId) return res.status(401).json({ error: 'Invalid user' });
 
     let scopedIds = null;
-    if (actorRole === 'employee') {
-      if ((employee && toEntityId(employee) !== actorId) || (supervisor && toEntityId(supervisor) !== actorId)) {
-        return res.status(403).json({ error: 'forbidden' });
-      }
-      if (parsedEmployeeIds.some((id) => id !== actorId)) {
-        return res.status(403).json({ error: 'forbidden' });
-      }
-      scopedIds = [actorId];
-    } else if (actorRole === 'supervisor') {
+    if (actorRole === 'employee' || actorRole === 'supervisor') {
+      // 員工只看得到自己；主管再加上直屬部屬，排班人員再加上被指定小單位的員工（範圍由 getAllowedScheduleEmployeeIds 決定）
       if (supervisor && toEntityId(supervisor) !== actorId) {
         return res.status(403).json({ error: 'forbidden' });
       }
@@ -115,8 +112,10 @@ export async function listMonthlySchedules(req, res) {
         scopedIds = [toEntityId(employee)];
       } else if (parsedEmployeeIds.length > 0) {
         scopedIds = parsedEmployeeIds;
-      } else {
+      } else if (actorRole === 'supervisor') {
         scopedIds = includeSelf ? allowedIds : allowedIds.filter((id) => id !== actorId);
+      } else {
+        scopedIds = allowedIds;
       }
     } else if (supervisor) {
       const emps = await Employee.find({ supervisor }).select('_id');
@@ -537,10 +536,27 @@ export async function listSupervisorSummary(req, res) {
     const end = new Date(start);
     end.setUTCMonth(end.getUTCMonth() + 1);
 
-    // 1️⃣ 先抓所有「直屬部屬」
-    const employees = await Employee.find({ supervisor })
-      .select('_id name')
-      .lean();
+    // 1️⃣ 先抓所有「直屬部屬」（主管範圍；排班權限模式切開主管時就沒有），
+    // 再加上排班人員被指定小單位的員工（不含自己，自己由 includeSelf 決定）
+    const access = await getScheduleAccessSummaryForRequest(req);
+    const employees = access?.supervisorScope
+      ? await Employee.find({ supervisor })
+        .select('_id name')
+        .lean()
+      : [];
+    const unitFilters = schedulerEmployeeFilters(access);
+    if (unitFilters.length) {
+      const listedIds = new Set(employees.map((e) => toEntityId(e._id)));
+      const unitEmployees = await Employee.find(unitFilters.length === 1 ? unitFilters[0] : { $or: unitFilters })
+        .select('_id name')
+        .lean();
+      (unitEmployees || []).forEach((e) => {
+        const key = toEntityId(e._id);
+        if (key === String(supervisor) || listedIds.has(key)) return;
+        listedIds.add(key);
+        employees.push(e);
+      });
+    }
 
     const summaryMap = {};
     const ids = [];

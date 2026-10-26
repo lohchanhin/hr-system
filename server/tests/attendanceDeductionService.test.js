@@ -147,6 +147,49 @@ describe('attendance deduction service', () => {
     await expect(calculateLateEarlyCount('employee1', '2026-13')).rejects.toThrow('Invalid month format')
     expect(mockAttendanceRecord.find).not.toHaveBeenCalled()
   })
+
+  // 月初第一天台灣 07:55 的指紋簽到在 UTC 是前一天：要多讀前一天的打卡，否則只剩 08:10 的線上簽到而誤算遲到
+  it('loads punches from the day before the month so an early fingerprint punch on the 1st counts', async () => {
+    const lean = (value) => ({ lean: jest.fn().mockResolvedValue(value) })
+    mockAttendanceSetting.findOne.mockReturnValue(lean({
+      shifts: [{ _id: 'day', code: 'D', name: 'Day', startTime: '08:00', endTime: '17:00' }],
+      abnormalRules: { lateGrace: 0, earlyLeaveGrace: 0 },
+    }))
+    mockShiftSchedule.find.mockReturnValue(lean([
+      { _id: 'schedule-1101', shiftId: 'day', date: new Date('2026-11-01T00:00:00.000Z') },
+    ]))
+    mockAttendanceRecord.find.mockReturnValue(lean([
+      { action: 'clockIn', timestamp: new Date('2026-10-31T23:55:00.000Z'), source: 'import' },
+      { action: 'clockIn', timestamp: new Date('2026-11-01T00:10:00.000Z'), source: 'online' },
+    ]))
+
+    const result = await calculateLateEarlyCount('employee1', '2026-11')
+
+    expect(mockAttendanceRecord.find).toHaveBeenCalledWith({
+      employee: 'employee1',
+      timestamp: { $gte: new Date('2026-10-31T00:00:00.000Z'), $lt: new Date('2026-12-02T00:00:00.000Z') },
+      action: { $in: ['clockIn', 'clockOut'] },
+    })
+    expect(result.lateCount).toBe(0)
+  })
+
+  it('does not ignore an imported clock-in that is earlier than the online clock-in carrying the punchKey', async () => {
+    const context = buildContext({
+      shift: { _id: 'shift1', code: 'D', name: 'Day', startTime: '09:00', endTime: '17:00', crossDay: false },
+      schedule: { _id: 'schedule1', shiftId: 'shift1', date: new Date('2026-09-10T00:00:00.000Z') },
+      records: [
+        { action: 'clockIn', timestamp: new Date('2026-09-10T01:11:00.000Z'), punchKey: 'employee1:schedule1:clockIn', source: 'online' },
+        { action: 'clockIn', timestamp: new Date('2026-09-10T00:58:00.000Z'), source: 'import' },
+        { action: 'clockOut', timestamp: new Date('2026-09-10T08:50:00.000Z'), punchKey: 'employee1:schedule1:clockOut', source: 'online' },
+        { action: 'clockOut', timestamp: new Date('2026-09-10T09:02:00.000Z'), source: 'import' },
+      ],
+    })
+
+    const result = await calculateLateEarlyCount('employee1', '2026-09', context)
+
+    expect(result.lateCount).toBe(0)
+    expect(result.earlyLeaveCount).toBe(0)
+  })
 })
 
 // 核准的請假中不算遲到或早退。日班 09:00-17:00（台灣時間）= UTC 01:00-09:00

@@ -8,6 +8,7 @@ import FormTemplate from '../models/form_template.js';
 import FormField from '../models/form_field.js';
 import { getAllLeaveFieldInfos } from './leaveFieldService.js';
 import { isNonWorkShift } from './shiftSemanticService.js';
+import { formatLocalTime, groupPunchesByEmployee, matchShiftPunches } from './attendancePunchService.js';
 import { ANNUAL_LEAVE_TYPES, WORK_HOURS_CONFIG } from '../config/salaryConfig.js';
 import { toTaipeiDateKey, toTaipeiParts } from '../utils/taipeiTime.js';
 import { normalizeLeaveFieldLabel } from '../utils/leaveFieldLabels.js';
@@ -280,7 +281,25 @@ async function buildAttendanceSettingContext() {
     lateGrace = Number(setting.abnormalRules?.lateGrace ?? 0) || 0;
     earlyGrace = Number(setting.abnormalRules?.earlyLeaveGrace ?? 0) || 0;
   }
-  return { shiftMap, lateGrace, earlyGrace };
+  return { shiftMap, lateGrace, earlyGrace, actionBuffers: setting?.actionBuffers };
+}
+
+// 依這一班的簽到、簽退時段（台灣時間，與線上打卡、薪資的遲到早退判斷相同）找打卡，線上打卡與指紋匯入一起看：
+// 簽到取最早、簽退取最晚（services/attendancePunchService.js）。沒有帶 punchesByEmployee 的呼叫端回傳 null，沿用依日期比對
+function matchSchedulePunches({ punchesByEmployee, actionBuffers }, employeeId, schedule, shift) {
+  if (!punchesByEmployee) return null;
+  return matchShiftPunches({
+    records: punchesByEmployee.get(employeeId) ?? [],
+    scheduleDate: schedule.date,
+    shift,
+    actionBuffers,
+  });
+}
+
+// 與薪資的遲到早退計算（attendanceDeductionService）相同，不足一分鐘不計
+function wholeMinutesBetween(start, end) {
+  const diff = new Date(end).getTime() - new Date(start).getTime();
+  return Number.isFinite(diff) ? Math.floor(diff / 60000) : 0;
 }
 
 function computeShiftTimes(date, shift) {
@@ -334,6 +353,9 @@ function buildEmployeeMap(employees) {
 }
 
 async function loadAttendanceData({ employeeIds, start, end }) {
+  // 打卡多讀前後各一天：月初第一天台灣時間 08:00 以前的打卡在 UTC 是前一天，月底跨日班的下班打卡在下個月
+  const recordRangeStart = new Date(start);
+  recordRangeStart.setUTCDate(recordRangeStart.getUTCDate() - 1);
   const recordRangeEnd = new Date(end);
   recordRangeEnd.setUTCDate(recordRangeEnd.getUTCDate() + 1);
   const [schedules, attendanceRecords] = await Promise.all([
@@ -345,7 +367,7 @@ async function loadAttendanceData({ employeeIds, start, end }) {
       .exec(),
     AttendanceRecord.find({
       employee: { $in: employeeIds },
-      timestamp: { $gte: start, $lt: recordRangeEnd },
+      timestamp: { $gte: recordRangeStart, $lt: recordRangeEnd },
       action: { $in: ['clockIn', 'clockOut'] },
     })
       .lean()
@@ -354,7 +376,7 @@ async function loadAttendanceData({ employeeIds, start, end }) {
   return { schedules, attendanceRecords };
 }
 
-function buildAttendanceSummary({ employees, schedules, recordMap, shiftMap }) {
+function buildAttendanceSummary({ employees, schedules, recordMap, shiftMap, punchesByEmployee, actionBuffers }) {
   const employeeMap = buildEmployeeMap(employees);
   const summary = { scheduled: 0, attended: 0, absent: 0 };
   const results = [];
@@ -376,7 +398,8 @@ function buildAttendanceSummary({ employees, schedules, recordMap, shiftMap }) {
     record.scheduled += 1;
     const dateKey = buildDateKey(schedule.date);
     const entry = recordMap.get(`${employeeId}::${dateKey}`);
-    if (entry && entry.clockIns.length) {
+    const punches = matchSchedulePunches({ punchesByEmployee, actionBuffers }, employeeId, schedule, shift);
+    if (punches?.clockIn || (entry && entry.clockIns.length)) {
       record.attended += 1;
     }
   });
@@ -395,7 +418,7 @@ function buildAttendanceSummary({ employees, schedules, recordMap, shiftMap }) {
   return { records: results, summary };
 }
 
-function buildTardinessSummary({ schedules, recordMap, shiftMap, employees, lateGrace }) {
+function buildTardinessSummary({ schedules, recordMap, shiftMap, employees, lateGrace, punchesByEmployee, actionBuffers }) {
   const summary = { totalLateCount: 0, totalLateMinutes: 0, averageLateMinutes: 0 };
   const employeeMap = buildEmployeeMap(employees);
   const records = [];
@@ -407,6 +430,25 @@ function buildTardinessSummary({ schedules, recordMap, shiftMap, employees, late
     const dateKey = buildDateKey(schedule.date);
     const shift = shiftMap.get(normalizeId(schedule.shiftId));
     if (!shift || isNonWorkShift(shift)) return;
+    if (punchesByEmployee) {
+      // 依簽到時段內最早的打卡（線上或指紋）判斷，與薪資的遲到扣款一致
+      const punches = matchSchedulePunches({ punchesByEmployee, actionBuffers }, employeeId, schedule, shift);
+      if (!punches?.clockIn) return;
+      const clockIn = new Date(punches.clockIn.timestamp);
+      const lateMinutes = Math.max(wholeMinutesBetween(punches.span.start, clockIn) - lateGrace, 0);
+      if (lateMinutes <= 0) return;
+      summary.totalLateCount += 1;
+      summary.totalLateMinutes += lateMinutes;
+      records.push({
+        employee: employeeId,
+        name: employee.name ?? '',
+        date: dateKey,
+        scheduledStart: formatLocalTime(punches.span.start),
+        actualClockIn: formatLocalTime(clockIn),
+        minutesLate: lateMinutes,
+      });
+      return;
+    }
     const { start } = computeShiftTimes(schedule.date, shift);
     const dayRecord = recordMap.get(`${employeeId}::${dateKey}`);
     if (!dayRecord || !dayRecord.clockIns.length) return;
@@ -432,7 +474,7 @@ function buildTardinessSummary({ schedules, recordMap, shiftMap, employees, late
   return { summary, records };
 }
 
-function buildEarlyLeaveSummary({ schedules, recordMap, shiftMap, employees, earlyGrace }) {
+function buildEarlyLeaveSummary({ schedules, recordMap, shiftMap, employees, earlyGrace, punchesByEmployee, actionBuffers }) {
   const summary = { totalEarlyLeaveCount: 0, totalEarlyMinutes: 0, averageEarlyMinutes: 0 };
   const employeeMap = buildEmployeeMap(employees);
   const records = [];
@@ -444,6 +486,25 @@ function buildEarlyLeaveSummary({ schedules, recordMap, shiftMap, employees, ear
     const dateKey = buildDateKey(schedule.date);
     const shift = shiftMap.get(normalizeId(schedule.shiftId));
     if (!shift || isNonWorkShift(shift)) return;
+    if (punchesByEmployee) {
+      // 依簽退時段內最晚的打卡（線上或指紋）判斷，與薪資的早退扣款一致
+      const punches = matchSchedulePunches({ punchesByEmployee, actionBuffers }, employeeId, schedule, shift);
+      if (!punches?.clockOut) return;
+      const clockOut = new Date(punches.clockOut.timestamp);
+      const earlyMinutes = Math.max(wholeMinutesBetween(clockOut, punches.span.end) - earlyGrace, 0);
+      if (earlyMinutes <= 0) return;
+      summary.totalEarlyLeaveCount += 1;
+      summary.totalEarlyMinutes += earlyMinutes;
+      records.push({
+        employee: employeeId,
+        name: employee.name ?? '',
+        date: dateKey,
+        scheduledEnd: formatLocalTime(punches.span.end),
+        actualClockOut: formatLocalTime(clockOut),
+        minutesEarly: earlyMinutes,
+      });
+      return;
+    }
     const { start, end } = computeShiftTimes(schedule.date, shift);
     const dayRecord = recordMap.get(`${employeeId}::${dateKey}`);
     const clockOuts = [...(dayRecord?.clockOuts ?? [])];
@@ -478,7 +539,7 @@ function buildEarlyLeaveSummary({ schedules, recordMap, shiftMap, employees, ear
   return { summary, records };
 }
 
-function buildWorkHoursSummary({ schedules, recordMap, shiftMap, employees }) {
+function buildWorkHoursSummary({ schedules, recordMap, shiftMap, employees, punchesByEmployee, actionBuffers }) {
   const employeeMap = buildEmployeeMap(employees);
   const records = [];
   let totalScheduledMinutes = 0;
@@ -496,14 +557,16 @@ function buildWorkHoursSummary({ schedules, recordMap, shiftMap, employees }) {
     const scheduledMinutes = Math.max(minutesBetween(start, end) - breakMinutes, 0);
     const dayRecord = recordMap.get(`${employeeId}::${dateKey}`);
     let workedMinutes = 0;
+    // 先依班別時段找打卡（線上與指紋一起看，簽到取最早、簽退取最晚），時段內找不到才沿用下面依日期比對
+    const punches = matchSchedulePunches({ punchesByEmployee, actionBuffers }, employeeId, schedule, shift);
     
     // For cross-day shifts, we need to check both current day and next day for clock records
     // Also check previous day for clock-in if this is a cross-day shift
-    let first = null;
+    let first = punches?.clockIn ? new Date(punches.clockIn.timestamp) : null;
     let last = null;
     
     // Check for clock-in on schedule date
-    if (dayRecord && dayRecord.clockIns.length) {
+    if (!first && dayRecord && dayRecord.clockIns.length) {
       first = dayRecord.clockIns[0];
     }
     
@@ -520,11 +583,16 @@ function buildWorkHoursSummary({ schedules, recordMap, shiftMap, employees }) {
     }
     
     if (first) {
+      const windowClockOut = punches?.clockOut ? new Date(punches.clockOut.timestamp) : null;
+      if (windowClockOut && windowClockOut > first) {
+        last = windowClockOut;
+      }
+      
       // First, try to find clock-out on the same day as clock-in
       const clockInDateKey = buildDateKey(first);
       const clockInDayRecord = recordMap.get(`${employeeId}::${clockInDateKey}`);
       
-      if (clockInDayRecord && clockInDayRecord.clockOuts.length) {
+      if (!last && clockInDayRecord && clockInDayRecord.clockOuts.length) {
         // Find the first clock-out after the clock-in time
         for (const clockOut of clockInDayRecord.clockOuts) {
           if (clockOut > first) {
@@ -898,7 +966,7 @@ async function buildDepartmentReportData({ type, month, departmentId, actor }, c
     throw new ReportAccessError(404, 'No data');
   }
   if (type === 'attendance' || type === 'tardiness' || type === 'earlyLeave' || type === 'workHours') {
-    const [{ schedules, attendanceRecords }, { shiftMap, lateGrace, earlyGrace }] = await Promise.all([
+    const [{ schedules, attendanceRecords }, { shiftMap, lateGrace, earlyGrace, actionBuffers }] = await Promise.all([
       loadAttendanceData({ employeeIds, start, end }),
       buildAttendanceSettingContext(),
     ]);
@@ -907,11 +975,13 @@ async function buildDepartmentReportData({ type, month, departmentId, actor }, c
       return { summary: {}, records: [] };
     }
     const recordMap = groupAttendanceRecords(attendanceRecords);
+    // 線上打卡與指紋匯入不分來源，依班別時段比對（簽到取最早、簽退取最晚）
+    const punchesByEmployee = groupPunchesByEmployee(attendanceRecords);
     if (type === 'attendance') {
-      return buildAttendanceSummary({ employees, schedules, recordMap, shiftMap });
+      return buildAttendanceSummary({ employees, schedules, recordMap, shiftMap, punchesByEmployee, actionBuffers });
     }
     if (type === 'tardiness') {
-      const data = buildTardinessSummary({ schedules, recordMap, shiftMap, employees, lateGrace });
+      const data = buildTardinessSummary({ schedules, recordMap, shiftMap, employees, lateGrace, punchesByEmployee, actionBuffers });
       if (!data.records.length) {
         // Return empty data structure instead of throwing error
         return { summary: { totalLateCount: 0, totalLateMinutes: 0, averageLateMinutes: 0 }, records: [] };
@@ -919,7 +989,7 @@ async function buildDepartmentReportData({ type, month, departmentId, actor }, c
       return data;
     }
     if (type === 'earlyLeave') {
-      const data = buildEarlyLeaveSummary({ schedules, recordMap, shiftMap, employees, earlyGrace });
+      const data = buildEarlyLeaveSummary({ schedules, recordMap, shiftMap, employees, earlyGrace, punchesByEmployee, actionBuffers });
       if (!data.records.length) {
         // Return empty data structure instead of throwing error
         return { summary: { totalEarlyLeaveCount: 0, totalEarlyMinutes: 0, averageEarlyMinutes: 0 }, records: [] };
@@ -927,7 +997,7 @@ async function buildDepartmentReportData({ type, month, departmentId, actor }, c
       return data;
     }
     if (type === 'workHours') {
-      const data = buildWorkHoursSummary({ schedules, recordMap, shiftMap, employees });
+      const data = buildWorkHoursSummary({ schedules, recordMap, shiftMap, employees, punchesByEmployee, actionBuffers });
       if (!data.records.length) {
         // Return empty data structure instead of throwing error
         return { summary: { totalScheduledHours: 0, totalWorkedHours: 0, differenceHours: 0 }, records: [] };

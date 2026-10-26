@@ -68,8 +68,10 @@ const departmentSchema = new mongoose.Schema({
   defaultTwoDayOff: { type: Boolean, default: true },
   // 是否允許臨時調班
   tempChangeAllowed: { type: Boolean, default: false },
-  // 指定的排班管理者
+  // 指定的排班管理者（舊欄位，存員工 _id 字串）：視為整個部門（所有小單位與沒有小單位的員工）的排班人員
   deptManager: { type: String, default: '', trim: true },
+  // 使用簽核表單：這個部門的員工登入後只看得到、只能送出這些表單；空陣列代表全部表單
+  allowedFormIds: { type: [{ type: mongoose.Schema.Types.ObjectId, ref: 'FormTemplate' }], default: [] },
   // 排班備註
   scheduleNotes: { type: String, default: '', trim: true, maxlength: 1000 },
   // 所屬機構

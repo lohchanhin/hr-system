@@ -70,6 +70,8 @@
             <span class="mr-2">需全員同意：{{ step.all_must_approve ? '是' : '否' }}</span>
             <span>必簽：{{ step.is_required ? '是' : '否' }}</span>
           </div>
+          <!-- 主管關卡找不到可簽核的主管時改由最高層簽核人簽核：說明改送的原因 -->
+          <p v-if="describeFallbackStep(step)" class="step-fallback" data-test="step-fallback">{{ describeFallbackStep(step) }}</p>
           <el-table :data="Array.isArray(step.approvers) ? step.approvers : []" size="small" border>
             <el-table-column label="審核人" width="200">
               <template #default="{ row }">
@@ -123,6 +125,7 @@ import EmployeeAvatar from '../../components/EmployeeAvatar.vue'
 import LeaveBalancePanel from '../../components/LeaveBalancePanel.vue'
 import { formatFormValue, formatTaipeiDateTime, personNameOrFallback } from '../../utils/approvalDisplay'
 import { describeError, readApiError } from '../../utils/approvalErrors'
+import { describeFallbackStep } from '../../utils/approvalForm'
 import {
   attachmentDisplayName,
   attachmentItems,
@@ -292,6 +295,16 @@ onBeforeUnmount(() => {
 <style scoped>
 .detail-error {
   color: #dc2626;
+}
+
+.step-fallback {
+  margin: 0 0 6px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  background: #fdf6ec;
+  color: #b88230;
+  font-size: 12px;
+  line-height: 1.6;
 }
 
 .person-line {

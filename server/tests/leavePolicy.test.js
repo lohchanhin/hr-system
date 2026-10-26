@@ -72,6 +72,18 @@ describe('matchLeaveType', () => {
     expect(match(['國定假日補假'])).toBe('comp')
   })
 
+  // 客戶把調休叫做「移休」（2026/10 重大調整）：移休、移休假也從調休存摺扣用，而且是固定的別名（管理員存過的別名再多也拿不掉）
+  it('maps 移休 and 移休假 to the compensatory leave bank, also after an admin saved other aliases', () => {
+    expect(match(['移休'])).toBe('comp')
+    expect(match(['移休假'])).toBe('comp')
+    expect(match(['移休（上午）'])).toBe('comp')
+    const saved = service.normalizeLeavePolicy({ types: [{ key: 'comp', aliases: ['加班補休'] }] })
+    expect(typeOf(saved, 'comp').aliases).toEqual(expect.arrayContaining(['移休', '移休假', '加班補休']))
+    expect(service.matchLeaveType(['移休'], saved.types)?.key).toBe('comp')
+    const validated = service.validateLeavePolicyInput({ types: [{ key: 'comp', aliases: [] }] })
+    expect(typeOf(validated, 'comp').aliases).toEqual(expect.arrayContaining(['移休']))
+  })
+
   it('matches names, aliases and spellings with brackets or spaces', () => {
     expect(match(['事假'])).toBe('personal')
     expect(match(['請事假'])).toBe('personal')

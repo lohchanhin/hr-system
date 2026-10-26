@@ -5,6 +5,7 @@ import { TextDecoder } from 'util'
 import mongoose from 'mongoose'
 import AttendanceRecord from '../models/AttendanceRecord.js'
 import Employee from '../models/Employee.js'
+import { punchMinuteKey } from '../services/attendancePunchService.js'
 
 const DEFAULT_COLUMN_MAPPINGS = Object.freeze({
   userId: 'USERID',
@@ -961,15 +962,59 @@ export async function importAttendanceRecords(req, res) {
   let missingCount = 0
   let ignoredCount = 0
   let errorCount = 0
+  let duplicateCount = 0
   let importedCount = 0
   let totalRows = 0
-  const batchRecords = []
+  // 匯入只新增、不修改也不刪除既有的打卡（線上打卡、先前匯入的指紋記錄都保留）。
+  // 同一位員工、同一個動作、同一分鐘的打卡視為重複：資料庫已經有（不論來源）或同一個檔案裡出現過，就略過並計入「重複略過」，
+  // 所以同一個檔案再匯入一次不會多出任何記錄。預覽（dryRun）也會比對，讓管理者先看到會略過幾筆。
+  const seenPunchKeys = new Set()
+  const pendingRows = []
 
-  const flushBatch = async () => {
-    if (!batchRecords.length) return
-    const toInsert = batchRecords.splice(0, batchRecords.length)
-    await AttendanceRecord.insertMany(toInsert)
-    importedCount += toInsert.length
+  const markDuplicate = (sampleEntry, reason) => {
+    duplicateCount += 1
+    sampleEntry.status = 'duplicate'
+    sampleEntry.duplicateReason = reason
+  }
+
+  const flushPending = async () => {
+    if (!pendingRows.length) return
+    const rows = pendingRows.splice(0, pendingRows.length)
+    const employeeIds = new Set()
+    let minTime = Number.POSITIVE_INFINITY
+    let maxTime = Number.NEGATIVE_INFINITY
+    rows.forEach(({ doc }) => {
+      employeeIds.add(String(doc.employee))
+      const time = doc.timestamp.getTime()
+      if (time < minTime) minTime = time
+      if (time > maxTime) maxTime = time
+    })
+    const minuteMs = 60 * 1000
+    const existing = await AttendanceRecord.find({
+      employee: { $in: Array.from(employeeIds) },
+      timestamp: {
+        $gte: new Date(Math.floor(minTime / minuteMs) * minuteMs),
+        $lt: new Date(Math.floor(maxTime / minuteMs) * minuteMs + minuteMs)
+      }
+    })
+      .select('employee action timestamp')
+      .lean()
+    const existingKeys = new Set(
+      (existing || []).map(item => punchMinuteKey(item.employee, item.action, item.timestamp))
+    )
+
+    const toInsert = []
+    rows.forEach(({ doc, key, sampleEntry }) => {
+      if (existingKeys.has(key)) {
+        markDuplicate(sampleEntry, '系統已有同一時間（同一分鐘）的打卡記錄')
+        return
+      }
+      toInsert.push(doc)
+    })
+    if (!dryRun && toInsert.length) {
+      await AttendanceRecord.insertMany(toInsert)
+      importedCount += toInsert.length
+    }
   }
 
   const processRow = async record => {
@@ -1075,15 +1120,24 @@ export async function importAttendanceRecords(req, res) {
             employeeId: employee.employeeId || ''
           }
 
-          if (!dryRun) {
-            batchRecords.push({
-              employee: employee._id,
-              action: record.action,
-              timestamp: record.timestamp,
-              remark: record.remark ?? ''
+          const key = punchMinuteKey(employee._id, record.action, record.timestamp)
+          if (seenPunchKeys.has(key)) {
+            markDuplicate(sampleEntry, '檔案中已有同一時間（同一分鐘）的打卡')
+          } else {
+            seenPunchKeys.add(key)
+            pendingRows.push({
+              key,
+              sampleEntry,
+              doc: {
+                employee: employee._id,
+                action: record.action,
+                timestamp: record.timestamp,
+                remark: record.remark ?? '',
+                source: 'import'
+              }
             })
-            if (batchRecords.length >= INSERT_BATCH_SIZE) {
-              await flushBatch()
+            if (pendingRows.length >= INSERT_BATCH_SIZE) {
+              await flushPending()
             }
           }
         }
@@ -1121,16 +1175,26 @@ export async function importAttendanceRecords(req, res) {
     return
   }
 
-  if (!dryRun) {
-    await flushBatch()
+  try {
+    await flushPending()
+  } catch (error) {
+    console.error('attendance-import: failed to store records', error?.name ?? 'Error')
+    res.status(500).json({
+      message: '考勤資料寫入失敗，請稍後再試',
+      errors: [],
+      summary: { importedCount: dryRun ? 0 : importedCount, duplicateCount }
+    })
+    return
   }
 
+  // readyCount 是已對應到員工的筆數（含重複略過）；duplicateCount 是其中與既有打卡或檔案內重複而略過的筆數
   const summary = {
     totalRows,
     readyCount,
     missingCount,
     ignoredCount,
     errorCount,
+    duplicateCount,
     uniqueUserCount: uniqueUsers.size,
     importedCount: dryRun ? 0 : importedCount
   }
@@ -1158,6 +1222,16 @@ export async function importAttendanceRecords(req, res) {
       failureReasons.push('沒有任何可匯入的資料')
     }
 
+    // 全部都是已經有的打卡（例如同一個檔案再匯入一次）：不是錯誤，只是沒有新資料
+    if (summary.importedCount === 0 && duplicateCount && !failureReasons.length) {
+      response.message = `沒有新的打卡記錄：${duplicateCount} 筆與既有打卡記錄重複，已略過`
+      res.json(response)
+      return
+    }
+    if (duplicateCount) {
+      failureReasons.push(`${duplicateCount} 筆與既有打卡記錄重複，已略過`)
+    }
+
     if (summary.importedCount === 0) {
       const baseMessage = errorCount > 0 ? '匯入失敗' : '所有資料均未匯入'
       const detail = failureReasons.join('、')
@@ -1177,6 +1251,9 @@ export async function importAttendanceRecords(req, res) {
     response.message = '考勤資料匯入完成'
   } else {
     response.message = '預覽成功'
+  }
+  if (!dryRun && duplicateCount) {
+    response.message += `（新增 ${importedCount} 筆，重複略過 ${duplicateCount} 筆）`
   }
 
   res.json(response)

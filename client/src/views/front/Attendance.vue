@@ -100,6 +100,14 @@
               </div>
             </template>
           </el-table-column>
+          <!-- 打卡來源：線上打卡與指紋匯入並存、互不覆蓋 -->
+          <el-table-column prop="sourceLabel" label="來源" width="120">
+            <template #default="{ row }">
+              <el-tag :type="row.sourceTagType" size="small" class="source-tag">
+                {{ row.sourceLabel }}
+              </el-tag>
+            </template>
+          </el-table-column>
           <el-table-column prop="remark" label="備註說明">
             <template #default="{ row }">
               <span class="remark-text">{{ row.remark || '無備註' }}</span>
@@ -128,6 +136,7 @@ import { ElMessage } from 'element-plus'
 import { apiFetch } from '../../api'
 import { getToken } from '../../utils/tokenService'
 import { determineActionAvailability, getTimezone } from '../../utils/timeWindow'
+import { attendanceSourceLabel, attendanceSourceTagType } from '../../utils/attendanceSource'
 
 // 將中文動作與後端定義的值互轉
 const actionMap = {
@@ -176,19 +185,25 @@ function updateAvailability(now = new Date()) {
   })
 }
 
+// 後端打卡記錄轉成表格列（含來源：線上 / 指紋匯入；舊資料顯示未標示）
+function toRecordRow(record) {
+  const timestamp = record.timestamp
+  return {
+    action: reverseActionMap[record.action] || record.action,
+    time: timestamp ? dayjs(timestamp).format('YYYY/MM/DD HH:mm:ss') : '',
+    remark: record.remark || '',
+    timestamp,
+    source: record.source,
+    sourceLabel: attendanceSourceLabel(record.source),
+    sourceTagType: attendanceSourceTagType(record.source)
+  }
+}
+
 async function fetchRecords() {
   const res = await apiFetch('/api/attendance')
   if (res.ok) {
     const data = await res.json()
-    records.value = data.map(r => {
-      const timestamp = r.timestamp
-      return {
-        action: reverseActionMap[r.action] || r.action,
-        time: timestamp ? dayjs(timestamp).format('YYYY/MM/DD HH:mm:ss') : '',
-        remark: r.remark || '',
-        timestamp
-      }
-    })
+    records.value = data.map(toRecordRow)
   }
 }
 
@@ -319,14 +334,7 @@ async function addRecord(action, remark = '') {
       return
     }
     const saved = await res.json()
-    const timestamp = saved.timestamp
-    const savedRecord = {
-      action: reverseActionMap[saved.action] || saved.action,
-      time: timestamp ? dayjs(timestamp).format('YYYY/MM/DD HH:mm:ss') : '',
-      remark: saved.remark || '',
-      timestamp
-    }
-    records.value.unshift(savedRecord)
+    records.value.unshift(toRecordRow({ source: 'online', ...saved }))
   } finally {
     punchSubmitting.value = false
   }
@@ -519,6 +527,10 @@ onUnmounted(() => {
 .action-tag {
   font-weight: 500;
   padding: 6px 12px;
+  border-radius: 6px;
+}
+
+.source-tag {
   border-radius: 6px;
 }
 

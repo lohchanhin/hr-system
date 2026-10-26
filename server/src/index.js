@@ -25,6 +25,8 @@ import { migrateLeaveFormSemantics, migrateLeaveKeywordForms } from './controlle
 import { normalizeStoredSignTags } from './controllers/employeeController.js';
 import { migrateAnnualLeaveToHours, migrateLeaveFormsToHours } from './services/leaveHoursMigration.js';
 import { authenticate, authorizeRoles } from './middleware/auth.js';
+import { requireScheduleAccess } from './middleware/scheduleAccess.js';
+import { countLegacyDeptManagers } from './services/scheduleAccessService.js';
 import scheduleRoutes from './routes/scheduleRoutes.js';
 import payrollRoutes from './routes/payrollRoutes.js';
 import reportRoutes from './routes/reportRoutes.js';
@@ -234,13 +236,15 @@ app.use(
 );
 
 
+// 排班：查詢開放給所有角色（範圍由各 API 決定）；匯出與所有寫入看排班權限（管理員、主管、被指定為排班人員的任何角色），
+// 員工回覆自己的班表不需要排班權限
 app.use(
   '/api/schedules',
   authenticate,
   (req, res, next) => {
     if (req.method === 'GET') {
       if (req.path?.startsWith('/export')) {
-        return authorizeRoles('admin', 'supervisor')(req, res, next);
+        return requireScheduleAccess()(req, res, next);
       }
       return authorizeRoles('employee', 'supervisor', 'admin')(req, res, next);
     }
@@ -252,7 +256,7 @@ app.use(
     if (isRespondPost) {
       return authorizeRoles('employee', 'supervisor', 'admin')(req, res, next);
     }
-    return authorizeRoles('supervisor', 'admin')(req, res, next);
+    return requireScheduleAccess()(req, res, next);
   },
   scheduleRoutes
 );
@@ -302,10 +306,16 @@ app.use(
   },
   organizationRoutes
 );
+// 小單位清單：管理員、主管與被指定為排班人員的員工（排班頁的單位篩選）可以讀；新增、修改、刪除只有管理員
 app.use(
   '/api/sub-departments',
   authenticate,
-  authorizeRoles('admin', 'supervisor'),
+  (req, res, next) => {
+    if (req.method === 'GET') {
+      return requireScheduleAccess({ allowRoles: ['admin', 'supervisor'] })(req, res, next);
+    }
+    return authorizeRoles('admin')(req, res, next);
+  },
   subDepartmentRoutes
 );
 app.use('/api/dept-schedules', authenticate, authorizeRoles('admin'), deptScheduleRoutes);
@@ -329,7 +339,7 @@ app.use('/api/holiday-calendar', authenticate, authorizeRoles('employee', 'super
 
 app.use('/api/salary-settings', authenticate, authorizeRoles('admin'), salarySettingRoutes);
 app.use('/api/holiday-move-settings', authenticate, authorizeRoles('admin'), holidayMoveSettingRoutes);
-// 國定假日休假紀錄：查詢依班表的權限範圍（員工只看自己）；匯出與登記處理方式只有主管、管理員（路由檔內再擋一次）
+// 國定假日休假紀錄：查詢依班表的權限範圍（員工只看自己）；匯出與登記處理方式只有有排班權限的人（管理員、主管、排班人員；路由檔內再擋一次）
 app.use(
   '/api/holiday-ledger',
   authenticate,
@@ -337,7 +347,7 @@ app.use(
     if (req.method === 'GET' && !req.path?.startsWith('/export')) {
       return authorizeRoles('employee', 'supervisor', 'admin')(req, res, next);
     }
-    return authorizeRoles('supervisor', 'admin')(req, res, next);
+    return requireScheduleAccess()(req, res, next);
   },
   holidayLedgerRoutes
 );
@@ -455,6 +465,16 @@ async function start() {
       }
     } catch (compLeaveError) {
       console.error('Failed to migrate compensatory leave bank', compLeaveError?.name ?? 'Error');
+    }
+    // 排班人員：小單位的 schedulers／allowedShiftIds、部門的 allowedFormIds 沒有值就是「沒有指定／全部」，不需要補資料；
+    // 部門舊有的「排班管理者」（deptManager）現在也能排整個部門的班，啟動時只記錄有設定的部門數（不修改資料）
+    try {
+      const legacyDeptManagers = await countLegacyDeptManagers();
+      if (legacyDeptManagers) {
+        console.log(`Departments whose schedule manager (deptManager) can now schedule the whole department: ${legacyDeptManagers}`);
+      }
+    } catch (schedulerError) {
+      console.error('Failed to count department schedule managers', schedulerError?.name ?? 'Error');
     }
     await ensureAdminUser();
     await ensureDefaultSupervisorReports();

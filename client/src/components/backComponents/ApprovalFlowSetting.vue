@@ -51,6 +51,47 @@
           </el-form-item>
         </el-form>
         <div v-else class="text-gray-500">請先從上方下拉選擇一個表單樣板。</div>
+
+        <!-- 全部表單共用：主管關卡找不到可簽核的主管時（沒設定主管、主管就是申請人本人、主管已離職）改送的人 -->
+        <el-divider content-position="left">無上級主管時的簽核人（全部表單共用）</el-divider>
+        <div class="top-level-card" data-test="top-level-approvers">
+          <p class="field-hint">
+            「申請者的主管」「指定主管」這類必簽關卡找不到可簽核的主管時（申請人沒有設定直屬主管、主管就是申請人本人、主管已離職或停用），
+            改送這裡選的人，任一位核准即可；申請人本人一律不會是自己的簽核人。沒有選人（或選的人都不能簽）時改送所有在職的系統管理員。
+          </p>
+          <div class="top-level-row">
+            <el-select
+              v-model="topLevel.ids"
+              multiple
+              filterable
+              clearable
+              :disabled="!topLevel.loaded"
+              placeholder="不選 = 改送系統管理員"
+              class="top-level-select"
+              data-test="top-level-approvers-select"
+            >
+              <el-option
+                v-for="emp in topLevelOptions"
+                :key="emp.id"
+                :label="emp.label"
+                :value="emp.id"
+                :disabled="emp.disabled"
+              />
+            </el-select>
+            <el-button
+              type="primary"
+              :loading="topLevel.saving"
+              :disabled="!topLevel.loaded"
+              data-test="top-level-approvers-save"
+              @click="saveTopLevelApprovers"
+            >
+              儲存
+            </el-button>
+          </div>
+          <p v-if="topLevel.loaded" class="field-hint" data-test="top-level-approvers-summary">{{ topLevelSummary }}</p>
+          <p v-for="line in topLevelWarnings" :key="line" class="field-hint top-level-warning" data-test="top-level-approvers-warning">{{ line }}</p>
+          <p v-if="topLevel.error" class="field-hint top-level-warning" data-test="top-level-approvers-error">{{ topLevel.error }}</p>
+        </div>
       </el-tab-pane>
 
       <!-- 2) 申請類型（表單樣板）與流程關卡設定 -->
@@ -506,7 +547,8 @@ const API = {
   itemSettings: '/api/other-control-settings/item-settings',
   subDepartments: '/api/sub-departments',
   formCategories: '/api/other-control-settings/form-categories',
-  restoreDefaults: '/api/approvals/restore-defaults'
+  restoreDefaults: '/api/approvals/restore-defaults',
+  topLevelApprovers: '/api/approvals/top-level-approvers'
 }
 
 const APPROVER_TYPES = [
@@ -714,6 +756,84 @@ function employeeIneligibleReason(emp) {
 }
 
 const employeeById = computed(() => new Map(employeeOptions.value.map((emp) => [emp.id, emp])))
+
+/* 無上級主管時的簽核人（全部表單共用；GET / PUT /api/approvals/top-level-approvers，只有管理員）：
+   伺服器回 { ids, approvers: [{ id, name, employeeId, eligible, ineligibleReason }], admins: [{ id, name, employeeId }] }；
+   ids 空白 = 改送所有在職的系統管理員 */
+const topLevel = ref({ ids: [], approvers: [], admins: [], loaded: false, saving: false, error: '' })
+
+const personLabel = (person) => (person?.employeeId ? `${person.name || '（未命名）'}（${person.employeeId}）` : (person?.name || '（未命名）'))
+
+const topLevelOptions = computed(() => {
+  const chosen = new Set(topLevel.value.ids)
+  const options = employeeOptions.value.map((emp) => ({
+    id: emp.id,
+    label: emp.ineligibleReason ? `${emp.displayName}（${emp.ineligibleReason}）` : emp.displayName,
+    // 離職、停用、留職停薪的人不能選；已經存進設定的仍顯示，方便移除
+    disabled: Boolean(emp.ineligibleReason) && !chosen.has(emp.id),
+  }))
+  const known = new Set(options.map((option) => option.id))
+  for (const person of topLevel.value.approvers) {
+    if (known.has(person.id)) continue
+    options.push({ id: person.id, label: `${personLabel(person)}${person.ineligibleReason ? `（${person.ineligibleReason}）` : ''}`, disabled: false })
+  }
+  return options
+})
+
+const topLevelSummary = computed(() => {
+  const saved = topLevel.value.approvers
+  if (saved.length) return `目前指定：${saved.map(personLabel).join('、')}`
+  const admins = topLevel.value.admins.map(personLabel)
+  return admins.length
+    ? `目前沒有指定：改送系統管理員（${admins.join('、')}）`
+    : '目前沒有指定，也沒有在職的系統管理員：無上級主管的申請會無法送出，請指定簽核人'
+})
+
+// 已存的人之後離職、停用了：簽核時會略過，提醒管理員換人
+const topLevelWarnings = computed(() => topLevel.value.approvers
+  .filter((person) => !person.eligible)
+  .map((person) => `「${personLabel(person)}」${person.ineligibleReason || '不能簽核'}，簽核時會略過，請移除或改選其他人`))
+
+function applyTopLevelSetting(body) {
+  const list = (value) => (Array.isArray(value) ? value.filter((item) => item && item.id) : [])
+  topLevel.value = {
+    ...topLevel.value,
+    ids: Array.isArray(body?.ids) ? body.ids.map(String) : [],
+    approvers: list(body?.approvers),
+    admins: list(body?.admins),
+    loaded: true,
+    error: '',
+  }
+}
+
+// 讀取失敗只在區塊內提示（不跳出訊息），也不能讓人把空白存回去
+async function loadTopLevelApprovers() {
+  const res = await readApi(API.topLevelApprovers)
+  const body = res?.ok ? await readJson(res) : null
+  if (!body || typeof body !== 'object') {
+    topLevel.value = { ...topLevel.value, loaded: false, error: '無法讀取無上級主管時的簽核人設定，請重新整理頁面' }
+    return
+  }
+  applyTopLevelSetting(body)
+}
+
+async function saveTopLevelApprovers() {
+  if (!topLevel.value.loaded || topLevel.value.saving) return
+  topLevel.value.saving = true
+  try {
+    const res = await sendWrite(API.topLevelApprovers, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids: topLevel.value.ids }),
+    }, '儲存無上級主管時的簽核人失敗')
+    if (!res) return
+    const body = await readJson(res)
+    if (body) applyTopLevelSetting(body)
+    ElMessage.success(topLevel.value.ids.length ? '已儲存無上級主管時的簽核人' : '已改回預設：改送系統管理員')
+  } finally {
+    topLevel.value.saving = false
+  }
+}
 
 function employeeOptionFor(emp) {
   const label = emp.displayName || emp.name
@@ -2097,7 +2217,7 @@ onMounted(async () => {
   await loadGroupOptions()
   await loadOrganizationOptions()
   await loadEmployeeOptions()
-  await Promise.all([loadSignRoleOptions(), loadSignLevelOptions(), loadSignTags(), loadDepartmentRecords()])
+  await Promise.all([loadSignRoleOptions(), loadSignLevelOptions(), loadSignTags(), loadDepartmentRecords(), loadTopLevelApprovers()])
 })
 </script>
 
@@ -2122,5 +2242,9 @@ onMounted(async () => {
 .restore-report-muted { color: #94a3b8; }
 .restore-report-tag { margin: 0; }
 .field-inactive-tag { margin-left: 6px; }
+.top-level-card { max-width: 900px; }
+.top-level-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 6px 0; }
+.top-level-select { width: 520px; max-width: 100%; }
+.top-level-warning { color: #b45309; }
 :deep(.field-row-inactive) { opacity: 0.55; }
 </style>

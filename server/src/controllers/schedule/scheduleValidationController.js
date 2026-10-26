@@ -15,23 +15,33 @@ import {
   buildMonthRange,
   resolveScopedEmployeeIds,
   buildPublishQuery,
+  getEditableScheduleEmployeeIds,
 } from './scheduleShared.js';
+
+// 完整性檢查的範圍：管理員不限；其他人只檢查自己可以排的員工（主管：自己與直屬部屬；排班人員：被指定小單位的員工）
+async function buildValidationOptions(req) {
+  const { department, subDepartment } = req.query;
+  const options = {};
+  if (department) options.department = department;
+  if (subDepartment) options.subDepartment = subDepartment;
+  const employeeIds = await getEditableScheduleEmployeeIds(req);
+  if (Array.isArray(employeeIds)) options.employeeIds = employeeIds;
+  return options;
+}
 
 /**
  * 驗證月度排班完整性
  */
 export async function validateScheduleCompleteness(req, res) {
   try {
-    const { month, department, subDepartment } = req.query;
-    
+    const { month } = req.query;
+
     if (!month) {
       return res.status(400).json({ error: 'month required' });
     }
-    
-    const options = {};
-    if (department) options.department = department;
-    if (subDepartment) options.subDepartment = subDepartment;
-    
+
+    const options = await buildValidationOptions(req);
+
     const validation = await validateMonthSchedules(month, options);
     res.json(validation);
   } catch (err) {
@@ -120,16 +130,14 @@ export async function validateScheduleRules(req, res) {
  */
 export async function getIncompleteSchedules(req, res) {
   try {
-    const { month, department, subDepartment } = req.query;
-    
+    const { month } = req.query;
+
     if (!month) {
       return res.status(400).json({ error: 'month required' });
     }
-    
-    const options = {};
-    if (department) options.department = department;
-    if (subDepartment) options.subDepartment = subDepartment;
-    
+
+    const options = await buildValidationOptions(req);
+
     const incompleteEmployees = await getIncompleteScheduleEmployees(month, options);
     res.json({ 
       month,
@@ -146,16 +154,14 @@ export async function getIncompleteSchedules(req, res) {
  */
 export async function checkCanFinalize(req, res) {
   try {
-    const { month, department, subDepartment } = req.query;
-    
+    const { month } = req.query;
+
     if (!month) {
       return res.status(400).json({ error: 'month required' });
     }
-    
-    const options = {};
-    if (department) options.department = department;
-    if (subDepartment) options.subDepartment = subDepartment;
-    
+
+    const options = await buildValidationOptions(req);
+
     const result = await canFinalizeSchedules(month, options);
     res.json(result);
   } catch (err) {

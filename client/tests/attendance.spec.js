@@ -106,6 +106,46 @@ describe('Attendance.vue availability', () => {
     expect(wrapper.vm.monthlySchedules).toEqual(schedules)
   })
 
+  // 線上打卡與指紋匯入並存，打卡記錄表格標示每一筆的來源
+  it('shows the source of each punch (online / fingerprint import / unlabelled legacy rows)', async () => {
+    apiFetch.mockReset()
+    apiFetch.mockImplementation(async (url, options) => {
+      if (url === '/api/attendance' && options?.method === 'POST') {
+        return {
+          ok: true,
+          json: async () => ({ action: 'clockOut', employee: 'emp1', timestamp: '2026-10-21T09:20:00.000Z', source: 'online' })
+        }
+      }
+      if (url === '/api/attendance') {
+        return {
+          ok: true,
+          json: async () => ([
+            { action: 'clockOut', timestamp: '2026-10-21T09:05:00.000Z', source: 'import' },
+            { action: 'clockIn', timestamp: '2026-10-21T00:10:00.000Z', source: 'online' },
+            { action: 'clockIn', timestamp: '2026-10-20T23:55:00.000Z', source: 'import' },
+            { action: 'clockIn', timestamp: '2026-10-01T00:00:00.000Z' }
+          ])
+        }
+      }
+      if (url === '/api/attendance/punch-window') {
+        return { ok: true, json: async () => ({ actionBuffers: {} }) }
+      }
+      return { ok: true, json: async () => [] }
+    })
+    const wrapper = mountComponent()
+    await flush()
+
+    expect(wrapper.vm.records.map(row => [row.action, row.sourceLabel])).toEqual([
+      ['下班簽退', '指紋匯入'],
+      ['上班簽到', '線上'],
+      ['上班簽到', '指紋匯入'],
+      ['上班簽到', '未標示']
+    ])
+
+    await wrapper.vm.addRecord('下班簽退')
+    expect(wrapper.vm.records[0]).toMatchObject({ action: '下班簽退', source: 'online', sourceLabel: '線上' })
+  })
+
   it('does not send a client-controlled timestamp when recording attendance', async () => {
     apiFetch.mockReset()
     apiFetch.mockImplementation(async (url, options) => {

@@ -23,7 +23,14 @@ import {
   UNRESOLVED_REASON_TEXT,
   resolveApprovers,
   resolveApproversDetailed,
+  resolveStepApprovers,
 } from '../services/approverResolution.js'
+import {
+  FORM_NOT_ALLOWED_CODE,
+  formNotAllowedMessage,
+  getFormVisibilityForUser,
+  isFormAllowed,
+} from '../services/formVisibilityService.js'
 import {
   advanceApprovalState,
   applyReturn,
@@ -304,14 +311,16 @@ function buildDecisionList(employeeIds) {
 
 /**
  * 依流程設定與申請人，建立這張單的各關簽核人（建立、重新送出共用）。
+ * 必簽的主管關卡找不到可簽核的主管時改送最高層簽核人（任一位核准即可，關卡上記下 fallback 說明，見 resolveStepApprovers）；
  * 必簽關卡找不到人、或所有關卡都沒有人（會變成無人簽核直接通過）時回報 REQUIRED_APPROVER_MISSING。
+ * 回傳 { steps, fallbackLogs }：fallbackLogs 是改送的關卡要寫進單據紀錄的訊息。
  */
 async function buildRequestSteps({ wf, applicantEmp, form }) {
   const workflowSteps = Array.from(wf.steps || [])
   const resolved = []
   for (let position = 0; position < workflowSteps.length; position += 1) {
     const source = workflowSteps[position]
-    const { ids, reason } = await resolveApproversDetailed(source, applicantEmp)
+    const { ids, reason, fallback } = await resolveStepApprovers(source, applicantEmp)
     const approverIds = []
     const seen = new Set()
     for (const rawId of ids || []) {
@@ -320,7 +329,7 @@ async function buildRequestSteps({ wf, applicantEmp, form }) {
       seen.add(id)
       approverIds.push(id)
     }
-    resolved.push({ source, position, approverIds, reason })
+    resolved.push({ source, position, approverIds, reason, fallback: approverIds.length ? fallback || null : null })
   }
 
   const missing = resolved.find(item => item.source.is_required !== false && !item.approverIds.length)
@@ -331,16 +340,27 @@ async function buildRequestSteps({ wf, applicantEmp, form }) {
 
   // 連續且簽核人與設定完全相同的關卡合併成一關
   const steps = []
+  const fallbackLogs = []
   let previousSignature = null
   for (const item of resolved) {
     const normalizedConfig = {
       approvers: [...item.approverIds].sort(),
-      all_must_approve: item.source.all_must_approve !== false,
+      // 改送最高層簽核人的關卡：任一位核准即可
+      all_must_approve: item.fallback ? false : item.source.all_must_approve !== false,
       is_required: item.source.is_required !== false,
       can_return: item.source.can_return !== false,
     }
+    if (item.fallback) {
+      const reasonText = item.fallback.reason_text ? `（${item.fallback.reason_text}）` : ''
+      fallbackLogs.push(`第${item.position + 1}關（${describeWorkflowStep(item.source)}）${reasonText}：${item.fallback.text}`)
+    }
     const signature = JSON.stringify(normalizedConfig)
-    if (signature === previousSignature) continue
+    if (signature === previousSignature) {
+      // 和前一關合併：前一關沒有說明時把這關的說明帶過去
+      const previous = steps[steps.length - 1]
+      if (item.fallback && previous && !previous.fallback) previous.fallback = { ...item.fallback }
+      continue
+    }
     previousSignature = signature
     steps.push({
       step_order: steps.length + 1,
@@ -348,9 +368,20 @@ async function buildRequestSteps({ wf, applicantEmp, form }) {
       all_must_approve: normalizedConfig.all_must_approve,
       is_required: normalizedConfig.is_required,
       can_return: normalizedConfig.can_return,
+      ...(item.fallback ? { fallback: { ...item.fallback } } : {}),
     })
   }
-  return { steps }
+  return { steps, fallbackLogs }
+}
+
+/*
+ * 部門的「使用簽核表單」：一般員工、主管只能送出自己部門開放的表單（部門沒有勾選 = 全部都可以；管理員不限制）。
+ * 不能用時回 403 FORM_NOT_ALLOWED（建立與退回後重新送出都檢查）。
+ */
+async function assertFormAllowedForApplicant({ req, form, applicantEmp }) {
+  const visibility = await getFormVisibilityForUser(req.user, applicantEmp)
+  if (isFormAllowed(visibility, form?._id)) return
+  throw fail(403, formNotAllowedMessage(form?.name), { code: FORM_NOT_ALLOWED_CODE })
 }
 
 async function notifyUsers(userIds, message) {
@@ -869,13 +900,15 @@ export async function createApprovalRequest(req, res) {
     if (!form) return res.status(400).json({ error: '找不到這個表單' })
     if (!form.is_active) return res.status(400).json({ error: '這個表單已停用，無法申請' })
 
+    const applicantEmp = await Employee.findById(actorId)
+    if (!applicantEmp) return res.status(401).json({ error: MESSAGES.invalidUser })
+    // 部門的「使用簽核表單」沒有開放這張表單時不能申請（403）
+    await assertFormAllowedForApplicant({ req, form, applicantEmp })
+
     const wf = await ApprovalWorkflow.findOne({ form: form._id })
     if (!wf || !wf.steps?.length) {
       return res.status(400).json({ error: `【${form.name}】尚未設定簽核流程，請聯絡管理員` })
     }
-
-    const applicantEmp = await Employee.findById(actorId)
-    if (!applicantEmp) return res.status(401).json({ error: MESSAGES.invalidUser })
 
     // 只留下表單定義的欄位並檢查型別、大小；之後的檢核與儲存都用整理過的資料
     const fields = await loadFormFields(form._id)
@@ -896,8 +929,8 @@ export async function createApprovalRequest(req, res) {
       lockCompLeave: async (employeeId) => { compLease = await acquireCompFilingLease(employeeId) },
     })
 
-    // 依每關解析審核人
-    const { steps } = await buildRequestSteps({ wf, applicantEmp, form })
+    // 依每關解析審核人（主管關卡找不到主管時改送最高層簽核人）
+    const { steps, fallbackLogs } = await buildRequestSteps({ wf, applicantEmp, form })
 
     // 附件：只能用自己上傳、尚未用過的檔案；通過後綁定到這張單
     requestId = newRequestId()
@@ -909,7 +942,10 @@ export async function createApprovalRequest(req, res) {
       status: 'pending',
       current_step_index: 0,
       steps,
-      logs: [{ action: 'create', by_employee: applicantRef, message: '建立送審單' }],
+      logs: [
+        { action: 'create', by_employee: applicantRef, message: '建立送審單' },
+        ...fallbackLogs.map(message => ({ action: 'approver_fallback', message })),
+      ],
     }
     // 進入第一個有簽核人的關卡（前面沒有人的選填關卡略過）
     startRequest(draft)
@@ -1598,6 +1634,8 @@ export async function resubmitApprovalRequest(req, res) {
       }
       const applicantEmp = await Employee.findById(actorId)
       if (!applicantEmp) throw fail(401, MESSAGES.invalidUser)
+      // 部門的「使用簽核表單」已不開放這張表單時不能重新送出（403；申請人仍可撤回）
+      await assertFormAllowedForApplicant({ req, form, applicantEmp })
 
       // 內容：有送新的 form_data 就重新整理檢查；沒有就沿用原本的
       const fields = await loadFormFields(form._id)
@@ -1629,9 +1667,11 @@ export async function resubmitApprovalRequest(req, res) {
       // 重新解析簽核人（人員、標籤、主管可能已經更動）；流程設定已不存在時沿用原本的簽核人
       const wf = (doc.workflow ? await ApprovalWorkflow.findById(doc.workflow) : null)
         || await ApprovalWorkflow.findOne({ form: form._id })
+      let fallbackLogs = []
       if (wf?.steps?.length) {
         const rebuilt = await buildRequestSteps({ wf, applicantEmp, form })
         doc.steps = rebuilt.steps
+        fallbackLogs = rebuilt.fallbackLogs
       } else if (doc.steps.some(step => step.is_required !== false && !(step.approvers || []).length)) {
         throw fail(400, `【${form.name}】的簽核流程已不存在且沒有簽核人，請聯絡管理員`, { code: 'REQUIRED_APPROVER_MISSING' })
       }
@@ -1662,6 +1702,7 @@ export async function resubmitApprovalRequest(req, res) {
         comment,
         by_employee: actorId,
       })
+      fallbackLogs.forEach(message => doc.logs.push({ action: 'approver_fallback', message }))
       const transition = restartRequest(doc, at)
       await doc.save()
       return { doc, transition, leaveWarnings: leaveCheck.warnings }

@@ -1,12 +1,12 @@
-<!-- src/components/CompensatoryLeavePanel.vue：調休存摺（單位是小時）。
-     簽核頁的「我的調休」、員工管理（管理員可手動給予、扣除、作廢）、簽核明細（申請人的存摺）共用。
+<!-- src/components/CompensatoryLeavePanel.vue：調休存摺（單位是小時；客戶稱為移休、以天計，時數旁一律附上天數，1 天 = 8 小時）。
+     簽核頁的「我的調休」、員工管理（管理員可手動給予、扣除、作廢、填寫存摺備註）、簽核明細（申請人的存摺）共用。
      傳 bank 就直接顯示（簽核明細已經帶在回應裡）；傳 employeeId 取那位員工的；什麼都不傳取登入者自己的。 -->
 <template>
   <div class="comp-leave-panel" :class="{ compact }" data-test="comp-leave-panel">
     <div class="panel-header">
       <div class="panel-title">
         <b>{{ title }}</b>
-        <span v-if="data" class="panel-sub" data-test="comp-leave-available">可用 {{ formatHoursWithDays(data.availableHours) }}</span>
+        <span v-if="data" class="panel-sub" data-test="comp-leave-available">可用 {{ formatCompHours(data.availableHours) }}</span>
       </div>
       <el-button
         v-if="!bank"
@@ -27,14 +27,46 @@
     </div>
 
     <div v-if="data" class="comp-summary" data-test="comp-leave-summary">
-      <el-tag type="success" effect="plain">存摺剩餘 {{ formatHours(data.balanceHours) }}</el-tag>
-      <el-tag v-if="data.pendingHours > 0" type="warning" effect="plain">簽核中 {{ formatHours(data.pendingHours) }}</el-tag>
-      <el-tag type="info" effect="plain">累計取得 {{ formatHours(data.earnedHours) }}</el-tag>
-      <el-tag type="info" effect="plain">已使用 {{ formatHours(data.usedHours) }}</el-tag>
-      <el-tag v-if="data.expiredHours > 0" type="danger" effect="plain">已過期 {{ formatHours(data.expiredHours) }}</el-tag>
+      <el-tag type="success" effect="plain">存摺剩餘 {{ formatCompHours(data.balanceHours) }}</el-tag>
+      <el-tag v-if="data.pendingHours > 0" type="warning" effect="plain">簽核中 {{ formatCompHours(data.pendingHours) }}</el-tag>
+      <el-tag type="info" effect="plain">累計取得 {{ formatCompHours(data.earnedHours) }}</el-tag>
+      <el-tag type="info" effect="plain">已使用 {{ formatCompHours(data.usedHours) }}</el-tag>
+      <el-tag v-if="data.expiredHours > 0" type="danger" effect="plain">已過期 {{ formatCompHours(data.expiredHours) }}</el-tag>
       <span v-if="data.expiryMonths > 0" class="row-note">取得後 {{ data.expiryMonths }} 個月內使用</span>
     </div>
     <p v-if="data && !compact" class="panel-help" data-test="comp-leave-help">{{ COMP_LEAVE_HELP_TEXT }}</p>
+
+    <!-- 存摺備註：管理員在員工管理填寫（空白 = 清除），員工在「我的調休」唯讀看得到 -->
+    <div v-if="data && canManage && targetEmployeeId && !bank" class="comp-note" data-test="comp-leave-note-edit">
+      <div class="note-label">存摺備註（員工在「我的調休」看得到）</div>
+      <el-input
+        v-model="noteDraft"
+        type="textarea"
+        :rows="2"
+        :maxlength="MAX_BANK_NOTE_LENGTH"
+        show-word-limit
+        placeholder="例如：10/10 國慶日改發加倍工資，不另給移休"
+        data-test="comp-leave-note-input"
+      />
+      <div class="note-actions">
+        <span v-if="noteMeta" class="row-note" data-test="comp-leave-note-meta">{{ noteMeta }}</span>
+        <el-button
+          type="primary"
+          size="small"
+          :loading="noteSaving"
+          :disabled="!noteChanged"
+          data-test="comp-leave-note-save"
+          @click="saveNote"
+        >
+          儲存備註
+        </el-button>
+      </div>
+    </div>
+    <div v-else-if="noteText" class="comp-note" data-test="comp-leave-note">
+      <div class="note-label">人資備註</div>
+      <p class="note-text" data-test="comp-leave-note-text">{{ noteText }}</p>
+      <span v-if="noteMeta" class="row-note">{{ noteMeta }}</span>
+    </div>
 
     <el-table
       v-if="rows.length"
@@ -98,7 +130,7 @@
       </el-radio-group>
       <div class="manage-row">
         <el-input-number v-model="manage.hours" :min="0.5" :max="1000" :step="0.5" size="small" data-test="comp-leave-manage-hours" />
-        <span class="row-note">小時</span>
+        <span class="row-note" data-test="comp-leave-manage-days">小時（{{ formatDays(manage.hours || 0) }}）</span>
         <el-date-picker
           v-if="manage.mode === 'credit'"
           v-model="manage.earnedDate"
@@ -129,14 +161,18 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { apiFetch } from '../api'
-import { formatHours, formatHoursWithDays } from '../utils/leaveBalance'
+import { formatDays } from '../utils/leaveBalance'
 import {
   COMP_LEAVE_HELP_TEXT,
   CONFLICT_REASON_TEXT,
   CREDIT_STATUS_TAG_TYPES,
+  MAX_BANK_NOTE_LENGTH,
   describeCreditHours,
+  describeNoteMeta,
   describeUsage,
+  formatCompHours,
   formatDateKey,
+  validateBankNote,
   validateManualForm,
 } from '../utils/compensatoryLeave'
 
@@ -242,7 +278,7 @@ async function submitManage() {
 async function voidRow(row) {
   let note = ''
   try {
-    const result = await ElMessageBox.prompt(`作廢「${row.sourceText}」（${formatHours(row.hours)}）。請填寫原因：`, '作廢調休', {
+    const result = await ElMessageBox.prompt(`作廢「${row.sourceText}」（${formatCompHours(row.hours)}）。請填寫原因：`, '作廢調休', {
       confirmButtonText: '作廢',
       cancelButtonText: '取消',
       inputValidator: (value) => (String(value ?? '').trim() ? true : '請填寫原因'),
@@ -266,6 +302,44 @@ async function voidRow(row) {
     await load()
   } catch {
     ElMessage.error('作廢失敗，請稍後再試')
+  }
+}
+
+/* ---------- 存摺備註（管理員填寫，員工唯讀） ---------- */
+
+const noteText = computed(() => (typeof data.value?.note?.text === 'string' ? data.value.note.text : ''))
+const noteMeta = computed(() => describeNoteMeta(data.value?.note))
+const noteDraft = ref('')
+const noteSaving = ref(false)
+const noteChanged = computed(() => noteDraft.value.trim() !== noteText.value)
+// 換員工或重新載入時，輸入框回到伺服器上的備註
+watch(noteText, (text) => { noteDraft.value = text }, { immediate: true })
+
+async function saveNote() {
+  if (noteSaving.value || !targetEmployeeId.value) return
+  const problem = validateBankNote(noteDraft.value)
+  if (problem) {
+    ElMessage.warning(problem)
+    return
+  }
+  noteSaving.value = true
+  try {
+    const res = await apiFetch('/api/compensatory-leave/note', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ employeeId: targetEmployeeId.value, note: noteDraft.value.trim() }),
+    })
+    if (!res.ok) {
+      ElMessage.error(await errorMessageOf(res, '儲存備註失敗'))
+      return
+    }
+    ElMessage.success(noteDraft.value.trim() ? '已儲存備註' : '已清除備註')
+    emit('changed')
+    await load()
+  } catch {
+    ElMessage.error('儲存備註失敗，請稍後再試')
+  } finally {
+    noteSaving.value = false
   }
 }
 
@@ -359,5 +433,35 @@ watch(() => props.employeeId, () => {
 .manage-note {
   flex: 1 1 200px;
   min-width: 160px;
+}
+.comp-note {
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: #fdf6ec;
+}
+.note-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #b88230;
+  margin-bottom: 4px;
+}
+.note-text {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.note-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 6px;
+}
+.note-actions .row-note {
+  display: inline;
+  margin-right: auto;
 }
 </style>

@@ -65,6 +65,14 @@ describe('Auth API', () => {
       organizationName: '',
       departmentName: '',
       subDepartmentName: '',
+      // 登入回應附上排班權限（前台決定要不要顯示排班頁）：沒有被指定為排班人員的員工不能排班
+      scheduleAccess: {
+        canSchedule: false,
+        supervisorScope: false,
+        subDepartmentIds: [],
+        departmentIds: [],
+        wholeDepartmentIds: [],
+      },
     });
     expect(signSpy).toHaveBeenCalledWith(
       { id: '1', sub: '1', role: 'employee', ver: 0 },

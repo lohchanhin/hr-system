@@ -4,6 +4,9 @@ import {
   SCHEDULE_EMPLOYEE_SELECT,
   toEntityId,
   getAllowedScheduleEmployeeIds,
+  getEditableScheduleEmployeeIds,
+  assertShiftsAllowedForScope,
+  respondShiftNotAllowed,
   attachShiftInfo,
   buildRosterLeaveChecks,
   hasLeaveConflict,
@@ -79,6 +82,17 @@ export async function createSchedulesBatch(req, res) {
       scheduleKey(row.employee, row.date),
       row,
     ]));
+    // 小單位的「使用班別」：只檢查這次真的換了班別的格子（既有的班表不因後來改了設定而不能再存）
+    await assertShiftsAllowedForScope(req, uniqueSchedules
+      .filter((sched) => {
+        const existing = existingByKey.get(scheduleKey(sched.employee, sched.date));
+        return !existing || toEntityId(existing.shiftId) !== toEntityId(sched.shiftId);
+      })
+      .map((sched) => ({
+        employee: sched.employee,
+        shiftId: sched.shiftId,
+        subDepartment: sched.subDepartment ?? existingByKey.get(scheduleKey(sched.employee, sched.date))?.subDepartment,
+      })));
     const operations = uniqueSchedules.map((sched) => {
       const existing = existingByKey.get(scheduleKey(sched.employee, sched.date));
       const nextData = {
@@ -123,6 +137,7 @@ export async function createSchedulesBatch(req, res) {
       .map((item) => writtenByKey.get(scheduleKey(item.employee, item.date)))
       .filter(Boolean));
   } catch (err) {
+    if (respondShiftNotAllowed(res, err)) return;
     if (respondLaborRuleError(res, err)) return;
     res.status(400).json({ error: err.message });
   }
@@ -170,6 +185,7 @@ export async function createSchedule(req, res) {
     if (await hasLeaveConflict(employee, dt, requestedShift, { strictNonWork: true })) {
       return res.status(400).json({ error: 'leave conflict' });
     }
+    await assertShiftsAllowedForScope(req, [{ employee, shiftId, subDepartment: normalizedSubDepartment }]);
 
     const schedule = await ShiftSchedule.create({
       employee,
@@ -181,6 +197,7 @@ export async function createSchedule(req, res) {
     });
     res.status(201).json(schedule);
   } catch (err) {
+    if (respondShiftNotAllowed(res, err)) return;
     if (respondLaborRuleError(res, err)) return;
     res.status(400).json({ error: err.message });
   }
@@ -251,6 +268,13 @@ export async function updateSchedule(req, res) {
       subDepartment: normalizedSubDepartment ?? schedule.subDepartment,
     };
     const shouldReset = hasScheduleDiff(schedule, nextData);
+    if (shouldReset) {
+      await assertShiftsAllowedForScope(req, [{
+        employee: nextData.employee,
+        shiftId: nextData.shiftId,
+        subDepartment: nextData.subDepartment,
+      }]);
+    }
     schedule.employee = nextData.employee;
     schedule.date = nextData.date;
     schedule.shiftId = nextData.shiftId;
@@ -262,6 +286,7 @@ export async function updateSchedule(req, res) {
     const saved = await schedule.save();
     res.json(saved);
   } catch (err) {
+    if (respondShiftNotAllowed(res, err)) return;
     if (respondLaborRuleError(res, err)) return;
     res.status(400).json({ error: err.message });
   }
@@ -298,7 +323,7 @@ export async function deleteSchedulesBatch(req, res) {
     if (!ids.length) return res.status(400).json({ error: 'ids required' });
     if (ids.length > 5000) return res.status(400).json({ error: 'too many schedules' });
 
-    const allowedEmployeeIds = await getAllowedScheduleEmployeeIds(req);
+    const allowedEmployeeIds = await getEditableScheduleEmployeeIds(req);
     if (allowedEmployeeIds !== null && !allowedEmployeeIds.length) {
       return res.status(403).json({ error: 'forbidden' });
     }

@@ -25,7 +25,7 @@
 - `leave-hours-invalid`：請假時數必須是大於 0 的數字，且以 0.5 小時為單位。
 - `leave-hours-range`：請假時數超過所選期間可請的上限（每個日曆日最多「每日上限」小時，預設 8；當天排了更長的班就以班別的工作時數（扣掉休息）為準）。時數可以比期間少（半天、扣掉休息日），不能比期間多。只在送出與重新送出時嚴格檢查，核准時不再檢查，管理員事後調低每日上限不會讓簽核中的單卡住。
 - 特休額度不足（HTTP 409，`ANNUAL_LEAVE_INSUFFICIENT`）：訊息例如「特休餘額不足：剩餘 8 小時（1 天），本次申請 16 小時（2 天）」，同時回傳 `remainingHours`、`requestedHours`。
-- 調休（假別「調休」「補休」「補假」）超過調休存摺的可用時數（剩餘 - 其他簽核中的調休）：一律擋下（HTTP 400，`COMP_LEAVE_INSUFFICIENT`），同時回傳 `availableHours`、`balanceHours`、`pendingHours`、`requestedHours`；
+- 調休（假別「調休」「移休」「補休」「補假」）超過調休存摺的可用時數（剩餘 - 其他簽核中的調休）：一律擋下（HTTP 400，`COMP_LEAVE_INSUFFICIENT`），同時回傳 `availableHours`、`balanceHours`、`pendingHours`、`requestedHours`；
   同一位員工同時送出兩筆時一次只檢查一筆（第二筆會把第一筆算進簽核中的時數）；最後一關核准時再檢查一次（不夠時 409、單據維持簽核中），核准時從存摺扣用。詳見 [調休存摺](compensatory-leave.md)。
 - 其他假別超過額度：預設只是**警告**（HTTP 201，回應 `warnings` 裡有 `LEAVE_QUOTA_EXCEEDED`，申請仍成立）；該假別的「超額時不能送出」開關打開後，改回 HTTP 400 `LEAVE_QUOTA_INSUFFICIENT`。
 
@@ -55,7 +55,7 @@
 
 管理員可以調整：每個假別的額度、計算方式、超額處理（「超額時不能送出」開關，預設關閉）、顯示方式（一律／用過才顯示／隱藏）、併入哪個假別計算；也可以新增自訂假別、還原預設值。每日最多可請時數與最小請假單位同樣在這裡設定。
 
-**調休的名稱固定**（調休，別名一定包含補休、補休假、補假、調休假），不能停用，超額處理固定是「禁止」；每筆調休的時數（`compensationHoursPerCredit`，預設 8）與期限（`compensationExpiryMonths`，預設 0 = 不設期限）也存在這個區塊（見 [調休存摺](compensatory-leave.md)）。
+**調休的名稱固定**（調休，別名一定包含補休、補休假、補假、調休假、移休、移休假），不能停用，超額處理固定是「禁止」；每筆調休的時數（`compensationHoursPerCredit`，預設 8）與期限（`compensationExpiryMonths`，預設 0 = 不設期限）也存在這個區塊（見 [調休存摺](compensatory-leave.md)）。
 
 **特休的名稱固定**（特休、特休假、特別休假；特休統計報表與薪資對照表也認這三個名稱），特休超過剩餘時數一律不能送出：超額處理固定是「禁止」，管理頁的開關停用（顯示為開啟），儲存或讀到 `warn`／`none` 都會變成 `block`，餘額 API 與畫面提示也一律回報無法送出。假別比對只認完整名稱，名稱裡「剛好含有特休兩個字」的其他假別不會被當成特休。
 

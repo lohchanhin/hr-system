@@ -12,6 +12,8 @@ const mockDepartment = { findOne: jest.fn() };
 jest.unstable_mockModule('../src/models/SubDepartment.js', () => ({ default: mockSubDepartment }));
 jest.unstable_mockModule('../src/models/Department.js', () => ({ default: mockDepartment }));
 jest.unstable_mockModule('../src/middleware/auth.js', () => ({ authorizeRoles: () => (req, res, next) => next() }));
+// 清單的權限（主管、管理員、排班人員）另有測試（schedulerAccessRoutes.test.js），這裡只測 CRUD
+jest.unstable_mockModule('../src/middleware/scheduleAccess.js', () => ({ requireScheduleAccess: () => (req, res, next) => next() }));
 
 let app;
 let subDepartmentRoutes;

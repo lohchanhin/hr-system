@@ -4,6 +4,8 @@ import Employee from '../models/Employee.js'
 import SubDepartment from '../models/SubDepartment.js'
 import { eligibleEmployeeFilter } from './approverEligibility.js'
 import { normalizeSignTag, normalizeSignTags } from '../utils/signTags.js'
+// 用命名空間匯入：別的測試把設定存取層換成只有部分函式的替身時，這裡不會因為缺少匯出而載入失敗
+import * as settingsStore from './otherControlSettingsStore.js'
 
 export const APPLICANT_SUPERVISOR_VALUE = 'APPLICANT_SUPERVISOR'
 const OBJECT_ID_PATTERN = /^[a-f0-9]{24}$/i
@@ -181,4 +183,92 @@ export async function resolveApproversDetailed(step, applicantEmp) {
 /* 依流程步驟解析「此關簽核人」（只回傳 id 清單；需要原因時用 resolveApproversDetailed） */
 export async function resolveApprovers(step, applicantEmp) {
   return (await resolveApproversDetailed(step, applicantEmp)).ids
+}
+
+/* ---------------------------- 無上級主管：改由最高層簽核人（R5） ---------------------------- */
+
+// 「主管」關卡（申請者的主管、指定主管）找不到可簽核的主管時（沒設定、主管就是申請人本人、主管已離職／停用／不具主管身分），
+// 必簽的關卡改送最高層簽核人：其他控制設定的 topLevelApproverIds（管理員在簽核流程設定挑選，預設空白）；
+// 沒設定、或設定的人都不能簽（離職、停用、就是申請人本人）時改送所有可簽核的系統管理員（不含申請人），任一位核准即可。
+// 兩者都沒有人才維持原本的「找不到可簽核的人員」（REQUIRED_APPROVER_MISSING）。選填的關卡照舊略過，不改送。
+export const MANAGER_FALLBACK_REASONS = Object.freeze(['no-supervisor', 'supervisor-inactive', 'only-applicant', 'manager-unavailable'])
+export const MAX_TOP_LEVEL_APPROVERS = 50
+export const FALLBACK_SOURCE_LABELS = Object.freeze({ setting: '最高層簽核人', admins: '系統管理員' })
+export const FALLBACK_REASON_TEXT = Object.freeze({
+  'no-supervisor': '申請人沒有設定直屬主管',
+  'supervisor-inactive': '直屬主管已離職、停用或留職停薪',
+  'only-applicant': '主管就是申請人本人',
+  'manager-unavailable': '指定的主管已離職、停用，或不具主管身分',
+})
+
+/** 設定值整理成不重複的員工 _id 字串（維持順序，最多 MAX_TOP_LEVEL_APPROVERS 位）；格式不對的略過 */
+export function normalizeTopLevelApproverIds(value) {
+  const ids = []
+  const seen = new Set()
+  for (const item of Array.isArray(value) ? value : []) {
+    const id = extractReferenceId(item).trim()
+    if (!isObjectIdString(id) || seen.has(id)) continue
+    seen.add(id)
+    ids.push(id)
+    if (ids.length >= MAX_TOP_LEVEL_APPROVERS) break
+  }
+  return ids
+}
+
+/** 其他控制設定的 topLevelApproverIds；讀不到（例如資料庫暫時有問題）就當作沒設定，改送系統管理員 */
+export async function loadTopLevelApproverIds() {
+  if (typeof settingsStore.getSettings !== 'function') return []
+  try {
+    const settings = await settingsStore.getSettings()
+    return normalizeTopLevelApproverIds(settings?.topLevelApproverIds)
+  } catch (error) {
+    console.error(`[approval] load top-level approvers failed: ${error?.name || 'Error'}`)
+    return []
+  }
+}
+
+/**
+ * 這位申請人的最高層簽核人：回傳 { ids, source }，source 是 setting（設定的人）或 admins（系統管理員），都沒有人時 ids 為空。
+ * 申請人本人一律排除；configuredIds 不傳就讀設定。
+ */
+export async function resolveTopLevelApprovers(applicantEmp, { configuredIds } = {}) {
+  const applicantId = normalizeId(applicantEmp?._id)
+  const configured = configuredIds !== undefined
+    ? normalizeTopLevelApproverIds(configuredIds)
+    : await loadTopLevelApproverIds()
+  if (configured.length) {
+    const ids = (await eligibleIdSubset(configured)).filter(id => id !== applicantId)
+    if (ids.length) return { ids, source: 'setting' }
+  }
+  const admins = await Employee.find({ role: 'admin', ...eligibleEmployeeFilter() }, { _id: 1 })
+  const ids = [...new Set((admins || []).map(row => normalizeId(row._id)))].filter(id => id && id !== applicantId)
+  return ids.length ? { ids, source: 'admins' } : { ids: [], source: '' }
+}
+
+/** 單據關卡、流程預覽上顯示的說明：{ reason, reason_text, source, text } */
+export function describeManagerFallback({ reason, source }) {
+  const label = FALLBACK_SOURCE_LABELS[source] || FALLBACK_SOURCE_LABELS.admins
+  return {
+    reason: reason || '',
+    reason_text: FALLBACK_REASON_TEXT[reason] || '',
+    source: FALLBACK_SOURCE_LABELS[source] ? source : 'admins',
+    text: `無上級主管，改由${label}簽核（任一位核准即可）`,
+  }
+}
+
+/** 這一關找不到人時要不要改送最高層簽核人：必簽的主管關卡，而且是「沒有可簽核的主管」（設定錯誤 invalid-config 不改送） */
+export function isManagerFallbackCandidate(step, reason) {
+  return step?.approver_type === 'manager' && step?.is_required !== false && MANAGER_FALLBACK_REASONS.includes(reason)
+}
+
+/**
+ * 建立／重新送出簽核單、流程預覽用的解析：和 resolveApproversDetailed 相同，但必簽的主管關卡找不到主管時改送最高層簽核人，
+ * 回傳 { ids, reason, fallback }（fallback 只在改送時有值，見 describeManagerFallback）。
+ */
+export async function resolveStepApprovers(step, applicantEmp, options = {}) {
+  const detailed = await resolveApproversDetailed(step, applicantEmp)
+  if (detailed.ids.length || !isManagerFallbackCandidate(step, detailed.reason)) return detailed
+  const topLevel = await resolveTopLevelApprovers(applicantEmp, options)
+  if (!topLevel.ids.length) return detailed
+  return { ids: topLevel.ids, reason: '', fallback: describeManagerFallback({ reason: detailed.reason, source: topLevel.source }) }
 }

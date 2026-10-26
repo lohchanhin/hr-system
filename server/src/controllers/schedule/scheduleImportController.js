@@ -17,9 +17,10 @@ import { buildShiftIdentityLookup } from '../../services/shiftIdentityService.js
 import { ROSTER_LEAVE_BLOCK } from '../../services/leaveCoverageService.js';
 import { calendarStatusFromContext, loadHolidayContext } from '../../services/holidayResolver.js';
 import { buildImportHolidayWarnings } from '../../services/holidayRestLedgerService.js';
+import { isShiftAllowedByRules, loadUnitShiftRules } from '../../services/scheduleAccessService.js';
 import {
   toEntityId,
-  getAllowedScheduleEmployeeIds,
+  getEditableScheduleEmployeeIds,
   buildRosterLeaveChecks,
   buildMonthDays,
   buildMonthRange,
@@ -124,7 +125,8 @@ export async function importSchedules(req, res) {
 
     const parsed = await parseScheduleWorkbook(req.file.buffer, { month });
     const includeSelf = String(req.body?.includeSelf || '').toLowerCase() === 'true';
-    let allowedEmployeeIds = await getAllowedScheduleEmployeeIds(req);
+    // 只能匯入自己可以排的員工（主管：自己與直屬部屬；排班人員：被指定小單位的員工），主管沒勾「包含自己」不含自己
+    let allowedEmployeeIds = await getEditableScheduleEmployeeIds(req);
     if (req.user?.role === 'supervisor' && Array.isArray(allowedEmployeeIds) && !includeSelf) {
       const actorId = toEntityId(req.user?.id);
       allowedEmployeeIds = allowedEmployeeIds.filter((employeeId) => employeeId !== actorId);
@@ -230,6 +232,10 @@ export async function importSchedules(req, res) {
       `${toEntityId(schedule.employee)}:${new Date(schedule.date).toISOString().slice(0, 10)}`,
       schedule,
     ]));
+    // 小單位的「使用班別」：非管理員匯入時，班別必須是員工所屬小單位開放的班別（沒有設定的小單位不限制）
+    const unitShiftRules = req.user?.role === 'admin'
+      ? new Map()
+      : await loadUnitShiftRules([subDepartment, ...importedEmployeeDocs.map((employee) => employee.subDepartment)]);
 
     const errors = [];
     const overwriteConflicts = [];
@@ -285,6 +291,12 @@ export async function importSchedules(req, res) {
             continue;
           }
           errors.push(scheduleImportError(row.rowNumber, entry.day, entry.code, unknownShiftMessage(entry)));
+          continue;
+        }
+        const employeeUnit = employee.subDepartment || subDepartment;
+        if (!isShiftAllowedByRules(unitShiftRules, employeeUnit, shift._id)) {
+          const unitName = unitShiftRules.get(toEntityId(employeeUnit))?.name;
+          errors.push(scheduleImportError(row.rowNumber, entry.day, entry.code, `${unitName ? `「${unitName}」` : '這個小單位'}沒有開放使用「${entry.code}」這個班別`));
           continue;
         }
         // 已核准請假：不用上班的班別（休息日、例假、國定假日、請假）不算衝突；上班班別只有核准的整天請假、

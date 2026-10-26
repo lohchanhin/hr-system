@@ -32,8 +32,20 @@ const mockFormField = { find: jest.fn() }
 const mockApprovalWorkflow = { findOne: jest.fn() }
 const mockApprovalRequest = { countDocuments: jest.fn() }
 const mockSubDepartment = { find: jest.fn() }
+// 部門的「使用簽核表單」（allowedFormIds）：預設沒有部門勾選表單（全部都可以用）
+let mockDepartmentRows = []
+const mockDepartment = {
+  findById: jest.fn((id) => {
+    const row = mockDepartmentRows.find(item => String(item._id) === String(id)) || null
+    const query = { select: () => query, lean: async () => row, then: (resolve, reject) => Promise.resolve(row).then(resolve, reject) }
+    return query
+  }),
+}
 const mockEmployee = createFakeEmployeeModel([])
 mockEmployee.findById = jest.fn(mockEmployee.findById)
+
+// 其他控制設定：topLevelApproverIds（無上級主管時的最高層簽核人）預設沒設定
+const mockGetSettings = jest.fn()
 
 let controller
 
@@ -44,9 +56,10 @@ beforeAll(async () => {
   await jest.unstable_mockModule('../src/models/approval_request.js', () => ({ default: mockApprovalRequest }))
   await jest.unstable_mockModule('../src/models/Employee.js', () => ({ default: mockEmployee }))
   await jest.unstable_mockModule('../src/models/SubDepartment.js', () => ({ default: mockSubDepartment }))
+  await jest.unstable_mockModule('../src/models/Department.js', () => ({ default: mockDepartment }))
   await jest.unstable_mockModule('../src/services/leaveFieldService.js', () => ({ resetLeaveFieldCache: jest.fn() }))
   await jest.unstable_mockModule('../src/services/otherControlSettingsStore.js', () => ({
-    getSettings: jest.fn().mockResolvedValue({ itemSettings: {} }),
+    getSettings: mockGetSettings,
     getDictionaryItems: jest.fn().mockResolvedValue([]),
   }))
   controller = await import('../src/controllers/approvalTemplateController.js')
@@ -57,6 +70,10 @@ beforeEach(() => {
   mockEmployee.find.mockClear()
   mockEmployee.findById.mockClear()
   mockApprovalWorkflow.findOne.mockReset()
+  mockDepartmentRows = []
+  mockDepartment.findById.mockClear()
+  mockGetSettings.mockReset()
+  mockGetSettings.mockResolvedValue({ itemSettings: {} })
   jest.spyOn(console, 'error').mockImplementation(() => {})
 })
 
@@ -215,5 +232,95 @@ describe('getWorkflow preview', () => {
     expect(bad.status).toHaveBeenCalledWith(400)
     expect(bad.json).toHaveBeenCalledWith({ error: '表單編號格式不正確' })
     expect(mockEmployee.findById).not.toHaveBeenCalled()
+  })
+})
+
+// R5：必簽的主管關卡找不到可簽核的主管時改由最高層簽核人（設定的人，沒設定就是系統管理員）；預覽先告訴申請人
+describe('getWorkflow preview - 無上級主管改由最高層簽核人', () => {
+  const ADMIN_1 = oid(21)
+  const ADMIN_2 = oid(22)
+  const CEO = oid(23)
+  const addPeople = () => mockEmployee.rows.push(
+    { _id: ADMIN_1, name: '管理員一', role: 'admin', signTags: [] },
+    { _id: ADMIN_2, name: '管理員二', role: 'admin', signTags: [], status: '離職員工' },
+    { _id: CEO, name: '院長', role: 'supervisor', signTags: [] },
+  )
+
+  it('shows the fallback to the eligible admins when the caller has no supervisor', async () => {
+    addPeople()
+    const { body } = await readWorkflow([step({ step_order: 1 })], { id: SUP_X, role: 'supervisor' })
+
+    expect(body.steps[0]).toMatchObject({
+      resolved_count: 1, // 管理員一；離職的管理員二不算
+      unresolved_reason: null,
+      fallback_text: '無上級主管，改由系統管理員簽核（任一位核准即可）',
+      fallback_reason: '申請人沒有設定直屬主管',
+    })
+    expect(JSON.stringify(body)).not.toContain('管理員一')
+  })
+
+  it('uses the configured top-level approvers, and says so', async () => {
+    addPeople()
+    mockGetSettings.mockResolvedValue({ itemSettings: {}, topLevelApproverIds: [CEO] })
+    const { body } = await readWorkflow([step({ step_order: 1 })], { id: SUP_X, role: 'supervisor' })
+
+    expect(body.steps[0]).toMatchObject({ resolved_count: 1, fallback_text: '無上級主管，改由最高層簽核人簽核（任一位核准即可）' })
+  })
+
+  it('falls back when the supervisor is the caller, but never to the caller', async () => {
+    addPeople()
+    mockEmployee.rows.find(row => row._id === ADMIN_1).supervisor = ADMIN_1
+    const asAdmin = await readWorkflow([step({ step_order: 1 })], { id: ADMIN_1, role: 'admin' })
+    // 唯一可簽核的管理員就是申請人本人：沒有人可以改送，維持原本的原因
+    expect(asAdmin.body.steps[0]).toMatchObject({ resolved_count: 0, unresolved_reason: '符合條件的簽核人只有申請人本人', fallback_text: null })
+
+    mockGetSettings.mockResolvedValue({ itemSettings: {}, topLevelApproverIds: [ADMIN_1, CEO] })
+    const withSetting = await readWorkflow([step({ step_order: 1 })], { id: ADMIN_1, role: 'admin' })
+    expect(withSetting.body.steps[0]).toMatchObject({ resolved_count: 1, fallback_reason: '主管就是申請人本人' })
+  })
+
+  it('does not fall back for an optional step, a non-manager step or a broken manager setting', async () => {
+    addPeople()
+    const { body } = await readWorkflow([
+      step({ step_order: 1, is_required: false }),
+      step({ step_order: 2, approver_type: 'tag', approver_value: '沒有人持有' }),
+      step({ step_order: 3, approver_type: 'manager', approver_value: 'not-an-id' }),
+    ], { id: SUP_X, role: 'supervisor' })
+
+    expect(body.steps.map(item => [item.resolved_count, item.fallback_text])).toEqual([[0, null], [0, null], [0, null]])
+  })
+})
+
+// R2：部門的「使用簽核表單」沒有開放的表單，流程預覽回 403（管理員不受影響；沒有關卡的流程不查登入者）
+describe('getWorkflow preview - 部門可使用的表單', () => {
+  const OTHER_FORM = oid(101)
+
+  it('answers 403 in Chinese to an employee whose department does not allow the form', async () => {
+    mockDepartmentRows = [{ _id: DEPT_A, allowedFormIds: [OTHER_FORM] }]
+    mockFormTemplate.findById.mockResolvedValue({ _id: FORM, name: '加班申請' })
+    const { res } = await readWorkflow([step()], { id: APPLICANT, role: 'employee' })
+
+    expect(res.status).toHaveBeenCalledWith(403)
+    expect(res.json).toHaveBeenCalledWith({ error: '您所屬的部門未開放使用【加班申請】，請改選其他表單；如需使用請洽管理員', code: 'FORM_NOT_ALLOWED' })
+  })
+
+  it('previews an allowed form, any form when the department chose none, and any form for an admin', async () => {
+    mockDepartmentRows = [{ _id: DEPT_A, allowedFormIds: [OTHER_FORM, FORM] }]
+    expect((await readWorkflow([step()], { id: APPLICANT, role: 'employee' })).body.steps[0]).toMatchObject({ resolved_count: 1 })
+
+    mockDepartmentRows = [{ _id: DEPT_A, allowedFormIds: [] }]
+    expect((await readWorkflow([step()], { id: APPLICANT, role: 'employee' })).body.steps[0]).toMatchObject({ resolved_count: 1 })
+
+    mockDepartmentRows = [{ _id: DEPT_B, allowedFormIds: [OTHER_FORM] }]
+    mockDepartment.findById.mockClear()
+    const admin = await readWorkflow([step({ approver_type: 'tag', approver_value: '人資' })], { id: SUP_X, role: 'admin' })
+    expect(admin.res.status).not.toHaveBeenCalled()
+    expect(mockDepartment.findById).not.toHaveBeenCalled()
+  })
+
+  it('lets an employee without a department preview every form', async () => {
+    mockDepartmentRows = [{ _id: DEPT_A, allowedFormIds: [OTHER_FORM] }]
+    const { res } = await readWorkflow([step()], { id: NO_DEPT, role: 'employee' })
+    expect(res.status).not.toHaveBeenCalled()
   })
 })

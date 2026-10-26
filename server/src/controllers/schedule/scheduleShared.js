@@ -12,6 +12,12 @@ import { buildRosterLeaveCheck } from '../../services/leaveCoverageService.js';
 import { isLaborRuleValidationError } from '../../services/laborRuleValidationService.js';
 import { normalizeShiftIdentifier } from '../../services/shiftIdentityService.js';
 import {
+  findDisallowedShiftAssignments,
+  getScheduleAccess,
+  getScheduleAccessForRequest,
+  getScheduleAccessSummaryForRequest,
+} from '../../services/scheduleAccessService.js';
+import {
   inferLegacyShiftSemanticType,
   isNonWorkSemanticType,
   isNonWorkShift,
@@ -29,19 +35,53 @@ export function toEntityId(value) {
   return typeof value.toString === 'function' ? value.toString() : String(value);
 }
 
+/**
+ * 看得到誰的班表（排班頁、相關簽核、國定假日休假紀錄、簽核單明細等共用）：管理員 null（全部）；
+ * 其他人一律看得到自己，再加上排班權限的範圍（主管：自己與直屬部屬；排班人員：被指定小單位的所有員工），規則在 scheduleAccessService。
+ */
 export async function getAllowedScheduleEmployeeIds(req) {
   const actorId = toEntityId(req.user?.id);
   if (!actorId) return [];
   if (req.user?.role === 'admin') return null;
-  if (req.user?.role === 'employee') return [actorId];
-  if (req.user?.role !== 'supervisor') return [];
+  if (!['employee', 'supervisor'].includes(req.user?.role)) return [];
 
-  const query = Employee.find({ supervisor: actorId }).select('_id');
-  const directReports = typeof query.lean === 'function' ? await query.lean() : await query;
-  return Array.from(new Set([
-    actorId,
-    ...(directReports || []).map((employee) => toEntityId(employee?._id)).filter(Boolean),
-  ]));
+  const access = await getScheduleAccessForRequest(req);
+  return Array.from(new Set([actorId, ...(access?.employeeIds || [])]));
+}
+
+/**
+ * 可以排（新增、修改、刪除、匯入）誰的班：管理員 null（全部）；有排班權限的人是自己的排班範圍；
+ * 沒有排班權限是空陣列。和「看得到」不同：沒被指定的員工只看得到自己的班表，不能排自己的班。
+ */
+export async function getEditableScheduleEmployeeIds(req) {
+  if (!toEntityId(req.user?.id)) return [];
+  if (req.user?.role === 'admin') return null;
+  const access = await getScheduleAccessForRequest(req);
+  return access?.canSchedule ? access.employeeIds : [];
+}
+
+/**
+ * 非管理員寫入班表前檢查小單位的「使用班別」：有不允許的班別就丟出 400（中文訊息附上單位名稱），管理員不限制。
+ * entries：[{ employee, shiftId, subDepartment }]
+ */
+export async function assertShiftsAllowedForScope(req, entries) {
+  if (req.user?.role === 'admin') return;
+  const disallowed = await findDisallowedShiftAssignments(entries);
+  if (!disallowed.length) return;
+  const unitNames = Array.from(new Set(disallowed.map((item) => item.subDepartmentName).filter(Boolean)));
+  const err = createError(
+    `${unitNames.length ? `「${unitNames.join('、')}」` : '這個小單位'}沒有開放使用這個班別，請改選小單位設定的使用班別`,
+    400,
+  );
+  err.code = 'SHIFT_NOT_ALLOWED';
+  err.disallowed = disallowed.map(({ employee, shiftId, subDepartment }) => ({ employee, shiftId, subDepartment }));
+  throw err;
+}
+
+export function respondShiftNotAllowed(res, err) {
+  if (err?.code !== 'SHIFT_NOT_ALLOWED') return false;
+  res.status(400).json({ error: err.message, code: err.code, disallowed: err.disallowed || [] });
+  return true;
 }
 
 export function formatDate(date) {
@@ -81,7 +121,14 @@ export async function buildLeaveDaysMapForMonth(employeeIds, month, monthStartDa
 }
 
 export async function canManageScheduleScope(req, department, subDepartment = '') {
-  const allowedEmployeeIds = await getAllowedScheduleEmployeeIds(req);
+  const access = await getScheduleAccessSummaryForRequest(req);
+  if (access?.isAdmin) return true;
+  if (!access?.canSchedule) return false;
+  // 被指定為這個小單位（或整個部門）的排班人員：小單位裡還沒有員工也可以管理
+  if (subDepartment && access.subDepartmentIds.includes(String(subDepartment))) return true;
+  if (!subDepartment && access.wholeDepartmentIds.includes(String(department))) return true;
+  // 其他情況（主管範圍）：範圍內有員工在這個部門／單位（原本的規則）
+  const allowedEmployeeIds = await getEditableScheduleEmployeeIds(req);
   if (allowedEmployeeIds === null) return true;
   if (!allowedEmployeeIds.length) return false;
 
@@ -207,22 +254,22 @@ export function hasScheduleDiff(existing, nextData) {
   });
 }
 
+/**
+ * 發布、完成發布、排班檢核的員工範圍：管理員 null（全部）；有排班權限的人是排班範圍，
+ * 主管沒勾「包含自己」時不含自己（原本的規則）；沒有排班權限是空陣列。
+ */
 export async function resolveScopedEmployeeIds(user, { includeSelf = false } = {}) {
   if (!user) throw new Error('unauthorized');
   const { role, id } = user;
   if (['admin'].includes(role)) {
     return null;
   }
-  if (role === 'supervisor') {
-    const list = await Employee.find({ supervisor: id }).select('_id');
-    const ids = list.map((e) => e._id.toString());
-    if (includeSelf && id) ids.push(String(id));
-    return ids;
-  }
-  if (role === 'employee' && id) {
-    return [String(id)];
-  }
-  return [];
+  const access = await getScheduleAccess(user);
+  if (!access.canSchedule) return [];
+  const actorId = String(id);
+  return role === 'supervisor' && !includeSelf
+    ? access.employeeIds.filter((employeeId) => employeeId !== actorId)
+    : [...access.employeeIds];
 }
 
 export function normalizeId(value) {

@@ -115,6 +115,7 @@ describe('approvalDetail 簽核紀錄與欄位', () => {
       admin_override: '管理員代為處理',
       annual_leave: '特休扣減',
       annual_leave_error: '特休扣減失敗',
+      approver_fallback: '無上級主管改送',
     }
     for (const [action, label] of Object.entries(labels)) expect(actionLabel(action)).toBe(label)
     const rows = buildLogRows({

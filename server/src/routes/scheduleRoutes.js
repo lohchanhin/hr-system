@@ -30,6 +30,8 @@ import {
 } from '../controllers/scheduleController.js';
 import { verifySupervisor } from '../middleware/supervisor.js';
 import { authenticate, authorizeRoles } from '../middleware/auth.js';
+// 排班功能看「排班權限」而不是角色：管理員、主管（排班權限模式允許時）與被指定為排班人員的員工都能使用
+import { requireScheduleAccess } from '../middleware/scheduleAccess.js';
 import uploadMiddleware from '../middleware/upload.js';
 
 const router = Router();
@@ -39,20 +41,21 @@ router.get('/monthly', listMonthlySchedules);
 router.get('/leave-approvals', listLeaveApprovals);
 router.get('/preferences/include-self', authenticate, authorizeRoles('supervisor'), getIncludeSelfPreference);
 router.put('/preferences/include-self', authenticate, authorizeRoles('supervisor'), updateIncludeSelfPreference);
-router.get('/summary', authenticate, authorizeRoles('supervisor'), listSupervisorSummary);
+// 主管統計：原本只給主管（管理員不開放），現在排班人員也看得到自己範圍的統計
+router.get('/summary', authenticate, requireScheduleAccess({ excludeRoles: ['admin'] }), listSupervisorSummary);
 router.get('/overview', authorizeRoles('admin'), listScheduleOverview);
 router.get('/overview/export', authorizeRoles('admin'), exportScheduleOverview);
 router.get('/export', exportSchedules);
-router.get('/rules/validate', authenticate, authorizeRoles('supervisor', 'admin'), validateScheduleRules);
-router.get('/validate', authenticate, authorizeRoles('supervisor', 'admin'), validateScheduleCompleteness);
-router.get('/incomplete', authenticate, authorizeRoles('supervisor', 'admin'), getIncompleteSchedules);
-router.get('/can-finalize', authenticate, authorizeRoles('supervisor', 'admin'), checkCanFinalize);
-router.post('/publish', authenticate, authorizeRoles('supervisor', 'admin'), publishSchedules);
-router.post('/publish/finalize', authenticate, authorizeRoles('supervisor', 'admin'), finalizeSchedules);
-router.post('/import', authenticate, authorizeRoles('supervisor', 'admin'), uploadMiddleware, importSchedules);
-router.get('/memos', authenticate, authorizeRoles('supervisor', 'admin'), listScheduleDayMemos);
-router.put('/memos/:date', authenticate, authorizeRoles('supervisor', 'admin'), upsertScheduleDayMemo);
-router.post('/batch-delete', authenticate, authorizeRoles('supervisor', 'admin'), deleteSchedulesBatch);
+router.get('/rules/validate', authenticate, requireScheduleAccess(), validateScheduleRules);
+router.get('/validate', authenticate, requireScheduleAccess(), validateScheduleCompleteness);
+router.get('/incomplete', authenticate, requireScheduleAccess(), getIncompleteSchedules);
+router.get('/can-finalize', authenticate, requireScheduleAccess(), checkCanFinalize);
+router.post('/publish', authenticate, requireScheduleAccess(), publishSchedules);
+router.post('/publish/finalize', authenticate, requireScheduleAccess(), finalizeSchedules);
+router.post('/import', authenticate, requireScheduleAccess(), uploadMiddleware, importSchedules);
+router.get('/memos', authenticate, requireScheduleAccess(), listScheduleDayMemos);
+router.put('/memos/:date', authenticate, requireScheduleAccess(), upsertScheduleDayMemo);
+router.post('/batch-delete', authenticate, requireScheduleAccess(), deleteSchedulesBatch);
 router.post('/batch', verifySupervisor, createSchedulesBatch);
 router.post('/', verifySupervisor, createSchedule);
 router.get('/:id', getSchedule);

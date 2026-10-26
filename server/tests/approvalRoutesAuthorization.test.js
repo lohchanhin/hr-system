@@ -39,6 +39,13 @@ jest.unstable_mockModule('../src/middleware/approvalAttachmentUpload.js', () => 
   uploadApprovalAttachmentFiles: (req, res, next) => next(),
 }))
 
+// 無上級主管時的最高層簽核人設定：回不同的內容，才分得出不是被 GET /:id 接走
+const policy = (req, res) => res.json({ policy: true })
+jest.unstable_mockModule('../src/controllers/approvalPolicyController.js', () => ({
+  getTopLevelApprovers: policy,
+  updateTopLevelApprovers: policy,
+}))
+
 let app
 let currentUser
 
@@ -92,5 +99,25 @@ describe('approval request route access', () => {
     const res = await request(app).get('/api/approvals/history')
 
     expect(res.status).toBe(403)
+  })
+})
+
+describe('top-level approvers setting (無上級主管時的最高層簽核人)', () => {
+  it.each(['employee', 'supervisor'])('is closed to a %s', async (role) => {
+    currentUser = { id: `${role}-1`, role }
+
+    expect((await request(app).get('/api/approvals/top-level-approvers')).status).toBe(403)
+    expect((await request(app).put('/api/approvals/top-level-approvers').send({ ids: [] })).status).toBe(403)
+  })
+
+  it('is open to an administrator and is not taken for a request id', async () => {
+    currentUser = { id: 'admin-1', role: 'admin' }
+
+    const read = await request(app).get('/api/approvals/top-level-approvers')
+    const write = await request(app).put('/api/approvals/top-level-approvers').send({ ids: [] })
+
+    expect(read.status).toBe(200)
+    expect(read.body).toEqual({ policy: true })
+    expect(write.body).toEqual({ policy: true })
   })
 })

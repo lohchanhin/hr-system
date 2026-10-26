@@ -301,3 +301,33 @@ describe('ApprovalDetailContent 假別餘額', () => {
     expect(other.find('.leave-balance-alert').exists()).toBe(false)
   })
 })
+
+// R5：主管關卡找不到可簽核的主管、改由最高層簽核人簽核時，明細的那一關說明改送的原因；沒有改送的關卡不顯示
+describe('ApprovalDetailContent：無上級主管改送', () => {
+  it('shows why a step went to the top-level approvers', async () => {
+    const doc = buildDoc({
+      status: 'pending',
+      steps: [
+        {
+          all_must_approve: false,
+          is_required: true,
+          fallback: { reason: 'only-applicant', reason_text: '主管就是申請人本人', source: 'admins', text: '無上級主管，改由系統管理員簽核（任一位核准即可）' },
+          approvers: [{ approver: { _id: 'u9', name: '管理員' }, decision: 'pending' }],
+        },
+        { all_must_approve: true, is_required: true, approvers: [{ approver: { _id: 'u2', name: 'Alice' }, decision: 'pending' }] },
+      ],
+      logs: [
+        { action: 'create', by_employee: 'app1', at: '2026-06-19T00:00:00.000Z', message: '建立送審單' },
+        { action: 'approver_fallback', at: '2026-06-19T00:00:00.000Z', message: '第1關（申請者的主管）（主管就是申請人本人）：無上級主管，改由系統管理員簽核（任一位核准即可）' },
+      ],
+    })
+    vi.spyOn(window, 'fetch').mockResolvedValue(jsonResponse(doc))
+    const wrapper = mountContent('a1')
+    await flushPromises()
+
+    const notes = wrapper.findAll('[data-test="step-fallback"]')
+    expect(notes).toHaveLength(1)
+    expect(notes[0].text()).toBe('無上級主管，改由系統管理員簽核（任一位核准即可）（主管就是申請人本人）')
+    expect(wrapper.find('.detail-logs').text()).toContain('無上級主管改送')
+  })
+})

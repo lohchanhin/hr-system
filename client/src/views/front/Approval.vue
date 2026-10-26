@@ -28,10 +28,10 @@
               title="我的假別餘額"
               @loaded="onOwnBalancesLoaded"
             />
-            <!-- 我的調休：國定假日適逢休息日／例假存入的調休（來源、狀態、用在哪張單）；要用時在下方選假別「調休」發起簽核 -->
+            <!-- 我的調休（客戶稱為移休）：國定假日適逢休息日／例假存入的調休（來源、狀態、用在哪張單、人資備註）；要用時在下方選假別「調休」或「移休」發起簽核 -->
             <CompensatoryLeavePanel
               ref="applyCompPanel"
-              title="我的調休"
+              title="我的調休（移休）"
             />
 
             <el-card class="form-card">
@@ -92,7 +92,21 @@
                       快速請假
                     </el-button>
                   </div>
+                  <!-- 部門的「使用簽核表單」：清單有依部門篩選時提示（伺服器回應標頭 X-Form-Visibility: department） -->
+                  <p v-if="formsRestricted" class="form-visibility-hint" data-test="form-visibility-hint">
+                    目前只列出您所屬部門開放使用的表單；找不到需要的表單請洽管理員
+                  </p>
                 </el-form-item>
+                <!-- 選好的表單不在可申請的清單了（管理員停用，或部門不再開放）：說明為什麼不見了 -->
+                <el-alert
+                  v-if="formGoneNotice"
+                  type="warning"
+                  show-icon
+                  class="mb-3"
+                  :title="formGoneNotice"
+                  data-test="form-gone-notice"
+                  @close="formGoneNotice = ''"
+                />
 
                 <div v-if="fieldList.length" class="form-content">
                   <el-divider content-position="left">
@@ -141,6 +155,7 @@
                         <div class="step-content">
                           <h4 class="step-title">{{ s.label }}</h4>
                           <p class="step-approvers">{{ s.approvers }}</p>
+                          <p v-if="s.fallback" class="step-fallback" data-test="workflow-step-fallback">{{ s.fallback }}</p>
                           <p v-if="s.warning" class="step-warning">{{ s.warning }}</p>
                         </div>
                       </div>
@@ -553,6 +568,8 @@
               <span class="mr-2">需全員同意：{{ s.all_must_approve ? '是' : '否' }}</span>
               <span>必簽：{{ s.is_required ? '是' : '否' }}</span>
             </div>
+            <!-- 主管關卡找不到可簽核的主管時改由最高層簽核人簽核：說明改送的原因 -->
+            <p v-if="describeFallbackStep(s)" class="step-fallback" data-test="detail-step-fallback">{{ describeFallbackStep(s) }}</p>
             <el-table :data="s.approvers" size="small" border>
               <el-table-column label="審核人" width="200">
                 <template #default="{ row }">
@@ -773,6 +790,7 @@ import {
   findMissingRequiredField,
   describeWorkflowApprovers,
   describeUnresolvedStep,
+  describeFallbackStep,
   findLeaveFormId,
   isLeaveForm,
   isPayrollConnectedForm,
@@ -934,6 +952,10 @@ const applyLeaveContext = computed(() => (applyIsLeaveForm.value ? leaveContextO
 
 const workflowSteps = ref([])
 const workflowWarning = ref('')
+// 部門的「使用簽核表單」：表單清單有依部門篩選（伺服器回應標頭 X-Form-Visibility 是 department）
+const formsRestricted = ref(false)
+// 選好的表單不在清單裡了（管理員停用、部門不再開放）時的提示
+const formGoneNotice = ref('')
 const fileBuffers = ref({}) // { fieldId: [FileItem...] }
 const submitting = ref(false)
 const applyError = ref('')
@@ -993,8 +1015,25 @@ async function loadFormTemplates() {
     if (!res.ok) throw await readApiError(res)
     const list = await res.json()
     formTemplates.value = (Array.isArray(list) ? list : []).filter(isActiveForm)
+    formsRestricted.value = res.headers?.get?.('X-Form-Visibility') === 'department'
   } catch (error) {
     templatesError.value = describeError(error).message
+  }
+}
+
+// 重新載入清單後，原本選的表單已經不在了：清掉選擇並說明原因（reason 是伺服器的訊息，沒有就用通用說明）
+function noticeFormGone(previous, reason = '') {
+  const name = previous?.name ? `「${previous.name}」` : '您選的表單'
+  formGoneNotice.value = reason || `${name}已不在可申請的表單中（可能已停用，或您所屬的部門未開放使用），請改選其他表單`
+}
+
+// 送出時伺服器回「部門未開放這張表單」（403 FORM_NOT_ALLOWED）：重新取清單，表單不見了就清掉選擇
+async function handleFormNotAllowed(message) {
+  const previous = formTemplates.value.find(t => t._id === applyState.formId)
+  await loadFormTemplates()
+  if (!formTemplates.value.some(t => t._id === applyState.formId)) {
+    resetApplyForm()
+    noticeFormGone(previous, message)
   }
 }
 
@@ -1068,6 +1107,7 @@ async function onSelectForm() {
   // 換表單等於另一次送出，不要沿用上一張的 Idempotency-Key
   approvalSubmissionKey = createSubmissionKey()
   if (!applyState.formId) return
+  formGoneNotice.value = ''
   const formId = applyState.formId
 
   try {
@@ -1103,11 +1143,16 @@ async function onSelectForm() {
       await Promise.all([ensureEmployeeCache(userIds), ensureSignOptions(steps)])
       if (seq !== selectSeq) return
       // 伺服器替每一關帶 resolved_count / unresolved_reason：必簽的關卡找不到人，先提醒原因，不必等填完送出才知道
-      workflowSteps.value = steps.map((s, idx) => ({
-        label: s.name || `第 ${idx + 1} 關`,
-        approvers: describeWorkflowApprovers(s, previewLookups),
-        warning: describeUnresolvedStep(s),
-      }))
+      workflowSteps.value = steps.map((s, idx) => {
+        // 主管關卡找不到主管時改由最高層簽核人：送出前就讓申請人知道這關會送給誰
+        const fallback = describeFallbackStep(s)
+        return {
+          label: s.name || `第 ${idx + 1} 關`,
+          approvers: describeWorkflowApprovers(s, previewLookups),
+          warning: describeUnresolvedStep(s),
+          ...(fallback ? { fallback } : {}),
+        }
+      })
     } else if (wfRes.status === 404) {
       workflowWarning.value = '此表單尚未設定簽核流程，暫時無法送出，請聯絡管理員'
     }
@@ -1129,9 +1174,11 @@ async function reloadSelectedForm() {
   if (!applyState.formId) return
   if (hasTypedInput() && typeof window !== 'undefined' && !window.confirm('重新載入會清除目前已填寫的內容，確定要重新載入嗎？')) return
   // 同時更新表單清單，管理員新增 / 停用的表單不必重新整理整頁
+  const previous = formTemplates.value.find(t => t._id === applyState.formId)
   await loadFormTemplates()
   if (!formTemplates.value.some(t => t._id === applyState.formId)) {
     applyState.formId = ''
+    noticeFormGone(previous)
   }
   await onSelectForm()
 }
@@ -1233,6 +1280,8 @@ async function submitApply() {
     applyError.value = info.message
     applyErrorLines.value = info.lines
     showFailure('送出失敗', info)
+    // 部門已不開放這張表單（例如管理員剛改了部門設定）：更新清單，表單不見了就說明原因
+    if (info.code === 'FORM_NOT_ALLOWED') await handleFormNotAllowed(info.message)
   } finally {
     submitting.value = false
   }
@@ -2110,6 +2159,22 @@ watch(activeTab, async (tab) => {
   font-size: 13px;
   color: #d97706;
   margin: 4px 0 0 0;
+}
+
+/* 主管關卡改由最高層簽核人簽核的說明（預覽與明細） */
+.step-fallback {
+  font-size: 13px;
+  color: #b88230;
+  margin: 4px 0 6px 0;
+}
+
+/* 表單清單依部門篩選的提示 */
+.form-visibility-hint {
+  flex: 0 0 100%;
+  margin: 6px 0 0 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #64748b;
 }
 
 .error-lines {

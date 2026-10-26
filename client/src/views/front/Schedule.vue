@@ -34,15 +34,15 @@
         </div>
         <div class="filter-group" :class="{ 'filter-group-hidden': shouldHideDepartmentFilters }">
           <label class="filter-label">部門</label>
-          <el-select v-model="selectedDepartment" placeholder="請選擇部門" @change="onDepartmentChange" :disabled="true"
-            class="modern-select">
+          <el-select v-model="selectedDepartment" placeholder="請選擇部門" @change="onDepartmentChange" :disabled="!canSwitchDepartment"
+            class="modern-select" data-test="schedule-department-select">
             <el-option v-for="dept in departments" :key="dept._id" :label="dept.name" :value="dept._id" />
           </el-select>
         </div>
         <div class="filter-group" :class="{ 'filter-group-hidden': shouldHideDepartmentFilters }">
           <label class="filter-label">單位</label>
           <el-select v-model="selectedSubDepartment" placeholder="請選擇單位" @change="onSubDepartmentChange"
-            class="modern-select">
+            class="modern-select" data-test="schedule-subdepartment-select">
             <el-option v-for="sub in filteredSubDepartments" :key="sub._id" :label="sub.name" :value="sub._id" />
           </el-select>
         </div>
@@ -377,7 +377,7 @@
           :popper-class="toolbarPopperClassName"
           data-test="batch-shift-select"
         >
-          <el-option v-for="opt in shifts" :key="opt._id" :label="formatShiftLabel(opt)" :value="opt._id" />
+          <el-option v-for="opt in availableShifts" :key="opt._id" :label="formatShiftLabel(opt)" :value="opt._id" />
         </el-select>
         <template v-if="isTableFullscreen">
           <div class="batch-readonly-field" data-test="batch-dept-readonly">
@@ -615,7 +615,7 @@
               :day="d"
               :cell-view="getRenderedCell(row._id, d.date)"
               :can-edit="canEditSchedule"
-              :shifts="shifts"
+              :shifts="availableShifts"
               :format-shift-label="formatShiftLabel"
               :is-fullscreen="isTableFullscreen"
               :fullscreen-popper-target="fullscreenPopperTarget"
@@ -816,6 +816,14 @@ import dayjs from 'dayjs'
 import { apiFetch, importScheduleRecords } from '../../api'
 import { useAuthStore } from '../../stores/auth'
 import { useMenuStore } from '../../stores/menu'
+import { useProfileStore } from '../../stores/profile'
+import {
+  filterScopeDepartments,
+  filterScopeSubDepartments,
+  normalizeScheduleAccess,
+  resolveAllowedShiftIds,
+  restrictShifts
+} from '../../utils/scheduleScope'
 import { ElMessage, ElMessageBox, ElLoading } from 'element-plus'
 import { useRouter } from 'vue-router'
 import ScheduleDashboard from './ScheduleDashboard.vue'
@@ -887,6 +895,15 @@ const ApprovalDetailContent = defineAsyncComponent(() => import('./ApprovalDetai
 const HolidayLedgerDialog = defineAsyncComponent(() => import('./HolidayLedgerDialog.vue'))
 const authStore = useAuthStore()
 const menuStore = useMenuStore()
+// 排班權限（個人資料的 scheduleAccess，進入排班頁時路由已讀取）：被指定為排班人員的員工任何角色都能排班，
+// 只看得到被指定的小單位；沒有這份資料（舊版伺服器或讀取失敗）時維持依角色判斷
+const profileStore = useProfileStore()
+const scheduleAccess = computed(() => normalizeScheduleAccess(profileStore.profile?.scheduleAccess))
+// 主管範圍（自己與直屬部屬）：其他控制設定切成「只有排班人員」時就沒有
+const usesSupervisorScope = computed(() =>
+  authStore.role === 'supervisor' && (scheduleAccess.value ? scheduleAccess.value.supervisorScope : true)
+)
+const isSchedulerView = computed(() => authStore.role !== 'admin' && Boolean(scheduleAccess.value?.isScheduler))
 
 const FORM_CATEGORY_LABELS = {
   leave: '請假',
@@ -1336,12 +1353,25 @@ const isSelectableCell = (empId, day) => {
   return !isLeaveCell(empId, day)
 }
 
+// 正在看的小單位的「使用班別」：班別下拉、套用班別與圖例只列這些班別（小單位沒有設定就是全部）；
+// 既有班表的班別名稱與顏色照樣用完整的班別設定顯示
+const viewedSubDepartments = computed(() => {
+  if (selectedSubDepartment.value) {
+    const selected = subDepartments.value.find(sub => sub._id === selectedSubDepartment.value)
+    return selected ? [selected] : []
+  }
+  return subDepartments.value.filter(sub => sub.department === selectedDepartment.value)
+})
+const availableShifts = computed(() =>
+  restrictShifts(shifts.value, resolveAllowedShiftIds(viewedSubDepartments.value))
+)
+
 const legendShifts = computed(() => {
-  if (!Array.isArray(shifts.value) || !shifts.value.length) {
+  if (!Array.isArray(availableShifts.value) || !availableShifts.value.length) {
     return []
   }
   const seen = new Set()
-  return shifts.value.reduce((acc, shift) => {
+  return availableShifts.value.reduce((acc, shift) => {
     if (!shift) return acc
     const label = formatShiftLabel(shift) || shift.name || shift.code || '未命名班別'
     const key = String(shift._id || `${shift.code ?? ''}-${shift.name ?? ''}`)
@@ -1354,6 +1384,13 @@ const legendShifts = computed(() => {
     })
     return acc
   }, [])
+})
+
+// 換到另一個小單位後，原本選的「套用班別」不在可用班別內就清掉（伺服器也會拒絕不允許的班別）
+watch(availableShifts, list => {
+  if (batchShiftId.value && !list.some(shift => String(shift?._id) === String(batchShiftId.value))) {
+    batchShiftId.value = ''
+  }
 })
 
 const allSelectedCells = computed(
@@ -2934,9 +2971,8 @@ const router = useRouter()
 authStore.loadUser()
 loadScheduleNotifications()
 
-const canUseSupervisorFilter = computed(() =>
-  ['supervisor', 'admin'].includes(authStore.role)
-)
+// 只有主管帶自己的 id 當 supervisor 參數（主管範圍）；管理員看全部員工，不再只列直屬於管理員的人
+const canUseSupervisorFilter = computed(() => authStore.role === 'supervisor')
 const shouldHideDepartmentFilters = computed(() => isTableFullscreen.value)
 const selectedDepartmentName = computed(() =>
   departments.value.find(dept => dept._id === selectedDepartment.value)?.name || '全部部門'
@@ -2950,8 +2986,16 @@ const fullscreenFilterHint = computed(() =>
 const showIncludeSelfToggle = computed(() => authStore.role === 'supervisor')
 // 注意：可篩選(主管視角)與可編輯(排班維護)是兩種不同權限，避免共用同一判定。
 const canEditScheduleRoles = ['supervisor', 'admin', 'manager', 'scheduler']
+// 有排班權限資料時以它為準（排班人員任何角色都能排；被切開的主管不能），否則依角色
 const canEditSchedule = computed(() =>
-  canEditScheduleRoles.includes(authStore.role)
+  authStore.role === 'admin' ||
+  (scheduleAccess.value
+    ? scheduleAccess.value.canSchedule
+    : canEditScheduleRoles.includes(authStore.role))
+)
+// 部門篩選原本固定在主管自己的部門；管理員（看全部）與被指定到不同部門小單位的排班人員要能切換部門
+const canSwitchDepartment = computed(() =>
+  (authStore.role === 'admin' || isSchedulerView.value) && departments.value.length > 1
 )
 const missingSupervisorScheduleNoticeKey = ref('')
 
@@ -3409,17 +3453,22 @@ async function fetchSubDepartments(dept = '') {
         }
       }
     }
-    if (!filtered.length && normalized.length) {
+    if (!filtered.length && normalized.length && !isSchedulerView.value) {
       filtered = normalized
     }
 
-    if (authStore.role === 'supervisor') {
-      const baseIds = supervisorAssignableSubDepartmentIds.value.length
+    const supervisorUnitIds = usesSupervisorScope.value
+      ? (supervisorAssignableSubDepartmentIds.value.length
         ? supervisorAssignableSubDepartmentIds.value
         : supervisorSubDepartmentId.value
           ? [supervisorSubDepartmentId.value]
-          : []
-      const allowedSet = new Set(baseIds.map(id => String(id)))
+          : [])
+      : []
+    if (isSchedulerView.value) {
+      // 排班人員：被指定的小單位，加上主管範圍的小單位（主管同時是排班人員時）
+      filtered = filterScopeSubDepartments(filtered, scheduleAccess.value, supervisorUnitIds)
+    } else if (authStore.role === 'supervisor') {
+      const allowedSet = new Set(supervisorUnitIds.map(id => String(id)))
       if (allowedSet.size) {
         filtered = filtered.filter(s => allowedSet.has(String(s._id)))
       }
@@ -3476,6 +3525,20 @@ async function fetchOptions() {
       selectedDepartment.value || supervisorDepartmentId.value
 
     let filtered = normalized
+    if (isSchedulerView.value) {
+      // 排班人員：被指定小單位所屬的部門（排班管理者的整個部門），主管同時是排班人員時再加上自己的部門
+      filtered = filterScopeDepartments(
+        normalized,
+        scheduleAccess.value,
+        usesSupervisorScope.value && supervisorDepartmentId.value ? [supervisorDepartmentId.value] : []
+      )
+      departments.value = filtered
+      if (!departments.value.some(d => d._id === selectedDepartment.value)) {
+        selectedDepartment.value = departments.value[0]?._id || ''
+      }
+      await fetchSubDepartments(selectedDepartment.value)
+      return
+    }
     if (targetDeptId) {
       filtered = normalized.filter(
         d =>
@@ -3522,7 +3585,7 @@ function getStoredSupervisorId() {
 }
 
 async function fetchSupervisorContext() {
-  if (authStore.role !== 'supervisor') {
+  if (!usesSupervisorScope.value) {
     supervisorDepartmentId.value = ''
     supervisorDepartmentName.value = ''
     supervisorSubDepartmentId.value = ''
@@ -3614,7 +3677,7 @@ async function fetchSupervisorContext() {
 }
 
 async function fetchSupervisorSubDepartmentScope(supervisorId = '') {
-  if (authStore.role !== 'supervisor') {
+  if (!usesSupervisorScope.value) {
     supervisorAssignableSubDepartmentIds.value = []
     return
   }

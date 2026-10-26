@@ -380,7 +380,8 @@ describe('listSupervisorSummary leave handling', () => {
   });
 
   it('excludes leave days from shift count and counts leave days', async () => {
-    const req = { query: { month: '2023-06' }, user: { id: 'sup1' } };
+    // 統計範圍依排班權限決定（主管的直屬部屬、排班人員的小單位），所以登入者要帶角色
+    const req = { query: { month: '2023-06' }, user: { id: 'sup1', role: 'supervisor' } };
     const status = jest.fn().mockReturnThis();
     const json = jest.fn();
     const res = { status, json };

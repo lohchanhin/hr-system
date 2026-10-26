@@ -12,6 +12,7 @@ import {
 } from '../controllers/approvalRequestController.js'
 
 import { getLeaveBalances, getLeaveHoursHint } from '../controllers/leaveBalanceController.js'
+import { getTopLevelApprovers, updateTopLevelApprovers } from '../controllers/approvalPolicyController.js'
 
 import { authorizeRoles } from '../middleware/auth.js'
 import { uploadApprovalAttachmentFiles } from '../middleware/approvalAttachmentUpload.js'
@@ -42,6 +43,10 @@ router.get('/forms/:formId/workflow', authorizeRoles('employee', 'supervisor', '
 router.put('/forms/:formId/workflow', authorizeRoles('admin'), setWorkflow)
 router.get('/sign-roles', authorizeRoles('employee', 'supervisor', 'admin'), getSignRoles)
 router.get('/sign-levels', authorizeRoles('employee', 'supervisor', 'admin'), getSignLevels)
+
+// 無上級主管時的最高層簽核人（全公司共用，只有管理員）；要排在 GET /:id 之前
+router.get('/top-level-approvers', authorizeRoles('admin'), getTopLevelApprovers)
+router.put('/top-level-approvers', authorizeRoles('admin'), updateTopLevelApprovers)
 
 // Requests
 router.post(

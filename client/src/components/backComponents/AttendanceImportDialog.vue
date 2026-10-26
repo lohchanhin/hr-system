@@ -9,6 +9,9 @@
       <el-alert type="info" show-icon class="import-hint">
         <template #title>上傳考勤檔案後可先預覽資料，確認欄位與員工對應再正式匯入。</template>
         系統預設欄位為考勤機匯出格式：「編號」、「姓名」、「日期時間」、「簽到/退」。如您的考勤機使用不同欄位名稱（如 USERID、NAME、CHECKTIME、CHECKTYPE），請在「欄位對應」中修改對應的欄位名稱。
+        <div class="import-source-hint">
+          匯入的打卡標示為「指紋匯入」，只會新增，不會修改或刪除員工的線上打卡與先前匯入的記錄；同一員工、同一動作、同一分鐘已有的打卡會自動略過（重複略過），同一個檔案重複匯入也不會多出記錄。
+        </div>
       </el-alert>
 
       <el-form label-width="140px" class="import-form">
@@ -65,10 +68,11 @@
         <h3>匯入預覽</h3>
         <p class="summary-text">
           共 {{ previewState.summary.totalRows }} 筆，
-          已匹配 {{ previewState.summary.readyCount }} 筆，
+          已匹配 {{ previewState.summary.readyCount }} 筆<template v-if="duplicateCount">（其中重複略過 {{ duplicateCount }} 筆）</template>，
           待處理 {{ previewState.summary.missingCount }} 筆，
           忽略 {{ previewState.summary.ignoredCount }} 筆，
-          發生錯誤 {{ previewState.summary.errorCount }} 筆。
+          發生錯誤 {{ previewState.summary.errorCount }} 筆<template v-if="!previewState.dryRun && previewState.summary.importedCount !== undefined">，
+          新增 {{ previewState.summary.importedCount }} 筆</template>。
         </p>
         <el-table :data="previewRows" height="240" border>
           <el-table-column prop="rowNumber" label="列" width="60" />
@@ -96,12 +100,14 @@
               <el-tag v-else-if="row.status === 'missing'" type="info">未匹配</el-tag>
               <el-tag v-else-if="row.status === 'ignored'">忽略</el-tag>
               <el-tag v-else-if="row.status === 'error'" type="danger">錯誤</el-tag>
+              <el-tag v-else-if="row.status === 'duplicate'" type="info">重複略過</el-tag>
               <span v-else>{{ row.status }}</span>
             </template>
           </el-table-column>
           <el-table-column label="訊息">
             <template #default="{ row }">
               <span v-if="Array.isArray(row.errors) && row.errors.length">{{ row.errors.join('、') }}</span>
+              <span v-else-if="row.status === 'duplicate'">{{ row.employee?.name ? `${row.employee.name}：` : '' }}{{ row.duplicateReason || '已有同一時間的打卡記錄' }}</span>
               <span v-else-if="row.status === 'missing'">尚未對應員工</span>
               <span v-else-if="row.status === 'ready'">{{ row.employee?.name || '' }}</span>
             </template>
@@ -232,6 +238,8 @@ const employeeOptions = computed(() =>
 
 const previewRows = computed(() => previewState.value?.preview ?? [])
 const missingUsers = computed(() => previewState.value?.missingUsers ?? [])
+// 與既有打卡（線上或先前匯入）或檔案內重複而略過的筆數
+const duplicateCount = computed(() => Number(previewState.value?.summary?.duplicateCount ?? 0))
 
 // 匯入按鈕是否可用：所有缺失的 USERID 都被對應或忽略
 const canImport = computed(() => {
@@ -416,8 +424,13 @@ async function submitPreview() {
       missingResolutions[item.identifier] = getResolution(item.identifier)
     })
 
+    const previewDuplicates = Number(payload.summary?.duplicateCount ?? 0)
     if ((payload.missingUsers || []).length === 0) {
-      ElMessage.success('預覽完成，可直接匯入')
+      if (previewDuplicates && previewDuplicates >= Number(payload.summary?.readyCount ?? 0)) {
+        ElMessage.warning(`預覽完成：${previewDuplicates} 筆與既有打卡記錄重複，匯入時會略過，沒有新的打卡資料`)
+      } else {
+        ElMessage.success('預覽完成，可直接匯入')
+      }
     } else {
       ElMessage.warning('部分資料需要對應員工後才能匯入')
     }
@@ -452,6 +465,11 @@ async function submitImport() {
     previewState.value = result
     const importedCount = Number(result?.summary?.importedCount ?? 0)
     if (importedCount <= 0) {
+      // 全部都是已經有的打卡（例如同一個檔案再匯入一次）：不是錯誤，只是沒有新資料，保留對話框顯示重複略過的筆數
+      if (Number(result?.summary?.duplicateCount ?? 0) > 0 && !result?.failureReasons?.length) {
+        ElMessage.warning(result.message || '沒有新的打卡記錄：資料與既有打卡記錄重複，已略過')
+        return
+      }
       ElMessage.error(buildFailureMessage(result, '所有資料均未匯入'))
       return
     }
@@ -487,6 +505,10 @@ defineExpose({
 
 .import-hint {
   margin-bottom: 8px;
+}
+
+.import-source-hint {
+  margin-top: 6px;
 }
 
 .import-form {

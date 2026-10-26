@@ -2,7 +2,28 @@ import ExcelJS from 'exceljs'
 import { jest } from '@jest/globals'
 
 const mockAttendanceRecord = {
-  insertMany: jest.fn()
+  insertMany: jest.fn(),
+  // 匯入前比對資料庫裡已經有的打卡（重複略過）
+  find: jest.fn(),
+  // 匯入只能新增：以下修改、刪除的方法都不應被呼叫
+  deleteMany: jest.fn(),
+  deleteOne: jest.fn(),
+  updateMany: jest.fn(),
+  updateOne: jest.fn(),
+  replaceOne: jest.fn(),
+  findOneAndUpdate: jest.fn(),
+  findOneAndDelete: jest.fn(),
+  bulkWrite: jest.fn()
+}
+
+const WRITE_METHODS_OTHER_THAN_INSERT = [
+  'deleteMany', 'deleteOne', 'updateMany', 'updateOne', 'replaceOne', 'findOneAndUpdate', 'findOneAndDelete', 'bulkWrite'
+]
+
+let mockExistingRecords = []
+
+function mockExistingRecordsWith(records) {
+  mockExistingRecords = records
 }
 
 const mockEmployeeModel = {
@@ -55,6 +76,14 @@ async function createWorkbookBuffer(rows) {
 
 beforeEach(() => {
   mockAttendanceRecord.insertMany.mockReset()
+  WRITE_METHODS_OTHER_THAN_INSERT.forEach(method => mockAttendanceRecord[method].mockReset())
+  mockAttendanceRecord.find.mockReset()
+  mockExistingRecords = []
+  mockAttendanceRecord.find.mockImplementation(() => {
+    const lean = jest.fn().mockImplementation(async () => mockExistingRecords)
+    const select = jest.fn().mockReturnValue({ lean })
+    return { select, lean }
+  })
   mockEmployeeModel.find.mockReset()
   mockIsTokenBlacklisted.mockReset()
   mockIsTokenBlacklisted.mockResolvedValue(false)
@@ -780,5 +809,224 @@ describe('attendanceImportController', () => {
     // Should be interpreted as PM (11:50:45 PM = 23:50:45 in 24-hour)
     // Asia/Taipei is UTC+8, so 23:50:45 Taipei - 8 hours = 15:50:45 UTC
     expect(inserted[0].timestamp.toISOString()).toBe('2025-11-02T15:50:45.000Z')
+  })
+})
+
+// 指紋匯入與線上打卡互補、不互相覆蓋：匯入只新增（標記來源 import），
+// 同一位員工、同一個動作、同一分鐘已經有的打卡（不論來源）或檔案內重複的列都略過，計入「重複略過」
+describe('attendanceImportController 打卡來源與重複略過', () => {
+  const EMPLOYEE = { _id: 'emp-src', employeeId: 'S001', name: '護理師', email: 's001@example.com' }
+
+  function buildRequest(buffer, { dryRun = false } = {}) {
+    return {
+      user: { role: 'admin' },
+      file: {
+        buffer,
+        mimetype: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        originalname: 'attendance.xlsx'
+      },
+      body: {
+        options: JSON.stringify({ timezone: 'Asia/Taipei', dryRun })
+      }
+    }
+  }
+
+  function expectNoUpdateOrDelete() {
+    WRITE_METHODS_OTHER_THAN_INSERT.forEach(method => {
+      expect(mockAttendanceRecord[method]).not.toHaveBeenCalled()
+    })
+  }
+
+  const insertedRows = () => mockAttendanceRecord.insertMany.mock.calls.flatMap(([batch]) => batch)
+
+  it('匯入的打卡標記來源為 import，只新增、不修改也不刪除既有記錄', async () => {
+    const buffer = await createWorkbookBuffer([
+      { USERID: 'S001', CHECKTIME: '2026-10-21 07:55:00', CHECKTYPE: 'I' },
+      { USERID: 'S001', CHECKTIME: '2026-10-21 17:05:00', CHECKTYPE: 'O' }
+    ])
+    mockEmployeeFindWith([EMPLOYEE])
+    const res = createMockRes()
+
+    await importAttendanceRecords(buildRequest(buffer), res)
+
+    expect(insertedRows()).toEqual([
+      expect.objectContaining({ employee: 'emp-src', action: 'clockIn', source: 'import' }),
+      expect.objectContaining({ employee: 'emp-src', action: 'clockOut', source: 'import' })
+    ])
+    expectNoUpdateOrDelete()
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+      message: '考勤資料匯入完成',
+      summary: expect.objectContaining({ readyCount: 2, importedCount: 2, duplicateCount: 0 })
+    }))
+  })
+
+  it('同一個檔案裡同一員工、同一動作、同一分鐘的打卡只匯入一次', async () => {
+    const buffer = await createWorkbookBuffer([
+      { USERID: 'S001', CHECKTIME: '2026-10-21 07:55:10', CHECKTYPE: 'I' },
+      { USERID: 'S001', CHECKTIME: '2026-10-21 07:55:50', CHECKTYPE: 'I' },
+      // 下一分鐘、或同一分鐘的不同動作都不是重複
+      { USERID: 'S001', CHECKTIME: '2026-10-21 07:56:00', CHECKTYPE: 'I' },
+      { USERID: 'S001', CHECKTIME: '2026-10-21 07:55:30', CHECKTYPE: 'O' }
+    ])
+    mockEmployeeFindWith([EMPLOYEE])
+    const res = createMockRes()
+
+    await importAttendanceRecords(buildRequest(buffer), res)
+
+    expect(insertedRows().map(row => [row.action, row.timestamp.toISOString()])).toEqual([
+      ['clockIn', '2026-10-20T23:55:10.000Z'],
+      ['clockIn', '2026-10-20T23:56:00.000Z'],
+      ['clockOut', '2026-10-20T23:55:30.000Z']
+    ])
+    const payload = res.json.mock.calls[0][0]
+    expect(payload.summary).toMatchObject({ totalRows: 4, readyCount: 4, duplicateCount: 1, importedCount: 3 })
+    expect(payload.preview[1]).toMatchObject({ rowNumber: 3, status: 'duplicate', duplicateReason: expect.stringContaining('檔案中') })
+    expect(payload.message).toBe('考勤資料匯入完成（新增 3 筆，重複略過 1 筆）')
+  })
+
+  it('系統已有的打卡（線上打卡、舊資料）同一分鐘就略過，不覆蓋也不重複新增，其他照常新增', async () => {
+    mockExistingRecordsWith([
+      // 員工 08:10:23 已在線上簽到
+      { employee: 'emp-src', action: 'clockIn', timestamp: new Date('2026-10-21T00:10:23.000Z'), source: 'online' },
+      // 沒有來源欄位的舊資料
+      { employee: 'emp-src', action: 'clockOut', timestamp: new Date('2026-10-21T09:05:59.000Z') }
+    ])
+    const buffer = await createWorkbookBuffer([
+      { USERID: 'S001', CHECKTIME: '2026-10-21 08:10:45', CHECKTYPE: 'I' },
+      { USERID: 'S001', CHECKTIME: '2026-10-21 07:55:00', CHECKTYPE: 'I' },
+      { USERID: 'S001', CHECKTIME: '2026-10-21 17:05:00', CHECKTYPE: 'O' }
+    ])
+    mockEmployeeFindWith([EMPLOYEE])
+    const res = createMockRes()
+
+    await importAttendanceRecords(buildRequest(buffer), res)
+
+    expect(mockAttendanceRecord.find).toHaveBeenCalledWith({
+      employee: { $in: ['emp-src'] },
+      timestamp: {
+        $gte: new Date('2026-10-20T23:55:00.000Z'),
+        $lt: new Date('2026-10-21T09:06:00.000Z')
+      }
+    })
+    expect(insertedRows()).toEqual([
+      expect.objectContaining({ action: 'clockIn', timestamp: new Date('2026-10-20T23:55:00.000Z'), source: 'import' })
+    ])
+    expectNoUpdateOrDelete()
+    const payload = res.json.mock.calls[0][0]
+    expect(payload.summary).toMatchObject({ readyCount: 3, duplicateCount: 2, importedCount: 1 })
+    expect(payload.preview.filter(row => row.status === 'duplicate').map(row => row.rowNumber)).toEqual([2, 4])
+    expect(payload.preview[0].duplicateReason).toContain('系統已有')
+  })
+
+  it('同一個檔案再匯入一次不會新增任何記錄：回傳 200 並說明重複略過的筆數', async () => {
+    mockExistingRecordsWith([
+      { employee: 'emp-src', action: 'clockIn', timestamp: new Date('2026-10-20T23:55:00.000Z'), source: 'import' },
+      { employee: 'emp-src', action: 'clockOut', timestamp: new Date('2026-10-21T09:05:00.000Z'), source: 'import' }
+    ])
+    const buffer = await createWorkbookBuffer([
+      { USERID: 'S001', CHECKTIME: '2026-10-21 07:55:00', CHECKTYPE: 'I' },
+      { USERID: 'S001', CHECKTIME: '2026-10-21 17:05:00', CHECKTYPE: 'O' }
+    ])
+    mockEmployeeFindWith([EMPLOYEE])
+    const res = createMockRes()
+
+    await importAttendanceRecords(buildRequest(buffer), res)
+
+    expect(mockAttendanceRecord.insertMany).not.toHaveBeenCalled()
+    expectNoUpdateOrDelete()
+    expect(res.status).not.toHaveBeenCalled()
+    const payload = res.json.mock.calls[0][0]
+    expect(payload.message).toBe('沒有新的打卡記錄：2 筆與既有打卡記錄重複，已略過')
+    expect(payload.summary).toMatchObject({ readyCount: 2, duplicateCount: 2, importedCount: 0, errorCount: 0 })
+    expect(payload.failureReasons).toBeUndefined()
+  })
+
+  it('有缺少對應員工的列時，重複略過一併列在失敗原因裡', async () => {
+    mockExistingRecordsWith([
+      { employee: 'emp-src', action: 'clockIn', timestamp: new Date('2026-10-20T23:55:00.000Z'), source: 'online' }
+    ])
+    const buffer = await createWorkbookBuffer([
+      { USERID: 'S001', CHECKTIME: '2026-10-21 07:55:00', CHECKTYPE: 'I' },
+      { USERID: 'unknown', CHECKTIME: '2026-10-21 08:00:00', CHECKTYPE: 'I' }
+    ])
+    mockEmployeeFindWith([EMPLOYEE])
+    const res = createMockRes()
+    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {})
+
+    try {
+      await importAttendanceRecords(buildRequest(buffer), res)
+    } finally {
+      warnSpy.mockRestore()
+    }
+
+    expect(mockAttendanceRecord.insertMany).not.toHaveBeenCalled()
+    const payload = res.json.mock.calls[0][0]
+    expect(payload.failureReasons).toEqual(['1 筆資料缺少對應員工', '1 筆與既有打卡記錄重複，已略過'])
+    expect(payload.message).toBe('所有資料均未匯入：1 筆資料缺少對應員工、1 筆與既有打卡記錄重複，已略過')
+  })
+
+  it('預覽（dryRun）也會標出重複略過的列，但不寫入資料庫', async () => {
+    mockExistingRecordsWith([
+      { employee: 'emp-src', action: 'clockOut', timestamp: new Date('2026-10-21T09:05:00.000Z'), source: 'online' }
+    ])
+    const buffer = await createWorkbookBuffer([
+      { USERID: 'S001', CHECKTIME: '2026-10-21 07:55:00', CHECKTYPE: 'I' },
+      { USERID: 'S001', CHECKTIME: '2026-10-21 17:05:20', CHECKTYPE: 'O' }
+    ])
+    mockEmployeeFindWith([EMPLOYEE])
+    const res = createMockRes()
+
+    await importAttendanceRecords(buildRequest(buffer, { dryRun: true }), res)
+
+    expect(mockAttendanceRecord.insertMany).not.toHaveBeenCalled()
+    const payload = res.json.mock.calls[0][0]
+    expect(payload.message).toBe('預覽成功')
+    expect(payload.summary).toMatchObject({ readyCount: 2, duplicateCount: 1, importedCount: 0 })
+    expect(payload.preview.map(row => row.status)).toEqual(['ready', 'duplicate'])
+  })
+
+  it('跨批次（每 500 筆）也會略過檔案內重複的列', async () => {
+    const rows = []
+    for (let index = 0; index < 501; index += 1) {
+      const minute = String(index % 60).padStart(2, '0')
+      const hour = String(Math.floor(index / 60)).padStart(2, '0')
+      rows.push({ USERID: 'S001', CHECKTIME: `2026-10-21 ${hour}:${minute}:00`, CHECKTYPE: 'I' })
+    }
+    // 與第一列同一分鐘
+    rows.push({ USERID: 'S001', CHECKTIME: '2026-10-21 00:00:30', CHECKTYPE: 'I' })
+    const buffer = await createWorkbookBuffer(rows)
+    mockEmployeeFindWith([EMPLOYEE])
+    const res = createMockRes()
+
+    await importAttendanceRecords(buildRequest(buffer), res)
+
+    expect(mockAttendanceRecord.insertMany).toHaveBeenCalledTimes(2)
+    expect(insertedRows()).toHaveLength(501)
+    expect(res.json.mock.calls[0][0].summary).toMatchObject({ totalRows: 502, duplicateCount: 1, importedCount: 501 })
+  })
+
+  it('比對既有打卡失敗時回傳 500，不會把檔案當成已匯入', async () => {
+    mockAttendanceRecord.find.mockImplementation(() => ({
+      select: () => ({ lean: () => Promise.reject(new Error('db down')) })
+    }))
+    const buffer = await createWorkbookBuffer([
+      { USERID: 'S001', CHECKTIME: '2026-10-21 07:55:00', CHECKTYPE: 'I' }
+    ])
+    mockEmployeeFindWith([EMPLOYEE])
+    const res = createMockRes()
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {})
+
+    try {
+      await importAttendanceRecords(buildRequest(buffer), res)
+    } finally {
+      errorSpy.mockRestore()
+    }
+
+    expect(mockAttendanceRecord.insertMany).not.toHaveBeenCalled()
+    expect(res.status).toHaveBeenCalledWith(500)
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+      message: '考勤資料寫入失敗，請稍後再試',
+      summary: { importedCount: 0, duplicateCount: 0 }
+    }))
   })
 })

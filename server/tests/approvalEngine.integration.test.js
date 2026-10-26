@@ -540,16 +540,32 @@ describeIntegration('approval engine against a real MongoDB through the real app
       expect((await load(res.body._id)).steps[0].approvers.map(a => String(a.approver))).toEqual([id('stranger')])
     })
 
+    // R5（2026/10）之後：直屬主管離職時這一關改送最高層簽核人（預設是系統管理員），離職的主管仍然不會是簽核人；
+    // 連可以改送的人都沒有時才維持原本的錯誤
     it('ignores departed and disabled people for user and manager steps', async () => {
       await Employee.updateOne({ _id: people.a3._id }, { $set: { supervisor: people.hrLeft._id } })
-      const made = await makeForm({
-        name: '離職主管',
-        steps: [{ approver_type: 'manager', approver_value: 'APPLICANT_SUPERVISOR', all_must_approve: true, is_required: true, can_return: true }],
-      })
-      const res = await createRequest('a3', made)
-      expect(res.status).toBe(400)
-      expect(res.body.error).toContain('申請人的直屬主管已離職')
-      await Employee.updateOne({ _id: people.a3._id }, { $set: { supervisor: people.boss._id } })
+      try {
+        const made = await makeForm({
+          name: '離職主管',
+          steps: [{ approver_type: 'manager', approver_value: 'APPLICANT_SUPERVISOR', all_must_approve: true, is_required: true, can_return: true }],
+        })
+        const res = await createRequest('a3', made)
+        expect(res.status).toBe(201)
+        const doc = await load(res.body._id)
+        expect(doc.steps[0].approvers.map(a => String(a.approver))).toEqual([id('admin')])
+        expect(doc.steps[0].fallback).toMatchObject({ reason: 'supervisor-inactive' })
+
+        await Employee.updateOne({ _id: people.admin._id }, { $set: { status: '留職停薪' } })
+        try {
+          const refused = await createRequest('a3', made)
+          expect(refused.status).toBe(400)
+          expect(refused.body.error).toContain('申請人的直屬主管已離職')
+        } finally {
+          await Employee.updateOne({ _id: people.admin._id }, { $set: { status: '正職員工' } })
+        }
+      } finally {
+        await Employee.updateOne({ _id: people.a3._id }, { $set: { supervisor: people.boss._id } })
+      }
     })
   })
 

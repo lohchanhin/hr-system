@@ -1,4 +1,5 @@
 import Employee from '../models/Employee.js';
+import { getScheduleAccessSummary } from '../services/scheduleAccessService.js';
 
 export async function getMenu(req, res, next) {
   try {
@@ -39,6 +40,23 @@ export async function getMenu(req, res, next) {
       { name: 'ManagerChangePassword', label: '變更密碼', icon: 'el-icon-lock' }
     ]
   };
+
+    // 排班管理看排班權限：被指定為排班人員的員工也看得到；排班權限模式切開主管後，沒被指定的主管就看不到
+    if (['employee', 'supervisor'].includes(role) && req.user?.id) {
+      let access = null;
+      try {
+        access = await getScheduleAccessSummary(req.user);
+      } catch (accessError) {
+        // 讀不到排班權限時維持原本依角色的選單（主管看得到、員工看不到），各排班 API 仍會再檢查
+        console.error('Failed to resolve schedule access for menu', accessError?.name ?? 'Error');
+      }
+      if (role === 'employee' && access?.canSchedule) {
+        menus.employee.splice(1, 0, { name: 'Schedule', label: '排班管理', icon: 'el-icon-timer' });
+      }
+      if (role === 'supervisor' && access && !access.canSchedule) {
+        menus.supervisor = menus.supervisor.filter((item) => item.name !== 'Schedule');
+      }
+    }
 
     if (role === 'supervisor' && req.user?.id) {
       const profile = await Employee.findById(req.user.id)

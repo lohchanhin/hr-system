@@ -814,7 +814,7 @@ describe('HolidayLedgerDialog: 調休, personal swaps and the year list', () => 
     expect(apiFetch.mock.calls.map(([url]) => url)).toContain('/api/holiday-ledger/compensations?department=d1&subDepartment=s1&year=2026&status=available')
     expect(section.text()).toContain('輪班甲')
     expect(section.text()).toContain('2026-10-10 國慶日 適逢休息日')
-    expect(section.text()).toContain('8 小時，剩 8 小時')
+    expect(section.text()).toContain('8 小時（1 天），剩 8 小時（1 天）') // 移休以天計：時數旁附上天數
 
     await wrapper.find('[data-test="holiday-ledger-year-end-sync"]').trigger('click')
     await flushPromises()

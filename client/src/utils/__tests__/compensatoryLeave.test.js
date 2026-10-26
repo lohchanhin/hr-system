@@ -3,8 +3,11 @@ import {
   COMP_LEAVE_HELP_TEXT,
   describeBankSummary,
   describeCreditHours,
+  describeNoteMeta,
   describeUsage,
+  formatCompHours,
   formatDateKey,
+  validateBankNote,
   validateManualForm,
 } from '../compensatoryLeave'
 import { evaluateRequest, STATUS_LABELS } from '../leaveBalance'
@@ -15,27 +18,47 @@ describe('調休存摺的顯示文字', () => {
     expect(formatDateKey('')).toBe('')
   })
 
-  it('describes the hours of a credit: total, used, left and expired', () => {
-    expect(describeCreditHours({ hours: 8, usedHours: 0, remainingHours: 8, status: 'available' })).toBe('8 小時，剩 8 小時')
-    expect(describeCreditHours({ hours: 8, usedHours: 4, remainingHours: 4, status: 'partial' })).toBe('8 小時，已用 4 小時，剩 4 小時')
-    expect(describeCreditHours({ hours: 8, usedHours: 8, remainingHours: 0, status: 'used' })).toBe('8 小時，已用 8 小時')
-    expect(describeCreditHours({ hours: 8, usedHours: 2, remainingHours: 0, expiredHours: 6, status: 'expired' })).toBe('8 小時，已用 2 小時，過期 6 小時')
+  // 客戶把調休叫做移休、以天計（2026/10）：時數旁一律附上天數（1 天 = 8 小時，小數）
+  it('describes the hours of a credit: total, used, left and expired, each with its day equivalent', () => {
+    expect(describeCreditHours({ hours: 8, usedHours: 0, remainingHours: 8, status: 'available' })).toBe('8 小時（1 天），剩 8 小時（1 天）')
+    expect(describeCreditHours({ hours: 8, usedHours: 4, remainingHours: 4, status: 'partial' })).toBe('8 小時（1 天），已用 4 小時（0.5 天），剩 4 小時（0.5 天）')
+    expect(describeCreditHours({ hours: 8, usedHours: 8, remainingHours: 0, status: 'used' })).toBe('8 小時（1 天），已用 8 小時（1 天）')
+    expect(describeCreditHours({ hours: 8, usedHours: 2, remainingHours: 0, expiredHours: 6, status: 'expired' })).toBe('8 小時（1 天），已用 2 小時（0.25 天），過期 6 小時（0.75 天）')
+  })
+
+  it('formats bank hours with decimal days, so half a day shows', () => {
+    expect(formatCompHours(8)).toBe('8 小時（1 天）')
+    expect(formatCompHours(4)).toBe('4 小時（0.5 天）')
+    expect(formatCompHours(12)).toBe('12 小時（1.5 天）')
+    expect(formatCompHours(0)).toBe('0 小時（0 天）')
+    expect(formatCompHours(null)).toBe('—')
   })
 
   it('describes each use: a whole-day 調休 approval, half a day, an HR assignment with its note and an HR deduction', () => {
     expect(describeUsage({ kind: 'leave_request', kindLabel: '調休簽核', hours: 8, approvalStatus: 'approved', days: [{ date: '2026-10-26', hours: 8 }], fullDayDates: ['2026-10-26'] }))
-      .toBe('調休簽核 8 小時（2026/10/26 整天，已核准）')
+      .toBe('調休簽核 8 小時（1 天；2026/10/26 整天，已核准）')
     expect(describeUsage({ kind: 'leave_request', hours: 4, approvalStatus: 'approved', days: [{ date: '2026-11-02', hours: 4 }], fullDayDates: [] }))
-      .toBe('調休簽核 4 小時（2026/11/02 4 小時，已核准）')
+      .toBe('調休簽核 4 小時（0.5 天；2026/11/02 4 小時，已核准）')
     expect(describeUsage({ kind: 'hr_assigned', kindLabel: 'HR 指定', hours: 8, days: [{ date: '2026-03-02', hours: 8 }], fullDayDates: ['2026-03-02'], note: '與員工協商' }))
-      .toBe('HR 指定 8 小時（2026/03/02 整天）：與員工協商')
-    expect(describeUsage({ kind: 'adjustment', kindLabel: '人資扣除', hours: 2, days: [], fullDayDates: [], note: '更正' })).toBe('人資扣除 2 小時：更正')
+      .toBe('HR 指定 8 小時（1 天；2026/03/02 整天）：與員工協商')
+    expect(describeUsage({ kind: 'adjustment', kindLabel: '人資扣除', hours: 2, days: [], fullDayDates: [], note: '更正' })).toBe('人資扣除 2 小時（0.25 天）：更正')
   })
 
   it('sums up the bank in one line and explains how to use it', () => {
-    expect(describeBankSummary({ availableHours: 12, balanceHours: 16, pendingHours: 4 })).toBe('可用 12 小時（1 天 4 小時）；存摺剩餘 16 小時、簽核中 4 小時')
-    expect(describeBankSummary({ availableHours: 8, balanceHours: 8, pendingHours: 0 })).toBe('可用 8 小時（1 天）；存摺剩餘 8 小時')
+    expect(describeBankSummary({ availableHours: 12, balanceHours: 16, pendingHours: 4 })).toBe('可用 12 小時（1.5 天）；存摺剩餘 16 小時（2 天）、簽核中 4 小時（0.5 天）')
+    expect(describeBankSummary({ availableHours: 8, balanceHours: 8, pendingHours: 0 })).toBe('可用 8 小時（1 天）；存摺剩餘 8 小時（1 天）')
     expect(COMP_LEAVE_HELP_TEXT).toContain('發起簽核')
+    // 客戶的叫法：移休也可以選
+    expect(COMP_LEAVE_HELP_TEXT).toContain('移休')
+  })
+
+  it('describes who last changed the bank note and checks its length like the server', () => {
+    expect(describeNoteMeta({ text: '改發加倍工資', updatedAt: '2026-10-25T17:30:00.000Z', updatedBy: { id: 'a1', name: '人資小林' } })).toBe('人資小林 2026/10/26 更新')
+    expect(describeNoteMeta({ text: '只有內容' })).toBe('')
+    expect(describeNoteMeta({ text: '', updatedBy: { name: 'x' } })).toBe('')
+    expect(validateBankNote('a'.repeat(1000))).toBe('')
+    expect(validateBankNote('a'.repeat(1001))).toBe('備註不可超過 1000 個字')
+    expect(validateBankNote('')).toBe('')
   })
 
   it('checks the manual credit / deduction form: positive hours in the minimum unit and a note', () => {
@@ -52,13 +75,13 @@ describe('調休在請假單上的提示（與伺服器送出時的檢查相同�
 
   it('shows how much of the bank is left after the request', () => {
     expect(evaluateRequest(comp, [comp], 8)).toMatchObject({ level: 'info', exceeded: false, remainingAfter: 0 })
-    expect(evaluateRequest(comp, [comp], 8).text).toContain('調休：目前可請 8 小時')
+    expect(evaluateRequest(comp, [comp], 8).text).toBe('調休：目前可請 8 小時（1 天）；本次申請 8 小時（1 天），核准後剩 0 小時（0 天）')
   })
 
   it('refuses a request over the hours available (balance minus pending), whatever the stored over-quota setting says', () => {
     const verdict = evaluateRequest({ ...comp, enforcement: 'warn' }, [comp], 12)
     expect(verdict).toMatchObject({ level: 'error', exceeded: true, blocking: true })
-    expect(verdict.text).toBe('調休存摺剩餘 12 小時、簽核中 4 小時，可用 8 小時，本次申請 12 小時，將超出 4 小時，無法送出')
+    expect(verdict.text).toBe('調休存摺剩餘 12 小時（1.5 天）、簽核中 4 小時（0.5 天），可用 8 小時（1 天），本次申請 12 小時（1.5 天），將超出 4 小時（0.5 天），無法送出')
     expect(STATUS_LABELS.bank).toBe('調休存摺')
   })
 })

@@ -195,6 +195,7 @@ async function validateEmployeeSchedule(employee, month, shiftMap = new Map(), l
  * @param {Object} options - 選項
  * @param {string} options.department - 部門ID (可選)
  * @param {string} options.subDepartment - 小單位ID (可選)
+ * @param {string[]} options.employeeIds - 只檢查這些員工 (可選，非管理員的排班範圍)
  * @returns {Promise<Object>} 驗證結果
  */
 export async function validateMonthSchedules(month, options = {}) {
@@ -214,7 +215,12 @@ export async function validateMonthSchedules(month, options = {}) {
   if (options.subDepartment) {
     employeeQuery.subDepartment = options.subDepartment;
   }
-  
+
+  // 非管理員只檢查自己排班範圍內的員工（呼叫端傳入；沒傳代表不限制）
+  if (Array.isArray(options.employeeIds)) {
+    employeeQuery._id = { $in: options.employeeIds };
+  }
+
   // 取得所有需要檢查的員工
   const employees = await Employee.find(employeeQuery).lean();
   const shiftMap = await loadShiftMap();

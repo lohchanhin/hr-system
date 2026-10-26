@@ -30,7 +30,7 @@ import {
 import { toTaipeiDateKey } from '../utils/taipeiTime.js';
 import { appendHolidayLedgerSheet } from '../services/holidayLedgerWorkbook.js';
 import { buildLiteralSearchRegex } from '../utils/safeSearch.js';
-import { getAllowedScheduleEmployeeIds, toEntityId } from './schedule/scheduleShared.js';
+import { getAllowedScheduleEmployeeIds, getEditableScheduleEmployeeIds, toEntityId } from './schedule/scheduleShared.js';
 
 const MAX_LEDGER_MONTHS = 12;
 // 一次最多處理的員工數：全公司沒有選單位時可能很多人，請使用者縮小範圍
@@ -94,7 +94,7 @@ function resolveMonths(query, { single = false } = {}) {
 }
 
 /**
- * 依登入者的權限（與班表相同：管理員全部、主管為自己與直屬部屬、員工只有自己）與篩選條件組出員工查詢條件。
+ * 依登入者的權限（與班表相同：管理員全部、主管為自己與直屬部屬、排班人員再加上被指定小單位的員工、員工只有自己）與篩選條件組出員工查詢條件。
  * 主管預設不含自己（和排班頁一樣，includeSelf=true 才含）。
  */
 async function buildLedgerEmployeeQuery(req) {
@@ -290,13 +290,12 @@ export async function exportHolidayLedger(req, res) {
   }
 }
 
-/** 主管只能處理直屬部屬（不含自己）；管理員不限 */
+/** 只能處理自己排班範圍內的員工（不含自己）：主管是直屬部屬、排班人員是被指定小單位的員工；管理員不限 */
 async function assertCanResolveFor(req, employeeId) {
   const role = req.user?.role;
   if (role === 'admin') return;
-  if (role !== 'supervisor') throw new LedgerRequestError(403, 'forbidden');
   const actorId = toEntityId(req.user?.id);
-  const allowed = await getAllowedScheduleEmployeeIds(req);
+  const allowed = await getEditableScheduleEmployeeIds(req);
   if (!Array.isArray(allowed) || employeeId === actorId || !allowed.includes(employeeId)) {
     throw new LedgerRequestError(403, 'forbidden');
   }
@@ -413,7 +412,7 @@ function parseYear(value) {
   return year;
 }
 
-// 調休、調移的寫入：主管只能處理直屬部屬（不含自己），管理員不限（HR 指定與手動補登在路由只開放管理員）
+// 調休、調移的寫入：只能處理自己排班範圍內的員工（不含自己），管理員不限（HR 指定與手動補登在路由只開放管理員）
 const authorizeFor = (req) => (employeeId) => assertCanResolveFor(req, employeeId);
 
 /** GET /api/holiday-ledger/compensations?year=&status=available|used|expired|void|all：年度調休清單（預設未使用） */

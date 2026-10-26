@@ -203,6 +203,20 @@ export function describeUnresolvedStep(step) {
   return `此關目前找不到可簽核的人員${reason}，送出申請會失敗，請聯絡管理員設定`
 }
 
+/**
+ * 主管關卡找不到可簽核的主管、改由最高層簽核人簽核時的說明（伺服器在流程預覽帶 fallback_text / fallback_reason，
+ * 單據的關卡上是 fallback.text / fallback.reason_text）：「無上級主管，改由系統管理員簽核（任一位核准即可）（主管就是申請人本人）」。
+ * 沒有改送時回傳空字串
+ */
+export function describeFallbackStep(step) {
+  const text = typeof step?.fallback_text === 'string' ? step.fallback_text.trim()
+    : (typeof step?.fallback?.text === 'string' ? step.fallback.text.trim() : '')
+  if (!text) return ''
+  const reason = typeof step?.fallback_reason === 'string' ? step.fallback_reason.trim()
+    : (typeof step?.fallback?.reason_text === 'string' ? step.fallback.reason_text.trim() : '')
+  return reason ? `${text}（${reason}）` : text
+}
+
 /* -------------------- 表單種類（依表單性質 / 固定代號判斷，改名後不會失效） -------------------- */
 
 const LEAVE_FORM_NAME = '請假'

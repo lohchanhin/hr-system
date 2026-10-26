@@ -202,6 +202,110 @@ describe('AttendanceImportDialog', () => {
     expect(tagTexts).toContain('O / 下班')
   })
 
+  it('預覽顯示重複略過的列與筆數，全部重複時提醒沒有新的打卡資料', async () => {
+    importAttendanceMock.mockResolvedValueOnce(
+      createApiResponse({
+        dryRun: true,
+        summary: { totalRows: 2, readyCount: 2, missingCount: 0, ignoredCount: 0, errorCount: 0, duplicateCount: 2, importedCount: 0 },
+        preview: [
+          {
+            rowNumber: 2,
+            userId: 'emp1',
+            action: 'clockIn',
+            timestamp: '2026-10-20T23:55:00.000Z',
+            status: 'duplicate',
+            duplicateReason: '系統已有同一時間（同一分鐘）的打卡記錄',
+            employee: { name: 'Alice' }
+          },
+          {
+            rowNumber: 3,
+            userId: 'emp1',
+            action: 'clockOut',
+            timestamp: '2026-10-21T09:05:00.000Z',
+            status: 'duplicate',
+            duplicateReason: '系統已有同一時間（同一分鐘）的打卡記錄',
+            employee: { name: 'Alice' }
+          }
+        ],
+        missingUsers: [],
+        message: '預覽成功'
+      })
+    )
+
+    const wrapper = mountComponent()
+    wrapper.vm.selectedFile = new File(['content'], 'records.xlsx')
+
+    await wrapper.vm.submitPreview()
+    await wrapper.vm.$nextTick()
+
+    const tagTexts = wrapper.findAll('.el-tag-stub').map(tag => tag.text())
+    expect(tagTexts.filter(text => text === '重複略過')).toHaveLength(2)
+    expect(wrapper.find('.summary-text').text()).toContain('（其中重複略過 2 筆）')
+    expect(wrapper.text()).toContain('Alice：系統已有同一時間（同一分鐘）的打卡記錄')
+    expect(ElMessage.warning).toHaveBeenCalledWith('預覽完成：2 筆與既有打卡記錄重複，匯入時會略過，沒有新的打卡資料')
+    expect(ElMessage.success).not.toHaveBeenCalled()
+  })
+
+  it('同一個檔案再匯入一次：提醒沒有新的打卡記錄，不當成錯誤，保留對話框顯示重複略過筆數', async () => {
+    importAttendanceMock
+      .mockResolvedValueOnce(createApiResponse({
+        dryRun: true,
+        summary: { totalRows: 2, readyCount: 2, missingCount: 0, ignoredCount: 0, errorCount: 0, duplicateCount: 0, importedCount: 0 },
+        preview: [],
+        missingUsers: [],
+        message: '預覽成功'
+      }))
+      .mockResolvedValueOnce(createApiResponse({
+        dryRun: false,
+        summary: { totalRows: 2, readyCount: 2, missingCount: 0, ignoredCount: 0, errorCount: 0, duplicateCount: 2, importedCount: 0 },
+        preview: [],
+        missingUsers: [],
+        message: '沒有新的打卡記錄：2 筆與既有打卡記錄重複，已略過'
+      }))
+
+    const wrapper = mountComponent()
+    wrapper.vm.selectedFile = new File(['content'], 'records.xlsx')
+    await wrapper.vm.submitPreview()
+    await wrapper.vm.$nextTick()
+
+    await wrapper.vm.submitImport()
+    await wrapper.vm.$nextTick()
+
+    expect(ElMessage.warning).toHaveBeenCalledWith('沒有新的打卡記錄：2 筆與既有打卡記錄重複，已略過')
+    expect(ElMessage.error).not.toHaveBeenCalled()
+    expect(wrapper.vm.visible).toBe(true)
+    expect(wrapper.emitted()['import-complete']).toBeFalsy()
+    expect(wrapper.find('.summary-text').text()).toContain('新增 0 筆')
+  })
+
+  it('部分重複時照常完成匯入並顯示後端的新增與重複略過筆數', async () => {
+    importAttendanceMock
+      .mockResolvedValueOnce(createApiResponse({
+        dryRun: true,
+        summary: { totalRows: 3, readyCount: 3, missingCount: 0, ignoredCount: 0, errorCount: 0, duplicateCount: 1, importedCount: 0 },
+        preview: [],
+        missingUsers: [],
+        message: '預覽成功'
+      }))
+      .mockResolvedValueOnce(createApiResponse({
+        dryRun: false,
+        summary: { totalRows: 3, readyCount: 3, missingCount: 0, ignoredCount: 0, errorCount: 0, duplicateCount: 1, importedCount: 2 },
+        preview: [],
+        missingUsers: [],
+        message: '考勤資料匯入完成（新增 2 筆，重複略過 1 筆）'
+      }))
+
+    const wrapper = mountComponent()
+    wrapper.vm.selectedFile = new File(['content'], 'records.xlsx')
+    await wrapper.vm.submitPreview()
+    expect(ElMessage.success).toHaveBeenCalledWith('預覽完成，可直接匯入')
+
+    await wrapper.vm.submitImport()
+
+    expect(ElMessage.success).toHaveBeenCalledWith('考勤資料匯入完成（新增 2 筆，重複略過 1 筆）')
+    expect(wrapper.emitted()['import-complete']).toBeTruthy()
+  })
+
   it('當存在缺少的使用者時可設定對應並進行匯入', async () => {
     importAttendanceMock
       .mockResolvedValueOnce(createApiResponse({

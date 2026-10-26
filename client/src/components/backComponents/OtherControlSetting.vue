@@ -144,6 +144,13 @@
           </el-table>
         </div>
       </el-tab-pane>
+
+      <!-- 排班權限（scheduleAccessMode）：主管是否因為是主管就能排班；排班人員在小單位設定 -->
+      <el-tab-pane label="排班權限" name="schedule-access" lazy>
+        <div class="tab-content">
+          <ScheduleAccessSetting />
+        </div>
+      </el-tab-pane>
     </el-tabs>
 
     <el-dialog v-model="optionDialogVisible" :title="optionDialogTitle" width="420px">
@@ -292,6 +299,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { apiFetch } from '../../api'
 import { editableListToOptions, optionsToEditableList } from '../../utils/fieldOptions'
+import ScheduleAccessSetting from './ScheduleAccessSetting.vue'
 
 const activeTab = ref('item-setting')
 // 其他控制設定是否已從伺服器成功載入。載入失敗時畫面上是預設值，不能把它當成已儲存的資料存回去

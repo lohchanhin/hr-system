@@ -14,6 +14,18 @@ const decisionSchema = new Schema(
   { _id: false }
 )
 
+// 主管關卡找不到可簽核的主管、改由最高層簽核人簽核時的說明（services/approverResolution.resolveStepApprovers）；
+// 沒有改送的關卡沒有這個欄位（舊資料也沒有）
+const stepFallbackSchema = new Schema(
+  {
+    reason: String,                                                // no-supervisor / supervisor-inactive / only-applicant / manager-unavailable
+    reason_text: String,                                           // 例如「主管就是申請人本人」
+    source: String,                                                // setting 設定的最高層簽核人／admins 系統管理員
+    text: String,                                                  // 「無上級主管，改由系統管理員簽核（任一位核准即可）」
+  },
+  { _id: false }
+)
+
 const requestStepSchema = new Schema(
   {
     step_order: Number,
@@ -23,6 +35,7 @@ const requestStepSchema = new Schema(
     can_return: { type: Boolean, default: true },
     started_at: Date,
     finished_at: Date,
+    fallback: { type: stepFallbackSchema, default: undefined },
   },
   { _id: false }
 )

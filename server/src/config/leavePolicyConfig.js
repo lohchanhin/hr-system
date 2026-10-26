@@ -16,9 +16,10 @@ export const ANNUAL_LEAVE_TYPE_ALIASES = ['特休', '特休假', '特別休假']
 export const LEGACY_ANNUAL_LEAVE_DAYS_MAX = 40
 
 // 調休（國定假日適逢休息日／例假存入的調休存摺）的名稱：簽核單的假別寫「調休」「補休」「補假」都從存摺扣用。
+// 客戶把它叫做「移休」（2026/10「迦南人資系統-重大調整」），所以「移休」「移休假」也是固定的別名。
 // 名稱固定（管理員不能改掉），否則員工選的假別會對不到存摺、送出時就不會檢查餘額
 export const COMP_LEAVE_TYPE_NAME = '調休'
-export const COMP_LEAVE_TYPE_ALIASES = ['補休', '補休假', '補假', '調休假']
+export const COMP_LEAVE_TYPE_ALIASES = ['補休', '補休假', '補假', '調休假', '移休', '移休假']
 
 // 調休存摺的預設：每筆 8 小時、不設期限（0 = 不設期限；設定 N 個月時，從取得日起算 N 個月，過期的時數不列入餘額）
 export const DEFAULT_COMPENSATION_HOURS_PER_CREDIT = 8

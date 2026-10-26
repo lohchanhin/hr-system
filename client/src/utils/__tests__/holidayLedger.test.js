@@ -222,8 +222,11 @@ describe('canShowResolveButton', () => {
     expect(canShowResolveButton()).toBe(false)
   })
 
-  it("hides the button on the supervisor's own row only", () => {
+  it("hides the button on the viewer's own row for supervisors and schedulers only", () => {
     expect(canShowResolveButton({ canResolve: true, role: 'supervisor', viewerId: 'b2', row, item: open })).toBe(false)
+    // 員工角色的排班人員自己也在被指定的小單位時，同樣不能替自己登記
+    expect(canShowResolveButton({ canResolve: true, role: 'employee', viewerId: 'b2', row, item: open })).toBe(false)
+    expect(canShowResolveButton({ canResolve: true, role: 'employee', viewerId: 'other', row, item: open })).toBe(true)
     expect(canShowResolveButton({ canResolve: true, role: 'supervisor', viewerId: 'other', row, item: open })).toBe(true)
     // 管理員可以處理自己的；不知道登入者是誰時不亂藏
     expect(canShowResolveButton({ canResolve: true, role: 'admin', viewerId: 'b2', row, item: open })).toBe(true)
@@ -325,6 +328,7 @@ describe('補假、行事曆放假與個人調移欄位', () => {
     expect(canShowCompensationButton({ canResolve: false, role: 'admin', row, item: banked })).toBe(false)
     expect(canShowCompensationButton({ canResolve: true, role: 'supervisor', viewerId: 'b', row, item: banked })).toBe(false)
     expect(canShowSwapButton({ canResolve: true, role: 'supervisor', viewerId: 'a', row })).toBe(false)
+    expect(canShowSwapButton({ canResolve: true, role: 'employee', viewerId: 'a', row })).toBe(false)
     expect(canShowSwapButton({ canResolve: true, role: 'admin', viewerId: 'a', row })).toBe(true)
     expect(compensationReasonText({ reason: 'on_regular_rest' })).toBe('適逢例假')
     expect(compensationReasonText({ reason: 'on_rest_day' })).toBe('適逢休息日')

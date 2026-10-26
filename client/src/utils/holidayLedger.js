@@ -228,11 +228,11 @@ export function getViewerEmployeeId() {
 
 /**
  * 這個儲存格要不要顯示登記按鈕：要有權限、項目本身可以登記；
- * 主管不能替自己登記（伺服器會拒絕，一律回「沒有權限」），勾「包含自己」時自己那一列就不顯示按鈕。管理員不受限。
+ * 主管與排班人員不能替自己登記（伺服器會拒絕，一律回「沒有權限」），自己那一列（勾「包含自己」、或自己也在被指定的小單位）就不顯示按鈕。管理員不受限。
  */
 export function canShowResolveButton({ canResolve, role, viewerId, row, item } = {}) {
   if (!canResolve || !canRecordResolution(item)) return false
-  return !(role === 'supervisor' && viewerId && row?.employeeId === viewerId)
+  return !(role !== 'admin' && viewerId && row?.employeeId === viewerId)
 }
 
 /** HR 指定過日期的補償（可以修改、取消） */
@@ -252,10 +252,10 @@ export function canShowCompensationButton({ canResolve, role, item } = {}) {
   return unused || isHrAssigned(compensation)
 }
 
-/** 個人調移按鈕：要有權限，主管不能替自己登記 */
+/** 個人調移按鈕：要有權限，主管與排班人員不能替自己登記（管理員不受限） */
 export function canShowSwapButton({ canResolve, role, viewerId, row } = {}) {
   if (!canResolve || !row) return false
-  return !(role === 'supervisor' && viewerId && row.employeeId === viewerId)
+  return !(role !== 'admin' && viewerId && row.employeeId === viewerId)
 }
 
 /** 補假視窗要顯示的原因：適逢休息日／例假 */

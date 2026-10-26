@@ -20,6 +20,8 @@ const mockHolidayMoveSetting = { find: jest.fn() };
 const mockShiftSchedule = { find: jest.fn() };
 const mockAttendanceSetting = { findOne: jest.fn() };
 const mockDepartment = { findById: jest.fn(), find: jest.fn() };
+// 排班人員：小單位的 schedulers（預設沒有任何指派，個別測試再設定）
+const mockSubDepartment = { find: jest.fn() };
 const mockLoadApprovedLeaveCalendar = jest.fn();
 const mockLoadApprovedLeaveIntervals = jest.fn();
 
@@ -29,6 +31,7 @@ jest.unstable_mockModule('../src/models/HolidayMoveSetting.js', () => ({ default
 jest.unstable_mockModule('../src/models/ShiftSchedule.js', () => ({ default: mockShiftSchedule }));
 jest.unstable_mockModule('../src/models/AttendanceSetting.js', () => ({ default: mockAttendanceSetting }));
 jest.unstable_mockModule('../src/models/Department.js', () => ({ default: mockDepartment }));
+jest.unstable_mockModule('../src/models/SubDepartment.js', () => ({ default: mockSubDepartment }));
 jest.unstable_mockModule('../src/services/approvedLeaveCalendarService.js', () => ({
   loadApprovedLeaveCalendar: mockLoadApprovedLeaveCalendar,
   loadApprovedLeaveIntervals: mockLoadApprovedLeaveIntervals,
@@ -46,7 +49,7 @@ const { default: HolidayRestResolution } = await import('../src/models/HolidayRe
 const { default: holidayLedgerRoutes } = await import('../src/routes/holidayLedgerRoutes.js');
 
 const oid = (n) => n.toString(16).padStart(24, '0');
-const ID = { admin: oid(1), boss: oid(2), nurseA: oid(3), nurseB: oid(4), otherNurse: oid(5), otherBoss: oid(6), dept: oid(100), sub: oid(101) };
+const ID = { admin: oid(1), boss: oid(2), nurseA: oid(3), nurseB: oid(4), otherNurse: oid(5), otherBoss: oid(6), dept: oid(100), sub: oid(101), otherSub: oid(102) };
 const utc = (key) => new Date(`${key}T00:00:00.000Z`);
 
 const person = (id, name, extra = {}) => ({
@@ -59,13 +62,14 @@ const person = (id, name, extra = {}) => ({
   status: '正職員工',
   ...extra,
 });
+// unitId：員工所屬小單位的 _id（排班人員範圍的查詢 { subDepartment: { $in } } 用；subDepartment 是 populate 後顯示用的名稱）
 const ALL_EMPLOYEES = [
   person(ID.admin, '管理員', { title: '人資' }),
-  person(ID.boss, '主管', { supervisor: ID.admin }),
-  person(ID.nurseA, '護理甲', { supervisor: ID.boss }),
-  person(ID.nurseB, '護理乙', { supervisor: ID.boss, partTime: true }),
-  person(ID.otherNurse, '護理丙', { supervisor: ID.otherBoss }),
-  person(ID.otherBoss, '他組主管', { supervisor: ID.admin }),
+  person(ID.boss, '主管', { supervisor: ID.admin, unitId: ID.sub }),
+  person(ID.nurseA, '護理甲', { supervisor: ID.boss, unitId: ID.sub }),
+  person(ID.nurseB, '護理乙', { supervisor: ID.boss, partTime: true, unitId: ID.sub }),
+  person(ID.otherNurse, '護理丙', { supervisor: ID.otherBoss, unitId: ID.otherSub }),
+  person(ID.otherBoss, '他組主管', { supervisor: ID.admin, unitId: ID.otherSub }),
 ];
 
 const SHIFTS = [
@@ -102,6 +106,7 @@ beforeEach(() => {
     let rows = ALL_EMPLOYEES;
     if (query.supervisor) rows = rows.filter((employee) => employee.supervisor === query.supervisor);
     if (query._id?.$in) rows = rows.filter((employee) => query._id.$in.includes(employee._id));
+    if (query.subDepartment?.$in) rows = rows.filter((employee) => query.subDepartment.$in.includes(employee.unitId));
     if (query.department) rows = rows.filter((employee) => employee.department === query.department);
     if (query.$or) rows = rows.filter((employee) => query.$or.some((clause) => Object.entries(clause).every(([key, rx]) => rx.test(employee[key] || ''))));
     return chain(rows);
@@ -119,6 +124,9 @@ beforeEach(() => {
   mockHolidayMoveSetting.find.mockReturnValue(chain([]));
   mockAttendanceSetting.findOne.mockReturnValue(chain({ shifts: SHIFTS }));
   mockDepartment.findById.mockReturnValue(chain({ name: '護理部', unitName: '內科病房' }));
+  // 排班權限：預設沒有人被指定為部門的排班管理者或小單位的排班人員
+  mockDepartment.find.mockReturnValue(chain([]));
+  mockSubDepartment.find.mockReturnValue(chain([]));
   mockLoadApprovedLeaveCalendar.mockResolvedValue(new Map());
   mockLoadApprovedLeaveIntervals.mockResolvedValue(new Map());
   mockShiftSchedule.find.mockImplementation((query) => {
@@ -526,6 +534,45 @@ describe('DELETE /api/holiday-ledger/resolutions/:id', () => {
   it('answers 400 for a bad id and 404 for a missing one', async () => {
     expect((await request(app).delete('/api/holiday-ledger/resolutions/abc')).status).toBe(400);
     expect((await request(app).delete(`/api/holiday-ledger/resolutions/${oid(801)}`)).status).toBe(404);
+  });
+});
+
+describe('排班人員 (scheduler of a unit) uses the same scope as the roster', () => {
+  // 護理丙（員工角色，屬於另一個小單位）被指定為「內科」小單位（ID.sub）的排班人員
+  beforeEach(() => {
+    mockSubDepartment.find.mockImplementation((query = {}) => (
+      query.schedulers === ID.otherNurse ? chain([{ _id: ID.sub, department: ID.dept }]) : chain([])
+    ));
+  });
+
+  it('lists the employees of the assigned unit (and themselves) for an employee-role scheduler, never other units', async () => {
+    loginAs('employee', ID.otherNurse);
+    const res = await request(app).get(url());
+    expect(res.status).toBe(200);
+    expect(idsOf(res.body)).toEqual(sorted(ID.boss, ID.nurseA, ID.nurseB, ID.otherNurse));
+
+    expect((await request(app).get(url(`&employee=${ID.nurseA}`))).status).toBe(200);
+    expect((await request(app).get(url(`&employee=${ID.otherBoss}`))).status).toBe(403);
+  });
+
+  it('lets the scheduler record and delete resolutions inside the unit only, never for themselves', async () => {
+    loginAs('employee', ID.otherNurse);
+    const post = (employee) => request(app)
+      .post('/api/holiday-ledger/resolutions')
+      .send({ employee, holidayDate: '2026-09-25', kind: 'paid' });
+    expect((await post(ID.nurseA)).status).toBe(200);
+    expect((await post(ID.otherBoss)).status).toBe(403);
+    expect((await post(ID.otherNurse)).status).toBe(403);
+
+    resolutionStore.push({ _id: oid(800), employee: ID.nurseB, holidayDate: utc('2026-09-25'), kind: 'paid', month: '2026-09' });
+    expect((await request(app).delete(`/api/holiday-ledger/resolutions/${oid(800)}`)).status).toBe(200);
+  });
+
+  it('opens the export to the scheduler, while an employee without an assignment is still refused', async () => {
+    loginAs('employee', ID.otherNurse);
+    expect((await request(app).get('/api/holiday-ledger/export?month=2026-09')).status).toBe(200);
+    loginAs('employee', ID.nurseA);
+    expect((await request(app).get('/api/holiday-ledger/export?month=2026-09')).status).toBe(403);
   });
 });
 

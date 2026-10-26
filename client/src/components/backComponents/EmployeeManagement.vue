@@ -1094,13 +1094,14 @@
                           placeholder="請輸入特休相關備註" />
                       </el-form-item>
                     </div>
-                    <!-- 調休存摺（取代以前人資手動填的「補休時數」）：國定假日適逢休息日／例假自動存入；管理員可手動給予、扣除、作廢 -->
+                    <!-- 調休存摺（客戶稱為移休；取代以前人資手動填的「補休時數」）：國定假日適逢休息日／例假自動存入；
+                         管理員可手動給予、扣除、作廢，並填寫員工在「我的調休」看得到的存摺備註 -->
                     <div class="form-row" data-test="employee-comp-leave">
                       <div class="full-width-item">
                         <CompensatoryLeavePanel
                           v-if="employeeDialogTab === 'salary' && isEditingEmployee && editingEmployeeId"
                           :employee-id="editingEmployeeId"
-                          title="調休存摺"
+                          title="調休存摺（移休）"
                           :can-manage="canManageCompLeave"
                         />
                         <el-alert v-else-if="!isEditingEmployee" type="info" :closable="false" show-icon

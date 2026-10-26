@@ -21,6 +21,15 @@ const mockApprovalWorkflow = { findOne: jest.fn(), findById: jest.fn() }
 const mockApprovalRequest = { create: jest.fn(), findById: jest.fn(), findOne: jest.fn() }
 const mockApprovalAttachment = { find: jest.fn(), updateMany: jest.fn(), insertMany: jest.fn(), findOne: jest.fn() }
 const mockEmployee = createFakeEmployeeModel([])
+// 部門的「使用簽核表單」（allowedFormIds）：預設沒有部門勾選表單（全部都可以用）
+let mockDepartmentRows = []
+const mockDepartment = {
+  findById: jest.fn((id) => {
+    const row = mockDepartmentRows.find(item => String(item._id) === String(id)) || null
+    const query = { select: () => query, lean: async () => row, then: (resolve, reject) => Promise.resolve(row).then(resolve, reject) }
+    return query
+  }),
+}
 const mockAssertApprovalRequestCompliance = jest.fn()
 const mockIsLaborRuleValidationError = jest.fn((error) => Array.isArray(error?.violations))
 const mockDeductAnnualLeave = jest.fn()
@@ -56,6 +65,7 @@ beforeAll(async () => {
   await jest.unstable_mockModule('../src/models/approval_request.js', () => ({ default: mockApprovalRequest }))
   await jest.unstable_mockModule('../src/models/approval_attachment.js', () => ({ default: mockApprovalAttachment }))
   await jest.unstable_mockModule('../src/models/Employee.js', () => ({ default: mockEmployee }))
+  await jest.unstable_mockModule('../src/models/Department.js', () => ({ default: mockDepartment }))
   await jest.unstable_mockModule('../src/services/laborRuleValidationService.js', () => ({
     assertApprovalRequestCompliance: mockAssertApprovalRequestCompliance,
     isLaborRuleValidationError: mockIsLaborRuleValidationError,
@@ -93,6 +103,8 @@ beforeEach(() => {
   mockRefundAnnualLeave.mockReset()
   mockGetSettings.mockReset()
   mockGetSettings.mockResolvedValue({})
+  mockDepartmentRows = []
+  mockDepartment.findById.mockClear()
   resetLeavePolicyCache()
   jest.spyOn(console, 'log').mockImplementation(() => {})
   jest.spyOn(console, 'error').mockImplementation(() => {})
@@ -275,13 +287,15 @@ describe('createApprovalRequest', () => {
     expect(res.json).toHaveBeenCalledWith({ error: '加班規範檢核未通過', violations: error.violations })
   })
 
-  it('rejects a required manager step when applicant has no supervisor, with an actionable Chinese message', async () => {
+  // R5 之後：沒有主管時先改送最高層簽核人（預設是系統管理員）；連可以改送的人都沒有（唯一的管理員已離職）才維持原本的錯誤
+  it('rejects a required manager step when applicant has no supervisor and nobody to fall back to, with an actionable Chinese message', async () => {
     stubForm()
     stubWorkflow([
       { step_order: 1, approver_type: 'manager', approver_value: 'APPLICANT_SUPERVISOR' },
       { step_order: 2, approver_type: 'user', approver_value: [LEAD1] },
     ])
     mockEmployee.rows.find(row => row._id === APPLICANT).supervisor = null
+    mockEmployee.rows.find(row => row._id === ADMIN).status = '離職員工'
 
     const res = makeRes()
     await createApprovalRequest(makeCreateReq({ form_id: FORM, form_data: {} }), res)
@@ -1994,5 +2008,205 @@ describe('annual leave when the leave fields were replaced while the request was
     expect(res.status).toHaveBeenCalledWith(409)
     expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ code: 'LEAVE_STARTED' }))
     expect(mockRefundAnnualLeave).not.toHaveBeenCalled()
+  })
+})
+
+// R5「避免主管沒辦法當自己主管」：必簽的主管關卡找不到可簽核的主管時，改送最高層簽核人（任一位核准即可），申請人永遠不是自己的簽核人
+describe('createApprovalRequest - 無上級主管改由最高層簽核人', () => {
+  const ADMIN_2 = oid(11)
+  const DIRECTOR = oid(12)
+
+  beforeEach(() => {
+    stubForm({ name: '請假' })
+    mockEmployee.rows.push(
+      { _id: ADMIN_2, name: '管理員二', role: 'admin', signTags: [] },
+      { _id: DIRECTOR, name: '院長', role: 'supervisor', signTags: [] },
+    )
+  })
+
+  async function create(user = makeCreateReq({ form_id: FORM, form_data: {} })) {
+    const created = stubCreate()
+    const res = makeRes()
+    await createApprovalRequest(user, res)
+    return { res, doc: created.doc }
+  }
+
+  it('sends a top-level supervisor (no supervisor) to every eligible admin, any one of them, and says so on the step and in the log', async () => {
+    stubWorkflow([{ step_order: 1, approver_type: 'manager', approver_value: 'APPLICANT_SUPERVISOR', all_must_approve: true }])
+    mockEmployee.rows.find(row => row._id === APPLICANT).supervisor = null
+
+    const { res, doc } = await create()
+
+    expect(res.status).toHaveBeenCalledWith(201)
+    expect(doc.steps).toHaveLength(1)
+    expect(doc.steps[0].approvers.map(a => a.approver).sort()).toEqual([ADMIN, ADMIN_2].sort())
+    expect(doc.steps[0].all_must_approve).toBe(false)
+    expect(doc.steps[0].fallback).toEqual({
+      reason: 'no-supervisor',
+      reason_text: '申請人沒有設定直屬主管',
+      source: 'admins',
+      text: '無上級主管，改由系統管理員簽核（任一位核准即可）',
+    })
+    expect(doc.logs.find(log => log.action === 'approver_fallback')).toEqual(expect.objectContaining({
+      message: '第1關（申請者的主管）（申請人沒有設定直屬主管）：無上級主管，改由系統管理員簽核（任一位核准即可）',
+    }))
+  })
+
+  it('uses the configured top-level approvers instead of the admins', async () => {
+    stubWorkflow([{ step_order: 1, approver_type: 'manager', approver_value: 'APPLICANT_SUPERVISOR' }])
+    mockEmployee.rows.find(row => row._id === APPLICANT).supervisor = null
+    mockGetSettings.mockResolvedValue({ topLevelApproverIds: [DIRECTOR, 'junk', HR_LEFT] })
+
+    const { doc } = await create()
+
+    // 設定裡格式不對的、離職的人略過
+    expect(doc.steps[0].approvers.map(a => a.approver)).toEqual([DIRECTOR])
+    expect(doc.steps[0].fallback).toMatchObject({ source: 'setting', text: '無上級主管，改由最高層簽核人簽核（任一位核准即可）' })
+  })
+
+  it('never lets the applicant approve their own request: an admin whose supervisor is himself goes to the other admins', async () => {
+    stubWorkflow([{ step_order: 1, approver_type: 'manager', approver_value: 'APPLICANT_SUPERVISOR' }])
+    mockEmployee.rows.find(row => row._id === ADMIN).supervisor = ADMIN
+
+    const { res, doc } = await create(makeCreateReq({ form_id: FORM, form_data: {} }, ADMIN, 'admin'))
+
+    expect(res.status).toHaveBeenCalledWith(201)
+    expect(doc.steps[0].approvers.map(a => a.approver)).toEqual([ADMIN_2])
+    expect(doc.steps[0].fallback).toMatchObject({ reason: 'only-applicant', reason_text: '主管就是申請人本人' })
+  })
+
+  it('goes to the admins when the configured top-level approver is the applicant (the director files his own leave)', async () => {
+    stubWorkflow([{ step_order: 1, approver_type: 'manager', approver_value: 'APPLICANT_SUPERVISOR' }])
+    mockGetSettings.mockResolvedValue({ topLevelApproverIds: [DIRECTOR] })
+
+    const { doc } = await create(makeCreateReq({ form_id: FORM, form_data: {} }, DIRECTOR, 'supervisor'))
+
+    expect(doc.steps[0].approvers.map(a => a.approver).sort()).toEqual([ADMIN, ADMIN_2].sort())
+    expect(doc.steps[0].approvers.map(a => a.approver)).not.toContain(DIRECTOR)
+    expect(doc.steps[0].fallback.source).toBe('admins')
+  })
+
+  it('falls back when the supervisor left or the designated manager is gone', async () => {
+    stubWorkflow([
+      { step_order: 1, approver_type: 'manager', approver_value: 'APPLICANT_SUPERVISOR' },
+      { step_order: 2, approver_type: 'manager', approver_value: oid(999) },
+      { step_order: 3, approver_type: 'user', approver_value: [LEAD1] },
+    ])
+    mockEmployee.rows.find(row => row._id === SUP).status = '離職員工'
+
+    const { res, doc } = await create()
+
+    expect(res.status).toHaveBeenCalledWith(201)
+    // 第 1、2 關改送的人與設定相同：合併成一關，保留說明
+    expect(doc.steps).toHaveLength(2)
+    expect(doc.steps[0].fallback).toMatchObject({ reason: 'supervisor-inactive' })
+    expect(doc.steps[1].approvers.map(a => a.approver)).toEqual([LEAD1])
+    expect(doc.steps[1].fallback).toBeUndefined()
+    expect(doc.logs.filter(log => log.action === 'approver_fallback')).toHaveLength(2)
+  })
+
+  it('keeps skipping an optional manager step and keeps the supervisor when there is one', async () => {
+    stubWorkflow([
+      { step_order: 1, approver_type: 'manager', approver_value: 'APPLICANT_SUPERVISOR', is_required: false },
+      { step_order: 2, approver_type: 'manager', approver_value: 'APPLICANT_SUPERVISOR' },
+    ])
+    mockEmployee.rows.find(row => row._id === LEAD1).supervisor = null
+    const optional = await create(makeCreateReq({ form_id: FORM, form_data: {} }, LEAD1))
+    // 第 1 關選填：照舊略過；第 2 關必簽：改送管理員
+    expect(optional.doc.steps[0].approvers).toEqual([])
+    expect(optional.doc.steps[1].fallback).toMatchObject({ source: 'admins' })
+
+    stubWorkflow([{ step_order: 1, approver_type: 'manager', approver_value: 'APPLICANT_SUPERVISOR' }])
+    const normal = await create()
+    expect(normal.doc.steps[0].approvers.map(a => a.approver)).toEqual([SUP])
+    expect(normal.doc.steps[0].fallback).toBeUndefined()
+    expect(normal.doc.logs.some(log => log.action === 'approver_fallback')).toBe(false)
+  })
+
+  it('re-resolves the fallback when a returned request is resubmitted', async () => {
+    stubWorkflow([{ step_order: 1, approver_type: 'manager', approver_value: 'APPLICANT_SUPERVISOR' }])
+    mockFormField.find.mockImplementation(() => queryResult([]))
+    mockEmployee.rows.find(row => row._id === APPLICANT).supervisor = null
+    const doc = makeRequestDoc({ status: 'returned', steps: [{ approvers: [[SUP, 'returned']] }] })
+    mockApprovalRequest.findById.mockResolvedValue(doc)
+    const res = makeRes()
+
+    await resubmitApprovalRequest({ params: { id: REQ }, user: employeeUser(APPLICANT), body: {} }, res)
+
+    expect(doc.status).toBe('pending')
+    expect(doc.steps[0].approvers.map(a => a.approver).sort()).toEqual([ADMIN, ADMIN_2].sort())
+    expect(doc.steps[0].fallback).toMatchObject({ reason: 'no-supervisor' })
+    expect(doc.logs.map(log => log.action)).toEqual(expect.arrayContaining(['resubmit', 'approver_fallback']))
+  })
+})
+
+// R2「按部門顯示對應簽核」：部門勾選了「使用簽核表單」時，一般員工、主管只能送出那些表單（403）；沒有勾選、沒有部門、管理員不受限
+describe('createApprovalRequest / resubmitApprovalRequest - 部門可使用的表單', () => {
+  const DEPT = oid(9001)
+  const OTHER_FORM = oid(102)
+
+  beforeEach(() => {
+    stubForm({ name: '加班申請' })
+    stubWorkflow([{ step_order: 1, approver_type: 'user', approver_value: [LEAD1] }])
+    mockEmployee.rows.find(row => row._id === APPLICANT).department = DEPT
+  })
+
+  it('refuses a form the department did not allow, in Chinese, before anything is stored', async () => {
+    mockDepartmentRows = [{ _id: DEPT, allowedFormIds: [OTHER_FORM] }]
+    const res = makeRes()
+
+    await createApprovalRequest(makeCreateReq({ form_id: FORM, form_data: {} }), res)
+
+    expect(res.status).toHaveBeenCalledWith(403)
+    expect(res.json).toHaveBeenCalledWith({
+      error: '您所屬的部門未開放使用【加班申請】，請改選其他表單；如需使用請洽管理員',
+      code: 'FORM_NOT_ALLOWED',
+    })
+    expect(mockApprovalRequest.create).not.toHaveBeenCalled()
+    expect(mockAssertApprovalRequestCompliance).not.toHaveBeenCalled()
+  })
+
+  it('accepts an allowed form, any form when the department chose none, and any form for an admin', async () => {
+    mockDepartmentRows = [{ _id: DEPT, allowedFormIds: [OTHER_FORM, FORM] }]
+    stubCreate()
+    const allowed = makeRes()
+    await createApprovalRequest(makeCreateReq({ form_id: FORM, form_data: {} }), allowed)
+    expect(allowed.status).toHaveBeenCalledWith(201)
+
+    mockDepartmentRows = [{ _id: DEPT, allowedFormIds: [] }]
+    const open = makeRes()
+    await createApprovalRequest(makeCreateReq({ form_id: FORM, form_data: {} }), open)
+    expect(open.status).toHaveBeenCalledWith(201)
+
+    mockDepartmentRows = [{ _id: DEPT, allowedFormIds: [OTHER_FORM] }]
+    mockEmployee.rows.find(row => row._id === ADMIN).department = DEPT
+    const admin = makeRes()
+    await createApprovalRequest(makeCreateReq({ form_id: FORM, form_data: {} }, ADMIN, 'admin'), admin)
+    expect(admin.status).toHaveBeenCalledWith(201)
+  })
+
+  it('lets an employee without a department use every form', async () => {
+    mockDepartmentRows = [{ _id: DEPT, allowedFormIds: [OTHER_FORM] }]
+    mockEmployee.rows.find(row => row._id === APPLICANT).department = null
+    stubCreate()
+    const res = makeRes()
+    await createApprovalRequest(makeCreateReq({ form_id: FORM, form_data: {} }), res)
+    expect(res.status).toHaveBeenCalledWith(201)
+    expect(mockDepartment.findById).not.toHaveBeenCalled()
+  })
+
+  it('refuses to resubmit a returned request on a form the department no longer allows (it can still be withdrawn)', async () => {
+    mockDepartmentRows = [{ _id: DEPT, allowedFormIds: [OTHER_FORM] }]
+    mockFormField.find.mockImplementation(() => queryResult([]))
+    const doc = makeRequestDoc({ status: 'returned', steps: [{ approvers: [[LEAD1, 'returned']] }] })
+    mockApprovalRequest.findById.mockResolvedValue(doc)
+    const res = makeRes()
+
+    await resubmitApprovalRequest({ params: { id: REQ }, user: employeeUser(APPLICANT), body: {} }, res)
+
+    expect(res.status).toHaveBeenCalledWith(403)
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ code: 'FORM_NOT_ALLOWED' }))
+    expect(doc.status).toBe('returned')
+    expect(doc.save).not.toHaveBeenCalled()
   })
 })

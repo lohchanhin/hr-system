@@ -7,7 +7,14 @@ import Employee from '../models/Employee.js'
 import { resolveFieldOptions, resolveFieldsOptions, normalizeFieldKeyInput } from '../services/formFieldOptionsService.js'
 import { resetLeaveFieldCache } from '../services/leaveFieldService.js'
 import { eligibleEmployeeFilter } from '../services/approverEligibility.js'
-import { UNRESOLVED_REASON_TEXT, resolveApproversDetailed } from '../services/approverResolution.js'
+import { UNRESOLVED_REASON_TEXT, resolveStepApprovers } from '../services/approverResolution.js'
+import {
+  FORM_NOT_ALLOWED_CODE,
+  FORM_VISIBILITY_HEADER,
+  formNotAllowedMessage,
+  getFormVisibilityForUser,
+  isFormAllowed,
+} from '../services/formVisibilityService.js'
 import { normalizeSignTag, normalizeSignTags } from '../utils/signTags.js'
 import { DEFAULT_APPROVAL_TEMPLATES, DEFAULT_POLICY, findDefaultTemplate } from '../services/defaultApprovalTemplates.js'
 
@@ -213,6 +220,26 @@ export async function migrateLeaveFormSemantics() {
 }
 
 /* ---------------------- FormTemplate CRUD ---------------------- */
+
+// 一般員工、主管只能用自己部門「使用簽核表單」開放的表單（部門沒有勾選 = 全部；管理員不限制，見 services/formVisibilityService）。
+// 不能用的表單：取欄位、流程預覽、樣板內容都回 403（申請頁只會從清單選，正常操作不會遇到）
+async function formVisibilityOf(req) {
+  return getFormVisibilityForUser(req.user)
+}
+
+function respondFormNotAllowed(res, formName) {
+  return res.status(403).json({ error: formNotAllowedMessage(formName), code: FORM_NOT_ALLOWED_CODE })
+}
+
+async function formNameOf(formId) {
+  try {
+    const form = await FormTemplate.findById(formId)
+    return form?.name || ''
+  } catch {
+    return ''
+  }
+}
+
 export async function listFormTemplates(req, res) {
   try {
     const { q, category, is_active } = req.query
@@ -223,6 +250,10 @@ export async function listFormTemplates(req, res) {
     if (!isAdmin) {
       // 一般員工只看得到啟用中的表單：停用的表單選了也送不出去
       filter.is_active = { $ne: false }
+      // 部門有勾選「使用簽核表單」時只列出那些表單；回應標頭告訴申請頁清單有依部門篩選
+      const visibility = await formVisibilityOf(req)
+      if (visibility.restricted) filter._id = { $in: visibility.allowedIds }
+      if (typeof res.set === 'function') res.set(FORM_VISIBILITY_HEADER, visibility.restricted ? 'department' : 'all')
     } else if (is_active !== undefined) {
       // 管理員預設看到全部（每筆都帶 is_active 旗標），需要時可用 ?is_active=true|false 篩選
       filter.is_active = is_active === 'true' ? { $ne: false } : false
@@ -270,6 +301,9 @@ export async function getFormTemplate(req, res) {
     if (!isObjectIdString(formId)) return res.status(400).json({ error: FORM_ID_INVALID_MESSAGE })
     const form = await FormTemplate.findById(formId)
     if (!form) return res.status(404).json({ error: '找不到這張表單樣板' })
+    if (req.user?.role !== 'admin' && !isFormAllowed(await formVisibilityOf(req), form._id)) {
+      return respondFormNotAllowed(res, form.name)
+    }
     const fields = await FormField.find({ form: form._id, is_active: { $ne: false } }).sort({ order: 1 })
     const workflow = await ApprovalWorkflow.findOne({ form: form._id })
     res.json({ form, fields: await resolveFieldsOptions(fields), workflow })
@@ -454,6 +488,7 @@ export async function listFields(req, res) {
     const isAdmin = req.user?.role === 'admin'
     const filter = { form: formId }
     if (!isAdmin) {
+      if (!isFormAllowed(await formVisibilityOf(req), formId)) return respondFormNotAllowed(res, await formNameOf(formId))
       // 填寫申請用的欄位只回傳啟用中的；停用的欄位只有管理員（設計表單時）看得到
       filter.is_active = { $ne: false }
     } else if (req.query?.is_active !== undefined) {
@@ -486,37 +521,50 @@ function describeNoApprover(step, reasonCode) {
   }
 }
 
+// 預覽用的申請人（目前登入的人）；查不到或查詢失敗時回傳 null，各關的人數顯示「無法計算」
+async function loadPreviewApplicant(actorId) {
+  if (!isObjectIdString(String(actorId ?? ''))) return null
+  try {
+    return await Employee.findById(String(actorId), '_id department organization supervisor')
+  } catch (error) {
+    console.error(`[approval-template] load applicant for preview failed: ${error?.name || 'Error'}`)
+    return null
+  }
+}
+
 /**
  * 流程預覽（員工申請前就能看到某一關找不到人）：每一關加上
  * - resolved_count：以「目前登入的人當申請人」解析，這一關有幾位可簽核的在職員工（不含申請人本人）；無法計算時為 null
  * - unresolved_reason：resolved_count 為 0 時的中文原因，其餘為 null
+ * - fallback_text / fallback_reason：必簽的主管關卡找不到主管、改由最高層簽核人簽核時的說明與原因
+ *   （「無上級主管，改由系統管理員簽核（任一位核准即可）」「主管就是申請人本人」），沒有改送時為 null；resolved_count 是改送的人數
  * 只回傳人數與原因，不含任何人員姓名或編號。
  */
-async function withApproverPreview(steps, actorId) {
+async function withApproverPreview(steps, applicant) {
   const list = Array.isArray(steps) ? steps : []
   if (!list.length) return list
-  let applicant = null
-  if (isObjectIdString(String(actorId ?? ''))) {
-    try {
-      applicant = await Employee.findById(String(actorId), '_id department organization supervisor')
-    } catch (error) {
-      console.error(`[approval-template] load applicant for preview failed: ${error?.name || 'Error'}`)
-    }
-  }
   const previewed = []
   for (const step of list) {
     let resolvedCount = null
     let unresolvedReason = null
+    let fallback = null
     if (applicant) {
       try {
-        const { ids, reason } = await resolveApproversDetailed(step, applicant)
-        resolvedCount = ids.length
-        unresolvedReason = ids.length ? null : describeNoApprover(step, reason)
+        const resolved = await resolveStepApprovers(step, applicant)
+        resolvedCount = resolved.ids.length
+        unresolvedReason = resolved.ids.length ? null : describeNoApprover(step, resolved.reason)
+        fallback = resolved.ids.length ? resolved.fallback || null : null
       } catch (error) {
         console.error(`[approval-template] preview step failed: ${error?.name || 'Error'}`)
       }
     }
-    previewed.push({ ...step, resolved_count: resolvedCount, unresolved_reason: unresolvedReason })
+    previewed.push({
+      ...step,
+      resolved_count: resolvedCount,
+      unresolved_reason: unresolvedReason,
+      fallback_text: fallback?.text || null,
+      fallback_reason: fallback?.reason_text || null,
+    })
   }
   return previewed
 }
@@ -528,7 +576,16 @@ export async function getWorkflow(req, res) {
     const wf = await ApprovalWorkflow.findOne({ form: formId })
     if (!wf) return res.status(404).json({ error: '這張表單還沒有簽核流程' })
     const body = typeof wf.toJSON === 'function' ? wf.toJSON() : { ...wf }
-    body.steps = await withApproverPreview(body.steps, req.user?.id)
+    // 沒有關卡的流程沒有內容可看，不查登入者；有關卡時申請人只查一次（部門可用的表單、各關預覽共用）
+    if (Array.isArray(body.steps) && body.steps.length) {
+      const applicant = await loadPreviewApplicant(req.user?.id)
+      if (req.user?.role !== 'admin' && !isFormAllowed(await getFormVisibilityForUser(req.user, applicant), formId)) {
+        return respondFormNotAllowed(res, await formNameOf(formId))
+      }
+      body.steps = await withApproverPreview(body.steps, applicant)
+    } else {
+      body.steps = Array.isArray(body.steps) ? body.steps : []
+    }
     res.json(body)
   } catch (e) {
     respondFailure(res, e, 'get workflow')

@@ -10,6 +10,7 @@ import { normalizeSignTag, normalizeSignTags } from '../utils/signTags.js'
 import { presentAnnualLeave, readAnnualLeaveHours } from '../utils/annualLeaveHours.js'
 import { daysToHours, hoursToDays } from '../utils/leaveHours.js'
 import { parseHolidayRegime } from '../services/holidayCalendarRules.js'
+import { getScheduleAccessSummaryForRequest, schedulerEmployeeFilters } from '../services/scheduleAccessService.js'
 import {
   deleteEmployeePhoto,
   isManagedEmployeePhotoPath,
@@ -744,6 +745,23 @@ const resolveRemainingAnnualLeave = (annualLeave = {}) => {
   return { remainingDays: hoursToDays(remainingHours), remainingHours }
 }
 
+/**
+ * 排班頁的員工名單範圍（view=schedule，非管理員）：
+ * 只有主管身分（沒有被指定為排班人員）維持原本的查詢：直屬部屬，勾「包含自己」再加自己；
+ * 排班人員是排班範圍內的員工（主管範圍與被指定小單位的員工聯集，主管沒勾「包含自己」不含自己）；
+ * 沒有排班權限只有自己。
+ */
+async function buildScheduleViewScope(req, actorId, actorRole, includeSelf) {
+  const access = await getScheduleAccessSummaryForRequest(req)
+  if (!access?.canSchedule) return { _id: actorId }
+  const supervisorClause = includeSelf ? { $or: [{ _id: actorId }, { supervisor: actorId }] } : { supervisor: actorId }
+  const unitClauses = schedulerEmployeeFilters(access)
+  if (!unitClauses.length) return supervisorClause
+  const scope = { $or: [...(access.supervisorScope ? [supervisorClause] : []), ...unitClauses] }
+  // 主管沒勾「包含自己」：自己就算在被指定的小單位裡也不列出（與「包含自己」開關一致）
+  return actorRole === 'supervisor' && !includeSelf ? { $and: [scope, { _id: { $ne: actorId } }] } : scope
+}
+
 /** GET /api/employees?q=...&supervisor=...&organization=...&department=...&subDepartment=...&status=...&role=...&view=schedule */
 export async function listEmployees(req, res) {
   try {
@@ -805,14 +823,12 @@ export async function listEmployees(req, res) {
     if (status && view !== 'schedule') filter.status = status
     if (role && role !== 'all') filter.role = role
     const andFilters = []
-    if (actorRole === 'employee') {
+    if (isScheduleView && actorRole !== 'admin') {
+      andFilters.push(await buildScheduleViewScope(req, actorId, actorRole, shouldIncludeSelf))
+    } else if (actorRole === 'employee') {
       filter._id = actorId
     } else if (actorRole === 'supervisor') {
-      andFilters.push(
-        isScheduleView && !shouldIncludeSelf
-          ? { supervisor: actorId }
-          : { $or: [{ _id: actorId }, { supervisor: actorId }] }
-      )
+      andFilters.push({ $or: [{ _id: actorId }, { supervisor: actorId }] })
     }
     if (search) {
       const rx = new RegExp(escapeRegex(search), 'i')

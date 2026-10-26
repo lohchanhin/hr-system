@@ -51,6 +51,15 @@ export function formatHoursWithDays(hours) {
   return `${formatHours(hours)}（${formatDaysAndHours(hours)}）`
 }
 
+/**
+ * 調休存摺（客戶稱為移休，以天計）的時數：天數用小數，半天也看得出來。
+ * 8 -> '8 小時（1 天）'、4 -> '4 小時（0.5 天）'、12 -> '12 小時（1.5 天）'
+ */
+export function formatBankHours(hours) {
+  if (hours === null || hours === undefined || hours === '') return '—'
+  return `${formatHours(hours)}（${formatDays(hours)}）`
+}
+
 function normalizeName(value) {
   return String(value ?? '').normalize('NFKC').toLowerCase().replace(/[\s()[\]【】]/g, '')
 }
@@ -116,10 +125,10 @@ export function evaluateRequest(item, items, requestedHours) {
     const basis = toNumber(item.availableHours)
     remainingAfter = Math.round((basis - requested) * 100) / 100
     if (requested > basis) {
-      const pending = toNumber(item.pendingHours) > 0 ? `、簽核中 ${formatHours(item.pendingHours)}` : ''
+      const pending = toNumber(item.pendingHours) > 0 ? `、簽核中 ${formatBankHours(item.pendingHours)}` : ''
       reasons.push(
-        `${name}存摺剩餘 ${formatHours(item.remainingHours)}${pending}，可用 ${formatHours(Math.max(basis, 0))}，` +
-        `本次申請 ${formatHours(requested)}，將超出 ${formatHours(requested - Math.max(basis, 0))}`
+        `${name}存摺剩餘 ${formatBankHours(item.remainingHours)}${pending}，可用 ${formatBankHours(Math.max(basis, 0))}，` +
+        `本次申請 ${formatBankHours(requested)}，將超出 ${formatBankHours(requested - Math.max(basis, 0))}`
       )
     }
   } else if (item.period === 'event') {
@@ -159,6 +168,15 @@ export function evaluateRequest(item, items, requestedHours) {
   }
 
   if (remainingAfter !== null) {
+    if (item.source === 'bank') {
+      return {
+        level: 'info',
+        exceeded: false,
+        blocking: false,
+        remainingAfter,
+        text: `${name}：目前可請 ${formatBankHours(item.availableHours)}；本次申請 ${formatBankHours(requested)}，核准後剩 ${formatBankHours(remainingAfter)}`,
+      }
+    }
     return {
       level: 'info',
       exceeded: false,
@@ -226,6 +244,7 @@ export default {
   formatDays,
   formatDaysAndHours,
   formatHoursWithDays,
+  formatBankHours,
   matchBalanceItem,
   evaluateRequest,
   describeOver,

@@ -730,6 +730,62 @@ export async function voidCredit({ id, note, actorId = null, now = new Date() } 
   return serialized;
 }
 
+/* ---------------------------- 員工存摺的備註（管理員在員工管理填寫，員工在「我的調休」唯讀） ---------------------------- */
+
+// 與 models/CompensatoryLeaveState.js 的 note 欄位一致（key = note:<員工 _id>、最多 1000 字）
+export const MAX_BANK_NOTE_LENGTH = 1000;
+const BANK_NOTE_KEY_PREFIX = 'note:';
+const EMPTY_BANK_NOTE = Object.freeze({ text: '', updatedAt: null, updatedBy: null });
+
+function bankNoteKeyOf(employeeId) {
+  return `${BANK_NOTE_KEY_PREFIX}${employeeId}`;
+}
+
+/** 某位員工存摺的備註：{ text, updatedAt, updatedBy: { id, name } | null }；沒有備註時 text 是空字串 */
+export async function getEmployeeBankNote(employeeId) {
+  const id = toId(employeeId);
+  if (!isObjectId(id)) return { ...EMPTY_BANK_NOTE };
+  const doc = await leanResult(CompensatoryLeaveState.findOne({ key: bankNoteKeyOf(id) }));
+  if (!doc?.note) return { ...EMPTY_BANK_NOTE };
+  let updatedBy = null;
+  if (doc.noteUpdatedBy) {
+    const actor = await leanResult(Employee.findById(doc.noteUpdatedBy).select('_id name'));
+    updatedBy = { id: toId(doc.noteUpdatedBy), name: actor?.name || '' };
+  }
+  return { text: doc.note, updatedAt: doc.noteUpdatedAt || doc.updatedAt || null, updatedBy };
+}
+
+/**
+ * 管理員儲存員工存摺的備註（例如「10/10 國慶日改發加倍工資，不另給移休」），空白 = 清除。
+ * 每位員工一筆（CompensatoryLeaveState 的 key = note:<員工 _id>，唯一索引）；回傳同 getEmployeeBankNote。
+ */
+export async function saveEmployeeBankNote({ employeeId, note, actorId = null, now = new Date() } = {}) {
+  const employee = await requireEmployee(employeeId);
+  if (note !== undefined && note !== null && typeof note !== 'string') fail(400, 'INVALID_NOTE', '備註格式不正確');
+  const text = String(note ?? '').trim();
+  if (text.length > MAX_BANK_NOTE_LENGTH) fail(400, 'NOTE_TOO_LONG', `備註不可超過 ${MAX_BANK_NOTE_LENGTH} 個字`);
+  const id = toId(employee._id);
+  const key = bankNoteKeyOf(id);
+  if (!text) {
+    await CompensatoryLeaveState.deleteOne({ key });
+    return { ...EMPTY_BANK_NOTE };
+  }
+  const write = () => CompensatoryLeaveState.updateOne(
+    { key },
+    { $set: { employee: employee._id, note: text, noteUpdatedBy: actorId || null, noteUpdatedAt: now } },
+    // 不帶系統狀態那幾個欄位的預設值（切換日、轉換時間只屬於 key = bank 的那一筆）
+    { upsert: true, setDefaultsOnInsert: false },
+  );
+  try {
+    await write();
+  } catch (err) {
+    // 兩位管理員同時第一次填：另一筆剛建立，改成更新它
+    if (err?.code !== 11000) throw err;
+    await write();
+  }
+  return getEmployeeBankNote(id);
+}
+
 /* ---------------------------- 部署時的資料轉換（冪等，只記錄筆數） ---------------------------- */
 
 /**

@@ -3,6 +3,7 @@ import { ElMessage } from 'element-plus'
 import { getToken } from '@/utils/tokenService'
 import { clearRoleCache, refreshRoleFromSource, resolveUserRole } from '@/utils/roleResolver'
 import { getAuthenticatedHomeRoute } from '@/utils/authNavigation'
+import { useProfileStore } from '@/stores/profile'
 
 // ★ 既有的後台檔案
 const ManagerLogin = () => import('@/views/Login.vue')
@@ -111,7 +112,8 @@ const routes = [
         path: 'schedule',
         name: 'Schedule',
         component: Schedule,
-        meta: { roles: ['supervisor', 'admin'] },
+        // allowScheduler：被指定為排班人員的員工（任何角色）也能進入；主管依排班權限模式決定（見路由守衛）
+        meta: { roles: ['supervisor', 'admin'], allowScheduler: true },
       },
       {
         path: 'department-reports',
@@ -126,13 +128,13 @@ const routes = [
         path: 'preview-week',
         name: 'PreviewWeek',
         component: PreviewWeek,
-        meta: { roles: ['supervisor', 'admin'] },
+        meta: { roles: ['supervisor', 'admin'], allowScheduler: true },
       },
       {
         path: 'preview-month',
         name: 'PreviewMonth',
         component: PreviewMonth,
-        meta: { roles: ['supervisor', 'admin'] },
+        meta: { roles: ['supervisor', 'admin'], allowScheduler: true },
       },
       {
         path: 'approval',
@@ -220,6 +222,41 @@ function resolveActiveRole(token) {
   return refreshRoleFromSource({ token })
 }
 
+const SCHEDULE_ACCESS_DENIED_MESSAGE = '您沒有排班權限，請聯絡管理員在小單位設定排班人員'
+
+function storedEmployeeId() {
+  if (typeof window === 'undefined') return ''
+  return window.sessionStorage?.getItem('employeeId') || window.localStorage?.getItem('employeeId') || ''
+}
+
+// 個人資料的排班權限（scheduleAccess）；讀不到（舊版伺服器、網路錯誤）回傳 null，由呼叫端退回依角色判斷。
+// 個人資料快取的是別人（換了帳號）時重新讀取
+export async function loadScheduleAccess(store) {
+  try {
+    const profileStore = store || useProfileStore()
+    const cached = profileStore.profile
+    const employeeId = storedEmployeeId()
+    const stale = Boolean(cached && employeeId && String(cached.id || cached.employeeId || '') !== employeeId)
+    const profile = await profileStore.fetchProfile({ force: stale })
+    const access = profile?.scheduleAccess
+    return access && typeof access === 'object' ? access : null
+  } catch (error) {
+    return null
+  }
+}
+
+/**
+ * 排班頁（meta.allowScheduler）：管理員一律可以；其他角色看排班權限——
+ * 被指定為排班人員的員工任何角色都能進入，排班權限模式切開主管後沒被指定的主管不能進入。
+ * 讀不到排班權限時維持原本的角色限制。
+ */
+export async function canEnterSchedulePage(role, allowedRoles = [], loader = loadScheduleAccess) {
+  if (role === 'admin') return true
+  const access = await loader()
+  if (!access) return allowedRoles.includes(role)
+  return access.canSchedule === true
+}
+
 // ★ 路由守衛
 router.beforeEach((to, from, next) => {
   const token = getToken()
@@ -250,6 +287,13 @@ router.beforeEach((to, from, next) => {
   // 若有角色限制 meta.roles
   if (to.meta.roles) {
     const roleForRoute = activeRole || resolveUserRole({ token }) || 'employee'
+    if (to.meta.allowScheduler && roleForRoute !== 'admin') {
+      return canEnterSchedulePage(roleForRoute, to.meta.roles).then(allowed => {
+        if (allowed) return next()
+        showWarningMessage(SCHEDULE_ACCESS_DENIED_MESSAGE)
+        return next({ name: 'Forbidden' })
+      })
+    }
     if (!to.meta.roles.includes(roleForRoute)) {
       const warningMessage = to.meta.warningMessage || '您沒有權限瀏覽此頁面'
       showWarningMessage(warningMessage)

@@ -8,7 +8,9 @@ import { getAllLeaveFieldInfos } from './leaveFieldService.js';
 import { calculateNightShiftAllowance } from './nightShiftAllowanceService.js';
 import { isNonWorkShift, resolveShiftSemanticType } from './shiftSemanticService.js';
 import { loadHolidayContext, resolveDayType } from './holidayResolver.js';
+import { findPunchSource, matchShiftPunches } from './attendancePunchService.js';
 import { toTaipeiDateKey } from '../utils/taipeiTime.js';
+import { getTimezone } from '../utils/timeWindow.js';
 import { computeLeaveDuration, sumLeaveHoursInRange } from '../utils/leaveDuration.js';
 import { isOvertimeFormTemplate } from '../utils/formSemantics.js';
 import { candidateSelectKeys, orderFieldCandidateIds, pickFieldValue, resolveCandidateIds } from '../utils/fieldCandidates.js';
@@ -200,6 +202,9 @@ export async function calculateWorkHours(employeeId, month, context = {}) {
   endDate.setUTCMonth(endDate.getUTCMonth() + 1);
   
   // 取得班表設定
+  // 打卡多讀前後各一天：月初第一天台灣時間 08:00 以前的打卡（UTC 是前一天）、月底跨日班的下班打卡都要算進來
+  const recordRangeStart = new Date(startDate);
+  recordRangeStart.setUTCDate(recordRangeStart.getUTCDate() - 1);
   const recordRangeEnd = new Date(endDate);
   recordRangeEnd.setUTCDate(recordRangeEnd.getUTCDate() + 1);
   const [attendanceSetting, schedules, attendanceRecords] = await Promise.all([
@@ -210,7 +215,7 @@ export async function calculateWorkHours(employeeId, month, context = {}) {
     }).lean(),
     context.attendanceRecords ?? AttendanceRecord.find({
       employee: employeeId,
-      timestamp: { $gte: startDate, $lt: recordRangeEnd },
+      timestamp: { $gte: recordRangeStart, $lt: recordRangeEnd },
       action: { $in: ['clockIn', 'clockOut'] }
     }).lean(),
   ]);
@@ -229,6 +234,13 @@ export async function calculateWorkHours(employeeId, month, context = {}) {
   
   // 分組出勤記錄
   const recordMap = groupAttendanceRecords(attendanceRecords);
+  // 這位員工的上下班打卡（線上打卡、指紋匯入、舊資料不分來源，一起比對）
+  const employeePunches = (attendanceRecords || []).filter((record) => (
+    (record?.action === 'clockIn' || record?.action === 'clockOut')
+    && String(record.employee?._id ?? record.employee ?? '') === String(employeeId)
+  ));
+  const actionBuffers = attendanceSetting?.actionBuffers;
+  const timeZone = getTimezone();
   
   // 計算工作時數
   let totalScheduledMinutes = 0;
@@ -267,13 +279,24 @@ export async function calculateWorkHours(employeeId, month, context = {}) {
     let clockInTime = null;
     let clockOutTime = null;
     
+    // 先依這一班的簽到、簽退時段（台灣時間，與線上打卡、遲到早退判斷相同）找打卡：
+    // 線上打卡與指紋匯入一起看，簽到取最早、簽退取最晚，兩邊互補（services/attendancePunchService.js）。
+    // 時段內找不到時，才沿用下面原本依日期比對的方式。
+    const shiftPunches = matchShiftPunches({
+      records: employeePunches,
+      scheduleDate: schedule.date,
+      shift,
+      actionBuffers,
+      timeZone,
+    });
+    
     // For cross-day shifts, we need to check both current day and next day for clock records
     // Also check previous day for clock-in if this is a cross-day shift
-    let first = null;
+    let first = shiftPunches?.clockIn ? new Date(shiftPunches.clockIn.timestamp) : null;
     let last = null;
     
     // Check for clock-in on schedule date
-    if (dayRecord && dayRecord.clockIns.length) {
+    if (!first && dayRecord && dayRecord.clockIns.length) {
       first = dayRecord.clockIns[0];
     }
     
@@ -292,11 +315,17 @@ export async function calculateWorkHours(employeeId, month, context = {}) {
     if (first) {
       clockInTime = first;
       
+      // 簽退時段內有晚於簽到的打卡就取最晚的一筆
+      const windowClockOut = shiftPunches?.clockOut ? new Date(shiftPunches.clockOut.timestamp) : null;
+      if (windowClockOut && windowClockOut > first) {
+        last = windowClockOut;
+      }
+      
       // First, try to find clock-out on the same day as clock-in
       const clockInDateKey = buildDateKey(first);
       const clockInDayRecord = recordMap.get(`${employeeId}::${clockInDateKey}`);
       
-      if (clockInDayRecord && clockInDayRecord.clockOuts.length) {
+      if (!last && clockInDayRecord && clockInDayRecord.clockOuts.length) {
         // Find the first clock-out after the clock-in time
         for (const clockOut of clockInDayRecord.clockOuts) {
           if (clockOut > first) {
@@ -336,7 +365,10 @@ export async function calculateWorkHours(employeeId, month, context = {}) {
       hasAttendance,
       shiftName: shift.name || '未命名班別',
       clockInTime: clockInTime ? clockInTime.toISOString() : null,
-      clockOutTime: clockOutTime ? clockOutTime.toISOString() : null
+      clockOutTime: clockOutTime ? clockOutTime.toISOString() : null,
+      // 打卡來源（online 線上、import 指紋匯入、manual 手動補登、legacy 舊資料未標示）
+      clockInSource: clockInTime ? findPunchSource(employeePunches, 'clockIn', clockInTime) : null,
+      clockOutSource: clockOutTime ? findPunchSource(employeePunches, 'clockOut', clockOutTime) : null
     });
   });
   

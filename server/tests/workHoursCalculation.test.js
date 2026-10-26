@@ -266,6 +266,33 @@ describe('work-hours calculation: holiday / leave / zero-time shifts are not wor
     ])
   })
 
+  // 月初第一天台灣 07:55 的指紋簽到在 UTC 是前一天（5/31 23:55Z）：要多讀前一天的打卡才算得到
+  it('loads punches from the day before the month so an early fingerprint clock-in on the 1st counts', async () => {
+    mockMonth(
+      [{ employee: 'emp1', date: new Date('2026-06-01T00:00:00.000Z'), shiftId: 'day' }],
+      [
+        { employee: 'emp1', action: 'clockIn', timestamp: new Date('2026-05-31T23:55:00.000Z'), source: 'import' },
+        { employee: 'emp1', action: 'clockIn', timestamp: new Date('2026-06-01T00:10:00.000Z'), source: 'online' },
+        { employee: 'emp1', action: 'clockOut', timestamp: new Date('2026-06-01T09:05:00.000Z'), source: 'import' },
+      ],
+    )
+
+    const result = await calculateWorkHours('emp1', '2026-06-01')
+
+    expect(mockAttendanceRecord.find).toHaveBeenCalledWith({
+      employee: 'emp1',
+      timestamp: { $gte: new Date('2026-05-31T00:00:00.000Z'), $lt: new Date('2026-07-02T00:00:00.000Z') },
+      action: { $in: ['clockIn', 'clockOut'] },
+    })
+    expect(result.dailyDetails[0]).toEqual(expect.objectContaining({
+      clockInTime: '2026-05-31T23:55:00.000Z',
+      clockOutTime: '2026-06-01T09:05:00.000Z',
+      clockInSource: 'import',
+      clockOutSource: 'import',
+      workedHours: 8.17,
+    }))
+  })
+
   it('a night shift 00:00-08:00 flagged cross-day is 8 scheduled hours, not 32', async () => {
     mockMonth([{ employee: 'emp1', date: new Date('2026-06-01T00:00:00.000Z'), shiftId: 'night' }])
 

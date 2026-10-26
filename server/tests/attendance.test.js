@@ -508,6 +508,64 @@ describe('Attendance API', () => {
     expect(saveMock).not.toHaveBeenCalled();
   });
 
+  it('stores an online punch with source online', async () => {
+    currentUser = { id: 'emp1', role: 'employee' };
+    const scheduleDate = new Date(Date.UTC(2024, 0, 1));
+    setupScheduleMocks({
+      schedules: [{ _id: 'sched1', employee: 'emp1', date: scheduleDate, shiftId: 'shift1' }],
+      shifts: [{ _id: 'shift1', startTime: '09:00', endTime: '18:00' }]
+    });
+    saveMock.mockResolvedValue();
+
+    const res = await request(app).post('/api/attendance').send({ action: 'clockIn', employee: 'emp1' });
+
+    expect(res.status).toBe(201);
+    expect(mockAttendanceRecord.mock.calls.at(-1)[0]).toMatchObject({ source: 'online', punchKey: 'emp1:sched1:clockIn' });
+    expect(res.body.source).toBe('online');
+  });
+
+  // 指紋匯入的打卡不擋線上打卡（兩邊都保留、計算時互補），只擋重複的線上打卡與沒有來源的舊資料
+  it('does not treat an imported fingerprint punch as a duplicate of an online punch', async () => {
+    currentUser = { id: 'emp1', role: 'employee' };
+    const scheduleDate = new Date(Date.UTC(2024, 0, 1));
+    setupScheduleMocks({
+      schedules: [{ _id: 'sched1', employee: 'emp1', date: scheduleDate, shiftId: 'shift1' }],
+      shifts: [{ _id: 'shift1', startTime: '09:00', endTime: '18:00' }]
+    });
+    saveMock.mockResolvedValue();
+
+    const res = await request(app).post('/api/attendance').send({ action: 'clockIn', employee: 'emp1' });
+
+    expect(res.status).toBe(201);
+    const duplicateQuery = mockAttendanceRecord.exists.mock.calls[0][0];
+    expect(duplicateQuery.$or).toEqual([
+      { punchKey: 'emp1:sched1:clockIn' },
+      expect.objectContaining({ employee: 'emp1', action: 'clockIn', source: { $ne: 'import' } }),
+    ]);
+  });
+
+  it('accepts an imported fingerprint clock-in as the clock-in before an online clock-out', async () => {
+    Date.now.mockReturnValue(Date.parse('2024-01-01T09:30:00.000Z'));
+    currentUser = { id: 'emp1', role: 'employee' };
+    const scheduleDate = new Date(Date.UTC(2024, 0, 1));
+    setupScheduleMocks({
+      schedules: [{ _id: 'sched1', employee: 'emp1', date: scheduleDate, shiftId: 'shift1' }],
+      shifts: [{ _id: 'shift1', startTime: '09:00', endTime: '18:00' }]
+    });
+    mockAttendanceRecord.exists
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(true);
+    saveMock.mockResolvedValue();
+
+    const res = await request(app).post('/api/attendance').send({ action: 'clockOut', employee: 'emp1' });
+
+    expect(res.status).toBe(201);
+    const clockInQuery = mockAttendanceRecord.exists.mock.calls[1][0];
+    expect(clockInQuery.$or[1]).toEqual(expect.objectContaining({ employee: 'emp1', action: 'clockIn' }));
+    expect(clockInQuery.$or[1]).not.toHaveProperty('source');
+    expect(mockAttendanceRecord.mock.calls.at(-1)[0]).toMatchObject({ action: 'clockOut', source: 'online' });
+  });
+
   it('ignores a valid client timestamp and stores the server time', async () => {
     currentUser = { id: 'emp1', role: 'employee' };
     const scheduleDate = new Date(Date.UTC(2024, 0, 1));

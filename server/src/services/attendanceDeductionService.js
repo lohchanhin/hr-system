@@ -59,6 +59,8 @@ function buildShiftMap(setting) {
   return shiftMap
 }
 
+// 線上打卡（有 punchKey）與指紋匯入、舊資料一起比對：符合 punchKey 或落在打卡時段內的都算候選，
+// 不會因為有線上打卡就忽略匯入的打卡；簽到取最早、簽退取最晚
 function findPunch({ records, employeeId, schedule, action, window }) {
   const scheduleId = schedule._id?.toString?.()
   const expectedKey = scheduleId ? `${employeeId}:${scheduleId}:${action}` : ''
@@ -73,6 +75,9 @@ function findPunch({ records, employeeId, schedule, action, window }) {
 }
 
 async function loadAttendanceContext(employeeId, monthRange, context) {
+  // 打卡多讀前一天：月初第一天台灣時間 08:00 以前的打卡（例如 07:55 的指紋簽到）在 UTC 是前一天
+  const recordRangeStart = new Date(monthRange.start)
+  recordRangeStart.setUTCDate(recordRangeStart.getUTCDate() - 1)
   const recordRangeEnd = new Date(monthRange.end)
   recordRangeEnd.setUTCDate(recordRangeEnd.getUTCDate() + 1)
   const [setting, schedules, records] = await Promise.all([
@@ -83,7 +88,7 @@ async function loadAttendanceContext(employeeId, monthRange, context) {
     }).lean(),
     context.attendanceRecords ?? AttendanceRecord.find({
       employee: employeeId,
-      timestamp: { $gte: monthRange.start, $lt: recordRangeEnd },
+      timestamp: { $gte: recordRangeStart, $lt: recordRangeEnd },
       action: { $in: ['clockIn', 'clockOut'] },
     }).lean(),
   ])

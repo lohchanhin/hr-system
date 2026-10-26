@@ -91,14 +91,15 @@ describe('CompensatoryLeavePanel（我的調休）', () => {
     expect(wrapper.text()).toContain('我的調休')
     expect(wrapper.find('[data-test="comp-leave-available"]').text()).toBe('可用 8 小時（1 天）')
     const summary = wrapper.find('[data-test="comp-leave-summary"]').text()
-    expect(summary).toContain('存摺剩餘 12 小時')
-    expect(summary).toContain('簽核中 4 小時')
+    expect(summary).toContain('存摺剩餘 12 小時（1.5 天）')
+    expect(summary).toContain('簽核中 4 小時（0.5 天）')
     const text = wrapper.text()
     expect(text).toContain('2026-10-25 臺灣光復暨金門古寧頭大捷紀念日 適逢週日')
     expect(text).toContain('部分使用')
-    expect(text).toContain('8 小時，已用 4 小時，剩 4 小時')
-    expect(text).toContain('調休簽核 4 小時（2026/11/02 4 小時，已核准）')
-    expect(text).toContain('HR 指定 8 小時（2026/10/14 整天）：協商')
+    // 移休以天計（2026/10）：時數旁一律附上天數
+    expect(text).toContain('8 小時（1 天），已用 4 小時（0.5 天），剩 4 小時（0.5 天）')
+    expect(text).toContain('調休簽核 4 小時（0.5 天；2026/11/02 4 小時，已核准）')
+    expect(text).toContain('HR 指定 8 小時（1 天；2026/10/14 整天）：協商')
     expect(text).toContain('2026/10/26')
     expect(wrapper.find('[data-test="comp-leave-conflict"]').exists()).toBe(true)
     expect(wrapper.find('[data-test="comp-leave-help"]').text()).toContain('選假別「調休」')
@@ -196,7 +197,91 @@ describe('LeaveBalancePanel：簽核人看申請人的調休存摺', () => {
     expect(compensatory.exists()).toBe(true)
     expect(compensatory.text()).toContain('申請人的調休存摺（本次申請調休）')
     expect(compensatory.text()).toContain('2026-10-25 臺灣光復暨金門古寧頭大捷紀念日 適逢週日')
-    expect(wrapper.find('[data-test="leave-balance-comp-this"]').text()).toBe('這張單已扣用調休 8 小時：2026-10-10 國慶日 適逢例假 8 小時')
+    expect(wrapper.find('[data-test="leave-balance-comp-this"]').text()).toBe('這張單已扣用調休 8 小時（1 天）：2026-10-10 國慶日 適逢例假 8 小時（1 天）')
     expect(apiFetch).not.toHaveBeenCalled()
+  })
+})
+
+// R4（2026/10）：客戶把調休叫做移休、以天計；管理員可以在員工的人事資料（員工管理的調休存摺）填寫備註，員工在「我的調休」唯讀看得到
+describe('CompensatoryLeavePanel：移休的天數與存摺備註', () => {
+  const note = { text: '10/10 國慶日改發加倍工資，不另給移休', updatedAt: '2026-10-26T02:00:00.000Z', updatedBy: { id: 'a1', name: '人資小林' } }
+  // el-input 把 data-test 放在原生 textarea 上（或外層）：兩種都找得到
+  const textareaOf = (wrapper) => {
+    const node = wrapper.find('[data-test="comp-leave-note-input"]')
+    return node.element.tagName === 'TEXTAREA' ? node : node.find('textarea')
+  }
+
+  it('shows the note read-only to the employee, with who wrote it', async () => {
+    apiFetch.mockResolvedValue(json(bank({ note })))
+    const wrapper = mountPanel({ title: '我的調休' })
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="comp-leave-note-text"]').text()).toBe('10/10 國慶日改發加倍工資，不另給移休')
+    expect(wrapper.find('[data-test="comp-leave-note"]').text()).toContain('人資小林 2026/10/26 更新')
+    expect(wrapper.find('[data-test="comp-leave-note-edit"]').exists()).toBe(false)
+    expect(wrapper.find('textarea').exists()).toBe(false)
+  })
+
+  it('shows nothing when there is no note, and no note editor on the approval detail', async () => {
+    apiFetch.mockResolvedValue(json(bank({ note: { text: '', updatedAt: null, updatedBy: null } })))
+    const wrapper = mountPanel()
+    await flushPromises()
+    expect(wrapper.find('[data-test="comp-leave-note"]').exists()).toBe(false)
+
+    const detail = mountPanel({ bank: bank(), compact: true, canManage: true })
+    await flushPromises()
+    expect(detail.find('[data-test="comp-leave-note-edit"]').exists()).toBe(false)
+  })
+
+  it('lets an admin edit, save and clear the note of the employee', async () => {
+    apiFetch.mockResolvedValue(json(bank({ note })))
+    const wrapper = mountPanel({ employeeId: 'e1', canManage: true })
+    await flushPromises()
+
+    expect(textareaOf(wrapper).element.value).toBe('10/10 國慶日改發加倍工資，不另給移休')
+    expect(wrapper.find('[data-test="comp-leave-note-meta"]').text()).toBe('人資小林 2026/10/26 更新')
+    // 沒改就不能按儲存
+    expect(wrapper.find('[data-test="comp-leave-note-save"]').attributes('disabled')).toBeDefined()
+
+    apiFetch.mockClear()
+    apiFetch.mockResolvedValueOnce(json({ text: '移休請於年底前用完' })).mockResolvedValue(json(bank({ note: { ...note, text: '移休請於年底前用完' } })))
+    await textareaOf(wrapper).setValue('  移休請於年底前用完  ')
+    await wrapper.find('[data-test="comp-leave-note-save"]').trigger('click')
+    await flushPromises()
+    expect(apiFetch.mock.calls[0][0]).toBe('/api/compensatory-leave/note')
+    expect(apiFetch.mock.calls[0][1].method).toBe('PUT')
+    expect(JSON.parse(apiFetch.mock.calls[0][1].body)).toEqual({ employeeId: 'e1', note: '移休請於年底前用完' })
+    expect(messageSuccess).toHaveBeenCalledWith('已儲存備註')
+    expect(apiFetch.mock.calls[1][0]).toBe('/api/compensatory-leave?employeeId=e1')
+    expect(textareaOf(wrapper).element.value).toBe('移休請於年底前用完')
+
+    apiFetch.mockClear()
+    apiFetch.mockResolvedValueOnce(json({ text: '' })).mockResolvedValue(json(bank({ note: { text: '', updatedAt: null, updatedBy: null } })))
+    await textareaOf(wrapper).setValue('')
+    await wrapper.find('[data-test="comp-leave-note-save"]').trigger('click')
+    await flushPromises()
+    expect(JSON.parse(apiFetch.mock.calls[0][1].body)).toEqual({ employeeId: 'e1', note: '' })
+    expect(messageSuccess).toHaveBeenCalledWith('已清除備註')
+  })
+
+  it('shows the server message when the note cannot be saved', async () => {
+    apiFetch.mockResolvedValue(json(bank()))
+    const wrapper = mountPanel({ employeeId: 'e1', canManage: true })
+    await flushPromises()
+    apiFetch.mockClear()
+    apiFetch.mockResolvedValueOnce(json({ error: '找不到這位員工', code: 'EMPLOYEE_NOT_FOUND' }, 404))
+    await textareaOf(wrapper).setValue('x')
+    await wrapper.find('[data-test="comp-leave-note-save"]').trigger('click')
+    await flushPromises()
+    expect(messageError).toHaveBeenCalledWith('找不到這位員工')
+    expect(apiFetch).toHaveBeenCalledTimes(1)
+  })
+
+  it('shows the day equivalent next to the hours an admin gives or deducts', async () => {
+    apiFetch.mockResolvedValue(json(bank()))
+    const wrapper = mountPanel({ employeeId: 'e1', canManage: true })
+    await flushPromises()
+    expect(wrapper.find('[data-test="comp-leave-manage-days"]').text()).toBe('小時（1 天）')
+    expect(wrapper.find('[data-test="comp-leave-summary"]').text()).toContain('累計取得 24 小時（3 天）')
   })
 })

@@ -323,6 +323,8 @@ export async function createRecord(req, res) {
       }
 
       punchKey = `${targetEmployeeId}:${scheduleId}:${action}`;
+      // 只擋重複的線上打卡（含沒有來源的舊資料）；指紋匯入的打卡不擋線上打卡，兩邊都保留，
+      // 計算時簽到取最早、簽退取最晚（services/attendancePunchService.js）
       const duplicate = await AttendanceRecord.exists({
         $or: [
           { punchKey },
@@ -330,6 +332,7 @@ export async function createRecord(req, res) {
             employee: targetEmployeeId,
             action,
             timestamp: { $gte: actionWindow.start, $lte: actionWindow.end },
+            source: { $ne: 'import' },
           },
         ],
       });
@@ -337,6 +340,7 @@ export async function createRecord(req, res) {
         return res.status(409).json({ error: 'Attendance action already recorded for this shift' });
       }
 
+      // 簽退前要有這一班的簽到：線上或指紋匯入的簽到都算
       if (action === 'clockOut') {
         const clockInWindow = computeActionWindow(
           'clockIn',
@@ -370,6 +374,7 @@ export async function createRecord(req, res) {
       timestamp: punchTime,
       remark,
       punchKey,
+      source: 'online',
     });
     await record.save();
     const response = typeof record.toObject === 'function' ? record.toObject() : { ...record };

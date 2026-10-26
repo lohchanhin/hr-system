@@ -161,6 +161,13 @@
               <el-table-column prop="location" label="位置" width="150" />
               <el-table-column prop="responsiblePerson" label="負責人" width="120" />
               <el-table-column prop="manager" label="部門主管" width="120" />
+              <el-table-column label="使用簽核表單" width="140">
+                <template #default="{ row }">
+                  <el-tag :type="row.allowedFormIds?.length ? 'warning' : 'info'" class="code-tag" data-test="dept-form-scope">
+                    {{ formScopeText(row) }}
+                  </el-tag>
+                </template>
+              </el-table-column>
               <el-table-column label="操作" width="200" fixed="right">
                 <template #default="{ $index }">
                   <div class="action-buttons">
@@ -268,6 +275,18 @@
               </el-table-column>
               <el-table-column prop="responsiblePerson" label="負責人" width="120" />
               <el-table-column prop="manager" label="主管" width="120" />
+              <el-table-column label="排班人員" min-width="160">
+                <template #default="{ row }">
+                  <span class="scheduler-names" data-test="sub-scheduler-names">{{ schedulerNames(row) }}</span>
+                </template>
+              </el-table-column>
+              <el-table-column label="使用班別" width="140">
+                <template #default="{ row }">
+                  <el-tag :type="row.allowedShiftIds?.length ? 'warning' : 'info'" class="code-tag" data-test="sub-shift-scope">
+                    {{ shiftScopeText(row) }}
+                  </el-tag>
+                </template>
+              </el-table-column>
               <el-table-column label="操作" width="200" fixed="right">
                 <template #default="{ $index }">
                   <div class="action-buttons">
@@ -414,17 +433,20 @@
             <el-form-item label="排班管理者">
               <el-select
                 v-model="form.deptManager"
-                placeholder="選擇管理者"
+                placeholder="搜尋並選擇員工"
                 style="width: 100%"
                 clearable
+                filterable
+                data-test="dept-manager-select"
               >
                 <el-option
-                  v-for="mgr in managerList"
+                  v-for="mgr in deptManagerOptions"
                   :key="mgr.value"
                   :label="mgr.label"
                   :value="mgr.value"
                 />
               </el-select>
+              <div class="form-hint">可以排整個部門（所有小單位與沒有小單位的員工）的班；只排個別小單位請到小單位設定「排班人員」</div>
             </el-form-item>
             <el-form-item label="排班備註">
               <el-input
@@ -433,6 +455,31 @@
                 :rows="3"
                 placeholder="例如換班審核流程、注意事項"
               />
+            </el-form-item>
+          </div>
+
+          <div class="form-section">
+            <h3 class="form-section-title">簽核表單</h3>
+            <el-form-item label="使用簽核表單">
+              <el-select
+                v-model="form.allowedFormIds"
+                multiple
+                filterable
+                clearable
+                collapse-tags
+                collapse-tags-tooltip
+                placeholder="未選擇代表全部表單"
+                style="width: 100%"
+                data-test="dept-allowed-forms"
+              >
+                <el-option
+                  v-for="opt in formSelectOptions"
+                  :key="opt.value"
+                  :label="opt.label"
+                  :value="opt.value"
+                />
+              </el-select>
+              <div class="form-hint">這個部門的員工登入後，只看得到、只能送出所選的簽核表單；未選擇代表全部表單</div>
             </el-form-item>
           </div>
 
@@ -501,6 +548,53 @@
               </el-select>
             </el-form-item>
           </div>
+
+          <div class="form-section">
+            <h3 class="form-section-title">排班設定</h3>
+            <el-form-item label="排班人員">
+              <el-select
+                v-model="form.schedulers"
+                multiple
+                filterable
+                clearable
+                placeholder="搜尋並選擇員工（任何角色都可以）"
+                style="width: 100%"
+                data-test="sub-schedulers"
+              >
+                <el-option
+                  v-for="opt in schedulerSelectOptions"
+                  :key="opt.value"
+                  :label="opt.label"
+                  :value="opt.value"
+                />
+              </el-select>
+              <div class="form-hint">被指定的員工登入後才看得到排班頁，可以排這個小單位所有員工的班；「部門主管」欄位仍只作為簽核使用</div>
+            </el-form-item>
+            <el-form-item label="使用班別">
+              <el-select
+                v-model="form.allowedShiftIds"
+                multiple
+                filterable
+                clearable
+                collapse-tags
+                collapse-tags-tooltip
+                placeholder="未選擇代表全部班別"
+                style="width: 100%"
+                data-test="sub-allowed-shifts"
+              >
+                <el-option
+                  v-for="shift in shiftOptions"
+                  :key="shift._id"
+                  :label="shiftLabel(shift)"
+                  :value="String(shift._id)"
+                />
+              </el-select>
+              <div class="form-hint">排班頁看這個小單位時，班別選單與圖例只列出所選的班別；未選擇代表全部班別</div>
+              <div v-if="missingNonWorkShift" class="form-hint form-hint--warning" data-test="sub-shift-rest-warning">
+                所選的班別沒有休息日、例假、國定假日等不用上班的班別，排班時將無法排休
+              </div>
+            </el-form-item>
+          </div>
         </template>
       </el-form>
       
@@ -520,6 +614,7 @@
 <script setup>
 import { ref, onMounted, computed, watch } from 'vue'
 import { apiFetch } from '../../api'
+import { isNonWorkSemanticType, resolveShiftSemanticType } from '../../utils/shiftSemantics'
 
 const activeTab = ref('org')
 const orgList = ref([])
@@ -536,7 +631,84 @@ const currentType = ref('org')
 const editIndex = ref(null)
 
 // 部門排班規則與中場休息設定
+// 排班管理者／排班人員的選單：任何角色的員工（/api/dept-managers，active: false 為離職、留職停薪或停用帳號）
 const managerList = ref([])
+// 使用簽核表單的選單（管理員看得到全部表單，含停用的）
+const formOptions = ref([])
+
+const toIdText = value => (value && typeof value === 'object' ? String(value._id ?? value.id ?? '') : String(value ?? ''))
+
+function employeeOptionLabel(mgr) {
+  const name = mgr?.label || '未命名員工'
+  const code = mgr?.employeeId ? `（${mgr.employeeId}）` : ''
+  return `${name}${code}${mgr?.active === false ? '（已停用）' : ''}`
+}
+
+// 選單只列在職的員工；已指定的人就算後來離職或被刪除，也要看得到是誰（才能移除）
+function buildEmployeeOptions(selectedIds) {
+  const selected = new Set((selectedIds || []).map(toIdText).filter(Boolean))
+  const known = new Set()
+  const options = []
+  managerList.value.forEach(mgr => {
+    const value = toIdText(mgr.value)
+    known.add(value)
+    if (mgr.active === false && !selected.has(value)) return
+    options.push({ value, label: employeeOptionLabel(mgr) })
+  })
+  selected.forEach(value => {
+    if (!known.has(value)) options.push({ value, label: '已刪除的員工' })
+  })
+  return options
+}
+
+const schedulerSelectOptions = computed(() => buildEmployeeOptions(form.value.schedulers))
+const deptManagerOptions = computed(() => buildEmployeeOptions(form.value.deptManager ? [form.value.deptManager] : []))
+
+const formSelectOptions = computed(() => {
+  const selected = new Set((form.value.allowedFormIds || []).map(toIdText).filter(Boolean))
+  const known = new Set()
+  const options = []
+  formOptions.value.forEach(item => {
+    const value = toIdText(item._id)
+    known.add(value)
+    const inactive = item.is_active === false
+    if (inactive && !selected.has(value)) return
+    options.push({ value, label: `${item.name || '未命名表單'}${inactive ? '（已停用）' : ''}` })
+  })
+  selected.forEach(value => {
+    if (!known.has(value)) options.push({ value, label: '已刪除的表單' })
+  })
+  return options
+})
+
+// 使用班別有選、卻沒有任何不用上班的班別（休息日／例假／國定假日／請假）：排班時排不了休，先提醒
+const missingNonWorkShift = computed(() => {
+  const selected = new Set((form.value.allowedShiftIds || []).map(String))
+  if (!selected.size) return false
+  return !shiftOptions.value.some(shift =>
+    selected.has(String(shift._id)) && isNonWorkSemanticType(resolveShiftSemanticType(shift))
+  )
+})
+
+function formScopeText(dept) {
+  const count = Array.isArray(dept?.allowedFormIds) ? dept.allowedFormIds.length : 0
+  return count ? `${count} 張表單` : '全部表單'
+}
+
+function schedulerNames(sub) {
+  const ids = Array.isArray(sub?.schedulers) ? sub.schedulers.map(toIdText) : []
+  if (!ids.length) return '未指定'
+  const names = new Map(managerList.value.map(mgr => [toIdText(mgr.value), mgr.label]))
+  return ids.map(id => names.get(id) || '已刪除的員工').join('、')
+}
+
+function shiftScopeText(sub) {
+  const ids = Array.isArray(sub?.allowedShiftIds) ? sub.allowedShiftIds.map(String) : []
+  if (!ids.length) return '全部班別'
+  const labels = new Map(shiftOptions.value.map(shift => [String(shift._id), shift.code || shift.name]))
+  const names = ids.map(id => labels.get(id)).filter(Boolean)
+  return names.length === ids.length && names.length <= 3 ? names.join('、') : `${ids.length} 種班別`
+}
 
 const filteredDeptList = computed(() =>
   selectedOrg.value
@@ -657,7 +829,8 @@ function defaultForm(type) {
       defaultTwoDayOff: true,
       tempChangeAllowed: false,
       deptManager: '',
-      scheduleNotes: ''
+      scheduleNotes: '',
+      allowedFormIds: []
     }
   } else {
     return {
@@ -675,7 +848,9 @@ function defaultForm(type) {
       manager: '',
       headcount: 0,
       shiftId: '',
-      department: ''
+      department: '',
+      schedulers: [],
+      allowedShiftIds: []
     }
   }
 }
@@ -696,6 +871,13 @@ async function openDialog(type, index = null) {
       const shiftValue = item?.shiftId ?? item?.shift ?? ''
       form.value.shiftId = shiftValue ? shiftValue.toString() : ''
       delete form.value.shift
+      // 多選欄位複製一份（不要直接改到列表上的資料），舊資料沒有這兩個欄位時是空陣列
+      form.value.schedulers = (Array.isArray(item?.schedulers) ? item.schedulers : []).map(toIdText).filter(Boolean)
+      form.value.allowedShiftIds = (Array.isArray(item?.allowedShiftIds) ? item.allowedShiftIds : []).map(String)
+    }
+    if (type === 'dept') {
+      form.value.allowedFormIds = (Array.isArray(item?.allowedFormIds) ? item.allowedFormIds : []).map(toIdText).filter(Boolean)
+      form.value.deptManager = item?.deptManager ? toIdText(item.deptManager) : ''
     }
   } else {
     editIndex.value = null
@@ -754,7 +936,20 @@ function deleteItem(type, index) {
 async function fetchManagers() {
   const res = await apiFetch('/api/dept-managers')
   if (res.ok) {
-    managerList.value = await res.json()
+    const data = await res.json()
+    managerList.value = Array.isArray(data) ? data : []
+  }
+}
+
+async function fetchForms() {
+  try {
+    const res = await apiFetch('/api/approvals/forms')
+    if (res.ok) {
+      const data = await res.json()
+      formOptions.value = Array.isArray(data) ? data : []
+    }
+  } catch (err) {
+    console.error(err)
   }
 }
 
@@ -787,6 +982,7 @@ async function fetchShifts(force = false) {
 onMounted(() => {
   fetchAll()
   fetchManagers()
+  fetchForms()
 })
 
 watch(selectedOrg, val => {
@@ -1031,6 +1227,24 @@ watch(selectedDept, val => {
   margin: 0 0 20px 0;
   padding-left: 12px;
   border-left: 3px solid #10b981;
+}
+
+/* 欄位下方的說明文字（排班人員、使用班別、使用簽核表單） */
+.form-hint {
+  width: 100%;
+  margin-top: 4px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #64748b;
+}
+
+.form-hint--warning {
+  color: #b45309;
+}
+
+.scheduler-names {
+  color: #334155;
+  font-size: 13px;
 }
 
 .dialog-footer {

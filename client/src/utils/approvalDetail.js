@@ -110,6 +110,8 @@ const ACTION_LABELS = {
   // 調休單核准時從調休存摺扣用（失敗時請人資手動調整）
   comp_leave: '調休扣用',
   comp_leave_error: '調休扣用失敗',
+  // 主管關卡找不到可簽核的主管，改由最高層簽核人（預設是系統管理員）簽核
+  approver_fallback: '無上級主管改送',
 }
 
 export function actionLabel(action) {

@@ -54,6 +54,12 @@ describe('leave type pay table', () => {
     expect(resolveLeavePay(name)).toMatchObject({ category, known: true, matchedName: name });
   });
 
+  // 移休是客戶對調休的叫法（調休存摺的有薪假）：不能因為名稱不同就被當成無薪而扣款
+  it('pays 移休 like 調休', () => {
+    expect(resolveLeavePay('移休')).toMatchObject({ category: 'paid', payRate: 1, known: true });
+    expect(resolveLeavePay('移休假')).toMatchObject({ category: 'paid', payRate: 1, known: true });
+  });
+
   it('gives each group its rate', () => {
     expect(resolveLeavePay('特休假').payRate).toBe(1);
     expect(resolveLeavePay('病假').payRate).toBe(0.5);

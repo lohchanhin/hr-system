@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   buildInitialFormData,
   describeUnresolvedStep,
+  describeFallbackStep,
   describeWorkflowApprovers,
   findLeaveFormId,
   findMissingRequiredField,
@@ -255,5 +256,21 @@ describe('approvalList 分頁回應', () => {
 
   it('清單網址帶上 page 與 limit', () => {
     expect(pagedListUrl('/api/approvals/inbox', 2)).toBe(`/api/approvals/inbox?page=2&limit=${PAGE_SIZE}`)
+  })
+})
+
+// R5：主管關卡改由最高層簽核人簽核的說明（流程預覽的 fallback_text / fallback_reason，單據關卡的 fallback）
+describe('describeFallbackStep', () => {
+  it('reads the preview fields and the stored step note, with the reason', () => {
+    expect(describeFallbackStep({ fallback_text: '無上級主管，改由系統管理員簽核（任一位核准即可）', fallback_reason: '申請人沒有設定直屬主管' }))
+      .toBe('無上級主管，改由系統管理員簽核（任一位核准即可）（申請人沒有設定直屬主管）')
+    expect(describeFallbackStep({ fallback: { text: '無上級主管，改由最高層簽核人簽核（任一位核准即可）', reason_text: '' } }))
+      .toBe('無上級主管，改由最高層簽核人簽核（任一位核准即可）')
+  })
+
+  it('says nothing when the step was not sent elsewhere', () => {
+    expect(describeFallbackStep({ fallback_text: null, fallback_reason: null })).toBe('')
+    expect(describeFallbackStep({})).toBe('')
+    expect(describeFallbackStep(null)).toBe('')
   })
 })
