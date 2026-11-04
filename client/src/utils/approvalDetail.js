@@ -112,10 +112,58 @@ const ACTION_LABELS = {
   comp_leave_error: '調休扣用失敗',
   // 主管關卡找不到可簽核的主管，改由最高層簽核人（預設是系統管理員）簽核
   approver_fallback: '無上級主管改送',
+  // 請假長度條件（例如請假滿 56 小時才需要）不符合，這一關不送；讀不到請假長度時照常簽核
+  step_not_applicable: '關卡不適用',
+  step_condition: '關卡照常簽核',
+  // 已是前面關卡簽核人的人，後面的關卡不再重複簽（主管鏈一律、其他關卡依通用流程規則）
+  skip_repeated_approver: '略過重複簽核人',
+  // 主管鏈往上找時略過離職、停用、留職停薪的主管等說明
+  manager_chain: '主管鏈',
 }
 
 export function actionLabel(action) {
   return ACTION_LABELS[action] || action || '-'
+}
+
+/* -------------------- 關卡名稱（主管鏈：第n級主管） -------------------- */
+
+/** 單據上一關的標題：「第 2 關」；有名稱（主管鏈展開的「第n級主管」）時「第 2 關・第2級主管」 */
+export function requestStepTitle(step, index) {
+  const name = typeof step?.name === 'string' ? step.name.trim() : ''
+  return name ? `第 ${index + 1} 關・${name}` : `第 ${index + 1} 關`
+}
+
+/** 單據上一關的說明（主管鏈略過離職的主管等）；沒有說明時回傳空字串 */
+export function requestStepNote(step) {
+  return typeof step?.note === 'string' ? step.note.trim() : ''
+}
+
+/* -------------------- 流程預覽：主管鏈、條件、略過重複 -------------------- */
+
+/**
+ * 主管鏈關卡的預覽文字（GET /forms/:id/workflow 的 chain_levels 只有級數、沒有姓名）：
+ * 「主管鏈：第1級主管 → 第2級主管（到持有「一般假單決行」標籤的主管為止）」；已是前面關卡簽核人的那一級不列出。
+ */
+export function describeChainPreview(step) {
+  const config = step?.approver_value && typeof step.approver_value === 'object' && !Array.isArray(step.approver_value) ? step.approver_value : {}
+  const tag = typeof config.stopAtTag === 'string' ? config.stopAtTag.trim() : ''
+  const limit = Number(config.maxLevels) || 5
+  const scope = tag ? `到持有「${tag}」標籤的主管為止，最多 ${limit} 級` : `最多 ${limit} 級`
+  const levels = Array.isArray(step?.chain_levels) ? step.chain_levels.filter(level => level && !level.repeated) : []
+  if (!levels.length) return `主管鏈（${scope}）`
+  return `主管鏈：${levels.map(level => level.label || `第${level.level}級主管`).join(' → ')}（${scope}）`
+}
+
+/** 有請假長度條件的關卡：「請假滿 56 小時才需要」；沒有條件回傳空字串 */
+export function describeStepConditionPreview(step) {
+  return typeof step?.condition_text === 'string' ? step.condition_text.trim() : ''
+}
+
+/** 略過重複簽核人的預覽說明；沒有重複時回傳空字串 */
+export function describeRepeatPreview(step) {
+  if (step?.skipped_as_repeat) return '這一關的簽核人都已在前面的關卡簽核，送出時會自動略過'
+  const count = Number(step?.repeated_count) || 0
+  return count ? `已在前面關卡簽核的 ${count} 位不會重複簽核` : ''
 }
 
 function actorId(value) {

@@ -13,6 +13,7 @@ import {
 
 import { getLeaveBalances, getLeaveHoursHint } from '../controllers/leaveBalanceController.js'
 import { getTopLevelApprovers, updateTopLevelApprovers } from '../controllers/approvalPolicyController.js'
+import { trialWorkflow } from '../controllers/approvalTrialController.js'
 
 import { authorizeRoles } from '../middleware/auth.js'
 import { uploadApprovalAttachmentFiles } from '../middleware/approvalAttachmentUpload.js'
@@ -41,6 +42,8 @@ router.delete('/forms/:formId/fields/:fieldId', authorizeRoles('admin'), deleteF
 // Workflow
 router.get('/forms/:formId/workflow', authorizeRoles('employee', 'supervisor', 'admin'), getWorkflow)
 router.put('/forms/:formId/workflow', authorizeRoles('admin'), setWorkflow)
+// 流程試算（只有管理員）：某位員工送出這張表單時會得到哪些關卡、誰簽核（不建立單據）
+router.get('/forms/:formId/workflow/trial', authorizeRoles('admin'), trialWorkflow)
 router.get('/sign-roles', authorizeRoles('employee', 'supervisor', 'admin'), getSignRoles)
 router.get('/sign-levels', authorizeRoles('employee', 'supervisor', 'admin'), getSignLevels)
 

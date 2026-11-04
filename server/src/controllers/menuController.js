@@ -41,20 +41,23 @@ export async function getMenu(req, res, next) {
     ]
   };
 
-    // 排班管理看排班權限：被指定為排班人員的員工也看得到；排班權限模式切開主管後，沒被指定的主管就看不到
+    // 排班管理看排班權限：被指定為排班人員的員工也看得到；主管預設（只有排班人員能排班）沒被指定就看不到，
+    // 改看「我的排班」（自己的班表）。部門報表、簽核流程不受影響
     if (['employee', 'supervisor'].includes(role) && req.user?.id) {
       let access = null;
       try {
         access = await getScheduleAccessSummary(req.user);
       } catch (accessError) {
-        // 讀不到排班權限時維持原本依角色的選單（主管看得到、員工看不到），各排班 API 仍會再檢查
+        // 讀不到排班權限時不顯示「排班管理」（與預設模式相同，fail closed），各排班 API 仍會再檢查
         console.error('Failed to resolve schedule access for menu', accessError?.name ?? 'Error');
       }
       if (role === 'employee' && access?.canSchedule) {
         menus.employee.splice(1, 0, { name: 'Schedule', label: '排班管理', icon: 'el-icon-timer' });
       }
-      if (role === 'supervisor' && access && !access.canSchedule) {
+      if (role === 'supervisor' && !access?.canSchedule) {
         menus.supervisor = menus.supervisor.filter((item) => item.name !== 'Schedule');
+        // 以前「我的排班」只在排班頁勾了「包含自己」才出現，看不到排班頁的主管就沒有地方看自己的班表
+        menus.supervisor.splice(1, 0, { name: 'MySchedule', label: '我的排班', icon: 'el-icon-timer' });
       }
     }
 
@@ -63,7 +66,7 @@ export async function getMenu(req, res, next) {
         .select('schedulePreferences.includeSelf')
         .lean();
       const includeSelf = Boolean(profile?.schedulePreferences?.includeSelf);
-      if (includeSelf) {
+      if (includeSelf && !menus.supervisor.some((item) => item.name === 'MySchedule')) {
         menus.supervisor.push({ name: 'MySchedule', label: '我的排班', icon: 'el-icon-timer' });
       }
     }

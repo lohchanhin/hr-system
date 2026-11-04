@@ -155,6 +155,9 @@
                         <div class="step-content">
                           <h4 class="step-title">{{ s.label }}</h4>
                           <p class="step-approvers">{{ s.approvers }}</p>
+                          <!-- 有請假長度條件的關卡（例如請假滿 56 小時才需要）、會被略過的重複簽核人 -->
+                          <p v-if="s.condition" class="step-condition" data-test="workflow-step-condition">{{ s.condition }}</p>
+                          <p v-if="s.repeat" class="step-repeat" data-test="workflow-step-repeat">{{ s.repeat }}</p>
                           <p v-if="s.fallback" class="step-fallback" data-test="workflow-step-fallback">{{ s.fallback }}</p>
                           <p v-if="s.warning" class="step-warning">{{ s.warning }}</p>
                         </div>
@@ -561,13 +564,15 @@
           <el-timeline-item
             v-for="(s, idx) in detail.doc.steps"
             :key="idx"
-            :timestamp="`第 ${idx+1} 關`"
+            :timestamp="requestStepTitle(s, idx)"
             :type="idx === detail.doc.current_step_index ? 'primary' : 'info'"
           >
             <div class="mb-1">
               <span class="mr-2">需全員同意：{{ s.all_must_approve ? '是' : '否' }}</span>
               <span>必簽：{{ s.is_required ? '是' : '否' }}</span>
             </div>
+            <!-- 主管鏈往上找時略過離職、留職停薪的主管等說明 -->
+            <p v-if="requestStepNote(s)" class="step-note" data-test="detail-step-note">{{ requestStepNote(s) }}</p>
             <!-- 主管關卡找不到可簽核的主管時改由最高層簽核人簽核：說明改送的原因 -->
             <p v-if="describeFallbackStep(s)" class="step-fallback" data-test="detail-step-fallback">{{ describeFallbackStep(s) }}</p>
             <el-table :data="s.approvers" size="small" border>
@@ -781,6 +786,11 @@ import {
   findReturnInfo,
   getStatusText,
   getStatusTagType,
+  requestStepTitle,
+  requestStepNote,
+  describeChainPreview,
+  describeStepConditionPreview,
+  describeRepeatPreview,
 } from '../../utils/approvalDetail'
 import {
   isActiveField,
@@ -1146,11 +1156,17 @@ async function onSelectForm() {
       workflowSteps.value = steps.map((s, idx) => {
         // 主管關卡找不到主管時改由最高層簽核人：送出前就讓申請人知道這關會送給誰
         const fallback = describeFallbackStep(s)
+        // 主管鏈列出會簽的級數；有請假長度條件的關卡說明「請假滿 N 小時（或 N 日）才需要」；重複的簽核人會被略過
+        const condition = describeStepConditionPreview(s)
+        const repeat = describeRepeatPreview(s)
         return {
           label: s.name || `第 ${idx + 1} 關`,
-          approvers: describeWorkflowApprovers(s, previewLookups),
-          warning: describeUnresolvedStep(s),
+          approvers: s.approver_type === 'manager_chain' ? describeChainPreview(s) : describeWorkflowApprovers(s, previewLookups),
+          // 整關會因為簽核人都已在前面簽過而略過：不是「找不到人」
+          warning: s.skipped_as_repeat ? '' : describeUnresolvedStep(s),
           ...(fallback ? { fallback } : {}),
+          ...(condition ? { condition } : {}),
+          ...(repeat ? { repeat } : {}),
         }
       })
     } else if (wfRes.status === 404) {
@@ -1377,10 +1393,13 @@ function overrideFromDetail(decision) {
   openAction(target, decision, { override: true, fromDetail: true })
 }
 
-// 歷史清單：自己簽過的單顯示自己的決定；管理員檢視他人的單則顯示單據目前狀態
-const historyDecisionText = (row) => (
-  row?.oversight ? getStatusText(row.status) : getStatusText(row?.__latest?.decision || row?.status)
-)
+// 歷史清單：自己簽過的單顯示自己的決定（主管鏈的關卡附上「第n級主管」）；管理員檢視他人的單則顯示單據目前狀態
+const historyDecisionText = (row) => {
+  if (row?.oversight) return getStatusText(row.status)
+  const text = getStatusText(row?.__latest?.decision || row?.status)
+  const stepName = typeof row?.__latest?.step_name === 'string' ? row.__latest.step_name.trim() : ''
+  return stepName ? `${text}（${stepName}）` : text
+}
 
 // 伺服器附帶的提醒（例如特休扣減失敗）要讓使用者看到
 const warningLines = (result) => (
@@ -2165,6 +2184,15 @@ watch(activeTab, async (tab) => {
 .step-fallback {
   font-size: 13px;
   color: #b88230;
+  margin: 4px 0 6px 0;
+}
+
+/* 請假長度條件、略過重複簽核人、主管鏈的說明 */
+.step-condition,
+.step-repeat,
+.step-note {
+  font-size: 13px;
+  color: #475569;
   margin: 4px 0 6px 0;
 }
 

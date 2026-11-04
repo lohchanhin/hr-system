@@ -2,6 +2,7 @@ import request from 'supertest';
 import express from 'express';
 import { jest } from '@jest/globals';
 import { buildLeaveFieldServiceMock } from './helpers/leaveFieldServiceMock.js';
+import { registerScheduleAccessModeMocks } from './helpers/scheduleAccessModeMocks.js';
 
 const mockShiftSchedule = {
   find: jest.fn(),
@@ -26,6 +27,8 @@ jest.unstable_mockModule('../src/services/laborRuleValidationService.js', () => 
   assertScheduleRuleCompliance: mockAssertScheduleRuleCompliance,
   isLaborRuleValidationError: mockIsLaborRuleValidationError,
 }));
+// 這個檔案測主管排直屬部屬：2026/11 起要把排班權限存成「主管與排班人員」才有（預設只有排班人員能排班）
+const scheduleAccessMode = await registerScheduleAccessModeMocks(jest);
 
 let app;
 let scheduleRoutes;
@@ -45,6 +48,7 @@ beforeAll(async () => {
 });
 
 beforeEach(() => {
+  scheduleAccessMode.allowSupervisors();
   mockShiftSchedule.find.mockReset();
   mockShiftSchedule.findOne.mockReset();
   mockShiftSchedule.create.mockReset();

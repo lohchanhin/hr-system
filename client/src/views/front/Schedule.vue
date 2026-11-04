@@ -36,7 +36,7 @@
           <label class="filter-label">部門</label>
           <el-select v-model="selectedDepartment" placeholder="請選擇部門" @change="onDepartmentChange" :disabled="!canSwitchDepartment"
             class="modern-select" data-test="schedule-department-select">
-            <el-option v-for="dept in departments" :key="dept._id" :label="dept.name" :value="dept._id" />
+            <el-option v-for="dept in departments" :key="dept._id" :label="departmentLabel(dept)" :value="dept._id" />
           </el-select>
         </div>
         <div class="filter-group" :class="{ 'filter-group-hidden': shouldHideDepartmentFilters }">
@@ -397,7 +397,7 @@
             class="modern-select batch-select"
             data-test="batch-dept-select"
           >
-            <el-option v-for="dept in departments" :key="dept._id" :label="dept.name" :value="dept._id" />
+            <el-option v-for="dept in departments" :key="dept._id" :label="departmentLabel(dept)" :value="dept._id" />
           </el-select>
           <el-select
             v-model="batchSubDepartment"
@@ -899,7 +899,7 @@ const menuStore = useMenuStore()
 // 只看得到被指定的小單位；沒有這份資料（舊版伺服器或讀取失敗）時維持依角色判斷
 const profileStore = useProfileStore()
 const scheduleAccess = computed(() => normalizeScheduleAccess(profileStore.profile?.scheduleAccess))
-// 主管範圍（自己與直屬部屬）：其他控制設定切成「只有排班人員」時就沒有
+// 主管範圍（自己與直屬部屬）：其他控制設定存成「主管與排班人員」時才有（2026/11 起預設「只有排班人員」，主管沒有這個範圍）
 const usesSupervisorScope = computed(() =>
   authStore.role === 'supervisor' && (scheduleAccess.value ? scheduleAccess.value.supervisorScope : true)
 )
@@ -1353,8 +1353,8 @@ const isSelectableCell = (empId, day) => {
   return !isLeaveCell(empId, day)
 }
 
-// 正在看的小單位的「使用班別」：班別下拉、套用班別與圖例只列這些班別（小單位沒有設定就是全部）；
-// 既有班表的班別名稱與顏色照樣用完整的班別設定顯示
+// 正在看的小單位的「使用班別」：班別下拉、套用班別與圖例只列這些班別（小單位沒有設定就是全部），
+// 不用上班的班別（休息日、例假、國定假日、請假）一律列出；既有班表的班別名稱與顏色照樣用完整的班別設定顯示
 const viewedSubDepartments = computed(() => {
   if (selectedSubDepartment.value) {
     const selected = subDepartments.value.find(sub => sub._id === selectedSubDepartment.value)
@@ -2974,9 +2974,35 @@ loadScheduleNotifications()
 // 只有主管帶自己的 id 當 supervisor 參數（主管範圍）；管理員看全部員工，不再只列直屬於管理員的人
 const canUseSupervisorFilter = computed(() => authStore.role === 'supervisor')
 const shouldHideDepartmentFilters = computed(() => isTableFullscreen.value)
-const selectedDepartmentName = computed(() =>
-  departments.value.find(dept => dept._id === selectedDepartment.value)?.name || '全部部門'
+// 部門來自不同機構時（例如排班人員被指定到兩個機構的小單位），部門名稱附上機構名稱，同名的部門（各機構的「護理部」）才分得出來
+const organizationNames = ref({})
+const departmentsSpanOrganizations = computed(() =>
+  new Set(departments.value.map(dept => String(dept?.organization?._id ?? dept?.organization ?? '')).filter(Boolean)).size > 1
 )
+const departmentLabel = dept => {
+  const name = dept?.name || ''
+  if (!departmentsSpanOrganizations.value) return name
+  const orgName = organizationNames.value[String(dept?.organization?._id ?? dept?.organization ?? '')]
+  return orgName ? `${name}（${orgName}）` : name
+}
+async function loadOrganizationNames() {
+  if (!departmentsSpanOrganizations.value) return
+  try {
+    const res = await apiFetch('/api/organizations')
+    if (!res.ok) return
+    const list = await res.json()
+    organizationNames.value = Object.fromEntries(
+      (Array.isArray(list) ? list : []).map(org => [String(org?._id ?? org?.id ?? ''), org?.name || ''])
+    )
+  } catch (err) {
+    // 機構名稱只是顯示用：讀不到就只顯示部門名稱
+    console.error(err)
+  }
+}
+const selectedDepartmentName = computed(() => {
+  const dept = departments.value.find(item => item._id === selectedDepartment.value)
+  return dept ? departmentLabel(dept) || '全部部門' : '全部部門'
+})
 const selectedSubDepartmentName = computed(() =>
   subDepartments.value.find(sub => sub._id === selectedSubDepartment.value)?.name || '全部單位'
 )
@@ -3533,6 +3559,7 @@ async function fetchOptions() {
         usesSupervisorScope.value && supervisorDepartmentId.value ? [supervisorDepartmentId.value] : []
       )
       departments.value = filtered
+      void loadOrganizationNames()
       if (!departments.value.some(d => d._id === selectedDepartment.value)) {
         selectedDepartment.value = departments.value[0]?._id || ''
       }
@@ -3560,6 +3587,7 @@ async function fetchOptions() {
     }
 
     departments.value = filtered.length ? filtered : normalized
+    void loadOrganizationNames()
 
     if (departments.value.length) {
       if (!departments.value.some(d => d._id === selectedDepartment.value)) {
@@ -4525,7 +4553,7 @@ async function handleScheduleError(
   if (res?.status === 403 || code === 'SCHEDULE_SCOPE_FORBIDDEN') {
     await openScheduleIssueDialog(
       '排班權限不足',
-      ['目前帳號只能調整自己與直屬員工的班表。請重新整理後確認員工是否仍在此主管的管理範圍；若人員已調動，請由管理員更新主管設定。'],
+      ['目前帳號只能調整排班範圍內員工的班表。請重新整理後確認員工是否仍在您的排班範圍；若人員已調動，請由管理員更新小單位的排班人員設定。'],
       defaultMsg
     )
   } else if (msg === 'employee conflict') {

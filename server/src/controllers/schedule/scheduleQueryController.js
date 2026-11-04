@@ -10,12 +10,14 @@ import { buildLiteralSearchRegex } from '../../utils/safeSearch.js';
 import { dateKeyToUtcMidnight, toTaipeiDateKey } from '../../utils/taipeiTime.js';
 import { candidateSelectKeys, pickFieldValue, resolveCandidateIds } from '../../utils/fieldCandidates.js';
 import {
+  buildScheduleViewEmployeeFilter,
   getScheduleAccessSummaryForRequest,
-  schedulerEmployeeFilters,
 } from '../../services/scheduleAccessService.js';
 import {
   toEntityId,
   getAllowedScheduleEmployeeIds,
+  getDirectReportIds,
+  SCHEDULER_VISIBLE_FORM_TYPES,
   attachShiftInfo,
   buildScheduleOverview,
 } from './scheduleShared.js';
@@ -509,11 +511,23 @@ export async function listLeaveApprovals(req, res) {
     }
 
     // 「相關簽核」清單：範圍內員工的所有簽核單（任何表單、任何狀態），不是只有核准的請假單；
-    // leaves[] 仍只含核准的請假，日曆靠它顯示
+    // leaves[] 仍只含核准的請假，日曆靠它顯示。
+    // 只因為排班範圍看得到的員工（排班人員被指定的小單位）只列排班需要的請假、加班、換班單，離職、人事等表單不列
+    // （和開啟簽核單明細同一條規則）；自己與主管的直屬部屬不限
+    let rowFilter = null;
+    if (allowedEmployeeIds !== null) {
+      const fullyVisible = new Set([actorId, ...(await getDirectReportIds(req))]);
+      const schedulerOnly = new Set(allowedEmployeeIds.filter((id) => !fullyVisible.has(id)));
+      if (schedulerOnly.size) {
+        rowFilter = (row) => !schedulerOnly.has(toEntityId(row.applicant_employee?._id))
+          || SCHEDULER_VISIBLE_FORM_TYPES.includes(row.form?.semanticType);
+      }
+    }
     const { approvals, truncated } = await listScheduleRelatedApprovals({
       scopeQuery,
       leaveForms,
       monthRange: { monthStart, monthEnd, queryStart, queryEnd },
+      rowFilter,
     });
     if (truncated && typeof res.set === 'function') res.set('X-Approvals-Truncated', 'true');
 
@@ -525,38 +539,45 @@ export async function listLeaveApprovals(req, res) {
 
 export async function listSupervisorSummary(req, res) {
   try {
-    const { month, includeSelf: includeSelfRaw } = req.query;
+    const {
+      month,
+      includeSelf: includeSelfRaw,
+      department: departmentRaw,
+      subDepartment: subDepartmentRaw,
+    } = req.query;
     const supervisor = req.user?.id;
+    const actorRole = req.user?.role;
     if (!month) return res.status(400).json({ error: 'month required' });
     if (!supervisor) return res.status(400).json({ error: 'supervisor required' });
+    const department = departmentRaw ? String(departmentRaw) : '';
+    const subDepartment = subDepartmentRaw ? String(subDepartmentRaw) : '';
+    if ((department && !Types.ObjectId.isValid(department)) || (subDepartment && !Types.ObjectId.isValid(subDepartment))) {
+      return res.status(400).json({ error: 'Invalid department filter' });
+    }
 
-    const includeSelf = String(includeSelfRaw).toLowerCase() === 'true';
+    // 只有主管有「包含自己」開關（與排班頁相同）；排班人員與管理員本人在範圍內時就照名單算
+    const includeSelf = actorRole === 'supervisor' && String(includeSelfRaw).toLowerCase() === 'true';
 
     const start = new Date(`${month}-01T00:00:00.000Z`);
     const end = new Date(start);
     end.setUTCMonth(end.getUTCMonth() + 1);
 
-    // 1️⃣ 先抓所有「直屬部屬」（主管範圍；排班權限模式切開主管時就沒有），
-    // 再加上排班人員被指定小單位的員工（不含自己，自己由 includeSelf 決定）
+    // 1️⃣ 排班頁目前看的員工（「排班員工數」）：與排班頁名單 GET /api/employees/schedule 同一個條件——
+    // 非管理員依排班權限（主管範圍是直屬部屬，只有其他控制設定允許時才有；排班人員是被指定小單位的員工），
+    // 再加上畫面選的部門、小單位；管理員是所選部門、小單位的所有員工。以前只算直屬部屬，也不看部門、小單位的篩選
     const access = await getScheduleAccessSummaryForRequest(req);
-    const employees = access?.supervisorScope
-      ? await Employee.find({ supervisor })
-        .select('_id name')
-        .lean()
-      : [];
-    const unitFilters = schedulerEmployeeFilters(access);
-    if (unitFilters.length) {
-      const listedIds = new Set(employees.map((e) => toEntityId(e._id)));
-      const unitEmployees = await Employee.find(unitFilters.length === 1 ? unitFilters[0] : { $or: unitFilters })
-        .select('_id name')
-        .lean();
-      (unitEmployees || []).forEach((e) => {
-        const key = toEntityId(e._id);
-        if (key === String(supervisor) || listedIds.has(key)) return;
-        listedIds.add(key);
-        employees.push(e);
-      });
-    }
+    const viewFilter = {};
+    if (department) viewFilter.department = department;
+    if (subDepartment) viewFilter.subDepartment = subDepartment;
+    const scopeFilter = actorRole === 'admin'
+      ? null
+      : buildScheduleViewEmployeeFilter(access, supervisor, actorRole, includeSelf);
+    const employeeQuery = scopeFilter && Object.keys(viewFilter).length
+      ? { $and: [viewFilter, scopeFilter] }
+      : (scopeFilter || viewFilter);
+    const employees = (await Employee.find(employeeQuery)
+      .select('_id name')
+      .lean()) || [];
 
     const summaryMap = {};
     const ids = [];
@@ -646,10 +667,10 @@ export async function listSupervisorSummary(req, res) {
       else sum.shiftCount += 1;
     });
 
-    // 6️⃣ 最後這一步：根據 includeSelf 決定是否包含主管本人
+    // 6️⃣ 最後這一步：主管根據 includeSelf 決定是否包含自己（排班人員、管理員本人在範圍內就和名單一樣列入）
     const supervisorIdStr = supervisor ? String(supervisor) : '';
     const payload = Object.values(summaryMap).filter((entry) => {
-      if (!supervisorIdStr) return true;
+      if (!supervisorIdStr || actorRole !== 'supervisor') return true;
       // 當 includeSelf=true 時，保留主管；否則過濾掉
       if (includeSelf) return true;
       return String(entry.employee) !== supervisorIdStr;

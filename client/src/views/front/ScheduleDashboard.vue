@@ -27,7 +27,8 @@ const props = defineProps({
 })
 
 const metrics = computed(() => [
-  { label: '直屬員工數', value: props.summary.direct, icon: UserFilled, tone: 'neutral' },
+  // 排班員工數（2026/11 客戶：「直屬」改為「排班」）：排班頁目前看的員工，和名單同一個範圍（部門、小單位與排班權限），不是直屬部屬
+  { label: '排班員工數', value: props.summary.direct, icon: UserFilled, tone: 'neutral' },
   { label: '未排班員工', value: props.summary.unscheduled, icon: CircleCloseFilled, tone: 'warning' },
   { label: '請假中員工', value: props.summary.onLeave, icon: WarningFilled, tone: 'leave' }
 ])

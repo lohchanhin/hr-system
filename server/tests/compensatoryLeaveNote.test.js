@@ -1,5 +1,6 @@
 // R4「管理者帳號，可由該員工的人事資料填寫備註」：員工調休（移休）存摺的備註。
-// 存在 CompensatoryLeaveState（key = note:<員工 _id>，每位員工一筆）；管理員在員工管理填寫，看得到存摺的人（本人、主管、管理員）唯讀看得到。
+// 存在 CompensatoryLeaveState（key = note:<員工 _id>，每位員工一筆）；管理員在員工管理填寫，本人、直屬主管、管理員唯讀看得到
+// （排班範圍內的排班人員看得到存摺的時數，但不附備註）。
 import { jest } from '@jest/globals';
 import express from 'express';
 import request from 'supertest';
@@ -22,6 +23,11 @@ jest.unstable_mockModule('../src/models/CompensatoryLeaveState.js', () => ({ def
 jest.unstable_mockModule('../src/models/HolidayCompensation.js', () => ({ default: mockHolidayCompensation }));
 jest.unstable_mockModule('../src/models/Employee.js', () => ({ default: mockEmployee }));
 jest.unstable_mockModule('../src/services/otherControlSettingsStore.js', () => ({ getSettings: async () => ({}) }));
+// 小單位的排班人員（看存摺但不看人資備註的人）：一般函式，測試裡設定 units
+let units = [];
+jest.unstable_mockModule('../src/models/SubDepartment.js', () => ({
+  default: { find: (filter = {}) => leanQuery(units.filter((unit) => !filter.schedulers || unit.schedulers.includes(String(filter.schedulers)))) },
+}));
 
 const service = await import('../src/services/compensatoryLeaveService.js');
 
@@ -135,5 +141,35 @@ describe('PUT /api/compensatory-leave/note and the note in the bank', () => {
     expect(res.status).toBe(200);
     expect(res.body.note).toEqual({ text: '10/10 改發加倍工資', updatedAt: '2026-10-26T02:00:00.000Z', updatedBy: { id: ID.admin, name: '人資小林' } });
     expect(res.body).toHaveProperty('credits');
+  });
+
+  // 審查發現：備註以前給所有看得到存摺的人（含別的部門的員工角色排班人員）；現在只給本人、管理員與直屬主管
+  it('shows the note only to the employee, an admin and the direct supervisor; a scheduler of the unit gets the hours without it', async () => {
+    const SCHEDULER = oid(7);
+    const UNIT = oid(200);
+    stateRows = [{ key: `note:${ID.nurse}`, note: '10/10 改發加倍工資', noteUpdatedBy: ID.admin, noteUpdatedAt: new Date('2026-10-26T02:00:00.000Z') }];
+    units = [{ _id: UNIT, department: oid(100), schedulers: [SCHEDULER] }];
+    // 護理師小陳的直屬主管是 boss，所屬小單位是 UNIT（排班員被指定為 UNIT 的排班人員）
+    mockEmployee.find.mockImplementation((filter = {}) => leanQuery(
+      String(filter.supervisor) === ID.boss || filter.subDepartment ? [{ _id: ID.nurse }] : [],
+    ));
+
+    for (const [role, id] of [['employee', ID.nurse], ['admin', ID.admin], ['supervisor', ID.boss]]) {
+      currentUser = { id, role };
+      const res = await request(app).get(`/api/compensatory-leave?employeeId=${ID.nurse}`);
+      expect(res.status).toBe(200);
+      expect(res.body.note?.text).toBe('10/10 改發加倍工資');
+    }
+
+    currentUser = { id: SCHEDULER, role: 'employee' };
+    const scheduler = await request(app).get(`/api/compensatory-leave?employeeId=${ID.nurse}`);
+    expect(scheduler.status).toBe(200);
+    expect(scheduler.body).toHaveProperty('credits');
+    expect(scheduler.body).toHaveProperty('availableHours');
+    expect(scheduler.body).not.toHaveProperty('note');
+
+    currentUser = { id: ID.otherNurse, role: 'employee' };
+    expect((await request(app).get(`/api/compensatory-leave?employeeId=${ID.nurse}`)).status).toBe(404);
+    units = [];
   });
 });

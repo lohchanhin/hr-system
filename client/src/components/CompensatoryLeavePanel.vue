@@ -36,9 +36,10 @@
     </div>
     <p v-if="data && !compact" class="panel-help" data-test="comp-leave-help">{{ COMP_LEAVE_HELP_TEXT }}</p>
 
-    <!-- 存摺備註：管理員在員工管理填寫（空白 = 清除），員工在「我的調休」唯讀看得到 -->
+    <!-- 存摺備註：管理員在員工管理填寫（空白 = 清除），員工在「我的調休」唯讀看得到；
+         伺服器只把備註給本人、管理員與直屬主管，排班範圍內的排班人員拿到的存摺沒有備註（下方「人資備註」就不顯示） -->
     <div v-if="data && canManage && targetEmployeeId && !bank" class="comp-note" data-test="comp-leave-note-edit">
-      <div class="note-label">存摺備註（員工在「我的調休」看得到）</div>
+      <div class="note-label">存摺備註（員工在「我的調休」看得到，直屬主管也看得到；排班人員看不到）</div>
       <el-input
         v-model="noteDraft"
         type="textarea"

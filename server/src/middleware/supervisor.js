@@ -13,11 +13,13 @@ export async function verifySupervisor(req, res, next) {
     if (!actor) return res.status(401).json({ error: 'Invalid user' });
     if (['admin'].includes(actor.role)) return next();
 
-    let employeeIds = [];
-    if (req.body.employee) employeeIds = [req.body.employee];
-    else if (Array.isArray(req.body.schedules) && req.body.schedules.length) {
-      employeeIds = req.body.schedules.map((s) => s.employee);
-    }
+    // 請求裡出現的每一位員工都要檢查：批次新增同時帶 employee 與 schedules[] 時，以前只檢查 employee，
+    // schedules[] 裡範圍外的員工（別的小單位、別的部門）也會被寫進去
+    const body = req.body || {};
+    const employeeIds = [
+      body.employee,
+      ...(Array.isArray(body.schedules) ? body.schedules.map((s) => s?.employee) : []),
+    ].filter(Boolean);
     if (req.params.id) {
       // 修改、刪除既有班表：原本那位員工也必須在範圍內（不能把別人的班表改到自己範圍的員工身上）
       const schedule = await ShiftSchedule.findById(req.params.id);

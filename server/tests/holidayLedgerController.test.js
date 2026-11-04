@@ -40,8 +40,10 @@ jest.unstable_mockModule('../src/services/approvedLeaveCalendarService.js', () =
 jest.unstable_mockModule('../src/services/laborRuleValidationService.js', () => ({
   isLaborRuleValidationError: jest.fn(() => false),
 }));
-// 假別規則（調休的時數與期限）：沒有存過設定，用預設值
-jest.unstable_mockModule('../src/services/otherControlSettingsStore.js', () => ({ getSettings: async () => ({}) }));
+// 假別規則（調休的時數與期限）：沒有存過設定，用預設值。
+// 排班權限模式存成「主管與排班人員」：這個檔案測主管處理直屬部屬，2026/11 起預設只有排班人員能排班（一般函式，不受 mock 重設影響）
+jest.unstable_mockModule('../src/services/otherControlSettingsStore.js', () => ({ getSettings: async () => ({ scheduleAccessMode: 'supervisor_and_scheduler' }) }));
+jest.unstable_mockModule('../src/models/OtherControlSetting.js', () => ({ default: { findOne: () => ({ lean: async () => null }) } }));
 // 國定假日判斷（holidayResolver）用到的年度行事曆、補假、個人調移
 const resolverMocks = await registerHolidayResolverModelMocks(jest);
 

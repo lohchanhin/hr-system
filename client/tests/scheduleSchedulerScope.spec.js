@@ -198,3 +198,68 @@ describe('Schedule.vue keeps today\'s screens for supervisors and plain employee
     plain.unmount()
   })
 })
+
+// S4（2026/11 客戶）：「兩個單位設同一個排班人員，可以用切換的去排班，就不用開兩個帳號了」——
+// 兩個機構各有一個同名的「護理部」時，部門選單附上機構名稱；切換後名單與班別跟著小單位走（休息類班別一律列出）
+describe('Schedule.vue for a scheduler of units in two organisations', () => {
+  const ORGS = [{ _id: 'oH', name: '迦南醫院' }, { _id: 'oC', name: '迦南護理之家' }]
+  const DEPTS = [
+    { _id: 'dH', name: '護理部', organization: 'oH' },
+    { _id: 'dC', name: '護理部', organization: 'oC' },
+    { _id: 'dX', name: '行政部', organization: 'oH' }
+  ]
+  const SUBS = [
+    { _id: 'uH', name: '3A 病房', department: 'dH', allowedShiftIds: ['night'] },
+    { _id: 'uH2', name: '5B 病房', department: 'dH', allowedShiftIds: [] },
+    { _id: 'uC', name: '日照中心', department: 'dC', allowedShiftIds: [] }
+  ]
+  const PEOPLE = {
+    uH: [{ _id: 'h1', name: '3A 護理師', department: 'dH', subDepartment: 'uH' }],
+    uC: [{ _id: 'c1', name: '日照照服員', department: 'dC', subDepartment: 'uC' }]
+  }
+  const access = { canSchedule: true, supervisorScope: false, subDepartmentIds: ['uH', 'uC'], departmentIds: ['dH', 'dC'], wholeDepartmentIds: [] }
+
+  it('labels the departments with their organisation and switches employees and shifts with the unit', async () => {
+    apiFetch.mockImplementation(url => {
+      const [path, queryString = ''] = String(url).split('?')
+      const query = new URLSearchParams(queryString)
+      if (path === '/api/shifts') return ok(SHIFTS)
+      if (path === '/api/departments') return ok(DEPTS)
+      if (path === '/api/organizations') return ok(ORGS)
+      if (path === '/api/sub-departments') {
+        const dept = query.get('department')
+        return ok(dept ? SUBS.filter(unit => unit.department === dept) : SUBS)
+      }
+      if (path === '/api/employees/schedule') {
+        const list = PEOPLE[query.get('subDepartment')] || []
+        return ok({ employees: list, pagination: { total: list.length, page: 1, pageSize: 50, totalPages: 1 } })
+      }
+      if (path === '/api/schedules/monthly') {
+        return ok({ schedules: [], employees: [], publishSummary: { status: 'draft', pendingEmployees: [], disputedEmployees: [], hasSchedules: false } })
+      }
+      if (path === '/api/schedules/leave-approvals') return ok({ approvals: [], leaves: [] })
+      return ok([])
+    })
+    // 主管同時是兩個機構的排班人員（預設模式：沒有主管範圍）
+    signIn('supervisor', access)
+    const wrapper = mountSchedule()
+    await flush()
+
+    expect(wrapper.vm.departments.map(dept => dept._id)).toEqual(['dH', 'dC'])
+    const labels = wrapper.find('[data-test="schedule-department-select"]').findAll('option').map(option => option.text())
+    expect(labels).toEqual(['護理部（迦南醫院）', '護理部（迦南護理之家）'])
+    expect(wrapper.vm.subDepartments.map(sub => sub._id)).toEqual(['uH'])
+    expect(wrapper.vm.employees.map(employee => employee.name)).toEqual(['3A 護理師'])
+    expect(wrapper.vm.availableShifts.map(shift => shift._id)).toEqual(['night', 'rest'])
+
+    wrapper.vm.selectedDepartment = 'dC'
+    await wrapper.vm.onDepartmentChange()
+    await flush()
+    expect(wrapper.vm.subDepartments.map(sub => sub._id)).toEqual(['uC'])
+    expect(wrapper.vm.selectedSubDepartment).toBe('uC')
+    expect(wrapper.vm.employees.map(employee => employee.name)).toEqual(['日照照服員'])
+    expect(wrapper.vm.availableShifts.map(shift => shift._id)).toEqual(['day', 'night', 'rest'])
+    expect(wrapper.vm.selectedDepartmentName).toBe('護理部（迦南護理之家）')
+    wrapper.unmount()
+  })
+})

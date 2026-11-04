@@ -1,5 +1,5 @@
 import ExcelJS from 'exceljs'
-import readline from 'node:readline'
+import { StringDecoder } from 'node:string_decoder'
 import { Readable } from 'stream'
 import { TextDecoder } from 'util'
 import mongoose from 'mongoose'
@@ -702,13 +702,33 @@ async function iterateXlsxRecords({ createStream, headerPairs, mappings, timezon
   }
 }
 
+// 把 createUploadStreamFactory 產生的串流（已處理 BOM 與 UTF-16）整個讀成文字
+async function readStreamText(stream) {
+  const decoder = new StringDecoder('utf8')
+  let text = ''
+  for await (const chunk of stream) {
+    text += typeof chunk === 'string' ? chunk : decoder.write(chunk)
+  }
+  return text + decoder.end()
+}
+
+// 依換行切成一行一行，與原本的 readline 相同：\r\n、\n、單獨的 \r 都算換行，檔案最後的換行不多出一行空白列
+function splitCsvLines(text) {
+  if (!text) return []
+  const lines = text.split(/\r\n|\n|\r/)
+  if (lines[lines.length - 1] === '') lines.pop()
+  return lines
+}
+
 async function iterateCsvRecords({ createStream, headerPairs, mappings, timezone, onRow }) {
-  const stream = createStream()
-  const reader = readline.createInterface({ input: stream, crlfDelay: Infinity })
+  // 不用 readline 的 async iterator：Node 24 上整個檔案只有一個 chunk、超過約 1024 行的 CSV
+  // 會在讀到一半時丟出「readline was closed」（5000 筆的檔案預覽、匯入都回 400「無法讀取匯入檔案」）。
+  // 改成先讀成文字再逐行處理，引號、BOM、編碼的處理與原本相同（引號內不支援換行，與原本一樣）。
+  const lines = splitCsvLines(await readStreamText(createStream()))
 
   let headerMap = null
   let rowNumber = 0
-  for await (const line of reader) {
+  for (const line of lines) {
     rowNumber += 1
     if (!headerMap) {
       const headers = parseCsvLine(line)

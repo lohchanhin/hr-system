@@ -11,6 +11,7 @@ import {
 import { buildRosterLeaveCheck } from '../../services/leaveCoverageService.js';
 import { isLaborRuleValidationError } from '../../services/laborRuleValidationService.js';
 import { normalizeShiftIdentifier } from '../../services/shiftIdentityService.js';
+import { explicitSemanticType, isLeaveFormTemplate, isOvertimeFormTemplate } from '../../utils/formSemantics.js';
 import {
   findDisallowedShiftAssignments,
   getScheduleAccess,
@@ -36,8 +37,9 @@ export function toEntityId(value) {
 }
 
 /**
- * 看得到誰的班表（排班頁、相關簽核、國定假日休假紀錄、簽核單明細等共用）：管理員 null（全部）；
- * 其他人一律看得到自己，再加上排班權限的範圍（主管：自己與直屬部屬；排班人員：被指定小單位的所有員工），規則在 scheduleAccessService。
+ * 看得到誰的班表（排班頁、相關簽核、國定假日休假紀錄共用）：管理員 null（全部）；
+ * 其他人一律看得到自己，再加上排班權限的範圍（排班人員：被指定小單位的所有員工；主管：模式允許時自己與直屬部屬），規則在 scheduleAccessService。
+ * 簽核單明細、假別餘額、調休存摺不只看這個範圍，請用 resolveEmployeeReadAccess（主管不論模式都看得到直屬部屬）。
  */
 export async function getAllowedScheduleEmployeeIds(req) {
   const actorId = toEntityId(req.user?.id);
@@ -61,6 +63,55 @@ export async function getEditableScheduleEmployeeIds(req) {
 }
 
 /**
+ * 主管欄位的唯讀範圍：主管角色的直屬部屬（員工資料的直屬主管是自己）的 _id，不論排班權限模式——
+ * 主管欄位作為簽核使用，主管照樣看得到直屬部屬的簽核單、附件、假別餘額與調休存摺（dbcd121 以前的規則）。
+ * 其他角色是空陣列；同一個請求只查一次。
+ */
+export function getDirectReportIds(req) {
+  const actorId = toEntityId(req?.user?.id);
+  if (!actorId || req.user?.role !== 'supervisor') return Promise.resolve([]);
+  if (req.directReportIdsCache?.key !== actorId) {
+    const load = async () => {
+      const query = Employee.find({ supervisor: actorId }).select('_id');
+      const rows = query && typeof query.lean === 'function' ? await query.lean() : await query;
+      return (Array.isArray(rows) ? rows : []).map((row) => toEntityId(row?._id)).filter(Boolean);
+    };
+    req.directReportIdsCache = { key: actorId, ids: load() };
+  }
+  return req.directReportIdsCache.ids;
+}
+
+/**
+ * 唯讀資料（簽核單明細、假別餘額、調休存摺）上，登入者和某位員工的關係（和能不能排班分開）：
+ * - 'self'：本人；'admin'：管理員
+ * - 'supervisor'：主管角色，員工是直屬部屬（不論排班權限模式）
+ * - 'scheduler'：只因為排班範圍看得到（排班人員被指定的小單位、部門的排班管理者，或模式允許時主管的排班範圍）；
+ *   呼叫端只給排班需要的資料（簽核單只限請假、加班、換班，附件不給，調休存摺不附人資備註）
+ * - null：都不是（呼叫端回 404，不洩漏員工是否存在）
+ */
+export async function resolveEmployeeReadAccess(req, employeeId) {
+  const actorId = toEntityId(req?.user?.id);
+  const targetId = toEntityId(employeeId);
+  if (!actorId || !targetId) return null;
+  if (actorId === targetId) return 'self';
+  if (req.user?.role === 'admin') return 'admin';
+  if ((await getDirectReportIds(req)).includes(targetId)) return 'supervisor';
+  const allowedIds = await getAllowedScheduleEmployeeIds(req);
+  return allowedIds === null || allowedIds.includes(targetId) ? 'scheduler' : null;
+}
+
+// 排班人員（只因為排班範圍看得到）看得到的簽核表單性質：請假、加班、換班；離職、人事等其他表單只給簽核人、申請人、直屬主管與管理員
+export const SCHEDULER_VISIBLE_FORM_TYPES = Object.freeze(['leave', 'overtime', 'shift_change']);
+
+/** 這張表單是不是排班需要看的（請假、加班、換班）；表單已刪除時不是 */
+export function isSchedulerVisibleForm(form) {
+  if (!form) return false;
+  const explicit = explicitSemanticType(form);
+  if (explicit) return SCHEDULER_VISIBLE_FORM_TYPES.includes(explicit);
+  return isLeaveFormTemplate(form) || isOvertimeFormTemplate(form);
+}
+
+/**
  * 非管理員寫入班表前檢查小單位的「使用班別」：有不允許的班別就丟出 400（中文訊息附上單位名稱），管理員不限制。
  * entries：[{ employee, shiftId, subDepartment }]
  */
@@ -79,6 +130,11 @@ export async function assertShiftsAllowedForScope(req, entries) {
 }
 
 export function respondShiftNotAllowed(res, err) {
+  // 資料庫斷線、檢查不了小單位的使用班別：這次寫入不做（scheduleAccessService 的 ScheduleAccessUnavailableError）
+  if (err?.code === 'SCHEDULE_ACCESS_UNAVAILABLE') {
+    res.status(503).json({ error: err.message, code: err.code });
+    return true;
+  }
   if (err?.code !== 'SHIFT_NOT_ALLOWED') return false;
   res.status(400).json({ error: err.message, code: err.code, disallowed: err.disallowed || [] });
   return true;

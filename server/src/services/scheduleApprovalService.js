@@ -197,8 +197,9 @@ function buildApprovalRow(doc, catalog, monthRange) {
  * scopeQuery 是呼叫端算好的員工／部門條件（和請假日曆同一份範圍），這裡不再自己定義誰看得到誰。
  * monthRange 是本月的台灣日期範圍 { monthStart, monthEnd }（[起, 迄)），以及資料庫粗篩用、兩邊各放寬一天的 { queryStart, queryEnd }。
  * 與本月有關：解得出開始／結束日期的（請假單通常都是）看台灣日期有沒有與本月重疊；其餘（含沒填日期的請假單）看申請日是否在本月，或還在流程中（待簽、被退回）。
+ * rowFilter(row)：呼叫端再決定哪些列可以給這位使用者看（例如排班人員只看請假、加班、換班的單），在取前 SCHEDULE_APPROVAL_LIMIT 筆之前套用。
  */
-export async function listScheduleRelatedApprovals({ scopeQuery = {}, leaveForms = [], monthRange }) {
+export async function listScheduleRelatedApprovals({ scopeQuery = {}, leaveForms = [], monthRange, rowFilter = null }) {
   const catalog = await loadFormCatalog(leaveForms);
 
   const createdFrom = new Date(dateKeyToUtcMidnight(monthRange.monthStart).getTime() - TAIPEI_OFFSET_MS);
@@ -226,7 +227,7 @@ export async function listScheduleRelatedApprovals({ scopeQuery = {}, leaveForms
   const rows = [];
   for (const doc of docs.slice(0, DB_FETCH_LIMIT)) {
     const row = buildApprovalRow(doc, catalog, monthRange);
-    if (row) rows.push(row);
+    if (row && (typeof rowFilter !== 'function' || rowFilter(row))) rows.push(row);
   }
   if (rows.length > SCHEDULE_APPROVAL_LIMIT) truncated = true;
   return { approvals: rows.slice(0, SCHEDULE_APPROVAL_LIMIT), truncated };

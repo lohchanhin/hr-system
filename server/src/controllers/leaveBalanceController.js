@@ -4,7 +4,7 @@ import { buildLeaveBalances, currentTaipeiYear } from '../services/leaveBalanceS
 import { getLeavePolicy } from '../services/leavePolicyService.js'
 import { buildLeaveHoursHint, loadScheduledShiftHours } from '../services/leaveShiftHours.js'
 import { parseLeaveInterval } from '../utils/leaveDuration.js'
-import { getAllowedScheduleEmployeeIds } from './schedule/scheduleShared.js'
+import { resolveEmployeeReadAccess } from './schedule/scheduleShared.js'
 
 const NOT_FOUND_MESSAGE = '找不到這位員工的資料'
 const MIN_YEAR = 2000
@@ -18,13 +18,11 @@ function normalizeId(value) {
 
 /*
  * 誰可以看某位員工的假別餘額（病假時數屬於敏感資料，範圍跟「簽核單明細」一致，不多給）：
- * 本人、管理員、申請人在自己排班範圍內的主管（直屬部屬），以及曾被排進這位員工任何一張簽核單的簽核人（例如人資）。
+ * 本人、管理員、主管（直屬部屬，不論排班權限模式；主管欄位作為簽核使用）、排班範圍內的排班人員（請假單明細也附餘額），
+ * 以及曾被排進這位員工任何一張簽核單的簽核人（例如人資）。
  */
 async function canReadBalances(req, actorId, targetId) {
-  if (actorId === targetId) return true
-  if (req.user?.role === 'admin') return true
-  const allowedIds = await getAllowedScheduleEmployeeIds(req)
-  if (allowedIds === null || allowedIds.includes(targetId)) return true
+  if (await resolveEmployeeReadAccess(req, targetId)) return true
   const asApprover = await ApprovalRequest.exists({
     applicant_employee: targetId,
     'steps.approvers.approver': actorId,

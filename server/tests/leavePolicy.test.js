@@ -365,3 +365,78 @@ describe('原民假（原住民族歲時祭儀）', () => {
     expect(storedSettings.leavePolicy.types[0]).toEqual({ key: 'indigenous', quotaHours: 16, note: '公司給 2 天' })
   })
 })
+
+// 「移休」成了調休的固定別名（審查 F4）：以前自建過名稱或別名是「移休」的假別，不能讓之後每一次儲存假別規則都失敗
+describe('其他假別用到調休的固定名稱（移休、補休…）', () => {
+  // 客戶以前自建的假別：名稱「移休」、另一個別名有「移休假」
+  const legacyPolicy = () => ({
+    types: [
+      { key: 'move_rest', name: '移休', aliases: ['挪休'], quotaHours: 16, enforcement: 'block', note: '舊的移休' },
+      { key: 'shift_rest', name: '輪休', aliases: ['移休假', '輪休假'], quotaHours: 24 },
+    ],
+  })
+
+  it('saves a policy that still has those custom types, keeping their names, quotas and notes', async () => {
+    storedSettings = { leavePolicy: legacyPolicy() }
+    // 後台畫面的做法：讀出目前的規則、改一個欄位、整份送回
+    const current = await service.getLeavePolicy({ fresh: true })
+    typeOf(current, 'personal').quotaHours = 96
+
+    const saved = await service.saveLeavePolicy(current)
+
+    expect(typeOf(saved, 'personal').quotaHours).toBe(96)
+    expect(typeOf(saved, 'move_rest')).toMatchObject({ name: '移休', aliases: ['挪休'], quotaHours: 16, enforcement: 'block', note: '舊的移休', builtin: false })
+    expect(typeOf(saved, 'shift_rest')).toMatchObject({ name: '輪休', aliases: ['移休假', '輪休假'], quotaHours: 24 })
+    expect(storedSettings.leavePolicy.types.find(item => item.key === 'move_rest').name).toBe('移休')
+  })
+
+  it('still sends 移休 and 移休假 to the 調休 bank, while the custom types keep their other names', () => {
+    const policy = service.validateLeavePolicyInput(legacyPolicy())
+    expect(service.matchLeaveType(['移休'], policy.types)?.key).toBe('comp')
+    expect(service.matchLeaveType(['移休假'], policy.types)?.key).toBe('comp')
+    expect(service.matchLeaveType(['挪休'], policy.types)?.key).toBe('move_rest')
+    expect(service.matchLeaveType(['輪休假'], policy.types)?.key).toBe('shift_rest')
+  })
+
+  it('treats every fixed 調休 name the same way (調休, 補休, 補假 …), also on a builtin type, and lists which names are taken over', () => {
+    const policy = service.validateLeavePolicyInput({
+      types: [
+        { key: 'custom_a', name: '補假' },
+        { key: 'custom_b', name: '加班換休', aliases: ['調休', '補休'] },
+        { key: 'personal', aliases: ['事假申請', '移休'] },
+      ],
+    })
+    expect(service.compAliasCollisionsOf(typeOf(policy, 'custom_a'))).toEqual(['補假'])
+    expect(service.compAliasCollisionsOf(typeOf(policy, 'custom_b'))).toEqual(['調休', '補休'])
+    expect(service.compAliasCollisionsOf(typeOf(policy, 'personal'))).toEqual(['移休'])
+    expect(service.compAliasCollisionsOf(typeOf(policy, 'comp'))).toEqual([])
+    expect(service.matchLeaveType(['補假'], policy.types)?.key).toBe('comp')
+    expect(service.matchLeaveType(['加班換休'], policy.types)?.key).toBe('custom_b')
+  })
+
+  it('keeps refusing every other duplicate (between custom types, with 特休, or with an alias the admin added to 調休)', () => {
+    const problem = (input) => {
+      try {
+        service.validateLeavePolicyInput(input)
+        return null
+      } catch (error) {
+        return error.message
+      }
+    }
+    expect(problem({ types: [{ key: 'custom_a', name: '移休', aliases: ['進修'] }, { key: 'custom_b', name: '進修' }] })).toContain('假別名稱或別名重複')
+    expect(problem({ types: [{ key: 'custom_a', name: '移休', aliases: ['特休'] }] })).toContain('假別名稱或別名重複')
+    expect(problem({ types: [{ key: 'comp', aliases: ['加班補休'] }, { key: 'custom_a', name: '加班補休' }] })).toContain('假別名稱或別名重複')
+    expect(problem({ types: [{ key: 'custom_a', name: '事假' }] })).toBe('假別名稱或別名重複：「事假」與「事假」')
+  })
+
+  it('counts the stored types that use a fixed 調休 name for the startup log, without writing anything', async () => {
+    expect(await service.countCompAliasCollisions()).toBe(0)
+
+    storedSettings = { leavePolicy: { types: [...legacyPolicy().types, { key: 'comp', aliases: ['加班補休'] }, { key: 'custom_c', name: '進修假' }] } }
+    expect(await service.countCompAliasCollisions()).toBe(2)
+
+    storedSettings.leavePolicy.types.push({ key: 'personal', aliases: ['補休'] })
+    expect(await service.countCompAliasCollisions()).toBe(3)
+    expect(mockUpdateSettings).not.toHaveBeenCalled()
+  })
+})

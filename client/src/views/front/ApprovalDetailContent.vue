@@ -63,13 +63,15 @@
         <el-timeline-item
           v-for="(step, idx) in doc.steps || []"
           :key="idx"
-          :timestamp="`第 ${idx + 1} 關`"
+          :timestamp="requestStepTitle(step, idx)"
           :type="idx === doc.current_step_index ? 'primary' : 'info'"
         >
           <div class="mb-1">
             <span class="mr-2">需全員同意：{{ step.all_must_approve ? '是' : '否' }}</span>
             <span>必簽：{{ step.is_required ? '是' : '否' }}</span>
           </div>
+          <!-- 主管鏈往上找時略過離職、留職停薪的主管等說明 -->
+          <p v-if="requestStepNote(step)" class="step-note" data-test="step-note">{{ requestStepNote(step) }}</p>
           <!-- 主管關卡找不到可簽核的主管時改由最高層簽核人簽核：說明改送的原因 -->
           <p v-if="describeFallbackStep(step)" class="step-fallback" data-test="step-fallback">{{ describeFallbackStep(step) }}</p>
           <el-table :data="Array.isArray(step.approvers) ? step.approvers : []" size="small" border>
@@ -133,7 +135,9 @@ import {
   detailFields,
   downloadApprovalAttachment,
   findReturnInfo,
-  getStatusText
+  getStatusText,
+  requestStepNote,
+  requestStepTitle
 } from '../../utils/approvalDetail'
 
 const props = defineProps({
@@ -303,6 +307,13 @@ onBeforeUnmount(() => {
   border-radius: 4px;
   background: #fdf6ec;
   color: #b88230;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.step-note {
+  margin: 0 0 6px;
+  color: #475569;
   font-size: 12px;
   line-height: 1.6;
 }

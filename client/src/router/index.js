@@ -2,7 +2,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { getToken } from '@/utils/tokenService'
 import { clearRoleCache, refreshRoleFromSource, resolveUserRole } from '@/utils/roleResolver'
-import { getAuthenticatedHomeRoute } from '@/utils/authNavigation'
+import { getAuthenticatedHomeRoute, SUPERVISOR_WITHOUT_SCHEDULE_HOME } from '@/utils/authNavigation'
 import { useProfileStore } from '@/stores/profile'
 
 // ★ 既有的後台檔案
@@ -245,16 +245,26 @@ export async function loadScheduleAccess(store) {
   }
 }
 
+const SCHEDULE_ACCESS_UNKNOWN_MESSAGE = '目前無法確認排班權限，請重新整理頁面後再試'
+
 /**
  * 排班頁（meta.allowScheduler）：管理員一律可以；其他角色看排班權限——
- * 被指定為排班人員的員工任何角色都能進入，排班權限模式切開主管後沒被指定的主管不能進入。
- * 讀不到排班權限時維持原本的角色限制。
+ * 被指定為排班人員的員工任何角色都能進入；主管預設（只有排班人員能排班）沒被指定就不能進入。
+ * 讀不到排班權限時不放行（以前退回角色限制，等於假設主管都能排班；現在預設不是這樣，進去也只會被每支排班 API 擋下）。
+ * 回傳 true／false；第二個參數 detail 為 true 時回傳 { allowed, reason }（reason：'denied'｜'unknown'）。
  */
-export async function canEnterSchedulePage(role, allowedRoles = [], loader = loadScheduleAccess) {
-  if (role === 'admin') return true
+export async function canEnterSchedulePage(role, allowedRoles = [], loader = loadScheduleAccess, { detail = false } = {}) {
+  const result = (allowed, reason = '') => (detail ? { allowed, reason } : allowed)
+  if (role === 'admin') return result(true)
   const access = await loader()
-  if (!access) return allowedRoles.includes(role)
-  return access.canSchedule === true
+  if (!access) return result(false, 'unknown')
+  return access.canSchedule === true ? result(true) : result(false, 'denied')
+}
+
+/** 已登入的人打開登入頁時要去的首頁：主管看排班權限（沒有就進出勤打卡，不會落到排班頁的 403） */
+async function resolveHomeRoute(role) {
+  if (role !== 'supervisor') return getAuthenticatedHomeRoute(role)
+  return getAuthenticatedHomeRoute(role, await loadScheduleAccess())
 }
 
 // ★ 路由守衛
@@ -265,6 +275,9 @@ router.beforeEach((to, from, next) => {
   const frontRequiresAuth = to.matched.some(r => r.meta.frontRequiresAuth)
 
   if (token && ['ManagerLogin', 'FrontLogin'].includes(to.name)) {
+    if (activeRole === 'supervisor') {
+      return resolveHomeRoute(activeRole).then(destination => next(destination || undefined))
+    }
     const destination = getAuthenticatedHomeRoute(activeRole)
     if (destination) return next(destination)
   }
@@ -288,9 +301,11 @@ router.beforeEach((to, from, next) => {
   if (to.meta.roles) {
     const roleForRoute = activeRole || resolveUserRole({ token }) || 'employee'
     if (to.meta.allowScheduler && roleForRoute !== 'admin') {
-      return canEnterSchedulePage(roleForRoute, to.meta.roles).then(allowed => {
+      return canEnterSchedulePage(roleForRoute, to.meta.roles, loadScheduleAccess, { detail: true }).then(({ allowed, reason }) => {
         if (allowed) return next()
-        showWarningMessage(SCHEDULE_ACCESS_DENIED_MESSAGE)
+        showWarningMessage(reason === 'unknown' ? SCHEDULE_ACCESS_UNKNOWN_MESSAGE : SCHEDULE_ACCESS_DENIED_MESSAGE)
+        // 主管從選單以外（舊書籤、登入前的網址）進排班頁：帶到出勤打卡，不停在沒有連結的 403
+        if (roleForRoute === 'supervisor' && reason === 'denied') return next(SUPERVISOR_WITHOUT_SCHEDULE_HOME)
         return next({ name: 'Forbidden' })
       })
     }

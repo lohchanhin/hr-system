@@ -1,7 +1,9 @@
 // 排班頁的權限範圍與班別限制（個人資料 GET /api/profile 的 scheduleAccess；說明見 docs/scheduler-access.md）。
 // - 排班人員：小單位設定的「排班人員」任何角色都能排班，只看得到被指定的小單位（部門的排班管理者 = 整個部門）
-// - 主管：自己與直屬部屬（原本的規則）；其他控制設定切成「只有排班人員」時，主管不再因為是主管而能排班
-// - 使用班別：小單位設定的班別；沒有設定代表全部班別
+// - 主管：預設（只有排班人員能排班）不因為是主管而能排班；其他控制設定存成「主管與排班人員」時排自己與直屬部屬
+// - 使用班別：小單位設定的班別；沒有設定代表全部班別。不用上班的班別（休息日、例假、國定假日、請假）一律可以用
+
+import { hasNoWorkingTime, isNonWorkSemanticType, resolveShiftSemanticType } from './shiftSemantics'
 
 const toId = value => {
   if (value === null || value === undefined) return ''
@@ -66,9 +68,18 @@ export function resolveAllowedShiftIds(units) {
   return allowed
 }
 
-/** 依 resolveAllowedShiftIds 的結果篩選班別；null 代表全部 */
+/**
+ * 不用上班的班別：休息日、例假、國定假日、請假，或沒有工作時間（例如 00:00-00:00）。
+ * 與伺服器 shiftSemanticService 的 isNonWorkShift 相同：這些班別每個小單位一律可以用，不受「使用班別」限制。
+ */
+export function isNonWorkShift(shift) {
+  if (!shift || typeof shift !== 'object') return false
+  return isNonWorkSemanticType(resolveShiftSemanticType(shift)) || hasNoWorkingTime(shift)
+}
+
+/** 依 resolveAllowedShiftIds 的結果篩選班別；null 代表全部。不用上班的班別一律保留 */
 export function restrictShifts(shifts, allowedShiftIds) {
   const list = Array.isArray(shifts) ? shifts : []
   if (!allowedShiftIds) return list
-  return list.filter(shift => allowedShiftIds.has(toId(shift)))
+  return list.filter(shift => allowedShiftIds.has(toId(shift)) || isNonWorkShift(shift))
 }

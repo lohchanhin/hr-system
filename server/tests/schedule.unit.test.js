@@ -1,6 +1,7 @@
 import { jest } from '@jest/globals';
 import { registerHolidayResolverModelMocks } from './helpers/holidayResolverMocks.js';
 import { buildLeaveFieldServiceMock } from './helpers/leaveFieldServiceMock.js';
+import { registerScheduleAccessModeMocks } from './helpers/scheduleAccessModeMocks.js';
 
 const mockShiftSchedule = {
   findOne: jest.fn(),
@@ -35,8 +36,14 @@ jest.unstable_mockModule('../src/services/laborRuleValidationService.js', () => 
   isLaborRuleValidationError: mockIsLaborRuleValidationError,
 }));
 jest.unstable_mockModule('../src/services/leaveFieldService.js', () => buildLeaveFieldServiceMock(mockGetLeaveFieldIds));
+// 這個檔案測主管排直屬部屬：2026/11 起要把排班權限存成「主管與排班人員」才有（預設只有排班人員能排班）
+const scheduleAccessMode = await registerScheduleAccessModeMocks(jest);
 
 const { createSchedule, createSchedulesBatch, updateSchedule, listSupervisorSummary, exportSchedules } = await import('../src/controllers/scheduleController.js');
+
+beforeEach(() => {
+  scheduleAccessMode.allowSupervisors();
+});
 
 describe('createSchedule validations', () => {
   beforeEach(() => {

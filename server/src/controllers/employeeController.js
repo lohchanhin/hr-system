@@ -10,7 +10,7 @@ import { normalizeSignTag, normalizeSignTags } from '../utils/signTags.js'
 import { presentAnnualLeave, readAnnualLeaveHours } from '../utils/annualLeaveHours.js'
 import { daysToHours, hoursToDays } from '../utils/leaveHours.js'
 import { parseHolidayRegime } from '../services/holidayCalendarRules.js'
-import { getScheduleAccessSummaryForRequest, schedulerEmployeeFilters } from '../services/scheduleAccessService.js'
+import { buildScheduleViewEmployeeFilter, getScheduleAccessSummaryForRequest } from '../services/scheduleAccessService.js'
 import {
   deleteEmployeePhoto,
   isManagedEmployeePhotoPath,
@@ -746,20 +746,12 @@ const resolveRemainingAnnualLeave = (annualLeave = {}) => {
 }
 
 /**
- * 排班頁的員工名單範圍（view=schedule，非管理員）：
- * 只有主管身分（沒有被指定為排班人員）維持原本的查詢：直屬部屬，勾「包含自己」再加自己；
- * 排班人員是排班範圍內的員工（主管範圍與被指定小單位的員工聯集，主管沒勾「包含自己」不含自己）；
- * 沒有排班權限只有自己。
+ * 排班頁的員工名單範圍（view=schedule，非管理員）：條件由 scheduleAccessService 的 buildScheduleViewEmployeeFilter 決定，
+ * 排班頁上方的「排班員工數」（GET /api/schedules/summary）用同一個條件，兩邊的人數才會一致。
  */
 async function buildScheduleViewScope(req, actorId, actorRole, includeSelf) {
   const access = await getScheduleAccessSummaryForRequest(req)
-  if (!access?.canSchedule) return { _id: actorId }
-  const supervisorClause = includeSelf ? { $or: [{ _id: actorId }, { supervisor: actorId }] } : { supervisor: actorId }
-  const unitClauses = schedulerEmployeeFilters(access)
-  if (!unitClauses.length) return supervisorClause
-  const scope = { $or: [...(access.supervisorScope ? [supervisorClause] : []), ...unitClauses] }
-  // 主管沒勾「包含自己」：自己就算在被指定的小單位裡也不列出（與「包含自己」開關一致）
-  return actorRole === 'supervisor' && !includeSelf ? { $and: [scope, { _id: { $ne: actorId } }] } : scope
+  return buildScheduleViewEmployeeFilter(access, actorId, actorRole, includeSelf)
 }
 
 /** GET /api/employees?q=...&supervisor=...&organization=...&department=...&subDepartment=...&status=...&role=...&view=schedule */

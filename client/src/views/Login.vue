@@ -168,7 +168,8 @@ const onLogin = async () => {
     if (res.ok) {
       const data = await res.json()
       const authenticatedRole = data.user?.role
-      const destination = getAuthenticatedHomeRoute(authenticatedRole)
+      // 主管沒有排班權限（預設只有排班人員能排班）時進出勤打卡，不再落到排班頁的 403
+      const destination = getAuthenticatedHomeRoute(authenticatedRole, data.user?.scheduleAccess)
 
       if (!data.token || !destination) {
         throw new Error('Invalid login response')

@@ -6,6 +6,7 @@ import express from 'express';
 import { jest } from '@jest/globals';
 import { registerHolidayResolverModelMocks } from './helpers/holidayResolverMocks.js';
 import { buildLeaveFieldServiceMock } from './helpers/leaveFieldServiceMock.js';
+import { registerScheduleAccessModeMocks } from './helpers/scheduleAccessModeMocks.js';
 import ExcelJS from 'exceljs';
 import jwt from 'jsonwebtoken';
 
@@ -135,6 +136,8 @@ jest.unstable_mockModule('../src/services/laborRuleValidationService.js', () => 
 jest.unstable_mockModule('../src/utils/tokenBlacklist.js', () => ({
   isTokenBlacklisted: mockIsTokenBlacklisted,
 }));
+// 這個檔案大多測主管排直屬部屬：2026/11 起要把排班權限存成「主管與排班人員」才有（預設只有排班人員能排班）
+const scheduleAccessMode = await registerScheduleAccessModeMocks(jest);
 
 let currentRole = 'supervisor';
 
@@ -157,6 +160,7 @@ beforeAll(async () => {
 
 beforeEach(() => {
   currentRole = 'supervisor';
+  scheduleAccessMode.allowSupervisors();
   mockShiftSchedule.find.mockReset();
   mockShiftSchedule.countDocuments.mockReset();
   mockShiftSchedule.countDocuments.mockResolvedValue(0);
@@ -2175,6 +2179,20 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
     expect(mockApprovalRequest.find).not.toHaveBeenCalled();
   });
 
+  // 刪除某日以前的全公司班表只有管理員（以前任何排班的人帶一位範圍內的員工就能清掉全公司的舊班表）
+  it('refuses to delete old schedules for anyone but an administrator', async () => {
+    mockShiftSchedule.deleteMany.mockResolvedValue({ deletedCount: 12 });
+    // 主管（有排班權限、帶的是自己範圍內的員工）與員工角色都不行
+    for (const role of ['supervisor', 'employee']) {
+      const res = await request(app)
+        .delete('/api/schedules/older-than?before=2021-01-01')
+        .set('Authorization', buildAuthHeader(role))
+        .send({ employee: 'tester' });
+      expect(res.status).toBe(403);
+    }
+    expect(mockShiftSchedule.deleteMany).not.toHaveBeenCalled();
+  });
+
   it('deletes old schedules', async () => {
     // 用本地陣列模擬資料，deleteMany 以條件計算刪除數
     const data = [
@@ -2193,7 +2211,7 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
 
     const res = await request(app)
       .delete('/api/schedules/older-than?before=2021-01-01')
-      .send({ employee: 'tester' });
+      .set('Authorization', buildAuthHeader('admin'));
 
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ deleted: 1 });

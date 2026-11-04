@@ -8,7 +8,7 @@ import { getAllLeaveFieldInfos } from './leaveFieldService.js';
 import { calculateNightShiftAllowance } from './nightShiftAllowanceService.js';
 import { isNonWorkShift, resolveShiftSemanticType } from './shiftSemanticService.js';
 import { loadHolidayContext, resolveDayType } from './holidayResolver.js';
-import { findPunchSource, matchShiftPunches } from './attendancePunchService.js';
+import { findPunchSource, matchSchedulesPunches } from './attendancePunchService.js';
 import { toTaipeiDateKey } from '../utils/taipeiTime.js';
 import { getTimezone } from '../utils/timeWindow.js';
 import { computeLeaveDuration, sumLeaveHoursInRange } from '../utils/leaveDuration.js';
@@ -232,8 +232,6 @@ export async function calculateWorkHours(employeeId, month, context = {}) {
     });
   }
   
-  // 分組出勤記錄
-  const recordMap = groupAttendanceRecords(attendanceRecords);
   // 這位員工的上下班打卡（線上打卡、指紋匯入、舊資料不分來源，一起比對）
   const employeePunches = (attendanceRecords || []).filter((record) => (
     (record?.action === 'clockIn' || record?.action === 'clockOut')
@@ -241,6 +239,19 @@ export async function calculateWorkHours(employeeId, month, context = {}) {
   ));
   const actionBuffers = attendanceSetting?.actionBuffers;
   const timeZone = getTimezone();
+  // 整個月的班表一起比對打卡（services/attendancePunchService.js 的 matchSchedulesPunches）：
+  // 先依每一班的簽到、簽退時段（台灣時間，與線上打卡、遲到早退判斷相同）找，線上打卡與指紋匯入一起看，簽到取最早、簽退取最晚；
+  // 時段內找不到時才沿用原本依日期比對的方式。同一筆打卡只算給一個班：缺勤那天不會拿到隔天大夜班前一晚的簽到，
+  // 一組打卡也不會讓兩天都算出勤。
+  const punchesBySchedule = matchSchedulesPunches({
+    records: employeePunches,
+    schedules: (schedules || []).map((schedule) => {
+      const shift = shiftMap.get(String(schedule.shiftId ?? ''));
+      return { key: schedule, scheduleDate: schedule.date, shift, nonWork: !shift || isNonWorkShift(shift) };
+    }),
+    actionBuffers,
+    timeZone,
+  });
   
   // 計算工作時數
   let totalScheduledMinutes = 0;
@@ -273,80 +284,19 @@ export async function calculateWorkHours(employeeId, month, context = {}) {
     const breakMinutes = getShiftBreakMinutes(shift, schedule.date);
     const scheduledMinutes = Math.max(minutesBetween(start, end) - breakMinutes, 0);
     
-    const dayRecord = recordMap.get(`${employeeId}::${dateKey}`);
     let workedMinutes = 0;
     let hasAttendance = false;
     let clockInTime = null;
     let clockOutTime = null;
-    
-    // 先依這一班的簽到、簽退時段（台灣時間，與線上打卡、遲到早退判斷相同）找打卡：
-    // 線上打卡與指紋匯入一起看，簽到取最早、簽退取最晚，兩邊互補（services/attendancePunchService.js）。
-    // 時段內找不到時，才沿用下面原本依日期比對的方式。
-    const shiftPunches = matchShiftPunches({
-      records: employeePunches,
-      scheduleDate: schedule.date,
-      shift,
-      actionBuffers,
-      timeZone,
-    });
-    
-    // For cross-day shifts, we need to check both current day and next day for clock records
-    // Also check previous day for clock-in if this is a cross-day shift
-    let first = shiftPunches?.clockIn ? new Date(shiftPunches.clockIn.timestamp) : null;
-    let last = null;
-    
-    // Check for clock-in on schedule date
-    if (!first && dayRecord && dayRecord.clockIns.length) {
-      first = dayRecord.clockIns[0];
-    }
-    
-    // For cross-day shifts, also check previous day for clock-in
-    if (!first && shift.crossDay) {
-      const prevDate = new Date(schedule.date);
-      prevDate.setUTCDate(prevDate.getUTCDate() - 1);
-      const prevDateKey = buildDateKey(prevDate);
-      const prevDayRecord = recordMap.get(`${employeeId}::${prevDateKey}`);
-      
-      if (prevDayRecord && prevDayRecord.clockIns.length) {
-        first = prevDayRecord.clockIns[prevDayRecord.clockIns.length - 1]; // Use the last clock-in of previous day
-      }
-    }
-    
+
+    // 這一班採用的簽到、簽退（時段內比對到的，或依日期比對、沒有被別的班用掉的）
+    const shiftPunches = punchesBySchedule.get(schedule);
+    const first = shiftPunches?.clockIn ? new Date(shiftPunches.clockIn.timestamp) : null;
+    const last = first && shiftPunches?.clockOut ? new Date(shiftPunches.clockOut.timestamp) : null;
+
     if (first) {
       clockInTime = first;
-      
-      // 簽退時段內有晚於簽到的打卡就取最晚的一筆
-      const windowClockOut = shiftPunches?.clockOut ? new Date(shiftPunches.clockOut.timestamp) : null;
-      if (windowClockOut && windowClockOut > first) {
-        last = windowClockOut;
-      }
-      
-      // First, try to find clock-out on the same day as clock-in
-      const clockInDateKey = buildDateKey(first);
-      const clockInDayRecord = recordMap.get(`${employeeId}::${clockInDateKey}`);
-      
-      if (!last && clockInDayRecord && clockInDayRecord.clockOuts.length) {
-        // Find the first clock-out after the clock-in time
-        for (const clockOut of clockInDayRecord.clockOuts) {
-          if (clockOut > first) {
-            last = clockOut;
-            break;
-          }
-        }
-      }
-      
-      // If no clock-out found on the same day, check next day (for cross-day shifts)
-      if (!last) {
-        const clockInNextDay = new Date(first);
-        clockInNextDay.setUTCDate(clockInNextDay.getUTCDate() + 1);
-        const nextDateKey = buildDateKey(clockInNextDay);
-        const nextDayRecord = recordMap.get(`${employeeId}::${nextDateKey}`);
-        
-        if (nextDayRecord && nextDayRecord.clockOuts.length) {
-          last = nextDayRecord.clockOuts[0]; // Use the first clock-out of next day
-        }
-      }
-      
+
       if (last) {
         clockOutTime = last;
         workedMinutes = Math.max(minutesBetween(first, last) - breakMinutes, 0);

@@ -8,7 +8,13 @@ import FormTemplate from '../models/form_template.js';
 import FormField from '../models/form_field.js';
 import { getAllLeaveFieldInfos } from './leaveFieldService.js';
 import { isNonWorkShift } from './shiftSemanticService.js';
-import { formatLocalTime, groupPunchesByEmployee, matchShiftPunches } from './attendancePunchService.js';
+import {
+  formatLocalTime,
+  groupPunchesByEmployee,
+  matchSchedulesPunches,
+  matchShiftPunches,
+  resolveAttendanceSource,
+} from './attendancePunchService.js';
 import { ANNUAL_LEAVE_TYPES, WORK_HOURS_CONFIG } from '../config/salaryConfig.js';
 import { toTaipeiDateKey, toTaipeiParts } from '../utils/taipeiTime.js';
 import { normalizeLeaveFieldLabel } from '../utils/leaveFieldLabels.js';
@@ -296,6 +302,30 @@ function matchSchedulePunches({ punchesByEmployee, actionBuffers }, employeeId, 
   });
 }
 
+// 出勤與工時：每位員工整個月的班表一起比對打卡（與薪資工時相同，services/attendancePunchService.js 的 matchSchedulesPunches），
+// 同一筆打卡只算給一個班，缺勤那天不會拿到隔天班的打卡。回傳 Map(班表 → 比對結果)；沒有帶 punchesByEmployee 的呼叫端回傳 null，沿用依日期比對
+function assignSchedulePunches({ schedules, shiftMap, punchesByEmployee, actionBuffers }) {
+  if (!punchesByEmployee) return null;
+  const schedulesByEmployee = new Map();
+  schedules.forEach((schedule) => {
+    const employeeId = normalizeId(schedule.employee);
+    const shift = shiftMap.get(normalizeId(schedule.shiftId));
+    if (!schedulesByEmployee.has(employeeId)) schedulesByEmployee.set(employeeId, []);
+    schedulesByEmployee.get(employeeId).push({
+      key: schedule,
+      scheduleDate: schedule.date,
+      shift,
+      nonWork: !shift || isNonWorkShift(shift),
+    });
+  });
+  const assigned = new Map();
+  schedulesByEmployee.forEach((items, employeeId) => {
+    matchSchedulesPunches({ records: punchesByEmployee.get(employeeId) ?? [], schedules: items, actionBuffers })
+      .forEach((value, schedule) => assigned.set(schedule, value));
+  });
+  return assigned;
+}
+
 // 與薪資的遲到早退計算（attendanceDeductionService）相同，不足一分鐘不計
 function wholeMinutesBetween(start, end) {
   const diff = new Date(end).getTime() - new Date(start).getTime();
@@ -388,6 +418,7 @@ function buildAttendanceSummary({ employees, schedules, recordMap, shiftMap, pun
     attendanceCounter.set(id, base);
   });
 
+  const assigned = assignSchedulePunches({ schedules, shiftMap, punchesByEmployee, actionBuffers });
   schedules.forEach((schedule) => {
     const employeeId = normalizeId(schedule.employee);
     const record = attendanceCounter.get(employeeId);
@@ -396,10 +427,14 @@ function buildAttendanceSummary({ employees, schedules, recordMap, shiftMap, pun
     // 休息日 / 例假 / 國定假日 / 請假 / 沒有工作時間的班別：不算應出勤，也就不會算缺勤
     if (!shift || isNonWorkShift(shift)) return;
     record.scheduled += 1;
+    if (assigned) {
+      // 這一班有簽到（時段內的，或依日期比對、沒有被別的班用掉的）就算出勤
+      if (assigned.get(schedule)?.clockIn) record.attended += 1;
+      return;
+    }
     const dateKey = buildDateKey(schedule.date);
     const entry = recordMap.get(`${employeeId}::${dateKey}`);
-    const punches = matchSchedulePunches({ punchesByEmployee, actionBuffers }, employeeId, schedule, shift);
-    if (punches?.clockIn || (entry && entry.clockIns.length)) {
+    if (entry && entry.clockIns.length) {
       record.attended += 1;
     }
   });
@@ -445,6 +480,8 @@ function buildTardinessSummary({ schedules, recordMap, shiftMap, employees, late
         date: dateKey,
         scheduledStart: formatLocalTime(punches.span.start),
         actualClockIn: formatLocalTime(clockIn),
+        // 實際打卡的來源：online 線上、import 指紋匯入、manual 手動補登、legacy 舊資料未標示
+        clockInSource: resolveAttendanceSource(punches.clockIn),
         minutesLate: lateMinutes,
       });
       return;
@@ -501,6 +538,7 @@ function buildEarlyLeaveSummary({ schedules, recordMap, shiftMap, employees, ear
         date: dateKey,
         scheduledEnd: formatLocalTime(punches.span.end),
         actualClockOut: formatLocalTime(clockOut),
+        clockOutSource: resolveAttendanceSource(punches.clockOut),
         minutesEarly: earlyMinutes,
       });
       return;
@@ -544,6 +582,7 @@ function buildWorkHoursSummary({ schedules, recordMap, shiftMap, employees, punc
   const records = [];
   let totalScheduledMinutes = 0;
   let totalWorkedMinutes = 0;
+  const assigned = assignSchedulePunches({ schedules, shiftMap, punchesByEmployee, actionBuffers });
 
   schedules.forEach((schedule) => {
     const employeeId = normalizeId(schedule.employee);
@@ -557,21 +596,22 @@ function buildWorkHoursSummary({ schedules, recordMap, shiftMap, employees, punc
     const scheduledMinutes = Math.max(minutesBetween(start, end) - breakMinutes, 0);
     const dayRecord = recordMap.get(`${employeeId}::${dateKey}`);
     let workedMinutes = 0;
-    // 先依班別時段找打卡（線上與指紋一起看，簽到取最早、簽退取最晚），時段內找不到才沿用下面依日期比對
-    const punches = matchSchedulePunches({ punchesByEmployee, actionBuffers }, employeeId, schedule, shift);
-    
+    // 有帶打卡（實際的報表）時，用整個月一起比對的結果：先依班別時段（線上與指紋一起看，簽到取最早、簽退取最晚），
+    // 時段內找不到才依日期比對，同一筆打卡只算給一個班。沒有帶打卡的呼叫端沿用下面依日期比對
+    const punches = assigned?.get(schedule);
+
     // For cross-day shifts, we need to check both current day and next day for clock records
     // Also check previous day for clock-in if this is a cross-day shift
     let first = punches?.clockIn ? new Date(punches.clockIn.timestamp) : null;
-    let last = null;
-    
+    let last = first && punches?.clockOut ? new Date(punches.clockOut.timestamp) : null;
+
     // Check for clock-in on schedule date
-    if (!first && dayRecord && dayRecord.clockIns.length) {
+    if (!assigned && !first && dayRecord && dayRecord.clockIns.length) {
       first = dayRecord.clockIns[0];
     }
-    
+
     // For cross-day shifts, also check previous day for clock-in
-    if (!first && shift.crossDay) {
+    if (!assigned && !first && shift.crossDay) {
       const prevDate = new Date(schedule.date);
       prevDate.setUTCDate(prevDate.getUTCDate() - 1);
       const prevDateKey = buildDateKey(prevDate);
@@ -582,12 +622,7 @@ function buildWorkHoursSummary({ schedules, recordMap, shiftMap, employees, punc
       }
     }
     
-    if (first) {
-      const windowClockOut = punches?.clockOut ? new Date(punches.clockOut.timestamp) : null;
-      if (windowClockOut && windowClockOut > first) {
-        last = windowClockOut;
-      }
-      
+    if (first && !assigned) {
       // First, try to find clock-out on the same day as clock-in
       const clockInDateKey = buildDateKey(first);
       const clockInDayRecord = recordMap.get(`${employeeId}::${clockInDateKey}`);
@@ -613,12 +648,12 @@ function buildWorkHoursSummary({ schedules, recordMap, shiftMap, employees, punc
           last = nextDayRecord.clockOuts[0]; // Use the first clock-out of next day
         }
       }
-      
-      if (last) {
-        workedMinutes = Math.max(minutesBetween(first, last) - breakMinutes, 0);
-      }
     }
-    
+
+    if (first && last) {
+      workedMinutes = Math.max(minutesBetween(first, last) - breakMinutes, 0);
+    }
+
     totalScheduledMinutes += Math.max(scheduledMinutes, 0);
     totalWorkedMinutes += Math.max(workedMinutes, 0);
     records.push({
@@ -1094,6 +1129,7 @@ export function getReportDisplayName(type) {
 export const __testUtils = {
   computeShiftTimes,
   getShiftBreakMinutes,
+  groupAttendanceRecords,
   minutesBetween,
   buildAttendanceSummary,
   buildTardinessSummary,

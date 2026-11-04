@@ -19,12 +19,14 @@ import {
   isLaborRuleValidationError,
 } from '../services/laborRuleValidationService.js'
 import {
-  APPLICANT_SUPERVISOR_VALUE,
-  UNRESOLVED_REASON_TEXT,
   resolveApprovers,
   resolveApproversDetailed,
-  resolveStepApprovers,
 } from '../services/approverResolution.js'
+import {
+  StepBuildError,
+  buildRequestSteps as buildWorkflowRequestSteps,
+  computeLeaveLength,
+} from '../services/approvalStepBuilder.js'
 import {
   FORM_NOT_ALLOWED_CODE,
   formNotAllowedMessage,
@@ -75,11 +77,10 @@ import { extraCeilings, loadScheduledShiftHours } from '../services/leaveShiftHo
 import { parseLeaveInterval } from '../utils/leaveDuration.js'
 import { readAnnualLeaveHours } from '../utils/annualLeaveHours.js'
 import { daysToHours, formatHoursText, hoursToDays, isLeaveHoursFilled } from '../utils/leaveHours.js'
-import { normalizeSignTag } from '../utils/signTags.js'
 import { isLeaveFormTemplate } from '../utils/formSemantics.js'
 import { resolveLeaveFieldsForRequest } from '../utils/leaveFieldResolution.js'
 import { toTaipeiDateKey } from '../utils/taipeiTime.js'
-import { getAllowedScheduleEmployeeIds } from './schedule/scheduleShared.js'
+import { isSchedulerVisibleForm, resolveEmployeeReadAccess } from './schedule/scheduleShared.js'
 
 const OBJECT_ID_PATTERN = /^[a-f0-9]{24}$/i
 const MAX_COMMENT_LENGTH = 1000
@@ -92,12 +93,6 @@ const HISTORY_STATUSES = ['pending', 'approved', 'rejected', 'returned', 'cancel
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 const APPROVAL_UPLOAD_DIR = path.join(__dirname, '../../../upload/approvals')
-
-// 錯誤訊息裡顯示用的名稱（與員工表單的簽核角色／層級選項一致）
-const SIGN_ROLE_NAMES = {
-  R001: '填報', R002: '覆核', R003: '審核', R004: '核定', R005: '知會', R006: '財務覆核', R007: '人資覆核',
-}
-const SIGN_LEVEL_NAMES = { U001: 'L1', U002: 'L2', U003: 'L3', U004: 'L4', U005: 'L5' }
 
 const MESSAGES = {
   invalidUser: '登入狀態無效，請重新登入',
@@ -225,12 +220,17 @@ function isApprovalParticipant(doc, actorId) {
   ))
 }
 
-// 申請人在不在這位使用者的排班範圍內：和排班頁「相關簽核」清單用同一個範圍函式，不另外定義誰看得到誰
-async function isApplicantInScheduleScope(req, applicant) {
-  const applicantId = normalizeId(applicant)
-  if (!applicantId) return false
-  const allowedIds = await getAllowedScheduleEmployeeIds(req)
-  return allowedIds === null || allowedIds.includes(applicantId)
+/*
+ * 不是簽核人、申請人（也不是管理員）時能不能唯讀開啟這張單（排班頁「相關簽核」、主管看直屬部屬的單）：
+ * - 主管：申請人是直屬部屬，任何表單（不論排班權限模式；主管欄位作為簽核使用），附件也看得到
+ * - 只因為排班範圍看得到（排班人員被指定的小單位等）：只限排班需要的表單（請假、加班、換班），附件不給
+ * 回傳 { canView, canDownload }；範圍規則在 scheduleShared 的 resolveEmployeeReadAccess，和「相關簽核」清單同一套
+ */
+async function resolveApplicantViewAccess(req, doc) {
+  const access = await resolveEmployeeReadAccess(req, doc?.applicant_employee)
+  if (access === 'supervisor' || access === 'admin') return { canView: true, canDownload: true }
+  if (access === 'scheduler') return { canView: isSchedulerVisibleForm(doc?.form), canDownload: false }
+  return { canView: false, canDownload: false }
 }
 
 function findApprovalAttachment(value, expectedPath) {
@@ -263,115 +263,20 @@ async function loadFormFields(formId) {
 // 解析邏輯在 services/approverResolution.js（流程預覽 getWorkflow 也要用）；這裡維持原本的匯出，呼叫端與測試不受影響
 export { resolveApprovers, resolveApproversDetailed }
 
-function describeWorkflowStep(step) {
-  const type = step.approver_type
-  const raw = Array.isArray(step.approver_value) ? step.approver_value[0] : step.approver_value
-  let label = ''
-  if (type === 'manager') {
-    const value = typeof raw === 'string' ? raw : ''
-    label = !value || value === APPLICANT_SUPERVISOR_VALUE ? '申請者的主管' : '指定主管'
-  } else if (type === 'tag') {
-    label = `標籤：${normalizeSignTag(raw) || '未設定'}`
-  } else if (type === 'user') {
-    label = '指定員工'
-  } else if (type === 'role') {
-    const code = String(raw ?? '').trim()
-    label = SIGN_ROLE_NAMES[code] ? `角色：${SIGN_ROLE_NAMES[code]}（${code}）` : `角色：${code || '未設定'}`
-  } else if (type === 'level') {
-    const code = String(raw ?? '').trim()
-    label = SIGN_LEVEL_NAMES[code] ? `層級：${SIGN_LEVEL_NAMES[code]}（${code}）` : `層級：${code || '未設定'}`
-  } else if (type === 'department') {
-    label = '部門'
-  } else if (type === 'org') {
-    label = '機構'
-  } else if (type === 'group') {
-    label = '群組'
-  } else {
-    label = String(type || '未設定')
-  }
-  if (step.scope_type === 'dept') label += '，範圍：部門'
-  if (step.scope_type === 'org') label += '，範圍：機構'
-  return label
-}
-
-function missingApproverError(form, item) {
-  const stepNumber = item.position + 1
-  const reason = UNRESOLVED_REASON_TEXT[item.reason]
-  const detail = reason ? `：${reason}` : ''
-  return fail(
-    400,
-    `【${form?.name || '表單'}】第${stepNumber}關（${describeWorkflowStep(item.source)}）找不到可簽核的人員${detail}，請聯絡管理員設定`,
-    { code: 'REQUIRED_APPROVER_MISSING', step: stepNumber },
-  )
-}
-
-function buildDecisionList(employeeIds) {
-  return employeeIds.map(id => ({ approver: id, decision: 'pending' }))
-}
-
 /**
- * 依流程設定與申請人，建立這張單的各關簽核人（建立、重新送出共用）。
- * 必簽的主管關卡找不到可簽核的主管時改送最高層簽核人（任一位核准即可，關卡上記下 fallback 說明，見 resolveStepApprovers）；
- * 必簽關卡找不到人、或所有關卡都沒有人（會變成無人簽核直接通過）時回報 REQUIRED_APPROVER_MISSING。
- * 回傳 { steps, fallbackLogs }：fallbackLogs 是改送的關卡要寫進單據紀錄的訊息。
+ * 依流程設定與申請人，建立這張單的各關簽核人（建立、重新送出共用；展開規則在 services/approvalStepBuilder.js，流程預覽與流程試算也用它）。
+ * 必簽的主管關卡找不到可簽核的主管時改送最高層簽核人（任一位核准即可，關卡上記下 fallback 說明）；
+ * 必簽關卡找不到人、或所有關卡都沒有人（會變成無人簽核直接通過）時回報 REQUIRED_APPROVER_MISSING；展開主管鏈後超過 20 關回報 TOO_MANY_STEPS。
+ * 回傳 { steps, logs }：logs 是要寫進單據紀錄的 { action, message }（改送最高層簽核人、關卡不適用、略過重複的簽核人、主管鏈的說明）。
  */
-async function buildRequestSteps({ wf, applicantEmp, form }) {
-  const workflowSteps = Array.from(wf.steps || [])
-  const resolved = []
-  for (let position = 0; position < workflowSteps.length; position += 1) {
-    const source = workflowSteps[position]
-    const { ids, reason, fallback } = await resolveStepApprovers(source, applicantEmp)
-    const approverIds = []
-    const seen = new Set()
-    for (const rawId of ids || []) {
-      const id = rawId != null ? String(rawId) : ''
-      if (!id || seen.has(id)) continue
-      seen.add(id)
-      approverIds.push(id)
-    }
-    resolved.push({ source, position, approverIds, reason, fallback: approverIds.length ? fallback || null : null })
+async function buildRequestSteps({ wf, applicantEmp, form, leave = null }) {
+  try {
+    const { steps, logs } = await buildWorkflowRequestSteps({ wf, applicantEmp, form, leave })
+    return { steps, logs }
+  } catch (error) {
+    if (error instanceof StepBuildError) throw fail(error.status, error.message, error.extra)
+    throw error
   }
-
-  const missing = resolved.find(item => item.source.is_required !== false && !item.approverIds.length)
-  if (missing) throw missingApproverError(form, missing)
-  if (resolved.length && !resolved.some(item => item.approverIds.length)) {
-    throw missingApproverError(form, resolved[0])
-  }
-
-  // 連續且簽核人與設定完全相同的關卡合併成一關
-  const steps = []
-  const fallbackLogs = []
-  let previousSignature = null
-  for (const item of resolved) {
-    const normalizedConfig = {
-      approvers: [...item.approverIds].sort(),
-      // 改送最高層簽核人的關卡：任一位核准即可
-      all_must_approve: item.fallback ? false : item.source.all_must_approve !== false,
-      is_required: item.source.is_required !== false,
-      can_return: item.source.can_return !== false,
-    }
-    if (item.fallback) {
-      const reasonText = item.fallback.reason_text ? `（${item.fallback.reason_text}）` : ''
-      fallbackLogs.push(`第${item.position + 1}關（${describeWorkflowStep(item.source)}）${reasonText}：${item.fallback.text}`)
-    }
-    const signature = JSON.stringify(normalizedConfig)
-    if (signature === previousSignature) {
-      // 和前一關合併：前一關沒有說明時把這關的說明帶過去
-      const previous = steps[steps.length - 1]
-      if (item.fallback && previous && !previous.fallback) previous.fallback = { ...item.fallback }
-      continue
-    }
-    previousSignature = signature
-    steps.push({
-      step_order: steps.length + 1,
-      approvers: buildDecisionList(item.approverIds),
-      all_must_approve: normalizedConfig.all_must_approve,
-      is_required: normalizedConfig.is_required,
-      can_return: normalizedConfig.can_return,
-      ...(item.fallback ? { fallback: { ...item.fallback } } : {}),
-    })
-  }
-  return { steps, fallbackLogs }
 }
 
 /*
@@ -426,11 +331,11 @@ export async function downloadApprovalAttachment(req, res) {
 
     const doc = await ApprovalRequest.findById(requestId).lean()
     if (!doc) return res.status(404).json({ error: MESSAGES.notFound })
-    // 與開啟明細同一條規則：管理員、申請人與簽核人，以及申請人在自己排班範圍內的主管（唯讀）
+    // 管理員、申請人與簽核人，以及申請人的直屬主管（唯讀）；只因為排班範圍看得到明細的排班人員不能下載附件
     if (
       req.user?.role !== 'admin'
       && !isApprovalParticipant(doc, actorId)
-      && !(await isApplicantInScheduleScope(req, doc.applicant_employee))
+      && !(await resolveApplicantViewAccess(req, doc)).canDownload
     ) {
       return res.status(404).json({ error: MESSAGES.notFound })
     }
@@ -528,17 +433,18 @@ function leaveYearOf(formData, leaveFields) {
   return Number(startKey?.slice(0, 4)) || currentTaipeiYear()
 }
 
-// 班表查不到（例如資料庫暫時有問題）就用每日上限，不能因此擋住送出申請
+// 班表查不到（例如資料庫暫時有問題）就用每日上限，不能因此擋住送出申請。
+// 回傳 { ceilings, schedule }：schedule 是讀到的班表，關卡條件「排班日數」直接沿用，不再查一次
 async function loadDayCeilings({ applicantEmp, startValue, endValue, startType, endType, policy }) {
   try {
-    if (!applicantEmp?._id) return null
+    if (!applicantEmp?._id) return { ceilings: null, schedule: null }
     const interval = parseLeaveInterval(startValue, endValue, { startType, endType })
-    if (!interval || interval.reversed) return null
+    if (!interval || interval.reversed) return { ceilings: null, schedule: null }
     const schedule = await loadScheduledShiftHours(applicantEmp._id, interval.startKey, interval.lastKey)
-    return extraCeilings(schedule, policy.maxHoursPerDay)
+    return { ceilings: extraCeilings(schedule, policy.maxHoursPerDay), schedule }
   } catch (error) {
     console.error(`[LeaveHours] Schedule lookup skipped: ${error?.name || 'Error'}`)
-    return null
+    return { ceilings: null, schedule: null }
   }
 }
 
@@ -548,11 +454,12 @@ async function loadDayCeilings({ applicantEmp, startValue, endValue, startType, 
  * - 特休：尚未設定特休時數的員工不以餘額擋下；超過剩餘時數擋下（400 ANNUAL_LEAVE_INSUFFICIENT）。
  * - 事假、病假等：超額處理設為「禁止」時擋下（400 LEAVE_QUOTA_INSUFFICIENT），設為「警告」時照常送出並回傳警告。
  * - 調休：超過可用時數擋下（400 COMP_LEAVE_INSUFFICIENT）；lockCompLeave(員工 _id) 在檢查存摺前呼叫（拿調休申請鎖，見 acquireCompFilingLease）。
- * 回傳 { warnings }（給 201 回應附上）。
+ * 回傳 { warnings, leave }：warnings 給 201 回應附上；leave 是這張假單的長度（時數、日曆日，關卡的適用條件用，見 approvalStepBuilder.computeLeaveLength），
+ * 不是請假表單時是 null。
  */
 async function assertLeaveAllowed({ form, formData, applicantEmp, fields = null, lockCompLeave = null }) {
   const analysis = await analyzeLeaveRequest(form, formData)
-  if (!analysis) return { warnings: [] }
+  if (!analysis) return { warnings: [], leave: null }
   const { leaveFields } = analysis
   if (analysis.invalidRange) {
     throw fail(400, '請假結束日期不可早於開始日期', { code: 'INVALID_LEAVE_RANGE' })
@@ -568,9 +475,14 @@ async function assertLeaveAllowed({ form, formData, applicantEmp, fields = null,
   const startType = fieldTypeOf(fields, leaveFields.startId)
   const endType = fieldTypeOf(fields, leaveFields.endId)
   // 班表上排了比每日上限更長的班（例如 12 小時班）的日子，那天可以請整個班的時數
-  const dayCeilings = isLeaveHoursFilled(hoursValue)
+  const { ceilings: dayCeilings, schedule } = isLeaveHoursFilled(hoursValue)
     ? await loadDayCeilings({ applicantEmp, startValue, endValue, startType, endType, policy })
-    : null
+    : { ceilings: null, schedule: null }
+  // 關卡的適用條件（請假滿 N 小時／日才需要）用的請假長度；讀過的班表帶著，「排班日數」不再查一次
+  const leave = {
+    ...computeLeaveLength({ hours: analysis.hours, startValue, endValue, startType, endType, employeeId: applicantEmp?._id }),
+    ...(schedule ? { schedule } : {}),
+  }
   const hoursViolations = checkLeaveHours({
     hoursValue,
     hoursFieldId: leaveFields.hoursId,
@@ -586,7 +498,7 @@ async function assertLeaveAllowed({ form, formData, applicantEmp, fields = null,
 
   if (analysis.isAnnual) {
     const annual = readAnnualLeaveHours(applicantEmp?.annualLeave)
-    if (!annual.configured) return { warnings: [] }
+    if (!annual.configured) return { warnings: [], leave }
     if (analysis.hours > annual.remainingHours) {
       throw fail(
         400,
@@ -594,17 +506,17 @@ async function assertLeaveAllowed({ form, formData, applicantEmp, fields = null,
         { code: 'ANNUAL_LEAVE_INSUFFICIENT', remainingHours: annual.remainingHours, requestedHours: analysis.hours },
       )
     }
-    return { warnings: [] }
+    return { warnings: [], leave }
   }
 
   if (isCompLeaveAnalysis(analysis, policy)) {
     // 先拿這位員工的調休申請鎖（呼叫端建立單據後才放開），同時送出的另一筆會等這筆建立好再檢查
     if (lockCompLeave && applicantEmp?._id) await lockCompLeave(applicantEmp._id)
     await assertCompLeaveAvailable({ hours: analysis.hours, employeeId: applicantEmp?._id, policy })
-    return { warnings: [] }
+    return { warnings: [], leave }
   }
 
-  return { warnings: await checkLeaveQuota({ analysis, formData, applicantEmp, policy }) }
+  return { warnings: await checkLeaveQuota({ analysis, formData, applicantEmp, policy }), leave }
 }
 
 /*
@@ -929,8 +841,8 @@ export async function createApprovalRequest(req, res) {
       lockCompLeave: async (employeeId) => { compLease = await acquireCompFilingLease(employeeId) },
     })
 
-    // 依每關解析審核人（主管關卡找不到主管時改送最高層簽核人）
-    const { steps, fallbackLogs } = await buildRequestSteps({ wf, applicantEmp, form })
+    // 依每關解析審核人（主管關卡找不到主管時改送最高層簽核人；請假表單依請假長度決定有條件的關卡要不要）
+    const { steps, logs: stepLogs } = await buildRequestSteps({ wf, applicantEmp, form, leave: leaveCheck.leave })
 
     // 附件：只能用自己上傳、尚未用過的檔案；通過後綁定到這張單
     requestId = newRequestId()
@@ -944,7 +856,7 @@ export async function createApprovalRequest(req, res) {
       steps,
       logs: [
         { action: 'create', by_employee: applicantRef, message: '建立送審單' },
-        ...fallbackLogs.map(message => ({ action: 'approver_fallback', message })),
+        ...stepLogs.map(log => ({ action: log.action, message: log.message })),
       ],
     }
     // 進入第一個有簽核人的關卡（前面沒有人的選填關卡略過）
@@ -1069,9 +981,9 @@ export async function getApprovalRequest(req, res) {
       .populate('logs.by_employee', DETAIL_PERSON_FIELDS)
     if (!doc) return res.status(404).json({ error: MESSAGES.notFound })
     const isAdmin = req.user?.role === 'admin'
-    // 簽核人與申請人之外，申請人在排班範圍內的主管也可以唯讀開啟（排班頁「相關簽核」列出這些單）；
-    // 簽核、撤回、重送的權限仍只看簽核人與申請人，下方 viewer 的判斷不受影響
-    if (!isAdmin && !isApprovalParticipant(doc, actorId) && !(await isApplicantInScheduleScope(req, doc.applicant_employee))) {
+    // 簽核人與申請人之外，申請人的直屬主管（任何表單），與申請人在排班範圍內的排班人員（只限請假、加班、換班；
+    // 排班頁「相關簽核」列出這些單）也可以唯讀開啟；簽核、撤回、重送的權限仍只看簽核人與申請人，下方 viewer 的判斷不受影響
+    if (!isAdmin && !isApprovalParticipant(doc, actorId) && !(await resolveApplicantViewAccess(req, doc)).canView) {
       return res.status(404).json({ error: MESSAGES.notFound })
     }
 
@@ -1260,6 +1172,8 @@ function buildHistoryItem(obj, empId, { isAdmin }) {
         decision: approver.decision,
         decided_at: approver.decided_at,
         comment: approver.comment,
+        // 主管鏈的關卡有名稱（第n級主管），歷史清單顯示在決議後面；其他關卡沒有這個欄位
+        ...(step.name ? { step_name: step.name } : {}),
       }
       if (normalizeId(approver.approver) === empId) mine.push(action)
       else others.push({ ...action, approver: approver.approver })
@@ -1667,11 +1581,12 @@ export async function resubmitApprovalRequest(req, res) {
       // 重新解析簽核人（人員、標籤、主管可能已經更動）；流程設定已不存在時沿用原本的簽核人
       const wf = (doc.workflow ? await ApprovalWorkflow.findById(doc.workflow) : null)
         || await ApprovalWorkflow.findOne({ form: form._id })
-      let fallbackLogs = []
+      // 請假長度改了（例如 6.5 日改成 7 日）時，有條件的關卡依新的長度重新判斷
+      let stepLogs = []
       if (wf?.steps?.length) {
-        const rebuilt = await buildRequestSteps({ wf, applicantEmp, form })
+        const rebuilt = await buildRequestSteps({ wf, applicantEmp, form, leave: leaveCheck.leave })
         doc.steps = rebuilt.steps
-        fallbackLogs = rebuilt.fallbackLogs
+        stepLogs = rebuilt.logs
       } else if (doc.steps.some(step => step.is_required !== false && !(step.approvers || []).length)) {
         throw fail(400, `【${form.name}】的簽核流程已不存在且沒有簽核人，請聯絡管理員`, { code: 'REQUIRED_APPROVER_MISSING' })
       }
@@ -1702,7 +1617,7 @@ export async function resubmitApprovalRequest(req, res) {
         comment,
         by_employee: actorId,
       })
-      fallbackLogs.forEach(message => doc.logs.push({ action: 'approver_fallback', message }))
+      stepLogs.forEach(log => doc.logs.push({ action: log.action, message: log.message }))
       const transition = restartRequest(doc, at)
       await doc.save()
       return { doc, transition, leaveWarnings: leaveCheck.warnings }

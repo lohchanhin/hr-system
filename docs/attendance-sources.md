@@ -46,6 +46,13 @@
 - 同一班重複的線上簽到／簽退仍然擋下（409）；**指紋匯入的打卡不擋線上打卡**，兩邊都保留，計算時互補。沒有來源的舊資料視同線上打卡，照舊會擋。
 - 線上簽退前要有這一班的簽到：線上或指紋匯入的簽到都算（不變）。
   注意：指紋簽到要等管理者匯入後系統才看得到；在匯入之前用線上簽退，仍會因為「沒有簽到」被擋下（維持原本的規則）。
+- 打卡算哪一班：讀昨天、今天、**明天**的班表，先照原本的方式選（現在在上班時間內的班 → 今天的班 → 昨天的跨日班），
+  選到的班現在不能做這個動作時，改用打卡時段包含現在的那一班（好幾班都包含時取時間最接近的：簽到比上班時間、簽退比下班時間）。
+  - 00:00 開始的大夜班，前一晚 23:00（簽到緩衝提早 60 分鐘）起就能簽到，記在明天的大夜班上。
+    原本只讀今天與昨天的班表，23:50 簽到會回 400「今日未設定班表，請洽管理員」，或被當成今天已經下班的日班而回「時段已結束」。
+  - 今天排休、明天大夜：23:00 以後的簽到照樣可以打（記在明天的班）；其他時間、其他動作仍以「今日為休息日」回覆。
+  - 昨天夜班（20:00-08:00）接今天日班：07:55 的簽到算今天的日班、08:05 的簽退算昨天的夜班（原本兩個都會被擋）。
+  - 明天的班只在現在已經落在它的打卡時段內時才看；其他情況（包含錯誤訊息）與原本相同。
 
 ## 計算：簽到取最早、簽退取最晚
 
@@ -55,13 +62,36 @@
 - 簽到取簽到時段內最早的一筆，簽退取簽退時段內、晚於簽到的最晚一筆，不分來源。
 - 例：08:10 線上簽到，之後匯入 07:55 簽到、17:05 簽退 → 這一班以 07:55-17:05 計算，不算遲到；之後再用線上在 17:20 簽退 → 簽退改取 17:20。
 
+### 同一筆打卡只算給一個班
+
+工時、出勤天數與部門報表的出勤、工時，用同一個檔案的 `matchSchedulesPunches`，把一位員工整個月的班表一起比對：
+
+1. 先依每一班的簽到、簽退時段比對（如上）。落在某一班時段內的打卡就保留給那一班；同一筆打卡落在兩個班的時段內時
+   （打卡緩衝設得很大才會發生），算給時間比較接近的那一班（簽到比上班時間、簽退比下班時間）。
+2. 時段內找不到簽到或簽退的班，才沿用原本依日期比對的方式（遲到超過簽到緩衝、提早超過簽退緩衝的人仍算得到工時），但：
+   - 已經被任何一班用掉的打卡不再使用（依日期比對用到的也保留給那一班）；
+   - 簽到要早於這一班的下班時間；
+   - 簽退要晚於上班時間與簽到，且不晚於下一個班表的開始時間（休息日等不用上班的班表以當天 00:00 為界，有填時間的以開始時間為界）；
+     後面沒有班表時（例如月底最後一班，下個月的班表不在這次計算裡），當作隔天休息：不晚於隔天 00:00；
+     跨日班（例如夜班 20:00-08:00）不晚於下班時間加簽退緩衝（預設 2 小時）。之後日期的班表最早也是隔天 00:00 才開始，不會拿到它的簽退。
+
+修正的問題（2026-11 複查時在真的資料庫重現）：大夜 00:00-08:00、日薪 2000，10/12 缺勤、10/13 上班
+（10/12 23:55 指紋簽到、10/13 08:04 線上簽退）。原本 10/12 依日期比對拿到 23:55 的簽到與隔天的簽退，
+10/12、10/13 都算 8.15 小時，`/api/payroll/complete-data` 回 `workDays: 2`、`baseSalary: 4000`；修正後是 1 天、2000。
+日班（缺勤那天拿到隔天 07:55 的簽到）、小夜缺勤接大夜、夜班 20:00-08:00 中間缺勤、只打簽到忘了簽退（原本會拿隔天的簽退，算成 30 幾個小時）也都是同一個問題。
+
+對既有資料的影響：部署後重新計算時，缺勤那天不再被算成出勤（日薪、時薪人員的薪資、出勤天數、部門報表的出勤與工時會變少，變成正確的數字）；
+有出勤的那天不受影響（下班超過簽退緩衝才用指紋簽退的加班，月中、月底最後一班都照樣算）。比較少見的情況：
+月底最後一班是跨日班、又在下班超過簽退緩衝之後才簽退（而且簽退時段內沒有任何簽退），那天不再算出勤；需要時調大「打卡緩衝」的簽退延後時間。
+
 各處的使用：
 
 | 功能 | 檔案 | 說明 |
 | --- | --- | --- |
-| 薪資工時、出勤天數、每日出勤明細 | `services/workHoursCalculationService.js` | 先依班別時段比對；時段內找不到時才沿用原本依日期比對的方式（例如遲到超過打卡緩衝的人仍算得到工時）。每日明細多了 `clockInSource`、`clockOutSource`。 |
-| 遲到早退扣款 | `services/attendanceDeductionService.js` | 原本就是「符合線上打卡 punchKey 或落在打卡時段內」一起比對，簽到取最早、簽退取最晚，匯入的打卡不會因為有線上打卡而被忽略（已補測試）。 |
-| 部門報表：出勤、遲到、早退、工時 | `services/reportMetricsService.js` | 遲到、早退改依班別時段比對（與薪資扣款一致，時間以台灣時間顯示）；出勤與工時先依時段比對，找不到再沿用依日期比對。 |
+| 薪資工時、出勤天數、每日出勤明細 | `services/workHoursCalculationService.js` | 整個月的班表一起比對（`matchSchedulesPunches`）：先依班別時段，找不到才依日期比對，同一筆打卡只算給一個班。每日明細有 `clockInSource`、`clockOutSource`。 |
+| 遲到早退扣款 | `services/attendanceDeductionService.js` | 原本就是「符合線上打卡 punchKey 或落在打卡時段內」一起比對，簽到取最早、簽退取最晚，匯入的打卡不會因為有線上打卡而被忽略（已補測試）。只看打卡時段，缺勤那天不會有遲到早退（已補測試）。 |
+| 部門報表：出勤、遲到、早退、工時 | `services/reportMetricsService.js` | 遲到、早退依班別時段比對（與薪資扣款一致，時間以台灣時間顯示），每一筆多了實際打卡的來源 `clockInSource`／`clockOutSource`；出勤與工時與薪資工時相同（`matchSchedulesPunches`）。 |
+| 部門報表的遲到、早退預覽與匯出 | `client/src/views/front/DepartmentReports.vue`、`controllers/reportController.js` | 預覽表格「實際打卡」的時間旁標示來源（線上／指紋匯入／未標示）；Excel／PDF 在「實際打卡」右邊多一欄「打卡來源」。 |
 | 打卡記錄（員工出勤打卡頁） | `client/src/views/front/Attendance.vue` | 每筆打卡顯示來源（線上／指紋匯入／未標示）。 |
 | 薪資明細的每日出勤明細 | `client/src/components/backComponents/SalaryManagementSetting.vue` | 上班、下班時間下方標示該筆打卡的來源。 |
 | 考勤資料匯入對話框 | `client/src/components/backComponents/AttendanceImportDialog.vue` | 說明只新增不覆蓋；預覽與結果顯示重複略過的列與筆數。 |
@@ -76,8 +106,12 @@
 ## 測試
 
 - `server/tests/attendanceSources.test.js`：比對工具、工時、遲到早退、報表的混合來源情境（線上簽到＋指紋簽退、兩邊都有、指紋比線上早、舊資料、跨日大夜班）。
+- `server/tests/attendancePunchAssignment.test.js`：同一筆打卡只算給一個班（缺勤日、只打一半的日子、連續大夜、小夜過午夜、夜班跨日、日班、月底、舊資料），報表的出勤／工時與遲到早退的來源。
+- `server/tests/attendanceOvernightClockIn.test.js`：線上打卡讀明天的班表（00:00 大夜前一晚簽到），其他班別照舊。
+- `server/tests/reportPunchSourceExport.test.js`：遲到、早退匯出的「打卡來源」欄。
+- `server/tests/attendancePunchAssignment.integration.test.js`（真的 MongoDB，預設略過，指定 `APPROVAL_ENGINE_TEST_MONGODB_URI` 才執行）：大夜缺勤日的薪資（`/api/payroll/complete-data`）、報表、前一晚的線上簽到、5000 筆 CSV 匯入。
 - `server/tests/attendanceImport.test.js`：匯入標示來源、只新增不修改／刪除、檔案內與資料庫重複略過、重複匯入、預覽、跨批次、資料庫錯誤。
 - `server/tests/attendance.test.js`：線上打卡標示來源、匯入的打卡不擋線上打卡、匯入的簽到可作為線上簽退前的簽到。
 - `server/tests/attendanceSources.integration.test.js`（真的 MongoDB，預設略過）：
   `APPROVAL_ENGINE_TEST_MONGODB_URI=mongodb://127.0.0.1:<port> npm test -- tests/attendanceSources.integration.test.js`
-- 前端：`client/tests/attendance.spec.js`、`client/tests/salaryPunchSource.spec.js`、`client/src/components/backComponents/__tests__/AttendanceImportDialog.spec.js`、`client/src/utils/__tests__/attendanceSource.spec.js`。
+- 前端：`client/tests/attendance.spec.js`、`client/tests/salaryPunchSource.spec.js`、`client/tests/departmentReportsPunchSource.spec.js`、`client/src/components/backComponents/__tests__/AttendanceImportDialog.spec.js`、`client/src/utils/__tests__/attendanceSource.spec.js`。

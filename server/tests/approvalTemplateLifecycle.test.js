@@ -19,6 +19,12 @@ const mockApprovalWorkflow = {
 }
 const mockApprovalRequest = { countDocuments: jest.fn() }
 const mockResetLeaveFieldCache = jest.fn()
+// 刪除 / 停用表單時會整理部門的「使用簽核表單」（見 formDepartmentCleanup.test.js）：這裡沒有部門勾選任何表單
+const mockDepartment = {
+  find: jest.fn(() => ({ select: () => ({ lean: async () => [] }) })),
+  findById: jest.fn(() => ({ select: () => ({ lean: async () => null }) })),
+  updateMany: jest.fn(async () => ({ modifiedCount: 0 })),
+}
 
 let controller
 
@@ -29,6 +35,7 @@ beforeAll(async () => {
   await jest.unstable_mockModule('../src/models/form_field.js', () => ({ default: mockFormField }))
   await jest.unstable_mockModule('../src/models/approval_workflow.js', () => ({ default: mockApprovalWorkflow }))
   await jest.unstable_mockModule('../src/models/approval_request.js', () => ({ default: mockApprovalRequest }))
+  await jest.unstable_mockModule('../src/models/Department.js', () => ({ default: mockDepartment }))
   await jest.unstable_mockModule('../src/services/leaveFieldService.js', () => ({ resetLeaveFieldCache: mockResetLeaveFieldCache }))
   await jest.unstable_mockModule('../src/services/otherControlSettingsStore.js', () => ({
     getSettings: jest.fn().mockResolvedValue({ itemSettings: {} }),

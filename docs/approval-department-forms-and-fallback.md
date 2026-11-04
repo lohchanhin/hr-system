@@ -17,20 +17,39 @@
 | 管理員 | 全部（表單設計、簽核流程設定不受影響） |
 
 - 依的是**申請人自己的部門**（員工資料的「部門」），小單位不另外設定。
-- `GET /api/approvals/forms`：一般員工、主管只回部門開放的表單，回應標頭 `X-Form-Visibility: department`（沒篩選時是 `all`）；申請頁看到 `department` 時在表單選單下方提示「目前只列出您所屬部門開放使用的表單；找不到需要的表單請洽管理員」。
+- `GET /api/approvals/forms`：一般員工、主管只回部門開放的表單，回應標頭 `X-Form-Visibility: department`（沒篩選時是 `all`）；申請頁看到 `department` 時在表單選單下方提示「目前只列出您所屬部門開放使用的表單；找不到需要的表單請洽管理員」。這個標頭列在 CORS 的 `exposedHeaders`（`server/src/index.js`），前端與 API 不同網域（`FRONTEND_URL`）時瀏覽器才讀得到、提示才會出現。
 - 不能用的表單：`GET /api/approvals/forms/:id`、`/forms/:id/fields`、`/forms/:id/workflow`（有關卡時）回 403 `FORM_NOT_ALLOWED`；**送出（`POST /api/approvals`）與退回後重新送出（`POST /api/approvals/:id/resubmit`）也回 403**，訊息例如「您所屬的部門未開放使用【加班申請】，請改選其他表單；如需使用請洽管理員」，什麼都不會存。
 - 已經送出的單據不受影響：簽核、開啟明細、撤回都照常；簽核人看別的部門員工送來的單據也照常。退回的單如果表單已經不開放，申請人只能撤回。
 - 申請頁：重新載入清單後原本選的表單不見了（停用或部門不再開放），或送出時收到 403，會清掉選擇並在上方說明原因（「「加班申請」已不在可申請的表單中（可能已停用，或您所屬的部門未開放使用），請改選其他表單」或伺服器的訊息）。
 - 每次都即時讀部門設定（沒有快取），管理員改了部門設定，員工重新整理就生效。
-- 勾選的表單之後被刪除：清單裡就少那一張；如果勾選的全部被刪掉，這個部門的員工會看不到任何表單，請到部門設定重新勾選或清空。
 
-程式：`server/src/services/formVisibilityService.js`（`getFormVisibilityForUser`、`isFormAllowed`），`approvalTemplateController`（清單、樣板、欄位、流程預覽）、`approvalRequestController`（建立、重新送出）。
+### 勾選的表單之後被刪除或停用
+
+部門**一定不會因為勾選的表單不能用了而一張表單都看不到**：
+
+| 情況 | 部門的勾選 | 員工看得到 |
+| --- | --- | --- |
+| 表單真的被刪除（從來沒有申請單用過，「刪除」） | 刪除時從每個部門的勾選拿掉（`$pull`）；清空的部門 = 沒有勾選 | 其餘勾選的表單；清空了就是全部表單 |
+| 「刪除」已有申請單的表單（系統改為停用），或在「編輯」把表單停用 | 不動（重新啟用就恢復） | 其餘勾選、啟用中的表單；**勾選的表單全部停用或刪除時視同沒有勾選**，看得到全部啟用中的表單 |
+| 以前刪除留下的 id（這版之前刪除的表單、或拿掉時資料庫失敗） | 留著，讀取時不算；管理員下次儲存部門設定時拿掉 | 同上：不算那個 id，全部都不存在就是全部表單 |
+
+- 決定「勾選的表單全部停用 = 全部表單」而不是「一張都不能申請」：表單停用常常只是暫時（例如改版、「刪除」已有申請單的表單），護理部只勾選請假單時把請假單停用，不能讓護理師連假都請不了；和刪除後清空的效果一致；勾選本身不改，重新啟用其中一張，部門又只看得到勾選的表單。
+- 管理員看得到的提醒：
+  - 刪除：`DELETE /api/approvals/forms/:id` 回 `departmentsUpdated`（拿掉的部門數）、`departmentsUsingAllForms`（因此清空、改為全部表單的部門數），`message` 例如「已刪除表單樣板；已從 2 個部門的「使用簽核表單」拿掉這張表單，其中 1 個部門因此沒有勾選可用的表單，改為看得到全部表單」。
+  - 改為停用（已有申請單）：回 `departmentsUsingAllForms`，`message` 後面多一句「另外有 N 個部門勾選的表單都已停用或刪除，這些部門的員工改為看得到全部啟用中的表單；如需限制請到部門設定調整「使用簽核表單」」（簽核流程設定頁會顯示這段訊息）。
+  - 部門設定的「使用簽核表單」選單把勾選中的停用表單標成「（已停用）」、已刪除的標成「已刪除的表單」。
+- 部門設定儲存時（`POST` / `PUT /api/departments`）：已經被刪除的表單直接拿掉、不再回 400「使用簽核表單包含不存在的表單」（以前部門留著刪除過的表單 id 就再也存不了）；全部都被刪除就是空白（全部表單）。格式不對（不是陣列、不是表單編號）仍回 400「使用簽核表單格式不正確」。
+- 勾選中、但已停用的表單仍算在部門的勾選裡：員工直接送出它時看到的是「表單已停用」，不是「部門未開放」。
+- 從部門拿掉的動作在表單刪除**之後**：中途失敗頂多留下一個已刪除表單的 id（讀取時不算），不會先拿掉一張還在的表單；失敗只記錄錯誤名稱，刪除照樣成功。
+- 已知限制：在「編輯」直接把表單停用時，回應沒有部門提醒（`PUT /api/approvals/forms/:id` 回傳的仍是表單本身）；刪除成功時簽核流程設定頁顯示固定的「已刪除表單樣板」，部門的筆數只在回應的 `message` 裡。
+
+程式：`server/src/services/formVisibilityService.js`（`getFormVisibilityForUser`、`isFormAllowed`、`removeFormFromDepartments`、`describeDepartmentsUsingForm`），`approvalTemplateController`（清單、樣板、欄位、流程預覽、刪除）、`approvalRequestController`（建立、重新送出）、`departmentController`（部門設定的儲存）。
 
 ## R5 無上級主管時的簽核人
 
 決定：**主管關卡找不到可簽核的主管時，改送可設定的「最高層簽核人」**；預設是所有在職的系統管理員（不含申請人），任一位核准即可。只有連最高層簽核人都沒有時，才維持原本的錯誤。
 
-- **什麼時候改送**：流程裡「必簽」的主管關卡（「申請者的主管」或「指定主管」），而且找不到可簽核的主管：
+- **什麼時候改送**：流程裡「必簽」的主管關卡（「申請者的主管」「指定主管」，或一位主管都沒有的「主管鏈」，見 [主管鏈](approval-supervisor-chain.md)），而且找不到可簽核的主管：
   - 申請人沒有設定直屬主管（`no-supervisor`）；
   - 主管就是申請人本人（`only-applicant`，例如管理員的主管欄位填了自己）；
   - 直屬主管已離職、停用或留職停薪（`supervisor-inactive`）；
@@ -60,11 +79,11 @@
 
 ## 部署
 
-不需要資料轉換：`Department.allowedFormIds` 預設空白（全部表單，和以前一樣），`topLevelApproverIds` 沒有值（系統管理員）。部署步驟不變：`git pull` → `npm ci` → 建置前端 → `pm2 restart`。
+不需要資料轉換：`Department.allowedFormIds` 預設空白（全部表單，和以前一樣），`topLevelApproverIds` 沒有值（系統管理員）。部門勾選裡以前刪除留下的表單 id 不需要清理（讀取時不算，管理員下次儲存部門設定時拿掉）。部署步驟不變：`git pull` → `npm ci` → 建置前端 → `pm2 restart`。
 
 **行為變更（請告知人資）**：以前「申請者的主管」找不到人時申請會失敗，現在會改送系統管理員（或指定的最高層簽核人）；直屬主管離職而還沒更新員工資料時，單據會送到管理員那裡，而不是送不出去。
 
 ## 對應的測試
 
-- 伺服器：`formVisibility.test.js`（部門篩選、沒勾選、沒部門、管理員；樣板、欄位 403；404 先於部門檢查）、`approvalWorkflow.test.js`（建立：改送管理員、設定的人、申請人不簽自己的單、設定的人就是申請人時改送管理員、主管離職與指定主管失效、選填關卡照舊略過、重新送出重新解析、合併關卡保留說明、連改送都沒有人時維持原本錯誤；部門表單 403 與重新送出 403）、`workflowPreview.test.js`（預覽的改送說明與部門 403）、`topLevelApprovers.test.js`（改送規則、設定 API 的權限與驗證）、`approvalRoutesAuthorization.test.js`、`approvalEngine.integration.test.js`（直屬主管離職：改送管理員，沒有管理員時維持原本錯誤）、真實 MongoDB 的 `formsApprovalsComp.integration.test.js`（護理部只看得到請假單、加班單 403、行政部與沒部門的人全部、管理員全部、改部門設定立即生效；院長層級的護理長自己請假送到系統管理員、任一位核准、預覽先說明、指定最高層簽核人、最高層簽核人自己請假改送管理員、管理員沒有主管時送給另一位管理員、都沒有人時維持原本錯誤）。
+- 伺服器：`formVisibility.test.js`（部門篩選、沒勾選、沒部門、管理員；樣板、欄位 403；404 先於部門檢查）、`formDepartmentCleanup.test.js`（已刪除的 id 不算、全部刪除 = 全部表單；勾選的表單全部停用 = 全部表單、勾選不動、重新啟用恢復，還有啟用中的就維持限制；刪除時從部門拿掉與回應的筆數、拿掉失敗時刪除照樣成功；改為停用時不動勾選並提醒；部門設定儲存時拿掉已刪除的表單、格式不對仍 400）、`schedulerAccessRoutes.test.js` 與真實 MongoDB 的 `schedulerAccess.integration.test.js`（部門設定的 API：已刪除的表單拿掉、格式不對 400）、`corsExposedHeaders.test.js`（跨網域讀得到 `X-Form-Visibility`）、真實 MongoDB 的 `formDepartmentCleanup.integration.test.js`（真的刪除、改為停用、以前留下的 id、部門設定儲存、跨網域標頭）、`approvalWorkflow.test.js`（建立：改送管理員、設定的人、申請人不簽自己的單、設定的人就是申請人時改送管理員、主管離職與指定主管失效、選填關卡照舊略過、重新送出重新解析、合併關卡保留說明、連改送都沒有人時維持原本錯誤；部門表單 403 與重新送出 403）、`workflowPreview.test.js`（預覽的改送說明與部門 403）、`topLevelApprovers.test.js`（改送規則、設定 API 的權限與驗證）、`approvalRoutesAuthorization.test.js`、`approvalEngine.integration.test.js`（直屬主管離職：改送管理員，沒有管理員時維持原本錯誤）、真實 MongoDB 的 `formsApprovalsComp.integration.test.js`（護理部只看得到請假單、加班單 403、行政部與沒部門的人全部、管理員全部、改部門設定立即生效；院長層級的護理長自己請假送到系統管理員、任一位核准、預覽先說明、指定最高層簽核人、最高層簽核人自己請假改送管理員、管理員沒有主管時送給另一位管理員、都沒有人時維持原本錯誤）。
 - 前端：`approvalFormVisibility.spec.js`（部門篩選提示、表單不見的說明、送出 403 後更新清單、流程預覽的改送說明）、`approvalFlowSettingTopLevel.spec.js`（無上級主管時的簽核人：說明、可選的人、儲存、改回預設、離職提醒、讀取失敗）、`approvalDetailContent.spec.js`、`approvalForm.spec.js`、`approvalDetailUtil.spec.js`。

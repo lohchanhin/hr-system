@@ -45,6 +45,14 @@
 - `CHECKTIME` 欄位 → `日期時間`
 - `CHECKTYPE` 欄位 → `簽到/退`
 
+## CSV 檔案的讀取
+
+- 編碼：UTF-8（有沒有 BOM 都可以）、UTF-16LE / UTF-16BE（需有 BOM）。換行 `\r\n`、`\n`、單獨的 `\r` 都可以，檔案最後的換行不會多出空白列。
+- 欄位以逗號分隔，含逗號的值用雙引號括起來（`"早班, 支援"`），引號內的雙引號寫兩次（`""`）；引號內不支援換行。
+- 整個檔案先讀成文字再逐行處理，筆數多的檔案（例如 5000 筆）也能預覽、匯入。
+  原本用 Node 的 readline 逐行讀，在 Node 24 上超過約 1024 行的 CSV 會讀到一半失敗（回 400「無法讀取匯入檔案」，錯誤為 `readline was closed`）；
+  測試：`server/tests/attendanceImportLargeCsv.test.js`（5000 筆，含 UTF-8 BOM + CRLF、UTF-16LE）。
+
 ## 時區與重複打卡
 
 - 可於匯入介面選擇時區（預設為 `Asia/Taipei`）。未帶有時區資訊的時間將依此設定換算為 UTC 儲存。

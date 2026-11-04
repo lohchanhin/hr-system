@@ -1,6 +1,8 @@
 import {
   computeActionWindow,
   computeShiftSpan,
+  createDateFromParts,
+  getLocalDateParts,
   getTimezone,
   normalizeActionBuffers,
 } from '../utils/timeWindow.js'
@@ -16,6 +18,7 @@ export const ATTENDANCE_SOURCE_LABELS = Object.freeze({
 })
 
 const MS_PER_MINUTE = 60 * 1000
+const MS_PER_DAY = 24 * 60 * MS_PER_MINUTE
 
 export function resolveAttendanceSource(record) {
   const source = record?.source
@@ -95,6 +98,134 @@ export function matchShiftPunches({ records = [], scheduleDate, shift, actionBuf
   }
 
   return { span, clockIn, clockOut }
+}
+
+// 原本依日期比對用的日期鍵：班表日期是 UTC 午夜，打卡取 UTC 日期（台灣 08:00 到隔天 08:00 是同一個鍵）
+function utcDateKey(time) {
+  return new Date(time).toISOString().slice(0, 10)
+}
+
+function localDayStart(scheduleDate, timeZone) {
+  const parts = getLocalDateParts(scheduleDate, timeZone)
+  return parts ? createDateFromParts(parts, timeZone) : null
+}
+
+/**
+ * 一位員工一段期間（例如一個月）的班表一起找打卡：同一筆打卡只算給一個班，一組打卡不會被兩個班表各算一次。
+ *
+ * 1. 先依每一班的簽到、簽退時段比對（與 matchShiftPunches 相同：簽到取最早、簽退取晚於簽到的最晚一筆）。
+ *    落在某一班時段內的打卡就保留給那一班；同一筆打卡落在兩個班的時段內時（打卡緩衝設得很大才會發生），
+ *    算給時間比較接近的那一班（簽到比上班時間、簽退比下班時間）。
+ * 2. 時段內找不到簽到或簽退的班，才沿用原本依日期比對的方式（例如遲到超過打卡緩衝的人仍算得到工時），但：
+ *    - 已經被任何一班用掉的打卡（時段比對到的、前面的班依日期比對用掉的）不再使用；
+ *    - 簽到要早於這一班的下班時間；
+ *    - 簽退要晚於上班時間與簽到，且不晚於下一個班表的開始時間；後面沒有班表時（例如月底最後一班，
+ *      下個月的班表不在這次計算裡），當作隔天休息：不晚於隔天 00:00，跨日班不晚於下班時間加簽退緩衝。
+ *      之後日期的班表最早也是隔天 00:00 才開始，不會拿到它的簽退。
+ *    依日期比對用到的打卡同樣保留給這一班。
+ *
+ * schedules：同一位員工的班表 [{ key, scheduleDate, shift, nonWork }]。不用上班的班表（nonWork）也要帶：
+ * 不比對打卡，只當作前一班簽退的界線。
+ * 回傳 Map(key → { span, clockIn, clockOut, windowClockIn, windowClockOut })：clockIn / clockOut 是這一班最後採用的打卡
+ * （原本的打卡資料，找不到為 null）；windowClockIn / windowClockOut 是時段內比對到的。不用上班的班表不在結果裡。
+ */
+export function matchSchedulesPunches({ records = [], schedules = [], actionBuffers, timeZone = getTimezone() }) {
+  const buffers = normalizeActionBuffers(actionBuffers)
+  const punches = (records || [])
+    .filter((record) => (record?.action === 'clockIn' || record?.action === 'clockOut') && Number.isFinite(toTime(record)))
+    .sort((a, b) => toTime(a) - toTime(b))
+
+  // 依開始時間排好的班表；不用上班的班表以當天 00:00（或班別的開始時間）當界線
+  const entries = []
+  for (const item of schedules || []) {
+    if (!item?.scheduleDate) continue
+    const span = item.shift ? computeShiftSpan(item.scheduleDate, item.shift, timeZone) : null
+    const boundary = span?.start ?? localDayStart(item.scheduleDate, timeZone)
+    if (!boundary) continue
+    entries.push({ ...item, span, boundary: boundary.getTime(), work: Boolean(item.shift) && !item.nonWork })
+  }
+  entries.sort((a, b) => a.boundary - b.boundary)
+  const workEntries = entries.filter((entry) => entry.work)
+  workEntries.forEach((entry) => {
+    const next = entries.find((other) => other.boundary > entry.boundary)
+    entry.nextStart = next ? next.boundary : null
+    // 後面沒有班表時的界線：隔天 00:00（與隔天排休相同）
+    entry.nextDayStart = localDayStart(new Date(new Date(entry.scheduleDate).getTime() + MS_PER_DAY), timeZone)?.getTime() ?? null
+    entry.windowRecords = []
+    if (!entry.span) return
+    entry.clockInWindow = computeActionWindow('clockIn', entry.span.start, entry.span.end, buffers)
+    entry.clockOutWindow = computeActionWindow('clockOut', entry.span.start, entry.span.end, buffers)
+  })
+
+  // 1. 時段比對：每一筆打卡最多屬於一個班
+  const used = new Set()
+  for (const record of punches) {
+    const time = toTime(record)
+    const isClockIn = record.action === 'clockIn'
+    let owner = null
+    let ownerDistance = Number.POSITIVE_INFINITY
+    for (const entry of workEntries) {
+      if (!isWithin(time, isClockIn ? entry.clockInWindow : entry.clockOutWindow)) continue
+      const distance = Math.abs(time - (isClockIn ? entry.span.start : entry.span.end).getTime())
+      if (distance < ownerDistance) {
+        owner = entry
+        ownerDistance = distance
+      }
+    }
+    if (owner) {
+      owner.windowRecords.push(record)
+      used.add(record)
+    }
+  }
+
+  // 2. 依日期比對（依時間先後一班一班來），只用還沒被用掉、而且落在這一班合理範圍內的打卡
+  const results = new Map()
+  for (const entry of workEntries) {
+    const matched = entry.span
+      ? matchShiftPunches({ records: entry.windowRecords, scheduleDate: entry.scheduleDate, shift: entry.shift, actionBuffers: buffers, timeZone })
+      : null
+    const windowClockIn = matched?.clockIn ?? null
+    const windowClockOut = matched?.clockOut ?? null
+    const spanStart = entry.span ? entry.span.start.getTime() : Number.NEGATIVE_INFINITY
+    const spanEnd = entry.span ? entry.span.end.getTime() : Number.POSITIVE_INFINITY
+    const unused = (action) => punches.filter((record) => record.action === action && !used.has(record))
+
+    let clockIn = windowClockIn
+    if (!clockIn) {
+      // 班表日期當天（UTC 日期）最早的簽到；跨日班再看前一天最晚的簽到
+      const candidates = unused('clockIn').filter((record) => toTime(record) < spanEnd)
+      const scheduleKey = utcDateKey(entry.scheduleDate)
+      clockIn = candidates.find((record) => utcDateKey(toTime(record)) === scheduleKey) ?? null
+      if (!clockIn && entry.shift.crossDay) {
+        const previousKey = utcDateKey(new Date(entry.scheduleDate).getTime() - MS_PER_DAY)
+        clockIn = candidates.filter((record) => utcDateKey(toTime(record)) === previousKey).at(-1) ?? null
+      }
+      if (clockIn) used.add(clockIn)
+    }
+
+    let clockOut = null
+    if (clockIn) {
+      const clockInTime = toTime(clockIn)
+      if (windowClockOut && toTime(windowClockOut) > clockInTime) {
+        clockOut = windowClockOut
+      } else {
+        // 簽到當天（UTC 日期）晚於簽到的第一筆簽退，沒有再看隔天的第一筆
+        const lower = Math.max(clockInTime, spanStart)
+        const upper = entry.nextStart
+          ?? Math.max(spanEnd + buffers.clockOut.lateMinutes * MS_PER_MINUTE, entry.nextDayStart ?? Number.NEGATIVE_INFINITY)
+        const candidates = unused('clockOut').filter((record) => toTime(record) > lower && toTime(record) <= upper)
+        const clockInKey = utcDateKey(clockInTime)
+        const nextKey = utcDateKey(clockInTime + MS_PER_DAY)
+        clockOut = candidates.find((record) => utcDateKey(toTime(record)) === clockInKey)
+          ?? candidates.find((record) => utcDateKey(toTime(record)) === nextKey)
+          ?? null
+        if (clockOut) used.add(clockOut)
+      }
+    }
+
+    results.set(entry.key, { span: entry.span, clockIn, clockOut, windowClockIn, windowClockOut })
+  }
+  return results
 }
 
 /** 找出某個時間點、某個動作的打卡來源（同一時間有多筆時取第一筆） */

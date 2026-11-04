@@ -1,12 +1,17 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
-import ElementPlus from 'element-plus'
+import ElementPlus, { ElMessage } from 'element-plus'
 import OrgDepartmentSetting from '../src/components/backComponents/OrgDepartmentSetting.vue'
 import { apiFetch } from '../src/api'
+import { backendHelpContent } from '../src/constants/backendHelpContent'
 
 vi.mock('../src/api', () => ({
   apiFetch: vi.fn(() => Promise.resolve({ ok: true, json: async () => [] }))
 }))
+
+// 對話框裡的 el-select（以 data-test 找）
+const findSelect = (wrapper, dataTest) =>
+  wrapper.findAllComponents({ name: 'ElSelect' }).find(select => select.attributes('data-test') === dataTest)
 
 describe('OrgDepartmentSetting.vue', () => {
   beforeEach(() => {
@@ -41,13 +46,14 @@ describe('OrgDepartmentSetting.vue', () => {
     expect(apiFetch).toHaveBeenCalledWith('/api/organizations', expect.objectContaining({ method: 'POST' }))
   })
 
+  // 客戶 2026/11「可以把一些沒有功能性的拿掉」：部門表單不再有統一編號、預設週休二日等沒有功能的欄位（資料保留在伺服器）
   it('shows organization select in dept form', async () => {
     const wrapper = mount(OrgDepartmentSetting, { global: { plugins: [ElementPlus] } })
     await wrapper.vm.openDialog('dept')
     expect(wrapper.findComponent({ name: 'ElSelect' }).exists()).toBe(true)
     expect(wrapper.vm.form).toHaveProperty('organization')
-    expect(wrapper.vm.form).toHaveProperty('defaultTwoDayOff', true)
-    expect(wrapper.vm.form).toHaveProperty('uniformNumber', '')
+    expect(wrapper.vm.form).not.toHaveProperty('defaultTwoDayOff')
+    expect(wrapper.vm.form).not.toHaveProperty('uniformNumber')
   })
 
   it('fetchList adds parent id query', async () => {
@@ -66,6 +72,7 @@ describe('OrgDepartmentSetting.vue', () => {
     ])
   })
 
+  // 預設週休二日、允許臨時調班、統一編號已不在畫面上：編輯時不帶入表單，存檔也不送（伺服器上的值不動）
   it('merges schedule defaults when editing dept without data', async () => {
     const wrapper = mount(OrgDepartmentSetting, { global: { plugins: [ElementPlus] } })
     wrapper.vm.deptList = [
@@ -77,10 +84,15 @@ describe('OrgDepartmentSetting.vue', () => {
       }
     ]
     await wrapper.vm.openDialog('dept', 0)
-    expect(wrapper.vm.form.defaultTwoDayOff).toBe(false)
-    expect(wrapper.vm.form.tempChangeAllowed).toBe(false)
-    expect(wrapper.vm.form).toHaveProperty('deptManager', '')
-    expect(wrapper.vm.form.uniformNumber).toBe('')
+    expect(wrapper.vm.form).toEqual({
+      organization: 'org1',
+      name: 'HR',
+      code: '',
+      unitName: '',
+      deptManager: '',
+      scheduleNotes: '',
+      allowedFormIds: []
+    })
   })
 
   it('saves department with schedule fields', async () => {
@@ -113,13 +125,15 @@ describe('OrgDepartmentSetting.vue', () => {
     expect(postCall).toBeTruthy()
     const [, options] = postCall
     const payload = JSON.parse(options.body)
-    expect(payload).toMatchObject({
-      defaultTwoDayOff: false,
-      tempChangeAllowed: true,
+    // 只送畫面上的欄位：預設週休二日、允許臨時調班與證號等不再送出（新增時用資料庫的預設值）
+    expect(payload).toEqual({
+      organization: 'org1',
+      name: '人資',
+      code: 'D1',
+      unitName: '',
       deptManager: 'mgr1',
       scheduleNotes: '備註',
-      uniformNumber: '12345678',
-      responsiblePerson: '王主管'
+      allowedFormIds: []
     })
     expect(apiFetch.mock.calls.some(([url]) => url.includes('break-settings'))).toBe(false)
   })
@@ -142,19 +156,19 @@ describe('OrgDepartmentSetting.vue', () => {
     expect(wrapper.vm.shiftOptions).toEqual(shifts)
   })
 
-  it('編輯小單位時會帶入既有班別', async () => {
+  // 客戶要求拿掉「班表拉選」與沒有功能的欄位（2026/11）：編輯時不再帶入，伺服器上的資料不動
+  it('編輯小單位時不再帶入班表拉選與沒有功能的舊欄位', async () => {
     const wrapper = mount(OrgDepartmentSetting, { global: { plugins: [ElementPlus] } })
     await new Promise(resolve => setTimeout(resolve, 0))
     wrapper.vm.subList = [
-      { _id: 'sd1', name: '夜班組', department: 'dept1', shift: 's2' }
+      { _id: 'sd1', name: '夜班組', department: 'dept1', shift: 's2', shiftId: 's2', uniformNumber: '12345678', manager: '王組長' }
     ]
     await wrapper.vm.$nextTick()
     await wrapper.vm.openDialog('sub', 0)
-    expect(wrapper.vm.form.shiftId).toBe('s2')
-    expect(wrapper.vm.form).not.toHaveProperty('shift')
+    expect(wrapper.vm.form).toEqual({ department: 'dept1', name: '夜班組', code: '', schedulers: [], allowedShiftIds: [] })
   })
 
-  it('儲存小單位時會包含班別ID', async () => {
+  it('新增小單位時只送畫面上的欄位（不再有班別ID與證號等欄位）', async () => {
     apiFetch.mockImplementation(url => {
       if (url === '/api/shifts') {
         return Promise.resolve({ ok: true, json: async () => [{ _id: 's1', name: '早班' }] })
@@ -165,15 +179,12 @@ describe('OrgDepartmentSetting.vue', () => {
     await wrapper.vm.openDialog('sub')
     await Promise.resolve()
     await Promise.resolve()
+    expect(wrapper.vm.form).toEqual({ name: '', code: '', department: '', schedulers: [], allowedShiftIds: [] })
     wrapper.vm.form = {
       ...wrapper.vm.form,
       name: '夜班組',
       department: 'dept1',
-      shiftId: 's1',
-      uniformNumber: '12345678',
-      laborInsuranceNumber: 'LAB001',
-      healthInsuranceNumber: 'HEA001',
-      taxRegistrationNumber: 'TAX001'
+      code: 'N1'
     }
     wrapper.vm.editIndex = null
     apiFetch.mockClear()
@@ -182,9 +193,7 @@ describe('OrgDepartmentSetting.vue', () => {
     expect(call).toBeTruthy()
     const [, options] = call
     const payload = JSON.parse(options.body)
-    expect(payload.shiftId).toBe('s1')
-    expect(payload).not.toHaveProperty('shift')
-    expect(payload.uniformNumber).toBe('12345678')
+    expect(payload).toEqual({ department: 'dept1', name: '夜班組', code: 'N1', schedulers: [], allowedShiftIds: [] })
   })
 
   it('顯示選取部門的機構與部門組合', async () => {
@@ -257,31 +266,38 @@ describe('OrgDepartmentSetting.vue', () => {
     it('saves the schedulers and the shifts of a unit, and copies them when editing', async () => {
       const wrapper = mount(OrgDepartmentSetting, { global: { plugins: [ElementPlus] } })
       await flushPromises()
-      wrapper.vm.subList = [{ _id: 'sd1', name: '內科', department: 'dept1', schedulers: ['e1'], allowedShiftIds: ['night'] }]
+      wrapper.vm.subList = [{ _id: 'sd1', name: '內科', department: 'dept1', schedulers: ['e1'], allowedShiftIds: ['night', 'rest'] }]
       await wrapper.vm.openDialog('sub', 0)
       expect(wrapper.vm.form.schedulers).toEqual(['e1'])
-      expect(wrapper.vm.form.allowedShiftIds).toEqual(['night'])
+      expect(wrapper.vm.form.allowedShiftIds).toEqual(['night', 'rest'])
+      // 選單只顯示上班的班別；舊設定裡選過的休息日照樣保留
+      expect(wrapper.vm.selectedWorkShiftIds).toEqual(['night'])
       wrapper.vm.form.schedulers.push('e2')
       expect(wrapper.vm.subList[0].schedulers).toEqual(['e1'])
 
-      wrapper.vm.form.allowedShiftIds = ['night', 'rest']
+      // 使用班別要從選單改（直接改資料不算有改，修改時不送這個欄位）
+      wrapper.vm.selectedWorkShiftIds = ['night', 'day']
       apiFetch.mockClear()
       await wrapper.vm.saveItem()
       const call = apiFetch.mock.calls.find(([url, options]) => url === '/api/sub-departments/sd1' && options?.method === 'PUT')
-      expect(JSON.parse(call[1].body)).toMatchObject({ schedulers: ['e1', 'e2'], allowedShiftIds: ['night', 'rest'] })
+      expect(JSON.parse(call[1].body)).toMatchObject({ schedulers: ['e1', 'e2'], allowedShiftIds: ['night', 'day', 'rest'] })
     })
 
-    it('warns when the chosen shifts have no day-off shift', async () => {
+    // 以前選了班別卻沒有休息類班別時會提醒「排班時將無法排休」；現在不用上班的班別一律可以用，選單只列上班的班別
+    it('lists only work shifts in 使用班別, says rest-type shifts are always available and no longer warns about a missing rest shift', async () => {
       const wrapper = mount(OrgDepartmentSetting, { global: { plugins: [ElementPlus] } })
       await flushPromises()
       await wrapper.vm.openDialog('sub')
-      expect(wrapper.vm.missingNonWorkShift).toBe(false)
-      wrapper.vm.form.allowedShiftIds = ['day', 'night']
-      await wrapper.vm.$nextTick()
-      expect(wrapper.vm.missingNonWorkShift).toBe(true)
-      wrapper.vm.form.allowedShiftIds = ['day', 'rest']
-      await wrapper.vm.$nextTick()
-      expect(wrapper.vm.missingNonWorkShift).toBe(false)
+      await flushPromises()
+      const select = findSelect(wrapper, 'sub-allowed-shifts')
+      expect(select.findAllComponents({ name: 'ElOption' }).map(option => option.props('value'))).toEqual(['day', 'night'])
+      expect(wrapper.find('[data-test="sub-shift-rest-hint"]').text()).toContain('不用上班的班別一律可以使用')
+
+      select.vm.$emit('update:modelValue', ['day', 'night'])
+      await flushPromises()
+      expect(wrapper.vm.form.allowedShiftIds).toEqual(['day', 'night'])
+      expect(wrapper.find('[data-test="sub-shift-rest-warning"]').exists()).toBe(false)
+      expect(wrapper.find('[data-test="sub-shift-no-work-warning"]').exists()).toBe(false)
     })
 
     it('saves the 使用簽核表單 of a department from the active forms', async () => {
@@ -311,7 +327,9 @@ describe('OrgDepartmentSetting.vue', () => {
       expect(wrapper.vm.schedulerNames({ schedulers: ['e1', 'gone'] })).toBe('王小明、已刪除的員工')
       expect(wrapper.vm.schedulerNames({})).toBe('未指定')
       expect(wrapper.vm.shiftScopeText({ allowedShiftIds: [] })).toBe('全部班別')
-      expect(wrapper.vm.shiftScopeText({ allowedShiftIds: ['night', 'rest'] })).toBe('N、休')
+      // 只摘要上班的班別（休息日一律可以用，與對話框相同）
+      expect(wrapper.vm.shiftScopeText({ allowedShiftIds: ['night', 'rest'] })).toBe('N')
+      expect(wrapper.vm.shiftScopeText({ allowedShiftIds: ['rest'] })).toBe('沒有上班班別')
     })
   })
 
@@ -330,5 +348,445 @@ describe('OrgDepartmentSetting.vue', () => {
     wrapper.vm.selectedDept = 'd2'
     await wrapper.vm.$nextTick()
     expect(wrapper.html()).toContain('目前部門：財務部')
+  })
+})
+
+// 客戶 2026/11：「將人力需求下面的排班拿掉，因為我們應該是使用最下方的使用班別」「可以把一些沒有功能性的拿掉」；
+// 不用上班的班別一律可以用；儲存失敗要看得到伺服器的原因
+describe('OrgDepartmentSetting.vue 小單位設定只留有功能的欄位', () => {
+  const DEPARTMENTS = [{ _id: '6650000000000000000000d1', name: '護理部', organization: '6650000000000000000000a1' }]
+  const SHIFTS = [
+    { _id: 'day', name: '白班', code: 'D', semanticType: 'work', startTime: '08:00', endTime: '16:00' },
+    { _id: 'night', name: '大夜', code: 'N', semanticType: 'work', startTime: '00:00', endTime: '08:00', crossDay: false },
+    { _id: 'rest', name: '休息日', code: '休', semanticType: 'rest_day', startTime: '00:00', endTime: '00:00' },
+    { _id: 'regular', name: '例假', code: '例', semanticType: 'regular_rest', startTime: '00:00', endTime: '00:00' },
+    { _id: 'holiday', name: '國定假日', code: '國', semanticType: 'holiday', startTime: '00:00', endTime: '00:00' },
+    { _id: 'personal', name: '事假', code: '事', semanticType: 'leave', startTime: '00:00', endTime: '00:00' }
+  ]
+  const MANAGERS = [{ label: '王小明', value: '6650000000000000000000e1', employeeId: 'N001', role: 'employee', active: true }]
+  // GET /api/sub-departments 回傳的樣子（formatSubDepartment：含 shift 與 shiftId、時間戳記）
+  const realUnit = overrides => ({
+    _id: '6650000000000000000000b1',
+    department: DEPARTMENTS[0]._id,
+    code: 'B1',
+    name: 'B1 病房',
+    unitName: '舊單位名稱',
+    institutionCode: 'IC-9',
+    uniformNumber: '12345678',
+    laborInsuranceNumber: 'LAB-1',
+    healthInsuranceNumber: 'HEA-1',
+    taxRegistrationNumber: 'TAX-1',
+    location: '三樓',
+    phone: '02-1234-5678',
+    responsiblePerson: '林負責',
+    manager: '王組長',
+    headcount: 12,
+    shift: 'day',
+    shiftId: 'day',
+    scheduleSetting: '舊排班設定',
+    schedulers: [MANAGERS[0].value],
+    allowedShiftIds: ['night', 'rest'],
+    createdAt: '2026-10-01T00:00:00.000Z',
+    updatedAt: '2026-10-02T00:00:00.000Z',
+    __v: 0,
+    ...overrides
+  })
+  let units
+  let saveResponse
+
+  beforeEach(() => {
+    apiFetch.mockClear()
+    units = [realUnit()]
+    saveResponse = () => Promise.resolve({ ok: true, status: 200, json: async () => units[0] })
+    apiFetch.mockImplementation((url, options = {}) => {
+      const path = String(url).split('?')[0]
+      if (options.method === 'PUT' || options.method === 'POST') return saveResponse(url, options)
+      if (path === '/api/departments') return Promise.resolve({ ok: true, json: async () => DEPARTMENTS })
+      if (path === '/api/sub-departments') return Promise.resolve({ ok: true, json: async () => units })
+      if (path === '/api/shifts') return Promise.resolve({ ok: true, json: async () => SHIFTS })
+      if (path === '/api/dept-managers') return Promise.resolve({ ok: true, json: async () => MANAGERS })
+      return Promise.resolve({ ok: true, json: async () => [] })
+    })
+  })
+
+  afterEach(() => {
+    ElMessage.closeAll()
+    document.body.innerHTML = ''
+  })
+
+  async function mountAndOpenUnit() {
+    const wrapper = mount(OrgDepartmentSetting, { global: { plugins: [ElementPlus] }, attachTo: document.body })
+    await flushPromises()
+    await wrapper.vm.openDialog('sub', 0)
+    await flushPromises()
+    return wrapper
+  }
+
+  const lastSave = () => {
+    const call = apiFetch.mock.calls.filter(([, options]) => options?.method === 'PUT' || options?.method === 'POST').at(-1)
+    return call ? { url: call[0], method: call[1].method, body: JSON.parse(call[1].body) } : null
+  }
+
+  it('shows only 所屬部門／名稱／代碼／排班人員／使用班別 in the dialog and drops the non-functional table columns', async () => {
+    const wrapper = await mountAndOpenUnit()
+    const labels = wrapper.findAll('.dialog-form .el-form-item__label').map(label => label.text())
+    expect(labels).toEqual(['所屬部門', '小單位名稱', '代碼', '排班人員', '使用班別'])
+    const dialogText = wrapper.find('.dialog-form').text()
+    // （「單位名稱」是「小單位名稱」的一部分，已由上面的欄位清單檢查）
+    for (const removed of ['班表拉選', '人力需求數', '部門主管', '負責人', '機構代碼', '統一編號', '勞保證號', '健保編號', '稅籍編號', '連絡電話', '位置']) {
+      expect(dialogText).not.toContain(removed)
+    }
+    // 排班人員的說明不再提「部門主管」欄位，改說簽核看員工資料的直屬主管
+    const schedulerHint = wrapper.find('[data-test="sub-schedulers-hint"]').text()
+    expect(schedulerHint).toContain('員工資料設定的直屬主管')
+    expect(schedulerHint).not.toContain('「部門主管」')
+
+    const unitTable = wrapper.findAll('.el-table').find(table => table.text().includes('小單位名稱'))
+    const headers = unitTable.findAll('thead th').map(th => th.text()).filter(Boolean)
+    expect(headers).toEqual(['小單位名稱', '代碼', '排班人員', '使用班別', '操作'])
+    expect(unitTable.text()).toContain('B1 病房')
+    expect(unitTable.text()).not.toContain('舊單位名稱')
+    // 列表的使用班別只摘要上班的班別
+    expect(unitTable.find('[data-test="sub-shift-scope"]').text()).toBe('N')
+    wrapper.unmount()
+  })
+
+  it('saves an untouched unit with only the shown fields, so the hidden values and the shift selection stay on the server', async () => {
+    const wrapper = await mountAndOpenUnit()
+    expect(wrapper.vm.selectedWorkShiftIds).toEqual(['night'])
+    await wrapper.vm.saveItem()
+    expect(lastSave()).toEqual({
+      url: `/api/sub-departments/${units[0]._id}`,
+      method: 'PUT',
+      body: { department: DEPARTMENTS[0]._id, name: 'B1 病房', code: 'B1', schedulers: [MANAGERS[0].value] }
+    })
+    expect(wrapper.vm.dialogVisible).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('keeps an old rest shift of the selection when the work shifts change, and clearing the selection means every shift', async () => {
+    const wrapper = await mountAndOpenUnit()
+    const select = findSelect(wrapper, 'sub-allowed-shifts')
+    expect(select.props('modelValue')).toEqual(['night'])
+    expect(select.findAllComponents({ name: 'ElOption' }).map(option => option.props('value'))).toEqual(['day', 'night'])
+
+    select.vm.$emit('update:modelValue', ['day'])
+    await flushPromises()
+    await wrapper.vm.saveItem()
+    expect(lastSave().body.allowedShiftIds).toEqual(['day', 'rest'])
+
+    await wrapper.vm.openDialog('sub', 0)
+    await flushPromises()
+    findSelect(wrapper, 'sub-allowed-shifts').vm.$emit('update:modelValue', [])
+    await flushPromises()
+    await wrapper.vm.saveItem()
+    expect(lastSave().body.allowedShiftIds).toEqual([])
+    wrapper.unmount()
+  })
+
+  it('warns when a saved selection has no work shift left (deleted shifts or rest shifts only) and still saves the rest untouched', async () => {
+    units = [realUnit({ allowedShiftIds: ['rest', '6650000000000000000000ff'] })]
+    const wrapper = await mountAndOpenUnit()
+    expect(wrapper.find('[data-test="sub-shift-no-work-warning"]').exists()).toBe(true)
+    expect(wrapper.vm.shiftScopeText(units[0])).toBe('沒有上班班別')
+    // 沒改使用班別：不送這個欄位（已刪除的班別不會讓存檔失敗）
+    await wrapper.vm.saveItem()
+    expect(lastSave().body).not.toHaveProperty('allowedShiftIds')
+
+    await wrapper.vm.openDialog('sub', 0)
+    await flushPromises()
+    findSelect(wrapper, 'sub-allowed-shifts').vm.$emit('update:modelValue', ['day'])
+    await flushPromises()
+    expect(wrapper.find('[data-test="sub-shift-no-work-warning"]').exists()).toBe(false)
+    await wrapper.vm.saveItem()
+    // 已刪除的班別去掉，休息日保留
+    expect(lastSave().body.allowedShiftIds).toEqual(['day', 'rest'])
+    wrapper.unmount()
+  })
+
+  it('shows the Chinese message of the server when a save fails and keeps the dialog open', async () => {
+    const errorSpy = vi.spyOn(ElMessage, 'error')
+    saveResponse = () => Promise.resolve({ ok: false, status: 400, json: async () => ({ error: '使用班別包含不存在的班別，請重新選擇' }) })
+    const wrapper = await mountAndOpenUnit()
+    await wrapper.vm.saveItem()
+    expect(errorSpy).toHaveBeenLastCalledWith('使用班別包含不存在的班別，請重新選擇')
+    expect(wrapper.vm.dialogVisible).toBe(true)
+    await flushPromises()
+    expect(document.body.textContent).toContain('使用班別包含不存在的班別，請重新選擇')
+
+    // Mongoose 驗證訊息：去掉英文前綴，只留各欄位的中文說明
+    saveResponse = () => Promise.resolve({
+      ok: false,
+      status: 400,
+      json: async () => ({ error: 'SubDepartment validation failed: uniformNumber: 統一編號需為 8 碼數字, phone: 連絡電話格式不正確' })
+    })
+    await wrapper.vm.saveItem()
+    expect(errorSpy).toHaveBeenLastCalledWith('統一編號需為 8 碼數字；連絡電話格式不正確')
+
+    saveResponse = () => Promise.resolve({
+      ok: false,
+      status: 400,
+      json: async () => ({ error: 'SubDepartment validation failed: name: Path `name` is required.' })
+    })
+    await wrapper.vm.saveItem()
+    expect(errorSpy).toHaveBeenLastCalledWith('請填寫必填欄位（標示 * 的欄位）')
+
+    saveResponse = () => Promise.resolve({ ok: false, status: 404, json: async () => ({ error: 'Not found' }) })
+    await wrapper.vm.saveItem()
+    expect(errorSpy).toHaveBeenLastCalledWith('找不到這筆資料，可能已被處理或刪除，請重新整理')
+
+    saveResponse = () => Promise.reject(new TypeError('Failed to fetch'))
+    await wrapper.vm.saveItem()
+    expect(errorSpy).toHaveBeenLastCalledWith('網路連線異常，請確認網路後再試一次')
+    expect(wrapper.vm.dialogVisible).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('shows the server message for an organisation or department save as well', async () => {
+    const errorSpy = vi.spyOn(ElMessage, 'error')
+    saveResponse = () => Promise.resolve({
+      ok: false,
+      status: 400,
+      json: async () => ({ error: 'Department validation failed: uniformNumber: 統一編號需為 8 碼數字' })
+    })
+    const wrapper = mount(OrgDepartmentSetting, { global: { plugins: [ElementPlus] } })
+    await flushPromises()
+    await wrapper.vm.openDialog('dept', 0)
+    await wrapper.vm.saveItem()
+    expect(errorSpy).toHaveBeenLastCalledWith('統一編號需為 8 碼數字')
+    expect(wrapper.vm.dialogVisible).toBe(true)
+    wrapper.unmount()
+  })
+})
+
+// 客戶 2026/11「可以把一些沒有功能性的拿掉」「避免他們混淆」，開發端同意部門與機構的對話框也一樣處理：
+// 只留有功能的欄位；不顯示的欄位資料保留（存檔只送畫面上的欄位，伺服器只更新有送的欄位）
+describe('OrgDepartmentSetting.vue 部門與機構設定只留有功能的欄位', () => {
+  const ORG_ID = '6650000000000000000000a1'
+  const MANAGERS = [
+    { label: '王小明', value: '6650000000000000000000e1', employeeId: 'N001', role: 'employee', active: true },
+    { label: '李主管', value: '6650000000000000000000e2', employeeId: 'S001', role: 'supervisor', active: true }
+  ]
+  const FORMS = [{ _id: '6650000000000000000000f1', name: '請假單', is_active: true }]
+  // GET /api/organizations、/api/departments 回傳的樣子（Mongoose 文件：含所有舊欄位、時間戳記）
+  const realOrg = overrides => ({
+    _id: ORG_ID,
+    name: '迦南醫院',
+    systemCode: 'SYS-01',
+    unitName: '醫療部門',
+    orgCode: 'ORG-01',
+    taxIdNumber: '12345678',
+    laborInsuranceNo: 'L-001',
+    healthInsuranceNo: 'H-001',
+    taxCode: 'T-001',
+    address: '屏東縣',
+    phone: '08-7654321',
+    principal: '陳院長',
+    createdAt: '2026-10-01T00:00:00.000Z',
+    updatedAt: '2026-10-02T00:00:00.000Z',
+    __v: 0,
+    ...overrides
+  })
+  const realDept = overrides => ({
+    _id: '6650000000000000000000d1',
+    name: '護理部',
+    code: 'NUR',
+    unitName: '護理單位',
+    institutionCode: 'IC-9',
+    uniformNumber: '87654321',
+    laborInsuranceNumber: 'LAB-1',
+    healthInsuranceNumber: 'HEA-1',
+    taxRegistrationNumber: 'TAX-1',
+    location: '三樓',
+    phone: '02-1234-5678',
+    responsiblePerson: '林負責',
+    manager: '王護理長',
+    defaultTwoDayOff: false,
+    tempChangeAllowed: true,
+    deptManager: MANAGERS[1].value,
+    allowedFormIds: [FORMS[0]._id],
+    scheduleNotes: '11/3 與 B 組調班',
+    organization: ORG_ID,
+    createdAt: '2026-10-01T00:00:00.000Z',
+    updatedAt: '2026-10-02T00:00:00.000Z',
+    __v: 0,
+    ...overrides
+  })
+  let orgs
+  let depts
+
+  beforeEach(() => {
+    apiFetch.mockClear()
+    orgs = [realOrg()]
+    depts = [realDept()]
+    apiFetch.mockImplementation((url, options = {}) => {
+      const path = String(url).split('?')[0]
+      if (options.method === 'PUT' || options.method === 'POST') {
+        return Promise.resolve({ ok: true, status: options.method === 'POST' ? 201 : 200, json: async () => JSON.parse(options.body) })
+      }
+      if (path === '/api/organizations') return Promise.resolve({ ok: true, json: async () => orgs })
+      if (path === '/api/departments') return Promise.resolve({ ok: true, json: async () => depts })
+      if (path === '/api/dept-managers') return Promise.resolve({ ok: true, json: async () => MANAGERS })
+      if (path === '/api/approvals/forms') return Promise.resolve({ ok: true, json: async () => FORMS })
+      return Promise.resolve({ ok: true, json: async () => [] })
+    })
+  })
+
+  afterEach(() => {
+    document.body.innerHTML = ''
+  })
+
+  async function mountPage() {
+    const wrapper = mount(OrgDepartmentSetting, { global: { plugins: [ElementPlus] }, attachTo: document.body })
+    await flushPromises()
+    return wrapper
+  }
+
+  const lastSave = () => {
+    const call = apiFetch.mock.calls.filter(([, options]) => options?.method === 'PUT' || options?.method === 'POST').at(-1)
+    return call ? { url: call[0], method: call[1].method, body: JSON.parse(call[1].body) } : null
+  }
+  const dialogLabels = wrapper => wrapper.findAll('.dialog-form .el-form-item__label').map(label => label.text())
+  const tableWith = (wrapper, header) => wrapper.findAll('.el-table').find(table => table.find('thead').text().includes(header))
+  const headersOf = table => table.findAll('thead th').map(th => th.text()).filter(Boolean)
+
+  it('shows only the functional department fields, explains the 排班管理者, and drops the non-functional columns', async () => {
+    const wrapper = await mountPage()
+    await wrapper.vm.openDialog('dept', 0)
+    await flushPromises()
+    expect(dialogLabels(wrapper)).toEqual(['所屬機構', '部門名稱', '部門代碼', '單位名稱', '排班管理者', '排班備註', '使用簽核表單'])
+    const dialogText = wrapper.find('.dialog-form').text()
+    for (const removed of ['位置', '連絡電話', '部門主管', '負責人', '機構代碼', '統一編號', '勞保證號', '健保編號', '稅籍編號', '預設週休二日', '允許臨時調班', '法規資訊']) {
+      expect(dialogText).not.toContain(removed)
+    }
+    // 排班管理者：整個部門（所有小單位與沒有小單位的員工），與是不是主管無關；簽核看每位員工的直屬主管
+    const hint = wrapper.find('[data-test="dept-manager-hint"]').text()
+    expect(hint).toContain('不論是不是主管')
+    expect(hint).toContain('整個部門')
+    expect(hint).toContain('所有小單位的員工')
+    expect(hint).toContain('沒有小單位的員工')
+    expect(hint).toContain('簽核找的是每位員工資料設定的直屬主管')
+    expect(wrapper.find('[data-test="dept-code-hint"]').text()).toContain('員工批次匯入')
+    expect(wrapper.find('[data-test="dept-unit-name-hint"]').text()).toContain('匯出排班表')
+
+    const deptTable = tableWith(wrapper, '部門代碼')
+    expect(headersOf(deptTable)).toEqual(['部門名稱', '部門代碼', '使用簽核表單', '操作'])
+    expect(deptTable.text()).toContain('護理部')
+    expect(deptTable.text()).toContain('護理單位')
+    for (const hidden of ['IC-9', '87654321', '三樓', '林負責', '王護理長']) {
+      expect(deptTable.text()).not.toContain(hidden)
+    }
+    wrapper.unmount()
+  })
+
+  it('shows only the functional organisation fields and drops the 連絡電話 and 負責人 columns', async () => {
+    const wrapper = await mountPage()
+    await wrapper.vm.openDialog('org', 0)
+    await flushPromises()
+    expect(dialogLabels(wrapper)).toEqual(['機構名稱', '系統代碼', '單位名稱', '機構代碼'])
+    const dialogText = wrapper.find('.dialog-form').text()
+    for (const removed of ['統一編號', '勞保編號', '健保編號', '稅籍編號', '位置', '連絡電話', '負責人', '證照資訊', '聯絡資訊']) {
+      expect(dialogText).not.toContain(removed)
+    }
+    expect(wrapper.find('[data-test="org-import-hint"]').text()).toContain('員工批次匯入')
+
+    const orgTable = tableWith(wrapper, '系統代碼')
+    expect(headersOf(orgTable)).toEqual(['機構名稱', '系統代碼', '操作'])
+    expect(orgTable.text()).toContain('迦南醫院')
+    expect(orgTable.text()).not.toContain('08-7654321')
+    expect(orgTable.text()).not.toContain('陳院長')
+    wrapper.unmount()
+  })
+
+  it('saves an edited department with only the shown fields, so the hidden values stay on the server', async () => {
+    const wrapper = await mountPage()
+    await wrapper.vm.openDialog('dept', 0)
+    expect(wrapper.vm.form).toEqual({
+      organization: ORG_ID,
+      name: '護理部',
+      code: 'NUR',
+      unitName: '護理單位',
+      deptManager: MANAGERS[1].value,
+      scheduleNotes: '11/3 與 B 組調班',
+      allowedFormIds: [FORMS[0]._id]
+    })
+    wrapper.vm.form.scheduleNotes = '11/3 與 B 組調班；11/10 與 C 組調班'
+    await wrapper.vm.saveItem()
+    expect(lastSave()).toEqual({
+      url: `/api/departments/${depts[0]._id}`,
+      method: 'PUT',
+      body: {
+        organization: ORG_ID,
+        name: '護理部',
+        code: 'NUR',
+        unitName: '護理單位',
+        deptManager: MANAGERS[1].value,
+        scheduleNotes: '11/3 與 B 組調班；11/10 與 C 組調班',
+        allowedFormIds: [FORMS[0]._id]
+      }
+    })
+    expect(wrapper.vm.dialogVisible).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('really clears the 排班管理者 when the select is cleared (the select gives undefined, which JSON would drop)', async () => {
+    const wrapper = await mountPage()
+    await wrapper.vm.openDialog('dept', 0)
+    await flushPromises()
+    findSelect(wrapper, 'dept-manager-select').vm.$emit('update:modelValue', undefined)
+    await flushPromises()
+    await wrapper.vm.saveItem()
+    expect(lastSave().body).toHaveProperty('deptManager', '')
+    wrapper.unmount()
+  })
+
+  it('creates a department without the hidden fields, so the database defaults apply as before', async () => {
+    const wrapper = await mountPage()
+    wrapper.vm.selectedOrg = ORG_ID
+    await flushPromises()
+    await wrapper.vm.openDialog('dept')
+    wrapper.vm.form.name = '藥劑部'
+    wrapper.vm.form.code = 'PHA'
+    await wrapper.vm.saveItem()
+    expect(lastSave()).toEqual({
+      url: '/api/departments',
+      method: 'POST',
+      body: { organization: ORG_ID, name: '藥劑部', code: 'PHA', unitName: '', deptManager: '', scheduleNotes: '', allowedFormIds: [] }
+    })
+    wrapper.unmount()
+  })
+
+  it('saves an organisation with only 名稱、系統代碼、單位名稱、機構代碼, both when editing and when creating', async () => {
+    const wrapper = await mountPage()
+    await wrapper.vm.openDialog('org', 0)
+    expect(wrapper.vm.form).toEqual({ name: '迦南醫院', systemCode: 'SYS-01', unitName: '醫療部門', orgCode: 'ORG-01' })
+    wrapper.vm.form.orgCode = 'ORG-02'
+    await wrapper.vm.saveItem()
+    expect(lastSave()).toEqual({
+      url: `/api/organizations/${ORG_ID}`,
+      method: 'PUT',
+      body: { name: '迦南醫院', systemCode: 'SYS-01', unitName: '醫療部門', orgCode: 'ORG-02' }
+    })
+
+    await wrapper.vm.openDialog('org')
+    wrapper.vm.form.name = '迦南護理之家'
+    await wrapper.vm.saveItem()
+    expect(lastSave()).toEqual({
+      url: '/api/organizations',
+      method: 'POST',
+      body: { name: '迦南護理之家', systemCode: '', unitName: '', orgCode: '' }
+    })
+    wrapper.unmount()
+  })
+
+  it('explains the slimmer organisation and department settings in the page help', () => {
+    const help = backendHelpContent.OrgDepartmentSetting
+    const text = [help.description, ...help.scenarios, ...help.tips, ...help.steps].join('\n')
+    expect(text).toContain('機構只需設定名稱、系統代碼、單位名稱與機構代碼')
+    expect(text).toContain('部門只需設定所屬機構')
+    expect(text).toContain('預設週休二日、允許臨時調班沒有功能')
+    expect(text).toContain('排班管理者」不論是不是主管，都可以排整個部門的班')
+    expect(text).toContain('沒有小單位的員工')
+    expect(text).toContain('簽核找的是員工資料設定的直屬主管')
   })
 })

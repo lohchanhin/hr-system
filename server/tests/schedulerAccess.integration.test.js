@@ -213,7 +213,53 @@ describeIntegration('schedulers of units against a real MongoDB through the real
     expect(res.body.errors.map((error) => error.message)).toEqual([expect.stringContaining('沒有開放使用「D」這個班別')])
   })
 
-  it('keeps the supervisor scope (self and direct reports) and lets the administrator see everyone', async () => {
+  // 2026/11 起預設「只有排班人員能排班」：主管排直屬部屬要由管理員存成「主管與排班人員」（這個案例以前在預設下執行）
+  it('by default gives a supervisor without an assignment no schedule access, but approvals-related reads stay', async () => {
+    const setting = await get('admin', '/api/other-control-settings/schedule-access')
+    expect(setting.body).toMatchObject({ mode: 'scheduler_only', defaultMode: 'scheduler_only', saved: false })
+    expect((await get('boss', '/api/profile')).body.scheduleAccess).toMatchObject({ canSchedule: false, supervisorScope: false })
+    const menu = (await get('boss', '/api/menu')).body.map((item) => item.name)
+    expect(menu).not.toContain('Schedule')
+    expect(menu).toContain('MySchedule')
+    expect((await createSchedule('boss', 'nurseA2', 3, 'day')).status).toBe(403)
+    expect((await get('boss', `/api/schedules/summary?month=${MONTH}`)).status).toBe(403)
+    // 主管欄位作為簽核使用：直屬部屬的假別餘額、調休存摺照樣看得到；不是直屬部屬的看不到
+    expect((await get('boss', `/api/approvals/leave-balances?employeeId=${id('nurseA2')}`)).status).toBe(200)
+    expect((await get('boss', `/api/compensatory-leave?employeeId=${id('nurseA2')}`)).status).toBe(200)
+    expect((await get('boss', `/api/compensatory-leave?employeeId=${id('nurseA1')}`)).status).toBe(404)
+  })
+
+  it('opens approval documents by relation: any form of a direct report, only rostering forms for a scheduler, attachments only for the supervisor', async () => {
+    const ApprovalRequest = (await import('../src/models/approval_request.js')).default
+    const ApprovalWorkflow = (await import('../src/models/approval_workflow.js')).default
+    const resignForm = await FormTemplate.create({ name: '離職申請（測試）', semanticType: 'general', semantic_type_set: true, is_active: true })
+    const overtimeForm = await FormTemplate.create({ name: '加班申請（測試）', semanticType: 'overtime', semantic_type_set: true, is_active: true })
+    const workflow = await ApprovalWorkflow.create({ form: resignForm._id, steps: [] })
+    const docFor = (employeeKey, form) => ApprovalRequest.create({
+      form: form._id,
+      workflow: workflow._id,
+      applicant_employee: people[employeeKey]._id,
+      form_data: { reason: '個人生涯規劃（機密）' },
+      status: 'pending',
+      steps: [{ step_order: 1, approvers: [{ approver: people.admin._id }] }],
+    })
+    const bossResign = await docFor('nurseA2', resignForm)
+    const carerResign = await docFor('carerB1', resignForm)
+    const carerOvertime = await docFor('carerB1', overtimeForm)
+
+    expect((await get('boss', `/api/approvals/${bossResign._id}`)).status).toBe(200)
+    expect((await get('boss', `/api/approvals/${carerResign._id}`)).status).toBe(404)
+    expect((await get('scheduler', `/api/approvals/${carerOvertime._id}`)).status).toBe(200)
+    expect((await get('scheduler', `/api/approvals/${carerResign._id}`)).status).toBe(404)
+    const related = await get('scheduler', `/api/schedules/leave-approvals?month=${new Date().toISOString().slice(0, 7)}`)
+    expect(related.status).toBe(200)
+    expect(related.body.approvals.map((row) => String(row._id))).toEqual(expect.arrayContaining([String(carerOvertime._id)]))
+    expect(related.body.approvals.map((row) => String(row._id))).not.toContain(String(carerResign._id))
+  })
+
+  it('keeps the supervisor scope (self and direct reports) when 主管與排班人員 is saved, and lets the administrator see everyone', async () => {
+    expect((await put('admin', '/api/other-control-settings/schedule-access', { mode: 'supervisor_and_scheduler' })).body)
+      .toMatchObject({ mode: 'supervisor_and_scheduler', saved: true })
     expect(namesOf(await get('boss', '/api/employees/schedule'))).toEqual(['5B 護理師', '排班員'])
     expect((await createSchedule('boss', 'nurseA2', 3, 'day')).status).toBe(201)
     expect((await createSchedule('boss', 'nurseA1', 3, 'day')).status).toBe(403)
@@ -254,6 +300,10 @@ describeIntegration('schedulers of units against a real MongoDB through the real
     expect((await Department.findById(ids.deptA).lean()).allowedFormIds.map(String)).toEqual([String(form._id)])
     const listed = await get('admin', '/api/departments')
     expect(listed.body.find((dept) => dept._id === ids.deptA).allowedFormIds).toEqual([String(form._id)])
-    expect((await put('admin', `/api/departments/${ids.deptA}`, { allowedFormIds: [String(new mongoose.Types.ObjectId())] })).status).toBe(400)
+    // 已經被刪除的表單直接拿掉、不擋下儲存（以前回 400）；格式不對仍是 400
+    const dropped = await put('admin', `/api/departments/${ids.deptA}`, { name: '護理部', organization: ids.org, allowedFormIds: [String(new mongoose.Types.ObjectId()), String(form._id)] })
+    expect(dropped.status).toBe(200)
+    expect((await Department.findById(ids.deptA).lean()).allowedFormIds.map(String)).toEqual([String(form._id)])
+    expect((await put('admin', `/api/departments/${ids.deptA}`, { allowedFormIds: ['junk'] })).status).toBe(400)
   })
 })

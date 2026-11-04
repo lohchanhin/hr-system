@@ -7,13 +7,25 @@ import Employee from '../models/Employee.js'
 import { resolveFieldOptions, resolveFieldsOptions, normalizeFieldKeyInput } from '../services/formFieldOptionsService.js'
 import { resetLeaveFieldCache } from '../services/leaveFieldService.js'
 import { eligibleEmployeeFilter } from '../services/approverEligibility.js'
-import { UNRESOLVED_REASON_TEXT, resolveStepApprovers } from '../services/approverResolution.js'
+import {
+  MANAGER_CHAIN_DEFAULT_LEVELS,
+  MANAGER_CHAIN_MAX_LEVELS,
+  STEP_CONDITION_KINDS,
+  STEP_CONDITION_LIMITS,
+  UNRESOLVED_REASON_TEXT,
+  describeStepCondition,
+  managerChainLevelName,
+} from '../services/approverResolution.js'
+import { planRequestSteps } from '../services/approvalStepBuilder.js'
+import { isLeaveFormTemplate } from '../utils/formSemantics.js'
 import {
   FORM_NOT_ALLOWED_CODE,
   FORM_VISIBILITY_HEADER,
+  describeDepartmentsUsingForm,
   formNotAllowedMessage,
   getFormVisibilityForUser,
   isFormAllowed,
+  removeFormFromDepartments,
 } from '../services/formVisibilityService.js'
 import { normalizeSignTag, normalizeSignTags } from '../utils/signTags.js'
 import { DEFAULT_APPROVAL_TEMPLATES, DEFAULT_POLICY, findDefaultTemplate } from '../services/defaultApprovalTemplates.js'
@@ -351,10 +363,27 @@ export async function updateFormTemplate(req, res) {
   }
 }
 
+// 部門「使用簽核表單」的整理只是附帶的：失敗時只記錄錯誤名稱、不讓已經完成的刪除 / 停用變成失敗
+// （讀取時已刪除的表單本來就不算，部門設定下次儲存時也會拿掉）
+async function departmentEffectOf(context, task) {
+  try {
+    return await task()
+  } catch (error) {
+    console.error(`[approval-template] ${context} failed: ${error?.name || 'Error'}`)
+    return { departments: 0, usingAllForms: 0 }
+  }
+}
+
+function usingAllFormsNotice(count) {
+  return count ? `另外有 ${count} 個部門勾選的表單都已停用或刪除，這些部門的員工改為看得到全部啟用中的表單；如需限制請到部門設定調整「使用簽核表單」。` : ''
+}
+
 /**
  * 刪除表單樣板。
- * - 沒有任何申請單用過：連同欄位與流程一起刪除。
- * - 已有申請單：不能刪（刪了舊申請單會打不開、簽核中的單子無法處理），改為「停用」並保留欄位與流程，回傳 deactivated: true。
+ * - 沒有任何申請單用過：連同欄位與流程一起刪除，並從每個部門的「使用簽核表單」拿掉（清空的部門 = 全部表單），
+ *   回傳 departmentsUpdated（拿掉的部門數）、departmentsUsingAllForms（因此改為看得到全部表單的部門數）。
+ * - 已有申請單：不能刪（刪了舊申請單會打不開、簽核中的單子無法處理），改為「停用」並保留欄位與流程，回傳 deactivated: true；
+ *   部門的勾選不動（重新啟用就恢復），勾選的表單因此全部不能用的部門改為看得到全部表單，訊息會提醒（departmentsUsingAllForms）。
  */
 export async function deleteFormTemplate(req, res) {
   try {
@@ -368,13 +397,15 @@ export async function deleteFormTemplate(req, res) {
       const pendingCount = await ApprovalRequest.countDocuments({ form: form._id, status: 'pending' })
       await FormTemplate.findByIdAndUpdate(form._id, { $set: { is_active: false } })
       resetLeaveFieldCache()
+      const departments = await departmentEffectOf('describe departments of deactivated form', () => describeDepartmentsUsingForm(form._id))
       return res.json({
         success: true,
         deleted: false,
         deactivated: true,
         requestCount,
         pendingCount,
-        message: `這張表單已有 ${requestCount} 筆申請單（其中 ${pendingCount} 筆簽核中），為了保留歷史紀錄並讓簽核可以繼續，已改為停用而沒有刪除。`,
+        departmentsUsingAllForms: departments.usingAllForms,
+        message: `這張表單已有 ${requestCount} 筆申請單（其中 ${pendingCount} 筆簽核中），為了保留歷史紀錄並讓簽核可以繼續，已改為停用而沒有刪除。${usingAllFormsNotice(departments.usingAllForms)}`,
       })
     }
 
@@ -382,7 +413,19 @@ export async function deleteFormTemplate(req, res) {
     await ApprovalWorkflow.deleteOne({ form: form._id })
     await FormTemplate.deleteOne({ _id: form._id })
     resetLeaveFieldCache()
-    res.json({ success: true, deleted: true, deactivated: false, message: '已刪除表單樣板' })
+    // 表單刪除之後才從部門拿掉：中途失敗頂多留下已刪除表單的 id（讀取時不算），不會先拿掉還在的表單
+    const departments = await departmentEffectOf('remove form from departments', () => removeFormFromDepartments(form._id))
+    const departmentText = departments.departments
+      ? `；已從 ${departments.departments} 個部門的「使用簽核表單」拿掉這張表單${departments.usingAllForms ? `，其中 ${departments.usingAllForms} 個部門因此沒有勾選可用的表單，改為看得到全部表單` : ''}`
+      : ''
+    res.json({
+      success: true,
+      deleted: true,
+      deactivated: false,
+      departmentsUpdated: departments.departments,
+      departmentsUsingAllForms: departments.usingAllForms,
+      message: `已刪除表單樣板${departmentText}`,
+    })
   } catch (e) {
     respondFailure(res, e, 'delete form')
   }
@@ -521,7 +564,7 @@ function describeNoApprover(step, reasonCode) {
   }
 }
 
-// 預覽用的申請人（目前登入的人）；查不到或查詢失敗時回傳 null，各關的人數顯示「無法計算」
+// 預覽用的申請人（目前登入的人）；查不到或查詢失敗時回傳 null，各關的人數顯示「無法計算」（主管鏈要用直屬主管與 _id）
 async function loadPreviewApplicant(actorId) {
   if (!isObjectIdString(String(actorId ?? ''))) return null
   try {
@@ -538,35 +581,57 @@ async function loadPreviewApplicant(actorId) {
  * - unresolved_reason：resolved_count 為 0 時的中文原因，其餘為 null
  * - fallback_text / fallback_reason：必簽的主管關卡找不到主管、改由最高層簽核人簽核時的說明與原因
  *   （「無上級主管，改由系統管理員簽核（任一位核准即可）」「主管就是申請人本人」），沒有改送時為 null；resolved_count 是改送的人數
- * 只回傳人數與原因，不含任何人員姓名或編號。
+ * 只有用到新設定的關卡才多帶（其餘關卡的內容和以前完全相同）：
+ * - condition_text：有請假長度條件時「請假滿 56 小時才需要」（還不知道請假長度，預覽一律列出這一關）
+ * - chain_levels：主管鏈展開的每一級 [{ level, label: '第1級主管', repeated }]（repeated：已是前面關卡的簽核人，送出時略過）
+ * - repeated_count / skipped_as_repeat：略過重複簽核人後少了幾位；整關都會被略過時 skipped_as_repeat 為 true
+ * 和實際送出用同一份展開程式（services/approvalStepBuilder）；只回傳人數、級數與原因，不含任何人員姓名或編號。
  */
-async function withApproverPreview(steps, applicant) {
-  const list = Array.isArray(steps) ? steps : []
+async function withApproverPreview(workflow, applicant) {
+  const list = Array.isArray(workflow?.steps) ? workflow.steps : []
   if (!list.length) return list
-  const previewed = []
-  for (const step of list) {
-    let resolvedCount = null
-    let unresolvedReason = null
-    let fallback = null
-    if (applicant) {
-      try {
-        const resolved = await resolveStepApprovers(step, applicant)
-        resolvedCount = resolved.ids.length
-        unresolvedReason = resolved.ids.length ? null : describeNoApprover(step, resolved.reason)
-        fallback = resolved.ids.length ? resolved.fallback || null : null
-      } catch (error) {
-        console.error(`[approval-template] preview step failed: ${error?.name || 'Error'}`)
+  let plan = null
+  if (applicant) {
+    try {
+      plan = await planRequestSteps({
+        wf: workflow,
+        applicantEmp: applicant,
+        evaluateConditions: false,
+        catchStepErrors: (error) => console.error(`[approval-template] preview step failed: ${error?.name || 'Error'}`),
+      })
+    } catch (error) {
+      console.error(`[approval-template] preview step failed: ${error?.name || 'Error'}`)
+    }
+  }
+  return list.map((step, index) => {
+    const item = plan?.items?.[index]
+    const resolved = item && !item.error
+    const fallback = resolved ? item.fallback || null : null
+    const extra = {}
+    const conditionText = describeStepCondition(step?.condition)
+    if (conditionText) extra.condition_text = conditionText
+    if (resolved) {
+      const units = plan.units.filter(unit => unit.item === item)
+      if (step?.approver_type === 'manager_chain' && !fallback) {
+        extra.chain_levels = units
+          .filter(unit => unit.level)
+          .map(unit => ({ level: unit.level.level, label: managerChainLevelName(unit.level.level), repeated: Boolean(unit.emptied) }))
+      }
+      const repeated = units.reduce((total, unit) => total + (unit.removed?.length || 0), 0)
+      if (repeated) {
+        extra.repeated_count = repeated
+        if (units.length && units.every(unit => unit.emptied && !unit.emptyChain)) extra.skipped_as_repeat = true
       }
     }
-    previewed.push({
+    return {
       ...step,
-      resolved_count: resolvedCount,
-      unresolved_reason: unresolvedReason,
+      resolved_count: resolved ? item.approverIds.length : null,
+      unresolved_reason: resolved && !item.approverIds.length ? describeNoApprover(step, item.reason) : null,
       fallback_text: fallback?.text || null,
       fallback_reason: fallback?.reason_text || null,
-    })
-  }
-  return previewed
+      ...extra,
+    }
+  })
 }
 
 export async function getWorkflow(req, res) {
@@ -582,7 +647,7 @@ export async function getWorkflow(req, res) {
       if (req.user?.role !== 'admin' && !isFormAllowed(await getFormVisibilityForUser(req.user, applicant), formId)) {
         return respondFormNotAllowed(res, await formNameOf(formId))
       }
-      body.steps = await withApproverPreview(body.steps, applicant)
+      body.steps = await withApproverPreview(body, applicant)
     } else {
       body.steps = Array.isArray(body.steps) ? body.steps : []
     }
@@ -592,9 +657,14 @@ export async function getWorkflow(req, res) {
   }
 }
 
-const APPROVER_TYPES = ['manager', 'tag', 'user', 'role', 'level', 'department', 'org', 'group']
+const APPROVER_TYPES = ['manager', 'manager_chain', 'tag', 'user', 'role', 'level', 'department', 'org', 'group']
 const APPROVER_TYPE_LABELS = {
-  manager: '主管', tag: '標籤', user: '員工', role: '角色', level: '層級', department: '部門', org: '機構', group: '群組',
+  manager: '主管', manager_chain: '主管鏈', tag: '標籤', user: '員工', role: '角色', level: '層級', department: '部門', org: '機構', group: '群組',
+}
+const CONDITION_KIND_LABELS = {
+  leave_hours_gte: '請假時數',
+  leave_calendar_days_gte: '請假日數（日曆日）',
+  leave_scheduled_days_gte: '請假日數（排班日）',
 }
 const SCOPE_TYPES = ['none', 'dept', 'org']
 const MAX_WORKFLOW_STEPS = 20
@@ -603,6 +673,31 @@ const MAX_STEP_NAME_LENGTH = 50
 const APPLICANT_SUPERVISOR_VALUE = 'APPLICANT_SUPERVISOR'
 const SYSTEM_ROLE_VALUES = ['admin', 'supervisor', 'employee']
 const POLICY_OVERDUE_ACTIONS = ['none', 'autoPass', 'autoReject']
+
+/**
+ * 關卡的適用條件（請假長度）：undefined / null / '' / { kind: '' } ＝沒有條件。回傳 { condition }（沒有條件時 condition 是 null）或 { error }。
+ * 只有表單性質＝請假的表單可以設定；時數 0.5–2928 小時（0.5 的倍數），日數 1–366 的整數。
+ */
+function cleanStepCondition(raw, { prefix, isLeaveForm }) {
+  if (raw === undefined || raw === null || raw === '') return { condition: null }
+  if (typeof raw !== 'object' || Array.isArray(raw)) return { error: `${prefix}：適用條件格式不正確` }
+  if (raw.kind === undefined || raw.kind === null || raw.kind === '') return { condition: null }
+  if (!STEP_CONDITION_KINDS.includes(raw.kind)) return { error: `${prefix}：適用條件「${raw.kind}」不正確，請重新選擇` }
+  if (!isLeaveForm) {
+    return { error: `${prefix}：只有表單性質為「請假」的表單可以設定請假長度條件，請先移除這一關的適用條件` }
+  }
+  const limits = STEP_CONDITION_LIMITS[raw.kind]
+  const label = CONDITION_KIND_LABELS[raw.kind]
+  const value = typeof raw.value === 'string' && raw.value.trim() !== '' ? Number(raw.value) : raw.value
+  const unit = raw.kind === 'leave_hours_gte' ? '小時' : '日'
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < limits.min || value > limits.max) {
+    return { error: `${prefix}：${label}條件必須是 ${limits.min} 到 ${limits.max} ${unit}` }
+  }
+  if (Math.abs(value / limits.step - Math.round(value / limits.step)) > 1e-9) {
+    return { error: limits.step === 1 ? `${prefix}：${label}條件必須是整數日` : `${prefix}：${label}條件必須是 ${limits.step} 小時的倍數` }
+  }
+  return { condition: { kind: raw.kind, value } }
+}
 
 function flattenValues(raw) {
   const list = Array.isArray(raw) ? raw : [raw]
@@ -619,7 +714,7 @@ function flattenValues(raw) {
  * 檢查並整理一關的內容（不查資料庫）。回傳 { step } 或 { error }；
  * employeeIds 是這關指定的員工 / 主管 id，稍後統一確認是否存在。
  */
-function cleanWorkflowStep(raw, index) {
+function cleanWorkflowStep(raw, index, { isLeaveForm = false } = {}) {
   const number = index + 1
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
     return { error: `第${number}關：內容格式不正確` }
@@ -658,7 +753,11 @@ function cleanWorkflowStep(raw, index) {
     if (name.length > MAX_STEP_NAME_LENGTH) return { error: `${prefix}：關卡說明最多 ${MAX_STEP_NAME_LENGTH} 個字` }
   }
 
-  const values = flattenValues(raw.approver_value)
+  const checkedCondition = cleanStepCondition(raw.condition, { prefix, isLeaveForm })
+  if (checkedCondition.error) return { error: checkedCondition.error }
+
+  // 主管鏈的設定是物件 { stopAtTag, maxLevels }，不能像其他類型一樣攤平成字串清單
+  const values = type === 'manager_chain' ? [] : flattenValues(raw.approver_value)
   let value
   const employeeIds = []
   let managerId = ''
@@ -675,6 +774,28 @@ function cleanWorkflowStep(raw, index) {
       } else {
         return { error: `${prefix}：指定的主管資料不正確，請重新選擇` }
       }
+      break
+    }
+    case 'manager_chain': {
+      // 從直屬主管一路往上：到第一位持有 stopAtTag 的主管為止（不填＝到最上層），最多 maxLevels 位（預設 5）
+      const rawValue = raw.approver_value
+      if (rawValue !== undefined && rawValue !== null && rawValue !== '' && (typeof rawValue !== 'object' || Array.isArray(rawValue))) {
+        return { error: `${prefix}：主管鏈的設定格式不正確，請重新設定` }
+      }
+      const config = rawValue && typeof rawValue === 'object' ? rawValue : {}
+      if (config.stopAtTag !== undefined && config.stopAtTag !== null && typeof config.stopAtTag !== 'string') {
+        return { error: `${prefix}：「簽到持有標籤的主管為止」格式不正確，請重新選擇` }
+      }
+      const stopAtTag = normalizeSignTag(config.stopAtTag)
+      if (stopAtTag.length > MAX_TAG_LENGTH) return { error: `${prefix}：標籤最多 ${MAX_TAG_LENGTH} 個字` }
+      let maxLevels = MANAGER_CHAIN_DEFAULT_LEVELS
+      if (config.maxLevels !== undefined && config.maxLevels !== null && config.maxLevels !== '') {
+        maxLevels = Number(config.maxLevels)
+        if (!Number.isInteger(maxLevels) || maxLevels < 1 || maxLevels > MANAGER_CHAIN_MAX_LEVELS) {
+          return { error: `${prefix}：最多層數必須是 1 到 ${MANAGER_CHAIN_MAX_LEVELS} 的整數` }
+        }
+      }
+      value = { ...(stopAtTag ? { stopAtTag } : {}), maxLevels }
       break
     }
     case 'tag': {
@@ -742,6 +863,7 @@ function cleanWorkflowStep(raw, index) {
       all_must_approve: flags.all_must_approve,
       can_return: flags.can_return,
       ...(name ? { name } : {}),
+      ...(checkedCondition.condition ? { condition: checkedCondition.condition } : {}),
     },
     employeeIds,
     managerId,
@@ -750,10 +872,11 @@ function cleanWorkflowStep(raw, index) {
 
 /**
  * 檢查整條流程（K4）：最多 20 關、每關類型 / 值 / 範圍 / 布林欄位正確、指定的員工與主管真的存在。
+ * 請假長度條件只有請假表單（options.isLeaveForm）可以設定，而且至少要有一關沒有條件（不然短假沒有人簽核）。
  * 依 step_order 排序（沒有就照陣列順序）後重新編號 1..n。
  * 回傳 { steps } 或 { error, step }。
  */
-export async function validateWorkflowSteps(rawSteps) {
+export async function validateWorkflowSteps(rawSteps, { isLeaveForm = false } = {}) {
   if (!Array.isArray(rawSteps)) return { error: '關卡設定格式不正確：steps 必須是陣列' }
   if (rawSteps.length > MAX_WORKFLOW_STEPS) {
     return { error: `簽核關卡最多 ${MAX_WORKFLOW_STEPS} 關，目前有 ${rawSteps.length} 關` }
@@ -761,10 +884,13 @@ export async function validateWorkflowSteps(rawSteps) {
 
   const cleaned = []
   for (let index = 0; index < rawSteps.length; index += 1) {
-    const result = cleanWorkflowStep(rawSteps[index], index)
+    const result = cleanWorkflowStep(rawSteps[index], index, { isLeaveForm })
     if (result.error) return { error: result.error, step: index + 1 }
     const order = Number(rawSteps[index].step_order)
     cleaned.push({ ...result, index, order: Number.isFinite(order) ? order : index + 1 })
+  }
+  if (cleaned.length && cleaned.every((item) => item.step.condition)) {
+    return { error: '每一關都設定了請假長度條件：至少要有一關沒有條件，不然未達條件的假單會沒有人簽核', step: 1 }
   }
 
   // 指定員工 / 主管必須存在（流程存下去之後才不會在員工送出申請時才發現）
@@ -788,7 +914,7 @@ export async function validateWorkflowSteps(rawSteps) {
 
 /**
  * 檢查通用規則；只回傳有帶的欄位。回傳 { policy } 或 { error }。
- * 目前這些規則只會被記錄，系統尚未依它們自動處理。
+ * 最大關卡數、代理簽核、逾時目前只會被記錄，系統尚未依它們自動處理；skipRepeatedApprovers（略過重複的簽核人）會生效。
  */
 function validateWorkflowPolicy(rawPolicy) {
   if (!rawPolicy || typeof rawPolicy !== 'object' || Array.isArray(rawPolicy)) {
@@ -819,6 +945,11 @@ function validateWorkflowPolicy(rawPolicy) {
     }
     policy.overdueAction = rawPolicy.overdueAction
   }
+  // 會生效的規則：已是前面關卡簽核人的人，後面的關卡不再重複簽（預設關閉）
+  if (rawPolicy.skipRepeatedApprovers !== undefined) {
+    if (typeof rawPolicy.skipRepeatedApprovers !== 'boolean') return { error: '「略過重複的簽核人」必須是開或關' }
+    policy.skipRepeatedApprovers = rawPolicy.skipRepeatedApprovers
+  }
   return { policy }
 }
 
@@ -835,7 +966,7 @@ export async function setWorkflow(req, res) {
 
     const setObj = {}
     if (steps !== undefined) {
-      const checked = await validateWorkflowSteps(steps)
+      const checked = await validateWorkflowSteps(steps, { isLeaveForm: isLeaveFormTemplate(form) })
       if (checked.error) {
         return res.status(400).json({ error: checked.error, ...(checked.step ? { step: checked.step } : {}) })
       }

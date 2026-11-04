@@ -84,10 +84,11 @@ describe('Login.vue', () => {
     expect(wrapper.vm.loginForm.role).toBe('supervisor')
   })
 
-  it('redirects supervisor to schedule', async () => {
+  // 2026/11 起主管預設沒有排班權限：登入回應的 scheduleAccess.canSchedule 是 true 才進排班頁
+  it('redirects a supervisor who can schedule to schedule', async () => {
     fetch.mockResolvedValueOnce({
       ok: true,
-      json: async () => ({ token: createToken(), user: { role: 'supervisor', employeeId: 'e1' } })
+      json: async () => ({ token: createToken(), user: { role: 'supervisor', employeeId: 'e1', scheduleAccess: { canSchedule: true } } })
     })
     const wrapper = mountLogin()
     wrapper.vm.loginFormRef = { validate: async () => true }
@@ -105,6 +106,19 @@ describe('Login.vue', () => {
     expect(sessionStorage.getItem('employeeId')).toBe('e1')
     expect(fetchMenuSpy).toHaveBeenCalled()
     expect(replace).toHaveBeenCalledWith('/front/schedule')
+  })
+
+  it('redirects a supervisor without schedule access to attendance instead of the forbidden schedule page', async () => {
+    fetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ token: createToken(), user: { role: 'supervisor', employeeId: 'e1', scheduleAccess: { canSchedule: false } } })
+    })
+    const wrapper = mountLogin()
+    wrapper.vm.loginFormRef = { validate: async () => true }
+    wrapper.vm.loginForm.username = 'u'
+    wrapper.vm.loginForm.password = 'p'
+    await wrapper.vm.onLogin()
+    expect(replace).toHaveBeenCalledWith('/front/attendance')
   })
 
   it('redirects admin to manager', async () => {

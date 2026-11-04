@@ -309,3 +309,32 @@ describe('server startup: compensatory leave bank', () => {
     expect(success).not.toMatch(/\.name\b|holidayName|employeeId/)
   })
 })
+
+// 名稱或別名用到調休固定名稱（移休、補休…）的其他假別：儲存不再被擋，啟動時只記錄有幾種（不修改資料；審查 F4）
+describe('server startup: leave types colliding with the fixed 調休 names', () => {
+  it('imports the counter on its own line (the pinned import of the indigenous quota migration stays as it is)', () => {
+    expect(indexSource).toMatch(/import \{ migrateIndigenousLeaveQuota \} from '\.\/services\/leavePolicyService\.js';/)
+    expect(indexSource).toMatch(/import \{ countCompAliasCollisions \} from '\.\/services\/leavePolicyService\.js';/)
+  })
+
+  it('counts after the indigenous quota migration and before the admin bootstrap, in its own try/catch, logging only the count or the error name', () => {
+    const body = startBody()
+    const quota = body.indexOf('await migrateIndigenousLeaveQuota()')
+    const call = body.indexOf('await countCompAliasCollisions()')
+    const admin = body.indexOf('await ensureAdminUser()')
+    expect(call).toBeGreaterThan(quota)
+    expect(call).toBeLessThan(admin)
+
+    const tryStart = body.lastIndexOf('try {', call)
+    const catchStart = body.indexOf('} catch (collisionError) {', call)
+    const catchEnd = body.indexOf('}', catchStart + '} catch (collisionError) {'.length)
+    expect(tryStart).toBeGreaterThan(quota)
+    expect(body.slice(tryStart, call)).not.toContain('}')
+    const handler = body.slice(catchStart, catchEnd + 1)
+    expect(handler).toContain("console.error('Failed to count leave types colliding with 調休 aliases', collisionError?.name ?? 'Error')")
+    expect(handler).not.toMatch(/process\.exit|throw /)
+    const success = body.slice(call, catchStart)
+    expect(success).toContain('if (compAliasCollisions) console.log(`custom leave types colliding with 調休 aliases: ${compAliasCollisions}`)')
+    expect(success).not.toMatch(/updateSettings|\.name\b|aliases\)/)
+  })
+})

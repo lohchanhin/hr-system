@@ -2,6 +2,7 @@ import request from 'supertest';
 import express from 'express';
 import { jest } from '@jest/globals';
 import { buildLeaveFieldServiceMock } from './helpers/leaveFieldServiceMock.js';
+import { createFakeOtherControlSettingModel } from './helpers/fakeOtherControlSettingModel.js';
 
 const mockShiftSchedule = { find: jest.fn() };
 const mockEmployee = { find: jest.fn(), findById: jest.fn() };
@@ -14,6 +15,13 @@ jest.unstable_mockModule('../src/models/Employee.js', () => ({ default: mockEmpl
 jest.unstable_mockModule('../src/models/AttendanceSetting.js', () => ({ default: mockAttendanceSetting }));
 jest.unstable_mockModule('../src/models/approval_request.js', () => ({ default: mockApprovalRequest }));
 jest.unstable_mockModule('../src/services/leaveFieldService.js', () => buildLeaveFieldServiceMock(mockGetLeaveFieldIds));
+// 排班權限模式存在其他控制設定（記憶體版 model）：預設只有排班人員能排班，主管的統計要在「主管與排班人員」模式下測
+const fakeSettings = createFakeOtherControlSettingModel();
+jest.unstable_mockModule('../src/models/OtherControlSetting.js', () => ({ default: fakeSettings }));
+const mockSubDepartment = { find: jest.fn() };
+const mockDepartment = { find: jest.fn() };
+jest.unstable_mockModule('../src/models/SubDepartment.js', () => ({ default: mockSubDepartment }));
+jest.unstable_mockModule('../src/models/Department.js', () => ({ default: mockDepartment }));
 
 const mockAuth = {
   currentUser: { id: 'sup1', role: 'supervisor' },
@@ -33,15 +41,26 @@ jest.unstable_mockModule('../src/middleware/auth.js', () => mockAuth);
 
 let app;
 let scheduleRoutes;
+let scheduleAccessService;
+
+const rows = (list) => ({ select: jest.fn().mockReturnThis(), lean: jest.fn().mockResolvedValue(list) });
 
 beforeAll(async () => {
   scheduleRoutes = (await import('../src/routes/scheduleRoutes.js')).default;
+  scheduleAccessService = await import('../src/services/scheduleAccessService.js');
   app = express();
   app.use(express.json());
   app.use('/api/schedules', scheduleRoutes);
 });
 
-beforeEach(() => {
+beforeEach(async () => {
+  fakeSettings.__clear();
+  // 這個檔案原本的案例是主管排直屬部屬：2026/11 起要由管理員存成「主管與排班人員」才有（預設只有排班人員）
+  await scheduleAccessService.setScheduleAccessMode('supervisor_and_scheduler');
+  mockSubDepartment.find.mockReset();
+  mockSubDepartment.find.mockImplementation(() => rows([]));
+  mockDepartment.find.mockReset();
+  mockDepartment.find.mockImplementation(() => rows([]));
   mockShiftSchedule.find.mockReset();
   mockEmployee.find.mockReset();
   mockEmployee.findById.mockReset();
@@ -151,5 +170,60 @@ describe('Supervisor schedule summary', () => {
     expect(res.status).toBe(200);
     const summaryRows = res.body.employees;
     expect(summaryRows.some((row) => row.employee === 'sup1')).toBe(true);
+  });
+});
+
+// 2026/11 客戶：「直屬員工數」改成「排班員工數」，人數是排班頁目前看的員工（與名單同一個條件），不是直屬部屬
+describe('排班員工數 (the employees of the schedule view)', () => {
+  const oid = (n) => n.toString(16).padStart(24, '0');
+  const SCHEDULER = oid(7);
+  const UNIT = oid(200);
+  const DEPT = oid(100);
+
+  const stubMonth = () => {
+    mockAttendanceSetting.findOne.mockReturnValue({ lean: jest.fn().mockResolvedValue({ shifts: [] }) });
+    mockShiftSchedule.find.mockReturnValue({ lean: jest.fn().mockResolvedValue([]) });
+  };
+
+  it('counts the scheduler units with the department and unit filters of the page, including the scheduler in their own unit', async () => {
+    mockAuth.currentUser = { id: SCHEDULER, role: 'employee' };
+    mockSubDepartment.find.mockImplementation((filter) => rows(filter?.schedulers ? [{ _id: UNIT, department: DEPT }] : []));
+    mockEmployee.find.mockReturnValue(rows([
+      { _id: SCHEDULER, name: '排班員' },
+      { _id: oid(3), name: '護理甲' },
+    ]));
+    stubMonth();
+
+    const res = await request(app).get(`/api/schedules/summary?month=2023-05&department=${DEPT}&subDepartment=${UNIT}`);
+    expect(res.status).toBe(200);
+    expect(mockEmployee.find).toHaveBeenCalledWith({
+      $and: [{ department: DEPT, subDepartment: UNIT }, { $or: [{ subDepartment: { $in: [UNIT] } }] }],
+    });
+    expect(res.body.stats.direct).toBe(2);
+    expect(res.body.employees.map((row) => row.employee)).toEqual([SCHEDULER, oid(3)]);
+  });
+
+  it('refuses a supervisor without an assignment in the default mode (only schedulers schedule)', async () => {
+    fakeSettings.__clear();
+    const res = await request(app).get('/api/schedules/summary?month=2023-05');
+    expect(res.status).toBe(403);
+    expect(mockEmployee.find).not.toHaveBeenCalled();
+  });
+
+  it('gives an administrator the summary of the selected department (it was refused, so the page always showed 0)', async () => {
+    mockAuth.currentUser = { id: oid(1), role: 'admin' };
+    mockEmployee.find.mockReturnValue(rows([{ _id: oid(3), name: '護理甲' }, { _id: oid(4), name: '護理乙' }]));
+    stubMonth();
+
+    const res = await request(app).get(`/api/schedules/summary?month=2023-05&department=${DEPT}`);
+    expect(res.status).toBe(200);
+    expect(mockEmployee.find).toHaveBeenCalledWith({ department: DEPT });
+    expect(res.body.stats).toMatchObject({ direct: 2, unscheduled: 2, onLeave: 0 });
+  });
+
+  it('rejects a malformed department filter', async () => {
+    mockAuth.currentUser = { id: oid(1), role: 'admin' };
+    const res = await request(app).get('/api/schedules/summary?month=2023-05&department=junk');
+    expect(res.status).toBe(400);
   });
 });

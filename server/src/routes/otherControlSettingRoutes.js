@@ -31,7 +31,7 @@ router.delete('/form-categories/:id', deleteFormCategory)
 // 假別額度規則（請假與加班設定）：額度、超額處理、顯示方式；沒有儲存過就用法定預設值
 router.get('/leave-policy', getLeavePolicySettings)
 router.put('/leave-policy', updateLeavePolicySettings)
-// 排班權限模式：supervisor_and_scheduler（預設：主管與排班人員都能排班）／scheduler_only（只有被指定的排班人員）
+// 排班權限模式：scheduler_only（預設：只有被指定的排班人員，主管只負責簽核）／supervisor_and_scheduler（主管與排班人員都能排班）
 router.get('/schedule-access', getScheduleAccessSetting)
 router.put('/schedule-access', updateScheduleAccessSetting)
 

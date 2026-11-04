@@ -248,8 +248,9 @@ describe('work-hours calculation: holiday / leave / zero-time shifts are not wor
         { employee: 'emp1', action: 'clockOut', timestamp: new Date('2026-06-02T12:00:00.000Z') },
         { employee: 'emp1', action: 'clockIn', timestamp: new Date('2026-06-04T01:00:00.000Z') },
         { employee: 'emp1', action: 'clockOut', timestamp: new Date('2026-06-04T10:00:00.000Z') },
-        { employee: 'emp1', action: 'clockIn', timestamp: new Date('2026-06-05T08:00:00.000Z') },
-        { employee: 'emp1', action: 'clockOut', timestamp: new Date('2026-06-05T17:00:00.000Z') },
+        // 6/05 日班的打卡是真實的台灣 08:00-17:00（00:00Z-09:00Z）：依日期比對的打卡必須落在這一班的範圍內
+        { employee: 'emp1', action: 'clockIn', timestamp: new Date('2026-06-05T00:00:00.000Z') },
+        { employee: 'emp1', action: 'clockOut', timestamp: new Date('2026-06-05T09:00:00.000Z') },
       ],
     )
 

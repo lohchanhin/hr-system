@@ -33,10 +33,12 @@ const mockSubDepartment = {
     && (query.department === undefined || matchesIn(unit.department, query.department))
     && (query._id === undefined || matchesIn(unit._id, query._id))
   )))),
+  distinct: jest.fn(async (field) => units.flatMap((unit) => unit[field] || [])),
 };
 const mockDepartment = {
   find: jest.fn((query = {}) => chain(departments.filter((dept) => dept.deptManager === query.deptManager))),
   countDocuments: jest.fn(async () => departments.filter((dept) => dept.deptManager).length),
+  distinct: jest.fn(async (field) => departments.map((dept) => dept[field])),
 };
 const mockEmployee = {
   find: jest.fn((query = {}) => {
@@ -44,6 +46,7 @@ const mockEmployee = {
     return chain(EMPLOYEES.filter((employee) => clauses.some((clause) => Object.entries(clause)
       .every(([key, condition]) => matchesIn(employee[key], condition)))));
   }),
+  countDocuments: jest.fn(async () => 0),
 };
 const fakeSettings = createFakeOtherControlSettingModel();
 
@@ -109,7 +112,9 @@ describe('getScheduleAccess', () => {
     expect(access.employeeIds).toEqual([ID.clerk]);
   });
 
-  it('keeps today\'s supervisor scope (self and direct reports) by default and adds assigned units on top', async () => {
+  // 2026/11 起的預設（以前的預設是 supervisor_and_scheduler，這個案例原本測「預設維持主管範圍」，改成要明確存成那個模式）
+  it('keeps the supervisor scope (self and direct reports) when supervisor_and_scheduler is saved, and adds assigned units on top', async () => {
+    await service.setScheduleAccessMode('supervisor_and_scheduler');
     const plain = await service.getScheduleAccess({ id: ID.boss, role: 'supervisor' });
     expect(plain).toMatchObject({ canSchedule: true, supervisorScope: true, mode: 'supervisor_and_scheduler' });
     expect(sorted(plain.employeeIds)).toEqual(sorted([ID.boss, ID.nurseA, ID.nurseB]));
@@ -118,6 +123,16 @@ describe('getScheduleAccess', () => {
     const withUnit = await service.getScheduleAccess({ id: ID.boss, role: 'supervisor' });
     expect(sorted(withUnit.employeeIds)).toEqual(sorted([ID.boss, ID.nurseA, ID.nurseB, ID.nurseC]));
     expect(withUnit.subDepartmentIds).toEqual([ID.unitB1]);
+  });
+
+  it('by default (nothing saved) a supervisor without an assignment cannot schedule; with an assignment only the units count', async () => {
+    const cut = await service.getScheduleAccess({ id: ID.boss, role: 'supervisor' });
+    expect(cut).toMatchObject({ canSchedule: false, supervisorScope: false, mode: 'scheduler_only', employeeIds: [] });
+
+    units[2].schedulers = [ID.boss];
+    const scheduler = await service.getScheduleAccess({ id: ID.boss, role: 'supervisor' });
+    expect(scheduler).toMatchObject({ canSchedule: true, supervisorScope: false });
+    expect(scheduler.employeeIds).toEqual([ID.nurseC]);
   });
 
   it('cuts supervisors off in scheduler_only mode: only their scheduler assignments count', async () => {
@@ -139,13 +154,82 @@ describe('getScheduleAccess', () => {
 });
 
 describe('schedule access mode setting', () => {
-  it('defaults to supervisor_and_scheduler, normalises unknown values and rejects bad input', async () => {
-    expect(await service.getScheduleAccessMode()).toBe('supervisor_and_scheduler');
-    expect(service.normalizeScheduleAccessMode('anything')).toBe('supervisor_and_scheduler');
-    expect(await service.setScheduleAccessMode('scheduler_only')).toBe('scheduler_only');
+  // 預設從 supervisor_and_scheduler 改成 scheduler_only（2026/11 客戶：主管帳號與排班功能切開）
+  it('defaults to scheduler_only, respects an explicitly saved supervisor_and_scheduler, normalises unknown values and rejects bad input', async () => {
+    expect(service.DEFAULT_SCHEDULE_ACCESS_MODE).toBe('scheduler_only');
     expect(await service.getScheduleAccessMode()).toBe('scheduler_only');
+    expect(await service.getScheduleAccessModeState()).toEqual({ mode: 'scheduler_only', saved: false });
+    expect(service.normalizeScheduleAccessMode('anything')).toBe('scheduler_only');
+    expect(service.normalizeScheduleAccessMode('supervisor_and_scheduler')).toBe('supervisor_and_scheduler');
+    expect(await service.setScheduleAccessMode('supervisor_and_scheduler')).toBe('supervisor_and_scheduler');
+    expect(await service.getScheduleAccessModeState()).toEqual({ mode: 'supervisor_and_scheduler', saved: true });
+    expect(await service.setScheduleAccessMode('scheduler_only')).toBe('scheduler_only');
+    expect(await service.getScheduleAccessModeState()).toEqual({ mode: 'scheduler_only', saved: true });
     await expect(service.setScheduleAccessMode('nobody')).rejects.toBeInstanceOf(service.ScheduleAccessSettingError);
     expect(await service.getScheduleAccessMode()).toBe('scheduler_only');
+  });
+
+  it('describes the effective mode for the startup log, counting the supervisors without a scheduler assignment', async () => {
+    mockEmployee.countDocuments.mockResolvedValueOnce(3);
+    units[0].schedulers = [ID.scheduler];
+    departments[1].deptManager = ID.boss;
+    expect(await service.describeScheduleAccessForStartup()).toEqual({ mode: 'scheduler_only', saved: false, supervisorsWithoutAssignment: 3 });
+    expect(mockEmployee.countDocuments).toHaveBeenCalledWith({ role: 'supervisor', _id: { $nin: [ID.scheduler, ID.boss] } });
+
+    await service.setScheduleAccessMode('supervisor_and_scheduler');
+    mockEmployee.countDocuments.mockClear();
+    expect(await service.describeScheduleAccessForStartup()).toEqual({ mode: 'supervisor_and_scheduler', saved: true, supervisorsWithoutAssignment: null });
+    expect(mockEmployee.countDocuments).not.toHaveBeenCalled();
+  });
+});
+
+// 資料庫斷線時一律取最嚴格的結果（以前斷線時當作預設的「主管與排班人員」、沒有指派、小單位不限班別：fail open）
+describe('while the database is disconnected', () => {
+  afterEach(() => {
+    delete fakeSettings.db;
+    delete mockSubDepartment.db;
+    delete mockDepartment.db;
+  });
+
+  it('fails closed: a saved supervisor_and_scheduler is not used, assignments count as none, and shift checks refuse to run', async () => {
+    await service.setScheduleAccessMode('supervisor_and_scheduler');
+    units[2].schedulers = [ID.scheduler];
+    fakeSettings.db = { readyState: 0 };
+    mockSubDepartment.db = { readyState: 0 };
+    mockDepartment.db = { readyState: 0 };
+
+    const boss = await service.getScheduleAccess({ id: ID.boss, role: 'supervisor' });
+    expect(boss).toMatchObject({ canSchedule: false, supervisorScope: false, mode: 'scheduler_only' });
+    expect((await service.getScheduleAccess({ id: ID.scheduler, role: 'employee' })).canSchedule).toBe(false);
+    expect(mockSubDepartment.find).not.toHaveBeenCalled();
+
+    await expect(service.findDisallowedShiftAssignments([{ employee: ID.nurseC, shiftId: 'day' }]))
+      .rejects.toMatchObject({ status: 503, code: 'SCHEDULE_ACCESS_UNAVAILABLE' });
+    await expect(service.loadUnitShiftRules([ID.unitB1])).rejects.toBeInstanceOf(service.ScheduleAccessUnavailableError);
+
+    // 連線回來就照常
+    delete fakeSettings.db;
+    delete mockSubDepartment.db;
+    delete mockDepartment.db;
+    expect((await service.getScheduleAccess({ id: ID.boss, role: 'supervisor' })).canSchedule).toBe(true);
+    expect(await service.findDisallowedShiftAssignments([{ employee: ID.nurseC, shiftId: 'day' }])).toHaveLength(1);
+  });
+});
+
+describe('buildScheduleViewEmployeeFilter (schedule page list and its 排班員工數)', () => {
+  it('builds the same filter for the list and the summary card', () => {
+    const none = { canSchedule: false };
+    expect(service.buildScheduleViewEmployeeFilter(none, ID.lonely, 'employee')).toEqual({ _id: ID.lonely });
+    const boss = { canSchedule: true, supervisorScope: true, subDepartmentIds: [], wholeDepartmentIds: [] };
+    expect(service.buildScheduleViewEmployeeFilter(boss, ID.boss, 'supervisor')).toEqual({ supervisor: ID.boss });
+    expect(service.buildScheduleViewEmployeeFilter(boss, ID.boss, 'supervisor', true)).toEqual({ $or: [{ _id: ID.boss }, { supervisor: ID.boss }] });
+    const scheduler = { canSchedule: true, supervisorScope: false, subDepartmentIds: [ID.unitA1], wholeDepartmentIds: [ID.deptC] };
+    expect(service.buildScheduleViewEmployeeFilter(scheduler, ID.scheduler, 'employee')).toEqual({
+      $or: [{ subDepartment: { $in: [ID.unitA1] } }, { department: { $in: [ID.deptC] } }],
+    });
+    expect(service.buildScheduleViewEmployeeFilter(scheduler, ID.boss, 'supervisor')).toEqual({
+      $and: [{ $or: [{ subDepartment: { $in: [ID.unitA1] } }, { department: { $in: [ID.deptC] } }] }, { _id: { $ne: ID.boss } }],
+    });
   });
 });
 
@@ -160,6 +244,7 @@ describe('request memo and per-employee checks', () => {
   });
 
   it('checks one employee record against the scope without listing everybody', async () => {
+    await service.setScheduleAccessMode('supervisor_and_scheduler');
     units[2].schedulers = [ID.scheduler];
     const access = await service.getScheduleAccessSummary({ id: ID.scheduler, role: 'employee' });
     expect(service.isEmployeeInScheduleScope(access, ID.scheduler, EMPLOYEES[3])).toBe(true);

@@ -5,6 +5,7 @@ import path from 'node:path'
 import jwt from 'jsonwebtoken'
 import request from 'supertest'
 import { registerHolidayResolverModelMocks } from './helpers/holidayResolverMocks.js'
+import { registerScheduleAccessModeMocks } from './helpers/scheduleAccessModeMocks.js'
 
 // 真實 Express app（src/index.js）在載入時會檢查這幾個環境變數，必須在動態 import 之前設定
 process.env.PORT = process.env.PORT || '3000'
@@ -32,6 +33,7 @@ const mockResolution = { find: jest.fn(), findOneAndUpdate: jest.fn(), findById:
 
 let app
 let resolverMocks
+let scheduleAccessMode
 
 beforeAll(async () => {
   // 國定假日判斷（holidayResolver）用到的年度行事曆、補假、個人調移：沒有替身 mongoose 會一直等連線
@@ -54,6 +56,9 @@ beforeAll(async () => {
     isTokenBlacklisted: mockIsTokenBlacklisted,
     blacklistToken: jest.fn(),
   }))
+  // 這個檔案測主管處理直屬部屬的國定假日休假：2026/11 起要把排班權限存成「主管與排班人員」才有（預設只有排班人員能排班）
+  scheduleAccessMode = await registerScheduleAccessModeMocks(jest)
+  scheduleAccessMode.allowSupervisors()
   ;({ app } = await import('../src/index.js'))
 })
 

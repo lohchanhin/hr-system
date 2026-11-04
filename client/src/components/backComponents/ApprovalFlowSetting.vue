@@ -22,6 +22,22 @@
         </div>
 
         <el-form :model="policyForm" label-width="160px" class="rule-form" v-if="selectedFormId">
+          <!-- 會生效的規則：已是前面關卡簽核人的人，後面的關卡不再重複簽（預設關閉；主管鏈關卡不論開關一律略過） -->
+          <el-form-item label="略過重複的簽核人" class="skip-repeated-item" data-test="skip-repeated">
+            <el-switch v-model="skipRepeatedApprovers" :disabled="!policyLoaded" data-test="skip-repeated-switch" />
+            <el-button
+              size="small"
+              type="primary"
+              class="policy-inline-save"
+              :disabled="!policyLoaded"
+              data-test="skip-repeated-save"
+              @click="saveSkipRepeated"
+            >儲存</el-button>
+            <div class="field-hint">
+              開啟後，已是前面關卡簽核人的人，後面的關卡不再重複簽；整關的簽核人都已簽過時自動略過這一關（不會因此送不出去）。
+              「主管鏈」關卡不論開關，一律略過已是前面關卡簽核人的主管。關閉＝和以前一樣。
+            </div>
+          </el-form-item>
           <div class="policy-notice" data-test="policy-not-effective">
             <strong>尚未啟用（僅記錄設定）</strong>
             <span>以下通用規則目前只會被儲存，系統還不會依它們限制關卡數、允許代理簽核，或在逾時後提醒／自動處理；實際簽核仍依「申請類型 / 關卡」裡設定的關卡進行。儲存通用規則不會更動這張表單的簽核關卡。</span>
@@ -208,7 +224,7 @@
           <el-dialog
             v-model="workflowDialogVisible"
             title="流程關卡設定"
-            width="1100px"
+            :width="selectedFormIsLeave ? 'min(1320px, 96vw)' : '1100px'"
             :append-to-body="false"
             :teleported="false"
           >
@@ -263,6 +279,33 @@
                       :disabled="m.disabled"
                     />
                   </el-select>
+                  <!-- 主管鏈：從直屬主管一路往上，簽到持有標籤的主管為止（不選＝到最上層），最多幾級 -->
+                  <div v-else-if="row.approver_type==='manager_chain' && row.approver_value && typeof row.approver_value === 'object'" class="chain-config" data-test="chain-config">
+                    <el-select
+                      v-model="row.approver_value.stopAtTag"
+                      placeholder="簽到持有此標籤的主管為止"
+                      filterable
+                      allow-create
+                      default-first-option
+                      clearable
+                      data-test="chain-stop-tag"
+                      @change="handleChainChange(row)"
+                    >
+                      <el-option v-for="tag in tagOptions" :key="tag.value" :label="tag.label" :value="tag.value" />
+                    </el-select>
+                    <div class="chain-levels-row">
+                      <span class="step-hint">最多</span>
+                      <el-input-number
+                        v-model="row.approver_value.maxLevels"
+                        :min="1"
+                        :max="MANAGER_CHAIN_MAX_LEVELS"
+                        size="small"
+                        data-test="chain-max-levels"
+                        @change="handleChainChange(row)"
+                      />
+                      <span class="step-hint">級主管</span>
+                    </div>
+                  </div>
                   <el-select
                     v-else-if="row.approver_type==='tag'"
                     v-model="row.approver_value"
@@ -367,6 +410,35 @@
               <el-table-column label="關卡說明" width="140">
                 <template #default="{ row }">
                   <el-input v-model="row.name" placeholder="例如：直屬主管" maxlength="50" />
+                </template>
+              </el-table-column>
+              <!-- 只有表單性質＝請假的表單：請假長度「大於或等於」設定值才需要這一關 -->
+              <el-table-column v-if="selectedFormIsLeave" label="適用條件" width="250">
+                <template #default="{ row }">
+                  <div v-if="row.condition" class="condition-config" data-test="step-condition">
+                    <el-select
+                      v-model="row.condition.kind"
+                      placeholder="每張都要"
+                      clearable
+                      data-test="step-condition-kind"
+                      @change="handleConditionKindChange(row)"
+                    >
+                      <el-option v-for="opt in CONDITION_KIND_OPTIONS" :key="opt.value" :label="opt.label" :value="opt.value" />
+                    </el-select>
+                    <div v-if="row.condition.kind" class="condition-value-row">
+                      <span class="step-hint">滿</span>
+                      <el-input-number
+                        v-model="row.condition.value"
+                        :min="conditionLimits(row).min"
+                        :max="conditionLimits(row).max"
+                        :step="conditionLimits(row).step"
+                        :precision="row.condition.kind === 'leave_hours_gte' ? 1 : 0"
+                        size="small"
+                        data-test="step-condition-value"
+                      />
+                      <span class="step-hint">{{ conditionUnit(row) }}才需要</span>
+                    </div>
+                  </div>
                 </template>
               </el-table-column>
               <el-table-column label="範圍" width="130">
@@ -513,6 +585,104 @@
           </template>
         </el-dialog>
       </el-tab-pane>
+
+      <!-- 流程試算：用實際送出時同一套規則，算出某位員工送出這張表單會得到哪些關卡、誰簽核（不建立單據） -->
+      <el-tab-pane label="流程試算" name="trial">
+        <div class="tab-content trial-panel" data-test="workflow-trial">
+          <p class="field-hint">
+            選一張表單、一位員工與請假長度，看這位員工送出時實際會得到的簽核關卡與簽核人（含有條件的關卡、略過的重複簽核人、無上級主管改送）。
+            只是試算，不會建立任何單據；設定好主管鏈之後，建議每個部門挑一位員工試算一次。
+          </p>
+          <el-form label-width="110px" class="trial-form">
+            <el-form-item label="表單">
+              <el-select v-model="trial.formId" placeholder="選擇要試算的表單" filterable style="width: 320px" data-test="trial-form">
+                <el-option v-for="f in forms" :key="f._id" :label="f.name" :value="f._id" />
+              </el-select>
+            </el-form-item>
+            <el-form-item label="員工">
+              <el-select v-model="trial.employeeId" placeholder="輸入姓名搜尋" filterable clearable style="width: 320px" data-test="trial-employee">
+                <el-option v-for="emp in trialEmployeeOptions" :key="emp.value" :label="emp.label" :value="emp.value" />
+              </el-select>
+            </el-form-item>
+            <template v-if="trialFormIsLeave">
+              <el-form-item label="請假日期">
+                <el-date-picker
+                  v-model="trial.start"
+                  type="date"
+                  value-format="YYYY-MM-DD"
+                  placeholder="開始日期"
+                  data-test="trial-start"
+                />
+                <span class="trial-range-sep">至</span>
+                <el-date-picker
+                  v-model="trial.end"
+                  type="date"
+                  value-format="YYYY-MM-DD"
+                  placeholder="結束日期（同一天可不填）"
+                  data-test="trial-end"
+                />
+              </el-form-item>
+              <el-form-item label="請假時數">
+                <el-input-number v-model="trial.hours" :min="0.5" :max="2928" :step="0.5" :precision="1" data-test="trial-hours" />
+                <span class="field-hint trial-inline-hint">不填＝依日期每天 8 小時（和送出時一樣）</span>
+              </el-form-item>
+            </template>
+            <el-form-item>
+              <el-button type="primary" :loading="trial.loading" :disabled="!trial.formId || !trial.employeeId" data-test="trial-run" @click="runTrial">試算</el-button>
+            </el-form-item>
+          </el-form>
+
+          <el-alert v-if="trial.error" type="error" :closable="false" show-icon :title="trial.error" data-test="trial-request-error" />
+          <div v-if="trial.result" class="trial-result" data-test="trial-result">
+            <el-alert
+              v-for="line in trial.result.warnings"
+              :key="line"
+              type="warning"
+              :closable="false"
+              show-icon
+              class="trial-alert"
+              :title="line"
+            />
+            <el-alert
+              v-if="trial.result.error"
+              type="error"
+              :closable="false"
+              show-icon
+              class="trial-alert"
+              :title="`實際送出會失敗：${trial.result.error.message}`"
+              data-test="trial-build-error"
+            />
+            <p class="trial-summary" data-test="trial-summary">{{ trialSummary }}</p>
+            <el-table v-if="trial.result.steps.length" :data="trial.result.steps" border size="small" data-test="trial-steps">
+              <el-table-column label="關卡" width="150">
+                <template #default="{ row }">第 {{ row.step_order }} 關{{ row.name ? `・${row.name}` : '' }}</template>
+              </el-table-column>
+              <el-table-column label="簽核人" min-width="220">
+                <template #default="{ row }">{{ row.approvers.map(trialPersonLabel).join('、') }}</template>
+              </el-table-column>
+              <el-table-column label="來自設定" width="120">
+                <template #default="{ row }">{{ row.source_position ? `第 ${row.source_position} 關` : '' }}</template>
+              </el-table-column>
+              <el-table-column label="必簽" width="70">
+                <template #default="{ row }">{{ row.is_required ? '是' : '否' }}</template>
+              </el-table-column>
+              <el-table-column label="說明" min-width="260">
+                <template #default="{ row }">{{ [row.fallback_text, row.note].filter(Boolean).join('；') }}</template>
+              </el-table-column>
+            </el-table>
+            <h4 class="trial-subtitle">每一關的判斷</h4>
+            <ul class="trial-trace" data-test="trial-trace">
+              <li v-for="line in trialTraceLines" :key="line">{{ line }}</li>
+            </ul>
+            <template v-if="trial.result.logs.length">
+              <h4 class="trial-subtitle">送出時會寫進簽核紀錄</h4>
+              <ul class="trial-trace" data-test="trial-logs">
+                <li v-for="line in trial.result.logs" :key="line">{{ line }}</li>
+              </ul>
+            </template>
+          </div>
+        </div>
+      </el-tab-pane>
     </el-tabs>
   </div>
 </template>
@@ -548,11 +718,13 @@ const API = {
   subDepartments: '/api/sub-departments',
   formCategories: '/api/other-control-settings/form-categories',
   restoreDefaults: '/api/approvals/restore-defaults',
-  topLevelApprovers: '/api/approvals/top-level-approvers'
+  topLevelApprovers: '/api/approvals/top-level-approvers',
+  trial: (formId) => `/api/approvals/forms/${formId}/workflow/trial`
 }
 
 const APPROVER_TYPES = [
   { value: 'manager', label: '主管' },
+  { value: 'manager_chain', label: '主管鏈' },
   { value: 'tag', label: '標籤' },
   { value: 'user', label: '員工' },
   { value: 'role', label: '角色' },
@@ -577,8 +749,18 @@ const SYSTEM_ROLE_OPTIONS = [
   { value: 'supervisor', label: '系統權限：主管' },
   { value: 'employee', label: '系統權限：一般員工' },
 ]
+// 主管鏈（manager_chain）：approver_value = { stopAtTag, maxLevels }，與伺服器 normalizeManagerChainValue 相同的預設
+const MANAGER_CHAIN_DEFAULT_LEVELS = 5
+const MANAGER_CHAIN_MAX_LEVELS = 10
+// 關卡的適用條件（只有請假表單）：請假長度「大於或等於」設定值才需要這一關；與伺服器 STEP_CONDITION_LIMITS 相同
+const CONDITION_KIND_OPTIONS = [
+  { value: 'leave_hours_gte', label: '請假時數', unit: '小時', min: 0.5, max: 2928, step: 0.5, defaultValue: 56 },
+  { value: 'leave_calendar_days_gte', label: '請假日數（日曆日）', unit: '日', min: 1, max: 366, step: 1, defaultValue: 7 },
+  { value: 'leave_scheduled_days_gte', label: '請假日數（排班日）', unit: '個排班日', min: 1, max: 366, step: 1, defaultValue: 7 },
+]
 const APPROVER_TYPE_HINTS = {
   manager: '「申請者的主管」會送給申請人自己的直屬主管；也可以指定某一位主管。',
+  manager_chain: '從申請人的直屬主管開始一路往上，每一級主管各一關（第1級主管、第2級主管…），簽到持有所選標籤的主管為止（不選＝到最上層）；已是前面關卡簽核人的主管自動略過，中途離職、留職停薪的主管會略過並往上找。',
   user: '送給你選的員工；只有在職且帳號啟用的人能簽核。',
   tag: '送給持有此簽核標籤的在職員工；標籤在「員工管理」設定。可以先在這裡選好標籤，再為負責的人加上。',
   role: '送給角色符合的在職員工：系統權限（管理員／主管／一般員工），或員工管理裡設定的簽核角色（R001–R007）。',
@@ -616,6 +798,8 @@ const DEFAULT_POLICY_FORM = Object.freeze({
   overdueAction: 'none',
 })
 const policyForm = ref({ ...DEFAULT_POLICY_FORM })
+// 「略過重複的簽核人」（policy.skipRepeatedApprovers）會生效，和上面只記錄的規則分開存（自己的儲存按鈕）；跟著 policyForm 一起讀
+const skipRepeatedApprovers = ref(false)
 // 這張表單的通用規則成功讀回來（或確定還沒有流程）之後才允許儲存：讀取失敗時不能把預設值當成它的規則存回去
 const policyLoaded = ref(false)
 // 序號：快速切換表單時，慢回來的舊回應不能蓋掉現在這張表單的規則 / 關卡
@@ -835,6 +1019,122 @@ async function saveTopLevelApprovers() {
   }
 }
 
+/* 流程試算（GET /api/approvals/forms/:id/workflow/trial，只有管理員）：
+   和實際送出同一套規則算出某位員工會得到的關卡與簽核人（含姓名）；不建立單據。分頁打開前不讀任何資料 */
+const trial = ref({ formId: '', employeeId: '', start: '', end: '', hours: undefined, loading: false, error: '', result: null })
+const trialFormIsLeave = computed(() => isLeaveFormRecord(forms.value.find((item) => item._id === trial.value.formId)))
+const trialEmployeeOptions = computed(() => employeeOptions.value.map((emp) => {
+  const dept = emp.department?.name ? `・${emp.department.name}` : ''
+  return { value: emp.id, label: `${emp.displayName || emp.name}${dept}${emp.ineligibleReason ? `（${emp.ineligibleReason}）` : ''}` }
+}))
+
+function trialPersonLabel(person) {
+  const name = person?.name || '（未命名）'
+  return person?.employeeId ? `${name}（${person.employeeId}）` : name
+}
+
+function normalizeTrialResult(body) {
+  const list = (value) => (Array.isArray(value) ? value : [])
+  return {
+    ...body,
+    warnings: list(body?.warnings).filter((line) => typeof line === 'string' && line),
+    steps: list(body?.steps).map((step) => ({ ...step, approvers: list(step?.approvers) })),
+    workflow: list(body?.workflow),
+    logs: list(body?.logs).filter((line) => typeof line === 'string' && line),
+  }
+}
+
+const trialSummary = computed(() => {
+  const result = trial.value.result
+  if (!result) return ''
+  const parts = []
+  const applicant = result.applicant
+  if (applicant) {
+    const supervisor = applicant.supervisor ? `直屬主管：${trialPersonLabel(applicant.supervisor)}` : '沒有設定直屬主管'
+    parts.push(`${trialPersonLabel(applicant)}（${supervisor}）`)
+  }
+  const leave = result.leave
+  if (leave) {
+    const scheduled = leave.scheduledDays !== null && leave.scheduledDays !== undefined
+      ? `、${leave.scheduledDays} 個排班日${leave.scheduledNote ? `（${leave.scheduledNote}）` : ''}`
+      : ''
+    parts.push(`請假 ${leave.hours ?? '-'} 小時、${leave.calendarDays ?? '-'} 個日曆日${scheduled}`)
+  }
+  parts.push(result.ok ? `送出後共 ${result.steps.length} 關` : '實際送出會失敗（見上方說明）')
+  return parts.join('；')
+})
+
+// 每一關怎麼判斷的：條件適不適用、主管鏈走到誰、略過了誰、改送給誰
+const trialTraceLines = computed(() => {
+  const result = trial.value.result
+  if (!result) return []
+  return result.workflow.map((item) => {
+    const head = `第${item.position}關（${item.label}${item.name ? `・${item.name}` : ''}）`
+    const parts = []
+    if (item.condition_text) {
+      parts.push(item.included
+        ? `${item.condition_text}：適用（${item.condition_detail || '請假長度未知'}）`
+        : `${item.condition_text}：不適用（${item.condition_detail}），這一關不送`)
+    }
+    if (item.included) {
+      if (item.chain && item.chain.levels?.length) {
+        const levels = item.chain.levels.map((level) => `${level.label} ${trialPersonLabel(level.approver)}${level.repeated ? '（已是前面關卡的簽核人，略過）' : ''}`)
+        parts.push(`${levels.join(' → ')}；${item.chain.end_text}`)
+      } else if (item.approvers?.length) {
+        parts.push(item.approvers.map(trialPersonLabel).join('、'))
+      }
+      ;(item.chain?.levels || []).forEach((level) => (level.notes || []).forEach((note) => parts.push(note)))
+      ;(item.chain?.notes || []).forEach((note) => parts.push(note))
+      if (item.fallback_text) parts.push(item.fallback_text)
+      else if (item.unresolved_reason) parts.push(`找不到簽核人：${item.unresolved_reason}${item.is_required ? '' : '（選填，送出時自動略過）'}`)
+      if (!item.chain && item.repeated?.length) parts.push(`略過已是前面關卡簽核人的${item.repeated.map(trialPersonLabel).join('、')}`)
+      if (item.skipped_as_repeat) parts.push('整關的簽核人都已在前面簽過，這一關略過')
+    }
+    return `${head}：${parts.join('；') || '沒有簽核人'}`
+  })
+})
+
+// 打開「流程試算」時先帶入目前選的表單
+watch(activeTab, (tab) => {
+  if (tab === 'trial' && !trial.value.formId && selectedFormId.value) trial.value.formId = selectedFormId.value
+})
+
+async function runTrial() {
+  if (!trial.value.formId || !trial.value.employeeId || trial.value.loading) return
+  const params = new URLSearchParams({ employee: trial.value.employeeId })
+  if (trialFormIsLeave.value) {
+    // 只選了結束日期：伺服器只看開始日期，先請管理員補上，免得試算結果和想看的期間不同
+    if (!trial.value.start && trial.value.end) {
+      trial.value.result = null
+      trial.value.error = '請先選開始日期（同一天的請假可以只選開始日期）'
+      return
+    }
+    if (trial.value.start) params.set('start', trial.value.start)
+    if (trial.value.end) params.set('end', trial.value.end)
+    if (Number(trial.value.hours) > 0) params.set('hours', String(trial.value.hours))
+  }
+  trial.value.loading = true
+  trial.value.error = ''
+  try {
+    const res = await readApi(`${API.trial(trial.value.formId)}?${params.toString()}`)
+    if (!res) {
+      trial.value.result = null
+      trial.value.error = LOAD_FAILURE_MESSAGE
+      return
+    }
+    if (!res.ok) {
+      trial.value.result = null
+      trial.value.error = await describeFailure(res, '試算失敗')
+      return
+    }
+    const body = await readJson(res)
+    trial.value.result = body && typeof body === 'object' ? normalizeTrialResult(body) : null
+    if (!trial.value.result) trial.value.error = '試算失敗，請稍後再試'
+  } finally {
+    trial.value.loading = false
+  }
+}
+
 function employeeOptionFor(emp) {
   const label = emp.displayName || emp.name
   // 已離職 / 留職停薪 / 帳號停用的人不能簽核：灰掉不能新選，但已儲存的值仍看得到原因
@@ -902,8 +1202,11 @@ const tagOptions = computed(() => {
     })
   })
   workflowSteps.value.forEach((step) => {
-    if (step?.approver_type !== 'tag') return
-    const tag = normalizeTagText(step.approver_value)
+    // 主管鏈的「簽到持有此標籤的主管為止」也算用到的標籤
+    const raw = step?.approver_type === 'tag'
+      ? step.approver_value
+      : (step?.approver_type === 'manager_chain' ? step.approver_value?.stopAtTag : '')
+    const tag = normalizeTagText(raw)
     if (tag) names.add(tag)
   })
   return Array.from(names)
@@ -1444,8 +1747,59 @@ function approverTypeLabel(type) {
 function defaultValueForType(type) {
   if (type === 'user' || type === 'group') return []
   if (type === 'manager') return APPLICANT_SUPERVISOR_VALUE
+  if (type === 'manager_chain') return { stopAtTag: '', maxLevels: MANAGER_CHAIN_DEFAULT_LEVELS }
   return ''
 }
+
+/* 主管鏈的設定：{ stopAtTag, maxLevels }；格式不對時用預設（不設停止標籤、最多 5 級） */
+function normalizeChainValue(raw) {
+  const config = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {}
+  const levels = Number(config.maxLevels)
+  return {
+    stopAtTag: normalizeTagText(config.stopAtTag),
+    maxLevels: Number.isInteger(levels) && levels >= 1 && levels <= MANAGER_CHAIN_MAX_LEVELS ? levels : MANAGER_CHAIN_DEFAULT_LEVELS,
+  }
+}
+
+/* 關卡的適用條件：畫面上一律是 { kind, value }（kind 空白＝每張都要）；送出時沒有 kind 就不帶 */
+function normalizeConditionValue(raw) {
+  const option = CONDITION_KIND_OPTIONS.find((opt) => opt.value === raw?.kind)
+  if (!option) return { kind: '', value: null }
+  const value = Number(raw?.value)
+  return { kind: option.value, value: Number.isFinite(value) ? value : option.defaultValue }
+}
+
+function conditionOption(row) {
+  return CONDITION_KIND_OPTIONS.find((opt) => opt.value === row?.condition?.kind) || null
+}
+
+function conditionLimits(row) {
+  const option = conditionOption(row)
+  return option ? { min: option.min, max: option.max, step: option.step } : { min: 1, max: 366, step: 1 }
+}
+
+function conditionUnit(row) {
+  return conditionOption(row)?.unit || ''
+}
+
+// 換了條件種類：數值改成這種條件的建議值（56 小時或 7 日），避免「7 小時」這種誤設
+function handleConditionKindChange(row) {
+  const option = conditionOption(row)
+  row.condition = option ? { kind: option.value, value: option.defaultValue } : { kind: '', value: null }
+}
+
+function handleChainChange(row) {
+  row.approver_value = normalizeChainValue(row.approver_value)
+  Object.assign(row, normalizeStep(row))
+}
+
+// 這張表單是不是請假表單（與伺服器 isLeaveFormTemplate 相同：有表單性質時以它為準，沒有才看名稱）；只有請假表單能設定請假長度條件
+function isLeaveFormRecord(form) {
+  if (!form) return false
+  if (form.semanticType) return form.semanticType === 'leave'
+  return /請假|leave/i.test(String(form.name ?? ''))
+}
+const selectedFormIsLeave = computed(() => isLeaveFormRecord(forms.value.find((item) => item._id === selectedFormId.value)))
 
 const roleOptions = computed(() => [
   ...SYSTEM_ROLE_OPTIONS,
@@ -1481,10 +1835,16 @@ function isKnownValue(type, value) {
  */
 function analyzeStep(step) {
   const type = step?.approver_type
-  const values = stepValues(step?.approver_value)
+  // 主管鏈的設定是物件，沒有要檢查失效的值；只看停止標籤目前有幾位持有者
+  const values = type === 'manager_chain' ? [] : stepValues(step?.approver_value)
   const info = { type, values, stale: [], ineligible: [], holders: null }
   const knowsEmployees = employeeOptions.value.length > 0
   switch (type) {
+    case 'manager_chain': {
+      const tag = normalizeTagText(step?.approver_value?.stopAtTag)
+      info.holders = tag ? holdersOf(tag) : null
+      break
+    }
     case 'user': {
       if (!knowsEmployees) break
       values.forEach((id) => {
@@ -1524,6 +1884,7 @@ function analyzeStep(step) {
 
 function hasValidApprover(step, info) {
   if (step?.approver_type === 'manager') return true // 沒指定時就是申請者的主管
+  if (step?.approver_type === 'manager_chain') return true // 一定從申請人的直屬主管開始
   const valid = info.values.filter((value) => !info.stale.includes(value))
   if (step?.approver_type === 'tag') return Boolean(normalizeTagText(valid[0]))
   return valid.length > 0
@@ -1564,6 +1925,12 @@ function stepNotices(row) {
   if (row.approver_type === 'tag' && normalizeTagText(row.approver_value)) {
     if (info.holders === 0) notices.push({ type: 'warning', text: '目前沒有人持有此標籤' })
     else if (info.holders > 0) notices.push({ type: 'info', text: `目前 ${info.holders} 人持有此標籤` })
+  }
+  if (row.approver_type === 'manager_chain') {
+    const tag = normalizeTagText(row.approver_value?.stopAtTag)
+    if (!tag) notices.push({ type: 'info', text: '沒有選停止標籤：一路簽到最上層（或最多層數）' })
+    else if (info.holders === 0) notices.push({ type: 'warning', text: '目前沒有人持有此標籤：主管鏈會一路簽到最上層（或最多層數）' })
+    else if (info.holders > 0) notices.push({ type: 'info', text: `目前 ${info.holders} 位主管持有此標籤` })
   }
   return notices
 }
@@ -1627,12 +1994,16 @@ function normalizeStep(step) {
       // 沒指定主管時就是「申請者的主管」，伺服器也是這樣解讀
       normalized.approver_value = values[0] || APPLICANT_SUPERVISOR_VALUE
       break
+    case 'manager_chain':
+      normalized.approver_value = normalizeChainValue(step.approver_value)
+      break
     case 'tag':
       normalized.approver_value = normalizeTagText(values[0])
       break
     default:
       normalized.approver_value = values.length ? values[0] : ''
   }
+  normalized.condition = normalizeConditionValue(step.condition)
 
   const info = analyzeStep(normalized)
   normalized.__meta = {
@@ -1775,6 +2146,7 @@ async function loadWorkflow() {
   const isStale = () => seq !== policyLoadSeq || selectedFormId.value !== formId
   // 先回到預設值：沒有流程文件（或讀取失敗）的表單不能沿用上一張表單的規則
   policyForm.value = { ...DEFAULT_POLICY_FORM }
+  skipRepeatedApprovers.value = false
   policyLoaded.value = false
   const res = await readApi(API.workflow(formId))
   if (isStale()) return
@@ -1782,6 +2154,7 @@ async function loadWorkflow() {
     const wf = await readJson(res)
     if (isStale()) return
     policyForm.value = { ...DEFAULT_POLICY_FORM, ...(wf?.policy || {}) }
+    skipRepeatedApprovers.value = wf?.policy?.skipRepeatedApprovers === true
     policyLoaded.value = true
   } else if (!res) {
     ElMessage.error(LOAD_FAILURE_MESSAGE)
@@ -1813,6 +2186,27 @@ async function savePolicy() {
   )
   if (!res) return
   ElMessage.success('已儲存通用規則')
+}
+
+// 「略過重複的簽核人」只送這一個欄位：不動其他通用規則，也不動關卡
+async function saveSkipRepeated() {
+  if (!selectedFormId.value) return
+  if (!policyLoaded.value || policyFormId !== selectedFormId.value) {
+    ElMessage.error('這張表單的通用規則還沒有成功載入，請重新選擇表單樣板後再儲存')
+    return
+  }
+  const value = skipRepeatedApprovers.value === true
+  const res = await sendWrite(
+    API.workflow(selectedFormId.value),
+    {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ policy: { skipRepeatedApprovers: value } })
+    },
+    '儲存「略過重複的簽核人」失敗'
+  )
+  if (!res) return
+  ElMessage.success(value ? '已開啟：後面的關卡不再重複簽核' : '已關閉：每一關照設定簽核（主管鏈仍會略過重複的主管）')
 }
 
 /* 新增/編輯樣板 */
@@ -1921,6 +2315,7 @@ async function openWorkflowDialog(row) {
   policyLoadSeq += 1
   policyFormId = formId
   policyForm.value = { ...DEFAULT_POLICY_FORM }
+  skipRepeatedApprovers.value = false
   policyLoaded.value = false
   const res = await readApi(API.workflow(formId))
   if (isStale()) return
@@ -1932,6 +2327,7 @@ async function openWorkflowDialog(row) {
     const wf = await readJson(res)
     if (isStale()) return
     policyForm.value = { ...DEFAULT_POLICY_FORM, ...(wf?.policy || {}) }
+    skipRepeatedApprovers.value = wf?.policy?.skipRepeatedApprovers === true
     policyLoaded.value = true
     // 依 step_order 排好（與伺服器儲存 / 執行的順序一致），再依位置重新編號
     const stored = Array.isArray(wf?.steps) ? wf.steps : []
@@ -2008,6 +2404,16 @@ function collectSaveIssues(steps) {
         issues.push({ kind: 'warn', text: `${label}：選擇的人員目前都不能簽核（已離職、留職停薪或帳號停用），員工送出申請時會找不到簽核人。` })
       }
     }
+    if (step.approver_type === 'manager_chain' && normalizeTagText(step.approver_value?.stopAtTag) && info.holders === 0) {
+      issues.push({
+        kind: 'warn',
+        text: `${label}：標籤「${normalizeTagText(step.approver_value.stopAtTag)}」目前沒有任何在職員工持有，主管鏈會一路簽到最上層（或最多 ${step.approver_value.maxLevels} 級）。`,
+      })
+    }
+    // 表單不是請假表單（例如表單性質改成一般）時，請假長度條件沒有作用，伺服器也不接受
+    if (step.condition?.kind && !selectedFormIsLeave.value) {
+      issues.push({ kind: 'remove', text: `${label}：這張表單不是請假表單，儲存時會移除這一關的請假長度條件。` })
+    }
   })
   if (!steps.length) {
     issues.push({ kind: 'warn', text: '這張表單沒有任何簽核關卡，儲存後員工將無法送出這張表單的申請。' })
@@ -2017,10 +2423,15 @@ function collectSaveIssues(steps) {
 
 // 送給伺服器的關卡：去掉內部欄位，並移除（或還原預設的）已失效的對象
 function toPayloadStep(step, idx) {
-  const { __meta, ...clean } = step
+  const { __meta, condition, ...clean } = step
   const info = analyzeStep(step)
   const stale = new Set(info.stale)
-  if (Array.isArray(clean.approver_value)) {
+  // 請假長度條件：只有請假表單、而且有選條件時才送出
+  if (condition?.kind && selectedFormIsLeave.value) clean.condition = { kind: condition.kind, value: Number(condition.value) }
+  if (clean.approver_type === 'manager_chain') {
+    const chain = normalizeChainValue(clean.approver_value)
+    clean.approver_value = { ...(chain.stopAtTag ? { stopAtTag: chain.stopAtTag } : {}), maxLevels: chain.maxLevels }
+  } else if (Array.isArray(clean.approver_value)) {
     clean.approver_value = clean.approver_value.filter((value) => !stale.has(toValueString(value)))
   } else if (stale.has(toValueString(clean.approver_value))) {
     clean.approver_value = clean.approver_type === 'manager' ? APPLICANT_SUPERVISOR_VALUE : ''
@@ -2061,6 +2472,19 @@ async function saveWorkflow() {
       ElMessage(message)
     }
     return
+  }
+
+  // 請假長度條件：數值要填，而且至少一關沒有條件（不然未達條件的假單沒有人簽核）
+  if (selectedFormIsLeave.value) {
+    const missingValue = normalizedSteps.findIndex((step) => step.condition?.kind && !(Number(step.condition.value) > 0))
+    if (missingValue >= 0) {
+      ElMessage.error(`第${missingValue + 1}關：請輸入適用條件的數值（例如 56 小時或 7 日）`)
+      return
+    }
+    if (normalizedSteps.length && normalizedSteps.every((step) => step.condition?.kind)) {
+      ElMessage.error('每一關都設定了請假長度條件：至少要有一關沒有條件，不然未達條件的假單會沒有人簽核')
+      return
+    }
   }
 
   const issues = collectSaveIssues(normalizedSteps)
@@ -2247,4 +2671,17 @@ onMounted(async () => {
 .top-level-select { width: 520px; max-width: 100%; }
 .top-level-warning { color: #b45309; }
 :deep(.field-row-inactive) { opacity: 0.55; }
+.policy-inline-save { margin-left: 10px; }
+.chain-config { display: flex; flex-direction: column; gap: 6px; }
+.chain-levels-row, .condition-value-row { display: flex; align-items: center; gap: 6px; }
+.condition-config { display: flex; flex-direction: column; gap: 6px; }
+.trial-panel { max-width: 1100px; }
+.trial-form { margin-top: 12px; max-width: 760px; }
+.trial-range-sep { margin: 0 8px; color: #64748b; }
+.trial-inline-hint { flex: 0 0 auto; margin: 0 0 0 10px; }
+.trial-result { margin-top: 12px; }
+.trial-alert { margin-bottom: 8px; }
+.trial-summary { margin: 8px 0; font-size: 14px; color: #334155; }
+.trial-subtitle { margin: 16px 0 6px; font-size: 14px; color: #334155; }
+.trial-trace { margin: 0; padding-left: 18px; font-size: 13px; line-height: 1.8; color: #475569; }
 </style>

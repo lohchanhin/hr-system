@@ -29,6 +29,9 @@ const stepFallbackSchema = new Schema(
 const requestStepSchema = new Schema(
   {
     step_order: Number,
+    // 這一關的名稱：主管鏈展開的每一級是「第n級主管」（流程關卡有說明時是「說明（第n級主管）」）；
+    // 其他關卡、舊資料沒有這個欄位，畫面只顯示「第 N 關」
+    name: { type: String, default: undefined },
     approvers: { type: [decisionSchema], default: [] },             // 此關所有審核人
     all_must_approve: { type: Boolean, default: true },
     is_required: { type: Boolean, default: true },
@@ -36,6 +39,8 @@ const requestStepSchema = new Schema(
     started_at: Date,
     finished_at: Date,
     fallback: { type: stepFallbackSchema, default: undefined },
+    // 主管鏈往上找時的說明，例如「已略過留職停薪的 OOO（第1級主管），改由上一級主管簽核」；沒有時不存
+    note: { type: String, default: undefined },
   },
   { _id: false }
 )

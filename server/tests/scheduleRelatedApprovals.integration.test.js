@@ -144,6 +144,9 @@ describeIntegration('schedule related approvals against a real MongoDB through t
     await addPerson('admin', { role: 'admin' })
     await addPerson('boss', { role: 'supervisor', department: DEPT_A })
     await addPerson('boss2', { role: 'supervisor', department: DEPT_B })
+    // 排班頁的「相關簽核」由主管看直屬部屬：2026/11 起要把排班權限存成「主管與排班人員」才有（預設只有排班人員能排班）
+    const { setScheduleAccessMode } = await import('../src/services/scheduleAccessService.js')
+    await setScheduleAccessMode('supervisor_and_scheduler')
     await addPerson('sha', { name: '沙俊宇', supervisor: people.boss._id, department: DEPT_A, subDepartment: SUB_A })
     await addPerson('wang', { name: '王小明', supervisor: people.boss._id, department: DEPT_B })
     await addPerson('outsider', { name: '外部員工', supervisor: people.boss2._id, department: DEPT_B })

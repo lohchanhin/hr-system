@@ -458,7 +458,11 @@
                         </el-select>
                       </el-form-item>
                       <el-form-item label="直屬主管">
-                        <el-select v-model="employeeForm.supervisor" placeholder="選擇主管" clearable>
+                        <!-- 沒有輸入時列出同機構同部門的主管；輸入姓名或員工編號可搜尋全部在職員工（別的部門、機構的主任、總幹事、副院長） -->
+                        <el-select v-model="employeeForm.supervisor" placeholder="選擇主管，或輸入姓名、員工編號搜尋" clearable
+                          filterable remote remote-show-suffix :remote-method="searchSupervisors"
+                          :loading="supervisorSearch.loading" class="supervisor-select" data-test="supervisor-select"
+                          @visible-change="handleSupervisorDropdown">
                           <template #label="{ label, value }">
                             <span class="supervisor-option">
                               <EmployeeAvatar v-if="supervisorById.has(String(value))"
@@ -468,9 +472,12 @@
                           </template>
                           <el-option v-for="sup in supervisorList" :key="sup._id"
                             :label="sup.employeeNo ? `${sup.name}（${sup.employeeNo}）` : sup.name" :value="sup._id">
-                            <span class="supervisor-option">
-                              <EmployeeAvatar :employee="sup" :size="20" />
-                              <span>{{ sup.employeeNo ? `${sup.name}（${sup.employeeNo}）` : sup.name }}</span>
+                            <span class="supervisor-option-row">
+                              <span class="supervisor-option">
+                                <EmployeeAvatar :employee="sup" :size="20" />
+                                <span>{{ sup.employeeNo ? `${sup.name}（${sup.employeeNo}）` : sup.name }}</span>
+                              </span>
+                              <span v-if="supervisorUnitLabel(sup)" class="supervisor-option-unit" data-test="supervisor-option-unit">{{ supervisorUnitLabel(sup) }}</span>
                             </span>
                           </el-option>
                         </el-select>
@@ -1095,7 +1102,7 @@
                       </el-form-item>
                     </div>
                     <!-- 調休存摺（客戶稱為移休；取代以前人資手動填的「補休時數」）：國定假日適逢休息日／例假自動存入；
-                         管理員可手動給予、扣除、作廢，並填寫員工在「我的調休」看得到的存摺備註 -->
+                         管理員可手動給予、扣除、作廢，並填寫員工在「我的調休」看得到的存摺備註（本人、直屬主管與管理員看得到，排班人員看不到） -->
                     <div class="form-row" data-test="employee-comp-leave">
                       <div class="full-width-item">
                         <CompensatoryLeavePanel
@@ -4106,9 +4113,96 @@ async function fetchSupervisorCandidates() {
     const payload = await res.json()
     if (generation !== supervisorCandidatesGeneration) return
     const list = Array.isArray(payload) ? payload : (payload.employees ?? [])
+    list.forEach(rememberSupervisorUnit)
     supervisorCandidates.value = list.map(toSupervisorOption)
   } catch (error) {
     console.warn('載入主管候選人失敗', error)
+  }
+}
+
+// 直屬主管可以是任何機構、任何部門的在職員工（例如康協員工的主管是另一個機構的總幹事、各機構主任的主管是副院長）：
+// 輸入姓名或員工編號時向後端搜尋全部員工（伺服器只擋本人、離職／停用的人），離職、留職停薪、帳號停用的人與本人不列出；
+// 同機構同部門的主管排最前面，其次同部門、同機構，最後其他人。沒有輸入時和以前一樣只列同機構同部門的主管。
+const INACTIVE_SUPERVISOR_STATUSES = ['離職員工', '留職停薪']
+const SUPERVISOR_SEARCH_LIMIT = 50
+const supervisorSearch = ref({ query: '', results: [], loading: false })
+let supervisorSearchGeneration = 0
+// 選項旁顯示的機構／部門：{ 員工 _id: { organization, department } }（搜尋結果、候選名單帶回來的）
+const supervisorUnitById = ref(new Map())
+
+function rememberSupervisorUnit(e = {}) {
+  const id = e?._id ? String(e._id) : ''
+  if (!id) return
+  supervisorUnitById.value.set(id, {
+    organization: String(e.organization?._id ?? e.organization ?? ''),
+    department: String(e.department?._id ?? e.department ?? '')
+  })
+}
+
+function supervisorUnitLabel(sup) {
+  const id = sup?._id ? String(sup._id) : ''
+  if (!id) return ''
+  const listed = employeeList.value.find(e => String(e._id) === id)
+  const unit = supervisorUnitById.value.get(id) ?? (listed ? { organization: String(listed.organization ?? ''), department: String(listed.department ?? '') } : null)
+  if (!unit) return ''
+  const orgName = orgList.value.find(o => String(o._id) === unit.organization)?.name ?? ''
+  const deptName = departmentList.value.find(d => String(d._id) === unit.department)?.name ?? ''
+  return [orgName, deptName].filter(Boolean).join('／')
+}
+
+function supervisorRank(e) {
+  const { organization, department } = employeeForm.value
+  const sameOrg = Boolean(organization) && String(e.organization?._id ?? e.organization ?? '') === String(organization)
+  const sameDept = sameOrg && Boolean(department) && String(e.department?._id ?? e.department ?? '') === String(department)
+  if (sameDept && e.role === 'supervisor') return 0
+  if (sameDept) return 1
+  if (sameOrg) return 2
+  return 3
+}
+
+function isSelectableSupervisor(e) {
+  if (!e?._id) return false
+  if (editingEmployeeId.value && String(e._id) === String(editingEmployeeId.value)) return false
+  if (e.accountEnabled === false) return false
+  return !INACTIVE_SUPERVISOR_STATUSES.includes(e.status ?? e.employmentStatus)
+}
+
+async function searchSupervisors(query) {
+  const text = String(query ?? '').trim()
+  const generation = ++supervisorSearchGeneration
+  if (!text) {
+    supervisorSearch.value = { query: '', results: [], loading: false }
+    return
+  }
+  supervisorSearch.value = { ...supervisorSearch.value, query: text, loading: true }
+  try {
+    const params = new URLSearchParams({ search: text, pageSize: String(SUPERVISOR_SEARCH_LIMIT) })
+    const res = await apiFetch(`/api/employees?${params.toString()}`)
+    if (generation !== supervisorSearchGeneration) return
+    if (!res.ok) {
+      supervisorSearch.value = { query: text, results: [], loading: false }
+      return
+    }
+    const payload = await res.json()
+    if (generation !== supervisorSearchGeneration) return
+    const list = (Array.isArray(payload) ? payload : (payload.employees ?? [])).filter(isSelectableSupervisor)
+    list.forEach(rememberSupervisorUnit)
+    const ranked = list
+      .map((e, index) => ({ e, index, rank: supervisorRank(e) }))
+      .sort((a, b) => (a.rank - b.rank) || (a.index - b.index))
+      .map(item => toSupervisorOption(item.e))
+    supervisorSearch.value = { query: text, results: ranked, loading: false }
+  } catch (error) {
+    console.warn('搜尋直屬主管失敗', error)
+    if (generation === supervisorSearchGeneration) supervisorSearch.value = { query: text, results: [], loading: false }
+  }
+}
+
+// 收起下拉選單時回到預設的候選名單（同機構同部門的主管），下次打開不會停在上一次的搜尋結果
+function handleSupervisorDropdown(visible) {
+  if (!visible && supervisorSearch.value.query) {
+    supervisorSearchGeneration += 1
+    supervisorSearch.value = { query: '', results: [], loading: false }
   }
 }
 
@@ -4119,7 +4213,9 @@ const supervisorList = computed(() => {
     if (key && !options.has(key)) options.set(key, option)
   }
   const { organization, department, supervisor } = employeeForm.value
-  if (organization && department) {
+  if (supervisorSearch.value.query) {
+    supervisorSearch.value.results.forEach(addOption)
+  } else if (organization && department) {
     employeeList.value
       .filter(e => e.role === 'supervisor' && e.organization === organization && e.department === department)
       .map(toSupervisorOption)
@@ -5210,6 +5306,8 @@ async function openEmployeeDialog(employeeId = null) {
   }
   await fetchSubDepartments(employeeForm.value.department)
   employeeDialogVisible.value = true
+  supervisorSearchGeneration += 1
+  supervisorSearch.value = { query: '', results: [], loading: false }
   void fetchSupervisorCandidates()
   void fetchSignTagOptions()
   // 表單值整批換掉時，上一次留下的紅字（例如新增員工按儲存後的「請輸入登入密碼」）會殘留在欄位上，
@@ -6354,6 +6452,24 @@ function getStatusTagType(status) {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+/* 直屬主管選項：姓名（員工編號）右邊顯示機構／部門 */
+.supervisor-option-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.supervisor-option-unit {
+  font-size: 12px;
+  color: #94a3b8;
+  white-space: nowrap;
+}
+
+.supervisor-select {
+  width: 100%;
 }
 
 .department-info {

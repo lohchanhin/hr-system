@@ -48,6 +48,19 @@ function typeKeys(leaveType) {
   return [leaveType.name, ...(leaveType.aliases || [])].map(normalizeLeaveName).filter(Boolean)
 }
 
+// 調休的固定名稱（「調休」與管理員拿不掉的別名：補休、補假、移休…，正規化後）
+const FIXED_COMP_KEYS = new Set([COMP_LEAVE_TYPE_NAME, ...COMP_LEAVE_TYPE_ALIASES].map(normalizeLeaveName))
+
+/**
+ * 調休以外的假別（自訂假別，或改過名稱、別名的內建假別）用到調休固定名稱的那些名稱（正規化後）。
+ * 比對時調休排在前面，這些名稱一定先對到調休（請假單寫「移休」從調休存摺扣用），那個假別只是用不到這個名稱；
+ * 儲存假別規則時不算重複：以前自建過「移休」假別的公司，不會因為「移休」成了固定別名就再也存不了設定（假別本身、額度與資料都保留）。
+ */
+export function compAliasCollisionsOf(leaveType) {
+  if (!leaveType || leaveType.key === 'comp') return []
+  return [...new Set(typeKeys(leaveType).filter(key => FIXED_COMP_KEYS.has(key)))]
+}
+
 /**
  * 把假別名稱（可能有好幾個，例如字典代碼與顯示名稱）對應到一個假別規則；對不到回傳 null。
  * 名稱或別名完全相同的優先，其次取「包含」的最長別名（「請事假」→ 事假、「公傷病假」→ 公傷病假而不是病假）。
@@ -353,10 +366,11 @@ export function validateLeavePolicyInput(input) {
     for (const item of submitted) if (!item.builtin) merged.push(item)
     policy.types = merged
 
-    // 名稱與別名在所有假別之間不能重複（比對時才分得出是哪一種假別）
+    // 名稱與別名在所有假別之間不能重複（比對時才分得出是哪一種假別）；
+    // 例外：其他假別用到調休的固定名稱（移休、補休…）不算重複，這些名稱照舊對到調休（見 compAliasCollisionsOf）
     const owners = new Map()
     for (const item of policy.types) {
-      const seenInType = new Set()
+      const seenInType = new Set(compAliasCollisionsOf(item))
       for (const key of typeKeys(item)) {
         if (seenInType.has(key)) continue
         seenInType.add(key)
@@ -473,6 +487,17 @@ export async function migrateIndigenousLeaveQuota() {
   return { updated }
 }
 
+/**
+ * 啟動時記錄用：已存的假別規則裡，名稱或別名用到調休固定名稱（移休、補休…）的其他假別有幾種。
+ * 只計數，不修改資料（這些假別照常儲存，那些名稱對到調休存摺）。沒有存過假別規則時是 0。
+ */
+export async function countCompAliasCollisions() {
+  if (typeof settingsStore.getSettings !== 'function') return 0
+  const settings = await settingsStore.getSettings()
+  if (!isPlainObject(settings?.leavePolicy)) return 0
+  return normalizeLeavePolicy(settings.leavePolicy).types.filter(item => compAliasCollisionsOf(item).length).length
+}
+
 export { ANNUAL_LEAVE_TYPE_ALIASES }
 
 export default {
@@ -486,4 +511,6 @@ export default {
   resetLeavePolicyCache,
   getDefaultLeavePolicy,
   migrateIndigenousLeaveQuota,
+  compAliasCollisionsOf,
+  countCompAliasCollisions,
 }

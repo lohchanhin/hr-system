@@ -13,7 +13,7 @@ import {
 import * as bankService from '../services/compensatoryLeaveService.js';
 import { computeCompLeavePendingHours } from '../services/leaveBalanceService.js';
 import { getLeavePolicy } from '../services/leavePolicyService.js';
-import { getAllowedScheduleEmployeeIds, toEntityId } from './schedule/scheduleShared.js';
+import { resolveEmployeeReadAccess, toEntityId } from './schedule/scheduleShared.js';
 
 const NOT_FOUND_MESSAGE = '找不到這位員工的資料';
 
@@ -35,22 +35,18 @@ function parseEmployeeId(value) {
 }
 
 /*
- * 誰可以看某位員工的調休存摺：本人、管理員、排班範圍內的人（主管的直屬部屬、排班人員被指定小單位的員工，與排班頁同一個範圍）。
- * 其他人一律 404（與查不到相同，不洩漏員工是否存在）。
+ * 誰可以看某位員工的調休存摺（resolveEmployeeReadAccess）：本人、管理員、主管（直屬部屬，不論排班權限模式），
+ * 以及排班範圍內的排班人員（被指定小單位的員工）。其他人一律 404（與查不到相同，不洩漏員工是否存在）。
+ * 人資備註只給本人、管理員與直屬主管；只因為排班範圍看得到的人只看時數與使用紀錄（note 不附）。
  */
-async function canReadBank(req, actorId, targetId) {
-  if (actorId === targetId) return true;
-  if (req.user?.role === 'admin') return true;
-  const allowedIds = await getAllowedScheduleEmployeeIds(req);
-  return allowedIds === null || allowedIds.includes(targetId);
-}
+const NOTE_READERS = new Set(['self', 'admin', 'supervisor']);
 
-async function bankOf(employeeId) {
+async function bankOf(employeeId, { withNote = true } = {}) {
   const policy = await getLeavePolicy();
   const pendingHours = await computeCompLeavePendingHours({ employeeId, policy });
   const bank = await buildCompensatoryBank({ employeeId, pendingHours, policy });
-  // 管理員在員工管理填的存摺備註（看得到存摺的人都看得到；員工唯讀）
-  if (typeof bankService.getEmployeeBankNote !== 'function') return bank;
+  // 管理員在員工管理填的存摺備註（本人唯讀，直屬主管與管理員也看得到）
+  if (!withNote || typeof bankService.getEmployeeBankNote !== 'function') return bank;
   return { ...bank, note: await bankService.getEmployeeBankNote(employeeId) };
 }
 
@@ -65,7 +61,7 @@ export async function getMyCompensatoryLeave(req, res) {
   }
 }
 
-/** GET /api/compensatory-leave?employeeId= - 某位員工的調休存摺（本人、主管、管理員） */
+/** GET /api/compensatory-leave?employeeId= - 某位員工的調休存摺（本人、直屬主管、管理員；排班範圍內的排班人員不附人資備註） */
 export async function getEmployeeCompensatoryLeave(req, res) {
   try {
     const actorId = toEntityId(req.user?.id);
@@ -74,8 +70,9 @@ export async function getEmployeeCompensatoryLeave(req, res) {
     if (raw !== undefined && typeof raw !== 'string') return res.status(400).json({ error: '員工編號格式不正確', code: 'INVALID_EMPLOYEE' });
     const targetId = raw ? parseEmployeeId(raw) : actorId;
     if (!targetId) return res.status(400).json({ error: '員工編號格式不正確', code: 'INVALID_EMPLOYEE' });
-    if (!(await canReadBank(req, actorId, targetId))) return res.status(404).json({ error: NOT_FOUND_MESSAGE });
-    return res.json(await bankOf(targetId));
+    const access = await resolveEmployeeReadAccess(req, targetId);
+    if (!access) return res.status(404).json({ error: NOT_FOUND_MESSAGE });
+    return res.json(await bankOf(targetId, { withNote: NOTE_READERS.has(access) }));
   } catch (error) {
     return respondError(res, error, 'employee bank');
   }

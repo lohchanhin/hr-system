@@ -69,9 +69,10 @@
 ## 移休（2026/10 補充）
 
 - **「移休」就是調休**：假別別名固定包含「移休」「移休假」（`config/leavePolicyConfig.js` 的 `COMP_LEAVE_TYPE_ALIASES`），請假單的假別寫「移休」一樣從調休存摺扣用、一樣檢查可用時數；薪資的假別對照表（`config/salaryConfig.js`）把「移休」列為全薪（以前沒有這個名稱，會被當成無薪）。字典 C12（假別類別）要讓員工選得到「移休」，請在其他控制設定加上這個項目。
-  - 如果管理員以前自建過名稱或別名是「移休」的自訂假別，之後「移休」會對到調休存摺；再儲存假別規則時會出現「假別名稱或別名重複」，請刪掉那個自訂假別或別名。
+  - 如果管理員以前自建過名稱或別名是「移休」的自訂假別（或替別的假別加過「移休」別名）：之後請假單寫「移休」**一律從調休存摺扣用**（調休排在前面，比對時先對到調休），那個假別只是用不到「移休」這個名稱；它本身、它的其他名稱、額度與已有的資料都保留。儲存假別規則**不會**因此出現「假別名稱或別名重複」（以前每一次儲存都會失敗）：其他假別的名稱或別名和調休的固定名稱（調休、補休、補休假、補假、調休假、移休、移休假）相同時不算重複（`leavePolicyService.compAliasCollisionsOf`）。其他的重複照舊擋下（兩個自訂假別同名、和特休同名、和管理員自己加給調休的別名同名）。不需要的話，請管理員把那個自訂假別或別名刪掉，避免員工以為「移休」會扣那個假別的額度。
+  - 啟動時只記錄有幾種這樣的假別（不修改資料）：`custom leave types colliding with 調休 aliases: N`（沒有就不記錄；計算的是調休以外、名稱或別名用到調休固定名稱的假別，包含改過別名的內建假別）。
 - **以天計**：存摺的時數旁一律附上天數（1 天 = 8 小時、天數用小數，例如「4 小時（0.5 天）」）。顯示的地方：簽核頁「我的調休（移休）」（標頭的可用、存摺剩餘、簽核中、累計取得、已使用、已過期、每一筆的時數與使用紀錄）、填請假單時的提示（「調休：目前可請 8 小時（1 天）；本次申請 4 小時（0.5 天），核准後剩 4 小時（0.5 天）」、超額訊息）、我的假別餘額的調休那一列、簽核明細的申請人存摺與「這張單已扣用調休 8 小時（1 天）」、員工管理的調休存摺（手動給予／扣除的時數輸入框旁也顯示天數）、國定假日休假紀錄的「年度調休」清單。伺服器的訊息本來就附天數（「存摺剩餘 8 小時（1 天）」）。單位仍是小時，存的資料不變；12 小時班的整天調休是 12 小時，顯示成 1.5 天。
-- **存摺備註（管理員填、員工唯讀）**：員工管理 > 薪資與特休 > 調休存摺（移休）多一個「存摺備註」輸入框（最多 1000 字，空白 = 清除），例如「10/10 國慶日改發加倍工資，不另給移休」。看得到這份存摺的人（本人、排班範圍內的主管或排班人員、管理員）在存摺下方看到「人資備註」與誰、哪天更新；只有管理員能改。
+- **存摺備註（管理員填、員工唯讀）**：員工管理 > 薪資與特休 > 調休存摺（移休）多一個「存摺備註」輸入框（最多 1000 字，空白 = 清除），例如「10/10 國慶日改發加倍工資，不另給移休」。本人、管理員與員工的直屬主管（員工資料的直屬主管，不論排班權限模式）在存摺下方看到「人資備註」與誰、哪天更新；只有管理員能改。排班範圍內的排班人員（小單位的排班人員、部門的排班管理者）看得到存摺的時數與使用紀錄，但**不附備註**（2026/11 審查：以前備註給所有看得到存摺的人，含別的部門的員工角色排班人員）。
   - **存在哪裡**：`CompensatoryLeaveState` 的 `key = note:<員工 _id>`（每位員工一筆：`employee`、`note`、`noteUpdatedBy`、`noteUpdatedAt`；唯一索引就是原本的 `key`）。選它而不是員工資料（`Employee.compensatoryLeaveNote`）：不動員工主檔、員工 API、批次匯入匯出與員工資料的表單；存摺的資料都在調休相關的集合裡；回復舊版程式時多出的文件會被忽略。不需要資料轉換，沒有備註的員工就是沒有文件。
   - 簽核明細裡申請人的存摺不附備註（簽核人看的是額度與使用紀錄）。
 
@@ -90,11 +91,11 @@
 | 路徑 | 權限 | 說明 |
 | --- | --- | --- |
 | `GET /api/compensatory-leave/mine` | 登入者 | 我的調休存摺：`balanceHours`（剩餘，不含過期）、`pendingHours`、`availableHours`、`earnedHours`、`usedHours`、`expiredHours`、`credits[]`（來源 `sourceText`、`status`、`usages[]`…） |
-| `GET /api/compensatory-leave?employeeId=` | 本人、該員工的主管（排班範圍內的直屬部屬）、管理員；其他人 404 | 某位員工的調休存摺 |
+| `GET /api/compensatory-leave?employeeId=` | 本人、該員工的直屬主管（不論排班權限模式）、管理員；排班範圍內的排班人員（回應沒有 `note`）；其他人 404 | 某位員工的調休存摺 |
 | `POST /api/compensatory-leave/credits` | 管理員 | `{ employeeId, hours, note, earnedDate? }` 手動給予（`note` 必填，時數是最小請假單位的倍數） |
 | `POST /api/compensatory-leave/adjustments` | 管理員 | `{ employeeId, hours, note }` 扣除調整（依扣用順序，不夠時 409 `COMP_LEAVE_INSUFFICIENT`） |
 | `POST /api/compensatory-leave/credits/:id/void` | 管理員 | `{ note }` 作廢還沒用過的調休（用過的 409 `CREDIT_USED`） |
-| `PUT /api/compensatory-leave/note` | 管理員 | `{ employeeId, note }` 員工存摺的備註（`note` 空白 = 清除，最多 1000 字：400 `NOTE_TOO_LONG`；找不到員工 404），回傳 `{ text, updatedAt, updatedBy: { id, name } }`；`GET /mine`、`GET ?employeeId=` 的回應多一個 `note`（同樣的格式，沒有備註時 `text` 是空字串） |
+| `PUT /api/compensatory-leave/note` | 管理員 | `{ employeeId, note }` 員工存摺的備註（`note` 空白 = 清除，最多 1000 字：400 `NOTE_TOO_LONG`；找不到員工 404），回傳 `{ text, updatedAt, updatedBy: { id, name } }`；`GET /mine`、`GET ?employeeId=` 的回應多一個 `note`（同樣的格式，沒有備註時 `text` 是空字串；只因為排班範圍看得到存摺的人沒有這個欄位） |
 | `GET /api/holiday-ledger/compensations?year=&status=` | 依排班範圍 | 年度調休清單（`available` 預設／`used`／`expired`／`void`／`all`），`summary` 是各狀態件數與 `conflict` |
 | `POST /api/holiday-ledger/compensations/:id/assign` | 管理員 | `{ assignedDate, agreementNote }` HR 指定調休日（第一次指定 `agreementNote` 必填；部分使用的 409 `CREDIT_PARTIALLY_USED`、過期的 409 `CREDIT_EXPIRED`） |
 | `POST /api/holiday-ledger/compensations/:id/unassign` | 管理員 | 取消 HR 指定 |
@@ -137,5 +138,5 @@
 
 - 伺服器：`compensatoryLeaveService`（狀態、期限、扣用順序、跨筆部分時數、整天的判斷、資料轉換、調休申請鎖）、`compensatoryLeaveApi`（權限：本人／主管／管理員／其他人 404、只有管理員能給予扣除作廢）、`holidayCompensationService`（建立、作廢、重新開啟、人資作廢不重新開啟、用過的標記、冪等、行政人員切換日前後、HR 指定）、`holidayRestLedgerService`、`holidayLedgerController`、`holidayResolver`（整天調休日是假日、切換日、標頭）、`workHoursCalculation`（加班費日別）、`leavePayrollImpact`（調休、補假有薪）、`leaveBalanceService`、`leavePolicy`、`startupMigrations`。
 - 真實 MongoDB 的端對端測試 `compensatoryLeave.integration.test.js`（`APPROVAL_ENGINE_TEST_MONGODB_URI=mongodb://127.0.0.1:<port>`）：行政人員 2026-10-25（週日）存入調休、10/26 不自動放假、申請 10/26 調休核准後當天是假日、餘額 0、薪資有薪；另一位同事保存到 11 月分 4 + 4 小時用；輪班護理師例假遇國定假日存入；人資手動給予；跨筆扣用；撤回返還；否決、撤回簽核中不扣；最後一關核准前人資扣除擋下核准；資料轉換只做一次；人資作廢的調休在員工打開休假紀錄、重新計算後仍是作廢；同時送出兩筆調休只有一筆通過。
-- 2026/10 補充（移休）：伺服器 `leavePolicy`（移休、移休假對到調休存摺，管理員存過別的別名也拿不掉）、`salaryConfigLeavePay`（移休全薪）、`compensatoryLeaveNote`（存摺備註的儲存、清除、同時建立、驗證；只有管理員能寫；「我的調休」帶備註）、真實 MongoDB 的 `formsApprovalsComp.integration.test.js`（沒有存摺時移休被擋下、給予後移休核准扣用、管理員填備註員工唯讀、清除）；前端 `compensatoryLeave`（天數、備註的顯示與長度檢查）、`compensatoryLeavePanel`（員工唯讀的人資備註、管理員編輯／清除備註、給予時數旁的天數）。
+- 2026/10 補充（移休）：伺服器 `leavePolicy`（移休、移休假對到調休存摺，管理員存過別的別名也拿不掉；以前自建的「移休」假別照常儲存、名稱與額度保留、移休仍對到調休，其他重複照舊擋下，啟動記錄的計數）、`startupMigrations`（計數的啟動記錄只記筆數、失敗不擋啟動）、真實 MongoDB 的 `formDepartmentCleanup.integration.test.js`（存著舊的「移休」自訂假別時後台照常儲存假別規則，請「移休」仍檢查調休存摺）、`salaryConfigLeavePay`（移休全薪）、`compensatoryLeaveNote`（存摺備註的儲存、清除、同時建立、驗證；只有管理員能寫；「我的調休」帶備註）、真實 MongoDB 的 `formsApprovalsComp.integration.test.js`（沒有存摺時移休被擋下、給予後移休核准扣用、管理員填備註員工唯讀、清除）；前端 `compensatoryLeave`（天數、備註的顯示與長度檢查）、`compensatoryLeavePanel`（員工唯讀的人資備註、管理員編輯／清除備註、給予時數旁的天數）。
 - 前端：`compensatoryLeave`（顯示文字、管理員表單檢查、調休的超額提示）、`compensatoryLeavePanel`（我的調休、管理員給予／扣除／作廢、簽核明細的申請人存摺）、`holidayLedger`（人資作廢的調休顯示「調休已作廢」）、`holidayLedgerDialog`、`leaveOvertimeSetting`（調休那一列：依調休存摺、不分年度，名稱與開關固定）。

@@ -21,12 +21,13 @@ import {
 import CompensatoryCredit from './models/CompensatoryCredit.js';
 import CompensatoryLeaveState from './models/CompensatoryLeaveState.js';
 import { migrateIndigenousLeaveQuota } from './services/leavePolicyService.js';
+import { countCompAliasCollisions } from './services/leavePolicyService.js';
 import { migrateLeaveFormSemantics, migrateLeaveKeywordForms } from './controllers/approvalTemplateController.js';
 import { normalizeStoredSignTags } from './controllers/employeeController.js';
 import { migrateAnnualLeaveToHours, migrateLeaveFormsToHours } from './services/leaveHoursMigration.js';
 import { authenticate, authorizeRoles } from './middleware/auth.js';
 import { requireScheduleAccess } from './middleware/scheduleAccess.js';
-import { countLegacyDeptManagers } from './services/scheduleAccessService.js';
+import { countLegacyDeptManagers, describeScheduleAccessForStartup } from './services/scheduleAccessService.js';
 import scheduleRoutes from './routes/scheduleRoutes.js';
 import payrollRoutes from './routes/payrollRoutes.js';
 import reportRoutes from './routes/reportRoutes.js';
@@ -178,8 +179,9 @@ app.use(cors({
   origin: allowedOrigins,
   credentials: true,
   methods: "GET,POST,PUT,DELETE,OPTIONS",
-  // 跨網域部署時前端要讀得到清單的分頁與截斷提示（排班頁「相關簽核」超過 500 筆的提醒、簽核清單的總筆數）
-  exposedHeaders: ['X-Approvals-Truncated', 'X-Total-Count', 'X-Page', 'X-Limit']
+  // 跨網域部署時前端要讀得到清單的分頁與截斷提示（排班頁「相關簽核」超過 500 筆的提醒、簽核清單的總筆數），
+  // 以及申請頁「只列出您部門開放的表單」的提示（表單清單的 X-Form-Visibility）
+  exposedHeaders: ['X-Approvals-Truncated', 'X-Total-Count', 'X-Page', 'X-Limit', 'X-Form-Visibility']
 }));
 app.get('/env.js', (req, res) => {
   res.setHeader('Cache-Control', 'no-store');
@@ -236,7 +238,8 @@ app.use(
 );
 
 
-// 排班：查詢開放給所有角色（範圍由各 API 決定）；匯出與所有寫入看排班權限（管理員、主管、被指定為排班人員的任何角色），
+// 排班：查詢開放給所有角色（範圍由各 API 決定）；匯出與所有寫入看排班權限（管理員、被指定為排班人員的任何角色，
+// 其他控制設定 > 排班權限存成「主管與排班人員」時再加上主管），
 // 員工回覆自己的班表不需要排班權限
 app.use(
   '/api/schedules',
@@ -351,7 +354,7 @@ app.use(
   },
   holidayLedgerRoutes
 );
-// 調休存摺：員工看自己的、主管看直屬部屬的、管理員看所有人；手動給予、扣除、作廢只有管理員（路由檔內再擋一次）
+// 調休存摺：員工看自己的、主管看直屬部屬的（不論排班權限模式）、排班人員看排班範圍內的（不含人資備註）、管理員看所有人；手動給予、扣除、作廢只有管理員（路由檔內再擋一次）
 app.use('/api/compensatory-leave', authenticate, authorizeRoles('employee', 'supervisor', 'admin'), compensatoryLeaveRoutes);
 
 app.use('/api', apiNotFound);
@@ -440,6 +443,8 @@ async function start() {
     }
     // 原民假（原住民族歲時祭儀）由每年 1 日改為 3 日：只改仍是舊預設值的設定（冪等，只記錄筆數）
     try { const indigenousQuota = await migrateIndigenousLeaveQuota(); if (indigenousQuota?.updated) console.log(`Updated indigenous leave quota to 3 days in ${indigenousQuota.updated} stored leave policies`); } catch (quotaError) { console.error('Failed to migrate indigenous leave quota', quotaError?.name ?? 'Error'); }
+    // 名稱或別名和調休的固定名稱（移休、補休…）相同的其他假別：不再擋下儲存，這些名稱照舊從調休存摺扣用；只記錄筆數（不修改資料）
+    try { const compAliasCollisions = await countCompAliasCollisions(); if (compAliasCollisions) console.log(`custom leave types colliding with 調休 aliases: ${compAliasCollisions}`); } catch (collisionError) { console.error('Failed to count leave types colliding with 調休 aliases', collisionError?.name ?? 'Error'); }
     // 國定假日休假紀錄的處理方式集合：確保唯一索引存在（冪等；失敗不擋啟動，之後寫入時 Mongoose 仍會再試建立）
     try {
       await HolidayRestResolution.createIndexes();
@@ -475,6 +480,17 @@ async function start() {
       }
     } catch (schedulerError) {
       console.error('Failed to count department schedule managers', schedulerError?.name ?? 'Error');
+    }
+    // 排班權限模式（2026/11 起預設「只有排班人員」）：記錄生效的模式、是存過的還是預設值，
+    // 以及沒有排班指派、因此沒有「排班管理」的主管人數（只記錄筆數，不修改資料）
+    try {
+      const scheduleAccess = await describeScheduleAccessForStartup();
+      const supervisorNote = scheduleAccess.supervisorsWithoutAssignment === null
+        ? ''
+        : `; supervisors without a scheduler assignment (no 排班管理, approvals unchanged): ${scheduleAccess.supervisorsWithoutAssignment}`;
+      console.log(`Schedule access mode: ${scheduleAccess.mode} (${scheduleAccess.saved ? 'saved setting' : 'default, not saved'})${supervisorNote}`);
+    } catch (scheduleAccessError) {
+      console.error('Failed to read schedule access mode', scheduleAccessError?.name ?? 'Error');
     }
     await ensureAdminUser();
     await ensureDefaultSupervisorReports();

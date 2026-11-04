@@ -2,7 +2,7 @@
 // 放在 service 而不是控制器裡：樣板控制器也要用，不能反過來依賴簽核單控制器。
 import Employee from '../models/Employee.js'
 import SubDepartment from '../models/SubDepartment.js'
-import { eligibleEmployeeFilter } from './approverEligibility.js'
+import { eligibleEmployeeFilter, isEligibleApprover } from './approverEligibility.js'
 import { normalizeSignTag, normalizeSignTags } from '../utils/signTags.js'
 // 用命名空間匯入：別的測試把設定存取層換成只有部分函式的替身時，這裡不會因為缺少匯出而載入失敗
 import * as settingsStore from './otherControlSettingsStore.js'
@@ -66,6 +66,133 @@ async function eligibleIdSubset(ids, extraFilter = {}) {
   return valid.filter(id => found.has(id))
 }
 
+/* ---------------------------- 主管鏈（manager_chain） ---------------------------- */
+
+// 主管鏈：從申請人的直屬主管開始，沿著每個人的「直屬主管」一路往上，每一位可簽核的主管是單據上的一關（第n級主管）。
+// approver_value = { stopAtTag, maxLevels }：
+// - stopAtTag（簽核標籤，可不填）：簽到第一位持有這個標籤的主管為止（含這一位）；不填就一路簽到最上層或 maxLevels。
+// - maxLevels（1–10，預設 5）：最多幾位主管簽核（略過的離職者不算）。
+// 規則（docs/approval-supervisor-chain.md）：
+// - 申請人本人一律不在鏈上；主管資料繞回已經走過的人（循環）就停在那裡。
+// - 中途的主管已離職、停用或留職停薪：略過這個人，繼續找他的直屬主管（單據的那一關留下說明）；
+//   略過的人持有 stopAtTag 時，由上一級可簽核的主管代為決行，簽完就停（不會因為決行的人不在而一路簽到最上層）。
+// - 一位主管都沒有（沒有直屬主管、全部都離職）時和「申請者的主管」一樣：必簽的關卡改送最高層簽核人（R5）。
+export const MANAGER_CHAIN_DEFAULT_LEVELS = 5
+export const MANAGER_CHAIN_MAX_LEVELS = 10
+// 一路往上最多看幾個人（含略過的人）：資料異常時不會查個沒完
+const MANAGER_CHAIN_MAX_HOPS = 40
+const CHAIN_PERSON_FIELDS = '_id name employeeId supervisor signTags status accountEnabled'
+
+/** 主管鏈的設定整理成 { stopAtTag, maxLevels }；格式不對的值用預設（不設停止標籤、最多 5 級） */
+export function normalizeManagerChainValue(value) {
+  const raw = value && typeof value === 'object' && !Array.isArray(value) ? value : {}
+  const stopAtTag = normalizeSignTag(raw.stopAtTag)
+  const levels = Number(raw.maxLevels)
+  const maxLevels = Number.isInteger(levels) && levels >= 1 && levels <= MANAGER_CHAIN_MAX_LEVELS
+    ? levels
+    : MANAGER_CHAIN_DEFAULT_LEVELS
+  return { stopAtTag, maxLevels }
+}
+
+export function managerChainLevelName(level) {
+  return `第${level}級主管`
+}
+
+function inactiveText(person) {
+  if (person?.accountEnabled === false) return '帳號停用'
+  if (person?.status === '離職員工') return '已離職'
+  if (person?.status === '留職停薪') return '留職停薪'
+  return '不能簽核'
+}
+
+function personText(person) {
+  const name = person?.name || '（未命名）'
+  return person?.employeeId ? `${name}（${person.employeeId}）` : name
+}
+
+/**
+ * 沿著直屬主管往上走：回傳 { levels, reason, end, stopAtTag, maxLevels, tailNotes, notes }。
+ * - levels：[{ id, name, employeeId, level（離申請人第幾級，直屬主管是 1）, stoppedByTag, inherited,
+ *   skipped: [{ id, name, employeeId, level, reason, holdsStopTag }], notes（這一級之前略過的人的說明） }]
+ * - end：tag（簽到持有標籤的人）、inherited（略過的人持有標籤，由上一級代為決行）、max（到最多層數）、top（沒有更上層）、
+ *   loop（繞回走過的人）、missing（找不到主管的員工資料）、hops（走太多層）
+ * - reason：levels 為空時的原因（no-supervisor / only-applicant / supervisor-inactive），其餘是 ''
+ * - tailNotes：最後一級之後的說明（循環、最上層的人已離職）；notes：全部說明（依順序），寫進單據紀錄
+ */
+export async function walkManagerChain(step, applicantEmp) {
+  const { stopAtTag, maxLevels } = normalizeManagerChainValue(step?.approver_value)
+  const applicantId = normalizeId(applicantEmp?._id)
+  const visited = new Set(applicantId ? [applicantId] : [])
+  const levels = []
+  const notes = []
+  let skipped = []
+  let inheritStop = false
+  let cursor = normalizeId(applicantEmp?.supervisor)
+  let end = cursor ? '' : 'top'
+  let hops = 0
+  let lastPerson = null
+  const tailNotes = []
+
+  while (cursor && !end) {
+    if (visited.has(cursor)) {
+      end = 'loop'
+      if (cursor !== applicantId || levels.length || skipped.length) {
+        tailNotes.push(`主管資料形成循環（${lastPerson ? personText(lastPerson) : '申請人'}的直屬主管又回到前面的人），只簽到這裡`)
+      }
+      break
+    }
+    if (hops >= MANAGER_CHAIN_MAX_HOPS) {
+      end = 'hops'
+      break
+    }
+    visited.add(cursor)
+    hops += 1
+    const person = isObjectIdString(cursor) ? await Employee.findById(cursor, CHAIN_PERSON_FIELDS) : null
+    if (!person) {
+      end = 'missing'
+      break
+    }
+    lastPerson = person
+    const holdsStopTag = Boolean(stopAtTag) && normalizeSignTags(person.signTags).includes(stopAtTag)
+    if (!isEligibleApprover(person)) {
+      skipped.push({ id: cursor, name: person.name || '', employeeId: person.employeeId || '', level: hops, reason: inactiveText(person), holdsStopTag })
+      if (holdsStopTag) inheritStop = true
+      cursor = normalizeId(person.supervisor)
+      if (!cursor) end = 'top'
+      continue
+    }
+    const inherited = inheritStop && !holdsStopTag
+    const levelNotes = skipped.map(gone => (gone.holdsStopTag
+      ? `已略過${gone.reason}的${personText(gone)}（第${gone.level}級主管，持有「${stopAtTag}」標籤），由上一級主管${personText(person)}代為決行`
+      : `已略過${gone.reason}的${personText(gone)}（第${gone.level}級主管），改由上一級主管簽核`))
+    levels.push({ id: cursor, name: person.name || '', employeeId: person.employeeId || '', level: hops, stoppedByTag: holdsStopTag, inherited, skipped, notes: levelNotes })
+    notes.push(...levelNotes)
+    skipped = []
+    if (holdsStopTag) end = 'tag'
+    else if (inherited) end = 'inherited'
+    else if (levels.length >= maxLevels) end = 'max'
+    else {
+      cursor = normalizeId(person.supervisor)
+      if (!cursor) end = 'top'
+    }
+  }
+
+  // 最上層的人已離職、沒有更上層：記下來（一位主管都沒有時改送最高層簽核人，見 resolveStepApprovers）
+  for (const gone of skipped) {
+    tailNotes.push(`已略過${gone.reason}的${personText(gone)}（第${gone.level}級主管），沒有更上層的主管`)
+  }
+  notes.push(...tailNotes)
+
+  let reason = ''
+  if (!levels.length) {
+    const first = normalizeId(applicantEmp?.supervisor)
+    if (!first) reason = 'no-supervisor'
+    else if (first === applicantId) reason = 'only-applicant'
+    else reason = 'supervisor-inactive'
+  }
+  return { levels, reason, end: end || 'top', stopAtTag, maxLevels, tailNotes, notes }
+}
+
 /**
  * 依流程關卡解析簽核人，回傳 { ids, reason }。
  * - 只回傳可簽核的員工（帳號未停用、不是離職／留職停薪）。
@@ -110,6 +237,13 @@ export async function resolveApproversDetailed(step, applicantEmp) {
     }
     if (!isObjectIdString(targetId)) return finish([], 'invalid-config')
     return finish(await eligibleIdSubset([targetId], { role: 'supervisor' }), 'manager-unavailable')
+  }
+
+  if (type === 'manager_chain') {
+    // 主管鏈所有級的主管（由下往上）；建立單據時每一級各是一關（services/approvalStepBuilder），chain 留給呼叫端看每一級
+    const chain = await walkManagerChain(step, applicantEmp)
+    const result = finish(chain.levels.map(level => level.id), chain.reason)
+    return { ...result, chain }
   }
 
   if (type === 'user') {
@@ -256,9 +390,78 @@ export function describeManagerFallback({ reason, source }) {
   }
 }
 
-/** 這一關找不到人時要不要改送最高層簽核人：必簽的主管關卡，而且是「沒有可簽核的主管」（設定錯誤 invalid-config 不改送） */
+/**
+ * 這一關找不到人時要不要改送最高層簽核人：必簽的主管關卡（申請者的主管、指定主管，或一位主管都沒有的主管鏈），
+ * 而且是「沒有可簽核的主管」（設定錯誤 invalid-config 不改送）
+ */
 export function isManagerFallbackCandidate(step, reason) {
-  return step?.approver_type === 'manager' && step?.is_required !== false && MANAGER_FALLBACK_REASONS.includes(reason)
+  const isManagerStep = step?.approver_type === 'manager' || step?.approver_type === 'manager_chain'
+  return isManagerStep && step?.is_required !== false && MANAGER_FALLBACK_REASONS.includes(reason)
+}
+
+/* ---------------------------- 關卡的適用條件（請假長度） ---------------------------- */
+
+// 與 models/approval_workflow.js 的 condition.kind 相同；只有表單性質＝請假的表單可以設定
+export const STEP_CONDITION_KINDS = Object.freeze(['leave_hours_gte', 'leave_calendar_days_gte', 'leave_scheduled_days_gte'])
+export const STEP_CONDITION_LIMITS = Object.freeze({
+  leave_hours_gte: { min: 0.5, max: 2928, step: 0.5 },
+  leave_calendar_days_gte: { min: 1, max: 366, step: 1 },
+  leave_scheduled_days_gte: { min: 1, max: 366, step: 1 },
+})
+const CONDITION_WORDING = {
+  leave_hours_gte: { need: v => `請假滿 ${v} 小時才需要`, short: v => `請假未滿 ${v} 小時`, actual: v => `本次 ${v} 小時` },
+  leave_calendar_days_gte: { need: v => `請假滿 ${v} 日（日曆日）才需要`, short: v => `請假未滿 ${v} 日`, actual: v => `本次 ${v} 日` },
+  leave_scheduled_days_gte: { need: v => `請假滿 ${v} 個排班日才需要`, short: v => `請假未滿 ${v} 個排班日`, actual: v => `本次 ${v} 個排班日` },
+}
+
+const roundHundredth = (value) => Math.round(Number(value) * 100) / 100
+
+/** 關卡上的條件整理成 { kind, value }；沒有設定或格式不對回傳 null（＝每張單都要這一關） */
+export function normalizeStepCondition(condition) {
+  if (!condition || typeof condition !== 'object') return null
+  const kind = String(condition.kind ?? '')
+  const value = Number(condition.value)
+  if (!STEP_CONDITION_KINDS.includes(kind) || !Number.isFinite(value) || value <= 0) return null
+  return { kind, value }
+}
+
+/** 流程預覽、申請頁顯示的條件文字，例如「請假滿 56 小時才需要」；沒有條件回傳 '' */
+export function describeStepCondition(condition) {
+  const normalized = normalizeStepCondition(condition)
+  return normalized ? CONDITION_WORDING[normalized.kind].need(normalized.value) : ''
+}
+
+/**
+ * 依這張假單的長度判斷這一關要不要：回傳 { applies, text, detail, actual }。
+ * leave = { hours, calendarDays, calendarSource, scheduledDays, scheduledNote }（見 approvalStepBuilder.computeLeaveLength）；
+ * 沒有條件 → applies: true；有條件但讀不到請假長度（例如表單已不是請假表單）→ 照常需要這一關（寧可多簽，不能少簽），detail 說明原因。
+ * 「大於或等於」：剛好 7 日也算。
+ */
+export function evaluateStepCondition(condition, leave) {
+  const normalized = normalizeStepCondition(condition)
+  if (!normalized) return { applies: true, text: '', detail: '', actual: null }
+  const wording = CONDITION_WORDING[normalized.kind]
+  const text = wording.need(normalized.value)
+  let actual = null
+  let note = ''
+  if (leave && typeof leave === 'object') {
+    if (normalized.kind === 'leave_hours_gte') actual = Number(leave.hours)
+    else if (normalized.kind === 'leave_calendar_days_gte') {
+      actual = Number(leave.calendarDays)
+      if (leave.calendarSource === 'hours') note = '沒有請假日期，以時數換算'
+    } else {
+      actual = Number(leave.scheduledDays)
+      note = leave.scheduledNote || ''
+    }
+  }
+  if (actual === null || !Number.isFinite(actual)) {
+    return { applies: true, text, detail: '無法判斷請假長度，照常簽核', actual: null }
+  }
+  actual = roundHundredth(actual)
+  const applies = actual + 1e-9 >= normalized.value
+  const parts = [applies ? text.replace(/才需要$/, '') : wording.short(normalized.value), wording.actual(actual)]
+  if (note) parts.push(note)
+  return { applies, text, detail: parts.join('，'), actual }
 }
 
 /**
@@ -270,5 +473,7 @@ export async function resolveStepApprovers(step, applicantEmp, options = {}) {
   if (detailed.ids.length || !isManagerFallbackCandidate(step, detailed.reason)) return detailed
   const topLevel = await resolveTopLevelApprovers(applicantEmp, options)
   if (!topLevel.ids.length) return detailed
-  return { ids: topLevel.ids, reason: '', fallback: describeManagerFallback({ reason: detailed.reason, source: topLevel.source }) }
+  const fallback = describeManagerFallback({ reason: detailed.reason, source: topLevel.source })
+  // 主管鏈一位主管都沒有：保留往上找的經過（例如最上層的主管已離職），單據那一關的說明用得到
+  return { ids: topLevel.ids, reason: '', fallback, ...(detailed.chain ? { chain: detailed.chain } : {}) }
 }

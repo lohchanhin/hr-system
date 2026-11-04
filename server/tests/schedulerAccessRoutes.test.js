@@ -11,8 +11,13 @@ const oid = (n) => n.toString(16).padStart(24, '0');
 const ID = {
   admin: oid(1), boss: oid(2), nurseA: oid(3), nurseB: oid(4), nurseC: oid(5), outsider: oid(6), scheduler: oid(7), plain: oid(8),
   deptA: oid(100), deptB: oid(101), unitA1: oid(200), unitA2: oid(201), unitB1: oid(202),
-  formLeave: oid(300), formOvertime: oid(301),
+  formLeave: oid(300), formOvertime: oid(301), formResign: oid(302),
 };
+const FORMS = [
+  { _id: ID.formLeave, name: '請假', category: '請假類', semanticType: 'leave' },
+  { _id: ID.formOvertime, name: '加班申請', category: '人事類', semanticType: 'overtime' },
+  { _id: ID.formResign, name: '離職申請', category: '人事類', semanticType: 'general' },
+];
 const SHIFT = { day: oid(400), night: oid(401), rest: oid(402) };
 
 /* ------------------------------ 記憶體資料 ------------------------------ */
@@ -109,8 +114,9 @@ const mockDepartment = Object.assign(
   },
 );
 const mockFormTemplate = {
-  find: jest.fn((filter) => query([{ _id: ID.formLeave }, { _id: ID.formOvertime }].filter((form) => matches(form, filter)))),
+  find: jest.fn((filter) => query(FORMS.filter((form) => matches(form, filter)))),
 };
+const mockFormField = { find: jest.fn(() => query([])) };
 const mockShiftSchedule = {
   find: jest.fn((filter) => query(schedules.filter((schedule) => matches(schedule, filter)))),
   findOne: jest.fn(async () => null),
@@ -135,6 +141,7 @@ jest.unstable_mockModule('../src/models/Employee.js', () => ({ default: mockEmpl
 jest.unstable_mockModule('../src/models/SubDepartment.js', () => ({ default: mockSubDepartment }));
 jest.unstable_mockModule('../src/models/Department.js', () => ({ default: mockDepartment }));
 jest.unstable_mockModule('../src/models/form_template.js', () => ({ default: mockFormTemplate }));
+jest.unstable_mockModule('../src/models/form_field.js', () => ({ default: mockFormField }));
 jest.unstable_mockModule('../src/models/ShiftSchedule.js', () => ({ default: mockShiftSchedule }));
 jest.unstable_mockModule('../src/models/AttendanceSetting.js', () => ({ default: mockAttendanceSetting }));
 jest.unstable_mockModule('../src/models/approval_request.js', () => ({ default: mockApprovalRequest }));
@@ -271,8 +278,18 @@ describe('an employee-role scheduler of two units in different departments', () 
   });
 });
 
+const saveMode = async (mode) => {
+  const previous = currentUser;
+  loginAs('admin');
+  const res = await request(app).put('/api/other-control-settings/schedule-access').send({ mode });
+  currentUser = previous;
+  return res;
+};
+
 describe('supervisors and administrators', () => {
-  it('keeps the supervisor scope (direct reports) by default', async () => {
+  // 2026/11 起要由管理員明確存成「主管與排班人員」（以前這是預設，這個案例原本是 'by default'）
+  it('keeps the supervisor scope (direct reports) when 主管與排班人員 is saved', async () => {
+    expect((await saveMode('supervisor_and_scheduler')).status).toBe(200);
     loginAs('boss');
     const list = await request(app).get('/api/employees/schedule');
     expect(namesOf(list.body)).toEqual(['護理乙', '護理甲']);
@@ -282,9 +299,12 @@ describe('supervisors and administrators', () => {
 
   it('removes supervisor-only access in scheduler_only mode (menu, page APIs, writes)', async () => {
     loginAs('admin');
+    // 沒有存過：預設就是 scheduler_only（2026/11 起；以前的預設是 supervisor_and_scheduler）
+    expect((await request(app).get('/api/other-control-settings/schedule-access')).body)
+      .toMatchObject({ mode: 'scheduler_only', defaultMode: 'scheduler_only', saved: false });
     const saved = await request(app).put('/api/other-control-settings/schedule-access').send({ mode: 'scheduler_only' });
     expect(saved.status).toBe(200);
-    expect(saved.body).toMatchObject({ mode: 'scheduler_only', defaultMode: 'supervisor_and_scheduler' });
+    expect(saved.body).toMatchObject({ mode: 'scheduler_only', defaultMode: 'scheduler_only', saved: true });
     expect((await request(app).put('/api/other-control-settings/schedule-access').send({ mode: 'everyone' })).status).toBe(400);
     expect((await request(app).get('/api/other-control-settings/schedule-access')).body.mode).toBe('scheduler_only');
 
@@ -305,6 +325,97 @@ describe('supervisors and administrators', () => {
     const list = await request(app).get('/api/employees/schedule');
     expect(list.body).toHaveLength(employees.length);
     expect((await request(app).post('/api/schedules').send({ employee: ID.outsider, date: '2026-11-02', shiftId: SHIFT.day })).status).toBe(201);
+  });
+});
+
+// S1／S5（2026/11 客戶）：「主管帳號(非排班)…因非設定為排班人員，所以登入後的左側列表應該無排班管理」
+describe('the default mode: a supervisor who is not a scheduler', () => {
+  it('has no 排班管理 but 我的排班, no schedule access in the profile, and every schedule API refuses', async () => {
+    loginAs('boss');
+    const menu = (await request(app).get('/api/menu')).body.map((item) => item.name);
+    expect(menu).not.toContain('Schedule');
+    expect(menu).toEqual(expect.arrayContaining(['MySchedule', 'FrontDepartmentReports', 'Approval']));
+    expect((await request(app).get('/api/profile')).body.scheduleAccess).toMatchObject({ canSchedule: false, supervisorScope: false });
+
+    expect((await request(app).post('/api/schedules').send({ employee: ID.nurseA, date: '2026-11-02', shiftId: SHIFT.day })).status).toBe(403);
+    expect((await request(app).post('/api/schedules/batch').send({ schedules: [{ employee: ID.nurseA, date: '2026-11-03', shiftId: SHIFT.day }] })).status).toBe(403);
+    expect((await request(app).post('/api/schedules/publish').send({ month: '2026-11' })).status).toBe(403);
+    expect((await request(app).get('/api/schedules/summary?month=2026-11')).status).toBe(403);
+    expect((await request(app).get(monthUrl(`employee=${ID.nurseA}`))).status).toBe(403);
+    expect((await request(app).get('/api/employees/schedule')).body.map((employee) => employee.name)).toEqual(['主管']);
+    expect(mockShiftSchedule.create).not.toHaveBeenCalled();
+  });
+
+  it('gets today\'s dbcd121 behaviour back when an admin switches to 主管與排班人員', async () => {
+    expect((await saveMode('supervisor_and_scheduler')).body).toMatchObject({ mode: 'supervisor_and_scheduler', saved: true });
+    loginAs('boss');
+    expect((await request(app).get('/api/menu')).body.map((item) => item.name)).toContain('Schedule');
+    expect((await request(app).get('/api/profile')).body.scheduleAccess).toMatchObject({ canSchedule: true, supervisorScope: true });
+    expect((await request(app).post('/api/schedules').send({ employee: ID.nurseA, date: '2026-11-02', shiftId: SHIFT.day })).status).toBe(201);
+  });
+});
+
+describe('scope checks found by the review', () => {
+  it('checks every employee of a batch, also when the request carries a top-level employee (it used to check only that one)', async () => {
+    loginAs('scheduler');
+    const batch = (schedules) => request(app).post('/api/schedules/batch').send({ employee: ID.nurseA, schedules });
+    // nurseA 在 A1（範圍內）；nurseB 在 A2、outsider 沒有小單位、自己不在被指定的小單位：都在範圍外
+    for (const outside of [ID.nurseB, ID.outsider, ID.scheduler]) {
+      const res = await batch([
+        { employee: ID.nurseA, date: '2026-11-03', shiftId: SHIFT.day },
+        { employee: outside, date: '2026-11-04', shiftId: SHIFT.day },
+      ]);
+      expect(res.status).toBe(403);
+    }
+    expect(mockShiftSchedule.bulkWrite).not.toHaveBeenCalled();
+    expect((await batch([{ employee: ID.nurseA, date: '2026-11-03', shiftId: SHIFT.day }])).status).toBe(201);
+  });
+
+  it('only lets an administrator delete every schedule older than a date', async () => {
+    mockShiftSchedule.deleteMany = jest.fn(async () => ({ deletedCount: 12 }));
+    for (const key of ['scheduler', 'boss']) {
+      loginAs(key);
+      const res = await request(app).delete('/api/schedules/older-than?before=2026-01-01').send({ employee: ID.nurseA });
+      expect(res.status).toBe(403);
+    }
+    expect(mockShiftSchedule.deleteMany).not.toHaveBeenCalled();
+    loginAs('admin');
+    expect((await request(app).delete('/api/schedules/older-than?before=2026-01-01')).body).toEqual({ deleted: 12 });
+  });
+
+  it('lists only the leave, overtime and shift requests of the scheduler units in 相關簽核, but everything of a direct report', async () => {
+    const at = new Date('2026-11-03T02:00:00.000Z');
+    mockApprovalRequest.find.mockImplementation(() => query([
+      { _id: oid(500), applicant_employee: { _id: ID.nurseA, name: '護理甲' }, form: ID.formResign, status: 'pending', createdAt: at },
+      { _id: oid(501), applicant_employee: { _id: ID.nurseA, name: '護理甲' }, form: ID.formOvertime, status: 'pending', createdAt: at },
+    ]));
+    loginAs('scheduler');
+    const scheduler = await request(app).get('/api/schedules/leave-approvals?month=2026-11');
+    expect(scheduler.status).toBe(200);
+    expect(scheduler.body.approvals.map((row) => row.form.name)).toEqual(['加班申請']);
+
+    await saveMode('supervisor_and_scheduler');
+    loginAs('boss');
+    const boss = await request(app).get('/api/schedules/leave-approvals?month=2026-11');
+    expect(boss.body.approvals.map((row) => row.form.name)).toEqual(['離職申請', '加班申請']);
+    mockApprovalRequest.find.mockImplementation(() => query([]));
+  });
+});
+
+// S3：排班頁上方「排班員工數」= 排班頁目前看的員工（部門、小單位篩選），兩個部門的小單位切換時跟著變
+describe('排班員工數 of a scheduler of two units in different departments', () => {
+  it('follows the department and unit filters of the page, like the employee list', async () => {
+    loginAs('scheduler');
+    const count = async (filters) => {
+      const res = await request(app).get(`/api/schedules/summary?month=2026-11&${filters}`);
+      expect(res.status).toBe(200);
+      return Array.isArray(res.body) ? 0 : res.body.stats.direct;
+    };
+    expect(await count(`department=${ID.deptA}&subDepartment=${ID.unitA1}`)).toBe(3);
+    expect(await count(`department=${ID.deptB}&subDepartment=${ID.unitB1}`)).toBe(1);
+    expect(await count(`department=${ID.deptA}&subDepartment=${ID.unitA2}`)).toBe(0);
+    const list = await request(app).get(`/api/employees/schedule?department=${ID.deptA}&subDepartment=${ID.unitA1}`);
+    expect(list.body).toHaveLength(3);
   });
 });
 
@@ -355,12 +466,16 @@ describe('使用班別 of a unit (R3)', () => {
 });
 
 describe('部門設定', () => {
-  it('saves the 使用簽核表單 selection and refuses unknown forms (R2)', async () => {
+  it('saves the 使用簽核表單 selection, drops forms that were deleted and refuses a malformed one (R2)', async () => {
     loginAs('admin');
     const saved = await request(app).put(`/api/departments/${ID.deptA}`).send({ name: 'A 部門', allowedFormIds: [ID.formLeave] });
     expect(saved.status).toBe(200);
     expect(saved.body.allowedFormIds).toEqual([ID.formLeave]);
-    expect((await request(app).put(`/api/departments/${ID.deptA}`).send({ allowedFormIds: [oid(998)] })).status).toBe(400);
+    // 已經被刪除的表單（畫面顯示「已刪除的表單」）直接拿掉、不擋下儲存（以前回 400，部門設定就再也存不了）
+    const dropped = await request(app).put(`/api/departments/${ID.deptA}`).send({ allowedFormIds: [oid(998), ID.formLeave] });
+    expect(dropped.status).toBe(200);
+    expect(dropped.body.allowedFormIds).toEqual([ID.formLeave]);
+    expect((await request(app).put(`/api/departments/${ID.deptA}`).send({ allowedFormIds: ['junk'] })).status).toBe(400);
     expect((await request(app).put(`/api/departments/${ID.deptA}`).send({ allowedFormIds: 'all' })).status).toBe(400);
 
     const cleared = await request(app).put(`/api/departments/${ID.deptA}`).send({ name: 'A 部門', allowedFormIds: [] });

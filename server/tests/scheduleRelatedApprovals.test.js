@@ -1,4 +1,5 @@
 import { jest } from '@jest/globals'
+import { registerScheduleAccessModeMocks } from './helpers/scheduleAccessModeMocks.js'
 
 // 排班頁「相關簽核」清單（GET /api/schedules/leave-approvals 的 approvals[]）：範圍內員工的所有簽核單，
 // 任何表單、任何狀態，只要與本月有關；日曆用的 leaves[] 仍只含核准的請假。
@@ -21,6 +22,8 @@ jest.unstable_mockModule('../src/models/AttendanceSetting.js', () => ({ default:
 jest.unstable_mockModule('../src/models/form_template.js', () => ({ default: mockFormTemplate }))
 jest.unstable_mockModule('../src/models/form_field.js', () => ({ default: mockFormField }))
 jest.unstable_mockModule('../src/services/leaveFieldService.js', () => ({ getAllLeaveFieldInfos: mockGetAllLeaveFieldInfos }))
+// 主管看直屬部屬的排班頁：2026/11 起要把排班權限存成「主管與排班人員」才有（預設只有排班人員能排班）
+const scheduleAccessMode = await registerScheduleAccessModeMocks(jest)
 
 let listLeaveApprovals
 let SCHEDULE_APPROVAL_LIMIT
@@ -28,6 +31,10 @@ let SCHEDULE_APPROVAL_LIMIT
 beforeAll(async () => {
   ;({ listLeaveApprovals } = await import('../src/controllers/schedule/scheduleQueryController.js'))
   ;({ SCHEDULE_APPROVAL_LIMIT } = await import('../src/services/scheduleApprovalService.js'))
+})
+
+beforeEach(() => {
+  scheduleAccessMode.allowSupervisors()
 })
 
 const LEAVE_FORM = { formId: 'leave-form', startId: 's', endId: 'e', typeId: 't', isActive: true }

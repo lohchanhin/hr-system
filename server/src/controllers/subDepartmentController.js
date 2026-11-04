@@ -49,6 +49,7 @@ function formatSubDepartment(doc) {
   };
 }
 
+// 舊欄位「班表拉選」（shift，API 以 shiftId 收送）：設定畫面已不顯示也不送，沒有功能讀取；仍接受舊用法，沒送就不動
 function mapShiftPayload(payload = {}) {
   const data = { ...payload };
   if (Object.prototype.hasOwnProperty.call(data, 'shiftId')) {

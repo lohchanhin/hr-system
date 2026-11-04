@@ -138,7 +138,20 @@
           :prop="column.prop"
           :label="column.label"
           :min-width="column.minWidth || 120"
-        />
+        >
+          <!-- 遲到、早退的實際打卡旁標示打卡來源（線上／指紋匯入） -->
+          <template v-if="column.sourceProp" #default="{ row }">
+            <span>{{ row[column.prop] }}</span>
+            <el-tag
+              v-if="row[column.prop] && row[column.sourceProp]"
+              size="small"
+              :type="attendanceSourceTagType(row[column.sourceProp])"
+              class="punch-source-tag"
+            >
+              {{ attendanceSourceLabel(row[column.sourceProp]) }}
+            </el-tag>
+          </template>
+        </el-table-column>
       </el-table>
     </el-card>
   </div>
@@ -150,6 +163,7 @@ import dayjs from 'dayjs'
 import { ElMessage } from 'element-plus'
 import { apiFetch } from '../../api'
 import EmployeeAvatar from '../../components/EmployeeAvatar.vue'
+import { attendanceSourceLabel, attendanceSourceTagType } from '../../utils/attendanceSource'
 
 const departments = ref([])
 const supervisorDepartmentId = ref('')
@@ -326,7 +340,7 @@ const dynamicColumns = computed(() => {
     return [
       { prop: 'date', label: '日期', minWidth: 140 },
       { prop: 'scheduledStart', label: '排定上班', minWidth: 140 },
-      { prop: 'actualClockIn', label: '實際打卡', minWidth: 140 },
+      { prop: 'actualClockIn', label: '實際打卡', minWidth: 160, sourceProp: 'clockInSource' },
       { prop: 'minutesLate', label: '遲到分鐘', minWidth: 120 },
     ]
   }
@@ -334,7 +348,7 @@ const dynamicColumns = computed(() => {
     return [
       { prop: 'date', label: '日期', minWidth: 140 },
       { prop: 'scheduledEnd', label: '排定下班', minWidth: 140 },
-      { prop: 'actualClockOut', label: '實際打卡', minWidth: 140 },
+      { prop: 'actualClockOut', label: '實際打卡', minWidth: 160, sourceProp: 'clockOutSource' },
       { prop: 'minutesEarly', label: '早退分鐘', minWidth: 120 },
     ]
   }
@@ -882,5 +896,9 @@ async function exportReport() {
 
 .preview-table {
   width: 100%;
+}
+
+.punch-source-tag {
+  margin-left: 6px;
 }
 </style>

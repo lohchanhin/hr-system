@@ -198,8 +198,12 @@ export async function createRecord(req, res) {
       const previousMidnight = baseMidnight ? new Date(baseMidnight.getTime() - 24 * 60 * 60 * 1000) : null;
       const previousParts = previousMidnight ? getLocalDateParts(previousMidnight, timeZone) : null;
       const previousScheduleDate = previousParts ? buildScheduleDate(previousParts) : null;
+      // 明天的班表也要讀：00:00 開始的大夜班，前一晚（例如 23:50）就在簽到時段內
+      const nextMidnight = baseMidnight ? new Date(baseMidnight.getTime() + 24 * 60 * 60 * 1000) : null;
+      const nextParts = nextMidnight ? getLocalDateParts(nextMidnight, timeZone) : null;
+      const nextScheduleDate = nextParts ? buildScheduleDate(nextParts) : null;
 
-      const candidateDates = [todayScheduleDate, previousScheduleDate].filter(Boolean);
+      const candidateDates = [todayScheduleDate, previousScheduleDate, nextScheduleDate].filter(Boolean);
 
       const schedules = candidateDates.length
         ? await ShiftSchedule.find({ employee: targetEmployeeId, date: { $in: candidateDates } }).lean()
@@ -217,7 +221,7 @@ export async function createRecord(req, res) {
         shiftMap.set(shift._id.toString(), shift);
       });
 
-      const entries = schedules
+      const allEntries = schedules
         .map((schedule) => {
           let shiftId;
           if (schedule.shiftId && typeof schedule.shiftId === 'object' && typeof schedule.shiftId.toString === 'function') {
@@ -245,8 +249,24 @@ export async function createRecord(req, res) {
         })
         .filter(Boolean);
 
-      if (!entries.length) {
-        return res.status(400).json({ error: '班別設定缺少時間資訊，請聯絡管理員' });
+      const nowMs = punchTime.getTime();
+      const windowOf = (ctx) => computeActionWindow(action, ctx.shiftStart, ctx.shiftEnd, actionBuffers);
+      const nextKey = nextScheduleDate?.getTime();
+      const isTomorrow = (dateMs) => nextKey !== undefined && dateMs === nextKey;
+      // 明天的班只在現在已經落在它的打卡時段內時才用（例如 00:00 大夜班前一晚 23:50 的簽到）；
+      // 其他情況照原本只看今天與昨天的班表（錯誤訊息也不變）
+      const tomorrowContexts = allEntries.filter((ctx) => (
+        isTomorrow(ctx.scheduleDateMs) && !ctx.nonWork && isWithinWindow(punchTime, windowOf(ctx))
+      ));
+      const entries = allEntries.filter((ctx) => !isTomorrow(ctx.scheduleDateMs));
+
+      if (!tomorrowContexts.length) {
+        if (schedules.every((schedule) => isTomorrow(new Date(schedule.date).getTime()))) {
+          return res.status(400).json({ error: '今日未設定班表，請洽管理員' });
+        }
+        if (!entries.length) {
+          return res.status(400).json({ error: '班別設定缺少時間資訊，請聯絡管理員' });
+        }
       }
 
       const contexts = entries.filter((ctx) => !ctx.nonWork);
@@ -254,7 +274,6 @@ export async function createRecord(req, res) {
       const todayKey = todayScheduleDate?.getTime();
       const previousKey = previousScheduleDate?.getTime();
 
-      const nowMs = punchTime.getTime();
       const activeContext = contexts.find((ctx) => nowMs >= ctx.shiftStart.getTime() && nowMs <= ctx.shiftEnd.getTime());
       const todayContext = contexts.find((ctx) => todayKey !== undefined && ctx.scheduleDateMs === todayKey);
       const previousContext = contexts.find((ctx) => previousKey !== undefined && ctx.scheduleDateMs === previousKey);
@@ -272,6 +291,17 @@ export async function createRecord(req, res) {
         if (!todayNonWork || isWithinWindow(punchTime, previousWindow)) {
           selectedContext = previousContext;
         }
+      }
+      // 選到的班現在不能做這個動作、另一個班（明天 00:00 的大夜班、昨天的跨日班、今天的班）的打卡時段卻包含現在：改用那一班。
+      // 好幾個班都包含現在時，取時間最接近的（簽到比上班時間、簽退比下班時間）
+      if (!selectedContext || !isWithinWindow(punchTime, windowOf(selectedContext))) {
+        const nominalOf = (ctx) => (action === 'clockIn' ? ctx.shiftStart : ctx.shiftEnd).getTime();
+        const inWindow = [...contexts, ...tomorrowContexts]
+          .filter((ctx) => isWithinWindow(punchTime, windowOf(ctx)))
+          .reduce((best, ctx) => (
+            !best || Math.abs(nowMs - nominalOf(ctx)) < Math.abs(nowMs - nominalOf(best)) ? ctx : best
+          ), null);
+        if (inWindow) selectedContext = inWindow;
       }
       if (!selectedContext) {
         if (todayNonWork) {

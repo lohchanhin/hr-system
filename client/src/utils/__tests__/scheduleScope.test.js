@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   filterScopeDepartments,
   filterScopeSubDepartments,
+  isNonWorkShift,
   normalizeScheduleAccess,
   resolveAllowedShiftIds,
   restrictShifts
@@ -83,5 +84,30 @@ describe('使用班別 of the viewed units', () => {
   it('takes the union of several viewed units, or everything when one of them has no selection', () => {
     expect(restrictShifts(shifts, resolveAllowedShiftIds([units[1], units[2]])).map(s => s._id)).toEqual(['day', 'night', 'rest'])
     expect(restrictShifts(shifts, resolveAllowedShiftIds([units[1], units[0]]))).toBe(shifts)
+  })
+
+  // 不用上班的班別（休息日、例假、國定假日、請假）每個小單位一律可以用，不論有沒有選
+  it('always keeps the shifts that are not work, whatever the unit selected', () => {
+    const all = [
+      { _id: 'day', code: 'D', name: '白班', semanticType: 'work', startTime: '08:00', endTime: '16:00' },
+      { _id: 'night', code: 'N', name: '大夜', semanticType: 'work', startTime: '00:00', endTime: '08:00' },
+      { _id: 'rest', code: '休', name: '休息日', semanticType: 'rest_day', startTime: '00:00', endTime: '00:00' },
+      { _id: 'regular', code: '例', name: '例假', semanticType: 'regular_rest', startTime: '00:00', endTime: '00:00' },
+      { _id: 'holiday', code: '國', name: '國定假日', semanticType: 'holiday', startTime: '00:00', endTime: '00:00' },
+      { _id: 'personal', code: '事', name: '事假', semanticType: 'leave', startTime: '00:00', endTime: '00:00' },
+      // 舊資料沒有班別性質：依代碼推斷（與伺服器相同）
+      { _id: 'legacyOff', code: 'OFF', name: '休假' },
+      // 標成工作班卻沒有工作時間：伺服器也當成不用上班
+      { _id: 'zero', code: 'Z', name: '待命', semanticType: 'work', startTime: '00:00', endTime: '00:00' }
+    ]
+    expect(restrictShifts(all, resolveAllowedShiftIds([units[2]])).map(s => s._id))
+      .toEqual(['night', 'rest', 'regular', 'holiday', 'personal', 'legacyOff', 'zero'])
+    // 舊設定選過休息日也一樣
+    expect(restrictShifts(all, resolveAllowedShiftIds([units[1]])).map(s => s._id))
+      .toEqual(['day', 'rest', 'regular', 'holiday', 'personal', 'legacyOff', 'zero'])
+    expect(all.filter(isNonWorkShift).map(s => s._id)).toEqual(['rest', 'regular', 'holiday', 'personal', 'legacyOff', 'zero'])
+    expect(isNonWorkShift(null)).toBe(false)
+    // 跨日班不是沒有工作時間
+    expect(isNonWorkShift({ code: 'X', semanticType: 'work', startTime: '00:00', endTime: '00:00', crossDay: true })).toBe(false)
   })
 })

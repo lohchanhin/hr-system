@@ -62,14 +62,16 @@ describe('router', () => {
     expect(paths).toContain('/manager/login')
   })
 
-  it('redirects an authenticated supervisor away from manager login', () => {
+  // 2026/11 起主管預設沒有排班權限：讀不到（這裡沒有個人資料）或沒有排班權限時帶到出勤打卡，不再落到排班頁的 403
+  it('redirects an authenticated supervisor away from manager login', async () => {
     const payload = btoa(JSON.stringify({ role: 'supervisor' }))
     setToken(`h.${payload}.s`)
     const next = vi.fn()
 
-    capturedGuard({ matched: [], meta: {}, name: 'ManagerLogin' }, {}, next)
+    await capturedGuard({ matched: [], meta: {}, name: 'ManagerLogin' }, {}, next)
 
-    expect(next).toHaveBeenCalledWith('/front/schedule')
+    await vi.waitFor(() => expect(next).toHaveBeenCalled())
+    expect(next).toHaveBeenCalledWith('/front/attendance')
   })
 
   it('redirects /manager to settings', () => {

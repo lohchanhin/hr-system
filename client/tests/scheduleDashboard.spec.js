@@ -87,7 +87,9 @@ describe('排班儀表板', () => {
     const wrapper = mountPage()
     await flush()
     expect(apiFetch).toHaveBeenCalledWith(`/api/schedules/summary?month=${month}`)
-    expect(wrapper.text()).toContain('直屬員工數')
+    // 2026/11 客戶：「直屬員工數」改為「排班員工數」（排班頁目前看的員工，不是直屬部屬）
+    expect(wrapper.text()).toContain('排班員工數')
+    expect(wrapper.text()).not.toContain('直屬員工數')
     expect(wrapper.text()).toContain('2')
     expect(wrapper.text()).toContain('未排班員工')
     expect(wrapper.text()).toContain('1')

@@ -5,8 +5,15 @@ import {
   ReportAccessError,
   getReportDisplayName,
 } from '../services/reportMetricsService.js';
+import { ATTENDANCE_SOURCE_LABELS } from '../services/attendancePunchService.js';
 
 const NOTIFICATION_FREQUENCIES = new Set(['daily', 'weekly', 'monthly']);
+
+// 遲到、早退報表「實際打卡」旁的打卡來源（線上、指紋匯入…）；沒有來源資訊時留白
+function punchSourceLabel(source) {
+  if (!source) return '';
+  return ATTENDANCE_SOURCE_LABELS[source] ?? ATTENDANCE_SOURCE_LABELS.legacy;
+}
 
 function defaultExportSettings() {
   return { formats: [], includeLogo: false, footerNote: '' };
@@ -427,6 +434,7 @@ const DEPARTMENT_EXPORT_CONFIG = {
       { header: '日期', key: 'date', width: 16 },
       { header: '排定上班', key: 'scheduledStart', width: 14 },
       { header: '實際打卡', key: 'actualClockIn', width: 14 },
+      { header: '打卡來源', key: 'clockInSource', width: 12 },
       { header: '遲到分鐘', key: 'minutesLate', width: 12 },
     ],
     mapRow: (record) => ({
@@ -434,6 +442,7 @@ const DEPARTMENT_EXPORT_CONFIG = {
       date: record.date,
       scheduledStart: record.scheduledStart,
       actualClockIn: record.actualClockIn,
+      clockInSource: punchSourceLabel(record.clockInSource),
       minutesLate: record.minutesLate,
     }),
     buildSummaryRows: (summary = {}) => [
@@ -448,6 +457,7 @@ const DEPARTMENT_EXPORT_CONFIG = {
       { header: '日期', key: 'date', width: 16 },
       { header: '排定下班', key: 'scheduledEnd', width: 14 },
       { header: '實際打卡', key: 'actualClockOut', width: 14 },
+      { header: '打卡來源', key: 'clockOutSource', width: 12 },
       { header: '早退分鐘', key: 'minutesEarly', width: 12 },
     ],
     mapRow: (record) => ({
@@ -455,6 +465,7 @@ const DEPARTMENT_EXPORT_CONFIG = {
       date: record.date,
       scheduledEnd: record.scheduledEnd,
       actualClockOut: record.actualClockOut,
+      clockOutSource: punchSourceLabel(record.clockOutSource),
       minutesEarly: record.minutesEarly,
     }),
     buildSummaryRows: (summary = {}) => [

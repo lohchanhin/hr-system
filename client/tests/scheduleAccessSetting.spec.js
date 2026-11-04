@@ -53,7 +53,8 @@ describe('ScheduleAccessSetting.vue', () => {
     expect(message.success).toHaveBeenCalled()
   })
 
-  it('switches back to the default without a confirmation', async () => {
+  // 2026/11 起預設是「只有排班人員」，「主管與排班人員」不再是預設：切回去照樣不用確認
+  it('switches to 主管與排班人員 (no longer the default) without a confirmation', async () => {
     apiFetch.mockImplementation((url, options) => (
       options?.method === 'PUT' ? ok({ mode: 'supervisor_and_scheduler' }) : ok({ mode: 'scheduler_only' })
     ))
@@ -63,6 +64,23 @@ describe('ScheduleAccessSetting.vue', () => {
     await wrapper.vm.save()
     expect(messageBox.confirm).not.toHaveBeenCalled()
     expect(wrapper.vm.savedMode).toBe('supervisor_and_scheduler')
+  })
+
+  it('shows that the default (only schedulers) is used while nothing is saved, and falls back to that default for an unknown mode', async () => {
+    apiFetch.mockImplementation(() => ok({ mode: 'scheduler_only', defaultMode: 'scheduler_only', saved: false }))
+    const wrapper = mount(ScheduleAccessSetting, { global: { plugins: [ElementPlus] } })
+    await flushPromises()
+    expect(wrapper.vm.mode).toBe('scheduler_only')
+    expect(wrapper.vm.saved).toBe(false)
+    expect(wrapper.find('[data-test="schedule-access-default-hint"]').exists()).toBe(true)
+    // 預設選項排在第一個
+    expect(wrapper.findAll('.el-radio').at(0).text()).toContain('只有被指定的排班人員能排班（預設')
+
+    apiFetch.mockImplementation(() => ok({}))
+    const legacy = mount(ScheduleAccessSetting, { global: { plugins: [ElementPlus] } })
+    await flushPromises()
+    expect(legacy.vm.mode).toBe('scheduler_only')
+    expect(legacy.find('[data-test="schedule-access-default-hint"]').exists()).toBe(false)
   })
 
   it('does not allow saving when the setting could not be read', async () => {

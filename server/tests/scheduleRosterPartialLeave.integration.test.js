@@ -167,6 +167,9 @@ describeIntegration('rostering around hourly approved leave, against a real Mong
 
     await addPerson('admin', { role: 'admin' })
     await addPerson('boss', { role: 'supervisor', department: DEPT })
+    // 這個檔案由主管排直屬部屬：2026/11 起要把排班權限存成「主管與排班人員」才有（預設只有排班人員能排班）
+    const { setScheduleAccessMode } = await import('../src/services/scheduleAccessService.js')
+    await setScheduleAccessMode('supervisor_and_scheduler')
 
     const form = await FormTemplate.create({ name: '(全)假別申請單', semanticType: 'leave', semantic_type_set: true, is_active: true })
     const fields = {}
