@@ -83,7 +83,9 @@ function mountSchedule() {
     'el-alert': { name: 'ElAlert', props: ['title', 'type'], template: '<div class="alert-stub">{{ title }}</div>' },
     'el-timeline': { name: 'ElTimeline', template: '<div><slot></slot></div>' },
     'el-timeline-item': { name: 'ElTimelineItem', template: '<div><slot></slot></div>' },
-    ScheduleDashboard: { name: 'ScheduleDashboard', template: '<div class="dashboard-stub"></div>', props: ['summary'] }
+    ScheduleDashboard: { name: 'ScheduleDashboard', template: '<div class="dashboard-stub"></div>', props: ['summary'] },
+    // 排班頁改用共用頁首：shallowMount 會把它換成空殼，月份／部門／單位與統計就不會畫出來，所以用真的元件
+    PageHeader: false
   }
   return shallowMount(Schedule, { global: { stubs } })
 }
@@ -216,7 +218,8 @@ describe('排班頁相關簽核（餵真的伺服器回應）', () => {
     expect(columnTexts(wrapper, '期間')).toContain('2026/07/12 ~ 2026/07/13')
   })
 
-  it('狀態：待簽核、已核准、已駁回、已退回、已撤回各有標籤與顏色', async () => {
+  // 2026/11：狀態的文字與顏色改成和簽核頁同一份（已核可／已否決／已退簽，退簽是主色；以前這一頁寫已核准／已駁回／已退回）
+  it('狀態：待簽核、已核可、已否決、已退簽、已撤回各有標籤與顏色（和簽核頁相同）', async () => {
     const wrapper = await mountWithApprovals()
     const statusOf = form => {
       const row = rowOf(wrapper, byForm(form)[0]._id)
@@ -224,11 +227,11 @@ describe('排班頁相關簽核（餵真的伺服器回應）', () => {
     }
 
     expect(statusOf('支援申請')).toEqual(['pending', '待簽核', 'warning'])
-    expect(statusOf('加班申請')).toEqual(['approved', '已核准', 'success'])
-    expect(statusOf('獎金申請')).toEqual(['rejected', '已駁回', 'danger'])
-    expect(statusOf('特休保留')).toEqual(['returned', '已退回', 'warning'])
+    expect(statusOf('加班申請')).toEqual(['approved', '已核可', 'success'])
+    expect(statusOf('獎金申請')).toEqual(['rejected', '已否決', 'danger'])
+    expect(statusOf('特休保留')).toEqual(['returned', '已退簽', 'primary'])
     expect(statusOf('補簽申請')).toEqual(['canceled', '已撤回', 'info'])
-    expect(new Set(columnTexts(wrapper, '狀態'))).toEqual(new Set(['待簽核', '已核准', '已駁回', '已退回', '已撤回']))
+    expect(new Set(columnTexts(wrapper, '狀態'))).toEqual(new Set(['待簽核', '已核可', '已否決', '已退簽', '已撤回']))
   })
 
   it('兩種拼法的撤回（canceled / cancelled）都顯示已撤回', async () => {

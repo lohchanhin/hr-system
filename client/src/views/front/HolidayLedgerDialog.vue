@@ -2,7 +2,7 @@
   <el-dialog
     :model-value="modelValue"
     title="國定假日休假紀錄"
-    width="min(1080px, 96vw)"
+    width="1080px"
     class="holiday-ledger-dialog"
     :append-to="appendTo"
     destroy-on-close
@@ -14,6 +14,7 @@
         v-model="month"
         type="month"
         value-format="YYYY-MM"
+        format="YYYY/MM"
         :clearable="false"
         class="ledger-month"
         data-test="holiday-ledger-month"
@@ -38,9 +39,13 @@
       <el-button :type="yearEnd.visible ? 'primary' : 'default'" plain data-test="holiday-ledger-year-end-toggle" @click="toggleYearEnd">
         年度調休
       </el-button>
+      <el-button link type="primary" :aria-expanded="helpVisible" data-test="holiday-ledger-help-toggle" @click="helpVisible = !helpVisible">
+        {{ helpVisible ? '收合說明' : '說明' }}
+      </el-button>
     </div>
 
-    <p class="ledger-help">
+    <!-- 判斷規則的說明較長：按「說明」才展開，預設不擋住表格 -->
+    <p v-show="helpVisible" class="ledger-help" data-test="holiday-ledger-help">
       班表上的「國」排在假日當天是<strong>當日休</strong>，排在當月其他日期是<strong>移休</strong>（顯示是哪一天）；
       本月沒有對應的「國」就是<strong>未休</strong>。「國」與假日依日期先後配對，總數一定正確，個別日期僅供參考。
       國定假日剛好是員工自己的休息日／例假時，系統存入一筆<strong>調休</strong>到員工的調休存摺，由員工自己發起調休簽核決定哪一天休
@@ -148,11 +153,13 @@
       :closable="false"
       data-test="holiday-ledger-error"
     />
-    <el-empty
+    <p
       v-else-if="ledger && !ledger.holidays.length"
-      description="這個月沒有國定假日"
+      class="hr-empty"
       data-test="holiday-ledger-no-holiday"
-    />
+    >
+      這個月沒有國定假日，不需要登記休假；可以用上方的月份切換到其他月份。
+    </p>
     <el-table
       v-else
       v-loading="loading"
@@ -265,7 +272,7 @@
     <el-dialog
       v-model="form.visible"
       :title="`登記處理方式：${form.employeeName}　${form.holidayName}`"
-      width="min(460px, 92vw)"
+      width="460px"
       :append-to="appendTo"
       destroy-on-close
       data-test="holiday-ledger-resolve-dialog"
@@ -281,7 +288,7 @@
           <span class="ledger-unit">小時</span>
         </el-form-item>
         <el-form-item v-if="form.kind === 'rested_later'" label="實際補休日">
-          <el-date-picker v-model="form.restedDate" type="date" value-format="YYYY-MM-DD" data-test="holiday-ledger-rested-date" />
+          <el-date-picker v-model="form.restedDate" type="date" value-format="YYYY-MM-DD" format="YYYY/MM/DD" data-test="holiday-ledger-rested-date" />
         </el-form-item>
         <el-form-item :label="form.kind === 'waived' ? '備註（必填）' : '備註'">
           <el-input v-model="form.note" type="textarea" :rows="3" maxlength="500" show-word-limit data-test="holiday-ledger-note" />
@@ -307,7 +314,7 @@
     <el-dialog
       v-model="compensation.visible"
       :title="`HR 指定調休日：${compensation.employeeName}　${compensation.holidayName}`"
-      width="min(460px, 92vw)"
+      width="460px"
       :append-to="appendTo"
       destroy-on-close
       data-test="holiday-ledger-compensation-dialog"
@@ -322,6 +329,7 @@
             v-model="compensation.assignedDate"
             type="date"
             value-format="YYYY-MM-DD"
+            format="YYYY/MM/DD"
             placeholder="選擇調休日期"
             data-test="holiday-ledger-compensation-date"
           />
@@ -358,7 +366,7 @@
     <el-dialog
       v-model="swap.visible"
       :title="`個人調移：${swap.employeeName}`"
-      width="min(560px, 94vw)"
+      width="560px"
       :append-to="appendTo"
       destroy-on-close
       data-test="holiday-ledger-swap-dialog"
@@ -369,10 +377,10 @@
           <el-select v-if="swap.options.length" v-model="swap.originalDate" data-test="holiday-ledger-swap-original">
             <el-option v-for="option in swap.options" :key="option.value" :label="option.label" :value="option.value" />
           </el-select>
-          <el-date-picker v-else v-model="swap.originalDate" type="date" value-format="YYYY-MM-DD" data-test="holiday-ledger-swap-original-date" />
+          <el-date-picker v-else v-model="swap.originalDate" type="date" value-format="YYYY-MM-DD" format="YYYY/MM/DD" data-test="holiday-ledger-swap-original-date" />
         </el-form-item>
         <el-form-item label="調移到">
-          <el-date-picker v-model="swap.targetDate" type="date" value-format="YYYY-MM-DD" data-test="holiday-ledger-swap-target" />
+          <el-date-picker v-model="swap.targetDate" type="date" value-format="YYYY-MM-DD" format="YYYY/MM/DD" data-test="holiday-ledger-swap-target" />
         </el-form-item>
         <el-form-item label="原因">
           <el-input v-model="swap.reason" maxlength="500" data-test="holiday-ledger-swap-reason" />
@@ -383,7 +391,7 @@
           </el-select>
         </el-form-item>
         <el-form-item label="同意日期">
-          <el-date-picker v-model="swap.consentedAt" type="date" value-format="YYYY-MM-DD" data-test="holiday-ledger-swap-consent-date" />
+          <el-date-picker v-model="swap.consentedAt" type="date" value-format="YYYY-MM-DD" format="YYYY/MM/DD" data-test="holiday-ledger-swap-consent-date" />
         </el-form-item>
         <el-form-item label="同意文件編號或存放位置（必填）">
           <el-input v-model="swap.evidenceRef" maxlength="200" data-test="holiday-ledger-swap-evidence" />
@@ -473,6 +481,8 @@ const authStore = useAuthStore()
 const viewerId = ref(getViewerEmployeeId())
 
 const month = ref(props.scope?.month || '')
+// 判斷規則的說明預設收合
+const helpVisible = ref(false)
 const search = ref('')
 const filter = ref('all')
 const loading = ref(false)

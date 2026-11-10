@@ -1325,13 +1325,40 @@ describe('actOnApproval - annual leave on final approval', () => {
     expect(res.json).toHaveBeenCalledWith(doc)
   })
 
-  it('keeps the approval but reports a failed deduction in the log, on the request and in the response', async () => {
-    mockDeductAnnualLeave.mockRejectedValue(Object.assign(new Error('Insufficient'), { code: 'INSUFFICIENT_BALANCE', remainingHours: 8, requestedHours: 16 }))
+  it('refuses the approval (nothing is saved) when the balance cannot cover the deduction', async () => {
+    mockDeductAnnualLeave.mockRejectedValue(Object.assign(new Error('Insufficient'), { code: 'INSUFFICIENT_BALANCE', remainingHours: 8, requestedHours: 16, configured: true }))
+    const doc = makeRequestDoc({ form_data: { 'l-type': '特休', 'l-start': '2026-03-02', 'l-end': '2026-03-03' } })
+    const res = await act(doc, { user: supUser(), body: { decision: 'approve' } })
+
+    // 以前照樣核准、只回警告：員工就會有超過特休時數的已核准特休
+    expect(res.status).toHaveBeenCalledWith(409)
+    expect(res.json).toHaveBeenCalledWith({
+      error: '特休餘額不足，無法核准：剩餘 8 小時（1 天），這張單需要 16 小時（2 天）。請人資確認特休時數，或退簽請申請人修改',
+      code: 'ANNUAL_LEAVE_INSUFFICIENT',
+      remainingHours: 8,
+      requestedHours: 16,
+    })
+    expect(doc.save).not.toHaveBeenCalled()
+    expect(doc.annual_leave).toBeUndefined()
+    expect(mockDeductAnnualLeave).toHaveBeenCalledTimes(1)
+  })
+
+  it('deducts once: the hours reserved before saving are not deducted again afterwards', async () => {
+    mockDeductAnnualLeave.mockResolvedValue({})
+    const doc = makeRequestDoc({ form_data: { 'l-type': '特休', 'l-start': '2026-03-02', 'l-end': '2026-03-03' } })
+    await act(doc, { user: supUser(), body: { decision: 'approve' } })
+
+    expect(doc.status).toBe('approved')
+    expect(mockDeductAnnualLeave).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps the approval of an employee whose quota was never entered, but reports the failed deduction in the log, on the request and in the response', async () => {
+    mockDeductAnnualLeave.mockRejectedValue(Object.assign(new Error('Insufficient'), { code: 'INSUFFICIENT_BALANCE', remainingHours: 0, requestedHours: 16, configured: false }))
     const doc = makeRequestDoc({ form_data: { 'l-type': '特休', 'l-start': '2026-03-02', 'l-end': '2026-03-03' } })
     const res = await act(doc, { user: supUser(), body: { decision: 'approve' } })
 
     expect(doc.status).toBe('approved')
-    const message = '特休扣減失敗：餘額不足（剩餘 8 小時（1 天），本次需扣 16 小時（2 天）），請人資確認特休時數後手動補登'
+    const message = '特休扣減失敗：餘額不足（剩餘 0 小時（0 天），本次需扣 16 小時（2 天）），請人資確認特休時數後手動補登'
     expect(doc.annual_leave).toEqual(expect.objectContaining({ hours: 16, days: 2, state: 'failed', message }))
     expect(doc.logs).toEqual(expect.arrayContaining([expect.objectContaining({ action: 'annual_leave_error', message })]))
     const body = res.json.mock.calls[0][0]

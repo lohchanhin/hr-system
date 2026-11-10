@@ -3,23 +3,37 @@
      傳 balances 就直接顯示（簽核明細已經帶在回應裡）；傳 employeeId 或什麼都不傳就自己向伺服器取。
      簽核明細的 balances 帶有 compensatory（申請人的調休存摺）時，在下方列出每一筆調休的來源、狀態與用在哪張單。 -->
 <template>
-  <div class="leave-balance-panel" :class="{ compact }" data-test="leave-balance-panel">
+  <div class="leave-balance-panel" :class="{ compact, 'is-collapsed': collapsed }" data-test="leave-balance-panel">
     <div class="panel-header">
       <div class="panel-title">
         <b>{{ title }}</b>
         <span v-if="data" class="panel-range">{{ rangeText }}</span>
       </div>
-      <el-button
-        v-if="!balances"
-        link
-        type="primary"
-        size="small"
-        :loading="loading"
-        data-test="leave-balance-refresh"
-        @click="load"
-      >
-        重新整理
-      </el-button>
+      <div class="panel-actions">
+        <el-button
+          v-if="!balances && !collapsed && !compact"
+          link
+          type="primary"
+          size="small"
+          :loading="loading"
+          data-test="leave-balance-refresh"
+          @click="load"
+        >
+          重新載入
+        </el-button>
+        <!-- 可收合（申請頁、簽核明細）：預設只留標題與「這張單的影響」，表格按展開才出現 -->
+        <el-button
+          v-if="collapsible"
+          link
+          type="primary"
+          size="small"
+          data-test="leave-balance-toggle"
+          :aria-expanded="!collapsed"
+          @click="collapsed = !collapsed"
+        >
+          {{ collapsed ? '展開' : '收合' }}
+        </el-button>
+      </div>
     </div>
 
     <el-alert
@@ -37,8 +51,26 @@
       <el-button link type="primary" size="small" @click="load">再試一次</el-button>
     </div>
 
+    <div v-show="!collapsed" class="panel-body" data-test="leave-balance-body">
+    <!-- 手機：每個假別一列（剩餘在右、額度與已使用在下一行），不用橫向捲動的寬表格 -->
+    <ul v-if="rows.length && isMobile" class="balance-list" data-test="leave-balance-list">
+      <li v-for="row in rows" :key="row.key || row.name" class="balance-item" :class="rowClassName({ row })">
+        <div class="balance-item__head">
+          <span class="type-name">{{ row.name }}</span>
+          <el-tag v-if="row.focus" size="small" type="primary" effect="plain" class="row-tag">本次申請</el-tag>
+          <span class="balance-item__remaining" :class="remainingClass(row)">{{ mobileRemainingText(row) }}</span>
+        </div>
+        <div class="row-note">{{ mobileDetailText(row) }}</div>
+        <div v-if="overText(row)" class="row-note over">{{ overText(row) }}</div>
+        <div v-if="statusLabel(row) || row.expiryDate" class="row-note">
+          <span v-if="statusLabel(row)" class="status-label" :class="`status-${row.status}`">{{ statusLabel(row) }}</span>
+          <span v-if="row.expiryDate">請休期限 {{ dateText(row.expiryDate) }}</span>
+        </div>
+      </li>
+    </ul>
+
     <el-table
-      v-if="rows.length"
+      v-else-if="rows.length"
       :data="rows"
       size="small"
       border
@@ -46,7 +78,7 @@
       :row-class-name="rowClassName"
       empty-text="沒有可顯示的假別"
     >
-      <el-table-column label="假別" min-width="120">
+      <el-table-column label="假別" :min-width="compact ? 86 : 120">
         <template #default="{ row }">
           <span class="type-name">{{ row.name }}</span>
           <el-tag v-if="row.focus" size="small" type="primary" effect="plain" class="row-tag">本次申請</el-tag>
@@ -54,10 +86,10 @@
           <el-tag v-if="row.source === 'bank'" size="small" type="success" effect="plain" class="row-tag">存摺</el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="年度額度" min-width="130">
+      <el-table-column label="年度額度" :min-width="compact ? 118 : 130">
         <template #default="{ row }">{{ quotaText(row) }}</template>
       </el-table-column>
-      <el-table-column label="已使用" min-width="120">
+      <el-table-column label="已使用" :min-width="compact ? 108 : 120">
         <template #default="{ row }">
           {{ rowHoursText(row, row.usedHours) }}
           <!-- 已使用只含已核准的：併入的子假別（家庭照顧假…）簽核中的部分放在「簽核中」那一欄，不然會被當成已使用的一部分 -->
@@ -70,16 +102,16 @@
           <div v-for="part in pendingIncludes(row)" :key="part.key" class="row-note" data-test="leave-balance-includes-pending">含{{ part.name }} {{ hoursText(part.hours) }}</div>
         </template>
       </el-table-column>
-      <el-table-column label="剩餘" min-width="150">
+      <el-table-column label="剩餘" :min-width="compact ? 118 : 150">
         <template #default="{ row }">
           <span :class="remainingClass(row)">{{ remainingText(row) }}</span>
           <div v-if="overText(row)" class="row-note over">{{ overText(row) }}</div>
         </template>
       </el-table-column>
-      <el-table-column v-if="!compact" label="備註" min-width="160">
+      <!-- 備註只留狀態與期限；各假別的規定（法條、給薪方式）收進下方的「說明」，不佔表格寬度 -->
+      <el-table-column v-if="!compact" label="備註" min-width="120">
         <template #default="{ row }">
           <span v-if="statusLabel(row)" class="status-label" :class="`status-${row.status}`">{{ statusLabel(row) }}</span>
-          <span v-if="row.note" class="row-note">{{ row.note }}</span>
           <span v-if="row.expiryDate" class="row-note">請休期限 {{ dateText(row.expiryDate) }}</span>
         </template>
       </el-table-column>
@@ -105,8 +137,28 @@
     </ul>
 
     <p v-if="data" class="panel-footer">
-      1 天 = {{ data.dayHours || 8 }} 小時；統計期間 {{ rangeText }}；特休依員工資料，調休（移休）依調休存摺（不分年度），其餘假別依法定額度（人資可調整）
+      1 天 = {{ data.dayHours || 8 }} 小時
+      <el-button
+        v-if="!compact"
+        link
+        type="primary"
+        size="small"
+        class="help-toggle"
+        data-test="leave-balance-help-toggle"
+        :aria-expanded="helpOpen"
+        @click="helpOpen = !helpOpen"
+      >
+        {{ helpOpen ? '收合說明' : '說明' }}
+      </el-button>
     </p>
+    <!-- 計算方式與各假別的規定：預設收合，按「說明」才展開 -->
+    <div v-if="data && !compact" v-show="helpOpen" class="panel-help" data-test="leave-balance-help">
+      <p>統計期間 {{ rangeText }}；特休依員工資料，調休（移休）依調休存摺（不分年度），其餘假別依法定額度（人資可調整）</p>
+      <ul v-if="noteRows.length">
+        <li v-for="row in noteRows" :key="row.key || row.name">{{ row.name }}：{{ row.note }}</li>
+      </ul>
+    </div>
+    </div>
   </div>
 </template>
 
@@ -114,6 +166,8 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { apiFetch } from '../api'
 import CompensatoryLeavePanel from './CompensatoryLeavePanel.vue'
+import { useIsMobile } from '../utils/useIsMobile'
+import { toTaipeiDateKey } from '../utils/leaveHours'
 import {
   STATUS_LABELS,
   describeOver,
@@ -133,6 +187,9 @@ const props = defineProps({
   title: { type: String, default: '假別餘額' },
   // 向伺服器取時的年度（預設今年）
   year: { type: [Number, String], default: '' },
+  // 可收合：標題列多一個「展開／收合」，預設收合（只留標題、這張單的影響與載入失敗的提示）
+  collapsible: { type: Boolean, default: false },
+  defaultCollapsed: { type: Boolean, default: true },
 })
 
 const emit = defineEmits(['loaded'])
@@ -141,6 +198,13 @@ const fetched = ref(null)
 const loading = ref(false)
 const error = ref('')
 let loadSeq = 0
+const isMobile = useIsMobile()
+// 計算方式與各假別規定的說明：預設收合
+const helpOpen = ref(false)
+const collapsed = ref(props.collapsible && props.defaultCollapsed)
+function expand() {
+  collapsed.value = false
+}
 
 const isObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value)
 
@@ -168,9 +232,10 @@ const rows = computed(() => (data.value?.items || []).map(item => ({
 const rangeText = computed(() => {
   const range = data.value?.range
   if (!range?.start) return ''
+  // 日期全站一致寫完整的 YYYY/MM/DD，期間用「～」連接（和薪資明細相同）
   const start = String(range.start).replaceAll('-', '/')
-  const end = String(range.end || '').slice(5).replaceAll('-', '/')
-  return `${start}-${end}`
+  const end = String(range.end || '').replaceAll('-', '/')
+  return end ? `${start}～${end}` : start
 })
 
 const hoursText = (hours) => formatHoursWithDays(hours)
@@ -202,6 +267,25 @@ const pendingIncludes = (row) => includesOf(row)
   .filter(part => part.hours > 0)
 
 const overText = (row) => (row.period === 'event' ? '' : describeOver(row))
+
+// 有規定說明的假別（法條、給薪方式等），列在「說明」裡
+const noteRows = computed(() => rows.value.filter(row => typeof row.note === 'string' && row.note.trim()))
+
+// 手機的一列：右邊是剩餘（每次計的假別顯示每次上限），下一行是額度、已使用、簽核中
+function mobileRemainingText(row) {
+  if (row.period === 'event') return row.quotaHours == null ? '不設上限' : `每次上限 ${formatHours(row.quotaHours)}`
+  if (row.remainingHours == null) return row.quotaHours == null ? '不設上限' : '—'
+  return `剩 ${remainingText(row)}`
+}
+function mobileDetailText(row) {
+  const parts = []
+  if (row.source === 'bank') parts.push(quotaText(row))
+  else if (row.period !== 'event' && row.quotaHours != null) parts.push(`額度 ${quotaText(row)}`)
+  parts.push(`已使用 ${rowHoursText(row, row.usedHours)}`)
+  for (const part of approvedIncludes(row)) parts.push(`含${part.name} ${hoursText(part.hours)}`)
+  if (row.pendingHours > 0) parts.push(`簽核中 ${rowHoursText(row, row.pendingHours)}`)
+  return parts.join('・')
+}
 const statusLabel = (row) => STATUS_LABELS[row.status] || ''
 
 function remainingClass(row) {
@@ -212,9 +296,11 @@ function remainingClass(row) {
 
 const rowClassName = ({ row }) => (row.focus ? 'focus-row' : (row.status === 'over' ? 'over-row' : ''))
 
+// 期限以台灣日期顯示：伺服器存的是時間點，可能是台灣時間的午夜（UTC 的前一天 16:00），
+// 直接取字串前 10 碼會少一天
 const dateText = (value) => {
-  const text = String(value || '')
-  return text.length >= 10 ? text.slice(0, 10).replaceAll('-', '/') : text
+  const key = toTaipeiDateKey(value)
+  return key ? key.replaceAll('-', '/') : String(value || '')
 }
 
 // 簽核明細帶來的「這張單」說明：核准前後的剩餘，超額時用警告色
@@ -256,7 +342,7 @@ async function load() {
   }
 }
 
-defineExpose({ load, refresh: load })
+defineExpose({ load, refresh: load, expand })
 
 onMounted(load)
 watch(() => [props.employeeId, props.year], () => {
@@ -286,6 +372,19 @@ watch(() => [props.employeeId, props.year], () => {
   color: #909399;
   font-size: 12px;
 }
+.panel-actions {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+/* 收合時標題列下面不留空白（有「這張單的影響」或錯誤提示時它們自己有間距） */
+.leave-balance-panel.is-collapsed > .panel-header {
+  margin-bottom: 0;
+}
+.leave-balance-panel.is-collapsed > .focus-note,
+.leave-balance-panel.is-collapsed > .panel-error {
+  margin: 8px 0 0;
+}
 .focus-note {
   margin-bottom: 8px;
 }
@@ -293,7 +392,7 @@ watch(() => [props.employeeId, props.year], () => {
   margin-top: 10px;
 }
 .panel-error {
-  color: #e6a23c;
+  color: var(--el-color-warning);
   font-size: 13px;
   margin-bottom: 8px;
 }
@@ -317,14 +416,14 @@ watch(() => [props.employeeId, props.year], () => {
   line-height: 1.5;
 }
 .row-note.over {
-  color: #f56c6c;
+  color: var(--el-color-danger);
 }
 .remaining-over {
-  color: #f56c6c;
+  color: var(--el-color-danger);
   font-weight: 600;
 }
 .remaining-low {
-  color: #e6a23c;
+  color: var(--el-color-warning);
   font-weight: 600;
 }
 .status-label {
@@ -332,10 +431,10 @@ watch(() => [props.employeeId, props.year], () => {
   margin-right: 6px;
 }
 .status-low {
-  color: #e6a23c;
+  color: var(--el-color-warning);
 }
 .status-over {
-  color: #f56c6c;
+  color: var(--el-color-danger);
 }
 .unmatched-list {
   margin: 8px 0 0;
@@ -348,8 +447,58 @@ watch(() => [props.employeeId, props.year], () => {
   color: #909399;
   font-size: 12px;
 }
+.help-toggle {
+  margin-left: 6px;
+  vertical-align: baseline;
+}
+.panel-help {
+  margin-top: 4px;
+  color: #606266;
+  font-size: 12px;
+  line-height: 1.7;
+}
+.panel-help p {
+  margin: 0;
+}
+.panel-help ul {
+  margin: 4px 0 0;
+  padding-left: 18px;
+}
+/* 手機的清單 */
+.balance-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.balance-item {
+  padding: 8px 0;
+  border-top: 1px solid var(--el-border-color-lighter, #ebeef5);
+}
+.balance-item:first-child {
+  border-top: none;
+}
+.balance-item.focus-row {
+  padding-left: 8px;
+  padding-right: 8px;
+  border-radius: 6px;
+  background-color: var(--el-color-primary-light-9);
+}
+.balance-item__head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.balance-item__remaining {
+  margin-left: auto;
+  font-weight: 600;
+  text-align: right;
+}
+.balance-item .row-tag {
+  margin-left: 0;
+}
+/* 目前要請的假別那一列：用系統主色的淺色（以前是 Element Plus 預設的藍色） */
 :deep(.focus-row) {
-  background-color: #ecf5ff;
+  background-color: var(--el-color-primary-light-9);
 }
 :deep(.over-row) {
   background-color: #fef0f0;

@@ -587,10 +587,46 @@ export function buildPublishQuery({ start, end }, { department, subDepartment })
   const query = {
     date: { $gte: start, $lt: end },
     state: { $ne: 'finalized' },
-    needsReconfirm: true,
+    // 2026-03 以前建立的班表沒有 needsReconfirm 欄位：還沒完成發布的就當成需要確認（$ne: false 也選得到沒有欄位的列）。
+    // 以前只選 true，舊資料永遠發布不了，已發送的也不能完成發布（404）。不做資料移轉
+    needsReconfirm: { $ne: false },
   };
   if (department) query.department = department;
   if (subDepartment) query.subDepartment = subDepartment;
+  return query;
+}
+
+/**
+ * 發布、完成發布、排班檢核選班表時的部門／小單位條件（直接改 query）。
+ * 除了班表上存的部門、小單位（排班當時的單位，原本的條件），也包含「現在屬於這個部門／小單位的員工」的班表：
+ * 員工月中調單位後，舊單位排的那幾天還掛在舊單位底下，新單位發布時以前選不到（舊單位的排班人員又已經看不到這位員工），
+ * 那幾天永遠停在草稿。排班頁的名單本來就是依員工現在的單位列出，這樣發布的範圍和畫面看到的一致。
+ * 員工名單讀不到時只用原本的條件。
+ */
+export async function applyPublishUnitFilter(query, { department, subDepartment } = {}) {
+  if (!department && !subDepartment) return query;
+  const rowFilter = {};
+  if (department) rowFilter.department = department;
+  if (subDepartment) rowFilter.subDepartment = subDepartment;
+  let unitEmployeeIds = [];
+  try {
+    const employeeFilter = { ...rowFilter };
+    // 有排班範圍時（非管理員）只需要範圍內的員工
+    if (query.employee?.$in) employeeFilter._id = { $in: query.employee.$in };
+    const find = Employee.find(employeeFilter);
+    const selected = find && typeof find.select === 'function' ? find.select('_id') : find;
+    const rows = selected && typeof selected.lean === 'function' ? await selected.lean() : await selected;
+    unitEmployeeIds = (Array.isArray(rows) ? rows : []).map((row) => row?._id).filter(Boolean);
+  } catch {
+    unitEmployeeIds = [];
+  }
+  delete query.department;
+  delete query.subDepartment;
+  if (unitEmployeeIds.length) {
+    query.$or = [rowFilter, { employee: { $in: unitEmployeeIds } }];
+  } else {
+    Object.assign(query, rowFilter);
+  }
   return query;
 }
 
@@ -704,7 +740,7 @@ export function applyEmployeeResponse(schedule, normalized, noteValue, now = new
     return schedule;
   }
 
-  throw createError('invalid response');
+  throw createError('回覆內容不正確（只能確認或提出異議）');
 }
 
 // 公版班表的國定假日標記。班別設定裡有定義就照一般班別存成班表；沒定義才只當核對用途略過。

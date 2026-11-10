@@ -9,11 +9,13 @@ import { calculateNightShiftAllowance } from './nightShiftAllowanceService.js';
 import { isNonWorkShift, resolveShiftSemanticType } from './shiftSemanticService.js';
 import { loadHolidayContext, resolveDayType } from './holidayResolver.js';
 import { findPunchSource, matchSchedulesPunches } from './attendancePunchService.js';
-import { toTaipeiDateKey } from '../utils/taipeiTime.js';
-import { getTimezone } from '../utils/timeWindow.js';
-import { computeLeaveDuration, sumLeaveHoursInRange } from '../utils/leaveDuration.js';
+import { dateKeyToUtcMidnight, toTaipeiDateKey } from '../utils/taipeiTime.js';
+import { computeShiftSpan, getTimezone } from '../utils/timeWindow.js';
+import { computeLeaveDuration, splitLeaveByDay, sumLeaveHoursInRange } from '../utils/leaveDuration.js';
 import { isOvertimeFormTemplate } from '../utils/formSemantics.js';
 import { candidateSelectKeys, orderFieldCandidateIds, pickFieldValue, resolveCandidateIds } from '../utils/fieldCandidates.js';
+import { resolveMonthlyEmployment } from '../utils/payrollEmployment.js';
+import { loadPayrollPolicy } from './payrollPolicyService.js';
 import {
   WORK_HOURS_CONFIG,
   OVERTIME_FIELDS,
@@ -219,6 +221,17 @@ export async function calculateWorkHours(employeeId, month, context = {}) {
       action: { $in: ['clockIn', 'clockOut'] }
     }).lean(),
   ]);
+  // 月初前一天的班表（只用來讓那一班認領自己的打卡，見 matchSchedulesPunches 的 contextOnly）：
+  // 這次自己查班表時順便查；班表由呼叫端帶入時（整批計算），前一天的班表也由呼叫端帶入（沒帶就沒有）
+  if (context.leadingSchedules === undefined) {
+    const leading = context.schedules
+      ? (context.marginSchedules ?? [])
+      : await resolveLeanQuery(ShiftSchedule.find({ employee: employeeId, date: { $gte: recordRangeStart, $lt: startDate } }));
+    context.leadingSchedules = (Array.isArray(leading) ? leading : []).filter((row) => {
+      const time = new Date(row?.date).getTime();
+      return time >= recordRangeStart.getTime() && time < startDate.getTime();
+    });
+  }
   context.attendanceSetting = attendanceSetting;
   context.schedules = schedules;
   context.attendanceRecords = attendanceRecords;
@@ -243,12 +256,16 @@ export async function calculateWorkHours(employeeId, month, context = {}) {
   // 先依每一班的簽到、簽退時段（台灣時間，與線上打卡、遲到早退判斷相同）找，線上打卡與指紋匯入一起看，簽到取最早、簽退取最晚；
   // 時段內找不到時才沿用原本依日期比對的方式。同一筆打卡只算給一個班：缺勤那天不會拿到隔天大夜班前一晚的簽到，
   // 一組打卡也不會讓兩天都算出勤。
+  const toPunchSchedule = (schedule, contextOnly = false) => {
+    const shift = shiftMap.get(String(schedule.shiftId ?? ''));
+    return { key: schedule, scheduleDate: schedule.date, shift, nonWork: !shift || isNonWorkShift(shift), contextOnly };
+  };
   const punchesBySchedule = matchSchedulesPunches({
     records: employeePunches,
-    schedules: (schedules || []).map((schedule) => {
-      const shift = shiftMap.get(String(schedule.shiftId ?? ''));
-      return { key: schedule, scheduleDate: schedule.date, shift, nonWork: !shift || isNonWorkShift(shift) };
-    }),
+    schedules: [
+      ...(context.leadingSchedules || []).map((schedule) => toPunchSchedule(schedule, true)),
+      ...(schedules || []).map((schedule) => toPunchSchedule(schedule)),
+    ],
     actionBuffers,
     timeZone,
   });
@@ -330,16 +347,21 @@ export async function calculateWorkHours(employeeId, month, context = {}) {
   };
 }
 
+// 加班費：只讀送簽日在薪資月份開始前這麼多天以後的加班單（加班日比送簽日晚超過一年多的單不存在）
+const OVERTIME_REQUEST_LOOKBACK_DAYS = 400;
+
 async function resolveLeanQuery(query) {
   return query && typeof query.lean === 'function' ? query.lean() : query;
 }
 
 /**
- * 這個月班表上「不用上班」的日子（台灣日期鍵）：休息日、例假、國定假日、沒有工作時間的班別。
- * 班表上排的「請假」班別不算：那一天有核准的假單就要照常給薪，不能因為班表標了請假就不給。
- * 沒有班表的日子不在裡面（無從判斷，維持算請假）。班表與班別設定沿用 context（calculateWorkHours 已載入），沒有才查詢。
+ * 這個月的班表整理成請假計算要用的樣子：
+ *   nonWorkDays：班表上「不用上班」的日子（台灣日期鍵）：休息日、例假、國定假日、沒有工作時間的班別。
+ *     班表上排的「請假」班別不算：那一天有核准的假單就要照常給薪，不能因為班表標了請假就不給。
+ *   workShifts：排了上班班別的日子 Map(日期鍵 -> { date, shift })。
+ * 沒有班表的日子兩邊都不在（無從判斷，維持算請假）。班表與班別設定沿用 context（calculateWorkHours 已載入），沒有才查詢。
  */
-async function loadNonWorkScheduleDays(employeeId, startDate, endDate, context) {
+async function loadRosterDays(employeeId, startDate, endDate, context) {
   const [attendanceSetting, schedules] = await Promise.all([
     context.attendanceSetting ?? resolveLeanQuery(AttendanceSetting.findOne()),
     context.schedules ?? resolveLeanQuery(ShiftSchedule.find({
@@ -349,19 +371,66 @@ async function loadNonWorkScheduleDays(employeeId, startDate, endDate, context) 
   ]);
   context.attendanceSetting = attendanceSetting;
   context.schedules = schedules;
+  return collectRosterDays(schedules, attendanceSetting);
+}
 
+function collectRosterDays(schedules, attendanceSetting, roster = { nonWorkDays: new Set(), workShifts: new Map() }) {
   const shiftMap = new Map((attendanceSetting?.shifts || []).map((shift) => [String(shift._id), shift]));
-  const days = new Set();
   for (const schedule of schedules || []) {
     const shift = shiftMap.get(String(schedule.shiftId ?? ''));
-    if (!shift || !isNonWorkShift(shift) || resolveShiftSemanticType(shift) === 'leave') continue;
-    days.add(buildDateKey(schedule.date));
+    if (!shift) continue;
+    const key = buildDateKey(schedule.date);
+    if (!isNonWorkShift(shift)) roster.workShifts.set(key, { date: schedule.date, shift });
+    else if (resolveShiftSemanticType(shift) !== 'leave') roster.nonWorkDays.add(key);
   }
-  return days;
+  return roster;
 }
 
 /**
- * 把一張假單拆到每天的時數（perDay）裡，拿掉班表上不用上班的日子（見 loadNonWorkScheduleDays）。
+ * 跨月的假單：把假單落在「這個月以外」那幾天的班表也加進 roster。
+ * 填了總時數（總天數）的假單要把總數分給整張假單裡要上班的日子；只知道當月的休息日時，
+ * 算 10 月與算 11 月各自少算了對方月份的休息日，兩個月加起來就不是假單的總時數。
+ * 整批計算時呼叫端已經多讀了月份前後幾天的班表（context.marginSchedules，涵蓋範圍 context.marginRange），
+ * 假單沒有超出那個範圍就不再查；超出或沒有預先讀好時才查一次。
+ */
+async function addRosterDaysOutsideMonth(roster, employeeId, startDate, endDate, durations, context) {
+  const monthStartKey = formatDate(startDate);
+  const monthEndKey = formatDate(endDate);
+  let fromKey = null;
+  let toKey = null;
+  for (const duration of durations) {
+    for (const item of duration.perDay) {
+      if (item.dateKey >= monthStartKey && item.dateKey < monthEndKey) continue;
+      if (!fromKey || item.dateKey < fromKey) fromKey = item.dateKey;
+      if (!toKey || item.dateKey > toKey) toKey = item.dateKey;
+    }
+  }
+  if (!fromKey) return roster;
+  const from = dateKeyToUtcMidnight(fromKey);
+  const to = dateKeyToUtcMidnight(toKey);
+  if (!from || !to) return roster;
+  const margin = context.marginRange;
+  const preloaded = Array.isArray(context.marginSchedules) && margin
+    && from.getTime() >= new Date(margin.from).getTime() && to.getTime() < new Date(margin.to).getTime();
+  const rows = preloaded
+    ? context.marginSchedules
+    : await resolveLeanQuery(ShiftSchedule.find({
+      employee: employeeId,
+      date: { $gte: from, $lt: new Date(to.getTime() + 24 * 60 * 60 * 1000) },
+    }));
+  const outside = (rows || []).filter((row) => {
+    const key = buildDateKey(row.date);
+    return key >= fromKey && key <= toKey && (key < monthStartKey || key >= monthEndKey);
+  });
+  if (!outside.length) return roster;
+  if (context.attendanceSetting === undefined) {
+    context.attendanceSetting = await resolveLeanQuery(AttendanceSetting.findOne());
+  }
+  return collectRosterDays(outside, context.attendanceSetting, roster);
+}
+
+/**
+ * 把一張假單拆到每天的時數（perDay）裡，拿掉班表上不用上班的日子（見 loadRosterDays）。
  * 由開始、結束時間推算的時數直接拿掉那幾天（週五 09:00 到週一 18:00 的假，週六日是休息日，只剩兩天 16 小時）；
  * 表單「天數」欄位填的是請假的總天數，拿掉休息日後把總時數分給剩下的日子（每天最多一個工作天的時數），
  * 這樣填「2 天」橫跨週末的假仍然是 2 天，不會因為週末被拿掉而少給薪。
@@ -385,9 +454,57 @@ function dropNonWorkLeaveDays(duration, nonWorkDays) {
 }
 
 /**
+ * 月薪：跨月的假單填了總時數（或總天數）時，依班表把總數分到各天，總時數不變。只影響各月份分到幾小時：
+ * 週四到下週一的 24 小時事假（週六休息日、週日例假）是前一個月 16 小時、後一個月 8 小時，不是平均分到 5 個日曆日的 14.4 與 9.6。
+ * 每一天最多可以分到的時數：
+ *   - 班表上不用上班的日子（休息日、例假、國定假日）：0
+ *   - 排了上班班別的日子：整天的假是班別的工作時數（扣休息）；有時分的假是請假時間與班次重疊的時數
+ *   - 沒有班表的日子：假單在那一天涵蓋的時數（最多 8 小時）
+ * 再依日期先後把總時數填進去（填滿一天再填下一天）。這樣算前一個月時，後一個月的班表還沒排也不影響前一個月的數字；
+ * 總時數比這些日子加起來還多時，多的部分依比例分給各天。
+ * 由開始、結束時間推算的假單（沒有填總數）維持日曆日計算；沒有班表、或班表上整段期間都不用上班時無從判斷，維持原本的分法。
+ */
+function spreadFilledLeaveOverWorkDays(duration, roster) {
+  if (duration.source === 'dates' || !duration.perDay.length || !duration.interval) return duration;
+  if (!roster.nonWorkDays.size && !roster.workShifts.size) return duration;
+  const { interval } = duration;
+  const hoursPerDay = WORK_HOURS_CONFIG.HOURS_PER_DAY;
+  const coveredByDay = new Map(splitLeaveByDay(interval, { hoursPerDay }).map((item) => [item.dateKey, item.hours]));
+  const timeZone = getTimezone();
+  const caps = duration.perDay.map(({ dateKey }) => {
+    if (roster.nonWorkDays.has(dateKey)) return { dateKey, cap: 0 };
+    const covered = coveredByDay.get(dateKey) ?? hoursPerDay;
+    const rostered = roster.workShifts.get(dateKey);
+    const span = rostered ? computeShiftSpan(rostered.date, rostered.shift, timeZone) : null;
+    if (!span) return { dateKey, cap: covered };
+    const spanMinutes = (span.end.getTime() - span.start.getTime()) / 60000;
+    const shiftHours = Math.max(spanMinutes - getShiftBreakMinutes(rostered.shift, rostered.date), 0) / 60;
+    if (interval.allDay) return { dateKey, cap: shiftHours > 0 ? shiftHours : covered };
+    const overlapMs = Math.min(interval.endMs, span.end.getTime()) - Math.max(interval.startMs, span.start.getTime());
+    return { dateKey, cap: Math.min(Math.max(overlapMs, 0) / 3600000, shiftHours) };
+  });
+  const capSum = caps.reduce((sum, item) => sum + item.cap, 0);
+  if (!(capSum > 0)) return duration;
+
+  const round = (value) => Math.round(value * 10000) / 10000;
+  let remaining = duration.hours;
+  const filled = caps.map((item) => {
+    const hours = Math.min(item.cap, Math.max(remaining, 0));
+    remaining = round(remaining - hours);
+    return { ...item, hours };
+  });
+  const extra = remaining > 0 ? remaining : 0;
+  const perDay = filled
+    .map((item) => ({ dateKey: item.dateKey, hours: round(item.hours + (extra * item.cap) / capSum) }))
+    .filter((item) => item.hours > 0);
+  return { ...duration, perDay };
+}
+
+/**
  * 計算請假對薪資的影響
  * 請假依「請假日期」歸屬月份（台灣日期，跨月的假單拆到各自的月份），不看送簽（建立）的月份。
- * 日薪、時薪只算排定要上班的日子（跨越休息日、例假、國定假日的假，那幾天不算）；月薪維持日曆日計算。
+ * 日薪、時薪只算排定要上班的日子（跨越休息日、例假、國定假日的假，那幾天不算）；月薪維持日曆日計算，
+ * 只有填了總時數（總天數）的跨月假單，各月份分到的時數依班表分（見 spreadFilledLeaveOverWorkDays）。
  * @param {String} employeeId - 員工 ID
  * @param {String} month - 月份 (YYYY-MM-DD 格式)
  * @param {Object} options.withDailyBreakdown - 另外回傳每天的給薪請假時數（payableLeaveByDay），日薪計算要用
@@ -436,13 +553,13 @@ export async function calculateLeaveImpact(employeeId, month, context = {}, { wi
   let undatedPayableLeaveHours = 0;
 
   // 日薪、時薪是按排定的上班日給薪：請假範圍橫跨的休息日、例假、國定假日（班表上不用上班的日子）不算請假、也不給薪。
-  // 月薪不受影響（維持日曆日計算）；特休餘額的天數是另一回事（日曆日計算，見 services/leaveRequestDays.js）。
-  const nonWorkDays = employee.salaryType === '日薪' || employee.salaryType === '時薪'
-    ? await loadNonWorkScheduleDays(employeeId, startDate, endDate, context)
-    : new Set();
+  // 月薪維持日曆日計算（只有填了總數的跨月假單依上班日分月，見下方）；特休餘額的天數是另一回事（日曆日計算，見 services/leaveRequestDays.js）。
+  const paidBySchedule = employee.salaryType === '日薪' || employee.salaryType === '時薪';
 
   // 每張請假表單各查一次該員工已核准的請假記錄（一張假單只屬於一張表單，不會重複計算）。
   // form_data 的日期是字串，沒辦法用資料庫的日期條件篩選，所以取回後依請假日期在程式裡篩出落在本月的部分。
+  // 先把所有假單的時數與每日分布算出來（entries），讀完班表後再逐張計入：跨月假單要連其他月份那幾天的班表一起看。
+  const entries = [];
   for (const leaveForm of leaveForms) {
     const { formId, startId, endId, typeId, daysId, typeOptions } = leaveForm;
     // 欄位被停用或換成同標籤的新欄位後，舊假單的答案還在舊欄位 ID 底下：逐張假單用第一個有填值的同標籤欄位
@@ -484,69 +601,97 @@ export async function calculateLeaveImpact(employeeId, month, context = {}, { wi
         literalHours: formData.hours,
         hoursPerDay: WORK_HOURS_CONFIG.HOURS_PER_DAY,
       });
-      // 有請假日期的才能分日；日薪、時薪另外把班表上不用上班的日子從請假裡拿掉（全部拿掉時 hours 為 0，下面會略過）
-      const dated = rawDuration.perDay.length > 0;
-      const duration = dated ? dropNonWorkLeaveDays(rawDuration, nonWorkDays) : rawDuration;
-
-      let days;
-      let hours;
-      if (dated) {
-        // 有請假日期：只算落在本月的部分
-        hours = sumLeaveHoursInRange(duration.perDay, windowStartKey, windowEndKey);
-        if (hours <= 0) return;
-        days = Math.round((hours / WORK_HOURS_CONFIG.HOURS_PER_DAY) * 10000) / 10000;
-      } else {
-        // 沒有請假日期的舊資料，才退回用送簽（建立）時間歸屬月份
-        const createdAt = approval.createdAt ? new Date(approval.createdAt) : null;
-        if (createdAt && (createdAt < startDate || createdAt >= endDate)) return;
-        ({ days, hours } = duration);
-        if (hours <= 0) return;
-      }
-
-      totalLeaveHours += hours;
-
-      // 依假別薪資對照表（salaryConfig.LEAVE_TYPE_PAY_TABLE）決定給薪方式：全薪不扣、半薪扣一半、無薪全扣
-      const pay = resolveLeavePay(leaveType);
-      unpaidLeaveHours += hours * (1 - pay.payRate);
-      if (pay.category === 'paid') {
-        paidLeaveHours += hours;
-      } else if (pay.category === 'sick') {
-        sickLeaveHours += hours;
-      } else if (pay.known) {
-        // 事假、家庭照顧假等明列的無薪假
-        personalLeaveHours += hours;
-      }
-      // 對照表查不到的假別預設為無薪（只計入無薪時數）
-
-      if (dated) {
-        if (pay.payRate > 0) {
-          duration.perDay.forEach((item) => {
-            if (item.dateKey < windowStartKey || item.dateKey >= windowEndKey) return;
-            payableLeaveByDay[item.dateKey] = (payableLeaveByDay[item.dateKey] ?? 0) + item.hours * pay.payRate;
-          });
-        }
-      } else {
-        undatedPayableLeaveHours += hours * pay.payRate;
-      }
-
-      const record = {
-        leaveType,
-        startDate: duration.startKey,
-        endDate: duration.endKey,
-        days,
-        hours,
-        payRate: pay.payRate,
-        // 有給薪（全薪或半薪）才算有薪；全額扣款的假別是無薪
-        isPaid: pay.payRate > 0
-      };
-      if (dated && hours < duration.hours) {
-        // 跨月的假單：days / hours 是本月的部分，另外附上整張假單的天數與時數
-        record.totalDays = duration.days;
-        record.totalHours = duration.hours;
-      }
-      leaveRecords.push(record);
+      entries.push({ approval, leaveType, rawDuration });
     });
   }
+
+  // 落在本月、而且跨到其他月份的假單裡，填了總時數（總天數）的那些：總數要分給整張假單裡要上班的日子
+  const inMonth = (item) => item.dateKey >= windowStartKey && item.dateKey < windowEndKey;
+  const crossMonthFilled = entries
+    .map((entry) => entry.rawDuration)
+    .filter((duration) => duration.source !== 'dates'
+      && duration.perDay.some(inMonth)
+      && duration.perDay.some((item) => !inMonth(item)));
+  let roster = { nonWorkDays: new Set(), workShifts: new Map() };
+  if (paidBySchedule || crossMonthFilled.length) {
+    roster = await loadRosterDays(employeeId, startDate, endDate, context);
+    if (crossMonthFilled.length) {
+      roster = await addRosterDaysOutsideMonth(roster, employeeId, startDate, endDate, crossMonthFilled, context);
+    }
+  }
+
+  entries.forEach(({ approval, leaveType, rawDuration }) => {
+    // 有請假日期的才能分日；日薪、時薪另外把班表上不用上班的日子從請假裡拿掉（全部拿掉時 hours 為 0，下面會略過）；
+    // 月薪只把填了總數的跨月假單改成依班表分到各天（總時數不變）
+    const dated = rawDuration.perDay.length > 0;
+    let duration = rawDuration;
+    if (dated && paidBySchedule) {
+      // 填了總數的跨月假單和月薪一樣依日期先後填（休息日、例假分到 0）：以前依比例分，算前一個月時後一個月的班表還沒排，
+      // 沒有班表的日子也分到一份，前一個月少算、兩個月加起來不是假單的總時數。分不出來（沒有班表等）時照舊拿掉休息日
+      const spread = crossMonthFilled.includes(rawDuration) ? spreadFilledLeaveOverWorkDays(rawDuration, roster) : rawDuration;
+      duration = spread !== rawDuration ? spread : dropNonWorkLeaveDays(rawDuration, roster.nonWorkDays);
+    } else if (dated && crossMonthFilled.includes(rawDuration)) {
+      duration = spreadFilledLeaveOverWorkDays(rawDuration, roster);
+    }
+
+    let days;
+    let hours;
+    if (dated) {
+      // 有請假日期：只算落在本月的部分
+      hours = sumLeaveHoursInRange(duration.perDay, windowStartKey, windowEndKey);
+      if (hours <= 0) return;
+      days = Math.round((hours / WORK_HOURS_CONFIG.HOURS_PER_DAY) * 10000) / 10000;
+    } else {
+      // 沒有請假日期的舊資料，才退回用送簽（建立）時間歸屬月份
+      const createdAt = approval.createdAt ? new Date(approval.createdAt) : null;
+      if (createdAt && (createdAt < startDate || createdAt >= endDate)) return;
+      ({ days, hours } = duration);
+      if (hours <= 0) return;
+    }
+
+    totalLeaveHours += hours;
+
+    // 依假別薪資對照表（salaryConfig.LEAVE_TYPE_PAY_TABLE）決定給薪方式：全薪不扣、半薪扣一半、無薪全扣
+    const pay = resolveLeavePay(leaveType);
+    unpaidLeaveHours += hours * (1 - pay.payRate);
+    if (pay.category === 'paid') {
+      paidLeaveHours += hours;
+    } else if (pay.category === 'sick') {
+      sickLeaveHours += hours;
+    } else if (pay.known) {
+      // 事假、家庭照顧假等明列的無薪假
+      personalLeaveHours += hours;
+    }
+    // 對照表查不到的假別預設為無薪（只計入無薪時數）
+
+    if (dated) {
+      if (pay.payRate > 0) {
+        duration.perDay.forEach((item) => {
+          if (item.dateKey < windowStartKey || item.dateKey >= windowEndKey) return;
+          payableLeaveByDay[item.dateKey] = (payableLeaveByDay[item.dateKey] ?? 0) + item.hours * pay.payRate;
+        });
+      }
+    } else {
+      undatedPayableLeaveHours += hours * pay.payRate;
+    }
+
+    const record = {
+      leaveType,
+      startDate: duration.startKey,
+      endDate: duration.endKey,
+      days,
+      hours,
+      payRate: pay.payRate,
+      // 有給薪（全薪或半薪）才算有薪；全額扣款的假別是無薪
+      isPaid: pay.payRate > 0
+    };
+    if (dated && hours < duration.hours) {
+      // 跨月的假單：days / hours 是本月的部分，另外附上整張假單的天數與時數
+      record.totalDays = duration.days;
+      record.totalHours = duration.hours;
+    }
+    leaveRecords.push(record);
+  });
 
   // 計算請假扣款 - 使用配置的轉換函數。日薪、時薪是按出勤與有薪假給薪，
   // 無薪假沒有薪水可領，不能再扣一次，所以只有月薪才有請假扣款
@@ -646,15 +791,31 @@ export async function calculateOvertimePay(employeeId, month, context = {}) {
     return {
       overtimeHours: 0,
       overtimePay: 0,
-      overtimeRecords: []
+      overtimeRecords: [],
+      overtimeCalcEnabled: false
     };
   }
+  // 加班費倍率來自薪資政策（整批計算時呼叫端已讀好放在 context.payrollPolicy）
+  if (!context.payrollPolicy) context.payrollPolicy = await loadPayrollPolicy();
+  const overtimeRates = { ...context.payrollPolicy.overtime.rates };
   
   // 依实际加班日期归属月份，不以送签建立时间判断，避免跨月送签漏算。
-  const overtimeForms = await ApprovalRequest.find({
+  // 但不必每次都把這位員工所有已核准的單（請假、加班、獎金…，越用越多）全部讀出來：
+  // - 加班單不會在加班日一年多以前就送出，只讀送簽日在「薪資月份前 OVERTIME_REQUEST_LOOKBACK_DAYS 天」之後的單
+  //   （之後才補送的照樣讀得到；沒有送簽時間的舊單也照樣讀）；
+  // - 整批計算（薪資總覽、匯出）時呼叫端已經查好哪些是加班表單（context.overtimeFormIds），只讀那些表單的單。
+  const overtimeQuery = {
     applicant_employee: employeeId,
-    status: 'approved'
-  }).populate('form').lean();
+    status: 'approved',
+    createdAt: { $not: { $lt: new Date(startDate.getTime() - OVERTIME_REQUEST_LOOKBACK_DAYS * 24 * 60 * 60 * 1000) } },
+  };
+  if (Array.isArray(context.overtimeFormIds)) {
+    if (!context.overtimeFormIds.length) {
+      return { overtimeHours: 0, overtimePay: 0, overtimeRecords: [], overtimeIssues: [], overtimeCalcEnabled: true, overtimeRates };
+    }
+    overtimeQuery.form = { $in: context.overtimeFormIds };
+  }
+  const overtimeForms = await ApprovalRequest.find(overtimeQuery).populate('form').lean();
   
   // 表單性質有設定就以它為準，沒有表單性質的舊表單才用名稱推論
   const overtimeRecords = overtimeForms.filter((request) => isOvertimeFormTemplate(request.form));
@@ -788,7 +949,7 @@ export async function calculateOvertimePay(employeeId, month, context = {}) {
       employee,
       shiftMap.get(String(schedule?.shiftId || '')),
     );
-    const calculation = calculateTaiwanOvertimeAmount(hours, hourlyRate, dayType);
+    const calculation = calculateTaiwanOvertimeAmount(hours, hourlyRate, dayType, overtimeRates);
 
     totalOvertimeHours += hours;
     overtimePay += calculation.amount;
@@ -813,6 +974,9 @@ export async function calculateOvertimePay(employeeId, month, context = {}) {
     overtimePay,
     overtimeRecords: records,
     overtimeIssues,
+    overtimeCalcEnabled: true,
+    // 這次套用的加班費倍率（薪資政策），各筆的 rateSegments 另有每一段的 rateKey 與 multiplier
+    overtimeRates,
   };
 }
 
@@ -855,6 +1019,9 @@ export async function calculateCompleteWorkData(employeeId, month, context = {})
   const employee = context.employee ?? await Employee.findById(employeeId);
   if (!employee) throw new Error('Employee not found');
   context.employee = employee;
+  // 薪資政策（月中到職／離職的比例、加班費倍率）：整批計算時呼叫端已讀好；單獨計算時這裡讀一次，加班費計算沿用同一份
+  if (!context.payrollPolicy) context.payrollPolicy = await loadPayrollPolicy();
+  const payrollPolicy = context.payrollPolicy;
 
   // Work hours loads the shared attendance context once. The other calculations
   // reuse it instead of repeating the same employee, setting and schedule reads.
@@ -877,12 +1044,19 @@ export async function calculateCompleteWorkData(employeeId, month, context = {})
     Math.max(Math.round((leaveImpact.leaveHours - leaveImpact.unpaidLeaveHours) * 10000) / 10000, 0),
     countScheduledWorkdays(workHours.dailyDetails) * WORK_HOURS_CONFIG.HOURS_PER_DAY
   );
+  // 本月的在職期間（到職日、離職日、留職停薪），月薪的本薪依此按比例計算；日薪、時薪按出勤給薪，只附上資訊
+  // 比例的算法是薪資政策的 proration.method（employment.method、basisDays 標出套用的規則）
+  const employment = resolveMonthlyEmployment(employee, month, {
+    scheduledKeys: (workHours.dailyDetails || []).map((day) => day.date),
+    method: payrollPolicy.proration?.method,
+  });
   if (employee.salaryType === '時薪') {
     baseSalary = (workHours.actualWorkHours + payableLeaveHours) * hourlyRate;
   } else if (employee.salaryType === '日薪') {
     baseSalary = (workHours.workDays + countPaidLeaveOnlyDays(workHours.dailyDetails, leaveImpact)) * dailyRate;
   } else { // 月薪
-    baseSalary = employee.salaryAmount || 0;
+    // 月中到職、離職按在職日數比例給，整個月都不在職（還沒到職、已離職、留職停薪）沒有本薪（utils/payrollEmployment.js）
+    baseSalary = (employee.salaryAmount || 0) * employment.ratio;
   }
   
   // 應用請假扣款（月薪）
@@ -909,7 +1083,10 @@ export async function calculateCompleteWorkData(employeeId, month, context = {})
     overtimeHours: overtimePay.overtimeHours,
     overtimePay: overtimePay.overtimePay,
     overtimeIssues: overtimePay.overtimeIssues ?? [],
-    
+    // 員工有沒有開「自動計算加班費」（關閉時加班費一律是 0）與這次套用的加班費倍率（薪資政策）
+    overtimeCalcEnabled: overtimePay.overtimeCalcEnabled ?? Boolean(employee.autoOvertimeCalc),
+    overtimeRates: overtimePay.overtimeRates ?? { ...payrollPolicy.overtime.rates },
+
     // 夜班資料
     nightShiftDays: nightShiftAllowanceData?.nightShiftDays ?? 0,
     nightShiftHours: nightShiftAllowanceData?.nightShiftHours ?? 0,
@@ -920,7 +1097,9 @@ export async function calculateCompleteWorkData(employeeId, month, context = {})
     
     // 基本薪資 (已扣除請假)
     baseSalary: Math.round(baseSalary),
-    
+    // 本月在職期間（employed、ratio、employedDays、daysInMonth、startKey、endKey、reason、method、basisDays）
+    employment,
+
     // 詳細記錄
     dailyDetails: workHours.dailyDetails,
     leaveRecords: leaveImpact.leaveRecords,

@@ -15,6 +15,9 @@ import {
   isFinalizeDisabled,
   getPublishDisabledReason,
   getFinalizeDisabledReason,
+  getUnpublishedNotice,
+  describePublishError,
+  describePublishSuccess,
 } from '../schedulePublishStatus.js'
 
 function scheduleRow(overrides = {}) {
@@ -37,6 +40,7 @@ describe('buildPublishSummaryFromRawSchedules', () => {
       hasSchedules: false,
       totalEmployees: 0,
       allEmployeesConfirmed: false,
+      unpublishedCount: 0,
     })
     expect(buildPublishSummaryFromRawSchedules(null)).toEqual(
       buildPublishSummaryFromRawSchedules([])
@@ -93,12 +97,45 @@ describe('buildPublishSummaryFromRawSchedules', () => {
     }])
   })
 
-  it('prioritizes finalized over disputed/pending status when any row is finalized', () => {
-    const summary = buildPublishSummaryFromRawSchedules([
-      scheduleRow({ state: 'finalized', employeeResponse: 'confirmed' }),
+  // 與伺服器相同的順序：異議 > 已發送（待確認／可完成）> 已完成發布（沒有未發送的異動時）> 草稿。
+  // 以前只要有一筆已完成發布就顯示已完成發布：鎖定的月份改一格或有人異議，畫面仍是「已完成發布」，不能再發送
+  it('follows the server order: disputed > pending/ready > finalized (only with no unsent rows) > draft', () => {
+    const finalizedRow = scheduleRow({ state: 'finalized', employeeResponse: 'confirmed' })
+    expect(buildPublishSummaryFromRawSchedules([
+      finalizedRow,
       scheduleRow({ state: 'changes_requested', employeeResponse: 'disputed', employee: { _id: 'e2' } }),
+    ]).status).toBe('disputed')
+    expect(buildPublishSummaryFromRawSchedules([
+      finalizedRow,
+      scheduleRow({ state: 'pending_confirmation', employeeResponse: 'pending', needsReconfirm: true, employee: { _id: 'e2' } }),
+    ]).status).toBe('pending')
+    expect(buildPublishSummaryFromRawSchedules([
+      finalizedRow,
+      scheduleRow({ state: 'pending_confirmation', employeeResponse: 'confirmed', employee: { _id: 'e2' } }),
+    ]).status).toBe('ready')
+    expect(buildPublishSummaryFromRawSchedules([finalizedRow]).status).toBe('finalized')
+
+    // 已完成發布之後又改了一格：回到草稿，並算出有幾筆還沒發送
+    const edited = buildPublishSummaryFromRawSchedules([
+      finalizedRow,
+      scheduleRow({ state: 'draft', needsReconfirm: true, employee: { _id: 'e2' } }),
     ])
-    expect(summary.status).toBe('finalized')
+    expect(edited).toMatchObject({ status: 'draft', unpublishedCount: 1 })
+    // 伺服器明確標成不需要重新確認的草稿不算未發送
+    expect(buildPublishSummaryFromRawSchedules([
+      finalizedRow,
+      scheduleRow({ state: 'draft', needsReconfirm: false, employee: { _id: 'e2' } }),
+    ])).toMatchObject({ status: 'finalized', unpublishedCount: 0 })
+  })
+
+  it('does not count a confirmed or not-resent published row as pending (same as the server)', () => {
+    const summary = buildPublishSummaryFromRawSchedules([
+      scheduleRow({ state: 'pending_confirmation', employeeResponse: 'confirmed' }),
+      scheduleRow({ state: 'pending_confirmation', employeeResponse: 'pending', needsReconfirm: false, employee: { _id: 'e2' } }),
+      scheduleRow({ state: 'pending_confirmation', employeeResponse: 'pending', needsReconfirm: true, employee: { _id: 'e3', name: 'Carol' } }),
+    ])
+    expect(summary.pendingEmployees).toEqual([{ id: 'e3', name: 'Carol', pendingCount: 1 }])
+    expect(summary.status).toBe('pending')
   })
 
   it('tracks the latest publishedAt across all rows', () => {
@@ -164,7 +201,10 @@ describe('resolvePublishSummary', () => {
       hasSchedules: true,
       totalEmployees: 5,
       allEmployeesConfirmed: true,
+      // 舊版伺服器的快照沒有 unpublishedCount：用這一頁的班表推算（這裡沒有草稿，是 0）
+      unpublishedCount: 0,
     })
+    expect(resolvePublishSummary(rawSchedules, { status: 'ready', unpublishedCount: 3 }).unpublishedCount).toBe(3)
   })
 
   it('falls back field-by-field when the snapshot sends the wrong type for a field', () => {
@@ -269,5 +309,33 @@ describe('publish/finalize button gating', () => {
     expect(getFinalizeDisabledReason({ status: 'disputed', hasSchedules: true }, false))
       .toBe('仍有員工提出異議，請先處理異議。')
     expect(getFinalizeDisabledReason({ status: 'ready', hasSchedules: true }, false)).toBe('')
+  })
+})
+
+describe('unsent changes, publish messages', () => {
+  it('shows 「有 N 筆異動尚未發送」 only after something was published', () => {
+    expect(getUnpublishedNotice({ status: 'ready', unpublishedCount: 2 })).toBe('有 2 筆異動尚未發送')
+    expect(getUnpublishedNotice({ status: 'pending', unpublishedCount: 1 })).toBe('有 1 筆異動尚未發送')
+    // 已完成發布之後又改：伺服器回 draft，但有發布時間
+    expect(getUnpublishedNotice({ status: 'draft', unpublishedCount: 1, publishedAt: '2026-11-01T00:00:00.000Z' })).toBe('有 1 筆異動尚未發送')
+    // 從來沒發送過的月份：整個月都是草稿，不另外提示
+    expect(getUnpublishedNotice({ status: 'draft', unpublishedCount: 30, publishedAt: null })).toBe('')
+    expect(getUnpublishedNotice({ status: 'ready', unpublishedCount: 0 })).toBe('')
+    expect(getUnpublishedNotice(null)).toBe('')
+  })
+
+  it('uses the server Chinese error, maps codes and old English messages', () => {
+    expect(describePublishError({ error: '這個範圍沒有可以發送的班表', code: 'NO_SCHEDULES' }, 'x')).toBe('這個範圍沒有可以發送的班表')
+    expect(describePublishError({ code: 'NOTHING_TO_PUBLISH' }, 'x')).toBe('這個範圍的班表員工都已確認，沒有新增或異動的班表需要發送；可以直接完成發布')
+    expect(describePublishError({ error: 'no schedules found' }, 'x')).toBe('這個範圍沒有可以發送的班表，請先排班')
+    expect(describePublishError({ error: 'unconfirmed employees' }, 'x')).toBe('仍有員工尚未確認或提出異議，無法完成發布')
+    expect(describePublishError({ error: 'Some English' }, '發布失敗')).toBe('發布失敗')
+    expect(describePublishError(null, '發布失敗')).toBe('發布失敗')
+  })
+
+  it('mentions the rows kept confirmed in the publish success message', () => {
+    expect(describePublishSuccess({ updated: 3, keptConfirmed: 12 })).toBe('已將 3 筆班表發送給員工確認；員工已確認的 12 筆沒有變動，不必重新確認')
+    expect(describePublishSuccess({ updated: 3 })).toBe('已將 3 筆班表發送給員工確認')
+    expect(describePublishSuccess(null)).toBe('已將班表發送給員工確認')
   })
 })

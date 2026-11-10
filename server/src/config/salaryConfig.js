@@ -100,32 +100,52 @@ export const OVERTIME_CONFIG = {
   HOLIDAY_WITHIN_8_HOURS: 1,
 };
 
-export function calculateTaiwanOvertimeAmount(hours, hourlyRate, dayType = 'workday') {
+// 加班費計算用到的每一個倍率（薪資政策 overtime.rates 的鍵與預設值，services/payrollPolicyService.js 可在後台調整）。
+// 預設值就是上面 OVERTIME_CONFIG 的常數：國定假日超過 8 小時的部分以前直接沿用平日的兩段倍率，這裡拆成自己的鍵，預設值相同。
+export const DEFAULT_OVERTIME_RATES = Object.freeze({
+  weekdayFirst2: OVERTIME_CONFIG.WEEKDAY_FIRST_2_HOURS,
+  weekdayAfter2: OVERTIME_CONFIG.WEEKDAY_AFTER_2_HOURS,
+  restDayFirst2: OVERTIME_CONFIG.REST_DAY_FIRST_2_HOURS,
+  restDayHours3To8: OVERTIME_CONFIG.REST_DAY_HOURS_3_TO_8,
+  restDayHours9To12: OVERTIME_CONFIG.REST_DAY_HOURS_9_TO_12,
+  holidayWithin8: OVERTIME_CONFIG.HOLIDAY_WITHIN_8_HOURS,
+  holidayAfter8First2: OVERTIME_CONFIG.WEEKDAY_FIRST_2_HOURS,
+  holidayAfter10: OVERTIME_CONFIG.WEEKDAY_AFTER_2_HOURS,
+});
+
+/**
+ * 依日別把加班時數拆成各段倍率計算加班費。
+ * rates：薪資政策的倍率（缺少的鍵用 DEFAULT_OVERTIME_RATES）；每一段回傳 rateKey，看得出套用的是哪一個倍率。
+ */
+export function calculateTaiwanOvertimeAmount(hours, hourlyRate, dayType = 'workday', rates = DEFAULT_OVERTIME_RATES) {
   const duration = Math.max(Number(hours) || 0, 0);
   const rate = Math.max(Number(hourlyRate) || 0, 0);
+  const multipliers = { ...DEFAULT_OVERTIME_RATES, ...(rates || {}) };
   const segments = [];
-  const addSegment = (segmentHours, multiplier, label) => {
+  const addSegment = (segmentHours, rateKey, label) => {
     if (segmentHours <= 0) return;
+    const multiplier = multipliers[rateKey];
     segments.push({
       hours: segmentHours,
       multiplier,
+      rateKey,
       label,
       amount: segmentHours * rate * multiplier,
     });
   };
 
   if (dayType === 'national_holiday') {
-    if (duration > 0) addSegment(8, OVERTIME_CONFIG.HOLIDAY_WITHIN_8_HOURS, '國定假日8小時內加發一日工資');
+    if (duration > 0) addSegment(8, 'holidayWithin8', '國定假日8小時內加發一日工資');
     const excess = Math.max(duration - 8, 0);
-    addSegment(Math.min(excess, 2), OVERTIME_CONFIG.WEEKDAY_FIRST_2_HOURS, '國定假日超過8小時之前2小時');
-    addSegment(Math.min(Math.max(excess - 2, 0), 2), OVERTIME_CONFIG.WEEKDAY_AFTER_2_HOURS, '國定假日超過10小時之後2小時');
+    addSegment(Math.min(excess, 2), 'holidayAfter8First2', '國定假日超過8小時之前2小時');
+    addSegment(Math.min(Math.max(excess - 2, 0), 2), 'holidayAfter10', '國定假日超過10小時之後2小時');
   } else if (dayType === 'rest_day') {
-    addSegment(Math.min(duration, 2), OVERTIME_CONFIG.REST_DAY_FIRST_2_HOURS, '休息日前2小時');
-    addSegment(Math.min(Math.max(duration - 2, 0), 6), OVERTIME_CONFIG.REST_DAY_HOURS_3_TO_8, '休息日第3至8小時');
-    addSegment(Math.min(Math.max(duration - 8, 0), 4), OVERTIME_CONFIG.REST_DAY_HOURS_9_TO_12, '休息日第9至12小時');
+    addSegment(Math.min(duration, 2), 'restDayFirst2', '休息日前2小時');
+    addSegment(Math.min(Math.max(duration - 2, 0), 6), 'restDayHours3To8', '休息日第3至8小時');
+    addSegment(Math.min(Math.max(duration - 8, 0), 4), 'restDayHours9To12', '休息日第9至12小時');
   } else {
-    addSegment(Math.min(duration, 2), OVERTIME_CONFIG.WEEKDAY_FIRST_2_HOURS, '平日前2小時');
-    addSegment(Math.min(Math.max(duration - 2, 0), 2), OVERTIME_CONFIG.WEEKDAY_AFTER_2_HOURS, '平日第3至4小時');
+    addSegment(Math.min(duration, 2), 'weekdayFirst2', '平日前2小時');
+    addSegment(Math.min(Math.max(duration - 2, 0), 2), 'weekdayAfter2', '平日第3至4小時');
   }
 
   return {
@@ -185,6 +205,28 @@ export function convertToDailyRate(salaryAmount, salaryType) {
   }
 }
 
+/**
+ * 員工資料上勾選的薪資項目（定期津貼，例如組長加給）與金額：{ total, breakdown: [{ item, amount }] }。
+ * 只算有勾選（salaryItems）而且金額大於 0 的項目；salaryItemAmounts 是「項目名稱 -> 金額」的物件。
+ */
+export function extractRecurringAllowance(employee) {
+  const salaryItems = Array.isArray(employee?.salaryItems) ? employee.salaryItems : [];
+  const amounts = employee?.salaryItemAmounts || {};
+  const breakdown = [];
+  let total = 0;
+
+  salaryItems.forEach((item) => {
+    const value = Number(amounts[item]);
+    if (!Number.isFinite(value)) return;
+    if (value > 0) {
+      total += value;
+      breakdown.push({ item, amount: value });
+    }
+  });
+
+  return { total, breakdown };
+}
+
 export default {
   WORK_HOURS_CONFIG,
   ANNUAL_LEAVE_TYPES,
@@ -192,6 +234,7 @@ export default {
   LEAVE_TYPE_PAY_TABLE,
   resolveLeavePay,
   OVERTIME_CONFIG,
+  DEFAULT_OVERTIME_RATES,
   OVERTIME_FORM_NAMES,
   OVERTIME_FIELDS,
   BONUS_FORM_NAMES,

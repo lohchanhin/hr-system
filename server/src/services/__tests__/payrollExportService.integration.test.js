@@ -42,6 +42,7 @@ jest.unstable_mockModule('../../utils/payrollPreviewUtils.js', () => ({
 }));
 
 const { generatePayrollExcel } = await import('../payrollExportService.js');
+const { getDefaultPayrollPolicy } = await import('../payrollPolicyService.js');
 
 describe('generatePayrollExcel with dynamic calculation', () => {
   beforeEach(() => {
@@ -112,10 +113,19 @@ describe('generatePayrollExcel with dynamic calculation', () => {
 
     // Verify calculation was called
     // 整批員工共用同一個 payrollBatch（國定假日判斷資料整批只讀一次）
-    expect(mockCalculateCompleteWorkData).toHaveBeenCalledWith('emp123', '2024-05-01', { payrollBatch: { employees: [mockEmployee] } });
-    expect(mockCalculateEmployeePayroll).toHaveBeenCalledWith('emp123', '2024-05-01', expect.any(Object), {
-      calculationContext: { payrollBatch: { employees: [mockEmployee] } },
+    // context 另外帶入員工本人（不必每位員工再查一次），薪資計算沿用已經算好的工時資料（不重算一次）
+    // 薪資政策整個匯出讀一次（沒有資料庫連線時是預設值），放在 payrollBatch 與每位員工的 context
+    const payrollPolicy = getDefaultPayrollPolicy();
+    expect(mockCalculateCompleteWorkData).toHaveBeenCalledWith('emp123', '2024-05-01', {
+      employee: mockEmployee,
+      payrollBatch: { employees: [mockEmployee], payrollPolicy },
+      payrollPolicy,
     });
+    expect(mockCalculateEmployeePayroll).toHaveBeenCalledWith('emp123', '2024-05-01', expect.any(Object), expect.objectContaining({
+      employee: mockEmployee,
+      workData: expect.any(Object),
+      calculationContext: { employee: mockEmployee, payrollBatch: { employees: [mockEmployee], payrollPolicy }, payrollPolicy },
+    }));
 
     // Verify Excel was generated
     expect(buffer).toBeDefined();
@@ -235,14 +245,26 @@ describe('generatePayrollExcel with dynamic calculation', () => {
       populate: jest.fn().mockReturnThis(),
       sort: jest.fn().mockResolvedValue([mockPayrollRecord])
     });
+    // 沒有其他員工（有薪資記錄時也要讀員工名單：沒有記錄的員工要即時計算，不能只匯出有記錄的人）
+    mockEmployeeFind.mockReturnValue({
+      populate: jest.fn().mockReturnThis(),
+      sort: jest.fn().mockResolvedValue([])
+    });
 
     // Execute
     const buffer = await generatePayrollExcel('2024-08-01', 'bonusSlip', { companyName: '測試公司' });
 
-    // Verify calculation was NOT called since records exist
+    // Verify calculation was NOT called for the employee whose record exists
     expect(mockCalculateCompleteWorkData).not.toHaveBeenCalled();
     expect(mockCalculateEmployeePayroll).not.toHaveBeenCalled();
-    expect(mockEmployeeFind).not.toHaveBeenCalled();
+    expect(mockEmployeeFind).toHaveBeenCalledTimes(1);
+
+    // 記錄的金額原樣匯出：加班 2000 + 夜班 500 + 績效 3000 + 其他 1000 + 簽核調整 -500 = 6000
+    const storedWorkbook = new ExcelJS.Workbook();
+    await storedWorkbook.xlsx.load(buffer);
+    const storedRow = storedWorkbook.getWorksheet('獎金紙條').getRow(5);
+    expect(storedRow.getCell(2).value).toBe('已有記錄的員工');
+    expect(storedRow.getCell(12).value).toBe(6000);
 
     // Verify Excel was still generated
     expect(buffer).toBeDefined();

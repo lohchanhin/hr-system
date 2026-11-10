@@ -105,7 +105,7 @@ describe('薪資明細的每日出勤明細顯示打卡來源', () => {
     await flush()
 
     const rows = [...document.body.querySelectorAll('.el-dialog .el-table__body tr')]
-      .filter(row => row.textContent.includes('2026-10-2'))
+      .filter(row => row.textContent.includes('2026/10/2'))
     expect(rows).toHaveLength(2)
     const sourcesOf = row => [...row.querySelectorAll('.punch-source')].map(element => element.textContent.trim())
     expect(sourcesOf(rows[0])).toEqual(['指紋匯入', '線上'])

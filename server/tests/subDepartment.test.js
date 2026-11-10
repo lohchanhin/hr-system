@@ -89,7 +89,7 @@ describe('SubDepartment API', () => {
     expect(mockSubDepartment.findByIdAndUpdate).toHaveBeenCalledWith(
       '1',
       expect.objectContaining({ shift: 'shift2' }),
-      { new: true }
+      { new: true, runValidators: true }
     );
     const body = res.body;
     expect(body.shiftId).toBe('shift2');

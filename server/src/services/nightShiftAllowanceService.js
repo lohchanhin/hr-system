@@ -2,6 +2,7 @@ import ShiftSchedule from '../models/ShiftSchedule.js';
 import AttendanceSetting from '../models/AttendanceSetting.js';
 import { WORK_HOURS_CONFIG } from '../config/salaryConfig.js';
 import { isNonWorkShift } from './shiftSemanticService.js';
+import { shiftBreakMinutes } from './leaveShiftHours.js';
 
 /**
  * 計算員工在指定月份的夜班津貼
@@ -180,8 +181,10 @@ function calculateShiftHours(shift) {
       totalMinutes += 24 * 60;
     }
 
-    // 扣除休息時間
-    const breakMinutes = shift.breakDuration || 0;
+    // 扣除休息時間：與工時、請假時數、勞基法檢核同一個規則（休息時段 breakWindows 的加總優先，
+    // 沒有才用 breakDuration / breakMinutes，最後是 breakTime）；以前只看 breakDuration，
+    // 設了休息時段的夜班時數會和出勤工時對不起來
+    const breakMinutes = shiftBreakMinutes(shift);
     const workMinutes = Math.max(0, totalMinutes - breakMinutes);
 
     // 轉換為小時

@@ -188,7 +188,8 @@ describe('單據明細與我已簽核：第n級主管', () => {
 
     const timestamps = [...document.body.querySelectorAll('.el-timeline-item__timestamp')].map(node => node.textContent.trim())
     expect(timestamps).toEqual(['第 1 關・第2級主管', '第 2 關・第3級主管'])
-    expect(document.body.querySelector('[data-test="detail-step-note"]').textContent.trim())
+    // 簽核頁的明細改用共用的 ApprovalDetailContent（與排班頁同一個元件），說明的 data-test 是 step-note
+    expect(document.body.querySelector('[data-test="step-note"]').textContent.trim())
       .toBe('已略過留職停薪的護理長乙（E0036）（第1級主管），改由上一級主管簽核')
     const logText = document.body.querySelector('.detail-logs').textContent
     expect(logText).toContain('主管鏈')

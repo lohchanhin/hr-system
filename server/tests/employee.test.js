@@ -192,7 +192,7 @@ describe('Employee API', () => {
     mockEmployee.find.mockReturnValue(query);
     const res = await request(app).get('/api/employees');
     expect(res.status).toBe(500);
-    expect(res.body).toEqual({ error: 'Failed to list employees' });
+    expect(res.body).toEqual({ error: '員工清單讀取失敗，請稍後再試' });
   });
 
   it('returns only names, ids and photo paths in employee options for non-admin users', async () => {
@@ -304,14 +304,14 @@ describe('Employee API', () => {
     const payload = { name: 'A', username: 'a', password: 'p', employeeNo: 'E004' };
     const res = await request(app).post('/api/employees').send(payload);
     expect(res.status).toBe(400);
-    expect(res.body).toEqual({ error: 'Email is required' });
+    expect(res.body).toEqual({ error: '請輸入 Email', code: 'EMAIL_REQUIRED' });
   });
 
   it('fails when employee number is missing', async () => {
     const payload = { name: 'A', username: 'a', password: 'p', email: 'a@example.com' };
     const res = await request(app).post('/api/employees').send(payload);
     expect(res.status).toBe(400);
-    expect(res.body).toEqual({ error: 'Employee number is required' });
+    expect(res.body).toEqual({ error: '請輸入員工編號', code: 'EMPLOYEE_NO_REQUIRED' });
   });
 
   it('gets employee', async () => {
@@ -367,6 +367,24 @@ describe('Employee API', () => {
     });
   });
 
+  it('still answers success and clears supervisor references when removing the photo file fails after the delete', async () => {
+    // 員工已經刪掉了：清照片檔失敗（磁碟、資料庫暫時有問題）不能回 400，也不能略過「清掉別人的直屬主管」
+    const mockDeleteOne = jest.fn().mockResolvedValue();
+    mockEmployee.findById.mockResolvedValue({
+      _id: '1', role: 'employee', photo: '/upload/employees/employee_0123abcd.png', deleteOne: mockDeleteOne,
+    });
+    mockEmployee.exists.mockRejectedValue(new Error('connection lost at E:\\data\\upload'));
+    mockEmployee.updateMany.mockResolvedValue({ modifiedCount: 2 });
+    const res = await request(app).delete('/api/employees/1');
+    expect(res.status).toBe(200);
+    expect(mockDeleteOne).toHaveBeenCalled();
+    expect(mockEmployee.updateMany).toHaveBeenCalledWith({ supervisor: { $in: ['1'] } }, { $unset: { supervisor: 1 } });
+    expect(res.body.success).toBe(true);
+    expect(res.body.unassignedSubordinates).toBe(2);
+    expect(res.body.warnings).toEqual(['員工照片檔案未能刪除，不影響這次刪除']);
+    expect(JSON.stringify(res.body)).not.toContain('connection lost');
+  });
+
   it('prevents deletion of admin accounts', async () => {
     const mockDeleteOne = jest.fn();
     mockEmployee.findById.mockResolvedValue({ _id: '1', role: 'admin', deleteOne: mockDeleteOne });
@@ -379,10 +397,12 @@ describe('Employee API', () => {
 
   it('sets supervisors in batch', async () => {
     mockEmployee.updateOne.mockResolvedValue();
-    const payload = { assignments: [{ employee: 'e1', supervisor: SUPERVISOR_1 }] };
+    // 員工要是 24 碼的員工編號（以前用 'e1' 也照寫：沒有檢查 employee）
+    const EMPLOYEE_1 = '507f1f77bcf86cd7994390e1';
+    const payload = { assignments: [{ employee: EMPLOYEE_1, supervisor: SUPERVISOR_1 }] };
     const res = await request(app).post('/api/employees/set-supervisors').send(payload);
     expect(res.status).toBe(200);
-    expect(mockEmployee.updateOne).toHaveBeenCalledWith({ _id: 'e1' }, { supervisor: SUPERVISOR_1 });
+    expect(mockEmployee.updateOne).toHaveBeenCalledWith({ _id: EMPLOYEE_1 }, { supervisor: SUPERVISOR_1 });
     expect(res.body).toEqual({ success: true });
   });
 });

@@ -60,7 +60,9 @@ async function isXlsx(buffer) {
   }
 }
 
-function decodeCsv(buffer) {
+// allowBig5：UTF-8 解不出來時再試 Big5（台灣的考勤機與 Excel「另存 CSV」常見的編碼）。
+// 只有讀得懂 Big5 的匯入才開（考勤匯入，見 createUploadMiddleware）；其他匯入照舊只收 UTF-8／UTF-16
+function decodeCsv(buffer, { allowBig5 = false } = {}) {
   if (startsWith(buffer, [0xff, 0xfe])) {
     return new TextDecoder('utf-16le', { fatal: true }).decode(buffer.subarray(2))
   }
@@ -68,14 +70,19 @@ function decodeCsv(buffer) {
     return new TextDecoder('utf-16be', { fatal: true }).decode(buffer.subarray(2))
   }
   const payload = startsWith(buffer, [0xef, 0xbb, 0xbf]) ? buffer.subarray(3) : buffer
-  return new TextDecoder('utf-8', { fatal: true }).decode(payload)
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(payload)
+  } catch (error) {
+    if (!allowBig5) throw error
+    return new TextDecoder('big5', { fatal: true }).decode(payload)
+  }
 }
 
-function isCsv(buffer) {
+function isCsv(buffer, options) {
   if (!Buffer.isBuffer(buffer) || buffer.length === 0) return false
 
   try {
-    const sample = decodeCsv(buffer).slice(0, 64 * 1024)
+    const sample = decodeCsv(buffer, options).slice(0, 64 * 1024)
     if (!sample.trim()) return false
 
     let disallowedControlCharacters = 0
@@ -91,10 +98,10 @@ function isCsv(buffer) {
   }
 }
 
-async function hasAllowedContent(file) {
+async function hasAllowedContent(file, options) {
   const extension = getExtension(file?.originalname)
   if (extension === '.xlsx') return await isXlsx(file?.buffer)
-  if (extension === '.csv') return isCsv(file?.buffer)
+  if (extension === '.csv') return isCsv(file?.buffer, options)
   return false
 }
 
@@ -151,7 +158,19 @@ function sendUploadError(res, error) {
   res.status(400).json({ message: '無法解析上傳內容' })
 }
 
+/**
+ * 匯入檔案的上傳檢查。allowBig5Csv：CSV 不是 UTF-8 時也接受 Big5（控制器要自己解碼，目前只有考勤匯入）。
+ * 預設匯出的 uploadMiddleware 不接受 Big5，行為與原本相同。
+ */
+export function createUploadMiddleware({ allowBig5Csv = false } = {}) {
+  return (req, res, next) => handleImportUpload(req, res, next, { allowBig5: allowBig5Csv })
+}
+
 export default function uploadMiddleware(req, res, next) {
+  return handleImportUpload(req, res, next, {})
+}
+
+function handleImportUpload(req, res, next, contentOptions) {
   const contentType = String(req.headers['content-type'] || '').toLowerCase()
   if (!contentType.startsWith('multipart/form-data')) {
     res.status(400).json({ message: 'Content-Type 必須為 multipart/form-data' })
@@ -167,7 +186,7 @@ export default function uploadMiddleware(req, res, next) {
       res.status(400).json({ message: '缺少上傳檔案' })
       return
     }
-    if (!await hasAllowedContent(req.file)) {
+    if (!await hasAllowedContent(req.file, contentOptions)) {
       res.status(400).json({ message: '匯入檔案內容與宣告格式不一致' })
       return
     }

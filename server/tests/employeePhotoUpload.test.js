@@ -76,7 +76,8 @@ beforeEach(() => {
     photo: '',
   }
   Object.values(mockEmployee).forEach(fn => fn.mockReset())
-  mockEmployee.countDocuments.mockResolvedValue(1)
+  // 其餘可登入的管理員數是 1；員工編號重複檢查（條件帶 employeeId）回 0＝沒有別人用這個編號
+  mockEmployee.countDocuments.mockImplementation(async (filter) => (filter && 'employeeId' in filter ? 0 : 1))
   mockEmployee.exists.mockResolvedValue(null)
   mockEmployee.findById.mockImplementation(() => findByIdResult({ ...stored }))
   mockEmployee.updateOne.mockImplementation(async (filter, update) => {
@@ -558,7 +559,7 @@ describe('PUT /api/employees/:id with a photo', () => {
     const res = await photoFile(put().field('data', JSON.stringify({ ...editFormData(), email: 'not-an-email' })))
 
     expect(res.status).toBe(400)
-    expect(res.body.error).toBe('Invalid email')
+    expect(res.body).toMatchObject({ error: 'Email 格式不正確', code: 'INVALID_EMAIL' })
     expect(mockEmployee.updateOne).not.toHaveBeenCalled()
     expect(writes).toHaveLength(1)
     await expect(fs.stat(writes[0])).rejects.toMatchObject({ code: 'ENOENT' })

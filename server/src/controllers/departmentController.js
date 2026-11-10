@@ -1,5 +1,15 @@
 import Department from '../models/Department.js';
 import FormTemplate from '../models/form_template.js';
+import {
+  IN_USE_CODE,
+  notFoundBody,
+  respondOrgError,
+  departmentUsage,
+  inUseMessage,
+  isInUse,
+  isObjectIdText,
+  syncDepartmentEmployees,
+} from '../services/orgStructureService.js';
 
 const OBJECT_ID_PATTERN = /^[a-f0-9]{24}$/i;
 
@@ -29,7 +39,7 @@ export async function listDepartments(req, res) {
     const departments = await Department.find(filter);
     res.json(departments);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    respondOrgError(res, err, '部門', '讀取');
   }
 }
 
@@ -77,7 +87,7 @@ export async function createDepartment(req, res) {
     await dept.save();
     res.status(201).json(dept);
   } catch (err) {
-    res.status(400).json({ error: err.message });
+    respondOrgError(res, err, '部門');
   }
 }
 
@@ -126,21 +136,40 @@ export async function updateDepartment(req, res) {
         deptManager,
         scheduleNotes
       },
-      { new: true }
+      // runValidators：修改時和新增一樣檢查必填與格式（以前把名稱清空、統一編號填錯也存得進去）；沒送的欄位不檢查也不動
+      { new: true, runValidators: true }
     );
-    if (!dept) return res.status(404).json({ error: 'Not found' });
+    if (!dept) return res.status(404).json(notFoundBody('部門'));
+    // 部門改到別的機構：這個部門的員工跟著改，員工資料上的機構才不會和部門對不起來
+    if (organization !== undefined && isObjectIdText(String(req.params.id))) {
+      try {
+        await syncDepartmentEmployees(dept);
+      } catch (syncError) {
+        // 部門已經存好；員工的機構沒跟上時只記錄，下次儲存部門會再對齊一次
+        console.error(`[department] sync employee organization failed: ${syncError?.name || 'Error'}`);
+      }
+    }
     res.json(dept);
   } catch (err) {
-    res.status(400).json({ error: err.message });
+    respondOrgError(res, err, '部門');
   }
 }
 
 export async function deleteDepartment(req, res) {
   try {
+    // 底下還有小單位或員工時不刪除：不然他們會留著一個不存在的部門（部門的「使用簽核表單」限制失效、排班人員看不到這些人）
+    if (isObjectIdText(req.params.id)) {
+      const usage = await departmentUsage(req.params.id);
+      if (isInUse(usage)) {
+        const current = await Department.findById(req.params.id).select('name').lean();
+        if (!current) return res.status(404).json(notFoundBody('部門'));
+        return res.status(409).json({ error: inUseMessage('部門', current.name, usage), code: IN_USE_CODE, usage });
+      }
+    }
     const dept = await Department.findByIdAndDelete(req.params.id);
-    if (!dept) return res.status(404).json({ error: 'Not found' });
+    if (!dept) return res.status(404).json(notFoundBody('部門'));
     res.json({ success: true });
   } catch (err) {
-    res.status(400).json({ error: err.message });
+    respondOrgError(res, err, '部門');
   }
 }

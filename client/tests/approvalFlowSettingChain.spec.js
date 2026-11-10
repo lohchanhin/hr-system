@@ -136,7 +136,8 @@ async function openDialog(wrapper, form) {
 }
 
 describe('主管鏈與適用條件：請假表單', () => {
-  it('opens the customer workflow with its chain settings and conditions, and shows the 適用條件 column', async () => {
+  // 2026/11：關卡改成一關一張卡片，「適用條件」是請假表單每張卡片裡的一行（以前是表格的一欄）
+  it('opens the customer workflow with its chain settings and conditions, and shows the 適用條件 line on every step', async () => {
     const wrapper = await mountPage()
     await openDialog(wrapper, LEAVE_FORM)
 
@@ -144,9 +145,14 @@ describe('主管鏈與適用條件：請假表單', () => {
       ['manager_chain', { stopAtTag: '一般假單決行', maxLevels: 5 }, { kind: '', value: null }],
       ['manager_chain', { stopAtTag: '長假決行', maxLevels: 5 }, { kind: 'leave_hours_gte', value: 56 }],
     ])
-    const labels = wrapper.findAllComponents({ name: 'ElTableColumn' }).map(col => col.props('label'))
-    expect(labels).toContain('適用條件')
+    const conditions = wrapper.findAll('[data-test="step-card"] [data-test="step-condition"]')
+    expect(conditions).toHaveLength(2)
+    expect(conditions[0].text()).toContain('適用條件')
+    expect(conditions[0].text()).toContain('每張申請都要過這一關')
+    expect(conditions[1].text()).toContain('小時才需要這一關')
     expect(wrapper.findAll('[data-test="chain-config"]')).toHaveLength(2)
+    // 主管鏈每一級只有一位主管：不顯示「全部都要簽／任一人簽即可」
+    expect(wrapper.findAll('[data-test="step-all-must"]')).toHaveLength(0)
     expect(wrapper.text()).toContain('目前 8 位主管持有此標籤')
     expect(wrapper.text()).toContain('目前 2 位主管持有此標籤')
     expect(wrapper.vm.tagOptions.map(tag => tag.value)).toEqual(expect.arrayContaining(['一般假單決行', '長假決行']))
@@ -210,12 +216,13 @@ describe('主管鏈與適用條件：請假表單', () => {
 })
 
 describe('不是請假表單', () => {
-  it('has no 適用條件 column and removes a stored condition on save, after asking', async () => {
+  it('has no 適用條件 line and removes a stored condition on save, after asking', async () => {
     const wrapper = await mountPage()
     await openDialog(wrapper, OVERTIME_FORM)
 
-    const labels = wrapper.findAllComponents({ name: 'ElTableColumn' }).map(col => col.props('label'))
-    expect(labels).not.toContain('適用條件')
+    expect(wrapper.findAll('[data-test="step-card"]')).toHaveLength(2)
+    expect(wrapper.findAll('[data-test="step-condition"]')).toHaveLength(0)
+    expect(wrapper.find('[data-test="steps-pane"]').text()).not.toContain('適用條件')
 
     await wrapper.vm.saveWorkflow()
     await flushPromises()
@@ -229,9 +236,16 @@ describe('不是請假表單', () => {
   })
 })
 
-describe('通用流程規則：略過重複的簽核人', () => {
-  it('reads the switch of the selected form and saves only that field', async () => {
+// 2026/11：「略過重複的簽核人」是每張表單自己的規則，放在那張表單的「簽核關卡」底下，切換後立即儲存
+// （以前在「通用流程規則」分頁，跟著頁面上方選的表單樣板，另有一顆儲存按鈕）
+describe('這張表單的流程規則：略過重複的簽核人', () => {
+  it('reads the switch of the form being edited and saves only that field', async () => {
     const wrapper = await mountPage()
+    // 沒有開啟表單時不預選任何表單，也沒有開關
+    expect(wrapper.vm.selectedFormId).toBe('')
+    expect(wrapper.find('[data-test="skip-repeated"]').exists()).toBe(false)
+
+    await openDialog(wrapper, LEAVE_FORM)
     expect(wrapper.vm.selectedFormId).toBe('f-leave')
     expect(wrapper.vm.skipRepeatedApprovers).toBe(true)
     expect(wrapper.find('[data-test="skip-repeated"]').text()).toContain('主管鏈')
@@ -250,15 +264,67 @@ describe('通用流程規則：略過重複的簽核人', () => {
     await flushPromises()
     expect(wrapper.vm.skipRepeatedApprovers).toBe(false)
   })
+
+  it('puts the switch back and tells the admin when the server refuses the change', async () => {
+    const wrapper = await mountPage()
+    await openDialog(wrapper, LEAVE_FORM)
+    const base = apiFetch.getMockImplementation()
+    apiFetch.mockImplementation((url, opts) => (
+      opts?.method === 'PUT' ? Promise.resolve(json({ error: '這張表單的流程同時被其他人修改，請重新整理後再試一次' }, 409)) : base(url, opts)
+    ))
+
+    wrapper.vm.skipRepeatedApprovers = false
+    await wrapper.vm.saveSkipRepeated()
+    await flushPromises()
+
+    expect(ElMessage.error).toHaveBeenCalledWith('儲存「略過重複的簽核人」失敗：這張表單的流程同時被其他人修改，請重新整理後再試一次')
+    expect(ElMessage.success).not.toHaveBeenCalled()
+    expect(wrapper.vm.skipRepeatedApprovers).toBe(true)
+  })
 })
 
 describe('流程試算', () => {
+  // 2026/11：試算不再預選「頁面上方選的表單樣板」（已經沒有那個選單）；從表單清單或表單設定按「流程試算」會帶入那張表單
   async function openTrial() {
+    const wrapper = await mountPage()
+    wrapper.vm.openTrialFor(LEAVE_FORM)
+    await flushPromises()
+    expect(wrapper.vm.activeTab).toBe('trial')
+    return wrapper
+  }
+
+  it('starts without a form when opened on its own, and takes the form being edited when there is one', async () => {
     const wrapper = await mountPage()
     wrapper.vm.activeTab = 'trial'
     await flushPromises()
-    return wrapper
-  }
+    expect(wrapper.vm.trial.formId).toBe('')
+
+    wrapper.vm.activeTab = 'approvalLevels'
+    await openDialog(wrapper, OVERTIME_FORM)
+    wrapper.vm.activeTab = 'trial'
+    await flushPromises()
+    expect(wrapper.vm.trial.formId).toBe('f-ot')
+  })
+
+  it('clears a previous result when another form or employee is chosen, and warns that unsaved steps are not part of the trial', async () => {
+    const wrapper = await mountPage()
+    await openDialog(wrapper, LEAVE_FORM)
+    wrapper.vm.openTrialFor(LEAVE_FORM)
+    await flushPromises()
+    expect(wrapper.find('[data-test="trial-unsaved-hint"]').exists()).toBe(false)
+    Object.assign(wrapper.vm.trial, { employeeId: NURSE, start: '2026-11-23' })
+    await wrapper.vm.runTrial()
+    await flushPromises()
+    expect(wrapper.vm.trial.result).not.toBeNull()
+
+    wrapper.vm.trial.employeeId = 'someone-else'
+    await flushPromises()
+    expect(wrapper.vm.trial.result).toBeNull()
+
+    wrapper.vm.workflowSteps[0].approver_value.maxLevels = 2
+    await flushPromises()
+    expect(wrapper.find('[data-test="trial-unsaved-hint"]').text()).toContain('試算用的是已儲存的關卡')
+  })
 
   it('asks the server with the employee and the leave length, and shows the chain with names', async () => {
     const wrapper = await openTrial()

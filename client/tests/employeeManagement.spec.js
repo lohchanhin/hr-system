@@ -7,7 +7,7 @@ import { apiFetch } from '../src/api'
 import EmployeeManagement from '../src/components/backComponents/EmployeeManagement.vue'
 import { REQUIRED_FIELDS } from '../src/components/backComponents/requiredFields'
 import Schema from 'async-validator'
-import { ElMessageBox } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 vi.mock('vue-router', () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn() })
 }))
@@ -273,7 +273,9 @@ describe('EmployeeManagement.vue', () => {
     expect(apiFetch).toHaveBeenCalledWith('/api/employees', expect.objectContaining({ method: 'POST' }))
   })
 
-  it('alerts missing fields when validation fails', async () => {
+  // 2026/11 有意改變：缺少必填欄位的提示改用訊息提示（ElMessage.warning），不必再按一次「確定」；
+  // 原本是 ElMessageBox.alert。提示內容（缺哪些欄位）不變
+  it('warns about missing fields when validation fails', async () => {
     const wrapper = mount(EmployeeManagement, { global: { stubs: elStubs } })
     const validate = vi.fn(() =>
       Promise.reject({
@@ -283,12 +285,16 @@ describe('EmployeeManagement.vue', () => {
     )
     wrapper.vm.formRef = { validate }
     apiFetch.mockClear()
+    ElMessage.warning.mockClear()
     await wrapper.vm.saveEmployee()
     expect(validate).toHaveBeenCalled()
-    expect(ElMessageBox.alert).toHaveBeenCalled()
-    const msg = ElMessageBox.alert.mock.calls[0][0]
+    expect(ElMessageBox.alert).not.toHaveBeenCalled()
+    expect(ElMessage.warning).toHaveBeenCalled()
+    const msg = ElMessage.warning.mock.calls[0][0]
     expect(msg).toContain('性別')
     expect(msg).toContain('Email')
+    // 兩個欄位都在「基本資料」分頁，分頁標籤標出 2 個要修正的欄位
+    expect(wrapper.vm.employeeTabErrors).toEqual({ basic: 2 })
     const postCall = apiFetch.mock.calls.find(c => c[1]?.method === 'POST')
     expect(postCall).toBeUndefined()
   })
@@ -343,8 +349,12 @@ describe('EmployeeManagement.vue', () => {
     expect(wrapper.vm.employeeForm.medicalBloodType).toBe('B')
     expect(wrapper.vm.employeeForm.laborPensionSelf).toBe(1800)
     expect(wrapper.vm.employeeForm.employeeAdvance).toBe(0)
-    expect(wrapper.vm.employeeForm.salaryItems).toEqual(['本薪', '全勤'])
-    expect(wrapper.vm.employeeForm.salaryItemAmounts).toEqual({ 本薪: 0, 全勤: 0 })
+    // 2026/11 有意改變：員工原本就有、但字典裡已經沒有的薪資項目（這裡的「未知選項」）不再在開啟編輯視窗時被默默濾掉。
+    // 以前只是改別的欄位按儲存，這些項目與金額就從員工資料裡消失（薪資匯出會讀這些項目）；
+    // 現在保留並在選項上註明「字典已無此項目」，要不要拿掉由人資決定。新增員工時不認得的項目仍然不會送出（見上面的測試）
+    expect(wrapper.vm.employeeForm.salaryItems).toEqual(['本薪', '全勤', '未知選項'])
+    expect(wrapper.vm.employeeForm.salaryItemAmounts).toEqual({ 本薪: 0, 全勤: 0, 未知選項: 0 })
+    expect(wrapper.vm.salaryItemOptionsForUI.at(-1)).toEqual({ value: '未知選項', label: '未知選項（字典已無此項目）' })
     expect(wrapper.vm.employeeForm.licenses).toHaveLength(1)
     expect(wrapper.vm.employeeForm.licenses[0].fileList[0].url).toBe('https://file.example/license.png')
     expect(wrapper.vm.employeeForm.trainings[0].category).toEqual(['院內'])
@@ -564,5 +574,107 @@ describe('EmployeeManagement.vue 假日制度與原住民身分', () => {
     const cleared = JSON.parse(apiFetch.mock.calls.find(c => c[1]?.method === 'POST')[1].body)
     expect(cleared.holidayRegime).toBe('')
     expect(cleared.isIndigenous).toBe(false)
+  })
+})
+
+describe('EmployeeManagement.vue 需要排班與自動計算加班費', () => {
+  beforeEach(() => {
+    apiFetch.mockClear()
+    apiFetch.mockImplementation(() => Promise.resolve({ ok: true, json: async () => [] }))
+  })
+
+  it('renders both switches with one-line hints and the model defaults for a new employee', async () => {
+    const stubs = {
+      ...Object.fromEntries(elStubs.map(name => [name, true])),
+      'el-dialog': { template: '<div><slot /><slot name="footer" /></div>' },
+      'el-tabs': { template: '<div><slot /></div>' },
+      'el-tab-pane': { template: '<div><slot /></div>' },
+      'el-form': { template: '<form><slot /></form>' },
+      'el-form-item': { template: '<div><slot /></div>' },
+      'el-switch': { template: '<input type="checkbox" v-bind="$attrs" />' },
+    }
+    const wrapper = mount(EmployeeManagement, { global: { stubs } })
+    await flushPromises()
+    expect(wrapper.find('[data-test="employee-requires-scheduling"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="employee-auto-overtime-calc"]').exists()).toBe(true)
+    // 新增員工、還沒切換時：說明寫出會套用薪資設定的預設值
+    expect(wrapper.find('[data-test="employee-auto-overtime-calc-hint"]').text()).toBe('不切換就套用薪資設定的新進員工預設')
+    wrapper.vm.autoOvertimeCalcTouched = true
+    await flushPromises()
+    expect(wrapper.find('[data-test="employee-auto-overtime-calc-hint"]').text()).toBe('開啟後薪資才依核准的加班申請計算加班費')
+    expect(wrapper.text()).toContain('不需排班的人假日制度預設為行政')
+    expect(wrapper.vm.employeeForm.requiresScheduling).toBe(true)
+    expect(wrapper.vm.employeeForm.autoOvertimeCalc).toBe(false)
+  })
+
+  it('loads the stored values when editing; missing values fall back to the model defaults', async () => {
+    installEmployeeApiMock({
+      '/api/departments': [],
+      '/api/organizations': [],
+      '/api/sub-departments': [],
+      '/api/employees': [
+        { _id: 'e1', name: '行政甲', requiresScheduling: false, autoOvertimeCalc: true },
+        { _id: 'e2', name: '護理乙' },
+      ],
+    })
+    const wrapper = mount(EmployeeManagement, { global: { stubs: elStubs } })
+    await flushPromises()
+    await wrapper.vm.openEmployeeDialog('e1')
+    expect(wrapper.vm.employeeForm.requiresScheduling).toBe(false)
+    expect(wrapper.vm.employeeForm.autoOvertimeCalc).toBe(true)
+    await wrapper.vm.openEmployeeDialog('e2')
+    expect(wrapper.vm.employeeForm.requiresScheduling).toBe(true)
+    expect(wrapper.vm.employeeForm.autoOvertimeCalc).toBe(false)
+  })
+
+  it('sends both fields as booleans under the model field names when saving', async () => {
+    const wrapper = mount(EmployeeManagement, { global: { stubs: elStubs } })
+    wrapper.vm.formRef = { validate: vi.fn(() => Promise.resolve(true)) }
+    apiFetch.mockClear()
+    apiFetch.mockImplementation((url, opts) => Promise.resolve({ ok: true, json: async () => (opts?.method === 'POST' ? {} : []) }))
+    wrapper.vm.employeeForm = {
+      ...wrapper.vm.employeeForm,
+      name: 'n', username: 'u', password: 'p', email: 'a@a.com', gender: 'M',
+    }
+    wrapper.vm.editEmployeeIndex = null
+    await flushPromises()
+    await wrapper.vm.saveEmployee()
+    const defaults = JSON.parse(apiFetch.mock.calls.find(c => c[1]?.method === 'POST')[1].body)
+    expect(defaults.requiresScheduling).toBe(true)
+    // 新增時沒切換「自動計算加班費」：不送，伺服器套用薪資設定的新進員工預設值
+    expect(defaults).not.toHaveProperty('autoOvertimeCalc')
+
+    apiFetch.mockClear()
+    wrapper.vm.employeeForm = { ...wrapper.vm.employeeForm, requiresScheduling: false, autoOvertimeCalc: true }
+    wrapper.vm.autoOvertimeCalcTouched = true
+    await wrapper.vm.saveEmployee()
+    const changed = JSON.parse(apiFetch.mock.calls.find(c => c[1]?.method === 'POST')[1].body)
+    expect(changed.requiresScheduling).toBe(false)
+    expect(changed.autoOvertimeCalc).toBe(true)
+
+    // 切換後又關掉也要送 false（管理員明確選了「否」）
+    apiFetch.mockClear()
+    wrapper.vm.employeeForm = { ...wrapper.vm.employeeForm, autoOvertimeCalc: false }
+    await wrapper.vm.saveEmployee()
+    expect(JSON.parse(apiFetch.mock.calls.find(c => c[1]?.method === 'POST')[1].body).autoOvertimeCalc).toBe(false)
+  })
+
+  it('always sends autoOvertimeCalc when editing, even if the switch was not touched', async () => {
+    installEmployeeApiMock({
+      '/api/departments': [],
+      '/api/organizations': [],
+      '/api/sub-departments': [],
+      '/api/employees': [{ _id: 'e1', name: '行政甲', username: 'u1', email: 'a@a.com', gender: 'M', autoOvertimeCalc: true }],
+    })
+    const wrapper = mount(EmployeeManagement, { global: { stubs: elStubs } })
+    await flushPromises()
+    await wrapper.vm.openEmployeeDialog('e1')
+    wrapper.vm.formRef = { validate: vi.fn(() => Promise.resolve(true)) }
+    expect(wrapper.vm.autoOvertimeCalcTouched).toBe(false)
+    await wrapper.vm.saveEmployee()
+    await flushPromises()
+    const put = apiFetch.mock.calls.find(c => c[1]?.method === 'PUT')
+    expect(put).toBeTruthy()
+    expect(JSON.parse(put[1].body).autoOvertimeCalc).toBe(true)
   })
 })

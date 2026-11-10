@@ -32,15 +32,6 @@
     max-width: 720px;
   }
 
-  /* Layout adjustments for tablets */
-  .modern-layout .layout-aside {
-    position: relative;
-    z-index: auto;
-    height: auto;
-    background: var(--hr-bg-card);
-    border-right: 1px solid var(--hr-border-light);
-  }
-
   .hr-grid-md-2 {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -178,41 +169,7 @@
     padding: var(--hr-space-sm);
   }
 
-  /* Mobile navigation adjustments */
-  .modern-layout .layout-aside {
-    position: fixed;
-    top: 0;
-    left: -100%;
-    z-index: var(--hr-z-modal);
-    width: 280px;
-    height: 100vh;
-    background: var(--hr-bg-card);
-    box-shadow: var(--hr-shadow-xl);
-    transition: left var(--hr-transition-normal);
-  }
-
-  .modern-layout .layout-aside.is-open {
-    left: 0;
-  }
-
-  /* Mobile overlay */
-  .hr-mobile-overlay {
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background-color: rgba(0, 0, 0, 0.5);
-    z-index: var(--hr-z-modal-backdrop);
-    opacity: 0;
-    visibility: hidden;
-    transition: opacity var(--hr-transition-normal), visibility var(--hr-transition-normal);
-  }
-
-  .hr-mobile-overlay.is-open {
-    opacity: 1;
-    visibility: visible;
-  }
+  /* 後台側欄在窄螢幕的抽屜與遮罩樣式放在 views/ModernLayout.vue（外框自己管，不用全域規則蓋 scoped 樣式） */
 
   /* Mobile table responsiveness */
   .hr-table-responsive {

@@ -1,6 +1,6 @@
 <template>
   <div class="other-control-setting">
-    <h2>其他控制設定</h2>
+    <PageHeader title="其他控制設定" subtitle="下拉選單的選項（字典）、表單分類、表單欄位範本與排班權限" />
 
     <el-alert
       v-if="settingsLoadFailed"
@@ -14,7 +14,7 @@
       <div class="load-alert__body">
         <span>其他控制設定載入失敗，目前畫面顯示的是預設內容，並非已儲存的資料。為避免覆蓋已儲存的設定，載入成功前無法新增、編輯、儲存或刪除。</span>
         <el-button
-          size="small"
+          link
           type="primary"
           :loading="settingsLoading"
           data-test="reload-settings"
@@ -23,170 +23,189 @@
       </div>
     </el-alert>
 
-    <el-tabs v-model="activeTab" type="border-card">
+    <el-tabs v-model="activeTab">
       <el-tab-pane label="字典項目" name="item-setting">
-        <div class="tab-content">
-          <el-alert
-            title="維護人資字典選項，確保報到與流程表單可即時使用最新的項目"
-            type="info"
-            show-icon
-            class="info-alert"
-          />
-          <div class="dictionary-action-row">
-            <div class="dictionary-header">
-              <h3>{{ activeDictionaryLabel }}</h3>
-              <span class="hint">字典代碼：{{ activeDictionaryKey }}</span>
+        <div class="dictionary-layout">
+          <!-- 先選字典：左邊一排名稱，右邊是它的選項 -->
+          <ul class="dictionary-list" data-test="dictionary-list">
+            <li v-for="dict in dictionaryDefinitions" :key="dict.key">
+              <button
+                type="button"
+                :class="['dictionary-item', { 'is-active': dict.key === activeDictionaryKey }]"
+                :aria-pressed="dict.key === activeDictionaryKey"
+                :data-test="`dictionary-item-${dict.key}`"
+                @click="activeDictionaryKey = dict.key"
+              >
+                <span class="dictionary-item__name">{{ dict.label }}</span>
+                <span class="dictionary-item__count">{{ (itemSettings[dict.key] || []).length }}</span>
+              </button>
+            </li>
+          </ul>
+
+          <div class="dictionary-detail">
+            <div class="hr-toolbar">
+              <div class="dictionary-header">
+                <h3 class="dictionary-title" data-test="dictionary-title">{{ activeDictionaryLabel }}</h3>
+                <span class="hr-hint" data-test="dictionary-usage">{{ activeDictionaryUsage }}</span>
+              </div>
+              <span class="hr-toolbar__spacer" />
+              <el-button type="primary" :disabled="!settingsLoaded" data-test="add-dictionary-option" @click="openOptionDialog()">新增選項</el-button>
             </div>
-            <div class="dictionary-controls">
-              <el-select v-model="activeDictionaryKey" size="small" class="dictionary-select">
-                <el-option
-                  v-for="dict in dictionaryDefinitions"
-                  :key="dict.key"
-                  :label="`${dict.key} ${dict.label}`"
-                  :value="dict.key"
-                />
-              </el-select>
-              <el-button type="primary" size="small" :disabled="!settingsLoaded" @click="openOptionDialog()">新增選項</el-button>
-            </div>
-          </div>
-          <el-table :data="itemSettings[activeDictionaryKey] || []" border>
-            <el-table-column type="index" width="60" label="#" />
-            <el-table-column prop="name" label="選項名稱" />
-            <el-table-column prop="code" label="代碼" width="160" />
-            <el-table-column label="操作" width="200">
-              <template #default="{ $index }">
-                <el-button
-                  size="small"
-                  :disabled="!settingsLoaded"
-                  @click="openOptionDialog(activeDictionaryKey, $index)"
-                >編輯</el-button>
-                <el-button
-                  size="small"
-                  type="danger"
-                  :disabled="!settingsLoaded"
-                  @click="removeOption(activeDictionaryKey, $index)"
-                >刪除</el-button>
+            <el-table :data="itemSettings[activeDictionaryKey] || []" border data-test="dictionary-table">
+              <el-table-column type="index" width="60" label="#" />
+              <el-table-column prop="name" label="選項名稱" min-width="160" />
+              <el-table-column prop="code" label="代碼" width="160" />
+              <el-table-column label="排序" width="140">
+                <template #default="{ $index }">
+                  <el-button
+                    link
+                    type="primary"
+                    :disabled="!settingsLoaded || optionSaving || $index === 0"
+                    @click="moveOption(activeDictionaryKey, $index, -1)"
+                  >上移</el-button>
+                  <el-button
+                    link
+                    type="primary"
+                    :disabled="!settingsLoaded || optionSaving || $index === (itemSettings[activeDictionaryKey] || []).length - 1"
+                    @click="moveOption(activeDictionaryKey, $index, 1)"
+                  >下移</el-button>
+                </template>
+              </el-table-column>
+              <el-table-column label="操作" width="160">
+                <template #default="{ $index }">
+                  <el-button
+                    link
+                    type="primary"
+                    :disabled="!settingsLoaded"
+                    @click="openOptionDialog(activeDictionaryKey, $index)"
+                  >編輯</el-button>
+                  <el-button
+                    link
+                    type="danger"
+                    :disabled="!settingsLoaded"
+                    @click="removeOption(activeDictionaryKey, $index)"
+                  >刪除</el-button>
+                </template>
+              </el-table-column>
+              <template #empty>
+                <span class="hr-empty">這個字典還沒有選項，請按右上角「新增選項」</span>
               </template>
-            </el-table-column>
-          </el-table>
+            </el-table>
+          </div>
         </div>
       </el-tab-pane>
 
       <el-tab-pane label="表單分類" name="form-category">
-        <div class="tab-content">
-          <el-alert
-            title="維護簽核表單分類，提供前台建立與過濾流程樣板時使用"
-            type="info"
-            show-icon
-            class="info-alert"
-          />
-          <div class="list-action-row">
-            <el-button type="primary" :disabled="!settingsLoaded" @click="openCategoryDialog()">新增分類</el-button>
-          </div>
-          <el-table :data="formCategories" border>
-            <el-table-column type="index" width="60" label="#" />
-            <el-table-column prop="name" label="分類名稱" width="200" />
-            <el-table-column prop="code" label="識別碼" width="180" />
-            <el-table-column label="說明">
-              <template #default="{ row }">
-                {{ row.description || '—' }}
-              </template>
-            </el-table-column>
-            <el-table-column label="狀態" width="120">
-              <template #default="{ row }">
-                <el-tag v-if="row.builtin" size="small" type="info">內建</el-tag>
-              </template>
-            </el-table-column>
-            <el-table-column label="操作" width="220">
-              <template #default="{ row }">
-                <el-button size="small" :disabled="!settingsLoaded" @click="openCategoryDialog('edit', row)">編輯</el-button>
-                <el-button
-                  size="small"
-                  type="danger"
-                  :disabled="row.builtin || !settingsLoaded"
-                  @click="removeCategory(row)"
-                >刪除</el-button>
-              </template>
-            </el-table-column>
-          </el-table>
+        <div class="hr-toolbar">
+          <span class="hr-hint">簽核表單的分類，在「簽核流程設定」新增或編輯表單時選用。</span>
+          <span class="hr-toolbar__spacer" />
+          <el-button type="primary" :disabled="!settingsLoaded" @click="openCategoryDialog()">新增分類</el-button>
         </div>
+        <el-table :data="formCategories" border>
+          <el-table-column type="index" width="60" label="#" />
+          <el-table-column prop="name" label="分類名稱" width="200" />
+          <el-table-column prop="code" label="識別碼" width="180" />
+          <el-table-column label="說明" min-width="160">
+            <template #default="{ row }">
+              {{ row.description || '—' }}
+            </template>
+          </el-table-column>
+          <el-table-column label="使用中的表單" width="130">
+            <template #default="{ row }">
+              <span data-test="category-usage">{{ categoryUsageText(row) }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="操作" width="200">
+            <template #default="{ row }">
+              <el-button link type="primary" :disabled="!settingsLoaded" @click="openCategoryDialog('edit', row)">編輯</el-button>
+              <el-button
+                v-if="!row.builtin"
+                link
+                type="danger"
+                :disabled="!settingsLoaded"
+                @click="removeCategory(row)"
+              >刪除</el-button>
+              <el-tag v-else size="small" type="info" class="builtin-tag">內建，不能刪除</el-tag>
+            </template>
+          </el-table-column>
+          <template #empty>
+            <span class="hr-empty">尚未建立表單分類，請按右上角「新增分類」</span>
+          </template>
+        </el-table>
       </el-tab-pane>
 
       <el-tab-pane label="自訂欄位" name="custom-field">
-        <div class="tab-content">
-          <el-alert
-            title="可用於員工資料或流程表單的額外欄位"
-            type="info"
-            show-icon
-            class="info-alert"
-          />
-          <div class="list-action-row">
-            <el-button type="primary" :disabled="!settingsLoaded" @click="openFieldDialog()">新增欄位</el-button>
-          </div>
-          <el-table :data="customFields" border>
-            <el-table-column prop="label" label="欄位名稱" width="180" />
-            <el-table-column prop="fieldKey" label="識別代碼" width="200" />
-            <el-table-column prop="type" label="欄位型別" width="120">
-              <template #default="{ row }">
-                {{ fieldTypeMap[row.type] || row.type }}
-              </template>
-            </el-table-column>
-            <el-table-column prop="required" label="必填" width="100">
-              <template #default="{ row }">{{ row.required ? '是' : '否' }}</template>
-            </el-table-column>
-            <el-table-column prop="description" label="使用說明" />
-            <el-table-column label="操作" width="180">
-              <template #default="{ $index }">
-                <el-button size="small" :disabled="!settingsLoaded" @click="openFieldDialog($index)">編輯</el-button>
-                <el-button size="small" type="danger" :disabled="!settingsLoaded" @click="removeField($index)">刪除</el-button>
-              </template>
-            </el-table-column>
-          </el-table>
+        <div class="hr-toolbar">
+          <span class="hr-hint">表單欄位的範本：在「簽核流程設定」新增表單欄位時，可以從「套用自訂欄位」直接帶入。</span>
+          <span class="hr-toolbar__spacer" />
+          <el-button type="primary" :disabled="!settingsLoaded" @click="openFieldDialog()">新增欄位</el-button>
         </div>
+        <el-table :data="customFields" border>
+          <el-table-column prop="label" label="欄位名稱" width="200" />
+          <el-table-column prop="fieldKey" label="識別代碼" width="180" />
+          <el-table-column prop="type" label="欄位型別" width="120">
+            <template #default="{ row }">
+              {{ fieldTypeMap[row.type] || row.type }}
+            </template>
+          </el-table-column>
+          <el-table-column prop="required" label="必填" width="80">
+            <template #default="{ row }">{{ row.required ? '是' : '否' }}</template>
+          </el-table-column>
+          <el-table-column prop="description" label="使用說明" min-width="160" />
+          <el-table-column label="操作" width="160">
+            <template #default="{ $index }">
+              <el-button link type="primary" :disabled="!settingsLoaded" @click="openFieldDialog($index)">編輯</el-button>
+              <el-button link type="danger" :disabled="!settingsLoaded" @click="removeField($index)">刪除</el-button>
+            </template>
+          </el-table-column>
+          <template #empty>
+            <span class="hr-empty">尚未建立自訂欄位，請按右上角「新增欄位」</span>
+          </template>
+        </el-table>
       </el-tab-pane>
 
       <!-- 排班權限（scheduleAccessMode）：主管是否因為是主管就能排班；排班人員在小單位設定 -->
       <el-tab-pane label="排班權限" name="schedule-access" lazy>
-        <div class="tab-content">
-          <ScheduleAccessSetting />
-        </div>
+        <ScheduleAccessSetting />
       </el-tab-pane>
     </el-tabs>
 
     <el-dialog v-model="optionDialogVisible" :title="optionDialogTitle" width="420px">
-      <el-form :model="optionForm" label-width="100px">
+      <el-form :model="optionForm" label-width="100px" @submit.prevent>
         <el-form-item label="所屬字典">
           <el-select v-model="optionForm.dictionaryKey" :disabled="editingOptionIndex > -1">
             <el-option
               v-for="dict in dictionaryDefinitions"
               :key="dict.key"
-              :label="`${dict.key} ${dict.label}`"
+              :label="dict.label"
               :value="dict.key"
             />
           </el-select>
         </el-form-item>
-        <el-form-item label="選項名稱">
+        <el-form-item label="選項名稱" required>
           <el-input v-model="optionForm.name" placeholder="顯示於下拉選單的名稱" />
         </el-form-item>
         <el-form-item label="選項代碼">
-          <el-input v-model="optionForm.code" placeholder="系統對應的代碼" />
+          <el-input v-model="optionForm.code" placeholder="不填則與名稱相同" />
+          <div v-if="editingOptionIndex > -1" class="hr-hint" data-test="option-rename-hint">修改名稱或代碼不會更新已經填好的資料：選過這個選項的員工資料與申請單仍保留原本的文字。</div>
         </el-form-item>
       </el-form>
       <template #footer>
         <span class="dialog-footer">
           <el-button @click="optionDialogVisible = false">取消</el-button>
-          <el-button type="primary" :disabled="!settingsLoaded" @click="saveOption">儲存</el-button>
+          <el-button type="primary" :loading="optionSaving" :disabled="!settingsLoaded" @click="saveOption">儲存</el-button>
         </span>
       </template>
     </el-dialog>
 
     <el-dialog v-model="categoryDialogVisible" :title="categoryDialogTitle" width="420px">
-      <el-form :model="categoryForm" label-width="100px">
-        <el-form-item label="分類名稱">
+      <el-form :model="categoryForm" label-width="100px" @submit.prevent>
+        <el-form-item label="分類名稱" required>
           <el-input v-model="categoryForm.name" placeholder="顯示名稱" />
         </el-form-item>
         <el-form-item label="識別碼">
-          <el-input v-model="categoryForm.code" placeholder="資料庫儲存用代碼" />
+          <el-input v-model="categoryForm.code" placeholder="不填則與名稱相同" :disabled="categoryCodeLocked" />
+          <div v-if="categoryCodeLocked" class="hr-hint" data-test="category-code-locked">有 {{ categoryFormUsage }} 張表單使用這個分類；表單是用識別碼對應分類，所以識別碼不能修改。</div>
         </el-form-item>
         <el-form-item label="說明">
           <el-input v-model="categoryForm.description" type="textarea" :rows="3" placeholder="可補充分類用途或適用範圍" />
@@ -195,17 +214,17 @@
       <template #footer>
         <span class="dialog-footer">
           <el-button @click="categoryDialogVisible = false">取消</el-button>
-          <el-button type="primary" :disabled="!settingsLoaded" @click="saveCategory">儲存</el-button>
+          <el-button type="primary" :loading="categorySaving" :disabled="!settingsLoaded" @click="saveCategory">儲存</el-button>
         </span>
       </template>
     </el-dialog>
 
-    <el-dialog v-model="fieldDialogVisible" title="自訂欄位" width="480px">
-      <el-form :model="fieldForm" label-width="100px">
-        <el-form-item label="欄位名稱">
+    <el-dialog v-model="fieldDialogVisible" :title="editingFieldIndex > -1 ? '編輯自訂欄位' : '新增自訂欄位'" width="480px">
+      <el-form :model="fieldForm" label-width="100px" @submit.prevent>
+        <el-form-item label="欄位名稱" required>
           <el-input v-model="fieldForm.label" placeholder="顯示名稱" />
         </el-form-item>
-        <el-form-item label="識別代碼">
+        <el-form-item label="識別代碼" required>
           <el-input v-model="fieldForm.fieldKey" placeholder="英數字代碼" />
         </el-form-item>
         <el-form-item label="欄位型別">
@@ -228,21 +247,21 @@
               data-test="option-row"
             >
               <el-row :gutter="8" align="middle">
-                <el-col :span="10">
+                <el-col :span="9">
                   <el-input
                     v-model="option.name"
                     placeholder="顯示文字"
                     data-test="option-name"
                   />
                 </el-col>
-                <el-col :span="10">
+                <el-col :span="7">
                   <el-input
                     v-model="option.code"
                     placeholder="代碼"
                     data-test="option-code"
                   />
                 </el-col>
-                <el-col :span="4" class="options-editor__actions">
+                <el-col :span="8" class="options-editor__actions">
                   <el-button
                     link
                     type="primary"
@@ -250,7 +269,7 @@
                     @click="moveOptionRow(index, -1)"
                     data-test="move-up"
                   >
-                    上
+                    上移
                   </el-button>
                   <el-button
                     link
@@ -259,7 +278,7 @@
                     @click="moveOptionRow(index, 1)"
                     data-test="move-down"
                   >
-                    下
+                    下移
                   </el-button>
                   <el-button
                     link
@@ -267,13 +286,12 @@
                     @click="removeOptionRow(index)"
                     data-test="remove-option"
                   >
-                    刪
+                    刪除
                   </el-button>
                 </el-col>
               </el-row>
             </div>
             <el-button
-              type="primary"
               plain
               size="small"
               @click="addOptionRow()"
@@ -287,7 +305,7 @@
       <template #footer>
         <span class="dialog-footer">
           <el-button @click="fieldDialogVisible = false">取消</el-button>
-          <el-button type="primary" :disabled="!settingsLoaded" @click="saveField">儲存</el-button>
+          <el-button type="primary" :loading="fieldSaving" :disabled="!settingsLoaded" @click="saveField">儲存</el-button>
         </span>
       </template>
     </el-dialog>
@@ -299,6 +317,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { apiFetch } from '../../api'
 import { editableListToOptions, optionsToEditableList } from '../../utils/fieldOptions'
+import PageHeader from '../PageHeader.vue'
 import ScheduleAccessSetting from './ScheduleAccessSetting.vue'
 
 const activeTab = ref('item-setting')
@@ -314,11 +333,59 @@ function ensureSettingsLoaded() {
   return false
 }
 
+// 伺服器回的錯誤文字（{ error } 或 { message }）；幾個只有英文欄位名稱的訊息換成畫面上的說法
+const SERVER_MESSAGE_TEXT = {
+  'code 已存在': '識別碼已經被其他分類使用，請換一個',
+  'name 為必填欄位': '請輸入分類名稱',
+  'code 為必填欄位': '請輸入識別碼',
+}
+function serverMessage(data, fallback) {
+  const text = [data?.error, data?.message].find((value) => typeof value === 'string' && value.trim())
+  if (!text) return fallback
+  return SERVER_MESSAGE_TEXT[text.trim()] || text.trim()
+}
+
 const formCategories = ref([])
 const categoryDialogVisible = ref(false)
 const categoryDialogMode = ref('create')
+const categorySaving = ref(false)
 const categoryForm = ref({ id: '', name: '', code: '', description: '', builtin: false })
 const categoryDialogTitle = computed(() => (categoryDialogMode.value === 'edit' ? '編輯分類' : '新增分類'))
+
+// 每個分類有幾張簽核表單在用（表單的 category 存的是分類的識別碼）：{ [識別碼]: 張數 }；讀不到表單清單時是 null
+const categoryUsage = ref(null)
+async function loadCategoryUsage() {
+  try {
+    const res = await apiFetch('/api/approvals/forms', { method: 'GET' }, { autoRedirect: false })
+    if (!res.ok) return
+    const list = await res.json()
+    if (!Array.isArray(list)) return
+    const counts = {}
+    list.forEach((form) => {
+      const code = typeof form?.category === 'string' ? form.category.trim() : ''
+      if (code) counts[code] = (counts[code] || 0) + 1
+    })
+    categoryUsage.value = counts
+  } catch (error) {
+    // 讀不到只是不顯示使用中的表單數
+  }
+}
+function categoryUsageCount(category) {
+  if (!categoryUsage.value || !category?.code) return null
+  return categoryUsage.value[category.code] || 0
+}
+function categoryUsageText(category) {
+  const count = categoryUsageCount(category)
+  if (count === null) return '—'
+  return count ? `${count} 張` : '沒有表單使用'
+}
+// 正在編輯的分類原本的識別碼有表單在用：識別碼不能改（改了之後那些表單就對不到分類）
+const categoryFormUsage = computed(() => {
+  if (categoryDialogMode.value !== 'edit' || !categoryForm.value.id) return 0
+  const original = formCategories.value.find((item) => item.id === categoryForm.value.id)
+  return categoryUsageCount(original) || 0
+})
+const categoryCodeLocked = computed(() => categoryFormUsage.value > 0)
 
 const dictionaryDefinitions = ref([
   { key: 'C03', label: '職稱' },
@@ -332,6 +399,22 @@ const dictionaryDefinitions = ref([
   { key: 'C12', label: '假別類別' },
   { key: 'C14', label: '津貼項目' }
 ])
+
+// 每個字典用在哪裡（員工管理的欄位讀同一個代碼的字典；C12 是簽核表單裡連結字典的下拉欄位）
+const DICTIONARY_USAGE = {
+  C03: '員工管理的「職稱」',
+  C04: '員工管理的「執業職稱」',
+  C05: '員工管理的「語言能力」',
+  C06: '員工管理的「身心障礙等級」',
+  C07: '員工管理的「身分類別」',
+  C08: '員工管理的「教育程度」',
+  'C08-1': '員工管理的「畢業狀態」',
+  C09: '員工管理的「緊急聯絡人稱謂」',
+  C10: '員工管理的教育訓練「積分類別」',
+  C12: '簽核表單裡連結這個字典的下拉欄位（例如請假單的假別）',
+  C14: '員工管理的薪資「津貼項目」',
+}
+const DICTIONARY_EXTRA_LABELS = { 'C08-1': '畢業狀態' }
 
 function pickFirstString(...values) {
   for (const value of values) {
@@ -479,10 +562,21 @@ const itemSettings = ref(createDefaultItemSettings())
 const activeDictionaryKey = ref(dictionaryDefinitions.value[0]?.key ?? '')
 const optionDialogVisible = ref(false)
 const editingOptionIndex = ref(-1)
+const optionSaving = ref(false)
 const optionForm = ref({ dictionaryKey: activeDictionaryKey.value, name: '', code: '' })
+
+const dictionaryLabelOf = (key) => dictionaryDefinitions.value.find(dict => dict.key === key)?.label || key || ''
 
 const activeDictionaryLabel = computed(() => {
   return dictionaryDefinitions.value.find(dict => dict.key === activeDictionaryKey.value)?.label || ''
+})
+
+// 右邊標題下方的一行說明：用在哪裡，以及代碼（表單欄位名稱結尾寫「(代碼)」就會連結這個字典）
+const activeDictionaryUsage = computed(() => {
+  const key = activeDictionaryKey.value
+  if (!key) return ''
+  const usage = DICTIONARY_USAGE[key]
+  return usage ? `用在：${usage}；代碼 ${key}` : `代碼 ${key}`
 })
 
 const optionDialogTitle = computed(() =>
@@ -614,7 +708,53 @@ const defaultCustomFields = [
 ]
 
 const customFields = ref([...defaultCustomFields])
+// 自訂欄位的版本（GET /api/other-control-settings 的 X-Custom-Fields-Version 標頭）：儲存時帶回去，
+// 別人在這之間存過時伺服器回 409 CUSTOM_FIELDS_CONFLICT，不會蓋掉別人的修改。舊版伺服器沒有這個標頭時是 null（不帶）
+const customFieldsVersion = ref(null)
+const CUSTOM_FIELDS_CONFLICT_MESSAGE = '自訂欄位剛被其他人修改，已重新載入最新內容，請確認後再修改一次'
+
+function readCustomFieldsVersion(res) {
+  const value = res?.headers?.get?.('X-Custom-Fields-Version')
+  return typeof value === 'string' && value ? value : null
+}
+
+// 整份自訂欄位送出（PUT 是整份取代），帶上版本；成功時記下新版本。
+// 回傳 { ok, conflict, message }：conflict 時已重新載入設定，畫面上是別人存好的最新內容
+async function putCustomFields(fallbackMessage) {
+  const body = { customFields: customFields.value }
+  if (customFieldsVersion.value) body.version = customFieldsVersion.value
+  const res = await apiFetch(
+    '/api/other-control-settings/custom-fields',
+    {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    },
+    { autoRedirect: false }
+  )
+  if (res.ok) {
+    customFieldsVersion.value = readCustomFieldsVersion(res) || customFieldsVersion.value
+    return { ok: true }
+  }
+  let responseText = ''
+  try {
+    responseText = await res.text()
+  } catch (readError) {
+    console.warn('讀取自訂欄位回應失敗：', readError)
+  }
+  let data = null
+  try {
+    data = responseText ? JSON.parse(responseText) : null
+  } catch (parseError) {
+    // 不是 JSON：直接顯示文字
+  }
+  if (res.status === 409 && data?.code === 'CUSTOM_FIELDS_CONFLICT') {
+    return { ok: false, conflict: true, message: CUSTOM_FIELDS_CONFLICT_MESSAGE }
+  }
+  return { ok: false, message: data ? serverMessage(data, fallbackMessage) : (responseText || fallbackMessage) }
+}
 const fieldDialogVisible = ref(false)
+const fieldSaving = ref(false)
 const editingFieldIndex = ref(-1)
 const fieldForm = ref({
   label: '',
@@ -684,6 +824,7 @@ function moveOptionRow(index, offset) {
 onMounted(() => {
   loadSettings()
   loadFormCategories()
+  loadCategoryUsage()
 })
 
 async function loadSettings() {
@@ -694,6 +835,7 @@ async function loadSettings() {
       throw new Error(`伺服器回應 ${res.status}`)
     }
     const data = await res.json()
+    customFieldsVersion.value = readCustomFieldsVersion(res)
     if (Array.isArray(data.customFields) && data.customFields.length) {
       customFields.value = data.customFields
     } else {
@@ -702,7 +844,7 @@ async function loadSettings() {
     if (data.itemSettings && typeof data.itemSettings === 'object') {
       Object.keys(data.itemSettings).forEach(key => {
         if (!dictionaryDefinitions.value.some(dict => dict.key === key)) {
-          dictionaryDefinitions.value.push({ key, label: key })
+          dictionaryDefinitions.value.push({ key, label: DICTIONARY_EXTRA_LABELS[key] || key })
         }
       })
       const merged = createDefaultItemSettings()
@@ -777,6 +919,7 @@ function openCategoryDialog(mode = 'create', category = null) {
 
 async function saveCategory() {
   if (!ensureSettingsLoaded()) return
+  if (categorySaving.value) return
   const name = (categoryForm.value.name || '').trim()
   const code = (categoryForm.value.code || '').trim() || name
   if (!name || !code) {
@@ -795,6 +938,7 @@ async function saveCategory() {
     ? `/api/other-control-settings/form-categories/${categoryForm.value.id}`
     : '/api/other-control-settings/form-categories'
 
+  categorySaving.value = true
   try {
     const res = await apiFetch(
       url,
@@ -817,8 +961,7 @@ async function saveCategory() {
     }
 
     if (!res.ok) {
-      const message = responseData?.error || responseData?.message || responseText || '儲存分類失敗，請稍後再試'
-      throw new Error(message)
+      throw new Error(serverMessage(responseData, responseText || '儲存分類失敗，請稍後再試'))
     }
 
     const normalized = normalizeCategory(responseData)
@@ -841,6 +984,8 @@ async function saveCategory() {
   } catch (error) {
     const message = error?.message || '儲存分類失敗，請稍後再試'
     ElMessage.error(message)
+  } finally {
+    categorySaving.value = false
   }
 }
 
@@ -851,8 +996,16 @@ async function removeCategory(category) {
     ElMessage.warning('內建分類不可刪除')
     return
   }
+  const usage = categoryUsageCount(category)
+  const consequence = usage
+    ? `目前有 ${usage} 張表單使用這個分類；刪除後這些表單不會被刪除，但分類會顯示成識別碼「${category.code}」，需要到「簽核流程設定」改選其他分類。`
+    : '刪除後新增或編輯表單時就不能再選這個分類。'
   try {
-    await ElMessageBox.confirm('確定要刪除此分類嗎？', '提醒', { type: 'warning' })
+    await ElMessageBox.confirm(
+      `確定要刪除分類「${category.name || ''}」嗎？${consequence}`,
+      '刪除分類',
+      { type: 'warning', confirmButtonText: '刪除', cancelButtonText: '取消' }
+    )
   } catch (error) {
     return
   }
@@ -869,8 +1022,7 @@ async function removeCategory(category) {
       let message = '刪除分類失敗，請稍後再試'
       if (responseText) {
         try {
-          const data = JSON.parse(responseText)
-          message = data?.error || data?.message || message
+          message = serverMessage(JSON.parse(responseText), message)
         } catch (error) {
           message = responseText
         }
@@ -886,9 +1038,10 @@ async function removeCategory(category) {
   }
 }
 
-async function saveItemSettings(successMessage = '已儲存字典項目設定') {
+// payload：要送出的字典（{ 代碼: 選項陣列 }）。伺服器只取代有送來的字典，其餘不動，
+// 所以新增、編輯、刪除、排序一個選項時只送那一個字典：別人剛改過的其他字典、畫面上還沒存過的預設內容都不會被寫回去
+async function saveItemSettings(successMessage = '已儲存字典項目設定', payload = itemSettings.value) {
   if (!ensureSettingsLoaded()) return false
-  const payload = itemSettings.value
   const fallbackMessage = '儲存字典項目時發生問題，請稍後再試'
   try {
     const res = await apiFetch(
@@ -912,11 +1065,7 @@ async function saveItemSettings(successMessage = '已儲存字典項目設定') 
     }
 
     if (!res.ok) {
-      const errorMessage = responseData?.message || fallbackMessage
-      if (responseText && !responseData?.message) {
-        console.error('儲存字典項目失敗回應：', responseText)
-      }
-      throw new Error(errorMessage)
+      throw new Error(serverMessage(responseData, fallbackMessage))
     }
 
     if (successMessage) {
@@ -925,7 +1074,6 @@ async function saveItemSettings(successMessage = '已儲存字典項目設定') 
 
     return responseData ?? true
   } catch (error) {
-    console.error('儲存字典項目時發生例外：', error)
     ElMessage.error(error?.message || fallbackMessage)
     return false
   }
@@ -955,48 +1103,97 @@ function openOptionDialog(dictionaryKey = activeDictionaryKey.value, index = -1)
   optionDialogVisible.value = true
 }
 
+// 把某個字典換成新的選項陣列並只儲存這個字典；失敗時畫面回到原本的內容
+async function saveDictionary(dictionaryKey, options, successMessage) {
+  const previousState = JSON.parse(JSON.stringify(itemSettings.value))
+  itemSettings.value = { ...previousState, [dictionaryKey]: options }
+  // 只有名稱（代碼與名稱相同、沒有其他屬性）的選項照原本的格式存成文字，不把整個字典改寫成物件
+  const stored = options.map((option) => {
+    const plain = option && typeof option === 'object'
+      && Object.keys(option).every((key) => key === 'name' || key === 'code')
+      && option.name === option.code
+    return plain ? option.name : option
+  })
+  const saved = await saveItemSettings(successMessage, { [dictionaryKey]: stored })
+  if (!saved) itemSettings.value = previousState
+  return saved
+}
+
 async function saveOption() {
   if (!ensureSettingsLoaded()) return
-  if (!optionForm.value.name || !optionForm.value.code || !optionForm.value.dictionaryKey) {
+  if (optionSaving.value) return
+  const name = String(optionForm.value.name ?? '').trim()
+  // 代碼沒填就和名稱相同
+  const code = String(optionForm.value.code ?? '').trim() || name
+  const dictionaryKey = optionForm.value.dictionaryKey
+  if (!name || !dictionaryKey) {
     ElMessage.warning('請完整填寫字典與選項資訊')
     return
   }
-  const previousState = JSON.parse(JSON.stringify(itemSettings.value))
-  const dictionaryKey = optionForm.value.dictionaryKey
-  const options = [...(previousState[dictionaryKey] || [])]
-  if (editingOptionIndex.value > -1) {
-    options.splice(editingOptionIndex.value, 1, {
-      name: optionForm.value.name,
-      code: optionForm.value.code
-    })
-  } else {
-    options.push({ name: optionForm.value.name, code: optionForm.value.code })
+  const current = JSON.parse(JSON.stringify(itemSettings.value[dictionaryKey] || []))
+  const editing = editingOptionIndex.value > -1
+  // 同一個字典裡名稱或代碼重複時，選單上分不出是哪一個，存進員工資料後也對不回來
+  const duplicated = current.find((option, index) => (
+    !(editing && index === editingOptionIndex.value) && (option?.name === name || option?.code === code)
+  ))
+  if (duplicated) {
+    ElMessage.warning(`「${dictionaryLabelOf(dictionaryKey)}」已經有名稱或代碼相同的選項「${duplicated.name}」`)
+    return
   }
-  itemSettings.value = { ...previousState, [dictionaryKey]: options }
-  const message = editingOptionIndex.value > -1 ? '已更新字典選項' : '已新增字典選項'
-  const saved = await saveItemSettings(message)
-  if (saved) {
-    optionDialogVisible.value = false
+  const options = [...current]
+  if (editing) {
+    // 保留這個選項原本的其他屬性（例如語言能力的等級清單），只換名稱與代碼
+    const existing = options[editingOptionIndex.value] && typeof options[editingOptionIndex.value] === 'object'
+      ? options[editingOptionIndex.value]
+      : {}
+    const next = { ...existing, name, code }
+    if ('label' in existing) next.label = name
+    if ('value' in existing) next.value = code
+    options.splice(editingOptionIndex.value, 1, next)
   } else {
-    itemSettings.value = previousState
+    options.push({ name, code })
+  }
+  optionSaving.value = true
+  try {
+    const saved = await saveDictionary(dictionaryKey, options, editing ? '已更新字典選項' : '已新增字典選項')
+    if (saved) optionDialogVisible.value = false
+  } finally {
+    optionSaving.value = false
   }
 }
 
 async function removeOption(dictionaryKey, index) {
   if (!ensureSettingsLoaded()) return
   if (!dictionaryKey || index < 0) return
+  const target = itemSettings.value[dictionaryKey]?.[index]
   try {
-    await ElMessageBox.confirm('確定要刪除此選項嗎？', '提醒', { type: 'warning' })
+    await ElMessageBox.confirm(
+      `確定要刪除「${dictionaryLabelOf(dictionaryKey)}」的選項「${target?.name || ''}」嗎？刪除後選單不再出現這個選項；已經選用它的員工資料或申請單不會被修改，仍保留原本的文字。`,
+      '刪除選項',
+      { type: 'warning', confirmButtonText: '刪除', cancelButtonText: '取消' }
+    )
   } catch (error) {
     return
   }
-  const previousState = JSON.parse(JSON.stringify(itemSettings.value))
-  const options = [...(previousState[dictionaryKey] || [])]
+  const options = JSON.parse(JSON.stringify(itemSettings.value[dictionaryKey] || []))
   options.splice(index, 1)
-  itemSettings.value = { ...previousState, [dictionaryKey]: options }
-  const saved = await saveItemSettings('已刪除字典選項')
-  if (!saved) {
-    itemSettings.value = previousState
+  await saveDictionary(dictionaryKey, options, '已刪除字典選項')
+}
+
+// 調整選項順序（下拉選單照這個順序顯示）
+async function moveOption(dictionaryKey, index, offset) {
+  if (!ensureSettingsLoaded()) return
+  if (optionSaving.value) return
+  const options = JSON.parse(JSON.stringify(itemSettings.value[dictionaryKey] || []))
+  const target = index + offset
+  if (index < 0 || index >= options.length || target < 0 || target >= options.length) return
+  const [item] = options.splice(index, 1)
+  options.splice(target, 0, item)
+  optionSaving.value = true
+  try {
+    await saveDictionary(dictionaryKey, options, '已調整順序')
+  } finally {
+    optionSaving.value = false
   }
 }
 
@@ -1028,8 +1225,18 @@ function openFieldDialog(index = -1) {
 
 async function saveField() {
   if (!ensureSettingsLoaded()) return
+  if (fieldSaving.value) return
   if (!fieldForm.value.label || !fieldForm.value.fieldKey) {
     ElMessage.warning('欄位名稱與識別代碼為必填')
+    return
+  }
+  // 識別代碼重複時，「套用自訂欄位」的選單分不出是哪一個
+  const fieldKey = String(fieldForm.value.fieldKey).trim()
+  const duplicated = customFields.value.find((field, index) => (
+    index !== editingFieldIndex.value && String(field?.fieldKey ?? '').trim() === fieldKey
+  ))
+  if (duplicated) {
+    ElMessage.warning(`識別代碼「${fieldKey}」已經被「${duplicated.label || fieldKey}」使用，請換一個`)
     return
   }
   const previousFields = JSON.parse(JSON.stringify(customFields.value))
@@ -1054,39 +1261,17 @@ async function saveField() {
   } else {
     customFields.value.push(updatedField)
   }
+  fieldSaving.value = true
   try {
-    const res = await apiFetch(
-      '/api/other-control-settings/custom-fields',
-      {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ customFields: customFields.value })
-      },
-      { autoRedirect: false }
-    )
-
-    if (!res.ok) {
-      let responseText = ''
-      try {
-        responseText = await res.text()
-      } catch (readError) {
-        console.warn('讀取儲存自訂欄位回應失敗：', readError)
-      }
-
-      let errorMessage = '儲存自訂欄位失敗，請稍後再試'
-      if (responseText) {
-        try {
-          const data = JSON.parse(responseText)
-          if (data?.message) {
-            errorMessage = data.message
-          }
-        } catch (parseError) {
-          errorMessage = responseText
-        }
-      }
-
-      throw new Error(errorMessage)
+    const result = await putCustomFields('儲存自訂欄位失敗，請稍後再試')
+    if (result.conflict) {
+      // 別人剛存過：重新載入最新內容（這次的修改沒有存），對話框留著讓使用者重新決定
+      customFields.value = previousFields
+      ElMessage.error(result.message)
+      await loadSettings()
+      return
     }
+    if (!result.ok) throw new Error(result.message)
 
     fieldDialogVisible.value = false
     editingFieldIndex.value = -1
@@ -1095,13 +1280,19 @@ async function saveField() {
     customFields.value = previousFields
     const message = error?.message || '儲存自訂欄位失敗，請稍後再試'
     ElMessage.error(message)
+  } finally {
+    fieldSaving.value = false
   }
 }
 
 async function removeField(index) {
   if (!ensureSettingsLoaded()) return
   try {
-    await ElMessageBox.confirm('確定要刪除此欄位嗎？', '提醒', { type: 'warning' })
+    await ElMessageBox.confirm(
+      `確定要刪除自訂欄位「${customFields.value[index]?.label || ''}」嗎？刪除後新增表單欄位時不能再套用它；已經套用到表單的欄位不受影響。`,
+      '刪除自訂欄位',
+      { type: 'warning', confirmButtonText: '刪除', cancelButtonText: '取消' }
+    )
   } catch (error) {
     // 取消
     return
@@ -1109,38 +1300,14 @@ async function removeField(index) {
   const previousFields = JSON.parse(JSON.stringify(customFields.value))
   customFields.value.splice(index, 1)
   try {
-    const res = await apiFetch(
-      '/api/other-control-settings/custom-fields',
-      {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ customFields: customFields.value })
-      },
-      { autoRedirect: false }
-    )
-
-    if (!res.ok) {
-      let responseText = ''
-      try {
-        responseText = await res.text()
-      } catch (readError) {
-        console.warn('讀取刪除自訂欄位回應失敗：', readError)
-      }
-
-      let errorMessage = '刪除自訂欄位失敗，請稍後再試'
-      if (responseText) {
-        try {
-          const data = JSON.parse(responseText)
-          if (data?.message) {
-            errorMessage = data.message
-          }
-        } catch (parseError) {
-          errorMessage = responseText
-        }
-      }
-
-      throw new Error(errorMessage)
+    const result = await putCustomFields('刪除自訂欄位失敗，請稍後再試')
+    if (result.conflict) {
+      customFields.value = previousFields
+      ElMessage.error(result.message)
+      await loadSettings()
+      return
     }
+    if (!result.ok) throw new Error(result.message)
 
     ElMessage.success('已刪除自訂欄位')
   } catch (error) {
@@ -1153,31 +1320,7 @@ async function removeField(index) {
 
 <style scoped>
 .other-control-setting {
-  padding: 24px;
-}
-
-.other-control-setting h2 {
-  margin-bottom: 16px;
-  color: #0f172a;
-}
-
-.tab-content {
-  padding: 16px 8px;
-}
-
-.list-action-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 12px;
-}
-
-.hint {
-  color: #475569;
-}
-
-.info-alert {
-  margin-bottom: 12px;
+  padding: 0;
 }
 
 .load-alert {
@@ -1191,39 +1334,116 @@ async function removeField(index) {
   gap: 12px;
 }
 
-.dictionary-action-row {
+/* 字典項目：左邊選字典，右邊是它的選項 */
+.dictionary-layout {
   display: flex;
-  justify-content: space-between;
+  align-items: flex-start;
+  gap: var(--hr-space-md);
+}
+
+.dictionary-list {
+  flex: 0 0 220px;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  border: 1px solid var(--hr-gray-200);
+  border-radius: var(--hr-radius-md);
+  background: var(--hr-white);
+}
+
+.dictionary-item {
+  display: flex;
   align-items: center;
-  margin-bottom: 12px;
-  gap: 12px;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  min-height: 40px;
+  padding: 8px 12px;
+  border: 0;
+  border-radius: var(--hr-radius-sm);
+  background: transparent;
+  font: inherit;
+  font-size: 14px;
+  color: var(--hr-gray-700);
+  text-align: left;
+  cursor: pointer;
+}
+
+.dictionary-item:hover {
+  background: var(--hr-gray-50);
+}
+
+.dictionary-item.is-active {
+  background: var(--hr-gray-100);
+  color: var(--hr-primary);
+  font-weight: var(--hr-font-weight-semibold);
+}
+
+.dictionary-item__count {
+  flex: 0 0 auto;
+  font-size: 12px;
+  font-weight: var(--hr-font-weight-normal);
+  color: var(--hr-gray-500);
+}
+
+.dictionary-detail {
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .dictionary-header {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 2px;
+  min-width: 0;
 }
 
-.dictionary-header h3 {
+.dictionary-title {
   margin: 0;
-  font-size: 18px;
-  color: #1e293b;
+  font-size: var(--hr-font-size-base);
+  font-weight: var(--hr-font-weight-semibold);
+  color: var(--hr-gray-900);
 }
 
-.dictionary-controls {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+.builtin-tag {
+  margin-left: 12px;
 }
 
-.dictionary-select {
-  width: 200px;
+.options-editor {
+  width: 100%;
+}
+
+.options-editor__row {
+  margin-bottom: 8px;
+}
+
+.options-editor__actions {
+  white-space: nowrap;
 }
 
 .dialog-footer {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
+}
+
+@media (max-width: 767px) {
+  .dictionary-layout {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  /* 手機：字典名稱排成可以左右滑動的一列 */
+  .dictionary-list {
+    flex: 0 0 auto;
+    display: flex;
+    overflow-x: auto;
+  }
+
+  .dictionary-item {
+    width: auto;
+    min-height: 44px;
+    white-space: nowrap;
+  }
 }
 </style>

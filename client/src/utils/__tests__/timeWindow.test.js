@@ -2,12 +2,14 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import {
   buildScheduleDate,
   computeActionWindow,
+  computeShiftPunchRange,
   computeShiftSpan,
   determineActionAvailability,
   formatWindow,
   getLocalDateParts,
   isNonWorkShift,
   parseScheduleDate,
+  resolveShiftPunches,
   __TESTING__
 } from '../timeWindow'
 
@@ -252,6 +254,126 @@ describe('timeWindow utilities (client)', () => {
 
       expect(result.actions.clockIn.disabled).toBe(false)
       expect(result.dayOff).toBeUndefined()
+    })
+  })
+
+  describe('which shift the punch buttons follow (same rules as the server)', () => {
+    const day = { _id: 'day', semanticType: 'work', startTime: '08:00', endTime: '17:00' }
+    const midnight = { _id: 'midnight', semanticType: 'work', startTime: '00:00', endTime: '08:00' }
+
+    // 以前今天沒排班時會退回用這個月的第一筆班表，顯示別天的打卡時段
+    it('reports no schedule today instead of borrowing another day\'s shift', () => {
+      const result = determineActionAvailability({
+        // 台北時間 2024-01-10 10:30
+        now: new Date('2024-01-10T02:30:00.000Z'),
+        schedules: [
+          { date: '2024/01/02', shiftId: 'day' },
+          { date: '2024/01/20', shiftId: 'day' }
+        ],
+        shifts: [day]
+      })
+
+      expect(result.context).toBeNull()
+      expect(result.actions.clockIn).toEqual({
+        disabled: true, reason: '今日未設定班表，無法打卡', window: null, formatted: null
+      })
+      expect(result.actions.clockOut.reason).toBe('今日未設定班表，無法打卡')
+    })
+
+    it('opens clock-in for tomorrow\'s 00:00 shift the evening before, as the server does', () => {
+      // 台北時間 2024-01-10 23:50；明天 00:00-08:00 的班，簽到時段 23:00 起
+      const now = new Date('2024-01-10T15:50:00.000Z')
+      const tomorrowOnly = determineActionAvailability({
+        now,
+        schedules: [{ date: '2024/01/11', shiftId: 'midnight' }],
+        shifts: [midnight]
+      })
+      expect(tomorrowOnly.actions.clockIn.disabled).toBe(false)
+      expect(tomorrowOnly.actions.clockIn.formatted).toEqual({ start: '23:00', end: '04:00' })
+      expect(tomorrowOnly.context.schedule.date).toBe('2024/01/11')
+
+      // 今天的日班已經下班，簽到要跟著明天的班，簽退仍然是今天這一班（時段已過）
+      const afterDayShift = determineActionAvailability({
+        now,
+        schedules: [
+          { date: '2024/01/10', shiftId: 'day' },
+          { date: '2024/01/11', shiftId: 'midnight' }
+        ],
+        shifts: [day, midnight]
+      })
+      expect(afterDayShift.actions.clockIn.disabled).toBe(false)
+      expect(afterDayShift.actions.clockIn.context.schedule.date).toBe('2024/01/11')
+      expect(afterDayShift.actions.clockOut.disabled).toBe(true)
+      expect(afterDayShift.actions.clockOut.context.schedule.date).toBe('2024/01/10')
+    })
+
+    it('does not open tomorrow\'s shift before its clock-in window', () => {
+      const result = determineActionAvailability({
+        // 台北時間 2024-01-10 20:00
+        now: new Date('2024-01-10T12:00:00.000Z'),
+        schedules: [{ date: '2024/01/11', shiftId: 'midnight' }],
+        shifts: [midnight]
+      })
+      expect(result.actions.clockIn.disabled).toBe(true)
+      expect(result.actions.clockIn.reason).toContain('未設定班表')
+    })
+
+    it('tells whether each action is before, inside or after its window', () => {
+      const at = iso => determineActionAvailability({
+        now: new Date(iso),
+        schedules: [{ date: '2024/01/10', shiftId: 'day' }],
+        shifts: [day]
+      }).actions
+      // 台北時間 06:30、09:00、18:30
+      expect(at('2024-01-09T22:30:00.000Z').clockIn.phase).toBe('before')
+      expect(at('2024-01-10T01:00:00.000Z').clockIn.phase).toBe('open')
+      expect(at('2024-01-10T10:30:00.000Z').clockIn.phase).toBe('after')
+      expect(at('2024-01-10T10:30:00.000Z').clockOut.phase).toBe('open')
+    })
+  })
+
+  describe('punches that belong to a shift', () => {
+    const span = computeShiftSpan(new Date(Date.UTC(2024, 0, 10)), { startTime: '22:00', endTime: '06:00', crossDay: true })
+    const context = { shiftStart: span.start, shiftEnd: span.end }
+
+    it('covers from the earliest clock-in to the latest clock-out of the shift', () => {
+      const range = computeShiftPunchRange(context)
+      // 台北時間 1/10 21:00 ~ 1/11 08:00
+      expect(range.start.toISOString()).toBe('2024-01-10T13:00:00.000Z')
+      expect(range.end.toISOString()).toBe('2024-01-11T00:00:00.000Z')
+      expect(computeShiftPunchRange(null)).toBeNull()
+    })
+
+    it('finds the clock-in and clock-out of the shift by the server\'s rules', () => {
+      const records = [
+        { action: 'clockIn', timestamp: '2024-01-10T13:40:00.000Z', source: 'import' }, // 21:40 指紋
+        { action: 'clockIn', timestamp: '2024-01-10T13:55:00.000Z', source: 'online' }, // 21:55 線上
+        { action: 'clockIn', timestamp: '2024-01-09T13:55:00.000Z', source: 'online' }, // 前一天
+        { action: 'clockOut', timestamp: '2024-01-10T22:05:00.000Z' }, // 1/11 06:05，舊資料沒有來源
+        { action: 'clockOut', timestamp: '2024-01-10T22:20:00.000Z', source: 'import' }, // 1/11 06:20 指紋
+        { action: 'outing', timestamp: '2024-01-10T15:00:00.000Z', source: 'online' }
+      ]
+      const punches = resolveShiftPunches(records, context)
+
+      // 顯示用：簽到取最早、簽退取最晚，任何來源都算
+      expect(punches.clockIn.record.timestamp).toBe('2024-01-10T13:40:00.000Z')
+      expect(punches.clockOut.record.timestamp).toBe('2024-01-10T22:20:00.000Z')
+      // 會被伺服器當成重複打卡的：不含指紋匯入
+      expect(punches.clockIn.blocking.timestamp).toBe('2024-01-10T13:55:00.000Z')
+      expect(punches.clockOut.blocking.timestamp).toBe('2024-01-10T22:05:00.000Z')
+    })
+
+    it('reports nothing when the shift has no punches or there is no shift', () => {
+      const none = { clockIn: { record: null, blocking: null }, clockOut: { record: null, blocking: null } }
+      expect(resolveShiftPunches([], context)).toEqual(none)
+      expect(resolveShiftPunches([{ action: 'clockIn', timestamp: '2024-01-10T13:55:00.000Z' }], null)).toEqual(none)
+      // 只有指紋匯入的簽到：算已簽到，但不擋線上簽到
+      const imported = resolveShiftPunches(
+        [{ action: 'clockIn', timestamp: '2024-01-10T13:55:00.000Z', source: 'import' }],
+        context
+      )
+      expect(imported.clockIn.record).not.toBeNull()
+      expect(imported.clockIn.blocking).toBeNull()
     })
   })
 

@@ -50,7 +50,8 @@ describe('LeaveBalancePanel', () => {
     const text = wrapper.text()
 
     expect(text).toContain('申請人假別餘額')
-    expect(text).toContain('2026/01/01-12/31')
+    // 期間寫完整日期、用「～」連接（全站的日期格式 YYYY/MM/DD）
+    expect(text).toContain('2026/01/01～2026/12/31')
     for (const name of ['特休', '事假', '病假', '婚假', '公假', '補休']) expect(text).toContain(name)
     expect(text).toContain('80 小時（10 天）') // 特休額度
     expect(text).toContain('64 小時（8 天）') // 特休剩餘
@@ -82,11 +83,14 @@ describe('LeaveBalancePanel', () => {
     const cells = personal.findAll('td')
     const [, , used, pending] = cells.map(cell => cell.text())
     expect(used).toContain('12 小時')
-    expect(used).toContain('含家庭照顧假 4 小時（4 小時）')
+    // 不滿一天的時數不再重複寫成「4 小時（4 小時）」
+    expect(used).toContain('含家庭照顧假 4 小時')
+    expect(used).not.toContain('4 小時（4 小時）')
     expect(used).not.toContain('含家庭照顧假 6 小時') // 簽核中的 2 小時不算進已使用的「含家庭照顧假」（合計 6 小時）
     expect(used).not.toContain('含家庭照顧假 2 小時')
     expect(pending).toContain('2 小時')
-    expect(pending).toContain('含家庭照顧假 2 小時（2 小時）')
+    expect(pending).toContain('含家庭照顧假 2 小時')
+    expect(pending).not.toContain('2 小時（2 小時）')
     expect(wrapper.findAll('[data-test="leave-balance-includes"]')).toHaveLength(1)
     expect(wrapper.findAll('[data-test="leave-balance-includes-pending"]')).toHaveLength(1)
   })
@@ -97,7 +101,7 @@ describe('LeaveBalancePanel', () => {
     const onlyPending = mountPanel({ balances: balances({ items, unmatched: [] }) })
     await flushPromises()
     expect(onlyPending.findAll('[data-test="leave-balance-includes"]')).toHaveLength(0)
-    expect(onlyPending.findAll('[data-test="leave-balance-includes-pending"]').map(node => node.text())).toEqual(['含家庭照顧假 3 小時（3 小時）'])
+    expect(onlyPending.findAll('[data-test="leave-balance-includes-pending"]').map(node => node.text())).toEqual(['含家庭照顧假 3 小時'])
 
     const approvedItems = serverItems()
     approvedItems[0].includes = [{ key: 'family_care', name: '家庭照顧假', approvedHours: 8, pendingHours: 0, hours: 8 }]

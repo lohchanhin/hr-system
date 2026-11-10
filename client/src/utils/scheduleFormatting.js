@@ -1,4 +1,5 @@
-import dayjs from 'dayjs'
+import { getShiftSemanticLabel, hasNoWorkingTime, isNonWorkSemanticType, resolveShiftSemanticType } from './shiftSemantics'
+import { scheduleDateKey } from './scheduleKeys'
 
 /** Formats a shift's code/name into the "CODE(name)" label used in legends and cells. */
 export function formatShiftLabel(shift) {
@@ -7,6 +8,37 @@ export function formatShiftLabel(shift) {
   const name = shift.name ?? ''
   if (!code && !name) return ''
   return name ? `${code}(${name})` : code
+}
+
+const toClockMinutes = value => {
+  const match = /^(\d{1,2}):(\d{2})/.exec(String(value || '').trim())
+  return match ? Number(match[1]) * 60 + Number(match[2]) : null
+}
+
+/**
+ * 班別的上下班時間：「08:30–17:30」；跨日的班別（勾了跨日，或下班時間不晚於上班時間）標「次日」：「22:00–次日 06:00」。
+ * 不用上班的班別（休息日、例假、國定假日、請假，或 00:00–00:00）回傳空字串。
+ */
+export function describeShiftTime(shift) {
+  if (!shift || typeof shift !== 'object') return ''
+  if (isNonWorkSemanticType(resolveShiftSemanticType(shift)) || hasNoWorkingTime(shift)) return ''
+  const start = String(shift.startTime || '').trim()
+  const end = String(shift.endTime || '').trim()
+  if (!start || !end) return ''
+  const startMinutes = toClockMinutes(start)
+  const endMinutes = toClockMinutes(end)
+  const crossesMidnight = shift.crossDay === true ||
+    (startMinutes !== null && endMinutes !== null && endMinutes <= startMinutes)
+  return `${start}–${crossesMidnight ? '次日 ' : ''}${end}`
+}
+
+/** 班表格子的提示文字：班別名稱、上下班時間（不用上班的班別顯示班別性質）與備註。 */
+export function describeShiftTooltip(shift) {
+  if (!shift || typeof shift !== 'object') return ''
+  const parts = [formatShiftLabel(shift), describeShiftTime(shift) || getShiftSemanticLabel(shift)]
+  const remark = String(shift.remark || '').trim()
+  if (remark) parts.push(remark)
+  return parts.filter(Boolean).join('｜')
 }
 
 /** Formats one row-level import error object into a user-facing line of text. */
@@ -85,8 +117,9 @@ export function formatLaborRuleViolation(item = {}, employees = []) {
   const employee = item.employeeCode || item.employeeName
     ? pendingEmployeeLabel(item, employees)
     : getEmployeeIssueLabel(item.employee, employees)
-  const parsedDate = dayjs(item.date || item.weekStart || item.startDate || item.dates?.[0] || '')
-  const date = parsedDate?.isValid() ? ` ${parsedDate.format('YYYY-MM-DD')}` : ''
+  // 伺服器的日期是該日的 UTC 午夜：直接取日期部分，不依瀏覽器時區換算
+  const dateKey = scheduleDateKey(item.date || item.weekStart || item.startDate || item.dates?.[0] || '')
+  const date = dateKey ? ` ${dateKey}` : ''
   const rule = item.rule ? ` [${LABOR_RULE_LABELS[item.rule] || item.rule}]` : ''
   const subject = `${employee}${date}${rule}`.trim()
   return `${subject ? `${subject}：` : ''}${item.message || '排班規範檢核未通過'}`
@@ -224,7 +257,7 @@ export function buildScheduleImportConfirmMessage({
   const violationLines = (Array.isArray(violations) ? violations : []).filter(Boolean)
   if (violationLines.length) {
     blocks.push([
-      `排班規範問題（${violationLines.length} 項，可先存為草稿，發布前必須修正）：`,
+      `排班規範問題（${violationLines.length} 項，可先存為草稿，建議發布前修正）：`,
       ...bulletLines(limitDialogLines(violationLines, lineLimit), lineLimit),
     ].join('\n'))
   }

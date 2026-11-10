@@ -46,11 +46,15 @@ function pickField(fields, matchesLabel) {
  */
 export function pickLeaveFields(fields) {
   const ordered = [...(fields || [])].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+  // 假別：啟用中的欄位一律優先於停用的。舊的「假別」被停用、換成「假別類別 (C12)」後，新假單的答案在新欄位底下；
+  // 還挑停用的那一個會讀不到假別（認不出特休，不檢查餘額也不扣特休）
+  const isActive = (field) => field.is_active !== false;
+  const exactTypes = ordered.filter((field) => normalizeLeaveFieldLabel(field.label) === '假別');
+  const looseTypes = ordered.filter((field) => isLeaveTypeLabel(field.label));
   return {
     startField: pickField(ordered, isLeaveStartLabel),
     endField: pickField(ordered, isLeaveEndLabel),
-    typeField: pickField(ordered, (label) => normalizeLeaveFieldLabel(label) === '假別')
-      ?? pickField(ordered, isLeaveTypeLabel),
+    typeField: exactTypes.find(isActive) ?? looseTypes.find(isActive) ?? exactTypes[0] ?? looseTypes[0],
     daysField: pickField(ordered, isLeaveDaysLabel),
     hoursField: pickField(ordered, isLeaveHoursLabel),
   };

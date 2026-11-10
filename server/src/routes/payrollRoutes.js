@@ -19,10 +19,16 @@ import {
   getEmployeeWorkHours,
   getEmployeeLeaveImpact,
   getEmployeeOvertimePay,
-  getEmployeeCompleteWorkData
+  getEmployeeCompleteWorkData,
+  getPayrollPolicySettings,
+  updatePayrollPolicySettings
 } from '../controllers/payrollController.js';
 
 const router = Router();
+
+// 薪資政策（月中到職／離職的比例、加班費倍率、新進員工自動計算加班費）：固定路徑，必須在 '/:id' 之前
+router.get('/policy', getPayrollPolicySettings);
+router.put('/policy', updatePayrollPolicySettings);
 
 // Basic CRUD
 router.get('/', listPayrolls);

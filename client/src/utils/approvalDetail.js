@@ -4,30 +4,15 @@
 import { apiFetch } from '../api'
 import { readApiError } from './approvalErrors'
 import { formatFormValue, formatTaipeiDateTime, isBlankValue } from './approvalDisplay'
+import { approvalStatusTagType, approvalStatusText } from './approvalStatus'
 
-const STATUS_TEXT = {
-  pending: '待簽核',
-  approved: '已核可',
-  rejected: '已否決',
-  returned: '已退簽',
-  canceled: '已撤回',
-  skipped: '已由其他人處理',
-}
-
+// 狀態的文字與標籤顏色定義在 utils/approvalStatus.js（排班頁的相關簽核、調休存摺也用同一份）
 export function getStatusText(status) {
-  return STATUS_TEXT[status] || status || '-'
+  return approvalStatusText(status)
 }
 
 export function getStatusTagType(status) {
-  const typeMap = {
-    pending: 'warning',
-    approved: 'success',
-    rejected: 'danger',
-    returned: 'info',
-    canceled: 'info',
-    skipped: 'info',
-  }
-  return typeMap[status] || 'info'
+  return approvalStatusTagType(status)
 }
 
 /* -------------------- 附件 -------------------- */

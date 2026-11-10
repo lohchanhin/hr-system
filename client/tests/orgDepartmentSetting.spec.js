@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
-import ElementPlus, { ElMessage } from 'element-plus'
+import ElementPlus, { ElMessage, ElMessageBox } from 'element-plus'
 import OrgDepartmentSetting from '../src/components/backComponents/OrgDepartmentSetting.vue'
 import { apiFetch } from '../src/api'
 import { backendHelpContent } from '../src/constants/backendHelpContent'
@@ -196,7 +196,11 @@ describe('OrgDepartmentSetting.vue', () => {
     expect(payload).toEqual({ department: 'dept1', name: '夜班組', code: 'N1', schedulers: [], allowedShiftIds: [] })
   })
 
-  it('顯示選取部門的機構與部門組合', async () => {
+  // 2026/11：三個分頁各一張清單（加上「機構-部門」標籤說明目前篩選的部門）改成一張階層表，機構 › 部門 › 小單位直接看得到
+  const treeNames = wrapper => wrapper.findAll('[data-test="org-tree"] .el-table__body tr [data-test="node-name"]').map(node => node.text())
+  const treeRow = (wrapper, name) => wrapper.findAll('[data-test="org-tree"] .el-table__body tr').find(row => row.find('[data-test="node-name"]').text() === name)
+
+  it('shows 機構 › 部門 › 小單位 as one tree with the counts of what each one contains', async () => {
     const wrapper = mount(OrgDepartmentSetting, { global: { plugins: [ElementPlus] } })
     await flushPromises()
     wrapper.vm.orgList = [
@@ -207,18 +211,79 @@ describe('OrgDepartmentSetting.vue', () => {
       { _id: 'dept1', name: '人資部', organization: 'org1' },
       { _id: 'dept2', name: '研發部', organization: 'org2' }
     ]
+    wrapper.vm.subList = [
+      { _id: 'sub1', name: '招募組', department: 'dept1' },
+      { _id: 'sub2', name: '薪資組', department: 'dept1' }
+    ]
+    wrapper.vm.managerList = [
+      { label: '王小明', value: 'e1', department: 'dept1', subDepartment: 'sub1', active: true },
+      { label: '李小華', value: 'e2', department: 'dept1', subDepartment: null, active: true },
+      { label: '陳大文', value: 'e3', department: 'dept2', subDepartment: null, active: true }
+    ]
+    await flushPromises()
 
-    wrapper.vm.selectedDept = 'dept1'
-    await wrapper.vm.$nextTick()
-    expect(wrapper.find('.dept-context-tag').text()).toBe('總公司-人資部')
+    expect(treeNames(wrapper)).toEqual(['總公司', '人資部', '招募組', '薪資組', '分公司', '研發部'])
+    expect(treeRow(wrapper, '總公司').find('[data-test="node-counts"]').text()).toBe('1 部門・2 小單位・2 人')
+    expect(treeRow(wrapper, '人資部').find('[data-test="node-counts"]').text()).toBe('2 小單位・2 人')
+    expect(treeRow(wrapper, '招募組').find('[data-test="node-counts"]').text()).toBe('1 人')
+    expect(treeRow(wrapper, '研發部').find('[data-test="node-counts"]').text()).toBe('0 小單位・1 人')
+    // 上方的數字是全部的筆數
+    expect(wrapper.find('[data-test="stat-org"]').text()).toBe('2')
+    expect(wrapper.find('[data-test="stat-dept"]').text()).toBe('2')
+    expect(wrapper.find('[data-test="stat-sub"]').text()).toBe('2')
+  })
 
-    wrapper.vm.selectedDept = 'dept2'
-    await wrapper.vm.$nextTick()
-    expect(wrapper.find('.dept-context-tag').text()).toBe('分公司-研發部')
+  it('pre-fills the parent when a child is added from its parent row, and names the organisation of each department in the unit form', async () => {
+    const wrapper = mount(OrgDepartmentSetting, { global: { plugins: [ElementPlus] } })
+    await flushPromises()
+    wrapper.vm.orgList = [{ _id: 'org1', name: '總公司' }, { _id: 'org2', name: '分公司' }]
+    wrapper.vm.deptList = [
+      { _id: 'dept1', name: '護理部', organization: 'org1' },
+      { _id: 'dept2', name: '護理部', organization: 'org2' }
+    ]
+    await flushPromises()
 
-    wrapper.vm.selectedDept = ''
-    await wrapper.vm.$nextTick()
-    expect(wrapper.find('.dept-context-tag').text()).toBe('請選擇部門')
+    await treeRow(wrapper, '分公司').find('[data-test="add-child"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.vm.dialogVisible).toBe(true)
+    expect(wrapper.vm.editIndex).toBeNull()
+    expect(wrapper.vm.form.organization).toBe('org2')
+
+    const deptRows = wrapper.findAll('[data-test="org-tree"] .el-table__body tr').filter(row => row.find('[data-test="node-name"]').text() === '護理部')
+    await deptRows[1].find('[data-test="add-child"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.vm.form.department).toBe('dept2')
+    // 同名的部門後面附上機構名稱才分得出來
+    expect(wrapper.vm.deptSelectOptions).toEqual([
+      { value: 'dept1', label: '護理部（總公司）' },
+      { value: 'dept2', label: '護理部（分公司）' }
+    ])
+  })
+
+  it('keeps departments and units whose parent no longer exists visible, and shows a deleted parent by name in the form instead of a raw id', async () => {
+    const wrapper = mount(OrgDepartmentSetting, { global: { plugins: [ElementPlus] } })
+    await flushPromises()
+    wrapper.vm.orgList = [{ _id: 'org1', name: '總公司' }]
+    wrapper.vm.deptList = [{ _id: 'dept9', name: '舊部門', organization: 'gone-org' }]
+    wrapper.vm.subList = [{ _id: 'sub9', name: '舊小組', department: 'gone-dept' }]
+    await flushPromises()
+
+    expect(treeNames(wrapper)).toEqual([
+      '總公司',
+      '找不到所屬機構（請編輯部門重新選擇）',
+      '舊部門',
+      '找不到所屬部門（請編輯小單位重新選擇）',
+      '舊小組'
+    ])
+    // 找不到的上層那一列沒有操作按鈕
+    expect(treeRow(wrapper, '找不到所屬機構（請編輯部門重新選擇）').find('[data-test="edit-node"]').exists()).toBe(false)
+
+    await treeRow(wrapper, '舊部門').find('[data-test="edit-node"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.vm.orgSelectOptions).toEqual([
+      { value: 'org1', label: '總公司' },
+      { value: 'gone-org', label: '已刪除的機構' }
+    ])
   })
 
   describe('排班人員、使用班別、使用簽核表單', () => {
@@ -333,21 +398,111 @@ describe('OrgDepartmentSetting.vue', () => {
     })
   })
 
-  it('選取部門時顯示名稱會更新', async () => {
+  // 2026/11：篩選改成在畫面上篩（以前換篩選會重新向伺服器要一份縮小的清單，上方的數字和其他分頁的選單跟著變少）
+  it('filters the tree by organisation and by keyword without refetching, and the counters keep showing the totals', async () => {
     const wrapper = mount(OrgDepartmentSetting, { global: { plugins: [ElementPlus] } })
     await flushPromises()
+    wrapper.vm.orgList = [{ _id: 'org1', name: '總公司' }, { _id: 'org2', name: '分公司' }]
     wrapper.vm.deptList = [
-      { _id: 'd1', name: '人資部' },
-      { _id: 'd2', name: '財務部' }
+      { _id: 'd1', name: '人資部', organization: 'org1' },
+      { _id: 'd2', name: '財務部', organization: 'org2', code: 'FIN' }
     ]
+    wrapper.vm.subList = [{ _id: 's1', name: '出納組', department: 'd2' }]
+    await flushPromises()
+    apiFetch.mockClear()
 
-    wrapper.vm.selectedDept = 'd1'
-    await wrapper.vm.$nextTick()
-    expect(wrapper.html()).toContain('目前部門：人資部')
+    wrapper.vm.selectedOrg = 'org2'
+    await flushPromises()
+    expect(treeNames(wrapper)).toEqual(['分公司', '財務部', '出納組'])
 
-    wrapper.vm.selectedDept = 'd2'
-    await wrapper.vm.$nextTick()
-    expect(wrapper.html()).toContain('目前部門：財務部')
+    wrapper.vm.selectedOrg = ''
+    wrapper.vm.keyword = '出納'
+    await flushPromises()
+    // 符合的小單位連同它的上層一起留下
+    expect(treeNames(wrapper)).toEqual(['分公司', '財務部', '出納組'])
+
+    wrapper.vm.keyword = 'fin'
+    await flushPromises()
+    expect(treeNames(wrapper)).toEqual(['分公司', '財務部', '出納組'])
+
+    wrapper.vm.keyword = '沒有這個名稱'
+    await flushPromises()
+    expect(treeNames(wrapper)).toEqual([])
+    expect(wrapper.find('[data-test="org-tree-empty"]').text()).toBe('找不到符合的機構、部門或小單位')
+
+    expect(apiFetch).not.toHaveBeenCalled()
+    expect(wrapper.vm.deptList).toHaveLength(2)
+    expect(wrapper.find('[data-test="stat-dept"]').text()).toBe('2')
+  })
+
+  it('asks before deleting, says what is lost, shows the reason of the server when it refuses, and reloads the lists', async () => {
+    const confirm = vi.spyOn(ElMessageBox, 'confirm').mockResolvedValue('confirm')
+    const alert = vi.spyOn(ElMessageBox, 'alert').mockResolvedValue('confirm')
+    const errorSpy = vi.spyOn(ElMessage, 'error').mockImplementation(() => {})
+    const successSpy = vi.spyOn(ElMessage, 'success').mockImplementation(() => {})
+    let deleteResponse = () => Promise.resolve({ ok: true, status: 200, json: async () => ({ success: true }) })
+    apiFetch.mockImplementation((url, options = {}) => {
+      if (options.method === 'DELETE') return deleteResponse()
+      if (url === '/api/organizations') return Promise.resolve({ ok: true, json: async () => [{ _id: 'org1', name: '總公司' }] })
+      if (url === '/api/departments') return Promise.resolve({ ok: true, json: async () => [{ _id: 'd1', name: '人資部', organization: 'org1' }] })
+      if (url === '/api/sub-departments') return Promise.resolve({ ok: true, json: async () => [{ _id: 's1', name: '招募組', department: 'd1' }] })
+      return Promise.resolve({ ok: true, json: async () => [] })
+    })
+    const wrapper = mount(OrgDepartmentSetting, { global: { plugins: [ElementPlus] } })
+    await flushPromises()
+    const deletes = () => apiFetch.mock.calls.filter(([, options]) => options?.method === 'DELETE')
+
+    // 底下還有小單位的部門：不能刪，說明原因，不送出請求
+    await treeRow(wrapper, '人資部').find('[data-test="delete-node"]').trigger('click')
+    await flushPromises()
+    expect(alert).toHaveBeenCalledTimes(1)
+    expect(alert.mock.calls[0][0]).toBe('「人資部」還有 1 個小單位，請先把它們移到其他部門或刪除後，再刪除這個部門')
+    expect(confirm).not.toHaveBeenCalled()
+    expect(deletes()).toHaveLength(0)
+
+    // 取消確認：不送出
+    confirm.mockRejectedValueOnce('cancel')
+    await treeRow(wrapper, '招募組').find('[data-test="delete-node"]').trigger('click')
+    await flushPromises()
+    expect(confirm.mock.calls[0][0]).toBe('確定要刪除小單位「招募組」嗎？這個小單位的排班人員與使用班別設定會一併刪除，被指定的排班人員不能再排這個小單位，無法復原。')
+    expect(deletes()).toHaveLength(0)
+
+    // 伺服器拒絕（還有員工、或簽核流程指定了這個小單位）：顯示它的原因
+    deleteResponse = () => Promise.resolve({
+      ok: false,
+      status: 409,
+      json: async () => ({ error: '「招募組」還有 2 位員工在使用，請先把員工移到其他小單位、調整簽核流程後，再刪除這個小單位', code: 'IN_USE' })
+    })
+    await treeRow(wrapper, '招募組').find('[data-test="delete-node"]').trigger('click')
+    await flushPromises()
+    expect(deletes()).toHaveLength(1)
+    expect(deletes()[0][0]).toBe('/api/sub-departments/s1')
+    expect(errorSpy).toHaveBeenLastCalledWith('「招募組」還有 2 位員工在使用，請先把員工移到其他小單位、調整簽核流程後，再刪除這個小單位')
+    expect(successSpy).not.toHaveBeenCalled()
+    expect(treeNames(wrapper)).toContain('招募組')
+
+    // 成功：提示並重新讀清單（不是只把畫面上那一列拿掉）
+    deleteResponse = () => Promise.resolve({ ok: true, status: 200, json: async () => ({ success: true }) })
+    const listCallsBefore = apiFetch.mock.calls.filter(([url]) => url === '/api/sub-departments').length
+    await treeRow(wrapper, '招募組').find('[data-test="delete-node"]').trigger('click')
+    await flushPromises()
+    expect(deletes()).toHaveLength(2)
+    expect(successSpy).toHaveBeenLastCalledWith('已刪除小單位')
+    expect(apiFetch.mock.calls.filter(([url]) => url === '/api/sub-departments').length).toBe(listCallsBefore + 1)
+  })
+
+  it('sends a save only once when the button is pressed twice', async () => {
+    const wrapper = mount(OrgDepartmentSetting, { global: { plugins: [ElementPlus] } })
+    await flushPromises()
+    await wrapper.vm.openDialog('org')
+    wrapper.vm.form.name = '新機構'
+    apiFetch.mockClear()
+
+    const first = wrapper.vm.saveItem()
+    const second = wrapper.vm.saveItem()
+    await Promise.all([first, second])
+
+    expect(apiFetch.mock.calls.filter(([, options]) => options?.method === 'POST')).toHaveLength(1)
   })
 })
 
@@ -441,13 +596,18 @@ describe('OrgDepartmentSetting.vue 小單位設定只留有功能的欄位', () 
     expect(schedulerHint).toContain('員工資料設定的直屬主管')
     expect(schedulerHint).not.toContain('「部門主管」')
 
-    const unitTable = wrapper.findAll('.el-table').find(table => table.text().includes('小單位名稱'))
-    const headers = unitTable.findAll('thead th').map(th => th.text()).filter(Boolean)
-    expect(headers).toEqual(['小單位名稱', '代碼', '排班人員', '使用班別', '操作'])
-    expect(unitTable.text()).toContain('B1 病房')
-    expect(unitTable.text()).not.toContain('舊單位名稱')
+    // 2026/11：小單位列在階層表裡（機構 › 部門 › 小單位），欄位是名稱、代碼、排班、可使用、包含、操作
+    const tree = wrapper.find('[data-test="org-tree"]')
+    const headers = tree.findAll('thead th').map(th => th.text()).filter(Boolean)
+    expect(headers).toEqual(['名稱', '代碼', '排班', '可使用', '包含', '操作'])
+    const unitRow = tree.findAll('.el-table__body tr').find(row => row.text().includes('B1 病房'))
+    expect(unitRow.text()).toContain('排班人員：王小明')
+    expect(tree.text()).not.toContain('舊單位名稱')
+    for (const hidden of ['IC-9', '12345678', '三樓', '林負責', '王組長', '舊排班設定']) {
+      expect(tree.text()).not.toContain(hidden)
+    }
     // 列表的使用班別只摘要上班的班別
-    expect(unitTable.find('[data-test="sub-shift-scope"]').text()).toBe('N')
+    expect(unitRow.find('[data-test="sub-shift-scope"]').text()).toBe('N')
     wrapper.unmount()
   })
 
@@ -647,7 +807,6 @@ describe('OrgDepartmentSetting.vue 部門與機構設定只留有功能的欄位
     return call ? { url: call[0], method: call[1].method, body: JSON.parse(call[1].body) } : null
   }
   const dialogLabels = wrapper => wrapper.findAll('.dialog-form .el-form-item__label').map(label => label.text())
-  const tableWith = (wrapper, header) => wrapper.findAll('.el-table').find(table => table.find('thead').text().includes(header))
   const headersOf = table => table.findAll('thead th').map(th => th.text()).filter(Boolean)
 
   it('shows only the functional department fields, explains the 排班管理者, and drops the non-functional columns', async () => {
@@ -669,12 +828,16 @@ describe('OrgDepartmentSetting.vue 部門與機構設定只留有功能的欄位
     expect(wrapper.find('[data-test="dept-code-hint"]').text()).toContain('員工批次匯入')
     expect(wrapper.find('[data-test="dept-unit-name-hint"]').text()).toContain('匯出排班表')
 
-    const deptTable = tableWith(wrapper, '部門代碼')
-    expect(headersOf(deptTable)).toEqual(['部門名稱', '部門代碼', '使用簽核表單', '操作'])
-    expect(deptTable.text()).toContain('護理部')
-    expect(deptTable.text()).toContain('護理單位')
+    // 2026/11：部門列在階層表裡，帶出排班管理者與使用簽核表單
+    const tree = wrapper.find('[data-test="org-tree"]')
+    expect(headersOf(tree)).toEqual(['名稱', '代碼', '排班', '可使用', '包含', '操作'])
+    const deptRow = tree.findAll('.el-table__body tr').find(row => row.text().includes('護理部'))
+    expect(deptRow.text()).toContain('護理單位')
+    expect(deptRow.text()).toContain('NUR')
+    expect(deptRow.find('[data-test="dept-manager-name"]').text()).toBe('排班管理者：李主管')
+    expect(deptRow.find('[data-test="dept-form-scope"]').text()).toBe('簽核表單：1 張表單')
     for (const hidden of ['IC-9', '87654321', '三樓', '林負責', '王護理長']) {
-      expect(deptTable.text()).not.toContain(hidden)
+      expect(tree.text()).not.toContain(hidden)
     }
     wrapper.unmount()
   })
@@ -690,11 +853,12 @@ describe('OrgDepartmentSetting.vue 部門與機構設定只留有功能的欄位
     }
     expect(wrapper.find('[data-test="org-import-hint"]').text()).toContain('員工批次匯入')
 
-    const orgTable = tableWith(wrapper, '系統代碼')
-    expect(headersOf(orgTable)).toEqual(['機構名稱', '系統代碼', '操作'])
-    expect(orgTable.text()).toContain('迦南醫院')
-    expect(orgTable.text()).not.toContain('08-7654321')
-    expect(orgTable.text()).not.toContain('陳院長')
+    const tree = wrapper.find('[data-test="org-tree"]')
+    const orgRow = tree.findAll('.el-table__body tr').find(row => row.text().includes('迦南醫院'))
+    expect(orgRow.text()).toContain('SYS-01')
+    expect(orgRow.find('[data-test="node-counts"]').text()).toBe('1 部門・0 小單位・0 人')
+    expect(tree.text()).not.toContain('08-7654321')
+    expect(tree.text()).not.toContain('陳院長')
     wrapper.unmount()
   })
 
@@ -784,7 +948,9 @@ describe('OrgDepartmentSetting.vue 部門與機構設定只留有功能的欄位
     const text = [help.description, ...help.scenarios, ...help.tips, ...help.steps].join('\n')
     expect(text).toContain('機構只需設定名稱、系統代碼、單位名稱與機構代碼')
     expect(text).toContain('部門只需設定所屬機構')
-    expect(text).toContain('預設週休二日、允許臨時調班沒有功能')
+    // 說明改寫成頁面現在的樣子：不再列出以前隱藏的舊欄位（預設週休二日、允許臨時調班…）
+    expect(text).not.toContain('已不顯示')
+    expect(text).toContain('同一棵樹')
     expect(text).toContain('排班管理者」不論是不是主管，都可以排整個部門的班')
     expect(text).toContain('沒有小單位的員工')
     expect(text).toContain('簽核找的是員工資料設定的直屬主管')

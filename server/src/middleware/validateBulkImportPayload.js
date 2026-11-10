@@ -1,4 +1,6 @@
-const REFERENCE_KEYS = ['organization', 'department', 'subDepartment']
+// 與 employeeBulkImportController 的 REFERENCE_KEYS 相同：少了 supervisor 時，畫面送來的「主管」對應與略過會在這裡被丟掉，
+// 檔案裡只要有一位系統不認得的主管，怎麼對應都回 409，整份檔案匯不進去
+const REFERENCE_KEYS = ['organization', 'department', 'subDepartment', 'supervisor']
 
 function normalizeReferenceKey(value) {
   if (value === null || value === undefined) return ''

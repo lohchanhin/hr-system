@@ -220,7 +220,7 @@ describe('LeaveOvertimeSetting 假別額度與餘額規則', () => {
 
     wrapper.vm.restorePolicyDefaults()
     expect(wrapper.vm.policy.types.map(item => item.key)).toEqual(['annual', 'personal', 'family_care', 'official'])
-    expect(messageInfo).toHaveBeenCalledWith('已還原成預設值，按「儲存假別規則」才會生效')
+    expect(messageInfo).toHaveBeenCalledWith('已還原成預設值，按「儲存」才會生效')
   })
 
   it('formats the per-event ceiling and the counted-against setting', async () => {

@@ -336,18 +336,22 @@ describe('ApprovalFlowSetting - 套用字典類自訂欄位（連結字典）', 
     expect(wrapper.find('[data-test="field-options"]').attributes('disabled')).toBeUndefined()
   })
 
-  it('連結字典後把型別改成非下拉欄位時，選項恢復可編輯', async () => {
+  // 2026/11：「選項」只在下拉 / 複選欄位顯示；改成其他型別時整個選項欄位不顯示（以前是留著、恢復可編輯）
+  it('連結字典後把型別改成非下拉欄位時，不再連結字典，選項欄位也不顯示', async () => {
     mockApis()
     const wrapper = await mountFieldsTab()
 
     wrapper.vm.openFieldDialog()
     wrapper.vm.handleCustomFieldSelect('C12')
+    await nextTick()
     expect(wrapper.vm.fieldDialogLinked).toBe(true)
+    expect(wrapper.find('[data-test="field-options"]').attributes('disabled')).toBeDefined()
 
     wrapper.vm.fieldDialog.type_1 = 'text'
     await nextTick()
     expect(wrapper.vm.fieldDialogLinked).toBe(false)
-    expect(wrapper.find('[data-test="field-options"]').attributes('disabled')).toBeUndefined()
+    expect(wrapper.find('[data-test="field-options"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="dictionary-hint"]').exists()).toBe(false)
   })
 
   it('編輯伺服器已連結的欄位（dictionaryKey）時以連結狀態開啟，並改用即時字典項目', async () => {
@@ -461,7 +465,8 @@ describe('ApprovalFlowSetting - 套用字典類自訂欄位（連結字典）', 
     expect(body.field_key).toBe('')
   })
 
-  it('欄位表格對下拉 / 複選欄位顯示「字典：代碼」或「手動」，其他型別不顯示', async () => {
+  // 2026/11：字典顯示名稱（自訂欄位的標籤），不只是代碼；找不到名稱時才顯示代碼
+  it('欄位表格對下拉 / 複選欄位顯示「字典：名稱」或「手動」，其他型別不顯示', async () => {
     fieldRows = [
       { _id: 'f1', label: '假別類別 (C12)', type_1: 'select', required: true, order: 0, field_key: '', dictionaryKey: 'C12', optionsSource: 'dictionary', options: [] },
       { _id: 'f2', label: '手動下拉', type_1: 'select', required: false, order: 1, dictionaryKey: null, optionsSource: 'own', options: ['A', 'B'] },
@@ -473,7 +478,12 @@ describe('ApprovalFlowSetting - 套用字典類自訂欄位（連結字典）', 
     const wrapper = await mountFieldsTab()
 
     const tags = wrapper.findAll('.field-source-tag').map(tag => tag.text())
-    expect(tags).toEqual(['字典：C12', '手動', '字典：C14', '手動'])
+    // C12 有字典類自訂欄位「假別類別 (C12)」；C14 沒有對應的自訂欄位，顯示代碼
+    expect(tags).toEqual(['字典：假別類別 (C12)', '手動', '字典：C14', '手動'])
+    // 選項欄另外預覽前幾個選項
+    expect(wrapper.findAll('.field-options-preview').map(preview => preview.text())).toEqual([
+      '尚未設定選項', 'A、B', '尚未設定選項', 'X'
+    ])
   })
 
   it('勾選必填時不回寫連結欄位被解析過的 options，手動欄位則維持原行為', async () => {

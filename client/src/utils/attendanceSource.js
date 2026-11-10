@@ -7,6 +7,10 @@ const SOURCE_META = {
   legacy: { label: '未標示', tagType: 'info' }
 }
 
+// 員工自己的打卡頁只標示「不是自己在這一頁打的」記錄（指紋匯入、手動補登）；
+// 線上打卡是預設情況、舊資料的「未標示」對員工沒有意義，都不顯示標籤
+const EMPLOYEE_VISIBLE_SOURCES = ['import', 'manual']
+
 export function resolveAttendanceSource(source) {
   return Object.prototype.hasOwnProperty.call(SOURCE_META, source) ? source : 'legacy'
 }
@@ -17,4 +21,9 @@ export function attendanceSourceLabel(source) {
 
 export function attendanceSourceTagType(source) {
   return SOURCE_META[resolveAttendanceSource(source)].tagType
+}
+
+/** 員工的打卡記錄清單要不要顯示這一筆的來源標籤 */
+export function isAttendanceSourceNotable(source) {
+  return EMPLOYEE_VISIBLE_SOURCES.includes(resolveAttendanceSource(source))
 }

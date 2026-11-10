@@ -3,6 +3,7 @@
 //   status：available 未使用／partial 部分使用／used 已使用／expired 已過期／void 已失效
 //   usages[].kind：leave_request 調休簽核／hr_assigned HR 指定／adjustment 人資扣除
 import { formatBankHours, formatDays, formatHours } from './leaveBalance'
+import { APPROVAL_STATUS_TEXT } from './approvalStatus'
 
 export const COMP_LEAVE_HELP_TEXT = '國定假日剛好是您的休息日、例假（行政人員是週六、週日或公司休息日）時，系統自動存入一筆調休（移休），'
   + '預設保存、不會自動放假；要使用時在申請表單選假別「調休」（或移休、補休、補假）發起簽核，核准後從最早到期、最早取得的調休扣起。'
@@ -30,13 +31,6 @@ export const CONFLICT_REASON_TEXT = {
   date_not_workday: '整天調休的日子之後被排成休息日／例假，員工並沒有因此多休一天，請人資確認',
 }
 
-const APPROVAL_STATUS_TEXT = {
-  approved: '已核准',
-  pending: '簽核中',
-  rejected: '已否決',
-  returned: '已退回',
-  canceled: '已撤回',
-}
 
 /** 'YYYY-MM-DD' -> 'YYYY/MM/DD' */
 export function formatDateKey(value) {
@@ -54,7 +48,7 @@ export function describeCreditHours(credit) {
   return parts.join('，')
 }
 
-/** 一筆使用紀錄：「調休簽核 8 小時（1 天；2026/10/26 整天，已核准）」「HR 指定 8 小時（1 天；2026/03/02 整天）：與員工協商」 */
+/** 一筆使用紀錄：「調休簽核 8 小時（1 天；2026/10/26 整天，已核可）」「HR 指定 8 小時（1 天；2026/03/02 整天）：與員工協商」 */
 export function describeUsage(usage) {
   if (!usage) return ''
   const label = usage.kindLabel || { leave_request: '調休簽核', hr_assigned: 'HR 指定', adjustment: '人資扣除' }[usage.kind] || '使用'

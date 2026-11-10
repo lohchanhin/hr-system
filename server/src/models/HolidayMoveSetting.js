@@ -28,36 +28,41 @@ function normalizeUtcDate(value) {
   return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
 }
 
+// 檢查訊息直接給管理員看（中文）；code 給畫面判斷用
+function moveError(message, code) {
+  return Object.assign(new Error(message), { code });
+}
+
 holidayMoveSettingSchema.pre('validate', function validateMove(next) {
   const hasSource = this.sourceDate != null;
   const hasTarget = this.targetDate != null;
   if (hasSource !== hasTarget) {
-    return next(new Error('sourceDate and targetDate must be provided together'));
+    return next(moveError('請選擇原國定假日與改放的日期', 'MOVE_DATES_REQUIRED'));
   }
   if (!hasSource) return next();
 
   // 調移國定假日一律需要勞資會議（或工會）同意的協議文號與日期
   if (!String(this.agreementReference ?? '').trim() || !this.agreementDate) {
-    return next(new Error('labor agreement reference and date are required'));
+    return next(moveError('請填寫同意文件編號與同意日期', 'AGREEMENT_REQUIRED'));
   }
   if (this.needMakeup && !this.makeupConfirmed) {
-    return next(new Error('makeup holiday must be explicitly confirmed'));
+    return next(moveError('這筆舊資料勾選了「安排補班」但沒有確認，請聯絡系統管理員', 'MAKEUP_UNCONFIRMED'));
   }
 
   const source = normalizeUtcDate(this.sourceDate);
   const target = normalizeUtcDate(this.targetDate);
   if (!source || !target) {
-    return next(new Error('sourceDate and targetDate must be valid dates'));
+    return next(moveError('日期格式不正確', 'INVALID_MOVE_DATE'));
   }
   if (!this.enableHolidayMove) {
-    return next(new Error('dated holiday moves must be enabled'));
+    return next(moveError('請先啟用國定假日調移，再設定調移日期', 'MOVE_DISABLED'));
   }
   if (source.getTime() === target.getTime()) {
-    return next(new Error('targetDate must differ from sourceDate'));
+    return next(moveError('改放的日期不能和原國定假日同一天', 'SAME_DATE'));
   }
   // 可以跨月（例如 2027-02-28 週日的和平紀念日移到 3/2），但不能超過一年
   if (Math.abs(target.getTime() - source.getTime()) > MAX_MOVE_DISTANCE_MS) {
-    return next(new Error('national holiday moves must stay within 366 days'));
+    return next(moveError('改放的日期不能和原國定假日相差超過一年', 'MOVE_TOO_FAR'));
   }
   this.sourceDate = source;
   this.targetDate = target;

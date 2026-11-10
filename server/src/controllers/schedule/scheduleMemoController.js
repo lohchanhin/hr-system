@@ -7,10 +7,10 @@ export async function listScheduleDayMemos(req, res) {
     const department = String(req.query?.department || '').trim();
     const subDepartment = String(req.query?.subDepartment || '').trim();
     if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month) || !department) {
-      return res.status(400).json({ error: 'valid month and department required' });
+      return res.status(400).json({ error: '請選擇月份與部門' });
     }
     if (!await canManageScheduleScope(req, department, subDepartment)) {
-      return res.status(403).json({ error: 'forbidden' });
+      return res.status(403).json({ error: '您沒有這個部門／小單位的排班權限', code: 'FORBIDDEN' });
     }
     const start = new Date(`${month}-01T00:00:00.000Z`);
     const end = new Date(start);
@@ -36,10 +36,10 @@ export async function upsertScheduleDayMemo(req, res) {
     const department = String(req.body?.department || '').trim();
     const subDepartment = String(req.body?.subDepartment || '').trim();
     const content = String(req.body?.content || '').trim();
-    if (!date || !department) return res.status(400).json({ error: 'valid date and department required' });
-    if (content.length > 1000) return res.status(400).json({ error: 'memo exceeds 1000 characters' });
+    if (!date || !department) return res.status(400).json({ error: '請選擇日期與部門' });
+    if (content.length > 1000) return res.status(400).json({ error: '備忘錄最多 1000 個字' });
     if (!await canManageScheduleScope(req, department, subDepartment)) {
-      return res.status(403).json({ error: 'forbidden' });
+      return res.status(403).json({ error: '您沒有這個部門／小單位的排班權限', code: 'FORBIDDEN' });
     }
     const filter = { date, department, subDepartment: subDepartment || null };
     if (!content) {

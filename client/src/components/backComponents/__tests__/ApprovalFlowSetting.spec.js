@@ -333,7 +333,7 @@ describe('ApprovalFlowSetting - restore defaults', () => {
       '確定要補齊預設表單嗎？系統只會建立缺少的預設表單，現有表單與歷史申請都會保留。',
       '確認補齊預設表單',
       expect.objectContaining({
-        confirmButtonText: '確定',
+        confirmButtonText: '補齊',
         cancelButtonText: '取消',
         type: 'warning'
       })

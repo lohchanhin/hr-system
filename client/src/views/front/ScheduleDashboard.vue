@@ -1,23 +1,21 @@
 <template>
-  <section class="dashboard" aria-label="排班摘要">
-    <div
+  <!-- 頁首的精簡統計（共用樣式 .hr-stat，見 docs/ui-guidelines.md） -->
+  <div class="schedule-stats" role="group" aria-label="排班摘要">
+    <span
       v-for="item in metrics"
       :key="item.label"
-      class="metric-card"
-      :class="`metric-card--${item.tone}`"
+      class="hr-stat"
+      :class="{ 'hr-stat--attention': item.attention && item.value > 0 }"
+      :data-test="item.test"
     >
-      <span class="metric-icon-shell" aria-hidden="true">
-        <component :is="item.icon" class="metric-icon" />
-      </span>
-      <span class="metric-label">{{ item.label }}</span>
-      <strong class="metric-value">{{ item.value }}</strong>
-    </div>
-  </section>
+      <span class="hr-stat__label">{{ item.label }}</span>
+      <strong class="hr-stat__value">{{ item.value }}</strong>
+    </span>
+  </div>
 </template>
 
 <script setup>
 import { computed } from 'vue'
-import { UserFilled, CircleCloseFilled, WarningFilled } from '@element-plus/icons-vue'
 defineOptions({ name: 'ScheduleDashboard' })
 const props = defineProps({
   summary: {
@@ -28,92 +26,32 @@ const props = defineProps({
 
 const metrics = computed(() => [
   // 排班員工數（2026/11 客戶：「直屬」改為「排班」）：排班頁目前看的員工，和名單同一個範圍（部門、小單位與排班權限），不是直屬部屬
-  { label: '排班員工數', value: props.summary.direct, icon: UserFilled, tone: 'neutral' },
-  { label: '未排班員工', value: props.summary.unscheduled, icon: CircleCloseFilled, tone: 'warning' },
-  { label: '請假中員工', value: props.summary.onLeave, icon: WarningFilled, tone: 'leave' }
+  { label: '排班員工數', value: props.summary.direct, test: 'schedule-stat-total' },
+  { label: '未排班員工', value: props.summary.unscheduled, test: 'schedule-stat-unscheduled', attention: true },
+  { label: '請假中員工', value: props.summary.onLeave, test: 'schedule-stat-leave' }
 ])
 </script>
 
 <style scoped>
-.dashboard {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  margin: 0 0 16px;
-  overflow: hidden;
-  background: #fff;
-  border: 1px solid #dfe3e6;
-  border-radius: 8px;
-  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
-}
-
-.metric-card {
-  display: grid;
-  grid-template-columns: 32px minmax(0, 1fr) auto;
+.schedule-stats {
+  display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 10px;
-  min-width: 0;
-  min-height: 62px;
-  padding: 12px 16px;
-  border-right: 1px solid #e8ebed;
+  gap: 8px;
 }
 
-.metric-card:last-child {
-  border-right: 0;
-}
-
-.metric-icon-shell {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-  border-radius: 6px;
-  color: #52606b;
-  background: #f1f3f5;
-}
-
-.metric-card--warning .metric-icon-shell {
-  color: #a15c05;
-  background: #fff7e8;
-}
-
-.metric-card--leave .metric-icon-shell {
-  color: #1769aa;
-  background: #edf6ff;
-}
-
-.metric-icon {
-  width: 16px;
-  height: 16px;
-}
-
-.metric-label {
-  min-width: 0;
-  color: #66727c;
-  font-size: 13px;
-  font-weight: 500;
-}
-
-.metric-value {
-  color: #182026;
-  font-size: 22px;
+.hr-stat__value {
   font-variant-numeric: tabular-nums;
-  font-weight: 680;
-  line-height: 1;
+}
+
+/* 還有人沒排班：數字用提醒色（沿用排班頁原本的提醒色，不新增顏色） */
+.hr-stat--attention .hr-stat__value {
+  color: #a15c05;
 }
 
 @media (max-width: 700px) {
-  .dashboard {
-    grid-template-columns: 1fr;
-  }
-
-  .metric-card {
-    border-right: 0;
-    border-bottom: 1px solid #e8ebed;
-  }
-
-  .metric-card:last-child {
-    border-bottom: 0;
+  .schedule-stats {
+    gap: 6px;
   }
 }
 </style>

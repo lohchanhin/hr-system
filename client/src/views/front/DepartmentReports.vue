@@ -1,169 +1,146 @@
+<!--
+  部門報表（後台「報表查看」與前台「部門報表」共用）：選報表、月份、部門後直接顯示結果，可匯出 Excel / PDF。
+  主管只能看自己的部門，管理員可以看所有部門；可用的報表與匯出格式由後端的報表模板決定。
+-->
 <template>
   <div class="department-reports-page">
-    <header class="page-header">
-      <h1 class="page-title">部門報表中心</h1>
-      <p class="page-subtitle">彙整各部門出勤與請假統計</p>
-    </header>
+    <PageHeader title="部門報表" />
 
-    <el-card class="filters-card" shadow="never">
-      <template #header>
-        <div class="card-header">
-          <h2>匯出條件</h2>
-          <span class="card-tip">請先選擇月份、部門與報表種類</span>
-        </div>
-      </template>
-      <div class="filters-grid">
-        <div class="filter-item">
-          <label class="filter-label">月份</label>
-          <el-date-picker
-            v-model="selectedMonth"
-            type="month"
-            placeholder="選擇月份"
-            format="YYYY 年 MM 月"
-            value-format="YYYY-MM"
-            :disabled="loading.departments"
-            class="w-full"
-          />
-        </div>
-        <div class="filter-item">
-          <label class="filter-label">部門</label>
-          <el-select
-            v-model="selectedDepartment"
-            placeholder="選擇部門"
-            filterable
-            :loading="loading.departments"
-            :disabled="loading.departments || departments.length === 0"
-            class="w-full"
-          >
-            <el-option
-              v-for="dept in departments"
-              :key="dept._id"
-              :label="dept.name"
-              :value="dept._id"
-            />
-          </el-select>
-        </div>
-        <div class="filter-item">
-          <label class="filter-label">報表種類</label>
-          <el-select
-            v-model="reportType"
-            placeholder="選擇報表"
-            class="w-full"
-            :disabled="loading.templates || availableReportOptions.length === 0"
-            :loading="loading.templates"
-          >
-            <el-option
-              v-for="type in availableReportOptions"
-              :key="type.value"
-              :label="type.label"
-              :value="type.value"
-            />
-          </el-select>
-        </div>
-        <div class="filter-item">
-          <label class="filter-label">匯出格式</label>
-          <el-select
-            v-model="exportFormat"
-            placeholder="選擇格式"
-            class="w-full"
-            :disabled="loading.templates || availableExportFormats.length === 0"
-            :loading="loading.templates"
-          >
-            <el-option
-              v-for="format in availableExportFormats"
-              :key="format.value"
-              :label="format.label"
-              :value="format.value"
-            />
-          </el-select>
-        </div>
-      </div>
-      <div class="actions">
-        <el-button
-          :disabled="!canPreview || preview.loading"
-          :loading="preview.loading"
-          @click="handlePreview"
-        >
-          預覽摘要
-        </el-button>
-        <el-button
-          type="primary"
-          :disabled="!canExport || exporting"
-          :loading="exporting"
-          @click="exportReport"
-        >
-          匯出報表
-        </el-button>
-      </div>
-    </el-card>
-
-    <el-alert
-      v-if="preview.state === 'empty'"
-      type="info"
-      show-icon
-      class="mt-4"
-      title="目前條件下沒有可供預覽的資料"
-    />
-
-    <el-card v-if="preview.state === 'success'" class="preview-card" shadow="never">
-      <template #header>
-        <div class="card-header">
-          <h2>報表摘要</h2>
-          <span class="card-tip">以下內容來自後端 JSON 預覽</span>
-        </div>
-      </template>
-      <div v-if="preview.summary" class="summary-grid">
-        <div class="summary-item" v-for="item in summaryItems" :key="item.label">
-          <span class="summary-label">{{ item.label }}</span>
-          <span class="summary-value">{{ item.value }}</span>
-        </div>
-      </div>
-      <el-table
-        v-if="preview.records.length"
-        :data="preview.records"
-        border
-        class="preview-table"
+    <div class="hr-toolbar">
+      <el-select
+        v-model="reportType"
+        placeholder="選擇報表"
+        class="filter-report"
+        :disabled="loading.templates || availableReportOptions.length === 0"
+        :loading="loading.templates"
+        data-test="report-type"
       >
-        <el-table-column prop="name" label="員工" min-width="140">
-          <template #default="{ row }">
-            <div class="report-person">
-              <EmployeeAvatar :employee="reportPerson(row)" :size="24" class="report-person-avatar" />
-              <span>{{ row.name }}</span>
-            </div>
-          </template>
-        </el-table-column>
-        <el-table-column
-          v-for="column in dynamicColumns"
-          :key="column.prop"
-          :prop="column.prop"
-          :label="column.label"
-          :min-width="column.minWidth || 120"
+        <el-option
+          v-for="type in availableReportOptions"
+          :key="type.value"
+          :label="type.label"
+          :value="type.value"
+        />
+      </el-select>
+      <el-date-picker
+        v-model="selectedMonth"
+        type="month"
+        placeholder="選擇月份"
+        format="YYYY/MM"
+        value-format="YYYY-MM"
+        :clearable="false"
+        :editable="false"
+        :disabled="loading.departments"
+        class="filter-month"
+        data-test="report-month"
+      />
+      <el-select
+        v-model="selectedDepartment"
+        placeholder="選擇部門"
+        filterable
+        class="filter-department"
+        :loading="loading.departments"
+        :disabled="loading.departments || departments.length <= 1"
+        data-test="report-department"
+      >
+        <el-option
+          v-for="dept in departments"
+          :key="dept._id"
+          :label="dept.name"
+          :value="dept._id"
+        />
+      </el-select>
+      <div v-if="availableExportFormats.length" class="toolbar-actions">
+        <el-button
+          v-for="(format, index) in availableExportFormats"
+          :key="format.value"
+          :type="index === 0 ? 'primary' : 'default'"
+          :disabled="!hasDepartmentAccess || !selectedMonth || exporting"
+          :loading="exporting && exportFormat === format.value"
+          :data-test="`export-${format.value}`"
+          @click="exportReport(format.value)"
         >
-          <!-- 遲到、早退的實際打卡旁標示打卡來源（線上／指紋匯入） -->
-          <template v-if="column.sourceProp" #default="{ row }">
-            <span>{{ row[column.prop] }}</span>
-            <el-tag
-              v-if="row[column.prop] && row[column.sourceProp]"
-              size="small"
-              :type="attendanceSourceTagType(row[column.sourceProp])"
-              class="punch-source-tag"
-            >
-              {{ attendanceSourceLabel(row[column.sourceProp]) }}
-            </el-tag>
-          </template>
-        </el-table-column>
-      </el-table>
-    </el-card>
+          匯出 {{ format.short }}
+        </el-button>
+      </div>
+    </div>
+
+    <section v-loading="preview.loading" class="hr-section report-result" data-test="report-result">
+      <div v-if="preview.error" class="hr-empty" data-test="report-error">
+        <p>{{ preview.error }}</p>
+        <el-button size="small" @click="handlePreview({ force: true })">重新查詢</el-button>
+      </div>
+
+      <template v-else-if="preview.state === 'success'">
+        <div v-if="summaryItems.length" class="summary-row" data-test="report-summary">
+          <span v-for="item in summaryItems" :key="item.label" class="hr-stat">
+            <span class="hr-stat__label">{{ item.label }}</span>
+            <strong class="hr-stat__value">{{ formatSummaryValue(item.value) }}</strong>
+          </span>
+        </div>
+        <p v-if="summaryNote" class="hr-hint summary-note" data-test="report-summary-note">{{ summaryNote }}</p>
+        <el-table
+          v-if="preview.records.length"
+          :data="preview.records"
+          border
+          stripe
+          class="preview-table"
+          max-height="max(320px, calc(100vh - 280px))"
+        >
+          <el-table-column prop="name" label="員工" min-width="140" fixed>
+            <template #default="{ row }">
+              <div class="report-person">
+                <EmployeeAvatar :employee="reportPerson(row)" :size="24" class="report-person-avatar" />
+                <span>{{ row.name }}</span>
+              </div>
+            </template>
+          </el-table-column>
+          <el-table-column
+            v-for="column in dynamicColumns"
+            :key="column.prop"
+            :prop="column.prop"
+            :label="column.label"
+            :min-width="column.minWidth || 120"
+            :align="column.kind === 'number' ? 'right' : 'left'"
+          >
+            <template #default="{ row }">
+              <span>{{ formatCell(row[column.prop], column) }}</span>
+              <!-- 遲到、早退的實際打卡旁標示打卡來源（線上／指紋匯入） -->
+              <el-tag
+                v-if="column.sourceProp && row[column.prop] && row[column.sourceProp]"
+                size="small"
+                :type="attendanceSourceTagType(row[column.sourceProp])"
+                class="punch-source-tag"
+              >
+                {{ attendanceSourceLabel(row[column.sourceProp]) }}
+              </el-tag>
+            </template>
+          </el-table-column>
+        </el-table>
+        <div v-else class="hr-empty" data-test="report-no-rows">這個月份沒有明細資料</div>
+      </template>
+
+      <!-- 還不能查詢：沒有可看的部門或沒有開放的報表 -->
+      <div v-else-if="setupProblem" class="hr-empty" data-test="report-setup-problem">{{ setupProblem }}</div>
+
+      <div v-else-if="preview.state === 'empty'" class="hr-empty" data-test="report-empty">
+        {{ monthLabel }} {{ selectedDepartmentName }}沒有「{{ selectedReportName }}」的資料，可以換一個月份或報表
+      </div>
+
+      <div v-else class="hr-empty">{{ preview.loading || loading.departments || loading.templates ? '載入中…' : '請選擇報表、月份與部門' }}</div>
+    </section>
   </div>
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted, watch } from 'vue'
-import dayjs from 'dayjs'
-import { ElMessage } from 'element-plus'
+import { ref, reactive, computed, nextTick, onBeforeUnmount, onMounted, watch } from 'vue'
+// vLoading：這個畫面的測試不掛整套 Element Plus，v-loading 要自己引入
+import { ElMessage, vLoading } from 'element-plus'
 import { apiFetch } from '../../api'
+import PageHeader from '../../components/PageHeader.vue'
 import EmployeeAvatar from '../../components/EmployeeAvatar.vue'
 import { attendanceSourceLabel, attendanceSourceTagType } from '../../utils/attendanceSource'
+import { formatScheduleDate, taiwanDateKey } from '../../utils/dateFormatter'
 
 const departments = ref([])
 const supervisorDepartmentId = ref('')
@@ -174,7 +151,8 @@ const userRole = ref(getStoredRole())
 const isAdmin = computed(() => userRole.value === 'admin')
 const isSupervisor = computed(() => userRole.value === 'supervisor')
 
-const selectedMonth = ref(dayjs().format('YYYY-MM'))
+// 預設是台灣時間的這個月（不看裝置時區）
+const selectedMonth = ref(taiwanDateKey(new Date()).slice(0, 7))
 const selectedDepartment = ref('')
 const reportType = ref('')
 const exportFormat = ref('')
@@ -185,6 +163,7 @@ const preview = reactive({
   state: 'idle',
   summary: null,
   records: [],
+  error: '',
 })
 
 // 報表每一列的員工：伺服器用 employee 放員工的 _id（沒有 _id 欄位）；照片路徑有帶才會顯示照片，否則是字母頭像
@@ -200,21 +179,28 @@ const loading = reactive({
   templates: false,
 })
 
+// 報表在選單裡的順序：先出勤與工時，再異常，最後是各種申請
 const reportEndpointMap = {
   attendance: '/api/reports/department/attendance/export',
-  leave: '/api/reports/department/leave/export',
+  workHours: '/api/reports/department/work-hours/export',
   tardiness: '/api/reports/department/tardiness/export',
   earlyLeave: '/api/reports/department/early-leave/export',
-  workHours: '/api/reports/department/work-hours/export',
+  leave: '/api/reports/department/leave/export',
+  specialLeave: '/api/reports/department/special-leave/export',
   overtime: '/api/reports/department/overtime/export',
   compTime: '/api/reports/department/comp-time/export',
   makeUp: '/api/reports/department/make-up/export',
-  specialLeave: '/api/reports/department/special-leave/export',
 }
+const reportOrder = Object.keys(reportEndpointMap)
 
 const formatLabelMap = {
   excel: 'Excel (.xlsx)',
   pdf: 'PDF (.pdf)',
+}
+
+const formatShortLabelMap = {
+  excel: 'Excel',
+  pdf: 'PDF',
 }
 
 const formatExtensionMap = {
@@ -249,7 +235,7 @@ const availableReportOptions = computed(() => {
     options.push({ value, label })
     seen.add(value)
   })
-  return options
+  return options.sort((a, b) => reportOrder.indexOf(a.value) - reportOrder.indexOf(b.value))
 })
 
 const selectedTemplate = computed(() => {
@@ -269,7 +255,7 @@ const availableExportFormats = computed(() => {
       seen.add(format)
       return true
     })
-    .map((format) => ({ value: format, label: formatLabelMap[format] }))
+    .map((format) => ({ value: format, label: formatLabelMap[format], short: formatShortLabelMap[format] }))
 })
 
 const canExport = computed(() => {
@@ -288,6 +274,22 @@ const canPreview = computed(
         selectedTemplate.value
     )
 )
+
+const monthLabel = computed(() => (selectedMonth.value || '').replace('-', '/'))
+const selectedDepartmentName = computed(
+  () => departments.value.find((dept) => dept._id === selectedDepartment.value)?.name || ''
+)
+const selectedReportName = computed(() => selectedTemplate.value?.name || reportType.value || '')
+
+// 讀完部門與報表模板後還是不能查詢的原因（讀取中不顯示）
+const setupProblem = computed(() => {
+  if (loading.departments || loading.templates) return ''
+  if (!departments.value.length) {
+    return isAdmin.value ? '目前沒有部門資料，請先到「機構與部門設定」建立部門' : '尚未為您設定可管理的部門，請聯絡系統管理員'
+  }
+  if (!availableReportOptions.value.length) return '目前沒有開放的報表，請聯絡系統管理員'
+  return ''
+})
 
 watch(
   availableReportOptions,
@@ -319,80 +321,107 @@ watch(
   { immediate: true }
 )
 
-const dynamicColumns = computed(() => {
+// 伺服器有沒有回傳某個欄位（舊版伺服器沒有請假天數等新欄位：沒有就不顯示那一欄，不顯示成 0）
+const hasRecordField = (prop) => preview.records.some((record) => record?.[prop] !== undefined && record?.[prop] !== null)
+const hasSummaryField = (prop) => preview.summary?.[prop] !== undefined && preview.summary?.[prop] !== null
+
+// kind：date 顯示成 YYYY/MM/DD、number 靠右並去掉浮點數雜訊，其他照原樣；欄位與匯出檔（伺服器 reportController 的 DEPARTMENT_EXPORT_CONFIG）一致。
+// optional：伺服器有回傳這個欄位才顯示
+const reportColumns = computed(() => {
   if (reportType.value === 'attendance') {
     return [
-      { prop: 'scheduled', label: '排班天數', minWidth: 120 },
-      { prop: 'attended', label: '出勤天數', minWidth: 120 },
-      { prop: 'absent', label: '缺勤天數', minWidth: 120 },
+      { prop: 'scheduled', label: '排班天數', minWidth: 120, kind: 'number' },
+      { prop: 'attended', label: '出勤天數', minWidth: 120, kind: 'number' },
+      // 請假：沒有簽到、但那一班在核准的請假中（不算缺勤）
+      { prop: 'onLeave', label: '請假天數', minWidth: 120, kind: 'number', optional: true },
+      { prop: 'absent', label: '缺勤天數', minWidth: 120, kind: 'number' },
     ]
   }
   if (reportType.value === 'leave') {
     return [
       { prop: 'leaveType', label: '假別', minWidth: 160 },
-      { prop: 'startDate', label: '開始日期', minWidth: 140 },
-      { prop: 'endDate', label: '結束日期', minWidth: 140 },
-      { prop: 'hours', label: '時數', minWidth: 100 },
-      { prop: 'days', label: '天數', minWidth: 100 },
+      { prop: 'startDate', label: '開始日期', minWidth: 140, kind: 'date' },
+      { prop: 'endDate', label: '結束日期', minWidth: 140, kind: 'date' },
+      { prop: 'hours', label: '時數', minWidth: 100, kind: 'number' },
+      { prop: 'days', label: '天數', minWidth: 100, kind: 'number' },
     ]
   }
   if (reportType.value === 'tardiness') {
     return [
-      { prop: 'date', label: '日期', minWidth: 140 },
+      { prop: 'date', label: '日期', minWidth: 140, kind: 'date' },
       { prop: 'scheduledStart', label: '排定上班', minWidth: 140 },
       { prop: 'actualClockIn', label: '實際打卡', minWidth: 160, sourceProp: 'clockInSource' },
-      { prop: 'minutesLate', label: '遲到分鐘', minWidth: 120 },
+      { prop: 'minutesLate', label: '遲到分鐘', minWidth: 120, kind: 'number' },
     ]
   }
   if (reportType.value === 'earlyLeave') {
     return [
-      { prop: 'date', label: '日期', minWidth: 140 },
+      { prop: 'date', label: '日期', minWidth: 140, kind: 'date' },
       { prop: 'scheduledEnd', label: '排定下班', minWidth: 140 },
       { prop: 'actualClockOut', label: '實際打卡', minWidth: 160, sourceProp: 'clockOutSource' },
-      { prop: 'minutesEarly', label: '早退分鐘', minWidth: 120 },
+      { prop: 'minutesEarly', label: '早退分鐘', minWidth: 120, kind: 'number' },
     ]
   }
   if (reportType.value === 'workHours') {
     return [
-      { prop: 'date', label: '日期', minWidth: 140 },
-      { prop: 'scheduledHours', label: '排定工時(小時)', minWidth: 160 },
-      { prop: 'workedHours', label: '實際工時(小時)', minWidth: 160 },
-      { prop: 'differenceHours', label: '差異(小時)', minWidth: 140 },
+      { prop: 'date', label: '日期', minWidth: 140, kind: 'date' },
+      { prop: 'scheduledHours', label: '排定工時(小時)', minWidth: 160, kind: 'number' },
+      { prop: 'workedHours', label: '實際工時(小時)', minWidth: 160, kind: 'number' },
+      { prop: 'differenceHours', label: '差異(小時)', minWidth: 140, kind: 'number' },
     ]
   }
   if (reportType.value === 'overtime') {
     return [
-      { prop: 'date', label: '日期', minWidth: 140 },
+      { prop: 'date', label: '日期', minWidth: 140, kind: 'date' },
       { prop: 'startTime', label: '開始時間', minWidth: 120 },
       { prop: 'endTime', label: '結束時間', minWidth: 120 },
-      { prop: 'hours', label: '時數', minWidth: 100 },
+      { prop: 'hours', label: '時數', minWidth: 100, kind: 'number' },
       { prop: 'reason', label: '原因', minWidth: 180 },
     ]
   }
   if (reportType.value === 'compTime') {
     return [
-      { prop: 'date', label: '日期', minWidth: 140 },
-      { prop: 'hours', label: '補休時數', minWidth: 120 },
-      { prop: 'overtimeReference', label: '來源加班單', minWidth: 180 },
+      { prop: 'date', label: '日期', minWidth: 140, kind: 'date' },
+      { prop: 'endDate', label: '結束日期', minWidth: 140, kind: 'date', optional: true },
+      { prop: 'leaveType', label: '假別', minWidth: 100, optional: true },
+      { prop: 'hours', label: '補休時數', minWidth: 120, kind: 'number' },
+      { prop: 'overtimeReference', label: '來源（調休額度／加班單）', minWidth: 220 },
     ]
   }
   if (reportType.value === 'makeUp') {
     return [
-      { prop: 'date', label: '日期', minWidth: 140 },
+      { prop: 'date', label: '日期', minWidth: 140, kind: 'date' },
       { prop: 'category', label: '補卡類別', minWidth: 160 },
       { prop: 'note', label: '補卡說明', minWidth: 200 },
     ]
   }
   if (reportType.value === 'specialLeave') {
     return [
-      { prop: 'startDate', label: '開始日期', minWidth: 140 },
-      { prop: 'endDate', label: '結束日期', minWidth: 140 },
-      { prop: 'hours', label: '時數', minWidth: 100 },
-      { prop: 'days', label: '天數', minWidth: 100 },
+      { prop: 'startDate', label: '開始日期', minWidth: 140, kind: 'date' },
+      { prop: 'endDate', label: '結束日期', minWidth: 140, kind: 'date' },
+      { prop: 'hours', label: '時數', minWidth: 100, kind: 'number' },
+      { prop: 'days', label: '天數', minWidth: 100, kind: 'number' },
     ]
   }
   return []
 })
+
+const dynamicColumns = computed(() => reportColumns.value.filter((column) => !column.optional || hasRecordField(column.prop)))
+
+// 數字最多兩位小數（284.87000000000006 → 284.87）；不是數字的照原樣
+function tidyNumber(value) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return value
+  return Math.round(value * 100) / 100 || 0
+}
+
+function formatCell(value, column) {
+  if (value === null || value === undefined) return ''
+  if (column.kind === 'date') return formatScheduleDate(value, value)
+  if (column.kind === 'number') return tidyNumber(value)
+  return value
+}
+
+const formatSummaryValue = (value) => (value === null || value === undefined ? 0 : tidyNumber(value))
 
 const summaryItems = computed(() => {
   if (!preview.summary) return []
@@ -400,6 +429,7 @@ const summaryItems = computed(() => {
     return [
       { label: '排班總計', value: preview.summary.scheduled },
       { label: '出勤總計', value: preview.summary.attended },
+      ...(hasSummaryField('onLeave') ? [{ label: '請假總計', value: preview.summary.onLeave }] : []),
       { label: '缺勤總計', value: preview.summary.absent },
     ]
   }
@@ -412,7 +442,7 @@ const summaryItems = computed(() => {
     const byType = Array.isArray(preview.summary.byType)
       ? preview.summary.byType.map((item) => ({
           label: `${item.leaveType || item.leaveCode} 件數`,
-          value: `${item.count ?? 0} 筆 / ${item.hours ?? 0} 小時（${item.days ?? 0} 天）`,
+          value: `${item.count ?? 0} 筆 / ${tidyNumber(item.hours ?? 0)} 小時（${tidyNumber(item.days ?? 0)} 天）`,
         }))
       : []
     return [...base, ...byType]
@@ -448,6 +478,8 @@ const summaryItems = computed(() => {
     return [
       { label: '補休申請數', value: preview.summary.totalRequests ?? 0 },
       { label: '補休總時數', value: preview.summary.totalHours ?? 0 },
+      ...(hasSummaryField('earnedCredits') ? [{ label: '本月存入調休筆數', value: preview.summary.earnedCredits }] : []),
+      ...(hasSummaryField('earnedHours') ? [{ label: '本月存入調休時數', value: preview.summary.earnedHours }] : []),
     ]
   }
   if (reportType.value === 'makeUp') {
@@ -470,6 +502,16 @@ const summaryItems = computed(() => {
   return []
 })
 
+// 出勤統計：排班 − 出勤 − 請假 − 缺勤 還有剩，是這個月還沒開始的班（不算缺勤）
+const summaryNote = computed(() => {
+  if (reportType.value !== 'attendance' || !hasSummaryField('onLeave')) return ''
+  const { scheduled, attended, onLeave, absent } = preview.summary
+  const upcoming = Number(scheduled) - Number(attended) - Number(onLeave) - Number(absent)
+  return Number.isFinite(upcoming) && upcoming > 0 ? `另有 ${tidyNumber(upcoming)} 天的班還沒開始，不計入缺勤` : ''
+})
+
+let unmounted = false
+
 onMounted(async () => {
   userRole.value = getStoredRole()
   loading.departments = true
@@ -484,11 +526,21 @@ onMounted(async () => {
     await fetchAllowedDepartments()
     await fetchSupervisorReportTemplates()
   } catch (err) {
-    ElMessage.error(err.message || '載入主管報表資訊失敗')
+    ElMessage.error(messageOf(err, '載入報表設定失敗，請確認網路連線後重新整理'))
   } finally {
     loading.departments = false
     loading.templates = false
   }
+  // 條件齊了就直接查，打開頁面就看得到這個月的報表（等預設的報表種類選好）
+  await nextTick()
+  if (!unmounted && canPreview.value) handlePreview({ silent: true })
+})
+
+onBeforeUnmount(() => {
+  unmounted = true
+  clearTimeout(autoPreviewTimer)
+  // 離開頁面後才回來的查詢不再處理
+  previewGeneration += 1
 })
 
 const getStoredEmployeeId = () => {
@@ -668,16 +720,87 @@ function buildQuery(params) {
   return `?${usp.toString()}`
 }
 
-async function handlePreview() {
-  if (!canPreview.value && !ensureDepartmentAccess()) return
-  if (!canPreview.value) return
+// 報表 API 的錯誤訊息有些是英文，換成看得懂的說法；本來就是中文的照原樣顯示
+const SERVER_MESSAGES = [
+  [/^forbidden$/i, '您沒有權限查看這個部門的報表'],
+  [/invalid month/i, '月份格式不正確，請重新選擇月份'],
+  [/invalid department|month and department required/i, '請重新選擇月份與部門'],
+  [/unknown report type/i, '這個報表尚未開放'],
+  [/^no data$/i, '這個部門沒有員工資料'],
+]
+
+function reportErrorMessage(message, fallback) {
+  const text = typeof message === 'string' ? message.trim() : ''
+  if (!text) return fallback
+  if (/[一-鿿]/.test(text)) return text
+  const known = SERVER_MESSAGES.find(([pattern]) => pattern.test(text))
+  return known ? known[1] : fallback
+}
+
+// 只顯示中文訊息：網路中斷時瀏覽器丟出的是英文（Failed to fetch），換成看得懂的說法
+const messageOf = (error, fallback) => (/[一-鿿]/.test(error?.message || '') ? error.message : fallback)
+
+async function readReportError(res, fallback) {
+  const contentType = res.headers?.get?.('content-type') || ''
+  let errorData = null
+  if (contentType.includes('application/json')) {
+    try {
+      errorData = await res.json()
+    } catch {
+      errorData = null
+    }
+  }
+  return reportErrorMessage(errorData?.error || errorData?.message, fallback)
+}
+
+/* -------------------- 查詢（畫面上的報表內容） -------------------- */
+// 同一組條件（報表、月份、部門）只查一次；條件改了以後，比較晚回來的舊查詢不會蓋掉新的結果
+let previewGeneration = 0
+let previewKey = ''
+let previewPromise = null
+let previewInFlight = false
+let autoPreviewTimer = null
+
+const previewRequestKey = () => [reportType.value, selectedMonth.value, selectedDepartment.value].join('|')
+
+function resetPreview() {
+  previewGeneration += 1
+  previewKey = ''
+  previewPromise = null
+  previewInFlight = false
+  preview.loading = false
+  preview.state = 'idle'
+  preview.summary = null
+  preview.records = []
+  preview.error = ''
+}
+
+function handlePreview(options = {}) {
+  const force = options?.force === true
+  const silent = options?.silent === true
+  if (!canPreview.value) {
+    if (!silent) ensureDepartmentAccess()
+    return Promise.resolve()
+  }
   const endpoint = reportEndpointMap[reportType.value]
   if (!endpoint) {
-    ElMessage.warning('此報表尚未開放預覽')
-    return
+    if (!silent) ElMessage.warning('此報表尚未開放預覽')
+    return Promise.resolve()
   }
+  const key = previewRequestKey()
+  if (!force && key === previewKey && previewPromise) return previewPromise
+  clearTimeout(autoPreviewTimer)
+  previewKey = key
+  previewPromise = loadPreview(endpoint)
+  return previewPromise
+}
+
+async function loadPreview(endpoint) {
+  const generation = ++previewGeneration
+  previewInFlight = true
   preview.loading = true
   preview.state = 'loading'
+  preview.error = ''
   try {
     const query = buildQuery({
       month: selectedMonth.value,
@@ -687,10 +810,19 @@ async function handlePreview() {
     const res = await apiFetch(`${endpoint}${query}`, {
       headers: { Accept: 'application/json' },
     })
+    if (generation !== previewGeneration) return
     const contentType = res.headers?.get?.('content-type') || ''
     if (!res.ok) {
-      const errorData = contentType.includes('application/json') ? await res.json() : null
-      throw new Error(errorData?.error || errorData?.message || '預覽失敗')
+      const message = await readReportError(res, '查詢失敗，請稍後再試')
+      if (generation !== previewGeneration) return
+      // 部門沒有員工時伺服器回 404：不是錯誤，是沒有資料
+      if (res.status === 404) {
+        preview.summary = null
+        preview.records = []
+        preview.state = 'empty'
+        return
+      }
+      throw new Error(message)
     }
     if (!contentType.includes('application/json')) {
       preview.state = 'idle'
@@ -700,6 +832,7 @@ async function handlePreview() {
       return
     }
     const data = await res.json()
+    if (generation !== previewGeneration) return
     preview.summary = data?.summary ?? null
     preview.records = Array.isArray(data?.records) ? data.records : []
     if (!preview.records.length && !preview.summary) {
@@ -708,22 +841,54 @@ async function handlePreview() {
       preview.state = 'success'
     }
   } catch (err) {
+    if (generation !== previewGeneration) return
     preview.state = 'idle'
     preview.summary = null
     preview.records = []
-    ElMessage.error(err.message || '預覽失敗')
+    preview.error = messageOf(err, '查詢失敗，請確認網路連線後再試')
+    ElMessage.error(preview.error)
   } finally {
-    preview.loading = false
+    if (generation === previewGeneration) {
+      previewInFlight = false
+      preview.loading = false
+    }
   }
 }
 
-async function exportReport() {
+// 條件一改就重新查（稍等一下，連續改兩個條件只查一次）
+watch([reportType, selectedMonth, selectedDepartment], () => {
+  clearTimeout(autoPreviewTimer)
+  if (loading.departments || loading.templates) return
+  if (!canPreview.value) {
+    if (previewKey) resetPreview()
+    else if (!previewInFlight) preview.loading = false
+    return
+  }
+  if (previewRequestKey() === previewKey) {
+    // 條件又改回畫面上這一組：不用重查，沒有查詢在跑就把「載入中」收掉
+    if (!previewInFlight) preview.loading = false
+    return
+  }
+  preview.loading = true
+  autoPreviewTimer = setTimeout(() => handlePreview({ silent: true }), 250)
+})
+
+/* -------------------- 匯出 -------------------- */
+// 目前畫面上的結果是不是這組條件、而且確定沒有資料
+const knownEmpty = computed(() => preview.state === 'empty' && !preview.loading)
+
+async function exportReport(format) {
   if (exporting.value) return
+  if (typeof format === 'string' && format) exportFormat.value = format
   if (!canExport.value && !ensureDepartmentAccess()) return
   if (!canExport.value) return
   const endpoint = reportEndpointMap[reportType.value]
   if (!endpoint) {
     ElMessage.error('尚未提供此報表的匯出服務')
+    return
+  }
+  if (knownEmpty.value && previewRequestKey() === previewKey) {
+    ElMessage.warning(`${monthLabel.value} ${selectedDepartmentName.value}沒有「${selectedReportName.value}」的資料，沒有內容可以匯出`)
     return
   }
   exporting.value = true
@@ -737,15 +902,15 @@ async function exportReport() {
       headers: { Accept: 'application/octet-stream' },
     })
     const contentType = res.headers?.get?.('content-type') || ''
-    if (!res.ok) {
-      const errorData = contentType.includes('application/json') ? await res.json() : null
-      throw new Error(errorData?.error || errorData?.message || '匯出失敗')
+    // 伺服器回錯誤（JSON）時顯示原因，不要存成一個打不開的檔案
+    if (!res.ok || contentType.includes('application/json')) {
+      throw new Error(await readReportError(res, '匯出失敗，請稍後再試'))
     }
     const blob = await res.blob()
+    if (!blob || blob.size === 0) throw new Error('伺服器回傳空白檔案，請稍後再試')
     const extension = formatExtensionMap[exportFormat.value] || 'dat'
-    const monthText = selectedMonth.value?.replace('-', '') || dayjs().format('YYYYMM')
-    const deptName =
-      departments.value.find((dept) => dept._id === selectedDepartment.value)?.name || 'department'
+    const monthText = selectedMonth.value?.replace('-', '') || taiwanDateKey(new Date()).slice(0, 7).replace('-', '')
+    const deptName = selectedDepartmentName.value || 'department'
     const template = selectedTemplate.value
     const typeKey = template?.type || reportType.value || 'report'
     const templateName = template?.name || typeKey
@@ -753,7 +918,7 @@ async function exportReport() {
       String(text)
         .trim()
         .replace(/\s+/g, '-')
-        .replace(/[^\w\u4e00-\u9fa5-]+/gi, '')
+        .replace(/[^\w一-龥-]+/gi, '')
     const fileName = `${monthText}-${sanitize(deptName)}-${sanitize(templateName)}.${extension}`
 
     const url = window.URL.createObjectURL(blob)
@@ -763,10 +928,11 @@ async function exportReport() {
     document.body.appendChild(link)
     link.click()
     document.body.removeChild(link)
-    window.URL.revokeObjectURL(url)
+    // 立刻釋放有些瀏覽器會來不及開始下載
+    setTimeout(() => window.URL.revokeObjectURL?.(url), 1000)
     ElMessage.success('匯出成功')
   } catch (err) {
-    ElMessage.error(err.message || '匯出失敗')
+    ElMessage.error(messageOf(err, '匯出失敗，請確認網路連線後再試'))
   } finally {
     exporting.value = false
   }
@@ -775,6 +941,47 @@ async function exportReport() {
 </script>
 
 <style scoped>
+.filter-report {
+  width: 200px;
+}
+
+/* 日期欄位的外框是 Element Plus 內層的元素（而且自己有固定寬度），要用 :deep 才設得到 */
+.hr-toolbar :deep(.filter-month) {
+  width: 140px;
+}
+
+.filter-department {
+  width: 200px;
+}
+
+/* 工具列右側的動作：寬度不夠換行時仍然靠右 */
+.toolbar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--hr-space-sm);
+  margin-left: auto;
+}
+
+.toolbar-actions :deep(.el-button + .el-button) {
+  margin-left: 0;
+}
+
+.report-result {
+  min-height: 160px;
+}
+
+.summary-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--hr-space-sm);
+  margin-bottom: var(--hr-space-sm);
+}
+
+.summary-note {
+  margin: 0 0 var(--hr-space-sm);
+}
+
 .report-person {
   display: flex;
   align-items: center;
@@ -785,120 +992,23 @@ async function exportReport() {
   flex: 0 0 auto;
 }
 
-.department-reports-page {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  padding: 24px;
-  background: #f8fafc;
-  min-height: 100vh;
-}
-
-.page-header {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.page-title {
-  margin: 0;
-  font-size: 28px;
-  font-weight: 600;
-  color: #0f172a;
-}
-
-.page-subtitle {
-  margin: 0;
-  font-size: 16px;
-  color: #475569;
-}
-
-.filters-card {
-  border-radius: 12px;
-}
-
-.card-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  gap: 16px;
-}
-
-.card-header h2 {
-  margin: 0;
-  font-size: 18px;
-  color: #0f172a;
-}
-
-.card-tip {
-  font-size: 14px;
-  color: #64748b;
-}
-
-.filters-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  gap: 16px;
-}
-
-.filter-item {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.filter-label {
-  font-weight: 500;
-  color: #1e293b;
-}
-
-.w-full {
-  width: 100%;
-}
-
-.actions {
-  margin-top: 20px;
-  display: flex;
-  gap: 12px;
-  justify-content: flex-end;
-}
-
-.preview-card {
-  border-radius: 12px;
-}
-
-.summary-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 12px;
-  margin-bottom: 16px;
-}
-
-.summary-item {
-  background: #f1f5f9;
-  border-radius: 10px;
-  padding: 12px 16px;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.summary-label {
-  font-size: 14px;
-  color: #475569;
-}
-
-.summary-value {
-  font-size: 18px;
-  font-weight: 600;
-  color: #0f172a;
-}
-
 .preview-table {
   width: 100%;
 }
 
 .punch-source-tag {
   margin-left: 6px;
+}
+
+@media (max-width: 767px) {
+  .filter-report,
+  .filter-department {
+    flex: 1 1 160px;
+    width: auto;
+  }
+
+  .hr-toolbar :deep(.filter-month) {
+    flex: 1 1 130px;
+  }
 }
 </style>

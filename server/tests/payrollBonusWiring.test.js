@@ -255,7 +255,8 @@ describe('bank transfer Excel export (no saved payroll records)', () => {
     await exportExcel()
 
     expectCompletionMonthFilter(approvalFilter())
-    expect(approvalFilter().applicant_employee).toBe(EMPLOYEE_ID)
+    // 整批員工的獎金申請一次查完（applicant_employee: { $in: [...] }），不再每位員工各查一次
+    expect(approvalFilter().applicant_employee).toEqual({ $in: [EMPLOYEE_ID] })
   })
 
   it('keeps the configured bonuses when no bonus request was approved', async () => {

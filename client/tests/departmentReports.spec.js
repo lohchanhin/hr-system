@@ -19,7 +19,22 @@ vi.mock('element-plus', async () => {
 })
 
 
+// 畫面現在會自動查詢（打開頁面、條件改變後稍等一下）：測試結束要卸載，計時器才不會跑進下一個測試
+const mountedWrappers = []
+// 自動查詢拿到的回應：沒有資料的報表
+const emptyPreviewResponse = () => ({
+  ok: true,
+  headers: { get: () => 'application/json' },
+  json: async () => ({ summary: null, records: [] }),
+})
+
 function createWrapper() {
+  const wrapper = mountDepartmentReports()
+  mountedWrappers.push(wrapper)
+  return wrapper
+}
+
+function mountDepartmentReports() {
   return mount(DepartmentReports, {
     global: {
       stubs: {
@@ -96,6 +111,7 @@ describe('DepartmentReports.vue', () => {
         },
       ],
     })
+    apiFetch.mockResolvedValue(emptyPreviewResponse())
 
     originalCreateObjectURL = window.URL.createObjectURL
     if (!originalCreateObjectURL) {
@@ -124,6 +140,7 @@ describe('DepartmentReports.vue', () => {
   })
 
   afterEach(() => {
+    while (mountedWrappers.length) mountedWrappers.pop().unmount()
     window.sessionStorage.clear()
     createObjectURLSpy?.mockRestore()
     revokeObjectURLSpy?.mockRestore()
@@ -194,6 +211,71 @@ describe('DepartmentReports.vue', () => {
     expect(wrapper.vm.preview.state).toBe('success')
     expect(wrapper.vm.preview.records.length).toBe(2)
     expect(wrapper.vm.summaryItems.length).toBeGreaterThan(0)
+    // 舊版伺服器沒有請假天數：不顯示那一欄（不會顯示成 0）
+    expect(wrapper.vm.dynamicColumns.map((column) => column.label)).toEqual(['排班天數', '出勤天數', '缺勤天數'])
+    expect(wrapper.vm.summaryItems.map((item) => item.label)).toEqual(['排班總計', '出勤總計', '缺勤總計'])
+    expect(wrapper.vm.summaryNote).toBe('')
+  })
+
+  // 出勤統計帶 onLeave（請假）：排班 − 出勤 − 請假 = 缺勤 在畫面上對得起來，欄位順序與匯出檔一致
+  it('出勤統計顯示請假天數與請假總計，還沒開始的班另外說明', async () => {
+    const wrapper = createWrapper()
+    await flushPromises()
+
+    apiFetch.mockResolvedValueOnce({
+      ok: true,
+      headers: { get: () => 'application/json' },
+      json: async () => ({
+        summary: { scheduled: 12, attended: 7, onLeave: 2, absent: 1 },
+        records: [
+          { name: '王小明', scheduled: 6, attended: 3, onLeave: 2, absent: 1 },
+          { name: '李小華', scheduled: 6, attended: 4, onLeave: 0, absent: 0 },
+        ],
+      }),
+    })
+    wrapper.vm.selectedMonth = '2024-05'
+    wrapper.vm.selectedDepartment = 'dept1'
+    await wrapper.vm.handlePreview()
+    await flushPromises()
+
+    expect(wrapper.vm.dynamicColumns.map((column) => column.label)).toEqual(['排班天數', '出勤天數', '請假天數', '缺勤天數'])
+    expect(wrapper.vm.summaryItems).toEqual([
+      { label: '排班總計', value: 12 },
+      { label: '出勤總計', value: 7 },
+      { label: '請假總計', value: 2 },
+      { label: '缺勤總計', value: 1 },
+    ])
+    // 12 − 7 − 2 − 1 = 2 天的班還沒開始
+    expect(wrapper.vm.summaryNote).toBe('另有 2 天的班還沒開始，不計入缺勤')
+    expect(wrapper.find('[data-test="report-summary-note"]').text()).toContain('另有 2 天的班還沒開始')
+  })
+
+  it('補休報表的欄位與匯出檔一致（結束日期、假別、存入調休的筆數與時數）', async () => {
+    const wrapper = createWrapper()
+    await flushPromises()
+    wrapper.vm.reportTemplates = [
+      { id: 'tpl-comp', name: '補休申請統計', type: 'compTime', exportSettings: { formats: ['excel'] }, permissionSettings: { supervisorDept: true } },
+    ]
+    await flushPromises()
+
+    apiFetch.mockResolvedValueOnce({
+      ok: true,
+      headers: { get: () => 'application/json' },
+      json: async () => ({
+        summary: { totalRequests: 1, totalHours: 8, earnedCredits: 2, earnedHours: 16 },
+        records: [
+          { name: '王小明', date: '2024-05-06', endDate: '2024-05-06', leaveType: '調休', hours: 8, overtimeReference: '2024/02/10 春節' },
+        ],
+      }),
+    })
+    wrapper.vm.selectedMonth = '2024-05'
+    wrapper.vm.selectedDepartment = 'dept1'
+    wrapper.vm.reportType = 'compTime'
+    await wrapper.vm.handlePreview({ force: true })
+    await flushPromises()
+
+    expect(wrapper.vm.dynamicColumns.map((column) => column.label)).toEqual(['日期', '結束日期', '假別', '補休時數', '來源（調休額度／加班單）'])
+    expect(wrapper.vm.summaryItems.map((item) => item.label)).toEqual(['補休申請數', '補休總時數', '本月存入調休筆數', '本月存入調休時數'])
   })
 
   it('預覽失敗時顯示錯誤訊息', async () => {
@@ -212,7 +294,8 @@ describe('DepartmentReports.vue', () => {
 
     await wrapper.vm.handlePreview()
 
-    expect(ElMessage.error).toHaveBeenCalledWith('Forbidden')
+    // 伺服器回的是英文的 Forbidden：畫面顯示中文原因
+    expect(ElMessage.error).toHaveBeenCalledWith('您沒有權限查看這個部門的報表')
     expect(wrapper.vm.preview.state).toBe('idle')
   })
   it('依後端模板限制報表與匯出格式', async () => {

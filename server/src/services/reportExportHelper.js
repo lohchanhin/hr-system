@@ -1,3 +1,5 @@
+import { registerTraditionalChinesePdfFont } from './pdfFontService.js';
+
 function sanitizeFileName(name = 'report') {
   return String(name)
     .trim()
@@ -25,6 +27,13 @@ export async function exportTabularReport(
       }
       
       const doc = new PDFDocument({ margin: 36 });
+      // 標題、表頭、姓名都是中文：要先註冊中文字型（pdfkit 內建的 Helvetica 沒有中文字，整份會是亂碼）。
+      // 伺服器沒有安裝字型時回 503 說明原因（與排班表、薪資單的 PDF 相同），不產生一份看不懂的檔案
+      try {
+        registerTraditionalChinesePdfFont(doc);
+      } catch (fontError) {
+        return res.status(503).json({ error: fontError.message });
+      }
       
       // Set up error handler before setting headers
       let hasError = false;

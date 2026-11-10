@@ -1,5 +1,5 @@
 import { describe, expect, it } from '@jest/globals';
-import { calculateTaiwanOvertimeAmount } from '../src/config/salaryConfig.js';
+import { calculateTaiwanOvertimeAmount, DEFAULT_OVERTIME_RATES } from '../src/config/salaryConfig.js';
 
 describe('Taiwan overtime rate segmentation', () => {
   it('segments four weekday overtime hours at 4/3 and 5/3', () => {
@@ -79,9 +79,38 @@ describe('Taiwan overtime rate segmentation', () => {
       expect(result.segments).toEqual([{
         hours: 8,
         multiplier: 1,
+        rateKey: 'holidayWithin8',
         label: '國定假日8小時內加發一日工資',
         amount: 1200,
       }]);
+    });
+  });
+
+  describe('薪資政策的加班倍率（overtime.rates）', () => {
+    it('沒有傳倍率、或傳預設值時與原本的常數完全相同', () => {
+      for (const [hours, dayType] of [[4, 'workday'], [10, 'rest_day'], [12, 'national_holiday'], [3.5, 'rest_day']]) {
+        const plain = calculateTaiwanOvertimeAmount(hours, 213.33, dayType);
+        expect(calculateTaiwanOvertimeAmount(hours, 213.33, dayType, DEFAULT_OVERTIME_RATES)).toEqual(plain);
+        expect(calculateTaiwanOvertimeAmount(hours, 213.33, dayType, {})).toEqual(plain);
+      }
+      expect(DEFAULT_OVERTIME_RATES).toEqual({
+        weekdayFirst2: 4 / 3, weekdayAfter2: 5 / 3,
+        restDayFirst2: 4 / 3, restDayHours3To8: 5 / 3, restDayHours9To12: 8 / 3,
+        holidayWithin8: 1, holidayAfter8First2: 4 / 3, holidayAfter10: 5 / 3,
+      });
+    });
+
+    it('每一段用自己的倍率，並標出 rateKey', () => {
+      const rates = { ...DEFAULT_OVERTIME_RATES, weekdayFirst2: 1.5, weekdayAfter2: 2, holidayAfter8First2: 2.5 };
+      const weekday = calculateTaiwanOvertimeAmount(4, 100, 'workday', rates);
+      expect(weekday.segments.map((s) => [s.rateKey, s.multiplier])).toEqual([['weekdayFirst2', 1.5], ['weekdayAfter2', 2]]);
+      expect(weekday.amount).toBe(2 * 100 * 1.5 + 2 * 100 * 2);
+      // 國定假日超過 8 小時的部分不再跟著平日倍率走
+      const holiday = calculateTaiwanOvertimeAmount(12, 100, 'national_holiday', rates);
+      expect(holiday.segments.map((s) => [s.rateKey, s.multiplier])).toEqual([
+        ['holidayWithin8', 1], ['holidayAfter8First2', 2.5], ['holidayAfter10', 5 / 3],
+      ]);
+      expect(holiday.amount).toBe(Math.round(800 + 500 + 200 * 5 / 3));
     });
   });
 });

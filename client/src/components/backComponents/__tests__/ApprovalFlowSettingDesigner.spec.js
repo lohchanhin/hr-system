@@ -144,66 +144,93 @@ describe('ApprovalFlowSetting 流程設計', () => {
     apiFetchMock.mockRestore()
   })
 
-  describe('通用流程規則（W1）', () => {
-    it('標示為「尚未啟用（僅記錄設定）」', async () => {
+  // 2026/11 客戶要求拿掉沒有功能的設定：「尚未啟用（僅記錄設定）」的通用規則（最大簽核關卡數、代理簽核、逾時提醒與處理）
+  // 伺服器只儲存、沒有任何功能讀取，已從畫面拿掉（資料與 API 保留）。表單的流程規則只剩會生效的「略過重複的簽核人」，
+  // 原本用那四個欄位驗證的事情（只送 policy、不帶 steps、失敗訊息、換表單不殘留）改用它驗證
+  describe('表單的流程規則：只剩會生效的「略過重複的簽核人」（W1）', () => {
+    it('不再顯示只記錄、沒有功能的通用規則', async () => {
       const wrapper = await mountDesigner()
+      await openWorkflow(wrapper)
 
-      const notice = wrapper.find('[data-test="policy-not-effective"]')
-      expect(notice.exists()).toBe(true)
-      expect(notice.text()).toContain('尚未啟用（僅記錄設定）')
-      expect(wrapper.findAll('.policy-tag').length).toBe(4)
+      expect(wrapper.find('[data-test="policy-not-effective"]').exists()).toBe(false)
+      expect(wrapper.findAll('.policy-tag').length).toBe(0)
+      const text = wrapper.text()
+      for (const removed of ['尚未啟用', '最大簽核關卡數', '是否允許代理簽核', '逾時提醒', '逾時處理方式', '儲存通用規則']) {
+        expect(text, removed).not.toContain(removed)
+      }
+      expect(wrapper.find('[data-test="skip-repeated"]').exists()).toBe(true)
     })
 
-    it('儲存通用規則只送 policy（四個欄位），不帶 steps，成功才顯示成功訊息', async () => {
+    it('切換開關只送 policy.skipRepeatedApprovers，不帶 steps 也不帶不再顯示的規則，成功才顯示成功訊息', async () => {
       const wrapper = await mountDesigner()
-      wrapper.vm.policyForm.overdueDays = 7
-      wrapper.vm.policyForm.overdueAction = 'autoPass'
+      await openWorkflow(wrapper)
+      wrapper.vm.skipRepeatedApprovers = true
 
-      await wrapper.vm.savePolicy()
+      await wrapper.vm.saveSkipRepeated()
 
       const calls = writesTo('PUT', '/api/approvals/forms/form1/workflow')
       expect(calls).toHaveLength(1)
       expect(Object.keys(calls[0].body)).toEqual(['policy'])
-      expect(calls[0].body.policy).toEqual({ maxApprovalLevel: 5, allowDelegate: false, overdueDays: 7, overdueAction: 'autoPass' })
-      expect(ElMessage.success).toHaveBeenCalledWith('已儲存通用規則')
+      // 伺服器上的最大簽核關卡數、代理簽核、逾時設定沒有被送出，所以原封不動
+      expect(calls[0].body.policy).toEqual({ skipRepeatedApprovers: true })
+      expect(ElMessage.success).toHaveBeenCalledWith('已開啟：後面的關卡不再重複簽核')
       expect(ElMessage.error).not.toHaveBeenCalled()
     })
 
-    it('儲存通用規則失敗時顯示伺服器的錯誤，不顯示成功', async () => {
-      server.write = () => json({ error: '逾時處理方式只能選不處理、自動通過或自動退回' }, 400)
+    it('儲存失敗時顯示伺服器的錯誤，不顯示成功，開關回到原本的值', async () => {
+      server.write = () => json({ error: '通用規則格式不正確' }, 400)
       const wrapper = await mountDesigner()
+      await openWorkflow(wrapper)
+      wrapper.vm.skipRepeatedApprovers = true
 
-      await wrapper.vm.savePolicy()
+      await wrapper.vm.saveSkipRepeated()
 
       expect(ElMessage.success).not.toHaveBeenCalled()
       expect(ElMessage.error).toHaveBeenCalledTimes(1)
-      expect(ElMessage.error.mock.calls[0][0]).toBe('儲存通用規則失敗：逾時處理方式只能選不處理、自動通過或自動退回')
+      expect(ElMessage.error.mock.calls[0][0]).toBe('儲存「略過重複的簽核人」失敗：通用規則格式不正確')
+      expect(wrapper.vm.skipRepeatedApprovers).toBe(false)
     })
 
-    it('儲存通用規則時網路中斷：顯示「儲存失敗，請檢查網路後再試」', async () => {
+    it('儲存時網路中斷：顯示「儲存失敗，請檢查網路後再試」，開關回到原本的值', async () => {
       const wrapper = await mountDesigner()
+      await openWorkflow(wrapper)
       apiFetchMock.mockImplementation(() => Promise.reject(new TypeError('Failed to fetch')))
+      wrapper.vm.skipRepeatedApprovers = true
 
-      await wrapper.vm.savePolicy()
+      await wrapper.vm.saveSkipRepeated()
 
       expect(ElMessage.success).not.toHaveBeenCalled()
       expect(ElMessage.error).toHaveBeenCalledWith('儲存失敗，請檢查網路後再試')
+      expect(wrapper.vm.skipRepeatedApprovers).toBe(false)
     })
 
-    it('切換樣板時，上一張表單的規則不會殘留（沒有 policy 就回到預設值）', async () => {
-      server.workflow = { steps: [], policy: { overdueDays: 9 } }
+    it('重新讀取時，上一次的規則不會殘留（沒有 policy 就回到關閉）', async () => {
+      server.workflow = { steps: [], policy: { skipRepeatedApprovers: true } }
       const wrapper = await mountDesigner()
-      expect(wrapper.vm.policyForm.overdueDays).toBe(9)
+      await openWorkflow(wrapper)
+      expect(wrapper.vm.skipRepeatedApprovers).toBe(true)
 
       server.workflow = { steps: [] }
       await wrapper.vm.loadWorkflow()
 
-      expect(wrapper.vm.policyForm).toEqual({ maxApprovalLevel: 5, allowDelegate: false, overdueDays: 3, overdueAction: 'none' })
+      expect(wrapper.vm.skipRepeatedApprovers).toBe(false)
+      expect(wrapper.vm.policyLoaded).toBe(true)
+    })
+
+    it('連按兩下開關只送一次', async () => {
+      const wrapper = await mountDesigner()
+      await openWorkflow(wrapper)
+      wrapper.vm.skipRepeatedApprovers = true
+
+      const first = wrapper.vm.saveSkipRepeated()
+      const second = wrapper.vm.saveSkipRepeated()
+      await Promise.all([first, second])
+
+      expect(writesTo('PUT', '/api/approvals/forms/form1/workflow')).toHaveLength(1)
     })
   })
 
   describe('切換表單時的規則與關卡不會被慢回來的舊回應蓋掉', () => {
-    const DEFAULT_POLICY = { maxApprovalLevel: 5, allowDelegate: false, overdueDays: 3, overdueAction: 'none' }
     const tagStep = (tag) => ({ step_order: 1, approver_type: 'tag', approver_value: tag })
 
     // 掛載完成後，讓之後的 workflow GET 先等著，由測試決定何時、用什麼內容回覆
@@ -244,17 +271,18 @@ describe('ApprovalFlowSetting 流程設計', () => {
       expect(wrapper.vm.selectedFormId).toBe('form2')
       expect(wrapper.vm.workflowLoaded).toBe(false)
 
-      pending.form2[0].respond({ steps: [tagStep('人資')], policy: { overdueDays: 8 } })
+      pending.form2[0].respond({ steps: [tagStep('人資')], policy: { skipRepeatedApprovers: true } })
       await openB
       expect(wrapper.vm.workflowLoaded).toBe(true)
 
-      pending.form1[0].respond({ steps: [tagStep('排班負責人'), tagStep('財務覆核')], policy: { overdueDays: 2, overdueAction: 'autoPass' } })
+      pending.form1[0].respond({ steps: [tagStep('排班負責人'), tagStep('財務覆核')], policy: { skipRepeatedApprovers: false } })
       await openA
       await flushPromises()
 
       expect(wrapper.vm.selectedFormId).toBe('form2')
       expect(wrapper.vm.workflowSteps.map((step) => step.approver_value)).toEqual(['人資'])
-      expect(wrapper.vm.policyForm).toEqual({ ...DEFAULT_POLICY, overdueDays: 8 })
+      // 規則（略過重複的簽核人）也是 B 的，沒有被 A 晚到的回應蓋掉
+      expect(wrapper.vm.skipRepeatedApprovers).toBe(true)
 
       await wrapper.vm.saveWorkflow()
       const writes = writesTo('PUT', '/api/approvals/forms/form2/workflow')
@@ -331,51 +359,63 @@ describe('ApprovalFlowSetting 流程設計', () => {
       const loadB = wrapper.vm.loadWorkflow()
       await flushPromises()
 
-      pending.form2[0].respond({ steps: [], policy: { overdueDays: 8 } })
+      pending.form2[0].respond({ steps: [], policy: { skipRepeatedApprovers: true } })
       await loadB
-      pending.form1[0].respond({ steps: [], policy: { overdueDays: 2, overdueAction: 'autoPass' } })
+      pending.form1[0].respond({ steps: [], policy: { skipRepeatedApprovers: false } })
       await loadA
       await flushPromises()
 
-      expect(wrapper.vm.policyForm).toEqual({ ...DEFAULT_POLICY, overdueDays: 8 })
+      expect(wrapper.vm.skipRepeatedApprovers).toBe(true)
       expect(wrapper.vm.policyLoaded).toBe(true)
     })
 
-    it('沒有流程文件（404）的表單不會沿用上一張表單的規則，儲存的是預設值', async () => {
-      server.workflow = { steps: [], policy: { overdueDays: 9, overdueAction: 'autoPass' } }
+    it('沒有流程文件（404）的表單不會沿用上一張表單的規則，可以直接儲存這張表單自己的', async () => {
+      server.workflow = { steps: [], policy: { skipRepeatedApprovers: true } }
       const wrapper = await mountDesigner()
-      expect(wrapper.vm.policyForm).toMatchObject({ overdueDays: 9, overdueAction: 'autoPass' })
+      await openWorkflow(wrapper)
+      expect(wrapper.vm.skipRepeatedApprovers).toBe(true)
 
       serveWorkflow('form2', () => json({ error: '這張表單還沒有簽核流程' }, 404))
       wrapper.vm.selectedFormId = 'form2'
       await wrapper.vm.loadWorkflow()
 
-      expect(wrapper.vm.policyForm).toEqual(DEFAULT_POLICY)
+      expect(wrapper.vm.skipRepeatedApprovers).toBe(false)
       expect(wrapper.vm.policyLoaded).toBe(true)
       expect(ElMessage.error).not.toHaveBeenCalled()
 
-      await wrapper.vm.savePolicy()
+      wrapper.vm.skipRepeatedApprovers = true
+      await wrapper.vm.saveSkipRepeated()
       const writes = writesTo('PUT', '/api/approvals/forms/form2/workflow')
       expect(writes).toHaveLength(1)
-      expect(writes[0].body.policy).toEqual(DEFAULT_POLICY)
+      expect(writes[0].body).toEqual({ policy: { skipRepeatedApprovers: true } })
+      expect(writesTo('PUT', '/api/approvals/forms/form1/workflow')).toHaveLength(0)
     })
 
     it('讀取失敗（非 404）時顯示錯誤、規則回到預設值，而且不能把它儲存到這張表單', async () => {
-      server.workflow = { steps: [], policy: { overdueDays: 9, overdueAction: 'autoPass' } }
+      server.workflow = { steps: [tagStep('人資')], policy: { skipRepeatedApprovers: true } }
       const wrapper = await mountDesigner()
+      await openWorkflow(wrapper)
+      expect(wrapper.vm.skipRepeatedApprovers).toBe(true)
 
       serveWorkflow('form2', () => json({ error: '資料庫忙碌中' }, 500))
       wrapper.vm.selectedFormId = 'form2'
       await wrapper.vm.loadWorkflow()
+      await flushPromises()
 
-      expect(ElMessage.error).toHaveBeenCalledWith('載入通用規則失敗：資料庫忙碌中')
-      expect(wrapper.vm.policyForm).toEqual(DEFAULT_POLICY)
+      expect(ElMessage.error).toHaveBeenCalledWith('載入流程規則失敗：資料庫忙碌中')
+      expect(wrapper.vm.skipRepeatedApprovers).toBe(false)
       expect(wrapper.vm.policyLoaded).toBe(false)
-      expect(wrapper.find('button[disabled]').exists()).toBe(true)
+      // 上一張表單的關卡也不留在這張表單底下；畫面只剩「沒有成功載入」與重新載入，開關與儲存都不在
+      expect(wrapper.vm.workflowSteps).toEqual([])
+      expect(wrapper.find('[data-test="steps-not-loaded"]').exists()).toBe(true)
+      expect(wrapper.find('[data-test="skip-repeated-switch"]').exists()).toBe(false)
+      expect(wrapper.find('[data-test="save-workflow"]').exists()).toBe(false)
 
       ElMessage.error.mockClear()
-      await wrapper.vm.savePolicy()
-      expect(ElMessage.error).toHaveBeenCalledWith('這張表單的通用規則還沒有成功載入，請重新選擇表單樣板後再儲存')
+      wrapper.vm.skipRepeatedApprovers = true
+      await wrapper.vm.saveSkipRepeated()
+      expect(ElMessage.error).toHaveBeenCalledWith('這張表單的流程規則還沒有成功載入，請回到表單清單重新開啟後再試')
+      expect(wrapper.vm.skipRepeatedApprovers).toBe(false)
       expect(writesTo('PUT', '/api/approvals/forms/form2/workflow')).toHaveLength(0)
     })
 
@@ -389,10 +429,11 @@ describe('ApprovalFlowSetting 流程設計', () => {
       expect(wrapper.vm.policyLoaded).toBe(false)
     })
 
-    it('開啟沒有流程文件的表單：關卡從空白開始，通用規則也是預設值，不是上一張的', async () => {
-      server.workflow = { steps: [tagStep('人資')], policy: { overdueDays: 9 } }
+    it('開啟沒有流程文件的表單：關卡從空白開始，流程規則也是預設值，不是上一張的', async () => {
+      server.workflow = { steps: [tagStep('人資')], policy: { skipRepeatedApprovers: true } }
       const wrapper = await mountDesigner()
-      expect(wrapper.vm.policyForm.overdueDays).toBe(9)
+      await openWorkflow(wrapper)
+      expect(wrapper.vm.skipRepeatedApprovers).toBe(true)
 
       serveWorkflow('form2', () => json({ error: '這張表單還沒有簽核流程' }, 404))
       await wrapper.vm.openWorkflowDialog({ _id: 'form2' })
@@ -401,13 +442,13 @@ describe('ApprovalFlowSetting 流程設計', () => {
       expect(wrapper.vm.selectedFormId).toBe('form2')
       expect(wrapper.vm.workflowSteps).toEqual([])
       expect(wrapper.vm.workflowLoaded).toBe(true)
-      expect(wrapper.vm.policyForm).toEqual(DEFAULT_POLICY)
+      expect(wrapper.vm.skipRepeatedApprovers).toBe(false)
       expect(wrapper.vm.policyLoaded).toBe(true)
     })
   })
 
   describe('儲存流程（W1 / W4）', () => {
-    it('只送 steps，不帶 policy（通用規則在自己的分頁儲存）', async () => {
+    it('只送 steps，不帶 policy（流程規則自己儲存）', async () => {
       const wrapper = await mountDesigner()
       await openWorkflow(wrapper)
       wrapper.vm.workflowSteps[0].name = '  直屬主管 '
@@ -423,7 +464,11 @@ describe('ApprovalFlowSetting 流程設計', () => {
       expect(call.body.steps[0].name).toBe('直屬主管')
       expect(call.body.steps[1]).not.toHaveProperty('name')
       expect(call.body.steps.every((step) => !('__meta' in step))).toBe(true)
-      expect(wrapper.vm.workflowDialogVisible).toBe(false)
+      // 2026/11：關卡在表單的設定畫面裡編輯，儲存後留在這張表單（以前是關閉對話框），畫面上沒有尚未儲存的變更
+      expect(wrapper.vm.workflowDialogVisible).toBe(true)
+      expect(wrapper.vm.selectedFormId).toBe('form1')
+      expect(wrapper.vm.stepsDirty).toBe(false)
+      expect(wrapper.vm.workflowSteps.map((step) => step.name)).toEqual(['直屬主管', ''])
       expect(ElMessage.success).toHaveBeenCalledWith('流程已儲存')
     })
 
@@ -437,6 +482,14 @@ describe('ApprovalFlowSetting 流程設計', () => {
       expect(ElMessage.success).not.toHaveBeenCalled()
       expect(ElMessage.error).toHaveBeenCalledWith('儲存流程失敗：第2關（標籤）：請選擇或輸入簽核標籤')
       expect(wrapper.vm.workflowDialogVisible).toBe(true)
+      // 伺服器回的 step 是第 2 關：原因標在第 2 關那張卡片（不重複「第2關（標籤）：」），改過那一關之後就不再顯示
+      await flushPromises()
+      const cards = wrapper.findAll('[data-test="step-card"]')
+      expect(cards[0].find('[data-test="step-error"]').exists()).toBe(false)
+      expect(cards[1].find('[data-test="step-error"]').text()).toBe('請選擇或輸入簽核標籤')
+      wrapper.vm.workflowSteps[1].approver_value = '人資'
+      await flushPromises()
+      expect(wrapper.find('[data-test="step-error"]').exists()).toBe(false)
     })
 
     it('伺服器 500 且沒有錯誤文字時顯示預設中文訊息', async () => {
@@ -613,7 +666,9 @@ describe('ApprovalFlowSetting 流程設計', () => {
       expect(texts).toContain('排班負責人')
       expect(texts).toContain('目前沒有任何在職員工持有')
       expect(writesTo('PUT', '/api/approvals/forms/form1/workflow')).toHaveLength(1)
-      expect(wrapper.vm.workflowDialogVisible).toBe(false)
+      // 儲存後留在這張表單（2026/11：不再是對話框）
+      expect(wrapper.vm.workflowDialogVisible).toBe(true)
+      expect(wrapper.vm.stepsDirty).toBe(false)
     })
 
     it('在警告確認按「回去修改」時不送出、視窗保持開啟', async () => {
@@ -976,7 +1031,8 @@ describe('ApprovalFlowSetting 流程設計', () => {
       expect(text).toContain('改為「停用」')
       expect(text).toContain('無法復原')
       expect(title).toBe('確認刪除表單樣板')
-      expect(options).toMatchObject({ confirmButtonText: '確定刪除', type: 'warning' })
+      // 確認鍵與全站一致用動詞「刪除」（以前是「確定刪除」）
+      expect(options).toMatchObject({ confirmButtonText: '刪除', type: 'warning' })
     })
 
     it('取消確認就不會送出刪除', async () => {
@@ -990,8 +1046,10 @@ describe('ApprovalFlowSetting 流程設計', () => {
       expect(ElMessage.success).not.toHaveBeenCalled()
     })
 
-    it('從上方「刪除樣板」按鈕（沒有帶列資料）刪除目前選的樣板', async () => {
+    // 2026/11：不再預選表單；「刪除」按鈕在表單的設定畫面上，刪的是正在設定的那張，刪除後回到清單
+    it('從表單設定畫面的「刪除」按鈕（沒有帶列資料）刪除正在設定的表單', async () => {
       const wrapper = await mountDesigner()
+      await openWorkflow(wrapper)
       server.write = () => json({ success: true, deleted: true })
 
       await wrapper.vm.removeForm(new MouseEvent('click'))
@@ -999,6 +1057,8 @@ describe('ApprovalFlowSetting 流程設計', () => {
       expect(writesTo('DELETE', '/api/approvals/forms/form1')).toHaveLength(1)
       expect(ElMessageBox.confirm.mock.calls[0][0]).toBeTruthy()
       expect(wrapper.vm.selectedFormId).toBe('')
+      expect(wrapper.vm.workflowDialogVisible).toBe(false)
+      expect(wrapper.vm.workflowSteps).toEqual([])
     })
 
     it('沒有申請單時刪除成功：顯示成功並重新讀取列表', async () => {
@@ -1016,6 +1076,7 @@ describe('ApprovalFlowSetting 流程設計', () => {
     it('已有申請單時伺服器改為停用：顯示伺服器的說明，保留目前選取的樣板', async () => {
       server.write = () => json({ success: true, deleted: false, deactivated: true, requestCount: 5, pendingCount: 2, message: '這張表單已有 5 筆申請單，已改為停用而沒有刪除。' })
       const wrapper = await mountDesigner()
+      await openWorkflow(wrapper)
 
       await wrapper.vm.removeForm({ _id: 'form1', name: '加班申請' })
 
@@ -1026,6 +1087,7 @@ describe('ApprovalFlowSetting 流程設計', () => {
     it('刪除失敗：顯示伺服器的錯誤，不顯示成功', async () => {
       server.write = () => json({ error: '找不到這張表單樣板' }, 404)
       const wrapper = await mountDesigner()
+      await openWorkflow(wrapper)
 
       await wrapper.vm.removeForm({ _id: 'form1', name: '加班申請' })
 

@@ -351,6 +351,34 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
     });
   });
 
+  // 2026-11 複查（真的資料庫重現）：同一格同時新增兩次，後到的回了資料庫的 E11000 原文（含資料庫與集合名稱）
+  it('同一格同時新增（撞到唯一索引）：回覆 employee conflict，不外洩資料庫錯誤訊息', async () => {
+    mockShiftSchedule.findOne
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ _id: 'winner', shiftId: 'other-shift' });
+    mockShiftSchedule.create.mockRejectedValue(Object.assign(
+      new Error('E11000 duplicate key error collection: hr.shiftschedules index: employee_1_date_1 dup key'),
+      { code: 11000 },
+    ));
+
+    const res = await request(app)
+      .post('/api/schedules')
+      .send({ employee: 'e1', date: '2023-01-01', shiftId: 's1' });
+
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({
+      error: 'employee conflict',
+      conflict: {
+        employee: 'e1',
+        date: '2023-01-01T00:00:00.000Z',
+        existingScheduleId: 'winner',
+        existingShiftId: 'other-shift',
+        requestedShiftId: 's1',
+      },
+    });
+    expect(JSON.stringify(res.body)).not.toContain('E11000');
+  });
+
   it('rejects creation if cross-department', async () => {
     mockShiftSchedule.findOne.mockResolvedValue({ _id: '1', department: 'd1' });
     const res = await request(app)
@@ -420,6 +448,7 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
         allEmployeesConfirmed: false,
         currentRoundPendingEmployees: [],
         unaffectedConfirmedEmployees: [],
+        unpublishedCount: 0,
       },
       pagination: {
         total: 1,
@@ -523,8 +552,10 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
         hasSchedules: true,
         totalEmployees: 1,
         allEmployeesConfirmed: false,
-        currentRoundPendingEmployees: [],
+        // 這筆班表沒有 needsReconfirm（舊資料形狀）：和發布的查詢一樣算這一輪要確認的
+        currentRoundPendingEmployees: [{ id: 'emp1', name: '' }],
         unaffectedConfirmedEmployees: [],
+        unpublishedCount: 0,
       },
       pagination: {
         total: 1,
@@ -674,7 +705,8 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
       expect(mockShiftSchedule.find).toHaveBeenCalledWith(expect.objectContaining({
         date: expect.any(Object),
         state: { $ne: 'finalized' },
-        needsReconfirm: true,
+        // 沒有 needsReconfirm 的舊資料也選得到
+        needsReconfirm: { $ne: false },
       }));
       expect(mockShiftSchedule.updateMany).toHaveBeenCalledWith({
         _id: { $in: ['sch1'] },
@@ -823,8 +855,10 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
         .send({ month: '2024-05' });
 
       expect(res.status).toBe(409);
+      // 訊息改成中文（畫面直接顯示這段文字），另外附上 code 給程式判斷
       expect(res.body).toEqual({
-        error: 'unconfirmed employees',
+        error: '仍有員工尚未確認或提出異議，無法完成發布',
+        code: 'UNCONFIRMED_EMPLOYEES',
         pendingEmployees: [
           expect.objectContaining({ id: 'emp1', name: '王小明' }),
         ],
@@ -1236,6 +1270,43 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
       expect(sessionMock.startTransaction).toHaveBeenCalled();
       expect(sessionMock.commitTransaction).toHaveBeenCalled();
       expect(sessionMock.abortTransaction).not.toHaveBeenCalled();
+    });
+
+    // 2026-11 複查（真的資料庫重現）：其中一筆不能回覆時回 400，排在它前面的幾筆卻已經存成「已確認」
+    it('批次回覆時其中一筆不能回覆（已完成發布）：整批都不存', async () => {
+      const pending = buildDoc({ _id: 'sch-mix-1', employee: { _id: 'empMix', name: '員工M' } });
+      const finalized = buildDoc({ _id: 'sch-mix-2', state: 'finalized', employee: { _id: 'empMix', name: '員工M' } });
+      mockShiftSchedule.startSession.mockResolvedValue(null);
+      mockShiftSchedule.findById.mockImplementation((id) => ({
+        populate: jest.fn().mockResolvedValue(id === 'sch-mix-1' ? pending : finalized),
+      }));
+
+      const res = await request(app)
+        .post('/api/schedules/respond/bulk')
+        .set('Authorization', buildAuthHeader('employee', { id: 'empMix' }))
+        .send({ scheduleIds: ['sch-mix-1', 'sch-mix-2'], response: 'confirm' });
+
+      expect(res.status).toBe(400);
+      expect(res.body).toEqual({ error: 'schedule finalized' });
+      expect(pending.save).not.toHaveBeenCalled();
+      expect(finalized.save).not.toHaveBeenCalled();
+    });
+
+    it('批次回覆裡有別人的班表：整批都不存', async () => {
+      const mine = buildDoc({ _id: 'sch-own-1', employee: { _id: 'empOwn', name: '員工O' } });
+      const others = buildDoc({ _id: 'sch-own-2', employee: { _id: 'someoneElse', name: '別人' } });
+      mockShiftSchedule.startSession.mockResolvedValue(null);
+      mockShiftSchedule.findById.mockImplementation((id) => ({
+        populate: jest.fn().mockResolvedValue(id === 'sch-own-1' ? mine : others),
+      }));
+
+      const res = await request(app)
+        .post('/api/schedules/respond/bulk')
+        .set('Authorization', buildAuthHeader('employee', { id: 'empOwn' }))
+        .send({ scheduleIds: ['sch-own-1', 'sch-own-2'], response: 'confirm' });
+
+      expect(res.status).toBe(403);
+      expect(mine.save).not.toHaveBeenCalled();
     });
 
     it('allows supervisor to confirm own schedules in bulk', async () => {
@@ -2407,7 +2478,9 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
     });
 
     mockShiftSchedule.find.mockImplementation((query) => {
-      expect(query.department).toBe('deptA');
+      // 部門只用來篩選員工；班表依這些員工查（員工月中調單位時，舊單位排的班表也要匯出），不再比對班表上存的部門
+      expect(query.department).toBeUndefined();
+      expect(query.employee).toEqual({ $in: ['empA'] });
       expect(query.date.$gte.toISOString()).toBe(
         new Date('2024-05-01T00:00:00.000Z').toISOString()
       );
@@ -2419,7 +2492,7 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
         (item) =>
           item.date >= query.date.$gte &&
           item.date < query.date.$lt &&
-          item.department === query.department
+          query.employee.$in.includes(item.employee._id)
       );
 
       const chain = {
@@ -2821,12 +2894,12 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
       }));
     });
 
-    it('rejects can-finalize with a 500 and the underlying message on an invalid month', async () => {
+    it('rejects can-finalize with a 400 (a request problem, it used to be a 500) on an invalid month', async () => {
       const res = await request(app)
         .get('/api/schedules/can-finalize?month=not-a-month')
         .set('Authorization', buildAuthHeader('admin'));
 
-      expect(res.status).toBe(500);
+      expect(res.status).toBe(400);
       expect(res.body.error).toMatch(/Invalid month format/);
     });
 
@@ -2868,7 +2941,8 @@ const buildAuthHeader = (role = 'supervisor', overrides = {}) => {
       expect(res.body.violations[0]).toEqual(expect.objectContaining({ employee: 'e1', rule: 'continuous-work-days' }));
       // 第一次查待發布的草稿，第二次只換成已完成發布的班表：同月份、同部門／單位，不再要求 needsReconfirm
       const [draftQuery, lockedQuery] = mockShiftSchedule.find.mock.calls.map(([query]) => query);
-      expect(draftQuery).toEqual(expect.objectContaining({ state: { $ne: 'finalized' }, needsReconfirm: true }));
+      // needsReconfirm 沒有值的舊資料也算（$ne: false）
+      expect(draftQuery).toEqual(expect.objectContaining({ state: { $ne: 'finalized' }, needsReconfirm: { $ne: false } }));
       expect(lockedQuery).toEqual({
         date: draftQuery.date,
         department: 'd1',

@@ -112,7 +112,7 @@ export async function importSchedules(req, res) {
     const subDepartment = String(req.body?.subDepartment || '').trim();
     const mode = req.body?.mode === 'commit' ? 'commit' : 'preview';
     const overwrite = String(req.body?.overwrite || '').toLowerCase() === 'true';
-    if (!department) return res.status(400).json({ error: 'department required' });
+    if (!department) return res.status(400).json({ error: '請先選擇要匯入的部門', code: 'DEPARTMENT_REQUIRED' });
     let range;
     try {
       range = buildMonthRange(month);
@@ -120,7 +120,7 @@ export async function importSchedules(req, res) {
       return res.status(400).json({ error: error.message });
     }
     if (!String(req.file?.originalname || '').toLowerCase().endsWith('.xlsx')) {
-      return res.status(400).json({ error: 'schedule import only supports .xlsx files' });
+      return res.status(400).json({ error: '班表匯入只支援 .xlsx 檔案', code: 'UNSUPPORTED_FILE' });
     }
 
     const parsed = await parseScheduleWorkbook(req.file.buffer, { month });
@@ -132,7 +132,7 @@ export async function importSchedules(req, res) {
       allowedEmployeeIds = allowedEmployeeIds.filter((employeeId) => employeeId !== actorId);
     }
     if (allowedEmployeeIds !== null && !allowedEmployeeIds.length) {
-      return res.status(403).json({ error: 'forbidden' });
+      return res.status(403).json({ error: '您沒有這個部門／小單位的排班權限，無法匯入班表', code: 'FORBIDDEN' });
     }
 
     const employeeQuery = { department };
@@ -408,7 +408,7 @@ export async function importSchedules(req, res) {
     if (mode === 'preview' || errors.length) {
       return res.status(errors.length ? 422 : 200).json(withPendingWeeks(summary));
     }
-    if (!candidates.length) return res.status(400).json({ ...summary, error: 'no schedules to import' });
+    if (!candidates.length) return res.status(400).json({ ...summary, error: '檔案裡沒有可以匯入的班表' });
 
     rollbackExistingSchedules = candidates
       .map((candidate) => candidate.existing)

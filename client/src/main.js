@@ -8,6 +8,7 @@ import zhTw from 'element-plus/es/locale/lang/zh-tw'
 import 'element-plus/dist/index.css'
 import './assets/main.css'
 import './assets/responsive.css'
+import './assets/page.css'
 
 const app = createApp(App)
 const pinia = createPinia()

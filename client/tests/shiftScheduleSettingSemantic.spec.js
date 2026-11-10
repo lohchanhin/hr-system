@@ -161,22 +161,27 @@ describe('ShiftScheduleSetting.vue 班別性質', () => {
     expect(wrapper.vm.semanticTouched).toBe(true)
   })
 
-  it('非工作類型時上下班時間與休息欄位停用，改回工作班後恢復', async () => {
+  // 2026/11 介面整理：不需上班的班別不再顯示（停用的）時間、休息與夜班欄位，改回工作班後才出現
+  it('非工作類型時不顯示上下班時間與休息欄位，改回工作班後恢復', async () => {
     await mountSetting()
     wrapper.vm.openShiftDialog()
     await flushPromises()
-    const disabledEditors = () => document.body.querySelectorAll('.el-date-editor.is-disabled').length
-    expect(disabledEditors()).toBe(0)
+    const timeEditors = () => document.body.querySelectorAll('.el-date-editor').length
+    const numberInputs = () => document.body.querySelectorAll('.el-input-number').length
+    expect(timeEditors()).toBe(2)
+    expect(numberInputs()).toBeGreaterThan(0)
 
     wrapper.vm.onSemanticTypeChange('rest_day')
     await flushPromises()
     expect(wrapper.vm.isNonWorkForm).toBe(true)
-    expect(disabledEditors()).toBe(2)
-    expect(document.body.querySelectorAll('.el-input-number.is-disabled').length).toBeGreaterThan(0)
+    expect(timeEditors()).toBe(0)
+    expect(numberInputs()).toBe(0)
+    expect(document.body.querySelector('[data-test="shift-computed-summary"]')).toBeNull()
 
     wrapper.vm.onSemanticTypeChange('work')
     await flushPromises()
-    expect(disabledEditors()).toBe(0)
+    expect(timeEditors()).toBe(2)
+    expect(document.body.querySelectorAll('.el-date-editor.is-disabled')).toHaveLength(0)
   })
 
   it('表單顯示班別性質說明，工作班沒有工作時間時顯示警示並阻擋儲存', async () => {

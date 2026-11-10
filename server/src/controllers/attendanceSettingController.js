@@ -125,8 +125,41 @@ export async function getAttendanceSetting(req, res) {
     const setting = await ensureAttendanceSetting();
     res.json(normalize(setting));
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(`Attendance setting read failed: ${err?.name || 'Error'}`);
+    res.status(500).json({ error: '出勤設定讀取失敗，請稍後再試' });
   }
+}
+
+// 遲到／早退扣款（薪資依「次數 × 每次金額」扣款，attendanceDeductionService）：有送的欄位要是正確的型別。
+// 以前不檢查：負數金額照存（變成每遲到一次多發錢）、"abc" 讓 Mongoose 丟 CastError 回 500 英文訊息、"yes" 被轉成 true
+const DEDUCTION_AMOUNT_MAX = 100000;
+const DEDUCTION_FIELDS = [
+  { key: 'lateDeductionEnabled', label: '遲到扣款的「啟用」', type: 'boolean' },
+  { key: 'earlyLeaveDeductionEnabled', label: '早退扣款的「啟用」', type: 'boolean' },
+  { key: 'lateDeductionAmount', label: '遲到每次扣款金額', type: 'amount' },
+  { key: 'earlyLeaveDeductionAmount', label: '早退每次扣款金額', type: 'amount' },
+];
+
+/* 回傳第一個不正確的扣款欄位 { error, code, field }，都正確回傳 null */
+function findInvalidDeduction(abnormalRules) {
+  if (!abnormalRules || typeof abnormalRules !== 'object') return null;
+  for (const { key, label, type } of DEDUCTION_FIELDS) {
+    if (!Object.hasOwn(abnormalRules, key)) continue;
+    const value = abnormalRules[key];
+    const valid = type === 'boolean'
+      ? typeof value === 'boolean'
+      : Number.isInteger(value) && value >= 0 && value <= DEDUCTION_AMOUNT_MAX;
+    if (!valid) {
+      return {
+        error: type === 'boolean'
+          ? `${label}只能是 true 或 false`
+          : `${label}必須是 0 到 ${DEDUCTION_AMOUNT_MAX} 的整數`,
+        code: 'INVALID_DEDUCTION_SETTING',
+        field: `abnormalRules.${key}`,
+      };
+    }
+  }
+  return null;
 }
 
 function mergeRuleSection(current, incoming, defaults) {
@@ -144,6 +177,8 @@ export async function updateAttendanceSetting(req, res) {
     const { abnormalRules, breakOutRules, overtimeRules, laborRules, globalBreakSetting, actionBuffers } = req.body || {};
 
     if (abnormalRules) {
+      const invalidDeduction = findInvalidDeduction(abnormalRules);
+      if (invalidDeduction) return res.status(400).json(invalidDeduction);
       setting.abnormalRules = mergeRuleSection(
         setting.abnormalRules,
         abnormalRules,
@@ -182,18 +217,16 @@ export async function updateAttendanceSetting(req, res) {
         DEFAULT_SETTING.laborRules
       );
       if (nextLaborRules.restIntervalExceptionEnabled && !String(nextLaborRules.restIntervalApprovalReference || '').trim()) {
-        return res.status(400).json({ error: 'rest interval exception requires an approval reference' });
+        return res.status(400).json({ error: '啟用 11 小時間隔例外必須填寫例外核准文件編號', code: 'REST_INTERVAL_APPROVAL_REQUIRED' });
       }
       if (nextLaborRules.workTimeRegime !== 'standard' && !String(nextLaborRules.workTimeRegimeApprovalReference || '').trim()) {
-        return res.status(400).json({ error: 'flexible work-time regime requires an approval reference' });
+        return res.status(400).json({ error: '採用變形工時必須填寫核准文件編號', code: 'WORK_TIME_REGIME_APPROVAL_REQUIRED' });
       }
       if (nextLaborRules.extendedOvertimeEnabled && !String(nextLaborRules.overtimeApprovalReference || '').trim()) {
-        return res.status(400).json({ error: 'extended overtime requires an approval reference' });
+        return res.status(400).json({ error: '延長每月加班上限必須填寫核准文件編號', code: 'EXTENDED_OVERTIME_APPROVAL_REQUIRED' });
       }
       if (nextLaborRules.strictCompanyWeeklyRest === false) {
-        return res.status(400).json({
-          error: 'company policy requires one regular rest day and one rest day every week',
-        });
+        return res.status(400).json({ error: '公司規定每週一例一休，不能關閉', code: 'WEEKLY_REST_REQUIRED' });
       }
       nextLaborRules.strictCompanyWeeklyRest = true;
       setting.laborRules = nextLaborRules;
@@ -214,7 +247,15 @@ export async function updateAttendanceSetting(req, res) {
     await setting.save();
     res.json(normalize(setting));
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    // 其他欄位型別不對（Mongoose 轉不過去）：以前回 500 與英文的 Cast 訊息
+    if (err?.name === 'ValidationError' || err?.name === 'CastError') {
+      return res.status(400).json({ error: '出勤設定的欄位格式不正確，請確認數字與開關後再儲存', code: 'INVALID_ATTENDANCE_SETTING' });
+    }
+    if (err?.name === 'VersionError') {
+      return res.status(409).json({ error: '出勤設定剛被其他人修改，請重新整理後再試', code: 'CONFLICT' });
+    }
+    console.error(`Attendance setting update failed: ${err?.name || 'Error'}`);
+    res.status(500).json({ error: '出勤設定儲存失敗，請稍後再試' });
   }
 }
 

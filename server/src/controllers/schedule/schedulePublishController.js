@@ -10,6 +10,7 @@ import {
   toEntityId,
   describePendingWeeks,
   buildPublishQuery,
+  applyPublishUnitFilter,
   summarizeEmployees,
   normalizeResponsePayload,
   sanitizeNote,
@@ -17,6 +18,9 @@ import {
   isTransactionNotSupportedError,
   applyEmployeeResponse,
 } from './scheduleShared.js';
+
+// 發布、完成發布只用到員工的姓名、代號與照片路徑：整個月幾千筆班表不必每一筆都帶整份員工資料
+const PUBLISH_EMPLOYEE_SELECT = 'name employeeId photo';
 
 /**
  * 發布、完成發布的排班規範檢核：只提醒、不擋（客戶：「可以顯示規範，可是不要阻止發布」；匯入照舊檢核）。
@@ -62,6 +66,17 @@ async function checkScheduleRulesWithoutBlocking(docs, range) {
   }
 }
 
+// 這個範圍裡員工已經確認、還沒完成發布的班表筆數（重新發布時不動它們）；算不出來（單元測試的替身）當成 0
+async function countConfirmedOpenRows(query) {
+  if (typeof ShiftSchedule.countDocuments !== 'function') return 0;
+  try {
+    const count = await ShiftSchedule.countDocuments({ ...query, state: 'pending_confirmation', employeeResponse: 'confirmed' });
+    return Number.isFinite(count) && count > 0 ? count : 0;
+  } catch {
+    return 0;
+  }
+}
+
 // violations／pendingWeeks 只在有的時候才附上，沒有的時候回應內容維持原本的樣子
 function withRuleFindings(body, { violations, pendingWeeks }) {
   return {
@@ -88,17 +103,29 @@ export async function publishSchedules(req, res) {
       return res.status(401).json({ error: err.message || 'unauthorized' });
     }
 
-    const query = buildPublishQuery(range, { department, subDepartment });
+    const query = buildPublishQuery(range, {});
     if (Array.isArray(scopedIds)) {
       if (!scopedIds.length) {
-        return res.status(404).json({ error: 'no employees in scope' });
+        return res.status(404).json({ error: '您的排班範圍內沒有員工', code: 'NO_EMPLOYEES_IN_SCOPE' });
       }
       query.employee = { $in: scopedIds };
     }
+    // 部門、小單位：班表上存的單位，加上現在屬於這個單位的員工（月中調單位的人，舊單位排的那幾天也一起發布）
+    await applyPublishUnitFilter(query, { department, subDepartment });
+    // 員工已經確認、之後沒有異動的班表不重送：只送新增或異動過的（草稿）、有異議的與還沒回覆的。
+    // 以前整個範圍還沒完成發布的班表全部重設成待確認，改一天再發布，員工已確認的十幾天都要重新確認一次
+    const confirmedQuery = { ...query };
+    query.employeeResponse = { $ne: 'confirmed' };
 
-    const docs = await ShiftSchedule.find(query).populate('employee').lean();
+    const docs = await ShiftSchedule.find(query).populate('employee', PUBLISH_EMPLOYEE_SELECT).lean();
     if (!docs.length) {
-      return res.status(404).json({ error: 'no schedules found' });
+      if (await countConfirmedOpenRows(confirmedQuery)) {
+        return res.status(409).json({
+          error: '這個範圍的班表員工都已確認，沒有新增或異動的班表需要發送；可以直接完成發布',
+          code: 'NOTHING_TO_PUBLISH',
+        });
+      }
+      return res.status(404).json({ error: '這個範圍沒有可以發送的班表', code: 'NO_SCHEDULES' });
     }
 
     // 排班規範的違規不擋發布：照樣發送給員工確認，違規隨回應回報讓畫面提醒
@@ -122,12 +149,15 @@ export async function publishSchedules(req, res) {
       state: 'pending_confirmation',
     }));
 
+    // keptConfirmed：員工已確認、這次沒有重送的筆數（有的時候才附上）
+    const keptConfirmed = await countConfirmedOpenRows(confirmedQuery);
     // 排班規範違規、跨月週（鄰月還沒排）目前無法判斷的週別都不擋發布，只回報讓畫面提醒；沒有的時候回應內容不變
     res.json(withRuleFindings({
       updated: ids.length,
       employees,
       publishedAt: now.toISOString(),
       publishedMonth: month,
+      ...(keptConfirmed ? { keptConfirmed } : {}),
     }, ruleFindings));
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -152,19 +182,20 @@ export async function finalizeSchedules(req, res) {
     }
 
     const query = {
-      ...buildPublishQuery(range, { department, subDepartment }),
+      ...buildPublishQuery(range, {}),
       state: { $in: ['pending_confirmation', 'changes_requested'] },
     };
     if (Array.isArray(scopedIds)) {
       if (!scopedIds.length) {
-        return res.status(404).json({ error: 'no employees in scope' });
+        return res.status(404).json({ error: '您的排班範圍內沒有員工', code: 'NO_EMPLOYEES_IN_SCOPE' });
       }
       query.employee = { $in: scopedIds };
     }
+    await applyPublishUnitFilter(query, { department, subDepartment });
 
-    const docs = await ShiftSchedule.find(query).populate('employee').lean();
+    const docs = await ShiftSchedule.find(query).populate('employee', PUBLISH_EMPLOYEE_SELECT).lean();
     if (!docs.length) {
-      return res.status(404).json({ error: 'no schedules found' });
+      return res.status(404).json({ error: '這個範圍沒有待完成發布的班表（請先發送給員工確認）', code: 'NO_SCHEDULES' });
     }
 
     const pendingMap = new Map();
@@ -204,7 +235,8 @@ export async function finalizeSchedules(req, res) {
 
     if (pendingMap.size || disputedMap.size) {
       return res.status(409).json({
-        error: 'unconfirmed employees',
+        error: '仍有員工尚未確認或提出異議，無法完成發布',
+        code: 'UNCONFIRMED_EMPLOYEES',
         pendingEmployees: Array.from(pendingMap.values()),
         disputedEmployees: Array.from(disputedMap.values()),
       });
@@ -212,7 +244,7 @@ export async function finalizeSchedules(req, res) {
 
     const pendingDocs = docs.filter((doc) => doc.state === 'pending_confirmation');
     if (!pendingDocs.length) {
-      return res.status(400).json({ error: 'no pending schedules to finalize' });
+      return res.status(400).json({ error: '沒有待完成發布的班表', code: 'NOTHING_TO_FINALIZE' });
     }
 
     // 完成發布同樣不被排班規範的違規擋住（員工未確認、沒有待完成的班表等資料問題仍照上面擋下）
@@ -290,6 +322,10 @@ export async function respondToSchedulesBulk(req, res) {
     const { session: activeSession = null, transactional = false } = options;
     const now = new Date();
     const updatedDocs = [];
+    // 先把每一筆都讀出來、檢查過（是不是自己的、能不能回覆），全部沒問題才開始存。
+    // 單機 MongoDB 沒有交易：以前邊檢查邊存，其中一筆不能回覆（例如已經完成發布）時回 400，
+    // 排在它前面的幾筆卻已經存成「已確認」，畫面顯示失敗、實際上確認了一部分
+    const prepared = [];
 
     for (const scheduleId of ids) {
       let query = ShiftSchedule.findById(scheduleId);
@@ -330,7 +366,10 @@ export async function respondToSchedulesBulk(req, res) {
       }
 
       applyEmployeeResponse(schedule, normalized, noteValue, now);
+      prepared.push(schedule);
+    }
 
+    for (const schedule of prepared) {
       const saveOptions = transactional && activeSession ? { session: activeSession } : undefined;
       const saved = await schedule.save(saveOptions);
       if (typeof saved.populate === 'function') {
@@ -345,7 +384,7 @@ export async function respondToSchedulesBulk(req, res) {
   try {
     const { scheduleIds, response, note } = req.body || {};
     if (!Array.isArray(scheduleIds) || !scheduleIds.length) {
-      return res.status(400).json({ error: 'scheduleIds required' });
+      return res.status(400).json({ error: '請選擇要回覆的班表', code: 'SCHEDULE_IDS_REQUIRED' });
     }
     const userId = req.user?.id;
     if (!userId) return res.status(401).json({ error: 'unauthorized' });
@@ -387,7 +426,7 @@ export async function respondToSchedulesBulk(req, res) {
     );
 
     if (!uniqueIds.length) {
-      throw createError('scheduleIds required');
+      throw createError('請選擇要回覆的班表');
     }
 
     let updated = [];

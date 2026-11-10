@@ -25,6 +25,8 @@ describe('CORS exposed headers', () => {
     const exposed = exposedHeadersOf(res)
     expect(exposed).toContain(FORM_VISIBILITY_HEADER.toLowerCase())
     expect(exposed).toEqual(expect.arrayContaining(['x-approvals-truncated', 'x-total-count', 'x-page', 'x-limit']))
+    // 自訂欄位的版本號（兩人同時編輯時防止互相覆蓋）也要讀得到
+    expect(exposed).toContain('x-custom-fields-version')
   })
 
   it('does not open the API to an origin that is not allowed', async () => {

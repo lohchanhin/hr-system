@@ -1,16 +1,23 @@
 <template>
   <div class="help-button-wrapper">
-    <el-button
-      type="info"
-      plain
-      size="small"
+    <!-- 放在後台標題列的小「？」按鈕：按下才顯示本頁的操作說明，不佔內容區的空間 -->
+    <button
+      type="button"
+      class="help-icon-button"
       data-testid="global-help-button"
+      aria-label="本頁操作說明"
+      title="本頁操作說明"
       @click="visible = true"
     >
-      說明
-    </el-button>
+      <el-icon :size="20"><QuestionFilled /></el-icon>
+    </button>
 
-    <el-dialog v-model="visible" :title="resolvedHelp.title" width="520px">
+    <el-dialog
+      v-model="visible"
+      :title="resolvedHelp.title"
+      width="520px"
+      append-to-body
+    >
       <p class="help-description" data-testid="help-description">
         {{ resolvedHelp.description }}
       </p>
@@ -41,6 +48,7 @@
 
 <script setup>
 import { computed, ref } from 'vue'
+import { QuestionFilled } from '@element-plus/icons-vue'
 
 const props = defineProps({
   help: {
@@ -70,6 +78,28 @@ const resolvedHelp = computed(() => {
 </script>
 
 <style scoped>
+.help-button-wrapper {
+  display: inline-flex;
+}
+
+.help-icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.help-icon-button:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
 .help-description {
   margin-bottom: 8px;
   color: #606266;

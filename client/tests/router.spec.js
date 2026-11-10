@@ -29,6 +29,7 @@ import router, {
   recoverRouteChunk
 } from '../src/router/index.js'
 import { setToken } from '../src/utils/tokenService'
+import { FRONT_MENU_NAMES } from '../src/utils/authNavigation'
 
 beforeEach(() => {
   localStorage.clear()
@@ -77,6 +78,20 @@ describe('router', () => {
   it('redirects /manager to settings', () => {
     const manager = router.getRoutes().find(r => r.path === '/manager')
     expect(manager.redirect).toBe('/manager/settings')
+  })
+
+  // 以前只打 /front 會停在外框、內容空白
+  it('redirects /front to attendance', () => {
+    const front = router.getRoutes().find(r => r.path === '/front')
+    expect(front.redirect).toBe('/front/attendance')
+  })
+
+  // 外框用這份清單把選單分成前台／後台（管理員開前台頁面時不混入後台選單）；新增前台頁面時兩邊要一起改
+  it('keeps the front page list used by the shells in sync with the /front routes', () => {
+    const front = router.getRoutes().find(r => r.name === 'FrontLayout')
+    expect([...FRONT_MENU_NAMES].sort()).toEqual(front.children.map(r => r.name).sort())
+    const manager = router.getRoutes().find(r => r.name === 'ManagerLayout')
+    manager.children.forEach(child => expect(FRONT_MENU_NAMES, child.name).not.toContain(child.name))
   })
 
   it('front child routes define role meta', () => {

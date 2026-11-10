@@ -1,5 +1,8 @@
 /* Professional HR System Design Tokens */
 :root {
+  /* 本系統只有淺色版面：表單控制項、捲軸等瀏覽器內建元件也固定用淺色，不跟著系統的深色模式切換 */
+  color-scheme: light;
+
   /* Primary HR Color Palette - Professional Cyan Theme */
   --hr-primary: #164e63; /* Cyan-800 - Professional, trustworthy */
   --hr-primary-light: #0891b2; /* Cyan-600 - Lighter primary */
@@ -104,24 +107,6 @@
   --hr-z-toast: 1080;
 }
 
-/* Dark Mode Support */
-@media (prefers-color-scheme: dark) {
-  :root {
-    --hr-bg-primary: var(--hr-gray-900);
-    --hr-bg-secondary: var(--hr-gray-800);
-    --hr-bg-muted: var(--hr-gray-700);
-    --hr-bg-card: var(--hr-gray-800);
-
-    --hr-text-primary: var(--hr-gray-100);
-    --hr-text-secondary: var(--hr-gray-300);
-    --hr-text-muted: var(--hr-gray-400);
-
-    --hr-border-light: var(--hr-gray-700);
-    --hr-border-medium: var(--hr-gray-600);
-    --hr-border-dark: var(--hr-gray-500);
-  }
-}
-
 /* Base Reset and Typography */
 *,
 *::before,
@@ -153,22 +138,12 @@ body {
   transition: color var(--hr-transition-normal), background-color var(--hr-transition-normal);
 }
 
-/* Responsive Typography */
+/* Responsive Typography：手機 14px，其餘固定 16px（--hr-* 的字級與間距註解的 px 值以 16px 為準）。
+   以前寬螢幕（1280px 以上）放大成 18px，用 rem 的頁首與間距會比介面規範大 12.5%，
+   而 Element Plus 元件是固定 px，同一頁裡兩種比例不一致 */
 @media (max-width: 640px) {
   html {
     font-size: 14px;
-  }
-}
-
-@media (min-width: 1024px) {
-  html {
-    font-size: 16px;
-  }
-}
-
-@media (min-width: 1280px) {
-  html {
-    font-size: 18px;
   }
 }
 

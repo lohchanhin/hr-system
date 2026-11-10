@@ -80,6 +80,50 @@ export function formatTaipeiDateTime(value, emptyText = '-') {
   return `${p.year}/${p.month}/${p.day} ${p.hour}:${p.minute}`
 }
 
+/* -------------------- 日期／時間選擇器 <-> 台灣時間 -------------------- */
+
+const TAIPEI_OFFSET_MS = 8 * 60 * 60 * 1000
+
+/**
+ * 日期／時間選擇器回傳的 Date 是「裝置時區」的時間，但系統一律以台灣時間為準：
+ * 把選擇器上看到的年月日時分當成台灣時間，換成正確的時間點。
+ * 裝置本來就在台灣時區（UTC+8）時結果不變；裝置時區不同（出國、電腦時區設錯）時，
+ * 選「11/12 09:00」送出的才會是台灣時間 11/12 09:00，而不是別的時區的 09:00（日期還可能差一天）。
+ */
+export function pickerDateToTaipeiInstant(value) {
+  if (!(value instanceof Date) || Number.isNaN(value.getTime())) return value
+  const wallClock = Date.UTC(
+    value.getFullYear(), value.getMonth(), value.getDate(),
+    value.getHours(), value.getMinutes(), value.getSeconds(), value.getMilliseconds(),
+  )
+  return new Date(wallClock - TAIPEI_OFFSET_MS)
+}
+
+/**
+ * 反過來：把表單裡的值（Date、含時區的 ISO 字串，或不含時區、已經是台灣時間的字串）
+ * 換成選擇器要顯示的 Date（選擇器上的年月日時分 = 台灣時間）。讀不懂的值原樣回傳。
+ */
+export function taipeiInstantToPickerDate(value) {
+  if (value == null || value === '') return value
+  if (typeof value === 'string') {
+    const text = value.trim()
+    const naive = DATE_ONLY_RE.exec(text) || NAIVE_DATETIME_RE.exec(text)
+    if (naive) return new Date(Number(naive[1]), Number(naive[2]) - 1, Number(naive[3]), Number(naive[4] || 0), Number(naive[5] || 0))
+    const timeOnly = TIME_ONLY_RE.exec(text)
+    if (timeOnly) {
+      const today = new Date()
+      return new Date(today.getFullYear(), today.getMonth(), today.getDate(), Number(timeOnly[1]), Number(timeOnly[2]))
+    }
+  }
+  const date = value instanceof Date ? value : new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  const taipei = new Date(date.getTime() + TAIPEI_OFFSET_MS)
+  return new Date(
+    taipei.getUTCFullYear(), taipei.getUTCMonth(), taipei.getUTCDate(),
+    taipei.getUTCHours(), taipei.getUTCMinutes(), taipei.getUTCSeconds(), taipei.getUTCMilliseconds(),
+  )
+}
+
 /* -------------------- 表單欄位值 -------------------- */
 
 /**

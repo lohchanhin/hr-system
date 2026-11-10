@@ -79,7 +79,8 @@ apiFetch.mockImplementation((url, opts) => {
 })
 
 describe('ApprovalFlowSetting approver select', () => {
-  it('renders Chinese headers in workflow dialog', async () => {
+  // 2026/11：關卡不再是對話框裡的表格（簽核類型／簽核對象／範圍各一欄），改成表單設定頁裡一關一張卡片、讀起來是一句話
+  it('renders each step as a Chinese sentence in the form editor, and shows 範圍 only for a type it applies to', async () => {
     const wrapper = mount(ApprovalFlowSetting, {
       global: { plugins: [ElementPlus] }
     })
@@ -87,12 +88,24 @@ describe('ApprovalFlowSetting approver select', () => {
     await wrapper.vm.openWorkflowDialog({ _id: 'f1' })
     await flushPromises()
     expect(wrapper.vm.workflowDialogVisible).toBe(true)
-    const columns = wrapper.findAllComponents({ name: 'ElTableColumn' })
-    const labels = columns.map(col => col.props('label'))
-    expect(labels).toContain('簽核類型')
-    expect(labels).toContain('簽核對象')
-    expect(labels).toContain('範圍')
-    expect(wrapper.text()).toContain('表單樣板')
+    expect(wrapper.find('[data-test="form-editor"]').exists()).toBe(true)
+    expect(wrapper.text()).toContain('返回表單清單')
+    const cards = wrapper.findAll('[data-test="step-card"]')
+    expect(cards).toHaveLength(1)
+    expect(cards[0].text()).toContain('第 1 關')
+    expect(cards[0].text()).toContain('關卡說明')
+    expect(cards[0].find('[data-test="step-type"]').exists()).toBe(true)
+    // 這一關是「員工」：範圍不適用，不顯示（不是反灰）
+    expect(cards[0].find('[data-test="step-scope"]').exists()).toBe(false)
+    expect(cards[0].text()).not.toContain('範圍')
+
+    const step = wrapper.vm.workflowSteps[0]
+    step.approver_type = 'tag'
+    wrapper.vm.handleApproverTypeChange(step)
+    await flushPromises()
+    const tagCard = wrapper.find('[data-test="step-card"]')
+    expect(tagCard.find('[data-test="step-scope"]').exists()).toBe(true)
+    expect(tagCard.text()).toContain('範圍')
   })
 
   it('loads options and saves selected id', async () => {

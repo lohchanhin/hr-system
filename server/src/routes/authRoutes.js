@@ -1,5 +1,6 @@
 import '../config/env.js'
 import { Router } from 'express'
+import crypto from 'node:crypto'
 import jwt from 'jsonwebtoken'
 import { ipKeyGenerator, rateLimit } from 'express-rate-limit'
 import Employee from '../models/Employee.js'
@@ -13,6 +14,7 @@ const JWT_OPTIONS = {
   audience: 'hr-system-api',
 }
 const INACTIVE_EMPLOYMENT_STATUSES = new Set(['離職員工', '留職停薪'])
+const LOGIN_ROLES = ['employee', 'supervisor', 'admin']
 
 const positiveInteger = (value, fallback) => {
   const parsed = Number.parseInt(value, 10)
@@ -45,6 +47,21 @@ const loginAccountRateLimiter = rateLimit({
     return `${ipKeyGenerator(req.ip)}:${username}`
   },
   handler: loginRateLimitResponse,
+})
+
+// 舊密碼打錯的次數上限（以帳號計，不看 IP）：拿到別人沒登出的畫面或 token 的人，不能用這支 API 一直猜密碼。
+// 只計「舊密碼不正確」的嘗試；變更成功、新密碼格式不符都不算。
+const changePasswordRateLimiter = rateLimit({
+  windowMs: positiveInteger(process.env.CHANGE_PASSWORD_RATE_LIMIT_WINDOW_MS, 15 * 60 * 1000),
+  limit: positiveInteger(process.env.CHANGE_PASSWORD_RATE_LIMIT_MAX, 10),
+  standardHeaders: 'draft-8',
+  legacyHeaders: false,
+  skipSuccessfulRequests: true,
+  requestWasSuccessful: (_req, res) => res.locals.oldPasswordRejected !== true,
+  keyGenerator: (req) => `change-password:${req.user?.id ?? ipKeyGenerator(req.ip)}`,
+  handler: (_req, res) => {
+    res.status(429).json({ error: '舊密碼錯誤次數過多，請稍後再試' })
+  },
 })
 
 function validatePasswordStrength(password) {
@@ -129,7 +146,10 @@ router.post('/login', loginIpRateLimiter, loginAccountRateLimiter, async (req, r
   try {
     const { username, password, role } = req.body ?? {}
     const normalizedUsername = typeof username === 'string' ? username.trim() : ''
-    const validRole = ['employee', 'supervisor', 'admin'].includes(role)
+    // role 可以不帶（2026/11 起登入頁不再讓使用者自己選角色）：沒帶就以帳號本身的角色登入；
+    // 有帶（舊版前端、驗證腳本）維持原本的檢查——必須是有效角色且與帳號的角色相符
+    const roleProvided = role !== undefined
+    const validRole = !roleProvided || LOGIN_ROLES.includes(role)
     if (
       !normalizedUsername ||
       normalizedUsername.length > 100 ||
@@ -145,7 +165,13 @@ router.post('/login', loginIpRateLimiter, loginAccountRateLimiter, async (req, r
     const activeAccount =
       employee?.accountEnabled !== false &&
       !INACTIVE_EMPLOYMENT_STATUSES.has(employee?.status)
-    if (!employee || !activeAccount || !employee.verifyPassword(password) || role !== employee.role) {
+    if (
+      !employee ||
+      !activeAccount ||
+      !employee.verifyPassword(password) ||
+      !LOGIN_ROLES.includes(employee.role) ||
+      (roleProvided && role !== employee.role)
+    ) {
       return res.status(401).json({ error: 'Invalid credentials' })
     }
 
@@ -170,7 +196,8 @@ router.post('/login', loginIpRateLimiter, loginAccountRateLimiter, async (req, r
         ver: Number(employee.authVersion ?? 0),
       },
       process.env.JWT_SECRET,
-      { ...JWT_OPTIONS, expiresIn: '1h' }
+      // jwtid：同一秒內重複登入也拿到不同的 token，登出其中一個不會連帶作廢另一個
+      { ...JWT_OPTIONS, expiresIn: '1h', jwtid: crypto.randomUUID() }
     )
     return res.json({ token, user: profile })
   } catch (error) {
@@ -202,37 +229,55 @@ router.post('/logout', async (req, res) => {
   }
 })
 
-router.post('/change-password', authenticate, async (req, res) => {
-  const { oldPassword, newPassword } = req.body || {}
-  if (!oldPassword || !newPassword) {
-    return res.status(400).json({ error: '請提供舊密碼與新密碼' })
+router.post('/change-password', authenticate, changePasswordRateLimiter, async (req, res) => {
+  // 整段包在 try 裡：Express 4 不會接住 async 處理函式丟出的錯誤，以前資料庫錯誤或存檔驗證失敗
+  // 會變成未處理的 rejection，整個服務直接結束
+  try {
+    const { oldPassword, newPassword } = req.body || {}
+    if (!oldPassword || !newPassword) {
+      return res.status(400).json({ error: '請提供舊密碼與新密碼' })
+    }
+
+    const strengthError = validatePasswordStrength(newPassword)
+    if (strengthError) {
+      return res.status(400).json({ error: strengthError })
+    }
+    if (newPassword === oldPassword) {
+      return res.status(400).json({ error: '新密碼不可與舊密碼相同' })
+    }
+
+    const employee = await Employee.findById(req.user?.id).select('+passwordHash')
+    if (!employee) {
+      return res.status(404).json({ error: '找不到使用者' })
+    }
+
+    const match = employee.verifyPassword(oldPassword)
+    if (!match) {
+      res.locals.oldPasswordRejected = true
+      return res.status(400).json({ error: '舊密碼不正確' })
+    }
+
+    employee.setPassword(newPassword)
+    // 只驗證這次改到的欄位（密碼、登入版本）：舊資料的其他欄位不符合現在的格式（例如性別存成中文）時，
+    // 整份驗證會失敗，員工永遠改不了密碼
+    await employee.save({ validateModifiedOnly: true })
+
+    // 密碼存檔時登入版本已經加一，舊 token 全部失效；這裡再把目前這個 token 列入黑名單，失敗不影響結果
+    const auth = req.headers.authorization
+    if (auth) {
+      const token = auth.split(' ')[1]
+      try {
+        await blacklistToken(token)
+      } catch (blacklistError) {
+        console.error('Failed to blacklist token after password change', { error: blacklistError?.name ?? 'Error' })
+      }
+    }
+
+    return res.json({ message: '密碼已更新，請重新登入' })
+  } catch (error) {
+    console.error('Change password failed', { error: error?.name ?? 'Error' })
+    return res.status(500).json({ error: '變更密碼失敗，請稍後再試' })
   }
-
-  const strengthError = validatePasswordStrength(newPassword)
-  if (strengthError) {
-    return res.status(400).json({ error: strengthError })
-  }
-
-  const employee = await Employee.findById(req.user?.id).select('+passwordHash')
-  if (!employee) {
-    return res.status(404).json({ error: '找不到使用者' })
-  }
-
-  const match = employee.verifyPassword(oldPassword)
-  if (!match) {
-    return res.status(400).json({ error: '舊密碼不正確' })
-  }
-
-  employee.setPassword(newPassword)
-  await employee.save()
-
-  const auth = req.headers.authorization
-  if (auth) {
-    const token = auth.split(' ')[1]
-    await blacklistToken(token)
-  }
-
-  res.json({ message: '密碼已更新，請重新登入' })
 })
 
 router.get('/profile', authenticate, async (req, res) => {

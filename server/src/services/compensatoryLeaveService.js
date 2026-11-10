@@ -487,6 +487,13 @@ async function consumeHours({ employeeId, hours, usageOf, requestId = null, now 
   for (let attempt = 0; attempt < MAX_CONSUME_ATTEMPTS; attempt += 1) {
     const credits = await loadEmployeeCredits(employeeId, { includeVoid: false });
     const { plan, availableHours, shortHours } = planConsumption(credits, amount, { todayKey, expiryMonths });
+    // 同一張簽核單同時被處理兩次（連點核准、兩個人同時按）：另一邊可能在這次讀取前後已經扣好了。
+    // 每一筆額度的原子條件只保證「同一筆額度不會被同一張單扣兩次」，重新規劃時會改扣下一筆額度——
+    // 兩筆 8 小時的額度、一張 8 小時的單同時核准兩次，會各扣一筆、共 16 小時。所以重試前、以及判定餘額不足前，先看這張單是不是已經扣過
+    if (requestId && (attempt > 0 || shortHours > 0)) {
+      const existing = await findRequestConsumption(requestId);
+      if (existing) return { already: true, ...existing };
+    }
     if (shortHours > 0) {
       fail(409, 'COMP_LEAVE_INSUFFICIENT', `調休餘額不足：可用 ${formatHoursText(availableHours)}，本次需扣 ${formatHoursText(amount)}`, {
         availableHours, requestedHours: amount,
@@ -550,6 +557,10 @@ export async function consumeCreditsForRequest({ employeeId, requestId, hours, d
       at: now,
     }),
   });
+  if (result?.already) {
+    const { already, ...consumption } = result;
+    return { state: 'already', ...consumption };
+  }
   return { state: 'consumed', ...result, fullDayDates: [...new Set(fullDayDates)].sort() };
 }
 

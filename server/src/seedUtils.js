@@ -13,12 +13,11 @@ import AttendanceRecord from './models/AttendanceRecord.js';
 import ShiftSchedule from './models/ShiftSchedule.js';
 import PayrollRecord from './models/PayrollRecord.js';
 import { getLeaveFieldIds, resetLeaveFieldCache } from './services/leaveFieldService.js';
-import { calculateNightShiftAllowance } from './services/nightShiftAllowanceService.js';
+import { getDefaultSettings } from './services/otherControlSettingsStore.js';
 export const SEED_TEST_PASSWORD = 'password';
 
 // Time conversion constants
 const MILLISECONDS_PER_HOUR = 1000 * 60 * 60;
-const MILLISECONDS_PER_DAY = MILLISECONDS_PER_HOUR * 24;
 
 const CITY_OPTIONS = ['台北市', '新北市', '桃園市', '台中市', '台南市', '高雄市'];
 const SIGN_ROLE_OPTIONS = [
@@ -60,7 +59,28 @@ export const SEED_SIGN_CONFIG = {
 const PRINCIPAL_NAMES = ['林經理', '張主管', '王負責人', '李主任', '陳董事'];
 const PHONE_PREFIXES = ['02', '03', '04', '05', '06', '07'];
 const EMPLOYEE_TITLES = ['專員', '助理', '資深專員', '專案企劃', '業務代表'];
-const EMPLOYEE_STATUSES = ['正職員工', '試用期員工', '留職停薪'];
+// 種子員工都要能登入（scripts/seed-accounts.json 列的是可用的測試帳號），所以只給在職的狀態；
+// 以前隨機抽到「留職停薪」的人登入不了，每次重建資料可用的帳號都不一樣
+const EMPLOYEE_STATUSES = ['正職員工', '試用期員工'];
+// 範例組織：2 個機構、各 2 個部門、每個部門 3 個小單位（名稱仿照護理之家／康復之家，畫面上一眼看得出層級）
+const SEED_ORG_STRUCTURE = [
+  {
+    name: '安康護理之家',
+    unitName: '安康',
+    departments: [
+      { name: '護理部', units: ['一樓護理站', '二樓護理站', '夜班照護組'] },
+      { name: '行政部', units: ['人事組', '會計組', '總務組'] },
+    ],
+  },
+  {
+    name: '惠民康復之家',
+    unitName: '惠民',
+    departments: [
+      { name: '照護部', units: ['日間照護組', '住民照護組', '復健組'] },
+      { name: '後勤部', units: ['廚房', '交通組', '環境維護組'] },
+    ],
+  },
+];
 const EMPLOYEE_NAMES = ['王小明', '李美玲', '陳俊宏', '黃淑芬', '吳建國', '張雅惠'];
 const SUPERVISOR_CONFIGS = [
   { name: '人資主管', prefix: 'hr-supervisor', signTags: ['人資'] },
@@ -75,18 +95,12 @@ const SUPERVISOR_TITLE = '部門主管';
 
 // 薪資相關配置
 const SALARY_TYPES = ['月薪', '日薪', '時薪'];
-const SALARY_ITEMS_POOL = [
-  '本薪',
-  '職務加給',
-  '績效獎金',
-  '交通津貼',
-  '伙食津貼',
-  '全勤獎金',
-  '加班費',
-  '專業加給',
-  '主管加給',
-  '年資加給',
-];
+// 員工的「其他薪資項目」要是字典 C14（其他控制設定 → 字典項目）裡的項目，而且要有金額：
+// 以前種子資料從另一份清單挑（本薪、加班費這些不是固定津貼的也在裡面），員工資料的下拉選單對不到、金額全是 0
+const SALARY_ITEMS_POOL = getDefaultSettings().itemSettings.C14;
+// 每個項目每月的金額範圍（元）；C14 新增的項目沒有列在這裡時用預設範圍
+const SALARY_ITEM_AMOUNT_RANGES = { 交通補助: [800, 2000], 餐費補助: [2400, 2400], 職務津貼: [1000, 5000] };
+const DEFAULT_SALARY_ITEM_AMOUNT_RANGE = [500, 2000];
 const BANK_NAMES = [
   '台灣銀行',
   '土地銀行',
@@ -218,9 +232,13 @@ function generateSalaryData(config, index) {
   // 選擇薪資項目
   const salaryItems = randomSubset(
     SALARY_ITEMS_POOL,
-    config.itemCount[0],
+    Math.min(config.itemCount[0], SALARY_ITEMS_POOL.length),
     config.itemCount[1]
   );
+  const salaryItemAmounts = Object.fromEntries(salaryItems.map((item) => {
+    const [min, max] = SALARY_ITEM_AMOUNT_RANGES[item] || DEFAULT_SALARY_ITEM_AMOUNT_RANGE;
+    return [item, Math.round(randomInRange(min, max) / 100) * 100];
+  }));
   
   // 計算勞保等級（根據薪資金額）
   // 簡化版：根據薪資範圍分配等級 1-28
@@ -253,6 +271,7 @@ function generateSalaryData(config, index) {
     salaryAccountA,
     salaryAccountB,
     salaryItems,
+    salaryItemAmounts,
     laborInsuranceLevel,
     autoDeduction,
     autoOvertimeCalc,
@@ -542,9 +561,15 @@ function startOfUtcDay(date) {
   return utcDate;
 }
 
+// 班別時間是台灣時間（UTC+8）；班表日期以 UTC 午夜代表台灣的那一天
+const SEED_TAIPEI_OFFSET_MS = 8 * MILLISECONDS_PER_HOUR;
+// 最後一個排班日往前留 36 小時：跨日夜班（隔天 06:00 下班，加上隨機的延後簽退）的打卡也一定早於現在，不會產生未來的打卡
+const SEED_LATEST_SHIFT_LAG_MS = 36 * MILLISECONDS_PER_HOUR;
+
 function generateRecentWorkdays(count, referenceDate = new Date()) {
   const workdays = [];
-  let cursor = startOfUtcDay(referenceDate);
+  // 以台灣日期為準（伺服器可能跑在 UTC）
+  let cursor = startOfUtcDay(new Date(new Date(referenceDate).getTime() - SEED_LATEST_SHIFT_LAG_MS + SEED_TAIPEI_OFFSET_MS));
 
   while (workdays.length < count) {
     const candidate = new Date(cursor);
@@ -555,10 +580,6 @@ function generateRecentWorkdays(count, referenceDate = new Date()) {
   }
 
   return workdays.reverse();
-}
-
-function formatMonthStart(date) {
-  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}-01`;
 }
 
 function parseTimeString(time) {
@@ -585,7 +606,11 @@ function buildShiftTimes(day, shift) {
     end.setUTCDate(end.getUTCDate() + 1);
   }
 
-  return { start, end };
+  // 班別的 08:30 是台灣時間：換成實際的時間點（UTC 00:30），打卡才會落在班別的簽到／簽退時段內
+  return {
+    start: new Date(start.getTime() - SEED_TAIPEI_OFFSET_MS),
+    end: new Date(end.getTime() - SEED_TAIPEI_OFFSET_MS),
+  };
 }
 
 function randomOffset(min, max) {
@@ -698,6 +723,8 @@ async function seedAttendanceData({
           shiftId: shiftOption.shiftId,
           department: departmentId,
           subDepartment: subDepartmentId,
+          // 和排班頁新增的班表一樣標成「還沒送給員工確認」，測試資料的班表才發布得出去（發布只選 needsReconfirm 的草稿）
+          needsReconfirm: true,
         });
 
         records.push(
@@ -714,313 +741,15 @@ async function seedAttendanceData({
 }
 
 /**
- * 生成最近2個月的薪資記錄
- * @param {Array} supervisors - 主管列表
- * @param {Array} employees - 員工列表
- * @returns {Array} - 薪資記錄
+ * 種子資料不建立薪資記錄（PayrollRecord），只清掉舊的。
+ * 有薪資記錄時，薪資總覽、匯出、PDF 的金額以記錄為準（services/payrollBatchService.js）；以前這裡用簡化公式
+ * （勞保 2%、健保 1.5%、隨機獎金）寫入當月與上月的記錄，和出勤、請假、加班即時算出來的數字對不起來，
+ * 當月又只有到今天為止的出勤。沒有記錄時，薪資總覽就照真正的計算方式即時算，和正式環境剛上線時一樣。
+ * @returns {Array} - 空陣列（保留回傳欄位，呼叫端不必改）
  */
-async function seedPayrollRecords({ supervisors = [], employees = [] } = {}) {
-  const allEmployees = [...supervisors, ...employees];
-  const payrollRecords = [];
-
-  const currentDate = new Date();
-  const months = [];
-
-  // 當月
-  const currentMonth = new Date(Date.UTC(currentDate.getUTCFullYear(), currentDate.getUTCMonth(), 1));
-  months.push(currentMonth);
-
-  // 上個月
-  const lastMonth = new Date(Date.UTC(currentDate.getUTCFullYear(), currentDate.getUTCMonth() - 1, 1));
-  months.push(lastMonth);
-
-  const formConfigs = await Promise.all([
-    loadFormConfig('請假'),
-    loadFormConfig('加班申請'),
-    loadFormConfig('補簽申請'),
-    loadFormConfig('獎金申請'),
-  ]);
-
-  const approvalForms = formConfigs.filter(Boolean);
-  const approvalFormIds = approvalForms.map((config) => config.form._id);
-  const approvalRequests = approvalFormIds.length
-    ? await ApprovalRequest.find({
-        applicant_employee: { $in: allEmployees.map((emp) => emp._id) },
-        form: { $in: approvalFormIds },
-        status: { $in: ['approved', 'rejected'] },
-      }).lean()
-    : [];
-
-  const approvalMap = new Map();
-
-  const isValidDate = (value) => value instanceof Date && !Number.isNaN(value.getTime());
-
-  const monthKey = (date) => Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1);
-
-  const getRate = (employee) => {
-    const base = employee.salaryAmount || 0;
-    if (employee.salaryType === '日薪') {
-      return { hourly: base / 8, daily: base };
-    }
-    if (employee.salaryType === '時薪') {
-      return { hourly: base, daily: base * 8 };
-    }
-    // 月薪
-    const daily = base / 22;
-    return { hourly: daily / 8, daily };
-  };
-
-  const getFieldValue = (formData, fieldMap, label) => {
-    const fieldId = fieldMap?.[label];
-    return fieldId ? formData[fieldId] : undefined;
-  };
-
-  const addAdjustment = (employeeId, date, payload) => {
-    if (!employeeId || !isValidDate(date)) return;
-    const key = `${employeeId}_${monthKey(date)}`;
-    if (!approvalMap.has(key)) approvalMap.set(key, []);
-    approvalMap.get(key).push(payload);
-  };
-
-  const leaveConfig = approvalForms.find((item) => item.form.name === '請假');
-  const overtimeConfig = approvalForms.find((item) => item.form.name === '加班申請');
-  const makeupConfig = approvalForms.find((item) => item.form.name === '補簽申請');
-  const bonusConfig = approvalForms.find((item) => item.form.name === '獎金申請');
-
-  approvalRequests.forEach((request) => {
-    const { applicant_employee: employeeId, status, form_data: formData, form } = request;
-    const basePayload = { request: request._id, status, reason: '' };
-
-    if (leaveConfig && toStringId(form) === toStringId(leaveConfig.form._id)) {
-      const { fieldMap } = leaveConfig;
-      // Support both old (開始日期) and new (開始時間) field names
-      const start = new Date(getFieldValue(formData, fieldMap, '開始時間') || getFieldValue(formData, fieldMap, '開始日期'));
-      const end = new Date(getFieldValue(formData, fieldMap, '結束時間') || getFieldValue(formData, fieldMap, '結束日期'));
-      const leaveType = getFieldValue(formData, fieldMap, '假別');
-      
-      // Calculate hours: 
-      // For datetime fields, calculate precise hours between times
-      // For date-only fields, treat as full days (each day = 8 hours for payroll purposes)
-      let hours = 0;
-      if (isValidDate(start) && isValidDate(end)) {
-        const totalMillis = end - start;
-        const hasTimeComponent = start.getUTCHours() !== 0 || start.getUTCMinutes() !== 0 ||
-          end.getUTCHours() !== 0 || end.getUTCMinutes() !== 0;
-        if (hasTimeComponent) {
-          // Datetime fields: use precise hour calculation
-          hours = totalMillis / MILLISECONDS_PER_HOUR;
-        } else {
-          // Date-only fields: calculate working days (8 hours per day)
-          const days = totalMillis < 0
-            ? 0
-            : Math.max(1, Math.ceil(totalMillis / MILLISECONDS_PER_DAY));
-          hours = days * 8; // Convert days to 8-hour work days
-        }
-      }
-      
-      const amount = status === 'approved' ? hours : 0;
-      const refDate = isValidDate(start) ? start : request.createdAt;
-      addAdjustment(employeeId, refDate, {
-        ...basePayload,
-        type: 'leave',
-        hours,
-        amount,
-        reason: leaveType || '未指定假別',
-        description: `請假申請(${status}) ${leaveType || ''}`.trim(),
-      });
-      return;
-    }
-
-    if (overtimeConfig && toStringId(form) === toStringId(overtimeConfig.form._id)) {
-      const { fieldMap } = overtimeConfig;
-      const start = new Date(getFieldValue(formData, fieldMap, '開始時間'));
-      const end = new Date(getFieldValue(formData, fieldMap, '結束時間'));
-      const reason = getFieldValue(formData, fieldMap, '事由');
-      const hours = isValidDate(start) && isValidDate(end) ? (end - start) / MILLISECONDS_PER_HOUR : 0;
-      const amount = status === 'approved' ? hours : 0;
-      const refDate = isValidDate(start) ? start : request.createdAt;
-      addAdjustment(employeeId, refDate, {
-        ...basePayload,
-        type: 'overtime',
-        hours,
-        amount,
-        reason: reason || '未填寫事由',
-        description: `加班申請(${status}) ${reason || ''}`.trim(),
-      });
-      return;
-    }
-
-    if (makeupConfig && toStringId(form) === toStringId(makeupConfig.form._id)) {
-      const { fieldMap } = makeupConfig;
-      const start = new Date(getFieldValue(formData, fieldMap, '開始時間'));
-      const end = new Date(getFieldValue(formData, fieldMap, '結束時間'));
-      const reason = getFieldValue(formData, fieldMap, '事由');
-      const hours = isValidDate(start) && isValidDate(end) ? (end - start) / MILLISECONDS_PER_HOUR : 0;
-      const amount = status === 'approved' ? hours : 0;
-      const refDate = isValidDate(start) ? start : request.createdAt;
-      addAdjustment(employeeId, refDate, {
-        ...basePayload,
-        type: 'makeup',
-        hours,
-        amount,
-        reason: reason || '未填寫事由',
-        description: `補簽申請(${status}) ${reason || ''}`.trim(),
-      });
-      return;
-    }
-
-    if (bonusConfig && toStringId(form) === toStringId(bonusConfig.form._id)) {
-      const { fieldMap } = bonusConfig;
-      const bonus = Number(getFieldValue(formData, fieldMap, '金額')) || 0;
-      const bonusType = getFieldValue(formData, fieldMap, '獎金類型');
-      addAdjustment(employeeId, request.createdAt, {
-        ...basePayload,
-        type: 'bonus',
-        amount: status === 'approved' ? bonus : 0,
-        reason: bonusType || '獎金申請',
-        description: `獎金申請(${status}) ${bonusType || ''}`.trim(),
-      });
-    }
-  });
-
-  for (const month of months) {
-    for (const employee of allEmployees) {
-      // 基本薪資
-      const baseSalary = employee.salaryAmount || 0;
-      
-      // 勞保費 (簡化計算: 約薪資的2%)
-      const laborInsuranceFee = Math.round(baseSalary * 0.02);
-      
-      // 健保費 (簡化計算: 約薪資的1.5%)
-      const healthInsuranceFee = Math.round(baseSalary * 0.015);
-      
-      // 勞退個人提繳
-      const laborPensionSelf = employee.laborPensionSelf || 0;
-      
-      // 員工借支
-      const employeeAdvance = employee.employeeAdvance || 0;
-      
-      // 其他扣款 (每月都有，確保資料多元性)
-      const otherDeductions = randomInRange(100, 500);
-      
-      // 計算實領金額 (Stage A)
-      const totalDeductions = laborInsuranceFee + healthInsuranceFee + laborPensionSelf +
-        employeeAdvance + otherDeductions;
-      const netPay = Math.max(0, baseSalary - totalDeductions);
-
-      // 夜班津貼：依排班配置計算，確保測試資料與夜班設定一致
-      let nightShiftAllowance = 0;
-      let nightShiftDays = 0;
-      let nightShiftHours = 0;
-      let nightShiftCalculationMethod = 'not_calculated';
-      let nightShiftBreakdown = [];
-      let nightShiftConfigurationIssues = [];
-      try {
-        const monthStr = formatMonthStart(month);
-        const nightShiftData = await calculateNightShiftAllowance(
-          employee._id.toString(),
-          monthStr,
-          employee
-        );
-        nightShiftAllowance = Math.round(nightShiftData?.allowanceAmount ?? 0);
-        nightShiftDays = nightShiftData?.nightShiftDays ?? 0;
-        nightShiftHours = nightShiftData?.nightShiftHours ?? 0;
-        nightShiftCalculationMethod = nightShiftData?.calculationMethod ?? 'not_calculated';
-        nightShiftBreakdown = nightShiftData?.shiftBreakdown ?? [];
-        nightShiftConfigurationIssues = nightShiftData?.configurationIssues ?? [];
-      } catch (err) {
-        console.warn(
-          `Seed: failed to calculate night shift allowance for ${employee.employeeId}:`,
-          err.message
-        );
-      }
-
-      // 其餘獎金項目保持隨機性以涵蓋多元情境
-      const performanceBonus = randomInRange(2000, 8000);
-      const otherBonuses = randomInRange(1000, 5000);
-      let totalBonus = nightShiftAllowance + performanceBonus + otherBonuses;
-
-      const employeeMonthAdjustments = approvalMap.get(`${employee._id}_${month.getTime()}`) ?? [];
-      const { hourly } = getRate(employee);
-
-      const leaveAdjustments = employeeMonthAdjustments.filter((item) => item.type === 'leave');
-      const overtimeAdjustments = employeeMonthAdjustments.filter((item) => item.type === 'overtime');
-      const makeupAdjustments = employeeMonthAdjustments.filter((item) => item.type === 'makeup');
-      const bonusAdjustments = employeeMonthAdjustments.filter((item) => item.type === 'bonus');
-
-      const leaveDeduction = leaveAdjustments.reduce((sum, adj) => sum + adj.amount * hourly, 0);
-      const overtimePay = overtimeAdjustments.reduce((sum, adj) => sum + adj.amount * hourly * 1.33, 0);
-      const makeupAdjustment = makeupAdjustments.reduce((sum, adj) => sum + adj.amount * hourly, 0);
-      const bonusAdjustment = bonusAdjustments.reduce((sum, adj) => sum + adj.amount, 0);
-
-      totalBonus += bonusAdjustment;
-
-      const finalNetPay = Math.max(
-        0,
-        baseSalary - totalDeductions - leaveDeduction + overtimePay + makeupAdjustment + totalBonus,
-      );
-
-      const adjustmentNotes = employeeMonthAdjustments
-        .map((adj) => `${adj.description || adj.type}: ${adj.status} 金額:${Math.round(adj.amount * (adj.type === 'bonus' ? 1 : hourly)).toFixed(0)}`)
-        .join(' | ');
-
-      // 銀行帳戶資訊 (從員工資料複製)
-      const bankAccountA = {
-        bank: employee.salaryAccountA?.bank || '',
-        accountNumber: employee.salaryAccountA?.acct || '',
-        accountName: employee.name
-      };
-      
-      const bankAccountB = {
-        bank: employee.salaryAccountB?.bank || '',
-        accountNumber: employee.salaryAccountB?.acct || '',
-        accountName: employee.name
-      };
-      
-      payrollRecords.push({
-        employee: employee._id,
-        month,
-        baseSalary,
-        laborInsuranceFee,
-        healthInsuranceFee,
-        laborPensionSelf,
-        employeeAdvance,
-        debtGarnishment: 0,
-        otherDeductions,
-        leaveDeduction,
-        overtimePay,
-        makeupAdjustment,
-        bonusAdjustment,
-        netPay: finalNetPay,
-        nightShiftAllowance,
-        nightShiftDays,
-        nightShiftHours,
-        nightShiftCalculationMethod,
-        nightShiftBreakdown,
-        nightShiftConfigurationIssues,
-        performanceBonus,
-        otherBonuses,
-        totalBonus,
-        bankAccountA,
-        bankAccountB,
-        insuranceLevel: employee.laborInsuranceLevel,
-        amount: finalNetPay, // Legacy field for backward compatibility with existing code
-        adjustments: employeeMonthAdjustments,
-        notes: adjustmentNotes,
-      });
-    }
-  }
-  
-  // 清除舊的薪資記錄並插入新的
+async function seedPayrollRecords() {
   await PayrollRecord.deleteMany({});
-  const createdRecords = payrollRecords.length ? await PayrollRecord.insertMany(payrollRecords) : [];
-  
-  console.log(`\n=== 薪資記錄生成完成 ===`);
-  console.log(`生成 ${months.length} 個月份的薪資記錄`);
-  console.log(`每月 ${allEmployees.length} 位員工`);
-  console.log(`總計 ${createdRecords.length} 筆薪資記錄\n`);
-  
-  return createdRecords;
+  return [];
 }
 
 export async function seedSampleData() {
@@ -1034,23 +763,15 @@ export async function seedSampleData() {
   const departments = [];
   const subDepartments = [];
 
-  const usedOrgNames = new Set();
-  const usedOrgUnitNames = new Set();
-  const usedOrgCodes = new Set();
-  const usedSystemCodes = new Set();
-  const usedDeptNames = new Set();
-  const usedDeptUnitNames = new Set();
-  const usedDeptCodes = new Set();
-  const usedSubDeptNames = new Set();
-  const usedSubDeptUnitNames = new Set();
-  const usedSubDeptCodes = new Set();
-
-  for (let i = 0; i < 2; i += 1) {
+  // 名稱與代碼固定、看得懂（以前是「機構-1692B67B」這種亂數，畫面上分不出誰是誰）；代碼依層級編號，彼此不重複
+  for (let i = 0; i < SEED_ORG_STRUCTURE.length; i += 1) {
+    const orgSpec = SEED_ORG_STRUCTURE[i];
+    const orgNo = String(i + 1).padStart(2, '0');
     const organization = await Organization.create({
-      name: generateUniqueValue('機構', usedOrgNames),
-      systemCode: generateUniqueValue('SYS', usedSystemCodes),
-      unitName: generateUniqueValue('單位', usedOrgUnitNames),
-      orgCode: generateUniqueValue('ORG', usedOrgCodes),
+      name: orgSpec.name,
+      systemCode: `SYS-${orgNo}`,
+      unitName: orgSpec.unitName,
+      orgCode: `ORG-${orgNo}`,
       taxIdNumber: randomDigits(8),
       phone: randomPhone(),
       address: `${randomElement(CITY_OPTIONS)}${randomDigits(3)}號`,
@@ -1058,24 +779,27 @@ export async function seedSampleData() {
     });
     organizations.push(organization);
 
-    for (let j = 0; j < 2; j += 1) {
+    for (let j = 0; j < orgSpec.departments.length; j += 1) {
+      const deptSpec = orgSpec.departments[j];
+      const deptNo = `${orgNo}${String(j + 1).padStart(2, '0')}`;
       const department = await Department.create({
-        name: generateUniqueValue('部門', usedDeptNames),
-        code: generateUniqueValue('DEPT', usedDeptCodes),
+        name: deptSpec.name,
+        code: `DEPT-${deptNo}`,
         organization: organization._id,
-        unitName: generateUniqueValue('部門單位', usedDeptUnitNames),
+        unitName: `${orgSpec.unitName}${deptSpec.name}`,
         location: randomElement(CITY_OPTIONS),
         phone: randomPhone(),
         manager: `主管-${randomDigits(3)}`,
       });
       departments.push(department);
 
-      for (let k = 0; k < 3; k += 1) {
+      for (let k = 0; k < deptSpec.units.length; k += 1) {
+        const unitName = deptSpec.units[k];
         const subDept = await SubDepartment.create({
           department: department._id,
-          code: generateUniqueValue('SUB', usedSubDeptCodes),
-          name: generateUniqueValue('小組', usedSubDeptNames),
-          unitName: generateUniqueValue('小組單位', usedSubDeptUnitNames),
+          code: `SUB-${deptNo}${String(k + 1).padStart(2, '0')}`,
+          name: unitName,
+          unitName: `${deptSpec.name}${unitName}`,
           location: randomElement(CITY_OPTIONS),
           phone: randomPhone(),
           manager: `組長-${randomDigits(3)}`,
@@ -1205,7 +929,7 @@ export async function seedTestUsers() {
       subDepartment: assignment.subDepartment,
       supervisor: supervisor._id,
       title: randomElement(EMPLOYEE_TITLES),
-      status: randomElement(EMPLOYEE_STATUSES),
+      status: EMPLOYEE_STATUSES[i % 3 === 2 ? 1 : 0],
       signTags: [],
       monthlySalaryAdjustments,
       ...salaryData,
@@ -1233,11 +957,8 @@ export async function seedTestUsers() {
     hierarchy,
   });
 
-  // 生成薪資記錄
-  const payrollRecords = await seedPayrollRecords({ supervisors, employees });
-
-  // Never emit payroll amounts or bank account data to process logs.
-  console.log(`Seeded payroll records for ${supervisors.length} supervisors and ${employees.length} employees`);
+  // 薪資記錄不由種子資料產生（見 seedPayrollRecords）：薪資總覽依出勤、請假、加班即時計算
+  const payrollRecords = await seedPayrollRecords();
 
   return { supervisors, employees, attendanceSetting, attendanceRecords, shiftSchedules, payrollRecords };
 }
@@ -1247,10 +968,12 @@ export async function seedApprovalTemplates() {
     {
       name: '請假',
       semanticType: 'leave',
-      category: '人事',
+      // 分類與系統預設表單相同（services/defaultApprovalTemplates.js）：要是「其他控制設定 → 表單分類」裡有的分類
+      category: '請假類',
       description: '用於申請各類假別（事假、病假、特休等），此表單會自動連接薪資系統計算扣薪或假勤。支援小時級別的精確請假時間。',
       fields: [
-        { label: '假別', type_1: 'text', required: true, order: 1, placeholder: '例如：事假、病假、特休、婚假等' },
+        // 和預設的請假表單一樣：下拉選單連結字典 C12
+        { label: '假別', type_1: 'select', field_key: 'C12', options: ['特休假', '病假', '事假'], required: true, order: 1, placeholder: '請選擇假別' },
         { label: '開始時間', type_1: 'datetime', required: true, order: 2 },
         { label: '結束時間', type_1: 'datetime', required: true, order: 3 },
         { label: '事由', type_1: 'textarea', order: 4, placeholder: '請說明請假原因' },
@@ -1263,7 +986,7 @@ export async function seedApprovalTemplates() {
     },
     {
       name: '支援申請',
-      category: '人事',
+      category: '人事類',
       description: '用於申請跨部門或單位支援，需經過相關單位主管與人資審核。',
       fields: [
         { label: '申請事由', type_1: 'textarea', required: true, order: 1 },
@@ -1279,7 +1002,7 @@ export async function seedApprovalTemplates() {
     },
     {
       name: '特休保留',
-      category: '人事',
+      category: '人事類',
       description: '用於申請保留當年度未使用的特別休假至次年度，需說明保留原因。',
       fields: [
         { label: '年度', type_1: 'text', required: true, order: 1 },
@@ -1293,7 +1016,7 @@ export async function seedApprovalTemplates() {
     },
     {
       name: '在職證明',
-      category: '人事',
+      category: '人事類',
       description: '用於申請在職證明文件，需說明使用目的（如：信貸、簽證等）。',
       fields: [
         { label: '用途', type_1: 'text', required: true, order: 1 },
@@ -1305,7 +1028,7 @@ export async function seedApprovalTemplates() {
     },
     {
       name: '離職證明',
-      category: '人事',
+      category: '人事類',
       description: '用於申請離職證明文件，需確認離職日期並說明使用目的。',
       fields: [
         { label: '用途', type_1: 'text', order: 1 },
@@ -1319,7 +1042,7 @@ export async function seedApprovalTemplates() {
     {
       name: '加班申請',
       semanticType: 'overtime',
-      category: '人事',
+      category: '人事類',
       description: '用於申請加班時數，此表單會自動連接薪資系統計算加班費。支援小時級別的精確加班時間。',
       fields: [
         { label: '開始時間', type_1: 'datetime', required: true, order: 1 },
@@ -1335,7 +1058,7 @@ export async function seedApprovalTemplates() {
     },
     {
       name: '補簽申請',
-      category: '人事',
+      category: '人事類',
       description: '用於申請補打卡或補簽到退，需說明原因。此表單會影響考勤記錄。',
       fields: [
         { label: '開始時間', type_1: 'datetime', required: true, order: 1 },
@@ -1350,7 +1073,7 @@ export async function seedApprovalTemplates() {
     },
     {
       name: '獎金申請',
-      category: '人事',
+      category: '人事類',
       description: '用於申請額外獎金或績效獎金，此表單會自動連接薪資系統計算獎金發放。需經財務與人資審核。',
       fields: [
         { label: '獎金類型', type_1: 'text', required: true, order: 1 },
@@ -1734,6 +1457,12 @@ function createApprovalPayload({
   createdAt,
   baseSteps,
 }) {
+  // 送出與簽核的時間不能在未來（當月較晚日期的請假、加班、獎金單是預先核准的）：會超過現在的單整張往前挪
+  const latestAllowed = Date.now() - 10 * 60 * 1000;
+  const logSpan = (baseSteps.length * 120 + 40) * 60 * 1000;
+  if (new Date(createdAt).getTime() + logSpan > latestAllowed) {
+    createdAt = new Date(latestAllowed - logSpan);
+  }
   const { steps, logs: statusLogs, currentStepIndex, status: finalStatus } = applyStatusToSteps(baseSteps, status, createdAt);
   const logs = [
     {

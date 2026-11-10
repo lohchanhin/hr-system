@@ -1474,3 +1474,100 @@ describe('assertScheduleRuleCompliance boundary weeks that cannot be judged yet'
     await expect(assertScheduleRuleCompliance(args)).resolves.toEqual({ ok: true, violations: [] });
   });
 });
+
+// 2026-11 複查（真的資料庫重現）：檢核 10 月時回報「9/24～9/30 連續 7 日未安排休/例」——整段都在 9 月，
+// 10 月的排班人員改不了那幾天，卻每次檢核、發布都跳出來。範圍前後多讀的 7 天只用來判斷跨月的問題。
+describe('assertScheduleRuleCompliance：整個落在檢核範圍外的問題不回報', () => {
+  // 2024-09-01 是週日
+  const septemberRange = { start: new Date('2024-09-01'), end: new Date('2024-10-01') };
+  const row = (date, shiftId) => ({ _id: `row-${date}`, employee: 'emp1', date: new Date(date), shiftId });
+  const rulesOf = async (existingRows, candidateRows) => {
+    mockShiftSchedule.find.mockReturnValue(sortableLeanQuery(existingRows));
+    try {
+      await assertScheduleRuleCompliance({ candidateSchedules: candidateRows, range: septemberRange });
+      return [];
+    } catch (error) {
+      return error.violations.map((violation) => [violation.rule, violation.previousDate ?? violation.dates?.[0] ?? null, violation.date ?? violation.dates?.at(-1) ?? null]);
+    }
+  };
+
+  it('8/25～8/31 連上 7 天（都在 8 月）：檢核 9 月時不回報', async () => {
+    const augustRows = ['25', '26', '27', '28', '29', '30', '31'].map((day) => row(`2024-08-${day}`, 'D'));
+
+    expect(await rulesOf(augustRows, [row('2024-09-01', 'REG'), row('2024-09-02', 'D')])).toEqual([]);
+  });
+
+  it('8/28～9/3 連上 7 天（跨進 9 月）：照常回報', async () => {
+    const augustRows = ['28', '29', '30', '31'].map((day) => row(`2024-08-${day}`, 'D'));
+    const septemberRows = [row('2024-09-01', 'D'), row('2024-09-02', 'D'), row('2024-09-03', 'D'), row('2024-09-04', 'REST')];
+
+    expect(await rulesOf(augustRows, septemberRows)).toEqual([['continuous-work-days', '2024-08-28', '2024-09-03']]);
+  });
+
+  it('8 月裡的超時班別、班間隔不足不回報；8/31 晚班接 9/1 日班（跨月的班間隔）照常回報', async () => {
+    // 8/26 長班（13 小時）、8/27 晚班接 8/28 早班只隔 7 小時：都在 8 月。8/31 晚班 16:00-00:00 接 9/1 日班 08:00 只隔 8 小時
+    const augustRows = [
+      row('2024-08-26', 'LONG'), row('2024-08-27', 'E'), row('2024-08-28', 'EARLY'),
+      row('2024-08-29', 'REST'), row('2024-08-30', 'REST'), row('2024-08-31', 'E'),
+    ];
+
+    expect(await rulesOf(augustRows, [row('2024-09-01', 'D'), row('2024-09-02', 'REST')])).toEqual([
+      ['shift-gap', '2024-08-31', '2024-09-01'],
+    ]);
+  });
+
+  it('下個月開頭（範圍後多讀的 7 天）的問題也不回報', async () => {
+    // 10/1～10/7 連上 7 天、10/2 是長班：都是 10 月的事
+    const octoberRows = ['01', '02', '03', '04', '05', '06', '07'].map((day) => row(`2024-10-${day}`, day === '02' ? 'LONG' : 'D'));
+
+    expect(await rulesOf(octoberRows, [row('2024-09-29', 'REG'), row('2024-09-30', 'REST')])).toEqual([]);
+  });
+});
+
+// 2026-11：管理員在請假表單加了一個必填的附件欄位之後，加之前就已經送出的假單全部無法核准
+// （400「請假申請必須附上相關證明」）：必填欄位的檢查有帶送簽時間（requiredFieldsAsOf），請假的附件規則卻沒有看。
+describe('assertApprovalRequestCompliance：送簽之後才變成必填的附件欄位不追溯', () => {
+  const form = { _id: 'leave-form', name: '請假', semanticType: 'leave' };
+  const filedAt = new Date('2026-11-01T02:00:00.000Z');
+  const before = new Date('2026-10-01T00:00:00.000Z');
+  const after = new Date('2026-11-05T00:00:00.000Z');
+  const baseFields = [
+    { _id: 'type', label: '假別', type_1: 'text', required: true, createdAt: before, updatedAt: before },
+    { _id: 'start', label: '開始時間', type_1: 'datetime', required: true, createdAt: before, updatedAt: before },
+    { _id: 'end', label: '結束時間', type_1: 'datetime', required: true, createdAt: before, updatedAt: before },
+    { _id: 'reason', label: '事由', type_1: 'textarea', createdAt: before, updatedAt: before },
+  ];
+  const data = { type: '特休', start: '2026-12-02T01:00:00.000Z', end: '2026-12-02T10:00:00.000Z', reason: '休假' };
+  const check = async (fields, formData, extra = {}) => {
+    mockFormField.find.mockReturnValue(sortableLeanQuery(fields));
+    try {
+      await assertApprovalRequestCompliance({ form, formData, applicantEmployeeId: 'emp1', ignoreRequestId: 'req1', ...extra });
+      return [];
+    } catch (error) {
+      return error.violations.map((violation) => violation.rule);
+    }
+  };
+
+  it('核准時不要求送簽之後才新增的必填附件欄位；新送出的假單照樣要附', async () => {
+    const fields = [...baseFields, { _id: 'proof', label: '相關證明', type_1: 'file', required: true, createdAt: after, updatedAt: after }];
+
+    expect(await check(fields, data, { requiredFieldsAsOf: filedAt })).toEqual([]);
+    // 沒有帶送簽時間（新送出、退回後重新送出）：照樣必填
+    expect(await check(fields, data)).toEqual(['required-form-field', 'leave-proof']);
+  });
+
+  it('送簽之後才從選填改成必填的附件欄位也不追溯', async () => {
+    const fields = [...baseFields, { _id: 'proof', label: '相關證明', type_1: 'file', required: true, createdAt: before, updatedAt: after }];
+
+    expect(await check(fields, data, { requiredFieldsAsOf: filedAt })).toEqual([]);
+  });
+
+  it('送簽當時就是必填的附件欄位，核准時照樣檢查；不是系統上傳的附件不論何時都不接受', async () => {
+    const required = [...baseFields, { _id: 'proof', label: '相關證明', type_1: 'file', required: true, createdAt: before, updatedAt: before }];
+    expect(await check(required, data, { requiredFieldsAsOf: filedAt })).toEqual(['required-form-field', 'leave-proof']);
+    expect(await check(required, { ...data, proof: REAL_PROOF }, { requiredFieldsAsOf: filedAt })).toEqual([]);
+
+    const addedLater = [...baseFields, { _id: 'proof', label: '相關證明', type_1: 'file', required: true, createdAt: after, updatedAt: after }];
+    expect(await check(addedLater, { ...data, proof: ['made-up.pdf'] }, { requiredFieldsAsOf: filedAt })).toEqual(['leave-proof']);
+  });
+});

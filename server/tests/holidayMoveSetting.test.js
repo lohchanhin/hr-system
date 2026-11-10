@@ -53,7 +53,7 @@ describe('HolidayMoveSetting', () => {
       ...agreement,
     });
 
-    await expect(setting.validate()).rejects.toThrow('national holiday moves must stay within 366 days');
+    await expect(setting.validate()).rejects.toThrow('改放的日期不能和原國定假日相差超過一年');
   });
 
   it('requires source and target dates together', async () => {
@@ -62,7 +62,7 @@ describe('HolidayMoveSetting', () => {
       sourceDate: '2036-04-07',
     });
 
-    await expect(setting.validate()).rejects.toThrow('provided together');
+    await expect(setting.validate()).rejects.toThrow('請選擇原國定假日與改放的日期');
   });
 
   it('requires agreement evidence and makeup confirmation when enabled', async () => {
@@ -72,7 +72,7 @@ describe('HolidayMoveSetting', () => {
       targetDate: '2036-04-20',
       needSignature: true,
     });
-    await expect(missingEvidence.validate()).rejects.toThrow('agreement reference');
+    await expect(missingEvidence.validate()).rejects.toThrow('請填寫同意文件編號與同意日期');
 
     const complete = new HolidayMoveSetting({
       enableHolidayMove: true,
@@ -92,7 +92,7 @@ describe('HolidayMoveSetting', () => {
       ...agreement,
       needMakeup: true,
     });
-    await expect(unconfirmed.validate()).rejects.toThrow('makeup holiday must be explicitly confirmed');
+    await expect(unconfirmed.validate()).rejects.toThrow('這筆舊資料勾選了「安排補班」但沒有確認，請聯絡系統管理員');
   });
 
   // 舊規則：只有勾選「需經簽核」才要協議資料。新規則：日期挪移一律需要協議文號與日期
@@ -104,7 +104,7 @@ describe('HolidayMoveSetting', () => {
       targetDate: '2036-04-20',
     });
 
-    await expect(setting.validate()).rejects.toThrow('labor agreement reference and date are required');
+    await expect(setting.validate()).rejects.toThrow('請填寫同意文件編號與同意日期');
     expect(new HolidayMoveSetting({}).needSignature).toBe(true);
   });
 });
@@ -150,7 +150,7 @@ describe('holidayMoveSettingController source and target checks', () => {
     const res = await request(app).post('/api/holiday-move-settings').send(body);
 
     expect(res.status).toBe(400);
-    expect(res.body.error).toBe('sourceDate must reference a statutory holiday');
+    expect(res.body).toMatchObject({ error: '原國定假日必須是行事曆上的國定假日', code: 'SOURCE_NOT_HOLIDAY' });
   });
 
   it('rejects a target that is already a statutory or designated holiday', async () => {
@@ -162,7 +162,7 @@ describe('holidayMoveSettingController source and target checks', () => {
     const res = await request(app).post('/api/holiday-move-settings').send(body);
 
     expect(res.status).toBe(400);
-    expect(res.body.error).toBe('targetDate is already a holiday');
+    expect(res.body).toMatchObject({ error: '改放的那一天已經是假日（國定假日、指定應放假日或公務機關補假），請改選其他日子', code: 'TARGET_IS_HOLIDAY' });
   });
 
   it('returns 409 SWAP_EXISTS when an employee already swapped that holiday personally', async () => {
@@ -198,7 +198,7 @@ describe('holidayMoveSettingController source and target checks', () => {
     const res = await request(app).post('/api/holiday-move-settings').send(body);
 
     expect(res.status).toBe(400);
-    expect(res.body.error).toBe('targetDate is already a holiday');
+    expect(res.body).toMatchObject({ error: '改放的那一天已經是假日（國定假日、指定應放假日或公務機關補假），請改選其他日子', code: 'TARGET_IS_HOLIDAY' });
     expect(save).not.toHaveBeenCalled();
     save.mockRestore();
   });

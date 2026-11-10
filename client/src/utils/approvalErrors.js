@@ -1,4 +1,5 @@
 // 簽核頁共用：把伺服器回應 / 網路錯誤轉成給使用者看的繁體中文訊息
+import { formatHoursWithDays } from './leaveBalance'
 
 export const NETWORK_ERROR_MESSAGE = '網路連線異常，請確認網路後再試一次'
 export const GENERIC_ERROR_MESSAGE = '操作失敗，請稍後再試，若持續發生請聯絡管理員'
@@ -92,11 +93,43 @@ export class ApprovalApiError extends Error {
   }
 }
 
+export const ANNUAL_LEAVE_INSUFFICIENT = 'ANNUAL_LEAVE_INSUFFICIENT'
+
+const hasNumber = (value) => value !== null && value !== undefined && value !== '' && Number.isFinite(Number(value))
+
+/**
+ * 特休餘額不足（送出 400、核准 409，code ANNUAL_LEAVE_INSUFFICIENT）：說清楚差多少、接下來怎麼做。
+ * 伺服器的中文訊息已經寫出剩餘、簽核中與本次時數，這裡只補上「怎麼辦」；舊版伺服器的英文訊息用回應裡的數字組一句。
+ * 送出時：可請時數＝剩餘 − 其他簽核中的特休（pendingHours / availableHours 只在有簽核中的特休時才有）。
+ */
+export function annualLeaveShortageMessage(body = {}, status = 0) {
+  const approving = Number(status) === 409
+  const advice = approving
+    ? '請人資確認特休時數，或退簽請申請人修改'
+    : '請減少請假時數、改請其他假別，或等簽核中的特休處理完再送出'
+  const serverText = typeof body?.error === 'string' ? body.error.trim() : ''
+  let text = serverText && HAS_CHINESE_RE.test(serverText) ? serverText.replace(/[。．.]+$/, '') : ''
+  if (!text) {
+    const parts = []
+    if (hasNumber(body?.remainingHours)) parts.push(`剩餘 ${formatHoursWithDays(Math.max(Number(body.remainingHours), 0))}`)
+    if (hasNumber(body?.pendingHours) && Number(body.pendingHours) > 0) {
+      parts.push(`其他簽核中的特休 ${formatHoursWithDays(body.pendingHours)}`)
+      if (hasNumber(body?.availableHours)) parts.push(`可請 ${formatHoursWithDays(Math.max(Number(body.availableHours), 0))}`)
+    }
+    if (hasNumber(body?.requestedHours)) parts.push(`${approving ? '這張單需要' : '本次申請'} ${formatHoursWithDays(body.requestedHours)}`)
+    text = `特休餘額不足${approving ? '，無法核准' : ''}${parts.length ? `：${parts.join('、')}` : ''}`
+  }
+  // 伺服器的訊息已經寫了怎麼辦（核准時的「請人資確認…」）就不重複
+  return text.includes(advice.slice(0, 6)) ? `${text}。` : `${text}。${advice}。`
+}
+
 export async function readApiError(res) {
   const body = await res.json().catch(() => ({}))
   const lines = violationLines(body?.violations)
   const status = Number(res?.status) || 0
-  const message = translateServerMessage(body?.error, { code: body?.code, step: body?.step, status })
+  const message = body?.code === ANNUAL_LEAVE_INSUFFICIENT
+    ? annualLeaveShortageMessage(body, status)
+    : translateServerMessage(body?.error, { code: body?.code, step: body?.step, status })
   return new ApprovalApiError({
     message,
     lines,

@@ -164,6 +164,42 @@ describe('otherControlSettingController - 寫入都經由 store.updateSettings',
     expect(state.customFields).toEqual(next)
   })
 
+  it('PUT /custom-fields 帶 version：別人剛存過（版本不同）回 409，不覆蓋；版本相同照常存，並回新版本', async () => {
+    // 兩位管理員都開著畫面：A 先存，B 用開畫面時的版本再存
+    const opened = await request(app).get(BASE)
+    const version = opened.headers['x-custom-fields-version']
+    expect(version).toMatch(/^[0-9a-f]{16}$/)
+
+    const fieldsA = [...state.customFields, { label: 'A2', fieldKey: 'a2', type: 'text', category: 'employee' }]
+    const savedA = await request(app).put(`${BASE}/custom-fields`).send({ customFields: fieldsA, version })
+    expect(savedA.status).toBe(200)
+    expect(savedA.body).toEqual(fieldsA)
+    const versionA = savedA.headers['x-custom-fields-version']
+    expect(versionA).not.toBe(version)
+
+    const fieldsB = [...opened.body.customFields, { label: 'B2', fieldKey: 'b2', type: 'text', category: 'employee' }]
+    const conflict = await request(app).put(`${BASE}/custom-fields`).send({ customFields: fieldsB, version })
+    expect(conflict.status).toBe(409)
+    expect(conflict.body).toEqual({
+      error: '自訂欄位剛被其他人修改，請重新整理後再編輯（這次的修改沒有儲存）',
+      code: 'CUSTOM_FIELDS_CONFLICT',
+      currentVersion: versionA,
+    })
+    expect(state.customFields).toEqual(fieldsA)
+
+    // 重新整理後用新版本再存就可以；沒有帶 version 的舊畫面照舊整份取代
+    const retried = await request(app).put(`${BASE}/custom-fields`).send({ customFields: fieldsB, version: versionA })
+    expect(retried.status).toBe(200)
+    expect(state.customFields).toEqual(fieldsB)
+    expect((await request(app).get(BASE)).headers['x-custom-fields-version']).toBe(retried.headers['x-custom-fields-version'])
+    const legacy = await request(app).put(`${BASE}/custom-fields`).send({ customFields: next() })
+    expect(legacy.status).toBe(200)
+    expect(state.customFields).toEqual(next())
+    expect((await request(app).put(`${BASE}/custom-fields`).send({ customFields: [], version: 7 })).status).toBe(400)
+
+    function next() { return [{ label: 'C', fieldKey: 'c', type: 'text', category: 'employee' }] }
+  })
+
   it('resetOtherControlSettings 交給 store.resetSettings', async () => {
     state.itemSettings.C12 = ['被改過']
 
@@ -178,10 +214,10 @@ describe('otherControlSettingController - 表單分類', () => {
   it('POST 新增：驗證先於 store；成功回 201，id 與寫入 store 的相同', async () => {
     const noName = await request(app).post(`${BASE}/form-categories`).send({ name: ' ' })
     expect(noName.status).toBe(400)
-    expect(noName.body).toEqual({ error: 'name 為必填欄位' })
+    expect(noName.body).toEqual({ error: '請輸入分類名稱', code: 'CATEGORY_NAME_REQUIRED' })
     const noCode = await request(app).post(`${BASE}/form-categories`).send({ name: 'x', code: ' ' })
     expect(noCode.status).toBe(400)
-    expect(noCode.body).toEqual({ error: 'code 為必填欄位' })
+    expect(noCode.body).toEqual({ error: '請輸入識別碼', code: 'CATEGORY_CODE_REQUIRED' })
     expect(updateSettings).not.toHaveBeenCalled()
 
     const ok = await request(app)
@@ -196,7 +232,7 @@ describe('otherControlSettingController - 表單分類', () => {
     const res = await request(app).post(`${BASE}/form-categories`).send({ name: '重複', code: 'ATT' })
 
     expect(res.status).toBe(409)
-    expect(res.body).toEqual({ error: 'code 已存在' })
+    expect(res.body).toEqual({ error: '識別碼「ATT」已經被其他分類使用，請換一個', code: 'CATEGORY_CODE_TAKEN' })
     expect(state.formCategories).toHaveLength(2)
   })
 
@@ -217,15 +253,15 @@ describe('otherControlSettingController - 表單分類', () => {
 
     const emptyName = await request(app).put(`${BASE}/form-categories/cat-custom`).send({ name: ' ' })
     expect(emptyName.status).toBe(400)
-    expect(emptyName.body).toEqual({ error: 'name 為必填欄位' })
+    expect(emptyName.body).toEqual({ error: '請輸入分類名稱', code: 'CATEGORY_NAME_REQUIRED' })
 
     const emptyCode = await request(app).put(`${BASE}/form-categories/cat-custom`).send({ code: '' })
     expect(emptyCode.status).toBe(400)
-    expect(emptyCode.body).toEqual({ error: 'code 為必填欄位' })
+    expect(emptyCode.body).toEqual({ error: '請輸入識別碼', code: 'CATEGORY_CODE_REQUIRED' })
 
     const duplicate = await request(app).put(`${BASE}/form-categories/cat-custom`).send({ code: '人事類' })
     expect(duplicate.status).toBe(409)
-    expect(duplicate.body).toEqual({ error: 'code 已存在' })
+    expect(duplicate.body).toEqual({ error: '識別碼「人事類」已經被其他分類使用，請換一個', code: 'CATEGORY_CODE_TAKEN' })
 
     expect(state).toEqual(makeState())
 

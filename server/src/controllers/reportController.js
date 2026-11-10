@@ -380,17 +380,21 @@ const DEPARTMENT_EXPORT_CONFIG = {
       { header: '員工姓名', key: 'name', width: 24 },
       { header: '排班天數', key: 'scheduled', width: 14 },
       { header: '出勤天數', key: 'attended', width: 14 },
+      // 請假：沒有簽到、但那一班在核准的請假中（不算缺勤）
+      { header: '請假天數', key: 'onLeave', width: 14 },
       { header: '缺勤天數', key: 'absent', width: 14 },
     ],
     mapRow: (record) => ({
       name: record.name,
       scheduled: record.scheduled,
       attended: record.attended,
+      onLeave: record.onLeave ?? 0,
       absent: record.absent,
     }),
     buildSummaryRows: (summary = {}) => [
       { label: '排班總計', value: summary.scheduled ?? 0 },
       { label: '出勤總計', value: summary.attended ?? 0 },
+      { label: '請假總計', value: summary.onLeave ?? 0 },
       { label: '缺勤總計', value: summary.absent ?? 0 },
     ],
   },
@@ -521,18 +525,25 @@ const DEPARTMENT_EXPORT_CONFIG = {
     columns: [
       { header: '員工姓名', key: 'name', width: 24 },
       { header: '日期', key: 'date', width: 16 },
+      { header: '結束日期', key: 'endDate', width: 16 },
+      { header: '假別', key: 'leaveType', width: 12 },
       { header: '補休時數', key: 'hours', width: 14 },
-      { header: '來源加班單', key: 'overtimeReference', width: 24 },
+      { header: '來源（調休額度／加班單）', key: 'overtimeReference', width: 30 },
     ],
+    // 補休（調休、移休）現在是請假單上的假別：列出的是那些請假單，來源是它扣用的調休額度
     mapRow: (record) => ({
       name: record.name,
       date: record.date,
+      endDate: record.endDate ?? record.date,
+      leaveType: record.leaveType ?? '補休',
       hours: record.hours,
       overtimeReference: record.overtimeReference,
     }),
     buildSummaryRows: (summary = {}) => [
       { label: '補休申請數', value: summary.totalRequests ?? 0 },
       { label: '補休總時數', value: summary.totalHours ?? 0 },
+      { label: '本月存入調休筆數', value: summary.earnedCredits ?? 0 },
+      { label: '本月存入調休時數', value: summary.earnedHours ?? 0 },
     ],
   },
   makeUp: {
@@ -585,6 +596,10 @@ function createDepartmentReportHandler(type) {
     if (!month || !department) {
       return res.status(400).json({ error: 'month and department required' });
     }
+    // 網址上的 department[$gte]=…、department=A&department=B 會被解析成物件或陣列：只收字串
+    if (typeof month !== 'string' || typeof department !== 'string') {
+      return res.status(400).json({ error: 'invalid month or department' });
+    }
 
     const format = typeof rawFormat === 'string' ? rawFormat.toLowerCase() : 'json';
     const actor = { role: req.user?.role, id: req.user?.id };
@@ -635,6 +650,10 @@ function createDepartmentReportHandler(type) {
     } catch (err) {
       if (err instanceof ReportAccessError) {
         return res.status(err.status ?? 500).json({ error: err.message });
+      }
+      // 部門編號格式不對（不是 24 碼的編號）：是請求的問題，不是伺服器錯誤，也不把資料庫的訊息回給使用者
+      if (err?.name === 'CastError') {
+        return res.status(400).json({ error: 'invalid department' });
       }
       res.status(500).json({ error: err.message });
     }

@@ -1,13 +1,13 @@
 <template>
-  <div class="change-password-card">
-    <h2 class="title">{{ title }}</h2>
-    <p class="description">{{ description }}</p>
-    <el-form ref="formRef" :model="form" :rules="rules" label-width="120px" class="form-body">
+  <div class="change-password">
+    <PageHeader :title="title" :subtitle="description" />
+    <el-form ref="formRef" :model="form" :rules="rules" label-position="top" hide-required-asterisk class="hr-section form-body" @submit.prevent="submit">
       <el-form-item label="舊密碼" prop="oldPassword">
         <el-input
           v-model="form.oldPassword"
           type="password"
           placeholder="請輸入目前使用的密碼"
+          autocomplete="current-password"
           show-password
           data-test="old-password"
         />
@@ -17,6 +17,7 @@
           v-model="form.newPassword"
           type="password"
           placeholder="至少 8 碼，需包含大小寫與數字"
+          autocomplete="new-password"
           show-password
           data-test="new-password"
         />
@@ -26,14 +27,15 @@
           v-model="form.confirmPassword"
           type="password"
           placeholder="請再次輸入新密碼"
+          autocomplete="new-password"
           show-password
           data-test="confirm-password"
         />
       </el-form-item>
-      <el-form-item>
-        <el-button type="primary" :loading="loading" @click="submit" data-test="submit-btn">確認變更</el-button>
-        <el-button @click="reset">重設</el-button>
-      </el-form-item>
+      <div class="form-actions">
+        <el-button type="primary" :loading="loading" native-type="submit" data-test="submit-btn">儲存</el-button>
+        <el-button :disabled="loading" @click="reset">清除</el-button>
+      </div>
     </el-form>
   </div>
 </template>
@@ -43,7 +45,8 @@ import { reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { apiFetch } from '../api'
-import { clearToken } from '../utils/tokenService'
+import { endSession } from '../utils/authNavigation'
+import PageHeader from './PageHeader.vue'
 
 const props = defineProps({
   title: { type: String, default: '變更密碼' },
@@ -72,6 +75,8 @@ const rules = {
         const hasNumber = /\d/.test(value || '')
         if (!(hasUpper && hasLower && hasNumber)) {
           callback(new Error('需包含大小寫字母與數字'))
+        } else if (value === form.oldPassword) {
+          callback(new Error('新密碼不可與舊密碼相同'))
         } else {
           callback()
         }
@@ -94,35 +99,43 @@ const rules = {
   ]
 }
 
-function clearAuth() {
-  clearToken()
-  sessionStorage.removeItem('role')
-  sessionStorage.removeItem('employeeId')
-  localStorage.removeItem('role')
-  localStorage.removeItem('employeeId')
-  localStorage.removeItem('username')
-}
-
 async function submit() {
-  if (!formRef.value) return
-  const valid = await formRef.value.validate().catch(() => false)
-  if (!valid) return
+  // loading 在第一個 await 之前就要擋：按 Enter 與按按鈕不會各送一次
+  if (!formRef.value || loading.value) return
   loading.value = true
+  const valid = await formRef.value.validate().catch(() => false)
+  if (!valid) {
+    loading.value = false
+    return
+  }
   try {
-    const res = await apiFetch(
-      '/api/change-password',
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ oldPassword: form.oldPassword, newPassword: form.newPassword })
-      },
-      { autoRedirect: false }
-    )
+    let res
+    try {
+      res = await apiFetch(
+        '/api/change-password',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ oldPassword: form.oldPassword, newPassword: form.newPassword })
+        },
+        { autoRedirect: false }
+      )
+    } catch (networkError) {
+      throw new Error('無法連線到伺服器，請確認網路連線後再試')
+    }
     const data = await res.json().catch(() => ({}))
+    if (res.status === 401) {
+      // 登入已逾時（token 過期或已作廢）：回登入頁，不顯示伺服器的英文訊息
+      endSession({ revokeToken: false })
+      ElMessage.error('登入已逾時，請重新登入後再變更密碼')
+      router.push(props.redirectTo)
+      return
+    }
     if (!res.ok) {
       throw new Error(data.error || '變更密碼失敗')
     }
-    clearAuth()
+    // 伺服器已經作廢這個 token；清掉本機的登入狀態與上一個人的快取（選單、個人資料、照片）
+    endSession({ revokeToken: false })
     ElMessage.success(data.message || '密碼已更新，請重新登入')
     router.push(props.redirectTo)
   } catch (err) {
@@ -141,28 +154,17 @@ function reset() {
 </script>
 
 <style scoped>
-.change-password-card {
-  max-width: 520px;
-  margin: 0 auto;
-  background: #ffffff;
-  padding: 32px;
-  border-radius: 16px;
-  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.08);
+.change-password {
+  max-width: 480px;
 }
 
-.title {
-  font-size: 24px;
-  font-weight: 700;
-  margin: 0 0 4px;
-  color: #0f172a;
+/* 手機上輸入框字級小於 16px 時，iOS 會在聚焦時自動放大整個畫面 */
+.form-body :deep(.el-input__inner) {
+  font-size: 16px;
 }
 
-.description {
-  margin: 0 0 20px;
-  color: #475569;
-}
-
-.form-body {
-  margin-top: 12px;
+.form-actions {
+  display: flex;
+  gap: 8px;
 }
 </style>

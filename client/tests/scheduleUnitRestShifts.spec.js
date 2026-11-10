@@ -81,7 +81,9 @@ function mountSchedule() {
         'el-button': { template: '<button v-bind="$attrs"><slot></slot></button>' },
         'el-table': { template: '<div><slot></slot></div>' },
         'el-table-column': { template: '<div></div>' },
-        ScheduleDashboard: { template: '<div></div>' }
+        ScheduleDashboard: { template: '<div></div>' },
+        // 排班頁改用共用頁首：shallowMount 會把它換成空殼，月份／部門／單位與統計就不會畫出來，所以用真的元件
+        PageHeader: false
       }
     }
   })

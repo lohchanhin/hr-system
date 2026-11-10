@@ -14,6 +14,14 @@ vi.mock('vue-router', async (importOriginal) => {
   return { ...actual, onBeforeRouteLeave: () => {} }
 })
 
+// 簽核頁的提示與確認改用 Element Plus 的訊息與確認框（utils/approvalNotify，不再用瀏覽器原生的 alert / confirm）：
+// 測試裡接回 window.alert / window.confirm 的 spy，原本檢查「提示了什麼」的斷言照舊有效
+vi.mock('../src/utils/approvalNotify', () => ({
+  notifySuccess: (message, warnings = []) => window.alert([message, ...warnings].join('\n')),
+  notifyFailure: (title, message) => window.alert(title ? `${title}：${message}` : message),
+  confirmAction: (message) => Promise.resolve(window.confirm(message)),
+}))
+
 beforeAll(() => {
   globalThis.ResizeObserver = globalThis.ResizeObserver || class {
     observe() {}

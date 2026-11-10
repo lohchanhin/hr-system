@@ -1,8 +1,8 @@
 import mongoose from 'mongoose';
 
 const organizationSchema = new mongoose.Schema({
-  // 機構名稱
-  name: String,
+  // 機構名稱（必填：沒有名稱的機構在選單裡是一列空白）
+  name: { type: String, required: true, trim: true, maxlength: 120 },
   // 系統代碼
   systemCode: String,
   // 單位名稱

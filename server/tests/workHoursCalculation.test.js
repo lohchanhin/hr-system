@@ -121,6 +121,27 @@ describe('work-hours calculation', () => {
       reason: '測試加班',
       pay: 900,
     }))
+    // 沒有資料庫連線時薪資政策是預設值：回傳套用的倍率，每一段標出 rateKey
+    expect(result.overtimeCalcEnabled).toBe(true)
+    expect(result.overtimeRates).toMatchObject({ weekdayFirst2: 4 / 3, weekdayAfter2: 5 / 3 })
+    expect(result.overtimeRecords[0].rateSegments.map((segment) => segment.rateKey)).toEqual(['weekdayFirst2', 'weekdayAfter2'])
+
+    // 薪資政策的倍率（呼叫端讀好放在 context.payrollPolicy）：平日前 2 小時 2 倍、第 3～4 小時 2.5 倍
+    const { getDefaultPayrollPolicy } = await import('../src/services/payrollPolicyService.js')
+    const payrollPolicy = getDefaultPayrollPolicy()
+    payrollPolicy.overtime.rates.weekdayFirst2 = 2
+    payrollPolicy.overtime.rates.weekdayAfter2 = 2.5
+    const custom = await calculateOvertimePay('emp1', '2026-09-01', { payrollPolicy })
+    // 時薪 36000 / 30 / 8 = 150：2 × 150 × 2 + 2 × 150 × 2.5 = 1350
+    expect(custom.overtimePay).toBe(1350)
+    expect(custom.overtimeRates).toMatchObject({ weekdayFirst2: 2, weekdayAfter2: 2.5 })
+  })
+
+  it('沒開「自動計算加班費」：加班費 0，標出 overtimeCalcEnabled: false，也不讀薪資政策與簽核單', async () => {
+    mockEmployee.findById.mockResolvedValue({ _id: 'emp1', autoOvertimeCalc: false, salaryAmount: 36000, salaryType: '月薪' })
+    const result = await calculateOvertimePay('emp1', '2026-09-01')
+    expect(result).toMatchObject({ overtimeHours: 0, overtimePay: 0, overtimeRecords: [], overtimeCalcEnabled: false })
+    expect(mockApprovalRequest.find).not.toHaveBeenCalled()
   })
 
   describe('overtime derived from start/end time when no hours field is present', () => {

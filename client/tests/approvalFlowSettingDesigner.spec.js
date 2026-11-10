@@ -125,13 +125,19 @@ describe('ApprovalFlowSetting 流程設計（真正的 Element Plus 渲染）', 
     expect(active.props('disabled')).toBeFalsy()
   })
 
-  it('通用規則分頁標示尚未啟用', async () => {
+  // 2026/11 客戶要求拿掉沒有功能的設定：「尚未啟用（僅記錄設定）」的通用規則（最大簽核關卡數、代理簽核、逾時提醒與處理）不再顯示
+  it('不再顯示只記錄、沒有功能的通用規則；共用規則分頁只有「無上級主管時的簽核人」', async () => {
     const wrapper = mount(ApprovalFlowSetting, { global: { plugins: [ElementPlus] } })
     await flushPromises()
 
-    const notice = wrapper.find('[data-test="policy-not-effective"]')
-    expect(notice.exists()).toBe(true)
-    expect(notice.text()).toContain('尚未啟用（僅記錄設定）')
+    expect(wrapper.find('[data-test="policy-not-effective"]').exists()).toBe(false)
+    wrapper.vm.activeTab = 'commonRule'
+    await flushPromises()
+    const text = wrapper.text()
+    for (const removed of ['尚未啟用', '最大簽核關卡數', '是否允許代理簽核', '逾時提醒', '逾時處理方式', '儲存通用規則']) {
+      expect(text, removed).not.toContain(removed)
+    }
+    expect(wrapper.find('[data-test="top-level-approvers"]').text()).toContain('無上級主管時的簽核人（全部表單共用）')
     expect(vueWarnings()).toEqual([])
   })
 
@@ -153,10 +159,12 @@ describe('ApprovalFlowSetting 流程設計（真正的 Element Plus 渲染）', 
     const wrapper = mount(ApprovalFlowSetting, { global: { plugins: [ElementPlus] } })
     await flushPromises()
 
-    wrapper.vm.activeTab = 'fields'
+    // 欄位在表單的設定畫面裡：先從清單開啟表單的「欄位」
+    await wrapper.vm.openFormEditor({ _id: 'f1' }, 'fields')
     await flushPromises()
 
-    expect(wrapper.text()).toContain('已停用')
+    expect(wrapper.vm.activeTab).toBe('fields')
+    expect(wrapper.find('[data-test="fields-pane"]').text()).toContain('已停用')
     expect(wrapper.text()).not.toContain('型別2')
     expect(vueWarnings()).toEqual([])
   })

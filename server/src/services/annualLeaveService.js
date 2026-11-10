@@ -13,6 +13,11 @@ import { LEAVE_DAY_EQUIVALENT_HOURS, formatHoursText, hoursToDays, roundHours } 
 // 特休以「小時」為單位儲存（1 天 = 8 小時只是換算顯示）。時數的讀取與舊資料（天數欄位）的解讀放在 utils/annualLeaveHours.js
 export { interpretLegacyAnnualLeave, readAnnualLeaveHours }
 
+// 台灣現在是哪一年（特休年度的預設值）
+function currentTaipeiYear(now = new Date()) {
+  return Number((toTaipeiDateKey(now) || '').slice(0, 4)) || now.getFullYear()
+}
+
 // 特休餘額相關的錯誤：message 保留英文供紀錄與既有測試，code / remainingHours / requestedHours 讓呼叫端組出中文訊息
 export class AnnualLeaveError extends Error {
   constructor(code, message, extra = {}) {
@@ -80,11 +85,12 @@ export async function deductAnnualLeave(employeeId, hours, approvalRequestId = n
     if (!updated) {
       employee = await load()
       if (alreadyApplied(employee)) return employee
-      const remainingHours = readAnnualLeaveHours(employee?.annualLeave).remainingHours
+      const { remainingHours, configured } = readAnnualLeaveHours(employee?.annualLeave)
+      // configured：這位員工有沒有設定過特休（沒設定過的人送出時不以餘額擋下，核准時也只回警告請人資補登）
       throw new AnnualLeaveError(
         'INSUFFICIENT_BALANCE',
         `Insufficient annual leave balance. Remaining: ${remainingHours} hours, Requested: ${hours} hours`,
-        { remainingHours, requestedHours: hours },
+        { remainingHours, requestedHours: hours, configured },
       )
     }
   }
@@ -138,7 +144,7 @@ export async function getAnnualLeaveBalance(employeeId) {
   }
 
   const hours = readAnnualLeaveHours(employee.annualLeave)
-  const year = employee.annualLeave?.year || new Date().getFullYear()
+  const year = employee.annualLeave?.year || currentTaipeiYear()
   const toDays = (value) => hoursToDays(value, LEAVE_DAY_EQUIVALENT_HOURS, 4)
 
   return {
@@ -274,7 +280,8 @@ export async function validateAnnualLeaveRequest(employeeId, hours) {
  * @returns {Promise<Object>} 更新後的員工資料
  */
 export async function setAnnualLeaveQuota(employeeId, totalHours, year = null) {
-  const targetYear = year || new Date().getFullYear()
+  // 沒帶年度時是台灣現在的年度：伺服器時區是 UTC 時，台灣 1/1 清晨（UTC 還是 12/31）不能設成去年
+  const targetYear = year || currentTaipeiYear()
   // 舊格式的資料先換成時數，免得只寫 totalHours 而漏掉舊的使用量
   await convertLegacyEmployee(employeeId)
 

@@ -76,11 +76,13 @@ import { checkLeaveHours, LeaveHoursValidationError } from '../services/leaveHou
 import { extraCeilings, loadScheduledShiftHours } from '../services/leaveShiftHours.js'
 import { parseLeaveInterval } from '../utils/leaveDuration.js'
 import { readAnnualLeaveHours } from '../utils/annualLeaveHours.js'
-import { daysToHours, formatHoursText, hoursToDays, isLeaveHoursFilled } from '../utils/leaveHours.js'
+import { daysToHours, formatHoursText, hoursToDays, isLeaveHoursFilled, roundHours } from '../utils/leaveHours.js'
 import { isLeaveFormTemplate } from '../utils/formSemantics.js'
 import { resolveLeaveFieldsForRequest } from '../utils/leaveFieldResolution.js'
 import { toTaipeiDateKey } from '../utils/taipeiTime.js'
 import { isSchedulerVisibleForm, resolveEmployeeReadAccess } from './schedule/scheduleShared.js'
+import { attachRequestSummaries } from '../services/approvalListSummary.js'
+import { buildLiteralSearchRegex } from '../utils/safeSearch.js'
 
 const OBJECT_ID_PATTERN = /^[a-f0-9]{24}$/i
 const MAX_COMMENT_LENGTH = 1000
@@ -451,15 +453,16 @@ async function loadDayCeilings({ applicantEmp, startValue, endValue, startType, 
 /*
  * 送出（或重新送出）時檢查請假：日期與時數合理、特休餘額足夠，其他假別依假別規則檢查額度。
  * - 時數欄位：大於 0、是最小單位（預設 0.5 小時）的倍數、不超過所選期間可請的上限（每日最多 8 小時，管理員可調）。
- * - 特休：尚未設定特休時數的員工不以餘額擋下；超過剩餘時數擋下（400 ANNUAL_LEAVE_INSUFFICIENT）。
+ * - 特休：尚未設定特休時數的員工不以餘額擋下；超過可請時數（剩餘 - 其他簽核中的特休）擋下（400 ANNUAL_LEAVE_INSUFFICIENT）。
+ *   excludeRequestId：重新送出時略過這張單本身。
  * - 事假、病假等：超額處理設為「禁止」時擋下（400 LEAVE_QUOTA_INSUFFICIENT），設為「警告」時照常送出並回傳警告。
  * - 調休：超過可用時數擋下（400 COMP_LEAVE_INSUFFICIENT）；lockCompLeave(員工 _id) 在檢查存摺前呼叫（拿調休申請鎖，見 acquireCompFilingLease）。
  * 回傳 { warnings, leave }：warnings 給 201 回應附上；leave 是這張假單的長度（時數、日曆日，關卡的適用條件用，見 approvalStepBuilder.computeLeaveLength），
  * 不是請假表單時是 null。
  */
-async function assertLeaveAllowed({ form, formData, applicantEmp, fields = null, lockCompLeave = null }) {
+async function assertLeaveAllowed({ form, formData, applicantEmp, fields = null, lockCompLeave = null, excludeRequestId = null }) {
   const analysis = await analyzeLeaveRequest(form, formData)
-  if (!analysis) return { warnings: [], leave: null }
+  if (!analysis) return { warnings: [], leave: await leaveLengthWithoutType({ form, formData, applicantEmp, fields }) }
   const { leaveFields } = analysis
   if (analysis.invalidRange) {
     throw fail(400, '請假結束日期不可早於開始日期', { code: 'INVALID_LEAVE_RANGE' })
@@ -499,11 +502,23 @@ async function assertLeaveAllowed({ form, formData, applicantEmp, fields = null,
   if (analysis.isAnnual) {
     const annual = readAnnualLeaveHours(applicantEmp?.annualLeave)
     if (!annual.configured) return { warnings: [], leave }
-    if (analysis.hours > annual.remainingHours) {
+    // 其他還在簽核中的特休也要算進去：以前只和剩餘時數比，餘額 16 小時可以送出兩張 16 小時的特休，而且兩張都核准
+    const pendingHours = await annualLeavePendingHours({ employeeId: applicantEmp?._id, policy, excludeRequestId })
+    const availableHours = roundHours(annual.remainingHours - pendingHours)
+    if (analysis.hours > availableHours + 1e-9) {
+      const pendingText = pendingHours > 0
+        ? `、其他簽核中的特休 ${hoursWithDays(pendingHours)}，可請 ${hoursWithDays(Math.max(availableHours, 0))}`
+        : ''
       throw fail(
         400,
-        `特休餘額不足：剩餘 ${hoursWithDays(Math.max(annual.remainingHours, 0))}，本次申請 ${hoursWithDays(analysis.hours)}`,
-        { code: 'ANNUAL_LEAVE_INSUFFICIENT', remainingHours: annual.remainingHours, requestedHours: analysis.hours },
+        `特休餘額不足：剩餘 ${hoursWithDays(Math.max(annual.remainingHours, 0))}${pendingText}，本次申請 ${hoursWithDays(analysis.hours)}`,
+        {
+          code: 'ANNUAL_LEAVE_INSUFFICIENT',
+          remainingHours: annual.remainingHours,
+          // 有其他簽核中的特休時才多帶這兩個欄位（沒有時回應和以前相同）
+          ...(pendingHours > 0 ? { pendingHours, availableHours } : {}),
+          requestedHours: analysis.hours,
+        },
       )
     }
     return { warnings: [], leave }
@@ -517,6 +532,47 @@ async function assertLeaveAllowed({ form, formData, applicantEmp, fields = null,
   }
 
   return { warnings: await checkLeaveQuota({ analysis, formData, applicantEmp, policy }), leave }
+}
+
+/*
+ * 請假表單沒有「假別」欄位（客戶自建、只有日期與時數的表單）：假別額度無從檢查，但關卡的適用條件（請假滿 N 小時／日才需要）
+ * 看的是請假長度，照樣由日期、時數算出來（和流程試算同一個 computeLeaveLength）。以前讀不到假別就整個不看長度，
+ * 有條件的關卡一律要簽，流程試算顯示的關卡和實際送出的不一樣。
+ * 表單上完全沒有日期、時數可以讀（或日期前後顛倒）時回傳 null：有條件的關卡照常要簽（寧可多簽，不能少簽）。不是請假表單也是 null。
+ */
+async function leaveLengthWithoutType({ form, formData, applicantEmp, fields = null }) {
+  if (!isAnnualLeaveFormTemplate(form)) return null
+  try {
+    const leaveFields = resolveLeaveFieldsForRequest(await getLeaveFieldIdsForForm(form), formData)
+    const amount = computeLeaveRequestHours({ formData, leaveFields })
+    if (amount.source === 'default' || amount.invalidRange || !(amount.hours > 0) || amount.hours > MAX_LEAVE_REQUEST_HOURS) return null
+    return computeLeaveLength({
+      hours: amount.hours,
+      startValue: leaveFields.startId ? formData?.[leaveFields.startId] : undefined,
+      endValue: leaveFields.endId ? formData?.[leaveFields.endId] : undefined,
+      startType: fieldTypeOf(fields, leaveFields.startId),
+      endType: fieldTypeOf(fields, leaveFields.endId),
+      employeeId: applicantEmp?._id,
+    })
+  } catch (error) {
+    console.error(`[LeaveLength] Leave length skipped: ${error?.name || 'Error'}`)
+    return null
+  }
+}
+
+/*
+ * 這位員工其他簽核中的特休時數（不分年度）。算不出來（資料庫暫時有問題、單元測試的替身沒有這個函式）時當成 0：
+ * 剩餘時數的檢查仍然有效，核准時扣不到特休也不會核准（reserveAnnualLeaveForApproval）。
+ */
+async function annualLeavePendingHours({ employeeId, policy, excludeRequestId = null }) {
+  if (!employeeId || typeof leaveBalanceModule.computeAnnualLeavePendingHours !== 'function') return 0
+  try {
+    const hours = await leaveBalanceModule.computeAnnualLeavePendingHours({ employeeId, policy, excludeRequestId })
+    return Number.isFinite(hours) && hours > 0 ? hours : 0
+  } catch (error) {
+    console.error(`[AnnualLeave] Pending hours lookup skipped: ${error?.name || 'Error'}`)
+    return 0
+  }
 }
 
 /*
@@ -552,6 +608,25 @@ async function acquireCompFilingLease(employeeId) {
     return await acquireCompLeaveFilingLease({ employeeId })
   } catch (error) {
     if (error?.code === 'COMP_LEAVE_FILING_BUSY') throw fail(409, error.message, { code: error.code })
+    throw error
+  }
+}
+
+/*
+ * 請假單（任何假別）：從「與已申請的假單重疊」的檢查到建立（或重新送出）單據之間，同一位員工只處理一筆。
+ * 以前兩個分頁、或沒有帶 Idempotency-Key 的連點同時送出同一天的假，兩筆都通過重疊檢查（彼此都還沒建立），
+ * 同一天就有兩張簽核中的假單。用的是和調休申請同一把鎖（每位員工一把，見 acquireCompLeaveFilingLease），
+ * 第二筆會等第一筆建立好再檢查。沒有資料庫連線時（單元測試以替身取代模型）不拿鎖。
+ */
+async function acquireLeaveFilingLease(form, employeeId) {
+  if (!employeeId || !isAnnualLeaveFormTemplate(form)) return null
+  if (mongoose.connection.readyState !== 1) return null
+  try {
+    return await acquireCompLeaveFilingLease({ employeeId })
+  } catch (error) {
+    if (error?.code === 'COMP_LEAVE_FILING_BUSY') {
+      throw fail(409, '您的另一筆請假申請正在送出，請稍後再試', { code: 'LEAVE_FILING_BUSY' })
+    }
     throw error
   }
 }
@@ -627,8 +702,53 @@ async function recordAnnualLeaveOutcome(doc, { annualLeave, logs }) {
   }
 }
 
-/* 處理特休扣減（當請假審核通過時）；回傳 { state, hours, days, message }，不是特休回傳 null */
-async function handleAnnualLeaveDeduction(doc) {
+/*
+ * 這次核准會讓特休單變成已核准：存檔之前先扣特休（原子操作，同一張單只會扣一次）。餘額不足就不核准
+ * （409 ANNUAL_LEAVE_INSUFFICIENT），單據維持簽核中。以前是照樣核准、只回警告，員工就會有超過特休時數的已核准特休。
+ * - 尚未設定特休的員工維持原本的做法：送出時不以餘額擋下，核准後回警告請人資補登。
+ * - 其他非預期的錯誤（找不到員工、資料庫暫時有問題）也不在這裡擋，留給核准後的 handleAnnualLeaveDeduction 記錄並回警告。
+ * 回傳 { hours }（已經扣好）或 null；扣了之後單據最後沒有核准成功時由 releaseAnnualLeaveReservation 還回去。
+ */
+async function reserveAnnualLeaveForApproval({ doc, form }) {
+  if (!form || !doc?.applicant_employee) return null
+  let analysis = null
+  try {
+    analysis = await analyzeAnnualLeave(form, doc.form_data)
+  } catch (error) {
+    console.error(`[AnnualLeave] Reservation skipped: ${error?.name || 'Error'}`)
+    return null
+  }
+  if (!analysis || !(analysis.hours > 0)) return null
+  try {
+    await deductAnnualLeave(doc.applicant_employee, analysis.hours, doc._id.toString())
+    return { hours: analysis.hours }
+  } catch (error) {
+    if (error?.code !== 'INSUFFICIENT_BALANCE' || error.configured === false) return null
+    const remainingHours = Math.max(Number(error.remainingHours) || 0, 0)
+    throw fail(
+      409,
+      `特休餘額不足，無法核准：剩餘 ${hoursWithDays(remainingHours)}，這張單需要 ${hoursWithDays(analysis.hours)}。請人資確認特休時數，或退簽請申請人修改`,
+      { code: 'ANNUAL_LEAVE_INSUFFICIENT', remainingHours, requestedHours: analysis.hours },
+    )
+  }
+}
+
+/* 核准前先扣的特休：單據最後沒有變成已核准（存檔衝突後發現已被撤回、否決…）就還回去；返還只認這張單扣過的那一筆，重複呼叫不會多還 */
+async function releaseAnnualLeaveReservation(requestId, reserved) {
+  try {
+    const fresh = await ApprovalRequest.findById(requestId).select('status applicant_employee').lean()
+    if (!fresh || fresh.status === 'approved') return
+    await refundAnnualLeave(fresh.applicant_employee, reserved.hours, requestId)
+  } catch (error) {
+    console.error(`[AnnualLeave] Failed to release reservation: ${error?.name || 'Error'}`, error?.message)
+  }
+}
+
+/*
+ * 處理特休扣減（當請假審核通過時）；回傳 { state, hours, days, message }，不是特休回傳 null。
+ * reserved：核准存檔前已經扣好的時數（reserveAnnualLeaveForApproval），這裡只把結果寫進單據，不再扣一次。
+ */
+async function handleAnnualLeaveDeduction(doc, { reserved = null } = {}) {
   try {
     const form = await FormTemplate.findById(doc.form).lean()
     const analysis = await analyzeAnnualLeave(form, doc.form_data)
@@ -641,7 +761,7 @@ async function handleAnnualLeaveDeduction(doc) {
     const at = new Date()
     let deductError = null
     try {
-      await deductAnnualLeave(doc.applicant_employee, hours, doc._id.toString())
+      if (reserved?.hours !== hours) await deductAnnualLeave(doc.applicant_employee, hours, doc._id.toString())
       console.log(`[AnnualLeave] Successfully deducted ${hours} hours for employee ${doc.applicant_employee}`)
     } catch (error) {
       deductError = error
@@ -826,19 +946,21 @@ export async function createApprovalRequest(req, res) {
     const fields = await loadFormFields(form._id)
     const { data: sanitized, fileFieldIds } = sanitizeApprovalFormData({ fields, formData: form_data })
 
+    // 請假單：重疊檢查到建立單據之間同一位員工只處理一筆（finally 釋放）
+    compLease = await acquireLeaveFilingLease(form, applicantEmp._id)
     await assertApprovalRequestCompliance({
       form,
       formData: sanitized,
       applicantEmployeeId: applicantEmp?._id || req.user?.id,
       checkLeaveConflicts: true,
     })
-    // 調休：檢查存摺到建立單據之間同一位員工只處理一筆（連點、兩個分頁同時送出不會一起超過存摺）
+    // 調休：檢查存摺到建立單據之間同一位員工只處理一筆（連點、兩個分頁同時送出不會一起超過存摺）；上面已經拿到鎖就沿用
     const leaveCheck = await assertLeaveAllowed({
       form,
       formData: sanitized,
       applicantEmp,
       fields,
-      lockCompLeave: async (employeeId) => { compLease = await acquireCompFilingLease(employeeId) },
+      lockCompLeave: async (employeeId) => { if (!compLease) compLease = await acquireCompFilingLease(employeeId) },
     })
 
     // 依每關解析審核人（主管關卡找不到主管時改送最高層簽核人；請假表單依請假長度決定有條件的關卡要不要）
@@ -1062,6 +1184,97 @@ const LIST_FORM_FIELDS = 'name category semanticType'
 const LIST_APPLICANT_FIELDS = 'name employeeId department organization photo'
 const LIST_APPROVER_FIELDS = 'name'
 
+// 清單篩選（三個清單共用，參數都是選填，說明見 docs/approval-list-api.md）
+const LIST_SORT_DIRECTIONS = { newest: -1, oldest: 1 }
+const LIST_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/
+const LIST_SEARCH_MAX_LENGTH = 50
+// 姓名／員工編號關鍵字最多對到幾位員工（500 人的機構打一個姓也不會超過）
+const LIST_SEARCH_MAX_EMPLOYEES = 2000
+const MS_PER_DAY = 24 * 60 * 60 * 1000
+
+function readListParam(query, key, label) {
+  const raw = query?.[key]
+  if (raw === undefined || raw === null) return undefined
+  // ?status=a&status=b 會變成陣列：不猜要用哪一個
+  if (typeof raw !== 'string') throw fail(400, `${label}只能指定一個值`, { code: 'INVALID_LIST_FILTER', param: key })
+  const text = raw.trim()
+  return text === '' ? undefined : text
+}
+
+/* 台灣日期 YYYY-MM-DD 的 00:00（UTC 時間點）；格式不對或不是真的日期丟 400 */
+function taipeiDayStart(value, key, label) {
+  if (!LIST_DATE_PATTERN.test(value) || toTaipeiDateKey(value) !== value) {
+    throw fail(400, `${label}格式不正確，請用 YYYY-MM-DD`, { code: 'INVALID_LIST_FILTER', param: key })
+  }
+  return new Date(`${value}T00:00:00.000+08:00`)
+}
+
+/*
+ * 讀 status / form / from / to / q / sort，回傳 { conditions, sortDirection }。
+ * conditions：要再加到清單查詢條件上的 { 欄位: 條件 }；沒有帶任何篩選時是空物件（查詢條件和以前完全一樣）。
+ * - status：不認得的值忽略（和以前管理員歷史清單的 ?status= 相同）
+ * - form：表單 _id；from / to：申請（建立）日期，台灣日期、含頭尾
+ * - q：申請人姓名或員工編號（部分比對、不分大小寫）；對不到任何員工時 noMatch 為 true，清單直接是空的
+ * - sort：newest（預設）或 oldest
+ */
+async function parseListFilters(query = {}) {
+  const conditions = {}
+  const status = readListParam(query, 'status', '狀態')
+  if (status && HISTORY_STATUSES.includes(status)) conditions.status = status
+
+  const form = readListParam(query, 'form', '表單')
+  if (form !== undefined) {
+    if (!isObjectIdString(form)) throw fail(400, '表單參數格式不正確', { code: 'INVALID_LIST_FILTER', param: 'form' })
+    conditions.form = new mongoose.Types.ObjectId(form)
+  }
+
+  const from = readListParam(query, 'from', '開始日期')
+  const to = readListParam(query, 'to', '結束日期')
+  const fromAt = from !== undefined ? taipeiDayStart(from, 'from', '開始日期') : null
+  const toEnd = to !== undefined ? new Date(taipeiDayStart(to, 'to', '結束日期').getTime() + MS_PER_DAY) : null
+  if (fromAt && toEnd && fromAt >= toEnd) {
+    throw fail(400, '開始日期不可晚於結束日期', { code: 'INVALID_LIST_FILTER', param: 'from' })
+  }
+  if (fromAt || toEnd) {
+    conditions.createdAt = {
+      ...(fromAt ? { $gte: fromAt } : {}),
+      ...(toEnd ? { $lt: toEnd } : {}),
+    }
+  }
+
+  const sortKey = readListParam(query, 'sort', '排序')
+  if (sortKey !== undefined && !Object.hasOwn(LIST_SORT_DIRECTIONS, sortKey)) {
+    throw fail(400, '排序只能是 newest（新到舊）或 oldest（舊到新）', { code: 'INVALID_LIST_FILTER', param: 'sort' })
+  }
+  const sortDirection = LIST_SORT_DIRECTIONS[sortKey ?? 'newest']
+
+  let noMatch = false
+  const q = readListParam(query, 'q', '關鍵字')
+  if (q !== undefined) {
+    if (q.length > LIST_SEARCH_MAX_LENGTH) {
+      throw fail(400, `關鍵字最多 ${LIST_SEARCH_MAX_LENGTH} 個字`, { code: 'INVALID_LIST_FILTER', param: 'q' })
+    }
+    const pattern = buildLiteralSearchRegex(q, { maxLength: LIST_SEARCH_MAX_LENGTH })
+    const matched = await Employee.find({ $or: [{ name: pattern }, { employeeId: pattern }] })
+      .select('_id')
+      .limit(LIST_SEARCH_MAX_EMPLOYEES)
+      .lean()
+    const ids = (matched || []).map(employee => employee._id)
+    if (!ids.length) noMatch = true
+    else conditions.applicant_employee = { $in: ids }
+  }
+  return { conditions, sortDirection, noMatch }
+}
+
+/* 篩選條件加到清單原本的條件上；同一個欄位原本就有條件（待簽的 status、我的申請的 applicant_employee）時兩個都要符合 */
+function applyListConditions(filter, conditions) {
+  for (const [key, value] of Object.entries(conditions)) {
+    if (Object.hasOwn(filter, key)) filter.$and = [...(filter.$and || []), { [key]: value }]
+    else filter[key] = value
+  }
+  return filter
+}
+
 /* 申請者的清單 */
 export async function myApprovalRequests(req, res) {
   try {
@@ -1071,10 +1284,12 @@ export async function myApprovalRequests(req, res) {
       return res.status(403).json({ error: '只能查看自己的申請' })
     }
     const paging = parseListPaging(req.query)
-    const filter = { applicant_employee: empId }
+    const { conditions, sortDirection, noMatch } = await parseListFilters(req.query)
+    if (noMatch) return respondList(res, { items: [], total: 0, ...paging })
+    const filter = applyListConditions({ applicant_employee: empId }, conditions)
     const [items, total] = await Promise.all([
       ApprovalRequest.find(filter)
-        .sort({ createdAt: -1 })
+        .sort({ createdAt: sortDirection })
         .skip(paging.skip)
         .limit(paging.limit)
         .populate('form', LIST_FORM_FIELDS)
@@ -1083,6 +1298,7 @@ export async function myApprovalRequests(req, res) {
         .lean(),
       ApprovalRequest.countDocuments(filter),
     ])
+    await attachRequestSummaries(items)
     return respondList(res, { items, total, ...paging })
   } catch (e) {
     return respondError(res, e, 'list mine')
@@ -1098,7 +1314,8 @@ export async function inboxApprovals(req, res) {
       return res.status(403).json({ error: '只能查看自己的待簽核事項' })
     }
     const paging = parseListPaging(req.query)
-    if (!isObjectIdString(empId)) return respondList(res, { items: [], total: 0, ...paging })
+    const { conditions, sortDirection, noMatch } = await parseListFilters(req.query)
+    if (!isObjectIdString(empId) || noMatch) return respondList(res, { items: [], total: 0, ...paging })
 
     const employeeObjectId = new mongoose.Types.ObjectId(empId)
     // 先用索引縮小範圍，再由 $expr 確認「目前關卡」才是有我待簽的那一關（分頁與總數才會正確）
@@ -1131,9 +1348,10 @@ export async function inboxApprovals(req, res) {
         },
       },
     }
+    applyListConditions(filter, conditions)
     const [items, total] = await Promise.all([
       ApprovalRequest.find(filter)
-        .sort({ createdAt: -1 })
+        .sort({ createdAt: sortDirection })
         .skip(paging.skip)
         .limit(paging.limit)
         .populate('form', LIST_FORM_FIELDS)
@@ -1142,6 +1360,7 @@ export async function inboxApprovals(req, res) {
         .lean(),
       ApprovalRequest.countDocuments(filter),
     ])
+    await attachRequestSummaries(items)
     return respondList(res, { items, total, ...paging })
   } catch (e) {
     return respondError(res, e, 'list inbox')
@@ -1214,24 +1433,23 @@ export async function historyApprovals(req, res) {
     }
     const isAdmin = req.user?.role === 'admin'
     const paging = parseListPaging(req.query)
+    // status 篩選以前只有管理員有，現在每個人都可以用（加在「我簽過的」條件上，看不到別人的單）
+    const { conditions, sortDirection, noMatch } = await parseListFilters(req.query)
+    if (noMatch) return respondList(res, { items: [], total: 0, ...paging })
 
-    let filter
-    if (isAdmin) {
-      filter = {}
-      const status = String(req.query?.status || '')
-      if (HISTORY_STATUSES.includes(status)) filter.status = status
-    } else {
-      filter = {
+    const filter = isAdmin
+      ? {}
+      : {
         steps: {
           $elemMatch: {
             approvers: { $elemMatch: { approver: empId, $or: DECIDED_APPROVER_MATCH } },
           },
         },
       }
-    }
+    applyListConditions(filter, conditions)
 
     let query = ApprovalRequest.find(filter)
-      .sort({ updatedAt: -1 })
+      .sort({ updatedAt: sortDirection })
       .skip(paging.skip)
       .limit(paging.limit)
       .populate('form', LIST_FORM_FIELDS)
@@ -1239,8 +1457,11 @@ export async function historyApprovals(req, res) {
     if (isAdmin) query = query.populate('steps.approvers.approver', LIST_APPROVER_FIELDS)
     const [docs, total] = await Promise.all([query.lean(), ApprovalRequest.countDocuments(filter)])
 
-    const items = docs
-      .map((doc) => buildHistoryItem(typeof doc.toObject === 'function' ? doc.toObject() : doc, empId, { isAdmin }))
+    // 摘要從單據的答案組（歷史清單本身不回傳 form_data）
+    const plain = docs.map(doc => (typeof doc.toObject === 'function' ? doc.toObject() : doc))
+    await attachRequestSummaries(plain)
+    const items = plain
+      .map((doc) => ({ ...buildHistoryItem(doc, empId, { isAdmin }), summary: doc.summary }))
       .filter(item => isAdmin || item.my_approvals.length)
     return respondList(res, { items, total, ...paging })
   } catch (e) {
@@ -1289,6 +1510,8 @@ export async function actOnApproval(req, res) {
     // 第一次嘗試時單據停在第幾關：並行更新後重新載入，單據若已經前進（或退回）到別的關卡，
     // 同一個動作不能套用到另一關（兩位管理員同時代為核可，不能變成連跳兩關；連按兩次退簽也不能退兩關）
     let firstAttemptIndex = null
+    // 這次核准在存檔前先扣好的特休（見 reserveAnnualLeaveForApproval）；最後沒有核准成功要還回去
+    let annualReserved = null
     const saved = await withVersionRetry(async () => {
       const doc = await ApprovalRequest.findById(requestId)
       if (!doc) throw fail(404, MESSAGES.notFound)
@@ -1384,11 +1607,18 @@ export async function actOnApproval(req, res) {
         }
         transition = advanceApprovalState(doc, at)
         // 這次核准讓調休單變成已核准：存摺不夠就不核准（送出之後存摺可能被扣除或用掉）
-        if (doc.status === 'approved') await assertCompLeaveCoversApproval({ doc, form: approveForm })
+        if (doc.status === 'approved') {
+          await assertCompLeaveCoversApproval({ doc, form: approveForm })
+          // 特休：扣得到才核准（並行重試時同一張單不會重複扣）
+          annualReserved = await reserveAnnualLeaveForApproval({ doc, form: approveForm }) || annualReserved
+        }
       }
 
       await doc.save()
       return { doc, transition }
+    }).catch(async (error) => {
+      if (annualReserved) await releaseAnnualLeaveReservation(requestId, annualReserved)
+      throw error
     })
 
     const { doc, transition } = saved
@@ -1397,7 +1627,7 @@ export async function actOnApproval(req, res) {
     }
     let warnings = []
     if (transition.completed) {
-      warnings = annualLeaveWarnings(await handleAnnualLeaveDeduction(doc))
+      warnings = annualLeaveWarnings(await handleAnnualLeaveDeduction(doc, { reserved: annualReserved }))
       warnings = [...warnings, ...compLeaveWarnings(await handleCompLeaveConsumption(doc))]
     }
 
@@ -1562,6 +1792,8 @@ export async function resubmitApprovalRequest(req, res) {
         attachmentFileFieldIds = sanitizedResult.fileFieldIds
       }
 
+      // 請假單：和新申請一樣，重疊檢查到存檔之間同一位員工只處理一筆（並行重試時沿用已拿到的鎖）
+      if (!compLease) compLease = await acquireLeaveFilingLease(form, applicantEmp._id)
       await assertApprovalRequestCompliance({
         form,
         formData,
@@ -1576,6 +1808,7 @@ export async function resubmitApprovalRequest(req, res) {
         applicantEmp,
         fields,
         lockCompLeave: async (employeeId) => { if (!compLease) compLease = await acquireCompFilingLease(employeeId) },
+        excludeRequestId: doc._id,
       })
 
       // 重新解析簽核人（人員、標籤、主管可能已經更動）；流程設定已不存在時沿用原本的簽核人

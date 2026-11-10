@@ -47,6 +47,11 @@ async function sheetText(buffer) {
 
 beforeEach(() => {
   mockPayrollRecord.find.mockReset()
+  // 匯出現在一律會讀員工名單（沒有薪資記錄的員工要即時計算，不能漏掉）；這裡沒有其他員工
+  mockEmployee.find.mockReset()
+  mockEmployee.find.mockReturnValue({
+    populate: () => ({ populate: () => ({ sort: () => Promise.resolve([]) }) }),
+  })
   jest.spyOn(console, 'warn').mockImplementation(() => {})
 })
 

@@ -433,15 +433,16 @@ describe('attendanceImportController', () => {
       expect(res.json).toHaveBeenCalledTimes(1)
       const payload = res.json.mock.calls[0][0]
       expect(payload.summary.errorCount).toBe(1)
-      expect(payload.preview[0].errors).toContain('無法解析 CHECKTIME：CHECKTIME 格式不支援')
-      expect(payload.preview[0].timestampError).toBe('CHECKTIME 格式不支援')
+      // 錯誤說明用畫面上的欄位名稱（打卡時間，不是 CHECKTIME）並附上檔案裡的原文
+      expect(payload.preview[0].errors).toContain('打卡時間格式不支援：「not-a-date」')
+      expect(payload.preview[0].timestampError).toBe('打卡時間格式不支援')
 
       expect(consoleErrorSpy).toHaveBeenCalledWith(
         'attendance-import: validation failed',
         expect.objectContaining({
           userId: 'ERR001',
           rawTimestamp: 'not-a-date',
-          errors: expect.arrayContaining(['無法解析 CHECKTIME：CHECKTIME 格式不支援'])
+          errors: expect.arrayContaining(['打卡時間格式不支援：「not-a-date」'])
         })
       )
     } finally {
@@ -1028,5 +1029,43 @@ describe('attendanceImportController 打卡來源與重複略過', () => {
       message: '考勤資料寫入失敗，請稍後再試',
       summary: { importedCount: 0, duplicateCount: 0 }
     }))
+  })
+
+  it('列出所有有問題的列（不只預覽的前 50 筆），說明用畫面的欄位名稱並附原文', async () => {
+    // 前 60 列都正常，之後才有寫錯、找不到員工、重複的列：以前只看得到前 50 列的狀態
+    const rows = []
+    for (let index = 0; index < 60; index += 1) {
+      rows.push({ USERID: 'S001', CHECKTIME: `2026-10-21 08:${String(index).padStart(2, '0')}:00`, CHECKTYPE: 'I' })
+    }
+    rows.push({ USERID: 'S001', CHECKTIME: '2026-02-30 08:00', CHECKTYPE: 'I' })
+    rows.push({ USERID: 'S001', CHECKTIME: '2026-10-22 08:00', CHECKTYPE: '外出' })
+    rows.push({ USERID: '', CHECKTIME: '2026-10-22 09:00', CHECKTYPE: 'I' })
+    rows.push({ USERID: 'nobody', CHECKTIME: '2026-10-22 08:00', CHECKTYPE: 'I' })
+    rows.push({ USERID: 'S001', CHECKTIME: '2026-10-21 08:00:30', CHECKTYPE: 'I' })
+    const buffer = await createWorkbookBuffer(rows)
+    mockEmployeeFindWith([EMPLOYEE])
+    const res = createMockRes()
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {})
+    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {})
+
+    try {
+      await importAttendanceRecords(buildRequest(buffer, { dryRun: true }), res)
+    } finally {
+      errorSpy.mockRestore()
+      warnSpy.mockRestore()
+    }
+
+    const payload = res.json.mock.calls[0][0]
+    expect(payload.preview).toHaveLength(50)
+    expect(payload.issueCount).toBe(5)
+    expect(payload.issuesTruncated).toBe(false)
+    expect(payload.issues.map(row => [row.rowNumber, row.status, row.errors?.join('；') || row.duplicateReason || ''])).toEqual([
+      [62, 'error', '打卡時間的日期或時間超出範圍：「2026-02-30 08:00」'],
+      [63, 'error', '無法判斷打卡類型：「外出」（可用 I／O、上班簽到／下班簽退）'],
+      [64, 'error', '缺少員工編號'],
+      [65, 'missing', ''],
+      [66, 'duplicate', '檔案中已有同一時間（同一分鐘）的打卡'],
+    ])
+    expect(payload.issues[3].rawUserId).toBe('nobody')
   })
 })

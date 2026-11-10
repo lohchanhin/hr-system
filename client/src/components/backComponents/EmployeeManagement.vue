@@ -1,1335 +1,1092 @@
 <!-- src/components/backComponents/EmployeeManagement.vue -->
 <template>
-  <el-tab-pane label="員工管理" name="employeeMgmt">
-    <div class="employee-management">
-      <!-- 添加現代化的頁面標題和統計信息 -->
-      <div class="page-header">
-        <div class="header-content">
-          <h1 class="page-title">員工管理系統</h1>
-          <p class="page-description">管理員工資料、權限設定、部門分配和薪資配置</p>
-        </div>
-        <div class="header-stats">
-          <div class="stat-item">
-            <div class="stat-number">{{ employeePagination.total }}</div>
-            <div class="stat-label">總員工數</div>
-          </div>
-          <div class="stat-item">
-            <div class="stat-number">{{ activeEmployees }}</div>
-            <div class="stat-label">在職員工</div>
-          </div>
-        </div>
+  <div class="employee-management">
+    <PageHeader title="員工管理">
+      <template #stats>
+        <span class="hr-stat" data-test="employee-stat-total">
+          <span class="hr-stat__label">員工</span>
+          <strong class="hr-stat__value">{{ employeeStats.total }}</strong>
+        </span>
+        <span class="hr-stat" data-test="employee-stat-active">
+          <span class="hr-stat__label">在職</span>
+          <strong class="hr-stat__value">{{ employeeStats.active }}</strong>
+        </span>
+      </template>
+      <template #actions>
+        <el-button type="primary" data-test="add-employee-button" @click="openEmployeeDialog()">新增員工</el-button>
+      </template>
+    </PageHeader>
+
+    <!-- 工具列：搜尋與篩選在左，清單層級的動作在右 -->
+    <div class="hr-toolbar employee-toolbar">
+      <el-input v-model="searchQuery" placeholder="搜尋姓名、員工編號、Email" clearable class="employee-search"
+        data-test="employee-search" />
+      <!-- 手機：篩選收在「篩選」按鈕裡，清單才不會被五個下拉選單擠到第二屏 -->
+      <el-button v-if="isMobile" data-test="employee-filter-toggle"
+        @click="mobileFiltersVisible = !mobileFiltersVisible">
+        {{ mobileFiltersVisible ? '收合篩選' : '篩選' }}{{ activeEmployeeFilterCount ? `（${activeEmployeeFilterCount}）` : '' }}
+      </el-button>
+      <template v-if="!isMobile || mobileFiltersVisible">
+      <el-select v-model="organizationFilter" placeholder="機構" aria-label="篩選機構" clearable class="employee-filter"
+        data-test="employee-filter-organization">
+        <el-option v-for="org in orgList" :key="org._id" :label="org.name" :value="org._id" />
+      </el-select>
+      <el-select v-model="departmentFilter" placeholder="部門" aria-label="篩選部門" clearable filterable class="employee-filter"
+        data-test="employee-filter-department">
+        <el-option v-for="dept in departmentFilterOptions" :key="dept.value" :label="dept.label"
+          :value="dept.value" />
+      </el-select>
+      <el-select v-model="subDepartmentFilter" placeholder="小單位" aria-label="篩選小單位" clearable filterable class="employee-filter"
+        data-test="employee-filter-sub-department">
+        <el-option v-for="unit in subDepartmentFilterOptions" :key="unit.value" :label="unit.label"
+          :value="unit.value" />
+      </el-select>
+      <el-select v-model="statusFilter" placeholder="在職狀態" aria-label="篩選在職狀態" clearable class="employee-filter employee-filter--narrow"
+        data-test="employee-filter-status">
+        <el-option v-for="status in EMPLOYMENT_STATUS_OPTIONS" :key="status" :label="status" :value="status" />
+      </el-select>
+      <el-select v-model="roleFilter" placeholder="系統權限" aria-label="篩選系統權限" clearable class="employee-filter employee-filter--narrow"
+        data-test="employee-filter-role">
+        <el-option v-for="r in ROLE_OPTIONS" :key="r.value" :label="r.label" :value="r.value" />
+      </el-select>
+      </template>
+      <el-button v-if="hasActiveEmployeeFilters" link type="primary" data-test="employee-filter-reset"
+        @click="resetEmployeeFilters">清除篩選</el-button>
+
+      <span class="hr-toolbar__spacer"></span>
+
+      <el-button data-test="bulk-import-button" @click="openBulkImportDialog">批量匯入</el-button>
+    </div>
+
+    <div class="hr-section employee-list-section">
+      <!-- 批量操作列：勾選員工後才出現，蓋在表頭上（勾選框右邊），不會把表格往下推 -->
+      <div v-if="selectedEmployees.length > 0" class="employee-bulk-bar" data-test="employee-bulk-bar">
+        <el-button type="danger" plain size="small" data-test="bulk-delete-button" :loading="bulkDeleting"
+          @click="handleBulkDelete">批量刪除（已選 {{ bulkDeletableEmployees.length }} 位）</el-button>
+        <el-button size="small" data-test="bulk-delete-clear-button" :disabled="bulkDeleting"
+          @click="clearEmployeeSelection">取消選取</el-button>
       </div>
+      <el-table ref="employeeTableRef" v-loading="employeeListLoading || employeeDialogLoading" :data="employeeList"
+        row-key="_id" class="employee-table" :row-class-name="employeeRowClassName"
+        @selection-change="handleEmployeeSelectionChange" @row-click="handleEmployeeRowClick">
 
-      <!-- 操作區域 -->
-      <div class="content-header">
-        <h2 class="section-title">員工列表</h2>
+        <!-- 勾選欄：用來批量刪除。reserve-selection 讓換頁後仍保留勾選；管理員列不可勾選 -->
+        <el-table-column v-if="!isMobile" type="selection" width="44" reserve-selection
+          :selectable="isEmployeeSelectable" />
 
-        <div class="content-actions">
-          <!-- 🔍 搜尋欄位 -->
-          <el-input v-model="searchQuery" placeholder="搜尋姓名、員工編號、Email" clearable class="search-input">
-            <template #prefix>
-              <i class="el-icon-search"></i>
-            </template>
-          </el-input>
-          
-          <!-- 🔍 部門篩選 -->
-          <el-select v-model="departmentFilter" placeholder="篩選部門" clearable class="dept-filter-select">
-            <el-option v-for="dept in departmentFilterOptions" :key="dept.value" :label="dept.label"
-              :value="dept.value" />
-          </el-select>
+        <el-table-column label="員工" :min-width="isCompactList ? 150 : 180">
+          <template #default="{ row }">
+            <div class="employee-info">
+              <EmployeeAvatar :employee="row" :size="40" class="employee-avatar" />
+              <div class="employee-details">
+                <div class="employee-name">{{ row.name || '未設定' }}</div>
+                <div class="employee-id">{{ row.employeeNo || '無編號' }}</div>
+                <div v-if="isCompactList" class="employee-id">{{ employeeUnitText(row) }}</div>
+              </div>
+            </div>
+          </template>
+        </el-table-column>
 
-          <el-button type="primary" @click="openEmployeeDialog()" class="add-btn">
-            <i class="el-icon-plus"></i>
-            新增員工
-          </el-button>
-          <el-button type="success" plain class="import-btn" data-test="bulk-import-button"
-            @click="openBulkImportDialog">
-            <i class="el-icon-upload2"></i>
-            批量匯入
-          </el-button>
+        <el-table-column v-if="!isCompactList" label="機構／部門／小單位" min-width="180">
+          <template #default="{ row }">
+            <div class="employee-unit">{{ employeeUnitText(row) || '—' }}</div>
+            <div v-if="organizationName(row.organization)" class="employee-unit-org">{{ organizationName(row.organization) }}</div>
+          </template>
+        </el-table-column>
 
-          <!-- 🗑️ 批量刪除（勾選員工後才會出現） -->
-          <div v-if="selectedEmployees.length > 0" class="bulk-delete-actions">
-            <el-button type="danger" plain class="bulk-delete-btn" data-test="bulk-delete-button"
-              :loading="bulkDeleting" @click="handleBulkDelete">
-              批量刪除（已選 {{ bulkDeletableEmployees.length }} 位）
-            </el-button>
-            <el-button size="small" class="bulk-delete-clear-btn" data-test="bulk-delete-clear-button"
-              :disabled="bulkDeleting" @click="clearEmployeeSelection">
-              取消選取
-            </el-button>
+        <el-table-column v-if="!isCompactList" label="職稱" min-width="100" show-overflow-tooltip>
+          <template #default="{ row }">{{ getOptionLabel(titleOptions, row.title) || '—' }}</template>
+        </el-table-column>
+
+        <el-table-column v-if="!isCompactList" label="直屬主管" min-width="100" show-overflow-tooltip>
+          <template #default="{ row }">{{ row.supervisorInfo?.name || '—' }}</template>
+        </el-table-column>
+
+        <el-table-column v-if="!isCompactList" label="系統權限" width="88">
+          <template #default="{ row }">
+            <el-tag :type="getRoleTagType(row.role)" effect="plain" disable-transitions>{{ getRoleLabel(row.role) }}</el-tag>
+          </template>
+        </el-table-column>
+
+        <el-table-column label="在職狀態" :width="isMobile ? 96 : 104">
+          <template #default="{ row }">
+            <el-tag :type="getStatusTagType(row.employmentStatus)" disable-transitions>{{ row.employmentStatus || '未設定' }}</el-tag>
+          </template>
+        </el-table-column>
+
+        <el-table-column label="操作" :width="isMobile ? 64 : 108" fixed="right">
+          <template #default="{ row }">
+            <el-button link type="primary" data-test="employee-edit-button"
+              @click.stop="openEmployeeDialog(row._id)">編輯</el-button>
+            <el-button v-if="row.role !== 'admin' && !isMobile" link type="danger" data-test="employee-delete-button"
+              :loading="deletingEmployeeId === row._id" @click.stop="deleteEmployee(row._id)">刪除</el-button>
+          </template>
+        </el-table-column>
+
+        <template #empty>
+          <div class="hr-empty" data-test="employee-empty">
+            {{ hasActiveEmployeeFilters ? '找不到符合條件的員工，請調整搜尋或篩選條件' : '尚未建立員工，請按右上角「新增員工」或「批量匯入」' }}
           </div>
-        </div>
+        </template>
+      </el-table>
+
+      <div class="employee-pagination">
+        <span class="employee-result-count" data-test="employee-result-count">
+          {{ hasActiveEmployeeFilters ? '符合條件' : '共' }} {{ employeePagination.total }} 位
+        </span>
+        <el-pagination background :layout="isMobile ? 'prev, pager, next' : 'sizes, prev, pager, next'"
+          :pager-count="isMobile ? 5 : 7" :total="employeePagination.total"
+          :current-page="employeePagination.page" :page-size="employeePagination.pageSize"
+          :page-sizes="[20, 50, 100]" @current-change="handleEmployeePageChange"
+          @size-change="handleEmployeePageSizeChange" />
       </div>
+    </div>
 
-
-      <!-- 美化員工列表表格 -->
-      <div class="table-container">
-        <el-table ref="employeeTableRef" v-loading="employeeListLoading" :data="filteredEmployeeList"
-          row-key="_id" class="employee-table"
-          :header-cell-style="{ background: '#f8fafc', color: '#475569', fontWeight: '600' }"
-          :row-style="{ height: '64px' }" @selection-change="handleEmployeeSelectionChange">
-
-          <!-- 勾選欄：reserve-selection 讓換頁後仍保留勾選；管理員列不可勾選 -->
-          <el-table-column type="selection" width="48" reserve-selection :selectable="isEmployeeSelectable" />
-
-          <el-table-column prop="name" label="員工資訊" min-width="200">
-            <template #default="{ row }">
-              <div class="employee-info">
-                <EmployeeAvatar :employee="row" :size="40" class="employee-avatar" />
-                <div class="employee-details">
-                  <div class="employee-name">{{ row.name || '未設定' }}</div>
-                  <div class="employee-id">{{ row.employeeNo || '無編號' }}</div>
-                </div>
-              </div>
+    <!-- 員工資料對話框：最常用的欄位（基本資料、帳號與權限、任職）在第一個分頁，其餘依主題放在後面的分頁 -->
+    <el-dialog v-model="employeeDialogVisible" :title="employeeDialogTitle" width="1040px"
+      top="5vh" class="employee-dialog" :fullscreen="isMobile" :close-on-click-modal="false"
+      :before-close="handleEmployeeDialogBeforeClose">
+      <el-form ref="formRef" :model="employeeForm" :rules="rules" :validate-on-rule-change="false"
+        label-position="top" class="employee-form" @validate="handleEmployeeFieldValidate">
+        <el-tabs v-model="employeeDialogTab" class="employee-tabs">
+          <!-- 基本資料：基本資料、帳號與權限、任職 -->
+          <el-tab-pane name="basic">
+            <template #label>
+              <span class="tab-label" :class="{ 'has-error': employeeTabErrors.basic }" data-test="employee-tab-basic">
+                基本資料<span v-if="employeeTabErrors.basic" class="tab-error-count">{{ employeeTabErrors.basic }}</span>
+              </span>
             </template>
-          </el-table-column>
 
-          <el-table-column label="部門" width="180">
-            <template #default="{ row }">
-              <div class="department-info">
-                <i class="el-icon-s-grid dept-icon"></i>
-                <span>{{ departmentLabel(row.department) }}</span>
-              </div>
-            </template>
-          </el-table-column>
-
-          <el-table-column prop="title" label="職稱" width="150">
-            <template #default="{ row }">
-              <el-tag v-if="row.title" type="info" class="title-tag">
-                {{ getOptionLabel(titleOptions, row.title) }}
-              </el-tag>
-              <span v-else class="no-data">未設定</span>
-            </template>
-          </el-table-column>
-
-          <el-table-column prop="role" label="系統權限" width="120">
-            <template #default="{ row }">
-              <el-tag :type="getRoleTagType(row.role)" class="role-tag">
-                {{ getRoleLabel(row.role) }}
-              </el-tag>
-            </template>
-          </el-table-column>
-
-          <el-table-column prop="employmentStatus" label="在職狀態" width="130">
-            <template #default="{ row }">
-              <el-tag :type="getStatusTagType(row.employmentStatus)" class="status-tag">
-                {{ row.employmentStatus || '未設定' }}
-              </el-tag>
-            </template>
-          </el-table-column>
-
-          <el-table-column label="聯絡方式" width="200">
-            <template #default="{ row }">
-              <div class="contact-info">
-                <div v-if="row.email" class="contact-item">
-                  <i class="el-icon-message"></i>
-                  <span>{{ row.email }}</span>
-                </div>
-                <div v-if="row.phone" class="contact-item">
-                  <i class="el-icon-phone"></i>
-                  <span>{{ row.phone }}</span>
-                </div>
-                <div v-if="!row.email && !row.phone" class="no-data">
-                  無聯絡資訊
-                </div>
-              </div>
-            </template>
-          </el-table-column>
-
-          <el-table-column label="特休餘額" width="120">
-            <template #default="{ row }">
-              <div v-if="row.annualLeave" class="annual-leave-info">
-                <el-tag type="info" size="small">
-                  剩餘 {{ annualLeaveRemainingHours(row.annualLeave) }} 小時
-                </el-tag>
-              </div>
-              <span v-else class="no-data">未設定</span>
-            </template>
-          </el-table-column>
-
-          <el-table-column label="操作" width="200" fixed="right">
-            <template #default="{ row, $index }">
-              <div class="action-buttons">
-                <el-button type="primary" size="small" @click="openEmployeeDialog(row._id)" class="edit-btn">
-                  <i class="el-icon-edit"></i>
-                  編輯
-                </el-button>
-                <el-button v-if="row.role !== 'admin'" type="danger" size="small" @click="deleteEmployee(row._id)" class="delete-btn">
-                  <i class="el-icon-delete"></i>
-                  刪除
-                </el-button>
-              </div>
-            </template>
-          </el-table-column>
-        </el-table>
-        <div class="employee-pagination">
-          <el-pagination
-            background
-            layout="total, sizes, prev, pager, next"
-            :total="employeePagination.total"
-            :current-page="employeePagination.page"
-            :page-size="employeePagination.pageSize"
-            :page-sizes="[20, 50, 100]"
-            @current-change="handleEmployeePageChange"
-            @size-change="handleEmployeePageSizeChange"
-          />
-        </div>
-      </div>
-
-      <!-- 美化員工資料對話框 -->
-      <el-dialog v-model="employeeDialogVisible" title="員工資料管理" width="1200px" class="employee-dialog"
-        :close-on-click-modal="false">
-        <el-form ref="formRef" :model="employeeForm" :rules="rules" :validate-on-rule-change="false"
-          label-width="140px" class="employee-form">
-          <el-tabs v-model="employeeDialogTab" type="border-card" class="employee-tabs">
-            <!-- 帳號/權限 -->
-            <el-tab-pane name="account">
-              <template #label>
-                <div class="tab-label">
-                  <i class="el-icon-user"></i>
-                  <span>帳號權限</span>
-                </div>
-              </template>
-
-              <div class="tab-content">
-                <div class="form-section">
-                  <div class="form-group">
-                    <h3 class="form-group-title">登入資訊</h3>
-                    <el-form-item label="登入帳號" required prop="username">
-                      <el-input v-model="employeeForm.username" placeholder="請輸入登入帳號" />
+            <div class="tab-content">
+              <section class="form-section">
+                <h3 class="form-section__title">基本資料</h3>
+                <div class="basic-layout">
+                  <el-form-item label="個人照片" class="photo-upload-item">
+                    <el-upload class="employee-photo-upload" :class="{ 'has-photo': employeeForm.photoList?.length }"
+                      v-model:file-list="employeeForm.photoList"
+                      :http-request="handlePhotoRequest" :before-upload="handlePhotoBeforeUpload"
+                      :on-success="handlePhotoSuccess"
+                      :on-remove="handlePhotoRemove" :on-exceed="handlePhotoExceed" list-type="picture-card"
+                      :limit="1" accept="image/jpeg,image/png,image/gif,image/webp" :disabled="photoUploading">
+                      <div class="upload-placeholder">{{ employeeForm.photoList?.length ? '更換照片' : '上傳照片' }}</div>
+                    </el-upload>
+                    <div class="hr-hint">JPEG／PNG／GIF／WebP，上限 5MB</div>
+                  </el-form-item>
+                  <div class="form-grid">
+                    <el-form-item label="員工姓名" required prop="name">
+                      <el-input v-model="employeeForm.name" placeholder="請輸入員工姓名" />
                     </el-form-item>
-                    <el-form-item label="登入密碼" :required="!isEditingEmployee" prop="password">
-                      <el-input v-model="employeeForm.password" type="password" autocomplete="new-password"
-                        :placeholder="isEditingEmployee ? '不修改請留空' : '請輸入密碼'" show-password />
-                      <div v-if="isEditingEmployee" class="option-desc">留空表示沿用原本的密碼；填寫新密碼會重設密碼並讓該員工重新登入。</div>
+                    <el-form-item label="員工編號" required prop="employeeNo" :error="employeeServerFieldErrors.employeeNo">
+                      <el-input v-model="employeeForm.employeeNo" placeholder="請輸入員工編號" />
                     </el-form-item>
-                  </div>
-
-                  <div class="form-group">
-                    <h3 class="form-group-title">權限設定</h3>
-                    <el-form-item label="系統權限" required prop="role">
-                      <el-radio-group v-model="employeeForm.role" class="role-radio-group">
-                        <el-radio v-for="r in ROLE_OPTIONS" :key="r.value" :label="r.value" class="role-radio">
-                          <div class="role-option">
-                            <div class="role-name">{{ r.label }}</div>
-                            <div class="role-desc">{{ getRoleDescription(r.value) }}</div>
-                          </div>
-                        </el-radio>
-                      </el-radio-group>
-                    </el-form-item>
-
-                    <el-form-item label="權限職等">
-                      <el-select v-model="employeeForm.permissionGrade" placeholder="選擇職等" class="code-select">
-                        <el-option v-for="g in PERMISSION_GRADE_OPTIONS" :key="g.level"
-                          :label="formatPermissionGradeLabel(g)" :value="g.level">
-                          <div class="option-wrapper">
-                            <div class="option-title">{{ g.level }}｜{{ g.description }}</div>
-                          </div>
-                        </el-option>
+                    <el-form-item label="性別" required prop="gender">
+                      <el-select v-model="employeeForm.gender" placeholder="選擇性別">
+                        <el-option label="男" value="M" />
+                        <el-option label="女" value="F" />
                       </el-select>
+                    </el-form-item>
+                    <el-form-item label="Email" required prop="email" :error="employeeServerFieldErrors.email">
+                      <el-input v-model="employeeForm.email" placeholder="請輸入Email" />
+                    </el-form-item>
+                    <el-form-item label="行動電話">
+                      <el-input v-model="employeeForm.phone" placeholder="請輸入行動電話" />
                     </el-form-item>
                   </div>
                 </div>
-              </div>
-            </el-tab-pane>
+              </section>
 
-            <!-- 簽核/標籤 -->
-            <el-tab-pane name="approval">
-              <template #label>
-                <div class="tab-label">
-                  <i class="el-icon-document-checked"></i>
-                  <span>簽核設定</span>
+              <section class="form-section">
+                <h3 class="form-section__title">帳號與權限</h3>
+                <div class="form-grid">
+                  <el-form-item label="登入帳號" required prop="username" :error="employeeServerFieldErrors.username">
+                    <el-input v-model="employeeForm.username" placeholder="請輸入登入帳號" autocomplete="off" />
+                  </el-form-item>
+                  <el-form-item label="登入密碼" :required="!isEditingEmployee" prop="password">
+                    <el-input v-model="employeeForm.password" type="password" autocomplete="new-password"
+                      :placeholder="isEditingEmployee ? '不修改請留空' : '請輸入密碼'" show-password />
+                    <div v-if="isEditingEmployee" class="hr-hint">留空表示沿用原本的密碼；填寫新密碼會重設密碼並讓該員工重新登入。</div>
+                  </el-form-item>
+                  <el-form-item label="系統權限" required prop="role">
+                    <el-radio-group v-model="employeeForm.role" class="role-radio-group">
+                      <el-radio v-for="r in ROLE_OPTIONS" :key="r.value" :value="r.value">{{ r.label }}</el-radio>
+                    </el-radio-group>
+                  </el-form-item>
                 </div>
-              </template>
+              </section>
 
-              <div class="tab-content">
-                <div class="form-section">
-                  <div class="form-group">
-                    <h3 class="form-group-title">簽核權限</h3>
-                    <el-form-item label="簽核角色">
-                      <el-radio-group v-model="employeeForm.signRole" class="sign-role-group">
-                        <el-radio v-for="option in SIGN_ROLE_OPTIONS" :key="option.id" :label="option.id"
-                          class="sign-role-radio">
-                          <div class="option-wrapper">
-                            <div class="option-title">{{ option.id }}｜{{ option.label }}</div>
-                            <div class="option-desc">{{ option.description }}</div>
-                          </div>
-                        </el-radio>
-                      </el-radio-group>
+              <section class="form-section">
+                <h3 class="form-section__title">任職</h3>
+                <div class="form-grid">
+                  <el-form-item label="所屬機構" required prop="organization">
+                    <el-select v-model="employeeForm.organization" placeholder="選擇機構" data-test="employee-organization">
+                      <el-option v-for="org in orgList" :key="org._id" :label="org.name" :value="org._id" />
+                    </el-select>
+                  </el-form-item>
+                  <el-form-item label="所屬部門" required prop="department">
+                    <el-select v-model="employeeForm.department" placeholder="選擇部門" filterable
+                      :disabled="!employeeForm.organization" data-test="employee-department">
+                      <el-option v-for="dept in filteredDepartments" :key="dept._id" :label="dept.name"
+                        :value="dept._id" />
+                    </el-select>
+                  </el-form-item>
+                  <el-form-item label="小單位">
+                    <el-select v-model="employeeForm.subDepartment" placeholder="選擇小單位" clearable value-on-clear=""
+                      filterable :disabled="!employeeForm.department" data-test="employee-sub-department">
+                      <el-option v-for="sd in filteredSubDepartments" :key="sd._id" :label="sd.name"
+                        :value="sd._id" />
+                    </el-select>
+                  </el-form-item>
+                  <el-form-item label="直屬主管">
+                    <!-- 沒有輸入時列出同機構同部門的主管；輸入姓名或員工編號可搜尋全部在職員工（別的部門、機構的主任、總幹事、副院長） -->
+                    <el-select v-model="employeeForm.supervisor" placeholder="選擇主管，或輸入姓名、員工編號搜尋" clearable
+                      filterable remote remote-show-suffix :remote-method="searchSupervisors"
+                      :loading="supervisorSearch.loading" class="supervisor-select" data-test="supervisor-select"
+                      @visible-change="handleSupervisorDropdown">
+                      <template #label="{ label, value }">
+                        <span class="supervisor-option">
+                          <EmployeeAvatar v-if="supervisorById.has(String(value))"
+                            :employee="supervisorById.get(String(value))" :size="20" />
+                          <span>{{ label }}</span>
+                        </span>
+                      </template>
+                      <el-option v-for="sup in supervisorList" :key="sup._id"
+                        :label="sup.employeeNo ? `${sup.name}（${sup.employeeNo}）` : sup.name" :value="sup._id">
+                        <span class="supervisor-option-row">
+                          <span class="supervisor-option">
+                            <EmployeeAvatar :employee="sup" :size="20" />
+                            <span>{{ sup.employeeNo ? `${sup.name}（${sup.employeeNo}）` : sup.name }}</span>
+                          </span>
+                          <span v-if="supervisorUnitLabel(sup)" class="supervisor-option-unit" data-test="supervisor-option-unit">{{ supervisorUnitLabel(sup) }}</span>
+                        </span>
+                      </el-option>
+                    </el-select>
+                  </el-form-item>
+                  <el-form-item label="職稱">
+                    <el-select v-model="employeeForm.title" placeholder="選擇職稱" clearable value-on-clear=""
+                      filterable :disabled="!titleOptions.length">
+                      <el-option v-for="option in titleOptions" :key="option.value" :label="option.label"
+                        :value="option.value" />
+                    </el-select>
+                  </el-form-item>
+                  <el-form-item label="在職狀態">
+                    <el-select v-model="employeeForm.employmentStatus" placeholder="選擇狀態"
+                      data-test="employee-employment-status">
+                      <el-option v-for="status in EMPLOYMENT_STATUS_OPTIONS" :key="status" :label="status"
+                        :value="status" />
+                    </el-select>
+                    <div v-if="isInactiveEmploymentStatus" class="hr-hint hr-hint--warning">離職員工與留職停薪的帳號無法登入</div>
+                  </el-form-item>
+                  <el-form-item label="到職日期">
+                    <el-date-picker v-model="employeeForm.hireDate" type="date" placeholder="選擇到職日期"
+                      format="YYYY/MM/DD" value-format="YYYY-MM-DD" />
+                  </el-form-item>
+                </div>
+              </section>
+            </div>
+          </el-tab-pane>
+
+          <!-- 任職與簽核：職務設定、聘任日期、簽核設定 -->
+          <el-tab-pane name="employment" label="任職與簽核">
+            <div class="tab-content">
+              <section class="form-section">
+                <h3 class="form-section__title">職務設定</h3>
+                <div class="form-grid">
+                  <el-form-item label="執業職稱">
+                    <el-select v-model="employeeForm.practiceTitle" placeholder="選擇執業職稱" clearable
+                      value-on-clear="" filterable :disabled="!practiceTitleOptions.length">
+                      <el-option v-for="option in practiceTitleOptions" :key="option.value" :label="option.label"
+                        :value="option.value" />
+                    </el-select>
+                  </el-form-item>
+                  <el-form-item label="試用期（天）">
+                    <el-input-number v-model="employeeForm.probationDays" :min="0" :max="365" :step="30"
+                      :value-on-clear="0" controls-position="right" />
+                  </el-form-item>
+                  <el-form-item label="兼職人員">
+                    <el-switch v-model="employeeForm.isPartTime" active-text="是" inactive-text="否" />
+                  </el-form-item>
+                  <el-form-item label="原住民身分">
+                    <el-switch v-model="employeeForm.isIndigenous" active-text="是" inactive-text="否"
+                      data-test="employee-is-indigenous" />
+                    <div class="hr-hint">原住民族歲時祭儀每年 3 日，以「原民假」申請</div>
+                  </el-form-item>
+                  <el-form-item label="需要排班">
+                    <el-switch v-model="employeeForm.requiresScheduling" active-text="是" inactive-text="否"
+                      data-test="employee-requires-scheduling" />
+                    <div class="hr-hint">不需排班的人假日制度預設為行政；主管不需排班時，班表完整性檢查不會要求排滿</div>
+                  </el-form-item>
+                  <el-form-item label="假日制度" class="span-all">
+                    <el-select v-model="employeeForm.holidayRegime" placeholder="依預設" class="holiday-regime-select"
+                      data-test="employee-holiday-regime">
+                      <el-option v-for="option in HOLIDAY_REGIME_OPTIONS" :key="option.value || 'default'"
+                        :label="option.label" :value="option.value" />
+                    </el-select>
+                    <div class="hr-hint">輪班：國定假日落在自己的休息日/例假時存入調休；行政：週一至週五上班，國定假日落在週末時存入調休（政府補假日為建議調休日）</div>
+                  </el-form-item>
+                </div>
+              </section>
+
+              <section class="form-section">
+                <h3 class="form-section__title">聘任日期</h3>
+                <div class="form-grid">
+                  <el-form-item label="起聘日期">
+                    <el-date-picker v-model="employeeForm.appointDate" type="date" placeholder="選擇起聘日期"
+                      format="YYYY/MM/DD" value-format="YYYY-MM-DD" />
+                  </el-form-item>
+                  <el-form-item label="離職日期">
+                    <el-date-picker v-model="employeeForm.resignDate" type="date" placeholder="選擇離職日期"
+                      format="YYYY/MM/DD" value-format="YYYY-MM-DD" />
+                  </el-form-item>
+                  <el-form-item label="解聘日期">
+                    <el-date-picker v-model="employeeForm.dismissDate" type="date" placeholder="選擇解聘日期"
+                      format="YYYY/MM/DD" value-format="YYYY-MM-DD" />
+                  </el-form-item>
+                  <el-form-item label="再任起聘">
+                    <el-date-picker v-model="employeeForm.reAppointDate" type="date" placeholder="選擇再任起聘日期"
+                      format="YYYY/MM/DD" value-format="YYYY-MM-DD" />
+                  </el-form-item>
+                  <el-form-item label="再任解聘">
+                    <el-date-picker v-model="employeeForm.reDismissDate" type="date" placeholder="選擇再任解聘日期"
+                      format="YYYY/MM/DD" value-format="YYYY-MM-DD" />
+                  </el-form-item>
+                  <el-form-item label="聘任備註" class="span-all">
+                    <el-input v-model="employeeForm.employmentNote" type="textarea" :rows="2"
+                      placeholder="請輸入聘任備註" />
+                  </el-form-item>
+                </div>
+              </section>
+
+              <section class="form-section">
+                <h3 class="form-section__title">簽核設定</h3>
+                <div class="form-grid">
+                  <el-form-item label="簽核角色">
+                    <el-select v-model="employeeForm.signRole" placeholder="未設定" clearable value-on-clear=""
+                      data-test="sign-role-select">
+                      <el-option v-for="option in SIGN_ROLE_OPTIONS" :key="option.id"
+                        :label="`${option.id}｜${option.label}`" :value="option.id">
+                        <span class="option-title">{{ option.id }}｜{{ option.label }}</span>
+                        <span class="option-desc">{{ option.description }}</span>
+                      </el-option>
+                    </el-select>
+                  </el-form-item>
+                  <el-form-item label="簽核層級">
+                    <el-select v-model="employeeForm.signLevel" placeholder="未設定" clearable value-on-clear=""
+                      data-test="sign-level-select">
+                      <el-option v-for="level in SIGN_LEVEL_OPTIONS" :key="level.id"
+                        :label="formatSignLevelLabel(level)" :value="level.id">
+                        <span class="option-title">{{ level.id }}｜{{ level.label }}</span>
+                        <span class="option-desc">{{ level.description }}</span>
+                      </el-option>
+                    </el-select>
+                  </el-form-item>
+                  <el-form-item label="員工標籤" class="span-all">
+                    <el-select v-model="employeeForm.signTags" multiple filterable allow-create default-first-option
+                      placeholder="選擇或新增標籤" class="tag-select" data-test="sign-tags-select"
+                      @change="handleSignTagsChange">
+                      <el-option v-for="t in signTagOptions" :key="t.name" :label="t.name" :value="t.name">
+                        <span class="tag-option-name">{{ t.name }}</span>
+                        <span v-if="formatSignTagMeta(t)" class="tag-option-meta">{{ formatSignTagMeta(t) }}</span>
+                      </el-option>
+                    </el-select>
+                    <div class="hr-hint">流程的「標籤」關卡會找持有這個標籤的在職員工簽核；清單右側為目前持有人數與被幾個流程關卡使用。</div>
+                  </el-form-item>
+                </div>
+              </section>
+            </div>
+          </el-tab-pane>
+
+          <!-- 個人資料：身分、聯絡方式、緊急聯絡人、體檢 -->
+          <el-tab-pane name="personal" label="個人資料">
+            <div class="tab-content">
+              <section class="form-section">
+                <h3 class="form-section__title">身分資料</h3>
+                <div class="form-grid">
+                  <el-form-item label="生日">
+                    <el-date-picker v-model="employeeForm.birthday" type="date" placeholder="選擇生日"
+                      format="YYYY/MM/DD" value-format="YYYY-MM-DD" />
+                  </el-form-item>
+                  <el-form-item label="身分證號">
+                    <el-input v-model="employeeForm.idNumber" placeholder="請輸入身分證號" />
+                  </el-form-item>
+                  <el-form-item label="出生地">
+                    <el-input v-model="employeeForm.birthplace" placeholder="請輸入出生地" />
+                  </el-form-item>
+                  <el-form-item label="血型">
+                    <el-select v-model="employeeForm.bloodType" placeholder="選擇血型" clearable value-on-clear="">
+                      <el-option v-for="b in ABO_TYPES" :key="b" :value="b" :label="b" />
+                    </el-select>
+                  </el-form-item>
+                  <el-form-item label="婚姻狀態">
+                    <el-select v-model="employeeForm.maritalStatus" placeholder="選擇婚姻狀態" clearable
+                      value-on-clear="">
+                      <el-option label="未婚" value="未婚" />
+                      <el-option label="已婚" value="已婚" />
+                      <el-option label="離婚" value="離婚" />
+                      <el-option label="喪偶" value="喪偶" />
+                    </el-select>
+                  </el-form-item>
+                  <el-form-item label="扶養人數">
+                    <el-input-number v-model="employeeForm.dependents" :min="0" :value-on-clear="0"
+                      controls-position="right" />
+                  </el-form-item>
+                  <el-form-item label="語言能力">
+                    <el-select v-model="employeeForm.languages" multiple filterable collapse-tags
+                      collapse-tags-tooltip placeholder="選擇語言" :disabled="!languageOptions.length">
+                      <el-option v-for="option in languageOptions" :key="option.value" :label="option.label"
+                        :value="option.value" />
+                    </el-select>
+                  </el-form-item>
+                  <el-form-item label="身心障礙等級">
+                    <el-select v-model="employeeForm.disabilityLevel" placeholder="選擇等級" clearable
+                      value-on-clear="" :disabled="!disabilityLevelOptions.length">
+                      <el-option v-for="option in disabilityLevelOptions" :key="option.value" :label="option.label"
+                        :value="option.value" />
+                    </el-select>
+                  </el-form-item>
+                  <el-form-item label="身分註記">
+                    <el-select v-model="employeeForm.identityCategory" multiple filterable collapse-tags
+                      collapse-tags-tooltip placeholder="選擇身份別" :disabled="!identityCategoryOptions.length">
+                      <el-option v-for="option in identityCategoryOptions" :key="option.value" :label="option.label"
+                        :value="option.value" />
+                    </el-select>
+                  </el-form-item>
+                </div>
+              </section>
+
+              <section class="form-section">
+                <h3 class="form-section__title">聯絡方式</h3>
+                <div class="form-grid">
+                  <el-form-item label="市內電話">
+                    <el-input v-model="employeeForm.landline" placeholder="請輸入市內電話" />
+                  </el-form-item>
+                  <el-form-item label="LINE ID">
+                    <el-input v-model="employeeForm.lineId" placeholder="請輸入LINE ID" />
+                  </el-form-item>
+                  <el-form-item label="戶籍地址" class="span-all">
+                    <el-input v-model="employeeForm.householdAddress" placeholder="請輸入戶籍地址" />
+                  </el-form-item>
+                  <el-form-item label="聯絡地址" class="span-all">
+                    <el-input v-model="employeeForm.contactAddress" placeholder="請輸入聯絡地址" />
+                  </el-form-item>
+                </div>
+              </section>
+
+              <section class="form-section">
+                <h3 class="form-section__title">緊急聯絡人</h3>
+                <div v-for="contact in EMERGENCY_CONTACT_FIELDS" :key="contact.key" class="form-grid form-grid--four">
+                  <el-form-item :label="`${contact.label}姓名`">
+                    <el-input v-model="employeeForm[contact.key].name" placeholder="請輸入姓名" />
+                  </el-form-item>
+                  <el-form-item label="關係">
+                    <el-select v-model="employeeForm[contact.key].relation" placeholder="選擇關係" clearable
+                      value-on-clear="">
+                      <el-option v-for="option in relationOptions" :key="`${contact.key}-${option.value}`"
+                        :label="option.label" :value="option.value" />
+                    </el-select>
+                  </el-form-item>
+                  <el-form-item label="電話一">
+                    <el-input v-model="employeeForm[contact.key].phone1" placeholder="請輸入電話" />
+                  </el-form-item>
+                  <el-form-item label="電話二">
+                    <el-input v-model="employeeForm[contact.key].phone2" placeholder="請輸入電話" />
+                  </el-form-item>
+                </div>
+              </section>
+
+              <section class="form-section">
+                <h3 class="form-section__title">身體檢查</h3>
+                <div class="form-grid">
+                  <el-form-item label="身高 (cm)">
+                    <el-input-number v-model="employeeForm.height" :min="0" :max="250" :step="0.1" :precision="1"
+                      :value-on-clear="null" controls-position="right" placeholder="請輸入身高" />
+                  </el-form-item>
+                  <el-form-item label="體重 (kg)">
+                    <el-input-number v-model="employeeForm.weight" :min="0" :max="300" :step="0.1" :precision="1"
+                      :value-on-clear="null" controls-position="right" placeholder="請輸入體重" />
+                  </el-form-item>
+                  <el-form-item label="體檢血型">
+                    <el-select v-model="employeeForm.medicalBloodType" placeholder="選擇血型" clearable
+                      value-on-clear="">
+                      <el-option v-for="blood in ABO_TYPES" :key="`medical-${blood}`" :label="blood"
+                        :value="blood" />
+                    </el-select>
+                  </el-form-item>
+                </div>
+              </section>
+            </div>
+          </el-tab-pane>
+
+          <!-- 學經歷：學歷、役別、工作經歷、證照、教育訓練 -->
+          <el-tab-pane name="background" label="學經歷與證照">
+            <div class="tab-content">
+              <section class="form-section">
+                <h3 class="form-section__title">學歷</h3>
+                <div class="form-grid">
+                  <el-form-item label="教育程度">
+                    <el-select v-model="employeeForm.educationLevel" placeholder="選擇教育程度" clearable
+                      value-on-clear="" :disabled="!educationLevelOptions.length">
+                      <el-option v-for="option in educationLevelOptions" :key="option.value" :label="option.label"
+                        :value="option.value" />
+                    </el-select>
+                  </el-form-item>
+                  <el-form-item label="學校名稱">
+                    <el-input v-model="employeeForm.schoolName" placeholder="請輸入學校名稱" />
+                  </el-form-item>
+                  <el-form-item label="主修科系">
+                    <el-input v-model="employeeForm.major" placeholder="請輸入主修科系" />
+                  </el-form-item>
+                  <el-form-item label="畢業狀態">
+                    <el-select v-model="employeeForm.graduationStatus" placeholder="選擇畢業狀態" clearable
+                      value-on-clear="" @clear="onGraduationStatusClear" :disabled="!graduationStatusOptions.length">
+                      <el-option v-for="option in graduationStatusOptions" :key="option.value" :label="option.label"
+                        :value="option.value" />
+                    </el-select>
+                  </el-form-item>
+                  <el-form-item label="畢業年度">
+                    <el-input v-model="employeeForm.graduationYear" placeholder="請輸入畢業年度" />
+                  </el-form-item>
+                </div>
+              </section>
+
+              <section class="form-section">
+                <h3 class="form-section__title">役別</h3>
+                <div class="form-grid form-grid--four">
+                  <el-form-item label="役別類型">
+                    <el-select v-model="employeeForm.serviceType" placeholder="選擇或輸入役別類型" filterable allow-create
+                      default-first-option clearable value-on-clear="">
+                      <el-option v-for="type in SERVICE_TYPES" :key="type" :label="type" :value="type" />
+                    </el-select>
+                  </el-form-item>
+                  <el-form-item label="軍種">
+                    <el-input v-model="employeeForm.militaryBranch" placeholder="請輸入軍種" />
+                  </el-form-item>
+                  <el-form-item label="軍階">
+                    <el-input v-model="employeeForm.militaryRank" placeholder="請輸入軍階" />
+                  </el-form-item>
+                  <el-form-item label="退伍年">
+                    <el-input-number v-model="employeeForm.dischargeYear" :min="1900" :max="CURRENT_YEAR + 10"
+                      :step="1" :value-on-clear="null" controls-position="right" placeholder="請輸入退伍年" />
+                  </el-form-item>
+                </div>
+              </section>
+
+              <section class="form-section">
+                <div class="form-section__header">
+                  <h3 class="form-section__title">工作經歷</h3>
+                  <el-button size="small" data-test="add-experience-button" @click="addExperience">新增經歷</el-button>
+                </div>
+                <div v-if="!employeeForm.experiences.length" class="form-section__empty">尚無工作經歷</div>
+                <div v-for="(exp, i) in employeeForm.experiences" :key="i" class="record-item">
+                  <div class="form-grid form-grid--four">
+                    <el-form-item label="單位名稱">
+                      <el-input v-model="exp.unit" placeholder="請輸入單位名稱" />
                     </el-form-item>
-
-                    <el-form-item label="簽核層級">
-                      <el-select v-model="employeeForm.signLevel" placeholder="選擇層級" class="code-select">
-                        <el-option v-for="level in SIGN_LEVEL_OPTIONS" :key="level.id"
-                          :label="formatSignLevelLabel(level)" :value="level.id">
-                          <div class="option-wrapper">
-                            <div class="option-title">{{ level.id }}｜{{ level.label }}</div>
-                            <div class="option-desc">{{ level.description }}</div>
-                          </div>
-                        </el-option>
-                      </el-select>
+                    <el-form-item label="職稱">
+                      <el-input v-model="exp.title" placeholder="請輸入職稱" />
                     </el-form-item>
-
-                    <el-form-item label="員工標籤">
-                      <el-select v-model="employeeForm.signTags" multiple filterable allow-create default-first-option
-                        placeholder="選擇或新增標籤" class="tag-select" data-test="sign-tags-select"
-                        @change="handleSignTagsChange">
-                        <el-option v-for="t in signTagOptions" :key="t.name" :label="t.name" :value="t.name">
-                          <span class="tag-option-name">{{ t.name }}</span>
-                          <span v-if="formatSignTagMeta(t)" class="tag-option-meta">{{ formatSignTagMeta(t) }}</span>
-                        </el-option>
-                      </el-select>
-                      <div class="option-desc">流程的「標籤」關卡會找持有這個標籤的在職員工簽核；清單右側為目前持有人數與被幾個流程關卡使用。</div>
+                    <el-form-item label="到職年月">
+                      <el-date-picker v-model="exp.start" type="month" placeholder="選擇到職年月" format="YYYY/MM"
+                        value-format="YYYY-MM" />
+                    </el-form-item>
+                    <el-form-item label="離職年月">
+                      <el-date-picker v-model="exp.end" type="month" placeholder="選擇離職年月" format="YYYY/MM"
+                        value-format="YYYY-MM" />
                     </el-form-item>
                   </div>
+                  <el-button link type="danger" class="record-item__remove" @click="removeExperience(i)">刪除</el-button>
                 </div>
-              </div>
-            </el-tab-pane>
+              </section>
 
-            <!-- 個人資訊 -->
-            <el-tab-pane name="personal">
-              <template #label>
-                <div class="tab-label">
-                  <i class="el-icon-user-solid"></i>
-                  <span>個人資訊</span>
+              <section class="form-section">
+                <div class="form-section__header">
+                  <h3 class="form-section__title">證照</h3>
+                  <el-button size="small" data-test="add-license-button" @click="addLicense">新增證照</el-button>
                 </div>
-              </template>
-
-              <div class="tab-content">
-                <div class="form-section">
-                  <div class="form-group">
-                    <h3 class="form-group-title">基本資料</h3>
-                    <el-form-item label="個人照片" class="photo-upload-item">
-                      <el-upload class="employee-photo-upload" v-model:file-list="employeeForm.photoList"
-                        :http-request="handlePhotoRequest" :before-upload="handlePhotoBeforeUpload"
-                        :on-success="handlePhotoSuccess"
-                        :on-remove="handlePhotoRemove" :on-exceed="handlePhotoExceed" list-type="picture-card"
-                        :limit="1" accept="image/jpeg,image/png,image/gif,image/webp" :disabled="photoUploading">
-                        <div class="upload-placeholder">
-                          <i class="el-icon-plus"></i>
-                          <span>上傳照片</span>
-                        </div>
+                <div v-if="!employeeForm.licenses.length" class="form-section__empty">尚無證照</div>
+                <div v-for="(license, i) in employeeForm.licenses" :key="`license-${i}`" class="record-item">
+                  <div class="form-grid form-grid--four">
+                    <el-form-item label="證照名稱">
+                      <el-input v-model="license.name" placeholder="請輸入證照名稱" />
+                    </el-form-item>
+                    <el-form-item label="證照字號">
+                      <el-input v-model="license.number" placeholder="請輸入證照字號" />
+                    </el-form-item>
+                    <el-form-item label="核發日期">
+                      <el-date-picker v-model="license.startDate" type="date" placeholder="選擇核發日期"
+                        format="YYYY/MM/DD" value-format="YYYY-MM-DD" />
+                    </el-form-item>
+                    <el-form-item label="有效期限">
+                      <el-date-picker v-model="license.endDate" type="date" placeholder="選擇有效期限"
+                        format="YYYY/MM/DD" value-format="YYYY-MM-DD" />
+                    </el-form-item>
+                    <el-form-item label="證照檔案" class="span-all">
+                      <el-upload v-model:file-list="license.fileList" action="#" multiple list-type="text"
+                        :before-upload="handleAttachmentBeforeUpload" :http-request="handleAttachmentRequest"
+                        :on-success="(res, file, fileList) => handleAttachmentSuccess('licenses', i, res, file, fileList)"
+                        :on-remove="(file, fileList) => handleAttachmentRemove('licenses', i, file, fileList)">
+                        <el-button size="small">上傳檔案</el-button>
                         <template #tip>
-                          <div class="upload-tip">支援 JPEG、PNG、GIF、WebP，檔案大小上限 5MB；已有照片時再選一張即可更換，按「儲存員工資料」後生效</div>
+                          <div class="hr-hint">{{ ATTACHMENT_HINT }}</div>
                         </template>
                       </el-upload>
                     </el-form-item>
-                    <div class="form-row">
-                      <el-form-item label="員工編號">
-                        <el-input v-model="employeeForm.employeeNo" placeholder="請輸入員工編號" />
-                      </el-form-item>
-                      <el-form-item label="員工姓名" required prop="name">
-                        <el-input v-model="employeeForm.name" placeholder="請輸入員工姓名" />
-                      </el-form-item>
-                    </div>
+                  </div>
+                  <el-button link type="danger" class="record-item__remove" @click="removeLicense(i)">刪除</el-button>
+                </div>
+              </section>
 
-                    <div class="form-row">
-                      <el-form-item label="性別" required prop="gender">
-                        <el-select v-model="employeeForm.gender" placeholder="選擇性別">
-                          <el-option label="男" value="M" />
-                          <el-option label="女" value="F" />
-                        </el-select>
-                      </el-form-item>
-                      <el-form-item label="生日">
-                        <el-date-picker v-model="employeeForm.birthday" type="date" placeholder="選擇生日" />
-                      </el-form-item>
-                    </div>
-
-                    <div class="form-row">
-                      <el-form-item label="身分證號">
-                        <el-input v-model="employeeForm.idNumber" placeholder="請輸入身分證號" />
-                      </el-form-item>
-                      <el-form-item label="出生地">
-                        <el-input v-model="employeeForm.birthplace" placeholder="請輸入出生地" />
-                      </el-form-item>
-                    </div>
-
-                    <div class="form-row">
-                      <el-form-item label="血型">
-                        <el-select v-model="employeeForm.bloodType" placeholder="選擇血型">
-                          <el-option v-for="b in ABO_TYPES" :key="b" :value="b" :label="b" />
-                        </el-select>
-                      </el-form-item>
-                      <el-form-item label="婚姻狀態">
-                        <el-select v-model="employeeForm.maritalStatus" placeholder="選擇婚姻狀態">
-                          <el-option label="未婚" value="未婚" />
-                          <el-option label="已婚" value="已婚" />
-                          <el-option label="離婚" value="離婚" />
-                          <el-option label="喪偶" value="喪偶" />
-                        </el-select>
-                      </el-form-item>
-                    </div>
-
-                    <el-form-item label="語言能力">
-                      <el-select v-model="employeeForm.languages" multiple filterable placeholder="選擇語言"
-                        :disabled="!languageOptions.length">
-                        <el-option v-for="option in languageOptions" :key="option.value" :label="option.label"
-                          :value="option.value" />
+              <section class="form-section">
+                <div class="form-section__header">
+                  <h3 class="form-section__title">教育訓練</h3>
+                  <el-button size="small" data-test="add-training-button" @click="addTraining">新增教育訓練</el-button>
+                </div>
+                <div v-if="!employeeForm.trainings.length" class="form-section__empty">尚無教育訓練紀錄</div>
+                <div v-for="(training, i) in employeeForm.trainings" :key="`training-${i}`" class="record-item">
+                  <div class="form-grid form-grid--four">
+                    <el-form-item label="課程名稱">
+                      <el-input v-model="training.course" placeholder="請輸入課程名稱" />
+                    </el-form-item>
+                    <el-form-item label="課程代碼">
+                      <el-input v-model="training.courseNo" placeholder="請輸入課程代碼" />
+                    </el-form-item>
+                    <el-form-item label="上課日期">
+                      <el-date-picker v-model="training.date" type="date" placeholder="選擇日期" format="YYYY/MM/DD"
+                        value-format="YYYY-MM-DD" />
+                    </el-form-item>
+                    <el-form-item label="積分">
+                      <el-input-number v-model="training.score" :min="0" :step="0.5" :value-on-clear="null"
+                        controls-position="right" />
+                    </el-form-item>
+                    <el-form-item label="積分類別" class="span-all">
+                      <el-select v-model="training.category" multiple collapse-tags collapse-tags-tooltip
+                        placeholder="選擇積分類別">
+                        <el-option v-for="option in creditCategoryOptions" :key="option.value"
+                          :label="option.label" :value="option.value" />
                       </el-select>
                     </el-form-item>
-
-                    <div class="form-row">
-                      <el-form-item label="身心障礙等級">
-                        <el-select v-model="employeeForm.disabilityLevel" placeholder="選擇等級" clearable
-                          :disabled="!disabilityLevelOptions.length">
-                          <el-option v-for="option in disabilityLevelOptions" :key="option.value" :label="option.label"
-                            :value="option.value" />
-                        </el-select>
-                      </el-form-item>
-                      <el-form-item label="身分註記">
-                        <el-select v-model="employeeForm.identityCategory" multiple filterable collapse-tags
-                          placeholder="選擇身份別" :disabled="!identityCategoryOptions.length">
-                          <el-option v-for="option in identityCategoryOptions" :key="option.value" :label="option.label"
-                            :value="option.value" />
-                        </el-select>
-                      </el-form-item>
-                    </div>
-
-                    <el-form-item label="扶養人數">
-                      <el-input-number v-model="employeeForm.dependents" :min="0" />
+                    <el-form-item label="訓練檔案" class="span-all">
+                      <el-upload v-model:file-list="training.fileList" action="#" multiple list-type="text"
+                        :before-upload="handleAttachmentBeforeUpload" :http-request="handleAttachmentRequest"
+                        :on-success="(res, file, fileList) => handleAttachmentSuccess('trainings', i, res, file, fileList)"
+                        :on-remove="(file, fileList) => handleAttachmentRemove('trainings', i, file, fileList)">
+                        <el-button size="small">上傳檔案</el-button>
+                        <template #tip>
+                          <div class="hr-hint">{{ ATTACHMENT_HINT }}</div>
+                        </template>
+                      </el-upload>
                     </el-form-item>
                   </div>
-
-                  <div class="form-group">
-                    <h3 class="form-group-title">聯絡資訊</h3>
-                    <div class="form-row">
-                      <el-form-item label="Email" required prop="email">
-                        <el-input v-model="employeeForm.email" placeholder="請輸入Email" />
-                      </el-form-item>
-                      <el-form-item label="行動電話">
-                        <el-input v-model="employeeForm.phone" placeholder="請輸入行動電話" />
-                      </el-form-item>
-                    </div>
-
-                    <div class="form-row">
-                      <el-form-item label="市內電話">
-                        <el-input v-model="employeeForm.landline" placeholder="請輸入市內電話" />
-                      </el-form-item>
-                      <el-form-item label="LINE ID">
-                        <el-input v-model="employeeForm.lineId" placeholder="請輸入LINE ID" />
-                      </el-form-item>
-                    </div>
-
-                    <el-form-item label="戶籍地址">
-                      <el-input v-model="employeeForm.householdAddress" placeholder="請輸入戶籍地址" />
-                    </el-form-item>
-
-                    <el-form-item label="聯絡地址">
-                      <el-input v-model="employeeForm.contactAddress" placeholder="請輸入聯絡地址" />
-                    </el-form-item>
-                  </div>
+                  <el-button link type="danger" class="record-item__remove" @click="removeTraining(i)">刪除</el-button>
                 </div>
-              </div>
-            </el-tab-pane>
+              </section>
+            </div>
+          </el-tab-pane>
 
-            <!-- 任職資訊 -->
-            <el-tab-pane name="employment">
-              <template #label>
-                <div class="tab-label">
-                  <i class="el-icon-office-building"></i>
-                  <span>任職資訊</span>
+          <!-- 薪資與假勤：薪資、投保、帳戶、每月調整、特休、調休 -->
+          <el-tab-pane name="salary">
+            <template #label>
+              <span class="tab-label" :class="{ 'has-error': employeeTabErrors.salary }" data-test="employee-tab-salary">
+                薪資與假勤<span v-if="employeeTabErrors.salary" class="tab-error-count">{{ employeeTabErrors.salary }}</span>
+              </span>
+            </template>
+
+            <div class="tab-content">
+              <section class="form-section">
+                <h3 class="form-section__title">薪資</h3>
+                <div class="form-grid">
+                  <el-form-item label="薪資類別">
+                    <el-select v-model="employeeForm.salaryType" placeholder="選擇類別" clearable value-on-clear="">
+                      <el-option v-for="s in SALARY_TYPES" :key="s" :label="s" :value="s" />
+                    </el-select>
+                  </el-form-item>
+                  <el-form-item label="薪資金額">
+                    <el-input-number v-model="employeeForm.salaryAmount" :min="0" :step="1000" :value-on-clear="0"
+                      controls-position="right" />
+                  </el-form-item>
+                  <el-form-item label="勞退自提" prop="laborPensionSelf">
+                    <el-input-number v-model="employeeForm.laborPensionSelf" :min="0" :step="100" :value-on-clear="0"
+                      controls-position="right" />
+                  </el-form-item>
+                  <el-form-item label="員工預支" prop="employeeAdvance">
+                    <el-input-number v-model="employeeForm.employeeAdvance" :min="0" :step="100" :value-on-clear="0"
+                      controls-position="right" />
+                  </el-form-item>
+                  <el-form-item label="自動計算加班費">
+                    <el-switch v-model="employeeForm.autoOvertimeCalc" active-text="是" inactive-text="否"
+                      data-test="employee-auto-overtime-calc" @change="autoOvertimeCalcTouched = true" />
+                    <div class="hr-hint" data-test="employee-auto-overtime-calc-hint">{{ autoOvertimeCalcHint }}</div>
+                  </el-form-item>
+                  <el-form-item class="span-all" label="薪資項目" prop="salaryItems">
+                    <el-select v-model="employeeForm.salaryItems" multiple collapse-tags collapse-tags-tooltip
+                      placeholder="選擇薪資項目">
+                      <el-option v-for="item in salaryItemOptionsForUI" :key="item.value" :label="item.label"
+                        :value="item.value" />
+                    </el-select>
+                  </el-form-item>
+                  <el-form-item v-for="item in selectedSalaryItemsForUI" :key="item.value"
+                    :label="item.label" class="salary-item-amount-item">
+                    <el-input-number v-model="employeeForm.salaryItemAmounts[item.value]" :min="0" :step="100"
+                      :value-on-clear="0" controls-position="right" />
+                  </el-form-item>
                 </div>
-              </template>
+              </section>
 
-              <div class="tab-content">
-                <div class="form-section">
-                  <div class="form-group">
-                    <h3 class="form-group-title">組織架構</h3>
-                    <div class="form-row">
-                      <el-form-item label="所屬機構" required prop="organization">
-                        <el-select v-model="employeeForm.organization" placeholder="選擇機構">
-                          <el-option v-for="org in orgList" :key="org._id" :label="org.name" :value="org._id" />
-                        </el-select>
-                      </el-form-item>
-                      <el-form-item label="所屬部門" required prop="department">
-                        <el-select v-model="employeeForm.department" placeholder="選擇部門">
-                          <el-option v-for="dept in filteredDepartments" :key="dept._id" :label="dept.name"
-                            :value="dept._id" />
-                        </el-select>
-                      </el-form-item>
-                    </div>
-
-                    <div class="form-row">
-                      <el-form-item label="小單位">
-                        <el-select v-model="employeeForm.subDepartment" placeholder="選擇小單位">
-                          <el-option v-for="sd in filteredSubDepartments" :key="sd._id" :label="sd.name"
-                            :value="sd._id" />
-                        </el-select>
-                      </el-form-item>
-                      <el-form-item label="直屬主管">
-                        <!-- 沒有輸入時列出同機構同部門的主管；輸入姓名或員工編號可搜尋全部在職員工（別的部門、機構的主任、總幹事、副院長） -->
-                        <el-select v-model="employeeForm.supervisor" placeholder="選擇主管，或輸入姓名、員工編號搜尋" clearable
-                          filterable remote remote-show-suffix :remote-method="searchSupervisors"
-                          :loading="supervisorSearch.loading" class="supervisor-select" data-test="supervisor-select"
-                          @visible-change="handleSupervisorDropdown">
-                          <template #label="{ label, value }">
-                            <span class="supervisor-option">
-                              <EmployeeAvatar v-if="supervisorById.has(String(value))"
-                                :employee="supervisorById.get(String(value))" :size="20" />
-                              <span>{{ label }}</span>
-                            </span>
-                          </template>
-                          <el-option v-for="sup in supervisorList" :key="sup._id"
-                            :label="sup.employeeNo ? `${sup.name}（${sup.employeeNo}）` : sup.name" :value="sup._id">
-                            <span class="supervisor-option-row">
-                              <span class="supervisor-option">
-                                <EmployeeAvatar :employee="sup" :size="20" />
-                                <span>{{ sup.employeeNo ? `${sup.name}（${sup.employeeNo}）` : sup.name }}</span>
-                              </span>
-                              <span v-if="supervisorUnitLabel(sup)" class="supervisor-option-unit" data-test="supervisor-option-unit">{{ supervisorUnitLabel(sup) }}</span>
-                            </span>
-                          </el-option>
-                        </el-select>
-                      </el-form-item>
-                    </div>
-                  </div>
-
-                  <div class="form-group">
-                    <h3 class="form-group-title">職務資訊</h3>
-                    <div class="form-row">
-                      <el-form-item label="職稱">
-                        <el-select v-model="employeeForm.title" placeholder="選擇職稱" :disabled="!titleOptions.length">
-                          <el-option v-for="option in titleOptions" :key="option.value" :label="option.label"
-                            :value="option.value" />
-                        </el-select>
-                      </el-form-item>
-                      <el-form-item label="執業職稱">
-                        <el-select v-model="employeeForm.practiceTitle" placeholder="選擇執業職稱"
-                          :disabled="!practiceTitleOptions.length">
-                          <el-option v-for="option in practiceTitleOptions" :key="option.value" :label="option.label"
-                            :value="option.value" />
-                        </el-select>
-                      </el-form-item>
-                    </div>
-
-                    <div class="form-row">
-                      <el-form-item label="兼職人員">
-                        <el-switch v-model="employeeForm.isPartTime" active-text="是" inactive-text="否"
-                          active-color="#10b981" />
-                      </el-form-item>
-                      <el-form-item label="需要打卡">
-                        <el-switch v-model="employeeForm.isClocking" active-text="是" inactive-text="否"
-                          active-color="#10b981" />
-                      </el-form-item>
-                    </div>
-
-                    <div class="form-row">
-                      <el-form-item label="假日制度">
-                        <el-select v-model="employeeForm.holidayRegime" placeholder="依預設"
-                          data-test="employee-holiday-regime">
-                          <el-option v-for="option in HOLIDAY_REGIME_OPTIONS" :key="option.value || 'default'"
-                            :label="option.label" :value="option.value" />
-                        </el-select>
-                        <div class="upload-tip">輪班：國定假日落在自己的休息日/例假時存入調休；行政：週一至週五上班，國定假日落在週末時存入調休（政府補假日為建議調休日）</div>
-                      </el-form-item>
-                      <el-form-item label="原住民身分">
-                        <el-switch v-model="employeeForm.isIndigenous" active-text="是" inactive-text="否"
-                          active-color="#10b981" data-test="employee-is-indigenous" />
-                        <div class="upload-tip">原住民族歲時祭儀每年 3 日，以「原民假」申請</div>
-                      </el-form-item>
-                    </div>
-                  </div>
-
-                  <div class="form-group">
-                    <h3 class="form-group-title">聘用狀態</h3>
-                    <div class="form-row">
-                      <el-form-item label="在職狀態">
-                        <el-select v-model="employeeForm.employmentStatus" placeholder="選擇狀態">
-                          <el-option label="正職員工" value="正職員工" />
-                          <el-option label="試用期員工" value="試用期員工" />
-                          <el-option label="離職員工" value="離職員工" />
-                          <el-option label="留職停薪" value="留職停薪" />
-                        </el-select>
-                      </el-form-item>
-                      <el-form-item label="試用期">
-                        <el-select v-model="employeeForm.probationDays" placeholder="選擇天數">
-                          <el-option label="無" value="" />
-                          <el-option label="30天" value="30" />
-                          <el-option label="60天" value="60" />
-                          <el-option label="90天" value="90" />
-                        </el-select>
-                      </el-form-item>
-                    </div>
-
-                    <div class="form-row">
-                      <el-form-item label="到職日期">
-                        <el-date-picker v-model="employeeForm.hireDate" type="date" placeholder="選擇到職日期" />
-                      </el-form-item>
-                      <el-form-item label="起聘日期">
-                        <el-date-picker v-model="employeeForm.appointDate" type="date" placeholder="選擇起聘日期" />
-                      </el-form-item>
-                    </div>
-
-                    <div class="form-row">
-                      <el-form-item label="離職日期">
-                        <el-date-picker v-model="employeeForm.resignDate" type="date" placeholder="選擇離職日期" />
-                      </el-form-item>
-                      <el-form-item label="解聘日期">
-                        <el-date-picker v-model="employeeForm.dismissDate" type="date" placeholder="選擇解聘日期" />
-                      </el-form-item>
-                    </div>
-
-                    <div class="form-row">
-                      <el-form-item label="再任起聘">
-                        <el-date-picker v-model="employeeForm.reAppointDate" type="date" placeholder="選擇再任起聘日期" />
-                      </el-form-item>
-                      <el-form-item label="再任解聘">
-                        <el-date-picker v-model="employeeForm.reDismissDate" type="date" placeholder="選擇再任解聘日期" />
-                      </el-form-item>
-                    </div>
-
-                    <div class="form-row">
-                      <el-form-item label="聘任備註" class="full-width-item">
-                        <el-input v-model="employeeForm.employmentNote" type="textarea" :rows="2"
-                          placeholder="請輸入聘任備註" />
-                      </el-form-item>
-                    </div>
-                  </div>
+              <section class="form-section">
+                <h3 class="form-section__title">勞健保投保</h3>
+                <div class="form-grid form-grid--four">
+                  <el-form-item label="勞保投保薪資" prop="laborInsuredSalary">
+                    <el-input-number v-model="employeeForm.laborInsuredSalary" :min="0" :step="1000"
+                      :value-on-clear="0" controls-position="right" />
+                  </el-form-item>
+                  <el-form-item label="勞退投保薪資" prop="pensionInsuredSalary">
+                    <el-input-number v-model="employeeForm.pensionInsuredSalary" :min="0" :step="1000"
+                      :value-on-clear="0" controls-position="right" />
+                  </el-form-item>
+                  <el-form-item label="健保投保薪資" prop="healthInsuredSalary">
+                    <el-input-number v-model="employeeForm.healthInsuredSalary" :min="0" :step="1000"
+                      :value-on-clear="0" controls-position="right" />
+                  </el-form-item>
+                  <el-form-item label="眷口數（人）" prop="dependentCount">
+                    <el-input-number v-model="employeeForm.dependentCount" :min="0" :step="1" :value-on-clear="0"
+                      controls-position="right" />
+                  </el-form-item>
                 </div>
-              </div>
-            </el-tab-pane>
+              </section>
 
-            <!-- 更多資訊 -->
-            <el-tab-pane name="more">
-              <template #label>
-                <div class="tab-label">
-                  <i class="el-icon-more"></i>
-                  <span>更多資訊</span>
+              <section class="form-section">
+                <h3 class="form-section__title">銀行帳戶</h3>
+                <div class="form-grid form-grid--four">
+                  <el-form-item label="薪資帳戶 A 銀行代碼/名稱">
+                    <el-input v-model="employeeForm.salaryAccountA.bank" placeholder="請輸入銀行資訊" />
+                  </el-form-item>
+                  <el-form-item label="薪資帳戶 A 帳號">
+                    <el-input v-model="employeeForm.salaryAccountA.acct" placeholder="請輸入帳號" />
+                  </el-form-item>
+                  <el-form-item label="薪資帳戶 B 銀行代碼/名稱">
+                    <el-input v-model="employeeForm.salaryAccountB.bank" placeholder="請輸入銀行資訊" />
+                  </el-form-item>
+                  <el-form-item label="薪資帳戶 B 帳號">
+                    <el-input v-model="employeeForm.salaryAccountB.acct" placeholder="請輸入帳號" />
+                  </el-form-item>
                 </div>
-              </template>
+              </section>
 
-              <div class="tab-content">
-                <div class="form-section">
-                  <!-- 身體檢查 -->
-                  <div class="form-group">
-                    <h3 class="form-group-title">身體檢查</h3>
-                    <div class="form-row">
-                      <el-form-item label="身高 (cm)">
-                        <el-input-number v-model="employeeForm.height" :min="0" :max="250" :step="0.1" :precision="1"
-                          :value-on-clear="null" controls-position="right" placeholder="請輸入身高" />
-                      </el-form-item>
-                      <el-form-item label="體重 (kg)">
-                        <el-input-number v-model="employeeForm.weight" :min="0" :max="300" :step="0.1" :precision="1"
-                          :value-on-clear="null" controls-position="right" placeholder="請輸入體重" />
-                      </el-form-item>
-                    </div>
-                    <div class="form-row">
-                      <el-form-item label="體檢血型">
-                        <el-select v-model="employeeForm.medicalBloodType" placeholder="選擇血型" clearable>
-                          <el-option v-for="blood in ABO_TYPES" :key="`medical-${blood}`" :label="blood"
-                            :value="blood" />
-                        </el-select>
-                      </el-form-item>
-                    </div>
-                  </div>
-
-                  <!-- 學歷資訊 -->
-                  <div class="form-group">
-                    <h3 class="form-group-title">學歷資訊</h3>
-                    <div class="form-row">
-                      <el-form-item label="教育程度">
-                        <el-select v-model="employeeForm.educationLevel" placeholder="選擇教育程度"
-                          :disabled="!educationLevelOptions.length">
-                          <el-option v-for="option in educationLevelOptions" :key="option.value" :label="option.label"
-                            :value="option.value" />
-                        </el-select>
-                      </el-form-item>
-                      <el-form-item label="學校名稱">
-                        <el-input v-model="employeeForm.schoolName" placeholder="請輸入學校名稱" />
-                      </el-form-item>
-                    </div>
-
-                    <div class="form-row">
-                      <el-form-item label="主修科系">
-                        <el-input v-model="employeeForm.major" placeholder="請輸入主修科系" />
-                      </el-form-item>
-                      <el-form-item label="畢業狀態">
-                        <el-select v-model="employeeForm.graduationStatus" placeholder="選擇畢業狀態" clearable
-                          @clear="onGraduationStatusClear" :disabled="!graduationStatusOptions.length">
-                          <el-option v-for="option in graduationStatusOptions" :key="option.value" :label="option.label"
-                            :value="option.value" />
-                        </el-select>
-                      </el-form-item>
-                    </div>
-
-                    <div class="form-row">
-                      <el-form-item label="畢業年度" class="full-width-item">
-                        <el-input v-model="employeeForm.graduationYear" placeholder="請輸入畢業年度" />
-                      </el-form-item>
-                    </div>
-                  </div>
-
-                  <!-- 役別資訊 -->
-                  <div class="form-group">
-                    <h3 class="form-group-title">役別資訊</h3>
-                    <div class="form-row">
-                      <el-form-item label="役別類型">
-                        <el-select v-model="employeeForm.serviceType" placeholder="選擇或輸入役別類型" filterable allow-create
-                          default-first-option clearable>
-                          <el-option v-for="type in SERVICE_TYPES" :key="type" :label="type" :value="type" />
-                        </el-select>
-                      </el-form-item>
-                      <el-form-item label="軍種">
-                        <el-input v-model="employeeForm.militaryBranch" placeholder="請輸入軍種" />
-                      </el-form-item>
-                    </div>
-
-                    <div class="form-row">
-                      <el-form-item label="軍階">
-                        <el-input v-model="employeeForm.militaryRank" placeholder="請輸入軍階" />
-                      </el-form-item>
-                      <el-form-item label="退伍年">
-                        <el-input-number v-model="employeeForm.dischargeYear" :min="1900" :max="CURRENT_YEAR + 10"
-                          :step="1" :value-on-clear="null" controls-position="right" placeholder="請輸入退伍年" />
-                      </el-form-item>
-                    </div>
-                  </div>
-
-                  <!-- 緊急聯絡人 -->
-                  <div class="form-group">
-                    <h3 class="form-group-title">緊急聯絡人</h3>
-                    <div class="emergency-contact">
-                      <h4 class="contact-subtitle">聯絡人一</h4>
-                      <div class="form-row">
-                        <el-form-item label="姓名">
-                          <el-input v-model="employeeForm.emergency1.name" placeholder="請輸入姓名" />
-                        </el-form-item>
-                        <el-form-item label="關係">
-                          <el-select v-model="employeeForm.emergency1.relation" placeholder="選擇關係">
-                            <el-option v-for="option in relationOptions" :key="`r1-${option.value}`"
-                              :label="option.label" :value="option.value" />
-                          </el-select>
-                        </el-form-item>
-                      </div>
-                      <div class="form-row">
-                        <el-form-item label="電話一">
-                          <el-input v-model="employeeForm.emergency1.phone1" placeholder="請輸入電話" />
-                        </el-form-item>
-                        <el-form-item label="電話二">
-                          <el-input v-model="employeeForm.emergency1.phone2" placeholder="請輸入電話" />
-                        </el-form-item>
-                      </div>
-                    </div>
-
-                    <div class="emergency-contact">
-                      <h4 class="contact-subtitle">聯絡人二</h4>
-                      <div class="form-row">
-                        <el-form-item label="姓名">
-                          <el-input v-model="employeeForm.emergency2.name" placeholder="請輸入姓名" />
-                        </el-form-item>
-                        <el-form-item label="關係">
-                          <el-select v-model="employeeForm.emergency2.relation" placeholder="選擇關係">
-                            <el-option v-for="option in relationOptions" :key="`r2-${option.value}`"
-                              :label="option.label" :value="option.value" />
-                          </el-select>
-                        </el-form-item>
-                      </div>
-                      <div class="form-row">
-                        <el-form-item label="電話一">
-                          <el-input v-model="employeeForm.emergency2.phone1" placeholder="請輸入電話" />
-                        </el-form-item>
-                        <el-form-item label="電話二">
-                          <el-input v-model="employeeForm.emergency2.phone2" placeholder="請輸入電話" />
-                        </el-form-item>
-                      </div>
-                    </div>
-                  </div>
-
-                  <!-- 經歷管理 -->
-                  <div class="form-group">
-                    <h3 class="form-group-title">工作經歷</h3>
-                    <div class="experience-list">
-                      <div v-for="(exp, i) in employeeForm.experiences" :key="i" class="experience-item">
-                        <div class="experience-header">
-                          <h4 class="experience-title">經歷 {{ i + 1 }}</h4>
-                          <el-button type="danger" size="small" @click="removeExperience(i)" class="remove-btn">
-                            <i class="el-icon-delete"></i>
-                            刪除
-                          </el-button>
-                        </div>
-                        <div class="form-row">
-                          <el-form-item label="單位名稱">
-                            <el-input v-model="exp.unit" placeholder="請輸入單位名稱" />
-                          </el-form-item>
-                          <el-form-item label="職稱">
-                            <el-input v-model="exp.title" placeholder="請輸入職稱" />
-                          </el-form-item>
-                        </div>
-                        <div class="form-row">
-                          <el-form-item label="到職年月">
-                            <el-date-picker v-model="exp.start" type="month" placeholder="選擇到職年月" />
-                          </el-form-item>
-                          <el-form-item label="離職年月">
-                            <el-date-picker v-model="exp.end" type="month" placeholder="選擇離職年月" />
-                          </el-form-item>
-                        </div>
-                      </div>
-                    </div>
-                    <el-button type="primary" @click="addExperience" class="add-item-btn">
-                      <i class="el-icon-plus"></i>
-                      新增經歷
-                    </el-button>
-                  </div>
-
-                  <!-- 證照資訊 -->
-                  <div class="form-group">
-                    <h3 class="form-group-title">證照</h3>
-                    <div class="experience-list">
-                      <div v-for="(license, i) in employeeForm.licenses" :key="`license-${i}`" class="experience-item">
-                        <div class="experience-header">
-                          <h4 class="experience-title">證照 {{ i + 1 }}</h4>
-                          <el-button type="danger" size="small" @click="removeLicense(i)" class="remove-btn">
-                            <i class="el-icon-delete"></i>
-                            刪除
-                          </el-button>
-                        </div>
-                        <div class="form-row">
-                          <el-form-item label="證照名稱">
-                            <el-input v-model="license.name" placeholder="請輸入證照名稱" />
-                          </el-form-item>
-                          <el-form-item label="證照字號">
-                            <el-input v-model="license.number" placeholder="請輸入證照字號" />
-                          </el-form-item>
-                        </div>
-                        <div class="form-row">
-                          <el-form-item label="核發日期">
-                            <el-date-picker v-model="license.startDate" type="date" placeholder="選擇核發日期" />
-                          </el-form-item>
-                          <el-form-item label="有效期限">
-                            <el-date-picker v-model="license.endDate" type="date" placeholder="選擇有效期限" />
-                          </el-form-item>
-                        </div>
-                        <div class="form-row">
-                          <el-form-item label="證照檔案" class="full-width-item">
-                            <el-upload v-model:file-list="license.fileList" action="#" multiple list-type="text"
-                              :http-request="handleAttachmentRequest"
-                              :on-success="(res, file, fileList) => handleAttachmentSuccess('licenses', i, res, file, fileList)"
-                              :on-remove="(file, fileList) => handleAttachmentRemove('licenses', i, file, fileList)">
-                              <el-button type="primary" plain>
-                                <i class="el-icon-upload2"></i>
-                                上傳檔案
-                              </el-button>
-                              <template #tip>
-                                <div class="upload-tip">可上傳多個檔案，將以連結形式儲存</div>
-                              </template>
-                            </el-upload>
-                          </el-form-item>
-                        </div>
-                      </div>
-                    </div>
-                    <el-button type="primary" @click="addLicense" class="add-item-btn">
-                      <i class="el-icon-plus"></i>
-                      新增證照
-                    </el-button>
-                  </div>
-
-                  <!-- 教育訓練 -->
-                  <div class="form-group">
-                    <h3 class="form-group-title">教育訓練</h3>
-                    <div class="experience-list">
-                      <div v-for="(training, i) in employeeForm.trainings" :key="`training-${i}`"
-                        class="experience-item">
-                        <div class="experience-header">
-                          <h4 class="experience-title">教育訓練 {{ i + 1 }}</h4>
-                          <el-button type="danger" size="small" @click="removeTraining(i)" class="remove-btn">
-                            <i class="el-icon-delete"></i>
-                            刪除
-                          </el-button>
-                        </div>
-                        <div class="form-row">
-                          <el-form-item label="課程名稱">
-                            <el-input v-model="training.course" placeholder="請輸入課程名稱" />
-                          </el-form-item>
-                          <el-form-item label="課程代碼">
-                            <el-input v-model="training.courseNo" placeholder="請輸入課程代碼" />
-                          </el-form-item>
-                        </div>
-                        <div class="form-row">
-                          <el-form-item label="上課日期">
-                            <el-date-picker v-model="training.date" type="date" placeholder="選擇日期" />
-                          </el-form-item>
-                          <el-form-item label="積分類別" class="full-width-item">
-                            <el-select v-model="training.category" multiple collapse-tags placeholder="選擇積分類別">
-                              <el-option v-for="option in creditCategoryOptions" :key="option.value"
-                                :label="option.label" :value="option.value" />
-                            </el-select>
-                          </el-form-item>
-                        </div>
-                        <div class="form-row">
-                          <el-form-item label="積分">
-                            <el-input-number v-model="training.score" :min="0" :step="0.5" :value-on-clear="null" />
-                          </el-form-item>
-                          <el-form-item label="訓練檔案" class="full-width-item">
-                            <el-upload v-model:file-list="training.fileList" action="#" multiple list-type="text"
-                              :http-request="handleAttachmentRequest"
-                              :on-success="(res, file, fileList) => handleAttachmentSuccess('trainings', i, res, file, fileList)"
-                              :on-remove="(file, fileList) => handleAttachmentRemove('trainings', i, file, fileList)">
-                              <el-button type="primary" plain>
-                                <i class="el-icon-upload2"></i>
-                                上傳檔案
-                              </el-button>
-                              <template #tip>
-                                <div class="upload-tip">支援多檔上傳，將以連結形式儲存</div>
-                              </template>
-                            </el-upload>
-                          </el-form-item>
-                        </div>
-                      </div>
-                    </div>
-                    <el-button type="primary" @click="addTraining" class="add-item-btn">
-                      <i class="el-icon-plus"></i>
-                      新增教育訓練
-                    </el-button>
-                  </div>
+              <section class="form-section">
+                <h3 class="form-section__title">每月薪資調整</h3>
+                <p class="hr-hint form-section__hint">作為每月薪資計算的預設值，不必每次簽核。</p>
+                <div class="form-grid">
+                  <el-form-item label="健保費自付額" prop="monthlySalaryAdjustments.healthInsuranceFee">
+                    <el-input-number v-model="employeeForm.monthlySalaryAdjustments.healthInsuranceFee"
+                      :min="0" :step="50" :value-on-clear="0" controls-position="right" />
+                  </el-form-item>
+                  <el-form-item label="債權扣押" prop="monthlySalaryAdjustments.debtGarnishment">
+                    <el-input-number v-model="employeeForm.monthlySalaryAdjustments.debtGarnishment"
+                      :min="0" :step="100" :value-on-clear="0" controls-position="right" />
+                  </el-form-item>
+                  <el-form-item label="其他扣款" prop="monthlySalaryAdjustments.otherDeductions">
+                    <el-input-number v-model="employeeForm.monthlySalaryAdjustments.otherDeductions"
+                      :min="0" :step="100" :value-on-clear="0" controls-position="right" />
+                  </el-form-item>
+                  <el-form-item label="人力績效獎金" prop="monthlySalaryAdjustments.performanceBonus">
+                    <el-input-number v-model="employeeForm.monthlySalaryAdjustments.performanceBonus"
+                      :min="0" :step="100" :value-on-clear="0" controls-position="right" />
+                  </el-form-item>
+                  <el-form-item label="其他獎金" prop="monthlySalaryAdjustments.otherBonuses">
+                    <el-input-number v-model="employeeForm.monthlySalaryAdjustments.otherBonuses"
+                      :min="0" :step="100" :value-on-clear="0" controls-position="right" />
+                  </el-form-item>
+                  <el-form-item label="調整說明" class="span-all" prop="monthlySalaryAdjustments.notes">
+                    <el-input v-model="employeeForm.monthlySalaryAdjustments.notes" type="textarea" :rows="2"
+                      placeholder="請輸入薪資調整的說明或備註" />
+                  </el-form-item>
                 </div>
-              </div>
-            </el-tab-pane>
+              </section>
 
-            <!-- 薪資 -->
-            <el-tab-pane name="salary">
-              <template #label>
-                <div class="tab-label">
-                  <i class="el-icon-money"></i>
-                  <span>薪資設定</span>
+              <section class="form-section">
+                <h3 class="form-section__title">特休</h3>
+                <p class="hr-hint form-section__hint">單位是小時（1 天 = 8 小時）；特休申請核准後系統會自動扣減。</p>
+                <el-alert v-if="annualLeaveUnitNotice" type="warning" :closable="false" show-icon
+                  class="annual-leave-unit-warning">
+                  <template #title>{{ annualLeaveUnitNotice.title }}</template>
+                  <p>{{ annualLeaveUnitNotice.message }}</p>
+                  <el-checkbox v-model="employeeForm.annualLeave.unitConfirmed">{{ annualLeaveUnitNotice.confirmLabel }}</el-checkbox>
+                </el-alert>
+                <div class="form-grid form-grid--four">
+                  <el-form-item label="年度特休總時數" prop="annualLeave.totalHours">
+                    <el-input-number v-model="employeeForm.annualLeave.totalHours" :min="0" :max="3000" :step="0.5"
+                      :precision="2" :value-on-clear="0" controls-position="right" placeholder="0" />
+                    <div class="hr-hint">約 {{ annualLeaveDaysText(employeeForm.annualLeave?.totalHours) }} 天</div>
+                  </el-form-item>
+                  <el-form-item label="已使用時數" prop="annualLeave.usedHours">
+                    <el-input-number v-model="employeeForm.annualLeave.usedHours" :min="0" :step="0.5"
+                      :precision="2" :value-on-clear="0" controls-position="right" placeholder="0" />
+                    <div class="hr-hint">
+                      剩餘 {{ annualLeaveRemainingHours(employeeForm.annualLeave) }} 小時（約 {{ annualLeaveDaysText(annualLeaveRemainingHours(employeeForm.annualLeave)) }} 天）
+                    </div>
+                  </el-form-item>
+                  <el-form-item label="年度" prop="annualLeave.year">
+                    <el-input-number v-model="employeeForm.annualLeave.year" :min="2020" :max="2050" :step="1"
+                      controls-position="right" :placeholder="String(CURRENT_YEAR)" />
+                  </el-form-item>
+                  <el-form-item label="請假期限" prop="annualLeave.expiryDate">
+                    <el-date-picker v-model="employeeForm.annualLeave.expiryDate" type="date" placeholder="選擇請假期限日期"
+                      format="YYYY/MM/DD" value-format="YYYY-MM-DD" />
+                  </el-form-item>
+                  <el-form-item label="積假（天）" prop="annualLeave.accumulatedLeave">
+                    <el-input-number v-model="employeeForm.annualLeave.accumulatedLeave" :min="0" :max="365" :step="0.5"
+                      :value-on-clear="0" controls-position="right" placeholder="0" />
+                  </el-form-item>
+                  <el-form-item label="備註" class="span-all" prop="annualLeave.notes">
+                    <el-input v-model="employeeForm.annualLeave.notes" type="textarea" :rows="2"
+                      placeholder="請輸入特休相關備註" />
+                  </el-form-item>
                 </div>
-              </template>
+              </section>
 
-              <div class="tab-content">
-                <div class="form-section">
-                  <div class="form-group">
-                    <h3 class="form-group-title">薪資資訊</h3>
-                    <div class="form-row">
-                      <el-form-item label="薪資類別">
-                        <el-select v-model="employeeForm.salaryType" placeholder="選擇類別">
-                          <el-option v-for="s in SALARY_TYPES" :key="s" :label="s" :value="s" />
-                        </el-select>
-                      </el-form-item>
-                      <el-form-item label="薪資金額">
-                        <el-input-number v-model="employeeForm.salaryAmount" :min="0" :step="1000"
-                          :formatter="value => `$ ${value ?? 0}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')"
-                          :parser="value => (value ? value.replace(/\$\s?|(,*)/g, '') : '')" />
-                      </el-form-item>
-                      <el-form-item label="勞退自提" prop="laborPensionSelf">
-                        <el-input-number v-model="employeeForm.laborPensionSelf" :min="0" :step="100"
-                          :formatter="value => `$ ${value ?? 0}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')"
-                          :parser="value => (value ? value.replace(/\$\s?|(,*)/g, '') : '')" />
-                      </el-form-item>
-                      <el-form-item label="員工預支" prop="employeeAdvance">
-                        <el-input-number v-model="employeeForm.employeeAdvance" :min="0" :step="100"
-                          :formatter="value => `$ ${value ?? 0}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')"
-                          :parser="value => (value ? value.replace(/\$\s?|(,*)/g, '') : '')" />
-                      </el-form-item>
-                      <el-form-item class="full-width-item" label="薪資項目" prop="salaryItems">
-                        <el-select v-model="employeeForm.salaryItems" multiple collapse-tags collapse-tags-tooltip
-                          placeholder="選擇薪資項目">
-                          <el-option v-for="item in salaryItemOptions" :key="item.value" :label="item.label"
-                            :value="item.value" />
-                        </el-select>
-                      </el-form-item>
-                      <div v-if="selectedSalaryItemsForUI.length" class="form-row salary-item-amounts">
-                        <el-form-item v-for="item in selectedSalaryItemsForUI" :key="item.value"
-                          :label="item.label" class="salary-item-amount-item">
-                          <el-input-number v-model="employeeForm.salaryItemAmounts[item.value]" :min="0" :step="100"
-                            :formatter="value => `$ ${value ?? 0}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')"
-                            :parser="value => (value ? value.replace(/\$\s?|(,*)/g, '') : '')" />
-                        </el-form-item>
-                      </div>
-                    </div>
-                  </div>
+              <!-- 調休存摺（客戶稱為移休；取代以前人資手動填的「補休時數」）：國定假日適逢休息日／例假自動存入；
+                   管理員可手動給予、扣除、作廢，並填寫員工在「我的調休」看得到的存摺備註（本人、直屬主管與管理員看得到，排班人員看不到） -->
+              <section class="form-section" data-test="employee-comp-leave">
+                <CompensatoryLeavePanel
+                  v-if="employeeDialogTab === 'salary' && isEditingEmployee && editingEmployeeId"
+                  :employee-id="editingEmployeeId"
+                  title="調休存摺（移休）"
+                  :can-manage="canManageCompLeave"
+                />
+                <template v-else-if="!isEditingEmployee">
+                  <h3 class="form-section__title">調休存摺（移休）</h3>
+                  <p class="hr-hint form-section__hint">員工建立後可在這裡查看調休存摺；國定假日適逢休息日／例假會自動存入調休，管理員也可以手動給予。</p>
+                </template>
+              </section>
+            </div>
+          </el-tab-pane>
+        </el-tabs>
+      </el-form>
+      <template #footer>
+        <div class="dialog-footer">
+          <el-button data-test="employee-cancel-button" @click="requestEmployeeDialogClose()">取消</el-button>
+          <el-button type="primary" data-test="employee-save-button" :loading="employeeSaving"
+            @click="saveEmployee">儲存</el-button>
+        </div>
+      </template>
+    </el-dialog>
 
-                  <div class="form-group">
-                    <h3 class="form-group-title">勞健保投保資訊</h3>
-                    <div class="form-row">
-                      <el-form-item label="勞保投保薪資" prop="laborInsuredSalary">
-                        <el-input-number v-model="employeeForm.laborInsuredSalary" :min="0" :step="1000"
-                          :formatter="value => `$ ${value ?? 0}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')"
-                          :parser="value => (value ? value.replace(/\$\s?|(,*)/g, '') : '')" />
-                      </el-form-item>
-                      <el-form-item label="勞退投保薪資" prop="pensionInsuredSalary">
-                        <el-input-number v-model="employeeForm.pensionInsuredSalary" :min="0" :step="1000"
-                          :formatter="value => `$ ${value ?? 0}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')"
-                          :parser="value => (value ? value.replace(/\$\s?|(,*)/g, '') : '')" />
-                      </el-form-item>
-                      <el-form-item label="健保投保薪資" prop="healthInsuredSalary">
-                        <el-input-number v-model="employeeForm.healthInsuredSalary" :min="0" :step="1000"
-                          :formatter="value => `$ ${value ?? 0}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')"
-                          :parser="value => (value ? value.replace(/\$\s?|(,*)/g, '') : '')" />
-                      </el-form-item>
-                      <el-form-item label="眷口數" prop="dependentCount">
-                        <el-input-number v-model="employeeForm.dependentCount" :min="0" :step="1" />
-                        <span style="margin-left: 8px; color: #909399;">人</span>
-                      </el-form-item>
-                    </div>
-                  </div>
-
-                  <div class="form-group">
-                    <h3 class="form-group-title">銀行帳戶</h3>
-                    <div class="account-section">
-                      <h4 class="account-subtitle">薪資帳戶 A</h4>
-                      <div class="form-row">
-                        <el-form-item label="銀行代碼/名稱">
-                          <el-input v-model="employeeForm.salaryAccountA.bank" placeholder="請輸入銀行資訊" />
-                        </el-form-item>
-                        <el-form-item label="帳號">
-                          <el-input v-model="employeeForm.salaryAccountA.acct" placeholder="請輸入帳號" />
-                        </el-form-item>
-                      </div>
-                    </div>
-
-                    <div class="account-section">
-                      <h4 class="account-subtitle">薪資帳戶 B</h4>
-                      <div class="form-row">
-                        <el-form-item label="銀行代碼/名稱">
-                          <el-input v-model="employeeForm.salaryAccountB.bank" placeholder="請輸入銀行資訊" />
-                        </el-form-item>
-                        <el-form-item label="帳號">
-                          <el-input v-model="employeeForm.salaryAccountB.acct" placeholder="請輸入帳號" />
-                        </el-form-item>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div class="form-group">
-                    <h3 class="form-group-title">每月薪資調整項目</h3>
-                    <el-alert type="info" :closable="false" style="margin-bottom: 16px;">
-                      <p>以下項目將作為每月薪資計算的預設值，可直接在個人資料中設定，無需每次簽核。</p>
-                    </el-alert>
-                    
-                    <div class="form-row">
-                      <el-form-item label="健保費自付額" prop="monthlySalaryAdjustments.healthInsuranceFee">
-                        <el-input-number v-model="employeeForm.monthlySalaryAdjustments.healthInsuranceFee" 
-                          :min="0" :step="50"
-                          :formatter="value => `$ ${value ?? 0}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')"
-                          :parser="value => (value ? value.replace(/\$\s?|(,*)/g, '') : '')" />
-                      </el-form-item>
-                      <el-form-item label="債權扣押" prop="monthlySalaryAdjustments.debtGarnishment">
-                        <el-input-number v-model="employeeForm.monthlySalaryAdjustments.debtGarnishment" 
-                          :min="0" :step="100"
-                          :formatter="value => `$ ${value ?? 0}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')"
-                          :parser="value => (value ? value.replace(/\$\s?|(,*)/g, '') : '')" />
-                      </el-form-item>
-                      <el-form-item label="其他扣款" prop="monthlySalaryAdjustments.otherDeductions">
-                        <el-input-number v-model="employeeForm.monthlySalaryAdjustments.otherDeductions" 
-                          :min="0" :step="100"
-                          :formatter="value => `$ ${value ?? 0}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')"
-                          :parser="value => (value ? value.replace(/\$\s?|(,*)/g, '') : '')" />
-                      </el-form-item>
-                    </div>
-                    
-                    <div class="form-row">
-                      <el-form-item label="人力績效獎金" prop="monthlySalaryAdjustments.performanceBonus">
-                        <el-input-number v-model="employeeForm.monthlySalaryAdjustments.performanceBonus" 
-                          :min="0" :step="100"
-                          :formatter="value => `$ ${value ?? 0}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')"
-                          :parser="value => (value ? value.replace(/\$\s?|(,*)/g, '') : '')" />
-                      </el-form-item>
-                      <el-form-item label="其他獎金" prop="monthlySalaryAdjustments.otherBonuses">
-                        <el-input-number v-model="employeeForm.monthlySalaryAdjustments.otherBonuses" 
-                          :min="0" :step="100"
-                          :formatter="value => `$ ${value ?? 0}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')"
-                          :parser="value => (value ? value.replace(/\$\s?|(,*)/g, '') : '')" />
-                      </el-form-item>
-                    </div>
-                    
-                    <div class="form-row">
-                      <el-form-item label="調整說明" class="full-width-item" prop="monthlySalaryAdjustments.notes">
-                        <el-input v-model="employeeForm.monthlySalaryAdjustments.notes" 
-                          type="textarea" 
-                          :rows="2"
-                          placeholder="請輸入薪資調整的說明或備註" />
-                      </el-form-item>
-                    </div>
-                  </div>
-
-                  <div class="form-group">
-                    <h3 class="form-group-title">特休管理</h3>
-                    <el-alert type="info" :closable="false" style="margin-bottom: 16px;">
-                      <p>設定員工年度特休時數（請假的單位是小時，1 天 = 8 小時）。當員工申請特休並審核通過後，系統將自動扣減剩餘時數。</p>
-                    </el-alert>
-                    <el-alert
-                      v-if="annualLeaveUnitNotice"
-                      type="warning"
-                      :closable="false"
-                      show-icon
-                      class="annual-leave-unit-warning"
-                      style="margin-bottom: 16px;"
-                    >
-                      <template #title>{{ annualLeaveUnitNotice.title }}</template>
-                      <p>{{ annualLeaveUnitNotice.message }}</p>
-                      <el-checkbox v-model="employeeForm.annualLeave.unitConfirmed">{{ annualLeaveUnitNotice.confirmLabel }}</el-checkbox>
-                    </el-alert>
-                    <div class="form-row">
-                      <el-form-item label="年度特休總時數" prop="annualLeave.totalHours">
-                        <el-input-number v-model="employeeForm.annualLeave.totalHours" :min="0" :max="3000" :step="0.5"
-                          :precision="2" placeholder="0" />
-                        <span style="margin-left: 8px; color: #909399;">小時</span>
-                      </el-form-item>
-                      <el-form-item label="約合天數">
-                        <el-tag type="info" size="large">
-                          約 {{ annualLeaveDaysText(employeeForm.annualLeave?.totalHours) }} 天
-                        </el-tag>
-                      </el-form-item>
-                      <el-form-item label="已使用時數" prop="annualLeave.usedHours">
-                        <el-input-number v-model="employeeForm.annualLeave.usedHours" :min="0" :step="0.5"
-                          :precision="2" placeholder="0" />
-                        <span style="margin-left: 8px; color: #909399;">小時</span>
-                      </el-form-item>
-                      <el-form-item label="剩餘時數">
-                        <el-tag type="success" size="large">
-                          {{ annualLeaveRemainingHours(employeeForm.annualLeave) }} 小時（約 {{ annualLeaveDaysText(annualLeaveRemainingHours(employeeForm.annualLeave)) }} 天）
-                        </el-tag>
-                      </el-form-item>
-                    </div>
-                    <div class="form-row">
-                      <el-form-item label="年度" prop="annualLeave.year">
-                        <el-input-number v-model="employeeForm.annualLeave.year" :min="2020" :max="2050" :step="1"
-                          :placeholder="new Date().getFullYear().toString()" />
-                      </el-form-item>
-                      <el-form-item label="請假期限" prop="annualLeave.expiryDate">
-                        <el-date-picker v-model="employeeForm.annualLeave.expiryDate" type="date" placeholder="選擇請假期限日期" />
-                      </el-form-item>
-                      <el-form-item label="積假" prop="annualLeave.accumulatedLeave">
-                        <el-input-number v-model="employeeForm.annualLeave.accumulatedLeave" :min="0" :max="365" :step="0.5"
-                          placeholder="0" />
-                        <span style="margin-left: 8px; color: #909399;">天</span>
-                      </el-form-item>
-                    </div>
-                    <div class="form-row">
-                      <el-form-item label="備註" class="full-width-item" prop="annualLeave.notes">
-                        <el-input v-model="employeeForm.annualLeave.notes" type="textarea" :rows="2"
-                          placeholder="請輸入特休相關備註" />
-                      </el-form-item>
-                    </div>
-                    <!-- 調休存摺（客戶稱為移休；取代以前人資手動填的「補休時數」）：國定假日適逢休息日／例假自動存入；
-                         管理員可手動給予、扣除、作廢，並填寫員工在「我的調休」看得到的存摺備註（本人、直屬主管與管理員看得到，排班人員看不到） -->
-                    <div class="form-row" data-test="employee-comp-leave">
-                      <div class="full-width-item">
-                        <CompensatoryLeavePanel
-                          v-if="employeeDialogTab === 'salary' && isEditingEmployee && editingEmployeeId"
-                          :employee-id="editingEmployeeId"
-                          title="調休存摺（移休）"
-                          :can-manage="canManageCompLeave"
-                        />
-                        <el-alert v-else-if="!isEditingEmployee" type="info" :closable="false" show-icon
-                          title="員工建立後可在這裡查看調休存摺；國定假日適逢休息日／例假會自動存入調休，管理員也可以手動給予" />
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </el-tab-pane>
-          </el-tabs>
-        </el-form>
-        <template #footer>
-          <div class="dialog-footer">
-            <el-button @click="employeeDialogVisible = false" class="cancel-btn">取消</el-button>
-            <el-button type="primary" :loading="employeeSaving" @click="saveEmployee" class="save-btn">
-              <i class="el-icon-check"></i>
-              儲存員工資料
-            </el-button>
-          </div>
-        </template>
-      </el-dialog>
-
-      <el-dialog v-model="bulkImportDialogVisible" title="批量匯入員工" width="720px" class="bulk-import-dialog"
-        :close-on-click-modal="false" :before-close="handleBulkImportDialogBeforeClose">
-        <div class="bulk-import-header">
+    <!-- 批量匯入：1 準備檔案 → 2 選擇檔案（立刻預覽）→ 3 匯入 → 結果 -->
+    <el-dialog v-model="bulkImportDialogVisible" title="批量匯入員工" width="760px"
+      top="5vh" class="bulk-import-dialog" :fullscreen="isMobile" :close-on-click-modal="false"
+      :before-close="handleBulkImportDialogBeforeClose">
+      <template v-if="!bulkImportDone">
+        <section class="bulk-import-step">
+          <h3 class="bulk-import-step__title">1. 準備檔案</h3>
           <el-alert type="info" show-icon :closable="false">
             <template #title>
               下載範本後依欄位填寫資料，或直接使用範本內建的 5 筆示範資料測試匯入流程。
             </template>
-            <div class="template-link">
-              <i class="el-icon-document"></i>
-              <el-button type="primary" link data-test="bulk-import-template-download"
-                @click="downloadBulkImportTemplate">
-                下載匯入範本
-              </el-button>
-            </div>
+            <div>必填欄位：{{ bulkImportRequiredFieldNames.join('、') }}；沒有設定預設登入密碼時，身分證號也必填（作為初始密碼）。</div>
           </el-alert>
-        </div>
+          <div class="bulk-import-step__actions">
+            <el-button data-test="bulk-import-template-download" @click="downloadBulkImportTemplate">下載匯入範本</el-button>
+            <el-button link type="primary" data-test="bulk-import-field-guide-toggle"
+              @click="bulkImportFieldGuideVisible = !bulkImportFieldGuideVisible">
+              {{ bulkImportFieldGuideVisible ? '收合欄位說明' : '查看欄位說明' }}
+            </el-button>
+          </div>
+          <div v-if="bulkImportFieldGuideVisible" class="bulk-import-guide" data-test="bulk-import-field-guide">
+            <table class="bulk-import-guide__table">
+              <thead>
+                <tr>
+                  <th>Excel 欄位（英文）</th>
+                  <th>欄位說明</th>
+                  <th>必填</th>
+                </tr>
+              </thead>
+              <tbody v-for="section in bulkImportTemplateSections" :key="section.title">
+                <tr class="bulk-import-guide__group">
+                  <td colspan="3">{{ section.title }}</td>
+                </tr>
+                <tr v-for="field in section.fields" :key="field.key">
+                  <td><code class="bulk-import-header-code">{{ field.header }}</code></td>
+                  <td>{{ field.displayDescription || field.description || field.label || field.header }}</td>
+                  <td>{{ field.required ? '必填' : '' }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
 
-        <div class="bulk-import-upload">
+        <section class="bulk-import-step">
+          <h3 class="bulk-import-step__title">2. 選擇檔案</h3>
           <el-upload drag action="" :auto-upload="false" accept=".xlsx,.csv" :file-list="bulkImportUploadFileList"
-            :limit="1" :on-change="handleBulkImportFileChange" :on-remove="handleBulkImportFileRemove">
-            <i class="el-icon-upload"></i>
+            :limit="1" :on-change="handleBulkImportFileChange" :on-remove="handleBulkImportFileRemove"
+            :on-exceed="handleBulkImportFileExceed" :disabled="bulkImportLoading">
             <div class="el-upload__text">
               將檔案拖曳至此或 <em>點此選擇</em>
             </div>
-            <div class="el-upload__tip">支援 .xlsx、.csv 檔案格式，檔案大小請勿超過 5MB</div>
+            <template #tip>
+              <div class="hr-hint">支援 .xlsx、.csv，檔案大小上限 5MB；已選檔案時再選一個即可更換</div>
+            </template>
           </el-upload>
-        </div>
+        </section>
 
-        <div class="bulk-import-form">
-          <h3 class="bulk-import-subtitle">欄位格式與必填說明</h3>
-          <p class="bulk-import-description">
-            系統已預先套用官方批量匯入 Excel 模板，請依下列欄位填寫資料後再上傳檔案。
-          </p>
-          <el-alert type="warning" show-icon class="bulk-import-required-alert" :closable="false">
-            <template #title>必填欄位：{{ bulkImportRequiredFieldNames.join('、') }}</template>
-            <div>若未提供必填欄位資料，匯入時將提示錯誤並中止處理。</div>
-          </el-alert>
-
-          <section v-for="section in bulkImportTemplateSections" :key="section.title" class="bulk-import-section">
-            <h4 class="bulk-import-section-title">{{ section.title }}</h4>
-            <el-table :data="section.fields" border size="small" class="bulk-import-table">
-              <el-table-column prop="header" label="Excel 欄位 (英文)" width="220">
-                <template #default="{ row }">
-                  <code class="bulk-import-header-code">{{ row.header }}</code>
-                </template>
-              </el-table-column>
-              <el-table-column prop="displayDescription" label="欄位說明" min-width="300">
-                <template #default="{ row }">
-                  {{ row.displayDescription || row.description || row.label || row.header }}
-                </template>
-              </el-table-column>
-              <el-table-column label="是否必填" width="120" align="center">
-                <template #default="{ row }">
-                  <el-tag v-if="row.required" type="danger" size="small">必填</el-tag>
-                  <span v-else class="bulk-import-optional-text">選填</span>
-                </template>
-              </el-table-column>
-            </el-table>
-          </section>
-
-          <h3 class="bulk-import-subtitle bulk-import-options-title">匯入參數設定</h3>
-          <el-form :model="bulkImportForm" label-width="150px">
-            <el-form-item label="匯入預設權限" required>
-              <el-select v-model="bulkImportForm.options.defaultRole" placeholder="請選擇預設權限">
-                <el-option v-for="role in ROLE_OPTIONS" :key="role.value" :label="role.label" :value="role.value" />
-              </el-select>
-            </el-form-item>
-            <el-form-item label="預設登入密碼">
-              <el-input v-model="bulkImportForm.options.resetPassword" type="password" show-password
-                placeholder="未設定則預設為該員工的身分證字號" />
-            </el-form-item>
-            <el-form-item label="寄發通知信">
-              <el-switch v-model="bulkImportForm.options.sendWelcomeEmail" />
-            </el-form-item>
-            <el-form-item label="更新已存在的員工資料">
-              <div class="bulk-import-update-option">
-                <el-switch v-model="bulkImportForm.options.updateExisting" />
-                <div class="bulk-import-update-hint">
-                  開啟後，以員工編號（找不到時以 Email）比對系統裡已有的員工：已有的人「更新」檔案裡有填的欄位，
+        <section class="bulk-import-step">
+          <h3 class="bulk-import-step__title">3. 匯入設定</h3>
+          <el-form :model="bulkImportForm" label-position="top" class="bulk-import-options">
+            <div class="form-grid">
+              <el-form-item label="新員工的系統權限" required>
+                <el-select v-model="bulkImportForm.options.defaultRole" placeholder="請選擇預設權限">
+                  <el-option v-for="role in ROLE_OPTIONS" :key="role.value" :label="role.label" :value="role.value" />
+                </el-select>
+              </el-form-item>
+              <el-form-item label="預設登入密碼">
+                <el-input v-model="bulkImportForm.options.resetPassword" type="password" show-password
+                  autocomplete="new-password" placeholder="未設定則為該員工的身分證號" />
+              </el-form-item>
+              <el-form-item label="更新已存在的員工資料" class="span-all">
+                <el-switch v-model="bulkImportForm.options.updateExisting" data-test="bulk-import-update-existing" />
+                <div v-if="!bulkImportForm.options.updateExisting" class="hr-hint">
+                  未開啟時，只要檔案裡有人已經存在就會停止匯入。
+                </div>
+                <div v-else class="hr-hint bulk-import-update-hint">
+                  以員工編號（找不到時以 Email）比對系統裡已有的員工：已有的人「更新」檔案裡有填的欄位，
                   沒有的人才「新增」。檔案裡空白的欄位不會清掉原有資料；帳號、權限、Email 與密碼不會被更動。
                   例外：簽核標籤、簽核角色、簽核層級只要檔案裡有這個欄位就以檔案為準（填了會取代原有設定、儲存格空白會清空）。
-                  未開啟時，只要有人已存在就會停止匯入。
                 </div>
-              </div>
-            </el-form-item>
-          </el-form>
-        </div>
-
-        <div class="bulk-import-result"
-          v-if="bulkImportPreview.length || bulkImportErrors.length || bulkImportWarnings.length">
-          <el-alert v-if="bulkImportErrors.length" type="warning" :closable="false" show-icon class="bulk-import-error">
-            <template #title>匯入時發現以下問題，請確認後重新處理：</template>
-            <ul class="error-list">
-              <li v-for="(error, idx) in bulkImportErrors" :key="idx">{{ error }}</li>
-            </ul>
-          </el-alert>
-
-          <el-alert v-if="bulkImportWarnings.length" type="info" :closable="false" show-icon
-            class="bulk-import-warning">
-            <template #title>匯入已完成，但有 {{ bulkImportWarnings.length }} 項資料已自動調整或略過，請抽查確認：</template>
-            <ul class="error-list">
-              <li v-for="(warning, idx) in bulkImportWarnings" :key="idx">{{ warning }}</li>
-            </ul>
-          </el-alert>
-
-          <div v-if="bulkImportPreview.length" class="bulk-import-preview">
-            <h4>匯入預覽</h4>
-            <el-table :data="bulkImportPreview" size="small" height="240">
-              <el-table-column v-if="bulkImportPreview.some(item => item.action)" label="處理" width="80">
-                <template #default="{ row }">
-                  <el-tag :type="row.action === 'updated' ? 'warning' : 'success'" size="small">
-                    {{ row.action === 'updated' ? '更新' : '新增' }}
-                  </el-tag>
-                </template>
-              </el-table-column>
-              <el-table-column prop="employeeNo" label="員工編號" width="140" />
-              <el-table-column prop="name" label="姓名" width="140" />
-              <el-table-column prop="department" label="部門" min-width="120" />
-              <el-table-column prop="role" label="權限" width="120" />
-              <el-table-column prop="email" label="Email" min-width="160" />
-            </el-table>
-          </div>
-        </div>
-
-        <template #footer>
-          <el-button @click="handleBulkImportDialogCancel">取消</el-button>
-          <el-button type="primary" :loading="bulkImportLoading" :disabled="!isBulkImportReady || bulkImportLoading"
-            @click="submitBulkImport">
-            開始匯入
-          </el-button>
-        </template>
-      </el-dialog>
-
-      <el-dialog v-model="referenceMappingDialogVisible" :title="referenceMappingDialogMessage || '補齊參照對應'"
-        width="640px" class="reference-mapping-dialog" :close-on-click-modal="false">
-        <p class="reference-mapping-tip">
-          請為下列資料選擇對應的既有項目，或設定忽略後重新嘗試匯入。
-        </p>
-
-        <!-- 外層先用 v-if 包住，裡面再單純 v-for -->
-        <div v-if="referenceMappingDialogVisible">
-          <!-- ✅ 用預先算好的 sections 來畫，避免模板裡層層 ?. -->
-          <!-- Vue 3 的 v-if 優先權高於 v-for，兩者寫在同一個元素上時 v-for 的
-               區域變數（這裡是 section）在 v-if 求值當下還不存在，整段永遠不會
-               渲染。改用 template v-for 搭配內層元素的 v-if 才能各自判斷每個
-               section 是否有資料要顯示。 -->
-          <template v-for="section in referenceMappingSectionsForUI" :key="section.type">
-            <div v-if="section && Array.isArray(section.values) && section.values.length"
-              class="reference-mapping-section">
-              <h4 class="reference-mapping-title">
-                {{ getReferenceMappingLabel(section.type) }}對應
-              </h4>
-
-              <div v-for="entry in section.values" :key="getReferenceEntryKey(entry)" class="reference-mapping-item">
-                <div class="reference-mapping-info">
-                  <span class="reference-mapping-value">
-                    {{ entry.value || '（空值）' }}
-                  </span>
-                  <span class="reference-mapping-rows">
-                    出現於第 {{ (entry.rows || []).join('、') }} 列
-                  </span>
-                </div>
-
-                <el-radio-group v-model="getRefSel(section.type, getReferenceEntryKey(entry)).mode"
-                  class="reference-mapping-mode">
-                  <el-radio label="map">指定既有資料</el-radio>
-                  <el-radio label="ignore">忽略此次匯入</el-radio>
-                </el-radio-group>
-
-                <el-select v-if="getRefSel(section.type, getReferenceEntryKey(entry)).mode === 'map'"
-                  v-model="getRefSel(section.type, getReferenceEntryKey(entry)).targetId" placeholder="請選擇既有項目"
-                  class="reference-mapping-select" filterable clearable>
-                  <el-option v-for="option in section.options" :key="option.id"
-                    :label="buildReferenceOptionLabel(section.type, option)" :value="option.id" />
-                </el-select>
-              </div>
+              </el-form-item>
             </div>
-          </template>
+          </el-form>
+        </section>
+      </template>
 
-          <!-- ✅ 單一空狀態邏輯，避免重複條件 -->
-          <div v-if="!hasPendingReferenceMappings" class="reference-mapping-empty">
-            所有參照皆已處理，請重新送出匯入。
-          </div>
+      <div class="bulk-import-result" data-test="bulk-import-result"
+        v-if="bulkImportDone || bulkImportPreview.length || bulkImportErrors.length || bulkImportErrorMessage || bulkImportWarnings.length">
+        <el-alert v-if="bulkImportDone" type="success" :closable="false" show-icon class="bulk-import-done"
+          data-test="bulk-import-done">
+          <template #title>{{ bulkImportDoneTitle }}</template>
+          <div>新帳號的登入帳號是員工編號；初始密碼是{{ bulkImportUsedDefaultPassword ? '剛才設定的預設登入密碼' : '該員工的身分證號' }}，請提醒員工登入後變更密碼。</div>
+        </el-alert>
+
+        <el-alert v-if="bulkImportErrors.length || bulkImportErrorMessage" type="error" :closable="false" show-icon class="bulk-import-error"
+          data-test="bulk-import-errors">
+          <template #title>{{ bulkImportErrorTitle }}</template>
+          <ul v-if="bulkImportErrors.length" class="error-list">
+            <li v-for="(error, idx) in bulkImportErrors" :key="idx">{{ error }}</li>
+          </ul>
+        </el-alert>
+
+        <el-alert v-if="bulkImportWarnings.length" type="warning" :closable="false" show-icon
+          class="bulk-import-warning" data-test="bulk-import-warnings">
+          <template #title>匯入已完成，但有 {{ bulkImportWarnings.length }} 項資料已自動調整或略過，請抽查確認：</template>
+          <ul class="error-list">
+            <li v-for="(warning, idx) in bulkImportWarnings" :key="idx">{{ warning }}</li>
+          </ul>
+        </el-alert>
+
+        <div v-if="bulkImportPreview.length" class="bulk-import-preview">
+          <h4 class="bulk-import-preview__title">
+            {{ bulkImportDone ? '匯入結果' : `預覽（共 ${bulkImportPreview.length} 筆，尚未匯入）` }}
+          </h4>
+          <p v-if="!bulkImportDone && bulkImportColumnSummary" class="hr-hint bulk-import-columns" data-test="bulk-import-columns">
+            會匯入檔案裡的 {{ bulkImportColumnSummary.recognized.length }} 個欄位：{{ bulkImportColumnSummary.recognized.map(config => config.label).join('、') }}。
+            <span v-if="bulkImportColumnSummary.unknown.length" class="hr-hint--warning">
+              檔案裡系統不認得、不會匯入的欄位：{{ bulkImportColumnSummary.unknown.join('、') }}
+            </span>
+          </p>
+          <el-table :data="bulkImportPreview" size="small" max-height="260">
+            <el-table-column v-if="bulkImportPreview.some(item => item.action)" label="處理" width="72">
+              <template #default="{ row }">
+                <el-tag :type="row.action === 'updated' ? 'warning' : 'success'" size="small" disable-transitions>
+                  {{ row.action === 'updated' ? '更新' : '新增' }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column prop="employeeNo" label="員工編號" width="120" />
+            <el-table-column prop="name" label="姓名" width="120" />
+            <el-table-column label="部門" min-width="120" show-overflow-tooltip>
+              <template #default="{ row }">{{ row.departmentName || departmentName(row.department) }}</template>
+            </el-table-column>
+            <el-table-column v-if="bulkImportDone" label="權限" width="88">
+              <template #default="{ row }">{{ getRoleLabel(row.role) }}</template>
+            </el-table-column>
+            <el-table-column v-else prop="status" label="人員狀態" width="110" />
+            <el-table-column prop="email" label="Email" min-width="160" show-overflow-tooltip />
+          </el-table>
         </div>
+      </div>
 
-        <template #footer>
-          <el-button @click="referenceMappingDialogVisible = false" :disabled="referenceMappingSubmitting">
-            稍後再處理
-          </el-button>
-          <el-button type="primary" :loading="referenceMappingSubmitting" @click="confirmReferenceMappings">
-            套用設定後重新匯入
+      <template #footer>
+        <template v-if="bulkImportDone">
+          <el-button data-test="bulk-import-again" @click="restartBulkImport">匯入其他檔案</el-button>
+          <el-button type="primary" data-test="bulk-import-finish" @click="finishBulkImport">完成</el-button>
+        </template>
+        <template v-else>
+          <el-button @click="handleBulkImportDialogCancel">取消</el-button>
+          <el-button type="primary" data-test="bulk-import-submit" :loading="bulkImportLoading"
+            :disabled="!canSubmitBulkImport || bulkImportLoading" @click="submitBulkImport()">
+            {{ bulkImportPreview.length ? `匯入 ${bulkImportPreview.length} 筆` : '匯入' }}
           </el-button>
         </template>
-      </el-dialog>
+      </template>
+    </el-dialog>
 
+    <el-dialog v-model="referenceMappingDialogVisible" title="補齊機構／部門對應"
+      width="640px" class="reference-mapping-dialog" :close-on-click-modal="false">
+      <p class="reference-mapping-tip">
+        檔案裡有系統對不到的機構、部門或小單位。請為每一筆指定既有的項目，或選擇忽略（該欄位留空）後重新匯入。
+      </p>
 
-    </div>
-  </el-tab-pane>
+      <!-- 外層先用 v-if 包住，裡面再單純 v-for -->
+      <div v-if="referenceMappingDialogVisible">
+        <!-- Vue 3 的 v-if 優先權高於 v-for，兩者寫在同一個元素上時 v-for 的
+             區域變數（這裡是 section）在 v-if 求值當下還不存在，整段永遠不會
+             渲染。改用 template v-for 搭配內層元素的 v-if 才能各自判斷每個
+             section 是否有資料要顯示。 -->
+        <template v-for="section in referenceMappingSectionsForUI" :key="section.type">
+          <div v-if="section && Array.isArray(section.values) && section.values.length"
+            class="reference-mapping-section">
+            <h4 class="reference-mapping-title">
+              {{ getReferenceMappingLabel(section.type) }}對應
+            </h4>
+
+            <div v-for="entry in section.values" :key="getReferenceEntryKey(entry)" class="reference-mapping-item">
+              <div class="reference-mapping-info">
+                <span class="reference-mapping-value">
+                  {{ entry.value || '（空值）' }}
+                </span>
+                <span class="reference-mapping-rows">
+                  出現於第 {{ (entry.rows || []).join('、') }} 列
+                </span>
+              </div>
+
+              <el-radio-group v-model="getRefSel(section.type, getReferenceEntryKey(entry)).mode"
+                class="reference-mapping-mode">
+                <el-radio value="map">指定既有資料</el-radio>
+                <el-radio value="ignore">忽略（這個欄位留空）</el-radio>
+              </el-radio-group>
+
+              <el-select v-if="getRefSel(section.type, getReferenceEntryKey(entry)).mode === 'map'"
+                v-model="getRefSel(section.type, getReferenceEntryKey(entry)).targetId" placeholder="請選擇既有項目"
+                class="reference-mapping-select" filterable clearable value-on-clear="">
+                <el-option v-for="option in section.options" :key="option.id"
+                  :label="buildReferenceOptionLabel(section.type, option)" :value="option.id" />
+              </el-select>
+            </div>
+          </div>
+        </template>
+
+        <div v-if="!hasPendingReferenceMappings" class="reference-mapping-empty">
+          所有參照皆已處理，請重新送出匯入。
+        </div>
+      </div>
+
+      <template #footer>
+        <el-button @click="referenceMappingDialogVisible = false" :disabled="referenceMappingSubmitting">
+          取消
+        </el-button>
+        <el-button type="primary" :loading="referenceMappingSubmitting" @click="confirmReferenceMappings">
+          套用並重新匯入
+        </el-button>
+      </template>
+    </el-dialog>
+  </div>
 </template>
 
 <script setup>
@@ -1337,10 +1094,12 @@ import { ref, onMounted, onBeforeUnmount, computed, watch, reactive, nextTick } 
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { apiFetch, importEmployeesBulk } from '../../api'
-import { REQUIRED_FIELDS } from './requiredFields'
 import EmployeeAvatar from '../EmployeeAvatar.vue'
+import PageHeader from '../PageHeader.vue'
 import CompensatoryLeavePanel from '../CompensatoryLeavePanel.vue'
 import { resolveUserRole } from '../../utils/roleResolver'
+import { taiwanDateKey } from '../../utils/dateFormatter'
+import { useIsMobile } from '../../utils/useIsMobile'
 import { LEGACY_ANNUAL_LEAVE_DAYS_MAX, readAnnualLeaveHours } from '../../utils/leaveBalance'
 import { HOLIDAY_REGIME_OPTIONS } from '../../constants/holidayCalendar'
 import { useProfileStore } from '../../stores/profile'
@@ -1355,42 +1114,79 @@ import {
 // 常數定義
 const CURRENT_YEAR = new Date().getFullYear()
 
+// 畫面寬度小於 768px（手機）：對話框改全螢幕、篩選收合、不顯示勾選欄與刪除
+const isMobile = useIsMobile()
+// 畫面寬度小於 1024px（平板直放、手機）：側邊選單佔掉一部分寬度，清單只留關鍵欄位（部門／小單位併到姓名下方）
+const isCompactList = useIsMobile('(max-width: 1023px)')
+
 // 👉 搜尋查詢字串
 const searchQuery = ref('')
 
-// 👉 目前選擇的部門（下拉選單綁這個）
+// 👉 清單篩選（機構／部門／小單位／在職狀態／系統權限）。搜尋與篩選都交給伺服器查詢：
+// 清單是分頁載入的，只在目前這一頁裡過濾會漏掉其他頁的人；伺服器的搜尋還包含職稱，
+// 以前在前端又用姓名／編號／Email 過濾一次，只靠職稱找到的人會被濾掉，畫面變成空白但筆數不是 0
+const organizationFilter = ref('')
 const departmentFilter = ref(null)
+const subDepartmentFilter = ref('')
+const statusFilter = ref('')
+const roleFilter = ref('')
+const EMPLOYMENT_STATUS_OPTIONS = ['正職員工', '試用期員工', '離職員工', '留職停薪']
 
-// 👉 下拉選單的部門列表
+const sameId = (a, b) => String(a ?? '') === String(b ?? '')
+
+// 👉 下拉選單的部門列表：選了機構就只列該機構的部門；沒選機構而且有多個機構時，名稱後面加上機構方便分辨
 const departmentFilterOptions = computed(() => {
-  return departmentList.value.map(department => ({
-    value: department._id,
-    label: `${department.name}${department.code ? `(${department.code})` : ''}`,
-  }))
-})
-
-// 👉 真正丟給表格用的資料
-const filteredEmployeeList = computed(() => {
-  let result = employeeList.value
-
-  // 搜尋過濾
-  if (searchQuery.value && searchQuery.value.trim()) {
-    const query = searchQuery.value.trim().toLowerCase()
-    result = result.filter(emp => {
-      const name = (emp.name || '').toLowerCase()
-      const employeeNo = (emp.employeeNo || emp.employeeId || '').toLowerCase()
-      const email = (emp.email || '').toLowerCase()
-      return name.includes(query) || employeeNo.includes(query) || email.includes(query)
+  const organization = organizationFilter.value
+  const showOrganization = !organization && orgList.value.length > 1
+  return departmentList.value
+    .filter(department => !organization || sameId(department.organization, organization))
+    .map(department => {
+      const orgName = showOrganization ? organizationName(department.organization) : ''
+      return { value: department._id, label: orgName ? `${department.name}（${orgName}）` : department.name }
     })
-  }
-
-  // 部門過濾
-  if (departmentFilter.value) {
-    result = result.filter(emp => emp.department === departmentFilter.value)
-  }
-
-  return result
 })
+
+// 👉 下拉選單的小單位列表：選了部門就只列該部門的小單位；沒選部門時列出（所選機構的）全部小單位並帶上部門名稱
+const subDepartmentFilterOptions = computed(() => {
+  const department = departmentFilter.value
+  const organization = organizationFilter.value
+  return subDepartmentList.value
+    .filter(unit => {
+      if (department) return sameId(unit.department, department)
+      if (!organization) return true
+      const parent = departmentList.value.find(item => sameId(item._id, unit.department))
+      return Boolean(parent) && sameId(parent.organization, organization)
+    })
+    .map(unit => {
+      const deptName = department ? '' : departmentName(unit.department)
+      return { value: unit._id, label: deptName ? `${deptName}／${unit.name}` : unit.name }
+    })
+})
+
+const hasActiveEmployeeFilters = computed(() => Boolean(
+  String(searchQuery.value ?? '').trim() ||
+  organizationFilter.value ||
+  departmentFilter.value ||
+  subDepartmentFilter.value ||
+  statusFilter.value ||
+  roleFilter.value
+))
+
+// 搜尋以外、已經套用的篩選數量（手機的「篩選」按鈕上顯示）
+const activeEmployeeFilterCount = computed(() =>
+  [organizationFilter.value, departmentFilter.value, subDepartmentFilter.value, statusFilter.value, roleFilter.value]
+    .filter(Boolean).length
+)
+const mobileFiltersVisible = ref(false)
+
+function resetEmployeeFilters() {
+  searchQuery.value = ''
+  organizationFilter.value = ''
+  departmentFilter.value = null
+  subDepartmentFilter.value = ''
+  statusFilter.value = ''
+  roleFilter.value = ''
+}
 
 
 // ========= 新增：Excel/CSV 讀取與預覽核心 =========
@@ -1469,16 +1265,6 @@ async function fileToArrayBuffer(file) {
   })
 }
 
-// 判斷「這一列」是否是你模板中的「第二行中文說明列」（需被忽略）
-function isTemplateDescriptionRow(obj) {
-  // 只要某些欄位帶有「必填」或括號說明，多半就是說明列
-  const vList = Object.values(obj || {}).map(v => (v == null ? '' : String(v)))
-  if (!vList.length) return false
-  const hit = vList.some(v => /必填|\(|\)|已婚|未婚|離婚|喪偶|TRUE|FALSE/.test(v))
-  // 中文說明列通常很多欄位都不是 email/日期/數字，這樣的粗判斷夠用
-  return hit
-}
-
 // 將 1990/3/2、1990-3-2 這類轉為 1990-03-02；非日期字串原樣回傳
 function normalizeDateLike(value) {
   if (value == null || value === '') return ''
@@ -1512,14 +1298,41 @@ function toCommaArray(value) {
     .filter(Boolean)
 }
 
+// 最近一次解析檔案得到的：資料從第幾列開始（表頭 1 列＋中文說明 0 或 1 列）、第 1 列的欄位名稱
+let lastParsedDataRowOffset = 2
+let lastParsedHeaders = []
+
+// 第 2 列是不是範本的「中文說明列」：與伺服器（employeeBulkImportController 的 CHINESE_HEADER_HINTS）用同一組文字、
+// 同樣要有 3 格以上相同才算，兩邊才會對同一份檔案得到同樣的筆數與列號。
+// 以前前端一律把第 2 列當說明列丟掉：沒有說明列的檔案，預覽少一筆、列號也差一列，但伺服器其實會匯入那一筆
+const BULK_IMPORT_DESCRIPTION_ROW_HINTS = new Set([
+  '員工編號',
+  '姓名',
+  '電子郵件 (必填唯一)',
+  '手機號碼',
+  '部門 ID',
+  '主管員工 ID',
+  '人員狀態 (正職員工/試用期/離職/留職停薪)'
+])
+
+function isBulkImportDescriptionRow(cells) {
+  if (!Array.isArray(cells)) return false
+  const matches = cells.filter(cell => BULK_IMPORT_DESCRIPTION_ROW_HINTS.has(String(cell ?? '').trim())).length
+  return matches >= 3
+}
+
 function sheetToObjects(XLSX, ws) {
   if (!ws) return []
   const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' })
   if (!Array.isArray(rows) || rows.length === 0) return []
 
-  // 第1行：英文表頭；第2行：中文說明（丟棄）；第3行起：資料
+  // 第1行：英文表頭；第2行：中文說明（丟棄）；第3行起：資料。
+  // 沒有中文說明列的檔案（自己整理的精簡檔）第 2 行就是資料，伺服器也是這樣判斷，預覽的筆數與列號要一致
   const headerRow = (rows[0] || []).map(h => stripBOM(String(h ?? '').trim()))
-  const dataRows = rows.slice(2)
+  const hasDescriptionRow = isBulkImportDescriptionRow(rows[1])
+  lastParsedDataRowOffset = hasDescriptionRow ? 2 : 1
+  lastParsedHeaders = headerRow.filter(Boolean)
+  const dataRows = rows.slice(hasDescriptionRow ? 2 : 1)
 
   const objects = []
   for (const r of dataRows) {
@@ -1551,19 +1364,23 @@ async function parseFileToRowObjects(file) {
   const XLSX = await loadXLSX()
   const buf = await fileToArrayBuffer(file)
 
-  // 1) 先用 xlsx 二進位路徑
-  try {
-    const wb = XLSX.read(buf, { type: 'array', codepage: 65001 })
-    const name = wb.SheetNames?.[0]
-    const ws = name ? wb.Sheets[name] : null
-    const objs = sheetToObjects(XLSX, ws)
-    if (objs.length) {
-      // 自動修正 mapping（避免大小寫/空白差異）
-      autoFixColumnMappingsFromHeader(Object.keys(objs[0]))
-      return objs
+  // 1) Excel 檔用 xlsx 的二進位路徑。CSV 不走這條路：以位元組讀 CSV 需要指定 codepage，
+  //    而打包進來的 xlsx 沒有 codepage 對照表，每讀一次就在主控台印一則錯誤；不指定的話沒有 BOM 的 UTF-8 檔會變成亂碼。
+  //    CSV 改由下面的文字路徑處理（自己用 TextDecoder 解碼，有沒有 BOM 都正確）
+  if (getFileExt(file) !== 'csv') {
+    try {
+      const wb = XLSX.read(buf, { type: 'array' })
+      const name = wb.SheetNames?.[0]
+      const ws = name ? wb.Sheets[name] : null
+      const objs = sheetToObjects(XLSX, ws)
+      if (objs.length) {
+        // 自動修正 mapping（避免大小寫/空白差異）
+        autoFixColumnMappingsFromHeader(Object.keys(objs[0]))
+        return objs
+      }
+    } catch (e) {
+      // 落到文字路徑
     }
-  } catch (e) {
-    // 落到文字路徑
   }
 
   // 2) 文字路徑：處理 UTF-8 / UTF-16LE、tab 分隔
@@ -1573,8 +1390,10 @@ async function parseFileToRowObjects(file) {
   if (tsvRows.length) {
     const headerRow = (tsvRows[0] || []).map(h => stripBOM(String(h ?? '').trim()))
     const descRow = tsvRows[1] || []
-    // 判斷第二列是否中文說明列（含「必填」等）；若是則丟掉
-    const isDesc = descRow.some(v => /必填|\(|\)|已婚|未婚|離婚|喪偶|TRUE|FALSE/.test(String(v || '')))
+    // 判斷第二列是否中文說明列（與 xlsx / csv 的路徑、伺服器用同一個規則）；若是則丟掉
+    const isDesc = isBulkImportDescriptionRow(descRow)
+    lastParsedDataRowOffset = isDesc ? 2 : 1
+    lastParsedHeaders = headerRow.filter(Boolean)
     const dataRows = isDesc ? tsvRows.slice(2) : tsvRows.slice(1)
 
     // 自動修正 mapping
@@ -1722,12 +1541,14 @@ function validateRequired(mappedRows, { rowOffset = 0 } = {}) {
 
 
 // 產生你畫面需要的「簡易預覽」欄位（表格目前只顯示這些）
+// 匯入前的預覽顯示檔案裡的「人員狀態」（status）；role 是匯入後伺服器回傳的系統權限，匯入前沒有
 function buildPreviewList(mappedRows) {
   return mappedRows.map(o => ({
     employeeNo: o.employeeNo || o.employeeId || '',
     name: o.name || '',
     department: o.department || '',
-    role: o.employmentStatus || o.status || '',
+    status: o.employmentStatus || o.status || '',
+    role: '',
     email: o.email || ''
   }))
 }
@@ -1741,17 +1562,25 @@ async function parseAndPreviewBulkImport(file) {
       return { ok: false }
     }
 
+    lastParsedHeaders = []
+    lastParsedDataRowOffset = 2
     const rowObjects = await parseFileToRowObjects(file) // 英文 header 的列
     if (!rowObjects.length) {
+      bulkImportFileHeaders.value = []
       ElMessage.warning('檔案內容為空，或格式不符（請使用範本）')
       return { ok: false }
     }
+    bulkImportFileHeaders.value = [...lastParsedHeaders]
 
     // 依使用者「欄位對應」把每一列轉成系統欄位形狀
     const mappedRows = rowObjects.map(r => mapRowToFormShape(r, bulkImportForm.columnMappings))
 
-    // ✅ 指定 offset：因為第 1、2 列是表頭與說明
-    const reqErrors = validateRequired(mappedRows, { rowOffset: 2 })
+    // 整個必填欄位都不在檔案裡：說明缺哪一欄就好，不必每一列都列一次；
+    // 欄位都在才逐列檢查有沒有空白（列號＝表頭 1 列＋中文說明 0 或 1 列之後）
+    const missingColumns = bulkImportColumnSummary.value?.missingRequired ?? []
+    const reqErrors = missingColumns.length
+      ? [`檔案缺少必填欄位：${missingColumns.map(config => `${config.label}（${config.header}）`).join('、')}`]
+      : validateRequired(mappedRows, { rowOffset: lastParsedDataRowOffset })
 
     // 建立預覽
     const preview = buildPreviewList(mappedRows)
@@ -1759,6 +1588,9 @@ async function parseAndPreviewBulkImport(file) {
     // 回填到 UI 狀態
     bulkImportPreview.value = preview
     bulkImportErrors.value = reqErrors
+    bulkImportErrorMessage.value = ''
+    // 檔案本身缺必填資料：送出去也只會被伺服器退回，先擋下來請使用者修正檔案
+    bulkImportFileInvalid.value = reqErrors.length > 0
     return { ok: true }
   } catch (err) {
     console.error('解析匯入檔失敗：', err)
@@ -1788,7 +1620,12 @@ async function handleBulkImportFileChange(uploadFile) {
 
   const isReplacingExistingFile = Boolean(previousFile) && previousFile !== raw
 
-  if (isReplacingExistingFile && hasBulkImportProgress.value) {
+  // 只有已經做過「參照對應」（手動指定機構／部門對應）時才需要確認：那是使用者花時間做的設定，換檔會清掉。
+  // 單純換一份檔案（例如修正後重新選擇）不必多問一次
+  const hasReferenceMappingWork =
+    Object.values(resolvedReferenceValueMappings).some(map => Object.keys(map || {}).length > 0) ||
+    Object.values(resolvedReferenceIgnores).some(list => Array.isArray(list) && list.length > 0)
+  if (isReplacingExistingFile && hasReferenceMappingWork) {
     try {
       await ElMessageBox.confirm(
         '重新選擇檔案將清除目前的預覽資料與參照對應設定，是否繼續？',
@@ -1823,6 +1660,20 @@ function handleBulkImportFileRemove() {
     resetMappings: false,
     resetResolvedReferences: true,
     referenceKeys: REFERENCE_MAPPING_DEFAULT_KEYS
+  })
+}
+
+// 已經選了檔案時再選一個：el-upload 的 limit=1 只會丟出這個事件、把新檔案丟掉，
+// 使用者得先找到小小的移除鈕才能換檔。這裡直接當成「更換檔案」處理
+async function handleBulkImportFileExceed(files) {
+  const picked = Array.from(files || [])[0]
+  if (!picked) return
+  await handleBulkImportFileChange({
+    name: picked.name,
+    size: picked.size,
+    raw: picked,
+    status: 'ready',
+    uid: Date.now()
   })
 }
 
@@ -1911,10 +1762,11 @@ function getOptionLabel(optionsRefOrList, value) {
 }
 
 /* 下拉選單選項：可改由後端「後臺控制 C0x」提供 ------------------------------ */
+// 由權限小到大排列：最常選的「員工」在最前面
 const ROLE_OPTIONS = [
-  { label: '管理員', value: 'admin' },
-  { label: '主管', value: 'supervisor' },
   { label: '員工', value: 'employee' },
+  { label: '主管', value: 'supervisor' },
+  { label: '管理員', value: 'admin' },
 ]
 const BULK_IMPORT_FIELD_CONFIGS = Object.freeze([
   {
@@ -2587,7 +2439,8 @@ const PERMISSION_GRADE_OPTIONS = [
   { level: 'L3', description: '部門主管 / 課長' },
   { level: 'L4', description: '處室主管 / 協理' },
   { level: 'L5', description: '高階決策者 / 最高主管' }
-] // 權限/職等(不可控僅示意)
+] // 權限/職等：伺服器與前端都沒有任何功能讀取這個欄位（只存不用），編輯畫面不再顯示；
+// 已存的值在編輯時原樣送回、匯入與 API 仍然接受。這份對照只用來把舊資料的寫法整理成 L1～L5
 
 const titleOptions = ref([])
 const practiceTitleOptions = ref([])
@@ -2609,6 +2462,80 @@ const bulkImportUploadFileList = ref([])
 const bulkImportPreview = ref([])
 const bulkImportErrors = ref([])
 const bulkImportWarnings = ref([])
+// 伺服器這次回的失敗原因（顯示在錯誤清單的標題，訊息提示消失後仍看得到）
+const bulkImportErrorMessage = ref('')
+// 這份檔案已經匯入成功：畫面改顯示結果，不能再按一次匯入（再送一次只會因為員工已存在而失敗，或在更新模式下重複更新）
+const bulkImportDone = ref(false)
+const bulkImportResult = ref({ created: null, updated: null, usedDefaultPassword: false })
+const bulkImportFieldGuideVisible = ref(false)
+// 選檔後在瀏覽器檢查到必填欄位缺漏（還沒送到伺服器）
+const bulkImportFileInvalid = ref(false)
+// 檔案第 1 列的欄位名稱（讀不出來時是空陣列）
+const bulkImportFileHeaders = ref([])
+// 伺服器本來就允許不存在的欄位（找不到時會改用第 2 列的中文名稱比對，或直接略過）：這些對應一律照送
+const BULK_IMPORT_SERVER_OPTIONAL_KEYS = new Set([
+  'annualLeave.totalHours',
+  'annualLeave.usedHours',
+  'annualLeave.totalDays',
+  'annualLeave.usedDays',
+  'annualLeave.accumulatedLeave',
+  'annualLeave.expiryDate',
+  'annualLeave.compensatoryHours',
+  'laborInsuredSalary',
+  'pensionInsuredSalary',
+  'healthInsuredSalary',
+  'dependentCount',
+  'signTags',
+  'signRole',
+  'signLevel',
+  'holidayRegime',
+  'isIndigenous'
+])
+
+// 檔案裡有哪些欄位會被匯入、缺哪些必填欄位、有哪些欄位名稱系統不認得（不會匯入）
+const bulkImportColumnSummary = computed(() => {
+  const headers = bulkImportFileHeaders.value
+  if (!headers.length) return null
+  const present = new Set(headers.map(normalizeHeaderKey))
+  const matched = new Set()
+  const recognized = []
+  const missingRequired = []
+  BULK_IMPORT_FIELD_CONFIGS.forEach(config => {
+    const header = normalizeHeaderKey(bulkImportForm.columnMappings[config.key] || config.header)
+    if (present.has(header)) {
+      recognized.push(config)
+      matched.add(header)
+    } else if (config.required) {
+      missingRequired.push(config)
+    }
+  })
+  const unknown = headers.filter(header => !/^col_\d+$/.test(header) && !matched.has(normalizeHeaderKey(header)))
+  return { recognized, missingRequired, unknown }
+})
+
+// 送給伺服器的欄位對應：只送檔案裡真的有的欄位。
+// 伺服器對每一個送去的對應都要求檔案裡有那一欄，以前一律送出全部 80 幾個對應，
+// 只要檔案少了任何一個選填欄位（例如只整理了姓名、編號、Email、部門的精簡檔），整份就被退回，
+// 錯誤訊息還是一長串「找不到對應欄位：birthday (birthDate)…」。讀不出表頭時維持原本的做法（全部照送）
+function buildBulkImportMappingsForSubmit() {
+  const summary = bulkImportColumnSummary.value
+  if (!summary) return { ...bulkImportForm.columnMappings }
+  const recognizedKeys = new Set(summary.recognized.map(config => config.key))
+  const requiredKeys = new Set(BULK_IMPORT_REQUIRED_FIELDS)
+  const knownKeys = new Set(BULK_IMPORT_FIELD_CONFIGS.map(config => config.key))
+  const result = {}
+  Object.entries(bulkImportForm.columnMappings).forEach(([key, header]) => {
+    if (
+      !knownKeys.has(key) ||
+      requiredKeys.has(key) ||
+      recognizedKeys.has(key) ||
+      BULK_IMPORT_SERVER_OPTIONAL_KEYS.has(key)
+    ) {
+      result[key] = header
+    }
+  })
+  return result
+}
 const bulkImportForm = reactive({
   columnMappings: { ...DEFAULT_BULK_IMPORT_COLUMN_MAPPINGS },
   options: {
@@ -2623,7 +2550,7 @@ const REFERENCE_MAPPING_DEFAULT_KEYS = Object.freeze(['organization', 'departmen
 const REFERENCE_MAPPING_LABELS = Object.freeze({
   organization: '機構',
   department: '部門',
-  subDepartment: '子部門'
+  subDepartment: '小單位'
 })
 const REFERENCE_MAPPING_KEY_ALIASES = Object.freeze({
   organization: ['organization', 'org', 'organizations'],
@@ -2865,6 +2792,22 @@ const isBulkImportReady = computed(
   () => Boolean(bulkImportFile.value) && missingBulkImportRequiredColumns.value.length === 0
 )
 
+const bulkImportErrorTitle = computed(() => {
+  if (bulkImportErrorMessage.value) return `匯入失敗：${bulkImportErrorMessage.value}`
+  if (bulkImportFileInvalid.value) return '檔案有以下問題，請修正後重新選擇檔案：'
+  return '匯入時發現以下問題，請確認後重新處理：'
+})
+
+const canSubmitBulkImport = computed(() => isBulkImportReady.value && !bulkImportFileInvalid.value)
+
+const bulkImportDoneTitle = computed(() => {
+  const { created, updated } = bulkImportResult.value
+  if (Number.isFinite(updated)) return `匯入完成：新增 ${created ?? 0} 筆、更新 ${updated} 筆`
+  return bulkImportPreview.value.length ? `匯入完成：共 ${bulkImportPreview.value.length} 筆` : '匯入完成'
+})
+
+const bulkImportUsedDefaultPassword = computed(() => bulkImportResult.value.usedDefaultPassword)
+
 const FALLBACK_TITLE_OPTIONS = createOptionListFromStrings([
   '護理師',
   '照顧服務員',
@@ -3085,11 +3028,6 @@ function normalizePermissionGrade(value) {
   return value
 }
 
-function formatPermissionGradeLabel(option) {
-  if (!option) return ''
-  return `${option.level}｜${option.description}`
-}
-
 function formatSignLevelLabel(option) {
   if (!option) return ''
   return `${option.id}｜${option.label}`
@@ -3150,9 +3088,12 @@ function handleSignTagsChange(values) {
 }
 
 /* 狀態 --------------------------------------------------------------------- */
-const employeeDialogTab = ref('account')
+const employeeDialogTab = ref('basic')
 const employeeList = ref([])
 const employeeListLoading = ref(false)
+// 按下「編輯」後正在載入該員工的完整資料（清單顯示 loading，避免以為沒反應又多按幾次）
+const employeeDialogLoading = ref(false)
+const deletingEmployeeId = ref('')
 const employeeTableRef = ref(null)
 const selectedEmployees = ref([])
 const bulkDeleting = ref(false)
@@ -3163,6 +3104,8 @@ const employeePagination = reactive({
   pageSize: 20,
   totalPages: 1,
 })
+// 頁首的統計：全體員工數與在職人數，不隨搜尋／篩選變動（符合條件的筆數顯示在清單下方）
+const employeeStats = reactive({ total: 0, active: 0, loaded: false })
 const departmentList = ref([])
 const subDepartmentList = ref([])
 const orgList = ref([])
@@ -3175,6 +3118,13 @@ let editEmployeeId = ''
 const editingEmployeeId = ref('')
 // 只有管理員能手動給予、扣除、作廢調休（伺服器也只開放管理員）；讀登入者的角色不經過 pinia（這個元件不依賴 store 啟動）
 const canManageCompLeave = computed(() => editingEmployeeId.value !== '' && resolveUserRole({ defaultRole: 'employee' }) === 'admin')
+// 「自動計算加班費」這次開視窗後有沒有被管理員切換過：新增員工時沒切換就不送，由伺服器套用預設值
+const autoOvertimeCalcTouched = ref(false)
+const autoOvertimeCalcHint = computed(() =>
+  !isEditingEmployee.value && !autoOvertimeCalcTouched.value
+    ? '不切換就套用薪資設定的新進員工預設'
+    : '開啟後薪資才依核准的加班申請計算加班費'
+)
 // 編輯視窗打開當下的特休「已使用時數」與已套用的簽核單編號（新增員工時為 null）
 let annualLeaveSnapshot = null
 // 員工照片的顯示（列表頭像、編輯視窗的縮圖）都交給 utils/photoUrl 的共用快取與 EmployeeAvatar；
@@ -3194,14 +3144,35 @@ function revokePhotoPreviews() {
   photoPreviewUrls.clear()
 }
 
-function departmentLabel(id) {
-  const dept = departmentList.value.find(d => d._id === id)
-  return dept ? `${dept.name}(${dept.code})` : id
+// 清單與預覽顯示用的名稱：找得到就顯示名稱；找不到時，看起來像資料庫識別碼的值不顯示（一串 24 碼的字對使用者沒有意義），
+// 其他文字（舊資料直接存名稱、匯入檔裡的部門代碼）原樣顯示
+const looksLikeObjectId = value => /^[0-9a-fA-F]{24}$/.test(String(value ?? ''))
+
+function lookupName(list, id) {
+  if (id === undefined || id === null || id === '') return ''
+  const hit = list.find(item => sameId(item?._id, id))
+  if (hit) return hit.name ?? ''
+  return looksLikeObjectId(id) ? '' : String(id)
 }
 
-function subDepartmentLabel(id) {
-  const sd = subDepartmentList.value.find(s => s._id === id)
-  return sd ? sd.name : id
+const organizationName = id => lookupName(orgList.value, id)
+const departmentName = id => lookupName(departmentList.value, id)
+const subDepartmentName = id => lookupName(subDepartmentList.value, id)
+
+// 清單的「部門／小單位」
+function employeeUnitText(row) {
+  return [departmentName(row?.department), subDepartmentName(row?.subDepartment)].filter(Boolean).join('／')
+}
+
+// 離職、留職停薪的列用淡色，掃清單時一眼分得出來
+function employeeRowClassName({ row }) {
+  return INACTIVE_SUPERVISOR_STATUSES.includes(row?.employmentStatus) ? 'employee-row is-inactive' : 'employee-row'
+}
+
+// 點列就開啟編輯（勾選框那一欄除外；操作欄的按鈕自己會擋掉事件）
+function handleEmployeeRowClick(row, column) {
+  if (column?.type === 'selection' || !row?._id) return
+  openEmployeeDialog(row._id)
 }
 
 function resolveSubDepartmentId(item = {}) {
@@ -3453,7 +3424,8 @@ function toNormalizedOptionValue(value) {
   return typeof value === 'string' ? value : String(value)
 }
 
-function getSalaryItemValueSet() {
+// 字典（C14）目前有的薪資項目
+function getDictionarySalaryItemValueSet() {
   const source = Array.isArray(salaryItemOptions.value) ? salaryItemOptions.value : []
   return new Set(
     source
@@ -3471,6 +3443,25 @@ function getSalaryItemValueSet() {
       })
       .filter(Boolean)
   )
+}
+
+// 編輯中的員工原本就有、但字典裡已經沒有的薪資項目（字典改名或刪除項目之後留下的）。
+// 以前開啟編輯視窗時就把這些項目濾掉，只是改個電話按儲存，員工的薪資項目與金額就被清空了（薪資匯出會讀這些項目）。
+// 現在保留在選項裡並註明，要不要拿掉由人資自己決定
+const preservedSalaryItems = ref([])
+
+function rememberPreservedSalaryItems(values) {
+  const dictionary = getDictionarySalaryItemValueSet()
+  preservedSalaryItems.value = [...new Set(
+    ensureArrayValue(values).map(toNormalizedOptionValue).filter(value => value && !dictionary.has(value))
+  )]
+}
+
+// 可以選的薪資項目：字典裡的，加上這位員工原本就有的
+function getSalaryItemValueSet() {
+  const valueSet = getDictionarySalaryItemValueSet()
+  preservedSalaryItems.value.forEach(value => valueSet.add(value))
+  return valueSet
 }
 
 function filterValidSalaryItems(values) {
@@ -3494,6 +3485,15 @@ function updateAttachmentList(type, index, uploadFiles) {
   if (!Array.isArray(target) || !target[index]) return
   const prefix = getAttachmentPrefix(type, index)
   target[index].fileList = normalizeAttachmentList(uploadFiles, prefix)
+}
+
+// 附件是以 base64 放在員工資料裡一起送出的：太大的檔案在選檔時就擋下來，不要等到按儲存才整份被伺服器拒絕
+function handleAttachmentBeforeUpload(file) {
+  if (Number(file?.size) > ATTACHMENT_MAX_BYTES) {
+    ElMessage.warning(`「${file?.name || '附件'}」超過 1MB，無法上傳；請壓縮後再試`)
+    return false
+  }
+  return true
 }
 
 async function handleAttachmentRequest({ file, onSuccess, onError }) {
@@ -3561,9 +3561,41 @@ function toStringOrEmpty(value) {
   return String(value)
 }
 
+// 日期欄位一律以「台灣的哪一天」（YYYY-MM-DD 字串）放進表單與送出，不經過瀏覽器所在的時區：
+// - 以前日期選擇器給的是 Date 物件（瀏覽器當地的午夜），送出後變成 UTC 時間；瀏覽器不在台灣時區時，
+//   到職日、生日會差一天；批量匯入存的是 UTC 午夜，在台灣以西的時區打開也會顯示成前一天。
+// - 伺服器收到 YYYY-MM-DD 會存成 UTC 午夜，用台灣時間讀回來仍是同一天（薪資、排班都以台灣日期判斷到職／離職日）。
 function toDateOrEmpty(value) {
   if (value === undefined || value === null || value === '') return ''
-  return value
+  if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value.trim())) return value.trim()
+  return taiwanDateKey(value, 'Asia/Taipei')
+}
+
+// 年月欄位（工作經歷的到職／離職年月）：YYYY-MM
+function toMonthOrEmpty(value) {
+  if (typeof value === 'string' && /^\d{4}-\d{2}$/.test(value.trim())) return value.trim()
+  return toDateOrEmpty(value).slice(0, 7)
+}
+
+function formatExperiencesForForm(list = []) {
+  if (!Array.isArray(list)) return []
+  return list.map((item = {}) => ({
+    unit: item?.unit ?? item?.organization ?? '',
+    title: item?.title ?? '',
+    start: toMonthOrEmpty(item?.start),
+    end: toMonthOrEmpty(item?.end)
+  }))
+}
+
+// 緊急聯絡人：伺服器可能回 null（只填了第二位）或缺欄位，表單一律用完整的物件
+function normalizeEmergencyContact(contact) {
+  const source = contact && typeof contact === 'object' ? contact : {}
+  return {
+    name: toStringOrEmpty(source.name),
+    relation: toStringOrEmpty(source.relation),
+    phone1: toStringOrEmpty(source.phone1),
+    phone2: toStringOrEmpty(source.phone2)
+  }
 }
 
 function formatLicensesForForm(list = []) {
@@ -3571,8 +3603,8 @@ function formatLicensesForForm(list = []) {
   return list.map((item = {}, index) => ({
     name: item?.name ?? '',
     number: item?.number ?? '',
-    startDate: item?.startDate ?? item?.issueDate ?? '',
-    endDate: item?.endDate ?? item?.expiryDate ?? '',
+    startDate: toDateOrEmpty(item?.startDate ?? item?.issueDate ?? ''),
+    endDate: toDateOrEmpty(item?.endDate ?? item?.expiryDate ?? ''),
     fileList: buildAttachmentFileList(
       item?.fileList ?? item?.files ?? (item?.file ? [item.file] : []),
       `證照${index + 1}-附件`
@@ -3585,7 +3617,7 @@ function formatTrainingsForForm(list = []) {
   return list.map((item = {}, index) => ({
     course: item?.course ?? item?.name ?? '',
     courseNo: item?.courseNo ?? item?.code ?? '',
-    date: item?.date ?? '',
+    date: toDateOrEmpty(item?.date ?? ''),
     category: toOptionValueArray(item?.category ?? item?.categories),
     score: toNumberOrNull(item?.score),
     fileList: buildAttachmentFileList(
@@ -3632,18 +3664,28 @@ async function loadItemSettings() {
 async function fetchDepartments() {
   const res = await apiFetch('/api/departments')
   if (handle401(res)) return
-  if (res.ok) departmentList.value = await res.json()
+  if (!res.ok) return
+  const list = await res.json()
+  departmentList.value = Array.isArray(list) ? list : []
 }
-async function fetchSubDepartments(dept = '') {
-  const url = dept ? `/api/sub-departments?department=${dept}` : '/api/sub-departments'
-  const res = await apiFetch(url)
+// 小單位一律載入全部，再依部門過濾：清單的名稱、清單篩選、匯入時的參照對應都要用完整的清單。
+// 以前編輯員工時會改成只載入「該員工部門」的小單位並蓋掉這份清單，之後其他部門的小單位就都對不到了
+let subDepartmentRequestGeneration = 0
+async function fetchSubDepartments() {
+  const generation = ++subDepartmentRequestGeneration
+  const res = await apiFetch('/api/sub-departments')
   if (handle401(res)) return
-  if (res.ok) subDepartmentList.value = await res.json()
+  if (!res.ok) return
+  const list = await res.json()
+  if (generation !== subDepartmentRequestGeneration) return
+  subDepartmentList.value = Array.isArray(list) ? list : []
 }
 async function fetchOrganizations() {
   const res = await apiFetch('/api/organizations')
   if (handle401(res)) return
-  if (res.ok) orgList.value = await res.json()
+  if (!res.ok) return
+  const list = await res.json()
+  orgList.value = Array.isArray(list) ? list : []
 }
 
 // 員工的特休一律用小時顯示與編輯：伺服器已附上時數，舊格式的資料（只有天數欄位）在這裡換算，畫面不必判斷單位
@@ -3654,6 +3696,8 @@ function normalizeAnnualLeaveRecord(annualLeave) {
   const legacyDays = Number(totalDays)
   return {
     ...rest,
+    // 請假期限以台灣日期（YYYY-MM-DD）編輯與送出；原本沒有的就不補，免得把空白送出去
+    ...(rest.expiryDate ? { expiryDate: toDateOrEmpty(rest.expiryDate) } : {}),
     totalHours: hours.totalHours,
     usedHours: hours.usedHours,
     unitSource: hours.unitSource || undefined,
@@ -3718,6 +3762,18 @@ function normalizeEmployeeRecord(e = {}) {
     // 假日制度沒設定時顯示「依預設」（空字串），存檔送空字串會清除設定
     holidayRegime: ['roster', 'office'].includes(e?.holidayRegime) ? e.holidayRegime : '',
     isIndigenous: e?.isIndigenous === true,
+    // 需要排班預設是（資料模型的預設值）、自動計算加班費預設否；一律整理成布林值再送回伺服器
+    requiresScheduling: e?.requiresScheduling !== false,
+    autoOvertimeCalc: e?.autoOvertimeCalc === true,
+    birthday: toDateOrEmpty(e?.birthday ?? e?.birthDate),
+    // 伺服器的欄位是 birthPlace（大寫 P），表單用的是 birthplace：以前沒有對應，編輯畫面的出生地永遠是空的，
+    // 一按儲存就把空白送回去、洗掉原本的出生地
+    birthplace: toStringOrEmpty(e?.birthplace ?? e?.birthPlace),
+    // 試用期天數是數字（以前下拉選單的選項是字串，存回去變成字串、讀回來的數字又對不到選項）
+    probationDays: toNumberOrNull(e?.probationDays) ?? 0,
+    emergency1: normalizeEmergencyContact(e?.emergency1 ?? e?.emergencyContacts?.[0]),
+    emergency2: normalizeEmergencyContact(e?.emergency2 ?? e?.emergencyContacts?.[1]),
+    experiences: formatExperiencesForForm(e?.experiences),
     phone: e?.phone ?? e?.mobile ?? '',
     title: extractOptionValue(e?.title),
     practiceTitle: extractOptionValue(e?.practiceTitle),
@@ -3788,15 +3844,21 @@ let employeeListRequestGeneration = 0
 // keepSelection：換頁 / 換每頁筆數時保留跨頁勾選；其餘任何重新載入（儲存、刪除、匯入、搜尋、篩選）
 // 都會清掉勾選。reserve-selection 不會在資料更新時汰換或剔除舊的列物件，
 // 留著會出現已被刪除（或權限已被改成管理員）的「幽靈列」，並被一起送去批量刪除。
-async function fetchEmployees({ keepSelection = false } = {}) {
+// refreshStats：資料有異動（儲存、刪除、匯入）之後，頁首的全體統計也要更新
+async function fetchEmployees({ keepSelection = false, refreshStats = false } = {}) {
   const generation = ++employeeListRequestGeneration
   const params = new URLSearchParams({
     page: String(employeePagination.page),
     pageSize: String(employeePagination.pageSize),
   })
-  const search = searchQuery.value.trim()
+  const search = String(searchQuery.value ?? '').trim()
   if (search) params.set('q', search)
+  if (organizationFilter.value) params.set('organization', organizationFilter.value)
   if (departmentFilter.value) params.set('department', departmentFilter.value)
+  if (subDepartmentFilter.value) params.set('subDepartment', subDepartmentFilter.value)
+  if (statusFilter.value) params.set('status', statusFilter.value)
+  if (roleFilter.value) params.set('role', roleFilter.value)
+  const filtered = hasActiveEmployeeFilters.value
 
   employeeListLoading.value = true
   try {
@@ -3818,6 +3880,14 @@ async function fetchEmployees({ keepSelection = false } = {}) {
     ).length)
     employeeList.value = normalizedEmployees
     if (!keepSelection) clearEmployeeSelection()
+    if (!filtered) {
+      // 沒有搜尋／篩選時，這份回應的總數就是全體統計
+      employeeStats.total = employeePagination.total
+      employeeStats.active = employeePagination.active
+      employeeStats.loaded = true
+    } else if (refreshStats || !employeeStats.loaded) {
+      void fetchEmployeeStats()
+    }
   } catch (error) {
     if (generation === employeeListRequestGeneration) {
       console.warn('載入員工清單失敗', error)
@@ -3827,6 +3897,22 @@ async function fetchEmployees({ keepSelection = false } = {}) {
     if (generation === employeeListRequestGeneration) {
       employeeListLoading.value = false
     }
+  }
+}
+
+// 有搜尋／篩選時另外查一次全體人數（只要總數，每頁 1 筆就夠）；失敗就維持上一次的數字
+async function fetchEmployeeStats() {
+  try {
+    const res = await apiFetch('/api/employees?page=1&pageSize=1')
+    if (!res?.ok) return
+    const payload = await res.json()
+    const total = Number(payload?.pagination?.total)
+    const active = Number(payload?.summary?.active)
+    if (Number.isFinite(total)) employeeStats.total = total
+    if (Number.isFinite(active)) employeeStats.active = active
+    employeeStats.loaded = true
+  } catch (error) {
+    console.warn('載入員工統計失敗', error)
   }
 }
 
@@ -3854,7 +3940,27 @@ watch(searchQuery, () => {
   }, 300)
 })
 
-watch(departmentFilter, () => {
+watch([organizationFilter, departmentFilter, subDepartmentFilter, statusFilter, roleFilter], () => {
+  // 上層換了之後，不屬於它的下層篩選一起清掉（清掉後這個 watcher 會再跑一次，那時才查詢，不會連發兩次）
+  const department = departmentFilter.value
+    ? departmentList.value.find(item => sameId(item._id, departmentFilter.value))
+    : null
+  if (department && organizationFilter.value && !sameId(department.organization, organizationFilter.value)) {
+    departmentFilter.value = null
+    return
+  }
+  const unit = subDepartmentFilter.value
+    ? subDepartmentList.value.find(item => sameId(item._id, subDepartmentFilter.value))
+    : null
+  if (unit) {
+    const parent = departmentList.value.find(item => sameId(item._id, unit.department))
+    const wrongDepartment = departmentFilter.value && !sameId(unit.department, departmentFilter.value)
+    const wrongOrganization = organizationFilter.value && parent && !sameId(parent.organization, organizationFilter.value)
+    if (wrongDepartment || wrongOrganization) {
+      subDepartmentFilter.value = ''
+      return
+    }
+  }
   clearEmployeeSelection()
   employeePagination.page = 1
   fetchEmployees()
@@ -3928,13 +4034,17 @@ const emptyEmployee = {
   title: '',
   practiceTitle: '',      // C04
   isPartTime: false,
-  isClocking: false,
+  // 「需要打卡」目前沒有任何功能讀取（考勤、薪資都不看它），畫面上不顯示；
+  // 新員工沿用資料模型的預設值（需要），編輯時原值原封不動送回
+  isClocking: true,
   holidayRegime: '',      // 假日制度：'' 依預設（需排班＝輪班、不需排班＝行政）
   isIndigenous: false,
+  requiresScheduling: true,   // 需要排班（預設是）
+  autoOvertimeCalc: false,    // 自動計算加班費：開啟後薪資才依核准的加班申請計算加班費
 
   // 人員狀態
-  employmentStatus: '',
-  probationDays: '',
+  employmentStatus: '正職員工',
+  probationDays: 0,
 
   // 體檢
   height: null,
@@ -4033,6 +4143,8 @@ const rules = computed(() => ({
   department: [{ required: true, message: '請選擇所屬部門', trigger: 'change' }],
   gender: [{ required: true, message: '請選擇性別', trigger: 'change' }],
   name: [{ required: true, message: '請輸入員工姓名', trigger: 'blur' }],
+  // 伺服器新增員工時一定要員工編號（批量匯入、排班、薪資都靠它對人），在畫面上就先擋
+  employeeNo: [{ required: true, message: '請輸入員工編號', trigger: 'blur' }],
   email: [
     {
       required: true,
@@ -4069,12 +4181,12 @@ const rules = computed(() => ({
 /* 派生 --------------------------------------------------------------------- */
 const filteredDepartments = computed(() =>
   employeeForm.value.organization
-    ? departmentList.value.filter(d => d.organization === employeeForm.value.organization)
+    ? departmentList.value.filter(d => sameId(d.organization, employeeForm.value.organization))
     : []
 )
 const filteredSubDepartments = computed(() =>
   employeeForm.value.department
-    ? subDepartmentList.value.filter(sd => sd.department === employeeForm.value.department)
+    ? subDepartmentList.value.filter(sd => sameId(sd.department, employeeForm.value.department))
     : []
 )
 // 直屬主管下拉選單的候選人。員工清單是分頁載入的，只靠目前這一頁找不到其他頁的主管，
@@ -4258,6 +4370,15 @@ const salaryItemOptionMap = computed(() => {
   return map
 })
 
+// 下拉選單的選項：字典的項目，後面接這位員工原本就有、字典已經沒有的項目
+const salaryItemOptionsForUI = computed(() => {
+  const dictionary = getDictionarySalaryItemValueSet()
+  const legacy = preservedSalaryItems.value
+    .filter(value => !dictionary.has(value))
+    .map(value => ({ value, label: `${value}（字典已無此項目）` }))
+  return [...(Array.isArray(salaryItemOptions.value) ? salaryItemOptions.value : []), ...legacy]
+})
+
 const selectedSalaryItemsForUI = computed(() =>
   ensureArrayValue(employeeForm.value.salaryItems)
     .map(value => {
@@ -4289,34 +4410,41 @@ watch(bulkImportDialogVisible, visible => {
   }
 })
 
-watch(
-  () => employeeForm.value.department,
-  async (dept, prevDept) => {
-    const previousSubDepartment = employeeForm.value.subDepartment
+// 機構／部門／小單位的連動只處理「使用者在表單上改了上層」：
+// - 換機構：原本的部門不屬於新機構就清掉（以前不會清，下拉選單顯示一串識別碼，存檔後員工掛在別的機構的部門底下）。
+// - 換部門：原本的小單位不屬於新部門就清掉。
+// - 直屬主管不跟著清：主管可以是其他部門、其他機構的人。
+// 開啟視窗載入資料（employeeFormHydrating）時不動，免得清單還沒載完就把原本的值洗掉。
+let employeeFormHydrating = false
 
-    if (!dept) {
-      subDepartmentList.value = []
-      if (employeeForm.value.subDepartment) {
-        employeeForm.value.subDepartment = ''
-      }
+watch(
+  () => employeeForm.value.organization,
+  organization => {
+    if (employeeFormHydrating) return
+    const currentDepartment = employeeForm.value.department
+    if (!currentDepartment) return
+    if (!organization) {
+      employeeForm.value.department = ''
       return
     }
-
-    await fetchSubDepartments(dept)
-
-    if (employeeForm.value.department !== dept) return
-
-    const isSelectionUnchanged = employeeForm.value.subDepartment === previousSubDepartment
-    const hasPreviousSelection = Boolean(previousSubDepartment)
-    const isValidInNewDepartment =
-      hasPreviousSelection &&
-      subDepartmentList.value.some(
-        sub => resolveSubDepartmentId(sub) === previousSubDepartment
-      )
-
-    if (!isValidInNewDepartment && dept !== prevDept && isSelectionUnchanged) {
-      employeeForm.value.subDepartment = ''
+    // 清單裡找不到的部門（舊資料、清單還沒載入）不動，只處理確定屬於別的機構的
+    const department = departmentList.value.find(item => sameId(item._id, currentDepartment))
+    if (department && !sameId(department.organization, organization)) {
+      employeeForm.value.department = ''
     }
+  }
+)
+
+watch(
+  () => employeeForm.value.department,
+  (dept, prevDept) => {
+    if (employeeFormHydrating || sameId(dept, prevDept)) return
+    const currentSubDepartment = employeeForm.value.subDepartment
+    if (!currentSubDepartment) return
+    const stillValid = Boolean(dept) && subDepartmentList.value.some(
+      sub => sameId(resolveSubDepartmentId(sub), currentSubDepartment) && sameId(sub.department, dept)
+    )
+    if (!stillValid) employeeForm.value.subDepartment = ''
   }
 )
 
@@ -4364,6 +4492,7 @@ function onGraduationStatusClear() {
 }
 
 function openBulkImportDialog() {
+  bulkImportFieldGuideVisible.value = false
   bulkImportDialogVisible.value = true
 }
 
@@ -4404,7 +4533,29 @@ async function handleBulkImportDialogCancel() {
 }
 
 async function handleBulkImportDialogBeforeClose(done) {
+  // 匯入進行中不能關（關掉就看不到結果）；已經匯入完成就直接關，不必再問一次
+  if (bulkImportLoading.value) return
+  if (bulkImportDone.value) {
+    finishBulkImport(done)
+    return
+  }
   await requestBulkImportDialogClose({ done })
+}
+
+// 匯入完成後按「完成」：資料已經寫入，沒有東西會遺失，直接關閉並清空
+function finishBulkImport(done) {
+  bulkImportDialogCloseOptions.value = {
+    resetMappings: true,
+    resetReferenceData: true,
+    resetResolvedReferences: true
+  }
+  if (typeof done === 'function') done()
+  else bulkImportDialogVisible.value = false
+}
+
+// 匯入完成後接著匯入另一份檔案：清空檔案與結果，回到選檔的步驟
+function restartBulkImport() {
+  resetBulkImportState({ resetMappings: true })
 }
 
 function resetBulkImportState({
@@ -4423,6 +4574,7 @@ function resetBulkImportState({
 
   if (resetFile) {
     bulkImportFile.value = null
+    bulkImportFileHeaders.value = []
   }
   if (resetUploadList) {
     bulkImportUploadFileList.value = []
@@ -4433,6 +4585,13 @@ function resetBulkImportState({
   if (resetErrors) {
     bulkImportErrors.value = []
     bulkImportWarnings.value = []
+    bulkImportErrorMessage.value = ''
+    bulkImportFileInvalid.value = false
+  }
+  // 換檔、移除檔案、關閉視窗都代表「這一份」的匯入結束了
+  if (resetFile || resetPreview) {
+    bulkImportDone.value = false
+    bulkImportResult.value = { created: null, updated: null, usedDefaultPassword: false }
   }
   if (resetReferenceDialogs) {
     referenceMappingDialogVisible.value = false
@@ -4958,21 +5117,9 @@ function openReferenceMappingDialog(missingReferences = {}, message = '', keys =
 
 
 
-// 當彈窗打開時，再輸出目前 sections 概況（多一道保險）
-watch(referenceMappingDialogVisible, (v) => {
-  if (v) {
-    console.log('[ref-mapping] dialog opened; sections snapshot =',
-      (referenceMappingKeys.value || []).map(k => ({
-        k,
-        values: referenceMappingPending[k]?.length || 0,
-        options: referenceMappingOptions[k]?.length || 0
-      })))
-  }
-})
-
-
-
-async function submitBulkImport({ triggeredByMapping = false } = {}) {
+async function submitBulkImport({ triggeredByMapping = false, autoResolved = false } = {}) {
+  // 匯入進行中再按一次不重複送出（參照對應完成後的重送是同一次匯入的延續，不算重複）
+  if (bulkImportLoading.value && !triggeredByMapping) return
   if (!bulkImportFile.value) {
     const tip = triggeredByMapping
       ? '原始檔案已重置，請重新選擇匯入檔案後再試'
@@ -4984,12 +5131,21 @@ async function submitBulkImport({ triggeredByMapping = false } = {}) {
     ElMessage.warning('請確認必要欄位對應是否完整')
     return
   }
+  if (bulkImportDone.value) {
+    ElMessage.warning('這份檔案已經匯入完成；要再匯入請先選擇其他檔案')
+    return
+  }
+  if (bulkImportFileInvalid.value) {
+    ElMessage.warning('檔案裡有必填欄位沒有填，請修正檔案後重新選擇')
+    return
+  }
   bulkImportLoading.value = true
   bulkImportWarnings.value = []
+  bulkImportErrorMessage.value = ''
   try {
     const formData = new FormData()
     formData.append('file', bulkImportFile.value)
-    formData.append('mappings', JSON.stringify(bulkImportForm.columnMappings))
+    formData.append('mappings', JSON.stringify(buildBulkImportMappingsForSubmit()))
     formData.append('options', JSON.stringify(bulkImportForm.options))
     const { valueMappingsPayload, ignorePayload } = buildReferenceSubmissionPayload()
     formData.append('valueMappings', JSON.stringify(valueMappingsPayload))
@@ -5031,9 +5187,11 @@ async function submitBulkImport({ triggeredByMapping = false } = {}) {
       const stillMissing = Object.values(unresolved).some(b => (b?.values?.length || 0) > 0)
       bulkImportErrors.value = Array.isArray(payload?.errors) ? payload.errors : []
 
-      if (!stillMissing) {
-        // 全部解決：直接重送（不彈窗）
-        await submitBulkImport({ triggeredByMapping: true })
+      if (!stillMissing && !autoResolved) {
+        // 全部解決：直接重送（不彈窗）。只自動重送一次：伺服器若還是回報對不到，就停下來讓使用者處理，不能一直重送
+        await submitBulkImport({ triggeredByMapping: true, autoResolved: true })
+      } else if (!stillMissing) {
+        throw new Error(payload?.message || '匯入資料存在未對應的組織或部門資訊，請確認檔案內容後再試')
       } else {
         openReferenceMappingDialog(unresolved, payload?.message, keysForDialog)
         ElMessage.warning(payload?.message || '匯入資料存在未對應的組織或部門資訊，請完成對應後重新提交')
@@ -5045,7 +5203,12 @@ async function submitBulkImport({ triggeredByMapping = false } = {}) {
 
 
     if (!res.ok) {
-      bulkImportErrors.value = Array.isArray(payload?.errors) ? payload.errors : []
+      bulkImportErrors.value = Array.isArray(payload?.errors) && payload.errors.length
+        ? payload.errors
+        // 檔案缺少必填欄位（missingColumns：{ key, header, label }）時寫出是哪幾欄、檔案第 1 列要有什麼
+        : (Array.isArray(payload?.missingColumns) ? payload.missingColumns : [])
+          .filter(Boolean)
+          .map(column => `找不到必填欄位「${column.label || column.key}」（檔案第 1 列要有「${column.header}」）`)
       const rowInfo = typeof payload?.rowNumber === 'number'
         ? `（停在第 ${payload.rowNumber} 列）`
         : ''
@@ -5071,14 +5234,22 @@ async function submitBulkImport({ triggeredByMapping = false } = {}) {
     } else {
       ElMessage.success(importSummary ? `匯入成功：${importSummary}` : '匯入成功')
     }
+    // 資料已經寫入：畫面改顯示結果，同一份檔案不能再送一次
+    bulkImportResult.value = {
+      created: Number.isFinite(payload?.createdCount) ? payload.createdCount : null,
+      updated: Number.isFinite(payload?.updatedCount) ? payload.updatedCount : null,
+      usedDefaultPassword: Boolean(String(bulkImportForm.options.resetPassword ?? '').trim())
+    }
+    bulkImportDone.value = true
 
-    await fetchEmployees()
+    await fetchEmployees({ refreshStats: true })
     if (!bulkImportErrors.value.length) {
       referenceMappingDialogVisible.value = false
       referenceMappingDialogMessage.value = ''
     }
   } catch (error) {
     const message = error?.message || '批量匯入失敗，請稍後再試'
+    bulkImportErrorMessage.value = message
     ElMessage.error(message)
   } finally {
     bulkImportLoading.value = false
@@ -5176,33 +5347,63 @@ function buildAnnualLeaveForUpdate(annualLeave, snapshot) {
   return result
 }
 
+// 連按兩次「編輯」、或點了列又點按鈕時，只處理最後一次；前一次載入回來的資料不能蓋掉後開的那一位
+let employeeDialogOpenGeneration = 0
+
 async function openEmployeeDialog(employeeId = null) {
+  const generation = ++employeeDialogOpenGeneration
+  autoOvertimeCalcTouched.value = false
   ensureDictionaryFallbacks()
+  employeeFormHydrating = true
+  try {
+    await loadEmployeeIntoDialog(employeeId, generation)
+  } finally {
+    if (generation === employeeDialogOpenGeneration) {
+      employeeFormHydrating = false
+      employeeDialogLoading.value = false
+    }
+  }
+}
+
+async function loadEmployeeIntoDialog(employeeId, generation) {
+  const isStale = () => generation !== employeeDialogOpenGeneration
   if (employeeId !== null) {
     const index = employeeList.value.findIndex(e => e._id === employeeId)
     if (index === -1) {
       ElMessage.error('找不到該員工資料')
       return
     }
+    employeeDialogLoading.value = true
     let detailResponse
     try {
-      detailResponse = await apiFetch(`/api/employees/${encodeURIComponent(employeeId)}`)
+      // 部門與小單位清單順便重新載入：表單的連動（換部門清小單位）要用最新的清單判斷
+      ;[detailResponse] = await Promise.all([
+        apiFetch(`/api/employees/${encodeURIComponent(employeeId)}`),
+        fetchDepartments().catch(() => {}),
+        fetchSubDepartments().catch(() => {})
+      ])
     } catch (error) {
       console.warn('載入員工完整資料失敗', error)
-      ElMessage.error('無法載入員工完整資料')
+      if (!isStale()) ElMessage.error('無法載入員工完整資料')
       return
     }
+    if (isStale()) return
     if (handle401(detailResponse)) return
     if (!detailResponse.ok) {
-      ElMessage.error('無法載入員工完整資料')
+      ElMessage.error(detailResponse.status === 404 ? '找不到該員工資料，可能已被刪除，請重新整理後再試' : '無法載入員工完整資料')
       return
     }
-    const emp = normalizeEmployeeRecord(await detailResponse.json())
+    const detail = await detailResponse.json()
+    if (isStale()) return
+    // 先記下這位員工原本就有、字典已經沒有的薪資項目，下面整理資料時才不會把它們濾掉
+    rememberPreservedSalaryItems(detail?.salaryItems)
+    const emp = normalizeEmployeeRecord(detail)
     editEmployeeIndex = index
     isEditingEmployee.value = true
     editEmployeeId = emp._id || ''
     editingEmployeeId.value = editEmployeeId
     currentSupervisorInfo.value = emp.supervisorInfo ?? null
+    employeeAccessSnapshot = { role: emp.role, status: emp.employmentStatus }
     // 以 emptyEmployee 為基底，可避免漏欄位
     employeeForm.value = { ...structuredClone(emptyEmployee), ...emp, password: '', photoList: [] }
     annualLeaveSnapshot = snapshotAnnualLeave(employeeForm.value.annualLeave)
@@ -5286,15 +5487,19 @@ async function openEmployeeDialog(employeeId = null) {
     editingEmployeeId.value = ''
     annualLeaveSnapshot = null
     currentSupervisorInfo.value = null
-    employeeDialogTab.value = 'account'
+    employeeAccessSnapshot = null
+    preservedSalaryItems.value = []
     employeeForm.value = { ...structuredClone(emptyEmployee) }
     employeeForm.value.licenses = []
     employeeForm.value.trainings = []
     releaseDialogPhoto()
     revokePhotoPreviews()
+    // 新增時同樣用最新的部門與小單位清單（不必等它，下拉選單載入完會自己更新）
+    void fetchDepartments().catch(() => {})
+    void fetchSubDepartments().catch(() => {})
   }
 
-  await fetchDepartments()
+  // 舊資料的部門可能直接存名稱：對得到就換成部門的識別碼
   if (
     employeeForm.value.department &&
     !/^[0-9a-fA-F]{24}$/.test(employeeForm.value.department)
@@ -5304,7 +5509,10 @@ async function openEmployeeDialog(employeeId = null) {
     )
     if (dept) employeeForm.value.department = dept._id
   }
-  await fetchSubDepartments(employeeForm.value.department)
+  // 每次開啟都從第一個分頁（最常用的欄位）開始，上一位員工留下的錯誤標記一併清掉
+  employeeDialogTab.value = 'basic'
+  employeeFieldErrors.value = {}
+  employeeServerFieldErrors.value = {}
   employeeDialogVisible.value = true
   supervisorSearchGeneration += 1
   supervisorSearch.value = { query: '', results: [], loading: false }
@@ -5313,27 +5521,31 @@ async function openEmployeeDialog(employeeId = null) {
   // 表單值整批換掉時，上一次留下的紅字（例如新增員工按儲存後的「請輸入登入密碼」）會殘留在欄位上，
   // 編輯時選填的密碼還是紅的；等畫面更新完再清掉驗證狀態
   await nextTick()
+  if (isStale()) return
   formRef.value?.clearValidate?.()
+  // 記下開啟當下的內容：關閉前比對有沒有未儲存的變更
+  employeeFormBaseline = employeeFormFingerprint()
 }
 
 // 驗證欄位所在的分頁：必填欄位在別的分頁時，使用者看不到錯誤，要幫他切過去
 const EMPLOYEE_TAB_LABELS = {
-  account: '帳號權限',
-  approval: '簽核設定',
-  personal: '個人資訊',
-  employment: '任職資訊',
-  more: '更多資訊',
-  salary: '薪資設定'
+  basic: '基本資料',
+  employment: '任職與簽核',
+  personal: '個人資料',
+  background: '學經歷與證照',
+  salary: '薪資與假勤'
 }
+// 所有必填欄位都在第一個分頁（基本資料）
 const EMPLOYEE_FIELD_TABS = {
-  username: 'account',
-  password: 'account',
-  role: 'account',
-  name: 'personal',
-  gender: 'personal',
-  email: 'personal',
-  organization: 'employment',
-  department: 'employment'
+  username: 'basic',
+  password: 'basic',
+  role: 'basic',
+  name: 'basic',
+  employeeNo: 'basic',
+  gender: 'basic',
+  email: 'basic',
+  organization: 'basic',
+  department: 'basic'
 }
 function resolveEmployeeFieldTab(prop) {
   const key = String(prop ?? '')
@@ -5343,6 +5555,136 @@ function resolveEmployeeFieldTab(prop) {
   }
   return ''
 }
+
+// 目前有驗證錯誤的欄位 { 欄位: 訊息 }：欄位旁的紅字由 el-form 顯示，這裡用來在分頁標籤上標出「這一頁有幾個欄位要修正」
+const employeeFieldErrors = ref({})
+
+// 伺服器擋下的重複欄位（400 DUPLICATE_EMPLOYEE，field 是 employeeId｜username｜email）：紅字標在那個欄位旁（el-form-item 的 error），
+// 改了那個欄位就拿掉。伺服器的 employeeId 是畫面上的「員工編號」（employeeNo）
+const DUPLICATE_FIELD_PROPS = { employeeId: 'employeeNo', employeeNo: 'employeeNo', username: 'username', email: 'email' }
+const employeeServerFieldErrors = ref({})
+
+async function showEmployeeDuplicateField(data, message) {
+  if (data?.code !== 'DUPLICATE_EMPLOYEE') return
+  const prop = DUPLICATE_FIELD_PROPS[data.field]
+  if (!prop) return
+  // el-form-item 的 error 要從空字串變成訊息才會顯示：先清掉再設定（同一個欄位連續兩次重複時也看得到）
+  employeeServerFieldErrors.value = {}
+  await nextTick()
+  employeeServerFieldErrors.value = { [prop]: message }
+  employeeFieldErrors.value = { ...employeeFieldErrors.value, [prop]: message }
+  const tab = resolveEmployeeFieldTab(prop)
+  if (tab && tab !== employeeDialogTab.value) employeeDialogTab.value = tab
+  await nextTick()
+  try {
+    formRef.value?.scrollToField?.(prop)
+  } catch {
+    // 捲動只是輔助
+  }
+}
+
+watch(
+  () => [employeeForm.value?.employeeNo, employeeForm.value?.username, employeeForm.value?.email],
+  (next, prev = []) => {
+    const props = ['employeeNo', 'username', 'email']
+    const current = { ...employeeServerFieldErrors.value }
+    let changed = false
+    props.forEach((prop, index) => {
+      if (current[prop] && next[index] !== prev[index]) {
+        delete current[prop]
+        changed = true
+        const fieldErrors = { ...employeeFieldErrors.value }
+        delete fieldErrors[prop]
+        employeeFieldErrors.value = fieldErrors
+      }
+    })
+    if (changed) employeeServerFieldErrors.value = current
+  }
+)
+const employeeTabErrors = computed(() => {
+  const counts = {}
+  Object.keys(employeeFieldErrors.value).forEach(prop => {
+    const tab = resolveEmployeeFieldTab(prop)
+    if (tab) counts[tab] = (counts[tab] || 0) + 1
+  })
+  return counts
+})
+
+// el-form 每驗證一個欄位（失焦、改值、送出）都會通知：通過就拿掉標記
+function handleEmployeeFieldValidate(prop, isValid, message) {
+  const key = String(prop ?? '')
+  if (!key) return
+  const next = { ...employeeFieldErrors.value }
+  if (isValid) delete next[key]
+  else next[key] = message || '格式不正確'
+  employeeFieldErrors.value = next
+}
+
+/* 編輯視窗：標題、未儲存變更的提醒 ------------------------------------------------ */
+const employeeDialogTitle = computed(() => {
+  if (!isEditingEmployee.value) return '新增員工'
+  const form = employeeForm.value
+  const label = [form.name, form.employeeNo ? `（${form.employeeNo}）` : ''].join('')
+  return label ? `編輯員工：${label}` : '編輯員工'
+})
+
+const isInactiveEmploymentStatus = computed(() =>
+  INACTIVE_SUPERVISOR_STATUSES.includes(employeeForm.value.employmentStatus)
+)
+
+// 表單內容的指紋：開啟時記一份，關閉前比對就知道有沒有改過。
+// 照片的縮圖網址會在背景載入後換掉，不能算「改過」，所以只記「有沒有照片、是不是新選的檔案」
+function employeeFormFingerprint() {
+  const { photoList, photo, ...rest } = employeeForm.value || {}
+  const first = Array.isArray(photoList) ? photoList[0] : null
+  const photoState = !first
+    ? 'none'
+    : first.raw instanceof File
+      ? `new:${first.raw.name}:${first.raw.size}`
+      : 'stored'
+  try {
+    return JSON.stringify({ ...rest, __photo: photoState })
+  } catch {
+    return ''
+  }
+}
+let employeeFormBaseline = ''
+const hasUnsavedEmployeeChanges = () =>
+  employeeFormBaseline !== '' && employeeFormBaseline !== employeeFormFingerprint()
+
+// 取消、右上角的 X、Esc 都走這裡：有未儲存的變更先問，儲存成功後的關閉不經過這裡
+async function requestEmployeeDialogClose(done) {
+  if (employeeSaving.value) return false
+  if (hasUnsavedEmployeeChanges()) {
+    try {
+      await ElMessageBox.confirm('有尚未儲存的變更，確定要關閉嗎？', '尚未儲存', {
+        type: 'warning',
+        confirmButtonText: '放棄變更',
+        cancelButtonText: '繼續編輯'
+      })
+    } catch {
+      return false
+    }
+  }
+  employeeFormBaseline = ''
+  if (typeof done === 'function') done()
+  else employeeDialogVisible.value = false
+  return true
+}
+
+function handleEmployeeDialogBeforeClose(done) {
+  void requestEmployeeDialogClose(done)
+}
+
+function resolveOwnEmployeeId() {
+  try {
+    return sessionStorage.getItem('employeeId') || localStorage.getItem('employeeId') || ''
+  } catch {
+    return ''
+  }
+}
+// 開啟視窗當下該員工的系統權限與在職狀態：管理員改自己的權限／狀態時要先提醒（儲存後會被登出）
+let employeeAccessSnapshot = null
 
 // 後端自己管理、不該由編輯畫面回寫的欄位（帳號啟用狀態、登入版本、時間戳記…），以及只在畫面上使用的欄位
 const SERVER_MANAGED_EMPLOYEE_FIELDS = [
@@ -5357,11 +5699,26 @@ const SERVER_MANAGED_EMPLOYEE_FIELDS = [
   '_photoObjectUrl'
 ]
 
+// 伺服器回傳的巢狀原始資料：表單編輯的是攤平後的欄位（emergency1、hireDate、educationLevel…），原始的那一份不能再送回去。
+// 尤其是 emergencyContacts：伺服器看到這個陣列就整個照寫，畫面上改的緊急聯絡人（emergency1 / emergency2）會被原本的資料蓋掉，
+// 等於緊急聯絡人永遠改不了
+const SERVER_SHAPED_EMPLOYEE_FIELDS = ['emergencyContacts', 'appointment', 'education', 'medicalCheck', 'militaryService']
+
+// 送出的資料大小上限：伺服器的 JSON 上限是 2MB。證照／訓練附件是直接放在資料裡的（base64），太大會被伺服器整個拒絕
+const EMPLOYEE_PAYLOAD_MAX_BYTES = 1.9 * 1024 * 1024
+const ATTACHMENT_MAX_BYTES = 1024 * 1024
+const ATTACHMENT_HINT = '單一檔案上限 1MB，全部附件合計約 1.4MB'
+
 // 伺服器回的英文錯誤對照成中文；沒有對照到的就原樣顯示伺服器給的訊息，不要吞掉
 const EMPLOYEE_SAVE_ERROR_TEXT = {
   'Invalid account state': '帳號狀態格式不正確',
   'Invalid email': 'Email 格式不正確',
   'Email is required': '請輸入 Email',
+  'Name is required': '請輸入員工姓名',
+  'Employee number is required': '請輸入員工編號',
+  'Username is required': '請輸入登入帳號',
+  'Password is required': '請輸入登入密碼',
+  'At least one active administrator is required': '系統至少要保留一位可登入的管理員，這個帳號的權限與在職狀態不能變更',
   'Invalid role': '系統權限不正確',
   'Too many fields': '送出的欄位過多，請聯絡系統管理員',
   'Not found': '找不到該員工資料，可能已被刪除，請重新整理後再試',
@@ -5369,13 +5726,16 @@ const EMPLOYEE_SAVE_ERROR_TEXT = {
   'Internal server error': '伺服器發生錯誤，請稍後再試或聯絡系統管理員'
 }
 
-// 把失敗的回應整理成可以直接顯示的原因（伺服器有說明就用伺服器的，沒有才看狀態碼）
-async function describeEmployeeSaveError(res) {
-  let data = null
-  try {
-    data = await res?.json?.()
-  } catch {
-    // 回應不是 JSON（例如反向代理回的 HTML 錯誤頁）時改看狀態碼
+// 把失敗的回應整理成可以直接顯示的原因（伺服器有說明就用伺服器的，沒有才看狀態碼）；
+// 已經讀過的回應內容可以用 data 傳進來（回應只能讀一次）
+async function describeEmployeeSaveError(res, data = undefined) {
+  if (data === undefined) {
+    data = null
+    try {
+      data = await res?.json?.()
+    } catch {
+      // 回應不是 JSON（例如反向代理回的 HTML 錯誤頁）時改看狀態碼
+    }
   }
   const serverText = typeof data?.error === 'string' ? data.error.trim() : ''
   const status = Number(res?.status)
@@ -5386,7 +5746,7 @@ async function describeEmployeeSaveError(res) {
   else if (serverText) message = `儲存失敗：${serverText}`
   else if (status === 401) message = '登入已逾時，請重新登入後再試'
   else if (status === 403) message = '您沒有權限執行這個操作'
-  else if (status === 413) message = '上傳的資料超過伺服器允許的大小，請換小一點的照片'
+  else if (status === 413) message = '上傳的資料超過伺服器允許的大小，請換小一點的照片或移除部分證照／訓練附件'
   else if (status === 429) message = '操作太頻繁，請稍後再試'
   else if (status >= 500) message = '伺服器發生錯誤，請稍後再試或聯絡系統管理員'
   // 伺服器發生錯誤時附上錯誤代碼，方便管理員在伺服器紀錄中查到原因
@@ -5431,27 +5791,65 @@ async function submitEmployee() {
     // 同一欄位可能有多則錯誤；每個欄位只列一次，並標示它在哪個分頁
     const seen = new Set()
     const fields = []
+    const fieldErrors = {}
+    const currentTab = employeeDialogTab.value
     Object.entries(errors).forEach(([prop, list]) => {
-      const tabLabel = EMPLOYEE_TAB_LABELS[resolveEmployeeFieldTab(prop)]
+      // 欄位就在眼前這個分頁時不必再註明分頁（紅字已經在欄位旁），在別的分頁才註明
+      const fieldTab = resolveEmployeeFieldTab(prop)
+      const tabLabel = fieldTab && fieldTab !== currentTab ? EMPLOYEE_TAB_LABELS[fieldTab] : ''
       ;[].concat(list ?? []).forEach(e => {
-        const label = String(e?.message ?? '').replace(/^請(?:輸入|選擇)(?:有效)?\s*/, '')
+        const message = String(e?.message ?? '')
+        if (message && !fieldErrors[prop]) fieldErrors[prop] = message
+        const label = message.replace(/^請(?:輸入|選擇)(?:有效)?\s*/, '')
         if (!label || seen.has(label)) return
         seen.add(label)
         fields.push(tabLabel ? `${label}（${tabLabel}）` : label)
       })
     })
+    // 紅字顯示在欄位旁（el-form），分頁標籤標出有幾個欄位要修正
+    employeeFieldErrors.value = fieldErrors
     // 欄位在別的分頁時，切到第一個有問題的欄位所在的分頁
-    const firstTab = resolveEmployeeFieldTab(Object.keys(errors)[0])
+    const firstProp = Object.keys(errors)[0]
+    const firstTab = resolveEmployeeFieldTab(firstProp)
     let hint = ''
     if (firstTab && firstTab !== employeeDialogTab.value) {
       employeeDialogTab.value = firstTab
       hint = `。已切換到「${EMPLOYEE_TAB_LABELS[firstTab]}」分頁。`
     }
-    ElMessageBox.alert(`請補齊：${fields.join('、')}${hint}`)
+    // 不用再多按一次「確定」的訊息提示，並捲到第一個有問題的欄位
+    ElMessage.warning(`請補齊：${fields.join('、')}${hint}`)
+    await nextTick()
+    try {
+      formRef.value?.scrollToField?.(firstProp)
+    } catch {
+      // 捲動只是輔助，欄位還沒畫出來（分頁剛切換）時略過
+    }
     return
   }
+  employeeFieldErrors.value = {}
+  employeeServerFieldErrors.value = {}
 
   const form = employeeForm.value
+  // 管理員改的是自己的權限或在職狀態：儲存後伺服器會讓目前的登入失效，改成非管理員就再也進不了後台，先問清楚
+  if (editEmployeeIndex !== null && employeeAccessSnapshot && sameId(editEmployeeId, resolveOwnEmployeeId())) {
+    const losesAdmin = employeeAccessSnapshot.role === 'admin' && form.role !== 'admin'
+    const becomesInactive = !INACTIVE_SUPERVISOR_STATUSES.includes(employeeAccessSnapshot.status) &&
+      INACTIVE_SUPERVISOR_STATUSES.includes(form.employmentStatus)
+    if (losesAdmin || becomesInactive) {
+      try {
+        await ElMessageBox.confirm(
+          becomesInactive
+            ? '您正在把自己的在職狀態改成無法登入的狀態，儲存後會立刻被登出，而且無法再登入。確定要繼續嗎？'
+            : '您正在取消自己的管理員權限，儲存後會立刻被登出，而且無法再進入後台管理。確定要繼續嗎？',
+          '變更自己的權限',
+          { type: 'warning', confirmButtonText: '確定變更', cancelButtonText: '取消' }
+        )
+      } catch {
+        return
+      }
+    }
+  }
+
   const payload = { ...form }
   payload.signTags = normalizeSignTagList(form.signTags)
   // 編輯既有員工時密碼是選填：留空代表沿用原密碼，絕對不能把空白密碼送出去
@@ -5466,6 +5864,7 @@ async function submitEmployee() {
   payload.practiceTitle = extractOptionValue(form.practiceTitle)
   
   SERVER_MANAGED_EMPLOYEE_FIELDS.forEach(key => delete payload[key])
+  SERVER_SHAPED_EMPLOYEE_FIELDS.forEach(key => delete payload[key])
 
   // 檢查是否有新上傳的照片檔案
   let photoFile = null
@@ -5511,6 +5910,12 @@ async function submitEmployee() {
     form.monthlySalaryAdjustments
   )
   payload.dischargeYear = toNumberOrNull(form.dischargeYear)
+  payload.probationDays = toNumberOrNull(form.probationDays) ?? 0
+  // 開關一律送布林值（欄位名稱與資料模型相同）
+  payload.requiresScheduling = form.requiresScheduling !== false
+  payload.autoOvertimeCalc = form.autoOvertimeCalc === true
+  // 新增員工時沒動過「自動計算加班費」就不送：由伺服器套用薪資設定的新進員工預設值
+  if (editEmployeeIndex === null && !autoOvertimeCalcTouched.value) delete payload.autoOvertimeCalc
   // 直屬主管：新增時沒選就不送；編輯時管理員把它清空，要明確送 null 才會取消（不送會沿用原本的主管）
   if (payload.supervisor === '' || payload.supervisor === null || payload.supervisor === undefined) {
     if (editEmployeeIndex !== null) payload.supervisor = null
@@ -5572,23 +5977,37 @@ async function submitEmployee() {
   const isCreate = editEmployeeIndex === null
   const url = isCreate ? '/api/employees' : `/api/employees/${encodeURIComponent(editEmployeeId)}`
   const method = isCreate ? 'POST' : 'PUT'
+  const payloadJson = JSON.stringify(payload)
+  if (payloadJson.length > EMPLOYEE_PAYLOAD_MAX_BYTES) {
+    employeeDialogTab.value = 'background'
+    ElMessage.error('證照與教育訓練的附件合計太大，伺服器無法接收；請移除或壓縮部分附件後再儲存')
+    return
+  }
   let requestInit
   if (photoFile) {
     // 有新照片：整份資料放在 data 這一個欄位（JSON 字串，布林值、數字、null 都保持原本的型別），另一個欄位是照片檔。
     // 不能把每個欄位各自放進 FormData：布林值會變成 'false' 字串、巢狀資料與 null 會走樣，欄位數也會超過伺服器上限。
     // 不設置 Content-Type，讓瀏覽器自動設置 multipart/form-data 和 boundary
     const formData = new FormData()
-    formData.append('data', JSON.stringify(payload))
+    formData.append('data', payloadJson)
     formData.append('photo', photoFile)
     requestInit = { method, body: formData }
   } else {
-    requestInit = { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }
+    requestInit = { method, headers: { 'Content-Type': 'application/json' }, body: payloadJson }
   }
   const res = await apiFetch(url, requestInit)
 
   if (!(res && res.ok)) {
+    let data = null
+    try {
+      data = await res?.json?.()
+    } catch {
+      // 回應不是 JSON 時改看狀態碼
+    }
     // 伺服器回的是中文說明（例如簽核角色不正確）就直接顯示，英文錯誤盡量轉成中文，否則維持通用訊息
-    ElMessage.error((await describeEmployeeSaveError(res)) || '儲存失敗')
+    const message = (await describeEmployeeSaveError(res, data)) || '儲存失敗'
+    ElMessage.error(message)
+    await showEmployeeDuplicateField(data, message)
     return
   }
 
@@ -5610,7 +6029,8 @@ async function submitEmployee() {
     refreshOwnProfile(savedId)
   }
 
-  await fetchEmployees()
+  await fetchEmployees({ refreshStats: true })
+  employeeFormBaseline = ''
   employeeDialogVisible.value = false
   ElMessage.success('儲存成功')
 }
@@ -5629,16 +6049,37 @@ async function deleteEmployee(employeeId) {
     return
   }
 
+  // 同一位員工的刪除正在進行（查詢影響、等待確認、送出）時，再按一次不重複處理
+  if (deletingEmployeeId.value) return
+  deletingEmployeeId.value = emp._id
+  try {
+    await runSingleDelete(emp)
+  } finally {
+    deletingEmployeeId.value = ''
+  }
+}
+
+async function runSingleDelete(emp) {
   // 刪除前先讓管理員看到「刪掉之後簽核會怎樣」；查詢失敗不擋刪除
   const impact = await fetchDeleteImpact([emp])
   if (!(await confirmSingleDelete(emp, impact))) return
 
-  const res = await apiFetch(`/api/employees/${emp._id}`, {
-    method: 'DELETE'
-  })
+  let res
+  try {
+    res = await apiFetch(`/api/employees/${emp._id}`, {
+      method: 'DELETE'
+    })
+  } catch (error) {
+    // 連線中斷時伺服器可能已經刪除：重新載入清單，讓畫面和資料庫一致
+    console.warn('刪除員工失敗', error)
+    ElMessage.error('刪除失敗，已重新載入員工列表，請確認結果後再試')
+    await fetchEmployees({ refreshStats: true })
+    return
+  }
+  if (handle401(res)) return
 
   if (res.ok) {
-    await fetchEmployees()
+    await fetchEmployees({ refreshStats: true })
     ElMessage.success('刪除成功')
     const data = await res.json().catch(() => ({}))
     showDeleteImpactMessages(data?.impact ?? impact)
@@ -5707,7 +6148,7 @@ async function confirmSingleDelete(emp, impact) {
   try {
     await ElMessageBox.confirm(lines.join('\n'), '確認刪除員工', {
       type: 'warning',
-      confirmButtonText: '確認刪除',
+      confirmButtonText: '刪除',
       cancelButtonText: '取消',
       confirmButtonClass: 'el-button--danger',
       customClass: 'bulk-delete-confirm',
@@ -5786,7 +6227,7 @@ async function confirmBulkDelete(rows, impact = null) {
   const message = buildBulkDeleteConfirmMessage(rows, impact)
   const options = {
     type: 'warning',
-    confirmButtonText: '確認刪除',
+    confirmButtonText: '刪除',
     cancelButtonText: '取消',
     confirmButtonClass: 'el-button--danger',
     customClass: 'bulk-delete-confirm',
@@ -5839,7 +6280,7 @@ async function submitBulkDelete(rows) {
     console.warn('批量刪除員工失敗', error)
     ElMessage.error('批量刪除失敗，已重新載入員工列表，請確認結果後再試')
     // 連線中斷時伺服器可能已經處理完，列表要重新載入才不會和資料庫不一致
-    await fetchEmployees()
+    await fetchEmployees({ refreshStats: true })
     return
   }
   if (handle401(res)) return
@@ -5847,7 +6288,7 @@ async function submitBulkDelete(rows) {
   const data = await res.json().catch(() => ({}))
   if (!res.ok) {
     ElMessage.error(data?.error || '批量刪除失敗')
-    await fetchEmployees()
+    await fetchEmployees({ refreshStats: true })
     return
   }
 
@@ -5885,7 +6326,7 @@ async function submitBulkDelete(rows) {
   showDeleteImpactMessages(data.impact)
 
   // 重新載入列表時會一併清掉勾選（已刪除的列不能再被送出）
-  await fetchEmployees()
+  await fetchEmployees({ refreshStats: true })
 }
 
 let bulkDeleteBusy = false // 同步旗標：涵蓋「確認視窗開啟中」與「請求進行中」，避免重複送出
@@ -5940,15 +6381,18 @@ function removeTraining(i) {
   employeeForm.value.trainings.splice(i, 1)
 }
 
-const activeEmployees = computed(() => {
-  return employeePagination.active
-})
+const EMERGENCY_CONTACT_FIELDS = [
+  { key: 'emergency1', label: '聯絡人一' },
+  { key: 'emergency2', label: '聯絡人二' }
+]
 
+// 標籤顏色：權限只有管理員、主管用主色標出來（紅、橘全站是「錯誤／需注意」的意思，不拿來標權限）；
+// 狀態只有在職（綠）與試用（橘）用顏色，離職／留停用灰色
 function getRoleTagType(role) {
   const typeMap = {
-    'admin': 'danger',
-    'supervisor': 'warning',
-    'employee': 'success'
+    'admin': 'primary',
+    'supervisor': 'primary',
+    'employee': 'info'
   }
   return typeMap[role] || 'info'
 }
@@ -5962,23 +6406,15 @@ function getRoleLabel(role) {
   return labelMap[role] || role
 }
 
-function getRoleDescription(role) {
-  const descMap = {
-    'admin': '',
-    'supervisor': '',
-    'employee': ''
-  }
-  return descMap[role] || ''
-}
-
 function getStatusTagType(status) {
   const typeMap = {
     '正職員工': 'success',
     '試用期員工': 'warning',
-    '離職員工': 'danger',
+    '離職員工': 'info',
     '留職停薪': 'info'
   }
-  return typeMap[status] || 'default'
+  // el-tag 沒有 'default' 這個類型（傳了會跳警告），沒設定狀態的用灰色
+  return typeMap[status] || 'info'
 }
 </script>
 
@@ -5987,191 +6423,109 @@ function getStatusTagType(status) {
   padding: 0;
 }
 
-.code-select {
+/* 工具列 */
+.employee-search {
+  width: 190px;
+}
+
+.employee-filter {
+  width: 124px;
+}
+
+.employee-filter--narrow {
+  width: 108px;
+}
+
+/* 清單 */
+.employee-list-section {
+  position: relative;
+  padding: 0;
+  overflow: hidden;
+}
+
+.employee-bulk-bar {
+  position: absolute;
+  top: 0;
+  left: 44px;
+  right: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: var(--hr-space-sm);
+  height: 40px;
+  padding: 0 12px;
+  background: var(--hr-gray-50);
+}
+
+.employee-table {
   width: 100%;
 }
 
-.option-wrapper {
+.employee-table :deep(th.el-table__cell) {
+  background: var(--hr-gray-50);
+  color: var(--hr-gray-600);
+  font-weight: var(--hr-font-weight-semibold);
+}
+
+.employee-table :deep(.employee-row) {
+  cursor: pointer;
+}
+
+.employee-table :deep(.employee-row.is-inactive) .employee-name,
+.employee-table :deep(.employee-row.is-inactive) .employee-unit {
+  color: var(--hr-gray-500);
+}
+
+.employee-info {
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
-}
-
-.option-title {
-  font-size: 14px;
-  font-weight: 600;
-  color: #0f172a;
-}
-
-.option-desc {
-  font-size: 12px;
-  color: #64748b;
-}
-
-.sign-role-group {
-  display: grid;
+  align-items: center;
   gap: 12px;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  min-width: 0;
 }
 
-:deep(.el-radio.sign-role-radio) {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-  border: 1px solid #e2e8f0;
-  border-radius: 10px;
-  padding: 12px;
-  transition: border-color 0.2s ease, box-shadow 0.2s ease;
-  height: auto !important;
-  line-height: 1.5;
-  white-space: normal;
+.employee-avatar {
+  flex-shrink: 0;
 }
 
-:deep(.el-radio.sign-role-radio.is-checked) {
-  border-color: #0284c7;
-  box-shadow: 0 6px 18px rgba(2, 132, 199, 0.18);
-  background: linear-gradient(135deg, rgba(14, 116, 144, 0.08), rgba(14, 116, 144, 0.02));
-}
-
-:deep(.el-radio.sign-role-radio:hover) {
-  border-color: #38bdf8;
-  box-shadow: 0 6px 16px rgba(14, 116, 144, 0.12);
-}
-
-:deep(.el-radio.sign-role-radio .el-radio__input) {
-  margin-top: 4px;
-}
-
-:deep(.el-radio.sign-role-radio .el-radio__label) {
+.employee-details {
   flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  white-space: normal;
+  min-width: 0;
 }
 
-/* 頁面標題區域 */
-.page-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  background: linear-gradient(135deg, #164e63 0%, #0891b2 100%);
-  color: white;
-  padding: 32px;
-  border-radius: 16px;
-  margin-bottom: 32px;
-  box-shadow: 0 4px 20px rgba(22, 78, 99, 0.3);
+.employee-name {
+  font-weight: var(--hr-font-weight-semibold);
+  color: var(--hr-gray-900);
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.header-content h1.page-title {
-  font-size: 28px;
-  font-weight: 700;
-  margin: 0 0 8px 0;
-  letter-spacing: 0.5px;
+.employee-id,
+.employee-unit-org {
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--hr-gray-500);
 }
 
-.page-description {
-  font-size: 16px;
-  opacity: 0.9;
-  margin: 0;
+.employee-unit {
+  color: var(--hr-gray-800);
+  line-height: 1.4;
 }
 
-.header-stats {
-  display: flex;
-  gap: 32px;
-}
-
-.stat-item {
-  text-align: center;
-}
-
-.stat-number {
-  font-size: 32px;
-  font-weight: 700;
-  margin-bottom: 4px;
-}
-
-.stat-label {
-  font-size: 14px;
-  opacity: 0.8;
-}
-
-/* 內容標題 */
-.content-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 24px;
-}
-
-.content-actions {
+.employee-pagination {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 12px;
+  justify-content: space-between;
+  gap: var(--hr-space-sm);
+  padding: 12px var(--hr-space-md);
+  border-top: 1px solid var(--hr-gray-200);
 }
 
-.section-title {
-  font-size: 20px;
-  font-weight: 600;
-  color: #1e293b;
-  margin: 0;
-  padding-left: 16px;
-  border-left: 4px solid #10b981;
-}
-
-.search-input {
-  flex-shrink: 0;
-  width: 280px;
-  margin-right: 12px;
-}
-
-.search-input :deep(.el-input__wrapper) {
-  border-radius: 20px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
-  transition: all 0.3s ease;
-}
-
-.search-input :deep(.el-input__wrapper:hover) {
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.12);
-}
-
-.search-input :deep(.el-input__wrapper.is-focus) {
-  box-shadow: 0 2px 12px rgba(16, 185, 129, 0.3);
-}
-
-.dept-filter-select {
-  min-width: 200px;
-  max-width: 240px;
-  margin-right: 12px;
-  flex-shrink: 0;
-}
-
-.import-btn {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  border-radius: 999px;
-  font-weight: 600;
-  flex-shrink: 0;
-}
-
-/* 批量刪除：按鈕與「取消選取」成組換行，避免撐出工具列 */
-.bulk-delete-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-shrink: 0;
-}
-
-.bulk-delete-btn {
-  border-radius: 999px;
-  font-weight: 600;
-}
-
-.bulk-delete-clear-btn {
-  margin-left: 0;
+.employee-result-count {
+  font-size: 13px;
+  color: var(--hr-gray-600);
 }
 
 /* 確認視窗內容為多行純文字（不使用 HTML），需保留換行 */
@@ -6179,273 +6533,165 @@ function getStatusTagType(status) {
   white-space: pre-line;
 }
 
-.bulk-import-dialog :deep(.el-dialog__body) {
-  padding-top: 10px;
-}
-
-.bulk-import-header {
-  margin-bottom: 20px;
-}
-
-.template-link {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  margin-top: 8px;
-  font-size: 14px;
-}
-
-.template-link :deep(.el-button) {
-  color: #0ea5e9;
-  padding: 0;
-}
-
-.bulk-import-upload {
-  margin-bottom: 24px;
-}
-
-.bulk-import-form {
-  background: #f8fafc;
-  border-radius: 12px;
-  padding: 20px;
-  margin-bottom: 24px;
-}
-
-.bulk-import-subtitle {
-  font-size: 16px;
-  font-weight: 600;
-  margin: 16px 0 12px 0;
-  color: #1f2937;
-}
-
-.bulk-import-subtitle:first-of-type {
-  margin-top: 0;
-}
-
-.bulk-import-description {
-  margin: 0 0 12px 0;
-  color: #475569;
-  font-size: 14px;
-}
-
-.bulk-import-required-alert {
-  margin-bottom: 16px;
-}
-
-.bulk-import-section {
-  margin-bottom: 20px;
-}
-
-.bulk-import-section:last-of-type {
+/* 員工資料對話框 */
+.employee-tabs :deep(.el-tabs__header) {
   margin-bottom: 0;
 }
 
-.bulk-import-section-title {
-  margin: 20px 0 8px 0;
-  font-size: 15px;
-  font-weight: 600;
-  color: #0f172a;
+.tab-label.has-error {
+  color: var(--el-color-danger);
 }
 
-.bulk-import-section:first-of-type .bulk-import-section-title {
-  margin-top: 0;
-}
-
-.bulk-import-table {
-  background: #fff;
-  border-radius: 8px;
-  overflow: hidden;
-}
-
-.bulk-import-header-code {
+.tab-error-count {
   display: inline-block;
-  padding: 2px 6px;
-  background: #e2e8f0;
-  border-radius: 4px;
-  font-family: 'Fira Code', Consolas, 'Courier New', monospace;
-  font-size: 13px;
-  color: #1e293b;
-}
-
-.bulk-import-optional-text {
-  color: #6b7280;
-  font-size: 13px;
-}
-
-.bulk-import-options-title {
-  margin-top: 28px;
-}
-
-.bulk-import-result {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-
-.bulk-import-error {
-  background: #fff7ed;
-  border-radius: 8px;
-  padding: 12px 16px;
-}
-
-.error-list {
-  margin: 12px 0 0 0;
-  padding-left: 20px;
-  color: #b45309;
-}
-
-.bulk-import-warning {
-  border-radius: 8px;
-  padding: 12px 16px;
-}
-
-.bulk-import-warning .error-list {
-  max-height: 180px;
-  overflow-y: auto;
-  color: #475569;
-}
-
-.bulk-import-update-option {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  align-items: flex-start;
-}
-
-.bulk-import-update-hint {
+  min-width: 18px;
+  margin-left: 6px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: var(--el-color-danger);
+  color: var(--hr-white);
   font-size: 12px;
-  line-height: 1.6;
-  color: #64748b;
-}
-
-.bulk-import-preview h4 {
-  margin: 0 0 12px 0;
-  font-size: 15px;
-  font-weight: 600;
-  color: #0f172a;
-}
-
-.reference-mapping-dialog :deep(.el-dialog__body) {
-  padding: 16px 20px 8px;
-  background: #f8fafc;
-}
-
-.reference-mapping-tip {
-  margin-bottom: 12px;
-  color: #475569;
-  font-size: 13px;
-}
-
-.reference-mapping-section {
-  margin-bottom: 16px;
-  padding: 12px;
-  background: #fff;
-  border-radius: 10px;
-  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.08);
-}
-
-.reference-mapping-title {
-  font-size: 14px;
-  font-weight: 600;
-  color: #0f172a;
-  margin-bottom: 8px;
-}
-
-.reference-mapping-item {
-  border: 1px solid #e2e8f0;
-  border-radius: 8px;
-  padding: 12px;
-  background: #fdfdfd;
-  margin-bottom: 12px;
-}
-
-.reference-mapping-info {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  flex-wrap: wrap;
-  margin-bottom: 8px;
-}
-
-.reference-mapping-value {
-  font-weight: 600;
-  color: #0f172a;
-}
-
-.reference-mapping-rows {
-  font-size: 12px;
-  color: #64748b;
-}
-
-.reference-mapping-mode {
-  margin-bottom: 8px;
-}
-
-.reference-mapping-select {
-  width: 100%;
-}
-
-.reference-mapping-empty {
+  line-height: 18px;
   text-align: center;
-  padding: 12px 0;
-  color: #64748b;
 }
 
-.add-btn {
+.tab-content {
+  max-height: calc(100vh - 290px);
+  min-height: 320px;
+  padding: var(--hr-space-md) 4px 0;
+  overflow-y: auto;
+}
+
+.form-section {
+  padding-bottom: var(--hr-space-sm);
+  margin-bottom: var(--hr-space-md);
+  border-bottom: 1px solid var(--hr-gray-200);
+}
+
+.form-section:last-child {
+  margin-bottom: 0;
+  border-bottom: 0;
+}
+
+.form-section__header {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 10px 20px;
-  border-radius: 8px;
-  font-weight: 500;
-  flex-shrink: 0;
+  justify-content: space-between;
+  gap: var(--hr-space-sm);
+  margin-bottom: 12px;
 }
 
-/* 表格樣式 */
-.table-container {
-  background: white;
-  border-radius: 12px;
-  overflow: hidden;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+.form-section__title {
+  margin: 0 0 12px;
+  font-size: var(--hr-font-size-base);
+  font-weight: var(--hr-font-weight-semibold);
+  color: var(--hr-gray-900);
 }
 
-.employee-table {
+.form-section__header .form-section__title {
+  margin-bottom: 0;
+}
+
+.form-section__hint {
+  margin: -6px 0 12px;
+}
+
+.form-section__empty {
+  padding-bottom: 12px;
+  font-size: 13px;
+  color: var(--hr-gray-500);
+}
+
+/* 欄位格線：依寬度自動排成 1～4 欄，手機是單欄 */
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 0 var(--hr-space-md);
+}
+
+.form-grid--four {
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+}
+
+.form-grid .span-all {
+  grid-column: 1 / -1;
+}
+
+.form-grid :deep(.el-select),
+.form-grid :deep(.el-date-editor),
+.form-grid :deep(.el-input-number) {
   width: 100%;
 }
 
-.employee-pagination {
+.holiday-regime-select {
+  max-width: 420px;
+}
+
+/* 欄位下方的說明一律另起一行（開關這類比較窄的元件旁邊不放說明） */
+.form-grid .hr-hint,
+.photo-upload-item .hr-hint {
+  flex-basis: 100%;
+}
+
+/* 基本資料：照片在左、欄位在右；窄螢幕改成上下排 */
+.basic-layout {
   display: flex;
-  justify-content: flex-end;
-  padding: 16px;
-  border-top: 1px solid #e5e7eb;
+  align-items: flex-start;
+  gap: var(--hr-space-lg);
 }
 
-.employee-info {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.employee-avatar {
-  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
-  color: white;
-  font-weight: 600;
-  flex-shrink: 0;
-}
-
-.employee-details {
+.basic-layout .form-grid {
   flex: 1;
+  min-width: 0;
 }
 
-.employee-name {
-  font-weight: 600;
-  color: #1e293b;
-  margin-bottom: 2px;
+.photo-upload-item {
+  flex: 0 0 150px;
 }
 
-.employee-id {
+.employee-photo-upload {
+  display: inline-flex;
+  flex-direction: column;
+}
+
+.employee-photo-upload :deep(.el-upload--picture-card),
+.employee-photo-upload :deep(.el-upload-list--picture-card .el-upload-list__item) {
+  width: 112px;
+  height: 112px;
+  margin: 0;
+}
+
+/* 已經有照片時，「上傳」的大方格縮成縮圖下方的一列「更換照片」，不再多佔一格的高度 */
+.employee-photo-upload.has-photo :deep(.el-upload--picture-card) {
+  height: 28px;
+  margin-top: 6px;
+  border-style: solid;
+}
+
+.upload-placeholder {
+  font-size: 13px;
+  color: var(--hr-gray-500);
+}
+
+.role-radio-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px var(--hr-space-md);
+}
+
+.role-radio-group :deep(.el-radio) {
+  margin-right: 0;
+}
+
+.option-title {
+  font-weight: var(--hr-font-weight-medium);
+  color: var(--hr-gray-900);
+}
+
+.option-desc {
+  margin-left: 12px;
   font-size: 12px;
-  color: #64748b;
+  color: var(--hr-gray-500);
 }
 
 .supervisor-option {
@@ -6464,202 +6710,11 @@ function getStatusTagType(status) {
 
 .supervisor-option-unit {
   font-size: 12px;
-  color: #94a3b8;
+  color: var(--hr-gray-400);
   white-space: nowrap;
 }
 
-.supervisor-select {
-  width: 100%;
-}
-
-.department-info {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.dept-icon {
-  color: #10b981;
-}
-
-.title-tag,
-.role-tag,
-.status-tag {
-  font-weight: 500;
-  padding: 4px 8px;
-  border-radius: 4px;
-}
-
-.contact-info {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.contact-item {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  color: #64748b;
-}
-
-.no-data {
-  color: #94a3b8;
-  font-style: italic;
-  font-size: 12px;
-}
-
-.action-buttons {
-  display: flex;
-  gap: 8px;
-}
-
-.edit-btn,
-.delete-btn {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  border-radius: 6px;
-  font-size: 12px;
-}
-
-/* 對話框樣式 */
-.employee-dialog .el-dialog__body {
-  padding: 0;
-}
-
-.employee-tabs {
-  min-height: 600px;
-}
-
-.tab-label {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-weight: 500;
-}
-
-.tab-content {
-  padding: 32px;
-  max-height: 70vh;
-  overflow-y: auto;
-}
-
-/* 表單樣式 */
-.form-section {
-  max-width: 100%;
-}
-
-.form-group {
-  background: #f8fafc;
-  padding: 24px;
-  border-radius: 12px;
-  margin-bottom: 24px;
-}
-
-.form-group-title {
-  font-size: 16px;
-  font-weight: 600;
-  color: #1e293b;
-  margin: 0 0 20px 0;
-  padding-left: 12px;
-  border-left: 3px solid #10b981;
-}
-
-.form-row {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 20px;
-}
-
-.full-width-item {
-  grid-column: span 2;
-}
-
-.photo-upload-item {
-  margin-bottom: 12px;
-}
-
-.employee-photo-upload {
-  display: inline-flex;
-}
-
-.employee-photo-upload:deep(.el-upload--picture-card) {
-  width: 148px;
-  height: 148px;
-  border-radius: 12px;
-  border-color: #cbd5f5;
-}
-
-.employee-photo-upload:deep(.el-upload--picture-card:hover) {
-  border-color: #10b981;
-}
-
-.employee-photo-upload:deep(.el-upload-list__item) {
-  border-radius: 12px;
-}
-
-.upload-placeholder {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  color: #64748b;
-  font-size: 14px;
-  gap: 6px;
-}
-
-.upload-tip {
-  margin-top: 8px;
-  font-size: 12px;
-  color: #64748b;
-}
-
-.upload-placeholder i {
-  font-size: 24px;
-  color: #10b981;
-}
-
-.role-radio-group {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-
-.role-radio {
-  border: 1px solid #e2e8f0;
-  border-radius: 8px;
-  padding: 16px;
-  margin: 0;
-  transition: all 0.3s ease;
-}
-
-.role-radio:hover {
-  border-color: #10b981;
-  background: #f0fdf4;
-}
-
-.role-radio.is-checked {
-  border-color: #10b981;
-  background: #f0fdf4;
-}
-
-.role-option {
-  margin-left: 8px;
-}
-
-.role-name {
-  font-weight: 600;
-  color: #1e293b;
-}
-
-.role-desc {
-  font-size: 12px;
-  color: #64748b;
-  margin-top: 2px;
-}
-
+.supervisor-select,
 .tag-select {
   width: 100%;
 }
@@ -6668,150 +6723,212 @@ function getStatusTagType(status) {
   float: right;
   margin-left: 16px;
   font-size: 12px;
-  color: #94a3b8;
+  color: var(--hr-gray-400);
 }
 
-/* 緊急聯絡人 */
-.emergency-contact {
-  background: white;
-  padding: 20px;
-  border-radius: 8px;
-  margin-bottom: 16px;
-  border: 1px solid #e2e8f0;
+/* 工作經歷、證照、教育訓練的每一筆 */
+.record-item {
+  position: relative;
+  padding: 12px 12px 0;
+  margin-bottom: 12px;
+  border: 1px solid var(--hr-gray-200);
+  border-radius: var(--hr-radius-md);
 }
 
-.contact-subtitle,
-.account-subtitle {
-  font-size: 14px;
-  font-weight: 600;
-  color: #475569;
-  margin: 0 0 16px 0;
-  padding-left: 8px;
-  border-left: 2px solid #10b981;
+.record-item__remove {
+  position: absolute;
+  top: 8px;
+  right: 12px;
 }
 
-/* 經歷管理 */
-.experience-list {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
+.annual-leave-unit-warning {
+  margin-bottom: var(--hr-space-md);
 }
 
-.experience-item {
-  background: white;
-  padding: 20px;
-  border-radius: 8px;
-  border: 1px solid #e2e8f0;
-}
-
-.experience-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 16px;
-}
-
-.experience-title {
-  font-size: 14px;
-  font-weight: 600;
-  color: #475569;
-  margin: 0;
-}
-
-.remove-btn {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.add-item-btn {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 16px;
-}
-
-/* 銀行帳戶 */
-.account-section {
-  background: white;
-  padding: 20px;
-  border-radius: 8px;
-  margin-bottom: 16px;
-  border: 1px solid #e2e8f0;
-}
-
-/* 對話框底部 */
 .dialog-footer {
   display: flex;
   justify-content: flex-end;
-  gap: 12px;
-  padding: 24px 32px;
-  border-top: 1px solid #e2e8f0;
-  background: #f8fafc;
+  gap: var(--hr-space-sm);
 }
 
-.cancel-btn {
-  padding: 10px 20px;
-  border-radius: 8px;
+/* 批量匯入 */
+.bulk-import-step {
+  margin-bottom: var(--hr-space-lg);
 }
 
-.save-btn {
+.bulk-import-step__title {
+  margin: 0 0 var(--hr-space-sm);
+  font-size: var(--hr-font-size-base);
+  font-weight: var(--hr-font-weight-semibold);
+  color: var(--hr-gray-900);
+}
+
+.bulk-import-step__actions {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 6px;
-  padding: 10px 24px;
-  border-radius: 8px;
-  font-weight: 500;
+  gap: var(--hr-space-sm);
+  margin-top: var(--hr-space-sm);
 }
 
-/* 響應式設計 */
-@media (max-width: 768px) {
-  .page-header {
-    flex-direction: column;
-    text-align: center;
-    gap: 20px;
+.bulk-import-guide {
+  max-height: 280px;
+  margin-top: var(--hr-space-sm);
+  overflow: auto;
+  border: 1px solid var(--hr-gray-200);
+  border-radius: var(--hr-radius-md);
+}
+
+.bulk-import-guide__table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.bulk-import-guide__table th,
+.bulk-import-guide__table td {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--hr-gray-100);
+  text-align: left;
+  vertical-align: top;
+}
+
+.bulk-import-guide__table th {
+  position: sticky;
+  top: 0;
+  background: var(--hr-gray-50);
+  color: var(--hr-gray-600);
+  font-weight: var(--hr-font-weight-semibold);
+}
+
+.bulk-import-guide__group td {
+  background: var(--hr-gray-50);
+  color: var(--hr-gray-700);
+  font-weight: var(--hr-font-weight-semibold);
+}
+
+.bulk-import-header-code {
+  font-family: var(--hr-font-family-mono);
+  font-size: 12px;
+  color: var(--hr-gray-800);
+}
+
+.bulk-import-update-hint {
+  max-width: 640px;
+}
+
+.bulk-import-result {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.error-list {
+  margin: 8px 0 0;
+  padding-left: 20px;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.bulk-import-columns {
+  margin: 0 0 8px;
+}
+
+.bulk-import-preview__title {
+  margin: 0 0 8px;
+  font-size: 14px;
+  font-weight: var(--hr-font-weight-semibold);
+  color: var(--hr-gray-900);
+}
+
+/* 參照對應 */
+.reference-mapping-tip {
+  margin: 0 0 12px;
+  font-size: 13px;
+  color: var(--hr-gray-600);
+}
+
+.reference-mapping-section {
+  margin-bottom: 16px;
+}
+
+.reference-mapping-title {
+  margin: 0 0 8px;
+  font-size: 14px;
+  font-weight: var(--hr-font-weight-semibold);
+  color: var(--hr-gray-900);
+}
+
+.reference-mapping-item {
+  padding: 12px;
+  margin-bottom: 12px;
+  border: 1px solid var(--hr-gray-200);
+  border-radius: var(--hr-radius-md);
+}
+
+.reference-mapping-info {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.reference-mapping-value {
+  font-weight: var(--hr-font-weight-semibold);
+  color: var(--hr-gray-900);
+}
+
+.reference-mapping-rows {
+  font-size: 12px;
+  color: var(--hr-gray-500);
+}
+
+.reference-mapping-mode {
+  margin-bottom: 8px;
+}
+
+.reference-mapping-select {
+  width: 100%;
+}
+
+.reference-mapping-empty {
+  padding: 12px 0;
+  text-align: center;
+  color: var(--hr-gray-500);
+}
+
+/* 手機與窄螢幕 */
+@media (max-width: 767px) {
+  .employee-search,
+  .employee-filter,
+  .employee-filter--narrow {
+    width: 100%;
   }
 
-  .header-stats {
-    gap: 20px;
+  .employee-toolbar .hr-toolbar__spacer {
+    display: none;
   }
 
-  .content-header {
+  .employee-pagination {
+    justify-content: center;
+  }
+
+  .basic-layout {
     flex-direction: column;
     align-items: stretch;
-    gap: 16px;
+    gap: 0;
   }
 
-  .form-row {
-    grid-template-columns: 1fr;
-    gap: 16px;
+  .photo-upload-item {
+    flex: none;
   }
 
+  /* 全螢幕對話框：內容區自己捲動，底部按鈕固定看得到 */
   .tab-content {
-    padding: 16px;
-  }
-
-  .employee-dialog {
-    width: 95% !important;
-  }
-}
-
-@media (max-width: 480px) {
-  .action-buttons {
-    flex-direction: column;
-    gap: 4px;
-  }
-
-  .stat-number {
-    font-size: 24px;
-  }
-
-  .role-radio-group {
-    gap: 12px;
-  }
-
-  .role-radio {
-    padding: 12px;
+    max-height: calc(100vh - 165px);
+    max-height: calc(100dvh - 165px);
+    min-height: 0;
   }
 }
 </style>

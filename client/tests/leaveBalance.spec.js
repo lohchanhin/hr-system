@@ -91,6 +91,20 @@ describe('evaluateRequest (the hint under the form)', () => {
     expect(evaluateRequest({ ...annual, status: 'unconfigured' }, [], 100)).toMatchObject({ exceeded: false })
   })
 
+  // 伺服器送出特休時以可用時數（剩餘 - 其他簽核中的特休）把關（400 ANNUAL_LEAVE_INSUFFICIENT）：
+  // 以前提示只看剩餘時數，剩 16 小時、已有 8 小時簽核中時還顯示可以再請 16 小時，送出才被擋
+  it('compares 特休 with the available hours (remaining minus other pending 特休)', () => {
+    const annual = item({ key: 'annual', name: '特休', source: 'employee', enforcement: 'block', quotaHours: 80, usedHours: 64, pendingHours: 8, remainingHours: 16, availableHours: 8 })
+    const fits = evaluateRequest(annual, [], 8)
+    expect(fits).toMatchObject({ exceeded: false, remainingAfter: 0 })
+    expect(fits.text).toBe('特休：目前可請 8 小時（1 天）；本次申請 8 小時，核准後剩 0 小時')
+    const over = evaluateRequest(annual, [], 16)
+    expect(over).toMatchObject({ level: 'error', exceeded: true, blocking: true })
+    expect(over.text).toContain('簽核中 8 小時')
+    expect(over.text).toContain('可請 8 小時')
+    expect(over.text).toContain('將超出 8 小時')
+  })
+
   // 伺服器對特休超過剩餘時數一律回 400（不看超額處理的設定），提示不能說「仍可送出」
   it('always treats 特休 over the remaining hours as blocking, whatever the stored over-quota setting says', () => {
     const base = { key: 'annual', name: '特休', source: 'employee', quotaHours: 80, usedHours: 72, remainingHours: 8, availableHours: 8 }

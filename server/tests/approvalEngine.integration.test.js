@@ -638,29 +638,42 @@ describeIntegration('approval engine against a real MongoDB through the real app
       expect((await post('stranger', `/api/approvals/${oneDay.body._id}/cancel`)).status).toBe(404)
     })
 
-    it('uses the old 天數 field (x8 hours) on a form without 時數, and keeps the approval with a visible failure when the balance changed meanwhile', async () => {
-      await Employee.updateOne({ _id: people.a2._id }, { $set: { 'annualLeave.totalHours': 8, 'annualLeave.usedHours': 0 } })
+    it('uses the old 天數 field (x8 hours) on a form without 時數, and refuses the approval when the balance changed meanwhile', async () => {
+      await Employee.updateOne({ _id: people.a2._id }, { $set: { 'annualLeave.totalHours': 12, 'annualLeave.usedHours': 0 } })
 
       const halfDay = await createRequest('a2', made, leave('2099-06-01', '2099-06-01', { [daysId]: 0.5 }))
       expect(halfDay.status).toBe(201)
       const another = await createRequest('a2', made, leave('2099-06-08', '2099-06-08', { [daysId]: 1 }))
-      expect(another.status).toBe(201) // 送出當下餘額 8 小時，足夠
+      expect(another.status).toBe(201) // 送出當下餘額 12 小時、簽核中 4 小時，可請 8 小時，足夠
+      // 簽核中的時數也算進去：再多 0.5 天就超過了（以前只和剩餘時數比，會送得出去）
+      const third = await createRequest('a2', made, leave('2099-06-15', '2099-06-15', { [daysId]: 0.5 }))
+      expect(third.status).toBe(400)
+      expect(third.body).toMatchObject({ code: 'ANNUAL_LEAVE_INSUFFICIENT', remainingHours: 12, pendingHours: 12, availableHours: 0, requestedHours: 4 })
 
       expect((await act('boss', halfDay.body._id, 'approve')).status).toBe(200)
       expect((await Employee.findById(id('a2'))).annualLeave.usedHours).toBe(4)
 
-      // 第二張核准時餘額只剩 4 小時：核准成立，但扣減失敗要清楚留下紀錄並回報
+      // 送出之後人資把年度特休調低，第二張核准時餘額只剩 4 小時：不核准，單據維持簽核中（以前照樣核准、只回警告）
+      await Employee.updateOne({ _id: people.a2._id }, { $set: { 'annualLeave.totalHours': 8 } })
       const second = await act('boss', another.body._id, 'approve')
-      expect(second.status).toBe(200)
-      expect(second.body.status).toBe('approved')
-      expect(second.body.warnings).toEqual([{
-        code: 'ANNUAL_LEAVE_DEDUCTION_FAILED',
-        message: '特休扣減失敗：餘額不足（剩餘 4 小時（0.5 天），本次需扣 8 小時（1 天）），請人資確認特休時數後手動補登',
-      }])
-      const doc = await load(another.body._id)
-      expect(doc.annual_leave).toMatchObject({ state: 'failed', hours: 8, days: 1 })
-      expect(doc.logs.find(log => log.action === 'annual_leave_error').message).toContain('餘額不足')
+      expect(second.status).toBe(409)
+      expect(second.body).toMatchObject({
+        code: 'ANNUAL_LEAVE_INSUFFICIENT',
+        error: '特休餘額不足，無法核准：剩餘 4 小時（0.5 天），這張單需要 8 小時（1 天）。請人資確認特休時數，或退簽請申請人修改',
+      })
+      let doc = await load(another.body._id)
+      expect(doc.status).toBe('pending')
+      expect(doc.annual_leave?.state).toBeUndefined()
       expect((await Employee.findById(id('a2'))).annualLeave.usedHours).toBe(4)
+
+      // 人資補回時數後核准，扣 8 小時
+      await Employee.updateOne({ _id: people.a2._id }, { $set: { 'annualLeave.totalHours': 12 } })
+      const approved = await act('boss', another.body._id, 'approve')
+      expect(approved.status).toBe(200)
+      expect(approved.body.warnings).toBeUndefined()
+      doc = await load(another.body._id)
+      expect(doc.annual_leave).toMatchObject({ state: 'deducted', hours: 8, days: 1 })
+      expect((await Employee.findById(id('a2'))).annualLeave.usedHours).toBe(12)
     })
 
     it('does not block employees whose quota was never configured, and says so after approval', async () => {
@@ -1107,7 +1120,8 @@ describeIntegration('approval engine against a real MongoDB through the real app
       const tooMuch = await createRequest('alHours', leaveForm, data(leaveForm, '2099-09-09T01:00:00.000Z', '2099-09-09T05:00:00.000Z'))
       expect(tooMuch.status).toBe(400)
       expect(tooMuch.body).toMatchObject({ code: 'ANNUAL_LEAVE_INSUFFICIENT', remainingHours: 2, requestedHours: 4 })
-      expect(tooMuch.body.error).toBe('特休餘額不足：剩餘 2 小時（0.25 天），本次申請 4 小時（0.5 天）')
+      // 第二張（4 小時）還在簽核中，也算進去
+      expect(tooMuch.body.error).toBe('特休餘額不足：剩餘 2 小時（0.25 天）、其他簽核中的特休 4 小時（0.5 天），可請 0 小時（0 天），本次申請 4 小時（0.5 天）')
       await Employee.updateOne({ _id: people.alHours._id }, { $set: { 'annualLeave.usedHours': 4 } })
 
       // 撤回第一張：返還的是記下的 4 小時

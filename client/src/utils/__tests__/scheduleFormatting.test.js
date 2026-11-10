@@ -12,6 +12,8 @@ import {
   buildScheduleImportConfirmMessage,
   buildPendingWeekLines,
   formatRuleExemptNotice,
+  describeShiftTime,
+  describeShiftTooltip,
 } from '../scheduleFormatting.js'
 
 describe('formatShiftLabel', () => {
@@ -183,7 +185,7 @@ describe('buildScheduleImportConfirmMessage', () => {
     expect(text).toContain('將匯入 8 名員工、232 個班次。')
     expect(text).toContain('班表中共有 8 天為國定假日或請假標記，其中 3 天因班別設定中沒有對應的班別，不會建立班表')
     expect(text).toContain('資料提醒（1 項）：\n・第 2 列／19 日／班別代號或名稱「國」：公版標記為國定假日')
-    expect(text).toContain('排班規範問題（1 項，可先存為草稿，發布前必須修正）：\n・A0003 2026-06-29 [每週一例一休]：該週沒有例假')
+    expect(text).toContain('排班規範問題（1 項，可先存為草稿，建議發布前修正）：\n・A0003 2026-06-29 [每週一例一休]：該週沒有例假')
     expect(text).not.toMatch(/[项资规范问题汇确认]/)
   })
 
@@ -336,5 +338,40 @@ describe('跨月週尚無法判斷的格式化', () => {
       expect(buildScheduleImportConfirmMessage(base)).not.toContain('跨月週')
       expect(buildScheduleImportConfirmMessage(base)).not.toContain('兼職')
     })
+  })
+})
+
+describe('班別時間與提示文字（跨日班別標「次日」）', () => {
+  it('一般班別顯示上下班時間', () => {
+    expect(describeShiftTime({ code: 'D', name: '白班', startTime: '08:30', endTime: '17:30' })).toBe('08:30–17:30')
+  })
+
+  it('跨日班別（勾了跨日，或下班時間不晚於上班時間）標示次日', () => {
+    expect(describeShiftTime({ code: 'N', name: '大夜', startTime: '22:00', endTime: '06:00', crossDay: true })).toBe('22:00–次日 06:00')
+    // 舊資料沒有勾跨日：下班時間比上班時間早，一樣是跨日
+    expect(describeShiftTime({ code: 'N', name: '大夜', startTime: '22:00', endTime: '06:00' })).toBe('22:00–次日 06:00')
+    expect(describeShiftTime({ code: 'E', name: '小夜', startTime: '16:00', endTime: '00:00' })).toBe('16:00–次日 00:00')
+  })
+
+  it('不用上班的班別（休息日、例假、國定假日、請假、00:00–00:00）沒有時間', () => {
+    expect(describeShiftTime({ code: '休', name: '休息日', startTime: '00:00', endTime: '00:00', semanticType: 'rest_day' })).toBe('')
+    expect(describeShiftTime({ code: '例', name: '例假', startTime: '00:00', endTime: '00:00' })).toBe('')
+    expect(describeShiftTime({ code: 'X', name: '未設定時間' })).toBe('')
+    expect(describeShiftTime(null)).toBe('')
+  })
+
+  it('提示文字：班別、時間（或班別性質）與備註', () => {
+    expect(describeShiftTooltip({ code: 'N', name: '大夜', startTime: '22:00', endTime: '06:00', crossDay: true, remark: '含夜班津貼' }))
+      .toBe('N(大夜)｜22:00–次日 06:00｜含夜班津貼')
+    expect(describeShiftTooltip({ code: '休', name: '休息日', startTime: '00:00', endTime: '00:00', semanticType: 'rest_day' }))
+      .toBe('休(休息日)｜休息日')
+    expect(describeShiftTooltip(undefined)).toBe('')
+  })
+})
+
+describe('排班規範問題的日期', () => {
+  it('伺服器的 UTC 午夜日期直接取日期部分（不依瀏覽器時區換算）', () => {
+    const text = formatLaborRuleViolation({ employeeCode: 'A0003', employeeName: '王小美', date: '2026-11-01T00:00:00.000Z', message: '每日工時超過上限' })
+    expect(text).toBe('A0003 王小美 2026-11-01：每日工時超過上限')
   })
 })

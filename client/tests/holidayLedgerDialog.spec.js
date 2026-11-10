@@ -189,6 +189,23 @@ describe('HolidayLedgerDialog', () => {
     expect(apiFetch).toHaveBeenCalledWith('/api/holiday-ledger?month=2026-09&department=d1&subDepartment=s1')
   })
 
+  // 2026/11 介面規範：超過一行的說明收進「說明」按鈕，預設不擋住表格
+  it('keeps the long explanation collapsed until 說明 is pressed', async () => {
+    const wrapper = mountDialog()
+    await flushPromises()
+
+    const help = wrapper.find('[data-test="holiday-ledger-help"]')
+    const isHidden = () => (help.attributes('style') || '').includes('display: none')
+    expect(isHidden()).toBe(true)
+    const toggle = wrapper.find('[data-test="holiday-ledger-help-toggle"]')
+    expect(toggle.text()).toBe('說明')
+
+    await toggle.trigger('click')
+    expect(isHidden()).toBe(false)
+    expect(help.text()).toContain('個別日期僅供參考')
+    expect(toggle.text()).toBe('收合說明')
+  })
+
   it('shows the holidays, summary and a text label for every state of every employee', async () => {
     const wrapper = mountDialog()
     await flushPromises()

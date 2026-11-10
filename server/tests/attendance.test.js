@@ -35,9 +35,11 @@ const setupFindChain = ({ records = [], error } = {}) => {
   const populateMock = error
     ? jest.fn().mockRejectedValue(error)
     : jest.fn().mockResolvedValue(records);
-  const sortMock = jest.fn().mockReturnValue({ populate: populateMock });
+  // 打卡記錄的查詢現在有筆數上限（find().sort().limit().populate()）
+  const limitMock = jest.fn().mockReturnValue({ populate: populateMock });
+  const sortMock = jest.fn().mockReturnValue({ limit: limitMock });
   mockAttendanceRecord.find.mockReturnValue({ sort: sortMock });
-  return { sortMock, populateMock };
+  return { sortMock, limitMock, populateMock };
 };
 
 beforeAll(async () => {
@@ -136,7 +138,8 @@ describe('Attendance API', () => {
 
     expect(mockAttendanceRecord.find).toHaveBeenCalledWith({});
     expect(sortMock).toHaveBeenCalledWith({ timestamp: -1 });
-    expect(populateMock).toHaveBeenCalledWith('employee');
+    // 只附上辨識員工用的欄位，不再把整份員工資料（薪資、帳號等）跟著每一筆打卡回傳
+    expect(populateMock).toHaveBeenCalledWith('employee', 'name employeeId department subDepartment');
     expect(res.status).toBe(200);
     expect(res.body).toEqual(fakeRecords);
   });
@@ -202,6 +205,77 @@ describe('Attendance API', () => {
     expect(sortMock).toHaveBeenCalledWith({ timestamp: -1 });
     expect(res.status).toBe(200);
     expect(res.body).toEqual(fakeRecords);
+  });
+
+  it('scope=self：主管、管理員只要自己的打卡記錄（個人的出勤打卡頁）', async () => {
+    for (const role of ['supervisor', 'admin', 'employee']) {
+      mockAttendanceRecord.find.mockReset();
+      setupFindChain({ records: [] });
+      currentUser = { id: 'me1', role };
+
+      const res = await request(app).get('/api/attendance').query({ scope: 'self', employee: 'someoneElse' });
+
+      expect(res.status).toBe(200);
+      expect(mockAttendanceRecord.find).toHaveBeenCalledWith({ employee: 'me1' });
+    }
+    // 主管只要自己的記錄時不必再查部門與直屬部屬
+    expect(mockEmployee.find).not.toHaveBeenCalled();
+  });
+
+  it('date／start／end 以台灣日期篩選（不是 UTC 日期），today 是伺服器現在的台灣日期', async () => {
+    currentUser = { id: 'emp1', role: 'employee' };
+    setupFindChain({ records: [] });
+    await request(app).get('/api/attendance').query({ date: '2026-11-10' });
+    expect(mockAttendanceRecord.find).toHaveBeenLastCalledWith({
+      employee: 'emp1',
+      timestamp: { $gte: new Date('2026-11-09T16:00:00.000Z'), $lt: new Date('2026-11-10T16:00:00.000Z') },
+    });
+
+    await request(app).get('/api/attendance').query({ start: '2026-10-31', end: '2026-11-01' });
+    expect(mockAttendanceRecord.find).toHaveBeenLastCalledWith({
+      employee: 'emp1',
+      timestamp: { $gte: new Date('2026-10-30T16:00:00.000Z'), $lt: new Date('2026-11-01T16:00:00.000Z') },
+    });
+
+    // 台灣 2024-01-02 07:30（UTC 還是 1/1）：today 要是 1/2
+    Date.now.mockReturnValue(Date.parse('2024-01-01T23:30:00.000Z'));
+    await request(app).get('/api/attendance').query({ date: 'today' });
+    expect(mockAttendanceRecord.find).toHaveBeenLastCalledWith({
+      employee: 'emp1',
+      timestamp: { $gte: new Date('2024-01-01T16:00:00.000Z'), $lt: new Date('2024-01-02T16:00:00.000Z') },
+    });
+  });
+
+  it('日期格式不對或起訖顛倒回 400，不查資料庫', async () => {
+    currentUser = { id: 'emp1', role: 'employee' };
+    setupFindChain({ records: [] });
+    for (const query of [{ date: '2026/11/10' }, { date: '2026-02-30' }, { start: 'abc' }, { start: '2026-11-10', end: '2026-11-09' }]) {
+      const res = await request(app).get('/api/attendance').query(query);
+      expect(res.status).toBe(400);
+    }
+    expect(mockAttendanceRecord.find).not.toHaveBeenCalled();
+  });
+
+  it('沒有指定 limit 時最多 1000 筆，指定時上限 5000', async () => {
+    currentUser = { id: 'admin1', role: 'admin' };
+    let chain = setupFindChain({ records: [] });
+    await request(app).get('/api/attendance');
+    expect(chain.limitMock).toHaveBeenCalledWith(1000);
+    chain = setupFindChain({ records: [] });
+    await request(app).get('/api/attendance').query({ limit: '999999' });
+    expect(chain.limitMock).toHaveBeenCalledWith(5000);
+    chain = setupFindChain({ records: [] });
+    await request(app).get('/api/attendance').query({ limit: '20' });
+    expect(chain.limitMock).toHaveBeenCalledWith(20);
+  });
+
+  it('員工編號不是有效的 _id 時回 400 而不是 500', async () => {
+    currentUser = { id: 'admin1', role: 'admin' };
+    const castError = Object.assign(new Error('Cast to ObjectId failed'), { name: 'CastError' });
+    setupFindChain({ error: castError });
+    const res = await request(app).get('/api/attendance').query({ employee: 'not-an-id' });
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({ error: '員工編號不正確' });
   });
 
   it('returns 500 if listing fails', async () => {
@@ -482,7 +556,7 @@ describe('Attendance API', () => {
     });
 
     expect(res.status).toBe(409);
-    expect(res.body.error).toContain('already recorded');
+    expect(res.body.error).toBe('這一班已經完成上班簽到，不需要重複打卡');
     expect(saveMock).not.toHaveBeenCalled();
   });
 
@@ -504,7 +578,7 @@ describe('Attendance API', () => {
     });
 
     expect(res.status).toBe(409);
-    expect(res.body.error).toContain('Clock-in is required');
+    expect(res.body.error).toBe('這一班還沒有上班簽到的記錄，請先完成上班簽到再簽退');
     expect(saveMock).not.toHaveBeenCalled();
   });
 

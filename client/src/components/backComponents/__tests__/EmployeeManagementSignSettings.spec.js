@@ -292,7 +292,9 @@ describe('EmployeeManagement - 簽核設定與登入密碼（會真的驗證的�
       expect(wrapper.find('form.el-form').attributes('validate-on-rule-change')).toBe('false')
     })
 
-    it('新增員工沒填密碼：提示補齊登入密碼並切到「帳號權限」分頁，不送出任何請求', async () => {
+    // 2026/11 版面調整（有意改變）：必填欄位全部移到第一個分頁「基本資料」（原本分散在帳號權限／個人資訊／任職資訊）；
+    // 提示改用不必再按一次「確定」的訊息（ElMessage.warning，原本是 ElMessageBox.alert），並在分頁標籤標出有幾個欄位要修正
+    it('新增員工沒填密碼：提示補齊登入密碼並切到「基本資料」分頁，不送出任何請求', async () => {
       await mountComponent()
       await wrapper.vm.openEmployeeDialog()
       await flushPromises()
@@ -301,20 +303,50 @@ describe('EmployeeManagement - 簽核設定與登入密碼（會真的驗證的�
         username: 'new-user',
         password: '',
         name: '新員工',
+        employeeNo: 'N001',
         email: 'new@example.com',
         gender: 'F',
         organization: 'org1',
         department: 'dep1'
       })
       apiFetchMock.mockClear()
+      ElMessage.warning.mockClear()
 
       await wrapper.vm.saveEmployee()
 
-      expect(ElMessageBox.alert).toHaveBeenCalledTimes(1)
-      const message = ElMessageBox.alert.mock.calls[0][0]
-      expect(message).toContain('登入密碼（帳號權限）')
-      expect(message).toContain('已切換到「帳號權限」分頁')
-      expect(wrapper.vm.employeeDialogTab).toBe('account')
+      expect(ElMessageBox.alert).not.toHaveBeenCalled()
+      expect(ElMessage.warning).toHaveBeenCalledTimes(1)
+      const message = ElMessage.warning.mock.calls[0][0]
+      expect(message).toContain('登入密碼（基本資料）')
+      expect(message).toContain('已切換到「基本資料」分頁')
+      expect(wrapper.vm.employeeDialogTab).toBe('basic')
+      expect(wrapper.vm.employeeTabErrors).toEqual({ basic: 1 })
+      expect(apiCalls((path, options) => ['POST', 'PUT'].includes(options?.method))).toHaveLength(0)
+    })
+
+    it('新增員工沒填員工編號：在畫面上就擋下來（伺服器新增時一定要員工編號）', async () => {
+      await mountComponent()
+      await wrapper.vm.openEmployeeDialog()
+      await flushPromises()
+      Object.assign(wrapper.vm.employeeForm, {
+        username: 'new-user',
+        password: 'secret',
+        name: '新員工',
+        employeeNo: '',
+        email: 'new@example.com',
+        gender: 'F',
+        organization: 'org1',
+        department: 'dep1'
+      })
+      apiFetchMock.mockClear()
+      ElMessage.warning.mockClear()
+
+      await wrapper.vm.saveEmployee()
+
+      expect(wrapper.vm.rules.employeeNo[0].required).toBe(true)
+      // 欄位就在目前的分頁（基本資料）：提示只列欄位名稱，不必再註明分頁
+      expect(ElMessage.warning.mock.calls[0][0]).toBe('請補齊：員工編號')
+      expect(wrapper.vm.employeeTabErrors).toEqual({ basic: 1 })
       expect(apiCalls((path, options) => ['POST', 'PUT'].includes(options?.method))).toHaveLength(0)
     })
 
@@ -322,19 +354,29 @@ describe('EmployeeManagement - 簽核設定與登入密碼（會真的驗證的�
       await mountComponent()
       await wrapper.vm.openEmployeeDialog('e1')
       await flushPromises()
-      wrapper.vm.employeeDialogTab = 'approval'
+      wrapper.vm.employeeDialogTab = 'employment'
       wrapper.vm.employeeForm.name = ''
       wrapper.vm.employeeForm.department = ''
       apiFetchMock.mockClear()
+      ElMessage.warning.mockClear()
 
       await wrapper.vm.saveEmployee()
 
-      const message = ElMessageBox.alert.mock.calls[0][0]
-      expect(message).toContain('員工姓名（個人資訊）')
-      expect(message).toContain('所屬部門（任職資訊）')
+      const message = ElMessage.warning.mock.calls[0][0]
+      expect(message).toContain('員工姓名（基本資料）')
+      expect(message).toContain('所屬部門（基本資料）')
       expect(message).not.toContain('登入密碼')
-      expect(wrapper.vm.employeeDialogTab).toBe('personal')
+      expect(wrapper.vm.employeeDialogTab).toBe('basic')
+      // 分頁標籤標出這一頁有兩個欄位要修正；補齊並儲存成功後標記消失
+      expect(wrapper.vm.employeeTabErrors).toEqual({ basic: 2 })
       expect(putCalls()).toHaveLength(0)
+
+      wrapper.vm.employeeForm.name = '王大明'
+      wrapper.vm.employeeForm.department = 'dep1'
+      await wrapper.vm.saveEmployee()
+      await flushPromises()
+      expect(putCalls()).toHaveLength(1)
+      expect(wrapper.vm.employeeTabErrors).toEqual({})
     })
 
     // 行為有意改變：不再只顯示含中文的伺服器訊息；英文訊息也要讓使用者看到（已知的對照成中文，其餘原樣附在「儲存失敗：」後面），
@@ -495,6 +537,8 @@ describe('EmployeeManagement - 簽核設定與登入密碼（會真的驗證的�
         username: 'new-user',
         password: 'secret',
         name: '新員工',
+        // 員工編號現在是必填（伺服器新增時本來就會擋）
+        employeeNo: 'N001',
         email: 'new@example.com',
         gender: 'F',
         organization: 'org1',

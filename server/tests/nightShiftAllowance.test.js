@@ -306,5 +306,24 @@ describe('Night Shift Allowance Service', () => {
       expect(result.nightShiftDays).toBe(0);
       expect(result.allowanceAmount).toBe(0);
     });
+
+    it('夜班時數的休息時間與工時計算同一個規則：有休息時段（breakWindows）時以時段加總為準', async () => {
+      // 22:00-06:00 共 8 小時，休息時段 02:00-02:30（30 分），breakDuration 寫 60：以前只看 breakDuration 算成 7 小時
+      const withWindow = { ...buildShift({ startTime: '22:00', endTime: '06:00', breakDuration: 60, fixedAllowanceAmount: 300 }), breakWindows: [{ start: '02:00', end: '02:30' }] };
+      const result = await calculateNightShiftAllowance('emp1', '2026-01-01', {}, {
+        attendanceSetting: { shifts: [withWindow] },
+        schedules: [buildSchedule('shift1'), buildSchedule('shift1')],
+      });
+      expect(result.shiftBreakdown.map((item) => item.workHours)).toEqual([7.5, 7.5]);
+      expect(result.nightShiftHours).toBe(15);
+      expect(result.allowanceAmount).toBe(600);
+
+      // 沒有休息時段：照舊用 breakDuration
+      const plain = await calculateNightShiftAllowance('emp1', '2026-01-01', {}, {
+        attendanceSetting: { shifts: [buildShift({ startTime: '22:00', endTime: '06:00', breakDuration: 60, fixedAllowanceAmount: 300 })] },
+        schedules: [buildSchedule('shift1')],
+      });
+      expect(plain.nightShiftHours).toBe(7);
+    });
   });
 });

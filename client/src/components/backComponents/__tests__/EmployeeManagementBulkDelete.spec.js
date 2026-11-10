@@ -351,7 +351,8 @@ describe('EmployeeManagement - 批量刪除員工', () => {
       expect(message).toContain('考勤、薪資、排班等歷史紀錄不會一併刪除')
       expect(options.type).toBe('warning')
       expect(options.confirmButtonClass).toContain('danger')
-      expect(options.confirmButtonText).toBe('確認刪除')
+      // 確認鍵與全站一致用動詞「刪除」（以前是「確認刪除」）
+      expect(options.confirmButtonText).toBe('刪除')
     })
 
     it('超過 5 位時只列出前 5 位並以「…等共 N 位」收尾', async () => {

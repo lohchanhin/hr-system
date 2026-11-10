@@ -240,7 +240,9 @@ describe('Schedule.vue', () => {
       'el-alert': AlertStub,
       'el-timeline': TimelineStub,
       'el-timeline-item': TimelineItemStub,
-      ScheduleDashboard: { name: 'ScheduleDashboard', template: '<div class="dashboard-stub"></div>', props: ['summary'] }
+      ScheduleDashboard: { name: 'ScheduleDashboard', template: '<div class="dashboard-stub"></div>', props: ['summary'] },
+      // 排班頁改用共用頁首：shallowMount 會把它換成空殼，月份／部門／單位與統計就不會畫出來，所以用真的元件
+      PageHeader: false
     }
     const optionGlobal = options.global || {}
     return shallowMount(Schedule, {
@@ -1235,7 +1237,7 @@ describe('Schedule.vue', () => {
   })
 
   // 刻意更新（行事曆分類）：標頭改讀 GET /api/holiday-calendar/headers（不再讀 /api/holidays-public/by-month），
-  // 只有國定假日標 🎊；公務機關補假等以灰字資訊顯示在日期下方
+  // 只有國定假日在標頭顯示假日名稱（2026/11 起不用表情符號）；公務機關補假等以灰字資訊顯示在日期下方
   it('marks only counted holidays in the day header (not 補班日, 工作日 or 例假日 records)', async () => {
     const month = dayjs().add(1, 'month').format('YYYY-MM')
     setupSupervisorApiMock()
@@ -1264,12 +1266,12 @@ describe('Schedule.vue', () => {
     expect(apiFetch.mock.calls.some(([url]) => String(url) === `/api/holiday-calendar/headers?month=${wrapper.vm.currentMonth}`)).toBe(true)
     expect(apiFetch.mock.calls.some(([url]) => String(url).startsWith('/api/holidays-public/by-month'))).toBe(false)
     const labels = wrapper.vm.days.map(day => day.label)
-    expect(labels[4]).toContain('🎊測試節日')
-    expect(labels[5]).not.toContain('🎊')
-    expect(labels[6]).not.toContain('🎊')
-    expect(labels[7]).not.toContain('🎊')
+    expect(labels[4]).toMatch(/^5\(.\) 測試節日$/)
+    expect(labels[5]).toMatch(/^6\(.\)$/)
+    expect(labels[6]).toMatch(/^7\(.\)$/)
+    expect(labels[7]).toMatch(/^8\(.\)$/)
     const headerText = wrapper.findAll('.day-header-label').map(node => node.text()).join('|')
-    expect(headerText).toContain('🎊測試節日')
+    expect(headerText).toContain('測試節日')
     expect(headerText).not.toContain('測試補班')
     expect(headerText).not.toContain('測試工作日')
     expect(headerText).not.toContain('測試週休')
@@ -1309,9 +1311,9 @@ describe('Schedule.vue', () => {
     await flush()
 
     const day20 = wrapper.vm.days[19]
-    expect(day20.label).not.toContain('🎊')
+    expect(day20.label).toMatch(/^20\(.\)$/)
     expect(day20.infos).toEqual(['公務機關補假'])
-    expect(wrapper.vm.days[27].label).toContain('🎊和平紀念日')
+    expect(wrapper.vm.days[27].label).toMatch(/^28\(.\) 和平紀念日$/)
     const info = wrapper.findAll('[data-test="day-header-info-20"]')
     if (wrapper.vm.virtualVisibleDays.some(day => day.date === 20)) {
       expect(info.map(node => node.text())).toEqual(['公務機關補假'])
@@ -1845,7 +1847,7 @@ describe('Schedule.vue', () => {
       expect(message).toContain('資料提醒（2 項）：')
       expect(message).toContain('・第 3 列／19 日／班別代號或名稱「國」：公版標記為國定假日，但系統假日日曆沒有該日期')
       expect(message).toContain('・第 4 列／20 日／班別代號或名稱「事」：請假代碼沒有對應的已核准假單')
-      expect(message).toContain('排班規範問題（1 項，可先存為草稿，發布前必須修正）：')
+      expect(message).toContain('排班規範問題（1 項，可先存為草稿，建議發布前修正）：')
       expect(message).toContain('・A0003 王小明 2026-06-29 [每週一例一休]：該週沒有例假')
       expect(message).not.toMatch(/[项资规范问题汇确认]/)
       expect(importScheduleRecords).toHaveBeenCalledTimes(2)
@@ -3560,7 +3562,7 @@ describe('Schedule.vue', () => {
     await wrapper.vm.$nextTick()
     await flush()
 
-    const menuCall = apiFetch.mock.calls.find(([url]) => url === '/api/menu')
+    const menuCall = apiFetch.mock.calls.find(([url]) => url.startsWith('/api/menu'))
     expect(menuCall).toBeTruthy()
   })
 
@@ -3739,7 +3741,7 @@ describe('Schedule.vue', () => {
 
     const defaultHeight = wrapper.vm.tableMaxHeight
     expect(wrapper.vm.isTableFullscreen).toBe(false)
-    expect(wrapper.vm.dayColumnWidth).toBe(140)
+    expect(wrapper.vm.dayColumnWidth).toBe(96)
 
     wrapper.vm.toggleTableFullscreen()
     await wrapper.vm.$nextTick()
@@ -4793,7 +4795,8 @@ describe('Schedule.vue', () => {
           'A0069 林小華 2026-07-06 [連續出勤限制]：不得連續7日未安排休/例',
           'A0999 張大明 2026-07-13 [每週一例一休]：該週沒有例假'
         ])
-        expect(ElMessage.success).toHaveBeenCalledWith('已將班表發送給員工確認')
+        // 成功訊息寫出這次發送的筆數（伺服器的 updated）
+        expect(ElMessage.success).toHaveBeenCalledWith('已將 2 筆班表發送給員工確認')
         // 徽章與完整檢核結果以伺服器發布當下的檢核為準
         expect(wrapper.vm.scheduleRuleValidation).toMatchObject({ ok: false, count: 2, pendingCount: 1 })
         expect(wrapper.vm.scheduleIssues.lines).toHaveLength(2)

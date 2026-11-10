@@ -233,7 +233,9 @@ Generate Excel file for bank transfer in Taiwan Business Bank or Taichung Bank f
 
 **Query Parameters:**
 - `month` (required): Month to export (format: YYYY-MM-DD)
-- `bankType` (required): Either "taiwan" or "taichung"
+- `bankType` / `format` (required): "taiwan", "taichung" or "bonusSlip"
+- `organization`, `department`, `subDepartment` (optional, 2026-11): the same scope filters as the monthly overview; only
+  employees in the scope are exported. Any other query parameter is refused with **400** (see `docs/payroll-policy.md`).
 
 **Request Body (Company Information):**
 ```json
@@ -511,3 +513,86 @@ Error responses include an error message:
 ## Migration Guide
 
 If you have existing payroll records with only the `amount` field, they will continue to work. New fields have default values of 0, and the legacy `amount` field is maintained for backward compatibility.
+
+---
+
+## 2026-11 update
+
+What changed in the payroll API in the 2026-11 review round. Everything is additive: existing callers keep working,
+stored payroll records without the new fields are read with the defaults below (no data migration).
+
+### Month parameter
+
+- Every endpoint that takes a payroll month accepts `YYYY-MM`, `YYYY-MM-01` or the ISO string of the first day of the month
+  (`2026-10-01T00:00:00.000Z`). Anything else, including a day in the middle of a month (`2026-10-15`), is refused with
+  **400** `{ "error": "Invalid month format. Expected YYYY-MM or YYYY-MM-01" }`. A mid-month date used to be calculated as
+  "15th to the 15th of the next month" and the saved record could not be found in the monthly overview.
+  (`GET /api/payroll/overview/monthly` only accepts `YYYY-MM-01`.)
+- `GET /api/payroll`: the employee filter is `employeeId`; `employee` is accepted as an alias. A value that is not a
+  24-character id is refused with **400** `{ "error": "Invalid employeeId" }` (the `employee` parameter used to be ignored,
+  so the response was every record of every employee).
+
+### New fields in calculation results and `PayrollRecord`
+
+| Field | Where | Meaning | Default for old records |
+| --- | --- | --- | --- |
+| `lateEarlyDeduction` | calculate / calculate-save result, `PayrollRecord` | Automatic late / early-leave deduction of the month. It is **already included** in `otherDeductions`; it is listed separately so the detail screen can show it. | `0` |
+| `deductionShortfall` | calculate / calculate-save result, `PayrollRecord` | When the deductions add up to more than `baseSalary`, `netPay` stops at 0 and this is the amount that could not be deducted (the individual deduction fields keep their full amounts). | `0` |
+| `insuredSalary` | calculate / calculate-save result, `PayrollRecord` | Insured salary of the labor-insurance bracket that was applied (the bracket amount, e.g. 45800). | `0` / missing: exports look the bracket up from `insuranceLevel` |
+| `employment` | work data (`GET /api/payroll/complete-data/:employeeId/:month`), calculate result, monthly overview rows | Period of the month the employee was employed: `{ employed, ratio, employedDays, daysInMonth, startKey, endKey, reason }`. `reason` is `null` (whole month), `partial_month`, `before_hire`, `after_resignation` or `leave_of_absence`. | not stored |
+| `recurringAllowance`, `recurringAllowanceBreakdown` | calculate result, monthly overview rows | Recurring allowances ticked on the employee (薪資項目, e.g. 組長加給) and their amounts; part of `totalBonus`. | not stored |
+
+Monthly-salary employees who join or leave in the middle of a month get `baseSalary = salaryAmount x employment.ratio`
+(`ratio` = employed calendar days / 30, at most 1); an employee who is not employed at all in the month gets 0.
+Daily and hourly employees are paid by attendance and are not prorated.
+
+### Monthly overview and exports use one calculation
+
+`GET /api/payroll/overview/monthly`, `GET /api/payroll/export/pdf` and `POST /api/payroll/export` now share the same
+per-employee calculation (`server/src/services/payrollBatchService.js`), so the three always show the same numbers:
+`totalBonus = overtimePay + nightShiftAllowance + performanceBonus + otherBonuses + recurringAllowance` and
+`totalPayment = netPay + totalBonus`. Employees without a saved record are calculated on the fly; employees with a saved
+record use the saved amounts (the night-shift allowance is recalculated from the current roster).
+An employee who was not employed at all in the month and has no amount to pay is left out of the bank file.
+
+### Bonus slip (`format=bonusSlip`)
+
+The bonus slip has one more column, **定期津貼** (between 其他獎金 and 簽核調整): the recurring allowances are paid with
+the bonuses, and without the column the slip total was lower than the amount actually transferred.
+
+### Leave and overtime rules that changed the numbers
+
+- A leave request with a filled total (時數 or the old 天數 field) that crosses a month end is split between the two months
+  by the roster: rest days, regular rest days and national holidays on the roster get nothing, and each working day is
+  filled in date order (monthly salary), so a 24-hour 事假 from Thu 10/29 to Mon 11/2 is 16 hours in October and 8 in
+  November (it used to be 14.4 / 9.6). For daily and hourly pay the rest days of the *other* month are now taken into
+  account as well (the two months used to add up to less than the request).
+- Overtime pay reads the approved overtime requests filed from 400 days before the payroll month onwards (requests filed
+  later are always read); it used to load every approved request the employee ever filed.
+- The first shift of a month can no longer be marked attended with the punches of the last shift of the previous month
+  (see `docs/attendance-sources.md`).
+
+## 2026-11 payroll policy (back-office settings)
+
+Full contract in Traditional Chinese: `docs/payroll-policy.md`. With no saved setting every number is the same as before.
+
+- `GET /api/payroll/policy`, `PUT /api/payroll/policy` (admin only): `proration.method` (`days30` default /
+  `calendarDays` / `none`), `overtime.rates` (8 multipliers, defaults 4/3, 5/3, 4/3, 5/3, 8/3, 1, 4/3, 5/3) and
+  `overtime.newEmployeeAutoCalc` (default `true`). PUT is a partial update; `null` or the default value resets a field.
+  The response is the effective policy plus `defaults`, `customized`, `options` (labels and descriptions) and `stats`
+  (active employees with `autoOvertimeCalc` on / off).
+- Every payroll path reads the policy once per request. Results say which rule applied: `employment.method` and
+  `employment.basisDays`; `overtimeRates`, `overtimeCalcEnabled` and `rateSegments[].rateKey` in the work data; calculate
+  results carry `employment` and `appliedPolicy: { prorationMethod, overtimeRates }`, which calculate-save also stores on
+  the `PayrollRecord`. Saved records are never recalculated.
+- `POST /api/employees` / `PUT /api/employees/:id` accept the booleans `autoOvertimeCalc` and `requiresScheduling`
+  (400 for other values). A new employee without `autoOvertimeCalc` gets `overtime.newEmployeeAutoCalc`; so do employees
+  created by the bulk import.
+- `POST /api/employees/auto-overtime-calc` `{ enabled, employeeIds?, dryRun? }` (admin only): without ids it applies to
+  every employee whose status is not 離職員工; `dryRun` returns `matched` / `willChange` only.
+- `GET /api/payroll/overview/monthly` returns `summary: { headCount, withPayrollRecord, totals }` for the whole filtered
+  result (always when it fits on one page; with more pages only when `summary=true` is passed, otherwise `null`). Rows have
+  `hoursSource` (`calculated` / `record` / `attendance`): rows of old payroll records that stored no hours now show the
+  current attendance hours instead of 0 (amounts still come from the record).
+- The night-shift hours (`nightShiftHours`, `nightShiftBreakdown[].workHours`) subtract the break the same way as the
+  work-hours calculation (break windows first, then `breakDuration`). The allowance amount is unchanged (fixed per shift).

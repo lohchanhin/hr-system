@@ -41,6 +41,14 @@ describe('GlobalHelpButton', () => {
     expect(dialog.text()).toContain('再檢查渲染')
   })
 
+  it('is a compact icon button with an accessible name (it lives in the back-office top bar)', () => {
+    const wrapper = shallowMount(GlobalHelpButton, { global: { stubs } })
+    const button = wrapper.find('[data-testid="global-help-button"]')
+    expect(button.element.tagName).toBe('BUTTON')
+    expect(button.attributes('aria-label')).toBe('本頁操作說明')
+    expect(button.text()).toBe('')
+  })
+
   it('falls back to default help copy when no props are provided', async () => {
     const wrapper = shallowMount(GlobalHelpButton, {
       global: { stubs }

@@ -1,269 +1,176 @@
 <template>
-  <div class="schedule-page">
-    <header class="page-header">
-      <div class="page-header__copy">
-        <h1 class="page-title">排班管理</h1>
-        <div class="page-context" aria-label="目前排班範圍">
-          <span>{{ currentMonth }}</span>
-          <span aria-hidden="true">/</span>
-          <span>{{ selectedDepartmentName }}</span>
-          <span aria-hidden="true">/</span>
-          <span>{{ selectedSubDepartmentName }}</span>
-        </div>
-      </div>
-      <div class="page-header__status">
-        <span class="page-header__status-label">發布狀態</span>
-        <span class="status-badge" :class="`status-${publishSummary.status}`">
-          {{ publishStatusLabel }}
-        </span>
-      </div>
-    </header>
-
-    <ScheduleDashboard :summary="summary" />
-
-    <div class="filters-card">
-      <div class="filters-header">
-        <h3 class="filters-title">篩選條件</h3>
-        <span class="filters-scope">{{ selectedDepartmentName }} · {{ selectedSubDepartmentName }}</span>
-      </div>
-      <div class="filters-content">
-        <div class="filter-group">
-          <label class="filter-label">選擇月份</label>
-          <el-date-picker v-model="currentMonth" type="month" value-format="YYYY-MM" @change="onMonthChange"
-            class="modern-date-picker" />
-        </div>
-        <div class="filter-group" :class="{ 'filter-group-hidden': shouldHideDepartmentFilters }">
-          <label class="filter-label">部門</label>
-          <el-select v-model="selectedDepartment" placeholder="請選擇部門" @change="onDepartmentChange" :disabled="!canSwitchDepartment"
-            class="modern-select" data-test="schedule-department-select">
+  <div ref="schedulePageRef" class="schedule-page" @keydown="handlePageKeydown">
+    <!-- 頁首：標題、三個統計數字，月份／部門／單位在同一列（規範見 docs/ui-guidelines.md） -->
+    <PageHeader compact title="排班管理">
+      <template #stats>
+        <ScheduleDashboard :summary="summary" />
+      </template>
+      <template #actions>
+        <div class="schedule-filters" role="group" aria-label="排班範圍">
+          <div class="month-switcher">
+            <el-button class="month-step" aria-label="上個月" title="上個月" data-test="month-prev" @click="stepMonth(-1)">
+              <el-icon><ArrowLeft /></el-icon>
+            </el-button>
+            <el-date-picker v-model="currentMonth" type="month" value-format="YYYY-MM" format="YYYY/MM"
+              :clearable="false" :editable="false" aria-label="月份" class="schedule-filter schedule-filter--month"
+              @change="onMonthChange" />
+            <el-button class="month-step" aria-label="下個月" title="下個月" data-test="month-next" @click="stepMonth(1)">
+              <el-icon><ArrowRight /></el-icon>
+            </el-button>
+          </div>
+          <el-select v-model="selectedDepartment" placeholder="部門" aria-label="部門" @change="onDepartmentChange"
+            :disabled="!canSwitchDepartment" class="schedule-filter schedule-filter--department"
+            data-test="schedule-department-select">
             <el-option v-for="dept in departments" :key="dept._id" :label="departmentLabel(dept)" :value="dept._id" />
           </el-select>
-        </div>
-        <div class="filter-group" :class="{ 'filter-group-hidden': shouldHideDepartmentFilters }">
-          <label class="filter-label">單位</label>
-          <el-select v-model="selectedSubDepartment" placeholder="請選擇單位" @change="onSubDepartmentChange"
-            class="modern-select" data-test="schedule-subdepartment-select">
+          <el-select v-model="selectedSubDepartment" placeholder="單位" aria-label="單位" @change="onSubDepartmentChange"
+            class="schedule-filter schedule-filter--unit" data-test="schedule-subdepartment-select">
             <el-option v-for="sub in filteredSubDepartments" :key="sub._id" :label="sub.name" :value="sub._id" />
           </el-select>
+          <label v-if="showIncludeSelfToggle" class="include-self-toggle">
+            <span>包含自己</span>
+            <el-switch v-model="includeSelf" active-text="是" inactive-text="否" inline-prompt />
+          </label>
         </div>
-        <div v-if="showIncludeSelfToggle" class="filter-group include-self-group">
-          <label class="filter-label">包含自己</label>
-          <el-switch v-model="includeSelf" active-text="是" inactive-text="否" inline-prompt />
-        </div>
-      </div>
-    </div>
+      </template>
+    </PageHeader>
 
-    <div v-if="canEditSchedule" class="publish-card">
-      <div class="publish-header">
-        <div class="publish-header-text">
-          <h3 class="publish-title">發布狀態</h3>
-          <p class="publish-subtitle">追蹤班表送審、回覆與鎖定流程</p>
-        </div>
+    <!-- 發布狀態：一列。目前狀態、待回覆與異議筆數、下一步的按鈕；四個步驟與名單按「流程詳情」才展開 -->
+    <section v-if="canEditSchedule" ref="publishBarRef" class="publish-bar" aria-label="發布狀態">
+      <div class="publish-bar__row">
+        <span class="publish-bar__label">發布狀態</span>
         <span class="status-badge" :class="`status-${publishSummary.status}`" data-test="publish-status-badge">
           {{ publishStatusLabel }}
         </span>
+        <span class="publish-bar__meta" data-test="publish-meta">
+          {{ publishSummary.publishedAt ? `最近發布 ${formatPublishDate(publishSummary.publishedAt)}` : '本月尚未發布' }}
+        </span>
+        <button v-if="pendingCount" type="button" class="publish-chip publish-chip--pending"
+          data-test="publish-pending-chip" @click="publishDetailVisible = true">
+          待回覆 {{ pendingCount }} 筆
+        </button>
+        <button v-if="disputedCount" type="button" class="publish-chip publish-chip--disputed"
+          data-test="publish-disputed-chip" @click="publishDetailVisible = true">
+          異議 {{ disputedCount }} 筆
+        </button>
+        <span v-if="unpublishedNotice" class="publish-chip publish-chip--static" data-test="publish-unsent-chip">
+          {{ unpublishedNotice }}
+        </span>
+        <el-button text class="publish-bar__detail-toggle" :aria-expanded="publishDetailVisible"
+          data-test="publish-detail-toggle" @click="publishDetailVisible = !publishDetailVisible">
+          {{ publishDetailVisible ? '收合流程' : '流程詳情' }}
+        </el-button>
+        <span class="publish-bar__spacer"></span>
+        <span v-if="publishActionHint" class="publish-bar__hint" :title="publishActionHint"
+          data-test="publish-disable-reasons">
+          {{ publishActionHint }}
+        </span>
+        <template v-if="publishSummary.status !== 'finalized'">
+          <!-- 已經發送過：可以重新發送（改過班表後），下一步是完成發布 -->
+          <template v-if="isPublishedRound">
+            <el-button :type="hasUnpublishedChanges ? 'primary' : 'default'" class="publish-btn" :loading="isPublishing"
+              :disabled="publishDisabled || scheduleRuleValidation.checking" data-test="publish-button"
+              @click="confirmPublish">
+              重新發送
+            </el-button>
+            <el-button :type="hasUnpublishedChanges ? 'default' : 'primary'" class="publish-btn" :loading="isFinalizing"
+              :disabled="finalizeDisabled || scheduleRuleValidation.checking" data-test="finalize-button"
+              @click="confirmFinalize">
+              完成發布
+            </el-button>
+          </template>
+          <el-button v-else type="primary" class="publish-btn" :loading="isPublishing"
+            :disabled="publishDisabled || scheduleRuleValidation.checking" data-test="publish-button"
+            @click="confirmPublish">
+            發送待確認
+          </el-button>
+        </template>
       </div>
 
-      <div class="publish-progress" data-test="publish-steps">
-        <el-steps :active="publishStepIndex" finish-status="success" align-center>
-          <el-step title="草稿" description="建立班表草稿" :status="stepStatuses.draft" />
-          <el-step title="待確認" :description="pendingStepDescription" :status="stepStatuses.pending" />
-          <el-step title="異議" :description="disputeStepDescription" :status="stepStatuses.disputed" />
-          <el-step title="完成" :description="finalStepDescription" :status="stepStatuses.finalized" />
-        </el-steps>
-      </div>
+      <div v-show="publishDetailVisible" class="publish-detail" data-test="publish-detail">
+        <div class="publish-progress" data-test="publish-steps">
+          <el-steps :active="publishStepIndex" finish-status="success" align-center>
+            <el-step title="草稿" description="建立班表草稿" :status="stepStatuses.draft" />
+            <el-step title="待確認" :description="pendingStepDescription" :status="stepStatuses.pending" />
+            <el-step title="異議" :description="disputeStepDescription" :status="stepStatuses.disputed" />
+            <el-step title="完成" :description="finalStepDescription" :status="stepStatuses.finalized" />
+          </el-steps>
+        </div>
 
-      <div class="publish-meta-row">
-        <p class="publish-meta" v-if="publishSummary.publishedAt" data-test="publish-meta">
-          最近發布：{{ formatPublishDate(publishSummary.publishedAt) }}
-        </p>
-        <p class="publish-meta" v-else data-test="publish-meta">本月尚未發布。</p>
         <div v-if="publishProgress > 0 && publishSummary.status !== 'finalized'" class="publish-progress-indicator">
           <el-progress :percentage="publishProgress" :stroke-width="8" status="success" :show-text="false" />
-          <span class="progress-label">{{ publishProgress }}% 完成</span>
-        </div>
-      </div>
-
-      <div class="publish-actions">
-        <el-button type="primary" class="publish-btn" :loading="isPublishing" :disabled="publishDisabled || scheduleRuleValidation.checking"
-          @click="confirmPublish">
-          發送待確認
-        </el-button>
-        <el-button type="success" plain class="publish-btn" :loading="isFinalizing" :disabled="finalizeDisabled || scheduleRuleValidation.checking"
-          @click="confirmFinalize">
-          完成發布
-        </el-button>
-      </div>
-      <div v-if="publishDisabled || finalizeDisabled" class="publish-disable-reasons" data-test="publish-disable-reasons">
-        <p v-if="publishDisabledReason" class="publish-disable-reason">
-          發送待確認不可點：{{ publishDisabledReason }}
-        </p>
-        <p v-if="finalizeDisabledReason" class="publish-disable-reason">
-          完成發布不可點：{{ finalizeDisabledReason }}
-        </p>
-      </div>
-
-      <div class="publish-stats">
-        <div v-if="pendingCount" class="status-card pending" data-test="pending-card">
-          <div class="card-header">
-            <span class="card-title">待回覆</span>
-            <span class="card-badge">{{ pendingCount }}</span>
-          </div>
-          <ul class="card-list">
-            <li v-for="emp in publishSummary.pendingEmployees" :key="emp.id" class="card-item">
-              <span class="card-name card-name--avatar">
-                <EmployeeAvatar :employee="publishEmployeeAvatar(emp)" :size="20" class="schedule-employee-avatar" />
-                {{ emp.name }}
-              </span>
-              <span class="card-count">{{ emp.pendingCount }} 筆</span>
-            </li>
-          </ul>
+          <span class="progress-label">{{ publishProgress }}% 已回覆</span>
         </div>
 
-        <div v-if="disputedCount" class="status-card disputed" data-test="disputed-card">
-          <div class="card-header">
-            <span class="card-title">異議</span>
-            <span class="card-badge">{{ disputedCount }}</span>
-          </div>
-          <ul class="card-list">
-            <li v-for="emp in publishSummary.disputedEmployees" :key="emp.id" class="card-item">
-              <div class="card-item-main">
+        <div class="publish-stats">
+          <div v-if="pendingCount" class="status-card pending" data-test="pending-card">
+            <div class="card-header">
+              <span class="card-title">待回覆</span>
+              <span class="card-badge">{{ pendingCount }}</span>
+            </div>
+            <ul class="card-list">
+              <li v-for="emp in publishSummary.pendingEmployees" :key="emp.id" class="card-item">
                 <span class="card-name card-name--avatar">
                   <EmployeeAvatar :employee="publishEmployeeAvatar(emp)" :size="20" class="schedule-employee-avatar" />
                   {{ emp.name }}
                 </span>
-                <span class="card-count">{{ emp.disputedCount }} 筆</span>
-              </div>
-              <div v-if="emp.disputes && emp.disputes.length > 0" class="disputes-list">
-                <div v-for="(dispute, idx) in emp.disputes" :key="idx" class="dispute-item">
-                  <div class="dispute-date">
-                    {{ formatDisputeDate(dispute.date) }}
-                  </div>
-                  <div v-if="dispute.note" class="dispute-note">
-                    {{ dispute.note }}
-                  </div>
-                  <div v-else class="dispute-note empty">
-                    （無具體說明）
+                <span class="card-count">{{ emp.pendingCount }} 筆</span>
+              </li>
+            </ul>
+          </div>
+
+          <div v-if="disputedCount" class="status-card disputed" data-test="disputed-card">
+            <div class="card-header">
+              <span class="card-title">異議</span>
+              <span class="card-badge">{{ disputedCount }}</span>
+            </div>
+            <ul class="card-list">
+              <li v-for="emp in publishSummary.disputedEmployees" :key="emp.id" class="card-item">
+                <div class="card-item-main">
+                  <span class="card-name card-name--avatar">
+                    <EmployeeAvatar :employee="publishEmployeeAvatar(emp)" :size="20" class="schedule-employee-avatar" />
+                    {{ emp.name }}
+                  </span>
+                  <span class="card-count">{{ emp.disputedCount }} 筆</span>
+                </div>
+                <div v-if="emp.disputes && emp.disputes.length > 0" class="disputes-list">
+                  <div v-for="(dispute, idx) in emp.disputes" :key="idx" class="dispute-item">
+                    <div class="dispute-date">
+                      {{ formatDisputeDate(dispute.date) }}
+                    </div>
+                    <div v-if="dispute.note" class="dispute-note">
+                      {{ dispute.note }}
+                    </div>
+                    <div v-else class="dispute-note empty">
+                      （無具體說明）
+                    </div>
                   </div>
                 </div>
-              </div>
-            </li>
-          </ul>
-        </div>
-
-        <div v-if="
-          !pendingCount &&
-          !disputedCount &&
-          publishSummary.status !== 'draft' &&
-          publishSummary.status !== 'finalized'
-        " class="status-card ready" data-test="ready-card">
-          <div class="card-header">
-            <span class="card-title">回覆完成</span>
-            <span class="card-badge success">✓</span>
+              </li>
+            </ul>
           </div>
-          <p class="card-message">所有員工已完成回覆，可執行最終發布。</p>
-        </div>
 
-        <div v-if="publishSummary.status === 'finalized'" class="status-card finalized" data-test="finalized-card">
-          <div class="card-header">
-            <span class="card-title">已鎖定</span>
-            <span class="card-badge success">100%</span>
+          <div v-if="
+            !pendingCount &&
+            !disputedCount &&
+            publishSummary.status !== 'draft' &&
+            publishSummary.status !== 'finalized'
+          " class="status-card ready" data-test="ready-card">
+            <div class="card-header">
+              <span class="card-title">回覆完成</span>
+            </div>
+            <p class="card-message">所有員工已完成回覆，可以完成發布。</p>
           </div>
-          <p class="card-message">班表已完成發布並鎖定。</p>
-        </div>
-      </div>
-    </div>
 
-    <div class="actions-card">
-      <div class="actions-card__selection">
-        <span class="toolbar-label">選取範圍</span>
-        <SelectionActions
-          :has-any-selection="hasAnySelection"
-          :employees-length="employees.length"
-          :server-pagination-total="serverPaginationTotal"
-          :is-selecting-all-employees-across-pages="isSelectingAllEmployeesAcrossPages"
-          :days-length="days.length"
-          @clear-selection="clearSelection"
-          @select-all-employees-on-page="selectAllEmployeesOnPage"
-          @select-all-employees-across-pages="selectAllEmployeesAcrossPages"
-          @select-all-days="selectAllDays"
-        />
-      </div>
-      <p v-if="selectedEmployeesSet.size > 0" class="selection-scope-hint" data-test="selection-scope-hint">
-        {{ allEmployeesSelectionHint }}
-      </p>
-      <div class="secondary-actions">
-        <div class="range-picker-wrapper">
-          <label class="range-label">自訂日期範圍</label>
-          <el-date-picker v-model="customRange" type="daterange" start-placeholder="開始日期" end-placeholder="結束日期"
-            range-separator="至" unlink-panels :disabled="!days.length" class="modern-date-picker range-picker"
-            @change="onCustomRangeChange" />
+          <div v-if="publishSummary.status === 'finalized'" class="status-card finalized" data-test="finalized-card">
+            <div class="card-header">
+              <span class="card-title">已鎖定</span>
+            </div>
+            <p class="card-message">班表已完成發布並鎖定。</p>
+          </div>
         </div>
-        <el-button @click="preview('week')" class="action-btn secondary">
-          <el-icon><Calendar /></el-icon>
-          預覽週表
-        </el-button>
-        <el-button @click="preview('month')" class="action-btn secondary">
-          <el-icon><Grid /></el-icon>
-          預覽月表
-        </el-button>
-        <el-button @click="exportPdf" class="action-btn export">
-          <el-icon><Download /></el-icon>
-          匯出 PDF
-        </el-button>
-        <el-button @click="exportExcel" class="action-btn export">
-          <el-icon><Download /></el-icon>
-          匯出 Excel
-        </el-button>
-        <el-badge :value="scheduleNotifications.length" :hidden="!scheduleNotifications.length" :max="99">
-          <el-button class="action-btn secondary" data-test="notification-log-button" @click="notificationDrawerVisible = true">
-            <el-icon><Bell /></el-icon>
-            通知日誌
-          </el-button>
-        </el-badge>
-        <el-badge
-          :value="scheduleRuleValidation.count || scheduleRuleValidation.pendingCount"
-          :hidden="!scheduleRuleValidation.count && !scheduleRuleValidation.pendingCount"
-          :type="scheduleRuleValidation.count ? 'danger' : 'info'"
-          :max="999"
-        >
-          <el-button
-            class="action-btn secondary"
-            data-test="schedule-rule-issues-button"
-            :loading="scheduleRuleValidation.checking"
-            @click="inspectScheduleRules"
-          >
-            <el-icon><WarningFilled /></el-icon>
-            排班檢核
-          </el-button>
-        </el-badge>
-        <el-button
-          v-if="canEditSchedule"
-          class="action-btn secondary"
-          data-test="holiday-ledger-button"
-          @click="openHolidayLedger"
-        >
-          <el-icon><Calendar /></el-icon>
-          國定假日休假
-        </el-button>
-        <input
-          ref="scheduleImportInput"
-          type="file"
-          accept=".xlsx"
-          hidden
-          @change="onScheduleImportFile"
-        />
-        <el-button
-          class="action-btn secondary"
-          :loading="isImportingSchedule"
-          :disabled="!selectedDepartment"
-          @click="openScheduleImport"
-        >
-          <el-icon><Upload /></el-icon>
-          匯入 Excel
-        </el-button>
       </div>
-    </div>
+    </section>
 
     <div ref="scheduleCardRef" class="schedule-card" :class="{ 'is-fullscreen': isTableFullscreen }" data-test="schedule-card">
       <div
@@ -272,35 +179,141 @@
         data-test="fullscreen-popper-host"
       ></div>
       <div ref="scheduleHeaderRef" class="schedule-header">
-        <div class="schedule-header__main">
-          <div class="schedule-title-wrapper">
-            <h3 class="schedule-title">員工排班表</h3>
-            <p class="fullscreen-filter-hint">
-              {{ isTableFullscreen ? fullscreenFilterHint : `${serverPaginationTotal} 位員工 · ${days.length} 天` }}
-            </p>
+        <!-- 第一列：人數與最近一次變更的狀態在左，工具在右（常用的直接顯示，其餘收進「更多」） -->
+        <div class="schedule-toolbar">
+          <div class="schedule-toolbar__status" aria-live="polite">
+            <span class="schedule-scope-count" data-test="schedule-scope-count">
+              <template v-if="isTableFullscreen">{{ fullscreenFilterHint }}｜</template>{{ serverPaginationTotal }} 位員工
+            </span>
+            <span v-if="gridBusyText" class="schedule-status" data-state="saving" data-test="grid-busy-status">
+              {{ gridBusyText }}
+            </span>
+            <span v-else-if="lastChange" class="schedule-status" :data-state="lastChange.status"
+              :title="lastChange.text" data-test="last-change-status">
+              <span class="schedule-status__text">{{ lastChange.text }}</span>
+              <el-button v-if="canUndoLastChange" link type="primary" class="schedule-status__undo"
+                title="復原上一次變更（Ctrl+Z）" data-test="undo-last-change" @click="undoLastChange">
+                復原
+              </el-button>
+            </span>
           </div>
           <div class="approval-summary-inline" data-test="approval-summary-inline">
-            <div class="approval-summary-inline-item">
+            <span class="approval-summary-inline-item">
               <span class="approval-summary-inline-label">待簽核</span>
               <strong class="approval-summary-inline-value" data-test="approval-summary-pending">{{ pendingApprovalCount }}</strong>
-            </div>
-            <div class="approval-summary-inline-item">
+            </span>
+            <span class="approval-summary-inline-item">
               <span class="approval-summary-inline-label">異議</span>
               <strong class="approval-summary-inline-value" data-test="approval-summary-disputed">{{ disputedApprovalCount }}</strong>
-            </div>
+            </span>
             <el-button
-              class="action-btn secondary approval-jump-btn"
+              link
+              type="primary"
+              class="approval-jump-btn"
               :disabled="!relatedApprovalRows.length"
               data-test="approval-jump-button"
               @click="jumpToApprovalSection"
             >
-              前往簽核詳情
+              查看簽核
             </el-button>
           </div>
           <div class="schedule-view-actions">
-            <el-button v-if="isTableFullscreen" :loading="scheduleRuleValidation.checking" @click="inspectScheduleRules">
-              <el-icon><WarningFilled /></el-icon>排班檢核
+            <input
+              ref="scheduleImportInput"
+              type="file"
+              accept=".xlsx"
+              hidden
+              @change="onScheduleImportFile"
+            />
+            <el-button
+              class="action-btn secondary"
+              :loading="isImportingSchedule"
+              :disabled="!selectedDepartment"
+              data-test="schedule-import-button"
+              @click="openScheduleImport"
+            >
+              <el-icon><Upload /></el-icon>
+              匯入
             </el-button>
+            <el-popover
+              v-model:visible="exportMenuVisible"
+              trigger="click"
+              placement="bottom-end"
+              :width="168"
+              :append-to="toolbarPopperAppendTarget"
+              :popper-class="toolbarPopperClassName"
+            >
+              <template #reference>
+                <el-button class="action-btn secondary" :loading="Boolean(isExporting)" :disabled="exportDisabled"
+                  :title="exportDisabled ? exportDisabledReason : ''" data-test="schedule-export-button">
+                  <el-icon><Download /></el-icon>
+                  匯出
+                </el-button>
+              </template>
+              <div class="schedule-menu" role="menu" aria-label="匯出格式">
+                <button type="button" class="schedule-menu__item" role="menuitem" :disabled="exportDisabled"
+                  data-test="export-excel-button" @click="runMenuAction('export', exportExcel)">
+                  匯出 Excel
+                </button>
+                <button type="button" class="schedule-menu__item" role="menuitem" :disabled="exportDisabled"
+                  data-test="export-pdf-button" @click="runMenuAction('export', exportPdf)">
+                  匯出 PDF
+                </button>
+              </div>
+            </el-popover>
+            <el-badge
+              :value="scheduleRuleValidation.count || scheduleRuleValidation.pendingCount"
+              :hidden="!scheduleRuleValidation.count && !scheduleRuleValidation.pendingCount"
+              :type="scheduleRuleValidation.count ? 'danger' : 'info'"
+              :max="999"
+            >
+              <el-button
+                class="action-btn secondary"
+                data-test="schedule-rule-issues-button"
+                :loading="scheduleRuleValidation.checking"
+                @click="inspectScheduleRules"
+              >
+                <el-icon><WarningFilled /></el-icon>
+                排班檢核
+              </el-button>
+            </el-badge>
+            <el-popover
+              v-model:visible="moreMenuVisible"
+              trigger="click"
+              placement="bottom-end"
+              :width="208"
+              :append-to="toolbarPopperAppendTarget"
+              :popper-class="toolbarPopperClassName"
+            >
+              <template #reference>
+                <el-button class="action-btn secondary" data-test="schedule-more-button">
+                  更多
+                  <el-icon class="el-icon--right"><ArrowDown /></el-icon>
+                </el-button>
+              </template>
+              <div class="schedule-menu" role="menu" aria-label="更多功能">
+                <button type="button" class="schedule-menu__item" role="menuitem" :disabled="!employees.length"
+                  data-test="preview-week-button" @click="runMenuAction('more', () => preview('week'))">
+                  預覽週表
+                </button>
+                <button type="button" class="schedule-menu__item" role="menuitem" :disabled="!employees.length"
+                  data-test="preview-month-button" @click="runMenuAction('more', () => preview('month'))">
+                  預覽月表
+                </button>
+                <button type="button" class="schedule-menu__item" role="menuitem"
+                  data-test="notification-log-button" @click="runMenuAction('more', () => { notificationDrawerVisible = true })">
+                  通知日誌<span v-if="scheduleNotifications.length" class="schedule-menu__count">{{ scheduleNotifications.length }}</span>
+                </button>
+                <button v-if="canEditSchedule" type="button" class="schedule-menu__item" role="menuitem"
+                  data-test="holiday-ledger-button" @click="runMenuAction('more', openHolidayLedger)">
+                  國定假日休假
+                </button>
+                <button type="button" class="schedule-menu__item" role="menuitem"
+                  data-test="toggle-info-columns-button" @click="runMenuAction('more', toggleEmployeeInfoColumns)">
+                  {{ showEmployeeInfoColumns ? '隱藏單位、職稱與特休欄' : '顯示單位、職稱與特休欄' }}
+                </button>
+              </div>
+            </el-popover>
             <el-button class="action-btn secondary fullscreen-toggle" @click="toggleTableFullscreen"
               data-test="fullscreen-toggle-button">
               <el-icon><FullScreen /></el-icon>
@@ -313,141 +326,220 @@
             </el-button>
           </div>
         </div>
-        <div v-show="!isTableFullscreen || !isFullscreenToolbarCollapsed" class="schedule-header__controls">
-          <div class="schedule-legend" data-test="schedule-legend">
-            <template v-if="legendShifts.length">
-              <span v-for="legend in legendShifts" :key="legend.key" class="legend-item" :style="legend.style"
-                data-test="shift-legend-item">
-                {{ legend.label }}
-              </span>
-            </template>
-            <span v-else class="legend-empty" data-test="shift-legend-empty">
-              尚未設定班別
-            </span>
-            <span class="legend-item leave">請假</span>
-          </div>
-          <div class="schedule-search-controls">
-            <el-input v-model="employeeSearch" placeholder="搜尋員工"
-              :prefix-icon="Search" clearable class="employee-search" />
-            <el-select v-model="statusFilter" placeholder="狀態" class="status-filter">
-              <el-option label="全部" value="all" />
-              <el-option label="缺班" value="unscheduled" />
-              <el-option label="待審核請假" value="onLeave" />
-            </el-select>
-            <el-input v-model="jobTypeFilter" placeholder="搜尋職別"
-              :prefix-icon="Filter" clearable class="employee-search" />
-          </div>
-        </div>
-        <SelectionActions
-          v-if="isTableFullscreen"
-          compact
-          class="fullscreen-selection-actions"
-          :has-any-selection="hasAnySelection"
-          :employees-length="employees.length"
-          :server-pagination-total="serverPaginationTotal"
-          :is-selecting-all-employees-across-pages="isSelectingAllEmployeesAcrossPages"
-          :days-length="days.length"
-          @clear-selection="clearSelection"
-          @select-all-employees-on-page="selectAllEmployeesOnPage"
-          @select-all-employees-across-pages="selectAllEmployeesAcrossPages"
-          @select-all-days="selectAllDays"
-        />
-        <p
-          v-if="shouldUseVirtualRender && visibleEmployees.length > 0"
-          class="virtual-render-hint"
-          data-test="virtual-render-hint"
+
+        <!-- 第二列：平常是班別圖例與搜尋；勾選了員工、日期或格子之後，同一列換成批次操作（表格不會上下跳動） -->
+        <div
+          ref="batchToolbarRef"
+          v-show="!isTableFullscreen || !isFullscreenToolbarCollapsed"
+          class="batch-toolbar"
+          :class="{ 'is-selecting': hasSelectionContext }"
         >
-          已啟用大量資料模式，共 {{ serverPaginationTotal }} 位員工
-        </p>
+          <div v-show="!hasSelectionContext" class="grid-toolbar__idle">
+            <div class="schedule-legend" data-test="schedule-legend">
+              <template v-if="legendShifts.length">
+                <span v-for="legend in legendShifts" :key="legend.key" class="legend-item" :style="legend.style"
+                  :title="legend.title" data-test="shift-legend-item">
+                  {{ legend.label }}
+                </span>
+              </template>
+              <span v-else class="legend-empty" data-test="shift-legend-empty">
+                尚未設定班別
+              </span>
+              <span class="legend-item leave">請假</span>
+            </div>
+            <div class="schedule-search-controls">
+              <el-input v-model="employeeSearch" placeholder="搜尋員工"
+                :prefix-icon="Search" clearable class="employee-search" />
+              <el-select v-model="statusFilter" placeholder="狀態" aria-label="排班狀態" class="status-filter"
+                :teleported="isToolbarDropdownTeleported"
+                :append-to="toolbarPopperAppendTarget"
+                :popper-class="toolbarPopperClassName">
+                <el-option label="全部" value="all" />
+                <el-option label="缺班" value="unscheduled" />
+                <el-option label="待審核請假" value="onLeave" />
+              </el-select>
+              <el-input v-model="jobTypeFilter" placeholder="搜尋職別"
+                :prefix-icon="Filter" clearable class="employee-search" />
+            </div>
+          </div>
+
+          <div
+            v-if="canEditSchedule"
+            v-show="hasSelectionContext"
+            class="grid-toolbar__selection"
+            role="toolbar"
+            aria-label="批次操作"
+            data-test="selection-bar"
+          >
+            <span class="selection-bar__count" :title="allEmployeesSelectionHint" data-test="selection-scope-hint">
+              {{ selectionSummaryText }}
+            </span>
+            <el-select
+              v-model="batchShiftId"
+              placeholder="套用班別"
+              aria-label="套用班別"
+              class="modern-select batch-select"
+              filterable
+              :teleported="isToolbarDropdownTeleported"
+              :append-to="toolbarPopperAppendTarget"
+              :popper-class="toolbarPopperClassName"
+              data-test="batch-shift-select"
+            >
+              <el-option v-for="opt in availableShifts" :key="opt._id" :label="formatShiftLabel(opt)" :value="opt._id" />
+            </el-select>
+            <el-button type="primary" class="action-btn primary apply-btn"
+              :disabled="!hasAnySelection || !batchShiftId || isApplyingBatch" :loading="isApplyingBatch"
+              @click="applyBatch" data-test="batch-apply-button">
+              套用
+            </el-button>
+            <el-button type="danger" plain class="action-btn apply-btn"
+              :disabled="!selectedPersistedSchedules.length || isClearingBatch" :loading="isClearingBatch"
+              @click="clearSelectedSchedules" data-test="batch-clear-button">
+              <el-icon><Delete /></el-icon>
+              清空排班
+            </el-button>
+            <el-popover
+              trigger="click"
+              placement="bottom-start"
+              :width="260"
+              :append-to="toolbarPopperAppendTarget"
+              :popper-class="toolbarPopperClassName"
+            >
+              <template #reference>
+                <el-button class="action-btn secondary" :disabled="!selectedEmployeesSet.size"
+                  :title="selectedEmployeesSet.size ? '' : '勾選員工（整列）後才能設定列色'" data-test="batch-row-color-button">
+                  列色
+                  <el-icon class="el-icon--right"><ArrowDown /></el-icon>
+                </el-button>
+              </template>
+              <div class="batch-popover">
+                <el-select
+                  v-model="batchRowColorIndex"
+                  placeholder="設定整列顏色"
+                  aria-label="整列顏色"
+                  clearable
+                  class="modern-select batch-select"
+                  :teleported="isToolbarDropdownTeleported"
+                  :append-to="toolbarPopperAppendTarget"
+                  :popper-class="toolbarPopperClassName"
+                  data-test="batch-row-color-select"
+                >
+                  <el-option v-for="opt in rowColorOptions" :key="opt.index" :label="opt.label" :value="opt.index">
+                    <span class="row-color-option">
+                      <span class="row-color-dot" :style="{ backgroundColor: opt.bg, borderColor: opt.border }"></span>
+                      {{ opt.label }}
+                    </span>
+                  </el-option>
+                </el-select>
+                <div class="batch-popover__actions">
+                  <el-button class="action-btn secondary apply-btn" :disabled="!canApplyRowColor" @click="applyRowColor"
+                    data-test="batch-row-color-apply">
+                    套用列色
+                  </el-button>
+                  <el-button class="action-btn secondary apply-btn" plain :disabled="!selectedEmployeesSet.size" @click="clearRowColor"
+                    data-test="batch-row-color-clear">
+                    清除列色
+                  </el-button>
+                </div>
+                <p class="row-color-hint">列色只保留在這次瀏覽，關閉分頁後清除。</p>
+              </div>
+            </el-popover>
+            <el-popover
+              trigger="click"
+              placement="bottom-start"
+              :width="280"
+              :append-to="toolbarPopperAppendTarget"
+              :popper-class="toolbarPopperClassName"
+            >
+              <template #reference>
+                <el-button class="action-btn secondary" :class="{ 'is-active': hasBatchScopeOverride }"
+                  data-test="batch-scope-button">
+                  {{ batchScopeLabel }}
+                  <el-icon class="el-icon--right"><ArrowDown /></el-icon>
+                </el-button>
+              </template>
+              <div class="batch-popover">
+                <template v-if="isTableFullscreen">
+                  <div class="batch-readonly-field" data-test="batch-dept-readonly">
+                    <span class="batch-readonly-field__label">套用部門</span>
+                    <span class="batch-readonly-field__value">{{ batchDepartmentDisplayName }}</span>
+                  </div>
+                  <div class="batch-readonly-field" data-test="batch-subdept-readonly">
+                    <span class="batch-readonly-field__label">套用單位</span>
+                    <span class="batch-readonly-field__value">{{ batchSubDepartmentDisplayName }}</span>
+                  </div>
+                </template>
+                <template v-else>
+                  <el-select
+                    v-model="batchDepartment"
+                    placeholder="套用部門"
+                    aria-label="套用部門"
+                    clearable
+                    class="modern-select batch-select"
+                    data-test="batch-dept-select"
+                  >
+                    <el-option v-for="dept in departments" :key="dept._id" :label="departmentLabel(dept)" :value="dept._id" />
+                  </el-select>
+                  <el-select
+                    v-model="batchSubDepartment"
+                    placeholder="套用單位"
+                    aria-label="套用單位"
+                    clearable
+                    class="modern-select batch-select"
+                    :disabled="!batchDepartment"
+                    data-test="batch-subdept-select"
+                  >
+                    <el-option v-for="sub in batchSubDepartments" :key="sub._id" :label="sub.name" :value="sub._id" />
+                  </el-select>
+                </template>
+                <p class="row-color-hint">套用班別時一併把班表掛到這個部門與單位；不指定就維持各格原本的設定。</p>
+              </div>
+            </el-popover>
+            <span class="grid-toolbar__spacer"></span>
+            <el-button class="action-btn secondary" title="取消選取（Esc）" data-test="selection-cancel-button"
+              @click="clearSelection">
+              <el-icon><Close /></el-icon>
+              取消選取
+            </el-button>
+          </div>
+
+          <el-popover
+            v-if="canEditSchedule"
+            v-model:visible="selectionMenuVisible"
+            trigger="click"
+            placement="bottom-end"
+            :width="300"
+            :append-to="toolbarPopperAppendTarget"
+            :popper-class="toolbarPopperClassName"
+          >
+            <template #reference>
+              <el-button class="action-btn secondary selection-menu-button" data-test="selection-menu-button">
+                選取
+                <el-icon class="el-icon--right"><ArrowDown /></el-icon>
+              </el-button>
+            </template>
+            <div class="batch-popover">
+              <SelectionActions
+                :compact="isTableFullscreen"
+                :has-any-selection="hasSelectionContext"
+                :employees-length="employees.length"
+                :server-pagination-total="serverPaginationTotal"
+                :is-selecting-all-employees-across-pages="isSelectingAllEmployeesAcrossPages"
+                :days-length="days.length"
+                @clear-selection="clearSelection"
+                @select-all-employees-on-page="selectAllEmployeesOnPage"
+                @select-all-employees-across-pages="selectAllEmployeesAcrossPages"
+                @select-all-days="selectAllDays"
+              />
+              <el-date-picker v-model="customRange" type="daterange" format="YYYY/MM/DD" start-placeholder="選取日期：開始" end-placeholder="結束"
+                range-separator="至" unlink-panels :disabled="!days.length" :teleported="!isTableFullscreen"
+                class="range-picker" data-test="selection-range-picker" @change="onCustomRangeChange" />
+              <p class="row-color-hint">也可以直接勾選員工、日期或格子；按住 Shift 點第二格可選取一整塊範圍。</p>
+            </div>
+          </el-popover>
+        </div>
       </div>
 
-      <div
-        ref="batchToolbarRef"
-        v-if="canEditSchedule"
-        v-show="!isTableFullscreen || !isFullscreenToolbarCollapsed"
-        class="batch-toolbar"
-      >
-        <el-select
-          v-model="batchShiftId"
-          placeholder="套用班別"
-          class="modern-select batch-select"
-          filterable
-          :teleported="isToolbarDropdownTeleported"
-          :append-to="toolbarPopperAppendTarget"
-          :popper-class="toolbarPopperClassName"
-          data-test="batch-shift-select"
-        >
-          <el-option v-for="opt in availableShifts" :key="opt._id" :label="formatShiftLabel(opt)" :value="opt._id" />
-        </el-select>
-        <template v-if="isTableFullscreen">
-          <div class="batch-readonly-field" data-test="batch-dept-readonly">
-            <span class="batch-readonly-field__label">套用部門</span>
-            <span class="batch-readonly-field__value">{{ batchDepartmentDisplayName }}</span>
-          </div>
-          <div class="batch-readonly-field" data-test="batch-subdept-readonly">
-            <span class="batch-readonly-field__label">套用單位</span>
-            <span class="batch-readonly-field__value">{{ batchSubDepartmentDisplayName }}</span>
-          </div>
-        </template>
-        <template v-else>
-          <el-select
-            v-model="batchDepartment"
-            placeholder="套用部門"
-            clearable
-            class="modern-select batch-select"
-            data-test="batch-dept-select"
-          >
-            <el-option v-for="dept in departments" :key="dept._id" :label="departmentLabel(dept)" :value="dept._id" />
-          </el-select>
-          <el-select
-            v-model="batchSubDepartment"
-            placeholder="套用單位"
-            clearable
-            class="modern-select batch-select"
-            :disabled="!batchDepartment"
-            data-test="batch-subdept-select"
-          >
-            <el-option v-for="sub in batchSubDepartments" :key="sub._id" :label="sub.name" :value="sub._id" />
-          </el-select>
-        </template>
-        <el-select
-          v-model="batchRowColorIndex"
-          placeholder="設定整列顏色"
-          clearable
-          class="modern-select batch-select"
-          :teleported="isToolbarDropdownTeleported"
-          :append-to="toolbarPopperAppendTarget"
-          :popper-class="toolbarPopperClassName"
-          data-test="batch-row-color-select"
-        >
-          <el-option v-for="opt in rowColorOptions" :key="opt.index" :label="opt.label" :value="opt.index">
-            <span class="row-color-option">
-              <span class="row-color-dot" :style="{ backgroundColor: opt.bg, borderColor: opt.border }"></span>
-              {{ opt.label }}
-            </span>
-          </el-option>
-        </el-select>
-        <el-button class="action-btn secondary apply-btn" :disabled="!canApplyRowColor" @click="applyRowColor"
-          data-test="batch-row-color-apply">
-          套用列色
-        </el-button>
-        <el-button class="action-btn secondary apply-btn" plain :disabled="!selectedEmployeesSet.size" @click="clearRowColor"
-          data-test="batch-row-color-clear">
-          清除列色
-        </el-button>
-        <el-button type="primary" class="action-btn primary apply-btn"
-          :disabled="!hasAnySelection || !batchShiftId || isApplyingBatch" :loading="isApplyingBatch"
-          @click="applyBatch" data-test="batch-apply-button">
-          套用至選取
-        </el-button>
-        <el-button type="danger" plain class="action-btn apply-btn"
-          :disabled="!selectedPersistedSchedules.length || isClearingBatch" :loading="isClearingBatch"
-          @click="clearSelectedSchedules" data-test="batch-clear-button">
-          <el-icon><Delete /></el-icon>
-          清空選取排班
-        </el-button>
-        <span class="row-color-hint">列色僅暫存於目前瀏覽器 session</span>
-      </div>
       <div
         ref="stressToolbarRef"
         v-if="stressScenarioEnabled"
@@ -476,37 +568,67 @@
         </span>
       </div>
 
-      <section v-if="scheduleIssues.lines.length" class="schedule-rule-results" aria-label="完整排班檢核結果" data-test="schedule-rule-results">
-        <h3>{{ scheduleIssues.title }}（共 {{ scheduleIssues.lines.length }} 項）</h3>
-        <ol tabindex="0" aria-label="全部不合規明細">
+      <!-- 排班檢核結果：平常只佔一行，明細按「展開」才列出（排班規範只提醒、不擋發布） -->
+      <section v-if="scheduleIssues.lines.length" class="schedule-rule-results" :class="{ 'is-collapsed': !ruleResultsExpanded }"
+        aria-label="完整排班檢核結果" data-test="schedule-rule-results">
+        <div class="schedule-rule-heading">
+          <h3>{{ scheduleIssues.title }}（共 {{ scheduleIssues.lines.length }} 項）</h3>
+          <el-button link type="primary" :aria-expanded="ruleResultsExpanded" data-test="schedule-rule-results-toggle"
+            @click="ruleResultsExpanded = !ruleResultsExpanded">
+            {{ ruleResultsExpanded ? '收合' : '展開明細' }}
+          </el-button>
+        </div>
+        <ol v-show="ruleResultsExpanded" tabindex="0" aria-label="全部不合規明細">
           <li v-for="(line, index) in scheduleIssues.lines" :key="index">{{ line }}</li>
         </ol>
       </section>
-      <section v-if="schedulePendingLines.length" class="schedule-rule-pending" aria-label="尚無法判斷的跨月週" data-test="schedule-rule-pending">
-        <h3>尚無法判斷的跨月週（共 {{ schedulePendingLines.length }} 項）</h3>
-        <p class="schedule-rule-pending-hint">{{ PENDING_WEEK_HINT }}</p>
-        <ol tabindex="0" aria-label="尚無法判斷的跨月週明細">
-          <li v-for="(line, index) in schedulePendingLines" :key="index">{{ line }}</li>
-        </ol>
+      <section v-if="schedulePendingLines.length" class="schedule-rule-pending" :class="{ 'is-collapsed': !rulePendingExpanded }"
+        aria-label="尚無法判斷的跨月週" data-test="schedule-rule-pending">
+        <div class="schedule-rule-heading">
+          <h3>尚無法判斷的跨月週（共 {{ schedulePendingLines.length }} 項）</h3>
+          <el-button link type="primary" :aria-expanded="rulePendingExpanded" data-test="schedule-rule-pending-toggle"
+            @click="rulePendingExpanded = !rulePendingExpanded">
+            {{ rulePendingExpanded ? '收合' : '展開明細' }}
+          </el-button>
+        </div>
+        <div v-show="rulePendingExpanded">
+          <p class="schedule-rule-pending-hint">{{ PENDING_WEEK_HINT }}</p>
+          <ol tabindex="0" aria-label="尚無法判斷的跨月週明細">
+            <li v-for="(line, index) in schedulePendingLines" :key="index">{{ line }}</li>
+          </ol>
+        </div>
       </section>
-      <el-alert
+      <!-- 公司行事曆尚未建立或尚未核定：一行提醒，管理員可以直接前往設定 -->
+      <p
         v-if="calendarStatus?.provisional && calendarStatus?.message"
         class="calendar-provisional-alert"
-        type="warning"
-        :closable="false"
-        show-icon
+        role="status"
         data-test="calendar-provisional-alert"
-        :title="calendarStatus.message"
-      />
+      >
+        <el-icon aria-hidden="true"><WarningFilled /></el-icon>
+        <span>{{ calendarStatus.message }}</span>
+        <el-button v-if="isAdminUser" link type="primary" data-test="calendar-settings-link" @click="goToCalendarSettings">
+          前往行事曆設定
+        </el-button>
+      </p>
       <div ref="scheduleTableWrapperRef" class="schedule-table-wrapper" :class="{ 'is-fullscreen': isTableFullscreen }"
         data-test="schedule-table-wrapper" @click.capture="handleTableDelegatedClick"
         @change.capture="handleTableDelegatedChange">
-        <el-table ref="scheduleTableRef" class="modern-schedule-table" :data="virtualVisibleEmployees" :max-height="tableMaxHeight" :header-cell-style="{
+        <el-table ref="scheduleTableRef" class="modern-schedule-table" :data="virtualVisibleEmployees" :max-height="tableMaxHeight"
+          :empty-text="gridEmptyText" :header-cell-style="{
           backgroundColor: '#f4f6f7',
           color: '#344054',
           fontWeight: '650'
         }" :row-style="scheduleRowStyle" :row-class-name="scheduleRowClassName">
-        <el-table-column prop="name" label="員工姓名" width="160" fixed="left" class-name="schedule-fixed-column">
+        <el-table-column prop="name" label="員工姓名" :width="isNarrowViewport ? 124 : 160" fixed="left" class-name="schedule-fixed-column">
+          <template #header>
+            <div class="employee-name-header">
+              <el-checkbox v-if="canEditSchedule" class="row-checkbox" :model-value="isPageFullySelected"
+                :indeterminate="isPagePartiallySelected" :disabled="!employees.length" aria-label="本頁全選"
+                title="本頁全選" data-test="select-page-checkbox" @change="selectAllEmployeesOnPage" />
+              <span>員工姓名</span>
+            </div>
+          </template>
           <template #default="{ row }">
             <div class="employee-name">
               <el-checkbox v-if="canEditSchedule" class="row-checkbox" :model-value="selectedEmployeesSet.has(row._id)"
@@ -537,16 +659,16 @@
             </div>
           </template>
         </el-table-column>
-        <el-table-column prop="subDepartmentName" label="單位" width="92" fixed="left"
-          class-name="schedule-fixed-column sub-department-column">
+        <el-table-column v-if="showEmployeeInfoColumns" prop="subDepartmentName" label="單位" width="92"
+          :fixed="isNarrowViewport ? false : 'left'" class-name="schedule-fixed-column sub-department-column">
           <template #default="{ row }">
             <span class="sub-department-text" :title="row.subDepartmentName || row.subDepartment || '-'">
               {{ row.subDepartmentName || row.subDepartment || '-' }}
             </span>
           </template>
         </el-table-column>
-        <el-table-column label="職稱 / 職位" width="166" fixed="left"
-          class-name="schedule-fixed-column title-position-column">
+        <el-table-column v-if="showEmployeeInfoColumns" label="職稱 / 職位" width="166"
+          :fixed="isNarrowViewport ? false : 'left'" class-name="schedule-fixed-column title-position-column">
           <template #default="{ row }">
             <div class="title-position-cell">
               <span class="title-line" :title="row.title || row.practiceTitle || '-'">
@@ -559,8 +681,9 @@
             </div>
           </template>
         </el-table-column>
-        
-        <el-table-column label="特休剩餘" width="96" fixed="left" class-name="schedule-fixed-column">
+
+        <el-table-column v-if="showEmployeeInfoColumns" label="特休剩餘" width="96"
+          :fixed="isNarrowViewport ? false : 'left'" class-name="schedule-fixed-column">
           <template #default="{ row }">
             <div v-if="row.annualLeave" class="annual-leave-info">
               <el-tag size="small" type="info">
@@ -588,8 +711,8 @@
 
         <el-table-column v-for="d in virtualVisibleDays" :key="d.date" :label="d.label" :width="dayColumnWidth" align="center">
           <template #header>
-            <div class="day-header">
-              <span class="day-header-label">{{ d.label }}</span>
+            <div class="day-header" :class="{ 'is-weekend': weekendDays.has(d.date), 'is-holiday': Boolean(d.holiday) }">
+              <span class="day-header-label" :title="d.label">{{ d.label }}</span>
               <span
                 v-for="info in d.infos || []"
                 :key="info"
@@ -613,13 +736,14 @@
             <ScheduleGridVirtualBody
               :row="row"
               :day="d"
-              :cell-view="getRenderedCell(row._id, d.date)"
+              :cell-view="cellViewFor(row._id, d.date)"
               :can-edit="canEditSchedule"
               :shifts="availableShifts"
               :format-shift-label="formatShiftLabel"
               :is-fullscreen="isTableFullscreen"
               :fullscreen-popper-target="fullscreenPopperTarget"
               @select-shift="onSelect"
+              @toggle-select="toggleCell"
             />
           </template>
         </el-table-column>
@@ -639,18 +763,19 @@
       </div>
 
       <div ref="paginationBarRef" class="pagination-bar" v-if="serverPaginationTotal > 0">
-        <el-pagination background layout="prev, pager, next, ->, sizes, total" :total="serverPaginationTotal"
+        <el-pagination background layout="total, sizes, ->, prev, pager, next" :total="serverPaginationTotal"
           :page-size="pageSize" :current-page="currentPage" :page-sizes="[20, 30, 50, 100]"
           @current-change="onPageChange" @size-change="onPageSizeChange" />
       </div>
     </div>
 
-    <!-- Enhanced approval list with modern card design -->
-    <div ref="approvalCardRef" class="approval-card">
+    <!-- 相關簽核：預設收合，只顯示筆數；展開後分頁列出 -->
+    <div ref="approvalCardRef" class="approval-card" :class="{ 'is-collapsed': approvalCollapsed }">
       <div class="approval-header">
         <h3 class="approval-title">相關簽核</h3>
         <div class="approval-count">{{ relatedApprovalRows.length }} 項</div>
-        <el-button text class="approval-collapse-btn" @click="approvalCollapsed = !approvalCollapsed">
+        <el-button text class="approval-collapse-btn" :aria-expanded="!approvalCollapsed"
+          data-test="approval-collapse-button" @click="approvalCollapsed = !approvalCollapsed">
           {{ approvalCollapsed ? '展開列表' : '收合列表' }}
         </el-button>
       </div>
@@ -663,6 +788,7 @@
         data-test="approval-error-alert"
         :title="approvalFetchError"
       />
+      <div v-show="!approvalCollapsed" class="approval-body" data-test="approval-body">
       <p v-if="!approvalFetchError && !relatedApprovalRows.length" class="approval-empty-hint" data-test="approval-empty-hint">
         目前沒有相關簽核資料。
       </p>
@@ -741,6 +867,7 @@
       <p v-if="approvalTruncated" class="approval-collapse-hint" data-test="approval-truncated-hint">
         相關簽核超過 500 筆，只列出最新的 500 筆；可以縮小部門或單位範圍檢視。
       </p>
+      </div>
     </div>
   </div>
 
@@ -830,9 +957,12 @@ import ScheduleDashboard from './ScheduleDashboard.vue'
 import ScheduleGridVirtualBody from './ScheduleGridVirtualBody.vue'
 import SelectionActions from './SelectionActions.vue'
 import EmployeeAvatar from '../../components/EmployeeAvatar.vue'
+import PageHeader from '../../components/PageHeader.vue'
 import {
-  Bell,
-  Calendar,
+  ArrowDown,
+  ArrowLeft,
+  ArrowRight,
+  Close,
   Delete,
   Download,
   EditPen,
@@ -840,7 +970,6 @@ import {
   Filter,
   Fold,
   FullScreen,
-  Grid,
   CircleCheckFilled,
   CircleCloseFilled,
   InfoFilled,
@@ -852,6 +981,10 @@ import { buildShiftStyle } from '../../utils/shiftColors'
 import { ROW_COLOR_PALETTE, normalizeRowColorIndex, resolveRowColor } from '../../utils/rowColors'
 import { buildMonthDays, buildHolidayMap } from '../../utils/scheduleCalendar'
 import { formatTaipeiDate } from '../../utils/approvalDisplay'
+import {
+  approvalStatusTagType as sharedApprovalStatusTagType,
+  approvalStatusText as sharedApprovalStatusText
+} from '../../utils/approvalStatus'
 import { describeLeaveDays, parseLeaveInterval } from '../../utils/leaveHours'
 import { leaveCoversRosteredShift, isNonWorkShift as isCoverageNonWorkShift } from '../../utils/leaveCoverage'
 import {
@@ -859,9 +992,13 @@ import {
   parseCellKey,
   normalizeOptionalReferenceId,
   sortEmployeesByDept,
+  parseScheduleDate,
+  scheduleDateKey,
+  scheduleDayOfMonth,
 } from '../../utils/scheduleKeys'
 import {
   formatShiftLabel,
+  describeShiftTooltip,
   formatScheduleImportIssue,
   formatScheduleImportPayloadIssues,
   formatScheduleImportWarning,
@@ -888,6 +1025,9 @@ import {
   isFinalizeDisabled,
   getPublishDisabledReason,
   getFinalizeDisabledReason,
+  getUnpublishedNotice,
+  describePublishError,
+  describePublishSuccess,
 } from '../../utils/schedulePublishStatus'
 
 const ApprovalDetailContent = defineAsyncComponent(() => import('./ApprovalDetailContent.vue'))
@@ -983,12 +1123,15 @@ const includeSelf = ref(false)
 const includeSelfStoragePrefix = 'schedule-include-self'
 let isInitializingIncludeSelf = true
 const summary = ref({ direct: 0, unscheduled: 0, onLeave: 0 })
-const perfMetrics = reactive({
+// 壓測用的計數：一般物件（不放進響應式系統），只有壓測工具列按下按鈕或捲動時才讀出來顯示。
+// 以前是 reactive，每算一格就寫一次，等於在 computed 裡面改響應式狀態
+const perfMetrics = {
   employeeStatusRecomputeCount: 0,
   employeeStatusTotalMs: 0,
   cellMetaComputeCount: 0,
   cellMetaTotalMs: 0
-})
+}
+const perfTick = ref(0)
 const employeeSearch = ref('')
 const statusFilter = ref('all')
 const jobTypeFilter = ref('')
@@ -1012,8 +1155,21 @@ const isApplyingBatch = ref(false)
 const isClearingBatch = ref(false)
 const isPublishing = ref(false)
 const isFinalizing = ref(false)
+// 正在匯出的格式（'excel'／'pdf'），空字串代表沒有在匯出
+const isExporting = ref('')
+const isFetchingEmployees = ref(false)
 const isTableFullscreen = ref(false)
 const isFullscreenToolbarCollapsed = ref(false)
+// 發布流程的四個步驟與待回覆、異議名單：按「流程詳情」才展開
+const publishDetailVisible = ref(false)
+const exportMenuVisible = ref(false)
+const moreMenuVisible = ref(false)
+const selectionMenuVisible = ref(false)
+// 排班檢核結果與跨月週提醒：平常只佔一行
+const ruleResultsExpanded = ref(false)
+const rulePendingExpanded = ref(false)
+const schedulePageRef = ref(null)
+const publishBarRef = ref(null)
 const scheduleCardRef = ref(null)
 const approvalCardRef = ref(null)
 const fullscreenPopperHostRef = ref(null)
@@ -1036,6 +1192,37 @@ let managedResizeHandler = null
 const viewportHeight = ref(
   typeof window === 'undefined' ? 900 : window.innerHeight
 )
+const viewportWidth = ref(
+  typeof window === 'undefined' ? 1280 : window.innerWidth
+)
+// 手機寬度：只固定姓名欄，其餘資訊欄不固定（四個固定欄加起來比手機螢幕還寬，日期欄會完全被擋住）
+const isNarrowViewport = computed(() => viewportWidth.value > 0 && viewportWidth.value < 768)
+// 表格上緣到視窗上緣的距離（頁面捲到最上面時）：表格高度用它算，上方的區塊變高變矮時表格跟著調整
+const tableTopOffset = ref(0)
+// 單位、職稱、特休剩餘三個資訊欄可以收起來，多看幾天的班表；偏好記在這台電腦的瀏覽器
+const INFO_COLUMNS_STORAGE_KEY = 'schedule-show-info-columns'
+const loadInfoColumnsPreference = () => {
+  if (typeof window === 'undefined') return null
+  try {
+    const stored = window.localStorage?.getItem(INFO_COLUMNS_STORAGE_KEY)
+    if (stored === 'true') return true
+    if (stored === 'false') return false
+  } catch (err) {
+    // 讀不到偏好就用預設
+  }
+  return null
+}
+const infoColumnsPreference = ref(loadInfoColumnsPreference())
+const showEmployeeInfoColumns = computed(() => infoColumnsPreference.value ?? !isNarrowViewport.value)
+const toggleEmployeeInfoColumns = () => {
+  const next = !showEmployeeInfoColumns.value
+  infoColumnsPreference.value = next
+  try {
+    window.localStorage?.setItem(INFO_COLUMNS_STORAGE_KEY, next ? 'true' : 'false')
+  } catch (err) {
+    // 存不了偏好不影響這次操作
+  }
+}
 const detail = reactive({ visible: false, approvalId: '' })
 const approvalCollapsed = ref(true)
 const approvalCollapsedLimit = 10
@@ -1057,6 +1244,8 @@ const stressScenarioEnabled = computed(() => {
   return params.get('stress') === '1'
 })
 const perfSnapshot = computed(() => {
+  // perfTick：壓測工具列要更新數字時才遞增
+  void perfTick.value
   const statusAvg = perfMetrics.employeeStatusRecomputeCount
     ? perfMetrics.employeeStatusTotalMs / perfMetrics.employeeStatusRecomputeCount
     : 0
@@ -1102,27 +1291,16 @@ const debugScheduleRequest = (event, extra = {}) => {
   })
 }
 
-const APPROVAL_STATUS_LABELS = {
-  pending: '待簽核',
+// 簽核狀態的文字與顏色和簽核頁共用（utils/approvalStatus：待簽核、已核可、已否決、已退簽、已撤回；canceled / cancelled 兩種拼法都認）；
+// 以前這裡自己寫成「已核准／已駁回／已退回」，退簽的顏色也和簽核頁不同。排班確認單另有「有異議」「已確認」
+const SCHEDULE_STATUS_LABELS = {
   disputed: '有異議',
-  confirmed: '已確認',
-  approved: '已核准',
-  rejected: '已駁回',
-  returned: '已退回',
-  // 伺服器的狀態拼成 canceled，兩種拼法都認
-  canceled: '已撤回',
-  cancelled: '已撤回'
+  confirmed: '已確認'
 }
 
-const APPROVAL_STATUS_TAG_MAP = {
-  pending: 'warning',
+const SCHEDULE_STATUS_TAG_MAP = {
   disputed: 'danger',
-  confirmed: 'success',
-  approved: 'success',
-  rejected: 'danger',
-  returned: 'warning',
-  canceled: 'info',
-  cancelled: 'info'
+  confirmed: 'success'
 }
 
 // 「資料類型」欄：請假、加班單獨標示，其餘顯示表單名稱
@@ -1213,32 +1391,29 @@ const shiftInfoMap = computed(() => {
 })
 
 const employeeStatusMap = shallowRef({})
-const cellMetaCache = shallowRef(new Map())
+// 每一格的顯示資訊快取：{ 員工 id → { 日 → 資訊 } }。一般的 Map（不放進響應式系統），失效時遞增版本號，讓用到它的 computed 重算。
+// 以前每算一格就複製整個 Map 再整個換掉：一百人一個月（3100 格）要複製三千次、每次三千筆，而且是在 computed 裡面寫響應式狀態
+const cellMetaStore = new Map()
+const cellMetaVersion = ref(0)
+// 每一格交給格子元件的顯示物件：內容沒變就沿用同一個物件，勾一格、改一格時其他三千格不用重新渲染
+const cellViewStore = new Map()
 
 const markScheduleMapDirty = () => triggerRef(scheduleMap)
 const markLeaveIndexDirty = () => triggerRef(leaveIndex)
 
 const invalidateCellMetaCache = (empId = '', day = null) => {
   if (!empId) {
-    cellMetaCache.value = new Map()
-    return
-  }
-  const next = new Map(cellMetaCache.value)
-  if (day === null) {
-    const prefix = `${String(empId)}::`
-    for (const key of next.keys()) {
-      if (key.startsWith(prefix)) next.delete(key)
-    }
+    cellMetaStore.clear()
+  } else if (day === null) {
+    cellMetaStore.delete(String(empId))
   } else {
-    next.delete(buildCellKey(String(empId), Number(day)))
+    cellMetaStore.get(String(empId))?.delete(Number(day))
   }
-  cellMetaCache.value = next
+  cellMetaVersion.value += 1
 }
 
-const recomputeEmployeeStatusFor = empId => {
+const computeEmployeeStatus = safeEmpId => {
   const startAt = typeof performance !== 'undefined' ? performance.now() : Date.now()
-  const safeEmpId = String(empId || '')
-  if (!safeEmpId) return
   const daysMap = scheduleMap.value[safeEmpId] || {}
   const cells = Object.values(daysMap)
   let status = 'scheduled'
@@ -1250,36 +1425,55 @@ const recomputeEmployeeStatusFor = empId => {
     if (hasAnyEmptyDay) status = 'unscheduled'
     else if (hasAnyLeave) status = 'onLeave'
   }
-  employeeStatusMap.value = {
-    ...employeeStatusMap.value,
-    [safeEmpId]: status
-  }
   const endAt = typeof performance !== 'undefined' ? performance.now() : Date.now()
   perfMetrics.employeeStatusRecomputeCount += 1
   perfMetrics.employeeStatusTotalMs += endAt - startAt
+  return status
 }
 
+const recomputeEmployeeStatusFor = empId => {
+  const safeEmpId = String(empId || '')
+  if (!safeEmpId) return
+  employeeStatusMap.value = {
+    ...employeeStatusMap.value,
+    [safeEmpId]: computeEmployeeStatus(safeEmpId)
+  }
+}
+
+// 多位員工一次算完再換掉整個物件（以前每位員工各複製一次整份狀態表）
 const recomputeEmployeeStatuses = empIds => {
-  ;(Array.isArray(empIds) ? empIds : []).forEach(empId => recomputeEmployeeStatusFor(empId))
+  const ids = (Array.isArray(empIds) ? empIds : []).map(empId => String(empId || '')).filter(Boolean)
+  if (!ids.length) return
+  const next = { ...employeeStatusMap.value }
+  ids.forEach(safeEmpId => {
+    next[safeEmpId] = computeEmployeeStatus(safeEmpId)
+  })
+  employeeStatusMap.value = next
 }
 
 const getCellMeta = (empId, day) => {
-  const startAt = typeof performance !== 'undefined' ? performance.now() : Date.now()
-  const key = buildCellKey(String(empId), Number(day))
-  const cached = cellMetaCache.value.get(key)
+  // 讀版本號：快取失效（invalidateCellMetaCache）時，用到這一格的 computed 會重算
+  void cellMetaVersion.value
+  const safeEmpId = String(empId)
+  const safeDay = Number(day)
+  let employeeMetas = cellMetaStore.get(safeEmpId)
+  const cached = employeeMetas?.get(safeDay)
   if (cached) return cached
+  const startAt = typeof performance !== 'undefined' ? performance.now() : Date.now()
   const isLeave = isLeaveCell(empId, day)
   const shiftId = scheduleMap.value?.[empId]?.[day]?.shiftId
   const computedMeta = {
     isLeave,
-    partialLeaveHours: isLeave ? 0 : Number(partialLeaveHours.value[String(empId)]?.[Number(day)] || 0),
+    partialLeaveHours: isLeave ? 0 : Number(partialLeaveHours.value[safeEmpId]?.[safeDay] || 0),
     hasShift: !isLeave && !!shiftId,
     missingShift: !isLeave && !shiftId,
     style: !isLeave ? shiftClass(shiftId) : {}
   }
-  const next = new Map(cellMetaCache.value)
-  next.set(key, computedMeta)
-  cellMetaCache.value = next
+  if (!employeeMetas) {
+    employeeMetas = new Map()
+    cellMetaStore.set(safeEmpId, employeeMetas)
+  }
+  employeeMetas.set(safeDay, computedMeta)
   const endAt = typeof performance !== 'undefined' ? performance.now() : Date.now()
   perfMetrics.cellMetaComputeCount += 1
   perfMetrics.cellMetaTotalMs += endAt - startAt
@@ -1293,6 +1487,93 @@ const leaveTitleOf = cellMeta => {
   return cellMeta.partialLeaveHours ? `當天有 ${formatLeaveHours(cellMeta.partialLeaveHours)} 小時核准請假` : ''
 }
 
+// ========= 單格變更的儲存狀態（儲存中／已儲存／未儲存）與復原 =========
+
+// { 格子 key → { status: 'saving' | 'saved' | 'failed', message } }
+const cellSaveStates = shallowRef(new Map())
+const cellSaveTimers = new Map()
+const CELL_SAVED_HINT_MS = 1800
+
+const setCellSaveState = (empId, day, status, message = '') => {
+  const key = buildCellKey(String(empId), Number(day))
+  const timer = cellSaveTimers.get(key)
+  if (timer) {
+    clearTimeout(timer)
+    cellSaveTimers.delete(key)
+  }
+  const next = new Map(cellSaveStates.value)
+  if (status) next.set(key, { status, message: String(message || '') })
+  else next.delete(key)
+  cellSaveStates.value = next
+  if (status === 'saved') {
+    // 「已儲存」只顯示一下子，格子就回到平常的樣子
+    cellSaveTimers.set(key, setTimeout(() => {
+      cellSaveTimers.delete(key)
+      if (cellSaveStates.value.get(key)?.status !== 'saved') return
+      const cleared = new Map(cellSaveStates.value)
+      cleared.delete(key)
+      cellSaveStates.value = cleared
+    }, CELL_SAVED_HINT_MS))
+  }
+}
+
+const clearCellSaveStates = () => {
+  cellSaveTimers.forEach(timer => clearTimeout(timer))
+  cellSaveTimers.clear()
+  if (cellSaveStates.value.size) cellSaveStates.value = new Map()
+}
+
+// 工具列上的一行狀態：最近一次單格變更（儲存中、已儲存可復原、未儲存與原因）
+const lastChange = ref(null)
+// 可以復原的上一次單格變更：{ empId, day, previousShiftId, month }
+const lastCellChange = ref(null)
+
+const resetChangeFeedback = () => {
+  clearCellSaveStates()
+  lastChange.value = null
+  lastCellChange.value = null
+}
+
+const buildCellView = (empId, day) => {
+  const cellKey = buildCellKey(empId, day)
+  const scheduleCell = scheduleMap.value?.[empId]?.[day] || null
+  const cellMeta = getCellMeta(empId, day)
+  const shiftInfo = scheduleCell?.shiftId
+    ? shiftInfoMap.value.get(String(scheduleCell.shiftId)) || null
+    : null
+  const isSelected = isCellSelected(empId, day)
+  const isManualSelected = manualSelectedCellsSet.value.has(cellKey)
+  const save = cellSaveStates.value.get(cellKey)
+  const saveState = save?.status || ''
+  const saveMessage = save?.message || ''
+  const previous = cellViewStore.get(cellKey)
+  if (
+    previous &&
+    previous.cellMeta === cellMeta &&
+    previous.scheduleCell === scheduleCell &&
+    previous.shiftInfo === shiftInfo &&
+    previous.isSelected === isSelected &&
+    previous.isManualSelected === isManualSelected &&
+    previous.saveState === saveState &&
+    previous.saveMessage === saveMessage
+  ) {
+    return previous
+  }
+  const view = {
+    key: cellKey,
+    cellMeta,
+    leaveTitle: leaveTitleOf(cellMeta),
+    isSelected,
+    isManualSelected,
+    scheduleCell,
+    shiftInfo,
+    saveState,
+    saveMessage
+  }
+  cellViewStore.set(cellKey, view)
+  return view
+}
+
 const cellViewMap = computed(() => {
   const map = new Map()
   const visibleRows = virtualVisibleEmployees.value
@@ -1303,21 +1584,7 @@ const cellViewMap = computed(() => {
     if (!empId) continue
     for (let j = 0; j < visibleDays.length; j++) {
       const day = visibleDays[j].date
-      const cellKey = buildCellKey(empId, day)
-      const scheduleCell = scheduleMap.value?.[empId]?.[day] || null
-      const cellMeta = getCellMeta(empId, day)
-      const shiftInfo = scheduleCell?.shiftId
-        ? shiftInfoMap.value.get(String(scheduleCell.shiftId)) || null
-        : null
-      map.set(cellKey, {
-        key: cellKey,
-        cellMeta,
-        leaveTitle: leaveTitleOf(cellMeta),
-        isSelected: isCellSelected(empId, day),
-        isManualSelected: manualSelectedCellsSet.value.has(cellKey),
-        scheduleCell,
-        shiftInfo
-      })
+      map.set(buildCellKey(empId, day), buildCellView(empId, day))
     }
   }
   return map
@@ -1325,23 +1592,29 @@ const cellViewMap = computed(() => {
 
 const getRenderedCell = (empId, day) => {
   const cellKey = buildCellKey(String(empId), Number(day))
-  const cached = cellViewMap.value.get(cellKey)
-  if (cached) return cached
-  const safeEmpId = String(empId)
-  const safeDay = Number(day)
-  const scheduleCell = scheduleMap.value?.[safeEmpId]?.[safeDay] || null
-  const cellMeta = getCellMeta(safeEmpId, safeDay)
-  return {
-    key: cellKey,
-    cellMeta,
-    leaveTitle: leaveTitleOf(cellMeta),
-    isSelected: isCellSelected(safeEmpId, safeDay),
-    isManualSelected: manualSelectedCellsSet.value.has(cellKey),
-    scheduleCell,
-    shiftInfo: scheduleCell?.shiftId
-      ? shiftInfoMap.value.get(String(scheduleCell.shiftId)) || null
-      : null
-  }
+  return cellViewMap.value.get(cellKey) || buildCellView(String(empId), Number(day))
+}
+
+// 表格的每一格各自訂閱自己的顯示物件（cellViewRefs 裡的 shallowRef，由檔案最後的 watch 依 cellViewMap 同步）。
+// 以前每一格都直接讀 cellViewMap：勾一格、改一格，表格裡的每一格（一百人一個月是 3100 格）都要重跑一次；
+// 現在只有內容真的變了的那幾格會重新渲染
+const cellViewRefs = new Map()
+const EMPTY_CELL_VIEW = Object.freeze({
+  key: '',
+  cellMeta: Object.freeze({ isLeave: false, partialLeaveHours: 0, hasShift: false, missingShift: false, style: {} }),
+  leaveTitle: '',
+  isSelected: false,
+  isManualSelected: false,
+  scheduleCell: null,
+  shiftInfo: null,
+  saveState: '',
+  saveMessage: ''
+})
+const cellViewFor = (empId, day) => {
+  // el-table 為了找巢狀欄位會用空的資料列試畫一次欄位內容：沒有員工就給固定的空格子，不讀任何狀態
+  if (empId === undefined || empId === null || empId === '') return EMPTY_CELL_VIEW
+  const holder = cellViewRefs.get(buildCellKey(String(empId), Number(day)))
+  return holder ? holder.value : getRenderedCell(empId, day)
 }
 
 // 只能選「有 cell 且不是請假日」的格子
@@ -1380,6 +1653,8 @@ const legendShifts = computed(() => {
     acc.push({
       key,
       label,
+      // 圖例的提示文字：上下班時間（跨日的班別標「次日」）與備註
+      title: describeShiftTooltip(shift),
       style: shiftClass(shift)
     })
     return acc
@@ -1510,8 +1785,32 @@ const allEmployeesSelectionHint = computed(() =>
 // ✅ UI 上是否標成「已選取」：請假格子一律 false
 const isCellSelected = (empId, day) => {
   if (!isSelectableCell(empId, day)) return false
-  return allSelectedCells.value.has(buildCellKey(empId, day))
+  return selectedCellsCache.value.has(buildCellKey(empId, day))
 }
+
+// 有任何選取（格子、整列的員工或整欄的日期）：工具列第二列換成批次操作
+const hasSelectionContext = computed(() =>
+  hasAnySelection.value || selectedEmployees.value.size > 0 || selectedDays.value.size > 0
+)
+const selectionSummaryText = computed(() => {
+  const cells = allSelectedCells.value.size
+  const people = selectedEmployees.value.size
+  if (!people) return `已選取 ${cells} 格`
+  return `已選取 ${cells} 格（${people} 位員工${selectedAllEmployeesAcrossPages.value ? '，全部人員' : ''}）`
+})
+// 姓名欄標頭的核取方塊：本頁全選／部分選取
+const isPageFullySelected = computed(() =>
+  employees.value.length > 0 && employees.value.every(emp => selectedEmployees.value.has(emp._id))
+)
+const isPagePartiallySelected = computed(() =>
+  !isPageFullySelected.value && employees.value.some(emp => selectedEmployees.value.has(emp._id))
+)
+// 「套用部門／單位」：指定了就把選取的班表改掛到那個部門與單位；按鈕上直接顯示目前的設定，收起來也看得到
+const hasBatchScopeOverride = computed(() => Boolean(effectiveBatchDepartment.value || effectiveBatchSubDepartment.value))
+const batchScopeLabel = computed(() => {
+  if (!hasBatchScopeOverride.value) return '套用部門／單位'
+  return `掛到 ${batchDepartmentDisplayName.value}／${batchSubDepartmentDisplayName.value}`
+})
 
 const pruneSelections = () => {
   const validEmployees = new Set(employees.value.map(e => e._id))
@@ -1548,6 +1847,9 @@ const pruneSelections = () => {
   rebuildSelectionCache()
 }
 
+// 上一次用滑鼠勾選的格子：按住 Shift 點另一格時，選取兩格之間的整塊範圍
+let selectionAnchor = null
+
 const clearSelection = () => {
   selectedEmployees.value = new Set()
   allEmployeesForSelection.value = new Set()
@@ -1556,6 +1858,29 @@ const clearSelection = () => {
   manualSelectedCells.value = new Set()
   selectedCellsCache.value = new Map()
   customRange.value = []
+  selectionAnchor = null
+}
+
+// 選取 from、to 兩格之間的所有可排班格子（員工依畫面上的順序）；任一格的員工不在畫面上就不處理
+const selectCellRange = (from, to) => {
+  const ids = visibleEmployees.value.map(emp => String(emp._id))
+  const fromRow = ids.indexOf(String(from.empId))
+  const toRow = ids.indexOf(String(to.empId))
+  if (fromRow === -1 || toRow === -1) return false
+  const [rowStart, rowEnd] = fromRow <= toRow ? [fromRow, toRow] : [toRow, fromRow]
+  const [dayStart, dayEnd] = from.day <= to.day ? [from.day, to.day] : [to.day, from.day]
+  const next = new Set(manualSelectedCells.value)
+  updateSelectionCache(cache => {
+    for (let rowIndex = rowStart; rowIndex <= rowEnd; rowIndex += 1) {
+      for (let day = dayStart; day <= dayEnd; day += 1) {
+        if (!isSelectableCell(ids[rowIndex], day)) continue
+        next.add(buildCellKey(ids[rowIndex], day))
+        applyCacheChange(cache, ids[rowIndex], day, 'manual', true)
+      }
+    }
+  })
+  manualSelectedCells.value = next
+  return true
 }
 
 const toggleEmployee = (empId, explicit) => {
@@ -1810,10 +2135,11 @@ async function handleScheduleActionApiError(res, fallbackMessage) {
       violations.map(formatLaborRuleViolation),
       data?.error || fallbackMessage
     )
-    return
+    return data
   }
 
-  callWarning(data?.error || fallbackMessage)
+  callWarning(describePublishError(data, fallbackMessage))
+  return data
 }
 
 const openScheduleImport = () => {
@@ -2001,13 +2327,25 @@ const handleTableDelegatedClick = event => {
   if (!target) return
   const cellNode = target.closest?.('[data-schedule-cell]')
   if (!cellNode) return
-  const checkboxNode = target.closest?.('.el-checkbox')
+  // 格子左上角的核取方塊（原生 input；舊版是 el-checkbox）
+  const checkboxNode = target.closest?.('.cell-selection, .el-checkbox')
   if (!checkboxNode) return
   const empId = cellNode.dataset.empId
   const day = Number(cellNode.dataset.day)
   if (!empId || !Number.isFinite(day)) return
   const input = checkboxNode.querySelector('input[type="checkbox"]')
-  toggleCell(empId, day, typeof input?.checked === 'boolean' ? input.checked : undefined)
+  const key = buildCellKey(empId, day)
+  if (event.shiftKey && selectionAnchor && selectCellRange(selectionAnchor, { empId, day })) {
+    // 按住 Shift：從上一次勾的那一格到這一格，整塊選取
+    selectionAnchor = { empId, day }
+  } else {
+    toggleCell(empId, day, typeof input?.checked === 'boolean' ? input.checked : undefined)
+    if (manualSelectedCells.value.has(key)) selectionAnchor = { empId, day }
+  }
+  // 核取方塊跟著實際的選取狀態（不能選的格子、Shift 範圍選取時，瀏覽器自己切換的勾選要改回來）
+  if (input && input.matches?.('.cell-manual-checkbox')) {
+    input.checked = manualSelectedCells.value.has(key)
+  }
 }
 
 const selectAllEmployeesOnPage = () => {
@@ -2230,6 +2568,13 @@ function scheduleMemoDate(day) {
   return `${currentMonth.value}-${String(day).padStart(2, '0')}`
 }
 
+// 各種讀取的請求序號：只採用最後一次請求的回應（見各 fetch 函式）
+let dayMemoRequestSeq = 0
+let holidayRequestSeq = 0
+let summaryRequestSeq = 0
+let employeeRequestSeq = 0
+let subDepartmentRequestSeq = 0
+
 async function fetchDayMemos() {
   if (!selectedDepartment.value) {
     dayMemos.value = {}
@@ -2240,15 +2585,20 @@ async function fetchDayMemos() {
     department: selectedDepartment.value
   })
   if (selectedSubDepartment.value) params.set('subDepartment', selectedSubDepartment.value)
+  // 只採用最後一次請求的回應：切換月份、單位時，上一個範圍較慢的回應不能蓋掉現在的備忘錄（備忘錄用「幾號」對應，蓋錯就會存到別的月份）
+  const seq = ++dayMemoRequestSeq
   try {
     const res = await apiFetch(`/api/schedules/memos?${params.toString()}`)
+    if (seq !== dayMemoRequestSeq) return
     if (!res.ok) throw new Error('日期備忘錄載入失敗')
     const rows = await res.json()
+    if (seq !== dayMemoRequestSeq) return
     dayMemos.value = Object.fromEntries((Array.isArray(rows) ? rows : []).map(row => [
-      dayjs(row.date).date(),
+      scheduleDayOfMonth(row.date),
       String(row.content || '')
     ]))
   } catch (err) {
+    if (seq !== dayMemoRequestSeq) return
     dayMemos.value = {}
     callWarning(err?.message || '日期備忘錄載入失敗')
   }
@@ -2446,6 +2796,7 @@ watch(
       ids.push(id)
     })
     employeeIndexMap.value = nextIndex
+    cellViewStore.clear()
     invalidateCellMetaCache()
     recomputeEmployeeStatuses(ids)
   },
@@ -2556,12 +2907,12 @@ const relatedEmployeeIds = computed(() => {
 const formatApprovalStatus = status => {
   const normalized = String(status || '').trim().toLowerCase()
   if (!normalized) return '待簽核'
-  return APPROVAL_STATUS_LABELS[normalized] || normalized
+  return SCHEDULE_STATUS_LABELS[normalized] || sharedApprovalStatusText(normalized)
 }
 
 const approvalStatusTagType = status => {
   const normalized = String(status || '').trim().toLowerCase()
-  return APPROVAL_STATUS_TAG_MAP[normalized] || 'info'
+  return SCHEDULE_STATUS_TAG_MAP[normalized] || sharedApprovalStatusTagType(normalized)
 }
 
 // 期間：台灣時間的 起日 ~ 迄日（同一天只顯示一天）；沒有日期的單據顯示申請日
@@ -2672,7 +3023,11 @@ function onApprovalPageChange(page) {
 }
 
 function jumpToApprovalSection() {
-  approvalCardRef.value?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  // 相關簽核預設收合：先展開再捲過去
+  approvalCollapsed.value = false
+  nextTick(() => {
+    approvalCardRef.value?.scrollIntoView?.({ behavior: 'smooth', block: 'start' })
+  })
 }
 
 function onDetailClosed() {
@@ -2695,7 +3050,8 @@ watch(leaveIndex, pruneSelections)
 
 
 // ========= table height for sticky header =========
-const dayColumnWidth = computed(() => (isTableFullscreen.value ? 92 : 140))
+// 日期欄寬：一般 96、全螢幕 92（以前一般模式是 140，1440 寬的螢幕一次只看得到四天）
+const dayColumnWidth = computed(() => (isTableFullscreen.value ? 92 : 96))
 const fullscreenPopperTarget = computed(() => {
   if (!isTableFullscreen.value) return undefined
   return fullscreenPopperHostRef.value || '.schedule-fullscreen-popper-host'
@@ -2718,13 +3074,35 @@ const tableMaxHeight = computed(() => {
       return Math.max(320, dynamicHeight)
     }
   }
-  const reservedHeight = isTableFullscreen.value ? 230 : 400
+  // 一般模式：表格上緣以下扣掉分頁列與頁面下方的留白，其餘都給表格（量不到位置時用預估值）
+  const TABLE_BOTTOM_RESERVE = 84
+  const reservedHeight = isTableFullscreen.value
+    ? 230
+    : tableTopOffset.value > 0
+      ? tableTopOffset.value + TABLE_BOTTOM_RESERVE
+      : 330
   return Math.max(320, viewportHeight.value - reservedHeight)
 })
+
+// 量表格上緣的位置（加上頁面已經捲動的距離，等於頁面捲到最上面時的位置）
+const measureTableTopOffset = () => {
+  if (isTableFullscreen.value) return
+  const wrapper = scheduleTableWrapperRef.value
+  if (!wrapper || typeof wrapper.getBoundingClientRect !== 'function') return
+  // 前台版面的捲動容器是 .content-wrapper（後台是 .el-main）；找不到就用整個視窗的捲動距離
+  const scroller = wrapper.closest?.('.content-wrapper, .el-main')
+  const scrolled = scroller ? scroller.scrollTop : (typeof window !== 'undefined' ? window.scrollY || 0 : 0)
+  const top = Math.round(wrapper.getBoundingClientRect().top + scrolled)
+  if (Number.isFinite(top) && top > 0 && Math.abs(top - tableTopOffset.value) > 1) {
+    tableTopOffset.value = top
+  }
+}
 
 const updateViewportHeight = () => {
   if (typeof window === 'undefined') return
   viewportHeight.value = window.innerHeight
+  viewportWidth.value = window.innerWidth
+  measureTableTopOffset()
   updateFullscreenLayoutHeight()
   recalculateViewportRanges()
 }
@@ -2732,7 +3110,7 @@ const updateViewportHeight = () => {
 const createThrottle = (fn, wait = 120) => {
   let lastTime = 0
   let timer = null
-  return (...args) => {
+  const throttled = (...args) => {
     const now = Date.now()
     const remain = wait - (now - lastTime)
     if (remain <= 0) {
@@ -2751,6 +3129,14 @@ const createThrottle = (fn, wait = 120) => {
       fn(...args)
     }, remain)
   }
+  // 離開頁面時取消還沒執行的那一次
+  throttled.cancel = () => {
+    if (timer) {
+      clearTimeout(timer)
+      timer = null
+    }
+  }
+  return throttled
 }
 
 const recalculateViewportRanges = () => {
@@ -2798,6 +3184,7 @@ const onTableScroll = () => {
     recalculateViewportRanges()
     const endAt = typeof performance !== 'undefined' ? performance.now() : Date.now()
     lastInteractionLatencyMs.value = Number((endAt - startAt).toFixed(1))
+    if (stressScenarioEnabled.value) perfTick.value += 1
     tableScrollRaf = null
   })
 }
@@ -2877,6 +3264,9 @@ const seedStressScenario = () => {
   currentPage.value = 1
   renderStrategyPreference.value = 'virtual'
   recalculateViewportRanges()
+  nextTick(() => {
+    perfTick.value += 1
+  })
 }
 
 const updateFullscreenLayoutHeight = () => {
@@ -2912,6 +3302,16 @@ const toggleTableFullscreen = () => {
   if (!target || typeof target.requestFullscreen !== 'function') {
     const nextIsFullscreen = !isTableFullscreen.value
     isTableFullscreen.value = nextIsFullscreen
+    isFullscreenToolbarCollapsed.value = false
+    updateViewportHeight()
+    updateFullscreenLayoutHeight()
+    return
+  }
+
+  // 瀏覽器不允許真正的全螢幕（例如被政策停用、嵌在不允許全螢幕的框架裡）時，用的是版面全螢幕（沒有 fullscreenElement）。
+  // 這時再按一次要直接退出；以前會再要求一次全螢幕、又被拒絕，結果永遠退不出來，只能重新整理
+  if (isTableFullscreen.value && document.fullscreenElement !== target) {
+    isTableFullscreen.value = false
     isFullscreenToolbarCollapsed.value = false
     updateViewportHeight()
     updateFullscreenLayoutHeight()
@@ -2959,6 +3359,7 @@ const registerHighFrequencyListeners = () => {
 const unregisterHighFrequencyListeners = () => {
   if (typeof window === 'undefined' || !managedResizeHandler) return
   window.removeEventListener('resize', managedResizeHandler)
+  managedResizeHandler.cancel?.()
   listenerMetrics.delegatedActive = Math.max(0, listenerMetrics.delegatedActive - 1)
 }
 
@@ -2973,7 +3374,6 @@ loadScheduleNotifications()
 
 // 只有主管帶自己的 id 當 supervisor 參數（主管範圍）；管理員看全部員工，不再只列直屬於管理員的人
 const canUseSupervisorFilter = computed(() => authStore.role === 'supervisor')
-const shouldHideDepartmentFilters = computed(() => isTableFullscreen.value)
 // 部門來自不同機構時（例如排班人員被指定到兩個機構的小單位），部門名稱附上機構名稱，同名的部門（各機構的「護理部」）才分得出來
 const organizationNames = ref({})
 const departmentsSpanOrganizations = computed(() =>
@@ -3024,6 +3424,22 @@ const canSwitchDepartment = computed(() =>
   (authStore.role === 'admin' || isSchedulerView.value) && departments.value.length > 1
 )
 const missingSupervisorScheduleNoticeKey = ref('')
+const isAdminUser = computed(() => authStore.role === 'admin')
+// 公司行事曆（年度行事曆、國定假日）在後台「排班表設定」維護，只有管理員進得去
+const goToCalendarSettings = () => {
+  router.push('/manager/shift-schedule-setting')
+}
+// 週六、週日的日期（標頭用淺色區分）
+const weekendDays = computed(() => {
+  const set = new Set()
+  const monthStart = dayjs(`${currentMonth.value}-01`)
+  if (!monthStart.isValid()) return set
+  days.value.forEach(day => {
+    const weekday = monthStart.date(day.date).day()
+    if (weekday === 0 || weekday === 6) set.add(day.date)
+  })
+  return set
+})
 
 // ========= 發布狀態相關 =========
 
@@ -3056,6 +3472,21 @@ const finalizeDisabled = computed(() => isFinalizeDisabled(publishSummary.value,
 const publishDisabledReason = computed(() => getPublishDisabledReason(publishSummary.value, isPublishing.value))
 
 const finalizeDisabledReason = computed(() => getFinalizeDisabledReason(publishSummary.value, isFinalizing.value))
+
+// 已經發送過、還沒鎖定（待確認、有異議、可完成發布）：主要按鈕是「完成發布」，另外可以重新發送
+const isPublishedRound = computed(() => ['pending', 'disputed', 'ready'].includes(publishSummary.value.status))
+// 下一步的按鈕不能按時，在按鈕旁用一行字說明原因（送出中、已鎖定不用說明）
+// 已發送或已完成發布之後又改過的格子：「有 N 筆異動尚未發送」，這時「重新發送」是主要的下一步
+const unpublishedNotice = computed(() => getUnpublishedNotice(publishSummary.value))
+const hasUnpublishedChanges = computed(() => Boolean(unpublishedNotice.value))
+
+const publishActionHint = computed(() => {
+  if (publishSummary.value.status === 'finalized') return ''
+  if (isPublishedRound.value) {
+    return finalizeDisabled.value && !isFinalizing.value ? finalizeDisabledReason.value : ''
+  }
+  return publishDisabled.value && !isPublishing.value ? publishDisabledReason.value : ''
+})
 
 watch(showIncludeSelfToggle, newVal => {
   const supervisorId = getStoredSupervisorId() || getSupervisorIdFromStorage()
@@ -3124,9 +3555,10 @@ const formatPublishDate = value => {
 
 const formatDisputeDate = value => {
   if (!value) return ''
-  const parsed = dayjs(value)
-  if (!parsed.isValid()) return ''
-  return parsed.format('MM/DD')
+  // 班表日期是該日的 UTC 午夜：直接取日期部分，不依瀏覽器時區換算
+  const parts = parseScheduleDate(value)
+  if (!parts) return ''
+  return `${String(parts.month).padStart(2, '0')}/${String(parts.day).padStart(2, '0')}`
 }
 
 function buildPublishPayload() {
@@ -3183,7 +3615,11 @@ async function publishSchedulesForMonth() {
       body: JSON.stringify(buildPublishPayload())
     })
     if (!res.ok) {
-      await handleScheduleActionApiError(res, '發布失敗')
+      const data = await handleScheduleActionApiError(res, '發布失敗')
+      // 沒有需要發送的（409 NOTHING_TO_PUBLISH）或沒有班表（404 NO_SCHEDULES）：畫面上的發布狀態已經過期，重新讀一次
+      if (res.status === 409 || res.status === 404) {
+        await refreshScheduleData({ reset: true, reason: data?.code === 'NOTHING_TO_PUBLISH' ? 'publish-nothing' : 'publish-not-found' })
+      }
       return
     }
     const payload = await res.json().catch(() => null)
@@ -3191,7 +3627,7 @@ async function publishSchedulesForMonth() {
     if (publishedMonth && /^\d{4}-(0[1-9]|1[0-2])$/.test(publishedMonth)) {
       localStorage.setItem(PUBLISHED_MONTH_HINT_KEY, publishedMonth)
     }
-    callSuccess('已將班表發送給員工確認')
+    callSuccess(describePublishSuccess(payload))
     recordScheduleReleaseFindings(payload, {
       queryKey,
       title: count => `已發布，仍有 ${count} 項排班規範問題`,
@@ -3218,14 +3654,9 @@ async function finalizeSchedulesForMonth() {
       body: JSON.stringify(buildPublishPayload())
     })
     if (res.status === 409) {
-      let message = '仍有員工未回覆'
-      try {
-        const data = await res.json()
-        if (data?.error) message = data.error
-      } catch (err) {
-        // ignore
-      }
-      callWarning(message)
+      // 409 UNCONFIRMED_EMPLOYEES：還有人沒回覆或有異議（伺服器回中文 error；舊版是英文，換成中文）
+      const data = await res.json().catch(() => null)
+      callWarning(describePublishError(data, '仍有員工尚未確認或提出異議，無法完成發布'))
       await refreshScheduleData({ reset: true, reason: 'finalize-conflict' })
       return
     }
@@ -3335,7 +3766,9 @@ async function confirmFinalize() {
   try {
     await confirmScheduleRelease(validation, {
       title: '完成發布',
-      question: '全部員工已確認，是否完成發布並鎖定班表？',
+      question: hasUnpublishedChanges.value
+        ? `全部員工已確認；另${unpublishedNotice.value}，完成發布不會包含這些異動（要先按「重新發送」）。是否完成發布並鎖定班表？`
+        : '全部員工已確認，是否完成發布並鎖定班表？',
       confirmButtonText: '完成',
       type: 'success',
       forceButtonText: '仍要完成發布',
@@ -3352,11 +3785,15 @@ const days = computed(() => buildMonthDays(currentMonth.value, holidayMap.value)
 // ========= 假日管理 =========
 
 async function fetchHolidays() {
+  // 只採用最後一次請求的回應：連續切換月份時，上一個月較慢的回應不能蓋掉現在這個月的假日標示
+  const seq = ++holidayRequestSeq
   try {
-    // 本月的行事曆標頭：國定假日標 🎊、指定應放假日標 📌，公務機關補假等只顯示灰字資訊
+    // 本月的行事曆標頭：國定假日顯示假日名稱、指定應放假日加「指定放假」，公務機關補假等只顯示灰字資訊
     const res = await apiFetch(`/api/holiday-calendar/headers?month=${currentMonth.value}`)
+    if (seq !== holidayRequestSeq) return
     if (res.ok) {
       const data = await res.json()
+      if (seq !== holidayRequestSeq) return
       const entries = Array.isArray(data) ? data : (Array.isArray(data?.entries) ? data.entries : [])
       holidays.value = entries
       calendarStatus.value = data && !Array.isArray(data) && data.status ? data.status : null
@@ -3415,9 +3852,13 @@ async function fetchSubDepartments(dept = '') {
     const url = targetDept
       ? `/api/sub-departments?department=${targetDept}`
       : '/api/sub-departments'
+    // 只採用最後一次請求的回應：連續切換部門時，上一個部門較慢的回應不能把單位清單換回去
+    const seq = ++subDepartmentRequestSeq
     const res = await apiFetch(url)
+    if (seq !== subDepartmentRequestSeq) return
     if (!res.ok) throw new Error('Failed to fetch sub departments')
     const subData = await res.json()
+    if (seq !== subDepartmentRequestSeq) return
 
     const deptMap = departments.value.reduce((acc, d) => {
       const id = String(d._id)
@@ -3821,7 +4262,9 @@ const patchScheduleMapForEmployees = (targetEmployees, daysList, employeeMap, sc
 
     const incomingSchedules = incomingScheduleByEmployee.get(empId) || []
     incomingSchedules.forEach(s => {
-      const dateNum = dayjs(s.date).date()
+      // 班表日期是該日的 UTC 午夜：直接取日期部分，不依瀏覽器時區換算（否則 1 號可能變成上個月最後一天）
+      const dateNum = scheduleDayOfMonth(s.date)
+      if (!Number.isFinite(dateNum)) return
       nextDayMap[dateNum] = {
         id: s._id,
         shiftId: s.shiftId,
@@ -3966,9 +4409,113 @@ function resetScheduleCache() {
   partialLeaveHours.value = {}
   markLeaveIndexDirty()
   employeeStatusMap.value = {}
-  cellMetaCache.value = new Map()
+  cellViewStore.clear()
+  invalidateCellMetaCache()
   fetchAllCache.fulfilled.clear()
   fetchAllCache.inFlight.clear()
+}
+
+// 切換月份的當下就把畫面上的班表清掉：格子用「幾號」對應，新月份的資料回來之前不能讓上個月的班別顯示在新月份的日期下面
+//（那時點格子會改到上個月的班表）。相關簽核清單留著，新資料回來才換
+function clearGridForScopeChange() {
+  activeScheduleRequest.key = ''
+  activeScheduleRequest.promise = null
+  // 讓還在路上的班表請求失效（回應回來時序號已經不同，整份丟掉）
+  activeScheduleRequest.requestId += 1
+  isFetchingSchedules.value = false
+  scheduleMap.value = {}
+  rawSchedules.value = []
+  publishSnapshot.value = null
+  loadedEmployeeIds.value = new Set()
+  leaveIndex.value = {}
+  partialLeaveHours.value = {}
+  markLeaveIndexDirty()
+  dayMemos.value = {}
+  dayMemoRequestSeq += 1
+  employeeStatusMap.value = {}
+  cellViewStore.clear()
+  invalidateCellMetaCache()
+  fetchAllCache.fulfilled.clear()
+  fetchAllCache.inFlight.clear()
+}
+
+/**
+ * GET /api/schedules/monthly 的 publishSummary -> 畫面用的發布狀態（null：伺服器沒給，改用班表逐筆推算）。
+ * unpublishedCount：還沒送給員工的新增／異動筆數（已發送或已完成發布之後再改的格子），舊版伺服器沒有這個欄位。
+ */
+function toPublishSnapshot(summaryData, schedules = []) {
+  if (!summaryData || typeof summaryData !== 'object') return null
+  const isNewFormat =
+    typeof summaryData.hasSchedules === 'boolean' ||
+    Array.isArray(summaryData.pendingEmployees)
+  const unpublished = Number(summaryData.unpublishedCount)
+  const unpublishedCount = Number.isFinite(unpublished) && unpublished > 0 ? unpublished : 0
+  if (isNewFormat) {
+    return {
+      status: summaryData.status || 'draft',
+      pendingEmployees: Array.isArray(summaryData.pendingEmployees)
+        ? summaryData.pendingEmployees
+        : [],
+      disputedEmployees: Array.isArray(summaryData.disputedEmployees)
+        ? summaryData.disputedEmployees
+        : [],
+      publishedAt: summaryData.publishedAt || null,
+      hasSchedules: summaryData.hasSchedules ?? (schedules.length > 0),
+      totalEmployees: summaryData.totalEmployees ?? 0,
+      allEmployeesConfirmed:
+        summaryData.allEmployeesConfirmed ?? false,
+      unpublishedCount
+    }
+  }
+  if (Array.isArray(summaryData.currentRoundPendingEmployees)) {
+    return {
+      status: summaryData.status || 'draft',
+      pendingEmployees: summaryData.currentRoundPendingEmployees,
+      disputedEmployees: [],
+      publishedAt: summaryData.publishedAt || null,
+      hasSchedules: schedules.length > 0,
+      totalEmployees: summaryData.totalEmployees ?? 0,
+      allEmployeesConfirmed:
+        summaryData.allEmployeesConfirmed ?? false,
+      unpublishedCount
+    }
+  }
+  return null
+}
+
+// 改了格子之後重新讀發布狀態：已發送或已完成發布的月份改一格，那一格回到「尚未發送」，
+// 狀態列要馬上顯示「有 N 筆異動尚未發送」，不必重新整理頁面。連續改很多格只讀一次（等 400ms）。
+// 只讀這一頁的同一組員工（伺服器的發布狀態算整個範圍，不看頁次），也只更新發布狀態，不動表格。
+let publishSummaryRefreshTimer = null
+let publishSummaryRequestSeq = 0
+function schedulePublishSummaryRefresh() {
+  if (!canEditSchedule.value) return
+  if (publishSummaryRefreshTimer) clearTimeout(publishSummaryRefreshTimer)
+  publishSummaryRefreshTimer = setTimeout(() => {
+    publishSummaryRefreshTimer = null
+    refreshPublishSummary().catch(() => {})
+  }, 400)
+}
+
+async function refreshPublishSummary() {
+  const seq = ++publishSummaryRequestSeq
+  const params = [`month=${currentMonth.value}`, 'page=1', `pageSize=${pageSize.value}`]
+  const ids = visibleEmployeeIds.value.length
+    ? visibleEmployeeIds.value
+    : employees.value.slice(0, pageSize.value).map(e => String(e._id))
+  if (ids.length) params.push(`employeeIds=${ids.join(',')}`)
+  if (selectedDepartment.value) params.push(`department=${selectedDepartment.value}`)
+  if (selectedSubDepartment.value) params.push(`subDepartment=${selectedSubDepartment.value}`)
+  const supervisorId = getStoredSupervisorId()
+  if (supervisorId) params.push(`supervisor=${supervisorId}`)
+  if (includeSelf.value && showIncludeSelfToggle.value) params.push('includeSelf=true')
+  const res = await apiFetch(`/api/schedules/monthly?${params.join('&')}`)
+  // 等回應的期間換了月份、單位，或又改了格子（seq 變了）：這份是舊的，丟掉
+  if (seq !== publishSummaryRequestSeq || !res?.ok) return
+  const data = typeof res.json === 'function' ? await res.json().catch(() => null) : null
+  if (seq !== publishSummaryRequestSeq || !data || Array.isArray(data)) return
+  const snapshot = toPublishSnapshot(data.publishSummary, Array.isArray(data.schedules) ? data.schedules : [])
+  if (snapshot) publishSnapshot.value = snapshot
 }
 
 async function fetchSchedules({ reset = false, fetchAll = false, reason = 'unknown' } = {}) {
@@ -4039,6 +4586,8 @@ async function fetchSchedules({ reset = false, fetchAll = false, reason = 'unkno
 
   const requestId = activeScheduleRequest.requestId + 1
   activeScheduleRequest.requestId = requestId
+  // 整份重新載入會帶回最新的發布狀態：還沒回來的單獨刷新作廢，免得較舊的回應蓋掉
+  publishSummaryRequestSeq += 1
   activeScheduleRequest.key = requestKey
   scheduleRequestStats.started += 1
   debugScheduleRequest('start', { reason, requestId, requestKey })
@@ -4046,53 +4595,20 @@ async function fetchSchedules({ reset = false, fetchAll = false, reason = 'unkno
 
   const requestPromise = (async () => {
     const res = await apiFetch(`/api/schedules/monthly${query}`)
+    // 等回應的期間已經有更新的請求（換了月份、部門、頁次或篩選）：這份回應是舊範圍的，整份丟掉。
+    // 以前只在最後才檢查，舊月份的班表與發布狀態會先寫進畫面，新月份沒有班表的日子就留著上個月的班別
+    if (activeScheduleRequest.requestId !== requestId) return
     if (!res.ok) throw new Error('Failed to fetch schedules')
     const data =
       typeof res.json === 'function' ? await res.json() : []
+    if (activeScheduleRequest.requestId !== requestId) return
     const schedules = Array.isArray(data)
       ? data
       : Array.isArray(data?.schedules)
         ? data.schedules
         : []
 
-    const summaryData = Array.isArray(data) ? null : data?.publishSummary
-    const isNewFormat = summaryData &&
-      (
-        typeof summaryData.hasSchedules === 'boolean' ||
-        Array.isArray(summaryData.pendingEmployees)
-      )
-    const isLegacyFormat = summaryData &&
-      Array.isArray(summaryData.currentRoundPendingEmployees)
-
-    if (isNewFormat) {
-      publishSnapshot.value = {
-        status: summaryData.status || 'draft',
-        pendingEmployees: Array.isArray(summaryData.pendingEmployees)
-          ? summaryData.pendingEmployees
-          : [],
-        disputedEmployees: Array.isArray(summaryData.disputedEmployees)
-          ? summaryData.disputedEmployees
-          : [],
-        publishedAt: summaryData.publishedAt || null,
-        hasSchedules: summaryData.hasSchedules ?? (schedules.length > 0),
-        totalEmployees: summaryData.totalEmployees ?? 0,
-        allEmployeesConfirmed:
-          summaryData.allEmployeesConfirmed ?? false
-      }
-    } else if (isLegacyFormat) {
-      publishSnapshot.value = {
-        status: summaryData.status || 'draft',
-        pendingEmployees: summaryData.currentRoundPendingEmployees,
-        disputedEmployees: [],
-        publishedAt: summaryData.publishedAt || null,
-        hasSchedules: schedules.length > 0,
-        totalEmployees: summaryData.totalEmployees ?? 0,
-        allEmployeesConfirmed:
-          summaryData.allEmployeesConfirmed ?? false
-      }
-    } else {
-      publishSnapshot.value = null
-    }
+    publishSnapshot.value = toPublishSnapshot(Array.isArray(data) ? null : data?.publishSummary, schedules)
 
     const targetSet = new Set(targetEmployees)
     patchScheduleMapForEmployees(
@@ -4199,8 +4715,11 @@ async function fetchSchedules({ reset = false, fetchAll = false, reason = 'unkno
     await requestPromise
   } catch (err) {
     console.error(err)
-    callError('取得排班資料失敗')
-    rawSchedules.value = []
+    // 已經被更新的請求取代：不提示、也不動現在畫面上的資料
+    if (activeScheduleRequest.requestId === requestId) {
+      callError('取得排班資料失敗')
+      rawSchedules.value = []
+    }
   } finally {
     if (activeScheduleRequest.requestId === requestId) {
       scheduleRequestStats.completed += 1
@@ -4303,7 +4822,31 @@ async function preview(type) {
   }
 }
 
+// 匯出按鈕：沒有選部門、或目前範圍沒有員工時不能按（伺服器會回錯誤或一份空的檔案）
+const exportDisabledReason = computed(() => {
+  if (!selectedDepartment.value) return '請先選擇部門'
+  if (!serverPaginationTotal.value) return '目前範圍沒有員工可以匯出'
+  return ''
+})
+const exportDisabled = computed(() => Boolean(exportDisabledReason.value) || Boolean(isExporting.value))
+
+// 匯出失敗的原因：伺服器的中文訊息直接顯示，英文的技術訊息換成看得懂的說明
+async function describeExportFailure(res) {
+  let serverMessage = ''
+  try {
+    serverMessage = String((await res.json())?.error || '')
+  } catch (err) {
+    // 回應不是 JSON：只顯示匯出失敗
+  }
+  if (!selectedDepartment.value) return '匯出失敗：請先選擇部門'
+  if (res?.status === 403) return '匯出失敗：目前的排班範圍沒有可以匯出的員工'
+  return /[\u4e00-\u9fff]/.test(serverMessage) ? `匯出失敗：${serverMessage}` : '匯出失敗'
+}
+
 async function exportSchedules(format) {
+  // 上一次匯出還沒完成：不重複送出
+  if (isExporting.value) return
+  isExporting.value = format
   try {
     const params = new URLSearchParams({
       month: currentMonth.value,
@@ -4324,7 +4867,7 @@ async function exportSchedules(format) {
     const res = await apiFetch(
       `/api/schedules/export?${params.toString()}`
     )
-    if (!res.ok) throw new Error()
+    if (!res.ok) throw new Error(await describeExportFailure(res))
     const blob = await res.blob()
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
@@ -4334,7 +4877,143 @@ async function exportSchedules(format) {
     a.click()
     URL.revokeObjectURL(url)
   } catch (err) {
-    callError('匯出失敗')
+    callError(err?.message || '匯出失敗')
+  } finally {
+    isExporting.value = ''
+  }
+}
+
+// ========= 工具列的小工具 =========
+
+// 選單裡的項目：先收起選單再執行
+function runMenuAction(menu, action) {
+  if (menu === 'export') exportMenuVisible.value = false
+  if (menu === 'more') moreMenuVisible.value = false
+  return typeof action === 'function' ? action() : undefined
+}
+
+// 上個月／下個月
+function stepMonth(delta) {
+  const base = dayjs(`${currentMonth.value}-01`)
+  const target = (base.isValid() ? base : dayjs()).add(delta, 'month').format('YYYY-MM')
+  currentMonth.value = target
+  return onMonthChange(target)
+}
+
+const hasEmployeeFilters = computed(() =>
+  Boolean(employeeSearch.value || jobTypeFilter.value || (statusFilter.value && statusFilter.value !== 'all'))
+)
+const gridBusyText = computed(() => (isFetchingEmployees.value || isFetchingSchedules.value ? '載入中…' : ''))
+// 表格沒有資料時的說明：告訴使用者下一步
+const gridEmptyText = computed(() => {
+  if (gridBusyText.value) return gridBusyText.value
+  if (hasEmployeeFilters.value) return '沒有符合條件的員工，請調整搜尋或狀態篩選'
+  return '這個單位目前沒有員工，請切換部門或單位'
+})
+
+// ========= 單格變更的狀態文字與復原 =========
+
+// 「王小明 12/3」
+function describeCellTarget(empId, day) {
+  const employee = employeeById.value[String(empId)] || {}
+  const month = Number(String(currentMonth.value).slice(5, 7))
+  return `${employee.name || '員工'} ${month}/${Number(day)}`
+}
+
+function noteCellSaving(empId, day) {
+  setCellSaveState(empId, day, 'saving')
+  lastChange.value = { status: 'saving', text: `儲存中：${describeCellTarget(empId, day)}` }
+}
+
+function noteCellSaved(empId, day, previousShiftId, nextShiftId) {
+  setCellSaveState(empId, day, 'saved')
+  const label = nextShiftId ? (formatShiftLabel(shiftInfo(nextShiftId)) || '已排班') : '已清空'
+  lastChange.value = { status: 'saved', text: `已儲存：${describeCellTarget(empId, day)} ${label}` }
+  lastCellChange.value = {
+    empId: String(empId),
+    day: Number(day),
+    previousShiftId: previousShiftId || '',
+    month: currentMonth.value
+  }
+}
+
+// 伺服器拒絕或連線失敗：格子維持原本的班別，原因顯示在格子的提示文字與工具列
+function noteCellFailed(empId, day, reason) {
+  const message = String(reason || '').trim() || '儲存失敗'
+  setCellSaveState(empId, day, 'failed', message)
+  lastChange.value = { status: 'failed', text: `未儲存：${describeCellTarget(empId, day)}（${message}）` }
+}
+
+const canUndoLastChange = computed(() => {
+  const change = lastCellChange.value
+  if (!change || lastChange.value?.status !== 'saved' || !canEditSchedule.value) return false
+  if (change.month !== currentMonth.value) return false
+  return Boolean(scheduleMap.value[change.empId]?.[change.day])
+})
+
+// 復原上一次的單格變更：把那一格改回原本的班別（等於再做一次單格排班，伺服器照常檢查）
+async function undoLastChange() {
+  const change = lastCellChange.value
+  if (!canUndoLastChange.value || !change) return
+  lastCellChange.value = null
+  await onSelect(change.empId, change.day, change.previousShiftId)
+}
+
+// 新增了班表：發布狀態跟著變成「有班表可以發送」。以前新增後發布狀態不更新，
+// 空白的月份排完班「發送待確認」仍然不能按，要重新整理頁面才行
+function noteSchedulesCreated(created) {
+  const list = (Array.isArray(created) ? created : [created]).filter(item => item && item._id)
+  if (!list.length) return
+  if (publishSnapshot.value) {
+    if (!publishSnapshot.value.hasSchedules) {
+      publishSnapshot.value = { ...publishSnapshot.value, hasSchedules: true }
+    }
+    return
+  }
+  const known = new Set(rawSchedules.value.map(item => String(item?._id || '')))
+  const added = list.filter(item => !known.has(String(item._id)))
+  if (added.length) rawSchedules.value = [...rawSchedules.value, ...added]
+}
+
+// 清空之後這個範圍已經沒有任何班表：發布狀態回到「尚未發布、沒有班表」，不再顯示清空前的待回覆筆數。
+// 只有全部員工都在這一頁時才能確定（還有其他頁時不猜，等重新載入）
+function noteSchedulesRemoved() {
+  if (Number(serverPaginationTotal.value || 0) > employees.value.length) return
+  const anyLeft = employees.value.some(emp =>
+    Object.values(scheduleMap.value[String(emp._id)] || {}).some(cell => cell?.id)
+  )
+  if (anyLeft) return
+  if (publishSnapshot.value) {
+    publishSnapshot.value = {
+      ...publishSnapshot.value,
+      status: 'draft',
+      hasSchedules: false,
+      pendingEmployees: [],
+      disputedEmployees: [],
+      publishedAt: null,
+      allEmployeesConfirmed: false
+    }
+  }
+  rawSchedules.value = []
+}
+
+// 鍵盤：Esc 取消選取；Ctrl+Z 復原上一次的單格變更（焦點在輸入框、下拉選單時交給它們自己處理）
+function handlePageKeydown(event) {
+  const target = event?.target
+  const key = String(event?.key || '')
+  const inField = Boolean(
+    target?.closest?.('textarea, select, [contenteditable="true"], .el-select, .el-popper, .el-input, .el-date-editor') ||
+    (target?.tagName === 'INPUT' && target.type !== 'checkbox')
+  )
+  if (key === 'Escape' || key === 'Esc') {
+    if (inField || !hasSelectionContext.value) return
+    clearSelection()
+    return
+  }
+  if ((event.ctrlKey || event.metaKey) && !event.shiftKey && key.toLowerCase() === 'z') {
+    if (inField || !canUndoLastChange.value) return
+    event.preventDefault?.()
+    undoLastChange()
   }
 }
 
@@ -4365,6 +5044,7 @@ async function onSelect(empId, day, value) {
 
   if (!value) {
     if (!existing?.id) return
+    noteCellSaving(empId, day)
     try {
       const res = await apiFetch(`/api/schedules/${existing.id}`, { method: 'DELETE' })
       if (!res.ok) {
@@ -4376,15 +5056,20 @@ async function onSelect(empId, day, value) {
       invalidateCellMetaCache(empId, day)
       recomputeEmployeeStatusFor(empId)
       markScheduleMapDirty()
+      noteCellSaved(empId, day, prev, '')
+      noteSchedulesRemoved()
       await fetchSummary()
       await refreshFrontMenu()
       callSuccess(`${employee.name || '員工'} ${dateStr} 排班已清空`)
+      schedulePublishSummaryRefresh()
       scheduleDraftRuleValidation()
     } catch (err) {
       await handleScheduleError(null, '清空排班失敗', empId, day, prev, '')
     }
     return
   }
+
+  noteCellSaving(empId, day)
 
   // 已有 schedule -> 更新
   if (existing && existing.id) {
@@ -4413,8 +5098,10 @@ async function onSelect(empId, day, value) {
         invalidateCellMetaCache(empId, day)
         recomputeEmployeeStatusFor(empId)
         markScheduleMapDirty()
+        noteCellSaved(empId, day, prev, value)
         await fetchSummary()
         await refreshFrontMenu()
+        schedulePublishSummaryRefresh()
         scheduleDraftRuleValidation()
       }
     } catch (err) {
@@ -4453,8 +5140,11 @@ async function onSelect(empId, day, value) {
         recomputeEmployeeStatusFor(empId)
         markScheduleMapDirty()
         invalidateFetchAllCache()
+        noteCellSaved(empId, day, prev, saved.shiftId || value)
+        noteSchedulesCreated(saved)
         await fetchSummary()
         await refreshFrontMenu()
+        schedulePublishSummaryRefresh()
         scheduleDraftRuleValidation()
       } else {
         await handleScheduleError(
@@ -4482,6 +5172,9 @@ async function onSelect(empId, day, value) {
 // ========= 篩選切換 =========
 
 async function onDepartmentChange() {
+  // 換部門：先前勾的員工、日期與格子不帶到新的範圍（否則勾好的日期會套到另一個單位的人）
+  clearSelection()
+  resetChangeFeedback()
   selectedSubDepartment.value = ''
   await fetchSubDepartments(selectedDepartment.value)
   await fetchEmployees(selectedDepartment.value, '')
@@ -4490,6 +5183,8 @@ async function onDepartmentChange() {
 }
 
 async function onSubDepartmentChange() {
+  clearSelection()
+  resetChangeFeedback()
   await fetchEmployees(
     selectedDepartment.value,
     selectedSubDepartment.value
@@ -4534,6 +5229,7 @@ async function handleScheduleError(
   const code = data?.code || ''
   const violations = Array.isArray(data?.violations) ? data.violations : []
   if (violations.length) {
+    noteCellFailed(empId, day, '排班規範檢核未通過')
     await openScheduleIssueDialog(
       '排班規範檢核未通過',
       violations.map(formatLaborRuleViolation),
@@ -4545,12 +5241,12 @@ async function handleScheduleError(
   const conflict = data?.conflict || {}
   const employee = employeeIssueLabel(conflict.employee || empId)
   const fallbackDate = `${currentMonth.value}-${String(day).padStart(2, '0')}`
-  const parsedDate = dayjs(conflict.date || fallbackDate)
-  const date = parsedDate.isValid() ? parsedDate.format('YYYY-MM-DD') : fallbackDate
+  const date = scheduleDateKey(conflict.date || fallbackDate) || fallbackDate
   const requestedShift = conflict.requestedShiftId || requestedShiftId
   const requestedLabel = formatShiftLabel(shiftInfo(requestedShift)) || String(requestedShift || '')
 
   if (res?.status === 403 || code === 'SCHEDULE_SCOPE_FORBIDDEN') {
+    noteCellFailed(empId, day, '這位員工不在您的排班範圍內')
     await openScheduleIssueDialog(
       '排班權限不足',
       ['目前帳號只能調整排班範圍內員工的班表。請重新整理後確認員工是否仍在您的排班範圍；若人員已調動，請由管理員更新小單位的排班人員設定。'],
@@ -4561,26 +5257,31 @@ async function handleScheduleError(
     const existingLabel = formatShiftLabel(shiftInfo(existingShift)) || String(existingShift || '')
     const existingText = existingLabel ? `已有排班「${existingLabel}」` : '已存在另一筆排班'
     const requestedText = requestedLabel ? `，無法再排「${requestedLabel}」` : '，無法重複新增'
+    noteCellFailed(empId, day, `${existingText}，畫面資料可能已過期，請重新整理`)
     await openScheduleIssueDialog(
       '排班資料衝突',
       [`${employee}：${date} ${existingText}${requestedText}。畫面資料可能已過期，請重新整理後再調整。`],
       defaultMsg
     )
   } else if (msg === 'department overlap') {
+    noteCellFailed(empId, day, '既有排班屬於不同部門或單位，無法覆蓋')
     await openScheduleIssueDialog(
       '部門或單位不一致',
       [`${employee}：${date} 的既有排班屬於不同部門或單位，無法覆蓋。請重新整理後再調整。`],
       defaultMsg
     )
   } else if (msg === 'leave conflict') {
+    noteCellFailed(empId, day, '已有核准的全天請假，或請假時間涵蓋整個班別')
     await openScheduleIssueDialog(
       '核准請假衝突',
       [`${employee}：${date} 已有核准的全天請假，或請假時間涵蓋整個班別，無法安排班別${requestedLabel ? `「${requestedLabel}」` : ''}。`],
       defaultMsg
     )
   } else if (msg) {
+    noteCellFailed(empId, day, msg)
     await openScheduleIssueDialog('排班操作失敗', [msg], defaultMsg)
   } else {
+    noteCellFailed(empId, day, res ? defaultMsg : `${defaultMsg}，請確認網路連線後再試`)
     callError(defaultMsg)
   }
 }
@@ -4668,9 +5369,12 @@ async function clearSelectedSchedules() {
     markScheduleMapDirty()
     invalidateFetchAllCache()
     clearSelection()
+    resetChangeFeedback()
+    noteSchedulesRemoved()
     await fetchSummary()
     await refreshFrontMenu()
     callSuccess(`已清空 ${Number(payload.deleted || deletedIds.size)} 筆排班`)
+    schedulePublishSummaryRefresh()
     scheduleDraftRuleValidation()
   } catch (err) {
     callError(err?.message || '清空排班失敗')
@@ -4761,7 +5465,9 @@ async function applyBatch() {
     const affectedEmployees = new Set()
     result.forEach(entry => {
       const empId = entry.employee?._id || entry.employee
-      const d = dayjs(entry.date).date()
+      // 班表日期是該日的 UTC 午夜：直接取日期部分，不依瀏覽器時區換算
+      const d = scheduleDayOfMonth(entry.date)
+      if (!Number.isFinite(d)) return
       if (!scheduleMap.value[empId]) {
         scheduleMap.value[empId] = {}
       }
@@ -4791,12 +5497,16 @@ async function applyBatch() {
     })
     recomputeEmployeeStatuses(Array.from(affectedEmployees))
     markScheduleMapDirty()
+    noteSchedulesCreated(result)
+    // 批次套用不能用「復原」退回，上一次單格變更的復原也一併取消
+    resetChangeFeedback()
 
     callSuccess('批次套用完成')
     invalidateFetchAllCache()
     await fetchSummary()
     clearSelection()
     await refreshFrontMenu()
+    schedulePublishSummaryRefresh()
     scheduleDraftRuleValidation()
   } finally {
     isApplyingBatch.value = false
@@ -4825,12 +5535,11 @@ function persistRowColors() {
   }
 }
 
+// 勾選整列的底色由樣式表判斷（列裡的核取方塊打勾，見 ScheduleWorkspace.scss），這裡不讀選取狀態：
+// 列的 class 是表格主體渲染時算的，一讀選取狀態，每勾一位員工整張表格（上千格）就要重新渲染一次
 function scheduleRowClassName({ row }) {
   const empId = String(row?._id || '')
   if (!empId) return ''
-  if (selectedEmployeesSet.value.has(empId)) {
-    return 'schedule-row schedule-row--selected'
-  }
   if (normalizeRowColorIndex(rowColorAssignments.value[empId]) !== null) {
     return 'schedule-row schedule-row--colored'
   }
@@ -4919,11 +5628,16 @@ async function fetchEmployees(
   params.push(`includeSelf=${includeSelf.value && showIncludeSelfToggle.value}`)
   const url = `/api/employees/schedule${params.length ? `?${params.join('&')}` : ''
     }`
+  // 只採用最後一次請求的回應：搜尋框每打一個字就查一次，較早、較慢的回應不能蓋掉最新的名單
+  const seq = ++employeeRequestSeq
+  isFetchingEmployees.value = true
   try {
     const empRes = await apiFetch(url)
+    if (seq !== employeeRequestSeq) return
     if (!empRes.ok) throw new Error('Failed to fetch employees')
     const payload =
       typeof empRes.json === 'function' ? await empRes.json() : []
+    if (seq !== employeeRequestSeq) return
     const empData = Array.isArray(payload)
       ? payload
       : Array.isArray(payload?.employees)
@@ -5024,8 +5738,11 @@ async function fetchEmployees(
     persistRowColors()
     pruneSelections()
   } catch (err) {
+    if (seq !== employeeRequestSeq) return
     console.error(err)
     callError('取得員工資料失敗')
+  } finally {
+    if (seq === employeeRequestSeq) isFetchingEmployees.value = false
   }
 }
 
@@ -5044,12 +5761,16 @@ async function fetchSummary() {
       params.push('includeSelf=true')
     }
 
+    // 只採用最後一次請求的回應：切換月份、單位或連續改班時，較早、較慢的回應不能蓋掉最新的統計
+    const seq = ++summaryRequestSeq
     const res = await apiFetch(
       `/api/schedules/summary?${params.join('&')}`
     )
+    if (seq !== summaryRequestSeq) return
     if (!res.ok) return
 
     const data = await res.json()
+    if (seq !== summaryRequestSeq) return
     if (data && typeof data === 'object' && data.stats) {
       summary.value = {
         direct: Number(data.stats.direct || 0),
@@ -5090,7 +5811,15 @@ async function onMonthChange(value) {
     ? next.format('YYYY-MM')
     : dayjs().format('YYYY-MM')
   currentPage.value = 1
+  // 上個月的班表、選取與變更狀態不帶到新月份（格子與選取都用「幾號」對應）
+  clearGridForScopeChange()
+  clearSelection()
+  resetChangeFeedback()
   await fetchHolidays()
+  // 「缺班」「待審核請假」的名單每個月不同：有狀態篩選時名單跟著月份重新查
+  if (statusFilter.value && statusFilter.value !== 'all') {
+    await fetchEmployees(selectedDepartment.value, selectedSubDepartment.value)
+  }
   await refreshScheduleData({ reset: true, reason: 'month-change' })
   // 相鄰月份可能已經排定或修改過：換到這個月時，在背景重新檢核一次，跨月週的結果才會跟上（只更新徽章與提醒，不彈窗）
   if (canEditSchedule.value) {
@@ -5106,10 +5835,16 @@ async function onMonthChange(value) {
 
 onBeforeUnmount(() => {
   scheduleRuleCheckDisposed = true
+  clearCellSaveStates()
   if (scheduleRuleValidationTimer) {
     clearTimeout(scheduleRuleValidationTimer)
     scheduleRuleValidationTimer = null
   }
+  if (publishSummaryRefreshTimer) {
+    clearTimeout(publishSummaryRefreshTimer)
+    publishSummaryRefreshTimer = null
+  }
+  publishSummaryRequestSeq += 1
   if (filterRefreshTimer) {
     clearTimeout(filterRefreshTimer)
     filterRefreshTimer = null
@@ -5141,27 +5876,26 @@ onMounted(async () => {
   }
   if (typeof ResizeObserver !== 'undefined') {
     layoutResizeObserver = new ResizeObserver(() => {
+      measureTableTopOffset()
       updateFullscreenLayoutHeight()
     })
     ;[
+      // 頁首與發布狀態列變高變矮時，表格的位置跟著變
+      schedulePageRef.value?.firstElementChild,
+      publishBarRef.value,
       scheduleCardRef.value,
       scheduleHeaderRef.value,
       batchToolbarRef.value,
       stressToolbarRef.value,
       paginationBarRef.value
     ]
-      .filter(Boolean)
+      .filter(target => target && typeof target === 'object' && target.nodeType === 1)
       .forEach(target => layoutResizeObserver.observe(target))
   }
+  measureTableTopOffset()
   updateFullscreenLayoutHeight()
   bindTableScrollListeners()
   listenerMetrics.elementLevelEstimated = (virtualVisibleEmployees.value.length * (virtualVisibleDays.value.length + 1)) + virtualVisibleDays.value.length
-  if (import.meta.env.DEV) {
-    console.info('[ScheduleListenerMetrics]', {
-      estimatedElementLevelBeforeDelegation: listenerMetrics.elementLevelEstimated,
-      delegatedActive: listenerMetrics.delegatedActive
-    })
-  }
   const supervisorId = getSupervisorIdFromStorage()
   const storedPreference = loadIncludeSelfPreference(supervisorId)
   let resolvedIncludeSelf = storedPreference
@@ -5213,6 +5947,25 @@ watch(days, () => {
   invalidateCellMetaCache()
 })
 
+// 把 cellViewMap 的結果分送到每一格自己的 shallowRef：物件沒換（內容沒變）就不動，那一格不會重新渲染。
+// flush: 'pre'：同一輪更新裡先同步完，表格才渲染
+watch(
+  cellViewMap,
+  map => {
+    map.forEach((view, key) => {
+      const holder = cellViewRefs.get(key)
+      if (!holder) cellViewRefs.set(key, shallowRef(view))
+      else if (holder.value !== view) holder.value = view
+    })
+    if (cellViewRefs.size > map.size) {
+      cellViewRefs.forEach((holder, key) => {
+        if (!map.has(key)) cellViewRefs.delete(key)
+      })
+    }
+  },
+  { immediate: true, flush: 'pre' }
+)
+
 watch(tableMaxHeight, () => {
   bindTableScrollListeners()
 })
@@ -5221,21 +5974,7 @@ watch([virtualVisibleEmployees, virtualVisibleDays], () => {
   listenerMetrics.elementLevelEstimated =
     (virtualVisibleEmployees.value.length * (virtualVisibleDays.value.length + 1)) +
     virtualVisibleDays.value.length
-  if (import.meta.env.DEV) {
-    console.info('[ScheduleListenerMetrics:update]', {
-      estimatedElementLevelBeforeDelegation: listenerMetrics.elementLevelEstimated,
-      delegatedActive: listenerMetrics.delegatedActive
-    })
-  }
 })
-
-watch(
-  () => [perfMetrics.employeeStatusRecomputeCount, perfMetrics.cellMetaComputeCount],
-  () => {
-    if (!import.meta.env.DEV) return
-    console.info('[SchedulePerfMetrics]', perfSnapshot.value)
-  }
-)
 
 onUpdated(() => {
   updateFullscreenLayoutHeight()
@@ -5253,10 +5992,6 @@ onUpdated(() => {
   font-weight: 400;
   line-height: 1.2;
   white-space: nowrap;
-}
-
-.calendar-provisional-alert {
-  margin-bottom: 8px;
 }
 </style>
 <style lang="scss" src="./ScheduleNotificationDrawer.scss"></style>

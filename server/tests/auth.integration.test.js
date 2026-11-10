@@ -55,4 +55,28 @@ describe('Auth Integration', () => {
     expect(res.body.user.id).toBe(String(employee._id))
     expect(res.body.token).toBeDefined()
   })
+
+  // 登入頁不再讓使用者選角色：不帶 role 時以帳號本身的角色登入
+  it('不帶 role 時以帳號本身的角色登入', async () => {
+    const employee = new RealEmployee({ name: 'Lead', username: 'lead', password: 'pass123', role: 'supervisor' })
+    selectMock.mockResolvedValue(employee)
+    mockEmployee.findOne.mockReturnValue({ select: selectMock })
+
+    const res = await request(app).post('/api/login').send({ username: 'lead', password: 'pass123' })
+
+    expect(res.status).toBe(200)
+    expect(res.body.user).toMatchObject({ username: 'lead', role: 'supervisor' })
+    expect(res.body.token).toBeDefined()
+  })
+
+  it('不帶 role 時留職停薪的帳號仍不能登入', async () => {
+    const employee = new RealEmployee({ name: 'Away', username: 'away', password: 'pass123', role: 'employee', status: '留職停薪' })
+    selectMock.mockResolvedValue(employee)
+    mockEmployee.findOne.mockReturnValue({ select: selectMock })
+
+    const res = await request(app).post('/api/login').send({ username: 'away', password: 'pass123' })
+
+    expect(res.status).toBe(401)
+    expect(res.body.token).toBeUndefined()
+  })
 })

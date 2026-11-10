@@ -49,9 +49,20 @@ async function upsertRate(rate) {
  * @param {Number} salary - 薪資金額
  * @returns {Object|null} - 勞保費率資料
  */
-export async function findInsuranceLevelBySalary(salary) {
+export async function findInsuranceLevelBySalary(salary, rates = null) {
   if (!salary || salary <= 0) return null;
-  
+
+  // 整批計算（薪資總覽、匯出）時呼叫端先把整張級距表讀好帶進來，不必每位員工各查一次；規則與下面的查詢相同
+  if (Array.isArray(rates) && rates.length) {
+    let match = null;
+    let top = null;
+    for (const rate of rates) {
+      if (!top || rate.level > top.level) top = rate;
+      if (rate.insuredSalary >= salary && (!match || rate.insuredSalary < match.insuredSalary)) match = rate;
+    }
+    return match ?? top;
+  }
+
   // 查找最接近且大於等於薪資的投保薪資等級
   const rate = await LaborInsuranceRate.findOne({
     insuredSalary: { $gte: salary }
@@ -63,6 +74,11 @@ export async function findInsuranceLevelBySalary(salary) {
   }
   
   return rate;
+}
+
+/** 整張勞保級距表（給整批薪資計算一次讀好，再交給 findInsuranceLevelBySalary 的第二個參數） */
+export async function loadInsuranceRateTable() {
+  return LaborInsuranceRate.find().lean();
 }
 
 /**

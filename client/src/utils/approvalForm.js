@@ -98,6 +98,43 @@ export function findMissingRequiredField(fields, formData, fileBuffers = {}, kep
   return null
 }
 
+/** 所有沒填的必填欄位：{ [欄位編號]: '請填寫事由' }，讓每個欄位下方都能標出來（規則與 findMissingRequiredField 相同） */
+export function collectMissingRequiredFields(fields, formData, fileBuffers = {}, keptFileFields = {}) {
+  const errors = {}
+  for (const field of fields || []) {
+    if (findMissingRequiredField([field], formData, fileBuffers, keptFileFields)) {
+      errors[field._id] = field.type_1 === 'file' ? `請選擇${field.label}的檔案` : `請填寫${field.label}`
+    }
+  }
+  return errors
+}
+
+/* -------------------- 附件（與伺服器 middleware/approvalAttachmentUpload.js 的限制相同） -------------------- */
+
+export const MAX_ATTACHMENT_COUNT = 5
+export const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024
+export const ATTACHMENT_EXTENSIONS = ['.pdf', '.doc', '.docx', '.xls', '.xlsx', '.jpg', '.jpeg', '.png', '.gif', '.webp']
+export const ATTACHMENT_ACCEPT = ATTACHMENT_EXTENSIONS.join(',')
+
+/** 這個檔案能不能當附件：可以回傳空字串，不行回傳要顯示的原因（說明是哪個檔案、為什麼） */
+export function checkAttachmentFile(file) {
+  if (!file || typeof file !== 'object') return ''
+  const name = String(file.name || '')
+  const dot = name.lastIndexOf('.')
+  const extension = dot >= 0 ? name.slice(dot).toLowerCase() : ''
+  if (!ATTACHMENT_EXTENSIONS.includes(extension)) {
+    return `「${name || '檔案'}」的格式不支援，請上傳 PDF、Word、Excel 或圖片`
+  }
+  const size = Number(file.size)
+  if (Number.isFinite(size) && size > MAX_ATTACHMENT_BYTES) {
+    return `「${name}」有 ${(size / 1024 / 1024).toFixed(1)} MB，超過每個檔案 10 MB 的上限`
+  }
+  if (Number.isFinite(size) && size === 0 && typeof File !== 'undefined' && file instanceof File) {
+    return `「${name}」是空的檔案，請確認後重新選擇`
+  }
+  return ''
+}
+
 /* -------------------- 簽核流程預覽 -------------------- */
 
 const APPROVER_TYPE_LABELS = {

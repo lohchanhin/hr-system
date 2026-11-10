@@ -39,6 +39,8 @@ const payrollRecordSchema = new mongoose.Schema({
   employeeAdvance: { type: Number, default: 0 }, // 員工借支
   debtGarnishment: { type: Number, default: 0 }, // 債權扣押
   otherDeductions: { type: Number, default: 0 }, // 其他扣款
+  lateEarlyDeduction: { type: Number, default: 0 }, // 遲到早退自動扣款（已包含在其他扣款裡，另外記錄供明細使用）
+  deductionShortfall: { type: Number, default: 0 }, // 扣款超過本薪而沒扣到的金額（實領為 0 時才會大於 0）
   netPay: { type: Number, default: 0 }, // 實領金額 (Stage A)
   
   // Stage B: 獎金項目
@@ -70,6 +72,7 @@ const payrollRecordSchema = new mongoose.Schema({
   
   // 勞保等級
   insuranceLevel: { type: Number }, // 對應 LaborInsuranceRate 的 level
+  insuredSalary: { type: Number, default: 0 }, // 勞保投保薪資（級距金額）；舊記錄沒有這個欄位，匯出時改用 level 查級距表
   
   // 特休資訊 (從員工資料複製)
   annualLeave: {
@@ -82,6 +85,12 @@ const payrollRecordSchema = new mongoose.Schema({
     notes: { type: String, default: '' }, // 備註
   },
   
+  // 存檔當時套用的薪資政策（計算並儲存時才有；舊記錄沒有這兩個欄位）：
+  // employment 是在職期間與月中到職、離職的比例（含算法 method），appliedPolicy 是 { prorationMethod, overtimeRates }。
+  // 之後改薪資設定不會重算已存的記錄，這裡留下當時的規則供查核
+  employment: { type: Object },
+  appliedPolicy: { type: Object },
+
   // Legacy field for backward compatibility
   amount: { type: Number, default: 0 },
 

@@ -9,7 +9,7 @@ describe('Schedule workspace design contract', () => {
     const styles = read('../src/views/front/ScheduleWorkspace.scss')
 
     expect(styles).toMatch(/\.modern-schedule-table\s*:deep\(\.el-table-fixed-column--left\)/)
-    expect(styles).toMatch(/\.modern-schedule-cell\s*{[\s\S]*?min-height:\s*62px/)
+    expect(styles).toMatch(/\.modern-schedule-cell\s*{[\s\S]*?min-height:\s*46px/)
     expect(styles).toMatch(/\.schedule-table-wrapper\s*:deep\(\.el-scrollbar__bar\.is-horizontal\)[\s\S]*?height:\s*12px/)
     expect(styles).not.toMatch(/linear-gradient/)
   })

@@ -51,9 +51,11 @@ async function assertSourceHoliday(setting) {
     HolidaySwap.exists({ targetDate: setting.targetDate, status: 'active' }),
     HolidayCompensation.exists({ assignedDate: setting.targetDate, status: 'assigned' }),
   ]);
-  if (!sourceKinds.has('statutory')) throw new MoveValidationError('sourceDate must reference a statutory holiday');
+  if (!sourceKinds.has('statutory')) {
+    throw new MoveValidationError('原國定假日必須是行事曆上的國定假日', 400, 'SOURCE_NOT_HOLIDAY');
+  }
   if (targetKinds.has('statutory') || targetKinds.has('designated') || targetKinds.has('gov_makeup_off')) {
-    throw new MoveValidationError('targetDate is already a holiday');
+    throw new MoveValidationError('改放的那一天已經是假日（國定假日、指定應放假日或公務機關補假），請改選其他日子', 400, 'TARGET_IS_HOLIDAY');
   }
   if (swapExists) {
     throw new MoveValidationError('已有員工個人調移這一天的國定假日，請先撤銷個人調移再設定全公司調移', 409, 'SWAP_EXISTS');
@@ -72,15 +74,28 @@ function sendMoveError(res, err) {
     if (err.code) body.code = err.code;
     return res.status(err.status).json(body);
   }
-  return res.status(400).json({ error: err.message });
+  // 同一個國定假日只能有一筆全公司調移（sourceDate 唯一索引）：以前把資料庫的 E11000 原文回給畫面
+  if (err?.code === 11000) {
+    return res.status(409).json({ error: '這個國定假日已經設定過全公司調移，請直接修改那一筆', code: 'SOURCE_TAKEN' });
+  }
+  if (err?.name === 'CastError' || err?.name === 'ValidationError') {
+    return res.status(400).json({ error: '資料格式不正確（日期、或說明超過 500 字、文號超過 200 字），請確認後再試', code: 'INVALID_INPUT' });
+  }
+  // 模型的檢查（models/HolidayMoveSetting.js）訊息已經是中文並帶 code
+  if (typeof err?.code === 'string') return res.status(400).json({ error: err.message, code: err.code });
+  console.error(`Holiday move setting failed: ${err?.name || 'Error'}`);
+  return res.status(500).json({ error: '國定假日調移儲存失敗，請稍後再試' });
 }
+
+const NOT_FOUND_BODY = { error: '找不到這筆國定假日調移設定，可能已被刪除，請重新整理', code: 'NOT_FOUND' };
 
 export async function listSettings(req, res) {
   try {
     const settings = await HolidayMoveSetting.find();
     res.json(settings);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(`Holiday move settings list failed: ${err?.name || 'Error'}`);
+    res.status(500).json({ error: '國定假日調移設定讀取失敗，請稍後再試' });
   }
 }
 
@@ -100,17 +115,17 @@ export async function createSetting(req, res) {
 export async function getSetting(req, res) {
   try {
     const setting = await HolidayMoveSetting.findById(req.params.id);
-    if (!setting) return res.status(404).json({ error: 'Not found' });
+    if (!setting) return res.status(404).json(NOT_FOUND_BODY);
     res.json(setting);
   } catch (err) {
-    res.status(400).json({ error: err.message });
+    sendMoveError(res, err);
   }
 }
 
 export async function updateSetting(req, res) {
   try {
     const setting = await HolidayMoveSetting.findById(req.params.id);
-    if (!setting) return res.status(404).json({ error: 'Not found' });
+    if (!setting) return res.status(404).json(NOT_FOUND_BODY);
     Object.assign(setting, settingPayload(req.body));
     setting.updatedBy = req.user?.userId || req.user?.id;
     await setting.validate();
@@ -125,9 +140,9 @@ export async function updateSetting(req, res) {
 export async function deleteSetting(req, res) {
   try {
     const setting = await HolidayMoveSetting.findByIdAndDelete(req.params.id);
-    if (!setting) return res.status(404).json({ error: 'Not found' });
+    if (!setting) return res.status(404).json(NOT_FOUND_BODY);
     res.json({ success: true });
   } catch (err) {
-    res.status(400).json({ error: err.message });
+    sendMoveError(res, err);
   }
 }

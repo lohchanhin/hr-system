@@ -34,8 +34,10 @@ describe('ApprovalFlowSetting field tab', () => {
     wrapper.vm.openFieldDialog()
     wrapper.vm.fieldDialog.label = 'Name'
     await wrapper.vm.saveField()
-    const call = apiFetch.mock.calls.find(c => c[0] === '/api/approvals/forms/f1/fields' && c[1].method === 'POST')
+    // 讀取欄位的呼叫沒有第二個參數（c[1] 是 undefined）：以前元件在儲存後會去改測試替身記錄的呼叫參數，這段程式已拿掉
+    const call = apiFetch.mock.calls.find(c => c[0] === '/api/approvals/forms/f1/fields' && c[1]?.method === 'POST')
     expect(call).toBeTruthy()
+    expect(JSON.parse(call[1].body)).toMatchObject({ label: 'Name', type_1: 'text', order: 0 })
   })
 
   it('moves field and updates order', async () => {

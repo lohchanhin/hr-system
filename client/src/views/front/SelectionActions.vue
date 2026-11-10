@@ -1,13 +1,14 @@
 <template>
-  <div class="selection-actions" :class="{ 'selection-actions--compact': compact }">
+  <!-- 「選取」選單的內容：整批選取的入口（勾選單一員工、日期或格子直接在表格上操作） -->
+  <div class="selection-actions" :class="{ 'selection-actions--compact': compact }" role="menu" aria-label="選取範圍">
     <el-button
       class="action-btn secondary"
-      :disabled="!hasAnySelection"
-      :data-test="compact ? 'fullscreen-clear-selection-button' : 'clear-selection-button'"
-      @click="$emit('clear-selection')"
+      :disabled="!employeesLength"
+      data-test="select-all-employees-on-page-button"
+      @click="$emit('select-all-employees-on-page')"
     >
-      <el-icon><Close /></el-icon>
-      清除選取
+      <el-icon><User /></el-icon>
+      本頁全選
     </el-button>
     <el-button
       type="primary"
@@ -15,62 +16,38 @@
       plain
       :loading="isSelectingAllEmployeesAcrossPages"
       :disabled="!serverPaginationTotal || isSelectingAllEmployeesAcrossPages"
-      :data-test="compact ? 'fullscreen-select-all-button' : 'select-all-employees-across-pages-button'"
+      data-test="select-all-employees-across-pages-button"
       @click="$emit('select-all-employees-across-pages')"
     >
       <el-icon><UserFilled /></el-icon>
       全部人員全選
     </el-button>
-
-    <template v-if="!compact">
-      <el-button
-        class="action-btn secondary"
-        :disabled="!employeesLength"
-        data-test="select-all-employees-on-page-button"
-        @click="$emit('select-all-employees-on-page')"
-      >
-        <el-icon><User /></el-icon>
-        本頁全選
-      </el-button>
-      <el-button
-        class="action-btn secondary"
-        :disabled="!daysLength"
-        data-test="select-all-days-button"
-        @click="$emit('select-all-days')"
-      >
-        <el-icon><Calendar /></el-icon>
-        全選日期
-      </el-button>
-    </template>
-
-    <el-dropdown
-      v-else
-      trigger="click"
-      data-test="fullscreen-selection-more-dropdown"
-      @command="handleCompactCommand"
+    <el-button
+      class="action-btn secondary"
+      :disabled="!daysLength"
+      data-test="select-all-days-button"
+      @click="$emit('select-all-days')"
     >
-      <el-button class="action-btn secondary selection-actions__more-btn" data-test="fullscreen-selection-more-button">
-        <el-icon><MoreFilled /></el-icon>
-        更多選取操作
-      </el-button>
-      <template #dropdown>
-        <el-dropdown-menu>
-          <el-dropdown-item command="page" :disabled="!employeesLength" data-test="fullscreen-select-page-command">
-            本頁全選
-          </el-dropdown-item>
-          <el-dropdown-item command="days" :disabled="!daysLength" data-test="fullscreen-select-days-command">
-            全選日期
-          </el-dropdown-item>
-        </el-dropdown-menu>
-      </template>
-    </el-dropdown>
+      <el-icon><Calendar /></el-icon>
+      全選日期
+    </el-button>
+    <el-button
+      class="action-btn secondary"
+      :disabled="!hasAnySelection"
+      data-test="clear-selection-button"
+      @click="$emit('clear-selection')"
+    >
+      <el-icon><Close /></el-icon>
+      取消選取
+    </el-button>
   </div>
 </template>
 
 <script setup>
-import { Calendar, Close, MoreFilled, User, UserFilled } from '@element-plus/icons-vue'
+import { Calendar, Close, User, UserFilled } from '@element-plus/icons-vue'
 
 defineProps({
+  // 保留給全螢幕使用（目前兩種模式的內容相同，只影響間距）
   compact: {
     type: Boolean,
     default: false
@@ -97,31 +74,34 @@ defineProps({
   }
 })
 
-const emit = defineEmits([
+defineEmits([
   'clear-selection',
   'select-all-employees-on-page',
   'select-all-employees-across-pages',
   'select-all-days'
 ])
-
-const handleCompactCommand = command => {
-  if (command === 'page') emit('select-all-employees-on-page')
-  if (command === 'days') emit('select-all-days')
-}
 </script>
 
 <style scoped lang="scss">
 .selection-actions {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
-  flex-wrap: wrap;
 
-  &--compact {
-    align-items: center;
+  :deep(.el-button) {
+    justify-content: flex-start;
+    margin-left: 0;
   }
 
-  &__more-btn {
-    border-style: dashed;
+  // 與排班頁其他按鈕同一組顏色（選單的內容不在排班頁的樣式範圍內，顏色直接寫在這裡）
+  :deep(.el-button.action-btn.primary) {
+    border-color: #b9ddd8;
+    background: #edf8f6;
+    color: #08635c;
+  }
+
+  &--compact {
+    gap: 6px;
   }
 }
 </style>

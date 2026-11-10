@@ -2,7 +2,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { getToken } from '@/utils/tokenService'
 import { clearRoleCache, refreshRoleFromSource, resolveUserRole } from '@/utils/roleResolver'
-import { getAuthenticatedHomeRoute, SUPERVISOR_WITHOUT_SCHEDULE_HOME } from '@/utils/authNavigation'
+import { FRONT_HOME, getAuthenticatedHomeRoute, SUPERVISOR_WITHOUT_SCHEDULE_HOME } from '@/utils/authNavigation'
 import { useProfileStore } from '@/stores/profile'
 
 // ★ 既有的後台檔案
@@ -91,6 +91,8 @@ const routes = [
     component: FrontLayout,
     // 若需要簡易的「前台登入判斷」，可加 meta
     meta: { frontRequiresAuth: true },
+    // 只打 /front 時進出勤打卡（以前外框裡是空白的）
+    redirect: FRONT_HOME,
 
     // 定義子路由: 排班 / 出勤 / 簽核
     children: [

@@ -15,6 +15,7 @@ import {
   buildMonthRange,
   resolveScopedEmployeeIds,
   buildPublishQuery,
+  applyPublishUnitFilter,
   getEditableScheduleEmployeeIds,
 } from './scheduleShared.js';
 
@@ -65,8 +66,10 @@ export async function validateScheduleRules(req, res) {
       return res.json({ ok: true, count: 0, violations: [] });
     }
 
-    const query = buildPublishQuery(range, { department, subDepartment });
+    const query = buildPublishQuery(range, {});
     if (Array.isArray(scopedIds)) query.employee = { $in: scopedIds };
+    // 與發布同一個範圍（含月中調到這個單位的員工在舊單位排的班表）
+    await applyPublishUnitFilter(query, { department, subDepartment });
     let schedules = await ShiftSchedule.find(query).lean();
     let lockedScope = {};
     if (!schedules.length) {
@@ -158,6 +161,11 @@ export async function checkCanFinalize(req, res) {
 
     if (!month) {
       return res.status(400).json({ error: 'month required' });
+    }
+
+    // 月份格式不對是請求的問題（400），不是伺服器錯誤（以前回 500）
+    if (typeof month !== 'string' || !/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) {
+      return res.status(400).json({ error: 'Invalid month format. Expected YYYY-MM' });
     }
 
     const options = await buildValidationOptions(req);

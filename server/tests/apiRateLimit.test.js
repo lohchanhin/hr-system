@@ -1,5 +1,6 @@
 import { jest } from '@jest/globals'
 import express from 'express'
+import jwt from 'jsonwebtoken'
 import request from 'supertest'
 
 // Small limits so the tests trip the limiter in a handful of requests
@@ -9,6 +10,14 @@ process.env.API_RATE_LIMIT_MAX = '3'
 process.env.API_RATE_LIMIT_WINDOW_MS = '60000'
 process.env.API_MUTATION_RATE_LIMIT_MAX = '2'
 process.env.API_MUTATION_RATE_LIMIT_WINDOW_MS = '60000'
+process.env.JWT_SECRET = 'test-only-jwt-secret-at-least-32-bytes'
+
+const tokenFor = (id, { secret = process.env.JWT_SECRET, expiresIn = '1h' } = {}) => jwt.sign(
+  { id, sub: id, role: 'employee', ver: 0 },
+  secret,
+  { issuer: 'hr-system', audience: 'hr-system-api', expiresIn },
+)
+const bearer = (token) => ({ Authorization: `Bearer ${token}` })
 
 // Each test gets a fresh module instance (via resetModules + a dynamic
 // import) so the in-memory rate-limit counters don't carry over between
@@ -80,5 +89,49 @@ describe('API rate limiting', () => {
     expect(getRes.status).toBe(200)
     expect(postOne.status).toBe(200)
     expect(postTwo.status).toBe(200)
+  })
+
+  // 同一個機構的員工共用一個對外 IP（院內 Wi-Fi／NAT）：以前所有人合用同一份額度，
+  // 一位同事用完每分鐘的寫入次數，其他人打卡就被擋下（429）
+  it('counts signed-in requests per account, so one account using up its quota does not block a colleague behind the same IP', async () => {
+    const app = await buildApp()
+    const nurseA = bearer(tokenFor('aaaaaaaaaaaaaaaaaaaaaaaa'))
+    const nurseB = bearer(tokenFor('bbbbbbbbbbbbbbbbbbbbbbbb'))
+
+    const writesA = []
+    for (let i = 0; i < 3; i += 1) writesA.push((await request(app).post('/api/echo').set(nurseA).send({})).status)
+    expect(writesA).toEqual([200, 200, 429])
+
+    // 同一個 IP 的另一個帳號：寫入與讀取的額度都還是完整的
+    const writesB = []
+    for (let i = 0; i < 3; i += 1) writesB.push((await request(app).post('/api/echo').set(nurseB).send({})).status)
+    expect(writesB).toEqual([200, 200, 429])
+
+    // 沒登入的請求（登入頁）另外以 IP 計，不受上面兩個帳號影響
+    expect((await request(app).post('/api/echo').send({})).status).toBe(200)
+  })
+
+  it('still limits each account on its own', async () => {
+    const app = await buildApp()
+    const nurseA = bearer(tokenFor('aaaaaaaaaaaaaaaaaaaaaaaa'))
+
+    const statuses = []
+    for (let i = 0; i < 4; i += 1) statuses.push((await request(app).get('/api/ping').set(nurseA)).status)
+    expect(statuses).toEqual([200, 200, 200, 429])
+  })
+
+  it('does not hand out a fresh quota for tokens that are forged, expired or malformed: those are counted by IP', async () => {
+    const app = await buildApp()
+    const headers = [
+      bearer(tokenFor('cccccccccccccccccccccccc', { secret: 'some-other-secret-that-is-not-the-server-secret' })),
+      bearer(tokenFor('dddddddddddddddddddddddd', { secret: 'yet-another-secret-that-is-not-the-server-one' })),
+      bearer(tokenFor('eeeeeeeeeeeeeeeeeeeeeeee', { expiresIn: -60 })),
+      bearer('not-a-jwt'),
+    ]
+
+    const statuses = []
+    for (const header of headers) statuses.push((await request(app).get('/api/ping').set(header)).status)
+    // 一般請求的上限是 3：四個不同的假 token 共用同一個 IP 的額度，第四個被擋下
+    expect(statuses).toEqual([200, 200, 200, 429])
   })
 })

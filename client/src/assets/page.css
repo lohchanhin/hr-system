@@ -1,0 +1,181 @@
+/* 全站共用的頁面樣式（頁首、統計數字、區塊、工具列、說明文字、空狀態）；規範見 docs/ui-guidelines.md */
+
+/* Element Plus 的主色改用系統主色（按鈕、連結、頁籤、勾選框等），不再是預設的藍色 */
+:root {
+  --el-color-primary: #0e7490;
+  --el-color-primary-light-3: #569eb1;
+  --el-color-primary-light-5: #87bac8;
+  --el-color-primary-light-7: #b7d5de;
+  --el-color-primary-light-8: #cfe3e9;
+  --el-color-primary-light-9: #e7f1f4;
+  --el-color-primary-dark-2: #0b5d73;
+}
+
+/* 頁首：<PageHeader> */
+.hr-page-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--hr-space-sm) var(--hr-space-lg);
+  margin-bottom: var(--hr-space-md);
+}
+
+.hr-page-header__text {
+  flex: 1 1 240px;
+  min-width: 0;
+}
+
+.hr-page-header__title {
+  margin: 0;
+  font-size: var(--hr-font-size-xl);
+  font-weight: var(--hr-font-weight-semibold);
+  line-height: var(--hr-line-height-tight);
+  color: var(--hr-gray-900);
+}
+
+.hr-page-header__subtitle {
+  margin: 2px 0 0;
+  font-size: 13px;
+  color: var(--hr-gray-500);
+}
+
+.hr-page-header__stats,
+.hr-page-header__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--hr-space-sm) var(--hr-space-md);
+}
+
+/* 頁首的選項：<PageHeader compact>、<PageHeader stats-below>、<PageHeader sticky>（各頁不要再用 :deep() 改頁首） */
+
+/* compact：標題很短時少留寬度，標題、統計與篩選才排得進同一列 */
+.hr-page-header--compact .hr-page-header__text {
+  flex-basis: 110px;
+}
+
+/* stats-below：統計數字固定在標題與動作的下一列，不會因為寬度不同而換行換得不一樣 */
+.hr-page-header--stats-below .hr-page-header__stats {
+  order: 3;
+  flex: 1 1 100%;
+}
+
+/*
+ * 固定在內容區頂端的列：長頁面的頁首（<PageHeader sticky>）或工具列（class="hr-toolbar hr-sticky-bar"），捲到下面時「儲存」仍然按得到。
+ * 外框的內容區有留白（--hr-shell-padding，由 ModernLayout／FrontLayout 設定：桌機 24px、手機 12px），
+ * sticky 是從留白的內緣算起，top 要用負的留白才會貼齊頂端；各頁不要自己寫死 -24px／-12px。
+ */
+.hr-sticky-bar {
+  position: sticky;
+  top: calc(-1 * var(--hr-shell-padding, 0px));
+  z-index: 10;
+  padding-top: var(--hr-space-sm);
+  padding-bottom: var(--hr-space-sm);
+  background: var(--hr-white);
+}
+
+/* 頁首加了上下留白：往上收回同樣的距離，沒捲動時標題的位置與其他頁相同 */
+.hr-page-header.hr-sticky-bar {
+  margin-top: calc(-1 * var(--hr-space-sm));
+  margin-bottom: var(--hr-space-sm);
+}
+
+.hr-toolbar.hr-sticky-bar {
+  margin-bottom: 0;
+}
+
+/* 對話框：各頁只寫桌機寬度（width="520px"），窄螢幕一律不超過螢幕寬度減 24px；不要再各自寫 min(…, calc(100vw - 24px)) */
+.el-dialog:not(.is-fullscreen) {
+  max-width: calc(100vw - 24px);
+}
+
+/* 統計數字：<span class="hr-stat"><span class="hr-stat__label">在職</span><strong class="hr-stat__value">8</strong></span> */
+.hr-stat {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 4px 10px;
+  border: 1px solid var(--hr-gray-200);
+  border-radius: var(--hr-radius-md);
+  background: var(--hr-white);
+  font-size: 13px;
+  color: var(--hr-gray-600);
+  white-space: nowrap;
+}
+
+.hr-stat__value {
+  font-size: var(--hr-font-size-base);
+  font-weight: var(--hr-font-weight-semibold);
+  color: var(--hr-gray-900);
+}
+
+/* 區塊：白底、細框、不加陰影 */
+.hr-section {
+  padding: var(--hr-space-md);
+  border: 1px solid var(--hr-gray-200);
+  border-radius: var(--hr-radius-md);
+  background: var(--hr-white);
+}
+
+.hr-section + .hr-section {
+  margin-top: var(--hr-space-md);
+}
+
+.hr-section__title {
+  margin: 0 0 var(--hr-space-sm);
+  font-size: var(--hr-font-size-base);
+  font-weight: var(--hr-font-weight-semibold);
+  color: var(--hr-gray-900);
+}
+
+/* 工具列：篩選在左、動作在右，窄螢幕自動換行 */
+.hr-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--hr-space-sm);
+  margin-bottom: var(--hr-space-sm);
+}
+
+.hr-toolbar__spacer {
+  flex: 1 1 auto;
+}
+
+/* 欄位下方的一行說明 */
+.hr-hint {
+  margin-top: 4px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--hr-gray-500);
+}
+
+.hr-hint--warning {
+  color: #b45309;
+}
+
+/* 空狀態：說明下一步可以做什麼 */
+.hr-empty {
+  padding: var(--hr-space-xl) var(--hr-space-md);
+  text-align: center;
+  font-size: var(--hr-font-size-sm);
+  color: var(--hr-gray-500);
+}
+
+@media (max-width: 767px) {
+  .hr-page-header {
+    gap: var(--hr-space-sm);
+    margin-bottom: var(--hr-space-sm);
+  }
+
+  .hr-page-header__title {
+    font-size: var(--hr-font-size-lg);
+  }
+
+  .hr-page-header__actions {
+    width: 100%;
+  }
+
+  .hr-section {
+    padding: 12px;
+  }
+}

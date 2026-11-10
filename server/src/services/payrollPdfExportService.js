@@ -1,13 +1,16 @@
 import PDFDocument from 'pdfkit';
 import PayrollRecord from '../models/PayrollRecord.js';
 import Employee from '../models/Employee.js';
-import { calculateEmployeePayroll, extractRecurringAllowance } from './payrollService.js';
-import { calculateCompleteWorkData } from './workHoursCalculationService.js';
-import { aggregateBonusFromApprovals, loadBonusFieldsByForm } from '../utils/payrollPreviewUtils.js';
-import { approvedInMonthFilter, payrollMonthRange } from '../utils/payrollMonth.js';
-import ApprovalRequest from '../models/approval_request.js';
-import mongoose from 'mongoose';
+import {
+  PAYROLL_EMPLOYEE_FIELDS,
+  computeEmployeePayroll,
+  createCalculationContext,
+  loadBonusApprovals,
+  loadPayrollBatchData,
+  mapWithConcurrency,
+} from './payrollBatchService.js';
 import { registerTraditionalChinesePdfFont } from './pdfFontService.js';
+import { loadPayrollPolicy } from './payrollPolicyService.js';
 
 /**
  * 格式化貨幣
@@ -18,22 +21,33 @@ function formatCurrency(value) {
 }
 
 /**
- * 格式化日期
+ * 格式化日期（薪資月份是該月第一天的 UTC 午夜，用 UTC 取年月）
  */
 function formatDate(date) {
   const d = new Date(date);
-  const year = d.getFullYear();
-  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const year = d.getUTCFullYear();
+  const month = String(d.getUTCMonth() + 1).padStart(2, '0');
   return `${year}-${month}`;
 }
 
+// 一次處理多少位員工（每一批各讀一次班表與打卡，記憶體用量不會隨總人數一直增加）
+const PDF_CHUNK_SIZE = 200;
+const PDF_CONCURRENCY = 8;
+
+// 「扣款」欄：從底薪扣掉、得到實領的項目。請假扣款不在裡面：底薪已經是扣掉請假之後的金額，
+// 再列進來會重複，而且 底薪 - 扣款 會對不上實領；員工借支、債權扣押以前漏掉了。
+function rowDeductions(row) {
+  return (row.laborInsuranceFee || 0) + (row.healthInsuranceFee || 0) + (row.laborPensionSelf || 0)
+    + (row.employeeAdvance || 0) + (row.debtGarnishment || 0) + (row.otherDeductions || 0);
+}
+
 /**
- * 生成月薪資總覽 PDF
+ * 月薪資總覽 PDF 的資料：每位員工一列，加上扣款欄（rowDeductions）。和 PDF 的繪製分開，數字才測得到。
  * @param {string} month - 月份 (YYYY-MM-DD)
  * @param {Object} filters - 篩選條件 { organization, department, subDepartment, employeeId }
- * @returns {Promise<Buffer>} - PDF 文件緩衝區
+ * @returns {Promise<{ monthDate: Date, rows: Array }>}
  */
-export async function generateMonthlyPayrollOverviewPdf(month, filters = {}) {
+export async function buildMonthlyPayrollOverviewRows(month, filters = {}) {
   // Validate month
   const monthDate = new Date(month);
   if (isNaN(monthDate.getTime())) {
@@ -60,7 +74,7 @@ export async function generateMonthlyPayrollOverviewPdf(month, filters = {}) {
     .populate('department')
     .populate('subDepartment')
     .populate('organization')
-    .select('employeeId name department subDepartment organization salaryAmount salaryType salaryItems salaryItemAmounts annualLeave monthlySalaryAdjustments');
+    .select(PAYROLL_EMPLOYEE_FIELDS);
 
   if (employees.length === 0) {
     throw new Error('No employees found matching the criteria');
@@ -76,161 +90,79 @@ export async function generateMonthlyPayrollOverviewPdf(month, filters = {}) {
 
   // Create a map of employee ID to payroll record
   const payrollMap = {};
-  payrollRecords.forEach(record => {
-    payrollMap[record.employee._id.toString()] = record;
+  (payrollRecords || []).forEach(record => {
+    const recordEmployeeId = record.employee?._id ?? record.employee;
+    if (recordEmployeeId) payrollMap[recordEmployeeId.toString()] = record;
   });
 
-  // 整批員工共用一份國定假日判斷資料（只讀一次，不會每位員工各查一次）
-  const payrollBatch = { employees };
+  // 整批員工共用一份國定假日判斷資料（只讀一次，不會每位員工各查一次）與薪資政策（整個匯出只讀一次）
+  const payrollBatch = { employees, payrollPolicy: await loadPayrollPolicy() };
 
-  // Build the overview data
-  const overviewData = await Promise.all(employees.map(async (employee) => {
-    const employeeIdStr = employee._id.toString();
-    let payroll = payrollMap[employeeIdStr];
-    if (payroll && typeof payroll.toObject === 'function') {
-      payroll = payroll.toObject();
-    }
-    const { total: recurringAllowanceFromItems } = extractRecurringAllowance(employee);
+  // Build the overview data：計算方式與薪資總覽畫面、銀行匯款 Excel 相同（services/payrollBatchService.js）
+  let overviewData = [];
+  for (let offset = 0; offset < employees.length; offset += PDF_CHUNK_SIZE) {
+    const chunk = employees.slice(offset, offset + PDF_CHUNK_SIZE);
+    // 這一批員工的班別設定、班表、打卡、勞保級距、核准的獎金申請各讀一次
+    const batchData = await loadPayrollBatchData(chunk, month);
+    const { approvalsByEmployee, bonusFieldsByForm, bonusRange } = await loadBonusApprovals(chunk, monthDate);
 
-    // Calculate work data including night shift data dynamically
-    let workData = null;
-    try {
-      workData = await calculateCompleteWorkData(employeeIdStr, month, { payrollBatch });
-    } catch (error) {
-      console.error(`Error calculating work data for employee ${employeeIdStr}:`, error);
-    }
+    const rows = await mapWithConcurrency(chunk, PDF_CONCURRENCY, async (employee) => {
+      const employeeIdStr = employee._id.toString();
+      const { payroll, recurringAllowance, baseSalary, netPay, totalBonus, totalPayment } = await computeEmployeePayroll({
+        employee,
+        month,
+        storedRecord: payrollMap[employeeIdStr],
+        approvals: approvalsByEmployee.get(employeeIdStr) ?? [],
+        bonusFieldsByForm,
+        bonusRange,
+        calculationContext: createCalculationContext(batchData, employee, payrollBatch),
+        insuranceRates: batchData.insuranceRates,
+      });
 
-    // If no payroll record exists, calculate it automatically
-    if (!payroll) {
-      try {
-        const customData = {};
-
-        if (workData) {
-          Object.assign(customData, {
-            workDays: workData.workDays,
-            scheduledHours: workData.scheduledHours,
-            actualWorkHours: workData.actualWorkHours,
-            hourlyRate: workData.hourlyRate,
-            dailyRate: workData.dailyRate,
-            leaveHours: workData.leaveHours,
-            paidLeaveHours: workData.paidLeaveHours,
-            unpaidLeaveHours: workData.unpaidLeaveHours,
-            sickLeaveHours: workData.sickLeaveHours,
-            personalLeaveHours: workData.personalLeaveHours,
-            leaveDeduction: workData.leaveDeduction,
-            overtimeHours: workData.overtimeHours,
-            overtimePay: workData.overtimePay,
-            overtimeIssues: workData.overtimeIssues,
-            baseSalary: workData.baseSalary,
-            nightShiftDays: workData.nightShiftDays,
-            nightShiftHours: workData.nightShiftHours,
-            nightShiftAllowance: workData.nightShiftAllowance,
-            nightShiftCalculationMethod: workData.nightShiftCalculationMethod,
-            nightShiftBreakdown: workData.nightShiftBreakdown,
-            nightShiftConfigurationIssues: workData.nightShiftConfigurationIssues
-          });
-        }
-
-        try {
-          if (mongoose.Types.ObjectId.isValid(employeeIdStr)) {
-            // 獎金申請依核准完成的時間歸屬月份（台灣時間），核准的金額加在員工設定的獎金之上
-            const bonusRange = payrollMonthRange(monthDate);
-            const approvals = await ApprovalRequest.find({
-              applicant_employee: employeeIdStr,
-              ...approvedInMonthFilter(bonusRange)
-            }).populate('form').lean();
-
-            if (approvals.length > 0) {
-              const bonusData = aggregateBonusFromApprovals(approvals, {
-                employee,
-                workData,
-                fieldsByForm: await loadBonusFieldsByForm(approvals),
-                range: bonusRange
-              });
-              Object.entries(bonusData || {}).forEach(([key, value]) => {
-                if (typeof value === 'number') {
-                  customData[key] = value;
-                }
-              });
-            }
-          }
-        } catch (error) {
-          console.error(`Error aggregating approvals for employee ${employeeIdStr}:`, error);
-        }
-
-        const calculatedPayroll = await calculateEmployeePayroll(employeeIdStr, month, customData, {
-          calculationContext: { payrollBatch },
-        });
-        payroll = calculatedPayroll;
-      } catch (error) {
-        console.error(`Error calculating payroll for employee ${employeeIdStr}:`, error);
-        payroll = null;
-      }
-    }
-
-    // Override night shift data with dynamically calculated values if available
-    if (payroll && workData) {
-      // 剛算出來的薪資（沒有薪資記錄）夜班津貼已經加上核准的夜班獎金申請，不能再被動態值蓋掉
-      const nightShiftAllowance = payrollMap[employeeIdStr]
-        ? workData.nightShiftAllowance
-        : (payroll.nightShiftAllowance ?? workData.nightShiftAllowance);
-      payroll = {
-        ...payroll,
-        nightShiftDays: workData.nightShiftDays,
-        nightShiftHours: workData.nightShiftHours,
-        nightShiftAllowance,
-        nightShiftCalculationMethod: workData.nightShiftCalculationMethod,
-        nightShiftBreakdown: workData.nightShiftBreakdown,
-        nightShiftConfigurationIssues: workData.nightShiftConfigurationIssues,
-        overtimeIssues: workData.overtimeIssues,
-        totalBonus: (payroll.overtimePay || 0) +
-                   (nightShiftAllowance || 0) + 
-                   (payroll.performanceBonus || 0) + 
-                   (payroll.otherBonuses || 0),
+      return {
+        employeeId: employee.employeeId,
+        name: employee.name,
+        department: employee.department?.name || '-',
+        subDepartment: employee.subDepartment?.name || '-',
+        organization: employee.organization?.name || '-',
+        baseSalary,
+        overtimePay: payroll?.overtimePay || 0,
+        nightShiftAllowance: payroll?.nightShiftAllowance || 0,
+        performanceBonus: payroll?.performanceBonus || 0,
+        otherBonuses: payroll?.otherBonuses || 0,
+        recurringAllowance,
+        laborInsuranceFee: payroll?.laborInsuranceFee || 0,
+        healthInsuranceFee: payroll?.healthInsuranceFee || 0,
+        laborPensionSelf: payroll?.laborPensionSelf || 0,
+        employeeAdvance: payroll?.employeeAdvance || 0,
+        debtGarnishment: payroll?.debtGarnishment || 0,
+        leaveDeduction: payroll?.leaveDeduction || 0,
+        otherDeductions: payroll?.otherDeductions || 0,
+        netPay,
+        totalBonus,
+        totalPayment
       };
-      payroll.totalPayment = (payroll.netPay || 0) + payroll.totalBonus;
-    }
-    const recurringAllowance = payroll?.recurringAllowance ?? recurringAllowanceFromItems ?? 0;
+    });
+    overviewData = overviewData.concat(rows);
+  }
 
-    // Extract payroll values with fallbacks
-    const netPayValue = payroll?.netPay ?? employee.salaryAmount ?? 0;
-    const totalBonusValue = (payroll?.overtimePay || 0) + 
-                            (payroll?.nightShiftAllowance || 0) + 
-                            (payroll?.performanceBonus || 0) + 
-                            (payroll?.otherBonuses || 0) +
-                            recurringAllowance;
-    const totalPaymentValue = netPayValue + totalBonusValue;
+  return { monthDate, rows: overviewData.map((row) => ({ ...row, deductions: rowDeductions(row) })) };
+}
 
-    return {
-      employeeId: employee.employeeId,
-      name: employee.name,
-      department: employee.department?.name || '-',
-      subDepartment: employee.subDepartment?.name || '-',
-      organization: employee.organization?.name || '-',
-      baseSalary: payroll?.baseSalary || employee.salaryAmount || 0,
-      overtimePay: payroll?.overtimePay || 0,
-      nightShiftAllowance: payroll?.nightShiftAllowance || 0,
-      performanceBonus: payroll?.performanceBonus || 0,
-      otherBonuses: payroll?.otherBonuses || 0,
-      recurringAllowance,
-      laborInsuranceFee: payroll?.laborInsuranceFee || 0,
-      healthInsuranceFee: payroll?.healthInsuranceFee || 0,
-      laborPensionSelf: payroll?.laborPensionSelf || 0,
-      leaveDeduction: payroll?.leaveDeduction || 0,
-      otherDeductions: payroll?.otherDeductions || 0,
-      netPay: netPayValue,
-      totalBonus: totalBonusValue,
-      totalPayment: totalPaymentValue
-    };
-  }));
+/**
+ * 生成月薪資總覽 PDF
+ * @param {string} month - 月份 (YYYY-MM-DD)
+ * @param {Object} filters - 篩選條件 { organization, department, subDepartment, employeeId }
+ * @returns {Promise<Buffer>} - PDF 文件緩衝區
+ */
+export async function generateMonthlyPayrollOverviewPdf(month, filters = {}) {
+  const { monthDate, rows: overviewData } = await buildMonthlyPayrollOverviewRows(month, filters);
 
   // Calculate summary statistics
   const totalEmployees = overviewData.length;
   const totalBaseSalary = overviewData.reduce((sum, row) => sum + (row.baseSalary || 0), 0);
   const totalNetPay = overviewData.reduce((sum, row) => sum + (row.netPay || 0), 0);
-  const totalDeductions = overviewData.reduce((sum, row) => 
-    sum + (row.laborInsuranceFee || 0) + (row.healthInsuranceFee || 0) + 
-    (row.laborPensionSelf || 0) + (row.leaveDeduction || 0) + (row.otherDeductions || 0), 0);
+  const totalDeductions = overviewData.reduce((sum, row) => sum + rowDeductions(row), 0);
   const totalPayment = overviewData.reduce((sum, row) => sum + (row.totalPayment || 0), 0);
 
   // Create PDF document
@@ -312,7 +244,7 @@ export async function generateMonthlyPayrollOverviewPdf(month, filters = {}) {
         Math.round(row.overtimePay).toLocaleString('zh-TW'),
         Math.round(row.nightShiftAllowance).toLocaleString('zh-TW'),
         Math.round((row.performanceBonus || 0) + (row.otherBonuses || 0) + (row.recurringAllowance || 0)).toLocaleString('zh-TW'),
-        Math.round((row.laborInsuranceFee || 0) + (row.healthInsuranceFee || 0) + (row.laborPensionSelf || 0) + (row.leaveDeduction || 0) + (row.otherDeductions || 0)).toLocaleString('zh-TW'),
+        Math.round(rowDeductions(row)).toLocaleString('zh-TW'),
         Math.round(row.netPay).toLocaleString('zh-TW'),
         Math.round(row.totalPayment).toLocaleString('zh-TW')
       ];
@@ -334,5 +266,6 @@ export async function generateMonthlyPayrollOverviewPdf(month, filters = {}) {
 }
 
 export default {
-  generateMonthlyPayrollOverviewPdf
+  generateMonthlyPayrollOverviewPdf,
+  buildMonthlyPayrollOverviewRows
 };

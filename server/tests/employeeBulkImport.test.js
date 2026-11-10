@@ -375,7 +375,8 @@ describe('POST /api/employees/bulk-import', () => {
         role: 'employee',
         email: 'csv_user@example.com',
         username: 'E0101',
-        initialPassword: 'Z123456789'
+        // 不回傳初始密碼（＝身分證號）；部門顯示名稱另外帶
+        departmentName: 'RD'
       }
     ])
     expect(response.body.errors).toEqual([])
@@ -462,11 +463,16 @@ describe('POST /api/employees/bulk-import', () => {
       name: '王小明',
       email: 'user1@example.com',
       role: 'supervisor',
-      password: 'A123456789',
       employmentStatus: '試用期員工',
       salaryType: '月薪',
       salaryAmount: 50000
     })
+    // 初始密碼（身分證號）以雜湊寫入，不是明碼；雜湊在背景執行緒計算（大檔案匯入不卡住伺服器）
+    expect(createdDoc.password).toBeUndefined()
+    expect(createdDoc.passwordHash).toMatch(/^[0-9a-f]{32}:[0-9a-f]{128}$/)
+    const [salt, hash] = createdDoc.passwordHash.split(':')
+    const { pbkdf2Sync } = await import('node:crypto')
+    expect(pbkdf2Sync('A123456789', salt, 100000, 64, 'sha512').toString('hex')).toBe(hash)
     expect(createdDoc.username).toBe('E0001')
     expect(createdDoc.languages).toEqual(['中文', '英文'])
     expect(createdDoc.identityCategory).toEqual(['原住民', '身障'])
@@ -482,10 +488,9 @@ describe('POST /api/employees/bulk-import', () => {
       username: expect.stringContaining('帳號優先使用員工編號'),
       password: expect.stringContaining('身分證號')
     })
-    expect(response.body.preview[0]).toMatchObject({
-      username: 'E0001',
-      initialPassword: 'A123456789'
-    })
+    expect(response.body.preview[0]).toMatchObject({ username: 'E0001' })
+    // 初始密碼（身分證號）不放在回應裡
+    expect(JSON.stringify(response.body)).not.toContain('A123456789')
   })
 
   it('可匯入特休/補休與勞健保投保薪資等薪資計算新增欄位', async () => {
@@ -1057,7 +1062,8 @@ describe('POST /api/employees/bulk-import', () => {
 
       expect(response.status).toBe(200)
       expect(response.body).toMatchObject({ successCount: 2, createdCount: 2, updatedCount: 0 })
-      expect(response.body.warnings).toEqual(expect.arrayContaining([
+      // 匯入已經成功：不再加「資料庫為單機模式、不支援交易…」的提醒（正式環境就是單機，每次都出現只會讓人以為出錯）
+      expect(response.body.warnings).not.toEqual(expect.arrayContaining([
         expect.stringContaining('不支援交易')
       ]))
       expect(mockEmployeeModel.insertMany).toHaveBeenCalledTimes(2)

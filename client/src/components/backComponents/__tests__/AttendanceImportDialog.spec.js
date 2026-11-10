@@ -198,8 +198,9 @@ describe('AttendanceImportDialog', () => {
     const tags = wrapper.findAll('.el-tag-stub')
     const tagTexts = tags.map((tag) => tag.text())
 
-    expect(tagTexts).toContain('I / 上班')
-    expect(tagTexts).toContain('O / 下班')
+    // 2026/11 介面整理：動作改用全站一致的說法（原本是考勤機代號「I / 上班」「O / 下班」）
+    expect(tagTexts).toContain('上班簽到')
+    expect(tagTexts).toContain('下班簽退')
   })
 
   it('預覽顯示重複略過的列與筆數，全部重複時提醒沒有新的打卡資料', async () => {
@@ -240,7 +241,9 @@ describe('AttendanceImportDialog', () => {
 
     const tagTexts = wrapper.findAll('.el-tag-stub').map(tag => tag.text())
     expect(tagTexts.filter(text => text === '重複略過')).toHaveLength(2)
-    expect(wrapper.find('.summary-text').text()).toContain('（其中重複略過 2 筆）')
+    // 2026/11 介面整理：統計從一句話改成分項數字（可匯入、重複略過、需對應員工、錯誤）
+    expect(wrapper.find('.summary-text').text()).toContain('重複略過 2 筆')
+    expect(wrapper.find('[data-test="import-summary-new"]').text()).toBe('可匯入 0 筆')
     expect(wrapper.text()).toContain('Alice：系統已有同一時間（同一分鐘）的打卡記錄')
     expect(ElMessage.warning).toHaveBeenCalledWith('預覽完成：2 筆與既有打卡記錄重複，匯入時會略過，沒有新的打卡資料')
     expect(ElMessage.success).not.toHaveBeenCalled()

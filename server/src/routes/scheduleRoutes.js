@@ -47,7 +47,9 @@ router.put('/preferences/include-self', authenticate, authorizeRoles('supervisor
 router.get('/summary', authenticate, requireScheduleAccess(), listSupervisorSummary);
 router.get('/overview', authorizeRoles('admin'), listScheduleOverview);
 router.get('/overview/export', authorizeRoles('admin'), exportScheduleOverview);
-router.get('/export', exportSchedules);
+// 匯出看排班權限：這裡也要擋（不能只靠 index.js 依路徑判斷）——路徑比對不分大小寫，
+// 以前沒有排班權限的員工用 /api/schedules/EXPORT 就能繞過 index.js 的檢查匯出班表
+router.get('/export', requireScheduleAccess(), exportSchedules);
 router.get('/rules/validate', authenticate, requireScheduleAccess(), validateScheduleRules);
 router.get('/validate', authenticate, requireScheduleAccess(), validateScheduleCompleteness);
 router.get('/incomplete', authenticate, requireScheduleAccess(), getIncompleteSchedules);

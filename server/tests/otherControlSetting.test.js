@@ -311,19 +311,19 @@ describe('Other Control Settings - 表單分類', () => {
   it('新增分類：缺 name 回 400、code 重複回 409，都不會寫入', async () => {
     const missing = await request(app).post('/api/other-control-settings/form-categories').send({ name: '   ' })
     expect(missing.status).toBe(400)
-    expect(missing.body).toEqual({ error: 'name 為必填欄位' })
+    expect(missing.body).toEqual({ error: '請輸入分類名稱', code: 'CATEGORY_NAME_REQUIRED' })
 
     const emptyCode = await request(app)
       .post('/api/other-control-settings/form-categories')
       .send({ name: '有名稱', code: '   ' })
     expect(emptyCode.status).toBe(400)
-    expect(emptyCode.body).toEqual({ error: 'code 為必填欄位' })
+    expect(emptyCode.body).toEqual({ error: '請輸入識別碼', code: 'CATEGORY_CODE_REQUIRED' })
 
     const duplicate = await request(app)
       .post('/api/other-control-settings/form-categories')
       .send({ name: '另一個人事類', code: '人事類' })
     expect(duplicate.status).toBe(409)
-    expect(duplicate.body).toEqual({ error: 'code 已存在' })
+    expect(duplicate.body).toEqual({ error: '識別碼「人事類」已經被其他分類使用，請換一個', code: 'CATEGORY_CODE_TAKEN' })
 
     expect(fakeModel.__documents).toHaveLength(0)
   })
@@ -358,19 +358,19 @@ describe('Other Control Settings - 表單分類', () => {
       .put('/api/other-control-settings/form-categories/cat-other')
       .send({ name: '  ' })
     expect(emptyName.status).toBe(400)
-    expect(emptyName.body).toEqual({ error: 'name 為必填欄位' })
+    expect(emptyName.body).toEqual({ error: '請輸入分類名稱', code: 'CATEGORY_NAME_REQUIRED' })
 
     const emptyCode = await request(app)
       .put('/api/other-control-settings/form-categories/cat-other')
       .send({ code: '' })
     expect(emptyCode.status).toBe(400)
-    expect(emptyCode.body).toEqual({ error: 'code 為必填欄位' })
+    expect(emptyCode.body).toEqual({ error: '請輸入識別碼', code: 'CATEGORY_CODE_REQUIRED' })
 
     const duplicate = await request(app)
       .put('/api/other-control-settings/form-categories/cat-other')
       .send({ code: '人事類' })
     expect(duplicate.status).toBe(409)
-    expect(duplicate.body).toEqual({ error: 'code 已存在' })
+    expect(duplicate.body).toEqual({ error: '識別碼「人事類」已經被其他分類使用，請換一個', code: 'CATEGORY_CODE_TAKEN' })
 
     const sameCode = await request(app)
       .put('/api/other-control-settings/form-categories/cat-other')

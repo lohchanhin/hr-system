@@ -124,8 +124,10 @@ function localDayStart(scheduleDate, timeZone) {
  *      之後日期的班表最早也是隔天 00:00 才開始，不會拿到它的簽退。
  *    依日期比對用到的打卡同樣保留給這一班。
  *
- * schedules：同一位員工的班表 [{ key, scheduleDate, shift, nonWork }]。不用上班的班表（nonWork）也要帶：
+ * schedules：同一位員工的班表 [{ key, scheduleDate, shift, nonWork, contextOnly }]。不用上班的班表（nonWork）也要帶：
  * 不比對打卡，只當作前一班簽退的界線。
+ * contextOnly：計算範圍以外、只用來認領自己打卡的班表（月初前一天的那一班）。它照常比對並保留自己的打卡，但不在回傳的結果裡。
+ * 沒有它的話，月初第一天的跨日班缺勤時，「再看前一天的簽到」會拿到上個月最後一天那一班的打卡（那一班不在計算裡，打卡看起來沒人用）。
  * 回傳 Map(key → { span, clockIn, clockOut, windowClockIn, windowClockOut })：clockIn / clockOut 是這一班最後採用的打卡
  * （原本的打卡資料，找不到為 null）；windowClockIn / windowClockOut 是時段內比對到的。不用上班的班表不在結果裡。
  */
@@ -149,6 +151,16 @@ export function matchSchedulesPunches({ records = [], schedules = [], actionBuff
   workEntries.forEach((entry) => {
     const next = entries.find((other) => other.boundary > entry.boundary)
     entry.nextStart = next ? next.boundary : null
+    // 下一個班表是不用上班的日子（休息日等，界線是當天 00:00）、這一班又是跨日班時，界線會落在這一班的上班時間內
+    // （夜班 20:00-08:00 隔天排休：界線是隔天 00:00），提早下班（例如 03:30，不在簽退時段內）的簽退就找不到，整班算成缺勤。
+    // 這種情況界線改成下班時間加簽退緩衝（與後面沒有班表時相同），但不超過再下一個上班班表的開始時間
+    if (next && !next.work && entry.span) {
+      const afterShift = entry.span.end.getTime() + buffers.clockOut.lateMinutes * MS_PER_MINUTE
+      if (afterShift > entry.nextStart) {
+        const nextWork = workEntries.find((other) => other.boundary > entry.boundary)
+        entry.nextStart = nextWork ? Math.min(afterShift, nextWork.boundary) : afterShift
+      }
+    }
     // 後面沒有班表時的界線：隔天 00:00（與隔天排休相同）
     entry.nextDayStart = localDayStart(new Date(new Date(entry.scheduleDate).getTime() + MS_PER_DAY), timeZone)?.getTime() ?? null
     entry.windowRecords = []
@@ -192,13 +204,24 @@ export function matchSchedulesPunches({ records = [], schedules = [], actionBuff
 
     let clockIn = windowClockIn
     if (!clockIn) {
-      // 班表日期當天（UTC 日期）最早的簽到；跨日班再看前一天最晚的簽到
+      // 班表日期當天最早的簽到；跨日班再看前一天最晚的簽到。
+      // 「當天」除了原本的 UTC 日期（台灣 08:00 到隔天 08:00），也包含班表日期的台灣日期當天 00:00 起：
+      // 台灣 08:00 以前的簽到 UTC 日期是前一天，日班 08:00 的人比簽到緩衝更早到（例如 06:50 的指紋簽到）以前找不到簽到，整天算成缺勤
       const candidates = unused('clockIn').filter((record) => toTime(record) < spanEnd)
       const scheduleKey = utcDateKey(entry.scheduleDate)
-      clockIn = candidates.find((record) => utcDateKey(toTime(record)) === scheduleKey) ?? null
+      const localStart = localDayStart(entry.scheduleDate, timeZone)?.getTime() ?? Number.POSITIVE_INFINITY
+      clockIn = candidates.find((record) => (
+        utcDateKey(toTime(record)) === scheduleKey || (toTime(record) >= localStart && toTime(record) < localStart + MS_PER_DAY)
+      )) ?? null
       if (!clockIn && entry.shift.crossDay) {
         const previousKey = utcDateKey(new Date(entry.scheduleDate).getTime() - MS_PER_DAY)
-        clockIn = candidates.filter((record) => utcDateKey(toTime(record)) === previousKey).at(-1) ?? null
+        // 前一天的簽到之後、這一班上班之前已經有簽退：那是前一天另一次出勤的打卡（例如休息日來加班 09:00-18:00），不是這一班提早到
+        const closedBeforeShift = (record) => punches.some((other) => (
+          other.action === 'clockOut' && toTime(other) > toTime(record) && toTime(other) <= spanStart
+        ))
+        clockIn = candidates
+          .filter((record) => utcDateKey(toTime(record)) === previousKey && !closedBeforeShift(record))
+          .at(-1) ?? null
       }
       if (clockIn) used.add(clockIn)
     }
@@ -223,7 +246,7 @@ export function matchSchedulesPunches({ records = [], schedules = [], actionBuff
       }
     }
 
-    results.set(entry.key, { span: entry.span, clockIn, clockOut, windowClockIn, windowClockOut })
+    if (!entry.contextOnly) results.set(entry.key, { span: entry.span, clockIn, clockOut, windowClockIn, windowClockOut })
   }
   return results
 }

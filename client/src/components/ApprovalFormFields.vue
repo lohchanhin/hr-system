@@ -5,6 +5,8 @@
       <el-form-item
         :label="fld.label"
         :required="!!fld.required"
+        :error="errorOf(fld)"
+        :data-field-id="fld._id"
         class="form-field"
       >
         <!-- text -->
@@ -56,13 +58,13 @@
           @update:model-value="setValue(fld._id, $event)"
         />
 
-        <!-- select -->
+        <!-- select：手機上選項不多時不開搜尋（一點就跳出鍵盤，反而擋住選項） -->
         <el-select
           v-else-if="fld.type_1==='select'"
           :model-value="modelValue[fld._id]"
-          filterable
+          :filterable="!isMobile || optionsOf(fld).length > 12"
           :placeholder="fld.placeholder || '請選擇'"
-          style="width: 320px"
+          class="field-control"
           @update:model-value="setValue(fld._id, $event)"
         >
           <el-option
@@ -87,29 +89,35 @@
           @update:model-value="setValue(fld._id, !!$event)"
         >{{ fld.placeholder || '是' }}</el-checkbox>
 
-        <!-- date / time / datetime -->
+        <!-- date / time / datetime：選擇器上的時間一律當成台灣時間（見 setPickedValue）；手機不跳出鍵盤，直接點選 -->
         <el-date-picker
           v-else-if="fld.type_1==='date'"
-          :model-value="modelValue[fld._id]"
+          :model-value="pickerValue(fld)"
           type="date"
+          format="YYYY/MM/DD"
           placeholder="選擇日期"
-          style="width: 220px"
-          @update:model-value="setValue(fld._id, $event)"
+          :editable="!isMobile"
+          class="field-control field-control--date"
+          @update:model-value="setPickedValue(fld._id, $event)"
         />
         <el-time-picker
           v-else-if="fld.type_1==='time'"
-          :model-value="modelValue[fld._id]"
+          :model-value="pickerValue(fld)"
+          format="HH:mm"
           placeholder="選擇時間"
-          style="width: 220px"
-          @update:model-value="setValue(fld._id, $event)"
+          :editable="!isMobile"
+          class="field-control field-control--date"
+          @update:model-value="setPickedValue(fld._id, $event)"
         />
         <el-date-picker
           v-else-if="fld.type_1==='datetime'"
-          :model-value="modelValue[fld._id]"
+          :model-value="pickerValue(fld)"
           type="datetime"
+          format="YYYY/MM/DD HH:mm"
           placeholder="選擇日期時間"
-          style="width: 260px"
-          @update:model-value="setValue(fld._id, $event)"
+          :editable="!isMobile"
+          class="field-control field-control--date"
+          @update:model-value="setPickedValue(fld._id, $event)"
         />
 
         <div v-else-if="fld.type_1==='file'" class="file-field">
@@ -118,8 +126,9 @@
             :file-list="files[fld._id]"
             list-type="text"
             multiple
-            :limit="5"
-            accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png,.gif,.webp"
+            :limit="MAX_ATTACHMENT_COUNT"
+            :accept="ATTACHMENT_ACCEPT"
+            :on-exceed="() => onFilesExceed(fld._id)"
             @update:file-list="setFiles(fld._id, $event)"
           >
             <el-button>選擇檔案</el-button>
@@ -127,6 +136,10 @@
               <div class="file-tip">最多 5 個檔案，每個 10 MB 以內（PDF、Word、Excel、圖片）</div>
             </template>
           </el-upload>
+          <!-- 太大、類型不對或超過數量的檔案不會加入，直接在欄位下說明是哪一個檔案、為什麼 -->
+          <ul v-if="fileProblems[fld._id]?.length" class="file-problems" data-test="file-problems">
+            <li v-for="(problem, index) in fileProblems[fld._id]" :key="index">{{ problem }}</li>
+          </ul>
           <div v-if="keptFor(fld).length" class="kept-attachments">
             目前附件（未選擇新檔案時會保留）：{{ keptFor(fld).map(item => item.name || '附件').join('、') }}
           </div>
@@ -137,7 +150,7 @@
           v-else-if="fld.type_1==='user'"
           :model-value="modelValue[fld._id]"
           filterable
-          style="width: 320px"
+          class="field-control"
           placeholder="選擇員工"
           @update:model-value="setValue(fld._id, $event)"
         >
@@ -148,7 +161,7 @@
           v-else-if="fld.type_1==='department'"
           :model-value="modelValue[fld._id]"
           filterable
-          style="width: 320px"
+          class="field-control"
           placeholder="選擇部門"
           @update:model-value="setValue(fld._id, $event)"
         >
@@ -159,7 +172,7 @@
           v-else-if="fld.type_1==='org'"
           :model-value="modelValue[fld._id]"
           filterable
-          style="width: 320px"
+          class="field-control"
           placeholder="選擇機構"
           @update:model-value="setValue(fld._id, $event)"
         >
@@ -173,15 +186,21 @@
           :placeholder="fld.placeholder || ''"
           @update:model-value="setValue(fld._id, $event)"
         />
+
+        <!-- 欄位下方的補充內容（請假單：假別旁的剩餘時數、時數欄位下的超額提示） -->
+        <div v-if="$slots['field-extra']" class="field-extra">
+          <slot name="field-extra" :field="fld" />
+        </div>
       </el-form-item>
     </template>
   </div>
 </template>
 
 <script setup>
-import { computed } from 'vue'
-import { normalizeFieldOptions } from '../utils/approvalDisplay'
-import { isActiveField, isLeaveHoursField } from '../utils/approvalForm'
+import { computed, reactive } from 'vue'
+import { normalizeFieldOptions, pickerDateToTaipeiInstant, taipeiInstantToPickerDate } from '../utils/approvalDisplay'
+import { ATTACHMENT_ACCEPT, MAX_ATTACHMENT_COUNT, checkAttachmentFile, isActiveField, isLeaveHoursField } from '../utils/approvalForm'
+import { useIsMobile } from '../utils/useIsMobile'
 
 const props = defineProps({
   // 請假單的時數欄位設定：enabled 為 false 表示這張表單不是請假表單（例如客戶自建的加班／補休表單），
@@ -198,6 +217,8 @@ const props = defineProps({
   userOptions: { type: Array, default: () => [] },
   deptOptions: { type: Array, default: () => [] },
   orgOptions: { type: Array, default: () => [] },
+  // 欄位的錯誤訊息（{ [fieldId]: '請填寫…' }），顯示在欄位下方
+  errors: { type: Object, default: () => ({}) },
 })
 const emit = defineEmits(['update:modelValue', 'update:files'])
 
@@ -215,11 +236,37 @@ const keptFor = (field) => {
   return Array.isArray(kept) ? kept : []
 }
 
+const isMobile = useIsMobile()
+const errorOf = (field) => {
+  const message = props.errors?.[field._id]
+  return typeof message === 'string' ? message : ''
+}
+
 function setValue(fieldId, value) {
   emit('update:modelValue', { ...props.modelValue, [fieldId]: value })
 }
+
+// 日期／時間選擇器：表單資料存的是時間點（Date 或 ISO 字串），選擇器上顯示與點選的年月日時分一律是台灣時間
+const pickerValue = (field) => taipeiInstantToPickerDate(props.modelValue[field._id])
+function setPickedValue(fieldId, value) {
+  setValue(fieldId, pickerDateToTaipeiInstant(value))
+}
+
+// 附件：選檔當下就檢查大小與類型（伺服器的限制相同），不合的檔案不加入並說明原因，不必等到送出才失敗
+const fileProblems = reactive({})
 function setFiles(fieldId, list) {
-  emit('update:files', { ...props.files, [fieldId]: list })
+  const accepted = []
+  const problems = []
+  for (const item of Array.isArray(list) ? list : []) {
+    const problem = checkAttachmentFile(item?.raw || item)
+    if (problem) problems.push(problem)
+    else accepted.push(item)
+  }
+  fileProblems[fieldId] = problems
+  emit('update:files', { ...props.files, [fieldId]: accepted })
+}
+function onFilesExceed(fieldId) {
+  fileProblems[fieldId] = [`最多 ${MAX_ATTACHMENT_COUNT} 個檔案，請先移除不需要的檔案再選擇`]
 }
 </script>
 
@@ -231,6 +278,50 @@ function setFiles(fieldId, list) {
 .field-input,
 .field-textarea {
   border-radius: 8px;
+}
+
+/* 下拉與日期時間：桌機固定寬度，手機佔滿整列（不出現橫向捲軸） */
+.field-control {
+  width: 100%;
+  max-width: 320px;
+}
+.field-control--date {
+  max-width: 260px;
+}
+.form-field :deep(.el-date-editor.field-control) {
+  width: 100%;
+}
+.field-extra {
+  flex: 0 0 100%;
+  width: 100%;
+}
+.file-field {
+  width: 100%;
+}
+.file-problems {
+  margin: 4px 0 0;
+  padding-left: 18px;
+  color: var(--el-color-danger, #f56c6c);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+@media (max-width: 767px) {
+  .form-field {
+    margin-bottom: 16px;
+  }
+  .field-control,
+  .field-control--date {
+    max-width: none;
+  }
+  /* 點擊區至少 44px */
+  .form-field :deep(.el-input__wrapper),
+  .form-field :deep(.el-select__wrapper) {
+    min-height: 44px;
+  }
+  .form-field :deep(.el-input-number) {
+    width: 180px;
+  }
 }
 
 .hours-unit {

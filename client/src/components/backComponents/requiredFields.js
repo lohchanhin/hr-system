@@ -3,6 +3,7 @@ export const REQUIRED_FIELDS = [
   'password',
   'role',
   'name',
+  'employeeNo',
   'email',
   'organization',
   'department',

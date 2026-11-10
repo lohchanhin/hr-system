@@ -88,6 +88,8 @@ describe('GET /api/approvals/history', () => {
         my_approvals: [
           { step_order: 1, decision: 'approved', decided_at: '2024-01-01T12:00:00.000Z', comment: 'OK' },
         ],
+        // 伺服器組好的內容摘要（這張單沒有答案：null）
+        summary: null,
       },
     ])
     expect(query.sort).toHaveBeenCalledWith({ updatedAt: -1 })

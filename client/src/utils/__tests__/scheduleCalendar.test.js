@@ -20,11 +20,11 @@ describe('buildMonthDays', () => {
     expect(buildMonthDays('2026-04', {})).toHaveLength(30)
   })
 
-  it('annotates a day with its holiday and includes the emoji + name in the label', () => {
+  it('annotates a day with its holiday and includes the name (no emoji) in the label', () => {
     const holidayMap = { '2026-01-01': { name: '元旦' } }
     const days = buildMonthDays('2026-01', holidayMap)
     expect(days[0].holiday).toEqual({ name: '元旦' })
-    expect(days[0].label).toBe('1(四) 🎊元旦')
+    expect(days[0].label).toBe('1(四) 元旦')
   })
 
   it('defaults to an empty holiday map when none is given', () => {
@@ -41,11 +41,11 @@ describe('buildMonthDays', () => {
       '2026-06-21': { type: '公司休息日', name: '園遊會' },
     }
     const days = buildMonthDays('2026-06', holidayMap)
-    expect(days[18].label).toBe('19(五) 🎊端午節')
+    expect(days[18].label).toBe('19(五) 端午節')
     expect(days[18].holiday).toEqual({ type: '國定假日', name: '端午節' })
     for (const date of [13, 14, 20, 21]) {
       expect(days[date - 1].holiday).toBeUndefined()
-      expect(days[date - 1].label).not.toContain('🎊')
+      expect(days[date - 1].label).toMatch(/^\d+\([日一二三四五六]\)$/)
     }
     expect(days[12].label).toBe('13(六)')
   })
@@ -89,15 +89,27 @@ describe('buildMonthDays with the holiday-calendar headers (公務機關補假�
     { date: '2026-02-28', kind: 'statutory', displayKind: 'holiday', label: '和平紀念日', name: '和平紀念日' }
   ]
 
-  it('2026 年 2 月：20 日只顯示灰字「公務機關補假」（沒有 🎊），28 日顯示 🎊和平紀念日', () => {
+  it('2026 年 2 月：20 日只顯示灰字「公務機關補假」（標頭沒有假日名稱），28 日顯示和平紀念日', () => {
     const days = buildMonthDays('2026-02', buildHolidayMap(FEBRUARY))
     expect(days[19]).toEqual({ date: 20, label: '20(五)', holiday: undefined, infos: ['公務機關補假'], displayKind: 'gov_info' })
-    expect(days[27]).toMatchObject({ date: 28, label: '28(六) 🎊和平紀念日', infos: [], displayKind: 'holiday' })
-    expect(days[14].label).toBe('15(日) 🎊小年夜')
-    expect(days.filter((day) => day.label.includes('🎊'))).toHaveLength(2)
+    expect(days[27]).toMatchObject({ date: 28, label: '28(六) 和平紀念日', infos: [], displayKind: 'holiday' })
+    expect(days[14].label).toBe('15(日) 小年夜')
+    // 只有這兩天的標頭帶假日名稱，其餘都是「日期(星期)」
+    expect(days.filter((day) => !/^\d+\([日一二三四五六]\)$/.test(day.label))).toHaveLength(2)
   })
 
-  it('指定應放假日標 📌；已調移、公司休息日、調整放假都放灰字', () => {
+  // 介面規範：畫面文字不用表情符號（以前國定假日標 U+1F38A、指定應放假日標 U+1F4CC）
+  it('標頭文字不含表情符號', () => {
+    const map = buildHolidayMap([
+      ...FEBRUARY,
+      { date: '2026-02-10', kind: 'designated', displayKind: 'designated', label: '罷免投票', name: '罷免投票' }
+    ])
+    const labels = buildMonthDays('2026-02', map).map((day) => day.label).join('|')
+    expect(labels).not.toMatch(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}]/u)
+    expect(labels).toContain('10(二) 指定放假 罷免投票')
+  })
+
+  it('指定應放假日標「指定放假」；已調移、公司休息日、調整放假都放灰字', () => {
     const map = buildHolidayMap([
       { date: '2026-11-28', kind: 'designated', displayKind: 'designated', label: '地方公職人員選舉', name: '地方公職人員選舉' },
       { date: '2026-11-13', kind: 'company_off', displayKind: 'company_off', label: '尾牙', name: '尾牙' },
@@ -106,10 +118,10 @@ describe('buildMonthDays with the holiday-calendar headers (公務機關補假�
       { date: '2026-11-20', kind: 'gov_bridge_off', displayKind: 'gov_info', label: '公務機關調整放假', name: '調整放假' }
     ])
     const days = buildMonthDays('2026-11', map)
-    expect(days[27]).toMatchObject({ label: '28(六) 📌地方公職人員選舉', displayKind: 'designated' })
+    expect(days[27]).toMatchObject({ label: '28(六) 指定放假 地方公職人員選舉', displayKind: 'designated' })
     expect(days[12]).toMatchObject({ label: '13(五)', infos: ['尾牙'], displayKind: 'company_off' })
     expect(days[9]).toMatchObject({ label: '10(二)', infos: ['已調移至 11/12'], displayKind: 'moved_away' })
-    expect(days[11]).toMatchObject({ label: '12(四) 🎊國慶日', displayKind: 'holiday' })
+    expect(days[11]).toMatchObject({ label: '12(四) 國慶日', displayKind: 'holiday' })
     expect(days[19]).toMatchObject({ label: '20(五)', infos: ['公務機關調整放假'] })
   })
 

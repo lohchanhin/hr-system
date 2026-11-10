@@ -29,7 +29,8 @@ function normalizeOption(value, label) {
   return { value: normalizedValue, label: normalizedLabel };
 }
 
-function extractOptions(field) {
+// 簽核清單的摘要（approvalListSummary）也用這兩個：選項值轉名稱、辨識請假欄位，規則與這裡相同
+export function extractOptions(field) {
   const { options } = field ?? {};
   if (!options) return [];
 
@@ -110,7 +111,19 @@ function sameLabelFieldIds(fields, picked) {
   return orderFieldCandidateIds(sameLabel.length ? sameLabel : [picked]);
 }
 
-function buildLeaveFieldBase(form, fields) {
+// 假別的候選欄位：同標籤的之外，再加上「已停用、標籤也是假別開頭」的欄位（排在最後）。
+// 「假別」被換成「假別類別 (C12)」之後，換欄位之前送出的假單答案還在停用的舊欄位底下。
+function typeFieldCandidateIds(fields, picked) {
+  const ids = sameLabelFieldIds(fields, picked);
+  if (!picked) return ids;
+  const retired = (fields || []).filter((field) => field.is_active === false && isLeaveTypeLabel(field.label));
+  for (const id of orderFieldCandidateIds(retired)) {
+    if (!ids.includes(id)) ids.push(id);
+  }
+  return ids;
+}
+
+export function buildLeaveFieldBase(form, fields) {
   const { startField, endField, typeField, daysField, hoursField } = pickLeaveFields(fields);
 
   return {
@@ -128,7 +141,7 @@ function buildLeaveFieldBase(form, fields) {
     // 同標籤的候選欄位 ID（第一個就是上面的 startId 等）
     startIds: sameLabelFieldIds(fields, startField),
     endIds: sameLabelFieldIds(fields, endField),
-    typeIds: sameLabelFieldIds(fields, typeField),
+    typeIds: typeFieldCandidateIds(fields, typeField),
     daysIds: sameLabelFieldIds(fields, daysField),
     // 「時數」欄位（請假的數量以小時為單位）；舊表單沒有這個欄位時為 undefined / 空陣列
     hoursId: hoursField?._id?.toString(),

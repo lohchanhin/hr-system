@@ -1,3 +1,4 @@
+import mongoose from 'mongoose';
 import AttendanceRecord from '../models/AttendanceRecord.js';
 import AttendanceSetting from '../models/AttendanceSetting.js';
 import Department from '../models/Department.js';
@@ -6,7 +7,11 @@ import ShiftSchedule from '../models/ShiftSchedule.js';
 import ApprovalRequest from '../models/approval_request.js';
 import FormTemplate from '../models/form_template.js';
 import FormField from '../models/form_field.js';
+import CompensatoryCredit from '../models/CompensatoryCredit.js';
 import { getAllLeaveFieldInfos } from './leaveFieldService.js';
+import { loadApprovedLeaveIntervals } from './approvedLeaveCalendarService.js';
+import { buildLeaveDayCheck } from './leaveCoverageService.js';
+import { computeShiftSpan } from '../utils/timeWindow.js';
 import { isNonWorkShift } from './shiftSemanticService.js';
 import {
   formatLocalTime,
@@ -16,6 +21,7 @@ import {
   resolveAttendanceSource,
 } from './attendancePunchService.js';
 import { ANNUAL_LEAVE_TYPES, WORK_HOURS_CONFIG } from '../config/salaryConfig.js';
+import { COMP_LEAVE_TYPE_ALIASES, COMP_LEAVE_TYPE_NAME } from '../config/leavePolicyConfig.js';
 import { toTaipeiDateKey, toTaipeiParts } from '../utils/taipeiTime.js';
 import { normalizeLeaveFieldLabel } from '../utils/leaveFieldLabels.js';
 import { computeLeaveDuration, sumLeaveHoursInRange } from '../utils/leaveDuration.js';
@@ -45,6 +51,8 @@ const APPROVAL_FORM_CONFIGS = {
       crossDay: ['是否跨日', '跨日'],
     },
   },
+  // 補休（調休、移休）從 2026/10 起是請假單上的假別（調休存摺），報表主要統計那些請假單（buildCompTimeReport）；
+  // 這裡是更早以前另外建「補休申請」表單的舊資料，有的話一併列出
   compTime: {
     templateNames: ['補休', '補休申請', '補休單'],
     fields: {
@@ -81,8 +89,16 @@ function assertRequired(value, message) {
   }
 }
 
+const MONTH_PATTERN = /^\d{4}-(0[1-9]|1[0-2])$/;
+const HOURS_PER_DAY = WORK_HOURS_CONFIG.HOURS_PER_DAY;
+const roundTwo = (value) => Math.round(value * 100) / 100;
+
 function parseMonthRange(month) {
   assertRequired(month, 'month required');
+  // 只收 YYYY-MM：「2026」會被當成一月、「+275760-09」算下個月時變成無效日期（以前回 500）
+  if (typeof month !== 'string' || !MONTH_PATTERN.test(month)) {
+    throw new ReportAccessError(400, 'invalid month');
+  }
   const start = new Date(`${month}-01T00:00:00.000Z`);
   if (Number.isNaN(start.getTime())) {
     throw new ReportAccessError(400, 'invalid month');
@@ -197,6 +213,11 @@ function buildDateKey(date) {
 
 export async function resolveDepartmentEmployees(departmentId, actor) {
   assertRequired(departmentId, 'department required');
+  // 只收字串：網址上的 department[$gte]=… 會被解析成物件、department=A&department=B 是陣列，
+  // 原樣放進查詢條件會變成運算子查詢，部門的排班管理者可以拿到別的部門的員工
+  if (typeof departmentId !== 'string') {
+    throw new ReportAccessError(400, 'invalid department');
+  }
   const role = actor?.role;
   const actorId = actor?.id;
   const normalizedDepartmentId = normalizeId(departmentId);
@@ -304,10 +325,11 @@ function matchSchedulePunches({ punchesByEmployee, actionBuffers }, employeeId, 
 
 // 出勤與工時：每位員工整個月的班表一起比對打卡（與薪資工時相同，services/attendancePunchService.js 的 matchSchedulesPunches），
 // 同一筆打卡只算給一個班，缺勤那天不會拿到隔天班的打卡。回傳 Map(班表 → 比對結果)；沒有帶 punchesByEmployee 的呼叫端回傳 null，沿用依日期比對
-function assignSchedulePunches({ schedules, shiftMap, punchesByEmployee, actionBuffers }) {
+// leadingSchedules：月初前一天的班表，只用來讓那一班認領自己的打卡（不在結果裡，也不算進報表）
+function assignSchedulePunches({ schedules, leadingSchedules = [], shiftMap, punchesByEmployee, actionBuffers }) {
   if (!punchesByEmployee) return null;
   const schedulesByEmployee = new Map();
-  schedules.forEach((schedule) => {
+  const add = (schedule, contextOnly) => {
     const employeeId = normalizeId(schedule.employee);
     const shift = shiftMap.get(normalizeId(schedule.shiftId));
     if (!schedulesByEmployee.has(employeeId)) schedulesByEmployee.set(employeeId, []);
@@ -316,14 +338,54 @@ function assignSchedulePunches({ schedules, shiftMap, punchesByEmployee, actionB
       scheduleDate: schedule.date,
       shift,
       nonWork: !shift || isNonWorkShift(shift),
+      contextOnly,
     });
-  });
+  };
+  (leadingSchedules || []).forEach((schedule) => add(schedule, true));
+  schedules.forEach((schedule) => add(schedule, false));
   const assigned = new Map();
   schedulesByEmployee.forEach((items, employeeId) => {
     matchSchedulesPunches({ records: punchesByEmployee.get(employeeId) ?? [], schedules: items, actionBuffers })
       .forEach((value, schedule) => assigned.set(schedule, value));
   });
   return assigned;
+}
+
+// 這一班在請假中的部分不算遲到或早退（與薪資的 attendanceDeductionService.trimSpanByLeave 相同）：
+// 請假涵蓋上班時間，從請假結束才開始算遲到；請假涵蓋下班時間，只看請假開始之前有沒有走。
+// 整班都在請假中時回傳的結束時間不晚於開始時間，呼叫端略過這一班。
+function trimSpanByLeave(span, leaves) {
+  let start = span.start.getTime();
+  let end = span.end.getTime();
+  for (let round = 0; round <= leaves.length; round += 1) {
+    let changed = false;
+    for (const leave of leaves) {
+      if (leave.endMs <= start || leave.startMs >= end) continue;
+      if (leave.startMs <= start) {
+        start = Math.min(leave.endMs, end);
+        changed = true;
+      } else if (leave.endMs >= end) {
+        end = Math.max(leave.startMs, start);
+        changed = true;
+      }
+    }
+    if (!changed) break;
+  }
+  return { start: new Date(start), end: new Date(end) };
+}
+
+const usableLeaveIntervals = (leaveIntervals, employeeId) => (leaveIntervals?.get(employeeId) ?? [])
+  .filter((leave) => Number.isFinite(leave?.startMs) && Number.isFinite(leave?.endMs) && leave.endMs > leave.startMs);
+
+// 該月已核准的請假區間：Map(員工 ID → [{ startMs, endMs, allDay }])。沒有資料庫連線（單元測試）或查詢失敗時當作沒有請假，報表照常產生
+async function loadLeaveIntervalsForReport({ employeeIds, start, end }) {
+  if (mongoose.connection.readyState !== 1) return new Map();
+  try {
+    return await loadApprovedLeaveIntervals({ employeeIds, start, end });
+  } catch (error) {
+    console.error(`[report] approved leave lookup skipped: ${error?.name || 'Error'}`);
+    return new Map();
+  }
 }
 
 // 與薪資的遲到早退計算（attendanceDeductionService）相同，不足一分鐘不計
@@ -388,10 +450,11 @@ async function loadAttendanceData({ employeeIds, start, end }) {
   recordRangeStart.setUTCDate(recordRangeStart.getUTCDate() - 1);
   const recordRangeEnd = new Date(end);
   recordRangeEnd.setUTCDate(recordRangeEnd.getUTCDate() + 1);
-  const [schedules, attendanceRecords] = await Promise.all([
+  // 班表多讀月初前一天（leadingSchedules）：不算進報表，只用來讓那一班認領自己的打卡
+  const [scheduleRows, attendanceRecords] = await Promise.all([
     ShiftSchedule.find({
       employee: { $in: employeeIds },
-      date: { $gte: start, $lt: end },
+      date: { $gte: recordRangeStart, $lt: end },
     })
       .lean()
       .exec(),
@@ -403,22 +466,65 @@ async function loadAttendanceData({ employeeIds, start, end }) {
       .lean()
       .exec(),
   ]);
-  return { schedules, attendanceRecords };
+  const inMonth = (row) => new Date(row.date).getTime() >= start.getTime();
+  return {
+    schedules: (scheduleRows || []).filter(inMonth),
+    leadingSchedules: (scheduleRows || []).filter((row) => !inMonth(row)),
+    attendanceRecords,
+  };
 }
 
-function buildAttendanceSummary({ employees, schedules, recordMap, shiftMap, punchesByEmployee, actionBuffers }) {
-  const employeeMap = buildEmployeeMap(employees);
-  const summary = { scheduled: 0, attended: 0, absent: 0 };
+/*
+ * 出勤統計：應出勤＝這個月排的工作班；出勤＝有簽到；請假（onLeave）＝沒有簽到、但那一班在核准的請假中；
+ * 缺勤＝已經開始的班裡，沒有簽到也沒有請假的。還沒開始的班（這個月之後的日子）算在應出勤，不算缺勤。
+ * leaveIntervals（Map 員工 → 請假區間）與 now 由實際的報表帶入；沒有帶時（舊的呼叫端）維持原本的算法：缺勤＝應出勤－出勤。
+ */
+function buildAttendanceSummary({ employees, schedules, leadingSchedules = [], recordMap, shiftMap, punchesByEmployee, actionBuffers, leaveIntervals = null, now = null }) {
+  const leaveAware = Boolean(leaveIntervals) || Boolean(now);
+  const nowMs = now ? new Date(now).getTime() : null;
+  const summary = leaveAware ? { scheduled: 0, attended: 0, onLeave: 0, absent: 0 } : { scheduled: 0, attended: 0, absent: 0 };
   const results = [];
   const attendanceCounter = new Map();
+  const upcomingCounter = new Map();
 
   employees.forEach((emp) => {
     const id = normalizeId(emp._id);
-    const base = { employee: id, name: emp.name ?? '', scheduled: 0, attended: 0, absent: 0 };
+    const base = leaveAware
+      ? { employee: id, name: emp.name ?? '', scheduled: 0, attended: 0, onLeave: 0, absent: 0 }
+      : { employee: id, name: emp.name ?? '', scheduled: 0, attended: 0, absent: 0 };
     attendanceCounter.set(id, base);
   });
 
-  const assigned = assignSchedulePunches({ schedules, shiftMap, punchesByEmployee, actionBuffers });
+  // 每位員工「某天是不是在請假中」：整天的假，或有時分的假涵蓋整個班次（與排班、國定假日休假紀錄同一個判斷）
+  const leaveChecks = new Map();
+  // 每位員工各天排的班別（第一次用到才整理一次，500 人一個月的班表不必每個人都掃一遍）
+  let shiftsByEmployee = null;
+  const shiftsOf = (employeeId) => {
+    if (!shiftsByEmployee) {
+      shiftsByEmployee = new Map();
+      schedules.forEach((item) => {
+        const itemShift = shiftMap.get(normalizeId(item.shiftId));
+        if (!itemShift) return;
+        const owner = normalizeId(item.employee);
+        if (!shiftsByEmployee.has(owner)) shiftsByEmployee.set(owner, new Map());
+        shiftsByEmployee.get(owner).set(buildDateKey(item.date), itemShift);
+      });
+    }
+    return shiftsByEmployee.get(employeeId) ?? new Map();
+  };
+  const isOnLeave = (employeeId, schedule, shift) => {
+    if (!leaveIntervals) return false;
+    if (!leaveChecks.has(employeeId)) {
+      const shiftByDate = shiftsOf(employeeId);
+      leaveChecks.set(employeeId, buildLeaveDayCheck(
+        usableLeaveIntervals(leaveIntervals, employeeId),
+        (dateKey) => (shiftByDate.has(dateKey) ? { kind: isNonWorkShift(shiftByDate.get(dateKey)) ? 'rest' : 'work', shift: shiftByDate.get(dateKey) } : null),
+      ));
+    }
+    return shift ? leaveChecks.get(employeeId)(buildDateKey(schedule.date)) : false;
+  };
+
+  const assigned = assignSchedulePunches({ schedules, leadingSchedules, shiftMap, punchesByEmployee, actionBuffers });
   schedules.forEach((schedule) => {
     const employeeId = normalizeId(schedule.employee);
     const record = attendanceCounter.get(employeeId);
@@ -427,24 +533,39 @@ function buildAttendanceSummary({ employees, schedules, recordMap, shiftMap, pun
     // 休息日 / 例假 / 國定假日 / 請假 / 沒有工作時間的班別：不算應出勤，也就不會算缺勤
     if (!shift || isNonWorkShift(shift)) return;
     record.scheduled += 1;
+    let attended = false;
     if (assigned) {
       // 這一班有簽到（時段內的，或依日期比對、沒有被別的班用掉的）就算出勤
-      if (assigned.get(schedule)?.clockIn) record.attended += 1;
+      attended = Boolean(assigned.get(schedule)?.clockIn);
+    } else {
+      const dateKey = buildDateKey(schedule.date);
+      const entry = recordMap.get(`${employeeId}::${dateKey}`);
+      attended = Boolean(entry && entry.clockIns.length);
+    }
+    if (attended) {
+      record.attended += 1;
       return;
     }
-    const dateKey = buildDateKey(schedule.date);
-    const entry = recordMap.get(`${employeeId}::${dateKey}`);
-    if (entry && entry.clockIns.length) {
-      record.attended += 1;
+    if (!leaveAware) return;
+    if (isOnLeave(employeeId, schedule, shift)) {
+      record.onLeave += 1;
+      return;
+    }
+    // 還沒開始的班不是缺勤
+    const span = nowMs !== null ? computeShiftSpan(schedule.date, shift) : null;
+    if (span && span.start.getTime() > nowMs) {
+      upcomingCounter.set(employeeId, (upcomingCounter.get(employeeId) ?? 0) + 1);
     }
   });
 
   // Only include employees who have schedules
-  attendanceCounter.forEach((record) => {
+  attendanceCounter.forEach((record, employeeId) => {
     if (record.scheduled > 0) {
-      record.absent = Math.max(record.scheduled - record.attended, 0);
+      const excused = leaveAware ? record.onLeave + (upcomingCounter.get(employeeId) ?? 0) : 0;
+      record.absent = Math.max(record.scheduled - record.attended - excused, 0);
       summary.scheduled += record.scheduled;
       summary.attended += record.attended;
+      if (leaveAware) summary.onLeave += record.onLeave;
       summary.absent += record.absent;
       results.push(record);
     }
@@ -453,7 +574,7 @@ function buildAttendanceSummary({ employees, schedules, recordMap, shiftMap, pun
   return { records: results, summary };
 }
 
-function buildTardinessSummary({ schedules, recordMap, shiftMap, employees, lateGrace, punchesByEmployee, actionBuffers }) {
+function buildTardinessSummary({ schedules, recordMap, shiftMap, employees, lateGrace, punchesByEmployee, actionBuffers, leaveIntervals = null }) {
   const summary = { totalLateCount: 0, totalLateMinutes: 0, averageLateMinutes: 0 };
   const employeeMap = buildEmployeeMap(employees);
   const records = [];
@@ -470,7 +591,11 @@ function buildTardinessSummary({ schedules, recordMap, shiftMap, employees, late
       const punches = matchSchedulePunches({ punchesByEmployee, actionBuffers }, employeeId, schedule, shift);
       if (!punches?.clockIn) return;
       const clockIn = new Date(punches.clockIn.timestamp);
-      const lateMinutes = Math.max(wholeMinutesBetween(punches.span.start, clockIn) - lateGrace, 0);
+      // 核准的請假中不算遲到：請假涵蓋上班時間時，從請假結束才開始算（與薪資的遲到扣款相同）
+      const leaves = usableLeaveIntervals(leaveIntervals, employeeId);
+      const span = leaves.length ? trimSpanByLeave(punches.span, leaves) : punches.span;
+      if (span.end.getTime() <= span.start.getTime()) return;
+      const lateMinutes = Math.max(wholeMinutesBetween(span.start, clockIn) - lateGrace, 0);
       if (lateMinutes <= 0) return;
       summary.totalLateCount += 1;
       summary.totalLateMinutes += lateMinutes;
@@ -478,7 +603,7 @@ function buildTardinessSummary({ schedules, recordMap, shiftMap, employees, late
         employee: employeeId,
         name: employee.name ?? '',
         date: dateKey,
-        scheduledStart: formatLocalTime(punches.span.start),
+        scheduledStart: formatLocalTime(span.start),
         actualClockIn: formatLocalTime(clockIn),
         // 實際打卡的來源：online 線上、import 指紋匯入、manual 手動補登、legacy 舊資料未標示
         clockInSource: resolveAttendanceSource(punches.clockIn),
@@ -511,7 +636,7 @@ function buildTardinessSummary({ schedules, recordMap, shiftMap, employees, late
   return { summary, records };
 }
 
-function buildEarlyLeaveSummary({ schedules, recordMap, shiftMap, employees, earlyGrace, punchesByEmployee, actionBuffers }) {
+function buildEarlyLeaveSummary({ schedules, recordMap, shiftMap, employees, earlyGrace, punchesByEmployee, actionBuffers, leaveIntervals = null }) {
   const summary = { totalEarlyLeaveCount: 0, totalEarlyMinutes: 0, averageEarlyMinutes: 0 };
   const employeeMap = buildEmployeeMap(employees);
   const records = [];
@@ -528,7 +653,11 @@ function buildEarlyLeaveSummary({ schedules, recordMap, shiftMap, employees, ear
       const punches = matchSchedulePunches({ punchesByEmployee, actionBuffers }, employeeId, schedule, shift);
       if (!punches?.clockOut) return;
       const clockOut = new Date(punches.clockOut.timestamp);
-      const earlyMinutes = Math.max(wholeMinutesBetween(clockOut, punches.span.end) - earlyGrace, 0);
+      // 核准的請假中不算早退：請假涵蓋下班時間時，只看請假開始之前有沒有走（與薪資的早退扣款相同）
+      const leaves = usableLeaveIntervals(leaveIntervals, employeeId);
+      const span = leaves.length ? trimSpanByLeave(punches.span, leaves) : punches.span;
+      if (span.end.getTime() <= span.start.getTime()) return;
+      const earlyMinutes = Math.max(wholeMinutesBetween(clockOut, span.end) - earlyGrace, 0);
       if (earlyMinutes <= 0) return;
       summary.totalEarlyLeaveCount += 1;
       summary.totalEarlyMinutes += earlyMinutes;
@@ -536,7 +665,7 @@ function buildEarlyLeaveSummary({ schedules, recordMap, shiftMap, employees, ear
         employee: employeeId,
         name: employee.name ?? '',
         date: dateKey,
-        scheduledEnd: formatLocalTime(punches.span.end),
+        scheduledEnd: formatLocalTime(span.end),
         actualClockOut: formatLocalTime(clockOut),
         clockOutSource: resolveAttendanceSource(punches.clockOut),
         minutesEarly: earlyMinutes,
@@ -577,12 +706,13 @@ function buildEarlyLeaveSummary({ schedules, recordMap, shiftMap, employees, ear
   return { summary, records };
 }
 
-function buildWorkHoursSummary({ schedules, recordMap, shiftMap, employees, punchesByEmployee, actionBuffers }) {
+function buildWorkHoursSummary({ schedules, leadingSchedules = [], recordMap, shiftMap, employees, punchesByEmployee, actionBuffers, now = null }) {
   const employeeMap = buildEmployeeMap(employees);
   const records = [];
   let totalScheduledMinutes = 0;
   let totalWorkedMinutes = 0;
-  const assigned = assignSchedulePunches({ schedules, shiftMap, punchesByEmployee, actionBuffers });
+  const assigned = assignSchedulePunches({ schedules, leadingSchedules, shiftMap, punchesByEmployee, actionBuffers });
+  const nowMs = now ? new Date(now).getTime() : null;
 
   schedules.forEach((schedule) => {
     const employeeId = normalizeId(schedule.employee);
@@ -591,6 +721,11 @@ function buildWorkHoursSummary({ schedules, recordMap, shiftMap, employees, punc
     const dateKey = buildDateKey(schedule.date);
     const shift = shiftMap.get(normalizeId(schedule.shiftId));
     if (!shift || isNonWorkShift(shift)) return;
+    // 還沒開始的班不列入：不然這個月之後的每一天都是「實際 0 小時、差異 -8 小時」，合計也被拉低
+    if (nowMs !== null) {
+      const span = computeShiftSpan(schedule.date, shift);
+      if (span && span.start.getTime() > nowMs) return;
+    }
     const { start, end } = computeShiftTimes(schedule.date, shift);
     const breakMinutes = getShiftBreakMinutes(shift, schedule.date);
     const scheduledMinutes = Math.max(minutesBetween(start, end) - breakMinutes, 0);
@@ -760,11 +895,14 @@ async function loadMonthlyLeaveRows({ employeeIds, start, end }) {
     const daysIds = resolveCandidateIds(leaveForm.daysIds, daysId);
     // 「時數」欄位（請假以小時為單位）；舊表單沒有這個欄位時為空陣列
     const hoursIds = resolveCandidateIds(leaveForm.hoursIds, leaveForm.hoursId);
-    const approvals = await ApprovalRequest.find({
+    // 只取用得到的欄位：關卡與紀錄（steps、logs）佔單據的大部分，報表用不到
+    let approvalQuery = ApprovalRequest.find({
       form: formId,
       status: 'approved',
       applicant_employee: { $in: employeeIds },
-    })
+    });
+    if (typeof approvalQuery?.select === 'function') approvalQuery = approvalQuery.select('form_data applicant_employee createdAt');
+    const approvals = await approvalQuery
       .populate('applicant_employee', 'name')
       .lean();
     const typeMap = new Map(typeOptions?.map((opt) => [String(opt.value), opt.label]));
@@ -844,6 +982,132 @@ function overtimeHoursOf(read) {
   return diff > 0 ? Math.round((diff / (60 * 60 * 1000)) * 100) / 100 : 0;
 }
 
+// 這個報表對應的表單底下已核准的單（每張符合的表單各查一次，依各自的欄位 ID 取值）
+async function loadApprovalFormItems({ type, employeeIds, employeeMap }) {
+  const configs = await resolveApprovalFormConfigs(type);
+  const items = [];
+  for (const config of configs) {
+    let approvalQuery = ApprovalRequest.find({
+      form: config.formId,
+      status: 'approved',
+      applicant_employee: { $in: employeeIds },
+    });
+    if (typeof approvalQuery?.select === 'function') approvalQuery = approvalQuery.select('form_data applicant_employee createdAt');
+    const approvals = await approvalQuery
+      .populate('applicant_employee', 'name')
+      .lean();
+    for (const approval of approvals || []) {
+      const resolved = ensureEmployeeApproval(approval, employeeMap);
+      if (!resolved) continue;
+      const read = (key) => pickFieldValue(approval.form_data, config.fieldMap[key]);
+      items.push({ approval, resolved, read });
+    }
+  }
+  return items;
+}
+
+// 調休的各種寫法（調休、補休、補假、移休…，與調休存摺扣用的名稱同一份：config/leavePolicyConfig.js）
+const normalizeLeaveTypeName = (value) => String(value ?? '').normalize('NFKC').toLowerCase().replace(/[\s()[\]【】]/g, '');
+const COMP_LEAVE_NAME_KEYS = new Set([COMP_LEAVE_TYPE_NAME, ...COMP_LEAVE_TYPE_ALIASES].map(normalizeLeaveTypeName));
+const isCompLeaveRow = (row) => COMP_LEAVE_NAME_KEYS.has(normalizeLeaveTypeName(row.leaveType))
+  || COMP_LEAVE_NAME_KEYS.has(normalizeLeaveTypeName(row.leaveCode));
+
+// 調休存摺的資料只在連上資料庫時讀（單元測試以替身取代其他模型時不讀，報表照常產出）
+const creditStoreReady = () => mongoose.connection?.readyState === 1;
+
+const creditLabel = (credit) => {
+  const dateKey = formatDate(credit.holidayDate || credit.earnedDate);
+  if (credit.sourceType === 'holiday_rest') return [credit.holidayName, dateKey].filter(Boolean).join(' ');
+  return [credit.sourceType === 'legacy_balance' ? '既有補休時數' : '人資給予', dateKey].filter(Boolean).join(' ');
+};
+
+// 每張調休單扣用了哪幾筆額度：Map(簽核單 ID -> 「國慶日 2026-10-10」這樣的說明)
+async function loadCreditSourcesByRequest(approvalIds) {
+  const result = new Map();
+  if (!approvalIds.length || !creditStoreReady()) return result;
+  const requestIds = approvalIds.filter((id) => mongoose.Types.ObjectId.isValid(id)).map((id) => new mongoose.Types.ObjectId(id));
+  if (!requestIds.length) return result;
+  const credits = await CompensatoryCredit.find({ 'usages.approvalRequest': { $in: requestIds } })
+    .select('sourceType holidayName holidayDate earnedDate usages.approvalRequest')
+    .sort({ earnedDate: 1 })
+    .lean();
+  for (const credit of credits || []) {
+    const label = creditLabel(credit);
+    for (const requestId of new Set((credit.usages || []).map((usage) => normalizeId(usage.approvalRequest)).filter(Boolean))) {
+      if (!result.has(requestId)) result.set(requestId, []);
+      result.get(requestId).push(label);
+    }
+  }
+  return new Map(Array.from(result, ([requestId, labels]) => [requestId, labels.join('、')]));
+}
+
+// 這個月存入調休存摺的額度（取得日在這個月，作廢的不算）
+async function loadEarnedCredits({ employeeIds, start, end }) {
+  if (!creditStoreReady()) return { earnedCredits: 0, earnedHours: 0 };
+  const credits = await CompensatoryCredit.find({
+    employee: { $in: employeeIds },
+    earnedDate: { $gte: start, $lt: end },
+    status: { $ne: 'void' },
+  }).select('hours').lean();
+  const hours = (credits || []).reduce((sum, credit) => sum + (Number(credit.hours) || 0), 0);
+  return { earnedCredits: (credits || []).length, earnedHours: roundTwo(hours) };
+}
+
+/**
+ * 補休申請統計：這個月的調休使用（請假單上假別是 調休／補休／補假／移休 的已核准假單，依請假日期歸屬月份、跨月只算本月的時數），
+ * 加上更早以前「補休申請」表單的舊資料；summary 另外帶這個月存入調休存摺的筆數與時數。
+ * 以前只找名稱是 補休／補休申請／補休單 的表單，補休改成請假單的假別之後報表永遠是空的。
+ */
+async function buildCompTimeReport({ employeeIds, start, end, employeeMap }) {
+  const { startKey, endKey } = monthKeysOf(start, end);
+  const records = [];
+  let totalHours = 0;
+
+  const leaveRows = (await loadMonthlyLeaveRows({ employeeIds, start, end }))
+    .filter((row) => employeeMap.has(row.employeeId) && isCompLeaveRow(row));
+  const sources = await loadCreditSourcesByRequest(leaveRows.map((row) => row.approvalId));
+  leaveRows.forEach((row) => {
+    totalHours += row.hours || 0;
+    records.push({
+      approvalId: row.approvalId,
+      employee: row.employeeId,
+      name: employeeMap.get(row.employeeId).name ?? row.name ?? '',
+      date: row.startDate,
+      endDate: row.endDate,
+      leaveType: row.leaveType,
+      hours: row.hours,
+      // 欄位名稱沿用舊報表（來源加班單）：現在放的是這張單扣用的調休額度來源
+      overtimeReference: sources.get(row.approvalId) ?? '',
+    });
+  });
+
+  for (const { approval, resolved, read } of await loadApprovalFormItems({ type: 'compTime', employeeIds, employeeMap })) {
+    const date = formatFormDate(read('date')) || formatFormDate(approval.createdAt);
+    if (!date || date < startKey || date >= endKey) continue;
+    const hours = parseNumber(read('hours'));
+    totalHours += hours;
+    records.push({
+      approvalId: normalizeId(approval._id),
+      employee: resolved.employeeId,
+      name: resolved.employee.name ?? '',
+      date,
+      hours,
+      overtimeReference: read('reference') ?? '',
+    });
+  }
+  records.sort((a, b) => String(a.date).localeCompare(String(b.date)) || String(a.name).localeCompare(String(b.name), 'zh-Hant'));
+
+  const earned = await loadEarnedCredits({ employeeIds, start, end });
+  return {
+    records,
+    summary: {
+      totalRequests: records.length,
+      totalHours: roundTwo(totalHours),
+      ...earned,
+    },
+  };
+}
+
 async function buildApprovalRecords({
   type,
   employeeIds,
@@ -879,33 +1143,19 @@ async function buildApprovalRecords({
       records,
       summary: {
         totalRequests: records.length,
-        totalDays,
+        // 天數由總時數換算（每一列各自四捨五入後再加總會和時數對不起來：八張 1 小時的假會變成 1.04 天）
+        totalDays: totalHours > 0 ? roundTwo(totalHours / HOURS_PER_DAY) : roundTwo(totalDays),
         totalHours: Math.round(totalHours * 100) / 100,
       },
     };
   }
 
-  const configs = await resolveApprovalFormConfigs(type);
-  if (!configs.length) {
-    return { records: [], summary: {} };
+  if (type === 'compTime') {
+    return buildCompTimeReport({ employeeIds, start, end, employeeMap });
   }
+
   // 每張符合的表單各查一次已核准的單，依各自的欄位 ID 取值，月份以單上的日期（台灣時間）為準
-  const items = [];
-  for (const config of configs) {
-    const approvals = await ApprovalRequest.find({
-      form: config.formId,
-      status: 'approved',
-      applicant_employee: { $in: employeeIds },
-    })
-      .populate('applicant_employee', 'name')
-      .lean();
-    for (const approval of approvals || []) {
-      const resolved = ensureEmployeeApproval(approval, employeeMap);
-      if (!resolved) continue;
-      const read = (key) => pickFieldValue(approval.form_data, config.fieldMap[key]);
-      items.push({ approval, resolved, read });
-    }
-  }
+  const items = await loadApprovalFormItems({ type, employeeIds, employeeMap });
 
   if (type === 'overtime') {
     let totalHours = 0;
@@ -925,31 +1175,6 @@ async function buildApprovalRecords({
         endTime: formatFormTime(read('endTime')),
         hours,
         reason: read('reason') ?? '',
-      });
-    }
-    return {
-      records,
-      summary: {
-        totalRequests: records.length,
-        totalHours: Math.round(totalHours * 100) / 100,
-      },
-    };
-  }
-  if (type === 'compTime') {
-    let totalHours = 0;
-    const records = [];
-    for (const { approval, resolved, read } of items) {
-      const date = formatFormDate(read('date')) || formatFormDate(approval.createdAt);
-      if (!date || date < startKey || date >= endKey) continue;
-      const hours = parseNumber(read('hours'));
-      totalHours += hours;
-      records.push({
-        approvalId: normalizeId(approval._id),
-        employee: resolved.employeeId,
-        name: resolved.employee.name ?? '',
-        date,
-        hours,
-        overtimeReference: read('reference') ?? '',
       });
     }
     return {
@@ -1001,7 +1226,7 @@ async function buildDepartmentReportData({ type, month, departmentId, actor }, c
     throw new ReportAccessError(404, 'No data');
   }
   if (type === 'attendance' || type === 'tardiness' || type === 'earlyLeave' || type === 'workHours') {
-    const [{ schedules, attendanceRecords }, { shiftMap, lateGrace, earlyGrace, actionBuffers }] = await Promise.all([
+    const [{ schedules, leadingSchedules, attendanceRecords }, { shiftMap, lateGrace, earlyGrace, actionBuffers }] = await Promise.all([
       loadAttendanceData({ employeeIds, start, end }),
       buildAttendanceSettingContext(),
     ]);
@@ -1012,11 +1237,14 @@ async function buildDepartmentReportData({ type, month, departmentId, actor }, c
     const recordMap = groupAttendanceRecords(attendanceRecords);
     // 線上打卡與指紋匯入不分來源，依班別時段比對（簽到取最早、簽退取最晚）
     const punchesByEmployee = groupPunchesByEmployee(attendanceRecords);
+    const now = new Date();
+    // 核准的請假：請假中的班不是缺勤，請假涵蓋的時段不算遲到早退（工時報表用不到，不查）
+    const leaveIntervals = type === 'workHours' ? null : await loadLeaveIntervalsForReport({ employeeIds, start, end });
     if (type === 'attendance') {
-      return buildAttendanceSummary({ employees, schedules, recordMap, shiftMap, punchesByEmployee, actionBuffers });
+      return buildAttendanceSummary({ employees, schedules, leadingSchedules, recordMap, shiftMap, punchesByEmployee, actionBuffers, leaveIntervals, now });
     }
     if (type === 'tardiness') {
-      const data = buildTardinessSummary({ schedules, recordMap, shiftMap, employees, lateGrace, punchesByEmployee, actionBuffers });
+      const data = buildTardinessSummary({ schedules, recordMap, shiftMap, employees, lateGrace, punchesByEmployee, actionBuffers, leaveIntervals });
       if (!data.records.length) {
         // Return empty data structure instead of throwing error
         return { summary: { totalLateCount: 0, totalLateMinutes: 0, averageLateMinutes: 0 }, records: [] };
@@ -1024,7 +1252,7 @@ async function buildDepartmentReportData({ type, month, departmentId, actor }, c
       return data;
     }
     if (type === 'earlyLeave') {
-      const data = buildEarlyLeaveSummary({ schedules, recordMap, shiftMap, employees, earlyGrace, punchesByEmployee, actionBuffers });
+      const data = buildEarlyLeaveSummary({ schedules, recordMap, shiftMap, employees, earlyGrace, punchesByEmployee, actionBuffers, leaveIntervals });
       if (!data.records.length) {
         // Return empty data structure instead of throwing error
         return { summary: { totalEarlyLeaveCount: 0, totalEarlyMinutes: 0, averageEarlyMinutes: 0 }, records: [] };
@@ -1032,7 +1260,7 @@ async function buildDepartmentReportData({ type, month, departmentId, actor }, c
       return data;
     }
     if (type === 'workHours') {
-      const data = buildWorkHoursSummary({ schedules, recordMap, shiftMap, employees, punchesByEmployee, actionBuffers });
+      const data = buildWorkHoursSummary({ schedules, leadingSchedules, recordMap, shiftMap, employees, punchesByEmployee, actionBuffers, now });
       if (!data.records.length) {
         // Return empty data structure instead of throwing error
         return { summary: { totalScheduledHours: 0, totalWorkedHours: 0, differenceHours: 0 }, records: [] };
@@ -1073,20 +1301,23 @@ async function buildDepartmentReportData({ type, month, departmentId, actor }, c
       summaryEntry.hours = Math.round((summaryEntry.hours + row.hours) * 100) / 100;
       typeSummary.set(row.leaveType, summaryEntry);
     });
+    // 天數的合計由時數換算（1 天 = 8 小時）：每一列各自四捨五入成天數再加總，會和時數對不起來（八張 1 小時的假變成 1.04 天）
+    const daysFromHours = (hours, summedDays) => (hours > 0 ? roundTwo(hours / HOURS_PER_DAY) : roundTwo(summedDays));
     return {
       records,
       summary: {
         totalLeaves: records.length,
-        totalDays,
+        totalDays: daysFromHours(totalHours, totalDays),
         totalHours: Math.round(totalHours * 100) / 100,
-        byType: Array.from(typeSummary.values()),
+        byType: Array.from(typeSummary.values()).map((entry) => ({ ...entry, days: daysFromHours(entry.hours, entry.days) })),
       },
     };
   }
 
   if (type === 'specialLeave' || type === 'overtime' || type === 'compTime' || type === 'makeUp') {
     const data = await buildApprovalRecords({ type, employeeIds, start, end, employees });
-    if (!data.records.length) {
+    // 補休報表：這個月沒有人用調休，但有存入調休存摺的額度時，仍要回報存入的筆數與時數
+    if (!data.records.length && !(data.summary?.earnedCredits > 0)) {
       // Return empty data structure instead of throwing error
       return { summary: {}, records: [] };
     }

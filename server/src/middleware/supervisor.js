@@ -53,6 +53,11 @@ export async function verifySupervisor(req, res, next) {
 
     return next();
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    // 員工或班表的編號格式不正確（不是 ObjectId）：是請求的問題，回 400，不把資料庫的錯誤訊息回給使用者
+    if (err?.name === 'CastError') {
+      return res.status(400).json({ error: 'Invalid employee or schedule id' });
+    }
+    console.error('Schedule scope check failed', { error: err?.name ?? 'Error' });
+    return res.status(500).json({ error: 'Schedule scope check failed' });
   }
 }

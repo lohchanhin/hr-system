@@ -84,7 +84,7 @@ export async function exportScheduleOverview(req, res) {
       try {
         ExcelJS = (await import('exceljs')).default;
       } catch (err) {
-        return res.status(500).json({ error: 'exceljs module not installed' });
+        return res.status(500).json({ error: '伺服器缺少產生 Excel 檔所需的元件（exceljs），請聯絡系統管理員', code: 'EXCEL_MODULE_MISSING' });
       }
       const workbook = new ExcelJS.Workbook();
       const ws = workbook.addWorksheet('Overview');
@@ -111,7 +111,7 @@ export async function exportScheduleOverview(req, res) {
     try {
       PDFDocument = (await import('pdfkit')).default;
     } catch (err) {
-      return res.status(500).json({ error: 'pdfkit module not installed' });
+      return res.status(500).json({ error: '伺服器缺少產生 PDF 檔所需的元件（pdfkit），請聯絡系統管理員', code: 'PDF_MODULE_MISSING' });
     }
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="${filenameParts.join('-')}.pdf"`);
@@ -143,16 +143,16 @@ export async function exportSchedules(req, res) {
       practiceTitle: practiceTitleRaw,
     } = req.query;
     if (!month || !department) {
-      return res.status(400).json({ error: 'month and department required' });
+      return res.status(400).json({ error: '請先選擇月份與部門', code: 'MONTH_AND_DEPARTMENT_REQUIRED' });
     }
     if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) {
-      return res.status(400).json({ error: 'invalid month format' });
+      return res.status(400).json({ error: '月份格式不正確（YYYY-MM）', code: 'INVALID_MONTH' });
     }
     const actorId = toEntityId(req.user?.id);
     if (!actorId) return res.status(401).json({ error: 'Invalid user' });
     const allowedEmployeeIds = await getAllowedScheduleEmployeeIds(req);
     if (allowedEmployeeIds !== null && allowedEmployeeIds.length === 0) {
-      return res.status(403).json({ error: 'forbidden' });
+      return res.status(403).json({ error: '您的排班範圍內沒有可以匯出的員工', code: 'FORBIDDEN' });
     }
     let departmentName = '';
     try {
@@ -166,10 +166,9 @@ export async function exportSchedules(req, res) {
     const end = new Date(start);
     end.setUTCMonth(end.getUTCMonth() + 1);
 
-    const query = { date: { $gte: start, $lt: end }, department };
-    if (subDepartment) {
-      query.subDepartment = subDepartment;
-    }
+    // 部門、小單位只用來篩選員工（下面的 employeeQuery），與排班頁（/api/schedules/monthly）相同：
+    // 班表上存的是排班當時的單位，員工月中調單位後，舊單位排的那幾天也要出現在匯出的班表上
+    const query = { date: { $gte: start, $lt: end } };
     const status = String(statusRaw || 'all').trim();
     const search = String(searchRaw || '').trim();
     const title = String(titleRaw || '').trim();
@@ -358,7 +357,7 @@ export async function exportSchedules(req, res) {
       try {
         ExcelJS = (await import('exceljs')).default;
       } catch (err) {
-        return res.status(500).json({ error: 'exceljs module not installed' });
+        return res.status(500).json({ error: '伺服器缺少產生 Excel 檔所需的元件（exceljs），請聯絡系統管理員', code: 'EXCEL_MODULE_MISSING' });
       }
       const workbook = new ExcelJS.Workbook();
       workbook.creator = 'HR System';
@@ -519,7 +518,7 @@ export async function exportSchedules(req, res) {
       try {
         PDFDocument = (await import('pdfkit')).default;
       } catch (err) {
-        return res.status(500).json({ error: 'pdfkit module not installed' });
+        return res.status(500).json({ error: '伺服器缺少產生 PDF 檔所需的元件（pdfkit），請聯絡系統管理員', code: 'PDF_MODULE_MISSING' });
       }
       const doc = new PDFDocument({ margin: 42 });
       res.setHeader('Content-Type', 'application/pdf');

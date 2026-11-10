@@ -20,6 +20,7 @@ import {
 } from '../controllers/employeeController.js';
 import { authorizeRoles } from '../middleware/auth.js';
 import { bulkImportEmployees } from '../controllers/employeeBulkImportController.js';
+import { bulkSetAutoOvertimeCalc } from '../controllers/employeeAutoOvertimeController.js';
 import uploadMiddleware from '../middleware/upload.js';
 import photoUploadMiddleware from '../middleware/photoUpload.js';
 import { uploadSingle, handleMulterError, processUploadedPhoto } from '../middleware/photoUploadMulter.js';
@@ -41,6 +42,8 @@ router.post('/set-supervisors', setSupervisors);
 router.post('/bulk-delete', bulkDeleteEmployees);
 // 刪除前預覽簽核影響（不刪任何資料）
 router.post('/delete-impact', previewDeleteImpact);
+// 整批開關「自動計算加班費」（只有管理員；dryRun 只回傳人數）
+router.post('/auto-overtime-calc', authorizeRoles('admin'), bulkSetAutoOvertimeCalc);
 
 // 特休管理路由
 router.get('/:id/annual-leave', getEmployeeAnnualLeave);

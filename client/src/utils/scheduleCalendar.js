@@ -55,9 +55,13 @@ export function buildHolidayMap(entries = []) {
   return map
 }
 
+// 指定應放假日（選舉、罷免、公投）在日期標頭的字樣
+export const DESIGNATED_DAY_PREFIX = '指定放假'
+
 /**
  * 產生月份每一天的標頭：[{ date, label, holiday, infos, displayKind }]。
- * 國定假日標 🎊、指定應放假日標 📌；公務機關補假、調整放假、公司休息日等不標示，只放進 infos（灰字）。
+ * 國定假日在日期後面接假日名稱、指定應放假日再加「指定放假」字樣（不用表情符號；顏色由畫面依 displayKind 決定）；
+ * 公務機關補假、調整放假、公司休息日等不標示，只放進 infos（灰字）。
  * holidayMap 是 buildHolidayMap 的結果（也接受舊版 { 日期: 紀錄 }）。
  */
 export function buildMonthDays(monthStr, holidayMap = {}) {
@@ -77,7 +81,7 @@ export function buildMonthDays(monthStr, holidayMap = {}) {
     let displayKind = ''
     if (holiday) {
       displayKind = isDesignated(holiday) ? 'designated' : 'holiday'
-      label = `${label} ${displayKind === 'designated' ? '📌' : '🎊'}${getHolidayDisplayName(holiday)}`
+      label = `${label} ${displayKind === 'designated' ? `${DESIGNATED_DAY_PREFIX} ` : ''}${getHolidayDisplayName(holiday)}`
     } else if (slot.infos.length) {
       displayKind = slot.infos[0].displayKind || ''
     }

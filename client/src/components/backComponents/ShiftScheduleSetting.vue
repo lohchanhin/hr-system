@@ -1,476 +1,415 @@
-<!-- src/Components/backComponents/ShiftScheduleSetting.vue -->
+<!-- 排班表設定：行事曆設定、班別設定、全公司的國定假日挪移 -->
 <template>
   <div class="shift-schedule-setting">
-    <!-- 添加現代化的頁面標題和統計信息 -->
-    <div class="page-header">
-      <div class="header-content">
-        <h1 class="page-title">排班與班別管理設定</h1>
-        <p class="page-description">管理班別時間、假日設定與國定假日挪移配置</p>
-      </div>
-      <div class="header-stats">
-        <div class="stat-item">
-          <div class="stat-number" data-test="stat-statutory-this-year">{{ statutoryThisYear }}</div>
-          <div class="stat-label">國定假日（今年）</div>
-        </div>
-        <div class="stat-item">
-          <div class="stat-number">{{ shiftList.length }}</div>
-          <div class="stat-label">班別</div>
-        </div>
-        <div class="stat-item">
-          <div class="stat-number">{{ holidayMoveList.length }}</div>
-          <div class="stat-label">假日挪移</div>
-        </div>
-      </div>
-    </div>
+    <PageHeader title="排班表設定" subtitle="公司行事曆、班別，以及全公司的國定假日挪移">
+      <template #stats>
+        <span class="hr-stat">
+          <span class="hr-stat__label">國定假日（今年）</span>
+          <strong class="hr-stat__value" data-test="stat-statutory-this-year">{{ statutoryThisYear }}</strong>
+        </span>
+        <span class="hr-stat">
+          <span class="hr-stat__label">班別</span>
+          <strong class="hr-stat__value" data-test="stat-shift-count">{{ shiftList.length }}</strong>
+        </span>
+        <span class="hr-stat">
+          <span class="hr-stat__label">假日挪移</span>
+          <strong class="hr-stat__value" data-test="stat-move-count">{{ holidayMoveList.length }}</strong>
+        </span>
+      </template>
+    </PageHeader>
 
-    <!-- 美化標籤頁設計，添加圖標和現代化樣式 -->
-    <el-tabs v-model="activeTab" type="card" class="schedule-tabs">
-      <!-- 1) 年度行事曆/休假日設定 -->
-      <el-tab-pane name="calendar">
-        <template #label>
-          <div class="tab-label">
-            <i class="el-icon-calendar"></i>
-            <span>行事曆設定</span>
-          </div>
-        </template>
-        
-        <div class="tab-content">
-          <!-- 每年由政府辦公日曆表建立草稿，人資檢查後核定；公務機關補假只對行政人員生效 -->
-          <CompanyCalendarPanel @years-loaded="onCalendarYearsLoaded" @calendar-changed="fetchMovableHolidays" />
-        </div>
+    <el-tabs v-model="activeTab" class="schedule-tabs">
+      <!-- 1) 年度行事曆 -->
+      <el-tab-pane name="calendar" label="行事曆設定">
+        <!-- 每年由政府辦公日曆表建立草稿，人資檢查後核定；公務機關補假只對行政人員生效 -->
+        <CompanyCalendarPanel @years-loaded="onCalendarYearsLoaded" @calendar-changed="fetchMovableHolidays" />
       </el-tab-pane>
 
-      <!-- 2) 班別管理 (針對排班) -->
-      <el-tab-pane name="shift">
-        <template #label>
-          <div class="tab-label">
-            <i class="el-icon-time"></i>
-            <span>班別設定</span>
-          </div>
-        </template>
-        
-        <div class="tab-content">
-          <div class="content-header">
-            <h2 class="section-title">班別管理</h2>
-            <el-button type="primary" @click="openShiftDialog()" class="add-btn">
-              <i class="el-icon-plus"></i>
-              新增班別
-            </el-button>
-          </div>
+      <!-- 2) 班別 -->
+      <el-tab-pane name="shift" label="班別設定">
+        <div class="hr-toolbar">
+          <span class="toolbar-note">左邊的色塊就是排班表格子顯示的樣子。</span>
+          <span class="hr-toolbar__spacer" />
+          <el-button type="primary" data-test="shift-add" @click="openShiftDialog()">新增班別</el-button>
+        </div>
 
-          <el-alert
-            v-if="shiftIdentityConflicts.length"
-            class="shift-conflict-alert"
-            type="warning"
-            :closable="false"
-            show-icon
-            title="重複的班別代碼或名稱不可用於公版班表匯入"
-            :description="shiftIdentityConflictDescription"
-          />
-          
-          <div class="table-container">
-            <el-table 
-              :data="shiftList" 
-              class="data-table"
-              :header-cell-style="{ background: '#f8fafc', color: '#475569', fontWeight: '600' }"
-              :row-style="{ height: '56px' }"
-            >
-              <el-table-column prop="code" label="班別代碼（匯入）" width="180" show-overflow-tooltip>
-                <template #default="{ row }">
-                  <el-tag class="code-tag">{{ row.code }}</el-tag>
-                </template>
-              </el-table-column>
-              <el-table-column prop="name" label="班別名稱" width="220" show-overflow-tooltip>
-                <template #default="{ row }">
-                  <div class="shift-info">
-                    <div class="shift-icon">
-                      <i class="el-icon-time"></i>
-                    </div>
-                    <div class="shift-name">{{ row.name }}</div>
-                  </div>
-                </template>
-              </el-table-column>
-              <el-table-column label="班別性質" width="150">
-                <template #default="{ row }">
-                  <el-tag :type="semanticTagType(row)" size="small" class="semantic-tag">
-                    {{ semanticLabel(row) }}
-                  </el-tag>
-                  <div v-if="isWorkShiftWithoutWorkingTime(row)" class="shift-type-warning">
-                    ⚠ 工作班沒有工作時間
-                  </div>
-                </template>
-              </el-table-column>
-              <el-table-column label="夜班" width="100">
-                <template #default="{ row }">
-                  <div v-if="row.isNightShift">
-                    <el-tag type="warning" size="small">
-                      🌙 夜班
-                    </el-tag>
-                    <div v-if="row.hasAllowance" style="font-size: 11px; color: #666; margin-top: 2px;">
-                      固定 ${{ row.fixedAllowanceAmount || 0 }}
-                    </div>
-                  </div>
-                  <span v-else-if="isNonWorkRow(row)" class="shift-not-applicable">—</span>
-                  <el-tag v-else type="info" size="small">日班</el-tag>
-                </template>
-              </el-table-column>
-              <el-table-column label="工作時間" width="200">
-                <template #default="{ row }">
-                  <div class="time-range">
-                    <span class="start-time">{{ row.startTime }}</span>
-                    <i class="el-icon-right time-separator"></i>
-                    <span class="end-time">{{ row.endTime }}</span>
-                  </div>
-                </template>
-              </el-table-column>
-              <el-table-column label="休息" min-width="220">
-                <template #default="{ row }">
-                  <div class="break-info">
-                    <div class="break-duration">{{ formatBreakDuration(row) }}</div>
-                    <div v-if="formatBreakWindows(row)" class="break-window">{{ formatBreakWindows(row) }}</div>
-                  </div>
-                </template>
-              </el-table-column>
-              <el-table-column prop="crossDay" label="跨日班" width="100">
-                <template #default="{ row }">
-                  <el-tag :type="row.crossDay ? 'warning' : 'success'" size="small">
-                    {{ row.crossDay ? '是' : '否' }}
-                  </el-tag>
-                </template>
-              </el-table-column>
-              <el-table-column prop="remark" label="備註" min-width="150" />
-              <el-table-column label="操作" width="200" fixed="right">
-                <template #default="{ row, $index }">
-                  <div class="action-buttons">
-                    <el-button type="primary" size="small" @click="openShiftDialog($index)" class="edit-btn">
-                      <i class="el-icon-edit"></i>
-                      編輯
-                    </el-button>
-                    <el-button type="danger" size="small" @click="deleteShift($index)" class="delete-btn">
-                      <i class="el-icon-delete"></i>
-                      刪除
-                    </el-button>
-                  </div>
-                </template>
-              </el-table-column>
-            </el-table>
-          </div>
+        <el-alert
+          v-if="shiftLoadError"
+          class="tab-alert"
+          type="error"
+          :closable="false"
+          show-icon
+          :title="shiftLoadError"
+          data-test="shift-load-error"
+        />
+        <el-alert
+          v-if="shiftIdentityConflicts.length"
+          class="tab-alert"
+          type="warning"
+          :closable="false"
+          show-icon
+          title="重複的班別代碼或名稱不可用於公版班表匯入"
+          :description="shiftIdentityConflictDescription"
+        />
 
-          <!-- 美化班別對話框 -->
-          <el-dialog v-model="shiftDialogVisible" title="班別資料" width="500px" class="form-dialog">
-            <el-form :model="shiftForm" label-width="120px" class="dialog-form">
-              <el-form-item label="班別代碼" required>
-                <el-input v-model="shiftForm.code" maxlength="40" placeholder="如：D、E、N" />
-                <div class="form-help">公版班表日期欄填寫此代碼；代碼是匯入識別鍵，不得與其他班別的代碼或名稱重複。</div>
-              </el-form-item>
-              <el-form-item label="班別名稱" required>
-                <el-input v-model="shiftForm.name" maxlength="100" placeholder="如：早班 / 夜班 / 彈性班" />
-                <div class="form-help">顯示於班表及報表，名稱不得與其他班別的名稱或代碼重複。</div>
-              </el-form-item>
-              <el-form-item label="班別性質" required>
-                <el-select
-                  :model-value="shiftForm.semanticType"
-                  style="width: 100%"
-                  data-test="shift-semantic-select"
-                  @update:model-value="onSemanticTypeChange"
-                >
-                  <el-option
-                    v-for="option in semanticOptions"
-                    :key="option.value"
-                    :label="option.label"
-                    :value="option.value"
+        <el-table
+          v-loading="shiftLoading"
+          :data="shiftList"
+          class="data-table"
+          data-test="shift-table"
+          empty-text="尚未建立班別，請按右上角「新增班別」"
+        >
+          <el-table-column label="班別" min-width="200">
+            <template #default="{ row }">
+              <div class="shift-identity">
+                <span class="shift-chip" :style="chipStyle(row)" data-test="shift-chip">{{ row.code }}</span>
+                <span class="shift-name">{{ row.name }}</span>
+              </div>
+            </template>
+          </el-table-column>
+          <el-table-column label="班別性質" width="120">
+            <template #default="{ row }">
+              <el-tag :type="semanticTagType(row)" size="small" class="semantic-tag" disable-transitions>
+                {{ semanticLabel(row) }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="上下班時間" min-width="210">
+            <template #default="{ row }">
+              <span v-if="isNonWorkRow(row)" class="shift-not-applicable">—</span>
+              <template v-else>
+                <span class="time-range">{{ describeShiftTime(row) || `${row.startTime || '?'}–${row.endTime || '?'}` }}</span>
+                <el-tag v-if="row.isNightShift" type="warning" size="small" class="inline-tag" disable-transitions>
+                  夜班<template v-if="row.hasAllowance">・津貼 {{ row.fixedAllowanceAmount || 0 }} 元</template>
+                </el-tag>
+                <div v-if="isWorkShiftWithoutWorkingTime(row)" class="shift-type-warning">
+                  工作班沒有工作時間，請編輯修正
+                </div>
+                <div v-else-if="crossDayFlagMismatch(row)" class="shift-type-warning" data-test="shift-crossday-mismatch">
+                  「跨日」標記和時間不一致，請按編輯後重新儲存
+                </div>
+              </template>
+            </template>
+          </el-table-column>
+          <el-table-column label="休息" min-width="170">
+            <template #default="{ row }">
+              <span v-if="isNonWorkRow(row)" class="muted">—</span>
+              <template v-else>
+                <span>{{ shiftBreakMinutes(row) }} 分鐘</span>
+                <div v-if="formatBreakWindows(row)" class="break-window">{{ formatBreakWindows(row) }}</div>
+              </template>
+            </template>
+          </el-table-column>
+          <el-table-column label="工時" width="100">
+            <template #default="{ row }">
+              <span v-if="isNonWorkRow(row)" class="muted">—</span>
+              <span v-else data-test="shift-work-hours">{{ workHoursLabel(row) }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column prop="remark" label="備註" min-width="140" show-overflow-tooltip />
+          <el-table-column label="操作" width="150" :fixed="actionColumnFixed">
+            <template #default="{ row, $index }">
+              <el-button size="small" data-test="shift-edit" @click="openShiftDialog($index)">編輯</el-button>
+              <el-button
+                size="small"
+                type="danger"
+                plain
+                :loading="deletingShiftId === row._id"
+                data-test="shift-delete"
+                @click="deleteShift($index)"
+              >
+                刪除
+              </el-button>
+            </template>
+          </el-table-column>
+        </el-table>
+
+        <el-dialog
+          v-model="shiftDialogVisible"
+          :title="shiftEditIndex === null ? '新增班別' : '編輯班別'"
+          :width="dialogWidth(620)"
+          class="form-dialog"
+          :close-on-click-modal="false"
+          :before-close="closeShiftDialog"
+        >
+          <el-form :model="shiftForm" label-width="110px" class="dialog-form" @submit.prevent>
+            <el-form-item label="班別代碼" required>
+              <el-input v-model="shiftForm.code" maxlength="40" placeholder="如：D、E、N" data-test="shift-code" />
+              <div class="hr-hint">公版班表日期欄填寫此代碼；代碼是匯入識別鍵，不得與其他班別的代碼或名稱重複。</div>
+            </el-form-item>
+            <el-form-item label="班別名稱" required>
+              <el-input v-model="shiftForm.name" maxlength="100" placeholder="如：早班、夜班" data-test="shift-name" />
+            </el-form-item>
+            <el-form-item label="班別性質" required>
+              <el-select
+                :model-value="shiftForm.semanticType"
+                style="width: 100%"
+                data-test="shift-semantic-select"
+                @update:model-value="onSemanticTypeChange"
+              >
+                <el-option
+                  v-for="option in semanticOptions"
+                  :key="option.value"
+                  :label="option.label"
+                  :value="option.value"
+                />
+              </el-select>
+              <div class="hr-hint">系統會依班別代碼／名稱自動判斷，也可以手動改選；休息日、例假、國定假日、請假不需上班，不計工時。</div>
+            </el-form-item>
+
+            <!-- 不需上班的班別沒有時間、休息與夜班設定（固定 00:00～00:00、休息 0 分鐘） -->
+            <template v-if="!isNonWorkForm">
+              <el-form-item label="上下班時間" required>
+                <div class="time-row">
+                  <el-time-picker
+                    v-model="shiftForm.startTime"
+                    :format="timeFormat"
+                    :value-format="timeFormat"
+                    placeholder="上班時間"
+                    class="time-input"
+                    style="width: 150px"
+                    data-test="shift-start"
                   />
-                </el-select>
-                <div class="form-help">
-                  系統會依班別代碼／名稱自動判斷（休＝休息日、例＝例假、國＝國定假日、事／病／特／補／公等＝請假，其餘為工作班），也可手動改選。
+                  <span class="time-separator">–</span>
+                  <el-time-picker
+                    v-model="shiftForm.endTime"
+                    :format="timeFormat"
+                    :value-format="timeFormat"
+                    placeholder="下班時間"
+                    class="time-input"
+                    style="width: 150px"
+                    data-test="shift-end"
+                  />
                 </div>
-                <div class="form-help">
-                  休息日、例假、國定假日、請假不需上班：上下班時間固定為 00:00～00:00、休息 0 分鐘，不計工時。
-                </div>
-                <div v-if="workShiftTimeWarning" class="form-help form-help--warning" data-test="shift-work-time-warning">
+                <!-- 下班早於上班一定跨日、晚於上班一定不跨日；只有上下班時間相同時需要管理者說明是不是 24 小時的班 -->
+                <el-checkbox v-if="sameStartEnd" v-model="shiftForm.crossDay" data-test="shift-full-day">
+                  這是 24 小時的班（隔天同一時間下班）
+                </el-checkbox>
+                <div v-if="workShiftTimeWarning" class="hr-hint hr-hint--warning" data-test="shift-work-time-warning">
                   {{ workShiftTimeWarning }}
                 </div>
               </el-form-item>
-              <el-form-item label="上班時間" :required="!isNonWorkForm">
-                <el-time-picker
-                  v-model="shiftForm.startTime"
-                  :format="timeFormat"
-                  :value-format="timeFormat"
-                  :disabled="isNonWorkForm"
-                  placeholder="選擇上班時間"
-                  style="width: 100%"
-                />
-              </el-form-item>
-              <el-form-item label="下班時間" :required="!isNonWorkForm">
-                <el-time-picker
-                  v-model="shiftForm.endTime"
-                  :format="timeFormat"
-                  :value-format="timeFormat"
-                  :disabled="isNonWorkForm"
-                  placeholder="選擇下班時間"
-                  style="width: 100%"
-                />
-              </el-form-item>
-              <el-form-item label="休息時長(分鐘)">
-                <el-input-number
-                  v-model="shiftForm.breakDuration"
-                  :min="0"
-                  :step="15"
-                  :disabled="isNonWorkForm"
-                  style="width: 100%"
-                />
+              <el-form-item label="休息時長">
+                <el-input-number v-model="shiftForm.breakDuration" :min="0" :max="1440" :step="15" data-test="shift-break-duration" />
+                <span class="unit">分鐘</span>
+                <div v-if="breakFromWindows" class="hr-hint hr-hint--warning" data-test="shift-break-from-windows">
+                  已填休息時段：工時改以時段合計的 {{ formBreakMinutes }} 分鐘計算，不使用這個數字。
+                </div>
               </el-form-item>
               <el-form-item label="休息時段">
                 <div class="break-window-list">
                   <div v-for="(item, index) in shiftForm.breakWindows" :key="index" class="break-window-row">
                     <el-time-picker
                       v-model="item.start"
-                      :disabled="isNonWorkForm"
                       :format="timeFormat"
                       :value-format="timeFormat"
                       placeholder="開始"
-                      style="width: 120px"
+                      class="break-time-input"
+                      style="width: 116px"
                     />
-                    <span class="time-separator">~</span>
+                    <span class="time-separator">–</span>
                     <el-time-picker
                       v-model="item.end"
-                      :disabled="isNonWorkForm"
                       :format="timeFormat"
                       :value-format="timeFormat"
                       placeholder="結束"
-                      style="width: 120px"
+                      class="break-time-input"
+                      style="width: 116px"
                     />
-                    <el-input v-model="item.label" placeholder="備註" style="width: 140px" :disabled="isNonWorkForm" />
-                    <el-button type="danger" link :disabled="isNonWorkForm" @click="removeBreakWindow(index)">
-                      <i class="el-icon-delete"></i>
-                    </el-button>
+                    <el-input v-model="item.label" placeholder="備註（如：午休）" class="break-label-input" />
+                    <el-button type="danger" link @click="removeBreakWindow(index)">刪除</el-button>
                   </div>
-                  <el-button type="primary" link :disabled="isNonWorkForm" @click="addBreakWindow">新增時段</el-button>
-                  <div class="form-help">若未填休息時段，將以「休息時長」扣除工時計算。</div>
+                  <el-button link type="primary" data-test="shift-add-break" @click="addBreakWindow">新增休息時段</el-button>
+                  <div class="hr-hint">選填。沒有填時段時，以「休息時長」從工時扣除。</div>
                 </div>
               </el-form-item>
-              <el-form-item label="跨日班">
-                <el-switch
-                  v-model="shiftForm.crossDay"
-                  :disabled="isNonWorkForm"
-                  active-text="是"
-                  inactive-text="否"
-                  active-color="#10b981"
-                />
+              <el-form-item label="計算結果">
+                <div class="computed-summary" data-test="shift-computed-summary">{{ computedSummary }}</div>
+                <ul v-if="timeProblems.length" class="problem-list" data-test="shift-time-problems">
+                  <li v-for="problem in timeProblems" :key="problem">{{ problem }}</li>
+                </ul>
               </el-form-item>
-              <el-form-item label="是否為夜班">
-                <el-switch
-                  v-model="shiftForm.isNightShift"
-                  :disabled="isNonWorkForm"
-                  active-text="是"
-                  inactive-text="否"
-                  active-color="#10b981"
-                />
-                <div class="form-help">標記此班別為夜班，用於薪資計算和津貼發放</div>
+              <el-form-item label="夜班">
+                <el-switch v-model="shiftForm.isNightShift" data-test="shift-night" @change="onNightShiftChange" />
+                <span class="switch-note">標記為夜班，薪資計算夜班津貼時使用</span>
               </el-form-item>
-              <el-form-item label="是否有夜班津貼">
-                <el-switch
-                  v-model="shiftForm.hasAllowance"
-                  :disabled="isNonWorkForm || !shiftForm.isNightShift"
-                  active-text="是"
-                  inactive-text="否"
-                  active-color="#10b981"
-                />
-                <div class="form-help">啟用後設定固定夜班津貼金額</div>
-              </el-form-item>
-              <el-form-item label="固定津貼金額" v-if="shiftForm.hasAllowance && shiftForm.isNightShift">
-                <el-input-number 
-                  v-model="shiftForm.fixedAllowanceAmount" 
-                  :min="0" 
-                  :step="100"
-                  :precision="0"
-                  :disabled="!shiftForm.isNightShift || !shiftForm.hasAllowance"
-                  style="width: 100%" 
-                />
-                <div class="form-help">
-                  固定津貼：每次上夜班可獲得固定金額的津貼<br/>
-                  例如設定 200 元，則每上一次夜班可得 200 元津貼
-                </div>
-              </el-form-item>
-              <el-form-item label="班別底色">
-                <el-color-picker
-                  v-model="shiftForm.bgColor"
-                  :predefine="shiftBgPresets"
-                  color-format="hex"
-                  :show-alpha="false"
-                />
-              </el-form-item>
-              <el-form-item label="文字顏色">
-                <el-color-picker
-                  v-model="shiftForm.color"
-                  :predefine="shiftTextPresets"
-                  color-format="hex"
-                  :show-alpha="false"
-                />
-              </el-form-item>
-              <el-form-item label="顏色預覽">
-                <div class="shift-color-preview" :style="shiftPreviewStyle">
-                  {{ shiftForm.code || shiftForm.name || 'SHIFT' }}
-                </div>
-              </el-form-item>
-              <el-form-item label="備註">
-                <el-input
-                  v-model="shiftForm.remark"
-                  type="textarea"
-                  :rows="3"
-                  placeholder="班別說明或特殊注意事項"
-                />
-              </el-form-item>
-            </el-form>
-            <template #footer>
-              <div class="dialog-footer">
-                <el-button @click="shiftDialogVisible = false" class="cancel-btn">取消</el-button>
-                <el-button type="primary" @click="saveShift" class="save-btn">
-                  <i class="el-icon-check"></i>
-                  儲存
-                </el-button>
-              </div>
-            </template>
-          </el-dialog>
-        </div>
-      </el-tab-pane>
-
-      <el-tab-pane name="holiday-move">
-        <template #label>
-          <div class="tab-label">
-            <i class="el-icon-switch"></i>
-            <span>國定假日挪移</span>
-          </div>
-        </template>
-
-        <div class="tab-content">
-          <div class="content-header">
-            <h2 class="section-title">國定假日挪移</h2>
-            <el-button type="primary" class="add-btn" @click="openHolidayMoveDialog()">
-              <i class="el-icon-plus"></i>
-              新增挪移
-            </el-button>
-          </div>
-
-          <el-alert
-            class="holiday-move-hint"
-            type="info"
-            :closable="false"
-            show-icon
-            title="此處為全公司統一調移（可跨月）；個別員工的調移需本人同意，請在排班頁「國定假日休假」的「個人調移」登記。"
-            data-test="holiday-move-hint"
-          />
-
-          <div class="table-container">
-            <el-table
-              :data="holidayMoveList"
-              class="data-table"
-              :header-cell-style="{ background: '#f8fafc', color: '#475569', fontWeight: '600' }"
-              :row-style="{ height: '56px' }"
-            >
-              <el-table-column prop="sourceDate" label="原國定假日" width="170" />
-              <el-table-column prop="targetDate" label="挪移日期" width="170" />
-              <el-table-column prop="reason" label="原因" min-width="220" />
-              <el-table-column label="協議資料" width="200">
-                <template #default="{ row }">
-                  <!-- 調移國定假日一律需要勞資會議（或工會）同意；舊資料沒有填的要補上 -->
-                  <el-tag v-if="!row.agreementReference || !row.agreementDate" type="warning" data-test="holiday-move-missing-agreement">
-                    缺少協議資料
-                  </el-tag>
-                  <span v-else class="agreement-info">{{ row.agreementReference }}（{{ toApiDate(row.agreementDate) }}）</span>
-                </template>
-              </el-table-column>
-              <el-table-column label="需補班" width="100">
-                <template #default="{ row }">
-                  <el-tag :type="row.needMakeup ? 'warning' : 'info'">
-                    {{ row.needMakeup ? '是' : '否' }}
-                  </el-tag>
-                </template>
-              </el-table-column>
-              <el-table-column label="操作" width="200" fixed="right">
-                <template #default="{ $index }">
-                  <div class="action-buttons">
-                    <el-button type="primary" size="small" class="edit-btn" @click="openHolidayMoveDialog($index)">
-                      編輯
-                    </el-button>
-                    <el-button type="danger" size="small" class="delete-btn" @click="deleteHolidayMove($index)">
-                      刪除
-                    </el-button>
-                  </div>
-                </template>
-              </el-table-column>
-            </el-table>
-          </div>
-
-          <el-dialog v-model="holidayMoveDialogVisible" title="國定假日挪移" width="520px" class="form-dialog">
-            <el-form :model="holidayMoveForm" label-width="120px" class="dialog-form">
-              <el-form-item label="原國定假日" required>
-                <el-select v-model="holidayMoveForm.sourceDate" placeholder="選擇國定假日" style="width: 100%" data-test="holiday-move-source">
-                  <el-option
-                    v-for="holiday in movableHolidayOptions"
-                    :key="holiday._id || holiday.date"
-                    :label="`${toApiDate(holiday.date).replace(/-/g, '/')} ${holiday.name || holiday.desc || ''}`"
-                    :value="toApiDate(holiday.date)"
+              <el-form-item v-if="shiftForm.isNightShift" label="夜班津貼">
+                <el-switch v-model="shiftForm.hasAllowance" data-test="shift-allowance" @change="onAllowanceChange" />
+                <template v-if="shiftForm.hasAllowance">
+                  <el-input-number
+                    v-model="shiftForm.fixedAllowanceAmount"
+                    :min="0"
+                    :step="100"
+                    :precision="0"
+                    class="allowance-input"
+                    data-test="shift-allowance-amount"
                   />
-                </el-select>
-                <div class="form-help">只能選擇行事曆上的國定假日（公務機關補假、調整放假不是國定假日）</div>
+                  <span class="unit">元／每上一次夜班</span>
+                </template>
               </el-form-item>
-              <el-form-item label="挪移日期" required>
-                <el-date-picker
-                  v-model="holidayMoveForm.targetDate"
-                  type="date"
-                  value-format="YYYY-MM-DD"
-                  format="YYYY/MM/DD"
-                  style="width: 100%"
-                />
-              </el-form-item>
-              <el-form-item label="原因">
-                <el-input v-model="holidayMoveForm.reason" type="textarea" :rows="3" maxlength="500" show-word-limit />
-              </el-form-item>
-              <el-form-item label="需經簽核">
-                <!-- 調移國定假日一律需要協議資料，固定為開啟 -->
-                <el-switch :model-value="true" disabled data-test="holiday-move-need-signature" />
-              </el-form-item>
-              <el-form-item label="安排補班">
-                <el-switch v-model="holidayMoveForm.needMakeup" />
-              </el-form-item>
-              <el-form-item label="同意文件編號" required>
-                <el-input v-model="holidayMoveForm.agreementReference" maxlength="200" data-test="holiday-move-agreement-reference" />
-              </el-form-item>
-              <el-form-item label="同意日期" required>
-                <el-date-picker
-                  v-model="holidayMoveForm.agreementDate"
-                  type="date"
-                  value-format="YYYY-MM-DD"
-                  format="YYYY/MM/DD"
-                  style="width: 100%"
-                />
-              </el-form-item>
-              <el-form-item v-if="holidayMoveForm.needMakeup" label="補休日確認" required>
-                <el-checkbox v-model="holidayMoveForm.makeupConfirmed">已確認調移後休假日期</el-checkbox>
-              </el-form-item>
-            </el-form>
-            <template #footer>
-              <div class="dialog-footer">
-                <el-button @click="holidayMoveDialogVisible = false">取消</el-button>
-                <el-button type="primary" @click="saveHolidayMove">儲存</el-button>
-              </div>
             </template>
-          </el-dialog>
-        </div>
+
+            <el-form-item label="班表顏色">
+              <div class="color-row">
+                <span class="color-label">底色</span>
+                <el-color-picker v-model="shiftForm.bgColor" :predefine="shiftBgPresets" color-format="hex" :show-alpha="false" />
+                <span class="color-label">文字</span>
+                <el-color-picker v-model="shiftForm.color" :predefine="shiftTextPresets" color-format="hex" :show-alpha="false" />
+                <span class="shift-chip shift-chip--preview" :style="formChip.style" data-test="shift-color-preview">
+                  {{ shiftForm.code || '代碼' }}
+                </span>
+              </div>
+              <div v-if="formChip.lowContrast" class="hr-hint hr-hint--warning" data-test="shift-contrast-warning">
+                文字和底色太接近，排班表上會看不清楚。
+                <el-button link type="primary" data-test="shift-auto-text-color" @click="shiftForm.color = ''">改用自動文字顏色</el-button>
+              </div>
+              <div v-else class="hr-hint">沒有選顏色時由系統自動配色。</div>
+            </el-form-item>
+            <el-form-item label="備註">
+              <el-input v-model="shiftForm.remark" type="textarea" :rows="2" maxlength="200" placeholder="班別說明或注意事項" />
+            </el-form-item>
+          </el-form>
+          <template #footer>
+            <el-button @click="closeShiftDialog()">取消</el-button>
+            <el-button type="primary" :loading="shiftSaving" data-test="shift-save" @click="saveShift">儲存</el-button>
+          </template>
+        </el-dialog>
       </el-tab-pane>
 
+      <!-- 3) 全公司的國定假日挪移 -->
+      <el-tab-pane name="holiday-move" label="國定假日挪移">
+        <div class="hr-toolbar">
+          <span class="toolbar-note" data-test="holiday-move-hint">
+            此處為全公司統一調移（可跨月）；個別員工的調移需本人同意，請在排班頁「國定假日休假」的「個人調移」登記。
+          </span>
+          <span class="hr-toolbar__spacer" />
+          <el-button type="primary" data-test="holiday-move-add" @click="openHolidayMoveDialog()">新增挪移</el-button>
+        </div>
+
+        <el-table
+          v-loading="holidayMoveLoading"
+          :data="holidayMoveList"
+          class="data-table"
+          data-test="holiday-move-table"
+          empty-text="尚未設定全公司的國定假日挪移；需要時請按右上角「新增挪移」"
+        >
+          <el-table-column label="原國定假日" min-width="200">
+            <template #default="{ row }">{{ formatMoveDate(row.sourceDate) }} {{ holidayNameOf(row.sourceDate) }}</template>
+          </el-table-column>
+          <el-table-column label="改放這一天" width="160">
+            <template #default="{ row }">{{ formatMoveDate(row.targetDate) }}</template>
+          </el-table-column>
+          <el-table-column prop="reason" label="原因" min-width="200" show-overflow-tooltip />
+          <el-table-column label="協議資料" min-width="220">
+            <template #default="{ row }">
+              <!-- 調移國定假日一律需要勞資會議（或工會）同意；舊資料沒有填的要補上 -->
+              <el-tag v-if="!row.agreementReference || !row.agreementDate" type="warning" size="small" disable-transitions data-test="holiday-move-missing-agreement">
+                缺少協議資料
+              </el-tag>
+              <span v-else class="agreement-info">{{ row.agreementReference }}（{{ toApiDate(row.agreementDate).replace(/-/g, '/') }}）</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="操作" width="150" :fixed="actionColumnFixed">
+            <template #default="{ row, $index }">
+              <el-button size="small" data-test="holiday-move-edit" @click="openHolidayMoveDialog($index)">編輯</el-button>
+              <el-button
+                size="small"
+                type="danger"
+                plain
+                :loading="deletingMoveId === row._id"
+                data-test="holiday-move-delete"
+                @click="deleteHolidayMove($index)"
+              >
+                刪除
+              </el-button>
+            </template>
+          </el-table-column>
+        </el-table>
+
+        <el-dialog
+          v-model="holidayMoveDialogVisible"
+          :title="holidayMoveEditIndex === null ? '新增國定假日挪移' : '編輯國定假日挪移'"
+          :width="dialogWidth(520)"
+          class="form-dialog"
+          :close-on-click-modal="false"
+        >
+          <el-form :model="holidayMoveForm" label-width="110px" class="dialog-form" @submit.prevent>
+            <el-form-item label="原國定假日" required>
+              <el-select
+                v-model="holidayMoveForm.sourceDate"
+                placeholder="選擇國定假日"
+                filterable
+                style="width: 100%"
+                no-data-text="行事曆上沒有國定假日，請先到「行事曆設定」建立年度行事曆"
+                data-test="holiday-move-source"
+              >
+                <el-option
+                  v-for="holiday in movableHolidayOptions"
+                  :key="holiday._id || holiday.date"
+                  :label="`${formatMoveDate(holiday.date)} ${holiday.name || holiday.desc || ''}`"
+                  :value="toApiDate(holiday.date)"
+                />
+              </el-select>
+              <div class="hr-hint">只能選行事曆上的國定假日（公務機關補假、調整放假不是國定假日）。</div>
+            </el-form-item>
+            <el-form-item label="改放這一天" required>
+              <el-date-picker
+                v-model="holidayMoveForm.targetDate"
+                type="date"
+                value-format="YYYY-MM-DD"
+                format="YYYY/MM/DD"
+                style="width: 100%"
+                data-test="holiday-move-target"
+              />
+            </el-form-item>
+            <el-form-item label="同意文件編號" required>
+              <el-input v-model="holidayMoveForm.agreementReference" maxlength="200" data-test="holiday-move-agreement-reference" />
+              <div class="hr-hint">工會或勞資會議同意調移的文號。</div>
+            </el-form-item>
+            <el-form-item label="同意日期" required>
+              <el-date-picker
+                v-model="holidayMoveForm.agreementDate"
+                type="date"
+                value-format="YYYY-MM-DD"
+                format="YYYY/MM/DD"
+                style="width: 100%"
+              />
+            </el-form-item>
+            <el-form-item label="原因">
+              <el-input v-model="holidayMoveForm.reason" type="textarea" :rows="2" maxlength="500" show-word-limit />
+            </el-form-item>
+          </el-form>
+          <template #footer>
+            <el-button @click="holidayMoveDialogVisible = false">取消</el-button>
+            <el-button type="primary" :loading="holidayMoveSaving" data-test="holiday-move-save" @click="saveHolidayMove">儲存</el-button>
+          </template>
+        </el-dialog>
+      </el-tab-pane>
     </el-tabs>
   </div>
 </template>
 
 <script setup>
 import { computed, ref, onMounted, watch } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { apiFetch } from '../../api'
 import { getToken } from '../../utils/tokenService'
-import { buildShiftStyle } from '../../utils/shiftColors'
 import { currentTaipeiYear, statutoryCountOfYear } from '../../utils/companyCalendar'
+import { describeShiftTime } from '../../utils/scheduleFormatting'
+import {
+  breakComesFromWindows,
+  crossesMidnight,
+  formatHours,
+  resolveCrossDayFlag,
+  shiftBreakMinutes,
+  shiftChipAppearance,
+  shiftSpanMinutes,
+  shiftWorkMinutes,
+  timeToMinutes,
+  validateWorkShiftTimes
+} from '../../utils/shiftTime'
+import { useIsMobile } from '../../utils/useIsMobile'
+import PageHeader from '../PageHeader.vue'
 import CompanyCalendarPanel from './CompanyCalendarPanel.vue'
 import {
   SHIFT_SEMANTIC_OPTIONS,
@@ -487,21 +426,53 @@ import {
 const activeTab = ref('calendar')
 const timeFormat = 'HH:mm'
 
+// 手機上操作欄不固定在右側（固定欄會蓋住其他欄位，表格改成整個左右捲動）
+const isMobile = useIsMobile()
+const actionColumnFixed = computed(() => (isMobile.value ? false : 'right'))
+
+// 對話框寬度：手機上不超出螢幕
+// 手機寬度由共用樣式（page.css 的 .el-dialog 規則）限制，這裡只寫桌機寬度
+const dialogWidth = (px) => `${px}px`
+
 // =========== 1) 年度行事曆（CompanyCalendarPanel）與國定假日挪移 ===========
 // 行事曆的新增、修改、核定都在 CompanyCalendarPanel；這裡只需要今年的國定假日數量與可挪移的國定假日
 const calendarYears = ref([])
 const movableHolidayOptions = ref([])
 const holidayMoveList = ref([])
+const holidayMoveLoading = ref(false)
+const holidayMoveSaving = ref(false)
+const deletingMoveId = ref('')
 const holidayMoveDialogVisible = ref(false)
-let holidayMoveEditIndex = null
+const holidayMoveEditIndex = ref(null)
 
 const statutoryThisYear = computed(() => statutoryCountOfYear(calendarYears.value, currentTaipeiYear()))
+
+// 伺服器對挪移的檢查訊息有些是英文，換成畫面上的說法
+const HOLIDAY_MOVE_ERROR_MESSAGES = {
+  'sourceDate must reference a statutory holiday': '原國定假日必須是行事曆上的國定假日',
+  'targetDate is already a holiday': '改放的那一天已經是假日（國定假日、指定應放假日或公務機關補假），請改選其他日子',
+  'targetDate must differ from sourceDate': '改放的日期不能和原國定假日同一天',
+  'national holiday moves must stay within 366 days': '改放的日期不能和原國定假日相差超過一年',
+  'labor agreement reference and date are required': '請填寫同意文件編號與同意日期',
+  'sourceDate and targetDate must be provided together': '請選擇原國定假日與改放的日期',
+  'sourceDate and targetDate must be valid dates': '日期格式不正確',
+  'makeup holiday must be explicitly confirmed': '這筆舊資料勾選了「安排補班」但沒有確認，請聯絡系統管理員'
+}
+
+function holidayMoveErrorMessage(message, fallback) {
+  const text = String(message || '')
+  if (HOLIDAY_MOVE_ERROR_MESSAGES[text]) return HOLIDAY_MOVE_ERROR_MESSAGES[text]
+  // 同一個國定假日只能有一筆全公司挪移（資料庫的唯一索引）
+  if (/E11000|duplicate key/i.test(text)) return '這個國定假日已經設定過挪移，請直接編輯原本那一筆'
+  return text || fallback
+}
 
 const createHolidayMoveForm = () => ({
   sourceDate: '',
   targetDate: '',
   reason: '',
-  // 調移國定假日一律需要協議資料（保留欄位相容舊資料）
+  // 以下三個是舊欄位：調移一律需要協議資料（needSignature 固定為 true）；「安排補班」沒有任何功能讀取，
+  // 畫面不再顯示，儲存時照原值送回，不會清掉舊資料
   needSignature: true,
   needMakeup: false,
   agreementReference: '',
@@ -512,6 +483,21 @@ const holidayMoveForm = ref(createHolidayMoveForm())
 
 function toApiDate(value) {
   return String(value || '').slice(0, 10).replace(/\//g, '-')
+}
+
+const WEEKDAY_LABELS = ['日', '一', '二', '三', '四', '五', '六']
+
+// 'YYYY-MM-DD' -> 'YYYY/MM/DD（三）'；日期是台灣的日曆日，直接用字串算星期，不經過瀏覽器時區
+function formatMoveDate(value) {
+  const key = toApiDate(value)
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(key)) return key.replace(/-/g, '/')
+  const weekday = new Date(`${key}T00:00:00.000Z`).getUTCDay()
+  return `${key.replace(/-/g, '/')}（${WEEKDAY_LABELS[weekday]}）`
+}
+
+function holidayNameOf(dateKey) {
+  const match = movableHolidayOptions.value.find((holiday) => holiday.date === toApiDate(dateKey))
+  return match?.name || match?.desc || ''
 }
 
 function onCalendarYearsLoaded(years) {
@@ -534,21 +520,27 @@ async function fetchMovableHolidays() {
 }
 
 async function fetchHolidayMoves() {
-  const res = await apiFetch('/api/holiday-move-settings')
-  if (!res.ok) return
-  const data = await res.json()
-  holidayMoveList.value = (Array.isArray(data) ? data : [])
-    .filter((item) => item.sourceDate && item.targetDate)
-    .map((item) => ({
-      ...item,
-      sourceDate: toApiDate(item.sourceDate),
-      targetDate: toApiDate(item.targetDate),
-      agreementDate: item.agreementDate ? toApiDate(item.agreementDate) : ''
-    }))
+  holidayMoveLoading.value = true
+  try {
+    const res = await apiFetch('/api/holiday-move-settings')
+    if (!res.ok) return
+    const data = await res.json()
+    holidayMoveList.value = (Array.isArray(data) ? data : [])
+      .filter((item) => item.sourceDate && item.targetDate)
+      .map((item) => ({
+        ...item,
+        sourceDate: toApiDate(item.sourceDate),
+        targetDate: toApiDate(item.targetDate),
+        agreementDate: item.agreementDate ? toApiDate(item.agreementDate) : ''
+      }))
+      .sort((a, b) => a.sourceDate.localeCompare(b.sourceDate))
+  } finally {
+    holidayMoveLoading.value = false
+  }
 }
 
 function openHolidayMoveDialog(index = null) {
-  holidayMoveEditIndex = index
+  holidayMoveEditIndex.value = index
   holidayMoveForm.value = index === null
     ? createHolidayMoveForm()
     : { ...createHolidayMoveForm(), ...holidayMoveList.value[index], needSignature: true }
@@ -556,10 +548,15 @@ function openHolidayMoveDialog(index = null) {
 }
 
 async function saveHolidayMove() {
+  if (holidayMoveSaving.value) return
   const sourceDate = toApiDate(holidayMoveForm.value.sourceDate)
   const targetDate = toApiDate(holidayMoveForm.value.targetDate)
   if (!sourceDate || !targetDate) {
     ElMessage.error('請選擇原國定假日與挪移日期')
+    return
+  }
+  if (sourceDate === targetDate) {
+    ElMessage.error(HOLIDAY_MOVE_ERROR_MESSAGES['targetDate must differ from sourceDate'])
     return
   }
   // 可以跨月（例如 2027-02-28 週日的和平紀念日改到 3/2），但一律要有勞資會議（或工會）同意的文件編號與日期
@@ -570,51 +567,82 @@ async function saveHolidayMove() {
     return
   }
 
-  const editing = holidayMoveEditIndex !== null
-  const current = editing ? holidayMoveList.value[holidayMoveEditIndex] : null
-  const res = await apiFetch(
-    editing ? `/api/holiday-move-settings/${current._id}` : '/api/holiday-move-settings',
-    {
-      method: editing ? 'PUT' : 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        enableHolidayMove: true,
-        sourceDate,
-        targetDate,
-        reason: holidayMoveForm.value.reason,
-        needSignature: true,
-        needMakeup: Boolean(holidayMoveForm.value.needMakeup),
-        agreementReference,
-        agreementDate,
-        makeupConfirmed: Boolean(holidayMoveForm.value.makeupConfirmed)
-      })
+  const editing = holidayMoveEditIndex.value !== null
+  const current = editing ? holidayMoveList.value[holidayMoveEditIndex.value] : null
+  holidayMoveSaving.value = true
+  try {
+    const res = await apiFetch(
+      editing ? `/api/holiday-move-settings/${current._id}` : '/api/holiday-move-settings',
+      {
+        method: editing ? 'PUT' : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          enableHolidayMove: true,
+          sourceDate,
+          targetDate,
+          reason: holidayMoveForm.value.reason,
+          needSignature: true,
+          needMakeup: Boolean(holidayMoveForm.value.needMakeup),
+          agreementReference,
+          agreementDate,
+          makeupConfirmed: Boolean(holidayMoveForm.value.makeupConfirmed)
+        })
+      }
+    )
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}))
+      ElMessage.error(holidayMoveErrorMessage(body.error, '國定假日挪移儲存失敗'))
+      return
     }
-  )
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}))
-    ElMessage.error(body.error || '國定假日挪移儲存失敗')
-    return
+    holidayMoveDialogVisible.value = false
+    await fetchHolidayMoves()
+    ElMessage.success('國定假日挪移已儲存')
+  } catch (error) {
+    ElMessage.error(`國定假日挪移儲存失敗（${error?.message || '連線失敗'}）`)
+  } finally {
+    holidayMoveSaving.value = false
   }
-  holidayMoveDialogVisible.value = false
-  await fetchHolidayMoves()
-  ElMessage.success('國定假日挪移已儲存')
 }
 
 async function deleteHolidayMove(index) {
   const current = holidayMoveList.value[index]
-  if (!current?._id) return
-  const res = await apiFetch(`/api/holiday-move-settings/${current._id}`, { method: 'DELETE' })
-  if (!res.ok) {
-    ElMessage.error('國定假日挪移刪除失敗')
+  if (!current?._id || deletingMoveId.value) return
+  try {
+    await ElMessageBox.confirm(
+      `確定刪除這筆挪移嗎？刪除後 ${formatMoveDate(current.sourceDate)} 恢復為國定假日，${formatMoveDate(current.targetDate)} 不再放假。`,
+      '刪除國定假日挪移',
+      { confirmButtonText: '刪除', cancelButtonText: '取消', type: 'warning', confirmButtonClass: 'el-button--danger' }
+    )
+  } catch {
     return
   }
-  await fetchHolidayMoves()
+  deletingMoveId.value = current._id
+  try {
+    const res = await apiFetch(`/api/holiday-move-settings/${current._id}`, { method: 'DELETE' })
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}))
+      ElMessage.error(holidayMoveErrorMessage(body.error, '國定假日挪移刪除失敗'))
+      return
+    }
+    ElMessage.success('國定假日挪移已刪除')
+    await fetchHolidayMoves()
+  } catch (error) {
+    ElMessage.error(`國定假日挪移刪除失敗（${error?.message || '連線失敗'}）`)
+  } finally {
+    deletingMoveId.value = ''
+  }
 }
 
 // =========== 2) 班別管理 (排班用) ===========
 const shiftList = ref([])
+const shiftLoading = ref(false)
+const shiftLoadError = ref('')
+const shiftSaving = ref(false)
+const deletingShiftId = ref('')
 const shiftDialogVisible = ref(false)
-let shiftEditIndex = null
+const shiftEditIndex = ref(null)
+// 開啟對話框當下的內容，用來判斷關閉時有沒有未儲存的變更
+let shiftFormSnapshot = ''
 
 const shiftIdentityConflicts = computed(() => {
   const owners = new Map()
@@ -681,26 +709,16 @@ const createEmptyShiftForm = () => ({
 
 const shiftForm = ref(createEmptyShiftForm())
 
-watch(
-  () => shiftForm.value.isNightShift,
-  (val) => {
-    if (val) {
-      shiftForm.value.hasAllowance = true
-    } else {
-      shiftForm.value.hasAllowance = false
-      shiftForm.value.fixedAllowanceAmount = 0
-    }
-  }
-)
+// 夜班與津貼的連動只在管理者自己切換開關時發生。
+// 以前用 watch：開啟「夜班但沒有津貼」的班別編輯時，會因為表單內容換了而把津貼自動打開
+function onNightShiftChange(enabled) {
+  shiftForm.value.hasAllowance = Boolean(enabled)
+  if (!enabled) shiftForm.value.fixedAllowanceAmount = 0
+}
 
-watch(
-  () => shiftForm.value.hasAllowance,
-  (val) => {
-    if (!val) {
-      shiftForm.value.fixedAllowanceAmount = 0
-    }
-  }
-)
+function onAllowanceChange(enabled) {
+  if (!enabled) shiftForm.value.fixedAllowanceAmount = 0
+}
 
 const semanticOptions = SHIFT_SEMANTIC_OPTIONS
 const WORK_DEFAULT_BREAK_MINUTES = 60
@@ -710,9 +728,35 @@ const isNonWorkForm = computed(() => isNonWorkSemanticType(shiftForm.value.seman
 
 const workShiftTimeWarning = computed(() => (
   isWorkShiftWithoutWorkingTime(shiftForm.value)
-    ? '工作班的上班與下班時間相同（且未勾跨日），等於沒有工作時間，無法儲存。若這是休假、例假、國定假日或請假，請改選班別性質。'
+    ? '工作班的上班與下班時間相同，等於沒有工作時間，無法儲存。24 小時的班請勾選上方選項；休假、例假、國定假日或請假請改選班別性質。'
     : ''
 ))
+
+const sameStartEnd = computed(() => {
+  const start = timeToMinutes(shiftForm.value.startTime)
+  return start !== null && start === timeToMinutes(shiftForm.value.endTime)
+})
+
+const breakFromWindows = computed(() => breakComesFromWindows(shiftForm.value))
+const formBreakMinutes = computed(() => shiftBreakMinutes(shiftForm.value))
+const timeProblems = computed(() => {
+  if (isNonWorkForm.value) return []
+  // 時間都還沒填時不急著列出問題，按儲存時才檢查
+  if (!shiftForm.value.startTime && !shiftForm.value.endTime) return []
+  return validateWorkShiftTimes(shiftForm.value)
+})
+
+// 「08:00–17:00，休息 60 分鐘，實際工時 8 小時」：和伺服器算工時的方式相同
+const computedSummary = computed(() => {
+  const form = shiftForm.value
+  const span = shiftSpanMinutes(form)
+  if (span === null) return '填好上下班時間後顯示工時'
+  if (span === 0) return '上下班時間相同，沒有工作時間'
+  const range = `${form.startTime}–${crossesMidnight(form) ? '次日 ' : ''}${form.endTime}`
+  return `${range}，休息 ${shiftBreakMinutes(form)} 分鐘，實際工時 ${formatHours(shiftWorkMinutes(form))} 小時`
+})
+
+const formChip = computed(() => shiftChipAppearance(shiftForm.value))
 
 // 班別性質預設依代碼／名稱推斷；管理者手動選過、或編輯既有班別之後，就不再自動改動
 const semanticTouched = ref(false)
@@ -752,39 +796,51 @@ watch(
 const isNonWorkRow = (row) => isNonWorkSemanticType(resolveShiftSemanticType(row))
 const semanticLabel = (row) => SHIFT_SEMANTIC_LABELS[resolveShiftSemanticType(row)] || '工作班'
 const semanticTagType = (row) => SHIFT_SEMANTIC_TAG_TYPES[resolveShiftSemanticType(row)] || 'info'
+const chipStyle = (row) => shiftChipAppearance(row).style
 
-const shiftPreviewStyle = computed(() => {
-  const style = buildShiftStyle(shiftForm.value)
-  return {
-    background: `linear-gradient(135deg, ${
-      style['--shift-cell-bg-start'] ?? '#f1f5f9'
-    } 0%, ${style['--shift-cell-bg-end'] ?? '#e2e8f0'} 100%)`,
-    color: style['--shift-text-color'] ?? '#0f172a',
-    borderColor: style['--shift-border-color'] ?? 'rgba(148, 163, 184, 0.45)'
-  }
-})
+function workHoursLabel(row) {
+  const minutes = shiftWorkMinutes(row)
+  return minutes === null ? '—' : `${formatHours(minutes)} 小時`
+}
+
+// 「跨日」旗標和時間對不上（22:00-06:00 沒勾，或 00:00-08:00 有勾）：夜班津貼與報表會算錯，提醒管理者重新儲存
+function crossDayFlagMismatch(row) {
+  if (timeToMinutes(row?.startTime) === null || timeToMinutes(row?.endTime) === null) return false
+  return Boolean(row.crossDay) !== resolveCrossDayFlag(row)
+}
 
 async function fetchShifts() {
-  const res = await apiFetch('/api/shifts', {
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${getToken()}`
+  shiftLoading.value = true
+  try {
+    const res = await apiFetch('/api/shifts', {
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${getToken()}`
+      }
+    })
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}))
+      shiftLoadError.value = `讀取班別失敗${body?.error ? `：${body.error}` : ''}，請重新整理頁面`
+      return
     }
-  })
-  if (res.ok) {
+    shiftLoadError.value = ''
     const data = await res.json()
     shiftList.value = Array.isArray(data?.shifts)
       ? data.shifts
       : Array.isArray(data)
         ? data
         : []
+  } catch (error) {
+    shiftLoadError.value = `讀取班別失敗（${error?.message || '連線失敗'}），請重新整理頁面`
+  } finally {
+    shiftLoading.value = false
   }
 }
-  
+
 function openShiftDialog(index = null) {
   if (index !== null) {
     // 編輯：班別性質以已儲存的值為準（舊資料沒有值時依代碼／名稱推斷），不再自動改動
-    shiftEditIndex = index
+    shiftEditIndex.value = index
     semanticTouched.value = true
     const stored = shiftList.value[index]
     shiftForm.value = {
@@ -794,32 +850,45 @@ function openShiftDialog(index = null) {
     }
   } else {
     // 新增：班別性質先依代碼／名稱自動帶入，管理者手動選擇後即停止自動判斷
-    shiftEditIndex = null
+    shiftEditIndex.value = null
     semanticTouched.value = false
     shiftForm.value = createEmptyShiftForm()
   }
-  if (!Array.isArray(shiftForm.value.breakWindows)) {
-    shiftForm.value.breakWindows = []
-  }
+  // 每一筆休息時段複製一份，取消編輯時不會改到列表上的資料
+  shiftForm.value.breakWindows = Array.isArray(shiftForm.value.breakWindows)
+    ? shiftForm.value.breakWindows.map((item) => ({ start: item?.start || '', end: item?.end || '', label: item?.label || '' }))
+    : []
+  shiftFormSnapshot = JSON.stringify(shiftForm.value)
   shiftDialogVisible.value = true
 }
 
-function formatBreakDuration(shift) {
-  if (shift.breakDuration != null) return `${shift.breakDuration} 分鐘`
-  if (shift.breakMinutes != null) return `${shift.breakMinutes} 分鐘`
-  if (shift.breakTime) return shift.breakTime
-  return '未設定'
+// 關閉班別對話框（取消、右上角 X、Esc）：有未儲存的變更先確認
+async function closeShiftDialog(done) {
+  if (shiftSaving.value) return
+  if (JSON.stringify(shiftForm.value) !== shiftFormSnapshot) {
+    try {
+      await ElMessageBox.confirm('班別內容尚未儲存，確定要關閉嗎？', '尚未儲存', {
+        confirmButtonText: '不儲存並關閉',
+        cancelButtonText: '繼續編輯',
+        type: 'warning'
+      })
+    } catch {
+      return
+    }
+  }
+  if (typeof done === 'function') done()
+  else shiftDialogVisible.value = false
 }
 
 function formatBreakWindows(shift) {
   if (!Array.isArray(shift.breakWindows) || !shift.breakWindows.length) return ''
   return shift.breakWindows
     .map((item) => {
-      const range = [item.start, item.end].filter(Boolean).join('~')
+      const range = [item.start, item.end].filter(Boolean).join('–')
       return item.label ? `${range}（${item.label}）` : range
     })
     .filter(Boolean)
-    .join('，')
+    .join('、')
 }
 
 function addBreakWindow() {
@@ -835,9 +904,9 @@ function normalizeShiftIdentifier(value) {
 }
 
 function findLocalShiftConflict(candidate) {
-  const currentId = shiftEditIndex === null
+  const currentId = shiftEditIndex.value === null
     ? ''
-    : String(shiftList.value[shiftEditIndex]?._id || '')
+    : String(shiftList.value[shiftEditIndex.value]?._id || '')
   const candidateEntries = [
     { label: '班別代碼', value: String(candidate.code || '').trim() },
     { label: '班別名稱', value: String(candidate.name || '').trim() }
@@ -860,8 +929,9 @@ function findLocalShiftConflict(candidate) {
   }
   return ''
 }
-  
+
 async function saveShift() {
+  if (shiftSaving.value) return
   shiftForm.value.code = String(shiftForm.value.code || '').trim()
   shiftForm.value.name = String(shiftForm.value.name || '').trim()
   if (!shiftForm.value.code || !shiftForm.value.name) {
@@ -880,43 +950,112 @@ async function saveShift() {
   } else if (hasNoWorkingTime(form)) {
     ElMessage.error('工作班的上班與下班時間不可相同。若這是休假、例假、國定假日或請假，請改選班別性質。')
     return
+  } else {
+    const problems = validateWorkShiftTimes(form)
+    if (problems.length) {
+      ElMessage.error(problems[0])
+      return
+    }
+    if (form.isNightShift && form.hasAllowance && !(Number(form.fixedAllowanceAmount) > 0)) {
+      ElMessage.error('啟用夜班津貼時，固定津貼金額必須大於 0')
+      return
+    }
+    // 「跨日」旗標由時間決定（只有上下班時間相同時才看管理者的勾選）
+    form.crossDay = resolveCrossDayFlag(form)
   }
-  const method = shiftEditIndex === null ? 'POST' : 'PUT'
+  const method = shiftEditIndex.value === null ? 'POST' : 'PUT'
   let url = '/api/shifts'
   if (method === 'PUT') {
-    const id = shiftList.value[shiftEditIndex]._id
+    const id = shiftList.value[shiftEditIndex.value]._id
     url += `/${id}`
   }
-  const res = await apiFetch(url, {
-    method,
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${getToken()}`
-    },
-    body: JSON.stringify(shiftForm.value)
-  })
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}))
-    ElMessage.error(body.error || '班別儲存失敗')
-    return
+  // 顏色選擇器清除後是 null，伺服器會把 null 當成「沒送」而保留舊顏色；改送空字串才清得掉
+  const payload = {
+    ...form,
+    color: form.color || '',
+    bgColor: form.bgColor || '',
+    breakWindows: (form.breakWindows || []).filter((item) => item.start || item.end || String(item.label || '').trim())
   }
-  await fetchShifts()
-  shiftDialogVisible.value = false
-  ElMessage.success('班別已儲存')
+  shiftSaving.value = true
+  try {
+    const res = await apiFetch(url, {
+      method,
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${getToken()}`
+      },
+      body: JSON.stringify(payload)
+    })
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}))
+      ElMessage.error(body.error || '班別儲存失敗')
+      return
+    }
+    await fetchShifts()
+    shiftDialogVisible.value = false
+    ElMessage.success('班別已儲存')
+  } catch (error) {
+    ElMessage.error(`班別儲存失敗（${error?.message || '連線失敗'}）`)
+  } finally {
+    shiftSaving.value = false
+  }
+}
+
+// 小單位「使用班別」有勾選這個班別的單位名稱（讀不到時回傳空陣列，不擋刪除）
+async function findUnitsUsingShift(shiftId) {
+  try {
+    const res = await apiFetch('/api/sub-departments')
+    if (!res?.ok) return []
+    const data = await res.json().catch(() => [])
+    return (Array.isArray(data) ? data : [])
+      .filter((unit) => Array.isArray(unit?.allowedShiftIds) && unit.allowedShiftIds.map(String).includes(String(shiftId)))
+      .map((unit) => unit.name || unit.code || '')
+      .filter(Boolean)
+  } catch {
+    return []
+  }
 }
 
 async function deleteShift(index) {
-  const id = shiftList.value[index]._id
-  await apiFetch(`/api/shifts/${id}`, {
-    method: 'DELETE',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${getToken()}`
+  const shift = shiftList.value[index]
+  if (!shift?._id || deletingShiftId.value) return
+  deletingShiftId.value = shift._id
+  try {
+    const units = await findUnitsUsingShift(shift._id)
+    const unitNote = units.length
+      ? `小單位「${units.join('、')}」的「使用班別」有勾選這個班別，刪除後請到小單位設定重新選擇。`
+      : ''
+    try {
+      await ElMessageBox.confirm(
+        `確定刪除班別「${shift.name || shift.code}」嗎？已經排進班表的班別不能刪除。${unitNote}`,
+        '刪除班別',
+        { confirmButtonText: '刪除', cancelButtonText: '取消', type: 'warning', confirmButtonClass: 'el-button--danger' }
+      )
+    } catch {
+      return
     }
-  })
-  await fetchShifts()
+    const res = await apiFetch(`/api/shifts/${shift._id}`, {
+      method: 'DELETE',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${getToken()}`
+      }
+    })
+    if (!res.ok) {
+      // 還有班表在用時伺服器會回 409 與原因（幾筆班表、最近一筆的日期）
+      const body = await res.json().catch(() => ({}))
+      ElMessage.error({ message: body.error || '班別刪除失敗', duration: 6000 })
+      return
+    }
+    ElMessage.success('班別已刪除')
+    await fetchShifts()
+  } catch (error) {
+    ElMessage.error(`班別刪除失敗（${error?.message || '連線失敗'}）`)
+  } finally {
+    deletingShiftId.value = ''
+  }
 }
-  
+
 onMounted(() => {
   fetchMovableHolidays()
   fetchShifts()
@@ -925,267 +1064,69 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.shift-schedule-setting {
-  max-width: 1400px;
-  margin: 0 auto;
-  padding: 0;
+.toolbar-note {
+  font-size: 13px;
+  color: var(--hr-gray-500);
 }
 
-/* 頁面標題區域 */
-.page-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  background: linear-gradient(135deg, #164e63 0%, #0891b2 100%);
-  color: white;
-  padding: 32px;
-  border-radius: 16px;
-  margin-bottom: 32px;
-  box-shadow: 0 4px 20px rgba(22, 78, 99, 0.3);
-}
-
-.header-content h1.page-title {
-  font-size: 28px;
-  font-weight: 700;
-  margin: 0 0 8px 0;
-  letter-spacing: 0.5px;
-}
-
-.page-description {
-  font-size: 16px;
-  opacity: 0.9;
-  margin: 0;
-}
-
-.header-stats {
-  display: flex;
-  gap: 32px;
-}
-
-.stat-item {
-  text-align: center;
-}
-
-.stat-number {
-  font-size: 32px;
-  font-weight: 700;
-  margin-bottom: 4px;
-}
-
-.stat-label {
-  font-size: 14px;
-  opacity: 0.8;
-}
-
-/* 標籤頁樣式 */
-.schedule-tabs {
-  background: white;
-  border-radius: 12px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-  overflow: hidden;
-}
-
-.tab-label {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-weight: 500;
-}
-
-.tab-content {
-  padding: 32px;
-}
-
-/* 內容標題 */
-.content-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 24px;
-}
-.header-actions {
-  display: flex;
-  gap: 8px;
-}
-
-.section-title {
-  font-size: 20px;
-  font-weight: 600;
-  color: #1e293b;
-  margin: 0;
-  padding-left: 16px;
-  border-left: 4px solid #10b981;
-}
-
-.add-btn {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 20px;
-  border-radius: 8px;
-  font-weight: 500;
-}
-
-/* 表格樣式 */
-.table-container {
-  background: white;
-  border-radius: 12px;
-  overflow: hidden;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+.tab-alert {
+  margin-bottom: var(--hr-space-sm);
 }
 
 .data-table {
   width: 100%;
 }
 
-/* 日期信息 */
-.date-info {
+/* 班別色塊：和排班表格子同一組顏色（底色、文字、邊框） */
+.shift-identity {
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-weight: 500;
+  gap: 10px;
 }
 
-.holiday-tag {
-  font-weight: 500;
-  padding: 4px 8px;
-  border-radius: 4px;
-}
-
-/* 班別信息 */
-.shift-info {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.shift-icon {
-  width: 32px;
-  height: 32px;
-  border-radius: 6px;
-  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: white;
-  font-size: 14px;
-}
-
-.shift-name {
-  font-weight: 600;
-  color: #1e293b;
-}
-
-.time-range {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-family: 'Courier New', monospace;
-  font-weight: 500;
-}
-
-.break-info {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  color: #334155;
-}
-
-.break-duration {
-  font-weight: 600;
-}
-
-.break-window-list {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.break-window-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.start-time {
-  color: #10b981;
-}
-
-.end-time {
-  color: #f59e0b;
-}
-
-.time-separator {
-  color: #64748b;
-}
-
-.code-tag {
-  font-weight: 600;
-  padding: 4px 8px;
-  border-radius: 4px;
-  background: #e2e8f0;
-  color: #475569;
-}
-
-.shift-color-preview {
-  min-width: 140px;
-  height: 40px;
-  border-radius: 8px;
-  border: 1px solid rgba(148, 163, 184, 0.45);
+.shift-chip {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  min-width: 44px;
+  max-width: 120px;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--hr-gray-300);
+  border-radius: var(--hr-radius-sm);
+  font-size: 13px;
+  font-weight: var(--hr-font-weight-semibold);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-/* 操作按鈕 */
-.action-buttons {
-  display: flex;
-  gap: 8px;
+.shift-chip--preview {
+  min-width: 72px;
+  height: 32px;
 }
 
-.edit-btn, .delete-btn {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  border-radius: 6px;
+.shift-name {
+  font-weight: var(--hr-font-weight-medium);
+  color: var(--hr-gray-800);
+}
+
+.time-range {
+  font-variant-numeric: tabular-nums;
+}
+
+.inline-tag {
+  margin-left: 8px;
+}
+
+.break-window {
   font-size: 12px;
+  color: var(--hr-gray-500);
 }
 
-/* 設定卡片 */
-.settings-card {
-  background: white;
-  border-radius: 12px;
-  padding: 32px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-}
-
-.settings-form {
-  max-width: 800px;
-}
-
-.form-group {
-  background: #f8fafc;
-  padding: 24px;
-  border-radius: 8px;
-  margin-bottom: 24px;
-}
-
-.form-help {
-  font-size: 12px;
-  color: #64748b;
-  margin-top: 4px;
-  line-height: 1.4;
-}
-
-.form-help--warning {
-  color: #b45309;
-}
-
+.muted,
 .shift-not-applicable {
-  color: #94a3b8;
+  color: var(--hr-gray-400);
 }
 
 .shift-type-warning {
@@ -1195,96 +1136,87 @@ onMounted(() => {
   color: #b45309;
 }
 
-.shift-conflict-alert {
-  margin-bottom: 16px;
+.agreement-info {
+  font-size: 13px;
 }
 
-.holiday-move-hint {
-  margin-bottom: 16px;
+/* 對話框 */
+.dialog-form {
+  max-height: 62vh;
+  overflow-y: auto;
+  padding-right: 8px;
 }
 
-.save-settings-btn {
+.dialog-form .hr-hint {
+  width: 100%;
+}
+
+.time-row,
+.color-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
-  padding: 12px 32px;
-  border-radius: 8px;
-  font-weight: 600;
-  font-size: 16px;
+  width: 100%;
 }
 
-/* 對話框樣式 */
-.form-dialog .el-dialog__body {
-  padding: 24px 32px;
+.time-separator {
+  color: var(--hr-gray-500);
 }
 
-.dialog-form {
-  max-height: 60vh;
-  overflow-y: auto;
+.unit,
+.switch-note,
+.color-label {
+  margin-left: 8px;
+  font-size: 13px;
+  color: var(--hr-gray-600);
 }
 
-.dialog-footer {
+.color-label {
+  margin-left: 0;
+}
+
+.allowance-input {
+  margin-left: 12px;
+}
+
+.break-window-list {
   display: flex;
-  justify-content: flex-end;
-  gap: 12px;
-  padding-top: 16px;
-  border-top: 1px solid #e2e8f0;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  width: 100%;
 }
 
-.cancel-btn {
-  padding: 10px 20px;
-  border-radius: 8px;
-}
-
-.save-btn {
+.break-window-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 6px;
-  padding: 10px 20px;
-  border-radius: 8px;
-  font-weight: 500;
+  gap: 8px;
 }
 
-/* 響應式設計 */
-@media (max-width: 768px) {
-  .page-header {
-    flex-direction: column;
-    text-align: center;
-    gap: 20px;
-  }
-  
-  .header-stats {
-    gap: 20px;
-  }
-  
-  .content-header {
-    flex-direction: column;
-    align-items: stretch;
-    gap: 16px;
-  }
-  
-  .tab-content {
-    padding: 16px;
-  }
-  
-  .settings-card {
-    padding: 20px;
-  }
+.break-label-input {
+  width: 150px;
 }
 
-@media (max-width: 480px) {
-  .action-buttons {
-    flex-direction: column;
-    gap: 4px;
-  }
-  
-  .stat-number {
-    font-size: 24px;
-  }
-  
-  .time-range {
-    flex-direction: column;
-    gap: 4px;
+.computed-summary {
+  font-weight: var(--hr-font-weight-medium);
+  color: var(--hr-gray-800);
+  font-variant-numeric: tabular-nums;
+}
+
+.problem-list {
+  width: 100%;
+  margin: 4px 0 0;
+  padding-left: 18px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--hr-error);
+}
+
+@media (max-width: 767px) {
+  .toolbar-note {
+    flex-basis: 100%;
   }
 }
 </style>

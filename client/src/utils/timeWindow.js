@@ -111,21 +111,34 @@ export function parseTimeString(value) {
   return { hour, minute, second }
 }
 
+// 建立 Intl.DateTimeFormat 很花時間，打卡頁會定時對整個月的班表重算打卡時段，
+// 所以每個時區只建一次、之後重複使用（與伺服器 utils/timeWindow.js 相同的做法）
+const dateTimePartsFormatters = new Map()
+
+function getDateTimePartsFormatter(timeZone) {
+  let formatter = dateTimePartsFormatters.get(timeZone)
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat('en-US', {
+      timeZone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hourCycle: 'h23'
+    })
+    dateTimePartsFormatters.set(timeZone, formatter)
+  }
+  return formatter
+}
+
 export function createDateFromParts(parts, timeZone = DEFAULT_TIMEZONE) {
   const { year, month, day, hour = 0, minute = 0, second = 0 } = parts || {}
   if (!year || !month || !day) return null
   const naiveUtc = Date.UTC(year, month - 1, day, hour, minute, second)
   const baseDate = new Date(naiveUtc)
-  const formatter = new Intl.DateTimeFormat('en-US', {
-    timeZone,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    hourCycle: 'h23'
-  })
+  const formatter = getDateTimePartsFormatter(timeZone)
   const mapped = formatter.formatToParts(baseDate).reduce((acc, part) => {
     if (part.type !== 'literal') acc[part.type] = part.value
     return acc
@@ -145,16 +158,7 @@ export function createDateFromParts(parts, timeZone = DEFAULT_TIMEZONE) {
 
 export function getLocalDateParts(date, timeZone = DEFAULT_TIMEZONE) {
   if (!date) return null
-  const formatter = new Intl.DateTimeFormat('en-US', {
-    timeZone,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    hourCycle: 'h23'
-  })
+  const formatter = getDateTimePartsFormatter(timeZone)
   const parts = formatter.formatToParts(new Date(date)).reduce((acc, part) => {
     if (part.type !== 'literal') acc[part.type] = part.value
     return acc
@@ -296,6 +300,10 @@ export function determineActionAvailability({
   const previousMidnight = baseMidnight ? new Date(baseMidnight.getTime() - MS_PER_DAY) : null
   const previousParts = previousMidnight ? getLocalDateParts(previousMidnight, timeZone) : null
   const previousScheduleDate = previousParts ? buildScheduleDate(previousParts) : null
+  // 明天的班表也要看：00:00 開始的大夜班，前一晚（例如 23:50）就在簽到時段內（伺服器也會放行）
+  const nextMidnight = baseMidnight ? new Date(baseMidnight.getTime() + MS_PER_DAY) : null
+  const nextParts = nextMidnight ? getLocalDateParts(nextMidnight, timeZone) : null
+  const nextScheduleDate = nextParts ? buildScheduleDate(nextParts) : null
 
   const disabledAvailability = (reason, extra = {}) => ({
     context: null,
@@ -315,8 +323,24 @@ export function determineActionAvailability({
 
   const todayKey = todayScheduleDate?.getTime()
   const previousKey = previousScheduleDate?.getTime()
+  const nextKey = nextScheduleDate?.getTime()
   const nowMs = now.getTime()
   const resolvedBuffers = normalizeActionBuffers(actionBuffers)
+  const windowOf = (ctx, action) => computeActionWindow(action, ctx.shiftStart, ctx.shiftEnd, resolvedBuffers)
+
+  // 伺服器打卡時只看昨天、今天、明天的班表；其他日子的班不能拿來當「今天的班」
+  const nearbyKeys = [previousKey, todayKey, nextKey].filter(key => key !== undefined)
+  const nearbyContexts = normalized.filter(ctx => nearbyKeys.includes(ctx.scheduleDate.getTime()))
+  // 另一個班（明天 00:00 的大夜班、昨天的跨日班、今天的班）的打卡時段包含現在時，伺服器會改用那一班；
+  // 好幾個班都包含現在時，取時間最接近的（簽到比上班時間、簽退比下班時間）
+  const pickOpenContext = action => {
+    const nominalOf = ctx => (action === 'clockIn' ? ctx.shiftStart : ctx.shiftEnd).getTime()
+    return nearbyContexts
+      .filter(ctx => isWithinWindow(now, windowOf(ctx, action)))
+      .reduce((best, ctx) => (
+        !best || Math.abs(nowMs - nominalOf(ctx)) < Math.abs(nowMs - nominalOf(best)) ? ctx : best
+      ), null)
+  }
 
   const activeContext = normalized.find(ctx => nowMs >= ctx.shiftStart.getTime() && nowMs <= ctx.shiftEnd.getTime())
   const todayContext = normalized.find(ctx => todayKey !== undefined && ctx.scheduleDate.getTime() === todayKey)
@@ -327,10 +351,12 @@ export function determineActionAvailability({
   if (!selected && previousContext) {
     // 今天排休時，前一天跨日班的下班打卡仍然放行；其餘情況一律顯示「今天休假」
     const previousStillOpen = ['clockIn', 'clockOut'].some(action => (
-      isWithinWindow(now, computeActionWindow(action, previousContext.shiftStart, previousContext.shiftEnd, resolvedBuffers))
+      isWithinWindow(now, windowOf(previousContext, action))
     ))
     if (!todayNonWork || previousStillOpen) selected = previousContext
   }
+  // 今天沒有班（或排休），但明天 00:00 的班已經可以簽到
+  if (!selected) selected = pickOpenContext('clockIn') || pickOpenContext('clockOut')
   if (!selected) {
     if (todayNonWork) {
       const reason = describeNonWorkDay(todayNonWork.shift)
@@ -338,19 +364,25 @@ export function determineActionAvailability({
         dayOff: { schedule: todayNonWork.schedule, shift: todayNonWork.shift, reason }
       })
     }
-    selected = normalized[0]
-    if (!selected) return noScheduleAvailability()
+    // 以前會退回用「這個月的第一筆班表」，今天沒排班卻顯示別天的打卡時段；伺服器在這種情況回覆「今日未設定班表」
+    return noScheduleAvailability()
   }
 
   const actions = {}
   ;['clockIn', 'clockOut'].forEach(action => {
-    const window = computeActionWindow(action, selected.shiftStart, selected.shiftEnd, resolvedBuffers)
+    // 選到的班現在不能做這個動作、另一個班的打卡時段卻包含現在：改用那一班（與伺服器相同）
+    let context = selected
+    if (!isWithinWindow(now, windowOf(context, action))) {
+      context = pickOpenContext(action) || selected
+    }
+    const window = windowOf(context, action)
     if (!window) {
       actions[action] = {
         disabled: true,
         reason: '班別尚未設定簽到簽退時間',
         window: null,
-        formatted: null
+        formatted: null,
+        context
       }
       return
     }
@@ -369,8 +401,11 @@ export function determineActionAvailability({
     actions[action] = {
       disabled: !within,
       reason,
+      // before / open / after：畫面用來顯示「幾點開放」或「已截止」
+      phase: within ? 'open' : before ? 'before' : 'after',
       window,
-      formatted
+      formatted,
+      context
     }
   })
 
@@ -378,6 +413,65 @@ export function determineActionAvailability({
     context: selected,
     actions,
     timeZone
+  }
+}
+
+/** 這一班的打卡範圍：最早可簽到 ~ 最晚可簽退（用來判斷哪些打卡記錄屬於這一班，例如跨日班前一晚的簽到） */
+export function computeShiftPunchRange(context, actionBuffers = DEFAULT_ACTION_BUFFERS) {
+  if (!context?.shiftStart || !context?.shiftEnd) return null
+  const clockIn = computeActionWindow('clockIn', context.shiftStart, context.shiftEnd, actionBuffers)
+  const clockOut = computeActionWindow('clockOut', context.shiftStart, context.shiftEnd, actionBuffers)
+  if (!clockIn || !clockOut) return null
+  return { start: clockIn.start, end: clockOut.end }
+}
+
+function recordTime(record) {
+  const time = new Date(record?.timestamp).getTime()
+  return Number.isNaN(time) ? null : time
+}
+
+/**
+ * 從打卡記錄找出這一班已有的簽到／簽退，規則與伺服器 attendanceController.createRecord 一致：
+ * - blocking：同一個動作、時間在該動作的允許時段內、來源不是指紋匯入 → 伺服器會以「重複打卡」擋下
+ * - record：畫面顯示用（簽到取最早、簽退取最晚，任何來源都算）；
+ *   簽到的範圍是「簽到時段開始 ~ 下班時間」，也就是伺服器判斷「簽退前要有簽到」的範圍
+ * records 的 action 是後端的值（clockIn / clockOut），timestamp 可以是 ISO 字串或 Date。
+ */
+export function resolveShiftPunches(records = [], context, actionBuffers = DEFAULT_ACTION_BUFFERS) {
+  const empty = { clockIn: { record: null, blocking: null }, clockOut: { record: null, blocking: null } }
+  if (!context?.shiftStart || !context?.shiftEnd) return empty
+  const clockInWindow = computeActionWindow('clockIn', context.shiftStart, context.shiftEnd, actionBuffers)
+  const clockOutWindow = computeActionWindow('clockOut', context.shiftStart, context.shiftEnd, actionBuffers)
+  if (!clockInWindow || !clockOutWindow) return empty
+
+  const list = Array.isArray(records) ? records : []
+  const between = (record, start, end) => {
+    const time = recordTime(record)
+    return time !== null && time >= start.getTime() && time <= end.getTime()
+  }
+  const earliest = (best, record) => (!best || recordTime(record) < recordTime(best) ? record : best)
+  const latest = (best, record) => (!best || recordTime(record) > recordTime(best) ? record : best)
+  const clockIns = list.filter(record => record?.action === 'clockIn')
+  const clockOuts = list.filter(record => record?.action === 'clockOut')
+  const notImported = record => record?.source !== 'import'
+
+  return {
+    clockIn: {
+      record: clockIns
+        .filter(record => between(record, clockInWindow.start, context.shiftEnd))
+        .reduce(earliest, null),
+      blocking: clockIns
+        .filter(record => notImported(record) && isWithinWindow(record.timestamp, clockInWindow))
+        .reduce(earliest, null)
+    },
+    clockOut: {
+      record: clockOuts
+        .filter(record => isWithinWindow(record.timestamp, clockOutWindow))
+        .reduce(latest, null),
+      blocking: clockOuts
+        .filter(record => notImported(record) && isWithinWindow(record.timestamp, clockOutWindow))
+        .reduce(latest, null)
+    }
   }
 }
 

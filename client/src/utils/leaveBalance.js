@@ -45,9 +45,14 @@ export function formatDaysAndHours(hours) {
   return `${sign}${days} 天 ${trimNumber(rest)} 小時`
 }
 
-/** 40 -> '40 小時（5 天）'、44 -> '44 小時（5 天 4 小時）'；給表格與訊息用，時數永遠在前 */
+/**
+ * 40 -> '40 小時（5 天）'、44 -> '44 小時（5 天 4 小時）'；給表格與訊息用，時數永遠在前。
+ * 不滿一天（或 0）時括號裡只會重複同一個時數，所以只寫時數：4 -> '4 小時'（以前是「4 小時（4 小時）」）
+ */
 export function formatHoursWithDays(hours) {
   if (hours === null || hours === undefined) return '—'
+  const number = Number(hours)
+  if (!Number.isFinite(number) || Math.abs(number) < DAY_HOURS) return formatHours(hours)
   return `${formatHours(hours)}（${formatDaysAndHours(hours)}）`
 }
 
@@ -89,6 +94,10 @@ export function matchBalanceItem(items, typedText) {
 }
 
 const toNumber = (value) => (Number.isFinite(Number(value)) ? Number(value) : 0)
+
+// 特休、其他假別的「可請時數」：可用時數（剩餘 - 簽核中），與伺服器送出時的檢查相同
+// （伺服器以前特休只看剩餘時數，所以舊資料沒有 availableHours 時退回剩餘時數）
+const availableBasis = (item) => toNumber(item.availableHours ?? item.remainingHours)
 
 /**
  * 這次申請 requestedHours 小時會怎樣：回傳 { level, text, exceeded, blocking, remainingAfter }。
@@ -137,7 +146,7 @@ export function evaluateRequest(item, items, requestedHours) {
       if (over > 0) reasons.push(`${name}每次最多 ${formatHours(item.quotaHours)}，本次申請 ${formatHours(requested)}，超出 ${formatHours(over)}`)
     }
   } else if (item.quotaHours != null && item.availableHours != null && item.status !== 'manual') {
-    const basis = item.source === 'employee' ? toNumber(item.remainingHours) : toNumber(item.availableHours)
+    const basis = availableBasis(item)
     remainingAfter = Math.round((basis - requested) * 100) / 100
     if (requested > basis) {
       const used = `已使用 ${formatHours(item.usedHours)}${toNumber(item.pendingHours) > 0 ? `、簽核中 ${formatHours(item.pendingHours)}` : ''}`
@@ -182,10 +191,41 @@ export function evaluateRequest(item, items, requestedHours) {
       exceeded: false,
       blocking: false,
       remainingAfter,
-      text: `${name}：目前可請 ${formatHoursWithDays(item.source === 'employee' ? item.remainingHours : item.availableHours)}；本次申請 ${formatHours(requested)}，核准後剩 ${formatHoursWithDays(remainingAfter)}`,
+      text: `${name}：目前可請 ${formatHoursWithDays(Math.max(availableBasis(item), 0))}；本次申請 ${formatHours(requested)}，核准後剩 ${formatHoursWithDays(remainingAfter)}`,
     }
   }
   return { level: 'info', exceeded: false, blocking: false, remainingAfter: null, text: `${name}：本次申請 ${formatHours(requested)}` }
+}
+
+/**
+ * 一個假別的一句話餘額（填請假單時顯示在假別欄位下方，完整的表格收合在表單下面）：
+ * 「特休 可請 40 小時（5 天）」「調休 可請 8 小時（1 天）」「婚假 每次上限 64 小時」「公假 不設上限」
+ */
+export function describeBalanceBrief(item) {
+  if (!item) return ''
+  const name = item.name
+  if (item.status === 'unconfigured') return `${name} 尚未設定`
+  if (item.status === 'ineligible') return `${name} ${STATUS_LABELS.ineligible}`
+  if (item.source === 'bank') return `${name} 可請 ${formatBankHours(Math.max(toNumber(item.availableHours), 0))}`
+  if (item.period === 'event') return item.quotaHours == null ? `${name} 不設上限` : `${name} 每次上限 ${formatHours(item.quotaHours)}`
+  if (item.quotaHours == null || item.remainingHours == null) return `${name} 不設上限`
+  // 與送出時的檢查相同：特休與其他假別都看可用時數（剩餘 - 簽核中的申請）
+  const basis = availableBasis(item)
+  return `${name} 可請 ${formatHoursWithDays(Math.max(basis, 0))}`
+}
+
+/**
+ * 假別欄位下方要列哪些假別：選了假別就只列那一個（併入其他假別計算的再加上被併入的假別）；
+ * 還沒選時列特休與調休（最常用、也是超額一律不能送出的兩種）。
+ */
+export function pickBriefItems(items, typedText) {
+  const list = Array.isArray(items) ? items : []
+  const matched = matchBalanceItem(list, typedText)
+  if (matched) {
+    const parent = matched.countsAgainst ? list.find(entry => entry.key === matched.countsAgainst.key) : null
+    return parent ? [matched, parent] : [matched]
+  }
+  return list.filter(item => item.source === 'employee' || item.source === 'bank')
 }
 
 /** 一列餘額的「已超出 N 小時」說明（remaining 為負數時） */

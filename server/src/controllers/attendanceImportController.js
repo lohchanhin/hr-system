@@ -34,12 +34,27 @@ const SUPPORTED_ACTIONS = new Set(['clockIn', 'clockOut', 'outing', 'breakIn'])
 const DEFAULT_TIMEZONE = 'Asia/Taipei'
 
 const PREVIEW_SAMPLE_LIMIT = 50
+// 回傳「有問題的列」（失敗、重複、找不到員工）的上限；超過時回應帶 issuesTruncated: true
+const ISSUE_ROW_LIMIT = 5000
+const RAW_CELL_DISPLAY_LENGTH = 60
 const INSERT_BATCH_SIZE = 500
+// 一批裡超過這麼多位員工、時間又橫跨超過這麼久，比對既有打卡時改成逐列查自己那一分鐘（見 flushPending）
+const SCATTERED_BATCH_EMPLOYEES = 5
+const SCATTERED_BATCH_SPAN_MS = 3 * 24 * 60 * 60 * 1000
 
 const ENCODING_UTF8 = 'utf8'
 const ENCODING_UTF8_BOM = 'utf8-bom'
 const ENCODING_UTF16LE = 'utf16le'
 const ENCODING_UTF16BE = 'utf16be'
+
+// 匯入途中寫入（或比對既有打卡）失敗：和「檔案讀不了」分開回報
+class AttendanceStoreError extends Error {
+  constructor(cause) {
+    super('考勤資料寫入失敗')
+    this.name = 'AttendanceStoreError'
+    this.cause = cause
+  }
+}
 
 class MissingColumnError extends Error {
   constructor(columns) {
@@ -47,6 +62,17 @@ class MissingColumnError extends Error {
     this.name = 'MissingColumnError'
     this.columns = columns
   }
+}
+
+/* 錯誤說明裡引用的儲存格原文（太長的截斷）；空白回傳空字串 */
+function displayRawCell(value) {
+  if (value === null || value === undefined) return ''
+  let text
+  if (value instanceof Date) text = Number.isNaN(value.getTime()) ? '無效的日期' : value.toISOString()
+  else if (typeof value === 'object') text = JSON.stringify(value)
+  else text = String(value)
+  text = text.replace(/\s+/g, ' ').trim()
+  return text.length > RAW_CELL_DISPLAY_LENGTH ? `${text.slice(0, RAW_CELL_DISPLAY_LENGTH)}…` : text
 }
 
 function parseJsonField(value, fallback) {
@@ -62,6 +88,10 @@ function parseJsonField(value, fallback) {
 
 function toPlainCellValue(cell) {
   if (!cell) return ''
+  // Excel 的日期時間儲存格：ExcelJS 給的是 Date（以 UTC 表示檔案裡的時間），直接交給 parseTimestamp。
+  // 以前先取 cell.text，日期儲存格會變成「Tue Nov 10 2026 16:00:00 GMT+0800 (...)」這種字串，每一列都回「CHECKTIME 格式不支援」
+  if (cell.value instanceof Date) return cell.value
+  if (cell.value && typeof cell.value === 'object' && cell.value.result instanceof Date) return cell.value.result
   if (cell.text !== undefined) return String(cell.text).trim()
   if (cell.value === null || cell.value === undefined) return ''
   if (cell.value instanceof Date) return cell.value
@@ -109,6 +139,21 @@ function detectBufferEncoding(buffer) {
   return ENCODING_UTF8
 }
 
+// 內容是有效的 UTF-8（含純英數）回傳 null；不是的話當成 Big5 解碼，解不出來（執行環境沒有 Big5）也回傳 null，維持原本的讀法
+function decodeBig5WhenNotUtf8(buffer) {
+  try {
+    new TextDecoder('utf-8', { fatal: true }).decode(buffer)
+    return null
+  } catch {
+    // 不是 UTF-8
+  }
+  try {
+    return new TextDecoder('big5').decode(buffer)
+  } catch {
+    return null
+  }
+}
+
 function createUploadStreamFactory(buffer, { isCsv }) {
   if (!isCsv) {
     return () => Readable.from([buffer])
@@ -129,6 +174,13 @@ function createUploadStreamFactory(buffer, { isCsv }) {
   let payload = buffer
   if (encoding === ENCODING_UTF8_BOM) {
     payload = buffer.slice(3)
+  } else {
+    // 沒有 BOM、內容又不是有效的 UTF-8：台灣的考勤機與 Excel「另存 CSV」常見的是 Big5（ANSI）。
+    // 以前一律當 UTF-8 讀，中文變成亂碼：姓名對不到員工、「上班簽到」無法判斷，「下午 05:30」還會被當成清晨 05:30 存進去
+    const big5Text = decodeBig5WhenNotUtf8(buffer)
+    if (big5Text !== null) {
+      return () => Readable.from([big5Text])
+    }
   }
 
   return () => {
@@ -138,21 +190,33 @@ function createUploadStreamFactory(buffer, { isCsv }) {
   }
 }
 
+// 每個時區的 Intl.DateTimeFormat 只建一次：每一列（而且檔案會讀兩遍）都重建的話，5 萬筆的檔案光建 formatter 就要好幾秒
+const zoneFormatters = new Map()
+
+function getZoneFormatter(timeZone) {
+  let formatter = zoneFormatters.get(timeZone)
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat('en-US', {
+      timeZone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hourCycle: 'h23'
+    })
+    zoneFormatters.set(timeZone, formatter)
+  }
+  return formatter
+}
+
 function createDateFromParts(parts, timeZone) {
   const { year, month, day, hour = 0, minute = 0, second = 0 } = parts
   if (!year || !month || !day) return null
   const naiveUtc = Date.UTC(year, month - 1, day, hour, minute, second)
   const baseDate = new Date(naiveUtc)
-  const formatter = new Intl.DateTimeFormat('en-US', {
-    timeZone,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    hour12: false
-  })
+  const formatter = getZoneFormatter(timeZone)
   const partsResult = formatter.formatToParts(baseDate).reduce((acc, part) => {
     if (part.type !== 'literal') acc[part.type] = part.value
     return acc
@@ -161,7 +225,7 @@ function createDateFromParts(parts, timeZone) {
     Number(partsResult.year),
     Number(partsResult.month) - 1,
     Number(partsResult.day),
-    Number(partsResult.hour),
+    Number(partsResult.hour) === 24 ? 0 : Number(partsResult.hour),
     Number(partsResult.minute),
     Number(partsResult.second)
   )
@@ -176,13 +240,34 @@ function processHourWithAmPm(hour, ampmIndicator) {
   }
   if (ampmIndicator === 'AM' && hourNumber === 12) {
     hourNumber = 0
-  } else if (ampmIndicator === 'PM' && hourNumber !== 12) {
+  } else if (ampmIndicator === 'PM' && hourNumber < 12) {
+    // 已經是 24 小時制又帶「下午」（例如 下午 17:30）時不再加 12，否則會變成隔天清晨
     hourNumber += 12
   }
   return hourNumber
 }
 
+const DATE_TIME_RANGE_ERROR = '打卡時間的日期或時間超出範圍'
+
+// 月、日、時、分、秒都要在合理範圍內。Date.UTC 會自動進位（2/30 變 3/2、13 月變隔年 1 月、24:00 變隔天），
+// 不檢查的話打錯的日期會被悄悄存成另一天的打卡
+function isValidDateTimeParts(year, month, day, hour, minute, second) {
+  if (![year, month, day, hour, minute, second].every(Number.isInteger)) return false
+  if (year < 1900 || year > 2200 || month < 1 || month > 12 || day < 1) return false
+  if (day > new Date(Date.UTC(year, month, 0)).getUTCDate()) return false
+  return hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59 && second >= 0 && second <= 59
+}
+
+// 民國年（2 到 3 位數）換成西元年
+function toGregorianYear(year) {
+  const value = Number(year)
+  return String(year).length <= 3 ? value + 1911 : value
+}
+
 function createDateResult(year, month, day, hour, minute, second, timeZone) {
+  if (!isValidDateTimeParts(Number(year), Number(month), Number(day), Number(hour), Number(minute), second ? Number(second) : 0)) {
+    return { value: null, error: DATE_TIME_RANGE_ERROR }
+  }
   return {
     value: createDateFromParts(
       {
@@ -201,20 +286,43 @@ function createDateResult(year, month, day, hour, minute, second, timeZone) {
 
 function parseDateTimeString(value, timeZone) {
   if (typeof value !== 'string') {
-    return { value: null, error: 'CHECKTIME 不是字串' }
+    return { value: null, error: '打卡時間不是文字' }
   }
   const text = value.trim()
   if (!text) {
-    return { value: null, error: 'CHECKTIME 為空字串' }
+    return { value: null, error: '打卡時間是空白' }
   }
 
-  const textWithoutT = text.replace('T', ' ')
+  // 20261110083000／202611100830（考勤機常見的緊湊格式）：長度 12 或 14 的純數字，不是 Excel 序號
+  const compactMatch = text.match(/^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})?$/)
+  if (compactMatch) {
+    const [, year, month, day, hour, minute, second] = compactMatch
+    return createDateResult(year, month, day, Number(hour), minute, second, timeZone)
+  }
+
+  // 民國 115 年 11 月 10 日、2026年11月10日、115.11.10、2026.11.10 先整理成 年/月/日；小數秒（08:00:00.000）捨去
+  const normalizedText = text
+    .replace(/^(?:中華民國|民國)\s*/, '')
+    .replace(/^(\d{2,4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日?/, '$1/$2/$3 ')
+    .replace(/^(\d{2,4})\.(\d{1,2})\.(\d{1,2})(?=\s|T|$)/, '$1/$2/$3')
+    .replace(/(:\d{2}:\d{2})[.,]\d{1,6}/, '$1')
+    .replace(/\s+/g, ' ')
+    .trim()
+  const textWithoutT = normalizedText.replace('T', ' ')
+
+  // 只有日期（沒有時間）：當天 00:00。以前交給 new Date() 解析，結果會隨伺服器的時區不同（台灣時區的主機上 2026/11/10 變成前一天 16:00）
+  const dateOnlyMatch = textWithoutT.match(/^(\d{3,4})[-/](\d{1,2})[-/](\d{1,2})$/)
+  if (dateOnlyMatch) {
+    const [, year, month, day] = dateOnlyMatch
+    return createDateResult(toGregorianYear(year), month, day, 0, '0', '0', timeZone)
+  }
 
   const ampmMatch = textWithoutT.match(
-    /^(?<year>\d{4})[-/](?<month>\d{1,2})[-/](?<day>\d{1,2})\s*(?:(?<prefix>上午|下午)\s*)?(?<hour>\d{1,2}):(?<minute>\d{2})(?::(?<second>\d{2}))?\s*(?<suffix>上午|下午|AM|PM)?$/i
+    /^(?<year>\d{3,4})[-/](?<month>\d{1,2})[-/](?<day>\d{1,2})\s*(?:(?<prefix>上午|下午)\s*)?(?<hour>\d{1,2}):(?<minute>\d{2})(?::(?<second>\d{2}))?\s*(?<suffix>上午|下午|AM|PM)?$/i
   )
   if (ampmMatch?.groups) {
-    const { year, month, day, hour, minute, second, prefix, suffix } = ampmMatch.groups
+    const { month, day, hour, minute, second, prefix, suffix } = ampmMatch.groups
+    const year = toGregorianYear(ampmMatch.groups.year)
     const indicator = prefix ?? suffix
     let normalizedIndicator = null
     if (indicator) {
@@ -225,7 +333,7 @@ function parseDateTimeString(value, timeZone) {
 
     const hourNumber = processHourWithAmPm(hour, normalizedIndicator)
     if (hourNumber === null) {
-      return { value: null, error: 'CHECKTIME 時間數值無效' }
+      return { value: null, error: '打卡時間的時、分不正確' }
     }
 
     return createDateResult(year, month, day, hourNumber, minute, second, timeZone)
@@ -237,10 +345,11 @@ function parseDateTimeString(value, timeZone) {
   // - Allows spaces before and after the indicator for flexibility
   // - This catches cases where encoding issues corrupt Chinese characters
   const flexibleMatch = textWithoutT.match(
-    /^(?<year>\d{4})[-/](?<month>\d{1,2})[-/](?<day>\d{1,2})\s+(?<indicator>[^\d\s:]+)?\s*(?<hour>\d{1,2}):(?<minute>\d{2})(?::(?<second>\d{2}))?$/
+    /^(?<year>\d{3,4})[-/](?<month>\d{1,2})[-/](?<day>\d{1,2})\s+(?<indicator>[^\d\s:]+)?\s*(?<hour>\d{1,2}):(?<minute>\d{2})(?::(?<second>\d{2}))?$/
   )
   if (flexibleMatch?.groups) {
-    const { year, month, day, hour, minute, second, indicator } = flexibleMatch.groups
+    const { month, day, hour, minute, second, indicator } = flexibleMatch.groups
+    const year = toGregorianYear(flexibleMatch.groups.year)
     let normalizedIndicator = null
     
     if (indicator) {
@@ -267,7 +376,7 @@ function parseDateTimeString(value, timeZone) {
 
     const hourNumber = processHourWithAmPm(hour, normalizedIndicator)
     if (hourNumber === null) {
-      return { value: null, error: 'CHECKTIME 時間數值無效' }
+      return { value: null, error: '打卡時間的時、分不正確' }
     }
 
     return createDateResult(year, month, day, hourNumber, minute, second, timeZone)
@@ -277,92 +386,59 @@ function parseDateTimeString(value, timeZone) {
   if (hasTimezone) {
     const parsed = new Date(text)
     if (Number.isNaN(parsed.getTime())) {
-      return { value: null, error: 'CHECKTIME 含時區但格式不正確' }
+      return { value: null, error: '打卡時間含時區但格式不正確' }
     }
     return { value: parsed, error: null }
   }
 
-  const isoCandidate = text.replace(' ', 'T')
-  const parsedIso = new Date(isoCandidate)
-  if (!Number.isNaN(parsedIso.getTime())) {
-    const parts = {
-      year: parsedIso.getUTCFullYear(),
-      month: parsedIso.getUTCMonth() + 1,
-      day: parsedIso.getUTCDate(),
-      hour: parsedIso.getUTCHours(),
-      minute: parsedIso.getUTCMinutes(),
-      second: parsedIso.getUTCSeconds()
-    }
-    return {
-      value: createDateFromParts(parts, timeZone),
-      error: null
-    }
-  }
-
-  const standardMatch = text.match(
-    /^(\d{4})[-/](\d{1,2})[-/](\d{1,2})(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?)?$/
-  )
-  if (standardMatch) {
-    const [, year, month, day, hour = '0', minute = '0', second = '0'] = standardMatch
-    return {
-      value: createDateFromParts(
-        {
-          year: Number(year),
-          month: Number(month),
-          day: Number(day),
-          hour: Number(hour),
-          minute: Number(minute),
-          second: Number(second)
-        },
-        timeZone
-      ),
-      error: null
-    }
-  }
-
-  const usMatch = text.match(
-    /^(\d{1,2})[-/](\d{1,2})[-/](\d{4})(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?)?$/
+  const usMatch = textWithoutT.match(
+    /^(\d{1,2})[-/](\d{1,2})[-/](\d{4})(?: (\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM|上午|下午)?)?$/i
   )
   if (usMatch) {
-    const [, month, day, year, hour = '0', minute = '0', second = '0'] = usMatch
-    return {
-      value: createDateFromParts(
-        {
-          year: Number(year),
-          month: Number(month),
-          day: Number(day),
-          hour: Number(hour),
-          minute: Number(minute),
-          second: Number(second)
-        },
-        timeZone
-      ),
-      error: null
-    }
+    const [, month, day, year, hour = '0', minute = '0', second = '0', marker] = usMatch
+    const indicator = marker ? ({ 上午: 'AM', 下午: 'PM' }[marker] || marker.toUpperCase()) : null
+    return createDateResult(year, month, day, processHourWithAmPm(hour, indicator), minute, second, timeZone)
   }
 
-  return { value: null, error: 'CHECKTIME 格式不支援' }
+  // 其他寫法（例如 Nov 10 2026 08:00）：沒有時區資訊的字串 JavaScript 以伺服器的時區解析，所以取回的也要是本地時間的年月日時分，
+  // 才是檔案上寫的時間；以前取 UTC 的欄位，伺服器時區不是 UTC 時整批差了好幾個小時
+  const parsedLocal = /^\d/.test(normalizedText) ? new Date(NaN) : new Date(normalizedText)
+  if (!Number.isNaN(parsedLocal.getTime())) {
+    return createDateResult(
+      parsedLocal.getFullYear(),
+      parsedLocal.getMonth() + 1,
+      parsedLocal.getDate(),
+      parsedLocal.getHours(),
+      parsedLocal.getMinutes(),
+      String(parsedLocal.getSeconds()),
+      timeZone
+    )
+  }
+
+  return { value: null, error: '打卡時間格式不支援' }
 }
 
 export function parseTimestamp(value, timeZone) {
   if (value === null || value === undefined) {
-    return { value: null, error: 'CHECKTIME 缺少值' }
+    return { value: null, error: '缺少打卡時間' }
   }
   if (value instanceof Date) {
     if (Number.isNaN(value.getTime())) {
-      return { value: null, error: 'CHECKTIME Date 物件無效' }
+      return { value: null, error: '打卡時間不是有效的日期' }
     }
+    // Excel 的時間是小數（一天的幾分之幾），換算後可能是 07:59:59.999：四捨五入到秒
+    const rounded = new Date(Math.round(value.getTime() / 1000) * 1000)
     const parts = {
-      year: value.getUTCFullYear(),
-      month: value.getUTCMonth() + 1,
-      day: value.getUTCDate(),
-      hour: value.getUTCHours(),
-      minute: value.getUTCMinutes(),
-      second: value.getUTCSeconds()
+      year: rounded.getUTCFullYear(),
+      month: rounded.getUTCMonth() + 1,
+      day: rounded.getUTCDate(),
+      hour: rounded.getUTCHours(),
+      minute: rounded.getUTCMinutes(),
+      second: rounded.getUTCSeconds()
     }
     const converted = createDateFromParts(parts, timeZone)
     if (!converted) {
-      return { value: null, error: 'CHECKTIME 無法轉換為指定時區' }
+      return { value: null, error: '打卡時間無法轉換為指定時區' }
     }
     return { value: converted, error: null }
   }
@@ -373,13 +449,13 @@ export function parseTimestamp(value, timeZone) {
     }
     const epochDate = new Date(value)
     if (Number.isNaN(epochDate.getTime())) {
-      return { value: null, error: 'Excel serial 無效且不是有效的時間戳' }
+      return { value: null, error: '打卡時間的數字不是有效的 Excel 日期' }
     }
     return { value: epochDate, error: null }
   }
   if (typeof value === 'string') {
     const numericLike = value.trim()
-    if (/^[+-]?\d+(?:\.\d+)?$/.test(numericLike)) {
+    if (/^[+-]?\d+(?:\.\d+)?$/.test(numericLike) && !/^\d{12}(?:\d{2})?$/.test(numericLike)) {
       const numericValue = Number(numericLike)
       if (!Number.isNaN(numericValue)) {
         return parseTimestamp(numericValue, timeZone)
@@ -391,7 +467,7 @@ export function parseTimestamp(value, timeZone) {
     }
     return { value: null, error: direct.error }
   }
-  return { value: null, error: 'CHECKTIME 類型不支援' }
+  return { value: null, error: '打卡時間格式不支援' }
 }
 function normalizeAction(value) {
   if (value === null || value === undefined) return ''
@@ -459,6 +535,9 @@ function resolveEmployeeByCompositeKey(identifier, name, employeeMaps) {
     if (byId) return byId
   }
   
+  // 這個編號有好幾位員工、又分不出是哪一位：不再用姓名猜，交給管理者指定
+  if (identifier && employeeMaps.ambiguousEmployeeIds?.has(identifier)) return null
+
   // If name is provided and identifier lookup failed, try name alone but only if there's exactly one match
   if (name) {
     const nameMatches = employeeMaps.byName.get(name)
@@ -506,23 +585,47 @@ function resolveMappedEmployee(mapping, maps) {
   return null
 }
 
+// 員工編號沒有唯一限制：離職後編號被沿用、同一個人重新到職另建一筆資料時，同一個編號會有好幾位員工。
+// 只有一位不是離職員工就用他；分不出來的回傳 null（列為缺少對應員工，由管理者在匯入畫面指定），
+// 以前是後讀到的那一位蓋掉前面的，打卡可能整批記到已離職的那一筆資料上
+function pickUnambiguousEmployee(candidates = []) {
+  if (candidates.length <= 1) return candidates[0] ?? null
+  const active = candidates.filter(employee => employee?.status !== '離職員工')
+  return active.length === 1 ? active[0] : null
+}
+
+function collapseCandidates(candidatesByKey, ambiguousKeys = null) {
+  const resolved = new Map()
+  candidatesByKey.forEach((candidates, key) => {
+    const employee = pickUnambiguousEmployee(candidates)
+    if (employee) resolved.set(key, employee)
+    else if (ambiguousKeys) ambiguousKeys.add(key)
+  })
+  return resolved
+}
+
+function pushCandidate(map, key, employee) {
+  if (!map.has(key)) map.set(key, [])
+  map.get(key).push(employee)
+}
+
 function buildEmployeeMaps(employees = []) {
-  const byEmployeeId = new Map()
+  const employeeIdCandidates = new Map()
   const byEmail = new Map()
   const byObjectId = new Map()
   const byName = new Map()
-  const byCompositeKey = new Map()
+  const compositeCandidates = new Map()
 
   employees.forEach(employee => {
     const id = String(employee._id)
     byObjectId.set(id, employee)
     if (employee.employeeId) {
       const empId = String(employee.employeeId).trim()
-      byEmployeeId.set(empId, employee)
+      pushCandidate(employeeIdCandidates, empId, employee)
       // Create composite key: employeeId + name
       if (employee.name) {
         const compositeKey = `${empId}|${String(employee.name).trim()}`
-        byCompositeKey.set(compositeKey, employee)
+        pushCandidate(compositeCandidates, compositeKey, employee)
       }
     }
     if (employee.email) {
@@ -538,7 +641,10 @@ function buildEmployeeMaps(employees = []) {
     }
   })
 
-  return { byEmployeeId, byEmail, byObjectId, byName, byCompositeKey }
+  const ambiguousEmployeeIds = new Set()
+  const byEmployeeId = collapseCandidates(employeeIdCandidates, ambiguousEmployeeIds)
+  const byCompositeKey = collapseCandidates(compositeCandidates)
+  return { byEmployeeId, byEmail, byObjectId, byName, byCompositeKey, ambiguousEmployeeIds }
 }
 
 function registerHeader(headerMap, header, colNumber) {
@@ -649,7 +755,13 @@ function buildRowRecord({
   }
 }
 
-function parseCsvLine(line) {
+// 欄位分隔符號：一般是逗號；考勤機匯出的文字檔常以 Tab 分隔（標題列沒有逗號、卻有 Tab 時就用 Tab）
+function detectCsvDelimiter(headerLine) {
+  const text = String(headerLine ?? '')
+  return !text.includes(',') && text.includes('\t') ? '\t' : ','
+}
+
+function parseCsvLine(line, delimiter = ',') {
   const result = []
   let current = ''
   let inQuotes = false
@@ -662,7 +774,7 @@ function parseCsvLine(line) {
       } else {
         inQuotes = !inQuotes
       }
-    } else if (char === ',' && !inQuotes) {
+    } else if (char === delimiter && !inQuotes) {
       result.push(current)
       current = ''
     } else {
@@ -728,10 +840,12 @@ async function iterateCsvRecords({ createStream, headerPairs, mappings, timezone
 
   let headerMap = null
   let rowNumber = 0
+  let delimiter = ','
   for (const line of lines) {
     rowNumber += 1
     if (!headerMap) {
-      const headers = parseCsvLine(line)
+      delimiter = detectCsvDelimiter(line)
+      const headers = parseCsvLine(line, delimiter)
       headerMap = buildHeaderMapFromValues(headers)
       const missingColumns = findMissingColumns(headerMap, mappings)
       if (missingColumns.length) {
@@ -744,7 +858,7 @@ async function iterateCsvRecords({ createStream, headerPairs, mappings, timezone
       continue
     }
 
-    const values = parseCsvLine(line)
+    const values = parseCsvLine(line, delimiter)
     const getValue = col => {
       const value = values[col - 1]
       if (value === undefined || value === null) return ''
@@ -970,7 +1084,7 @@ export async function importAttendanceRecords(req, res) {
   let employees = []
   if (queryConditions.length) {
     employees = await Employee.find({ $or: queryConditions })
-      .select('_id name email employeeId')
+      .select('_id name email employeeId status')
       .lean()
   }
   const employeeMaps = buildEmployeeMaps(employees)
@@ -991,10 +1105,20 @@ export async function importAttendanceRecords(req, res) {
   const seenPunchKeys = new Set()
   const pendingRows = []
 
+  // 有問題的列（驗證失敗、找不到員工、重複略過）全部列出（最多 ISSUE_ROW_LIMIT 筆，超過時 issuesTruncated）：
+  // 以前只有預覽的前 50 筆看得到原因，第 51 列以後哪幾列沒匯入、為什麼，畫面上都查不到
+  const issueRows = []
+  let issueCount = 0
+  const recordIssue = (sampleEntry) => {
+    issueCount += 1
+    if (issueRows.length < ISSUE_ROW_LIMIT) issueRows.push(sampleEntry)
+  }
+
   const markDuplicate = (sampleEntry, reason) => {
     duplicateCount += 1
     sampleEntry.status = 'duplicate'
     sampleEntry.duplicateReason = reason
+    recordIssue(sampleEntry)
   }
 
   const flushPending = async () => {
@@ -1010,13 +1134,28 @@ export async function importAttendanceRecords(req, res) {
       if (time > maxTime) maxTime = time
     })
     const minuteMs = 60 * 1000
-    const existing = await AttendanceRecord.find({
-      employee: { $in: Array.from(employeeIds) },
-      timestamp: {
-        $gte: new Date(Math.floor(minTime / minuteMs) * minuteMs),
-        $lt: new Date(Math.floor(maxTime / minuteMs) * minuteMs + minuteMs)
-      }
-    })
+    const minuteStart = time => Math.floor(time / minuteMs) * minuteMs
+    // 這一批的時間範圍很長、員工又多（檔案沒有依時間或員工排序）時，「這批員工 × 整段時間」幾乎是整個檔案期間的所有打卡，
+    // 每一批都重讀一次（5 萬筆的亂序檔案重複匯入要將近一分鐘）。這時改成只查每一列自己那一分鐘。
+    const scattered = employeeIds.size > SCATTERED_BATCH_EMPLOYEES && maxTime - minTime > SCATTERED_BATCH_SPAN_MS
+    const existingFilter = scattered
+      ? {
+          $or: rows.map(({ doc }) => ({
+            employee: doc.employee,
+            timestamp: {
+              $gte: new Date(minuteStart(doc.timestamp.getTime())),
+              $lt: new Date(minuteStart(doc.timestamp.getTime()) + minuteMs)
+            }
+          }))
+        }
+      : {
+          employee: { $in: Array.from(employeeIds) },
+          timestamp: {
+            $gte: new Date(minuteStart(minTime)),
+            $lt: new Date(minuteStart(maxTime) + minuteMs)
+          }
+        }
+    const existing = await AttendanceRecord.find(existingFilter)
       .select('employee action timestamp')
       .lean()
     const existingKeys = new Set(
@@ -1056,25 +1195,26 @@ export async function importAttendanceRecords(req, res) {
       timestampError: record.timestampError ?? null
     }
 
+    // 錯誤說明用畫面上的欄位名稱（員工編號／打卡時間／打卡類型）並附上檔案裡的原文，人資才找得到是哪一格寫錯
     const errors = []
     if (!record.identifier) {
-      errors.push('缺少 USERID')
+      errors.push('缺少員工編號')
     }
     if (!record.timestamp) {
-      errors.push(
-        record.timestampError
-          ? `無法解析 CHECKTIME：${record.timestampError}`
-          : '無法解析 CHECKTIME'
-      )
+      const rawTimestamp = displayRawCell(record.rawTimestamp)
+      const reason = record.timestampError || '打卡時間無法解析'
+      errors.push(rawTimestamp ? `${reason}：「${rawTimestamp}」` : '缺少打卡時間')
     }
     if (!record.action) {
-      errors.push('無法判斷 CHECKTYPE')
+      const rawAction = displayRawCell(record.rawAction)
+      errors.push(rawAction ? `無法判斷打卡類型：「${rawAction}」（可用 I／O、上班簽到／下班簽退）` : '缺少打卡類型')
     }
 
     if (errors.length) {
       errorCount += 1
       sampleEntry.errors = errors
       sampleEntry.status = 'error'
+      recordIssue(sampleEntry)
       console.error('attendance-import: validation failed', {
         rowNumber: record.rowNumber,
         userId: record.identifier || null,
@@ -1105,11 +1245,16 @@ export async function importAttendanceRecords(req, res) {
           missingCount += 1
           sampleEntry.errors = []
           sampleEntry.status = 'missing'
+          recordIssue(sampleEntry)
           const missingEntry = missingUserMap.get(record.identifier) || {
             identifier: record.identifier,
             count: 0,
             rows: [],
-            samples: []
+            samples: [],
+            // 員工編號重複、無法判斷是哪一位時附上原因，匯入畫面的「缺少對應員工」清單可以直接指定
+            ...(employeeMaps.ambiguousEmployeeIds.has(record.identifier)
+              ? { reason: '這個員工編號有多位員工使用，請指定要對應的員工' }
+              : {})
           }
           missingEntry.count += 1
           missingEntry.rows.push(record.rowNumber)
@@ -1157,7 +1302,11 @@ export async function importAttendanceRecords(req, res) {
               }
             })
             if (pendingRows.length >= INSERT_BATCH_SIZE) {
-              await flushPending()
+              try {
+                await flushPending()
+              } catch (error) {
+                throw new AttendanceStoreError(error)
+              }
             }
           }
         }
@@ -1183,6 +1332,18 @@ export async function importAttendanceRecords(req, res) {
       res.status(400).json({
         message: '匯入檔案缺少必要欄位',
         errors: error.columns.map(name => `找不到欄位：${name}`)
+      })
+      return
+    }
+    if (error instanceof AttendanceStoreError) {
+      // 超過一批（500 筆）的檔案在中途寫入失敗：以前回 400「無法讀取匯入檔案」，看不出前面幾批其實已經存進去了
+      console.error('attendance-import: failed to store records', error.cause?.name ?? 'Error')
+      res.status(500).json({
+        message: dryRun || !importedCount
+          ? '考勤資料寫入失敗，請稍後再試'
+          : `考勤資料寫入失敗：已新增 ${importedCount} 筆，其餘尚未匯入；請稍後用同一個檔案再匯入一次（已有的打卡會自動略過）`,
+        errors: [],
+        summary: { importedCount: dryRun ? 0 : importedCount, duplicateCount }
       })
       return
     }
@@ -1224,6 +1385,10 @@ export async function importAttendanceRecords(req, res) {
     timezone,
     summary,
     preview: previewSamples,
+    // 所有有問題的列（依列號排序，最多 ISSUE_ROW_LIMIT 筆）；欄位與 preview 的每一列相同
+    issues: issueRows.sort((a, b) => (a.rowNumber ?? 0) - (b.rowNumber ?? 0)),
+    issueCount,
+    issuesTruncated: issueCount > issueRows.length,
     missingUsers: Array.from(missingUserMap.values())
   }
 

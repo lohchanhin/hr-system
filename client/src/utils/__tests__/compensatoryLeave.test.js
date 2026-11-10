@@ -36,9 +36,9 @@ describe('調休存摺的顯示文字', () => {
 
   it('describes each use: a whole-day 調休 approval, half a day, an HR assignment with its note and an HR deduction', () => {
     expect(describeUsage({ kind: 'leave_request', kindLabel: '調休簽核', hours: 8, approvalStatus: 'approved', days: [{ date: '2026-10-26', hours: 8 }], fullDayDates: ['2026-10-26'] }))
-      .toBe('調休簽核 8 小時（1 天；2026/10/26 整天，已核准）')
+      .toBe('調休簽核 8 小時（1 天；2026/10/26 整天，已核可）')
     expect(describeUsage({ kind: 'leave_request', hours: 4, approvalStatus: 'approved', days: [{ date: '2026-11-02', hours: 4 }], fullDayDates: [] }))
-      .toBe('調休簽核 4 小時（0.5 天；2026/11/02 4 小時，已核准）')
+      .toBe('調休簽核 4 小時（0.5 天；2026/11/02 4 小時，已核可）')
     expect(describeUsage({ kind: 'hr_assigned', kindLabel: 'HR 指定', hours: 8, days: [{ date: '2026-03-02', hours: 8 }], fullDayDates: ['2026-03-02'], note: '與員工協商' }))
       .toBe('HR 指定 8 小時（1 天；2026/03/02 整天）：與員工協商')
     expect(describeUsage({ kind: 'adjustment', kindLabel: '人資扣除', hours: 2, days: [], fullDayDates: [], note: '更正' })).toBe('人資扣除 2 小時（0.25 天）：更正')

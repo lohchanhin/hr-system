@@ -16,6 +16,14 @@ const STATUS_LABELS = {
  * Derives the publish/response status of a month's schedules purely from the
  * raw ShiftSchedule rows, without relying on a server-computed snapshot.
  * Used as the fallback when no publish snapshot is available yet.
+ *
+ * 狀態的判斷順序與伺服器相同（server/src/controllers/schedule/schedulePublishSummary.js）：
+ *   disputed  有異議
+ *   pending / ready  有已發送、還沒完成發布的班表（有人沒回覆是 pending，都確認了是 ready）
+ *   finalized 只有在沒有「還沒發送的異動」時（已完成發布之後又改的格子會回到 draft）
+ *   draft     其他
+ * unpublishedCount：還沒發送給員工的新增或異動（state draft、needsReconfirm 不是 false）。
+ * 以前只要有一筆已完成發布就算 finalized：鎖定的月份改一格之後仍顯示已完成發布，那一格送不出去。
  */
 export function buildPublishSummaryFromRawSchedules(rawSchedules) {
   const result = {
@@ -26,6 +34,7 @@ export function buildPublishSummaryFromRawSchedules(rawSchedules) {
     hasSchedules: false,
     totalEmployees: 0,
     allEmployeesConfirmed: false,
+    unpublishedCount: 0,
   }
 
   const list = Array.isArray(rawSchedules) ? rawSchedules : []
@@ -34,9 +43,10 @@ export function buildPublishSummaryFromRawSchedules(rawSchedules) {
   result.hasSchedules = true
   const employeeMap = new Map()
   let latestPublishedAt = null
-  let hasPublished = false
+  let publishedOpenCount = 0
   let hasDisputed = false
   let hasFinalized = false
+  let unpublishedCount = 0
 
   list.forEach(item => {
     if (!item) return
@@ -47,9 +57,12 @@ export function buildPublishSummaryFromRawSchedules(rawSchedules) {
     const id = rawId ? String(rawId) : ''
     const name = employee?.name || item.employeeName || id
 
-    if (state !== 'draft') hasPublished = true
-    if (state === 'changes_requested' || response === 'disputed') hasDisputed = true
+    const disputed = state === 'changes_requested' || response === 'disputed'
+    if (state === 'pending_confirmation' || state === 'changes_requested') publishedOpenCount += 1
+    if (disputed) hasDisputed = true
     if (state === 'finalized') hasFinalized = true
+    // 伺服器只把 needsReconfirm: true 的草稿算成未發送；畫面拿到的舊資料可能沒有這個欄位，沒有時也算
+    if (state === 'draft' && item.needsReconfirm !== false) unpublishedCount += 1
 
     if (item?.publishedAt) {
       const published = new Date(item.publishedAt)
@@ -74,10 +87,7 @@ export function buildPublishSummaryFromRawSchedules(rawSchedules) {
     }
 
     const entry = employeeMap.get(id)
-    if (state === 'pending_confirmation' && response === 'pending') {
-      entry.pendingCount += 1
-    }
-    if (response === 'disputed' || state === 'changes_requested') {
+    if (disputed) {
       entry.disputedCount += 1
       if (item?.responseNote) {
         entry.latestNote = item.responseNote
@@ -87,6 +97,9 @@ export function buildPublishSummaryFromRawSchedules(rawSchedules) {
         note: item.responseNote || '',
         responseAt: item.responseAt,
       })
+    } else if (state === 'pending_confirmation' && item.needsReconfirm !== false && response !== 'confirmed') {
+      // 與伺服器相同：已發送、這一輪還沒回覆（員工已確認、或這一輪沒有重送的不算）
+      entry.pendingCount += 1
     }
     if (item?.responseAt) {
       const responded = new Date(item.responseAt)
@@ -128,12 +141,14 @@ export function buildPublishSummaryFromRawSchedules(rawSchedules) {
   result.totalEmployees = employeeMap.size
   result.publishedAt = latestPublishedAt ? latestPublishedAt.toISOString() : null
 
-  if (hasFinalized) {
-    result.status = 'finalized'
-  } else if (hasDisputed) {
+  result.unpublishedCount = unpublishedCount
+
+  if (hasDisputed) {
     result.status = 'disputed'
-  } else if (hasPublished) {
+  } else if (publishedOpenCount > 0) {
     result.status = pendingEmployees.length ? 'pending' : 'ready'
+  } else if (hasFinalized && unpublishedCount === 0) {
+    result.status = 'finalized'
   } else {
     result.status = 'draft'
   }
@@ -178,6 +193,10 @@ export function resolvePublishSummary(rawSchedules, publishSnapshot) {
     typeof snapshot.allEmployeesConfirmed === 'boolean'
       ? snapshot.allEmployeesConfirmed
       : fallbackSummary.allEmployeesConfirmed
+  // 舊版伺服器沒有 unpublishedCount：用這一頁的班表推算
+  const unpublishedCount = Number.isFinite(snapshot.unpublishedCount)
+    ? snapshot.unpublishedCount
+    : fallbackSummary.unpublishedCount
 
   return {
     status,
@@ -187,7 +206,51 @@ export function resolvePublishSummary(rawSchedules, publishSnapshot) {
     hasSchedules,
     totalEmployees,
     allEmployeesConfirmed,
+    unpublishedCount,
   }
+}
+
+/**
+ * 狀態列的「有 N 筆異動尚未發送」：發送過（或完成發布過）之後又新增、修改的格子。
+ * 從來沒發送過的月份不顯示（整個月都還是草稿，按鈕本身就是「發送待確認」）。
+ */
+export function getUnpublishedNotice(summary) {
+  const count = Number(summary?.unpublishedCount) || 0
+  if (count <= 0) return ''
+  if (summary?.status === 'draft' && !summary?.publishedAt) return ''
+  return `有 ${count} 筆異動尚未發送`
+}
+
+// 發送／完成發布失敗時的中文訊息：伺服器的中文 error 優先；舊版伺服器的英文訊息與只有 code 的回應換成中文
+const PUBLISH_ERROR_BY_CODE = {
+  NOTHING_TO_PUBLISH: '這個範圍的班表員工都已確認，沒有新增或異動的班表需要發送；可以直接完成發布',
+  NO_SCHEDULES: '這個範圍沒有可以發送的班表，請先排班',
+  NO_EMPLOYEES_IN_SCOPE: '您的排班範圍內沒有員工',
+  UNCONFIRMED_EMPLOYEES: '仍有員工尚未確認或提出異議，無法完成發布',
+  NOTHING_TO_FINALIZE: '沒有待完成發布的班表',
+}
+const PUBLISH_ERROR_BY_TEXT = {
+  'no schedules found': '這個範圍沒有可以發送的班表，請先排班',
+  'no employees in scope': '您的排班範圍內沒有員工',
+  'unconfirmed employees': '仍有員工尚未確認或提出異議，無法完成發布',
+}
+
+export function describePublishError(data, fallback = '操作失敗') {
+  const text = typeof data?.error === 'string' ? data.error.trim() : ''
+  if (text && /[一-鿿]/.test(text)) return text
+  if (data?.code && PUBLISH_ERROR_BY_CODE[data.code]) return PUBLISH_ERROR_BY_CODE[data.code]
+  if (text && PUBLISH_ERROR_BY_TEXT[text.toLowerCase()]) return PUBLISH_ERROR_BY_TEXT[text.toLowerCase()]
+  return fallback
+}
+
+/** 發送成功的訊息：updated 筆發送給員工確認；keptConfirmed 是員工已確認、這次沒有重送的筆數 */
+export function describePublishSuccess(payload) {
+  const updated = Number(payload?.updated)
+  const kept = Number(payload?.keptConfirmed)
+  const head = Number.isFinite(updated) && updated > 0
+    ? `已將 ${updated} 筆班表發送給員工確認`
+    : '已將班表發送給員工確認'
+  return Number.isFinite(kept) && kept > 0 ? `${head}；員工已確認的 ${kept} 筆沒有變動，不必重新確認` : head
 }
 
 export function getPublishStatusLabel(status) {

@@ -98,7 +98,7 @@ describe('CompensatoryLeavePanel（我的調休）', () => {
     expect(text).toContain('部分使用')
     // 移休以天計（2026/10）：時數旁一律附上天數
     expect(text).toContain('8 小時（1 天），已用 4 小時（0.5 天），剩 4 小時（0.5 天）')
-    expect(text).toContain('調休簽核 4 小時（0.5 天；2026/11/02 4 小時，已核准）')
+    expect(text).toContain('調休簽核 4 小時（0.5 天；2026/11/02 4 小時，已核可）')
     expect(text).toContain('HR 指定 8 小時（1 天；2026/10/14 整天）：協商')
     expect(text).toContain('2026/10/26')
     expect(wrapper.find('[data-test="comp-leave-conflict"]').exists()).toBe(true)

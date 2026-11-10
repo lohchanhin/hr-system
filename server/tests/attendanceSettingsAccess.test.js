@@ -245,7 +245,7 @@ describe('AttendanceSetting routes', () => {
       .send({ laborRules: { strictCompanyWeeklyRest: false } });
 
     expect(res.status).toBe(400);
-    expect(res.body.error).toMatch(/one regular rest day/i);
+    expect(res.body).toEqual({ error: '公司規定每週一例一休，不能關閉', code: 'WEEKLY_REST_REQUIRED' });
     expect(doc.save).not.toHaveBeenCalled();
   });
 });

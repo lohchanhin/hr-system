@@ -1,21 +1,30 @@
 import ExcelJS from 'exceljs';
 import PayrollRecord from '../models/PayrollRecord.js';
 import Employee from '../models/Employee.js';
-import ApprovalRequest from '../models/approval_request.js';
-import { calculateEmployeePayroll } from './payrollService.js';
-import { calculateCompleteWorkData } from './workHoursCalculationService.js';
-import { aggregateBonusFromApprovals, loadBonusFieldsByForm } from '../utils/payrollPreviewUtils.js';
-import { approvedInMonthFilter, payrollMonthRange } from '../utils/payrollMonth.js';
+import {
+  computeEmployeePayroll,
+  createCalculationContext,
+  loadBonusApprovals,
+  loadPayrollBatchData,
+  mapWithConcurrency,
+} from './payrollBatchService.js';
 import { readAnnualLeaveHours } from '../utils/annualLeaveHours.js';
+import { toTaipeiDateKey } from '../utils/taipeiTime.js';
+import { loadPayrollPolicy } from './payrollPolicyService.js';
+
+// 付款日的預設值是「今天」，以台灣日期為準：伺服器時區是 UTC 時，台灣早上 8 點以前會是前一天
+function taipeiToday() {
+  return new Date(`${toTaipeiDateKey(new Date())}T00:00:00.000Z`);
+}
 
 /**
  * 格式化日期為 YYYYMMDD
  */
 function formatDateYYYYMMDD(date) {
   const d = new Date(date);
-  const year = d.getFullYear();
-  const month = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
+  const year = d.getUTCFullYear();
+  const month = String(d.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(d.getUTCDate()).padStart(2, '0');
   return `${year}${month}${day}`;
 }
 
@@ -24,9 +33,9 @@ function formatDateYYYYMMDD(date) {
  */
 function formatDateSlash(date) {
   const d = new Date(date);
-  const year = d.getFullYear();
-  const month = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
+  const year = d.getUTCFullYear();
+  const month = String(d.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(d.getUTCDate()).padStart(2, '0');
   return `${year}/${month}/${day}`;
 }
 
@@ -50,21 +59,23 @@ export async function generateBonusSlipExcel(payrollRecords, companyInfo = {}) {
     { key: 'nightShift', width: 12 },
     { key: 'performance', width: 12 },
     { key: 'others', width: 12 },
+    { key: 'recurring', width: 12 },
     { key: 'bonusAdjustment', width: 12 },
     { key: 'total', width: 14 },
     { key: 'note', width: 20 }
   ];
 
   const monthDate = companyInfo.monthDate || payrollRecords[0]?.month || new Date();
-  const issueMonth = `${monthDate.getFullYear()}-${String(monthDate.getMonth() + 1).padStart(2, '0')}`;
+  // 薪資月份是該月第一天的 UTC 午夜，用 UTC 取年月（用本地時間，時區在 UTC 以西的主機會變成前一個月）
+  const issueMonth = `${monthDate.getUTCFullYear()}-${String(monthDate.getUTCMonth() + 1).padStart(2, '0')}`;
   const title = companyInfo.companyName || '公司名稱';
 
-  worksheet.mergeCells('A1:L1');
+  worksheet.mergeCells('A1:M1');
   worksheet.getCell('A1').value = `${title} - 個人獎金紙條`;
   worksheet.getCell('A1').font = { bold: true, size: 14 };
   worksheet.getCell('A1').alignment = { horizontal: 'center' };
 
-  worksheet.mergeCells('A2:L2');
+  worksheet.mergeCells('A2:M2');
   worksheet.getCell('A2').value = `撥款月份：${issueMonth}`;
   worksheet.getCell('A2').alignment = { horizontal: 'center' };
 
@@ -80,6 +91,7 @@ export async function generateBonusSlipExcel(payrollRecords, companyInfo = {}) {
     '夜班津貼',
     '績效獎金',
     '其他獎金',
+    '定期津貼',
     '簽核調整',
     '獎金合計',
     '備註'
@@ -92,8 +104,10 @@ export async function generateBonusSlipExcel(payrollRecords, companyInfo = {}) {
     const nightShiftAllowance = record.nightShiftAllowance || 0;
     const performanceBonus = record.performanceBonus || 0;
     const otherBonuses = record.otherBonuses || 0;
+    // 定期津貼（員工資料的薪資項目，例如組長加給）也是匯入獎金帳戶的金額：以前沒有這一欄，紙條的合計會比實際匯入的獎金少
+    const recurringAllowance = record.recurringAllowance || 0;
     const bonusAdjustment = record.bonusAdjustment || 0;
-    const bonusTotal = overtimePay + nightShiftAllowance + performanceBonus + otherBonuses + bonusAdjustment;
+    const bonusTotal = overtimePay + nightShiftAllowance + performanceBonus + otherBonuses + recurringAllowance + bonusAdjustment;
 
     const accountNumber = record.bankAccountB?.accountNumber || '';
     const accountTail = accountNumber ? accountNumber.slice(-4).padStart(4, '*') : '';
@@ -108,6 +122,7 @@ export async function generateBonusSlipExcel(payrollRecords, companyInfo = {}) {
       nightShift: nightShiftAllowance,
       performance: performanceBonus,
       others: otherBonuses,
+      recurring: recurringAllowance,
       bonusAdjustment,
       total: bonusTotal,
       note: '請確認獎金明細後再行撥款'
@@ -144,7 +159,7 @@ export async function generateBonusSlipExcel(payrollRecords, companyInfo = {}) {
 
   worksheet.addRow([]);
   const summaryRow = worksheet.addRow({ note: '此示意表僅供確認匯出欄位與欄位順序。' });
-  worksheet.mergeCells(`A${summaryRow.number}:L${summaryRow.number}`);
+  worksheet.mergeCells(`A${summaryRow.number}:M${summaryRow.number}`);
   worksheet.getCell(`A${summaryRow.number}`).alignment = { horizontal: 'left' };
 
   return await workbook.xlsx.writeBuffer();
@@ -177,7 +192,7 @@ export async function generateTaiwanBusinessBankExcel(payrollRecords, companyInf
   headerRow1.font = { bold: true };
   
   // 付款人資料
-  const paymentDate = companyInfo.paymentDate || formatDateYYYYMMDD(new Date());
+  const paymentDate = companyInfo.paymentDate || formatDateYYYYMMDD(taipeiToday());
   worksheet.addRow([
     '0001',
     paymentDate,
@@ -254,7 +269,7 @@ export async function generateTaichungBankExcel(payrollRecords, companyInfo = {}
   const companyName = companyInfo.companyName || '';
   const companyCode = companyInfo.companyCode || '6204';
   const transferAccount = companyInfo.transferAccount || '';
-  const paymentDate = companyInfo.paymentDate || formatDateSlash(new Date());
+  const paymentDate = companyInfo.paymentDate || formatDateSlash(taipeiToday());
   
   // 計算核證總數和總金額
   let totalAmount = 0;
@@ -348,104 +363,119 @@ export async function generateTaichungBankExcel(payrollRecords, companyInfo = {}
   return await workbook.xlsx.writeBuffer();
 }
 
+// 員工資料的帳戶是 { bank, acct }，薪資記錄的是 { bank, bankCode, branchCode, accountNumber, accountName }：
+// 匯款檔一律讀 accountNumber，所以即時計算（沒有薪資記錄）的員工要先轉成同一種形狀，否則帳號欄會是空的。
+function normalizeBankAccount(account, accountName) {
+  const source = account && typeof account.toObject === 'function' ? account.toObject() : (account || {});
+  return {
+    bank: source.bank || '',
+    bankCode: source.bankCode || '',
+    branchCode: source.branchCode || '',
+    accountNumber: String(source.accountNumber || source.acct || ''),
+    accountName: source.accountName || accountName || '',
+  };
+}
+
+// 一次處理多少位員工（每一批各讀一次班表與打卡，記憶體用量不會隨總人數一直增加）
+const EXPORT_CHUNK_SIZE = 200;
+const EXPORT_CONCURRENCY = 8;
+
 /**
  * 根據月份和銀行類型生成匯款 Excel
+ * 名單是「所有員工」：已經有薪資記錄的用記錄的金額，沒有的即時計算（與薪資總覽、月薪資總覽 PDF 同一套計算）。
+ * 以前只要這個月有任何一筆薪資記錄，就只匯出有記錄的那幾個人，其他員工整個不見。
+ * 整個月都不在職（已離職、尚未到職、留職停薪）而且沒有任何金額的員工不列入匯款名單。
  * @param {String} month - 月份 (YYYY-MM-DD)
  * @param {String} bankType - 銀行類型 ('taiwan' 或 'taichung')
  * @param {Object} companyInfo - 公司資訊
+ * @param {Object} filters - 與薪資總覽相同的範圍 { organization, department, subDepartment }（都沒有就是全部員工）
  * @returns {Buffer} - Excel 文件緩衝區
  */
-export async function generatePayrollExcel(month, bankTypeOrFormat, companyInfo = {}) {
+export async function generatePayrollExcel(month, bankTypeOrFormat, companyInfo = {}, filters = {}) {
   const monthDate = new Date(month);
   const format = bankTypeOrFormat || companyInfo.format;
+  const employeeQuery = {};
+  if (filters?.organization) employeeQuery.organization = filters.organization;
+  if (filters?.department) employeeQuery.department = filters.department;
+  if (filters?.subDepartment) employeeQuery.subDepartment = filters.subDepartment;
+  const scoped = Object.keys(employeeQuery).length > 0;
+  // 薪資政策整個匯出只讀一次，所有員工共用
+  const payrollPolicy = await loadPayrollPolicy();
 
-  // 獲取該月的所有薪資記錄
-  let payrollRecords = await PayrollRecord.find({
-    month: monthDate
-  }).populate('employee').sort({ 'employee.name': 1 });
-  
-  // 如果沒有薪資記錄，則自動計算所有員工的薪資
-  if (payrollRecords.length === 0) {
-    // 獲取所有員工
-    const employees = await Employee.find({})
-      .populate('department')
-      .populate('subDepartment')
-      .sort({ name: 1 });
-    
-    if (employees.length === 0) {
-      throw new Error('No employees found');
-    }
+  // 獲取所有員工（有篩選時只取範圍內的員工）
+  const employees = (await Employee.find(employeeQuery)
+    .populate('department')
+    .populate('subDepartment')
+    .sort({ name: 1 })) || [];
 
-    // 整批員工共用一份國定假日判斷資料（只讀一次，不會每位員工各查一次）
-    const payrollBatch = { employees };
+  // 獲取該月的薪資記錄（有篩選時只取範圍內員工的記錄，範圍外的人不能因為有記錄就被匯出）
+  const recordQuery = { month: monthDate };
+  if (scoped) recordQuery.employee = { $in: employees.map((employee) => employee._id) };
+  const storedRecords = await PayrollRecord.find(recordQuery).populate('employee').sort({ 'employee.name': 1 });
 
-    // 為每個員工計算薪資
-    payrollRecords = await Promise.all(employees.map(async (employee) => {
+  // 員工被刪除後，薪資記錄 populate 出來的 employee 會是 null，匯款檔取不到姓名與帳號，
+  // 留著會讓整個月份的匯出一起失敗，所以只略過這幾筆。
+  const orphanCount = storedRecords.filter(record => !record.employee).length;
+  if (orphanCount) {
+    console.warn(`Payroll export skipped ${orphanCount} record(s) whose employee no longer exists`);
+  }
+  const recordByEmployee = new Map();
+  const unmatchedRecords = [];
+  storedRecords.filter(record => record.employee).forEach((record) => {
+    const employeeId = record.employee._id;
+    if (employeeId) recordByEmployee.set(String(employeeId), record);
+    else unmatchedRecords.push(record);
+  });
+
+  if (employees.length === 0 && recordByEmployee.size === 0 && unmatchedRecords.length === 0) {
+    throw new Error(scoped ? '這個範圍沒有員工，沒有資料可以匯出' : 'No employees found');
+  }
+
+  // 整批員工共用一份國定假日判斷資料（只讀一次，不會每位員工各查一次）與薪資政策
+  const payrollBatch = { employees, payrollPolicy };
+  let payrollRecords = [];
+  const seenEmployees = new Set();
+
+  for (let offset = 0; offset < employees.length; offset += EXPORT_CHUNK_SIZE) {
+    const chunk = employees.slice(offset, offset + EXPORT_CHUNK_SIZE);
+    // 這一批員工的班別設定、班表、打卡、勞保級距、核准的獎金申請各讀一次
+    const batchData = await loadPayrollBatchData(chunk, month);
+    const { approvalsByEmployee, bonusFieldsByForm, bonusRange } = await loadBonusApprovals(chunk, monthDate);
+
+    const rows = await mapWithConcurrency(chunk, EXPORT_CONCURRENCY, async (employee) => {
+      const employeeIdStr = employee._id.toString();
+      const storedRecord = recordByEmployee.get(employeeIdStr) || null;
       try {
-        const customData = {};
-        let workData = null;
-
-        // 計算工作時數資料
-        try {
-          workData = await calculateCompleteWorkData(employee._id.toString(), month, { payrollBatch });
-          Object.assign(customData, {
-            workDays: workData.workDays,
-            scheduledHours: workData.scheduledHours,
-            actualWorkHours: workData.actualWorkHours,
-            hourlyRate: workData.hourlyRate,
-            dailyRate: workData.dailyRate,
-            leaveHours: workData.leaveHours,
-            paidLeaveHours: workData.paidLeaveHours,
-            unpaidLeaveHours: workData.unpaidLeaveHours,
-            sickLeaveHours: workData.sickLeaveHours,
-            personalLeaveHours: workData.personalLeaveHours,
-            leaveDeduction: workData.leaveDeduction,
-            overtimeHours: workData.overtimeHours,
-            overtimePay: workData.overtimePay,
-            baseSalary: workData.baseSalary
-          });
-        } catch (error) {
-          console.error(`Error calculating work data for employee ${employee._id}:`, error);
-        }
-
-        // 聚合獎金資料：依核准完成的時間歸屬月份（台灣時間），核准的金額加在員工設定的獎金之上
-        try {
-          const bonusRange = payrollMonthRange(monthDate);
-          const approvals = await ApprovalRequest.find({
-            applicant_employee: employee._id,
-            ...approvedInMonthFilter(bonusRange)
-          }).populate('form').lean();
-
-          const bonusData = aggregateBonusFromApprovals(approvals, {
-            employee,
-            workData,
-            fieldsByForm: await loadBonusFieldsByForm(approvals),
-            range: bonusRange
-          });
-          Object.assign(customData, bonusData);
-        } catch (error) {
-          console.error(`Error aggregating approvals for employee ${employee._id}:`, error);
-        }
-
-        // 計算薪資
-        const calculatedPayroll = await calculateEmployeePayroll(employee._id.toString(), month, customData, {
-          calculationContext: { payrollBatch },
+        const result = await computeEmployeePayroll({
+          employee,
+          month,
+          storedRecord,
+          approvals: approvalsByEmployee.get(employeeIdStr) ?? [],
+          bonusFieldsByForm,
+          bonusRange,
+          calculationContext: createCalculationContext(batchData, employee, payrollBatch),
+          insuranceRates: batchData.insuranceRates,
         });
-        
+        const payroll = result.payroll || {};
+        // 整個月都不在職而且沒有任何金額：不列入匯款名單
+        if (result.workData?.employment?.employed === false && !result.netPay && !result.totalBonus) return null;
+
         // 返回類似 PayrollRecord 的物件結構
         return {
           employee: employee,
           month: monthDate,
-          baseSalary: calculatedPayroll.baseSalary || 0,
-          netPay: calculatedPayroll.netPay || 0,
-          overtimePay: calculatedPayroll.overtimePay || 0,
-          nightShiftAllowance: calculatedPayroll.nightShiftAllowance || 0,
-          performanceBonus: calculatedPayroll.performanceBonus || 0,
-          otherBonuses: calculatedPayroll.otherBonuses || 0,
-          bonusAdjustment: calculatedPayroll.bonusAdjustment || 0,
-          totalBonus: calculatedPayroll.totalBonus || 0,
-          bankAccountA: employee.salaryAccountA || {},
-          bankAccountB: employee.salaryAccountB || {}
+          baseSalary: result.baseSalary || 0,
+          netPay: result.netPay || 0,
+          overtimePay: payroll.overtimePay || 0,
+          nightShiftAllowance: payroll.nightShiftAllowance || 0,
+          performanceBonus: payroll.performanceBonus || 0,
+          otherBonuses: payroll.otherBonuses || 0,
+          recurringAllowance: result.recurringAllowance || 0,
+          bonusAdjustment: payroll.bonusAdjustment || 0,
+          totalBonus: result.totalBonus || 0,
+          // 薪資記錄存檔當時還沒填帳號的，用員工資料現在的帳號
+          bankAccountA: normalizeBankAccount(payroll.bankAccountA?.accountNumber ? payroll.bankAccountA : employee.salaryAccountA, employee.name),
+          bankAccountB: normalizeBankAccount(payroll.bankAccountB?.accountNumber ? payroll.bankAccountB : employee.salaryAccountB, employee.name)
         };
       } catch (error) {
         console.error(`Error calculating payroll for employee ${employee._id}:`, error);
@@ -462,22 +492,23 @@ export async function generatePayrollExcel(month, bankTypeOrFormat, companyInfo 
           nightShiftAllowance: 0,
           performanceBonus: 0,
           otherBonuses: 0,
+          recurringAllowance: 0,
           bonusAdjustment: 0,
           totalBonus: 0,
-          bankAccountA: employee.salaryAccountA || {},
-          bankAccountB: employee.salaryAccountB || {}
+          bankAccountA: normalizeBankAccount(employee.salaryAccountA, employee.name),
+          bankAccountB: normalizeBankAccount(employee.salaryAccountB, employee.name)
         };
       }
-    }));
+    });
+    chunk.forEach((employee) => seenEmployees.add(employee._id.toString()));
+    payrollRecords = payrollRecords.concat(rows.filter(Boolean));
   }
 
-  // 員工被刪除後，薪資記錄 populate 出來的 employee 會是 null，匯款檔取不到姓名與帳號，
-  // 留著會讓整個月份的匯出一起失敗，所以只略過這幾筆。
-  const orphanCount = payrollRecords.filter(record => !record.employee).length;
-  if (orphanCount) {
-    console.warn(`Payroll export skipped ${orphanCount} record(s) whose employee no longer exists`);
-    payrollRecords = payrollRecords.filter(record => record.employee);
-  }
+  // 薪資記錄的員工不在上面的名單裡（理論上不會發生）或沒有 _id 可以對應：照記錄原樣匯出，不漏掉
+  recordByEmployee.forEach((record, employeeId) => {
+    if (!seenEmployees.has(employeeId)) unmatchedRecords.push(record);
+  });
+  payrollRecords = payrollRecords.concat(unmatchedRecords);
 
   const enhancedCompanyInfo = { ...companyInfo, monthDate };
 
@@ -519,15 +550,16 @@ export async function generateIndividualPayrollExcel(payrollRecord, employee, op
 
   // 格式化民國年月
   const monthDate = new Date(payrollRecord.month);
-  const rocYear = monthDate.getFullYear() - 1911;
-  const month = monthDate.getMonth() + 1;
+  // 薪資月份是該月第一天的 UTC 午夜，用 UTC 取年月
+  const rocYear = monthDate.getUTCFullYear() - 1911;
+  const month = monthDate.getUTCMonth() + 1;
   
   // 格式化支付日期 - 預設為下個月的10號
   let paymentDate = options.paymentDate;
   if (!paymentDate) {
     // 安全地計算下個月：使用明確的年月日值避免日期溢出問題
-    const year = monthDate.getFullYear();
-    const currentMonth = monthDate.getMonth();
+    const year = monthDate.getUTCFullYear();
+    const currentMonth = monthDate.getUTCMonth();
     // 如果是12月，年份+1，月份設為0(1月)；否則月份+1
     const nextYear = currentMonth === 11 ? year + 1 : year;
     const nextMonthNum = currentMonth === 11 ? 0 : currentMonth + 1;
@@ -601,14 +633,32 @@ export async function generateIndividualPayrollExcel(payrollRecord, employee, op
     }
   }
 
+  // 薪資記錄的 baseSalary 已經扣掉請假扣款（leaveDeduction）。這張表把請假扣款另外列成負數，
+  // 所以「本薪」要用扣款前的金額，否則事假、病假會被扣兩次，小計也對不上實領金額：
+  //   本薪（扣款前）+ 事假扣薪 + 病假扣薪 + 其他（其餘無薪假與進位差）= baseSalary，小計 - 應扣項目 = 實領金額。
+  // 日薪、時薪按出勤給薪，沒有請假扣款（leaveDeduction 為 0），事假、病假兩列就是 0。
+  const baseSalaryAfterLeave = Math.round(Number(payrollRecord.baseSalary) || 0);
+  const leaveDeduction = Math.max(Math.round(Number(payrollRecord.leaveDeduction) || 0), 0);
+  const leaveHourlyRate = Number(payrollRecord.hourlyRate) || 0;
+  let personalLeaveDeduction = 0;
+  let sickLeaveDeduction = 0;
+  if (leaveDeduction > 0) {
+    personalLeaveDeduction = Math.min(Math.round((Number(payrollRecord.personalLeaveHours) || 0) * leaveHourlyRate), leaveDeduction);
+    sickLeaveDeduction = Math.min(
+      Math.round((Number(payrollRecord.sickLeaveHours) || 0) * leaveHourlyRate * SICK_LEAVE_DEDUCTION_RATE),
+      leaveDeduction - personalLeaveDeduction
+    );
+  }
+  const otherLeaveDeduction = leaveDeduction - personalLeaveDeduction - sickLeaveDeduction;
+
   const taxableIncomeItems = [
-    { label: '本薪', value: payrollRecord.baseSalary || 0 },
+    { label: '本薪', value: baseSalaryAfterLeave + leaveDeduction },
     { label: '組長加給', value: supervisorAllowance },
-    { label: '事假扣薪', value: payrollRecord.personalLeaveHours ? -(payrollRecord.personalLeaveHours * (payrollRecord.hourlyRate || 0)) : 0 },
-    { label: '病假扣薪', value: payrollRecord.sickLeaveHours ? -(payrollRecord.sickLeaveHours * (payrollRecord.hourlyRate || 0) * SICK_LEAVE_DEDUCTION_RATE) : 0 },
-    { label: '遲到早退扣薪', value: 0 }, // 未實作：需要從考勤系統取得遲到早退資料
+    { label: '事假扣薪', value: personalLeaveDeduction ? -personalLeaveDeduction : 0 },
+    { label: '病假扣薪', value: sickLeaveDeduction ? -sickLeaveDeduction : 0 },
+    { label: '遲到早退扣薪', value: 0 }, // 遲到早退的自動扣款算在右邊應扣項目的「其他」裡
     { label: '曠職扣薪', value: 0 }, // 未實作：需要從考勤系統取得曠職資料
-    { label: '其他：', value: 0 }
+    { label: otherLeaveDeduction ? '其他：其餘無薪假' : '其他：', value: otherLeaveDeduction ? -otherLeaveDeduction : 0 }
   ];
 
   // 免稅所得主要包含加班費等項目
@@ -710,7 +760,9 @@ export async function generateIndividualPayrollExcel(payrollRecord, employee, op
   worksheet.addRow([]);
 
   // 勞健保級距與特休資訊
-  const insuranceLevel = payrollRecord.insuranceLevel || 45800;
+  // 這裡要印的是投保薪資（例如 45,800），不是級距表的序號（insuranceLevel 是 1-28 的序號，
+  // 以前直接印序號，雇主 6% 提繳也用序號去算，會印出「職退健 28、雇主勞退 2」）
+  const insuranceLevel = Math.max(Number(payrollRecord.insuredSalary ?? payrollRecord.insuranceRate?.insuredSalary) || 0, 0);
   const employerPension = Math.round(insuranceLevel * 0.06);
   
   // 特休以小時儲存：薪資記錄裡有就用記錄的，否則讀員工資料（舊格式的天數欄位會換算成小時）

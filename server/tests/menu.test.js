@@ -116,6 +116,21 @@ describe('Menu API', () => {
     expect(res.body.map(i => i.name)).toContain('MySchedule');
   });
 
+  it('?include=front returns { items, frontItems }: admins get the front pages, items stay exactly the plain array', async () => {
+    mockUser = { role: 'admin', id: 'admin-1' };
+    const plain = await request(app).get('/api/menu');
+    const wrapped = await request(app).get('/api/menu?include=front');
+    expect(wrapped.status).toBe(200);
+    expect(wrapped.body.items).toEqual(plain.body);
+    expect(wrapped.body.frontItems.map(i => i.name)).toEqual(['Attendance', 'Schedule', 'Approval', 'FrontChangePassword']);
+    expect(wrapped.body.frontItems.map(i => i.label)).toEqual(['出勤打卡', '排班管理', '簽核流程', '變更密碼']);
+
+    // 員工：frontItems 就是 items 裡的前台頁面
+    mockUser = { role: 'employee', id: 'emp-1' };
+    const employee = await request(app).get('/api/menu?include=front');
+    expect(employee.body.frontItems).toEqual(employee.body.items);
+  });
+
   it('menu names exist in frontend routes', async () => {
     const res = await request(app).get('/api/menu');
     const fs = await import('fs');

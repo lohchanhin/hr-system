@@ -229,10 +229,11 @@ describe('annual leave deduction for the customer leave form', () => {
     expect(res.status).not.toHaveBeenCalledWith(400)
   })
 
-  it('logs the failure (in Chinese) on the request but keeps the approval when the deduction fails', async () => {
+  it('logs the failure (in Chinese) on the request but keeps the approval when the deduction fails for an employee without a configured quota', async () => {
+    // 有設定特休而餘額不足的員工現在不核准（409，見 approvalWorkflow.test.js）；沒設定過特休的員工維持核准並回警告
     mockDeductAnnualLeave.mockRejectedValue(Object.assign(
       new Error('Insufficient annual leave balance'),
-      { code: 'INSUFFICIENT_BALANCE', remainingHours: 0, requestedHours: 8 },
+      { code: 'INSUFFICIENT_BALANCE', remainingHours: 0, requestedHours: 8, configured: false },
     ))
 
     const { doc, res } = await approveLastStep({

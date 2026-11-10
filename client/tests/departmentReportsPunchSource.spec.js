@@ -24,7 +24,16 @@ const TableColumnStub = {
   </td>`,
 }
 
+// 畫面現在會自動查詢：測試結束要卸載，計時器才不會跑進下一個測試
+const mountedWrappers = []
+
 function createWrapper() {
+  const wrapper = mountDepartmentReports()
+  mountedWrappers.push(wrapper)
+  return wrapper
+}
+
+function mountDepartmentReports() {
   return mount(DepartmentReports, {
     global: {
       stubs: {
@@ -53,6 +62,8 @@ function mockStartup() {
       { id: 'tpl-early', name: '早退統計', type: 'earlyLeave', exportSettings: { formats: ['excel'] }, permissionSettings: { supervisorDept: true } },
     ],
   })
+  // 打開頁面時的自動查詢：沒有資料的報表
+  apiFetch.mockResolvedValue({ ok: true, headers: { get: () => 'application/json' }, json: async () => ({ summary: null, records: [] }) })
 }
 
 async function previewWith(type, records) {
@@ -89,6 +100,7 @@ describe('DepartmentReports.vue 實際打卡的來源', () => {
   })
 
   afterEach(() => {
+    while (mountedWrappers.length) mountedWrappers.pop().unmount()
     window.sessionStorage.clear()
   })
 

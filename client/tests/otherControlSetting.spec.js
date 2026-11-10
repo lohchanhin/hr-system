@@ -47,25 +47,29 @@ describe('OtherControlSetting custom field defaults', () => {
     expect(wrapper.vm.dictionaryDefinitions).toEqual(expect.arrayContaining(expectedPairs))
   })
 
-  it('renders dictionary select options with proper labels for C08 以後', async () => {
+  // 2026/11：選字典改成左邊的名稱清單（以前是右上角的下拉選單，選項是「C08 教育程度」）
+  it('lists every dictionary by its name for C08 以後, and shows the chosen one with where it is used', async () => {
     const wrapper = mount(OtherControlSetting, { attachTo: document.body, global: { plugins: [ElementPlus] } })
     await flushPromises()
 
-    const trigger = wrapper.find('.dictionary-select .el-select__wrapper')
-    await trigger.trigger('click')
+    const names = wrapper.findAll('[data-test="dictionary-list"] .dictionary-item__name').map(item => item.text())
+    const expectedLabels = [
+      '教育程度',
+      '緊急聯絡人稱謂',
+      '教育訓練積分類別',
+      '假別類別',
+      '津貼項目'
+    ]
+    expect(names).toEqual(expect.arrayContaining(expectedLabels))
+    // 第一個字典預設選取
+    expect(wrapper.find('[data-test="dictionary-title"]').text()).toBe('職稱')
+
+    await wrapper.find('[data-test="dictionary-item-C12"]').trigger('click')
     await flushPromises()
 
-    const dropdownItems = Array.from(document.querySelectorAll('.el-select-dropdown__item'))
-    const optionTexts = dropdownItems.map(item => item.textContent?.trim())
-    const expectedLabels = [
-      'C08 教育程度',
-      'C09 緊急聯絡人稱謂',
-      'C10 教育訓練積分類別',
-      'C12 假別類別',
-      'C14 津貼項目'
-    ]
-
-    expect(optionTexts).toEqual(expect.arrayContaining(expectedLabels))
+    expect(wrapper.find('[data-test="dictionary-title"]').text()).toBe('假別類別')
+    expect(wrapper.find('[data-test="dictionary-item-C12"]').classes()).toContain('is-active')
+    expect(wrapper.find('[data-test="dictionary-usage"]').text()).toBe('用在：簽核表單裡連結這個字典的下拉欄位（例如請假單的假別）；代碼 C12')
 
     wrapper.unmount()
   })

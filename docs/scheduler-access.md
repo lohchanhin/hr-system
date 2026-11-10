@@ -96,6 +96,7 @@
 | `Department.allowedFormIds` | `[ObjectId → FormTemplate]`，預設 `[]` | 使用簽核表單，空陣列 = 全部 |
 | `Department.deptManager` | `String`（員工 `_id`） | 舊欄位「排班管理者」，視為整個部門的排班人員（兩種排班權限模式都一樣） |
 
+- 刪除班別（`DELETE /api/shifts/:id`）時一併從所有小單位的 `allowedShiftIds` 拿掉；拿掉後清單裡已經沒有上班的班別（只剩不用上班的，或空的）就清成空陣列 = 全部班別。以前留著已不存在的 `_id`，只選了那個班別的小單位排不了任何上班班別。
 - 新增、修改小單位與部門時，伺服器檢查格式與是否存在（員工、班別設定、表單），重複的去掉；**沒有送的欄位不會被清掉**（舊版畫面修改其他欄位時不影響設定）。
 - 舊資料沒有這些欄位，讀到時就是「沒有指定／全部」，所以**不需要補資料的啟動移轉**。啟動時只記錄一行有設定「排班管理者」的部門數（`Departments whose schedule manager (deptManager) can now schedule the whole department: N`），不修改資料。
 - **行為變更**：以前「排班管理者」只用在部門報表；現在被設定的人也能排整個部門的班。部署前可以先在部門設定檢查這個欄位。
@@ -150,6 +151,65 @@
   - 管理員看全部：以前前台排班頁會把管理員自己的 id 當成主管篩選，只列出直屬於管理員的人（通常是空的）；現在不再帶這個篩選，部門篩選也可以切換。
   - 編輯功能（發布、套用、國定假日休假等）依排班權限顯示。
   - 班別下拉、套用班別與圖例只列正在看的小單位的使用班別（沒有設定就是全部），不用上班的班別一律列出（`utils/scheduleScope.js` 的 `restrictShifts`／`isNonWorkShift`，判斷與伺服器相同）；既有班表的班別名稱與顏色照樣用完整的班別設定顯示。換到另一個小單位時，原本選的「套用班別」不在可用班別內就清掉。
+
+## 員工月中調單位（2026-11 複查）
+
+班表上存的部門、小單位是排班當時的單位。員工月中從 A 單位調到 B 單位後，A 單位排的那幾天還掛在 A 底下：
+
+- 排班頁（`GET /api/schedules/monthly`）與班表匯出（`GET /api/schedules/export`）：部門、小單位只用來篩選員工，名單上員工整個月的班表都列出來，
+  不再另外比對班表上存的單位。以前那幾天在 B 單位是空白格子，一排就回「既有排班屬於不同部門或單位」，A 單位的排班人員又已經看不到這位員工，誰也改不了。
+- 發布、完成發布、排班檢核：選班表時除了班表上存的單位（原本的條件），也包含現在屬於這個單位的員工的班表（`scheduleShared.js` 的 `applyPublishUnitFilter`），
+  和排班頁看到的範圍一致。以前那幾天永遠停在草稿。
+- B 單位的排班人員修改那幾天時，班表上的單位會跟著改成 B；使用班別照 B 單位的設定檢查。
+
+同一次複查的其他修正：
+
+- 同一格同時新增兩次（連點、兩位排班人員同時排）：後到的回 `employee conflict`（畫面請使用者重新整理），不再把資料庫的 E11000 原文回給畫面。
+- 員工批次回覆班表（`POST /api/schedules/respond/bulk`）：先全部檢查過才開始存，其中一筆不能回覆時整批都不存（以前前面幾筆已經存成已確認，畫面卻顯示失敗）。
+- 排班檢核、發布的排班規範：範圍前後多讀的 7 天只用來判斷跨月的問題，整個落在範圍外的違規（例如檢核 10 月時 9/24～9/30 連上 7 天）不回報。
+- 還有班表在使用的班別不能刪除（`DELETE /api/shifts/:id` 回 409 `SHIFT_IN_USE`，訊息含筆數與最近一筆的日期）；刪掉後那些班表的工時、薪資算不到，當天也打不了卡。
+  班別內容填錯（休息時長是負數、休息時段開始等於結束、夜班津貼金額是 0）回 400（以前 500）。
+- 測試：`server/tests/timeAudit.integration.test.js`（真的 MongoDB，預設略過）、`server/tests/schedule.test.js`、`server/tests/laborRuleValidationService.test.js`、`server/tests/shiftControllerSafety.test.js`。
+
+## 發布、員工確認、完成發布的循環（2026-11 複查）
+
+一筆班表的狀態（`ShiftSchedule.state`／`employeeResponse`）：
+
+| 狀態 | 意思 |
+| --- | --- |
+| `draft` | 還沒送給員工：新增或異動過的班表（`needsReconfirm: true`） |
+| `pending_confirmation`／`pending` | 已發送，等員工回覆 |
+| `pending_confirmation`／`confirmed` | 員工已確認，等完成發布 |
+| `changes_requested`／`disputed` | 員工提出異議（附原因） |
+| `finalized` | 已完成發布（鎖定）。之後再改這一筆，它會回到 `draft` |
+
+規則：
+
+- **發送待確認／重新發送**（`POST /api/schedules/publish`）只送「需要員工（再）確認」的班表：草稿（新增或異動過的）、有異議的、還沒回覆的。
+  **員工已經確認、之後沒有異動的班表不動。** 以前整個範圍還沒完成發布的班表全部重設成待確認：員工確認了 13 天，排班人員只改 1 天再發布，
+  14 天全部回到待確認。回應的 `updated` 是這次送出的筆數；有已確認而沒有重送的班表時另外帶 `keptConfirmed`（筆數）。
+  - 沒有東西要送而且班表都已確認：409 `NOTHING_TO_PUBLISH`（「…員工都已確認…可以直接完成發布」）；範圍內沒有可以發送的班表：404 `NO_SCHEDULES`。
+  - 有異議的那一天：排班人員改了班別 → 那一天變成草稿，重新發送後請員工再確認；和員工談過後不改、直接重新發送 → 那一天回到待確認，員工可以改按確認。
+- **完成發布**（`POST /api/schedules/publish/finalize`）不變：已發送的班表全部確認了才行，還有人沒回覆或有異議回 409（`UNCONFIRMED_EMPLOYEES`，訊息是中文，附名單）。
+  完成發布只鎖定已確認的班表；當時還是草稿（改了沒有重送）的班表維持草稿。
+- **已完成發布的月份再改班表**：改到的那一格（或新增的那一天）回到草稿，其餘維持鎖定。再按「發送待確認」只會送出那幾格，員工確認後再「完成發布」一次即可。
+
+排班頁的發布狀態（`GET /api/schedules/monthly` 的 `publishSummary`，程式在 `controllers/schedule/schedulePublishSummary.js`）：
+
+- **看的是整個範圍**（月份 + 部門／小單位 + 登入者看得到的員工），不看頁次、搜尋、職別、排班狀態，也不看畫面這次只要求的那幾位員工（`employeeIds`）。
+  以前用「這一頁員工」的班表算：員工比一頁多時，第一頁都確認了就顯示「可完成發布」，`totalEmployees`、待回覆名單也只有那一頁的。
+  現在用一次彙總查詢算出每位員工的筆數（有異議的班表另外讀一次），不會每位員工查一次。
+- `status`：`disputed`（還有異議）＞ `pending`（已發送、還有人沒回覆）／`ready`（已發送的都確認了）＞ `finalized`（全部都已完成發布，沒有還沒發送的異動）＞ `draft`。
+  以前只要有一筆已完成發布就回報 `finalized`：鎖定的月份改一格之後，畫面仍顯示已完成發布、不能再發送，那一格永遠送不到員工手上。
+  現在這種情況回報 `draft`（`publishedAt` 仍是最近一次發布的時間），畫面的「發送待確認」可以按。
+- 新欄位 `unpublishedCount`：範圍內還沒送給員工的班表筆數（草稿）。`pending`／`ready`／`draft` 時大於 0 代表有新增或異動還沒發送。
+- 資料相容：不需要搬移。2026/03 以前建立、沒有 `needsReconfirm` 欄位的舊班表和以前一樣不在發布的範圍內。
+
+其他：`GET /api/schedules`（畫面沒有使用）可以帶 `month=YYYY-MM` 或 `start`／`end`（`YYYY-MM-DD`，最多 366 天）；
+管理員不帶條件時只回最近三個月（台灣現在的月份與前後各一個月），以前把整個資料表一次回傳；格式不對回 400。
+`GET /api/schedules/can-finalize` 的月份格式不對回 400（以前 500）。
+
+測試：`server/tests/scheduleRepublish.integration.test.js`（真的 MongoDB，預設略過）、`server/tests/smallValidations.integration.test.js`、`server/tests/schedule.test.js`。
 
 ## 沒有改的部分
 

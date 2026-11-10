@@ -12,6 +12,15 @@ vi.mock('vue-router', async (importOriginal) => {
   return { ...actual, onBeforeRouteLeave: (guard) => { leaveGuards.push(guard) } }
 })
 
+// 簽核頁的提示與確認改用 Element Plus 的訊息與確認框（utils/approvalNotify，不再用瀏覽器原生的 alert / confirm）：
+// 測試裡接回 window.alert / window.confirm 的 spy，原本檢查「提示了什麼、確認時問了什麼」的斷言照舊有效
+// （訊息與確認框本身的行為在 approvalNotify.spec.js）
+vi.mock('../src/utils/approvalNotify', () => ({
+  notifySuccess: (message, warnings = []) => window.alert([message, ...warnings].join('\n')),
+  notifyFailure: (title, message) => window.alert(title ? `${title}：${message}` : message),
+  confirmAction: (message) => Promise.resolve(window.confirm(message)),
+}))
+
 beforeAll(() => {
   globalThis.ResizeObserver = globalThis.ResizeObserver || class {
     observe() {}
@@ -133,24 +142,59 @@ describe('Approval.vue 分頁（C1）', () => {
     expect(text).toContain('2026/06/19 09:00')
   })
 
-  it('伺服器回傳分頁格式時顯示分頁並可換頁；純陣列則不分頁', async () => {
-    const items = Array.from({ length: 20 }, (_, i) => ({
-      _id: `r${i}`, status: 'pending', form: { name: '請假' }, current_step_index: 0, steps: [{}], createdAt: '2026-06-19T01:00:00.000Z',
-    }))
+  // 2026/11：清單 API 支援篩選與分頁（docs/approval-list-api.md），畫面一次只向伺服器取這一頁（20 筆），
+  // 換頁、改篩選都重新查詢；以前一次取 200 筆在前端篩選，超過時要按「載入更多」
+  it('伺服器回傳分頁格式時一頁取 20 筆；換頁、改篩選都向伺服器重新查詢', async () => {
+    const row = (i) => ({
+      _id: `r${i}`, status: 'pending', form: { name: '請假' }, current_step_index: 0, steps: [{}], createdAt: '2026-06-19T01:00:00.000Z', summary: null,
+    })
     const calls = installFetch([
-      [(url) => /\/api\/approvals\?page=1/.test(url), json({ items, total: 45, page: 1, limit: 20 })],
-      [(url) => /\/api\/approvals\?page=2/.test(url), json({ items: items.slice(0, 5), total: 45, page: 2, limit: 20 })],
+      [(url) => /\/api\/approvals\?page=1&limit=1&/.test(url), json({ items: [], total: 3, page: 1, limit: 1 })],
+      [(url) => /\/api\/approvals\?page=1/.test(url), json({ items: Array.from({ length: 20 }, (_, i) => row(i)), total: 45, page: 1, limit: 20 })],
+      [(url) => /\/api\/approvals\?page=2/.test(url), json({ items: Array.from({ length: 20 }, (_, i) => row(20 + i)), total: 45, page: 2, limit: 20 })],
     ])
     const wrapper = await mountPage()
+    expect(callsTo(calls, c => /\/api\/approvals\?page=1&limit=20$/.test(c.url))).toHaveLength(1)
     expect(wrapper.vm.myList).toHaveLength(20)
     expect(wrapper.vm.myPage).toMatchObject({ total: 45, paged: true, page: 1 })
-    expect(wrapper.find('.list-pagination').exists()).toBe(true)
+    expect(wrapper.vm.myRows).toHaveLength(20)
+    expect(wrapper.find('#pane-mine .list-pagination').exists()).toBe(true)
+    // 「載入更多」與「篩選只套用在已載入的資料」的提示都沒有了
+    expect(wrapper.text()).not.toContain('載入更多')
+    // 清單不完整：頁首的進行中件數另外問伺服器（簽核中、被退簽各取 1 筆讀總數）
+    expect(callsTo(calls, c => /page=1&limit=1&status=pending$/.test(c.url))).toHaveLength(1)
+    expect(callsTo(calls, c => /page=1&limit=1&status=returned$/.test(c.url))).toHaveLength(1)
+    expect(wrapper.vm.myInProgressCount).toBe(6)
 
-    await wrapper.vm.fetchMyList(2)
+    wrapper.vm.onMyPageChange(2)
     await flushPromises()
-    expect(wrapper.vm.myList).toHaveLength(5)
-    expect(wrapper.vm.myPage.page).toBe(2)
-    expect(callsTo(calls, c => /\/api\/approvals\?page=2&limit=20/.test(c.url))).toHaveLength(1)
+    expect(callsTo(calls, c => /\/api\/approvals\?page=2&limit=20$/.test(c.url))).toHaveLength(1)
+    expect(wrapper.vm.myRows.map(item => item._id)).toEqual(Array.from({ length: 20 }, (_, i) => `r${20 + i}`))
+
+    // 改篩選：回到第 1 頁，條件交給伺服器
+    wrapper.vm.goTab('mine')
+    await flushPromises()
+    wrapper.vm.myFilter = { ...wrapper.vm.myFilter, status: 'returned', from: '2026-06-01', to: '2026-06-30' }
+    await flushPromises()
+    expect(wrapper.vm.myPage.page).toBe(1)
+    expect(calls.filter(c => /\/api\/approvals\?page=1&limit=20/.test(c.url)).at(-1).url)
+      .toMatch(/\?page=1&limit=20&status=returned&from=2026-06-01&to=2026-06-30$/)
+  })
+
+  it('篩選條件讓資料變少時，頁碼回到最後一頁（不會停在空白的那一頁）', async () => {
+    const items = Array.from({ length: 45 }, (_, i) => ({
+      _id: `r${i}`, status: i < 5 ? 'returned' : 'approved', form: { _id: 'f1', name: '請假' }, current_step_index: 0, steps: [{}], createdAt: '2026-06-19T01:00:00.000Z',
+    }))
+    installFetch([[(url) => /\/api\/approvals\?/.test(url), json(items)]])
+    const wrapper = await mountPage()
+    wrapper.vm.myPage.page = 3
+    await flushPromises()
+    expect(wrapper.vm.myRows).toHaveLength(5)
+
+    wrapper.vm.myFilter = { ...wrapper.vm.myFilter, status: 'returned' }
+    await flushPromises()
+    expect(wrapper.vm.myPage.page).toBe(1)
+    expect(wrapper.vm.myRows.map(item => item.status)).toEqual(Array(5).fill('returned'))
   })
 
   it('純陣列回應不顯示分頁元件', async () => {
@@ -893,7 +937,8 @@ describe('Approval.vue 管理員檢視與代為處理', () => {
     expect(wrapper.vm.canOverrideRow(doneRow)).toBe(false)
     expect(wrapper.text()).toContain('等待：Alice')
     const overrideButtons = wrapper.findAll('button').map(b => b.text()).filter(t => t.startsWith('代為'))
-    expect(overrideButtons).toEqual(['代為核可', '代為否決', '代為退簽'])
+    // 與手機卡片同一個順序：次要的在左、代為核可在最右
+    expect(overrideButtons).toEqual(['代為退簽', '代為否決', '代為核可'])
   })
 
   it('代為處理使用同一個簽核動作，對話框註明是管理員代為處理', async () => {
@@ -975,6 +1020,40 @@ describe('Approval.vue 離開頁面提醒（C7）', () => {
     expect(confirmSpy.mock.calls[0][0]).toContain('附件')
     confirmSpy.mockReturnValue(true)
     expect(guard()).toBe(true)
+  })
+
+  // 2026/11：以前只有選了附件才提醒，表單填到一半切到別頁內容就不見了
+  it('表單填到一半（沒有附件）要離開時也會詢問；只是選了表單還沒填、或已經送出就不問', async () => {
+    installFetch([
+      ['/api/approvals/forms/f1/fields', json([{ _id: 'reason', label: '事由', type_1: 'text', required: true }])],
+      ['/api/approvals/forms/f1/workflow', json({ steps: [{ approver_type: 'tag', approver_value: '人資' }] })],
+      [post('/api/approvals'), json({ _id: 'n1' }, 201)],
+    ])
+    const wrapper = await mountPage()
+    const guard = leaveGuards.at(-1)
+    wrapper.vm.applyState.formId = 'f1'
+    await wrapper.vm.onSelectForm()
+    await flushPromises()
+    expect(guard()).toBe(true)
+    expect(confirmSpy).not.toHaveBeenCalled()
+
+    wrapper.vm.applyState.formData = { reason: '家中有事' }
+    confirmSpy.mockReturnValue(false)
+    expect(guard()).toBe(false)
+    expect(confirmSpy.mock.calls.at(-1)[0]).toContain('申請表單填到一半還沒有送出')
+    // 重新整理、關閉分頁時瀏覽器也會提醒
+    const unload = new Event('beforeunload', { cancelable: true })
+    window.dispatchEvent(unload)
+    expect(unload.defaultPrevented).toBe(true)
+
+    confirmSpy.mockClear()
+    await wrapper.vm.submitApply()
+    await flushPromises()
+    expect(guard()).toBe(true)
+    expect(confirmSpy).not.toHaveBeenCalled()
+    const afterSubmit = new Event('beforeunload', { cancelable: true })
+    window.dispatchEvent(afterSubmit)
+    expect(afterSubmit.defaultPrevented).toBe(false)
   })
 })
 

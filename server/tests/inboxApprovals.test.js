@@ -80,7 +80,8 @@ describe('GET /api/approvals/inbox', () => {
 
     const res = await request(app).get('/api/approvals/inbox?page=3&limit=20')
 
-    expect(res.body).toEqual({ items: [{ _id: oid(11) }], total: 61, page: 3, limit: 20 })
+    // 每一列都帶伺服器組好的 summary（沒有答案的單是 null）
+    expect(res.body).toEqual({ items: [{ _id: oid(11), summary: null }], total: 61, page: 3, limit: 20 })
     expect(query.skip).toHaveBeenCalledWith(40)
     expect(query.limit).toHaveBeenCalledWith(20)
   })
@@ -135,7 +136,7 @@ describe('GET /api/approvals (my requests)', () => {
 
     const res = await request(app).get('/api/approvals?page=1&limit=5')
 
-    expect(res.body).toEqual({ items: [{ _id: oid(21) }], total: 7, page: 1, limit: 5 })
+    expect(res.body).toEqual({ items: [{ _id: oid(21), summary: null }], total: 7, page: 1, limit: 5 })
     expect(query.limit).toHaveBeenCalledWith(5)
   })
 

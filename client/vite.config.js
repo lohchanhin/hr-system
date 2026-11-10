@@ -39,7 +39,7 @@ export default defineConfig(({ mode }) => {
   }
 
   const config = {
-    plugins: [vue(), mode === 'test' ? null : vueDevTools()].filter(Boolean),
+    plugins: [vue(), mode === 'development' ? vueDevTools() : null].filter(Boolean),
     resolve: {
       alias: {
         '@': resolveSrc(),

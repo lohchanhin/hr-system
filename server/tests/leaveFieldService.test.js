@@ -251,6 +251,27 @@ describe('getLeaveFieldIds', () => {
     expect(info.typeId).toBe('type')
   })
 
+  it('uses the active 假別類別 field when the exact 假別 field was deactivated, and still reads old answers', async () => {
+    // 管理員把文字欄位「假別」換成連結字典的「假別類別 (C12)」：已有申請單的舊欄位只會被停用
+    forms = [{ _id: 'form1', name: '請假', semanticType: 'leave' }]
+    fields = [
+      field('old-type', 'form1', '假別', { is_active: false, order: 1 }),
+      field('new-type', 'form1', '假別類別 (C12)', { type_1: 'select', order: 2 }),
+      field('start', 'form1', '開始時間', { order: 3 }),
+      field('end', 'form1', '結束時間', { order: 4 }),
+    ]
+
+    const info = await service.getLeaveFieldIdsForForm(forms[0])
+
+    // 新送出的假單答案在啟用中的欄位底下：讀錯欄位會認不出特休，不檢查餘額也不扣特休
+    expect(info.typeId).toBe('new-type')
+    expect(info.typeIds).toEqual(['new-type', 'old-type'])
+    const { resolveLeaveFieldsForRequest } = await import('../src/utils/leaveFieldResolution.js')
+    expect(resolveLeaveFieldsForRequest(info, { 'new-type': '特休假' }).typeId).toBe('new-type')
+    // 換欄位之前送出的假單，假別仍在舊欄位底下
+    expect(resolveLeaveFieldsForRequest(info, { 'old-type': '病假' }).typeId).toBe('old-type')
+  })
+
   it('caches the result until resetLeaveFieldCache is called', async () => {
     forms = [{ _id: 'form1', name: '請假', semanticType: 'leave' }]
     fields = [field('s', 'form1', '開始時間'), field('e', 'form1', '結束時間'), field('t', 'form1', '假別')]

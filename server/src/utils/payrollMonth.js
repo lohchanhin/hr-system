@@ -4,6 +4,21 @@ import { TAIPEI_OFFSET_MS } from './taipeiTime.js';
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
+/**
+ * 把薪資月份整理成 'YYYY-MM-01'：接受 'YYYY-MM'、'YYYY-MM-01' 與該月第一天的 ISO 字串或 Date，其餘回傳 null。
+ * 月中的日期（例如 2026-10-15）不接受：薪資的計算範圍、薪資記錄的月份都以每月第一天為準，
+ * 月中的日期會算成「15 日到下個月 15 日」，存下來的記錄在薪資總覽也查不到。
+ */
+export function normalizePayrollMonth(value) {
+  if (value instanceof Date) {
+    if (Number.isNaN(value.getTime()) || value.getUTCDate() !== 1) return null;
+    return `${value.toISOString().slice(0, 7)}-01`;
+  }
+  if (typeof value !== 'string') return null;
+  const match = /^(\d{4})-(0[1-9]|1[0-2])(?:-01(?:T00:00:00(?:\.000)?Z)?)?$/.exec(value.trim());
+  return match ? `${match[1]}-${match[2]}-01` : null;
+}
+
 /** 薪資月份的台灣時間範圍 { start, end }（含頭不含尾的 Date），月份無法解析時回傳 null。 */
 export function payrollMonthRange(month) {
   const parsed = month instanceof Date ? month : new Date(month);
@@ -29,4 +44,4 @@ export function approvedInMonthFilter(range) {
   };
 }
 
-export default { payrollMonthRange, approvedInMonthFilter };
+export default { normalizePayrollMonth, payrollMonthRange, approvedInMonthFilter };

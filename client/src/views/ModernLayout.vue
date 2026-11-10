@@ -1,79 +1,86 @@
 <template>
-  <el-container class="modern-layout">
+  <!-- 後台外框：上方標題列（系統名稱只出現在這裡）＋左側選單；窄螢幕（寬度小於 768px）選單改成抽屜 -->
+  <el-container class="modern-layout" :class="{ 'is-mobile': isMobile }">
     <el-header class="layout-header">
       <div class="header-left">
-        <el-button link @click="toggleCollapse" class="collapse-btn">
-          <el-icon size="20"><i :class="isSidebarCollapsed ? 'el-icon-menu' : 'el-icon-close'" /></el-icon>
-        </el-button>
-        <h1 class="system-title">HR 管理系統</h1>
+        <button
+          type="button"
+          class="collapse-btn header-icon-btn"
+          :aria-label="toggleLabel"
+          :aria-expanded="!isSidebarCollapsed"
+          :title="toggleLabel"
+          @click="toggleCollapse"
+        >
+          <el-icon :size="20"><component :is="toggleIcon" /></el-icon>
+        </button>
+        <span class="system-title">HR 管理系統</span>
       </div>
       <div class="header-right">
+        <GlobalHelpButton v-if="currentHelp" :help="currentHelp" />
+        <button
+          v-if="hasFront"
+          type="button"
+          class="header-action"
+          aria-label="員工前台"
+          title="切換到員工前台"
+          data-test="switch-to-front"
+          @click="gotoFront"
+        >
+          <el-icon :size="18"><User /></el-icon>
+          <span class="header-action-text">員工前台</span>
+        </button>
         <div v-if="headerUser.name" class="header-user" data-test="header-user">
           <EmployeeAvatar :employee="headerUser" :size="32" :lazy="false" />
           <span class="header-user-name">{{ headerUser.name }}</span>
         </div>
-        <el-button type="primary" @click="logout" class="logout-btn">
-          <el-icon><i class="el-icon-switch-button" /></el-icon>
-          登出
-        </el-button>
+        <button type="button" class="header-action logout-btn" aria-label="登出" title="登出" data-test="logout-btn" @click="logout">
+          <el-icon :size="18"><SwitchButton /></el-icon>
+          <span class="header-action-text">登出</span>
+        </button>
       </div>
     </el-header>
-    <el-container>
+    <el-container class="layout-body">
       <el-aside
         class="layout-aside"
         :class="{
           collapsed: !isMobile && isSidebarCollapsed,
-          'is-open': !isSidebarCollapsed,
-          'is-hidden': !isMobile && isSidebarCollapsed
+          'is-open': !isSidebarCollapsed
         }"
         :width="asideWidth"
       >
-        <div class="sidebar-content">
-          <div class="sidebar-logo" :class="{ collapsed: isSidebarCollapsed }">
-            <img :src="DEFAULT_MENU_ICON" alt="HR 管理系統" class="sidebar-logo-image" />
-            <span v-if="!isSidebarCollapsed" class="sidebar-logo-text">HR 管理系統</span>
-          </div>
-          <el-menu
-            :default-active="active"
-            :collapse="isSidebarCollapsed"
-            class="sidebar-menu"
-            background-color="transparent"
-            text-color="#ecfeff"
-            active-text-color="#ffffff"
+        <el-menu
+          :default-active="active"
+          :collapse="isSidebarCollapsed"
+          :collapse-transition="false"
+          class="sidebar-menu"
+        >
+          <el-menu-item
+            v-for="item in navItems"
+            :key="item.name"
+            :index="item.name"
+            @click="gotoPage(item.name)"
+            class="menu-item"
           >
-            <el-menu-item
-              v-for="item in menuItems"
-              :key="item.name"
-              :index="item.name"
-              @click="gotoPage(item.name)"
-              class="menu-item"
-            >
-              <div class="menu-item-inner" :class="{ 'is-collapsed': isSidebarCollapsed }">
-                <el-tooltip
-                  v-if="isSidebarCollapsed"
-                  :content="item.label"
-                  placement="right"
-                  effect="dark"
-                >
-                  <img
-                    :src="resolveIcon(item)"
-                    class="menu-icon"
-                    :data-icon-key="availableMenuIcons[item.icon] ? item.icon : 'default'"
-                    alt=""
-                  />
-                </el-tooltip>
+            <div class="menu-item-inner" :class="{ 'is-collapsed': isSidebarCollapsed }">
+              <el-tooltip
+                :disabled="!isSidebarCollapsed"
+                :content="item.label"
+                placement="right"
+                effect="dark"
+              >
                 <img
-                  v-else
-                  :src="resolveIcon(item)"
+                  v-if="hasMenuIconImage(item)"
+                  :src="resolveMenuIcon(item)"
                   class="menu-icon"
-                  :data-icon-key="availableMenuIcons[item.icon] ? item.icon : 'default'"
+                  :data-icon-key="item.icon"
                   alt=""
                 />
-                <span v-if="!isSidebarCollapsed" class="menu-text">{{ item.label }}</span>
-              </div>
-            </el-menu-item>
-          </el-menu>
-        </div>
+                <el-icon v-else class="menu-icon menu-glyph" :size="22"><component :is="resolveMenuGlyph(item)" /></el-icon>
+              </el-tooltip>
+              <span v-if="!isSidebarCollapsed" class="menu-text">{{ item.label }}</span>
+            </div>
+          </el-menu-item>
+        </el-menu>
       </el-aside>
       <div
         v-if="isMobile"
@@ -86,13 +93,6 @@
         :class="{ 'with-sidebar': !isMobile && !isSidebarCollapsed }"
       >
         <div class="main-content">
-          <div class="page-help-bar">
-            <GlobalHelpButton :help="currentHelp" />
-            <div class="page-help-text">
-              <div class="page-help-title">本頁操作說明</div>
-              <div class="page-help-desc">點擊「說明」按鈕檢視情境、提示與操作流程。</div>
-            </div>
-          </div>
           <router-view />
         </div>
       </el-main>
@@ -103,19 +103,19 @@
 <script setup>
 import { ref, onMounted, onBeforeUnmount, watch, computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
+import { storeToRefs } from 'pinia'
+import { Close, Expand, Fold, SwitchButton, User } from '@element-plus/icons-vue'
 import { useMenuStore } from '../stores/menu'
 import { useProfileStore } from '../stores/profile'
-import { clearToken } from '../utils/tokenService'
-import { clearEmployeePhotoCache } from '../utils/photoUrl'
-import { storeToRefs } from 'pinia'
-import {
-  DEFAULT_MENU_ICON,
-  iconMap as availableMenuIcons,
-  resolveMenuIcon
-} from '../constants/menuIcons'
+import { useAuthStore } from '../stores/auth'
+import { hasMenuIconImage, resolveMenuGlyph, resolveMenuIcon } from '../constants/menuIcons'
 import { backendHelpContent } from '../constants/backendHelpContent'
+import { backOfficeMenuItems, endSession, frontMenuItems, FRONT_HOME } from '../utils/authNavigation'
 import GlobalHelpButton from '@/components/GlobalHelpButton.vue'
 import EmployeeAvatar from '@/components/EmployeeAvatar.vue'
+
+const SIDEBAR_WIDTH = '240px'
+const SIDEBAR_COLLAPSED_WIDTH = '64px'
 
 const router = useRouter()
 const route = useRoute()
@@ -123,6 +123,7 @@ const menuStore = useMenuStore()
 const { items: menuItems } = storeToRefs(menuStore)
 const profileStore = useProfileStore()
 const { profile } = storeToRefs(profileStore)
+const authStore = useAuthStore()
 
 // 標題列顯示目前登入者的頭像與姓名（個人資料的 id 就是員工的 _id）
 const headerUser = computed(() => ({
@@ -134,19 +135,16 @@ const headerUser = computed(() => ({
 
 const active = ref('')
 const isCollapse = ref(false)
-const isMobile = ref(false)
+// 第一次畫就要知道是不是窄螢幕：等到 mounted 才判斷的話，手機上每次載入都會看到側欄先出現再滑出去
+const isMobile = ref(typeof window !== 'undefined' && window.innerWidth < 768)
 const isMobileMenuOpen = ref(false)
 
-const currentHelp = computed(() => {
-  const routeName = route?.name
-  return backendHelpContent[routeName] || {
-    title: '後台操作說明',
-    description: '使用「說明」按鈕快速查看此頁的操作重點，無需修改按鈕本身。',
-    scenarios: ['第一次操作本頁功能，需快速了解目的與影響', '修改設定前想先確認關聯與風險'],
-    tips: ['完成設定後記得儲存或套用', '若有表單說明，先閱讀再進行修改'],
-    steps: ['點擊說明查看情境與流程', '依流程調整設定並保存', '重新整理或請同仁驗證結果']
-  }
-})
+// 後台只列後台的頁面；能使用前台的人（管理員）用標題列的「員工前台」切換，兩邊的選單不混在一起
+const navItems = computed(() => backOfficeMenuItems(menuItems.value))
+const hasFront = computed(() => frontMenuItems(menuItems.value, authStore.role, menuStore.frontItems).length > 0)
+
+// 標題列的「？」：有寫操作說明的頁面才顯示
+const currentHelp = computed(() => backendHelpContent[route?.name] || null)
 
 const isSidebarCollapsed = computed(() => {
   if (isMobile.value) {
@@ -157,9 +155,19 @@ const isSidebarCollapsed = computed(() => {
 
 const asideWidth = computed(() => {
   if (isMobile.value) {
-    return '280px'
+    return SIDEBAR_WIDTH
   }
-  return isCollapse.value ? '88px' : '280px'
+  return isCollapse.value ? SIDEBAR_COLLAPSED_WIDTH : SIDEBAR_WIDTH
+})
+
+const toggleLabel = computed(() => {
+  if (isMobile.value) return isMobileMenuOpen.value ? '關閉選單' : '開啟選單'
+  return isCollapse.value ? '展開側欄' : '收合側欄'
+})
+
+const toggleIcon = computed(() => {
+  if (isMobile.value) return isMobileMenuOpen.value ? Close : Expand
+  return isCollapse.value ? Expand : Fold
 })
 
 function updateIsMobile() {
@@ -175,13 +183,23 @@ function closeMobileMenu() {
   isMobileMenuOpen.value = false
 }
 
+function storedEmployeeId() {
+  if (typeof window === 'undefined') return ''
+  return window.sessionStorage?.getItem('employeeId') || window.localStorage?.getItem('employeeId') || ''
+}
+
 onMounted(async () => {
   if (typeof window !== 'undefined') {
     updateIsMobile()
     window.addEventListener('resize', updateIsMobile)
   }
-  // 個人資料只用來顯示標題列的頭像與姓名，讀不到不影響後台使用
-  profileStore.fetchProfile().catch(() => {})
+  authStore.loadUser({ forceRefresh: true })
+  // 個人資料只用來顯示標題列的頭像與姓名，讀不到不影響後台使用；
+  // 快取的是別人的（同一個分頁換了帳號）時重新讀取
+  const cached = profile.value
+  const employeeId = storedEmployeeId()
+  const stale = Boolean(cached && employeeId && String(cached.id || cached.employeeId || '') !== employeeId)
+  profileStore.fetchProfile({ force: stale }).catch(() => {})
   if (menuItems.value.length === 0) {
     await menuStore.fetchMenu()
   }
@@ -208,8 +226,15 @@ watch(
   () => menuItems.value,
   items => {
     if (!Array.isArray(items) || items.length === 0) return
-    const firstName = items[0]?.name
-    if (!firstName) return
+    const firstBackOffice = navItems.value[0]?.name
+    if (!firstBackOffice) {
+      // 選單沒有後台頁面的人（主管、員工）不屬於後台：不管打的是哪個後台網址，都帶回他自己的第一個頁面，
+      // 不停在側欄空白、每個儲存都會被伺服器拒絕的後台畫面
+      redirectToFirstMenu(items[0]?.name)
+      return
+    }
+    // 進後台首頁時帶到第一個後台頁面
+    const firstName = firstBackOffice
     const currentName = router.currentRoute?.value?.name
     if (!currentName || currentName === 'Settings' || currentName === 'ManagerLayout') {
       redirectToFirstMenu(firstName)
@@ -239,6 +264,11 @@ function gotoPage(name) {
     closeMobileMenu()
   }
 }
+
+function gotoFront() {
+  router.push(FRONT_HOME)
+}
+
 function toggleCollapse() {
   if (isMobile.value) {
     isMobileMenuOpen.value = !isMobileMenuOpen.value
@@ -247,64 +277,96 @@ function toggleCollapse() {
   isCollapse.value = !isCollapse.value
 }
 
-function resolveIcon(item) {
-  return resolveMenuIcon(item)
-}
-
 function logout() {
-  clearToken()
-  clearEmployeePhotoCache()
-  profileStore.clearProfile()
-  menuStore.setMenu([])
-  sessionStorage.removeItem('role')
-  sessionStorage.removeItem('employeeId')
-  localStorage.removeItem('role')
-  localStorage.removeItem('employeeId')
+  endSession()
   router.push('/')
 }
 </script>
 
 <style scoped>
 .modern-layout {
-  --header-height: 64px;
+  --header-height: 56px;
+  --shell-bg: var(--hr-primary);
+  --shell-text: #ecfeff;
   height: 100vh;
-  background: #f8fafc;
-  padding-top: var(--header-height);
+  height: 100dvh;
+  overflow: hidden;
+  background: var(--hr-white);
 }
 
+/* ---------- 標題列 ---------- */
 .layout-header {
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  height: var(--header-height);
-  background: linear-gradient(135deg, #164e63 0%, #0891b2 100%);
-  border-bottom: none;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-  padding: 0 24px;
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  z-index: 1000;
+  gap: 12px;
+  height: calc(var(--header-height) + env(safe-area-inset-top, 0px));
+  padding: env(safe-area-inset-top, 0px) 16px 0 12px;
+  background: var(--shell-bg);
+  color: var(--shell-text);
 }
 
-.header-left {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-}
-
+.header-left,
 .header-right {
   display: flex;
   align-items: center;
-  gap: 12px;
+  min-width: 0;
+}
+
+.header-left {
+  gap: 8px;
+}
+
+.header-right {
+  gap: 4px;
+}
+
+.system-title {
+  color: var(--hr-white);
+  font-size: 18px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.header-icon-btn,
+.header-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 36px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--shell-text);
+  font-family: inherit;
+  font-size: 14px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.header-icon-btn {
+  width: 36px;
+  padding: 0;
+}
+
+.header-action {
+  padding: 0 10px;
+}
+
+.header-icon-btn:hover,
+.header-action:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: var(--hr-white);
 }
 
 .header-user {
   display: flex;
   align-items: center;
   gap: 8px;
-  color: #ecfeff;
+  margin: 0 4px 0 8px;
+  color: var(--shell-text);
   font-size: 14px;
   font-weight: 500;
 }
@@ -316,133 +378,67 @@ function logout() {
   white-space: nowrap;
 }
 
-.collapse-btn {
-  color: #ecfeff !important;
-  font-size: 18px;
-  padding: 8px;
-  border-radius: 8px;
-  transition: all 0.3s ease;
-}
-
-.collapse-btn:hover {
-  background-color: rgba(236, 254, 255, 0.1) !important;
-  color: #ffffff !important;
-}
-
-.system-title {
-  color: #ffffff;
-  font-size: 20px;
-  font-weight: 600;
-  margin: 0;
-  letter-spacing: 0.5px;
-}
-
-.logout-btn {
-  background: rgba(239, 68, 68, 0.9) !important;
-  border: none !important;
-  color: #ffffff !important;
-  padding: 10px 20px;
-  border-radius: 8px;
-  font-weight: 500;
-  transition: all 0.3s ease;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.logout-btn:hover {
-  background: #dc2626 !important;
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(239, 68, 68, 0.3);
+/* ---------- 側欄 ---------- */
+.layout-body {
+  flex: 1;
+  min-height: 0;
 }
 
 .layout-aside {
-  background: linear-gradient(180deg, #0f4c75 0%, #164e63 100%);
-  border-right: none;
-  position: fixed;
-  top: var(--header-height);
-  left: -100%;
-  height: calc(100vh - var(--header-height));
-  box-shadow: 2px 0 8px rgba(0, 0, 0, 0.15);
-  transition: left 0.3s ease, width 0.3s ease;
+  flex: 0 0 auto;
+  background: var(--shell-bg);
   overflow: hidden;
-  z-index: 900;
-}
-
-.layout-aside.is-open {
-  left: 0;
-}
-
-.layout-aside.is-hidden {
-  left: -100%;
-}
-
-.layout-aside.collapsed {
-  align-items: center;
-}
-
-.sidebar-content {
-  height: 100%;
-  padding: 24px 0;
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 16px;
-}
-
-.sidebar-logo {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 12px;
-  padding: 0 20px;
-  transition: all 0.3s ease;
-}
-
-.sidebar-logo.collapsed {
-  flex-direction: column;
-  padding: 0;
-}
-
-.sidebar-logo-image {
-  width: 40px;
-  height: 40px;
-  border-radius: 12px;
-  object-fit: contain;
-  box-shadow: 0 4px 12px rgba(15, 76, 117, 0.35);
-  background: rgba(255, 255, 255, 0.15);
-  padding: 6px;
-}
-
-.sidebar-logo-text {
-  color: #ecfeff;
-  font-weight: 600;
-  font-size: 16px;
-  letter-spacing: 0.5px;
+  transition: width 0.2s ease;
 }
 
 .sidebar-menu {
-  border: none !important;
-  background: transparent !important;
-  flex: 1;
+  --el-menu-bg-color: transparent;
+  --el-menu-text-color: var(--shell-text);
+  --el-menu-active-color: var(--hr-white);
+  --el-menu-hover-bg-color: rgba(255, 255, 255, 0.1);
+  --el-menu-item-height: 44px;
+  height: 100%;
+  padding: 8px 12px 16px;
+  border: none;
+  overflow-x: hidden;
   overflow-y: auto;
 }
 
+.sidebar-menu.el-menu--collapse {
+  width: 100%;
+  padding: 8px;
+}
+
 .menu-item {
-  margin: 4px 12px;
-  border-radius: 12px !important;
-  transition: all 0.3s ease;
-  min-height: 52px !important;
-  display: flex;
-  align-items: center;
+  position: relative;
+  margin-bottom: 2px;
+  padding: 0 12px !important;
+  border-radius: 8px;
+}
+
+.menu-item.is-active {
+  background: rgba(255, 255, 255, 0.14);
+  font-weight: 600;
+}
+
+/* 目前頁面：左側一小段白色標記（導覽的強調色全站一致：深色側欄用白色，淺色底用主色；和前台外框相同） */
+.menu-item.is-active::before {
+  content: '';
+  position: absolute;
+  top: 12px;
+  bottom: 12px;
+  left: 0;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--hr-white);
 }
 
 .menu-item-inner {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 12px;
   width: 100%;
-  justify-content: flex-start;
+  min-width: 0;
 }
 
 .menu-item-inner.is-collapsed {
@@ -450,118 +446,108 @@ function logout() {
   gap: 0;
 }
 
+.layout-aside.collapsed .menu-item {
+  padding: 0 !important;
+}
+
 .menu-icon {
-  width: 32px;
-  height: 32px;
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
   object-fit: contain;
-  transition: transform 0.3s ease, filter 0.3s ease;
 }
 
-.menu-item:hover .menu-icon {
-  transform: scale(1.05);
-  filter: drop-shadow(0 4px 6px rgba(15, 76, 117, 0.35));
-}
-
-.menu-item:hover {
-  background-color: rgba(236, 254, 255, 0.1) !important;
-  transform: translateX(4px);
-}
-
-.menu-item.is-active {
-  background: linear-gradient(135deg, #10b981 0%, #059669 100%) !important;
-  box-shadow: 0 2px 8px rgba(16, 185, 129, 0.3);
+.menu-glyph {
+  margin: 0;
+  color: var(--shell-text);
 }
 
 .menu-text {
-  font-weight: 500;
   font-size: 14px;
-  color: #ecfeff;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
+/* ---------- 內容區：每一頁的留白都由這裡決定 ---------- */
 .layout-main {
-  background: #f8fafc;
+  min-width: 0;
   padding: 0;
   overflow: hidden;
-  margin-left: 0;
-  transition: margin-left 0.3s ease;
+  background: var(--hr-white);
 }
 
-.layout-main.with-sidebar {
-  margin-left: 280px;
-}
-
+/* --hr-shell-padding：內容區的留白，共用樣式 .hr-sticky-bar（固定在頂端的頁首／工具列）靠它算位置 */
 .main-content {
+  --hr-shell-padding: 24px;
   height: 100%;
-  padding: 24px;
+  padding: var(--hr-shell-padding);
   overflow: auto;
-  background: #ffffff;
-  margin: 16px;
-  border-radius: 12px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
 }
 
-.page-help-bar {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 12px 16px;
-  margin-bottom: 16px;
-  border: 1px solid #e5e7eb;
-  border-radius: 10px;
-  background: linear-gradient(90deg, #f8fafc 0%, #f0f9ff 100%);
+/* ---------- 窄螢幕：側欄改成從左邊滑出的抽屜 ---------- */
+.modern-layout.is-mobile .layout-aside {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 1001;
+  max-width: 85vw;
+  padding-top: env(safe-area-inset-top, 0px);
+  transform: translateX(-100%);
+  transition: transform 0.2s ease;
 }
 
-.page-help-text {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
+.modern-layout.is-mobile .layout-aside.is-open {
+  transform: translateX(0);
+  box-shadow: var(--hr-shadow-xl);
 }
 
-.page-help-title {
-  font-weight: 600;
-  color: #0f172a;
+.hr-mobile-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: rgba(0, 0, 0, 0.5);
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.2s ease, visibility 0.2s ease;
 }
 
-.page-help-desc {
-  color: #475569;
-  font-size: 13px;
+.hr-mobile-overlay.is-open {
+  opacity: 1;
+  visibility: visible;
 }
 
-.main-content h1,
-.main-content h2,
-.main-content h3,
-.main-content h4,
-.main-content h5,
-.main-content h6 {
-  color: var(--hr-text-primary);
+.modern-layout.is-mobile .main-content {
+  --hr-shell-padding: 12px;
 }
 
-@media (max-width: 768px) {
-  .layout-aside {
-    z-index: 1001;
-  }
-
-  .system-title {
-    display: none;
-  }
-
-  .main-content {
-    margin: 8px;
-    padding: 16px;
-  }
+.modern-layout.is-mobile .layout-header {
+  padding-right: 8px;
+  padding-left: 8px;
 }
 
-@media (max-width: 480px) {
-  .layout-header {
-    padding: 0 16px;
-  }
+.modern-layout.is-mobile .system-title {
+  font-size: 16px;
+}
 
-  .logout-btn span {
-    display: none;
-  }
+.modern-layout.is-mobile .header-action-text,
+.modern-layout.is-mobile .header-user-name {
+  display: none;
+}
 
-  .header-user-name {
-    display: none;
-  }
+.modern-layout.is-mobile .header-action {
+  width: 40px;
+  height: 40px;
+  padding: 0;
+}
+
+.modern-layout.is-mobile .header-icon-btn {
+  width: 40px;
+  height: 40px;
+}
+
+.modern-layout.is-mobile .header-user {
+  margin: 0 2px;
 }
 </style>

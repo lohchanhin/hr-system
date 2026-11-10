@@ -12,13 +12,16 @@ import {
   resolveSignLevel,
   validateSignSettings
 } from './employeeController.js'
+import { loadNewEmployeeAutoOvertimeDefault } from '../services/payrollPolicyService.js'
 import { INACTIVE_EMPLOYMENT_STATUSES } from '../services/approverEligibility.js'
 import { splitSignTagText } from '../utils/signTags.js'
+import { hashPasswordAsync } from '../utils/passwordHash.js'
 import { exceedsLegacyDaysMax, interpretLegacyAnnualLeave } from '../utils/annualLeaveHours.js'
 import { LEGACY_ANNUAL_LEAVE_DAYS_MAX } from '../config/leavePolicyConfig.js'
 import { parseHolidayRegime } from '../services/holidayCalendarRules.js'
 
 const REQUIRED_MAPPING_KEYS = ['employeeNo', 'name', 'email']
+const REQUIRED_COLUMN_LABELS = { employeeNo: '員工編號', name: '姓名', email: 'Email', idNumber: '身分證號' }
 const VALID_ROLES = ['employee', 'supervisor', 'admin']
 
 const DEFAULT_COLUMN_MAPPINGS = Object.freeze({
@@ -614,7 +617,32 @@ function formatRowError(rowNumber, messages) {
   return `第 ${rowNumber} 列：${text}`
 }
 
+/*
+ * 寫入前的資料檢查（Mongoose 驗證）失敗時給人資看的說明：每個欄位一句中文。
+ * 以前直接顯示「Employee validation failed: bloodType: `C` is not a valid enum value for path `bloodType`.」
+ */
+function describeRowValidationError(error) {
+  if (error?.name !== 'ValidationError' || !error.errors) {
+    const message = String(error?.message || '')
+    return /[一-鿿]/.test(message) ? message : '資料格式不正確，請檢查這一列的內容'
+  }
+  return Object.entries(error.errors).map(([path, fieldError]) => {
+    const value = fieldError?.value
+    const shown = value === undefined || value === null || typeof value === 'object' ? '' : `「${String(value).slice(0, 30)}」`
+    if (fieldError?.kind === 'required') return `「${path}」必須填寫`
+    if (fieldError?.kind === 'enum') return `「${path}」的值${shown}不是可用的選項`
+    if (fieldError?.kind === 'maxlength') return `「${path}」太長`
+    const message = String(fieldError?.message || '')
+    return /[一-鿿]/.test(message) ? message : `「${path}」的值${shown}格式不正確`
+  }).join('、')
+}
+
+// 欄位對應的 key／表頭名稱來自上傳的表單：這幾個名稱會碰到物件原型，不當作欄位
+const UNSAFE_PATH_SEGMENTS = new Set(['__proto__', 'constructor', 'prototype'])
+const isUnsafePath = path => String(path).split('.').some(part => UNSAFE_PATH_SEGMENTS.has(part))
+
 function setPathValue(target, path, value) {
+  if (isUnsafePath(path)) return
   if (!path.includes('.')) {
     target[path] = value
     return
@@ -640,16 +668,48 @@ function getPathValue(target, path) {
   }, target)
 }
 
+// 範本第 2 列（中文說明列）的欄位名稱，比對時只看括號前的部分（「員工編號 (必填)」「生日 (yyyy-mm-dd)」都算「員工編號」「生日」）。
+// 以前只認 CHINESE_HEADER_HINTS 那 7 個完整字串、要有 3 格一樣：刪掉範本其他欄、只留「員工編號 (必填)／姓名 (必填)／電子郵件 (必填唯一)／身分證號」
+// 的檔案只對到 1 格，說明列被當成第一筆資料匯入，整批回報「Email 格式不正確」
+const DESCRIPTION_ROW_LABELS = new Set([
+  '員工編號', '姓名', '性別', '身分證號', '身分證字號', '生日', '出生地', '血型', '語言', '失能等級', '身分類別', '婚姻狀況', '扶養人數',
+  '電子郵件', 'Email', '手機號碼', '市話', '戶籍地址', '聯絡地址', 'Line 帳號', '所屬機構', '部門 ID', '部門', '子部門 ID', '小單位',
+  '主管員工 ID', '職稱', '執業職稱', '人員狀態', '試用期天數', '是否兼職', '是否需打卡', '假日制度', '原住民身分',
+  '學歷程度', '畢業學校', '主修科目', '學歷狀態', '畢業年份', '役別類型', '軍種', '軍階', '退伍年份',
+  '緊急聯絡人1 姓名', '緊急聯絡人1 關係', '緊急聯絡人1 電話1', '緊急聯絡人1 電話2',
+  '緊急聯絡人2 姓名', '緊急聯絡人2 關係', '緊急聯絡人2 電話1', '緊急聯絡人2 電話2',
+  '到職日期', '起聘日期', '離職日期', '解聘日期', '再任起聘', '再任解聘', '任職備註', '薪資類型', '薪資金額', '自提勞退', '員工墊付金額',
+  '薪資帳戶A 銀行代號', '薪資帳戶A 帳號', '薪資帳戶B 銀行代號', '薪資帳戶B 帳號', '其他薪資項目',
+  '年度特休總時數', '已使用時數', '年度特休總天數', '已使用天數', '積假', '請假期限', '補休時數',
+  '勞保投保薪資', '勞退投保薪資', '健保投保薪資', '眷口數', '簽核標籤', '員工標籤', '簽核角色', '簽核層級',
+])
+
+function descriptionBaseLabel(text) {
+  return String(text).replace(/\s*[（(].*$/, '').replace(/\s+/g, ' ').trim()
+}
+
 function hasChineseHeaderHints(row) {
   if (!row) return false
+  let exactMatches = 0
   let matches = 0
+  let filled = 0
+  let looksLikeData = false
   row.eachCell(cell => {
     const value = toPlainCellValue(cell)
-    if (typeof value === 'string' && CHINESE_HEADER_HINTS.has(value.trim())) {
-      matches += 1
+    if (value === '' || value === null || value === undefined) return
+    filled += 1
+    if (typeof value !== 'string') {
+      looksLikeData = true
+      return
     }
+    const text = value.trim()
+    if (/\S+@\S+\.\S+/.test(text)) looksLikeData = true
+    if (CHINESE_HEADER_HINTS.has(text)) exactMatches += 1
+    if (CHINESE_HEADER_HINTS.has(text) || DESCRIPTION_ROW_LABELS.has(descriptionBaseLabel(text))) matches += 1
   })
-  return matches >= 3
+  // 和以前一樣：3 格完全相同就是說明列。其餘：沒有 Email、數字這類資料，而且大多數（超過一半、至少 2 格）是範本的欄位名稱
+  if (exactMatches >= 3) return true
+  return !looksLikeData && matches >= 2 && matches * 2 > filled
 }
 
 function splitToList(value) {
@@ -691,6 +751,32 @@ function resolveEmploymentStatus(value) {
   if (!text) return ''
   if (EMPLOYMENT_STATUSES.includes(text)) return text
   return STATUS_ALIASES.get(text) || STATUS_ALIASES.get(text.replace(/員工$/, '')) || null
+}
+
+// 性別：資料庫只收 M／F／O；常見的中文、英文寫法對應過去
+const GENDER_ALIASES = new Map([
+  ['m', 'M'], ['male', 'M'], ['男', 'M'], ['男性', 'M'], ['男生', 'M'],
+  ['f', 'F'], ['female', 'F'], ['女', 'F'], ['女性', 'F'], ['女生', 'F'],
+  ['o', 'O'], ['other', 'O'], ['其他', 'O'], ['其它', 'O']
+])
+
+// 空白儲存格＝沒填（新增時用預設值、更新時不動）；有填但認不得的值只提醒、當作沒填。
+// 以前空白或「男」「女」會讓整批匯入停在資料庫的驗證錯誤（gender: `` is not a valid enum value），
+// 更新模式則直接寫進資料庫，之後這位員工每次存檔（例如重設密碼）都會驗證失敗。
+function checkGender(normalized, rowNumber, warnings) {
+  if (!('gender' in normalized)) return
+  const text = String(normalized.gender ?? '').normalize('NFKC').trim()
+  if (!text) {
+    delete normalized.gender
+    return
+  }
+  const resolved = GENDER_ALIASES.get(text.toLowerCase())
+  if (resolved) {
+    normalized.gender = resolved
+    return
+  }
+  warnings.push(`第 ${rowNumber} 列「性別」的值「${text.slice(0, 20)}」無法辨識（請填 M／F／O 或 男／女／其他），已略過`)
+  delete normalized.gender
 }
 
 function normalizeRowObject(normalized) {
@@ -964,11 +1050,16 @@ function isTransactionUnsupportedError(error) {
   )
 }
 
+// 一次送幾筆密碼雜湊到背景執行緒（執行緒池預設 4 條，送多了只是排隊）
+const PASSWORD_HASH_BATCH = 8
+
 const DEFAULT_CREDENTIAL_RULE = Object.freeze({
   username: '帳號優先使用員工編號，缺少時依序以 Email 帳號前綴或手動輸入帳號填入',
   password: '預設密碼為身分證號（idNumber），缺少時將中止匯入'
 })
 
+// 匯入結果的每一列。不回傳初始密碼：初始密碼就是身分證號（或管理員剛輸入的預設密碼），
+// 畫面只說明規則（credentialRule），以前每一列都把身分證號以明碼放在回應裡
 function createPreview(row) {
   return {
     action: row.action ?? 'created',
@@ -977,9 +1068,29 @@ function createPreview(row) {
     department: row.department ?? '',
     role: row.role ?? '',
     email: row.email ?? '',
-    username: row.username ?? '',
-    initialPassword: row.initialPassword ?? ''
+    username: row.username ?? ''
   }
+}
+
+/* 結果的部門顯示名稱（department 是部門 _id 時查一次部門名稱；查不到或不是 _id 時是原本的值） */
+async function attachDepartmentNames(preview) {
+  const ids = [...new Set(preview.map(item => String(item.department ?? '')).filter(id => /^[a-f0-9]{24}$/i.test(id)))]
+  let names = new Map()
+  if (ids.length) {
+    try {
+      const query = Department.find({ _id: { $in: ids } })
+      const selected = query && typeof query.select === 'function' ? query.select('_id name') : query
+      const rows = selected && typeof selected.lean === 'function' ? await selected.lean() : await selected
+      names = new Map((Array.isArray(rows) ? rows : []).map(row => [String(row._id), row.name || '']))
+    } catch (error) {
+      console.error(`[bulkImport] department names lookup failed: ${error?.name || 'Error'}`)
+    }
+  }
+  preview.forEach(item => {
+    const id = String(item.department ?? '')
+    item.departmentName = names.get(id) ?? (ids.includes(id) ? '' : id)
+  })
+  return preview
 }
 
 export async function bulkImportEmployees(req, res) {
@@ -1083,7 +1194,10 @@ export async function bulkImportEmployees(req, res) {
         })
         return
       }
-      await workbook.csv.read(csvSource)
+      // 每一格都當文字讀：ExcelJS 預設會把看起來像數字的內容轉成數字，
+      // 手機 0912345678 會變成 912345678、銀行代號 004 變成 4、員工編號 00123 變成 123（帳號也跟著錯）。
+      // 數字、日期、是／否欄位之後各自依欄位型別轉換（和 .xlsx 的文字儲存格相同）
+      await workbook.csv.read(csvSource, { map: value => value })
     } else {
       await workbook.xlsx.load(req.file.buffer)
     }
@@ -1129,7 +1243,7 @@ export async function bulkImportEmployees(req, res) {
     const name = header.trim()
     const direct = headerMap.get(name)
     if (direct) return direct
-    const labels = HEADER_LABEL_FALLBACKS[name]
+    const labels = Object.prototype.hasOwnProperty.call(HEADER_LABEL_FALLBACKS, name) ? HEADER_LABEL_FALLBACKS[name] : null
     if (labels) {
       for (const label of labels) {
         const col = labelMap.get(label)
@@ -1139,21 +1253,28 @@ export async function bulkImportEmployees(req, res) {
     return undefined
   }
 
-  const missingColumns = Object.entries(columnMappings)
+  // 檔案裡找不到的欄位：必填欄位（員工編號、姓名、Email，沒有設定預設密碼時再加身分證號）擋下並寫出是哪幾欄；
+  // 其他欄位只提醒、當作沒有這一欄。以前欄位對應裡任何一欄找不到（例如範本的「血型」被刪掉）整批都不能匯入
+  const requiredColumnKeys = new Set([...REQUIRED_MAPPING_KEYS, ...(resetPassword ? [] : ['idNumber'])])
+  const unresolvedColumns = Object.entries(columnMappings)
     .filter(([, header]) => typeof header === 'string' && header.trim())
-    .filter(([key, header]) => !resolveColumn(header) && !OPTIONAL_COLUMN_KEYS.has(key))
-    .map(([key, header]) => `${key} (${header})`)
-
-  if (missingColumns.length) {
+    .filter(([, header]) => !resolveColumn(header))
+  const missingRequired = unresolvedColumns.filter(([key]) => requiredColumnKeys.has(key))
+  if (missingRequired.length) {
     res.status(400).json({
       message: '匯入檔案缺少必要欄位',
-      errors: missingColumns.map(col => `找不到對應欄位：${col}`)
+      errors: missingRequired.map(([key, header]) => `找不到必填欄位「${REQUIRED_COLUMN_LABELS[key] || key}」（檔案第 1 列要有「${header}」）`),
+      missingColumns: missingRequired.map(([key, header]) => ({ key, header, label: REQUIRED_COLUMN_LABELS[key] || key }))
     })
     return
   }
 
   const parsedRows = []
   const warnings = []
+  const skippedHeaders = unresolvedColumns.filter(([key]) => !OPTIONAL_COLUMN_KEYS.has(key)).map(([, header]) => header)
+  if (skippedHeaders.length) {
+    warnings.push(`檔案沒有這些欄位，已略過（不影響其他欄位）：${skippedHeaders.join('、')}`)
+  }
   // actualRowCount 只算「有內容的列數」，中間有空白列時會比最後一列的編號小，
   // 拿來當迴圈上限會把檔案尾端的資料整段漏掉，所以改用 rowCount（最後一列的編號）。
   const maxRow = Math.max(worksheet.rowCount || 0, worksheet.actualRowCount || 0)
@@ -1167,7 +1288,7 @@ export async function bulkImportEmployees(req, res) {
     let hasData = false
 
     Object.entries(columnMappings).forEach(([key, header]) => {
-      if (typeof header !== 'string' || !header.trim()) return
+      if (typeof header !== 'string' || !header.trim() || isUnsafePath(key)) return
       const col = resolveColumn(header)
       if (!col) return
       const cellValue = toPlainCellValue(row.getCell(col))
@@ -1241,6 +1362,7 @@ export async function bulkImportEmployees(req, res) {
     if (!hasData) continue
 
     normalizeRowObject(normalized)
+    checkGender(normalized, index, warnings)
     checkEmploymentStatus(normalized, index, warnings)
     normalizeSignSettings(normalized, index, warnings)
     convertPensionSelfRate(normalized, index, warnings)
@@ -1370,6 +1492,39 @@ export async function bulkImportEmployees(req, res) {
   const invalidMappings = []
   const invalidMessageSet = new Set()
 
+  // 同名的部門（不同機構各有一個「護理部」）：名稱對到好幾個部門時，依這一列的「所屬機構」決定是哪一個。
+  // 以前不看機構，誰最後讀到就用誰：別的機構的員工會被放進同一個護理部（機構和部門對不起來）。
+  const departmentsByAlias = new Map()
+  departmentMap.forEach(doc => {
+    REFERENCE_CONFIGS.department.aliasFields.forEach(field => {
+      const alias = typeof doc?.[field] === 'string' ? normalizeReferenceKey(doc[field]) : ''
+      if (!alias) return
+      const list = departmentsByAlias.get(alias) || []
+      if (!list.some(item => toIdString(item._id) === toIdString(doc._id))) list.push(doc)
+      departmentsByAlias.set(alias, list)
+    })
+  })
+  const organizationIdOfRow = row => {
+    const value = normalizeReferenceKey(getPathValue(row?.original, 'organization'))
+    const resolution = value ? resolutionMaps.organization.get(value) : null
+    return resolution && resolution.status !== 'ignored' && typeof resolution.resolved === 'string' ? resolution.resolved : ''
+  }
+  // 這一列的部門：{ id, ambiguous }。使用者在畫面上指定的對應照用；自動比對到同名的多個部門時看機構，
+  // 機構沒填或對不上就是 ambiguous（不替使用者猜）
+  const departmentOfRow = row => {
+    const value = normalizeReferenceKey(getPathValue(row?.original, 'department'))
+    if (!value) return { id: null, ambiguous: false }
+    const resolution = resolutionMaps.department.get(value)
+    if (!resolution || resolution.status === 'ignored' || typeof resolution.resolved !== 'string' || !resolution.resolved) {
+      return { id: null, ambiguous: false }
+    }
+    const candidates = departmentsByAlias.get(value) || []
+    if (resolution.status !== 'auto' || candidates.length <= 1) return { id: resolution.resolved, ambiguous: false }
+    const organizationId = organizationIdOfRow(row)
+    const matched = organizationId ? candidates.find(doc => toIdString(doc.organization) === organizationId) : null
+    return matched ? { id: toIdString(matched._id), ambiguous: false } : { id: null, ambiguous: true }
+  }
+
   REFERENCE_KEYS.forEach(type => {
     const usageMap = referenceUsage[type]
     if (!usageMap.size && !mappingMaps[type].size && !ignoreSets[type].size) return
@@ -1377,16 +1532,7 @@ export async function bulkImportEmployees(req, res) {
     const pendingMap = new Map()
     const optionMap = new Map()
 
-    const getDepartmentIdForRow = row => {
-      const normalizedDepartment = normalizeReferenceKey(getPathValue(row?.original, 'department'))
-      if (!normalizedDepartment) return null
-      const departmentResolution = resolutionMaps.department.get(normalizedDepartment)
-      if (!departmentResolution) return null
-      if (departmentResolution.status === 'ignored') return null
-      return typeof departmentResolution.resolved === 'string' && departmentResolution.resolved
-        ? departmentResolution.resolved
-        : null
-    }
+    const getDepartmentIdForRow = row => departmentOfRow(row).id
 
     if (type === 'subDepartment') {
       usageMap.forEach(entry => {
@@ -1604,12 +1750,20 @@ export async function bulkImportEmployees(req, res) {
       }
       let resolutionKey = normalizedValue
       if (key === 'subDepartment') {
-        const normalizedDepartment = normalizeReferenceKey(getPathValue(row.original, 'department'))
-        const departmentResolution = resolutionMaps.department.get(normalizedDepartment)
-        const departmentId = departmentResolution && departmentResolution.status !== 'ignored'
-          ? departmentResolution.resolved
-          : null
-        resolutionKey = buildSubDepartmentResolutionKey(normalizedValue, departmentId)
+        resolutionKey = buildSubDepartmentResolutionKey(normalizedValue, departmentOfRow(row).id)
+      }
+      if (key === 'department') {
+        const department = departmentOfRow(row)
+        if (department.ambiguous) {
+          row.errors.push(
+            `部門「${toReferenceDisplay(getPathValue(row.original, 'department'))}」在多個機構都有，請填寫正確的所屬機構，或改填部門代碼`
+          )
+          return
+        }
+        if (department.id) {
+          row.normalized[key] = department.id
+          return
+        }
       }
       const resolution = resolutionMaps[key].get(resolutionKey)
       if (!resolution) return
@@ -1622,6 +1776,7 @@ export async function bulkImportEmployees(req, res) {
   })
 
   const seenEmails = new Set()
+  const seenEmployeeNos = new Set()
   const emailCandidates = new Set()
 
   // 這份檔案裡出現在「主管員工 ID」欄的員工編號：被別人指定為主管，或填成自己（標示「我是
@@ -1663,6 +1818,12 @@ export async function bulkImportEmployees(req, res) {
 
     if (!row.normalized.employeeNo || String(row.normalized.employeeNo).trim() === '') {
       row.errors.push('缺少員工編號')
+    } else {
+      // 同一份檔案裡員工編號不能重複：帳號預設就是員工編號，兩列都新增時第二列會撞到帳號的唯一索引（資料庫錯誤 E11000），
+      // 更新模式則是同一位員工被後面那一列再蓋一次
+      const employeeNoKey = String(row.normalized.employeeNo).trim().toLowerCase()
+      if (seenEmployeeNos.has(employeeNoKey)) row.errors.push('員工編號重複')
+      else seenEmployeeNos.add(employeeNoKey)
     }
 
     if (!row.normalized.idNumber || String(row.normalized.idNumber).trim() === '') {
@@ -1703,7 +1864,7 @@ export async function bulkImportEmployees(req, res) {
       // （簽核標籤／角色／層級被清空的提醒、聯絡人與薪資項目的合併），兩種比對方式的結果才一致
       const foundByEmail = await Employee.find(
         { email: { $in: emailList } },
-        'email employeeId emergencyContacts salaryItems signTags signRole signLevel'
+        'email employeeId emergencyContacts salaryItems salaryItemAmounts signTags signRole signLevel role status accountEnabled'
       )
       // 和員工編號比對一樣轉成純物件：聯絡人是子文件，直接展開會把 Mongoose 的內部欄位一起寫回去
       existingEmails = (foundByEmail || []).map(doc => (typeof doc?.toObject === 'function' ? doc.toObject() : doc))
@@ -1723,7 +1884,7 @@ export async function bulkImportEmployees(req, res) {
     try {
       const found = await Employee.find(
         { employeeId: { $in: employeeNoList } },
-        '_id employeeId email emergencyContacts salaryItems signTags signRole signLevel'
+        '_id employeeId email emergencyContacts salaryItems salaryItemAmounts signTags signRole signLevel role status accountEnabled'
       )
       existingByNo = (found || []).map(doc => (typeof doc?.toObject === 'function' ? doc.toObject() : doc))
     } catch (error) {
@@ -1766,12 +1927,84 @@ export async function bulkImportEmployees(req, res) {
         employeeId: matched.employeeId,
         emergencyContacts: matched.emergencyContacts,
         salaryItems: matched.salaryItems,
+        salaryItemAmounts: matched.salaryItemAmounts,
         signTags: matched.signTags,
         signRole: matched.signRole,
-        signLevel: matched.signLevel
+        signLevel: matched.signLevel,
+        role: matched.role,
+        status: matched.status,
+        accountEnabled: matched.accountEnabled
       }
     }
   })
+
+  // 被別人填為主管的那一列，如果是用 Email 比對到既有員工（檔案裡的員工編號是新的），
+  // 「主管」要指向那位既有員工，不是先前替這一列預留、之後不會建立的 _id
+  const replacedIds = new Map()
+  parsedRows.forEach(row => {
+    if (row.existing?._id) replacedIds.set(String(row.newId), String(row.existing._id))
+  })
+  if (replacedIds.size) {
+    parsedRows.forEach(row => {
+      const supervisorId = row.normalized.supervisor
+      if (typeof supervisorId !== 'string' || !replacedIds.has(supervisorId)) return
+      const actualId = replacedIds.get(supervisorId)
+      if (row.existing?._id && String(row.existing._id) === actualId) {
+        delete row.normalized.supervisor
+        warnings.push(`第 ${row.rowNumber} 列的主管員工 ID 與本人相同，已不設定直屬主管`)
+      } else {
+        row.normalized.supervisor = actualId
+      }
+    })
+  }
+
+  // 新增的員工：帳號（預設是員工編號）已經被別的員工使用時先說清楚，不要等資料庫回報唯一索引錯誤
+  const newUsernames = Array.from(new Set(
+    parsedRows.filter(row => !row.existing && !row.errors.length).map(row => String(row.normalized.username ?? '').trim()).filter(Boolean)
+  ))
+  if (newUsernames.length) {
+    try {
+      const taken = await Employee.find({ username: { $in: newUsernames } }, '_id username')
+      const takenNames = new Set(
+        (Array.isArray(taken) ? taken : []).map(doc => String(doc?.username ?? '')).filter(name => newUsernames.includes(name))
+      )
+      if (takenNames.size) {
+        parsedRows.forEach(row => {
+          if (!row.existing && takenNames.has(String(row.normalized.username ?? '').trim())) {
+            row.errors.push(`帳號「${row.normalized.username}」已被其他員工使用，請更換員工編號或先修改那位員工的帳號`)
+          }
+        })
+      }
+    } catch (error) {
+      res.status(500).json({ message: '檢查既有帳號失敗', error: error.message })
+      return
+    }
+  }
+
+  // 更新模式：不能把最後一位可登入的管理員改成離職／留職停薪（和員工管理的編輯相同的保護）
+  const deactivatedAdminRows = parsedRows.filter(row =>
+    row.existing?.role === 'admin' &&
+    !INACTIVE_EMPLOYMENT_STATUSES.includes(row.existing.status) &&
+    INACTIVE_EMPLOYMENT_STATUSES.includes(row.normalized.employmentStatus)
+  )
+  if (deactivatedAdminRows.length) {
+    try {
+      const remainingAdmins = await Employee.countDocuments({
+        _id: { $nin: deactivatedAdminRows.map(row => row.existing._id) },
+        role: 'admin',
+        accountEnabled: { $ne: false },
+        status: { $nin: INACTIVE_EMPLOYMENT_STATUSES }
+      })
+      if (remainingAdmins === 0) {
+        deactivatedAdminRows.forEach(row => {
+          row.errors.push('這位是最後一位可登入的管理員，不能改成離職或留職停薪（系統至少要有一位在職的管理員）')
+        })
+      }
+    } catch (error) {
+      res.status(500).json({ message: '檢查管理員帳號失敗', error: error.message })
+      return
+    }
+  }
 
   const errorRows = parsedRows.filter(row => row.errors.length)
   if (errorRows.length) {
@@ -1787,6 +2020,15 @@ export async function bulkImportEmployees(req, res) {
       errors,
       rowNumber: firstErrorRow.rowNumber
     })
+    return
+  }
+
+  // 新增的員工「自動計算加班費」用薪資設定的新進員工預設值（匯入檔沒有這個欄位；更新模式不會動到既有員工的設定）
+  let autoOvertimeCalcDefault
+  try {
+    autoOvertimeCalcDefault = parsedRows.some(row => !row.existing) ? await loadNewEmployeeAutoOvertimeDefault() : undefined
+  } catch (error) {
+    res.status(500).json({ message: '讀取薪資設定失敗，資料沒有寫入，請稍後再試', errors: [] })
     return
   }
 
@@ -1825,13 +2067,16 @@ export async function bulkImportEmployees(req, res) {
       if (isBlankImportValue(body[key])) delete body[key]
     })
 
-    const employeeDoc = buildEmployeeDoc(body)
-    employeeDoc.password = password
+    // 密碼不在這裡設定：model 的 password 虛擬欄位是同步雜湊（每筆數十毫秒），幾百筆就會讓整個伺服器卡住；
+    // 全部列驗證完之後再分批用背景執行緒計算（見下方 PASSWORD_HASH_BATCH）
+    const employeeDoc = buildEmployeeDoc(body, { autoOvertimeCalcDefault })
     employeeDoc._id = row.newId
 
     try {
       const modelInstance = new Employee(employeeDoc)
       await modelInstance.validate()
+      // 每 50 列讓出一次事件迴圈，大檔案驗證期間其他人的請求照常處理
+      if (preparedRows.length % 50 === 49) await new Promise(resolve => setImmediate(resolve))
       preparedRows.push({
         doc: modelInstance.toObject(),
         rowNumber: row.rowNumber,
@@ -1839,7 +2084,7 @@ export async function bulkImportEmployees(req, res) {
         fallbackBody: body
       })
     } catch (validationError) {
-      const formattedError = formatRowError(row.rowNumber, validationError.message)
+      const formattedError = formatRowError(row.rowNumber, describeRowValidationError(validationError))
       res.status(400).json({
         message: `第 ${row.rowNumber} 列資料寫入失敗，已停止匯入`,
         errors: [formattedError],
@@ -1847,6 +2092,18 @@ export async function bulkImportEmployees(req, res) {
       })
       return
     }
+  }
+
+  // 初始密碼的雜湊：分批交給背景執行緒（libuv thread pool），主執行緒不被佔用
+  try {
+    for (let start = 0; start < preparedRows.length; start += PASSWORD_HASH_BATCH) {
+      await Promise.all(preparedRows.slice(start, start + PASSWORD_HASH_BATCH).map(async (prepared) => {
+        prepared.doc.passwordHash = await hashPasswordAsync(prepared.initialPassword)
+      }))
+    }
+  } catch (hashError) {
+    res.status(500).json({ message: '產生初始密碼失敗，資料沒有寫入，請稍後再試', errors: [] })
+    return
   }
 
   const createdIds = []
@@ -1894,8 +2151,7 @@ export async function bulkImportEmployees(req, res) {
           department: created.department || prepared.fallbackBody.department,
           role: created.role || prepared.fallbackBody.role,
           email: created.email,
-          username: created.username || prepared.fallbackBody.username,
-          initialPassword: prepared.initialPassword
+          username: created.username || prepared.fallbackBody.username
         })
       })
 
@@ -1927,8 +2183,7 @@ export async function bulkImportEmployees(req, res) {
           department: item.fallbackBody.department,
           role: '',
           email: item.fallbackBody.email,
-          username: item.fallbackBody.username,
-          initialPassword: ''
+          username: item.fallbackBody.username
         }))
       })
 
@@ -1936,11 +2191,9 @@ export async function bulkImportEmployees(req, res) {
         await session.commitTransaction()
       }
 
-      if (!allowTransaction) {
-        warnings.push(
-          '資料庫為單機模式、不支援交易：這次匯入若中途失敗，新增的員工會被補償刪除，但已完成的更新無法回復'
-        )
-      }
+      // 以前單機模式（正式環境就是單機）每次都在成功的結果加上「資料庫為單機模式、不支援交易：這次匯入若中途失敗…」：
+      // 匯入已經全部成功，這句話只會讓人資以為出了問題。失敗時的訊息仍會說明環境不支援交易
+      await attachDepartmentNames(preview)
 
       res.status(200).json({
         successCount: preparedRows.length + updateRows.length,
@@ -1989,9 +2242,13 @@ export async function bulkImportEmployees(req, res) {
           ? preparedRows[failureIndex].rowNumber
           : null
 
+      // 資料庫的重複鍵（E11000 duplicate key…）與驗證失敗（validation failed…）換成中文；其他寫入錯誤照舊附原因
+      const writeErrorText = error?.code === 11000
+        ? '員工編號、帳號或 Email 已被其他員工使用'
+        : error?.name === 'ValidationError' ? describeRowValidationError(error) : error.message
       const formattedError = failedRowNumber
-        ? formatRowError(failedRowNumber, error.message)
-        : error.message
+        ? formatRowError(failedRowNumber, writeErrorText)
+        : writeErrorText
 
       const transactionWarning = transactionUnavailable
         ? '；環境不支援交易，無法保證全有全無'

@@ -1,34 +1,57 @@
 <template>
   <div class="preview-page">
-    <div class="preview-header">
-      <button type="button" class="back-button" @click="handleBack">← 返回排班</button>
-      <h2>月表預覽</h2>
-    </div>
-    <table>
-      <thead>
-        <tr>
-          <th>員工</th>
-          <th v-for="d in days" :key="d.date">{{ d.label }}</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr v-for="emp in employees" :key="emp._id">
-          <td>{{ emp.name }}</td>
-          <td v-for="d in days" :key="d.date">{{ shiftCode(emp._id, d.date) }}</td>
-        </tr>
-      </tbody>
-    </table>
+    <PageHeader title="月表預覽" :subtitle="summary">
+      <template #actions>
+        <button type="button" class="back-button" @click="handleBack">← 返回排班</button>
+      </template>
+    </PageHeader>
+    <p v-if="!hasData" class="hr-empty" data-test="preview-empty">
+      沒有可預覽的排班資料，請回到排班頁重新開啟預覽
+    </p>
+    <section v-else class="hr-section">
+      <!-- 表格比螢幕寬時只在這個區塊內左右捲動，員工姓名欄固定在左側 -->
+      <div class="preview-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>員工</th>
+              <th v-for="d in days" :key="d.date" :class="{ 'is-holiday': Boolean(d.holiday) }">{{ d.label }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="emp in employees" :key="emp._id">
+              <td>{{ emp.name }}</td>
+              <td v-for="d in days" :key="d.date">{{ shiftCode(emp._id, d.date) }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
   </div>
 </template>
 
 <script setup>
 import { onBeforeRouteLeave, useRouter } from 'vue-router'
+import PageHeader from '../../components/PageHeader.vue'
 
-const data = JSON.parse(sessionStorage.getItem('schedulePreview') || '{}')
+// 排班頁把目前的班表放進 sessionStorage 再開這一頁；內容損壞時當成沒有資料
+function readPreviewData() {
+  try {
+    const parsed = JSON.parse(sessionStorage.getItem('schedulePreview') || '{}')
+    return parsed && typeof parsed === 'object' ? parsed : {}
+  } catch (err) {
+    return {}
+  }
+}
+
+const data = readPreviewData()
 const scheduleMap = data.scheduleMap || {}
-const employees = data.employees || []
-const days = data.days || []
-const shifts = data.shifts || []
+const employees = Array.isArray(data.employees) ? data.employees : []
+const days = Array.isArray(data.days) ? data.days : []
+const shifts = Array.isArray(data.shifts) ? data.shifts : []
+const shiftCodeById = new Map(shifts.map(s => [s._id, s.code || '']))
+const hasData = employees.length > 0 && days.length > 0
+const summary = hasData ? `${employees.length} 位員工` : ''
 
 const router = useRouter()
 
@@ -64,48 +87,87 @@ onBeforeRouteLeave(() => {
 
 function shiftCode(empId, day) {
   const id = scheduleMap[empId]?.[day]?.shiftId
-  const s = shifts.find(s => s._id === id)
-  return s ? s.code : ''
+  return shiftCodeById.get(id) || ''
 }
 </script>
 
 <style scoped>
-.preview-header {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 16px;
-}
-
-.preview-header h2 {
-  margin: 0;
-}
-
 .back-button {
-  background-color: #409eff;
-  border: none;
-  border-radius: 4px;
-  color: #fff;
+  min-height: 36px;
+  padding: 0 14px;
+  border: 1px solid var(--hr-gray-300);
+  border-radius: var(--hr-radius-sm);
+  background: var(--hr-white);
+  color: var(--hr-gray-800);
+  font: inherit;
+  font-size: var(--hr-font-size-sm);
   cursor: pointer;
-  font-weight: 600;
-  padding: 6px 14px;
-  transition: background-color 0.2s ease;
 }
 
 .back-button:hover {
-  background-color: #66b1ff;
+  border-color: var(--hr-primary-light);
+  color: var(--hr-primary);
 }
 
 .back-button:focus-visible {
-  outline: 2px solid #1f6fff;
+  outline: 2px solid var(--hr-primary-light);
   outline-offset: 2px;
 }
 
-table {
-  border-collapse: collapse;
+.preview-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
 }
-th, td {
-  border: 1px solid #ccc;
-  padding: 4px;
+
+table {
+  border-spacing: 0;
+  border-top: 1px solid var(--hr-gray-200);
+  border-left: 1px solid var(--hr-gray-200);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+th,
+td {
+  padding: 6px 10px;
+  border-right: 1px solid var(--hr-gray-200);
+  border-bottom: 1px solid var(--hr-gray-200);
+  text-align: center;
+}
+
+th {
+  background: var(--hr-gray-50);
+  font-weight: var(--hr-font-weight-semibold);
+  color: var(--hr-gray-700);
+}
+
+/* 國定假日、指定應放假日的標頭（與排班表同色；以前用表情符號標示） */
+th.is-holiday {
+  color: #9f2d24;
+}
+
+th:first-child,
+td:first-child {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  text-align: left;
+}
+
+/* 固定欄左邊多蓋 2px：寬度不是整數像素時，捲過去的內容不會從縫隙露出來 */
+th:first-child {
+  box-shadow: -2px 0 0 var(--hr-gray-50);
+}
+
+td:first-child {
+  background: var(--hr-white);
+  box-shadow: -2px 0 0 var(--hr-white);
+  font-weight: var(--hr-font-weight-medium);
+}
+
+@media (max-width: 767px) {
+  .back-button {
+    min-height: 44px;
+  }
 }
 </style>

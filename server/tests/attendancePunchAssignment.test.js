@@ -256,6 +256,76 @@ describe('工時：一組打卡只算給一個班', () => {
       ['2026-10-13', false, null, null, 0],
     ])
   })
+
+  // 2026-11 複查：依日期比對原本只看 UTC 日期，台灣 08:00 以前的簽到算成前一天
+  it('日班比簽到緩衝更早到（06:50 指紋簽到、17:05 簽退）：照樣算出勤，不會整天變成缺勤', async () => {
+    const result = await workHoursOf(
+      [schedule('2026-10-12', 'day'), schedule('2026-10-13', 'day')],
+      [
+        punch('clockIn', '2026-10-12 06:50', 'import'), punch('clockOut', '2026-10-12 17:05', 'import'),
+        punch('clockIn', '2026-10-13 07:55', 'import'), punch('clockOut', '2026-10-13 17:00', 'import'),
+      ],
+    )
+
+    expect(result.workDays).toBe(2)
+    expect(dailyOf(result)).toEqual([
+      ['2026-10-12', true, '10-12 06:50', '10-12 17:05', 9.25],
+      ['2026-10-13', true, '10-13 07:55', '10-13 17:00', 8.08],
+    ])
+  })
+
+  it('簽到緩衝設成提早 15 分鐘時，提早 20 分鐘（07:40）到的日班人員照樣算出勤', async () => {
+    const result = await calculateWorkHours(EMPLOYEE, '2026-10-01', {
+      employee: { _id: EMPLOYEE },
+      attendanceSetting: { ...SETTING, actionBuffers: { clockIn: { earlyMinutes: 15, lateMinutes: 240 }, clockOut: { earlyMinutes: 240, lateMinutes: 120 } } },
+      schedules: [schedule('2026-10-12', 'day')],
+      attendanceRecords: [punch('clockIn', '2026-10-12 07:40', 'import'), punch('clockOut', '2026-10-12 17:00', 'import')],
+    })
+
+    expect(dailyOf(result)).toEqual([['2026-10-12', true, '10-12 07:40', '10-12 17:00', 8.33]])
+  })
+
+  it('前一天深夜的簽到不會被當成今天日班的簽到（只認班表日期當天）', async () => {
+    const result = await workHoursOf(
+      [schedule('2026-10-12', 'day')],
+      [punch('clockIn', '2026-10-11 23:30', 'import'), punch('clockOut', '2026-10-12 17:00', 'import')],
+    )
+
+    expect(dailyOf(result)).toEqual([['2026-10-12', false, null, null, 0]])
+  })
+
+  it('夜班 20:00-08:00 隔天排休、提早下班（03:30，不在簽退時段內）：照樣算得到工時（原本隔天 00:00 的界線落在班內，整班算成缺勤）', async () => {
+    const result = await workHoursOf(
+      [schedule('2026-10-12', 'night12'), schedule('2026-10-13', 'rest'), schedule('2026-10-14', 'night12')],
+      [
+        punch('clockIn', '2026-10-12 19:55', 'online'), punch('clockOut', '2026-10-13 03:30', 'import'),
+        punch('clockIn', '2026-10-14 19:58', 'online'), punch('clockOut', '2026-10-15 08:01', 'online'),
+      ],
+    )
+
+    expect(result.workDays).toBe(2)
+    expect(dailyOf(result)).toEqual([
+      // 19:55 到 03:30 共 455 分鐘，扣休息 60 分鐘
+      ['2026-10-12', true, '10-12 19:55', '10-13 03:30', 6.58],
+      ['2026-10-13', false, null, null, 0],
+      ['2026-10-14', true, '10-14 19:58', '10-15 08:01', 11.05],
+    ])
+  })
+
+  it('夜班隔天排休、忘了簽退：不會拿隔天下午或再下一班的簽退', async () => {
+    const result = await workHoursOf(
+      [schedule('2026-10-12', 'night12'), schedule('2026-10-13', 'rest'), schedule('2026-10-14', 'night12')],
+      [
+        punch('clockIn', '2026-10-12 19:55', 'online'),
+        punch('clockOut', '2026-10-13 15:00', 'import'),
+        punch('clockIn', '2026-10-14 19:58', 'online'), punch('clockOut', '2026-10-15 08:01', 'online'),
+      ],
+    )
+
+    expect(dailyOf(result).map((row) => row.slice(0, 2))).toEqual([
+      ['2026-10-12', false], ['2026-10-13', false], ['2026-10-14', true],
+    ])
+  })
 })
 
 describe('matchSchedulesPunches', () => {
@@ -349,5 +419,68 @@ describe('部門報表：出勤、工時不重複計算；遲到、早退列出�
     )
     const result = reportUtils.buildEarlyLeaveSummary({ ...data, earlyGrace: 0 })
     expect(result.records).toEqual([expect.objectContaining({ actualClockOut: '16:30', clockOutSource: 'import', minutesEarly: 30 })])
+  })
+})
+
+// 2026-11（srvfix）：月初第一天的跨日班缺勤時，依日期比對的「再看前一天的簽到」會拿到上個月最後一天那一班的打卡——
+// 上個月的班表不在這次計算裡，那一班的打卡看起來沒有人用。11/1 大夜（00:00-08:00，勾了跨日）缺勤，
+// 卻用 10/31 小夜的 15:50 簽到、00:05 簽退算成出勤 8.25 小時（日薪多一天，10 月已經領過一次）。
+describe('月初第一班：不會用到上個月最後一天那一班的打卡', () => {
+  const eveningPunches = [punch('clockIn', '2026-10-31 15:50', 'online'), punch('clockOut', '2026-11-01 00:05', 'online')]
+  const november = (schedules, records, leadingSchedules) => calculateWorkHours(EMPLOYEE, '2026-11-01', {
+    employee: { _id: EMPLOYEE },
+    attendanceSetting: SETTING,
+    schedules,
+    attendanceRecords: records,
+    leadingSchedules,
+  })
+
+  it('10/31 小夜有上班、11/1 大夜（勾跨日）缺勤：11/1 不算出勤，也不顯示 10/31 的簽到', async () => {
+    const result = await november([schedule('2026-11-01', 'bigNightFlagged')], eveningPunches, [schedule('2026-10-31', 'evening')])
+
+    expect(result.workDays).toBe(0)
+    expect(dailyOf(result)).toEqual([['2026-11-01', false, null, null, 0]])
+  })
+
+  it('11/1 大夜真的有來（10/31 22:40 簽到，比簽到緩衝早）：照樣算 11/1 出勤，10/31 小夜的打卡留給 10/31', async () => {
+    const result = await november(
+      [schedule('2026-11-01', 'bigNightFlagged')],
+      [...eveningPunches, punch('clockIn', '2026-10-31 22:40', 'import'), punch('clockOut', '2026-11-01 08:03', 'import')],
+      [schedule('2026-10-31', 'evening')],
+    )
+
+    expect(result.workDays).toBe(1)
+    expect(dailyOf(result)).toEqual([['2026-11-01', true, '10-31 22:40', '11-01 08:03', 9.38]])
+  })
+
+  it('前一天沒有排班卻有一組完整的打卡（例如休息日來加班 09:00-18:00）：也不會被隔天缺勤的跨日班拿去', async () => {
+    const overtime = [punch('clockIn', '2026-10-31 09:00', 'online'), punch('clockOut', '2026-10-31 18:00', 'online')]
+    const result = await november([schedule('2026-11-01', 'bigNightFlagged')], overtime, [])
+
+    expect(result.workDays).toBe(0)
+    expect(dailyOf(result)).toEqual([['2026-11-01', false, null, null, 0]])
+
+    // 月中也一樣：10/14 休假來加班，10/15 大夜缺勤
+    const midMonth = await workHoursOf(
+      [schedule('2026-10-14', 'rest'), schedule('2026-10-15', 'bigNightFlagged')],
+      [punch('clockIn', '2026-10-14 09:00', 'online'), punch('clockOut', '2026-10-14 18:00', 'online')],
+    )
+    expect(midMonth.workDays).toBe(0)
+  })
+
+  it('部門報表的出勤、工時也一樣（帶入前一天的班表）', () => {
+    const employees = [{ _id: EMPLOYEE, name: '護理師' }]
+    const shiftMap = new Map(SETTING.shifts.map((shift) => [shift._id, shift]))
+    const args = {
+      employees,
+      schedules: [schedule('2026-11-01', 'bigNightFlagged')],
+      leadingSchedules: [schedule('2026-10-31', 'evening')],
+      recordMap: new Map(),
+      shiftMap,
+      punchesByEmployee: groupPunchesByEmployee(eveningPunches),
+      actionBuffers: SETTING.actionBuffers,
+    }
+    expect(reportUtils.buildAttendanceSummary(args).summary).toMatchObject({ scheduled: 1, attended: 0, absent: 1 })
+    expect(reportUtils.buildWorkHoursSummary(args).summary).toMatchObject({ totalWorkedHours: 0 })
   })
 })

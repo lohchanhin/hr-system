@@ -125,4 +125,37 @@ describe('排班預覽返回按鈕', () => {
 
     wrapper.unmount()
   })
+
+  it.each([
+    ['週表', PreviewWeek],
+    ['月表', PreviewMonth]
+  ])('%s預覽顯示員工每天的班別代碼，表格在自己的區塊內捲動', (_label, component) => {
+    sessionStorage.setItem('schedulePreview', previewPayload)
+    const wrapper = mount(component)
+
+    expect(wrapper.find('[data-test="preview-empty"]').exists()).toBe(false)
+    expect(wrapper.find('.preview-scroll table').exists()).toBe(true)
+    const cells = wrapper.findAll('tbody td').map(cell => cell.text())
+    expect(cells).toEqual(['測試員工', '早班'])
+
+    wrapper.unmount()
+  })
+
+  // 直接開啟網址、或暫存內容損壞時（以前 JSON.parse 會丟錯，整頁空白）
+  it.each([
+    ['週表', PreviewWeek, null],
+    ['月表', PreviewMonth, null],
+    ['週表', PreviewWeek, '{broken'],
+    ['月表', PreviewMonth, '{broken']
+  ])('%s預覽沒有資料或資料損壞時顯示說明，仍可返回排班', async (_label, component, stored) => {
+    if (stored !== null) sessionStorage.setItem('schedulePreview', stored)
+    const wrapper = mount(component)
+
+    expect(wrapper.find('[data-test="preview-empty"]').text()).toContain('沒有可預覽的排班資料')
+    expect(wrapper.find('table').exists()).toBe(false)
+    await wrapper.get('button.back-button').trigger('click')
+    expect(pushMock).toHaveBeenCalledWith({ name: 'Schedule' })
+
+    wrapper.unmount()
+  })
 })

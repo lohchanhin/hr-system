@@ -32,11 +32,13 @@ describe('generateBonusSlipExcel', () => {
 
     const headerRow = sheet.getRow(4)
     expect(headerRow.getCell(1).value).toBe('員工編號')
-    expect(headerRow.getCell(11).value).toBe('獎金合計')
+    // 多了「定期津貼」一欄（薪資項目的津貼也匯入獎金帳戶，要算進合計），獎金合計從第 11 欄移到第 12 欄
+    expect(headerRow.getCell(10).value).toBe('定期津貼')
+    expect(headerRow.getCell(12).value).toBe('獎金合計')
 
     const dataRow = sheet.getRow(5)
     expect(dataRow.getCell(1).value).toBe('E001')
     expect(dataRow.getCell(2).value).toBe('王小明')
-    expect(dataRow.getCell(11).value).toBe(3800)
+    expect(dataRow.getCell(12).value).toBe(3800)
   })
 })

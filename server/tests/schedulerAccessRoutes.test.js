@@ -453,7 +453,7 @@ describe('使用班別 of a unit (R3)', () => {
     expect(mockSubDepartment.findByIdAndUpdate).toHaveBeenCalledWith(
       ID.unitA2,
       expect.objectContaining({ schedulers: [ID.nurseC, ID.boss], allowedShiftIds: [SHIFT.day] }),
-      { new: true },
+      { new: true, runValidators: true },
     );
     expect((await request(app).put(`/api/sub-departments/${ID.unitA2}`).send({ schedulers: [oid(999)] })).status).toBe(400);
     expect((await request(app).put(`/api/sub-departments/${ID.unitA2}`).send({ schedulers: 'nurse' })).status).toBe(400);

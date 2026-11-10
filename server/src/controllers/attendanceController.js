@@ -44,19 +44,100 @@ function buildNonWorkDayError(shift) {
   };
 }
 
+// 同一班同一個動作已經打過卡（連點兩次、重新整理後再按一次）
+function buildDuplicatePunchError(action) {
+  return action === 'clockOut'
+    ? '這一班已經完成下班簽退，不需要重複打卡'
+    : '這一班已經完成上班簽到，不需要重複打卡';
+}
+
 function isSameDepartment(a, b) {
   if (!a && !b) return true;
   if (!a || !b) return false;
   return a === b;
 }
 
+// 打卡記錄附上的員工欄位：只給辨識用的欄位。以前整份員工資料（薪資、帳號、身分證字號…）都跟著每一筆打卡回傳，
+// 主管查部門的打卡記錄時看得到同事的薪資
+const ATTENDANCE_EMPLOYEE_SELECT = 'name employeeId department subDepartment';
+// 沒有指定日期範圍時最多回傳的筆數（由新到舊）；指定 limit 時上限 5000
+const DEFAULT_LIST_LIMIT = 1000;
+const MAX_LIST_LIMIT = 5000;
+const DATE_KEY_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+function firstQueryValue(value) {
+  return Array.isArray(value) ? value[0] : value;
+}
+
+// 'YYYY-MM-DD'（考勤時區，預設台灣時間）當天 00:00 的時間點；'today' 是伺服器現在的台灣日期。格式不對回傳 null
+function resolveLocalDayStart(value, timeZone) {
+  const text = String(value ?? '').trim();
+  if (text.toLowerCase() === 'today') {
+    const parts = getLocalDateParts(new Date(Date.now()), timeZone);
+    return parts ? createDateFromParts(parts, timeZone) : null;
+  }
+  const match = DATE_KEY_PATTERN.exec(text);
+  if (!match) return null;
+  const [year, month, day] = match.slice(1).map(Number);
+  const check = new Date(Date.UTC(year, month - 1, day));
+  if (check.getUTCFullYear() !== year || check.getUTCMonth() !== month - 1 || check.getUTCDate() !== day) return null;
+  return createDateFromParts({ year, month, day }, timeZone);
+}
+
+/**
+ * 打卡記錄的日期條件（以考勤時區的日期判斷，不是 UTC 日期）：
+ *   date=YYYY-MM-DD｜today：只要那一天；start／end=YYYY-MM-DD｜today：起訖日（含頭尾，可以只給一邊）。
+ * 回傳 { range }（沒有指定時 range 為 null）或 { error }。
+ */
+function resolveListRange(queryParams) {
+  const timeZone = getTimezone();
+  const dateRaw = firstQueryValue(queryParams.date);
+  const startRaw = dateRaw || firstQueryValue(queryParams.start);
+  const endRaw = dateRaw || firstQueryValue(queryParams.end);
+  if (!startRaw && !endRaw) return { range: null };
+  const range = {};
+  if (startRaw) {
+    const start = resolveLocalDayStart(startRaw, timeZone);
+    if (!start) return { error: '日期格式不正確，請使用 YYYY-MM-DD' };
+    range.$gte = start;
+  }
+  if (endRaw) {
+    const endDay = resolveLocalDayStart(endRaw, timeZone);
+    if (!endDay) return { error: '日期格式不正確，請使用 YYYY-MM-DD' };
+    // 結束日的隔天 00:00（不含）
+    const nextParts = getLocalDateParts(new Date(endDay.getTime() + 36 * 60 * 60 * 1000), timeZone);
+    range.$lt = createDateFromParts(nextParts, timeZone);
+  }
+  if (range.$gte && range.$lt && range.$lt <= range.$gte) {
+    return { error: '結束日期不可早於開始日期' };
+  }
+  return { range };
+}
+
+/**
+ * 打卡記錄（由新到舊）。
+ * - 員工只看得到自己的；主管不帶條件時是部門與直屬部屬的記錄（不含自己）、管理員是所有人的記錄。
+ * - scope=self：只要登入者自己的記錄（任何角色；個人的「出勤打卡」頁用這個，主管、管理員才不會看到別人的打卡）。
+ * - employee=<員工 _id>：指定員工（主管只能查部門內或直屬部屬）。
+ * - date／start／end：日期範圍（考勤時區的日期，見 resolveListRange）。
+ * - limit：最多幾筆（預設 1000，上限 5000），避免一次回傳整個資料庫的打卡記錄。
+ */
 export async function listRecords(req, res) {
   try {
     const role = req.user?.role;
     const userId = req.user?.id;
     const query = {};
+    const selfOnly = String(firstQueryValue(req.query.scope) ?? '').trim().toLowerCase() === 'self';
 
-    if (role === 'employee') {
+    const { range, error: rangeError } = resolveListRange(req.query);
+    if (rangeError) return res.status(400).json({ error: rangeError });
+    const limitRaw = Number.parseInt(firstQueryValue(req.query.limit), 10);
+    const limit = Number.isFinite(limitRaw) && limitRaw > 0 ? Math.min(limitRaw, MAX_LIST_LIMIT) : DEFAULT_LIST_LIMIT;
+
+    if (selfOnly) {
+      if (!userId) return res.status(403).json({ error: 'Forbidden' });
+      query.employee = userId;
+    } else if (role === 'employee') {
       query.employee = req.user?.id;
     } else if (role === 'supervisor') {
       if (!userId) return res.status(403).json({ error: 'Forbidden' });
@@ -133,14 +214,20 @@ export async function listRecords(req, res) {
         query.employee = { $in: [...allowed] };
       }
     } else if (req.query.employee) {
-      query.employee = req.query.employee;
+      query.employee = firstQueryValue(req.query.employee);
     }
+    if (range) query.timestamp = range;
 
     const records = await AttendanceRecord.find(query)
       .sort({ timestamp: -1 })
-      .populate('employee');
+      .limit(limit)
+      .populate('employee', ATTENDANCE_EMPLOYEE_SELECT);
     res.json(records);
   } catch (err) {
+    // 員工編號不是有效的 _id：是查詢條件的問題，不是伺服器錯誤
+    if (err?.name === 'CastError') {
+      return res.status(400).json({ error: '員工編號不正確' });
+    }
     res.status(500).json({ error: err.message });
   }
 }
@@ -170,7 +257,7 @@ export async function createRecord(req, res) {
       return res.status(401).json({ error: 'Invalid user' });
     }
     if (!employee || !action) {
-      return res.status(400).json({ error: 'employee and action are required' });
+      return res.status(400).json({ error: '缺少打卡的員工或動作' });
     }
     if (toStringId(employee) !== actorId) {
       return res.status(403).json({ error: 'Forbidden' });
@@ -179,7 +266,7 @@ export async function createRecord(req, res) {
     const targetEmployeeId = actorId;
 
     if (timestamp != null && Number.isNaN(new Date(timestamp).getTime())) {
-      return res.status(400).json({ error: 'invalid timestamp' });
+      return res.status(400).json({ error: '打卡時間格式不正確' });
     }
 
     // Attendance events must use the server clock. Client time is display-only.
@@ -367,7 +454,7 @@ export async function createRecord(req, res) {
         ],
       });
       if (duplicate) {
-        return res.status(409).json({ error: 'Attendance action already recorded for this shift' });
+        return res.status(409).json({ error: buildDuplicatePunchError(action) });
       }
 
       // 簽退前要有這一班的簽到：線上或指紋匯入的簽到都算
@@ -393,7 +480,7 @@ export async function createRecord(req, res) {
           ],
         });
         if (!hasClockIn) {
-          return res.status(409).json({ error: 'Clock-in is required before clock-out' });
+          return res.status(409).json({ error: '這一班還沒有上班簽到的記錄，請先完成上班簽到再簽退' });
         }
       }
     }
@@ -413,7 +500,7 @@ export async function createRecord(req, res) {
     res.status(201).json(response);
   } catch (err) {
     if (err?.code === 11000) {
-      return res.status(409).json({ error: 'Attendance action already recorded for this shift' });
+      return res.status(409).json({ error: buildDuplicatePunchError(req.body?.action) });
     }
     res.status(400).json({ error: err.message });
   }

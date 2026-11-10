@@ -255,9 +255,10 @@ describe('OtherControlSetting - custom fields', () => {
 
   it('新增含選項的自訂欄位可透過動態列新增、排序與刪除選項', async () => {
     const existingFields = []
+    // 伺服器沒有自訂欄位時畫面是預設清單（已有 uniformSize）；識別代碼不能重複，所以用另一個代碼
     const newField = {
       label: '制服尺寸',
-      fieldKey: 'uniformSize',
+      fieldKey: 'uniformSizeOption',
       type: 'select',
       category: 'profile',
       group: '報到資訊',
@@ -562,6 +563,53 @@ describe('OtherControlSetting - custom fields', () => {
     expect(JSON.parse(JSON.stringify(wrapper.vm.customFields))).toEqual(beforeRemove)
     expect(ElMessage.success).not.toHaveBeenCalled()
     expect(ElMessage.error).toHaveBeenCalledWith('刪除失敗')
+  })
+
+  // 兩個人同時改自訂欄位：帶上讀取時的版本，伺服器回 409 CUSTOM_FIELDS_CONFLICT 時不蓋掉別人的修改，重新載入最新內容
+  it('儲存時帶上 X-Custom-Fields-Version，成功後換成新版本；版本衝突時提示並重新載入', async () => {
+    const existingFields = [
+      { label: '欄位一', fieldKey: 'fieldOne', type: 'text', category: 'profile', group: '基本資料', required: false, description: '' }
+    ]
+    const latestFields = [
+      ...existingFields,
+      { label: '別人新增的欄位', fieldKey: 'otherField', type: 'text', category: 'profile', group: '基本資料', required: false, description: '' }
+    ]
+    let getCount = 0
+    let putResponse = () => new Response(JSON.stringify(existingFields), { status: 200, headers: { 'Content-Type': 'application/json', 'X-Custom-Fields-Version': 'v2' } })
+    apiFetchMock.mockImplementation((path, options = {}) => {
+      if (path === '/api/other-control-settings' && options.method === 'GET') {
+        getCount += 1
+        const fields = getCount === 1 ? existingFields : latestFields
+        return Promise.resolve(new Response(JSON.stringify({ itemSettings: {}, customFields: fields }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json', 'X-Custom-Fields-Version': getCount === 1 ? 'v1' : 'v3' }
+        }))
+      }
+      if (path === '/api/other-control-settings/custom-fields' && options.method === 'PUT') {
+        return Promise.resolve(putResponse())
+      }
+      return Promise.resolve(new Response('', { status: 404 }))
+    })
+
+    const wrapper = await mountComponent()
+    Object.assign(wrapper.vm.fieldForm, { label: '新欄位', fieldKey: 'newField', type: 'text', category: 'profile', group: '基本資料' })
+    await wrapper.vm.saveField()
+    const putBodies = () => apiFetchMock.mock.calls
+      .filter(([p, o]) => p === '/api/other-control-settings/custom-fields' && o?.method === 'PUT')
+      .map(([, o]) => JSON.parse(o.body))
+    expect(putBodies()[0].version).toBe('v1')
+    expect(ElMessage.success).toHaveBeenCalledWith('已更新自訂欄位')
+
+    // 下一次儲存帶的是上一次儲存回來的新版本；這次別人已經改過了
+    putResponse = () => new Response(JSON.stringify({ error: '自訂欄位剛被其他人修改', code: 'CUSTOM_FIELDS_CONFLICT', currentVersion: 'v3' }), { status: 409, headers: { 'Content-Type': 'application/json' } })
+    ElMessageBox.confirm.mockResolvedValueOnce()
+    await wrapper.vm.removeField(0)
+    await flushPromises()
+    expect(putBodies()[1].version).toBe('v2')
+    expect(ElMessage.error).toHaveBeenCalledWith('自訂欄位剛被其他人修改，已重新載入最新內容，請確認後再修改一次')
+    expect(getCount).toBe(2)
+    expect(wrapper.vm.customFields.map(field => field.fieldKey)).toEqual(['fieldOne', 'otherField'])
+    expect(wrapper.vm.customFieldsVersion).toBe('v3')
   })
 })
 

@@ -1,105 +1,84 @@
 <template>
   <div class="schedule-overview-page">
-    <div class="page-header">
-      <h1 class="page-title">班表總覽</h1>
-      <p class="page-subtitle">依照機構、部門與小單位快速檢視每月排班狀態</p>
-    </div>
+    <PageHeader title="班表總覽" subtitle="依機構、部門與小單位檢視每月排班" />
 
-    <el-card class="filters-card" shadow="never">
-      <template #header>
-        <div class="filters-header">
-          <div class="filters-title">篩選條件</div>
-          <div class="export-actions">
-            <el-button-group>
-              <el-button
-                type="primary"
-                plain
-                data-test="export-excel"
-                :loading="exportLoading && exportFormat === 'excel'"
-                :disabled="isExportDisabled"
-                @click="handleExport('excel')"
-              >
-                匯出 Excel
-              </el-button>
-              <el-button
-                type="primary"
-                plain
-                data-test="export-pdf"
-                :loading="exportLoading && exportFormat === 'pdf'"
-                :disabled="isExportDisabled"
-                @click="handleExport('pdf')"
-              >
-                匯出 PDF
-              </el-button>
-            </el-button-group>
-          </div>
-        </div>
-      </template>
-      <div class="filters-grid">
-        <div class="filter-item">
-          <label class="filter-label">月份</label>
-          <el-date-picker
-            v-model="selectedMonth"
-            type="month"
-            value-format="YYYY-MM"
-            placeholder="選擇月份"
-            class="filter-control"
-            @change="triggerOverviewReload"
-          />
-        </div>
-        <div class="filter-item">
-          <label class="filter-label">機構</label>
-          <el-select
-            v-model="selectedOrganization"
-            placeholder="全部機構"
-            clearable
-            class="filter-control"
-            @change="onOrganizationChange"
-          >
-            <el-option
-              v-for="org in organizations"
-              :key="org._id || org.id"
-              :label="org.name"
-              :value="toId(org._id || org.id)"
-            />
-          </el-select>
-        </div>
-        <div class="filter-item">
-          <label class="filter-label">部門</label>
-          <el-select
-            v-model="selectedDepartment"
-            placeholder="全部部門"
-            clearable
-            class="filter-control"
-            @change="onDepartmentChange"
-          >
-            <el-option
-              v-for="dept in filteredDepartments"
-              :key="dept._id"
-              :label="dept.name"
-              :value="toId(dept._id)"
-            />
-          </el-select>
-        </div>
-        <div class="filter-item">
-          <label class="filter-label">小單位</label>
-          <el-select
-            v-model="selectedSubDepartment"
-            placeholder="全部小單位"
-            clearable
-            class="filter-control"
-            @change="triggerOverviewReload"
-          >
-            <el-option
-              v-for="unit in filteredSubDepartments"
-              :key="unit._id"
-              :label="unit.name"
-              :value="toId(unit._id)"
-            />
-          </el-select>
-        </div>
-      </div>
-    </el-card>
+    <!-- 一列工具列：篩選在左、匯出在右 -->
+    <div class="hr-toolbar overview-toolbar">
+      <el-date-picker
+        v-model="selectedMonth"
+        type="month"
+        value-format="YYYY-MM"
+        format="YYYY/MM"
+        placeholder="選擇月份"
+        aria-label="月份"
+        :clearable="false"
+        class="filter-control filter-control--month"
+        @change="triggerOverviewReload"
+      />
+      <el-select
+        v-model="selectedOrganization"
+        placeholder="全部機構"
+        aria-label="機構"
+        clearable
+        class="filter-control"
+        @change="onOrganizationChange"
+      >
+        <el-option
+          v-for="org in organizations"
+          :key="org._id || org.id"
+          :label="org.name"
+          :value="toId(org._id || org.id)"
+        />
+      </el-select>
+      <el-select
+        v-model="selectedDepartment"
+        placeholder="全部部門"
+        aria-label="部門"
+        clearable
+        class="filter-control"
+        @change="onDepartmentChange"
+      >
+        <el-option
+          v-for="dept in filteredDepartments"
+          :key="dept._id"
+          :label="dept.name"
+          :value="toId(dept._id)"
+        />
+      </el-select>
+      <el-select
+        v-model="selectedSubDepartment"
+        placeholder="全部小單位"
+        aria-label="小單位"
+        clearable
+        class="filter-control"
+        @change="triggerOverviewReload"
+      >
+        <el-option
+          v-for="unit in filteredSubDepartments"
+          :key="unit._id"
+          :label="unit.name"
+          :value="toId(unit._id)"
+        />
+      </el-select>
+      <span v-if="hasOverviewData" class="overview-count" data-test="overview-count">{{ overviewEmployeeCount }} 位人員</span>
+      <span class="hr-toolbar__spacer"></span>
+      <el-button
+        data-test="export-excel"
+        :loading="exportLoading && exportFormat === 'excel'"
+        :disabled="isExportDisabled"
+        @click="handleExport('excel')"
+      >
+        匯出 Excel
+      </el-button>
+      <el-button
+        data-test="export-pdf"
+        :loading="exportLoading && exportFormat === 'pdf'"
+        :disabled="isExportDisabled"
+        @click="handleExport('pdf')"
+      >
+        匯出 PDF
+      </el-button>
+    </div>
 
     <el-alert
       v-if="errorMessage"
@@ -109,17 +88,17 @@
       class="message-block"
     >
       {{ errorMessage }}
+      <el-button link type="primary" class="retry-button" data-test="overview-retry" @click="retryLoad">重新載入</el-button>
     </el-alert>
 
     <el-skeleton v-if="loading" animated :rows="4" class="overview-skeleton" />
 
-    <el-empty
-      v-else-if="!hasOverviewData"
-      description="目前沒有符合條件的班表資料"
-      class="empty-state"
-    />
+    <!-- 載入失敗時只顯示錯誤訊息，不再同時顯示「沒有資料」 -->
+    <p v-else-if="!hasOverviewData && !errorMessage" class="hr-empty empty-state" data-test="overview-empty">
+      這個月份與範圍沒有班表。請調整上方的月份或篩選條件；班表在前台「排班管理」建立。
+    </p>
 
-    <div v-else class="overview-results">
+    <div v-else-if="hasOverviewData" class="overview-results">
       <el-collapse v-model="activeOrganizations" class="organization-collapse">
         <el-collapse-item
           v-for="org in overviewData"
@@ -241,6 +220,7 @@ import dayjs from 'dayjs'
 import { ElMessage } from 'element-plus'
 import { apiFetch } from '@/api'
 import EmployeeAvatar from '@/components/EmployeeAvatar.vue'
+import PageHeader from '@/components/PageHeader.vue'
 
 const selectedMonth = ref(dayjs().format('YYYY-MM'))
 const selectedOrganization = ref('')
@@ -303,6 +283,19 @@ const hasOverviewData = computed(() => {
   )
 })
 
+// 目前列出的人數（工具列上的一個數字）：同一個人出現在多個小單位（例如支援其他單位的班）只算一次
+const overviewEmployeeCount = computed(() => {
+  const seen = new Set()
+  overviewData.value.forEach(org => {
+    org.departments.forEach(dept => {
+      dept.subDepartments.forEach(unit => {
+        unit.employees.forEach(emp => seen.add(emp.id || `name:${emp.name || ''}`))
+      })
+    })
+  })
+  return seen.size
+})
+
 const isExportDisabled = computed(() => {
   return !selectedMonth.value || loading.value || exportLoading.value || !referenceLoaded.value
 })
@@ -318,10 +311,13 @@ const visibleDayRangeLabel = computed(() => {
   return `${first} - ${last}`
 })
 
+const WEEKDAY_LABELS = ['日', '一', '二', '三', '四', '五', '六']
+
+// 日期欄的標題：月/日（星期）
 const formatDayLabel = day => {
   const date = dayjs(day)
   if (!date.isValid()) return day
-  return date.format('MM/DD')
+  return `${date.format('MM/DD')}(${WEEKDAY_LABELS[date.day()]})`
 }
 
 const buildTableRows = unit => {
@@ -361,8 +357,11 @@ function rebuildUnitRowsCache() {
     org.departments.forEach(dept => {
       dept.subDepartments.forEach(unit => {
         cache[unit.id] = buildTableRows(unit)
-        if (!pageMap[unit.id]) pageMap[unit.id] = 1
         if (!pageSizeMap[unit.id]) pageSizeMap[unit.id] = 50
+        // 換月份或篩選後人數變少：停在的頁次超過最後一頁時回到最後一頁
+        //（以前頁次留在原地，表格是空的，分頁列又因為只剩一頁而不顯示，看起來像這個單位沒有人）
+        const lastPage = Math.max(1, Math.ceil(cache[unit.id].length / pageSizeMap[unit.id]))
+        pageMap[unit.id] = Math.min(Math.max(1, Number(pageMap[unit.id]) || 1), lastPage)
       })
     })
   })
@@ -603,6 +602,13 @@ function triggerOverviewReload() {
   loadOverview()
 }
 
+// 載入失敗後重試：機構、部門、小單位還沒載入成功就先重新載入
+async function retryLoad() {
+  errorMessage.value = ''
+  if (!referenceLoaded.value) await loadReferenceData()
+  await loadOverview()
+}
+
 function onOrganizationChange() {
   if (!filteredDepartments.value.some(dept => toId(dept._id) === selectedDepartment.value)) {
     selectedDepartment.value = ''
@@ -679,98 +685,70 @@ onMounted(async () => {
 <style scoped>
 .schedule-overview-page {
   --header-bg-color: #ecfeff;
-  --table-max-height-offset: 400px;
-  
+
   display: flex;
   flex-direction: column;
-  gap: 24px;
-  padding: 24px;
-  background: #f8fafc;
+  gap: 12px;
   min-height: 100%;
 }
 
-.page-header {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
+/* 這一頁的區塊間距由 gap（12px）決定：頁首再補 4px，和其他頁一樣是頁首下方 16px */
+.schedule-overview-page :deep(.hr-page-header) {
+  margin-bottom: 4px;
 }
 
-.page-title {
-  margin: 0;
-  font-size: 28px;
-  font-weight: 600;
-  color: #0f172a;
+.overview-toolbar {
+  margin-bottom: 0;
 }
 
-.page-subtitle {
-  margin: 0;
-  color: #475569;
+.overview-toolbar .filter-control {
+  width: 180px;
 }
 
-.filters-card {
-  border-radius: 12px;
+/* 月份選擇器的最外層不是它自己的根元素，要用 :deep 才套得到 */
+.overview-toolbar :deep(.filter-control--month) {
+  --el-date-editor-width: 140px;
+
+  width: 140px;
 }
 
-.filters-header {
-  font-weight: 600;
-  color: #0f172a;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 12px;
+.overview-toolbar .el-button {
+  margin-left: 0;
 }
 
-.filters-title {
-  font-weight: 600;
-  color: #0f172a;
-}
-
-.export-actions {
-  display: flex;
-  align-items: center;
-}
-
-.filters-grid {
-  display: grid;
-  gap: 16px;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-}
-
-.filter-item {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.filter-label {
-  font-size: 14px;
-  color: #475569;
-}
-
-.filter-control {
-  width: 100%;
+.overview-count {
+  color: var(--hr-gray-500);
+  font-size: 13px;
+  white-space: nowrap;
 }
 
 .message-block {
   border-radius: 8px;
 }
 
+.retry-button {
+  margin-left: 8px;
+  vertical-align: baseline;
+}
+
 .overview-skeleton {
-  border-radius: 12px;
+  border: 1px solid var(--hr-gray-200);
+  border-radius: 8px;
   padding: 16px;
   background: #fff;
 }
 
 .empty-state {
+  margin: 0;
+  border: 1px solid var(--hr-gray-200);
+  border-radius: 8px;
   background: #fff;
-  border-radius: 12px;
-  padding: 48px 0;
 }
 
 .overview-results {
   display: flex;
   flex-direction: column;
-  gap: 24px;
+  gap: 12px;
 }
 
 .organization-collapse {
@@ -795,10 +773,10 @@ onMounted(async () => {
 
 .organization-block {
   background: #fff;
-  border-radius: 16px;
-  padding: 20px;
-  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.05);
-  margin-bottom: 16px;
+  border: 1px solid var(--hr-gray-200);
+  border-radius: 8px;
+  padding: 12px 16px;
+  margin-bottom: 12px;
 }
 
 .organization-header {
@@ -811,7 +789,7 @@ onMounted(async () => {
 
 .organization-title {
   margin: 0;
-  font-size: 22px;
+  font-size: 16px;
   color: #0f172a;
 }
 
@@ -859,7 +837,7 @@ onMounted(async () => {
 
 .department-title {
   margin: 0;
-  font-size: 18px;
+  font-size: 15px;
   color: #1e293b;
 }
 
@@ -870,9 +848,13 @@ onMounted(async () => {
 
 .unit-card {
   border: 1px solid #e2e8f0;
-  border-radius: 12px;
-  padding: 16px;
-  background: #fdfefd;
+  border-radius: 8px;
+  padding: 12px;
+  background: #fff;
+}
+
+.unit-card + .unit-card {
+  margin-top: 12px;
 }
 
 .unit-header {
@@ -884,7 +866,7 @@ onMounted(async () => {
 
 .unit-title {
   margin: 0;
-  font-size: 16px;
+  font-size: 14px;
   color: #0f172a;
 }
 
@@ -995,12 +977,10 @@ onMounted(async () => {
 }
 
 @media (max-width: 768px) {
-  .schedule-overview-page {
-    padding: 16px;
-  }
-
-  .filters-grid {
-    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  .overview-toolbar .filter-control,
+  .overview-toolbar :deep(.filter-control--month) {
+    flex: 1 1 140px;
+    width: auto;
   }
 
   .overview-table {

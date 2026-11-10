@@ -36,9 +36,22 @@ describe('Department API', () => {
 
   it('filters departments by organization', async () => {
     mockDepartment.find.mockResolvedValue([{ name: 'HR' }]);
-    const res = await request(app).get('/api/departments?organization=1');
+    const organizationId = '64b000000000000000000001';
+    const res = await request(app).get(`/api/departments?organization=${organizationId}`);
     expect(res.status).toBe(200);
-    expect(mockDepartment.find).toHaveBeenCalledWith({ organization: '1' });
+    expect(mockDepartment.find).toHaveBeenCalledWith({ organization: organizationId });
+  });
+
+  // 以前格式不對的機構編號會原樣進到查詢條件：回 500 並把資料庫的錯誤訊息（Cast to ObjectId failed…）回給使用者
+  it('answers 400 for an organization filter that is not an id, without querying', async () => {
+    mockDepartment.find.mockClear();
+    for (const value of ['1', 'zzz', 'organization[]=a&organization[]=b']) {
+      const query = value.includes('=') ? value : `organization=${value}`;
+      const res = await request(app).get(`/api/departments?${query}`);
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe('Invalid organization filter');
+    }
+    expect(mockDepartment.find).not.toHaveBeenCalled();
   });
 
   it('creates department', async () => {

@@ -11,6 +11,7 @@ import { presentAnnualLeave, readAnnualLeaveHours } from '../utils/annualLeaveHo
 import { daysToHours, hoursToDays } from '../utils/leaveHours.js'
 import { parseHolidayRegime } from '../services/holidayCalendarRules.js'
 import { buildScheduleViewEmployeeFilter, getScheduleAccessSummaryForRequest } from '../services/scheduleAccessService.js'
+import { loadNewEmployeeAutoOvertimeDefault } from '../services/payrollPolicyService.js'
 import {
   deleteEmployeePhoto,
   isManagedEmployeePhotoPath,
@@ -64,6 +65,10 @@ const FALSE_STRINGS = new Set(['', 'false', '0', 'off', 'no', 'null', 'undefined
 const toBool = (v) => (typeof v === 'string' ? !FALSE_STRINGS.has(v.trim().toLowerCase()) : Boolean(v))
 const isBlankPassword = (v) => v === null || v === undefined || (typeof v === 'string' && v.trim() === '')
 const firstOr = (arr, fallback) => (Array.isArray(arr) && arr.length ? arr[0] : fallback)
+// 帳號、員工編號：去掉前後空白（登入時帳號會先去空白，存進去的值帶空白就永遠登入不了）
+const trimText = (v) => (typeof v === 'string' ? v.trim() : v)
+// Email：去空白並轉小寫（批量匯入用小寫比對既有員工；大小寫不同會被當成另一個人再建一筆）
+const normalizeEmailInput = (v) => (typeof v === 'string' ? v.trim().toLowerCase() : v)
 
 const normalizeSalaryItemAmounts = (map = {}, salaryItems = []) => {
   const selected = (Array.isArray(salaryItems) ? salaryItems : [salaryItems])
@@ -189,6 +194,23 @@ export function validateHolidayRegime(body = {}) {
   return null
 }
 
+// 「自動計算加班費」（autoOvertimeCalc）與「需要排班」（requiresScheduling）：只接受布林值
+// （舊版 multipart 表單送來的 'true'／'false' 字串也接受），其他值回 400，不會被當成 true 存進去
+const PAYROLL_FLAG_FIELDS = { autoOvertimeCalc: '自動計算加班費', requiresScheduling: '需要排班' }
+function parseStrictBoolean(value) {
+  if (typeof value === 'boolean') return value
+  if (typeof value === 'string' && ['true', 'false'].includes(value.trim().toLowerCase())) return value.trim().toLowerCase() === 'true'
+  return undefined
+}
+export function validateEmployeeFlags(body = {}) {
+  for (const [field, label] of Object.entries(PAYROLL_FLAG_FIELDS)) {
+    if (isDefined(body[field]) && parseStrictBoolean(body[field]) === undefined) {
+      return `「${label}」（${field}）只能是 true 或 false`
+    }
+  }
+  return null
+}
+
 // 'roster' / 'office' 才寫入；空白（null）與不認得的值都不寫入
 const holidayRegimeOrUndefined = (value) => {
   const regime = parseHolidayRegime(value)
@@ -236,45 +258,47 @@ function normalizeTrainings(list) {
   })
 }
 
-/* 依前端欄位建 Employee doc（建立用：盡量完整帶入） */
-export function buildEmployeeDoc(body = {}) {
-  const supervisor = body.supervisor === '' ? undefined : body.supervisor
+/* 緊急聯絡人：四個欄位都存成文字；空白的一格仍佔位（第 1、2 位各自對應畫面的 emergency1 / emergency2） */
+const toEmergencyContact = (c) => ({
+  name: c?.name ?? '',
+  relation: c?.relation ?? '',
+  phone1: c?.phone1 ?? '',
+  phone2: c?.phone2 ?? '',
+})
+const hasEmergencyContact = (c) => Boolean(c && (c.name || c.relation || c.phone1 || c.phone2))
+// 陣列中間的洞補成空白聯絡人、尾端的空白聯絡人去掉（Mongoose 會把洞存成 null，或把後面的聯絡人往前擠）
+function fillEmergencyContactGaps(list) {
+  for (let index = 0; index < list.length; index += 1) {
+    if (!list[index]) list[index] = toEmergencyContact()
+  }
+  while (list.length && !hasEmergencyContact(list[list.length - 1])) list.pop()
+  return list
+}
 
-  // 聯絡人陣列：前端可能傳 emergency1 / emergency2
-  const emergencyContacts = []
-  if (body.emergency1 && (body.emergency1.name || body.emergency1.relation || body.emergency1.phone1 || body.emergency1.phone2)) {
-    emergencyContacts[0] = {
-      name: body.emergency1.name ?? '',
-      relation: body.emergency1.relation ?? '',
-      phone1: body.emergency1.phone1 ?? '',
-      phone2: body.emergency1.phone2 ?? '',
-    }
-  }
-  if (body.emergency2 && (body.emergency2.name || body.emergency2.relation || body.emergency2.phone1 || body.emergency2.phone2)) {
-    emergencyContacts[1] = {
-      name: body.emergency2.name ?? '',
-      relation: body.emergency2.relation ?? '',
-      phone1: body.emergency2.phone1 ?? '',
-      phone2: body.emergency2.phone2 ?? '',
-    }
-  }
-  // 若直接傳 emergencyContacts 也接受
-  if (Array.isArray(body.emergencyContacts) && body.emergencyContacts.length) {
-    // 以 explicit array 為主
-    emergencyContacts.length = 0
-    body.emergencyContacts.forEach((c) => emergencyContacts.push({
-      name: c?.name ?? '',
-      relation: c?.relation ?? '',
-      phone1: c?.phone1 ?? '',
-      phone2: c?.phone2 ?? '',
-    }))
-  }
+/* 依前端欄位建 Employee doc（建立用：盡量完整帶入）
+   options.autoOvertimeCalcDefault：沒有送 autoOvertimeCalc 時用的值（薪資設定的「新進員工自動計算加班費」，由呼叫端讀好帶入）；
+   沒帶就交給資料模型的預設值 */
+export function buildEmployeeDoc(body = {}, { autoOvertimeCalcDefault } = {}) {
+  const supervisor = body.supervisor === '' ? undefined : body.supervisor
+  const autoOvertimeCalc = parseStrictBoolean(body.autoOvertimeCalc)
+
+  // 聯絡人陣列：直接傳 emergencyContacts 也接受；畫面送的 emergency1 / emergency2 是使用者實際填的那兩位，
+  // 兩種都送時以 emergency1 / emergency2 為準（各自對應第 1、2 位），和修改（buildEmployeePatch）同一套規則。
+  // 只填第二位時第一位留空白佔位：以前陣列中間留洞，存檔後第二位聯絡人變成第一位
+  const emergencyContacts = Array.isArray(body.emergencyContacts) ? body.emergencyContacts.map(toEmergencyContact) : []
+  ;[body.emergency1, body.emergency2].forEach((contact, index) => {
+    if (!contact || typeof contact !== 'object') return
+    if (hasEmergencyContact(contact) || index < emergencyContacts.length) emergencyContacts[index] = toEmergencyContact(contact)
+  })
+  fillEmergencyContactGaps(emergencyContacts)
 
   const salaryItems = toArray(body.salaryItems) ?? []
 
   return {
     /* 帳號/權限/簽核 */
-    username: body.username,
+    username: trimText(body.username),
+    // 新增時就選了「停用帳號」也要存（以前只有修改時才寫入，新增一律是啟用）
+    accountEnabled: isDefined(body.accountEnabled) ? toBool(body.accountEnabled) : undefined,
     permissionGrade: body.permissionGrade,
     role: body.role,                     // employee/supervisor/admin
     signRole: unknownToUndefined(resolveSignRole(body.signRole)),
@@ -282,13 +306,14 @@ export function buildEmployeeDoc(body = {}) {
     signLevel: unknownToUndefined(resolveSignLevel(body.signLevel)),
 
     /* 基本資料 */
-    employeeNo: body.employeeNo ?? body.employeeId, // alias → employeeId
-    name: body.name,
+    employeeNo: trimText(body.employeeNo ?? body.employeeId), // alias → employeeId
+    name: trimText(body.name),
     photo: body.photo ?? firstOr(body.photoList, undefined),
     gender: body.gender,                 // 'M' | 'F' | 'O'
     idNumber: body.idNumber,
     birthday: toDate(body.birthday),
-    birthplace: body.birthplace,
+    // schema 的欄位是 birthPlace（大寫 P）；以前寫成 birthplace，新增時出生地沒有存進去
+    birthPlace: body.birthplace ?? body.birthPlace,
     bloodType: sanitizeEnum(body.bloodType, BLOOD_TYPES),           // A/B/O/AB/HR
     languages: toArray(body.languages) ?? [],
     disabilityLevel: body.disabilityLevel,
@@ -297,7 +322,7 @@ export function buildEmployeeDoc(body = {}) {
     dependents: toNum(body.dependents) ?? 0,
 
     /* 聯絡方式 */
-    email: body.email,
+    email: normalizeEmailInput(body.email),
     phone: body.phone,                   // alias → mobile
     landline: body.landline,
     householdAddress: body.householdAddress,
@@ -316,9 +341,11 @@ export function buildEmployeeDoc(body = {}) {
     // 假日制度：沒填就不存，實際適用的制度依「是否需要排班」推算（resolveHolidayRegime）
     holidayRegime: isDefined(body.holidayRegime) ? holidayRegimeOrUndefined(body.holidayRegime) : undefined,
     isIndigenous: isDefined(body.isIndigenous) ? toBool(body.isIndigenous) : undefined,
+    // 需要排班：沒送就用資料模型的預設值（需要）；以前這個欄位完全沒有寫入路徑，畫面的開關存不進去
+    requiresScheduling: parseStrictBoolean(body.requiresScheduling),
 
     /* 人員狀態與試用 */
-    employmentStatus: sanitizeEnum(body.employmentStatus, EMPLOYMENT_STATUSES),        // alias → status
+    employmentStatus: sanitizeEnum(body.employmentStatus ?? body.status, EMPLOYMENT_STATUSES),        // alias → status
     probationDays: toNum(body.probationDays) ?? 0,
 
     /* 體檢 */
@@ -356,20 +383,23 @@ export function buildEmployeeDoc(body = {}) {
     licenses: normalizeLicenses(body.licenses) ?? [],
     trainings: normalizeTrainings(body.trainings) ?? [],
 
-    /* 任職日期群（各欄位 alias 於 model 負責） */
+    /* 任職日期群：巢狀欄位的 alias 在這一層不會生效，一律寫 schema 真正的欄位名
+       （以前寫 appointDate / reAppointDate / reDismissDate，新增時起聘、再任起聘、再任解聘日期都沒有存進去） */
     appointment: {
       hireDate: toDate(body.hireDate),
-      appointDate: toDate(body.appointDate),            // alias → startDate
+      startDate: toDate(body.appointDate),
       resignationDate: toDate(body.resignDate),
       dismissalDate: toDate(body.dismissDate),
-      reAppointDate: toDate(body.reAppointDate),        // alias → rehireStartDate
-      reDismissDate: toDate(body.reDismissDate),        // alias → rehireEndDate
+      rehireStartDate: toDate(body.reAppointDate),
+      rehireEndDate: toDate(body.reDismissDate),
       remark: body.employmentNote,
     },
 
     /* 薪資 */
     salaryType: body.salaryType,
     salaryAmount: toNum(body.salaryAmount) ?? 0,
+    // 自動計算加班費：有送就照送的值；沒送用薪資設定的新進員工預設值（autoOvertimeCalcDefault）
+    autoOvertimeCalc: autoOvertimeCalc ?? (typeof autoOvertimeCalcDefault === 'boolean' ? autoOvertimeCalcDefault : undefined),
     laborPensionSelf: toNum(body.laborPensionSelf) ?? 0,
     employeeAdvance: toNum(body.employeeAdvance) ?? 0,
     salaryAccountA: {
@@ -420,6 +450,14 @@ export function buildEmployeePatch(body = {}, existing = null) {
 
   const put = (k, v) => { if (isDefined(v)) $set[k] = v }
   const un = (k) => { $unset[k] = 1 }
+  // 日期、數字、單選欄位：編輯畫面清空後送來的是 null（日期選擇器）或空字串 → 清除原本的值；
+  // 有值就寫入；讀不懂的值（convert 回傳 undefined）和沒送的欄位都不動。
+  // 以前清空的欄位直接被略過：畫面顯示儲存成功，但離職日期、生日等還留在資料庫，重新開啟又跑出來。
+  const putOrClear = (k, raw, convert) => {
+    if (!isDefined(raw)) return
+    if (raw === '' || raw === null) un(k)
+    else put(k, convert(raw))
+  }
 
   // supervisor 特例：空字串或 null（編輯表單清除主管）→ unset
   if (isDefined(body.supervisor)) {
@@ -428,7 +466,8 @@ export function buildEmployeePatch(body = {}, existing = null) {
   }
 
   // 帳號/權限/簽核
-  put('username', body.username)
+  // 帳號空白不寫入（沒有帳號的舊資料存檔時不會被寫成空字串；帳號不能在這裡清掉）
+  if (trimText(body.username) !== '') put('username', trimText(body.username))
   if (isDefined(body.accountEnabled)) put('accountEnabled', toBool(body.accountEnabled))
   put('permissionGrade', body.permissionGrade)
   put('role', body.role)
@@ -438,22 +477,22 @@ export function buildEmployeePatch(body = {}, existing = null) {
   put('signLevel', unknownToUndefined(resolveSignLevel(body.signLevel)))
 
   // 基本資料
-  put('employeeId', body.employeeNo ?? body.employeeId)
-  put('name', body.name)
+  put('employeeId', trimText(body.employeeNo ?? body.employeeId))
+  put('name', trimText(body.name))
   put('photo', body.photo ?? firstOr(body.photoList, undefined))
   put('gender', body.gender)
   put('idNumber', body.idNumber)
-  if (isDefined(body.birthday)) put('birthDate', toDate(body.birthday))
+  putOrClear('birthDate', body.birthday, toDate)
   put('birthPlace', body.birthplace)
-  put('bloodType', sanitizeEnum(body.bloodType, BLOOD_TYPES))
+  putOrClear('bloodType', body.bloodType, (value) => sanitizeEnum(value, BLOOD_TYPES))
   if (isDefined(body.languages)) put('languages', toArray(body.languages) ?? [])
   put('disabilityLevel', body.disabilityLevel)
   if (isDefined(body.identityCategory)) put('identityCategory', toArray(body.identityCategory) ?? [])
-  put('maritalStatus', sanitizeEnum(body.maritalStatus, MARITAL_STATUSES))
+  putOrClear('maritalStatus', body.maritalStatus, (value) => sanitizeEnum(value, MARITAL_STATUSES))
   if (isDefined(body.dependents)) put('dependents', toNum(body.dependents))
 
   // 聯絡
-  put('email', body.email)
+  put('email', normalizeEmailInput(body.email))
   put('mobile', body.phone) // alias
   put('landline', body.landline)
   put('householdAddress', body.householdAddress)
@@ -481,15 +520,18 @@ export function buildEmployeePatch(body = {}, existing = null) {
     else put('holidayRegime', holidayRegimeOrUndefined(body.holidayRegime))
   }
   if (isDefined(body.isIndigenous)) put('isIndigenous', toBool(body.isIndigenous))
+  // 需要排班、自動計算加班費：有送才寫（不合格的值由 controller 先擋下，validateEmployeeFlags）
+  put('requiresScheduling', parseStrictBoolean(body.requiresScheduling))
+  put('autoOvertimeCalc', parseStrictBoolean(body.autoOvertimeCalc))
 
   // 狀態/試用
   put('status', sanitizeEnum(body.employmentStatus ?? body.status, EMPLOYMENT_STATUSES))
   if (isDefined(body.probationDays)) put('probationDays', toNum(body.probationDays))
 
   // 體檢
-  if (isDefined(body.height)) put('medicalCheck.height', toNum(body.height))
-  if (isDefined(body.weight)) put('medicalCheck.weight', toNum(body.weight))
-  put('medicalCheck.bloodType', sanitizeEnum(body.medicalBloodType, BLOOD_TYPES))
+  putOrClear('medicalCheck.height', body.height, toNum)
+  putOrClear('medicalCheck.weight', body.weight, toNum)
+  putOrClear('medicalCheck.bloodType', body.medicalBloodType, (value) => sanitizeEnum(value, BLOOD_TYPES))
 
   // 學歷
   if (isDefined(body.educationLevel)) put('education.level', body.educationLevel)
@@ -503,13 +545,13 @@ export function buildEmployeePatch(body = {}, existing = null) {
       if (isDefined(sanitizedStatus)) put('education.status', sanitizedStatus)
     }
   }
-  if (isDefined(body.graduationYear)) put('education.graduationYear', toNum(body.graduationYear))
+  putOrClear('education.graduationYear', body.graduationYear, toNum)
 
   // 役別
   if (isDefined(body.serviceType)) put('militaryService.serviceType', body.serviceType)
   if (isDefined(body.militaryBranch)) put('militaryService.branch', body.militaryBranch)
   if (isDefined(body.militaryRank)) put('militaryService.rank', body.militaryRank)
-  if (isDefined(body.dischargeYear)) put('militaryService.dischargeYear', toNum(body.dischargeYear))
+  putOrClear('militaryService.dischargeYear', body.dischargeYear, toNum)
 
   // 聯絡人：若傳 emergencyContacts/1/2 任一，就重建整個陣列
   if (
@@ -517,36 +559,25 @@ export function buildEmployeePatch(body = {}, existing = null) {
     isDefined(body.emergency1) ||
     isDefined(body.emergency2)
   ) {
+    // 子文件（Mongoose）先轉成純物件：直接展開拿到的是內部欄位，讀不到姓名、電話
     const ec = Array.isArray(existing?.emergencyContacts)
-      ? existing.emergencyContacts.map((x) => ({ ...x }))
+      ? existing.emergencyContacts.map((x) => (typeof x?.toObject === 'function' ? x.toObject() : { ...x }))
       : []
 
-    if (Array.isArray(body.emergencyContacts)) {
-      $set.emergencyContacts = body.emergencyContacts.map((c) => ({
-        name: c?.name ?? '',
-        relation: c?.relation ?? '',
-        phone1: c?.phone1 ?? '',
-        phone2: c?.phone2 ?? '',
-      }))
-    } else {
-      if (isDefined(body.emergency1)) {
-        ec[0] = {
-          name: body.emergency1?.name ?? '',
-          relation: body.emergency1?.relation ?? '',
-          phone1: body.emergency1?.phone1 ?? '',
-          phone2: body.emergency1?.phone2 ?? '',
-        }
-      }
-      if (isDefined(body.emergency2)) {
-        ec[1] = {
-          name: body.emergency2?.name ?? '',
-          relation: body.emergency2?.relation ?? '',
-          phone1: body.emergency2?.phone1 ?? '',
-          phone2: body.emergency2?.phone2 ?? '',
-        }
-      }
-      $set.emergencyContacts = ec
-    }
+    // 有送 emergencyContacts 陣列就以它為底（整個取代），否則以原本存的為底；
+    // 再套上 emergency1 / emergency2（畫面實際編輯的兩位）。以前有陣列時 emergency1 / emergency2 完全被忽略：
+    // 畫面把讀到的整筆資料原樣送回來時，剛改的緊急聯絡人被舊陣列蓋掉，卻顯示儲存成功
+    const base = Array.isArray(body.emergencyContacts) ? body.emergencyContacts.map(toEmergencyContact) : ec
+    // 沒有送的子欄位沿用原本的值（批量匯入的更新模式只帶有填的儲存格；編輯畫面四個欄位都會送，空字串＝清空）
+    const mergeContact = (incoming, current) => ({
+      name: incoming?.name ?? current?.name ?? '',
+      relation: incoming?.relation ?? current?.relation ?? '',
+      phone1: incoming?.phone1 ?? current?.phone1 ?? '',
+      phone2: incoming?.phone2 ?? current?.phone2 ?? '',
+    })
+    if (isDefined(body.emergency1)) base[0] = mergeContact(body.emergency1, base[0])
+    if (isDefined(body.emergency2)) base[1] = mergeContact(body.emergency2, base[1])
+    $set.emergencyContacts = fillEmergencyContactGaps(base)
   }
 
   // 關鍵字
@@ -558,12 +589,12 @@ export function buildEmployeePatch(body = {}, existing = null) {
   if (isDefined(body.trainings)) put('trainings', normalizeTrainings(body.trainings) ?? [])
 
   // 任職日期群
-  if (isDefined(body.hireDate)) put('appointment.hireDate', toDate(body.hireDate))
-  if (isDefined(body.appointDate)) put('appointment.startDate', toDate(body.appointDate))
-  if (isDefined(body.resignDate)) put('appointment.resignationDate', toDate(body.resignDate))
-  if (isDefined(body.dismissDate)) put('appointment.dismissalDate', toDate(body.dismissDate))
-  if (isDefined(body.reAppointDate)) put('appointment.rehireStartDate', toDate(body.reAppointDate))
-  if (isDefined(body.reDismissDate)) put('appointment.rehireEndDate', toDate(body.reDismissDate))
+  putOrClear('appointment.hireDate', body.hireDate, toDate)
+  putOrClear('appointment.startDate', body.appointDate, toDate)
+  putOrClear('appointment.resignationDate', body.resignDate, toDate)
+  putOrClear('appointment.dismissalDate', body.dismissDate, toDate)
+  putOrClear('appointment.rehireStartDate', body.reAppointDate, toDate)
+  putOrClear('appointment.rehireEndDate', body.reDismissDate, toDate)
   if (isDefined(body.employmentNote)) put('appointment.remark', body.employmentNote)
 
   // 薪資
@@ -578,7 +609,10 @@ export function buildEmployeePatch(body = {}, existing = null) {
   if (isDefined(body.salaryItems)) {
     const salaryItems = toArray(body.salaryItems) ?? []
     put('salaryItems', salaryItems)
-    put('salaryItemAmounts', normalizeSalaryItemAmounts(body.salaryItemAmounts, salaryItems))
+    // 只送項目清單、沒有送金額（批量匯入的更新模式）：仍在清單裡的項目沿用原本的金額，
+    // 不然每個津貼都會被寫成 0，下個月的薪資就少了這些固定津貼
+    const amounts = isDefined(body.salaryItemAmounts) ? body.salaryItemAmounts : existing?.salaryItemAmounts
+    put('salaryItemAmounts', normalizeSalaryItemAmounts(amounts, salaryItems))
   } else if (isDefined(body.salaryItemAmounts)) {
     const existingItems = existing?.salaryItems ?? []
     put('salaryItemAmounts', normalizeSalaryItemAmounts(body.salaryItemAmounts, existingItems))
@@ -635,7 +669,7 @@ export function buildEmployeePatch(body = {}, existing = null) {
       put('annualLeave.unitSource', 'entered')
     }
     if (isDefined(al.year)) put('annualLeave.year', toNum(al.year))
-    if (isDefined(al.expiryDate)) put('annualLeave.expiryDate', toDate(al.expiryDate))
+    putOrClear('annualLeave.expiryDate', al.expiryDate, toDate)
     if (isDefined(al.accumulatedLeave)) put('annualLeave.accumulatedLeave', toNum(al.accumulatedLeave) ?? 0)
     if (isDefined(al.compensatoryHours)) put('annualLeave.compensatoryHours', toNum(al.compensatoryHours) ?? 0)
     if (isDefined(al.notes)) put('annualLeave.notes', al.notes ?? '')
@@ -654,7 +688,7 @@ export function buildEmployeePatch(body = {}, existing = null) {
 
 const SCHEDULE_VIEW_SELECT = '_id name employeeId photo title practiceTitle department subDepartment annualLeave supervisor role status requiresScheduling partTime'
 const SUPERVISOR_VIEW_SELECT = '_id name employeeId photo title practiceTitle department subDepartment annualLeave supervisor role status requiresScheduling partTime organization appointment.hireDate'
-const ADMIN_LIST_SELECT = '_id name employeeId username email mobile photo title practiceTitle department subDepartment organization supervisor role status annualLeave requiresScheduling partTime holidayRegime isIndigenous accountEnabled createdAt'
+const ADMIN_LIST_SELECT = '_id name employeeId username email mobile photo title practiceTitle department subDepartment organization supervisor role status annualLeave requiresScheduling partTime holidayRegime isIndigenous accountEnabled autoOvertimeCalc createdAt'
 const EMPLOYEE_LIST_PAGE_SIZE = 20
 const EMPLOYEE_LIST_MAX_PAGE_SIZE = 100
 const EMPLOYEE_SEARCH_MAX_LENGTH = 100
@@ -985,7 +1019,7 @@ export async function listEmployees(req, res) {
       return res.status(400).json({ error: 'Invalid employee query' })
     }
     console.error('Failed to list employees', { error: err?.name ?? 'Error' })
-    return res.status(500).json({ error: 'Failed to list employees' })
+    return res.status(500).json({ error: '員工清單讀取失敗，請稍後再試' })
   }
 }
 
@@ -1180,8 +1214,38 @@ export async function listAttendanceImportEmployeeOptions(req, res) {
     return res.json(employees)
   } catch (err) {
     console.error('Failed to list attendance import options', { error: err?.name ?? 'Error' })
-    return res.status(500).json({ error: 'Failed to list employee options' })
+    return res.status(500).json({ error: '員工選單讀取失敗，請稍後再試' })
   }
+}
+
+/*
+ * 員工編號不能和別的員工相同（匯入、報表、薪資匯出都用員工編號認人；資料庫沒有唯一索引，這裡先擋下一般的重複輸入）。
+ * 可以用回傳 null；重複時回傳給管理員看的中文訊息。exceptId：修改時略過本人。
+ */
+async function checkEmployeeNoAvailable(employeeNo, exceptId = null) {
+  const value = typeof employeeNo === 'string' || typeof employeeNo === 'number' ? String(employeeNo).trim() : ''
+  if (!value) return null
+  const filter = { employeeId: value }
+  if (exceptId) filter._id = { $ne: exceptId }
+  const taken = await Employee.countDocuments(filter)
+  return taken > 0 ? `員工編號「${value}」已被其他員工使用，請改用別的編號` : null
+}
+
+/*
+ * 新增、修改員工寫入失敗的回應。兩個請求同時用了同一個員工編號、帳號或 Email 時撞到唯一索引（E11000）：
+ * 以前把資料庫原文（含集合與索引名稱）回給畫面；現在回中文並標出是哪一個欄位。其他錯誤照舊回原因。
+ */
+const DUPLICATE_FIELD_TEXT = { employeeId: '員工編號', username: '帳號', email: 'Email' }
+function describeEmployeeWriteError(err) {
+  if (err?.code === 11000) {
+    const field = Object.keys(err.keyPattern || err.keyValue || {}).find((key) => DUPLICATE_FIELD_TEXT[key])
+    return {
+      error: field ? `${DUPLICATE_FIELD_TEXT[field]}已被其他員工使用，請改用別的${DUPLICATE_FIELD_TEXT[field]}` : '員工編號、帳號或 Email 已被其他員工使用',
+      code: 'DUPLICATE_EMPLOYEE',
+      ...(field ? { field } : {}),
+    }
+  }
+  return { error: err?.message }
 }
 
 /** POST /api/employees */
@@ -1195,18 +1259,21 @@ export async function createEmployee(req, res) {
 
     const employeeNo = body.employeeNo ?? body.employeeId
 
-    if (!name) return rejectWithPhotoCleanup(req, res, 400, { error: 'Name is required' })
-    if (!email) return rejectWithPhotoCleanup(req, res, 400, { error: 'Email is required' })
+    if (!name) return rejectWithPhotoCleanup(req, res, 400, { error: '請輸入員工姓名', code: 'NAME_REQUIRED' })
+    if (!email) return rejectWithPhotoCleanup(req, res, 400, { error: '請輸入 Email', code: 'EMAIL_REQUIRED' })
     if (!employeeNo || String(employeeNo).trim() === '') {
-      return rejectWithPhotoCleanup(req, res, 400, { error: 'Employee number is required' })
+      return rejectWithPhotoCleanup(req, res, 400, { error: '請輸入員工編號', code: 'EMPLOYEE_NO_REQUIRED' })
     }
-    if (!username) return rejectWithPhotoCleanup(req, res, 400, { error: 'Username is required' })
-    if (!password) return rejectWithPhotoCleanup(req, res, 400, { error: 'Password is required' })
+    if (!username || (typeof username === 'string' && !username.trim())) {
+      return rejectWithPhotoCleanup(req, res, 400, { error: '請輸入登入帳號', code: 'USERNAME_REQUIRED' })
+    }
+    if (!password) return rejectWithPhotoCleanup(req, res, 400, { error: '請輸入登入密碼', code: 'PASSWORD_REQUIRED' })
+    if (typeof password !== 'string') return rejectWithPhotoCleanup(req, res, 400, { error: '密碼格式不正確' })
     const emailRegex = /^\S+@\S+\.\S+$/
-    if (!emailRegex.test(email)) return rejectWithPhotoCleanup(req, res, 400, { error: 'Invalid email' })
+    if (!emailRegex.test(email)) return rejectWithPhotoCleanup(req, res, 400, { error: 'Email 格式不正確', code: 'INVALID_EMAIL' })
     if (role !== undefined) {
       const validRoles = ['employee', 'supervisor', 'admin']
-      if (!validRoles.includes(role)) return rejectWithPhotoCleanup(req, res, 400, { error: 'Invalid role' })
+      if (!validRoles.includes(role)) return rejectWithPhotoCleanup(req, res, 400, { error: '系統權限不正確', code: 'INVALID_ROLE' })
     }
     if (body.photo && !req.uploadedPhotoPath) {
       return rejectWithPhotoCleanup(req, res, 400, { error: '新員工照片必須直接上傳' })
@@ -1215,10 +1282,17 @@ export async function createEmployee(req, res) {
     if (signSettingsError) return rejectWithPhotoCleanup(req, res, 400, { error: signSettingsError })
     const holidayRegimeError = validateHolidayRegime(body)
     if (holidayRegimeError) return rejectWithPhotoCleanup(req, res, 400, { error: holidayRegimeError })
+    const flagError = validateEmployeeFlags(body)
+    if (flagError) return rejectWithPhotoCleanup(req, res, 400, { error: flagError })
     const supervisorError = await checkSupervisorAssignment(body.supervisor)
     if (supervisorError) return rejectWithPhotoCleanup(req, res, 400, { error: supervisorError })
 
-    const employeeDoc = buildEmployeeDoc(body)
+    const employeeNoError = await checkEmployeeNoAvailable(employeeNo)
+    if (employeeNoError) return rejectWithPhotoCleanup(req, res, 400, { error: employeeNoError })
+
+    // 沒有指定「自動計算加班費」時用薪資設定的新進員工預設值（GET /api/payroll/policy 的 overtime.newEmployeeAutoCalc）
+    const autoOvertimeCalcDefault = isDefined(body.autoOvertimeCalc) ? undefined : await loadNewEmployeeAutoOvertimeDefault()
+    const employeeDoc = buildEmployeeDoc(body, { autoOvertimeCalcDefault })
     employeeDoc.password = password
 
     const employee = await Employee.create(employeeDoc)
@@ -1227,7 +1301,7 @@ export async function createEmployee(req, res) {
     res.status(201).json(employee)
   } catch (err) {
     if (!photoPersisted) await cleanupUnpersistedPhoto(req).catch(() => {})
-    res.status(400).json({ error: err.message })
+    res.status(400).json(describeEmployeeWriteError(err))
   }
 }
 
@@ -1413,21 +1487,41 @@ export async function updateEmployee(req, res) {
 
     // 若有驗證需求，沿用你原本的 email/role 檢核
     if (isDefined(body.email)) {
-      if (!body.email) return rejectWithPhotoCleanup(req, res, 400, { error: 'Email is required' })
+      if (!body.email) return rejectWithPhotoCleanup(req, res, 400, { error: '請輸入 Email', code: 'EMAIL_REQUIRED' })
       const emailRegex = /^\S+@\S+\.\S+$/
-      if (!emailRegex.test(body.email)) return rejectWithPhotoCleanup(req, res, 400, { error: 'Invalid email' })
+      if (!emailRegex.test(body.email)) return rejectWithPhotoCleanup(req, res, 400, { error: 'Email 格式不正確', code: 'INVALID_EMAIL' })
     }
     if (isDefined(body.role)) {
       const validRoles = ['employee', 'supervisor', 'admin']
-      if (!validRoles.includes(body.role)) return rejectWithPhotoCleanup(req, res, 400, { error: 'Invalid role' })
+      if (!validRoles.includes(body.role)) return rejectWithPhotoCleanup(req, res, 400, { error: '系統權限不正確', code: 'INVALID_ROLE' })
+    }
+    // 密碼要是文字：先檢查，不然其他欄位已經存進去、最後設定密碼才出錯（回報失敗但資料改了一半）
+    if (!isBlankPassword(body.password) && typeof body.password !== 'string') {
+      return rejectWithPhotoCleanup(req, res, 400, { error: '密碼格式不正確' })
+    }
+    // 姓名、員工編號是必填：修改時也不能存成空白（新增時本來就會擋）
+    if (isDefined(body.name) && (typeof body.name !== 'string' || !body.name.trim())) {
+      return rejectWithPhotoCleanup(req, res, 400, { error: '請輸入姓名' })
+    }
+    const nextEmployeeNo = body.employeeNo ?? body.employeeId
+    if (isDefined(nextEmployeeNo)) {
+      const text = typeof nextEmployeeNo === 'string' || typeof nextEmployeeNo === 'number' ? String(nextEmployeeNo).trim() : ''
+      if (!text) return rejectWithPhotoCleanup(req, res, 400, { error: '請輸入員工編號' })
+      // 只在編號「有變更」時檢查重複：原本就重複的舊資料不該擋住其他欄位的修改
+      if (text !== String(employee.employeeId ?? '').trim()) {
+        const employeeNoError = await checkEmployeeNoAvailable(text, employee._id)
+        if (employeeNoError) return rejectWithPhotoCleanup(req, res, 400, { error: employeeNoError })
+      }
     }
     if (isDefined(body.accountEnabled) && typeof body.accountEnabled !== 'boolean') {
-      return rejectWithPhotoCleanup(req, res, 400, { error: 'Invalid account state' })
+      return rejectWithPhotoCleanup(req, res, 400, { error: '帳號狀態格式不正確', code: 'INVALID_ACCOUNT_STATE' })
     }
     const signSettingsError = validateSignSettings(body)
     if (signSettingsError) return rejectWithPhotoCleanup(req, res, 400, { error: signSettingsError })
     const holidayRegimeError = validateHolidayRegime(body)
     if (holidayRegimeError) return rejectWithPhotoCleanup(req, res, 400, { error: holidayRegimeError })
+    const flagError = validateEmployeeFlags(body)
+    if (flagError) return rejectWithPhotoCleanup(req, res, 400, { error: flagError })
     // 只在主管「有變更」時檢查：原本就存在的（可能已經失效的）設定不該擋住其他欄位的修改
     if (isDefined(body.supervisor) && toEntityId(body.supervisor) !== toEntityId(employee.supervisor)) {
       const supervisorError = await checkSupervisorAssignment(body.supervisor, employee._id)
@@ -1463,7 +1557,7 @@ export async function updateEmployee(req, res) {
         status: { $nin: ['離職員工', '留職停薪'] },
       })
       if (remainingAdmins === 0) {
-        return rejectWithPhotoCleanup(req, res, 409, { error: 'At least one active administrator is required' })
+        return rejectWithPhotoCleanup(req, res, 409, { error: '系統至少要保留一位可登入的管理員，這個帳號的權限與在職狀態不能變更', code: 'LAST_ADMIN' })
       }
     }
 
@@ -1536,7 +1630,7 @@ export async function updateEmployee(req, res) {
     res.json(updated)
   } catch (err) {
     if (!photoPersisted) await cleanupUnpersistedPhoto(req).catch(() => {})
-    res.status(400).json({ error: err.message })
+    res.status(400).json(describeEmployeeWriteError(err))
   }
 }
 
@@ -1743,13 +1837,20 @@ export async function deleteEmployee(req, res) {
 
     const previousPhoto = employee.photo
     await employee.deleteOne()
+
+    // 刪除已經完成：之後的善後（照片檔、別人的直屬主管）失敗只回報警告，不讓整個請求失敗，
+    // 也不能因為照片檔刪不掉就略過清除直屬主管（與批量刪除一致）
+    const warnings = []
     if (previousPhoto) {
-      await deleteEmployeePhotoIfUnreferenced(previousPhoto, employee._id)
+      try {
+        await deleteEmployeePhotoIfUnreferenced(previousPhoto, employee._id)
+      } catch (photoErr) {
+        console.error('Delete employee: failed to remove photo', { error: photoErr?.name ?? 'Error', code: photoErr?.code })
+        warnings.push('員工照片檔案未能刪除，不影響這次刪除')
+      }
     }
 
-    // 與批量刪除一致：別人的「直屬主管」不能繼續指向這個已不存在的人
-    // （刪除已經完成，善後失敗只回報警告，不讓整個請求失敗）
-    const warnings = []
+    // 別人的「直屬主管」不能繼續指向這個已不存在的人
     let unassignedSubordinates = 0
     try {
       unassignedSubordinates = await clearSupervisorReferences([employeeId])
@@ -1938,13 +2039,27 @@ export async function previewDeleteImpact(req, res) {
 export async function setSupervisors(req, res) {
   try {
     const { assignments } = req.body ?? {}
-    if (!Array.isArray(assignments)) return res.status(400).json({ error: 'Invalid assignments' })
+    if (!Array.isArray(assignments)) return res.status(400).json({ error: '主管設定的資料格式不正確，請重新整理後再試', code: 'INVALID_ASSIGNMENTS' })
 
-    // 先全部檢查過再寫入，避免只套用了前幾筆：主管必須存在、可簽核，也不能是本人
+    // 先全部檢查過再寫入，避免只套用了前幾筆。
+    // 每一筆的員工都要是員工編號（24 碼字串）而且找得到：以前沒帶 employee（或帶 { $ne: null } 這種查詢條件）時，
+    // 更新條件變成「任何一位員工」，資料庫裡第一位員工的主管就被改掉或清掉
+    for (const [index, item] of assignments.entries()) {
+      const employee = item?.employee
+      if (typeof employee !== 'string' || !/^[0-9a-fA-F]{24}$/.test(employee)) {
+        return res.status(400).json({ error: `第 ${index + 1} 筆沒有指定員工，或員工編號格式不正確` })
+      }
+    }
+    // 主管必須存在、可簽核，也不能是本人
     for (const item of assignments) {
       const { employee, supervisor } = item ?? {}
       const supervisorError = await checkSupervisorAssignment(supervisor, employee)
       if (supervisorError) return res.status(400).json({ error: supervisorError })
+    }
+    for (const [index, item] of assignments.entries()) {
+      if (!(await Employee.exists({ _id: item.employee }))) {
+        return res.status(400).json({ error: `找不到第 ${index + 1} 筆要設定主管的員工（可能已被刪除），請重新整理後再試` })
+      }
     }
 
     for (const item of assignments) {
@@ -2003,7 +2118,7 @@ export async function setEmployeeAnnualLeave(req, res) {
     const { totalHours, totalDays, year } = req.body
     const hours = totalHours !== undefined ? Number(totalHours) : (totalDays !== undefined ? daysToHours(Number(totalDays)) : undefined)
     if (hours === undefined || !(hours >= 0)) {
-      return res.status(400).json({ error: 'Invalid totalHours' })
+      return res.status(400).json({ error: '特休總時數必須是 0 以上的數字', code: 'INVALID_TOTAL_HOURS' })
     }
 
     const employee = await setAnnualLeaveQuota(req.params.id, hours, year)
@@ -2022,7 +2137,7 @@ export async function validateEmployeeAnnualLeave(req, res) {
     const { hours: bodyHours, days } = req.body
     const hours = bodyHours !== undefined ? Number(bodyHours) : (days !== undefined ? daysToHours(Number(days)) : undefined)
     if (!hours || !(hours > 0)) {
-      return res.status(400).json({ error: 'Invalid hours' })
+      return res.status(400).json({ error: '時數必須是大於 0 的數字', code: 'INVALID_HOURS' })
     }
 
     const result = await validateAnnualLeaveRequest(req.params.id, hours)

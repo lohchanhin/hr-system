@@ -14,7 +14,6 @@ const mockApprovalWorkflows = [];
 const mockApprovalRequests = [];
 
 const MIN_WORKDAYS = 20;
-const PAYROLL_MONTHS_COUNT = 2;
 
 const matchDocument = (doc, filter) =>
   Object.entries(filter).every(([key, value]) => doc[key] === value);
@@ -544,50 +543,11 @@ describe('seedTestUsers', () => {
       });
     });
 
-    // 驗證薪資記錄
+    // 薪資記錄：種子資料只清掉舊的，不寫入簡化公式算的記錄（有記錄時薪資總覽以記錄為準，數字會和出勤、請假對不起來）
     expect(mockPayrollRecord.deleteMany).toHaveBeenCalledWith({});
-    expect(mockPayrollRecord.insertMany).toHaveBeenCalledTimes(1);
-    expect(result.payrollRecords).toBeDefined();
-    expect(result.payrollRecords.length).toBe(mockPayrollRecords.length);
-
-    // 應該有PAYROLL_MONTHS_COUNT個月的薪資記錄 (主管 + 員工)
-    const totalEmployees = result.supervisors.length + result.employees.length;
-    const expectedPayrollRecords = totalEmployees * PAYROLL_MONTHS_COUNT;
-    expect(mockPayrollRecords.length).toBe(expectedPayrollRecords);
-
-    // 驗證薪資記錄內容
-    mockPayrollRecords.forEach((payroll) => {
-      expect(payroll.employee).toBeDefined();
-      expect(payroll.month).toBeInstanceOf(Date);
-      expect(payroll.baseSalary).toBeGreaterThanOrEqual(0);
-      expect(payroll.netPay).toBeGreaterThanOrEqual(0);
-      expect(payroll.bankAccountA).toBeDefined();
-      expect(payroll.bankAccountA.bank).toBeTruthy();
-      expect(payroll.bankAccountA.accountNumber).toBeTruthy();
-      expect(payroll.bankAccountB).toBeDefined();
-      expect(payroll.bankAccountB.bank).toBeTruthy();
-      expect(payroll.bankAccountB.accountNumber).toBeTruthy();
-    });
-
-    const adjustmentRecords = mockPayrollRecords.filter(
-      (record) => Array.isArray(record.adjustments) && record.adjustments.length,
-    );
-    expect(adjustmentRecords.length).toBeGreaterThan(0);
-
-    const mayRecord = adjustmentRecords.find(
-      (record) => new Date(record.month).getUTCMonth() === 4,
-    );
-    expect(mayRecord?.leaveDeduction).toBeGreaterThan(0);
-    expect(mayRecord?.overtimePay).toBeGreaterThan(0);
-    expect(mayRecord?.makeupAdjustment).toBeGreaterThan(0);
-    expect(mayRecord?.adjustments?.length).toBe(3);
-    expect(mayRecord?.notes).toMatch(/加班申請/);
-
-    const aprilRecord = adjustmentRecords.find(
-      (record) => new Date(record.month).getUTCMonth() === 3,
-    );
-    expect(aprilRecord?.adjustments.some((adj) => adj.type === 'bonus')).toBe(true);
-    expect(aprilRecord?.bonusAdjustment ?? 0).toBe(0);
+    expect(mockPayrollRecord.insertMany).not.toHaveBeenCalled();
+    expect(result.payrollRecords).toEqual([]);
+    expect(mockPayrollRecords).toHaveLength(0);
 
     // 確認所有員工都有雙銀行帳戶
     mockEmployees.forEach((employee) => {
@@ -598,6 +558,61 @@ describe('seedTestUsers', () => {
       expect(employee.salaryAccountB.bank).toBeTruthy();
       expect(employee.salaryAccountB.acct).toBeTruthy();
     });
+  });
+
+  it('種子帳號都能登入、名稱看得懂、打卡落在台灣時間的班別內而且沒有未來的打卡', async () => {
+    // 現在是台灣 5/20 08:00；Math.random 不固定，連跑幾次確認不是剛好抽到
+    for (let round = 0; round < 3; round += 1) {
+      mockEmployees.length = 0;
+      mockAttendanceRecords.length = 0;
+      mockShiftSchedules.length = 0;
+      const { organizations, departments, subDepartments } = await seedSampleData();
+      mockOrg.find.mockResolvedValue(organizations);
+      mockDept.find.mockResolvedValue(departments);
+      mockSubDept.find.mockResolvedValue(subDepartments);
+
+      // 機構／部門／小單位：不是「機構-1692B67B」這種亂數名稱
+      const names = [...organizations, ...departments, ...subDepartments].map((item) => item.name);
+      names.forEach((name) => expect(name).not.toMatch(/[-_][0-9A-F]{6,}$/i));
+      expect(new Set(organizations.map((item) => item.name)).size).toBe(organizations.length);
+      expect(new Set(departments.map((item) => item.name)).size).toBe(departments.length);
+      expect(new Set(subDepartments.map((item) => item.name)).size).toBe(subDepartments.length);
+
+      const result = await seedTestUsers();
+
+      // 留職停薪、離職的人不能登入：seed-accounts.json 列出的帳號都要可用
+      mockEmployees.forEach((user) => {
+        expect(['正職員工', '試用期員工']).toContain(user.status);
+      });
+
+      const now = Date.now();
+      const shifts = new Map(result.attendanceSetting.shifts.map((shift) => [shift._id, shift]));
+      mockAttendanceRecords.forEach((record) => {
+        expect(new Date(record.timestamp).getTime()).toBeLessThanOrEqual(now);
+      });
+      mockShiftSchedules.forEach((schedule) => {
+        expect(new Date(schedule.date).getTime()).toBeLessThan(now);
+      });
+
+      // 每個班的簽到在班別開始時間（台灣時間）前後：-15 ~ +5 分鐘
+      const clockInsByEmployee = new Map();
+      mockAttendanceRecords
+        .filter((record) => record.action === 'clockIn')
+        .forEach((record) => {
+          if (!clockInsByEmployee.has(record.employee)) clockInsByEmployee.set(record.employee, []);
+          clockInsByEmployee.get(record.employee).push(new Date(record.timestamp).getTime());
+        });
+      mockShiftSchedules.forEach((schedule) => {
+        const shift = shifts.get(schedule.shiftId);
+        const [hours, minutes] = shift.startTime.split(':').map(Number);
+        // 班表日期是 UTC 午夜代表台灣的那一天；台灣時間 hh:mm = UTC (hh - 8):mm
+        const shiftStart = new Date(schedule.date).getTime() + ((hours - 8) * 60 + minutes) * 60 * 1000;
+        const matched = (clockInsByEmployee.get(schedule.employee) ?? []).some(
+          (time) => time >= shiftStart - 15 * 60 * 1000 && time <= shiftStart + 5 * 60 * 1000,
+        );
+        expect(matched).toBe(true);
+      });
+    }
   });
 
   it('缺少層級資料時拋出錯誤', async () => {

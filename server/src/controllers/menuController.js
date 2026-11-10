@@ -1,6 +1,16 @@
 import Employee from '../models/Employee.js';
 import { getScheduleAccessSummary } from '../services/scheduleAccessService.js';
 
+// 前台（員工系統）的頁面名稱；要和 client/src/utils/authNavigation.js 的 FRONT_MENU_NAMES 一致
+const FRONT_PAGE_NAMES = new Set(['Attendance', 'MySchedule', 'Schedule', 'FrontDepartmentReports', 'PreviewWeek', 'PreviewMonth', 'Approval', 'FrontChangePassword']);
+// 管理員也能用的前台頁面（管理員的 items 只有後台項目）。以前只寫在前端（FrontLayout 的備援選單），改選單要兩邊一起改
+const ADMIN_FRONT_ITEMS = Object.freeze([
+  { name: 'Attendance', label: '出勤打卡', icon: 'el-icon-postcard' },
+  { name: 'Schedule', label: '排班管理', icon: 'el-icon-timer' },
+  { name: 'Approval', label: '簽核流程', icon: 'el-icon-s-operation' },
+  { name: 'FrontChangePassword', label: '變更密碼', icon: 'el-icon-lock' },
+]);
+
 export async function getMenu(req, res, next) {
   try {
     const role = req.user?.role || 'employee';
@@ -71,12 +81,21 @@ export async function getMenu(req, res, next) {
       }
     }
 
-    res.json(menus[role] || []);
+    const items = menus[role] || [];
+    // ?include=front：回傳 { items, frontItems }（items 和沒帶參數時的陣列完全相同；frontItems 是前台要顯示的項目，
+    // 管理員是 ADMIN_FRONT_ITEMS，其他角色是 items 裡的前台頁面）。沒帶參數時照舊回傳陣列，舊畫面不受影響
+    if (req.query?.include === 'front') {
+      const frontItems = role === 'admin'
+        ? ADMIN_FRONT_ITEMS.map((item) => ({ ...item }))
+        : items.filter((item) => FRONT_PAGE_NAMES.has(item.name));
+      return res.json({ items, frontItems });
+    }
+    res.json(items);
   } catch (error) {
     if (typeof next === 'function') {
       next(error);
     } else {
-      res.status(500).json({ message: 'Failed to load menu' });
+      res.status(500).json({ message: '選單讀取失敗，請重新整理' });
     }
   }
 }

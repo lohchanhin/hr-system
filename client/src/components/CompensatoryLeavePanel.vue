@@ -2,23 +2,37 @@
      簽核頁的「我的調休」、員工管理（管理員可手動給予、扣除、作廢、填寫存摺備註）、簽核明細（申請人的存摺）共用。
      傳 bank 就直接顯示（簽核明細已經帶在回應裡）；傳 employeeId 取那位員工的；什麼都不傳取登入者自己的。 -->
 <template>
-  <div class="comp-leave-panel" :class="{ compact }" data-test="comp-leave-panel">
+  <div class="comp-leave-panel" :class="{ compact, 'is-collapsed': collapsed }" data-test="comp-leave-panel">
     <div class="panel-header">
       <div class="panel-title">
         <b>{{ title }}</b>
         <span v-if="data" class="panel-sub" data-test="comp-leave-available">可用 {{ formatCompHours(data.availableHours) }}</span>
       </div>
-      <el-button
-        v-if="!bank"
-        link
-        type="primary"
-        size="small"
-        :loading="loading"
-        data-test="comp-leave-refresh"
-        @click="load"
-      >
-        重新整理
-      </el-button>
+      <div class="panel-actions">
+        <el-button
+          v-if="!bank && !collapsed"
+          link
+          type="primary"
+          size="small"
+          :loading="loading"
+          data-test="comp-leave-refresh"
+          @click="load"
+        >
+          重新載入
+        </el-button>
+        <!-- 可收合（申請頁）：預設只留標題與可用時數，明細按展開才出現 -->
+        <el-button
+          v-if="collapsible"
+          link
+          type="primary"
+          size="small"
+          data-test="comp-leave-toggle"
+          :aria-expanded="!collapsed"
+          @click="collapsed = !collapsed"
+        >
+          {{ collapsed ? '展開' : '收合' }}
+        </el-button>
+      </div>
     </div>
 
     <div v-if="error" class="panel-error" data-test="comp-leave-error">
@@ -26,6 +40,7 @@
       <el-button link type="primary" size="small" @click="load">再試一次</el-button>
     </div>
 
+    <div v-show="!collapsed" class="panel-body" data-test="comp-leave-body">
     <div v-if="data" class="comp-summary" data-test="comp-leave-summary">
       <el-tag type="success" effect="plain">存摺剩餘 {{ formatCompHours(data.balanceHours) }}</el-tag>
       <el-tag v-if="data.pendingHours > 0" type="warning" effect="plain">簽核中 {{ formatCompHours(data.pendingHours) }}</el-tag>
@@ -33,8 +48,20 @@
       <el-tag type="info" effect="plain">已使用 {{ formatCompHours(data.usedHours) }}</el-tag>
       <el-tag v-if="data.expiredHours > 0" type="danger" effect="plain">已過期 {{ formatCompHours(data.expiredHours) }}</el-tag>
       <span v-if="data.expiryMonths > 0" class="row-note">取得後 {{ data.expiryMonths }} 個月內使用</span>
+      <el-button
+        v-if="!compact"
+        link
+        type="primary"
+        size="small"
+        data-test="comp-leave-help-toggle"
+        :aria-expanded="helpOpen"
+        @click="helpOpen = !helpOpen"
+      >
+        {{ helpOpen ? '收合說明' : '說明' }}
+      </el-button>
     </div>
-    <p v-if="data && !compact" class="panel-help" data-test="comp-leave-help">{{ COMP_LEAVE_HELP_TEXT }}</p>
+    <!-- 調休怎麼來、怎麼用的說明：預設收合，按「說明」才展開 -->
+    <p v-if="data && !compact" v-show="helpOpen" class="panel-help" data-test="comp-leave-help">{{ COMP_LEAVE_HELP_TEXT }}</p>
 
     <!-- 存摺備註：管理員在員工管理填寫（空白 = 清除），員工在「我的調休」唯讀看得到；
          伺服器只把備註給本人、管理員與直屬主管，排班範圍內的排班人員拿到的存摺沒有備註（下方「人資備註」就不顯示） -->
@@ -69,8 +96,39 @@
       <span v-if="noteMeta" class="row-note">{{ noteMeta }}</span>
     </div>
 
+    <!-- 手機：每筆調休一張小卡（來源、時數、狀態、使用紀錄），不用橫向捲動的寬表格 -->
+    <ul v-if="rows.length && isMobile" class="comp-list" data-test="comp-leave-list">
+      <li v-for="row in rows" :key="row.id || row.sourceText" class="comp-item">
+        <div class="comp-item__head">
+          <span class="source-text">{{ row.sourceText }}</span>
+          <el-tag size="small" :type="CREDIT_STATUS_TAG_TYPES[row.status] || 'info'" effect="light" class="comp-item__status">{{ row.statusLabel }}</el-tag>
+        </div>
+        <div class="row-note">{{ describeCreditHours(row) }}</div>
+        <div v-if="row.expiresOn || row.suggestedDate" class="row-note">
+          <template v-if="row.expiresOn">期限 {{ formatDateKey(row.expiresOn) }}</template>
+          <template v-if="row.expiresOn && row.suggestedDate && !compact">・</template>
+          <template v-if="row.suggestedDate && !compact">建議調休日 {{ formatDateKey(row.suggestedDate) }}</template>
+        </div>
+        <div v-if="row.conflict" class="row-note comp-item__conflict" data-test="comp-leave-conflict">
+          請人資確認：{{ CONFLICT_REASON_TEXT[row.conflictReason] || CONFLICT_REASON_TEXT.trigger_gone }}
+        </div>
+        <div v-if="row.status === 'void' && row.voidReasonText" class="row-note">{{ row.voidReasonText }}</div>
+        <div v-for="usage in row.usages || []" :key="usage.id || usage.at" class="usage-line" data-test="comp-leave-usage">{{ describeUsage(usage) }}</div>
+        <el-button
+          v-if="canManage && row.status === 'available' && !(row.usedHours > 0)"
+          link
+          type="danger"
+          size="small"
+          data-test="comp-leave-void"
+          @click="voidRow(row)"
+        >
+          作廢
+        </el-button>
+      </li>
+    </ul>
+
     <el-table
-      v-if="rows.length"
+      v-else-if="rows.length"
       :data="rows"
       size="small"
       border
@@ -123,6 +181,7 @@
       </el-table-column>
     </el-table>
     <div v-else-if="data && !error" class="panel-empty" data-test="comp-leave-empty">目前沒有調休</div>
+    </div>
 
     <div v-if="canManage && targetEmployeeId" class="comp-manage" data-test="comp-leave-manage">
       <el-radio-group v-model="manage.mode" size="small">
@@ -130,13 +189,14 @@
         <el-radio-button value="deduct">扣除調整</el-radio-button>
       </el-radio-group>
       <div class="manage-row">
-        <el-input-number v-model="manage.hours" :min="0.5" :max="1000" :step="0.5" size="small" data-test="comp-leave-manage-hours" />
+        <el-input-number v-model="manage.hours" :min="manageStep" :max="1000" :step="manageStep" size="small" data-test="comp-leave-manage-hours" />
         <span class="row-note" data-test="comp-leave-manage-days">小時（{{ formatDays(manage.hours || 0) }}）</span>
         <el-date-picker
           v-if="manage.mode === 'credit'"
           v-model="manage.earnedDate"
           type="date"
           value-format="YYYY-MM-DD"
+          format="YYYY/MM/DD"
           placeholder="取得日期（預設今天）"
           size="small"
           data-test="comp-leave-manage-date"
@@ -163,6 +223,7 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { apiFetch } from '../api'
 import { formatDays } from '../utils/leaveBalance'
+import { useIsMobile } from '../utils/useIsMobile'
 import {
   COMP_LEAVE_HELP_TEXT,
   CONFLICT_REASON_TEXT,
@@ -189,6 +250,9 @@ const props = defineProps({
   canManage: { type: Boolean, default: false },
   // 最小請假單位（手動給予、扣除的時數要是它的倍數）
   minUnitHours: { type: Number, default: 0.5 },
+  // 可收合：標題列多一個「展開／收合」，預設收合（只留標題與可用時數）
+  collapsible: { type: Boolean, default: false },
+  defaultCollapsed: { type: Boolean, default: true },
 })
 
 const emit = defineEmits(['loaded', 'changed'])
@@ -197,6 +261,13 @@ const fetched = ref(null)
 const loading = ref(false)
 const error = ref('')
 let loadSeq = 0
+const isMobile = useIsMobile()
+// 調休怎麼來、怎麼用的說明：預設收合
+const helpOpen = ref(false)
+const collapsed = ref(props.collapsible && props.defaultCollapsed)
+function expand() {
+  collapsed.value = false
+}
 
 const isObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value)
 const data = computed(() => {
@@ -233,6 +304,8 @@ async function load() {
 /* ---------- 管理員：手動給予、扣除、作廢 ---------- */
 
 const manage = reactive({ mode: 'credit', hours: 8, earnedDate: '', note: '', saving: false })
+// 時數輸入框的級距跟著最小請假單位（0.25、0.5 或 1 小時），不然按加減鍵會跳到送不出去的時數
+const manageStep = computed(() => (Number(props.minUnitHours) > 0 ? Number(props.minUnitHours) : 0.5))
 
 async function errorMessageOf(res, fallback) {
   try {
@@ -344,7 +417,7 @@ async function saveNote() {
   }
 }
 
-defineExpose({ load, refresh: load })
+defineExpose({ load, refresh: load, expand })
 
 onMounted(load)
 watch(() => props.employeeId, () => {
@@ -369,14 +442,25 @@ watch(() => props.employeeId, () => {
   justify-content: space-between;
   margin-bottom: 8px;
 }
+.panel-actions {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+.comp-leave-panel.is-collapsed > .panel-header {
+  margin-bottom: 0;
+}
+.comp-leave-panel.is-collapsed > .panel-error {
+  margin: 8px 0 0;
+}
 .panel-sub {
   margin-left: 8px;
-  color: #67c23a;
+  color: var(--el-color-success);
   font-size: 13px;
   font-weight: 600;
 }
 .panel-error {
-  color: #e6a23c;
+  color: var(--el-color-warning);
   font-size: 13px;
   margin-bottom: 8px;
 }
@@ -415,6 +499,36 @@ watch(() => props.employeeId, () => {
 .usage-line {
   font-size: 12px;
   line-height: 1.6;
+}
+/* 手機的清單 */
+.comp-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.comp-item {
+  padding: 8px 0;
+  border-top: 1px solid var(--el-border-color-lighter, #ebeef5);
+}
+.comp-item:first-child {
+  border-top: none;
+}
+.comp-item__head {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.comp-item__status {
+  margin-left: auto;
+  flex-shrink: 0;
+}
+.comp-item__conflict {
+  color: #b88230;
+}
+@media (max-width: 767px) {
+  .manage-row :deep(.el-date-editor) {
+    width: 100%;
+  }
 }
 .comp-manage {
   margin-top: 10px;

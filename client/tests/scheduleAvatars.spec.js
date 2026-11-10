@@ -101,7 +101,9 @@ function mountSchedule() {
     'el-alert': { name: 'ElAlert', props: ['title', 'type'], template: '<div class="alert-stub">{{ title }}</div>' },
     'el-timeline': { name: 'ElTimeline', template: '<div><slot></slot></div>' },
     'el-timeline-item': { name: 'ElTimelineItem', template: '<div><slot></slot></div>' },
-    ScheduleDashboard: { name: 'ScheduleDashboard', template: '<div class="dashboard-stub"></div>', props: ['summary'] }
+    ScheduleDashboard: { name: 'ScheduleDashboard', template: '<div class="dashboard-stub"></div>', props: ['summary'] },
+    // 排班頁改用共用頁首：shallowMount 會把它換成空殼，月份／部門／單位與統計就不會畫出來，所以用真的元件
+    PageHeader: false
   }
   return shallowMount(Schedule, { global: { stubs } })
 }

@@ -28,6 +28,9 @@ import { migrateAnnualLeaveToHours, migrateLeaveFormsToHours } from './services/
 import { authenticate, authorizeRoles } from './middleware/auth.js';
 import { requireScheduleAccess } from './middleware/scheduleAccess.js';
 import { countLegacyDeptManagers, describeScheduleAccessForStartup } from './services/scheduleAccessService.js';
+import { describeEmployeeNoUniqueness, ensureEmployeeNoUniqueIndex } from './services/employeeNoUniqueness.js';
+import { alignLegacyDefaultFormCategories } from './services/formCategoryAlignment.js';
+import { describePayrollPolicyForStartup } from './services/payrollPolicyService.js';
 import scheduleRoutes from './routes/scheduleRoutes.js';
 import payrollRoutes from './routes/payrollRoutes.js';
 import reportRoutes from './routes/reportRoutes.js';
@@ -63,6 +66,8 @@ import {
   apiRateLimiter,
   configureTrustProxy,
   disableApiCaching,
+  forwardAsyncErrors,
+  rejectQueryOperators,
   requestContext,
   secureHttpHeaders,
 } from './middleware/httpSecurity.js';
@@ -181,7 +186,7 @@ app.use(cors({
   methods: "GET,POST,PUT,DELETE,OPTIONS",
   // 跨網域部署時前端要讀得到清單的分頁與截斷提示（排班頁「相關簽核」超過 500 筆的提醒、簽核清單的總筆數），
   // 以及申請頁「只列出您部門開放的表單」的提示（表單清單的 X-Form-Visibility）
-  exposedHeaders: ['X-Approvals-Truncated', 'X-Total-Count', 'X-Page', 'X-Limit', 'X-Form-Visibility']
+  exposedHeaders: ['X-Approvals-Truncated', 'X-Total-Count', 'X-Page', 'X-Limit', 'X-Form-Visibility', 'X-Custom-Fields-Version']
 }));
 app.get('/env.js', (req, res) => {
   res.setHeader('Cache-Control', 'no-store');
@@ -204,6 +209,8 @@ app.get('/api/health', (req, res) => {
 app.use('/api', disableApiCaching);
 app.use('/api', apiRateLimiter);
 app.use('/api', apiMutationRateLimiter);
+// 查詢字串裡的 Mongo 運算子（?employee[$exists]=true）一律擋下，不讓它進到各 API 的查詢條件
+app.use('/api', rejectQueryOperators);
 app.use('/api', authRoutes);
 app.use(
   '/api/employees',
@@ -364,6 +371,8 @@ app.get('*', (req, res, next) => {
 });
 
 app.use(apiErrorHandler);
+// async 處理函式丟出的錯誤一律交給上面的 apiErrorHandler（回 500），不讓未處理的 rejection 把整個服務結束掉
+forwardAsyncErrors(app);
 async function start() {
   try {
     assertSecureRuntimeConfig();
@@ -481,6 +490,20 @@ async function start() {
     } catch (schedulerError) {
       console.error('Failed to count department schedule managers', schedulerError?.name ?? 'Error');
     }
+    // 系統預設表單的舊分類「人事」改成表單分類清單裡的「人事類／請假類」（只改還是舊預設值的，管理員建了「人事」分類就不動；冪等，只記錄筆數）
+    try {
+      const categoryAlignment = await alignLegacyDefaultFormCategories();
+      if (categoryAlignment?.updated) console.log(`Moved ${categoryAlignment.updated} default approval forms from category 人事 to 人事類／請假類`);
+    } catch (categoryError) {
+      console.error('Failed to align default form categories', categoryError?.name ?? 'Error');
+    }
+    // 員工編號唯一：先計算重複的編號（只記錄筆數），沒有重複才建立唯一索引；有重複不建、不擋啟動（services/employeeNoUniqueness.js）
+    try {
+      const employeeNoLine = describeEmployeeNoUniqueness(await ensureEmployeeNoUniqueIndex());
+      if (employeeNoLine) console.log(employeeNoLine);
+    } catch (employeeNoError) {
+      console.error('Failed to check employee number uniqueness', employeeNoError?.name ?? 'Error');
+    }
     // 排班權限模式（2026/11 起預設「只有排班人員」）：記錄生效的模式、是存過的還是預設值，
     // 以及沒有排班指派、因此沒有「排班管理」的主管人數（只記錄筆數，不修改資料）
     try {
@@ -491,6 +514,21 @@ async function start() {
       console.log(`Schedule access mode: ${scheduleAccess.mode} (${scheduleAccess.saved ? 'saved setting' : 'default, not saved'})${supervisorNote}`);
     } catch (scheduleAccessError) {
       console.error('Failed to read schedule access mode', scheduleAccessError?.name ?? 'Error');
+    }
+    // 薪資政策（沒存就是預設值，不需要搬資料）：記錄生效的月薪比例算法、加班倍率是否改過、
+    // 在職員工的「自動計算加班費」開／關人數（只讀、只記錄筆數，任何錯誤都不影響啟動）
+    try {
+      const payrollPolicy = await describePayrollPolicyForStartup();
+      if (payrollPolicy) {
+        console.log(
+          `Payroll policy (${payrollPolicy.saved ? 'saved setting' : 'defaults, not saved'}): proration ${payrollPolicy.prorationMethod}; ` +
+          `overtime rates ${payrollPolicy.customizedRates.length ? `customized (${payrollPolicy.customizedRates.join(', ')})` : 'default'}; ` +
+          `new employees autoOvertimeCalc ${payrollPolicy.newEmployeeAutoCalc ? 'on' : 'off'}; ` +
+          `active employees autoOvertimeCalc on ${payrollPolicy.autoOvertimeCalcOn} / off ${payrollPolicy.autoOvertimeCalcOff}`
+        );
+      }
+    } catch (payrollPolicyError) {
+      console.error('Failed to describe payroll policy', payrollPolicyError?.name ?? 'Error');
     }
     await ensureAdminUser();
     await ensureDefaultSupervisorReports();

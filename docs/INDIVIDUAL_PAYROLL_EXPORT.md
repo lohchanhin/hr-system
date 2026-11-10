@@ -216,3 +216,19 @@ For issues or questions, refer to:
 - Main README: `/README.md`
 - Payroll API docs: `/docs/PAYROLL_API.md`
 - Test data guide: `/docs/TEST_DATA_GUIDE.md`
+
+## 2026-11 update
+
+- **Month**: `month` accepts `YYYY-MM` or `YYYY-MM-01`; a day in the middle of a month is refused with 400
+  `Invalid month format. Expected YYYY-MM or YYYY-MM-01`. `employeeId` must be a 24-character id (400 `Invalid employeeId`).
+- **Without a saved payroll record** the sheet is calculated on the fly (the same calculation as `POST /api/payroll/calculate`);
+  with a saved record the saved amounts are used.
+- **勞健保級距** in the footer shows the insured salary of the bracket (`insuredSalary`). Records saved before 2026-11
+  do not have that field; the bracket amount is then looked up from the saved `insuranceLevel`.
+- **遲到早退**: the automatic late / early-leave deduction (`lateEarlyDeduction`) is part of `otherDeductions` and therefore
+  appears in the right-hand column under 「其他：」; the left-hand row 「遲到早退扣薪」 stays 0.
+- **債權扣押** shows `debtGarnishment` (from the employee's monthly adjustments or the saved record).
+- **Deductions larger than the salary**: 實領金額 stops at 0; the amount that could not be deducted is returned by the API as
+  `deductionShortfall` (it is not printed on the sheet).
+- **Mid-month hire / resignation**: 本薪 of a monthly-salary employee is prorated by the employed calendar days / 30
+  (`employment.ratio`); an employee who was not employed in the month has 本薪 0.

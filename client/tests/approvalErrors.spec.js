@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import {
+  ANNUAL_LEAVE_INSUFFICIENT,
   ApprovalApiError,
+  annualLeaveShortageMessage,
   GENERIC_ERROR_MESSAGE,
   NETWORK_ERROR_MESSAGE,
   describeError,
@@ -111,5 +113,30 @@ describe('approvalErrors describeError', () => {
   it('ApprovalApiError 帶出 lines 與狀態碼', () => {
     const info = describeError(new ApprovalApiError({ message: '失敗', lines: ['甲'], status: 409, code: 'X' }))
     expect(info).toEqual({ message: '失敗', lines: ['甲'], code: 'X', status: 409, network: false })
+  })
+})
+
+// 特休餘額不足：送出 400、核准 409（code ANNUAL_LEAVE_INSUFFICIENT），訊息要講差多少與怎麼辦
+describe('annualLeaveShortageMessage / readApiError（特休餘額不足）', () => {
+  const res = (status, body) => ({ status, json: async () => body })
+
+  it('送出（400）：伺服器的中文訊息加上怎麼辦', async () => {
+    const error = await readApiError(res(400, { error: '特休餘額不足：剩餘 8 小時（1 天），本次申請 16 小時（2 天）', code: ANNUAL_LEAVE_INSUFFICIENT, remainingHours: 8, requestedHours: 16 }))
+    expect(error.code).toBe(ANNUAL_LEAVE_INSUFFICIENT)
+    expect(error.status).toBe(400)
+    expect(error.message).toBe('特休餘額不足：剩餘 8 小時（1 天），本次申請 16 小時（2 天）。請減少請假時數、改請其他假別，或等簽核中的特休處理完再送出。')
+  })
+
+  it('核准（409）：伺服器已經寫了怎麼辦就不重複', () => {
+    const error = '特休餘額不足，無法核准：剩餘 4 小時，這張單需要 8 小時（1 天）。請人資確認特休時數，或退簽請申請人修改'
+    expect(annualLeaveShortageMessage({ error, code: ANNUAL_LEAVE_INSUFFICIENT }, 409)).toBe(`${error}。`)
+  })
+
+  it('舊版伺服器的英文訊息：用回應裡的數字組成中文（有簽核中的特休時寫出可請時數）', () => {
+    expect(annualLeaveShortageMessage({ error: 'Insufficient annual leave', remainingHours: 16, pendingHours: 8, availableHours: 8, requestedHours: 16 }, 400))
+      .toBe('特休餘額不足：剩餘 16 小時（2 天）、其他簽核中的特休 8 小時（1 天）、可請 8 小時（1 天）、本次申請 16 小時（2 天）。請減少請假時數、改請其他假別，或等簽核中的特休處理完再送出。')
+    expect(annualLeaveShortageMessage({ remainingHours: -2, requestedHours: 8 }, 409))
+      .toBe('特休餘額不足，無法核准：剩餘 0 小時、這張單需要 8 小時（1 天）。請人資確認特休時數，或退簽請申請人修改。')
+    expect(annualLeaveShortageMessage({}, 400)).toBe('特休餘額不足。請減少請假時數、改請其他假別，或等簽核中的特休處理完再送出。')
   })
 })

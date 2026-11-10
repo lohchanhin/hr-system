@@ -21,6 +21,11 @@ import {
   attachShiftInfo,
   buildScheduleOverview,
 } from './scheduleShared.js';
+import {
+  composePublishSummary,
+  loadPublishSummaryEntries,
+  summarizePublishRows,
+} from './schedulePublishSummary.js';
 
 // 日期鍵（YYYY-MM-DD）加減幾天
 function shiftDateKey(dateKey, days) {
@@ -82,6 +87,7 @@ export async function listMonthlySchedules(req, res) {
           allEmployeesConfirmed: false,
           currentRoundPendingEmployees: [],
           unaffectedConfirmedEmployees: [],
+          unpublishedCount: 0,
         },
         pagination: {
           total: 0,
@@ -98,6 +104,8 @@ export async function listMonthlySchedules(req, res) {
     if (!actorId) return res.status(401).json({ error: 'Invalid user' });
 
     let scopedIds = null;
+    // 發布狀態（publishSummary）的範圍：和 scopedIds 相同，但不看畫面這次只要求的那幾位員工（employeeIds）
+    let summaryScopedIds = null;
     if (actorRole === 'employee' || actorRole === 'supervisor') {
       // 員工只看得到自己；主管再加上直屬部屬，排班人員再加上被指定小單位的員工（範圍由 getAllowedScheduleEmployeeIds 決定）
       if (supervisor && toEntityId(supervisor) !== actorId) {
@@ -111,14 +119,13 @@ export async function listMonthlySchedules(req, res) {
         return res.status(403).json({ error: 'forbidden' });
       }
       if (employee) {
-        scopedIds = [toEntityId(employee)];
-      } else if (parsedEmployeeIds.length > 0) {
-        scopedIds = parsedEmployeeIds;
+        summaryScopedIds = [toEntityId(employee)];
       } else if (actorRole === 'supervisor') {
-        scopedIds = includeSelf ? allowedIds : allowedIds.filter((id) => id !== actorId);
+        summaryScopedIds = includeSelf ? allowedIds : allowedIds.filter((id) => id !== actorId);
       } else {
-        scopedIds = allowedIds;
+        summaryScopedIds = allowedIds;
       }
+      scopedIds = !employee && parsedEmployeeIds.length > 0 ? parsedEmployeeIds : summaryScopedIds;
     } else if (supervisor) {
       const emps = await Employee.find({ supervisor }).select('_id');
       const idSet = new Set(emps.map((e) => e._id.toString()));
@@ -126,12 +133,14 @@ export async function listMonthlySchedules(req, res) {
         idSet.add(String(supervisor));
       }
       scopedIds = Array.from(idSet);
+      summaryScopedIds = scopedIds;
       if (parsedEmployeeIds.length > 0) {
         const requestedSet = new Set(parsedEmployeeIds);
         scopedIds = scopedIds.filter((id) => requestedSet.has(id));
       }
     } else {
       const empId = employee;
+      if (empId) summaryScopedIds = [String(empId)];
       if (empId && parsedEmployeeIds.length > 0) {
         if (parsedEmployeeIds.includes(String(empId))) {
           scopedIds = [String(empId)];
@@ -164,6 +173,19 @@ export async function listMonthlySchedules(req, res) {
       Object.assign(employeeQuery, andFilters[0]);
     } else if (andFilters.length > 1) {
       employeeQuery.$and = andFilters;
+    }
+
+    // 發布狀態用的員工範圍（見下方 publishSummary）：名單被縮小時（只要求幾位員工、搜尋、職別）另外讀一次整個範圍的員工，
+    // 沒有縮小時就是下面的名單本身
+    let summaryEmployees = null;
+    if (parsedEmployeeIds.length > 0 || search || jobType) {
+      const summaryEmployeeQuery = {};
+      if (Array.isArray(summaryScopedIds)) summaryEmployeeQuery._id = { $in: summaryScopedIds };
+      if (department) summaryEmployeeQuery.department = department;
+      if (subDepartment) summaryEmployeeQuery.subDepartment = subDepartment;
+      const summaryQuery = Employee.find(summaryEmployeeQuery).select('_id name photo');
+      const rows = summaryQuery && typeof summaryQuery.lean === 'function' ? await summaryQuery.lean() : await summaryQuery;
+      summaryEmployees = Array.isArray(rows) ? rows : null;
     }
 
     const matchedEmployeeQuery = Employee.find(employeeQuery)
@@ -231,130 +253,21 @@ export async function listMonthlySchedules(req, res) {
     } else {
       scheduleQuery.employee = { $in: [] };
     }
-    if (department) scheduleQuery.department = department;
-    if (subDepartment) scheduleQuery.subDepartment = subDepartment;
+    // 部門、小單位的條件只用來篩選員工（上面的 employeeQuery）：這一頁員工整個月的班表都要列出來，不再另外比對班表上存的部門、小單位。
+    // 班表上存的是排班當時的單位；員工月中調到別的小單位後，舊單位排的那幾天以前會被濾掉，新單位的排班人員看到的是空白格子，
+    // 一排就回「既有排班屬於不同部門或單位」，而舊單位的排班人員已經看不到這位員工，那幾天誰也改不了。
+    // （一位員工一天只有一筆班表，所以不會因此多出別人的班表）
 
     const raw = await ShiftSchedule.find(scheduleQuery)
       .select('employee date shiftId department subDepartment state employeeResponse needsReconfirm responseNote responseAt publishedAt')
       .populate({ path: 'employee', select: 'name department subDepartment photo' })
       .lean();
     const schedules = await attachShiftInfo(raw);
-    const employeeStatusMap = new Map();
-    let hasFinalized = false;
-    let hasDisputed = false;
-    let hasPublished = false;
-    let latestPublishedAt = null;
-    raw.forEach((doc) => {
-      const emp = doc.employee || {};
-      const id = emp?._id?.toString?.() || doc.employee?.toString?.();
-      if (!id) return;
-      const prev = employeeStatusMap.get(id) || {
-        id,
-        name: emp.name || '',
-        photo: emp.photo || '',
-        pendingCount: 0,
-        disputedCount: 0,
-        latestNote: '',
-        latestResponseAt: null,
-        disputes: [],
-        hasCurrentRoundPending: false,
-        hasUnaffectedConfirmed: false,
-      };
-      if (doc.state === 'finalized') hasFinalized = true;
-      if (doc.state === 'pending_confirmation' || doc.state === 'changes_requested' || doc.state === 'finalized') {
-        hasPublished = true;
-      }
-      if (doc.publishedAt) {
-        const published = new Date(doc.publishedAt);
-        if (!Number.isNaN(published.getTime()) && (!latestPublishedAt || latestPublishedAt < published)) {
-          latestPublishedAt = published;
-        }
-      }
 
-      if (doc.needsReconfirm === true && doc.state !== 'finalized') {
-        prev.hasCurrentRoundPending = true;
-      } else if (doc.employeeResponse === 'confirmed' || doc.state === 'finalized') {
-        prev.hasUnaffectedConfirmed = true;
-      }
-
-      if (doc.employeeResponse === 'disputed' || doc.state === 'changes_requested') {
-        hasDisputed = true;
-        prev.disputedCount += 1;
-        if (doc.responseNote) {
-          prev.latestNote = doc.responseNote;
-        }
-        prev.disputes.push({
-          date: doc.date instanceof Date ? doc.date.toISOString() : new Date(doc.date).toISOString(),
-          note: doc.responseNote || '',
-          responseAt: doc.responseAt ? new Date(doc.responseAt).toISOString() : null,
-        });
-      } else if (
-        doc.state === 'pending_confirmation' &&
-        doc.needsReconfirm !== false &&
-        doc.employeeResponse !== 'confirmed'
-      ) {
-        prev.pendingCount += 1;
-      }
-
-      if (doc.responseAt) {
-        const responded = new Date(doc.responseAt);
-        if (!Number.isNaN(responded.getTime()) && (!prev.latestResponseAt || prev.latestResponseAt < responded)) {
-          prev.latestResponseAt = responded;
-        }
-      }
-      employeeStatusMap.set(id, prev);
-    });
-    const publishSummary = {
-      status: 'draft',
-      pendingEmployees: [],
-      disputedEmployees: [],
-      publishedAt: latestPublishedAt ? latestPublishedAt.toISOString() : null,
-      hasSchedules: raw.length > 0,
-      totalEmployees: employeeStatusMap.size,
-      allEmployeesConfirmed: false,
-      currentRoundPendingEmployees: [],
-      unaffectedConfirmedEmployees: [],
-    };
-    employeeStatusMap.forEach((entry) => {
-      if (entry.pendingCount > 0) {
-        publishSummary.pendingEmployees.push({
-          id: entry.id,
-          name: entry.name,
-          photo: entry.photo,
-          pendingCount: entry.pendingCount,
-        });
-      }
-      if (entry.disputedCount > 0) {
-        publishSummary.disputedEmployees.push({
-          id: entry.id,
-          name: entry.name,
-          photo: entry.photo,
-          disputedCount: entry.disputedCount,
-          latestNote: entry.latestNote,
-          latestResponseAt: entry.latestResponseAt ? entry.latestResponseAt.toISOString() : null,
-          disputes: entry.disputes,
-        });
-      }
-      if (entry.hasCurrentRoundPending) {
-        publishSummary.currentRoundPendingEmployees.push({ id: entry.id, name: entry.name });
-      }
-      if (entry.hasUnaffectedConfirmed && !entry.hasCurrentRoundPending) {
-        publishSummary.unaffectedConfirmedEmployees.push({ id: entry.id, name: entry.name });
-      }
-    });
-    if (hasFinalized) {
-      publishSummary.status = 'finalized';
-    } else if (hasDisputed) {
-      publishSummary.status = 'disputed';
-    } else if (hasPublished) {
-      publishSummary.status = publishSummary.pendingEmployees.length ? 'pending' : 'ready';
-    } else {
-      publishSummary.status = 'draft';
-    }
-    publishSummary.allEmployeesConfirmed =
-      publishSummary.status === 'ready' &&
-      publishSummary.pendingEmployees.length === 0 &&
-      publishSummary.disputedEmployees.length === 0;
+    // 發布狀態看整個範圍（月份 + 部門／小單位 + 看得到的員工），不看頁次、搜尋、職別、排班狀態與這次只要求的那幾位員工：
+    // 以前用這一頁的班表算，員工比一頁多時第一頁都確認了就顯示「可完成發布」（規則見 schedulePublishSummary.js）
+    const scopeEntries = await loadPublishSummaryEntries({ start, end, employees: summaryEmployees || matchedEmployees });
+    const publishSummary = composePublishSummary(scopeEntries || summarizePublishRows(raw));
 
     res.json({
       schedules,

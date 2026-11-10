@@ -6,6 +6,9 @@
     class="cell-select shift-select"
     size="small"
     automatic-dropdown
+    filterable
+    default-first-option
+    no-match-text="沒有符合的班別"
     :teleported="isDropdownTeleported"
     :append-to="appendTarget"
     :popper-class="popperClassName"

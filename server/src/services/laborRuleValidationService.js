@@ -593,11 +593,18 @@ export async function assertScheduleRuleCompliance({
       rosterKindOf,
     }),
   ]));
+  // 檢核範圍前後各多讀 7 天的班表，是為了判斷跨月的連續上班與班間隔；整個落在範圍外的問題不回報
+  // （例如檢核 10 月時 9/24～9/30 連上 7 天：那是 9 月的班表，10 月的排班人員改不了，也不該擋在 10 月的檢核結果裡）。
+  // 只要有一天落在範圍內（9/26～10/2 連上 7 天、9/30 夜班接 10/1 日班）就照常回報
+  const strictStartKey = dateKey(validationRange.strictStart);
+  const strictEndKey = dateKey(validationRange.strictEnd);
+  const touchesStrictRange = (violation) => [violation.date, violation.previousDate, ...(violation.dates || [])]
+    .some((key) => key && key >= strictStartKey && key < strictEndKey);
   const violations = [
     ...validateDailyHours(grouped, shiftMap),
     ...validateShiftGap(grouped, shiftMap, policy.minShiftRestMinutes),
     ...validateContinuousNonRestDays(grouped, shiftMap, validationRange, leaveDaysMap, holidayDaysByEmployee),
-  ];
+  ].filter(touchesStrictRange);
   // The customer's internal policy remains stricter than flexible-work-time minima.
   let pendingWeeks = [];
   if (strictWeeklyRest) {
@@ -713,7 +720,8 @@ function validateRequiredFields(formData, fields, { asOf = null } = {}) {
     ));
 }
 
-function validateLeaveRequest(formData, fields) {
+// asOf：重新檢核既有假單（核准）時帶入送簽時間，送簽之後才新增或才改成必填的附件欄位不追溯（與 validateRequiredFields 相同）
+function validateLeaveRequest(formData, fields, { asOf = null } = {}) {
   const violations = [];
   // 停用的欄位不會出現在填單畫面，一律不參與判斷
   const activeFields = fields.filter((field) => field.is_active !== false);
@@ -740,7 +748,10 @@ function validateLeaveRequest(formData, fields) {
   if (proofField) {
     const proofValue = extractFormValue(formData, proofField);
     const filled = !isEmptyFormValue(proofValue);
-    if (!hasUploadedAttachment(proofValue) && (proofField.required || filled)) {
+    // 送簽之後才加上（或才改成必填）的附件欄位：申請人當時無從上傳，核准時不能因此擋下（附了的話仍要是真的上傳檔案）。
+    // 以前管理員在請假表單加一個必填附件欄位，加之前就在簽核中的假單全部回 400「請假申請必須附上相關證明」
+    const required = Boolean(proofField.required) && fieldExistedAsOf(proofField, asOf);
+    if (!hasUploadedAttachment(proofValue) && (required || filled)) {
       violations.push(makeViolation(
         'leave-proof',
         // 選填欄位填了不是系統上傳的檔案，要說清楚是附件有問題，而不是沒附
@@ -1104,7 +1115,7 @@ export async function assertApprovalRequestCompliance({
   const fields = await loadFormFields(form?._id);
   const violations = validateRequiredFields(formData || {}, fields, { asOf: requiredFieldsAsOf });
   if (isLeaveForm(form)) {
-    violations.push(...validateLeaveRequest(formData || {}, fields));
+    violations.push(...validateLeaveRequest(formData || {}, fields, { asOf: requiredFieldsAsOf }));
     violations.push(...await validateLeaveTimeRules({
       formData: formData || {},
       fields,
