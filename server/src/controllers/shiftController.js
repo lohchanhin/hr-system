@@ -6,7 +6,6 @@ import { parseTimeString } from '../utils/timeWindow.js';
 import {
   hasNoWorkingTime,
   inferLegacyShiftSemanticType,
-  isNonWorkShift,
   resolveShiftSemanticType,
 } from '../services/shiftSemanticService.js';
 import {
@@ -205,12 +204,11 @@ async function removeShiftFromUnits(shiftId, remainingShifts = []) {
   try {
     const units = await SubDepartment.find({ allowedShiftIds: shiftId }).select('_id allowedShiftIds').lean();
     if (!units?.length) return 0;
-    const workShiftIds = new Set(
-      [...remainingShifts].filter((item) => item && !isNonWorkShift(item)).map((item) => String(item._id)),
-    );
+    const remainingIds = new Set([...remainingShifts].filter(Boolean).map((item) => String(item._id)));
     const operations = units.map((unit) => {
       const rest = (unit.allowedShiftIds || []).map(String).filter((id) => id !== shiftId);
-      const keepsWorkShift = rest.some((id) => workShiftIds.has(id));
+      // 全部班別都受「使用班別」限制（2026/11）：拿掉之後還有任何存在的班別就只 $pull；一個都不剩 = 全部班別
+      const keepsWorkShift = rest.some((id) => remainingIds.has(id));
       return {
         updateOne: {
           // 只改還選著這個班別的小單位（查詢之後管理員剛好改了設定，就不動它）

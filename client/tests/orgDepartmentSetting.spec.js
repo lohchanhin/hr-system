@@ -335,42 +335,48 @@ describe('OrgDepartmentSetting.vue', () => {
       await wrapper.vm.openDialog('sub', 0)
       expect(wrapper.vm.form.schedulers).toEqual(['e1'])
       expect(wrapper.vm.form.allowedShiftIds).toEqual(['night', 'rest'])
-      // 選單只顯示上班的班別；舊設定裡選過的休息日照樣保留
-      expect(wrapper.vm.selectedWorkShiftIds).toEqual(['night'])
+      // 選單顯示全部班別，選過的休息日也在選單裡（可以取消）
+      expect(wrapper.vm.selectedShiftIds).toEqual(['night', 'rest'])
       wrapper.vm.form.schedulers.push('e2')
       expect(wrapper.vm.subList[0].schedulers).toEqual(['e1'])
 
-      // 使用班別要從選單改（直接改資料不算有改，修改時不送這個欄位）
-      wrapper.vm.selectedWorkShiftIds = ['night', 'day']
+      // 使用班別要從選單改（直接改資料不算有改，修改時不送這個欄位）；取消休息日就真的不能排休息日
+      wrapper.vm.selectedShiftIds = ['night', 'day']
       apiFetch.mockClear()
       await wrapper.vm.saveItem()
       const call = apiFetch.mock.calls.find(([url, options]) => url === '/api/sub-departments/sd1' && options?.method === 'PUT')
-      expect(JSON.parse(call[1].body)).toMatchObject({ schedulers: ['e1', 'e2'], allowedShiftIds: ['night', 'day', 'rest'] })
+      expect(JSON.parse(call[1].body)).toMatchObject({ schedulers: ['e1', 'e2'], allowedShiftIds: ['night', 'day'] })
     })
 
-    // 以前選了班別卻沒有休息類班別時會提醒「排班時將無法排休」；現在不用上班的班別一律可以用，選單只列上班的班別
-    it('lists every shift in 使用班別: work shifts selectable, rest-type shifts shown as always available, and no longer warns about a missing rest shift', async () => {
+    // 客戶 2026/11/11：全部班別都要呈現、都要能管控；只選上班的班別時提醒排不了休
+    it('lists every shift in 使用班別 as selectable, grouped into work and rest-type shifts, and warns when no rest-type shift is chosen', async () => {
       const wrapper = mount(OrgDepartmentSetting, { global: { plugins: [ElementPlus] } })
       await flushPromises()
       await wrapper.vm.openDialog('sub')
       await flushPromises()
       const select = findSelect(wrapper, 'sub-allowed-shifts')
       const options = select.findAllComponents({ name: 'ElOption' })
-      // 上班的班別可以選
-      expect(options.filter(option => !option.props('disabled')).map(option => option.props('value'))).toEqual(['day', 'night'])
-      // 不用上班的班別也列出來（不能選、標示一律可用），使用者才不會以為班別不見了
-      const nonWork = options.filter(option => option.props('disabled'))
-      expect(nonWork.length).toBe(wrapper.vm.shiftOptions.length - 2)
-      nonWork.forEach(option => expect(String(option.props('label'))).toContain('一律可用'))
+      // 全部班別都能選（沒有停用的選項），上班的在前、休假類的在後
+      expect(options.some(option => option.props('disabled'))).toBe(false)
+      expect(options.map(option => option.props('value'))).toEqual(['day', 'night', 'rest'])
+      expect(select.findAllComponents({ name: 'ElOptionGroup' }).map(group => String(group.props('label')))).toEqual([
+        expect.stringContaining('上班的班別'),
+        expect.stringContaining('休假類的班別')
+      ])
       const hint = wrapper.find('[data-test="sub-shift-rest-hint"]').text()
       expect(hint).toContain(`共 ${wrapper.vm.shiftOptions.length} 種班別`)
-      expect(hint).toContain('一律可以使用')
+      expect(hint).toContain('休假類的班別也一樣')
 
       select.vm.$emit('update:modelValue', ['day', 'night'])
       await flushPromises()
       expect(wrapper.vm.form.allowedShiftIds).toEqual(['day', 'night'])
-      expect(wrapper.find('[data-test="sub-shift-rest-warning"]').exists()).toBe(false)
+      // 只選了上班的班別：提醒排不了休（仍可儲存）
+      expect(wrapper.find('[data-test="sub-shift-rest-warning"]').exists()).toBe(true)
       expect(wrapper.find('[data-test="sub-shift-no-work-warning"]').exists()).toBe(false)
+
+      select.vm.$emit('update:modelValue', ['day', 'night', 'rest'])
+      await flushPromises()
+      expect(wrapper.find('[data-test="sub-shift-rest-warning"]').exists()).toBe(false)
     })
 
     it('saves the 使用簽核表單 of a department from the active forms', async () => {
@@ -400,9 +406,10 @@ describe('OrgDepartmentSetting.vue', () => {
       expect(wrapper.vm.schedulerNames({ schedulers: ['e1', 'gone'] })).toBe('王小明、已刪除的員工')
       expect(wrapper.vm.schedulerNames({})).toBe('未指定')
       expect(wrapper.vm.shiftScopeText({ allowedShiftIds: [] })).toBe('全部班別')
-      // 只摘要上班的班別（休息日一律可以用，與對話框相同）
-      expect(wrapper.vm.shiftScopeText({ allowedShiftIds: ['night', 'rest'] })).toBe('N')
-      expect(wrapper.vm.shiftScopeText({ allowedShiftIds: ['rest'] })).toBe('沒有上班班別')
+      // 摘要所選的全部班別（休假類也算，與對話框相同）
+      expect(wrapper.vm.shiftScopeText({ allowedShiftIds: ['night', 'rest'] })).toBe('N、休')
+      expect(wrapper.vm.shiftScopeText({ allowedShiftIds: ['rest'] })).toBe('休')
+      expect(wrapper.vm.shiftScopeText({ allowedShiftIds: ['6650000000000000000000ff'] })).toBe('所選班別已刪除')
     })
   })
 
@@ -614,14 +621,14 @@ describe('OrgDepartmentSetting.vue 小單位設定只留有功能的欄位', () 
     for (const hidden of ['IC-9', '12345678', '三樓', '林負責', '王組長', '舊排班設定']) {
       expect(tree.text()).not.toContain(hidden)
     }
-    // 列表的使用班別只摘要上班的班別
-    expect(unitRow.find('[data-test="sub-shift-scope"]').text()).toBe('N')
+    // 列表的使用班別摘要所選的全部班別（休假類也算）
+    expect(unitRow.find('[data-test="sub-shift-scope"]').text()).toBe('N、休')
     wrapper.unmount()
   })
 
   it('saves an untouched unit with only the shown fields, so the hidden values and the shift selection stay on the server', async () => {
     const wrapper = await mountAndOpenUnit()
-    expect(wrapper.vm.selectedWorkShiftIds).toEqual(['night'])
+    expect(wrapper.vm.selectedShiftIds).toEqual(['night', 'rest'])
     await wrapper.vm.saveItem()
     expect(lastSave()).toEqual({
       url: `/api/sub-departments/${units[0]._id}`,
@@ -632,17 +639,17 @@ describe('OrgDepartmentSetting.vue 小單位設定只留有功能的欄位', () 
     wrapper.unmount()
   })
 
-  it('keeps an old rest shift of the selection when the work shifts change, and clearing the selection means every shift', async () => {
+  it('saves exactly the chosen shifts (rest-type ones included), and clearing the selection means every shift', async () => {
     const wrapper = await mountAndOpenUnit()
     const select = findSelect(wrapper, 'sub-allowed-shifts')
-    expect(select.props('modelValue')).toEqual(['night'])
-    // 可以選的只有上班的班別；不用上班的班別列出來但不能選
-    expect(select.findAllComponents({ name: 'ElOption' }).filter(option => !option.props('disabled')).map(option => option.props('value'))).toEqual(['day', 'night'])
+    expect(select.props('modelValue')).toEqual(['night', 'rest'])
+    expect(select.findAllComponents({ name: 'ElOption' }).map(option => option.props('value'))).toEqual(['day', 'night', 'rest', 'regular', 'holiday', 'personal'])
 
+    // 取消休息日、改選白班：存的就是畫面上選的，不會自動把休息日加回去
     select.vm.$emit('update:modelValue', ['day'])
     await flushPromises()
     await wrapper.vm.saveItem()
-    expect(lastSave().body.allowedShiftIds).toEqual(['day', 'rest'])
+    expect(lastSave().body.allowedShiftIds).toEqual(['day'])
 
     await wrapper.vm.openDialog('sub', 0)
     await flushPromises()
@@ -657,19 +664,20 @@ describe('OrgDepartmentSetting.vue 小單位設定只留有功能的欄位', () 
     units = [realUnit({ allowedShiftIds: ['rest', '6650000000000000000000ff'] })]
     const wrapper = await mountAndOpenUnit()
     expect(wrapper.find('[data-test="sub-shift-no-work-warning"]').exists()).toBe(true)
-    expect(wrapper.vm.shiftScopeText(units[0])).toBe('沒有上班班別')
+    expect(wrapper.vm.shiftScopeText(units[0])).toBe('休')
     // 沒改使用班別：不送這個欄位（已刪除的班別不會讓存檔失敗）
     await wrapper.vm.saveItem()
     expect(lastSave().body).not.toHaveProperty('allowedShiftIds')
 
     await wrapper.vm.openDialog('sub', 0)
     await flushPromises()
-    findSelect(wrapper, 'sub-allowed-shifts').vm.$emit('update:modelValue', ['day'])
+    // 選單裡只有存在的班別（已刪除的不顯示）；加選白班，休息日照選
+    findSelect(wrapper, 'sub-allowed-shifts').vm.$emit('update:modelValue', ['rest', 'day'])
     await flushPromises()
     expect(wrapper.find('[data-test="sub-shift-no-work-warning"]').exists()).toBe(false)
     await wrapper.vm.saveItem()
-    // 已刪除的班別去掉，休息日保留
-    expect(lastSave().body.allowedShiftIds).toEqual(['day', 'rest'])
+    // 已刪除的班別去掉
+    expect(lastSave().body.allowedShiftIds).toEqual(['rest', 'day'])
     wrapper.unmount()
   })
 

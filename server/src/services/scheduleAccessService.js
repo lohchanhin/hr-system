@@ -271,9 +271,9 @@ export function getScheduleAccessForRequest(req) {
 }
 
 /**
- * 不用上班的班別（休息日、例假、國定假日、請假，以及沒有工作時間的班別，判斷同 isNonWorkShift）的 _id：
- * 每個小單位一律可以用，不受「使用班別」限制（設定畫面也只讓管理員選上班的班別）。
- * 沒有班別設定、資料庫斷線（或只模擬部分 model 的測試替身）時是空的，也就是只看小單位的設定（比較嚴格，不會放寬限制）。
+ * 不用上班的班別（休息日、例假、國定假日、請假，以及沒有工作時間的班別，判斷同 isNonWorkShift）的 _id。
+ * 2026/11 客戶要求「全部班別都要能管控」：這些班別也跟上班的班別一樣受「使用班別」限制；
+ * 這裡只給一次性的舊設定轉換用（migrateUnitRestShiftsOnce）。
  */
 async function loadNonWorkShiftIds() {
   if (!canQuery(AttendanceSetting, 'findOne')) return new Set();
@@ -286,7 +286,7 @@ async function loadNonWorkShiftIds() {
 
 /**
  * 小單位可以用的班別（AttendanceSetting.shifts 的 _id 字串）；回傳空陣列代表全部班別。
- * 任一個小單位沒有設定（或找不到）就代表全部，否則取所有小單位的聯集，再加上一律可以用的不用上班的班別。
+ * 任一個小單位沒有設定（或找不到）就代表全部，否則取所有小單位的聯集（休假類班別也一樣要選了才能用）。
  */
 export async function getAllowedShiftIdsFor({ subDepartmentIds = [] } = {}) {
   const ids = uniqueIds(subDepartmentIds).filter((id) => OBJECT_ID_PATTERN.test(id));
@@ -294,7 +294,7 @@ export async function getAllowedShiftIdsFor({ subDepartmentIds = [] } = {}) {
   const units = await runLean(SubDepartment.find({ _id: { $in: ids } }).select('_id allowedShiftIds'));
   if (units.length < ids.length) return [];
   if (units.some((unit) => !Array.isArray(unit.allowedShiftIds) || !unit.allowedShiftIds.length)) return [];
-  return uniqueIds([...units.flatMap((unit) => unit.allowedShiftIds), ...await loadNonWorkShiftIds()]);
+  return uniqueIds(units.flatMap((unit) => unit.allowedShiftIds));
 }
 
 /**
@@ -333,8 +333,7 @@ export async function findDisallowedShiftAssignments(entries) {
 }
 
 /**
- * 小單位 → { name, allowedShiftIds, nonWorkShiftIds }：只列有設定「使用班別」的小單位（沒設定的不限制）。
- * nonWorkShiftIds 是一律可以用的不用上班的班別（所有小單位共用同一份），有限制的小單位才去讀班別設定。
+ * 小單位 → { name, allowedShiftIds }：只列有設定「使用班別」的小單位（沒設定的不限制）。
  */
 export async function loadUnitShiftRules(subDepartmentIds) {
   const ids = uniqueIds(subDepartmentIds).filter((id) => OBJECT_ID_PATTERN.test(id));
@@ -345,23 +344,54 @@ export async function loadUnitShiftRules(subDepartmentIds) {
   const units = (await runLean(SubDepartment.find({ _id: { $in: ids } }).select('_id name allowedShiftIds')))
     .filter((unit) => Array.isArray(unit.allowedShiftIds) && unit.allowedShiftIds.length > 0);
   if (!units.length) return new Map();
-  const nonWorkShiftIds = await loadNonWorkShiftIds();
   return new Map(units.map((unit) => [toId(unit._id), {
     name: unit.name || '',
     allowedShiftIds: unit.allowedShiftIds.map(String),
-    nonWorkShiftIds,
   }]));
 }
 
 /**
- * 依 loadUnitShiftRules 的結果判斷：小單位沒有設定就是允許；
- * 不用上班的班別（休息日、例假、國定假日、請假）一律允許，選過的舊設定裡有沒有這些班別都一樣
+ * 依 loadUnitShiftRules 的結果判斷：小單位沒有設定就是允許；有設定就只允許所選的班別
+ * （2026/11 起休息日、例假、國定假日、請假等不用上班的班別也一樣要選了才能用）
  */
 export function isShiftAllowedByRules(rules, subDepartmentId, shiftId) {
   const rule = rules?.get?.(toId(subDepartmentId));
   if (!rule) return true;
-  const id = toId(shiftId);
-  return rule.allowedShiftIds.includes(id) || Boolean(rule.nonWorkShiftIds?.has?.(id));
+  return rule.allowedShiftIds.includes(toId(shiftId));
+}
+
+/**
+ * 一次性轉換（冪等，只記錄筆數）：之前「不用上班的班別一律可以用」，管理員在「使用班別」只選了上班的班別。
+ * 改成全部班別都受限制後，這些小單位會突然排不了休，所以啟動時把當下所有不用上班的班別補進有設定的小單位，
+ * 維持原本能排的班別；之後管理員可以自己取消。做過一次就記在其他控制設定（unitRestShiftsMigratedAt），不再重做。
+ */
+export async function migrateUnitRestShiftsOnce() {
+  if (typeof settingsStore.getSettings !== 'function' || typeof settingsStore.updateSettings !== 'function') return null;
+  if (!canQuery(SubDepartment, 'find')) return null;
+  const settings = await settingsStore.getSettings();
+  if (settings?.unitRestShiftsMigratedAt) return { skipped: true, updated: 0 };
+  const nonWorkIds = [...await loadNonWorkShiftIds()];
+  let updated = 0;
+  if (nonWorkIds.length) {
+    const units = await runLean(SubDepartment.find({ 'allowedShiftIds.0': { $exists: true } }).select('_id allowedShiftIds'));
+    const operations = units
+      .map((unit) => {
+        const current = new Set((unit.allowedShiftIds || []).map(String));
+        const missing = nonWorkIds.filter((id) => !current.has(id));
+        return missing.length
+          ? { updateOne: { filter: { _id: unit._id }, update: { $addToSet: { allowedShiftIds: { $each: missing } } } } }
+          : null;
+      })
+      .filter(Boolean);
+    if (operations.length) {
+      await SubDepartment.bulkWrite(operations, { ordered: false });
+      updated = operations.length;
+    }
+  }
+  await settingsStore.updateSettings((current) => {
+    current.unitRestShiftsMigratedAt = new Date().toISOString();
+  });
+  return { skipped: false, updated };
 }
 
 /** 啟動時的紀錄：有設定「排班管理者」的部門數（這些人現在也能排整個部門的班） */

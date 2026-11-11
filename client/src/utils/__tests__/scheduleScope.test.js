@@ -87,7 +87,7 @@ describe('使用班別 of the viewed units', () => {
   })
 
   // 不用上班的班別（休息日、例假、國定假日、請假）每個小單位一律可以用，不論有沒有選
-  it('always keeps the shifts that are not work, whatever the unit selected', () => {
+  it('keeps only the selected shifts, rest-type shifts included (客戶 2026/11/11：全部都要能管控)', () => {
     const all = [
       { _id: 'day', code: 'D', name: '白班', semanticType: 'work', startTime: '08:00', endTime: '16:00' },
       { _id: 'night', code: 'N', name: '大夜', semanticType: 'work', startTime: '00:00', endTime: '08:00' },
@@ -100,11 +100,9 @@ describe('使用班別 of the viewed units', () => {
       // 標成工作班卻沒有工作時間：伺服器也當成不用上班
       { _id: 'zero', code: 'Z', name: '待命', semanticType: 'work', startTime: '00:00', endTime: '00:00' }
     ]
-    expect(restrictShifts(all, resolveAllowedShiftIds([units[2]])).map(s => s._id))
-      .toEqual(['night', 'rest', 'regular', 'holiday', 'personal', 'legacyOff', 'zero'])
-    // 舊設定選過休息日也一樣
-    expect(restrictShifts(all, resolveAllowedShiftIds([units[1]])).map(s => s._id))
-      .toEqual(['day', 'rest', 'regular', 'holiday', 'personal', 'legacyOff', 'zero'])
+    expect(restrictShifts(all, resolveAllowedShiftIds([units[2]])).map(s => s._id)).toEqual(['night'])
+    // 選了休息日就只有選的休息日，其他休假類的班別不會自動加上
+    expect(restrictShifts(all, resolveAllowedShiftIds([units[1]])).map(s => s._id)).toEqual(['day', 'rest'])
     expect(all.filter(isNonWorkShift).map(s => s._id)).toEqual(['rest', 'regular', 'holiday', 'personal', 'legacyOff', 'zero'])
     expect(isNonWorkShift(null)).toBe(false)
     // 跨日班不是沒有工作時間

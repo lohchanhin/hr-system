@@ -217,7 +217,7 @@
           </el-form-item>
           <el-form-item label="使用班別">
             <el-select
-              v-model="selectedWorkShiftIds"
+              v-model="selectedShiftIds"
               multiple
               filterable
               clearable
@@ -227,7 +227,7 @@
               style="width: 100%"
               data-test="sub-allowed-shifts"
             >
-              <el-option-group :label="`上班的班別（${workShiftOptions.length} 種，可選）`">
+              <el-option-group :label="`上班的班別（${workShiftOptions.length} 種）`">
                 <el-option
                   v-for="shift in workShiftOptions"
                   :key="shift._id"
@@ -235,24 +235,26 @@
                   :value="String(shift._id)"
                 />
               </el-option-group>
-              <!-- 不用上班的班別也列出來（不能選）：只列上班的班別時，看起來像是有班別不見了 -->
+              <!-- 客戶 2026/11/11：全部班別都要呈現、都要能管控，休息日、例假、國定假日、請假等也要選了才能用 -->
               <el-option-group
                 v-if="nonWorkShiftOptions.length"
-                :label="`不用上班的班別（${nonWorkShiftOptions.length} 種，一律可以用，不必選）`"
+                :label="`休假類的班別（休息日、例假、國定假日、請假等 ${nonWorkShiftOptions.length} 種）`"
                 data-test="sub-shift-nonwork-group"
               >
                 <el-option
                   v-for="shift in nonWorkShiftOptions"
                   :key="shift._id"
-                  :label="`${shiftLabel(shift)}　一律可用`"
-                  :value="`nonwork:${shift._id}`"
-                  disabled
+                  :label="shiftLabel(shift)"
+                  :value="String(shift._id)"
                 />
               </el-option-group>
             </el-select>
             <div class="form-hint">排班頁看這個小單位時，班別選單與圖例只列出所選的班別；未選擇代表全部班別</div>
             <div class="form-hint" data-test="sub-shift-rest-hint">
-              共 {{ shiftOptions.length }} 種班別：上班的班別 {{ workShiftOptions.length }} 種可選；休息日、例假、國定假日、請假等不用上班的班別 {{ nonWorkShiftOptions.length }} 種一律可以使用，不必選擇
+              共 {{ shiftOptions.length }} 種班別（上班 {{ workShiftOptions.length }} 種、休假類 {{ nonWorkShiftOptions.length }} 種），全部都可以選；有選擇時這個小單位只能排所選的班別，休假類的班別也一樣
+            </div>
+            <div v-if="noRestShiftSelected" class="form-hint form-hint--warning" data-test="sub-shift-rest-warning">
+              所選的班別沒有休息日、例假等休假類的班別，這個小單位排班時將無法排休
             </div>
             <div v-if="noWorkShiftSelected" class="form-hint form-hint--warning" data-test="sub-shift-no-work-warning">
               目前的設定沒有任何上班的班別（原本選的班別已刪除，或都是不用上班的班別），排班時只能排休；請重新選擇要使用的班別
@@ -407,22 +409,27 @@ const formSelectOptions = computed(() => {
   return options
 })
 
-// 使用班別的選單只列上班的班別：不用上班的班別（休息日、例假、國定假日、請假）每個小單位一律可以用，不必選
+// 使用班別的選單列出全部班別，分成上班的班別與休假類的班別兩組（客戶 2026/11/11：全部都呈現、都要能管控）
 const workShiftOptions = computed(() => shiftOptions.value.filter(shift => !isNonWorkShift(shift)))
 const nonWorkShiftOptions = computed(() => shiftOptions.value.filter(shift => isNonWorkShift(shift)))
 const workShiftIds = computed(() => new Set(workShiftOptions.value.map(shift => String(shift._id))))
+const nonWorkShiftIds = computed(() => new Set(nonWorkShiftOptions.value.map(shift => String(shift._id))))
+const knownShiftIds = computed(() => new Set(shiftOptions.value.map(shift => String(shift._id))))
 
-// 選單綁 form.allowedShiftIds 裡的上班班別。舊設定選過的不用上班的班別照樣保留（伺服器一律允許，留著不影響）；
-// 全部取消就是全部班別（存成空陣列）；已刪除的班別在重新選擇時去掉（伺服器不接受不存在的班別）
-const selectedWorkShiftIds = computed({
-  get: () => (form.value.allowedShiftIds || []).map(String).filter(id => workShiftIds.value.has(id)),
+// 選單綁 form.allowedShiftIds：全部取消就是全部班別（存成空陣列）；已刪除的班別在重新選擇時去掉（伺服器不接受不存在的班別）
+const selectedShiftIds = computed({
+  get: () => (form.value.allowedShiftIds || []).map(String).filter(id => knownShiftIds.value.has(id)),
   set: ids => {
-    const work = (Array.isArray(ids) ? ids : []).map(String)
-    const nonWorkIds = new Set(shiftOptions.value.filter(isNonWorkShift).map(shift => String(shift._id)))
-    const kept = (form.value.allowedShiftIds || []).map(String).filter(id => nonWorkIds.has(id))
-    form.value.allowedShiftIds = work.length ? Array.from(new Set([...work, ...kept])) : []
+    form.value.allowedShiftIds = Array.from(new Set((Array.isArray(ids) ? ids : []).map(String)))
     shiftSelectionTouched.value = true
   }
+})
+
+// 有選上班的班別、卻沒有選任何休假類的班別：這個小單位排班時排不了休，提醒一下（仍可儲存）
+const noRestShiftSelected = computed(() => {
+  const ids = (form.value.allowedShiftIds || []).map(String)
+  if (!ids.length || !nonWorkShiftOptions.value.length) return false
+  return ids.some(id => workShiftIds.value.has(id)) && !ids.some(id => nonWorkShiftIds.value.has(id))
 })
 
 // 有設定使用班別、卻沒有任何上班的班別（例如選的班別後來被刪除）：排班時只能排休，提醒重新選擇
@@ -444,14 +451,14 @@ function schedulerNames(sub) {
   return ids.map(id => names.get(id) || '已刪除的員工').join('、')
 }
 
-// 列表的「使用班別」只摘要上班的班別（不用上班的班別一律可以用，與對話框相同）
+// 列表的「使用班別」摘要：所選的全部班別（休假類也算，與對話框相同）；選的班別都被刪除時提醒
 function shiftScopeText(sub) {
   const ids = Array.isArray(sub?.allowedShiftIds) ? sub.allowedShiftIds.map(String) : []
   if (!ids.length) return '全部班別'
   if (!shiftOptions.value.length) return `${ids.length} 種班別`
-  const labels = new Map(workShiftOptions.value.map(shift => [String(shift._id), shift.code || shift.name]))
+  const labels = new Map(shiftOptions.value.map(shift => [String(shift._id), shift.code || shift.name]))
   const names = Array.from(new Set(ids)).map(id => labels.get(id)).filter(Boolean)
-  if (!names.length) return '沒有上班班別'
+  if (!names.length) return '所選班別已刪除'
   return names.length <= 3 ? names.join('、') : `${names.length} 種班別`
 }
 

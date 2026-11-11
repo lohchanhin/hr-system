@@ -70,16 +70,19 @@ export function resolveAllowedShiftIds(units) {
 
 /**
  * 不用上班的班別：休息日、例假、國定假日、請假，或沒有工作時間（例如 00:00-00:00）。
- * 與伺服器 shiftSemanticService 的 isNonWorkShift 相同：這些班別每個小單位一律可以用，不受「使用班別」限制。
+ * 與伺服器 shiftSemanticService 的 isNonWorkShift 相同（小單位設定把它們分成「休假類的班別」一組）。
  */
 export function isNonWorkShift(shift) {
   if (!shift || typeof shift !== 'object') return false
   return isNonWorkSemanticType(resolveShiftSemanticType(shift)) || hasNoWorkingTime(shift)
 }
 
-/** 依 resolveAllowedShiftIds 的結果篩選班別；null 代表全部。不用上班的班別一律保留 */
+/**
+ * 依 resolveAllowedShiftIds 的結果篩選班別；null 代表全部。
+ * 客戶 2026/11/11「全部都要能管控」：休假類的班別也只留所選的（與伺服器 isShiftAllowedByRules 相同）
+ */
 export function restrictShifts(shifts, allowedShiftIds) {
   const list = Array.isArray(shifts) ? shifts : []
   if (!allowedShiftIds) return list
-  return list.filter(shift => allowedShiftIds.has(toId(shift)) || isNonWorkShift(shift))
+  return list.filter(shift => allowedShiftIds.has(toId(shift)))
 }

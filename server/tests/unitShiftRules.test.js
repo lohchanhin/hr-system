@@ -1,5 +1,6 @@
-// 小單位的「使用班別」只限制上班的班別：不用上班的班別（休息日、例假、國定假日、請假，以及沒有工作時間的班別，
-// 判斷同 shiftSemanticService 的 isNonWorkShift）每個小單位一律可以用，不論有沒有選（客戶 2026/11）。
+// 小單位的「使用班別」限制所有班別：客戶 2026/11/11 要求「全部都呈現，都要能管控」，休息日、例假、國定假日、請假
+// 等不用上班的班別也一樣要選了才能用（之前的規則是這些班別一律可以用）。舊設定在啟動時一次性補上不用上班的班別
+// （migrateUnitRestShiftsOnce），維持原本能排的班別。
 // 新增、批次、修改班表（findDisallowedShiftAssignments）與匯入（loadUnitShiftRules + isShiftAllowedByRules）都用同一套規則。
 import { jest } from '@jest/globals';
 
@@ -60,25 +61,24 @@ beforeEach(() => {
 });
 
 describe('isShiftAllowedByRules / loadUnitShiftRules', () => {
-  it('always allows the shifts that are not work for a unit that selected only work shifts', async () => {
+  it('allows only the selected shifts, rest-type shifts included (they are controlled too)', async () => {
     const rules = await service.loadUnitShiftRules([ID.unitNight]);
     expect(service.isShiftAllowedByRules(rules, ID.unitNight, SHIFT.night)).toBe(true);
+    // 沒選的不用上班的班別也不允許
     for (const shiftId of NON_WORK) {
-      expect(service.isShiftAllowedByRules(rules, ID.unitNight, shiftId)).toBe(true);
+      expect(service.isShiftAllowedByRules(rules, ID.unitNight, shiftId)).toBe(false);
     }
-    // 沒選的上班班別照樣不允許
     expect(service.isShiftAllowedByRules(rules, ID.unitNight, SHIFT.day)).toBe(false);
-    // 班別設定只讀一次（所有小單位共用）
-    expect(mockAttendanceSetting.findOne).toHaveBeenCalledTimes(1);
+    // 規則只看小單位的設定，不必讀班別設定
+    expect(mockAttendanceSetting.findOne).not.toHaveBeenCalled();
   });
 
-  it('keeps an old selection that contains a rest shift working, and still refuses unselected work shifts', async () => {
+  it('allows a selected rest shift and refuses the unselected ones', async () => {
     const rules = await service.loadUnitShiftRules([ID.unitLegacy, ID.unitNight]);
     expect(service.isShiftAllowedByRules(rules, ID.unitLegacy, SHIFT.day)).toBe(true);
     expect(service.isShiftAllowedByRules(rules, ID.unitLegacy, SHIFT.rest)).toBe(true);
-    expect(service.isShiftAllowedByRules(rules, ID.unitLegacy, SHIFT.regular)).toBe(true);
+    expect(service.isShiftAllowedByRules(rules, ID.unitLegacy, SHIFT.regular)).toBe(false);
     expect(service.isShiftAllowedByRules(rules, ID.unitLegacy, SHIFT.night)).toBe(false);
-    expect(mockAttendanceSetting.findOne).toHaveBeenCalledTimes(1);
   });
 
   it('does not read the shift settings when no unit has a selection (everything is allowed anyway)', async () => {
@@ -105,25 +105,25 @@ describe('isShiftAllowedByRules / loadUnitShiftRules', () => {
 });
 
 describe('findDisallowedShiftAssignments (create, batch and update of schedules)', () => {
-  it('lets every shift that is not work through and reports only unselected work shifts', async () => {
+  it('reports every unselected shift, rest-type shifts included', async () => {
     const disallowed = await service.findDisallowedShiftAssignments([
-      ...NON_WORK.map((shiftId) => ({ employee: ID.nurse, shiftId })),
       { employee: ID.nurse, shiftId: SHIFT.night },
+      { employee: ID.nurse, shiftId: SHIFT.rest },
       { employee: ID.nurse, shiftId: SHIFT.day },
+      { employee: ID.legacyNurse, shiftId: SHIFT.rest },
       { employee: ID.legacyNurse, shiftId: SHIFT.regular },
-      { employee: ID.legacyNurse, shiftId: SHIFT.night },
     ]);
     expect(disallowed).toEqual([
+      { employee: ID.nurse, shiftId: SHIFT.rest, subDepartment: ID.unitNight, subDepartmentName: 'B1 病房' },
       { employee: ID.nurse, shiftId: SHIFT.day, subDepartment: ID.unitNight, subDepartmentName: 'B1 病房' },
-      { employee: ID.legacyNurse, shiftId: SHIFT.night, subDepartment: ID.unitLegacy, subDepartmentName: 'A2 病房' },
+      { employee: ID.legacyNurse, shiftId: SHIFT.regular, subDepartment: ID.unitLegacy, subDepartmentName: 'A2 病房' },
     ]);
   });
 });
 
 describe('getAllowedShiftIdsFor', () => {
-  it('adds the shifts that are not work to a selection, and stays empty (everything) without one', async () => {
-    expect([...await service.getAllowedShiftIdsFor({ subDepartmentIds: [ID.unitNight] })].sort())
-      .toEqual([SHIFT.night, ...NON_WORK].sort());
+  it('returns exactly the selection, and stays empty (everything) without one', async () => {
+    expect(await service.getAllowedShiftIdsFor({ subDepartmentIds: [ID.unitNight] })).toEqual([SHIFT.night]);
     expect(await service.getAllowedShiftIdsFor({ subDepartmentIds: [ID.unitNight, ID.unitAll] })).toEqual([]);
   });
 });

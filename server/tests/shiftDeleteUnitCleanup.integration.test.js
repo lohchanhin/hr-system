@@ -37,12 +37,12 @@ kit.describe('DELETE /api/shifts/:id 清理小單位的使用班別', () => {
 
   const allowedOf = async (key) => (await kit.models.SubDepartment.findById(units[key]._id).lean()).allowedShiftIds
 
-  it('pulls the deleted shift; a unit left without any work shift goes back to 全部 (empty list)', async () => {
+  it('pulls the deleted shift; a unit left without any existing shift goes back to 全部 (empty list)', async () => {
     const res = await kit.del('admin', `/api/shifts/${shiftIds.day}`)
     expect(res.status).toBe(204)
 
-    // 只剩休息日（不用上班的班別本來就一律可用）：清成空陣列 = 全部班別，而不是「沒有能排的上班班別」
-    expect(await allowedOf('onlyDay')).toEqual([])
+    // 2026/11/11 起休假類的班別也受「使用班別」限制：剩下的休息日是管理員選的，照樣保留（畫面會提醒沒有上班的班別）
+    expect(await allowedOf('onlyDay')).toEqual([shiftIds.rest])
     expect(await allowedOf('dayAndNight')).toEqual([shiftIds.night])
     expect(await allowedOf('all')).toEqual([])
     expect(await allowedOf('nightOnly')).toEqual([shiftIds.night])

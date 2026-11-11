@@ -1,6 +1,7 @@
 // 小單位設定的端到端測試（客戶 2026/11）：真的 Express app（src/index.js）+ 真的 JWT + 真的 MongoDB（單機 standalone）。
 // - 設定畫面拿掉「班表拉選」與沒有功能的欄位後，只送畫面上的欄位存檔：資料庫裡原本的值都保留
-// - 「使用班別」只限制上班的班別：不用上班的班別（休息日、例假、國定假日、請假）新增、批次、修改與匯入都一律允許
+// - 「使用班別」限制所有班別（客戶 2026/11/11「全部都要能管控」）：休息日、例假、國定假日、請假也要選了才能用，
+//   新增、批次、修改與匯入都一樣
 // 預設略過；要執行時指定一個本機的暫用資料庫（和其他整合測試相同的環境變數）：
 //   APPROVAL_ENGINE_TEST_MONGODB_URI=mongodb://127.0.0.1:27321 npm test -- tests/unitShiftRules.integration.test.js
 // 只接受 loopback 位址，並在隨機命名的資料庫內進行，結束後整個刪除。
@@ -25,7 +26,7 @@ function isolatedMongoUri() {
 
 const xlsxType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
 
-describeIntegration('unit settings and the always-allowed rest shifts against a real MongoDB through the real app', () => {
+describeIntegration('unit settings and the controlled shift list (rest shifts included) against a real MongoDB through the real app', () => {
   jest.setTimeout(120000)
   let app
   let Employee
@@ -177,51 +178,53 @@ describeIntegration('unit settings and the always-allowed rest shifts against a 
     expect(listed.body.find((unit) => unit._id === ids.unit)).toMatchObject({ shiftId: ids.day, uniformNumber: '12345678', headcount: 12 })
   })
 
-  it('lets the scheduler create rest, regular-rest and holiday schedules for a unit that selected only the night shift', async () => {
-    expect((await createSchedule('carer', 1, 'rest')).status).toBe(201)
-    expect((await createSchedule('carer', 2, 'regular')).status).toBe(201)
-    expect((await createSchedule('carer', 3, 'holiday')).status).toBe(201)
-    expect((await createSchedule('carer', 4, 'night')).status).toBe(201)
-    const refused = await createSchedule('carer', 5, 'day')
-    expect(refused.status).toBe(400)
-    expect(refused.body.code).toBe('SHIFT_NOT_ALLOWED')
-    expect(refused.body.error).toContain('B1 病房')
+  it('refuses rest-type shifts the unit did not select, like any unselected work shift', async () => {
+    expect((await createSchedule('carer', 1, 'night')).status).toBe(201)
+    for (const [day, shift] of [[2, 'rest'], [3, 'regular'], [4, 'holiday'], [5, 'day']]) {
+      const refused = await createSchedule('carer', day, shift)
+      expect(refused.status).toBe(400)
+      expect(refused.body.code).toBe('SHIFT_NOT_ALLOWED')
+      expect(refused.body.error).toContain('B1 病房')
+    }
   })
 
-  it('accepts rest shifts in a batch and when changing an existing schedule', async () => {
+  it('allows a rest shift once it is selected, in a batch and when changing an existing schedule', async () => {
+    const saved = await put('admin', `/api/sub-departments/${ids.unit}`, { allowedShiftIds: [ids.night, ids.rest] })
+    expect(saved.status).toBe(200)
+
     const batch = await post('scheduler', '/api/schedules/batch', {
-      schedules: [
-        { employee: id('carer'), date: dateOf(6), shiftId: ids.rest },
-        { employee: id('carer'), date: dateOf(7), shiftId: ids.regular },
-      ],
+      schedules: [{ employee: id('carer'), date: dateOf(6), shiftId: ids.rest }],
     })
     expect(batch.status).toBe(201)
     const refusedBatch = await post('scheduler', '/api/schedules/batch', {
       schedules: [
-        { employee: id('carer'), date: dateOf(8), shiftId: ids.holiday },
-        { employee: id('carer'), date: dateOf(9), shiftId: ids.day },
+        { employee: id('carer'), date: dateOf(7), shiftId: ids.rest },
+        { employee: id('carer'), date: dateOf(8), shiftId: ids.regular },
       ],
     })
     expect(refusedBatch.status).toBe(400)
     expect(refusedBatch.body.code).toBe('SHIFT_NOT_ALLOWED')
 
     const nightSchedule = await ShiftSchedule.findOne({ employee: people.carer._id, shiftId: ids.night }).lean()
-    const changed = await put('scheduler', `/api/schedules/${nightSchedule._id}`, { shiftId: ids.holiday })
+    const changed = await put('scheduler', `/api/schedules/${nightSchedule._id}`, { shiftId: ids.rest })
     expect(changed.status).toBe(200)
-    expect(changed.body.shiftId).toBe(ids.holiday)
-    const refusedChange = await put('scheduler', `/api/schedules/${nightSchedule._id}`, { shiftId: ids.day })
+    expect(changed.body.shiftId).toBe(ids.rest)
+    const refusedChange = await put('scheduler', `/api/schedules/${nightSchedule._id}`, { shiftId: ids.holiday })
     expect(refusedChange.status).toBe(400)
     expect(refusedChange.body.code).toBe('SHIFT_NOT_ALLOWED')
   })
 
-  it('accepts rest shift codes in a schedule import and still refuses an unselected work shift', async () => {
-    const accepted = await importPreview(['休', '例', 'N'])
+  it('accepts only the selected shift codes in a schedule import, rest-type codes included', async () => {
+    const accepted = await importPreview(['休', 'N'])
     expect(accepted.status).toBe(200)
     expect(accepted.body.errors).toEqual([])
-    expect(accepted.body.scheduleDays).toBe(3)
+    expect(accepted.body.scheduleDays).toBe(2)
 
-    const refused = await importPreview(['休', 'D'])
+    const refused = await importPreview(['例', 'D'])
     expect(refused.status).toBe(422)
-    expect(refused.body.errors.map((error) => error.message)).toEqual([expect.stringContaining('沒有開放使用「D」這個班別')])
+    expect(refused.body.errors.map((error) => error.message)).toEqual([
+      expect.stringContaining('沒有開放使用「例」這個班別'),
+      expect.stringContaining('沒有開放使用「D」這個班別'),
+    ])
   })
 })

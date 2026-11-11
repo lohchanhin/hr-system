@@ -3,8 +3,8 @@ import { shallowMount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { useProfileStore } from '../src/stores/profile'
 
-// 排班頁的班別選單與圖例：小單位的「使用班別」只限制上班的班別，
-// 不用上班的班別（休息日、例假、國定假日、請假）一律列出，舊設定有沒有選到都一樣（客戶 2026/11）
+// 排班頁的班別選單與圖例：小單位的「使用班別」限制所有班別，休息日、例假、國定假日、請假也一樣
+// （客戶 2026/11/11「全部都呈現，都要能管控」；之前的規則是這些班別一律列出）
 
 vi.mock('element-plus', () => ({
   ElMessage: { error: vi.fn(), success: vi.fn(), warning: vi.fn(), info: vi.fn() },
@@ -117,18 +117,20 @@ async function viewUnit(wrapper, unitId) {
 }
 
 describe('Schedule.vue shift lists of a unit with a 使用班別 selection', () => {
-  it('always offers the rest, regular rest, holiday and leave shifts next to the selected work shifts', async () => {
+  it('offers only the selected shifts, rest-type shifts included', async () => {
     const wrapper = mountSchedule()
     await flush()
 
+    // 只選了大夜：休假類的班別也不列出
     await viewUnit(wrapper, 'uA1')
-    expect(wrapper.vm.availableShifts.map(shift => shift._id)).toEqual(['night', ...NON_WORK])
-    expect(wrapper.vm.legendShifts.map(item => item.key)).toEqual(['night', ...NON_WORK])
-    expect(batchOptionValues(wrapper)).toEqual(['night', ...NON_WORK])
+    expect(wrapper.vm.availableShifts.map(shift => shift._id)).toEqual(['night'])
+    expect(wrapper.vm.legendShifts.map(item => item.key)).toEqual(['night'])
+    expect(batchOptionValues(wrapper)).toEqual(['night'])
 
-    // 舊設定選過休息日：照樣可以用，其他不用上班的班別也列出
+    // 選了白班與休息日：就是這兩種，其他休假類不會自動加上
     await viewUnit(wrapper, 'uA2')
-    expect(wrapper.vm.availableShifts.map(shift => shift._id)).toEqual(['day', ...NON_WORK])
+    expect(wrapper.vm.availableShifts.map(shift => shift._id)).toEqual(['day', 'rest'])
+    expect(NON_WORK).toContain('rest')
 
     // 沒有設定：全部
     await viewUnit(wrapper, 'uA3')
@@ -136,14 +138,14 @@ describe('Schedule.vue shift lists of a unit with a 使用班別 selection', () 
     wrapper.unmount()
   })
 
-  it('keeps a chosen rest shift for 套用班別 when switching to a unit that did not select it', async () => {
+  it('clears the chosen 套用班別 when switching to a unit that did not select it, rest-type shifts included', async () => {
     const wrapper = mountSchedule()
     await flush()
     await viewUnit(wrapper, 'uA2')
-    wrapper.vm.batchShiftId = 'regular'
+    wrapper.vm.batchShiftId = 'rest'
     await viewUnit(wrapper, 'uA1')
-    expect(wrapper.vm.batchShiftId).toBe('regular')
-    // 上班的班別不在這個小單位的使用班別內就清掉（原本的規則）
+    expect(wrapper.vm.batchShiftId).toBe('')
+    // 上班的班別不在這個小單位的使用班別內也清掉
     wrapper.vm.batchShiftId = 'night'
     await viewUnit(wrapper, 'uA2')
     expect(wrapper.vm.batchShiftId).toBe('')

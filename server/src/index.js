@@ -27,7 +27,7 @@ import { normalizeStoredSignTags } from './controllers/employeeController.js';
 import { migrateAnnualLeaveToHours, migrateLeaveFormsToHours } from './services/leaveHoursMigration.js';
 import { authenticate, authorizeRoles } from './middleware/auth.js';
 import { requireScheduleAccess } from './middleware/scheduleAccess.js';
-import { countLegacyDeptManagers, describeScheduleAccessForStartup } from './services/scheduleAccessService.js';
+import { countLegacyDeptManagers, describeScheduleAccessForStartup, migrateUnitRestShiftsOnce } from './services/scheduleAccessService.js';
 import { describeEmployeeNoUniqueness, ensureEmployeeNoUniqueIndex } from './services/employeeNoUniqueness.js';
 import { alignLegacyDefaultFormCategories } from './services/formCategoryAlignment.js';
 import { describePayrollPolicyForStartup } from './services/payrollPolicyService.js';
@@ -489,6 +489,13 @@ async function start() {
       }
     } catch (schedulerError) {
       console.error('Failed to count department schedule managers', schedulerError?.name ?? 'Error');
+    }
+    // 「使用班別」改成全部班別都受限制（2026/11）：只做一次，把不用上班的班別補進已有設定的小單位，維持原本能排的班別（只記錄筆數）
+    try {
+      const restShifts = await migrateUnitRestShiftsOnce();
+      if (restShifts && !restShifts.skipped) console.log(`Added rest/leave shifts to the 使用班別 of ${restShifts.updated} units (one-time, keeps what they could schedule)`);
+    } catch (restShiftError) {
+      console.error('Failed to add rest shifts to unit shift lists', restShiftError?.name ?? 'Error');
     }
     // 系統預設表單的舊分類「人事」改成表單分類清單裡的「人事類／請假類」（只改還是舊預設值的，管理員建了「人事」分類就不動；冪等，只記錄筆數）
     try {

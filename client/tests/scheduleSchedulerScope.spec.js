@@ -252,7 +252,8 @@ describe('Schedule.vue for a scheduler of units in two organisations', () => {
     expect(labels).toEqual(['護理部（迦南醫院）', '護理部（迦南護理之家）'])
     expect(wrapper.vm.subDepartments.map(sub => sub._id)).toEqual(['uH'])
     expect(wrapper.vm.employees.map(employee => employee.name)).toEqual(['3A 護理師'])
-    expect(wrapper.vm.availableShifts.map(shift => shift._id)).toEqual(['night', 'rest'])
+    // 客戶 2026/11/11：休假類的班別也受「使用班別」限制，3A 只選了大夜就只有大夜
+    expect(wrapper.vm.availableShifts.map(shift => shift._id)).toEqual(['night'])
 
     wrapper.vm.selectedDepartment = 'dC'
     await wrapper.vm.onDepartmentChange()
