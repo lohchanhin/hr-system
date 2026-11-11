@@ -227,15 +227,33 @@
               style="width: 100%"
               data-test="sub-allowed-shifts"
             >
-              <el-option
-                v-for="shift in workShiftOptions"
-                :key="shift._id"
-                :label="shiftLabel(shift)"
-                :value="String(shift._id)"
-              />
+              <el-option-group :label="`上班的班別（${workShiftOptions.length} 種，可選）`">
+                <el-option
+                  v-for="shift in workShiftOptions"
+                  :key="shift._id"
+                  :label="shiftLabel(shift)"
+                  :value="String(shift._id)"
+                />
+              </el-option-group>
+              <!-- 不用上班的班別也列出來（不能選）：只列上班的班別時，看起來像是有班別不見了 -->
+              <el-option-group
+                v-if="nonWorkShiftOptions.length"
+                :label="`不用上班的班別（${nonWorkShiftOptions.length} 種，一律可以用，不必選）`"
+                data-test="sub-shift-nonwork-group"
+              >
+                <el-option
+                  v-for="shift in nonWorkShiftOptions"
+                  :key="shift._id"
+                  :label="`${shiftLabel(shift)}　一律可用`"
+                  :value="`nonwork:${shift._id}`"
+                  disabled
+                />
+              </el-option-group>
             </el-select>
             <div class="form-hint">排班頁看這個小單位時，班別選單與圖例只列出所選的班別；未選擇代表全部班別</div>
-            <div class="form-hint" data-test="sub-shift-rest-hint">休息日、例假、國定假日、請假等不用上班的班別一律可以使用，不必選擇</div>
+            <div class="form-hint" data-test="sub-shift-rest-hint">
+              共 {{ shiftOptions.length }} 種班別：上班的班別 {{ workShiftOptions.length }} 種可選；休息日、例假、國定假日、請假等不用上班的班別 {{ nonWorkShiftOptions.length }} 種一律可以使用，不必選擇
+            </div>
             <div v-if="noWorkShiftSelected" class="form-hint form-hint--warning" data-test="sub-shift-no-work-warning">
               目前的設定沒有任何上班的班別（原本選的班別已刪除，或都是不用上班的班別），排班時只能排休；請重新選擇要使用的班別
             </div>
@@ -391,6 +409,7 @@ const formSelectOptions = computed(() => {
 
 // 使用班別的選單只列上班的班別：不用上班的班別（休息日、例假、國定假日、請假）每個小單位一律可以用，不必選
 const workShiftOptions = computed(() => shiftOptions.value.filter(shift => !isNonWorkShift(shift)))
+const nonWorkShiftOptions = computed(() => shiftOptions.value.filter(shift => isNonWorkShift(shift)))
 const workShiftIds = computed(() => new Set(workShiftOptions.value.map(shift => String(shift._id))))
 
 // 選單綁 form.allowedShiftIds 裡的上班班別。舊設定選過的不用上班的班別照樣保留（伺服器一律允許，留著不影響）；

@@ -349,14 +349,22 @@ describe('OrgDepartmentSetting.vue', () => {
     })
 
     // 以前選了班別卻沒有休息類班別時會提醒「排班時將無法排休」；現在不用上班的班別一律可以用，選單只列上班的班別
-    it('lists only work shifts in 使用班別, says rest-type shifts are always available and no longer warns about a missing rest shift', async () => {
+    it('lists every shift in 使用班別: work shifts selectable, rest-type shifts shown as always available, and no longer warns about a missing rest shift', async () => {
       const wrapper = mount(OrgDepartmentSetting, { global: { plugins: [ElementPlus] } })
       await flushPromises()
       await wrapper.vm.openDialog('sub')
       await flushPromises()
       const select = findSelect(wrapper, 'sub-allowed-shifts')
-      expect(select.findAllComponents({ name: 'ElOption' }).map(option => option.props('value'))).toEqual(['day', 'night'])
-      expect(wrapper.find('[data-test="sub-shift-rest-hint"]').text()).toContain('不用上班的班別一律可以使用')
+      const options = select.findAllComponents({ name: 'ElOption' })
+      // 上班的班別可以選
+      expect(options.filter(option => !option.props('disabled')).map(option => option.props('value'))).toEqual(['day', 'night'])
+      // 不用上班的班別也列出來（不能選、標示一律可用），使用者才不會以為班別不見了
+      const nonWork = options.filter(option => option.props('disabled'))
+      expect(nonWork.length).toBe(wrapper.vm.shiftOptions.length - 2)
+      nonWork.forEach(option => expect(String(option.props('label'))).toContain('一律可用'))
+      const hint = wrapper.find('[data-test="sub-shift-rest-hint"]').text()
+      expect(hint).toContain(`共 ${wrapper.vm.shiftOptions.length} 種班別`)
+      expect(hint).toContain('一律可以使用')
 
       select.vm.$emit('update:modelValue', ['day', 'night'])
       await flushPromises()
@@ -628,7 +636,8 @@ describe('OrgDepartmentSetting.vue 小單位設定只留有功能的欄位', () 
     const wrapper = await mountAndOpenUnit()
     const select = findSelect(wrapper, 'sub-allowed-shifts')
     expect(select.props('modelValue')).toEqual(['night'])
-    expect(select.findAllComponents({ name: 'ElOption' }).map(option => option.props('value'))).toEqual(['day', 'night'])
+    // 可以選的只有上班的班別；不用上班的班別列出來但不能選
+    expect(select.findAllComponents({ name: 'ElOption' }).filter(option => !option.props('disabled')).map(option => option.props('value'))).toEqual(['day', 'night'])
 
     select.vm.$emit('update:modelValue', ['day'])
     await flushPromises()
