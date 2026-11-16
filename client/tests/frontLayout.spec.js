@@ -259,7 +259,9 @@ describe('FrontLayout manager button', () => {
 
     const identity = wrapper.find('[data-test="identity"]')
     expect(identity.find('.identity-name').text()).toBe('測試員工')
-    expect(identity.find('[data-test="identity-meta"]').text()).toBe('測試機構・測試部門・測試小單位')
+    // 側欄用小表格列出機構／部門／小單位
+    const rows = identity.findAll('[data-test="identity-table"] tr').map(row => [row.find('th').text(), row.find('td').text()])
+    expect(rows).toEqual([['機構', '測試機構'], ['部門', '測試部門'], ['小單位', '測試小單位']])
     expect(identity.attributes('title')).toBe('測試員工\n機構：測試機構\n部門：測試部門\n小單位：測試小單位')
     expect(wrapper.find('.el-descriptions').exists()).toBe(false)
   })
@@ -268,13 +270,13 @@ describe('FrontLayout manager button', () => {
     profileData = { ...createProfile(), organizationName: '', departmentName: '  ', subDepartmentName: '甲單位' }
     useProfileStore().setProfile(profileData)
     const { wrapper } = await mountLayout()
-    expect(wrapper.find('[data-test="identity-meta"]').text()).toBe('甲單位')
+    expect(wrapper.findAll('[data-test="identity-table"] tr').map(row => row.text())).toEqual(['小單位甲單位'])
     expect(wrapper.text()).not.toContain('未提供')
 
     profileData = { ...createProfile(), organizationName: '', departmentName: '', subDepartmentName: '' }
     useProfileStore().setProfile(profileData)
     const { wrapper: bare } = await mountLayout()
-    expect(bare.find('[data-test="identity-meta"]').exists()).toBe(false)
+    expect(bare.find('[data-test="identity-table"]').exists()).toBe(false)
     expect(bare.find('.identity-name').text()).toBe('測試員工')
   })
 

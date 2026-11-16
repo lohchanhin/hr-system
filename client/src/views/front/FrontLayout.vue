@@ -45,13 +45,20 @@
         </el-tooltip>
       </div>
 
-      <!-- 登入者：頭像、姓名、一行「機構・部門・小單位」，完整內容滑鼠停留時顯示 -->
+      <!-- 登入者：頭像與姓名，下面用小表格列出機構／部門／小單位（名稱長時換行，不截斷）；收合側欄時只留頭像 -->
       <div class="sidebar-header identity" :title="identityTitle" data-test="identity">
-        <EmployeeAvatar :employee="profileAvatar" :size="36" :lazy="false" class="identity-avatar" />
-        <div v-if="!isSidebarCollapsed" class="identity-text">
-          <span class="identity-name">{{ displayName }}</span>
-          <span v-if="identityLine" class="identity-meta" data-test="identity-meta">{{ identityLine }}</span>
+        <div class="identity-head">
+          <EmployeeAvatar :employee="profileAvatar" :size="36" :lazy="false" class="identity-avatar" />
+          <span v-if="!isSidebarCollapsed" class="identity-name">{{ displayName }}</span>
         </div>
+        <table v-if="!isSidebarCollapsed && identityRows.length" class="identity-table" data-test="identity-table">
+          <tbody>
+            <tr v-for="[label, value] in identityRows" :key="label">
+              <th scope="row">{{ label }}</th>
+              <td>{{ value }}</td>
+            </tr>
+          </tbody>
+        </table>
       </div>
 
       <el-menu :default-active="activeMenu" class="sidebar-menu" :collapse="isSidebarCollapsed" :collapse-transition="false">
@@ -251,6 +258,9 @@ const identityParts = computed(() => [
   ["小單位", cleanText(profile.value?.subDepartmentName)],
 ]);
 
+// 側欄的資訊表：只列有值的欄位
+const identityRows = computed(() => identityParts.value.filter(([, value]) => value));
+
 const identityLine = computed(() =>
   identityParts.value
     .map(([, value]) => value)
@@ -436,48 +446,71 @@ function onUserCommand(command) {
 }
 
 .identity {
-  display: flex;
-  align-items: center;
-  gap: 10px;
   margin: 4px 12px 8px;
   padding: 10px;
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.06);
 }
 
-.identity-avatar {
-  flex: 0 0 auto;
+.identity-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
 }
 
-.identity-text {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  line-height: 1.35;
+.identity-avatar {
+  flex: 0 0 auto;
 }
 
 .identity-name {
   color: var(--hr-white);
   font-size: 14px;
   font-weight: 600;
+  line-height: 1.35;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.identity-meta {
-  color: var(--hr-gray-400);
+/* 機構／部門／小單位：深色側欄上的小表格，標籤淡色、內容白色，名稱長時換行 */
+.identity-table {
+  width: 100%;
+  margin-top: 8px;
+  border-collapse: collapse;
   font-size: 12px;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  line-height: 1.4;
+}
+
+.identity-table th,
+.identity-table td {
+  padding: 5px 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  text-align: left;
+  vertical-align: top;
+}
+
+.identity-table th {
+  width: 48px;
+  padding-right: 8px;
+  color: var(--hr-gray-400);
+  font-weight: 400;
   white-space: nowrap;
+}
+
+.identity-table td {
+  color: var(--hr-gray-100);
+  word-break: break-all;
 }
 
 .sidebar.collapsed .identity {
-  justify-content: center;
   margin: 4px 0 8px;
   padding: 0;
   background: transparent;
+}
+
+.sidebar.collapsed .identity-head {
+  justify-content: center;
 }
 
 .sidebar-menu {
