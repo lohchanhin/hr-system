@@ -155,14 +155,19 @@ async function onLogin() {
   min-height: 100vh;
   min-height: 100dvh;
   padding: 24px 16px;
-  background: var(--hr-gray-100);
+  /* 員工登入用藍色背景（主管／管理員登入是紫色），一眼分得出是哪一個入口 */
+  background: var(--hr-gray-100) url('../../assets/login/staff-login-bg.webp') center / cover no-repeat;
 }
 
 .login-card {
   width: 100%;
   max-width: 400px;
-  border: 1px solid var(--hr-gray-200);
+  border: 1px solid rgba(255, 255, 255, 0.7);
   border-radius: 12px;
+  /* 背景圖上的卡片：半透明白底加一點模糊，文字與輸入框維持清楚 */
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(6px);
+  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.12);
 }
 
 .login-card :deep(.el-card__body) {
