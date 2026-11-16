@@ -38,7 +38,7 @@ describe('SalarySetting API', () => {
     mockSalarySetting.find.mockRejectedValue(new Error('fail'));
     const res = await request(app).get('/api/salary-settings');
     expect(res.status).toBe(500);
-    expect(res.body).toEqual({ error: 'fail' });
+    expect(res.body).toEqual({ error: '讀取薪資設定失敗' });
   });
 
   it('creates setting', async () => {

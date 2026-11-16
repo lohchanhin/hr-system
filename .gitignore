@@ -7,3 +7,7 @@ logs
 .pm2
 upload/*
 !upload/.gitkeep
+server/fonts/*.otf
+server/fonts/*.ttf
+server/fonts/*.ttc
+

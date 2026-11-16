@@ -5,6 +5,7 @@ import Employee from '../models/Employee.js';
 import Organization from '../models/Organization.js';
 import ApprovalRequest from '../models/approval_request.js';
 import { WORK_HOURS_CONFIG } from '../config/salaryConfig.js';
+import { pickAllowedFields, sendSafeError } from '../utils/requestSecurity.js';
 import {
   calculateEmployeePayroll,
   calculateBatchPayroll,
@@ -90,6 +91,28 @@ function parseEmployeeScopeFilters(query, { allowEmployeeId = true } = {}) {
   return { filters };
 }
 
+const ALLOWED_PAYROLL_CREATE_FIELDS = [
+  'employee',
+  'month',
+  'baseSalary',
+  'laborInsuranceFee',
+  'healthInsuranceFee',
+  'laborPensionSelf',
+  'employeeAdvance',
+  'debtGarnishment',
+  'otherDeductions',
+  'nightShiftAllowance',
+  'performanceBonus',
+  'otherBonuses',
+  'recurringAllowance',
+  'notes',
+  'amount',
+];
+
+const ALLOWED_PAYROLL_UPDATE_FIELDS = ALLOWED_PAYROLL_CREATE_FIELDS.filter(
+  (field) => field !== 'employee' && field !== 'month'
+);
+
 export async function listPayrolls(req, res) {
   try {
     const { month } = req.query;
@@ -110,21 +133,22 @@ export async function listPayrolls(req, res) {
       }
       query.employee = employeeId;
     }
-    
+
     const records = await PayrollRecord.find(query).populate('employee').sort({ month: -1, 'employee.name': 1 });
     res.json(records);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    sendSafeError(req, res, err, { defaultMessage: '讀取薪資紀錄失敗' });
   }
 }
 
 export async function createPayroll(req, res) {
   try {
-    const record = new PayrollRecord(req.body);
+    const payload = pickAllowedFields(req.body, ALLOWED_PAYROLL_CREATE_FIELDS);
+    const record = new PayrollRecord(payload);
     await record.save();
     res.status(201).json(record);
   } catch (err) {
-    res.status(400).json({ error: err.message });
+    sendSafeError(req, res, err, { defaultStatus: 400, defaultMessage: '建立薪資紀錄失敗' });
   }
 }
 
@@ -134,17 +158,18 @@ export async function getPayroll(req, res) {
     if (!record) return res.status(404).json({ error: 'Not found' });
     res.json(record);
   } catch (err) {
-    res.status(400).json({ error: err.message });
+    sendSafeError(req, res, err, { defaultStatus: 400, defaultMessage: '讀取薪資紀錄失敗' });
   }
 }
 
 export async function updatePayroll(req, res) {
   try {
-    const record = await PayrollRecord.findByIdAndUpdate(req.params.id, req.body, { new: true });
+    const payload = pickAllowedFields(req.body, ALLOWED_PAYROLL_UPDATE_FIELDS);
+    const record = await PayrollRecord.findByIdAndUpdate(req.params.id, payload, { new: true, runValidators: true });
     if (!record) return res.status(404).json({ error: 'Not found' });
     res.json(record);
   } catch (err) {
-    res.status(400).json({ error: err.message });
+    sendSafeError(req, res, err, { defaultStatus: 400, defaultMessage: '更新薪資紀錄失敗' });
   }
 }
 
@@ -154,7 +179,7 @@ export async function deletePayroll(req, res) {
     if (!record) return res.status(404).json({ error: 'Not found' });
     res.json({ success: true });
   } catch (err) {
-    res.status(400).json({ error: err.message });
+    sendSafeError(req, res, err, { defaultStatus: 400, defaultMessage: '刪除薪資紀錄失敗' });
   }
 }
 

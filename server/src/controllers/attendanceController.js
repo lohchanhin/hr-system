@@ -4,6 +4,7 @@ import AttendanceManagementSetting from '../models/AttendanceManagementSetting.j
 import ShiftSchedule from '../models/ShiftSchedule.js';
 import AttendanceSetting from '../models/AttendanceSetting.js';
 import { isNonWorkShift, resolveShiftSemanticType } from '../services/shiftSemanticService.js';
+import { sendSafeError } from '../utils/requestSecurity.js';
 import {
   buildScheduleDate,
   computeActionWindow,
@@ -228,7 +229,7 @@ export async function listRecords(req, res) {
     if (err?.name === 'CastError') {
       return res.status(400).json({ error: '員工編號不正確' });
     }
-    res.status(500).json({ error: err.message });
+    sendSafeError(req, res, err, { defaultMessage: '讀取打卡紀錄失敗' });
   }
 }
 
@@ -245,7 +246,7 @@ export async function getPunchWindowSetting(req, res) {
       },
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    sendSafeError(req, res, err, { defaultMessage: '讀取打卡視窗設定失敗' });
   }
 }
 
@@ -502,6 +503,6 @@ export async function createRecord(req, res) {
     if (err?.code === 11000) {
       return res.status(409).json({ error: buildDuplicatePunchError(req.body?.action) });
     }
-    res.status(400).json({ error: err.message });
+    sendSafeError(req, res, err, { defaultStatus: 400, defaultMessage: '打卡紀錄建立失敗' });
   }
 }

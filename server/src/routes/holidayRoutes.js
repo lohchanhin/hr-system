@@ -15,7 +15,7 @@ const router = Router();
 
 // 讀取（by-month、清單）開放給已登入使用者，排班頁面要用；
 // 新增、修改、刪除、復原、確認、匯入只有管理員可以，不論這個 router 掛在哪個路徑下（含 /api/holidays-public）。
-const adminOnly = authorizeRoles('admin');
+const adminOnly = authorizeRoles('admin', 'hr_admin');
 
 router.post('/import/roc', adminOnly, importRocHolidays);
 router.get('/by-month', listHolidaysByMonth);

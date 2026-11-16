@@ -45,8 +45,8 @@ router.put('/preferences/include-self', authenticate, authorizeRoles('supervisor
 // 排班頁上方的統計（排班員工數、未排班、請假中）：範圍與排班頁名單相同（有排班權限的人；管理員是所選部門、小單位的所有員工，
 // 以前管理員不開放，排班頁的統計一直是 0）
 router.get('/summary', authenticate, requireScheduleAccess(), listSupervisorSummary);
-router.get('/overview', authorizeRoles('admin'), listScheduleOverview);
-router.get('/overview/export', authorizeRoles('admin'), exportScheduleOverview);
+router.get('/overview', authorizeRoles('admin', 'hr_admin', 'auditor'), listScheduleOverview);
+router.get('/overview/export', authorizeRoles('admin', 'hr_admin', 'auditor'), exportScheduleOverview);
 // 匯出看排班權限：這裡也要擋（不能只靠 index.js 依路徑判斷）——路徑比對不分大小寫，
 // 以前沒有排班權限的員工用 /api/schedules/EXPORT 就能繞過 index.js 的檢查匯出班表
 router.get('/export', requireScheduleAccess(), exportSchedules);
@@ -77,7 +77,7 @@ router.post(
 );
 router.put('/:id', verifySupervisor, updateSchedule);
 // 刪除某個日期以前的所有班表（全公司，畫面沒有用到）：只有管理員；以前任何排班人員帶一位範圍內的員工就能清掉全公司的舊班表
-router.delete('/older-than', authenticate, authorizeRoles('admin'), deleteOldSchedules);
+router.delete('/older-than', authenticate, authorizeRoles('admin', 'hr_admin'), deleteOldSchedules);
 router.delete('/:id', verifySupervisor, deleteSchedule);
 
 export default router;

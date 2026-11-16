@@ -7,7 +7,15 @@
         <h1 class="login-title">主管／管理員登入</h1>
       </div>
 
+      <TwoFactorChallenge
+        v-if="challengeToken"
+        :challenge-token="challengeToken"
+        @verified="onTwoFactorVerified"
+        @cancel="challengeToken = ''"
+      />
+
       <el-form
+        v-else
         :model="loginForm"
         ref="loginFormRef"
         class="login-form"
@@ -70,6 +78,7 @@ import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { signIn } from '../utils/authNavigation'
 import { useMenuStore } from '../stores/menu'
+import TwoFactorChallenge from '../components/TwoFactorChallenge.vue'
 
 const router = useRouter()
 const menuStore = useMenuStore()
@@ -81,12 +90,32 @@ const loginForm = ref({
 
 const loginFormRef = ref(null)
 const isLoading = ref(false)
+const challengeToken = ref('')
 // 送出中的旗標要在第一個 await 之前設好：按 Enter 與按按鈕同時觸發時只送一次
 let submitting = false
 
 const loginRules = {
   username: [{ required: true, message: '請輸入帳號', trigger: 'blur' }],
   password: [{ required: true, message: '請輸入密碼', trigger: 'blur' }]
+}
+
+async function finishLogin(result) {
+  if (result.passwordExpired) {
+    ElMessage.warning('您的密碼已超過有效期限，請儘速前往變更密碼')
+  } else if (result.twoFactorSetupRequired) {
+    ElMessage.info('系統建議/要求管理員啟用雙因素驗證 (2FA)，可於「變更密碼」頁面設定')
+  }
+  try {
+    await menuStore.fetchMenu()
+  } catch (menuError) {
+    // 略過
+  }
+  await router.replace(result.destination)
+}
+
+const onTwoFactorVerified = async (result) => {
+  challengeToken.value = ''
+  await finishLogin(result)
 }
 
 const onLogin = async () => {
@@ -98,20 +127,17 @@ const onLogin = async () => {
 
     isLoading.value = true
     const { username, password } = loginForm.value
-    const { destination, error } = await signIn(username, password)
-    if (!destination) {
-      ElMessage.error(error)
+    const result = await signIn(username, password)
+    if (result.requires2fa && result.challengeToken) {
+      challengeToken.value = result.challengeToken
+      return
+    }
+    if (!result.destination) {
+      ElMessage.error(result.error)
       return
     }
 
-    // 選單讀不到不擋登入：外框載入時會再讀一次
-    try {
-      await menuStore.fetchMenu()
-    } catch (menuError) {
-      // 略過
-    }
-    // 依伺服器回應的角色前往各自的首頁：員工帳號從這一頁登入也會進員工首頁
-    await router.replace(destination)
+    await finishLogin(result)
   } catch (error) {
     console.error('Login error:', error)
     ElMessage.error('登入過程中發生錯誤，請稍後再試')

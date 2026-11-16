@@ -12,6 +12,8 @@ import { daysToHours, hoursToDays } from '../utils/leaveHours.js'
 import { parseHolidayRegime } from '../services/holidayCalendarRules.js'
 import { buildScheduleViewEmployeeFilter, getScheduleAccessSummaryForRequest } from '../services/scheduleAccessService.js'
 import { loadNewEmployeeAutoOvertimeDefault } from '../services/payrollPolicyService.js'
+import { sendSafeError } from '../utils/requestSecurity.js'
+import { checkMinimumWageCompliance } from '../config/salaryConfig.js'
 import {
   deleteEmployeePhoto,
   isManagedEmployeePhotoPath,
@@ -1080,7 +1082,7 @@ export async function listEmployeeOptions(req, res) {
     })
     res.json(options)
   } catch (err) {
-    res.status(500).json({ error: err.message })
+    sendSafeError(req, res, err, { defaultMessage: '讀取簽核人選項失敗' })
   }
 }
 
@@ -1298,7 +1300,12 @@ export async function createEmployee(req, res) {
     const employee = await Employee.create(employeeDoc)
     photoPersisted = true
 
-    res.status(201).json(employee)
+    const wageCheck = checkMinimumWageCompliance(employee.salaryAmount, employee.salaryType || '月薪', Boolean(employee.partTime))
+    const payload = employee.toObject ? employee.toObject() : { ...employee }
+    if (!wageCheck.compliant && wageCheck.warning) {
+      payload.warnings = [wageCheck.warning]
+    }
+    res.status(201).json(payload)
   } catch (err) {
     if (!photoPersisted) await cleanupUnpersistedPhoto(req).catch(() => {})
     res.status(400).json(describeEmployeeWriteError(err))
@@ -1627,7 +1634,12 @@ export async function updateEmployee(req, res) {
       await updated.save()
     }
 
-    res.json(updated)
+    const wageCheck = checkMinimumWageCompliance(updated.salaryAmount, updated.salaryType || '月薪', Boolean(updated.partTime))
+    const payload = updated.toObject ? updated.toObject() : { ...updated }
+    if (!wageCheck.compliant && wageCheck.warning) {
+      payload.warnings = [wageCheck.warning]
+    }
+    res.json(payload)
   } catch (err) {
     if (!photoPersisted) await cleanupUnpersistedPhoto(req).catch(() => {})
     res.status(400).json(describeEmployeeWriteError(err))
@@ -1861,7 +1873,7 @@ export async function deleteEmployee(req, res) {
 
     res.json({ success: true, unassignedSubordinates, impact, warnings })
   } catch (err) {
-    res.status(400).json({ error: err.message })
+    sendSafeError(req, res, err, { defaultStatus: 400, defaultMessage: '刪除員工失敗' })
   }
 }
 
@@ -2072,7 +2084,7 @@ export async function setSupervisors(req, res) {
 
     res.json({ success: true })
   } catch (err) {
-    res.status(400).json({ error: err.message })
+    sendSafeError(req, res, err, { defaultStatus: 400, defaultMessage: '批次指派主管失敗' })
   }
 }
 
@@ -2094,7 +2106,7 @@ export async function getEmployeeAnnualLeave(req, res) {
     const balance = await getAnnualLeaveBalance(req.params.id)
     res.json(balance)
   } catch (err) {
-    res.status(400).json({ error: err.message })
+    sendSafeError(req, res, err, { defaultStatus: 400, defaultMessage: '查詢特休餘額失敗' })
   }
 }
 
@@ -2108,7 +2120,7 @@ export async function getEmployeeAnnualLeaveHistory(req, res) {
     const history = await getAnnualLeaveHistory(req.params.id, year)
     res.json(history)
   } catch (err) {
-    res.status(400).json({ error: err.message })
+    sendSafeError(req, res, err, { defaultStatus: 400, defaultMessage: '查詢特休使用記錄失敗' })
   }
 }
 
@@ -2127,7 +2139,7 @@ export async function setEmployeeAnnualLeave(req, res) {
       annualLeave: employee.annualLeave
     })
   } catch (err) {
-    res.status(400).json({ error: err.message })
+    sendSafeError(req, res, err, { defaultStatus: 400, defaultMessage: '設定特休時數失敗' })
   }
 }
 
@@ -2143,6 +2155,6 @@ export async function validateEmployeeAnnualLeave(req, res) {
     const result = await validateAnnualLeaveRequest(req.params.id, hours)
     res.json(result)
   } catch (err) {
-    res.status(400).json({ error: err.message })
+    sendSafeError(req, res, err, { defaultStatus: 400, defaultMessage: '驗證特休申請失敗' })
   }
 }

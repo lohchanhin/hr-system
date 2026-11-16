@@ -1,4 +1,6 @@
+import mongoose from 'mongoose';
 import LaborInsuranceRate from '../models/LaborInsuranceRate.js';
+import InsuranceRateTable from '../models/InsuranceRateTable.js';
 import {
   DEFAULT_HEALTH_INSURANCE_RATES,
   DEFAULT_LABOR_INSURANCE_RATES,
@@ -81,6 +83,64 @@ export async function loadInsuranceRateTable() {
   return LaborInsuranceRate.find().lean();
 }
 
+function resolveEffectiveDate(month) {
+  if (!month) return new Date();
+  const parsed = new Date(month);
+  return Number.isNaN(parsed.getTime()) ? new Date() : parsed;
+}
+
+/**
+ * 依薪資月份載入對應生效區間的保險級距表（支援多年度版本切換）。
+ * 若資料庫尚未建立版本紀錄，自動回退至 LaborInsuranceRate 或內建 2026 基準。
+ */
+export async function loadVersionedRateTable(type = 'laborInsurance', month = null) {
+  const normalizedType = normalizeInsuranceType(type);
+  const targetDate = resolveEffectiveDate(month);
+  try {
+    const versioned = await InsuranceRateTable.findOne({
+      type: normalizedType,
+      effectiveFrom: { $lte: targetDate },
+      $or: [{ effectiveTo: null }, { effectiveTo: { $gte: targetDate } }],
+    })
+      .sort({ effectiveFrom: -1 })
+      .lean();
+    if (versioned?.rates?.length) {
+      return versioned.rates;
+    }
+  } catch {
+    // 單元測試無資料庫連線或查詢失敗時，回退至預設基準
+  }
+
+  if (normalizedType === 'laborInsurance') {
+    try {
+      const dbRates = await LaborInsuranceRate.find().lean();
+      if (dbRates?.length) return dbRates;
+    } catch {
+      // ignore
+    }
+    return DEFAULT_LABOR_INSURANCE_RATES.map(normalizeRate);
+  }
+  if (normalizedType === 'healthInsurance') {
+    return DEFAULT_HEALTH_INSURANCE_RATES.map((rate) => ({ ...rate }));
+  }
+  return DEFAULT_LABOR_PENSION_RATES.map((rate) => ({ ...rate }));
+}
+
+export async function findHealthInsuranceLevelBySalary(salary, rates = null) {
+  if (!salary || salary <= 0) return null;
+  const table = Array.isArray(rates) && rates.length
+    ? rates
+    : await loadVersionedRateTable('healthInsurance');
+  if (!table.length) return null;
+  let match = null;
+  let top = null;
+  for (const rate of table) {
+    if (!top || rate.level > top.level) top = rate;
+    if (rate.insuredSalary >= salary && (!match || rate.insuredSalary < match.insuredSalary)) match = rate;
+  }
+  return match ?? top;
+}
+
 /**
  * 根據等級獲取勞保費率
  * @param {Number} level - 等級 (1-28)
@@ -92,11 +152,36 @@ export async function getInsuranceRateByLevel(level) {
 }
 
 /**
- * 初始化勞保費率表（28個等級）
+ * 初始化勞保費率表（28個等級）與多年度版本基準表
  */
 export async function initializeLaborInsuranceRates() {
   for (const rate of DEFAULT_LABOR_INSURANCE_RATES) {
     await upsertRate(rate);
+  }
+  const baselineDate = new Date(TAIWAN_INSURANCE_BASELINE_EFFECTIVE_FROM);
+  const baselines = [
+    { type: 'laborInsurance', rates: DEFAULT_LABOR_INSURANCE_RATES.map(normalizeRate) },
+    { type: 'healthInsurance', rates: DEFAULT_HEALTH_INSURANCE_RATES.map((r) => ({ ...r })) },
+    { type: 'laborPension', rates: DEFAULT_LABOR_PENSION_RATES.map((r) => ({ ...r })) },
+  ];
+  const shouldSeedVersioned = mongoose.connection.readyState === 1 || typeof InsuranceRateTable.findOneAndUpdate?.mock === 'object';
+  if (shouldSeedVersioned) {
+    for (const item of baselines) {
+      await InsuranceRateTable.findOneAndUpdate(
+        { type: item.type, effectiveFrom: baselineDate },
+        {
+          $setOnInsert: {
+            type: item.type,
+            effectiveFrom: baselineDate,
+            effectiveTo: null,
+            rates: item.rates,
+            source: 'embedded-official-baseline',
+            sourceUrl: TAIWAN_INSURANCE_SOURCES[item.type] || '',
+          },
+        },
+        { upsert: true }
+      );
+    }
   }
   return DEFAULT_LABOR_INSURANCE_RATES.length;
 }

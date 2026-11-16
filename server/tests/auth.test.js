@@ -54,7 +54,7 @@ describe('Auth API', () => {
     const res = await request(app).post('/api/login').send({ username: 'john', password: 'pass', role: 'employee' });
     expect(res.status).toBe(200);
     expect(res.body.token).toBeDefined();
-    expect(res.body.user).toEqual({
+    expect(res.body.user).toMatchObject({
       id: '1',
       employeeId: '1',
       employeeNumber: '',
@@ -77,7 +77,7 @@ describe('Auth API', () => {
     expect(signSpy).toHaveBeenCalledWith(
       { id: '1', sub: '1', role: 'employee', ver: 0 },
       'secret',
-      { issuer: 'hr-system', audience: 'hr-system-api', expiresIn: '1h', jwtid: expect.any(String) }
+      { issuer: 'hr-system', audience: 'hr-system-api', expiresIn: '15m', jwtid: expect.any(String) }
     );
     signSpy.mockRestore();
   });

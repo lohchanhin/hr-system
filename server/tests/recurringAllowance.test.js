@@ -22,7 +22,8 @@ jest.unstable_mockModule('../src/services/nightShiftAllowanceService.js', () => 
 
 const mockFindInsuranceLevelBySalary = jest.fn();
 jest.unstable_mockModule('../src/services/laborInsuranceService.js', () => ({
-  findInsuranceLevelBySalary: mockFindInsuranceLevelBySalary
+  findInsuranceLevelBySalary: mockFindInsuranceLevelBySalary,
+  findHealthInsuranceLevelBySalary: jest.fn().mockResolvedValue(null),
 }));
 
 const { calculateEmployeePayroll, extractRecurringAllowance } = await import('../src/services/payrollService.js');

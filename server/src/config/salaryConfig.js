@@ -227,6 +227,58 @@ export function extractRecurringAllowance(employee) {
   return { total, breakdown };
 }
 
+// 2026 年台灣最低工資（2026-01-01 起生效：月薪 NT$29,500、時薪 NT$196）
+export const MINIMUM_WAGE_2026 = Object.freeze({
+  monthly: 29500,
+  hourly: 196,
+  effectiveFrom: '2026-01-01',
+});
+
+/**
+ * 檢查薪資是否符合 2026 年最低工資（非強制阻擋，回傳合規狀態與警示訊息）。
+ * @param {number} amount - 薪資金額
+ * @param {string} salaryType - '月薪' | '時薪' | '日薪'
+ * @param {boolean} partTime - 是否為部分工時（部分工時月薪不適用全時月薪下限）
+ */
+export function checkMinimumWageCompliance(amount, salaryType = '月薪', partTime = false) {
+  const numeric = Number(amount);
+  if (!Number.isFinite(numeric) || numeric <= 0) {
+    return { compliant: true, warning: null };
+  }
+  if (salaryType === '時薪') {
+    if (numeric < MINIMUM_WAGE_2026.hourly) {
+      return {
+        compliant: false,
+        warning: {
+          code: 'BELOW_MINIMUM_WAGE_2026',
+          salaryType,
+          actual: numeric,
+          minimum: MINIMUM_WAGE_2026.hourly,
+          effectiveFrom: MINIMUM_WAGE_2026.effectiveFrom,
+          message: `時薪 NT$${numeric} 低於 2026 年法定最低時薪 NT$${MINIMUM_WAGE_2026.hourly}`,
+        },
+      };
+    }
+    return { compliant: true, warning: null };
+  }
+  if (salaryType === '月薪' && !partTime) {
+    if (numeric < MINIMUM_WAGE_2026.monthly) {
+      return {
+        compliant: false,
+        warning: {
+          code: 'BELOW_MINIMUM_WAGE_2026',
+          salaryType,
+          actual: numeric,
+          minimum: MINIMUM_WAGE_2026.monthly,
+          effectiveFrom: MINIMUM_WAGE_2026.effectiveFrom,
+          message: `月薪 NT$${numeric} 低於 2026 年法定最低月薪 NT$${MINIMUM_WAGE_2026.monthly}`,
+        },
+      };
+    }
+  }
+  return { compliant: true, warning: null };
+}
+
 export default {
   WORK_HOURS_CONFIG,
   ANNUAL_LEAVE_TYPES,
@@ -239,6 +291,8 @@ export default {
   OVERTIME_FIELDS,
   BONUS_FORM_NAMES,
   BONUS_FIELDS,
+  MINIMUM_WAGE_2026,
+  checkMinimumWageCompliance,
   convertToHourlyRate,
   convertToDailyRate,
   calculateTaiwanOvertimeAmount,

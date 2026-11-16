@@ -1,4 +1,5 @@
 import Employee from '../models/Employee.js';
+import { sendSafeError } from '../utils/requestSecurity.js';
 
 const INACTIVE_EMPLOYMENT_STATUSES = new Set(['離職員工', '留職停薪']);
 
@@ -22,6 +23,6 @@ export async function listDeptManagers(req, res) {
     }));
     res.json(result);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    sendSafeError(req, res, err, { defaultMessage: '讀取部門管理者名單失敗' });
   }
 }

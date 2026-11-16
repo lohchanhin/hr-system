@@ -1,6 +1,7 @@
 import jwt from 'jsonwebtoken'
 import Employee from '../models/Employee.js'
 import { isTokenBlacklisted } from '../utils/tokenBlacklist.js'
+import { getPermissionsForRole, roleHasAnyPermission } from '../config/rbac.js'
 
 const INACTIVE_EMPLOYMENT_STATUSES = new Set(['離職員工', '留職停薪'])
 
@@ -43,7 +44,7 @@ export async function authenticate(req, res, next) {
 
     const query = Employee.findById(employeeId)
     const employee = typeof query?.select === 'function'
-      ? await query.select('role status accountEnabled authVersion')
+      ? await query.select('role status accountEnabled authVersion username')
       : await query
 
     const tokenVersion = Number(decoded.ver ?? 0)
@@ -59,7 +60,9 @@ export async function authenticate(req, res, next) {
     req.user = {
       ...decoded,
       id: String(employeeId),
+      username: employee.username || decoded.username || '',
       role: employee.role,
+      permissions: getPermissionsForRole(employee.role),
       ver: currentVersion,
     }
     return next()
@@ -75,6 +78,15 @@ export async function authenticate(req, res, next) {
 export function authorizeRoles(...roles) {
   return (req, res, next) => {
     if (!req.user || !roles.includes(req.user.role)) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+    next();
+  };
+}
+
+export function authorizePermissions(...requiredPermissions) {
+  return (req, res, next) => {
+    if (!req.user || !roleHasAnyPermission(req.user.role, requiredPermissions)) {
       return res.status(403).json({ error: 'Forbidden' });
     }
     next();

@@ -288,7 +288,7 @@ describe('signIn', () => {
   it('只送帳號與密碼，不送 role', async () => {
     fetch.mockResolvedValueOnce(okResponse({ role: 'employee', employeeId: 'e1' }))
     const result = await signIn('alice', 'secret')
-    expect(result).toEqual({ destination: '/front/attendance' })
+    expect(result).toMatchObject({ destination: '/front/attendance' })
     expect(fetch).toHaveBeenCalledTimes(1)
     const [url, options] = fetch.mock.calls[0]
     expect(url).toContain('/api/login')

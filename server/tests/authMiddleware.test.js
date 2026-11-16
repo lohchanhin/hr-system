@@ -52,7 +52,7 @@ test('accepts a token only when the current account state matches', async () => 
     role: 'employee',
     ver: 2,
   })
-  expect(selectMock).toHaveBeenCalledWith('role status accountEnabled authVersion')
+  expect(selectMock).toHaveBeenCalledWith('role status accountEnabled authVersion username')
 })
 
 test.each([

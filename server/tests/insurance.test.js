@@ -39,7 +39,7 @@ describe('Insurance API', () => {
     mockInsuranceRecord.find.mockReturnValue({ populate: jest.fn().mockRejectedValue(new Error('fail')) });
     const res = await request(app).get('/api/insurance');
     expect(res.status).toBe(500);
-    expect(res.body).toEqual({ error: 'fail' });
+    expect(res.body).toEqual({ error: '讀取保險紀錄失敗' });
   });
 
   it('creates insurance record', async () => {

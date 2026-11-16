@@ -167,7 +167,7 @@ describe('Payroll API', () => {
     });
     const res = await request(app).get('/api/payroll');
     expect(res.status).toBe(500);
-    expect(res.body).toEqual({ error: 'fail' });
+    expect(res.body).toEqual({ error: '讀取薪資紀錄失敗' });
   });
 
   it('creates payroll record', async () => {

@@ -75,9 +75,16 @@ const employeeSchema = new Schema(
     authVersion: { type: Number, default: 0, min: 0 },
     role: {
       type: String,
-      enum: ['employee', 'supervisor', 'admin'],
+      enum: ['employee', 'supervisor', 'hr_admin', 'payroll_admin', 'auditor', 'admin'],
       default: 'employee',
     },
+    twoFactor: {
+      enabled: { type: Boolean, default: false },
+      secretEncrypted: { type: String, select: false },
+      backupCodesHash: { type: [String], default: [], select: false },
+      verifiedAt: { type: Date },
+    },
+    passwordChangedAt: { type: Date },
     permissionGrade: String, // 權限/職等（不可控定義可由後台維護）
 
     /* 簽核/標籤 */
@@ -323,6 +330,7 @@ employeeSchema.methods.setPassword = function (plain) {
   const hashed = hashPassword(plain)
   if (hashed) {
     this.passwordHash = hashed
+    this.passwordChangedAt = new Date()
   }
 }
 

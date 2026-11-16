@@ -41,15 +41,40 @@ export async function getMenu(req, res, next) {
         { name: 'ShiftScheduleSetting', label: '排班表設定', icon: 'el-icon-timer' },
         { name: 'ApprovalFlowSetting', label: '簽核流程設定', icon: 'el-icon-s-operation' },
         { name: 'SalaryManagementSetting', label: '薪資管理', icon: 'el-icon-money' },
-      { name: 'SocialInsuranceRetirementSetting', label: '勞健保設定', icon: 'el-icon-s-check' },
-      { name: 'HRManagementSystemSetting', label: '人資管理', icon: 'el-icon-user-solid' },
-      { name: 'OtherControlSetting', label: '其他控制設定', icon: 'el-icon-more' },
-      { name: 'OrgDepartmentSetting', label: '權限&機構&部門設定', icon: 'el-icon-s-grid' },
-      { name: 'ScheduleOverview', label: '班表總覽', icon: 'el-icon-s-data' },
-      { name: 'DepartmentReports', label: '報表查看', icon: 'el-icon-data-analysis' },
-      { name: 'ManagerChangePassword', label: '變更密碼', icon: 'el-icon-lock' }
-    ]
-  };
+        { name: 'SocialInsuranceRetirementSetting', label: '勞健保設定', icon: 'el-icon-s-check' },
+        { name: 'HRManagementSystemSetting', label: '人資管理', icon: 'el-icon-user-solid' },
+        { name: 'OtherControlSetting', label: '其他控制設定', icon: 'el-icon-more' },
+        { name: 'OrgDepartmentSetting', label: '權限&機構&部門設定', icon: 'el-icon-s-grid' },
+        { name: 'ScheduleOverview', label: '班表總覽', icon: 'el-icon-s-data' },
+        { name: 'DepartmentReports', label: '報表查看', icon: 'el-icon-data-analysis' },
+        { name: 'AuditLogViewer', label: '系統稽核日誌', icon: 'el-icon-document-checked' },
+        { name: 'ManagerChangePassword', label: '變更密碼', icon: 'el-icon-lock' }
+      ],
+      hr_admin: [
+        { name: 'AttendanceSetting', label: '出勤設定', icon: 'el-icon-setting' },
+        { name: 'AttendanceManagementSetting', label: '出勤管理', icon: 'el-icon-postcard' },
+        { name: 'LeaveOvertimeSetting', label: '請假加班設定', icon: 'el-icon-date' },
+        { name: 'ShiftScheduleSetting', label: '排班表設定', icon: 'el-icon-timer' },
+        { name: 'ApprovalFlowSetting', label: '簽核流程設定', icon: 'el-icon-s-operation' },
+        { name: 'HRManagementSystemSetting', label: '人資管理', icon: 'el-icon-user-solid' },
+        { name: 'OrgDepartmentSetting', label: '權限&機構&部門設定', icon: 'el-icon-s-grid' },
+        { name: 'ScheduleOverview', label: '班表總覽', icon: 'el-icon-s-data' },
+        { name: 'DepartmentReports', label: '報表查看', icon: 'el-icon-data-analysis' },
+        { name: 'ManagerChangePassword', label: '變更密碼', icon: 'el-icon-lock' }
+      ],
+      payroll_admin: [
+        { name: 'SalaryManagementSetting', label: '薪資管理', icon: 'el-icon-money' },
+        { name: 'SocialInsuranceRetirementSetting', label: '勞健保設定', icon: 'el-icon-s-check' },
+        { name: 'DepartmentReports', label: '報表查看', icon: 'el-icon-data-analysis' },
+        { name: 'ManagerChangePassword', label: '變更密碼', icon: 'el-icon-lock' }
+      ],
+      auditor: [
+        { name: 'ScheduleOverview', label: '班表總覽', icon: 'el-icon-s-data' },
+        { name: 'DepartmentReports', label: '報表查看', icon: 'el-icon-data-analysis' },
+        { name: 'AuditLogViewer', label: '系統稽核日誌', icon: 'el-icon-document-checked' },
+        { name: 'ManagerChangePassword', label: '變更密碼', icon: 'el-icon-lock' }
+      ]
+    };
 
     // 排班管理看排班權限：被指定為排班人員的員工也看得到；主管預設（只有排班人員能排班）沒被指定就看不到，
     // 改看「我的排班」（自己的班表）。部門報表、簽核流程不受影響

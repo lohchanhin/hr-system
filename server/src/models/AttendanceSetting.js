@@ -71,6 +71,7 @@ const attendanceSettingSchema = new mongoose.Schema({
       default: 'standard',
     },
     workTimeRegimeApprovalReference: { type: String, trim: true, maxlength: 200, default: '' },
+    workTimeRegimeAnchorDate: { type: String, trim: true, maxlength: 10, default: '2026-01-05' },
     minShiftRestMinutes: { type: Number, default: 660, min: 480, max: 1440 },
     restIntervalExceptionEnabled: { type: Boolean, default: false },
     restIntervalExceptionMinutes: { type: Number, default: 480, min: 480, max: 660 },

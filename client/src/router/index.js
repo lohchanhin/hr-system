@@ -21,6 +21,7 @@ const HRManagementSystemSetting = () => import('@/components/backComponents/HRMa
 const OrgDepartmentSettingView = () => import('@/views/OrgDepartmentSettingView.vue')
 const OtherControlSettingView = () => import('@/views/OtherControlSettingView.vue')
 const ScheduleOverview = () => import('@/views/ScheduleOverview.vue')
+const AuditLogViewer = () => import('@/components/backComponents/AuditLogViewer.vue')
 const ManagerChangePassword = () => import('@/views/ChangePasswordView.vue')
 
 // ★ 錯誤頁面
@@ -64,13 +65,19 @@ const routes = [
         path: 'department-reports',
         name: 'DepartmentReports',
         component: DepartmentReports,
-        meta: { roles: ['admin'], warningMessage: '僅系統管理員可以存取後台報表，請確認您的權限' },
+        meta: { roles: ['admin', 'hr_admin', 'payroll_admin', 'auditor'], warningMessage: '僅管理人員與稽核員可以存取後台報表，請確認您的權限' },
       },
       {
         path: 'schedule-overview',
         name: 'ScheduleOverview',
         component: ScheduleOverview,
-        meta: { roles: ['admin'], warningMessage: '僅系統管理員可以檢視班表總覽' },
+        meta: { roles: ['admin', 'hr_admin', 'auditor'], warningMessage: '僅人資管理員與稽核員可以檢視班表總覽' },
+      },
+      {
+        path: 'audit-logs',
+        name: 'AuditLogViewer',
+        component: AuditLogViewer,
+        meta: { roles: ['admin', 'auditor'], warningMessage: '僅系統管理員與稽核員可以查閱稽核日誌' },
       },
       { path: 'leave-overtime-setting', name: 'LeaveOvertimeSetting', component: LeaveOvertimeSetting },
       { path: 'shift-schedule-setting', name: 'ShiftScheduleSetting', component: ShiftScheduleSetting },

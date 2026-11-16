@@ -168,6 +168,10 @@
       <el-tab-pane label="排班權限" name="schedule-access" lazy>
         <ScheduleAccessSetting />
       </el-tab-pane>
+
+      <el-tab-pane label="安全與認證" name="security-controls" lazy>
+        <SecurityControlsSetting />
+      </el-tab-pane>
     </el-tabs>
 
     <el-dialog v-model="optionDialogVisible" :title="optionDialogTitle" width="420px">
@@ -319,6 +323,7 @@ import { apiFetch } from '../../api'
 import { editableListToOptions, optionsToEditableList } from '../../utils/fieldOptions'
 import PageHeader from '../PageHeader.vue'
 import ScheduleAccessSetting from './ScheduleAccessSetting.vue'
+import SecurityControlsSetting from './SecurityControlsSetting.vue'
 
 const activeTab = ref('item-setting')
 // 其他控制設定是否已從伺服器成功載入。載入失敗時畫面上是預設值，不能把它當成已儲存的資料存回去

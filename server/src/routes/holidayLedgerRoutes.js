@@ -22,7 +22,7 @@ const router = Router();
 // 匯出、登記與刪除處理方式、重新計算、個人調移只有有排班權限的人（管理員、主管、排班人員）；
 // HR 指定調休日、手動補登調休只有管理員，不論這個 router 掛在哪個路徑下。
 const managersOnly = requireScheduleAccess();
-const adminOnly = authorizeRoles('admin');
+const adminOnly = authorizeRoles('admin', 'hr_admin');
 
 router.get('/', getHolidayLedger);
 router.get('/export', managersOnly, exportHolidayLedger);

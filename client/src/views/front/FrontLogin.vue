@@ -7,7 +7,15 @@
         <h1 class="login-title">員工登入</h1>
       </div>
 
+      <TwoFactorChallenge
+        v-if="challengeToken"
+        :challenge-token="challengeToken"
+        @verified="onTwoFactorVerified"
+        @cancel="challengeToken = ''"
+      />
+
       <el-form
+        v-else
         :model="loginForm"
         ref="loginFormRef"
         class="login-form"
@@ -71,6 +79,7 @@ import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { useMenuStore } from '../../stores/menu'
 import { signIn } from '../../utils/authNavigation'
+import TwoFactorChallenge from '../../components/TwoFactorChallenge.vue'
 
 const router = useRouter()
 const menuStore = useMenuStore()
@@ -82,6 +91,7 @@ const loginForm = ref({
 
 const loginFormRef = ref(null)
 const isLoading = ref(false)
+const challengeToken = ref('')
 // 送出中的旗標要在第一個 await 之前設好：按鈕的 click 與表單的 submit 會同時觸發，
 // 以前各送一次登入請求，密碼打錯一次就算兩次失敗（同一帳號失敗 5 次會被暫時鎖住）
 let submitting = false
@@ -89,6 +99,23 @@ let submitting = false
 const loginRules = {
   username: [{ required: true, message: '請輸入員工帳號', trigger: 'blur' }],
   password: [{ required: true, message: '請輸入密碼', trigger: 'blur' }]
+}
+
+async function finishLogin(result) {
+  if (result.passwordExpired) {
+    ElMessage.warning('您的密碼已超過有效期限，請儘速前往變更密碼')
+  }
+  try {
+    await menuStore.fetchMenu()
+  } catch (menuError) {
+    // 略過
+  }
+  await router.push(result.destination)
+}
+
+async function onTwoFactorVerified(result) {
+  challengeToken.value = ''
+  await finishLogin(result)
 }
 
 async function onLogin() {
@@ -99,20 +126,17 @@ async function onLogin() {
     if (!valid) return
 
     isLoading.value = true
-    const { destination, error } = await signIn(loginForm.value.username, loginForm.value.password)
-    if (!destination) {
-      ElMessage.error(error)
+    const result = await signIn(loginForm.value.username, loginForm.value.password)
+    if (result.requires2fa && result.challengeToken) {
+      challengeToken.value = result.challengeToken
+      return
+    }
+    if (!result.destination) {
+      ElMessage.error(result.error)
       return
     }
 
-    // 選單讀不到不擋登入：外框載入時會再讀一次
-    try {
-      await menuStore.fetchMenu()
-    } catch (menuError) {
-      // 略過
-    }
-    // 依伺服器回應的角色前往各自的首頁
-    await router.push(destination)
+    await finishLogin(result)
   } catch (err) {
     console.error('Login error:', err)
     ElMessage.error('登入過程中發生錯誤，請稍後再試')

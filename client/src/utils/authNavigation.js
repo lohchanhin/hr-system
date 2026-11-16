@@ -9,6 +9,9 @@ import { useProfileStore } from '../stores/profile'
 const HOME_ROUTES = Object.freeze({
   employee: '/front/attendance',
   supervisor: '/front/schedule',
+  hr_admin: '/manager/settings',
+  payroll_admin: '/manager/settings',
+  auditor: '/manager/settings',
   admin: '/manager/settings'
 })
 
@@ -115,8 +118,44 @@ export async function signIn(username, password) {
   }
   const data = await Promise.resolve(res.json?.()).catch(() => null)
   if (!res.ok) return { error: loginFailureMessage(res.status, data) }
+  if (data?.requires2fa) {
+    return {
+      requires2fa: true,
+      challengeToken: data.challengeToken,
+      user: data.user,
+    }
+  }
   const destination = beginSession(data)
-  return destination ? { destination } : { error: '登入過程中發生錯誤，請稍後再試' }
+  return destination
+    ? {
+        destination,
+        twoFactorSetupRequired: Boolean(data?.twoFactorSetupRequired),
+        passwordExpired: Boolean(data?.passwordExpired),
+      }
+    : { error: '登入過程中發生錯誤，請稍後再試' }
+}
+
+export async function verifyTwoFactor(challengeToken, code) {
+  let res
+  try {
+    res = await apiFetch(
+      '/api/auth/2fa/verify',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ challengeToken, code })
+      },
+      { autoRedirect: false }
+    )
+  } catch (error) {
+    return { error: '無法連線到伺服器，請確認網路連線後再試' }
+  }
+  const data = await Promise.resolve(res.json?.()).catch(() => null)
+  if (!res.ok) return { error: data?.error || '驗證碼不正確，請再試一次' }
+  const destination = beginSession(data)
+  return destination
+    ? { destination, passwordExpired: Boolean(data?.passwordExpired) }
+    : { error: '登入過程中發生錯誤，請稍後再試' }
 }
 
 function storeEmployeeId(id) {

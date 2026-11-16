@@ -26,6 +26,7 @@ const DEFAULT_SETTING = Object.freeze({
   laborRules: {
     workTimeRegime: 'standard',
     workTimeRegimeApprovalReference: '',
+    workTimeRegimeAnchorDate: '2026-01-05',
     minShiftRestMinutes: 660,
     restIntervalExceptionEnabled: false,
     restIntervalExceptionMinutes: 480,

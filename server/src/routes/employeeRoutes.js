@@ -32,8 +32,8 @@ router.get('/', listEmployees);
 router.get('/schedule', listEmployeesSchedule);
 router.get('/options', listEmployeeOptions);
 // 員工標籤詞彙表：固定路徑，必須在 '/:id' 之前
-router.get('/sign-tags', authorizeRoles('admin', 'supervisor'), listSignTags);
-router.get('/attendance-import-options', authorizeRoles('admin'), listAttendanceImportEmployeeOptions);
+router.get('/sign-tags', authorizeRoles('admin', 'hr_admin', 'payroll_admin', 'supervisor'), listSignTags);
+router.get('/attendance-import-options', authorizeRoles('admin', 'hr_admin'), listAttendanceImportEmployeeOptions);
 router.post('/', uploadSingle, handleMulterError, processUploadedPhoto, createEmployee);
 router.post('/bulk-import', uploadMiddleware, validateBulkImportPayload, bulkImportEmployees);
 router.post('/import', uploadMiddleware, validateBulkImportPayload, bulkImportEmployees);
@@ -43,7 +43,7 @@ router.post('/bulk-delete', bulkDeleteEmployees);
 // 刪除前預覽簽核影響（不刪任何資料）
 router.post('/delete-impact', previewDeleteImpact);
 // 整批開關「自動計算加班費」（只有管理員；dryRun 只回傳人數）
-router.post('/auto-overtime-calc', authorizeRoles('admin'), bulkSetAutoOvertimeCalc);
+router.post('/auto-overtime-calc', authorizeRoles('admin', 'hr_admin'), bulkSetAutoOvertimeCalc);
 
 // 特休管理路由
 router.get('/:id/annual-leave', getEmployeeAnnualLeave);

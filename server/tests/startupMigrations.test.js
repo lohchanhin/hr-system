@@ -192,8 +192,8 @@ describe('server startup: holiday calendar', () => {
   })
 
   it('mounts the admin calendar settings and the read-only holiday calendar before the API 404 handler', () => {
-    const settings = indexSource.indexOf("app.use('/api/company-calendar', authenticate, authorizeRoles('admin'), companyCalendarRoutes);")
-    const view = indexSource.indexOf("app.use('/api/holiday-calendar', authenticate, authorizeRoles('employee', 'supervisor', 'admin'), holidayCalendarViewRoutes);")
+    const settings = indexSource.indexOf("app.use('/api/company-calendar', authenticate, enforceAdminIpWhitelist, authorizePermissions(PERMISSIONS.ATTENDANCE_SETTING_WRITE), companyCalendarRoutes);")
+    const view = indexSource.indexOf("app.use('/api/holiday-calendar', authenticate, authorizePermissions(PERMISSIONS.ATTENDANCE_READ, PERMISSIONS.SCHEDULE_READ), holidayCalendarViewRoutes);")
     const notFound = indexSource.indexOf("app.use('/api', apiNotFound);")
 
     expect(settings).toBeGreaterThan(-1)
@@ -257,7 +257,7 @@ describe('server startup: holiday calendar', () => {
     const body = startBody()
     const listen = body.indexOf('app.listen(PORT, () => {')
     const running = body.indexOf('console.log(`Server running on port ${PORT}`);')
-    const watcher = body.indexOf("if (process.env.HOLIDAY_CALENDAR_WATCHER !== 'off') startHolidayCalendarWatcher({ dailyTasks: [syncRecentHolidayCompensations] });")
+    const watcher = indexSource.slice(indexSource.indexOf('async function start()')).indexOf("watcherHandle = startHolidayCalendarWatcher({ dailyTasks: [syncRecentHolidayCompensations] });")
 
     expect(listen).toBeGreaterThan(-1)
     expect(running).toBeGreaterThan(listen)
@@ -276,7 +276,7 @@ describe('server startup: compensatory leave bank', () => {
     expect(indexSource).toMatch(/import CompensatoryCredit from '\.\/models\/CompensatoryCredit\.js';/)
     expect(indexSource).toMatch(/import CompensatoryLeaveState from '\.\/models\/CompensatoryLeaveState\.js';/)
     expect(indexSource).toMatch(/import compensatoryLeaveRoutes from '\.\/routes\/compensatoryLeaveRoutes\.js';/)
-    const mount = indexSource.indexOf("app.use('/api/compensatory-leave', authenticate, authorizeRoles('employee', 'supervisor', 'admin'), compensatoryLeaveRoutes);")
+    const mount = indexSource.indexOf("app.use('/api/compensatory-leave', authenticate, authorizePermissions(PERMISSIONS.ATTENDANCE_READ, PERMISSIONS.SCHEDULE_READ), compensatoryLeaveRoutes);")
     expect(mount).toBeGreaterThan(-1)
     expect(mount).toBeLessThan(indexSource.indexOf("app.use('/api', apiNotFound);"))
   })

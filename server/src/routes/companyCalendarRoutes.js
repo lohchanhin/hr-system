@@ -19,7 +19,7 @@ import { authorizeRoles } from '../middleware/auth.js';
 const router = Router();
 
 // 行事曆設定只有管理員可用（index.js 掛載時已檢查，這裡再擋一次，不論掛在哪個路徑）
-router.use(authorizeRoles('admin'));
+router.use(authorizeRoles('admin', 'hr_admin', 'auditor'));
 
 router.get('/years', listYears);
 router.get('/years/:year', getYear);

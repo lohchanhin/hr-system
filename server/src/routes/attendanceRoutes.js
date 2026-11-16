@@ -11,6 +11,6 @@ const uploadMiddleware = createUploadMiddleware({ allowBig5Csv: true })
 router.get('/punch-window', getPunchWindowSetting)
 router.get('/', listRecords)
 router.post('/', createRecord)
-router.post('/import', authorizeRoles('admin'), uploadMiddleware, importAttendanceRecords)
+router.post('/import', authorizeRoles('admin', 'hr_admin'), uploadMiddleware, importAttendanceRecords)
 
 export default router

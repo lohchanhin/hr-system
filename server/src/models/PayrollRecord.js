@@ -23,6 +23,7 @@ const payrollRecordSchema = new mongoose.Schema({
   overtimeHours: { type: Number, default: 0 }, // 加班時數
   overtimePay: { type: Number, default: 0 }, // 加班費
   overtimeIssues: { type: Array, default: [] }, // 加班時數計算問題列表（如疑似漏勾跨日）
+  complianceWarnings: { type: [Object], default: [] }, // 法規合規警示（如低於基本工資）
   
   // 夜班資料 (Night Shift)
   nightShiftDays: { type: Number, default: 0 }, // 夜班天數

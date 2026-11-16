@@ -17,6 +17,7 @@ jest.unstable_mockModule('../src/middleware/auth.js', () => ({
     next()
   },
   authorizeRoles: () => (_req, _res, next) => next(),
+  authorizePermissions: () => (_req, _res, next) => next(),
 }))
 
 const { apiErrorHandler, forwardAsyncErrors, requestContext } = await import('../src/middleware/httpSecurity.js')

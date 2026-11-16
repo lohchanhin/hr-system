@@ -33,6 +33,7 @@ jest.unstable_mockModule('../src/middleware/auth.js', () => ({
   authorizeRoles: (...roles) => (req, res, next) => (
     roles.includes(req.user?.role) ? next() : res.status(403).json({ error: 'Forbidden' })
   ),
+  authorizePermissions: () => (_req, _res, next) => next(),
 }))
 // 排班權限：這裡用 req.user.canSchedule 代表（管理員、被指定的排班人員…），規則本身在 scheduleAccessService 的測試
 jest.unstable_mockModule('../src/middleware/scheduleAccess.js', () => ({

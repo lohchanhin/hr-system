@@ -9,8 +9,7 @@ FONTS_DIR="$SCRIPT_DIR/fonts"
 FONT_URL="https://github.com/notofonts/noto-cjk/raw/main/Sans/OTF/TraditionalChinese/NotoSansCJKtc-Regular.otf"
 FONT_FILE="$FONTS_DIR/NotoSansCJKtc-Regular.otf"
 # SHA256 checksum for verification (update this when font version changes)
-# This is an example - actual checksum should be verified
-EXPECTED_CHECKSUM=""
+EXPECTED_CHECKSUM="dce08bd4fd91aa8aa76ed8fea4b694c2dfb8550f67871e326843212ddbeb88b4"
 
 echo "正在設置 PDF 繁體中文字型..."
 echo "Setting up Traditional Chinese fonts for PDF generation..."
@@ -74,6 +73,16 @@ if [ -f "$FONT_FILE" ]; then
     else
         echo "  警告：檔案類型可能不正確 / Warning: File type may be incorrect"
         echo "  類型 / Type: $FILE_TYPE"
+    fi
+
+    # Verify SHA256 checksum if configured
+    if [ -n "$EXPECTED_CHECKSUM" ] && command -v sha256sum &> /dev/null; then
+        ACTUAL_CHECKSUM=$(sha256sum "$FONT_FILE" | awk '{print $1}')
+        if [ "$ACTUAL_CHECKSUM" = "$EXPECTED_CHECKSUM" ]; then
+            echo "  SHA256 校驗 / Checksum: ✓ Matched"
+        else
+            echo "  警告：SHA256 校驗不符 / Warning: Checksum mismatch (expected $EXPECTED_CHECKSUM, got $ACTUAL_CHECKSUM)"
+        fi
     fi
 else
     echo ""

@@ -125,6 +125,60 @@ async function loadShiftMap() {
   return map;
 }
 
+export function getRegimeConfig(regime = 'standard') {
+  switch (regime) {
+    case 'two_week':
+      return {
+        regime: 'two_week',
+        dailyRegularMinutes: 10 * 60,
+        periodWeeks: 2,
+        periodDays: 14,
+        periodRegularMinutes: 80 * 60,
+        minRegularRestInPeriod: 2,
+        minRestDayInPeriod: 2,
+        minTotalRestInPeriod: 4,
+        maxContinuousWorkDays: 6,
+      };
+    case 'four_week':
+      return {
+        regime: 'four_week',
+        dailyRegularMinutes: 10 * 60,
+        periodWeeks: 4,
+        periodDays: 28,
+        periodRegularMinutes: 160 * 60,
+        minRegularRestInPeriod: 4,
+        minRestDayInPeriod: 4,
+        minTotalRestInPeriod: 8,
+        maxContinuousWorkDays: 12,
+      };
+    case 'eight_week':
+      return {
+        regime: 'eight_week',
+        dailyRegularMinutes: 8 * 60,
+        periodWeeks: 8,
+        periodDays: 56,
+        periodRegularMinutes: 320 * 60,
+        minRegularRestInPeriod: 8,
+        minRestDayInPeriod: 8,
+        minTotalRestInPeriod: 16,
+        maxContinuousWorkDays: 6,
+      };
+    case 'standard':
+    default:
+      return {
+        regime: 'standard',
+        dailyRegularMinutes: MAX_REGULAR_WORK_MINUTES_PER_DAY,
+        periodWeeks: 1,
+        periodDays: 7,
+        periodRegularMinutes: 40 * 60,
+        minRegularRestInPeriod: 1,
+        minRestDayInPeriod: 1,
+        minTotalRestInPeriod: 2,
+        maxContinuousWorkDays: MAX_CONTINUOUS_NON_REST_DAYS,
+      };
+  }
+}
+
 async function loadLaborRulePolicy() {
   const query = AttendanceSetting.findOne();
   const setting = query && typeof query.lean === 'function' ? await query.lean() : await query;
@@ -135,8 +189,13 @@ async function loadLaborRulePolicy() {
   const extendedOvertimeEnabled = Boolean(
     rules.extendedOvertimeEnabled && String(rules.overtimeApprovalReference || '').trim(),
   );
+  const requestedRegime = rules.workTimeRegime || 'standard';
+  const hasRegimeReference = Boolean(String(rules.workTimeRegimeApprovalReference || '').trim());
+  const effectiveRegime = requestedRegime !== 'standard' && hasRegimeReference ? requestedRegime : 'standard';
   return {
-    workTimeRegime: rules.workTimeRegime || 'standard',
+    workTimeRegime: requestedRegime,
+    effectiveRegime,
+    workTimeRegimeAnchorDate: rules.workTimeRegimeAnchorDate || '2026-01-05',
     minShiftRestMinutes: restExceptionEnabled
       ? Math.max(Number(rules.restIntervalExceptionMinutes) || 480, 480)
       : Math.max(Number(rules.minShiftRestMinutes) || MIN_REST_BETWEEN_SHIFTS_MINUTES, MIN_REST_BETWEEN_SHIFTS_MINUTES),
@@ -279,7 +338,7 @@ function buildValidationRange(candidateSchedules, range) {
   };
 }
 
-function validateDailyHours(grouped, shiftMap) {
+function validateDailyHours(grouped, shiftMap, maxRegularMinutes = MAX_REGULAR_WORK_MINUTES_PER_DAY) {
   const violations = [];
   for (const [employee, schedules] of grouped) {
     for (const schedule of schedules) {
@@ -293,11 +352,11 @@ function validateDailyHours(grouped, shiftMap) {
           { employee, date: dateKey(schedule.date), minutes: span.workMinutes },
         ));
       }
-      if (span.workMinutes > MAX_REGULAR_WORK_MINUTES_PER_DAY) {
+      if (span.workMinutes > maxRegularMinutes) {
         violations.push(makeViolation(
           'regular-work-hours',
-          `正常班每日工時不得超過8小時：${dateKey(schedule.date)} 已排 ${(span.workMinutes / 60).toFixed(1)} 小時`,
-          { employee, date: dateKey(schedule.date), minutes: span.workMinutes },
+          `正常班每日工時不得超過${maxRegularMinutes / 60}小時：${dateKey(schedule.date)} 已排 ${(span.workMinutes / 60).toFixed(1)} 小時`,
+          { employee, date: dateKey(schedule.date), minutes: span.workMinutes, limitMinutes: maxRegularMinutes },
         ));
       }
     }
@@ -341,6 +400,7 @@ function validateContinuousNonRestDays(
   { start, end },
   leaveDaysMap = new Map(),
   holidayDaysByEmployee = new Map(),
+  maxContinuousDays = MAX_CONTINUOUS_NON_REST_DAYS,
 ) {
   const violations = [];
   for (const [employee, schedules] of grouped) {
@@ -365,13 +425,13 @@ function validateContinuousNonRestDays(
         }
       }
       streak.push(key);
-      if (streak.length > MAX_CONTINUOUS_NON_REST_DAYS) {
+      if (streak.length > maxContinuousDays) {
         violations.push(makeViolation(
           'continuous-work-days',
-          `不得連續7日未安排休/例：${streak.slice(-7).join('、')}`,
-          { employee, dates: streak.slice(-7) },
+          `不得連續${maxContinuousDays + 1}日未安排休/例：${streak.slice(-(maxContinuousDays + 1)).join('、')}`,
+          { employee, dates: streak.slice(-(maxContinuousDays + 1)) },
         ));
-        streak = streak.slice(-6);
+        streak = streak.slice(-maxContinuousDays);
       }
     }
   }
@@ -531,6 +591,184 @@ function crossMonthViolationNote(outsideDates, missingDates, lacking, notEmploye
   return `（此週跨月：${outsideText} 屬相鄰月份，${dateRangeText(scheduledOutside)} 已排班；${dateRangeText(missingDates)} ${shortfall}${notEmployedNote}）`;
 }
 
+function resolveAnchorMonday(anchorDateStr, fallbackDate) {
+  const parsed = anchorDateStr ? startOfUtcDay(`${anchorDateStr}T00:00:00.000Z`) : null;
+  if (parsed) return weekStartMonday(parsed);
+  return weekStartMonday(fallbackDate);
+}
+
+function alignPeriodStart(targetDate, anchorMonday, periodDays) {
+  const diffDays = Math.floor((targetDate.getTime() - anchorMonday.getTime()) / MS_PER_DAY);
+  const periodIndex = Math.floor(diffDays / periodDays);
+  return addUtcDays(anchorMonday, periodIndex * periodDays);
+}
+
+function validateRegimePeriodRestAndHours(
+  grouped,
+  shiftMap,
+  { strictStart, strictEnd },
+  policy,
+  regimeConfig,
+  employmentWindows = new Map(),
+) {
+  if (regimeConfig.regime === 'standard') {
+    return validateWeeklyRest(grouped, shiftMap, { strictStart, strictEnd }, employmentWindows);
+  }
+
+  const violations = [];
+  const pendingWeeks = [];
+  const periodDays = regimeConfig.periodDays;
+  const anchorMonday = resolveAnchorMonday(policy.workTimeRegimeAnchorDate, strictStart);
+
+  for (const [employee, schedules] of grouped) {
+    const byDate = new Map(schedules.map((schedule) => [dateKey(schedule.date), schedule]));
+    const employmentWindow = employmentWindows.get(employee);
+    const lastScheduledKey = employmentWindow?.resigned && !employmentWindow.resignKey
+      ? (Array.from(byDate.keys()).sort().pop() || '')
+      : '';
+    const firstPeriodStart = alignPeriodStart(strictStart, anchorMonday, periodDays);
+
+    for (let periodStart = firstPeriodStart; periodStart < strictEnd; periodStart = addUtcDays(periodStart, periodDays)) {
+      const periodEnd = addUtcDays(periodStart, periodDays);
+      const outsideDates = [];
+      const missingDates = [];
+      const notEmployedDates = [];
+      let hasScheduledInStrictRange = false;
+      let regularRestCount = 0;
+      let restDayCount = 0;
+      let totalRegularMinutes = 0;
+
+      for (let pointer = new Date(periodStart); pointer < periodEnd; pointer = addUtcDays(pointer, 1)) {
+        const key = dateKey(pointer);
+        const isOutside = pointer < strictStart || pointer >= strictEnd;
+        const schedule = byDate.get(key);
+        if (isOutside) {
+          outsideDates.push(key);
+          if (!schedule) {
+            if (isEmployedOn(employmentWindow, key, lastScheduledKey)) missingDates.push(key);
+            else notEmployedDates.push(key);
+            continue;
+          }
+        } else if (schedule) {
+          hasScheduledInStrictRange = true;
+        }
+        if (!schedule) continue;
+
+        const shift = shiftMap.get(normalizeId(schedule.shiftId));
+        const classification = classifyShift(shift);
+        if (classification.isRegularRest) regularRestCount += 1;
+        else if (classification.isRestDay) restDayCount += 1;
+        else {
+          const span = getWorkSpan(schedule, shift);
+          if (span) {
+            totalRegularMinutes += Math.min(span.workMinutes, regimeConfig.dailyRegularMinutes);
+          }
+        }
+      }
+
+      if (!hasScheduledInStrictRange) continue;
+
+      const periodStartKey = dateKey(periodStart);
+      const periodEndKey = dateKey(addUtcDays(periodEnd, -1));
+
+      if (totalRegularMinutes > regimeConfig.periodRegularMinutes) {
+        violations.push(makeViolation(
+          'regime-period-regular-hours',
+          `${regimeConfig.periodWeeks}週變形工時週期正常工時不得超過 ${regimeConfig.periodRegularMinutes / 60} 小時（${periodStartKey}～${periodEndKey} 已排 ${(totalRegularMinutes / 60).toFixed(1)} 小時）`,
+          {
+            employee,
+            regime: regimeConfig.regime,
+            periodStart: periodStartKey,
+            periodEnd: periodEndKey,
+            totalRegularMinutes,
+            limitMinutes: regimeConfig.periodRegularMinutes,
+          },
+        ));
+      }
+
+      // Check sub-window regular rest rules:
+      // - four_week: every 14 days must have >= 2 regular rests
+      // - two_week / eight_week: every 7 days must have >= 1 regular rest
+      const subWindowDays = regimeConfig.regime === 'four_week' ? 14 : 7;
+      const requiredSubRegularRest = regimeConfig.regime === 'four_week' ? 2 : 1;
+      for (let subStart = new Date(periodStart); subStart < periodEnd; subStart = addUtcDays(subStart, subWindowDays)) {
+        const subEnd = addUtcDays(subStart, subWindowDays);
+        let subRegularRest = 0;
+        let subMissing = 0;
+        let subHasStrict = false;
+        for (let p = new Date(subStart); p < subEnd; p = addUtcDays(p, 1)) {
+          const k = dateKey(p);
+          const s = byDate.get(k);
+          if (p >= strictStart && p < strictEnd && s) subHasStrict = true;
+          if (!s) {
+            if ((p < strictStart || p >= strictEnd) && isEmployedOn(employmentWindow, k, lastScheduledKey)) {
+              subMissing += 1;
+            }
+            continue;
+          }
+          if (classifyShift(shiftMap.get(normalizeId(s.shiftId))).isRegularRest) {
+            subRegularRest += 1;
+          }
+        }
+        const subShortfall = Math.max(0, requiredSubRegularRest - subRegularRest);
+        if (subHasStrict && subShortfall > subMissing) {
+          violations.push(makeViolation(
+            regimeConfig.regime === 'four_week' ? 'four-week-regular-rest' : 'weekly-one-regular-rest-one-rest-day',
+            `${regimeConfig.regime === 'four_week' ? '每兩週' : '每7天'}至少需安排 ${requiredSubRegularRest} 天例假：${dateKey(subStart)}～${dateKey(addUtcDays(subEnd, -1))} 僅排 ${subRegularRest} 天`,
+            {
+              employee,
+              regime: regimeConfig.regime,
+              periodStart: dateKey(subStart),
+              periodEnd: dateKey(addUtcDays(subEnd, -1)),
+              regularRestCount: subRegularRest,
+            },
+          ));
+        }
+      }
+
+      const regularShortfall = Math.max(0, regimeConfig.minRegularRestInPeriod - regularRestCount);
+      const totalRestShortfall = Math.max(0, regimeConfig.minTotalRestInPeriod - (regularRestCount + restDayCount));
+      const restShortfall = Math.max(regularShortfall, totalRestShortfall);
+      if (restShortfall === 0) continue;
+      if (!missingDates.length && notEmployedDates.length) continue;
+
+      if (restShortfall > missingDates.length) {
+        violations.push(makeViolation(
+          'regime-period-rest',
+          `${regimeConfig.periodWeeks}週變形工時週期（${periodStartKey}～${periodEndKey}）至少需 ${regimeConfig.minTotalRestInPeriod} 天例假與休息日（含至少 ${regimeConfig.minRegularRestInPeriod} 天例假），目前僅排 例:${regularRestCount} 休:${restDayCount}`,
+          {
+            employee,
+            regime: regimeConfig.regime,
+            periodStart: periodStartKey,
+            periodEnd: periodEndKey,
+            regularRestCount,
+            restDayCount,
+          },
+        ));
+      } else {
+        pendingWeeks.push(makeViolation(
+          'weekly-rest-pending',
+          `跨月變形工時週期（${periodStartKey}～${periodEndKey}）：${dateRangeText(missingDates)} 尚未排班，暫時無法判斷週期例休總數`,
+          {
+            employee,
+            weekStart: periodStartKey,
+            weekEnd: periodEndKey,
+            regularRestCount,
+            restDayCount,
+            missingDates,
+            missingMonths: Array.from(new Set(missingDates.map((key) => key.slice(0, 7)))).sort(),
+          },
+        ));
+      }
+    }
+  }
+
+  pendingWeeks.sort((a, b) => (
+    a.weekStart.localeCompare(b.weekStart) || String(a.employee).localeCompare(String(b.employee))
+  ));
+  return { violations, pendingWeeks };
+}
+
 export async function assertScheduleRuleCompliance({
   candidateSchedules,
   ignoredScheduleIds = [],
@@ -541,6 +779,7 @@ export async function assertScheduleRuleCompliance({
   if (!normalizedCandidates.length && !range) return { ok: true, violations: [] };
 
   const [shiftMap, policy] = await Promise.all([loadShiftMap(), loadLaborRulePolicy()]);
+  const regimeConfig = getRegimeConfig(policy.effectiveRegime);
   const allEmployeeIds = Array.from(new Set(normalizedCandidates.map((item) => item.employee).filter(Boolean)));
   if (!allEmployeeIds.length) return { ok: true, violations: [] };
 
@@ -553,7 +792,15 @@ export async function assertScheduleRuleCompliance({
     ? normalizedCandidates.filter((item) => !exemptIds.has(item.employee))
     : normalizedCandidates;
 
-  const validationRange = buildValidationRange(ruleCandidates, range);
+  const baseRange = buildValidationRange(ruleCandidates, range);
+  const queryStart = regimeConfig.periodDays > 7 && strictWeeklyRest
+    ? addUtcDays(baseRange.strictStart, -regimeConfig.periodDays)
+    : baseRange.start;
+  const queryEnd = regimeConfig.periodDays > 7 && strictWeeklyRest
+    ? addUtcDays(baseRange.strictEnd, regimeConfig.periodDays)
+    : baseRange.end;
+  const validationRange = { ...baseRange, start: queryStart, end: queryEnd };
+
   const existing = await resolveLean(ShiftSchedule.find({
     employee: { $in: employeeIds },
     date: { $gte: validationRange.start, $lt: validationRange.end },
@@ -601,16 +848,29 @@ export async function assertScheduleRuleCompliance({
   const touchesStrictRange = (violation) => [violation.date, violation.previousDate, ...(violation.dates || [])]
     .some((key) => key && key >= strictStartKey && key < strictEndKey);
   const violations = [
-    ...validateDailyHours(grouped, shiftMap),
+    ...validateDailyHours(grouped, shiftMap, regimeConfig.dailyRegularMinutes),
     ...validateShiftGap(grouped, shiftMap, policy.minShiftRestMinutes),
-    ...validateContinuousNonRestDays(grouped, shiftMap, validationRange, leaveDaysMap, holidayDaysByEmployee),
+    ...validateContinuousNonRestDays(
+      grouped,
+      shiftMap,
+      validationRange,
+      leaveDaysMap,
+      holidayDaysByEmployee,
+      regimeConfig.maxContinuousWorkDays,
+    ),
   ].filter(touchesStrictRange);
-  // The customer's internal policy remains stricter than flexible-work-time minima.
   let pendingWeeks = [];
   if (strictWeeklyRest) {
-    const weekly = validateWeeklyRest(grouped, shiftMap, validationRange, employmentWindows);
-    violations.push(...weekly.violations);
-    pendingWeeks = weekly.pendingWeeks;
+    const periodResult = validateRegimePeriodRestAndHours(
+      grouped,
+      shiftMap,
+      validationRange,
+      policy,
+      regimeConfig,
+      employmentWindows,
+    );
+    violations.push(...periodResult.violations);
+    pendingWeeks = periodResult.pendingWeeks;
   }
 
   if (violations.length) {
@@ -1158,4 +1418,5 @@ export const __testUtils = {
   classifyShift,
   normalizeId,
   parseOvertimePayload,
+  validateRegimePeriodRestAndHours,
 };

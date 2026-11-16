@@ -1,14 +1,14 @@
 import mongoose from 'mongoose';
 import PayrollRecord from '../models/PayrollRecord.js';
 import Employee from '../models/Employee.js';
-import { findInsuranceLevelBySalary } from './laborInsuranceService.js';
+import { findInsuranceLevelBySalary, findHealthInsuranceLevelBySalary } from './laborInsuranceService.js';
 import { calculateCompleteWorkData } from './workHoursCalculationService.js';
 import { calculateLateEarlyDeductions } from './attendanceDeductionService.js';
 import { calculateNightShiftAllowance } from './nightShiftAllowanceService.js';
 import ApprovalRequest from '../models/approval_request.js';
 import { aggregateBonusFromApprovals, loadBonusFieldsByForm } from '../utils/payrollPreviewUtils.js';
 import { approvedInMonthFilter, payrollMonthRange } from '../utils/payrollMonth.js';
-import { extractRecurringAllowance } from '../config/salaryConfig.js';
+import { extractRecurringAllowance, checkMinimumWageCompliance } from '../config/salaryConfig.js';
 import { loadPayrollPolicy } from './payrollPolicyService.js';
 
 // 金額一律是整數元：設定值帶小數（例如每次遲到扣 33.5 元、津貼 1000.5 元）或不是數字時，
@@ -106,15 +106,44 @@ export async function calculateEmployeePayroll(employeeId, month, customData = {
     console.error(`Error calculating night shift allowance for employee ${employeeId}:`, error);
   }
   
-  // 查找勞保等級（整批計算時呼叫端已把級距表讀好放在 context.insuranceRates，不必每位員工各查一次）
+  // 查找勞保等級：優先使用員工申報投保薪資 (laborInsuredSalary)，否則使用本薪（整批計算時已預先載入級距表）
+  const laborInsuranceTarget = baseSalary <= 0 && !(Number(employee.laborInsuredSalary) > 0)
+    ? 0
+    : (Number(employee.laborInsuredSalary) > 0 ? Number(employee.laborInsuredSalary) : baseSalary);
   const insuranceRate = context.insuranceRates
-    ? await findInsuranceLevelBySalary(baseSalary, context.insuranceRates)
-    : await findInsuranceLevelBySalary(baseSalary);
+    ? await findInsuranceLevelBySalary(laborInsuranceTarget, context.insuranceRates)
+    : await findInsuranceLevelBySalary(laborInsuranceTarget);
   const laborInsuranceFee = toMoney(customData.laborInsuranceFee ?? (insuranceRate?.workerFee || 0));
-  
-  // 健保費自付額 (優先使用自定義值，然後使用員工設定的每月調整項目，最後默認為0)
-  const healthInsuranceFee = toMoney(customData.healthInsuranceFee ??
-                             employee.monthlySalaryAdjustments?.healthInsuranceFee ?? 0);
+
+  // 健保費自付額：優先使用自定義或每月手動覆寫；若設定了健保投保薪資或眷屬人數，則依健保級距 × (1 + min(眷屬人數, 3)) 自動計算
+  const hasManualHealthOverride =
+    customData.healthInsuranceFee != null ||
+    (employee.monthlySalaryAdjustments?.healthInsuranceFee !== undefined &&
+      employee.monthlySalaryAdjustments?.healthInsuranceFee !== null &&
+      employee.monthlySalaryAdjustments?.healthInsuranceFee !== '');
+  let healthInsuranceFee = 0;
+  if (hasManualHealthOverride) {
+    healthInsuranceFee = toMoney(customData.healthInsuranceFee ?? employee.monthlySalaryAdjustments?.healthInsuranceFee ?? 0);
+  } else if (Number(employee.healthInsuredSalary) > 0 || Number(employee.dependentCount) > 0) {
+    const healthTarget = Number(employee.healthInsuredSalary) > 0
+      ? Number(employee.healthInsuredSalary)
+      : (Number(employee.laborInsuredSalary) > 0 ? Number(employee.laborInsuredSalary) : baseSalary);
+    if (healthTarget > 0) {
+      const healthRate = await findHealthInsuranceLevelBySalary(healthTarget, context.healthInsuranceRates);
+      const cappedDependents = Math.min(Math.max(Number(employee.dependentCount) || 0, 0), 3);
+      healthInsuranceFee = toMoney((healthRate?.workerFee || 0) * (1 + cappedDependents));
+    }
+  }
+
+  // 2026 最低工資合規警示（非阻擋）
+  const complianceWarnings = [];
+  if (baseSalary > 0) {
+    const wageSource = Number(employee.salaryAmount) > 0 ? Number(employee.salaryAmount) : baseSalary;
+    const wageCheck = checkMinimumWageCompliance(wageSource, employee.salaryType || '月薪', Boolean(employee.partTime));
+    if (!wageCheck.compliant && wageCheck.warning) {
+      complianceWarnings.push(wageCheck.warning);
+    }
+  }
   
   // 勞退個人提繳 (從員工資料獲取或自定義)
   const laborPensionSelf = toMoney(customData.laborPensionSelf ?? employee.laborPensionSelf ?? 0);
@@ -208,6 +237,7 @@ export async function calculateEmployeePayroll(employeeId, month, customData = {
     overtimeHours: customData.overtimeHours ?? workData.overtimeHours ?? 0,
     overtimePay,
     overtimeIssues: workData.overtimeIssues ?? [],
+    complianceWarnings,
 
     // 這次套用的薪資政策：在職期間（含月中到職、離職的比例算法 employment.method）與加班費倍率
     employment: workData.employment ?? null,

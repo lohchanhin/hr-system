@@ -3,6 +3,7 @@ import express from 'express';
 import cors from 'cors';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import mongoose from 'mongoose';
 import { connectDB } from './config/db.js';
 import Employee from './models/Employee.js';
 import employeeRoutes from './routes/employeeRoutes.js';
@@ -25,7 +26,10 @@ import { countCompAliasCollisions } from './services/leavePolicyService.js';
 import { migrateLeaveFormSemantics, migrateLeaveKeywordForms } from './controllers/approvalTemplateController.js';
 import { normalizeStoredSignTags } from './controllers/employeeController.js';
 import { migrateAnnualLeaveToHours, migrateLeaveFormsToHours } from './services/leaveHoursMigration.js';
-import { authenticate, authorizeRoles } from './middleware/auth.js';
+import { authenticate, authorizeRoles, authorizePermissions } from './middleware/auth.js';
+import { PERMISSIONS } from './config/rbac.js';
+import { enforceAdminIpWhitelist } from './middleware/ipWhitelist.js';
+import auditRoutes from './routes/auditRoutes.js';
 import { requireScheduleAccess } from './middleware/scheduleAccess.js';
 import { countLegacyDeptManagers, describeScheduleAccessForStartup, migrateUnitRestShiftsOnce } from './services/scheduleAccessService.js';
 import { describeEmployeeNoUniqueness, ensureEmployeeNoUniqueIndex } from './services/employeeNoUniqueness.js';
@@ -206,29 +210,44 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'OK' });
 });
 
+app.get('/api/health/live', (req, res) => {
+  res.json({ status: 'OK' });
+});
+
+app.get('/api/health/ready', (req, res) => {
+  const dbReady = mongoose.connection?.readyState === 1;
+  if (!dbReady) {
+    return res.status(503).json({ status: 'NOT_READY', db: 'disconnected' });
+  }
+  return res.json({ status: 'OK', db: 'connected' });
+});
+
 app.use('/api', disableApiCaching);
 app.use('/api', apiRateLimiter);
 app.use('/api', apiMutationRateLimiter);
 // 查詢字串裡的 Mongo 運算子（?employee[$exists]=true）一律擋下，不讓它進到各 API 的查詢條件
 app.use('/api', rejectQueryOperators);
 app.use('/api', authRoutes);
+app.use('/api/audit-events', authenticate, enforceAdminIpWhitelist, auditRoutes);
 app.use(
   '/api/employees',
   authenticate,
+  enforceAdminIpWhitelist,
   (req, res, next) => {
     if (req.method === 'GET') {
-      return authorizeRoles('admin', 'supervisor', 'employee')(req, res, next);
+      return authorizePermissions(PERMISSIONS.EMPLOYEE_READ)(req, res, next);
     }
-    return authorizeRoles('admin')(req, res, next);
+    return authorizePermissions(PERMISSIONS.EMPLOYEE_WRITE)(req, res, next);
   },
   employeeRoutes
 );
-app.use('/api/attendance', authenticate, authorizeRoles('employee', 'supervisor', 'admin'), attendanceRoutes);
-app.use('/api/roles', authenticate, authorizeRoles('admin', 'supervisor'), roleRoutes);
+app.use('/api/attendance', authenticate, authorizePermissions(PERMISSIONS.ATTENDANCE_READ), attendanceRoutes);
+app.use('/api/roles', authenticate, authorizeRoles('admin', 'supervisor', 'hr_admin', 'payroll_admin', 'auditor'), roleRoutes);
 app.use(
   '/api/attendance-settings',
   authenticate,
-  authorizeRoles('admin'),
+  enforceAdminIpWhitelist,
+  authorizePermissions(PERMISSIONS.ATTENDANCE_SETTING_WRITE),
   attendanceSettingRoutes
 );
 
@@ -237,9 +256,9 @@ app.use(
   authenticate,
   (req, res, next) => {
     if (req.method === 'GET') {
-      return authorizeRoles('employee', 'supervisor', 'admin')(req, res, next);
+      return authorizePermissions(PERMISSIONS.SCHEDULE_READ)(req, res, next);
     }
-    return authorizeRoles('admin')(req, res, next);
+    return authorizePermissions(PERMISSIONS.ATTENDANCE_SETTING_WRITE)(req, res, next);
   },
   shiftRoutes
 );
@@ -256,7 +275,7 @@ app.use(
       if (req.path?.startsWith('/export')) {
         return requireScheduleAccess()(req, res, next);
       }
-      return authorizeRoles('employee', 'supervisor', 'admin')(req, res, next);
+      return authorizePermissions(PERMISSIONS.SCHEDULE_READ)(req, res, next);
     }
     const requestPath = req.path ?? '';
     const pathSegments = requestPath.split('/').filter(Boolean);
@@ -264,34 +283,61 @@ app.use(
       req.method === 'POST' &&
       (pathSegments[0] === 'respond' || pathSegments[1] === 'respond');
     if (isRespondPost) {
-      return authorizeRoles('employee', 'supervisor', 'admin')(req, res, next);
+      return authorizePermissions(PERMISSIONS.SCHEDULE_READ)(req, res, next);
     }
     return requireScheduleAccess()(req, res, next);
   },
   scheduleRoutes
 );
-app.use('/api/payroll', authenticate, authorizeRoles('admin'), payrollRoutes);
+app.use(
+  '/api/payroll',
+  authenticate,
+  enforceAdminIpWhitelist,
+  (req, res, next) => {
+    if (req.method === 'GET') {
+      return authorizePermissions(PERMISSIONS.PAYROLL_READ)(req, res, next);
+    }
+    if (req.path?.includes('/export')) {
+      return authorizePermissions(PERMISSIONS.PAYROLL_EXPORT)(req, res, next);
+    }
+    return authorizePermissions(PERMISSIONS.PAYROLL_WRITE)(req, res, next);
+  },
+  payrollRoutes
+);
 app.use(
   '/api/reports',
   authenticate,
+  enforceAdminIpWhitelist,
   (req, res, next) => {
     if (req.method === 'GET') {
       if (req.path?.startsWith('/department')) {
-        return authorizeRoles('admin', 'supervisor')(req, res, next);
+        return authorizePermissions(PERMISSIONS.REPORT_DEPARTMENT_READ)(req, res, next);
       }
-      return authorizeRoles('admin')(req, res, next);
+      return authorizePermissions(PERMISSIONS.REPORT_ADMIN_READ)(req, res, next);
     }
-    return authorizeRoles('admin')(req, res, next);
+    return authorizePermissions(PERMISSIONS.SYSTEM_SETTING_WRITE)(req, res, next);
   },
   reportRoutes
 );
-app.use('/api/insurance', authenticate, authorizeRoles('admin'), insuranceRoutes);
+app.use(
+  '/api/insurance',
+  authenticate,
+  enforceAdminIpWhitelist,
+  (req, res, next) => {
+    if (req.method === 'GET') {
+      return authorizePermissions(PERMISSIONS.INSURANCE_READ)(req, res, next);
+    }
+    return authorizePermissions(PERMISSIONS.INSURANCE_WRITE)(req, res, next);
+  },
+  insuranceRoutes
+);
 app.use('/api/approvals', authenticate, approvalRoutes);
 app.use('/api/menu', authenticate, menuRoutes);
 app.use(
   '/api/other-control-settings',
   authenticate,
-  authorizeRoles('admin'),
+  enforceAdminIpWhitelist,
+  authorizePermissions(PERMISSIONS.SYSTEM_SETTING_WRITE),
   otherControlSettingRoutes
 );
 app.use(
@@ -299,9 +345,9 @@ app.use(
   authenticate,
   (req, res, next) => {
     if (req.method === 'GET') {
-      return authorizeRoles('admin', 'supervisor', 'employee')(req, res, next);
+      return authorizePermissions(PERMISSIONS.ORG_READ)(req, res, next);
     }
-    return authorizeRoles('admin')(req, res, next);
+    return authorizePermissions(PERMISSIONS.ORG_WRITE)(req, res, next);
   },
   departmentRoutes
 );
@@ -310,9 +356,9 @@ app.use(
   authenticate,
   (req, res, next) => {
     if (req.method === 'GET') {
-      return authorizeRoles('admin', 'supervisor', 'employee')(req, res, next);
+      return authorizePermissions(PERMISSIONS.ORG_READ)(req, res, next);
     }
-    return authorizeRoles('admin')(req, res, next);
+    return authorizePermissions(PERMISSIONS.ORG_WRITE)(req, res, next);
   },
   organizationRoutes
 );
@@ -322,47 +368,58 @@ app.use(
   authenticate,
   (req, res, next) => {
     if (req.method === 'GET') {
-      return requireScheduleAccess({ allowRoles: ['admin', 'supervisor'] })(req, res, next);
+      return requireScheduleAccess({ allowRoles: ['admin', 'supervisor', 'hr_admin', 'auditor'] })(req, res, next);
     }
-    return authorizeRoles('admin')(req, res, next);
+    return authorizePermissions(PERMISSIONS.ORG_WRITE)(req, res, next);
   },
   subDepartmentRoutes
 );
-app.use('/api/dept-schedules', authenticate, authorizeRoles('admin'), deptScheduleRoutes);
+app.use('/api/dept-schedules', authenticate, enforceAdminIpWhitelist, authorizePermissions(PERMISSIONS.SCHEDULE_WRITE, PERMISSIONS.ORG_WRITE), deptScheduleRoutes);
 
-app.use('/api/dept-managers', authenticate, authorizeRoles('admin'), deptManagerRoutes);
+app.use('/api/dept-managers', authenticate, enforceAdminIpWhitelist, authorizePermissions(PERMISSIONS.SCHEDULE_WRITE, PERMISSIONS.ORG_WRITE), deptManagerRoutes);
 
-app.use('/api/holidays', authenticate, authorizeRoles('admin'), holidayRoutes);
+app.use('/api/holidays', authenticate, enforceAdminIpWhitelist, authorizePermissions(PERMISSIONS.ATTENDANCE_SETTING_WRITE), holidayRoutes);
 // 排班頁面用的假日讀取開放給所有已登入使用者；寫入（新增、修改、刪除、匯入）仍只有管理員
 app.use(
   '/api/holidays-public',
   authenticate,
   (req, res, next) => {
     if (req.method === 'GET' || req.method === 'HEAD') return next();
-    return authorizeRoles('admin')(req, res, next);
+    return authorizePermissions(PERMISSIONS.ATTENDANCE_SETTING_WRITE)(req, res, next);
   },
   holidayRoutes
 );
 // 行事曆設定（年度草稿、政府資料差異、核定）只有管理員；國定假日的標示與年度狀態給所有已登入使用者讀取
-app.use('/api/company-calendar', authenticate, authorizeRoles('admin'), companyCalendarRoutes);
-app.use('/api/holiday-calendar', authenticate, authorizeRoles('employee', 'supervisor', 'admin'), holidayCalendarViewRoutes);
+app.use('/api/company-calendar', authenticate, enforceAdminIpWhitelist, authorizePermissions(PERMISSIONS.ATTENDANCE_SETTING_WRITE), companyCalendarRoutes);
+app.use('/api/holiday-calendar', authenticate, authorizePermissions(PERMISSIONS.ATTENDANCE_READ, PERMISSIONS.SCHEDULE_READ), holidayCalendarViewRoutes);
 
-app.use('/api/salary-settings', authenticate, authorizeRoles('admin'), salarySettingRoutes);
-app.use('/api/holiday-move-settings', authenticate, authorizeRoles('admin'), holidayMoveSettingRoutes);
+app.use(
+  '/api/salary-settings',
+  authenticate,
+  enforceAdminIpWhitelist,
+  (req, res, next) => {
+    if (req.method === 'GET') {
+      return authorizePermissions(PERMISSIONS.PAYROLL_READ, PERMISSIONS.SALARY_SETTING_WRITE)(req, res, next);
+    }
+    return authorizePermissions(PERMISSIONS.SALARY_SETTING_WRITE)(req, res, next);
+  },
+  salarySettingRoutes
+);
+app.use('/api/holiday-move-settings', authenticate, enforceAdminIpWhitelist, authorizePermissions(PERMISSIONS.ATTENDANCE_SETTING_WRITE), holidayMoveSettingRoutes);
 // 國定假日休假紀錄：查詢依班表的權限範圍（員工只看自己）；匯出與登記處理方式只有有排班權限的人（管理員、主管、排班人員；路由檔內再擋一次）
 app.use(
   '/api/holiday-ledger',
   authenticate,
   (req, res, next) => {
     if (req.method === 'GET' && !req.path?.startsWith('/export')) {
-      return authorizeRoles('employee', 'supervisor', 'admin')(req, res, next);
+      return authorizePermissions(PERMISSIONS.ATTENDANCE_READ, PERMISSIONS.SCHEDULE_READ)(req, res, next);
     }
     return requireScheduleAccess()(req, res, next);
   },
   holidayLedgerRoutes
 );
 // 調休存摺：員工看自己的、主管看直屬部屬的（不論排班權限模式）、排班人員看排班範圍內的（不含人資備註）、管理員看所有人；手動給予、扣除、作廢只有管理員（路由檔內再擋一次）
-app.use('/api/compensatory-leave', authenticate, authorizeRoles('employee', 'supervisor', 'admin'), compensatoryLeaveRoutes);
+app.use('/api/compensatory-leave', authenticate, authorizePermissions(PERMISSIONS.ATTENDANCE_READ, PERMISSIONS.SCHEDULE_READ), compensatoryLeaveRoutes);
 
 app.use('/api', apiNotFound);
 app.get('*', (req, res, next) => {
@@ -540,11 +597,45 @@ async function start() {
     await ensureAdminUser();
     await ensureDefaultSupervisorReports();
     await initializeLaborInsuranceRates();
-    app.listen(PORT, () => {
+    let watcherHandle = null;
+    const server = app.listen(PORT, () => {
       console.log(`Server running on port ${PORT}`);
       // 每天檢查政府辦公日曆表（5 月起）並重新計算國定假日補假；HOLIDAY_CALENDAR_WATCHER=off 可停用
-      if (process.env.HOLIDAY_CALENDAR_WATCHER !== 'off') startHolidayCalendarWatcher({ dailyTasks: [syncRecentHolidayCompensations] });
+      if (process.env.HOLIDAY_CALENDAR_WATCHER !== 'off') {
+        watcherHandle = startHolidayCalendarWatcher({ dailyTasks: [syncRecentHolidayCompensations] });
+      }
     });
+
+    let shuttingDown = false;
+    const shutdown = async (signal) => {
+      if (shuttingDown) return;
+      shuttingDown = true;
+      console.log(`Received ${signal}, starting graceful shutdown...`);
+      try {
+        watcherHandle?.stop?.();
+      } catch (stopErr) {
+        console.error('Error stopping holiday calendar watcher:', stopErr?.name ?? 'Error');
+      }
+      const forceExitTimer = setTimeout(() => {
+        console.error('Graceful shutdown timed out after 10s, forcing exit.');
+        process.exit(1);
+      }, 10000);
+      forceExitTimer.unref?.();
+
+      await new Promise((resolve) => {
+        server.close(() => resolve());
+      });
+      try {
+        await mongoose.disconnect();
+      } catch (dbErr) {
+        console.error('Error disconnecting MongoDB:', dbErr?.name ?? 'Error');
+      }
+      clearTimeout(forceExitTimer);
+      process.exit(0);
+    };
+
+    process.once('SIGTERM', () => shutdown('SIGTERM'));
+    process.once('SIGINT', () => shutdown('SIGINT'));
   } catch (err) {
     console.error('Failed to start server:', err);
     process.exit(1);

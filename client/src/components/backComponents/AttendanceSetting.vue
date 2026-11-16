@@ -138,6 +138,7 @@
             </el-select>
           </div>
           <p class="hr-hint">排班檢核依這個制度檢查每週工時、例假與休息日。</p>
+          <p class="hr-hint" data-test="regime-statutory-summary">{{ regimeStatutorySummary }}</p>
         </div>
         <div
           v-if="laborRuleForm.workTimeRegime !== 'standard'"
@@ -150,6 +151,16 @@
           </div>
           <p class="hr-hint">工會或勞資會議同意採用變形工時的文號。</p>
           <p v-if="errors.workTimeRegimeApprovalReference" class="setting-error">{{ errors.workTimeRegimeApprovalReference }}</p>
+        </div>
+        <div
+          v-if="laborRuleForm.workTimeRegime !== 'standard'"
+          class="setting-field"
+        >
+          <span class="setting-label">變形工時週期起始日</span>
+          <div class="setting-control">
+            <el-input v-model="laborRuleForm.workTimeRegimeAnchorDate" placeholder="YYYY-MM-DD（預設 2026-01-05）" maxlength="10" data-test="regime-anchor-date" />
+          </div>
+          <p class="hr-hint">多週期（二／四／八週）計算對齊的起始週一日期。</p>
         </div>
       </div>
 
@@ -339,6 +350,7 @@ const defaultActionBuffers = {
 const defaultLaborRules = {
   workTimeRegime: 'standard',
   workTimeRegimeApprovalReference: '',
+  workTimeRegimeAnchorDate: '2026-01-05',
   minShiftRestMinutes: 660,
   restIntervalExceptionEnabled: false,
   restIntervalExceptionMinutes: 480,
@@ -349,6 +361,15 @@ const defaultLaborRules = {
   overtimeApprovalReference: '',
   strictCompanyWeeklyRest: true
 }
+
+const REGIME_SUMMARIES = {
+  standard: '標準單週：單日正常工時上限 8h、每週正常工時 ≤ 40h、每 7 日至少 1 例 1 休。',
+  two_week: '二週變形：單日正常工時上限 10h、每 14 日正常工時 ≤ 80h、每 7 日至少 1 例假、每 14 日至少 2 例 2 休。',
+  four_week: '四週變形：單日正常工時上限 10h、每 28 日正常工時 ≤ 160h、每 14 日至少 2 例假、每 28 日至少 4 例 4 休。',
+  eight_week: '八週變形：單日正常工時上限 8h、每 56 日正常工時 ≤ 320h、每 7 日至少 1 例假、每 56 日至少 8 例 8 休。',
+}
+
+const regimeStatutorySummary = computed(() => REGIME_SUMMARIES[laborRuleForm.workTimeRegime] || REGIME_SUMMARIES.standard)
 
 function cloneActionBuffers(source = defaultActionBuffers) {
   return { clockIn: { ...source.clockIn }, clockOut: { ...source.clockOut } }

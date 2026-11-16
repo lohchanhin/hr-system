@@ -9,7 +9,7 @@ import ApprovalRequest from '../models/approval_request.js';
 import FormTemplate from '../models/form_template.js';
 import { calculateEmployeePayroll } from './payrollService.js';
 import { calculateCompleteWorkData } from './workHoursCalculationService.js';
-import { loadInsuranceRateTable } from './laborInsuranceService.js';
+import * as laborInsuranceService from './laborInsuranceService.js';
 import { aggregateBonusFromApprovals, loadBonusFieldsByForm } from '../utils/payrollPreviewUtils.js';
 import { approvedInMonthFilter, payrollMonthRange } from '../utils/payrollMonth.js';
 import { extractRecurringAllowance } from '../config/salaryConfig.js';
@@ -24,7 +24,8 @@ const SCHEDULE_MARGIN_DAYS = 7;
 // holidayRegime、requiresScheduling、isIndigenous 是國定假日判斷要用的，帶了就不必每位員工再查一次。
 export const PAYROLL_EMPLOYEE_FIELDS = [
   'employeeId', 'name', 'department', 'subDepartment', 'organization',
-  'salaryAmount', 'salaryType', 'salaryItems', 'salaryItemAmounts', 'annualLeave', 'monthlySalaryAdjustments',
+  'salaryAmount', 'salaryType', 'partTime', 'salaryItems', 'salaryItemAmounts', 'annualLeave', 'monthlySalaryAdjustments',
+  'laborInsuredSalary', 'healthInsuredSalary', 'pensionInsuredSalary', 'dependentCount',
   'laborPensionSelf', 'employeeAdvance', 'salaryAccountA', 'salaryAccountB',
   'autoOvertimeCalc', 'status', 'appointment', 'holidayRegime', 'requiresScheduling', 'isIndigenous',
 ].join(' ');
@@ -77,7 +78,7 @@ export async function loadPayrollBatchData(employees, month) {
   const marginFrom = new Date(start.getTime() - SCHEDULE_MARGIN_DAYS * MS_PER_DAY);
   const marginTo = new Date(end.getTime() + SCHEDULE_MARGIN_DAYS * MS_PER_DAY);
   try {
-    const [attendanceSetting, schedules, attendanceRecords, insuranceRates, formTemplates] = await Promise.all([
+    const [attendanceSetting, schedules, attendanceRecords, insuranceRates, healthInsuranceRates, formTemplates] = await Promise.all([
       AttendanceSetting.findOne().lean(),
       // 月份前後各多讀幾天的班表（不算進這個月）：月初前一天那一班要認領自己的打卡（matchSchedulesPunches 的 contextOnly），
       // 跨月的請假單要知道其他月份那幾天是不是休息日（calculateLeaveImpact）
@@ -87,7 +88,12 @@ export async function loadPayrollBatchData(employees, month) {
         timestamp: { $gte: new Date(start.getTime() - MS_PER_DAY), $lt: new Date(end.getTime() + MS_PER_DAY) },
         action: { $in: ['clockIn', 'clockOut'] },
       }).lean(),
-      loadInsuranceRateTable(),
+      laborInsuranceService.loadVersionedRateTable
+        ? laborInsuranceService.loadVersionedRateTable('laborInsurance', month)
+        : laborInsuranceService.loadInsuranceRateTable?.(),
+      laborInsuranceService.loadVersionedRateTable
+        ? laborInsuranceService.loadVersionedRateTable('healthInsurance', month)
+        : Promise.resolve(null),
       // 哪些表單是加班表單（加班費只讀這些表單的單，不必每位員工把所有已核准的單讀出來再篩）
       FormTemplate.find({}).select('name semanticType').lean(),
     ]);
@@ -103,6 +109,7 @@ export async function loadPayrollBatchData(employees, month) {
       overtimeFormIds: (formTemplates || []).filter(isOvertimeFormTemplate).map((form) => form._id),
       recordsByEmployee: groupByEmployee(attendanceRecords),
       insuranceRates: insuranceRates?.length ? insuranceRates : null,
+      healthInsuranceRates: healthInsuranceRates?.length ? healthInsuranceRates : null,
     };
   } catch (error) {
     console.error('Failed to preload shared payroll data', error?.name ?? 'Error');
@@ -179,6 +186,7 @@ export async function computeEmployeePayroll({
   bonusRange,
   calculationContext,
   insuranceRates,
+  healthInsuranceRates = null,
 }) {
   const employeeIdStr = employee._id.toString();
   const hasPayrollRecord = Boolean(storedRecord);
@@ -256,6 +264,7 @@ export async function computeEmployeePayroll({
         nightShiftAllowanceData,
         calculationContext: context,
         insuranceRates,
+        healthInsuranceRates: healthInsuranceRates ?? calculationContext?.healthInsuranceRates ?? null,
         approvedBonusApplied: true,
       });
     } catch (error) {

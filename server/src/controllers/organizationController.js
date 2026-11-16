@@ -9,6 +9,22 @@ import {
   organizationUsage,
 } from '../services/orgStructureService.js';
 
+import { pickAllowedFields } from '../utils/requestSecurity.js';
+
+const ALLOWED_ORG_FIELDS = [
+  'name',
+  'systemCode',
+  'unitName',
+  'orgCode',
+  'taxIdNumber',
+  'laborInsuranceNo',
+  'healthInsuranceNo',
+  'taxCode',
+  'address',
+  'phone',
+  'principal',
+];
+
 export async function listOrganizations(req, res) {
   try {
     const organizations = await Organization.find();
@@ -20,7 +36,8 @@ export async function listOrganizations(req, res) {
 
 export async function createOrganization(req, res) {
   try {
-    const org = new Organization(req.body);
+    const payload = pickAllowedFields(req.body, ALLOWED_ORG_FIELDS);
+    const org = new Organization(payload);
     await org.save();
     res.status(201).json(org);
   } catch (err) {
@@ -31,7 +48,8 @@ export async function createOrganization(req, res) {
 export async function updateOrganization(req, res) {
   try {
     // runValidators：修改時和新增一樣檢查必填與格式（以前把名稱清空也存得進去）；沒送的欄位不檢查也不動
-    const org = await Organization.findByIdAndUpdate(req.params.id, req.body, { new: true, runValidators: true });
+    const payload = pickAllowedFields(req.body, ALLOWED_ORG_FIELDS);
+    const org = await Organization.findByIdAndUpdate(req.params.id, payload, { new: true, runValidators: true });
     if (!org) return res.status(404).json(notFoundBody('機構'));
     res.json(org);
   } catch (err) {

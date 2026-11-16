@@ -284,7 +284,7 @@ describe('Attendance API', () => {
     const res = await request(app).get('/api/attendance');
 
     expect(res.status).toBe(500);
-    expect(res.body).toEqual({ error: 'fail' });
+    expect(res.body).toEqual({ error: '讀取打卡紀錄失敗' });
   });
 
   it('creates record with remark when within window', async () => {
