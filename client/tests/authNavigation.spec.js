@@ -267,10 +267,16 @@ describe('endSession', () => {
     expectSignedOut()
   })
 
-  it('沒有 token（已過期被清掉）時不打登出 API', () => {
+  // 沒有 token 也要打：伺服器靠續期 cookie 作廢這一串續期，否則登出後還能續期回來
+  it('沒有 token 時也請伺服器作廢續期 cookie（不帶 Authorization）', () => {
+    fetch.mockResolvedValue({ ok: true, status: 204 })
     localStorage.removeItem('token')
     endSession()
-    expect(fetch).not.toHaveBeenCalled()
+    expect(fetch).toHaveBeenCalledTimes(1)
+    const [url, options] = fetch.mock.calls[0]
+    expect(url).toContain('/api/logout')
+    expect(options.credentials).toBe('include')
+    expect(options.headers.Authorization).toBeUndefined()
     expectSignedOut()
   })
 

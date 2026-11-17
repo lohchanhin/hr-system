@@ -1,6 +1,6 @@
 import { getActivePinia } from 'pinia'
 import { apiFetch } from '../api'
-import { clearToken, getToken, setToken } from './tokenService'
+import { clearToken, setToken } from './tokenService'
 import { persistRole } from './roleCache'
 import { clearEmployeePhotoCache } from './photoUrl'
 import { useMenuStore } from '../stores/menu'
@@ -194,9 +194,10 @@ export function beginSession(data) {
  * 登出：請伺服器作廢目前的 token，再清掉本機的登入狀態與快取。
  * 以前只清本機，token 到期前（1 小時）仍然有效——共用電腦上登出後，舊 token 還能呼叫 API。
  * 作廢請求不等回應，失敗（斷線、token 已過期）也照樣登出；變更密碼後伺服器已作廢 token，傳 revokeToken: false。
+ * 沒有 token（已過期被清掉）也要送：伺服器靠續期 cookie 作廢這一串續期，否則登出後還能續期回來。
  */
 export function endSession({ revokeToken = true } = {}) {
-  if (revokeToken && getToken()) {
+  if (revokeToken) {
     try {
       // apiFetch 在呼叫當下就讀取 token 並送出請求，所以要在 clearToken 之前
       Promise.resolve(apiFetch('/api/logout', { method: 'POST', keepalive: true }, { autoRedirect: false })).catch(() => {})

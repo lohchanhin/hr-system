@@ -8,6 +8,8 @@ const refreshTokenSchema = new mongoose.Schema(
     expiresAt: { type: Date, required: true, index: { expireAfterSeconds: 0 } },
     revokedAt: { type: Date, default: null },
     replacedByHash: { type: String, default: null },
+    // 發出時員工的登入版本；舊資料沒有這個欄位（null）時不比對
+    authVersion: { type: Number, default: null },
     userAgent: { type: String, default: '' },
     ip: { type: String, default: '' },
   },

@@ -184,8 +184,13 @@ function hashRefreshToken(rawToken) {
   return crypto.createHash('sha256').update(String(rawToken)).digest('hex')
 }
 
+/*
+ * 續期 cookie 只有在 HTTPS 才加 Secure：以前 NODE_ENV=production 就一律 Secure，正式站目前是 http://，
+ * 瀏覽器不存 Secure cookie，續期永遠失敗，登入 15 分鐘（access token 到期）就被踢回登入頁。
+ * 經過反向代理的 HTTPS 要設 TRUST_PROXY 讓 req.secure 正確，或直接設 COOKIE_SECURE=true。
+ */
 function setRefreshCookie(res, req, rawToken) {
-  const isSecure = Boolean(req?.secure || (process.env.NODE_ENV === 'production' && process.env.COOKIE_SECURE !== 'false'))
+  const isSecure = Boolean(req?.secure || process.env.COOKIE_SECURE === 'true')
   res.cookie(REFRESH_COOKIE_NAME, rawToken, {
     httpOnly: true,
     sameSite: 'lax',
@@ -214,8 +219,26 @@ function signAccessToken(employee) {
   )
 }
 
-async function issueRefreshToken(employee, req, existingFamilyId = null) {
-  const rawToken = crypto.randomBytes(48).toString('hex')
+// 換發後這段時間內再拿舊 token 來續期，當成同一個瀏覽器的重複請求（多分頁同時續期），不整串作廢
+const REFRESH_REUSE_GRACE_MS = 60 * 1000
+
+function isRecentRotation(token) {
+  const revokedAt = token?.revokedAt ? new Date(token.revokedAt).getTime() : 0
+  return Boolean(token?.replacedByHash) && revokedAt > 0 && Date.now() - revokedAt < REFRESH_REUSE_GRACE_MS
+}
+
+/** 作廢這位員工所有的續期 token（改密碼後其他裝置都要重新登入）；失敗只記錄 */
+async function revokeEmployeeRefreshTokens(employeeId) {
+  if (!employeeId) return
+  try {
+    await RefreshToken.updateMany({ employee: employeeId, revokedAt: null }, { $set: { revokedAt: new Date() } })
+  } catch (err) {
+    console.error('Revoke refresh tokens failed', { error: err?.name || 'Error' })
+  }
+}
+
+async function issueRefreshToken(employee, req, existingFamilyId = null, presetRawToken = null) {
+  const rawToken = presetRawToken || crypto.randomBytes(48).toString('hex')
   const tokenHash = hashRefreshToken(rawToken)
   const familyId = existingFamilyId || crypto.randomUUID()
   const expiresAt = new Date(Date.now() + REFRESH_TTL_MS)
@@ -227,6 +250,8 @@ async function issueRefreshToken(employee, req, existingFamilyId = null) {
         tokenHash,
         familyId,
         expiresAt,
+        // 改密碼、改權限或停用帳號時登入版本會加一：續期時比對，版本不同就不再發新的 token
+        authVersion: Number(employee.authVersion ?? 0),
         userAgent: typeof req?.get === 'function' ? req.get('user-agent') || '' : '',
         ip: req?.ip || '',
       })
@@ -560,6 +585,12 @@ router.post('/auth/refresh', async (req, res) => {
       return res.status(401).json({ error: 'Unauthorized' })
     }
 
+    if (existing.revokedAt && isRecentRotation(existing)) {
+      // 剛換過（同一個瀏覽器另一個分頁同時續期、或上一次的回應沒收到）：不當成被盜用，也不清 cookie，
+      // 瀏覽器已經存了新的 cookie，前端重新讀取另一個分頁拿到的 token 或再試一次
+      return res.status(401).json({ error: 'Refresh token already rotated', code: 'REFRESH_ROTATED' })
+    }
+
     // Reuse detection: if an already-revoked/rotated token is presented, revoke entire family
     if (existing.revokedAt) {
       await RefreshToken.updateMany(
@@ -588,17 +619,31 @@ router.post('/auth/refresh', async (req, res) => {
       employee &&
       employee.accountEnabled !== false &&
       !INACTIVE_EMPLOYMENT_STATUSES.has(employee.status)
-    if (!activeAccount) {
-      existing.revokedAt = new Date()
-      await existing.save()
+    // 改了密碼、權限或停用過帳號（登入版本變了）：這一串續期全部作廢，要重新登入
+    const versionChanged =
+      employee && existing.authVersion != null && Number(existing.authVersion) !== Number(employee.authVersion ?? 0)
+    if (!activeAccount || versionChanged) {
+      await RefreshToken.updateMany(
+        { familyId: existing.familyId, revokedAt: null },
+        { $set: { revokedAt: new Date() } }
+      )
       clearRefreshCookie(res)
       return res.status(401).json({ error: 'Unauthorized' })
     }
 
-    const { rawToken: nextRawToken, tokenHash: nextHash } = await issueRefreshToken(employee, req, existing.familyId)
-    existing.revokedAt = new Date()
-    existing.replacedByHash = nextHash
-    await existing.save()
+    // 先以「比對再改」佔用這個 token（只有還沒作廢的才改得到）：兩個請求同時續期時只有一個成功，
+    // 另一個當成「剛換過」，不會兩個都發新 token、也不會被誤判成盜用而整串作廢
+    const nextRawToken = crypto.randomBytes(48).toString('hex')
+    const nextHash = hashRefreshToken(nextRawToken)
+    const claimed = await RefreshToken.findOneAndUpdate(
+      { _id: existing._id, revokedAt: null },
+      { $set: { revokedAt: new Date(), replacedByHash: nextHash } },
+      { new: true }
+    )
+    if (!claimed) {
+      return res.status(401).json({ error: 'Refresh token already rotated', code: 'REFRESH_ROTATED' })
+    }
+    await issueRefreshToken(employee, req, existing.familyId, nextRawToken)
     setRefreshCookie(res, req, nextRawToken)
 
     const token = signAccessToken(employee)
@@ -609,32 +654,50 @@ router.post('/auth/refresh', async (req, res) => {
   }
 })
 
+/** 登出時作廢瀏覽器帶來的續期 cookie 那一串；不需要有效的 access token（過期後才按登出也要作廢） */
+async function revokeRefreshFamilyFromCookie(req) {
+  const rawRefresh = parseCookies(req)[REFRESH_COOKIE_NAME]
+  if (!rawRefresh) return false
+  try {
+    const found = RefreshToken.findOne({ tokenHash: hashRefreshToken(rawRefresh) })
+    const stored = typeof found?.lean === 'function' ? await found.lean() : await found
+    if (!stored?.familyId) return false
+    await RefreshToken.updateMany({ familyId: stored.familyId, revokedAt: null }, { $set: { revokedAt: new Date() } })
+    return true
+  } catch {
+    // Non-blocking in unit tests without MongoDB
+    return false
+  }
+}
+
 router.post('/logout', async (req, res) => {
   const auth = req.headers.authorization
   const [scheme, token, extra] = typeof auth === 'string' ? auth.trim().split(/\s+/) : []
-  if (scheme?.toLowerCase() !== 'bearer' || !token || extra) {
-    return res.status(401).json({ error: 'Unauthorized' })
+  const hasBearer = scheme?.toLowerCase() === 'bearer' && Boolean(token) && !extra
+  if (!hasBearer) {
+    // access token 已過期被清掉、只剩續期 cookie：一樣作廢續期，否則登出後還能續期回來
+    const revoked = await revokeRefreshFamilyFromCookie(req)
+    clearRefreshCookie(res)
+    return revoked ? res.status(204).end() : res.status(401).json({ error: 'Unauthorized' })
   }
 
   try {
-    jwt.verify(token, process.env.JWT_SECRET, {
-      ...JWT_OPTIONS,
-      algorithms: ['HS256'],
-      clockTolerance: 5,
-    })
-    await blacklistToken(token)
-    const cookies = parseCookies(req)
-    const rawRefresh = cookies[REFRESH_COOKIE_NAME]
-    if (rawRefresh) {
-      try {
-        const stored = await RefreshToken.findOne({ tokenHash: hashRefreshToken(rawRefresh) }).lean()
-        if (stored?.familyId) {
-          await RefreshToken.updateMany({ familyId: stored.familyId, revokedAt: null }, { $set: { revokedAt: new Date() } })
-        }
-      } catch {
-        // Non-blocking in unit tests without MongoDB
+    try {
+      jwt.verify(token, process.env.JWT_SECRET, {
+        ...JWT_OPTIONS,
+        algorithms: ['HS256'],
+        clockTolerance: 5,
+      })
+    } catch (verifyError) {
+      if (['JsonWebTokenError', 'TokenExpiredError', 'NotBeforeError'].includes(verifyError?.name)) {
+        const revoked = await revokeRefreshFamilyFromCookie(req)
+        clearRefreshCookie(res)
+        return revoked ? res.status(204).end() : res.status(401).json({ error: 'Unauthorized' })
       }
+      throw verifyError
     }
+    await blacklistToken(token)
+    await revokeRefreshFamilyFromCookie(req)
     clearRefreshCookie(res)
     return res.status(204).end()
   } catch (error) {
@@ -677,6 +740,9 @@ router.post('/change-password', authenticate, changePasswordRateLimiter, async (
     // 只驗證這次改到的欄位（密碼、登入版本）：舊資料的其他欄位不符合現在的格式（例如性別存成中文）時，
     // 整份驗證會失敗，員工永遠改不了密碼
     await employee.save({ validateModifiedOnly: true })
+    // 其他裝置的續期 token 也作廢（續期時也會比對登入版本，這裡直接作廢比較乾淨）
+    await revokeEmployeeRefreshTokens(employee._id)
+    clearRefreshCookie(res)
 
     // 密碼存檔時登入版本已經加一，舊 token 全部失效；這裡再把目前這個 token 列入黑名單，失敗不影響結果
     const auth = req.headers.authorization
