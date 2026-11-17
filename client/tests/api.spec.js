@@ -19,6 +19,7 @@ describe('apiFetch', () => {
     vi.clearAllMocks()
     getToken.mockImplementation(() => 't')
     isTokenExpiring.mockImplementation(() => false)
+    localStorage.removeItem('hr_token_refresh_lock')
     vi.stubGlobal('fetch', vi.fn())
     Object.defineProperty(window, 'location', {
       writable: true,
@@ -148,11 +149,47 @@ describe('apiFetch', () => {
       isTokenExpiring.mockImplementation(() => stored === 'old')
       fetch.mockResolvedValueOnce(json(401, { code: 'REFRESH_ROTATED' }))
       const pending = refreshAccessToken('old')
-      await vi.advanceTimersByTimeAsync(0)
+      await vi.advanceTimersByTimeAsync(50)
+      expect(fetch).toHaveBeenCalledTimes(1)
       stored = 'from-other-tab'
       await vi.advanceTimersByTimeAsync(250)
       expect(await pending).toEqual({ token: 'from-other-tab' })
       expect(fetch).toHaveBeenCalledTimes(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  // http:// 沒有 navigator.locks：另一個分頁正在續期（localStorage 有鎖）就等它，直接用它換到的 token
+  it('waits for another tab holding the storage lock and reuses its token', async () => {
+    vi.useFakeTimers()
+    try {
+      let stored = 'old'
+      getToken.mockImplementation(() => stored)
+      isTokenExpiring.mockImplementation(() => stored === 'old')
+      localStorage.setItem('hr_token_refresh_lock', JSON.stringify({ owner: 'other-tab', until: Date.now() + 5000 }))
+      const pending = refreshAccessToken('old')
+      await vi.advanceTimersByTimeAsync(300)
+      expect(fetch).not.toHaveBeenCalled()
+      stored = 'from-other-tab'
+      localStorage.removeItem('hr_token_refresh_lock')
+      await vi.advanceTimersByTimeAsync(300)
+      expect(await pending).toEqual({ token: 'from-other-tab' })
+      expect(fetch).not.toHaveBeenCalled()
+      expect(localStorage.getItem('hr_token_refresh_lock')).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('stops waiting for a stuck storage lock after 5 seconds and refreshes itself', async () => {
+    vi.useFakeTimers()
+    try {
+      localStorage.setItem('hr_token_refresh_lock', JSON.stringify({ owner: 'crashed-tab', until: Date.now() + 60000 }))
+      fetch.mockResolvedValueOnce(json(200, { token: 'mine' }))
+      const pending = refreshAccessToken('t')
+      await vi.advanceTimersByTimeAsync(5200)
+      expect(await pending).toEqual({ token: 'mine' })
     } finally {
       vi.useRealTimers()
     }

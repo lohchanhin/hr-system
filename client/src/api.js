@@ -64,17 +64,64 @@ async function runRefresh(previousToken) {
   return result
 }
 
+const STORAGE_LOCK_KEY = 'hr_token_refresh_lock'
+const STORAGE_LOCK_TTL_MS = 5000
+
+function readStorageLock() {
+  try {
+    return JSON.parse(localStorage.getItem(STORAGE_LOCK_KEY) || 'null')
+  } catch {
+    return null
+  }
+}
+
+/*
+ * 分頁之間排隊的備用做法：Web Locks（navigator.locks）只有 HTTPS 或 localhost 才有，
+ * 正式站目前是 http://，改用 localStorage 記「誰正在續期」。拿不到就等，等的期間另一個分頁換好的 token
+ * 會由 runRefresh 直接拿來用；鎖卡住（分頁當掉）超過 5 秒就不等了，伺服器的寬限時間也擋得住同時續期。
+ */
+async function withStorageLock(task) {
+  const owner = `${Date.now()}-${Math.random().toString(36).slice(2)}`
+  const deadline = Date.now() + STORAGE_LOCK_TTL_MS
+  while (Date.now() < deadline) {
+    const held = readStorageLock()
+    if (!held || !(held.until > Date.now())) {
+      try {
+        localStorage.setItem(STORAGE_LOCK_KEY, JSON.stringify({ owner, until: Date.now() + STORAGE_LOCK_TTL_MS }))
+      } catch {
+        return task()
+      }
+      // 兩個分頁同時寫入時以最後寫入的為準：稍等再確認是不是自己
+      await wait(30)
+      if (readStorageLock()?.owner === owner) {
+        try {
+          return await task()
+        } finally {
+          try {
+            if (readStorageLock()?.owner === owner) localStorage.removeItem(STORAGE_LOCK_KEY)
+          } catch {
+            // 清不掉也會在 5 秒後過期
+          }
+        }
+      }
+    }
+    await wait(100)
+  }
+  return task()
+}
+
 /**
  * 用續期 cookie 換新的 access token。
  * 回傳 { token }，或 { status: 'unauthorized' }（要重新登入）、{ status: 'error' }（網路或伺服器問題，先不登出）。
- * 同一個分頁同時多個請求只續期一次；多個分頁之間用 Web Locks 排隊，避免同一個續期 token 被用兩次。
+ * 同一個分頁同時多個請求只續期一次；多個分頁之間用 Web Locks（HTTPS）或 localStorage（http）排隊，
+ * 避免同一個續期 token 被用兩次。
  */
 export function refreshAccessToken(previousToken = getToken()) {
   if (!refreshPromise) {
     const locks = typeof navigator !== 'undefined' ? navigator.locks : null
     const task = () => runRefresh(previousToken)
     refreshPromise = Promise.resolve()
-      .then(() => (locks?.request ? locks.request(REFRESH_LOCK_NAME, task) : task()))
+      .then(() => (locks?.request ? locks.request(REFRESH_LOCK_NAME, task) : withStorageLock(task)))
       .catch(() => ({ status: 'error' }))
       .finally(() => {
         refreshPromise = null
