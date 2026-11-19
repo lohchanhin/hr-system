@@ -12,7 +12,7 @@ import { getLeavePolicy, matchLeaveType, normalizeLeaveName } from './leavePolic
 import { collectLeaveTypeNames, computeLeaveRequestHours, isAnnualLeaveType } from './leaveRequestDays.js'
 import { computeLeaveDuration, sumLeaveHoursInRange } from '../utils/leaveDuration.js'
 import { candidateSelectKeys, pickFieldValue, resolveCandidateIds } from '../utils/fieldCandidates.js'
-import { readAnnualLeaveHours } from '../utils/annualLeaveHours.js'
+import { readAnnualLeaveHours, readOvertimeCompHours } from '../utils/annualLeaveHours.js'
 import { toTaipeiDateKey } from '../utils/taipeiTime.js'
 import { creditPolicyOf, loadEmployeeCredits, summarizeCredits } from './compensatoryLeaveService.js'
 import { LEAVE_DAY_EQUIVALENT_HOURS, formatHoursText, hoursToDays, roundHours } from '../utils/leaveHours.js'
@@ -195,18 +195,20 @@ export async function summarizeCompLeaveBank({ employeeId, policy, pendingHours 
 /* ---------------------------- 組成餘額列表（純函式） ---------------------------- */
 
 /**
- * 員工資料裡由人資維護的餘額（不是從單據算出來的）：目前只有積假（天數）。
+ * 員工資料裡由人資維護的餘額（不是從單據算出來的）：目前只有加班補休（小時；以前叫積假、單位是天，舊資料乘 8）。
  * 補休已改成調休存摺（系統累計，見 compensatoryLeaveService），員工資料的「補休時數」部署時轉入存摺，不再列在這裡。
  */
 export function collectEmployeeHeldBalances(employee) {
   const held = []
-  const accumulatedDays = Number(employee?.annualLeave?.accumulatedLeave)
-  if (Number.isFinite(accumulatedDays) && accumulatedDays > 0) {
+  const overtimeComp = readOvertimeCompHours(employee?.annualLeave)
+  if (overtimeComp.totalHours > 0 || overtimeComp.usedHours > 0) {
     held.push({
       key: 'accumulated',
-      name: '積假',
-      hours: roundHours(accumulatedDays * LEAVE_DAY_EQUIVALENT_HOURS),
-      note: '人資維護，單位換算：1 天 = 8 小時',
+      name: '加班補休',
+      hours: overtimeComp.totalHours,
+      usedHours: overtimeComp.usedHours,
+      remainingHours: overtimeComp.remainingHours,
+      note: '人資在員工資料維護（總時數與已使用時數）',
     })
   }
   return held
@@ -393,11 +395,11 @@ export function composeLeaveBalanceItems({ policy, usage, employee, focusKey = n
       builtin: true,
       note: held.note,
       includes: [],
-      usedHours: 0,
+      usedHours: held.usedHours ?? 0,
       pendingHours: 0,
       quotaHours: held.hours,
-      remainingHours: held.hours,
-      availableHours: held.hours,
+      remainingHours: held.remainingHours ?? held.hours,
+      availableHours: held.remainingHours ?? held.hours,
       source: 'employee-manual',
       status: 'manual',
     }))

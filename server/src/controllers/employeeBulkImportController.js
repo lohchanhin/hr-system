@@ -93,6 +93,8 @@ const DEFAULT_COLUMN_MAPPINGS = Object.freeze({
   'annualLeave.totalDays': 'annualLeave_totalDays',
   'annualLeave.usedDays': 'annualLeave_usedDays',
   'annualLeave.accumulatedLeave': 'annualLeave_accumulatedLeave',
+  'annualLeave.overtimeCompHours': 'annualLeave_overtimeCompHours',
+  'annualLeave.overtimeCompUsedHours': 'annualLeave_overtimeCompUsedHours',
   'annualLeave.compensatoryHours': 'annualLeave_compensatoryHours',
   'annualLeave.expiryDate': 'annualLeave_expiryDate',
   laborInsuredSalary: 'laborInsuredSalary',
@@ -138,6 +140,8 @@ const NUMBER_FIELDS = new Set([
   'annualLeave.totalDays',
   'annualLeave.usedDays',
   'annualLeave.accumulatedLeave',
+  'annualLeave.overtimeCompHours',
+  'annualLeave.overtimeCompUsedHours',
   'annualLeave.compensatoryHours',
   'laborInsuredSalary',
   'pensionInsuredSalary',
@@ -157,6 +161,8 @@ const OPTIONAL_COLUMN_KEYS = new Set([
   'annualLeave.totalDays',
   'annualLeave.usedDays',
   'annualLeave.accumulatedLeave',
+  'annualLeave.overtimeCompHours',
+  'annualLeave.overtimeCompUsedHours',
   'annualLeave.compensatoryHours',
   'annualLeave.expiryDate',
   'laborInsuredSalary',
@@ -178,6 +184,8 @@ const HEADER_LABEL_FALLBACKS = Object.freeze({
   annualLeave_totalDays: ['年度特休總天數'],
   annualLeave_usedDays: ['已使用天數'],
   annualLeave_accumulatedLeave: ['積假'],
+  annualLeave_overtimeCompHours: ['加班補休時數', '加班補休總時數'],
+  annualLeave_overtimeCompUsedHours: ['加班補休已使用時數'],
   annualLeave_expiryDate: ['請假期限'],
   annualLeave_compensatoryHours: ['補休時數'],
   laborInsuredSalary: ['勞保投保薪資'],
@@ -197,6 +205,8 @@ const NUMBER_FIELD_LABELS = Object.freeze({
   'annualLeave.totalDays': '年度特休總天數',
   'annualLeave.usedDays': '已使用天數',
   'annualLeave.accumulatedLeave': '積假',
+  'annualLeave.overtimeCompHours': '加班補休時數',
+  'annualLeave.overtimeCompUsedHours': '加班補休已使用時數',
   'annualLeave.compensatoryHours': '補休時數',
   laborInsuredSalary: '勞保投保薪資',
   pensionInsuredSalary: '勞退投保薪資',
@@ -925,6 +935,15 @@ function isAnnualLeaveDaysOnly(leave) {
   return Boolean(leave) && typeof leave === 'object' && !hasAnnualLeaveHoursColumns(leave) && hasAnnualLeaveDaysColumns(leave)
 }
 
+// 舊範本的「積假」（天）：沒有填「加班補休時數」時乘 8 換成加班補休時數（積假本身照舊保存）
+function resolveOvertimeCompUnits(normalized) {
+  const leave = normalized?.annualLeave
+  if (!leave || typeof leave !== 'object') return
+  if (leave.overtimeCompHours === undefined && Number.isFinite(Number(leave.accumulatedLeave)) && leave.accumulatedLeave !== undefined) {
+    leave.overtimeCompHours = Math.max(Math.round(Number(leave.accumulatedLeave) * 8 * 100) / 100, 0)
+  }
+}
+
 function resolveAnnualLeaveUnits(normalized, rowNumber, warnings, { hoursConvention = false, typedRowNumbers = [] } = {}) {
   const leave = normalized.annualLeave
   if (!leave || typeof leave !== 'object') return
@@ -975,6 +994,7 @@ function resolveAnnualLeaveUnitsForFile(rows, warnings) {
   const hoursConvention = typedRowNumbers.length > 0
   rows.forEach(row => {
     resolveAnnualLeaveUnits(row.normalized, row.rowNumber, warnings, { hoursConvention, typedRowNumbers })
+    resolveOvertimeCompUnits(row.normalized)
   })
   if (hoursConvention) {
     const asHours = dayRows.filter(row => row.normalized.annualLeave.unitSource === 'migrated-hours').length

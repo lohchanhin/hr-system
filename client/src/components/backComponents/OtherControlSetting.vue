@@ -511,6 +511,67 @@ function createOptionRowsFromOptions(options) {
   return list.map(item => createOptionRow(item))
 }
 
+const isOptionField = (field) => optionFieldTypes.includes(field?.type)
+const fieldKeyOf = (field) => String(field?.fieldKey ?? '').trim()
+
+// 欄位名稱結尾的「(C15)」不放進字典名稱（左邊清單已經是字典，右邊另外寫代碼）
+function fieldDictionaryLabel(field) {
+  const label = String(field?.label ?? '').replace(/\s*[（(]\s*[A-Za-z0-9_-]+\s*[)）]\s*$/, '').trim()
+  return label || fieldKeyOf(field)
+}
+
+// 自訂欄位的選項換成字典的格式（{ name, code }，代碼沒填就和名稱相同）
+function fieldOptionsAsDictionary(options) {
+  return optionsToEditableList(options)
+    .filter(option => option.name || option.code)
+    .map(option => ({ name: option.name || option.code, code: option.code || option.name }))
+}
+
+/*
+ * 有選項的自訂欄位（單選、複選、複合加選）也列在「字典項目」：以前左邊只有固定的 C03–C14，
+ * 新增的自訂欄位（例如 C15）看不到，選項只能在自訂欄位的對話框裡改。
+ * 這種欄位的選項就是同一個代碼的字典；字典還沒存過時先用欄位本身的選項顯示。
+ */
+function syncFieldDictionaries() {
+  const fields = customFields.value.filter(field => isOptionField(field) && fieldKeyOf(field))
+  const definitions = dictionaryDefinitions.value
+    // 欄位刪掉或改成沒有選項的型別：由欄位帶出來的字典從清單拿掉（存過的字典資料不動）
+    .filter(dict => !dict.fromField || fields.some(field => fieldKeyOf(field) === dict.key))
+    .map(dict => {
+      const field = fields.find(item => fieldKeyOf(item) === dict.key)
+      // 伺服器多出來、只顯示代碼的字典：有對應的自訂欄位就用欄位名稱
+      if (field && dict.label === dict.key) return { ...dict, label: fieldDictionaryLabel(field), fromField: fieldDictionaryLabel(field) }
+      return dict
+    })
+  const nextItems = { ...itemSettings.value }
+  fields.forEach(field => {
+    const key = fieldKeyOf(field)
+    if (!definitions.some(dict => dict.key === key)) {
+      definitions.push({ key, label: fieldDictionaryLabel(field), fromField: fieldDictionaryLabel(field) })
+    }
+    if (!Array.isArray(nextItems[key])) nextItems[key] = fieldOptionsAsDictionary(field.options)
+  })
+  dictionaryDefinitions.value = definitions
+  itemSettings.value = nextItems
+  if (!definitions.some(dict => dict.key === activeDictionaryKey.value)) {
+    activeDictionaryKey.value = definitions[0]?.key ?? ''
+  }
+}
+
+// 字典存好之後：對應的自訂欄位還不是「字典類」就改成字典類，簽核表單套用時才會連結這個字典（選項跟著字典更新）
+async function linkFieldToDictionary(dictionaryKey) {
+  const index = customFields.value.findIndex(field => fieldKeyOf(field) === dictionaryKey && isOptionField(field))
+  if (index < 0 || customFields.value[index].category === 'dictionary') return
+  const previousFields = JSON.parse(JSON.stringify(customFields.value))
+  customFields.value.splice(index, 1, { ...customFields.value[index], category: 'dictionary' })
+  try {
+    const result = await putCustomFields('')
+    if (!result.ok) customFields.value = previousFields
+  } catch {
+    customFields.value = previousFields
+  }
+}
+
 const defaultDictionaryOptions = {
   C03: [
     { name: '人資專員', code: 'HR-S' },
@@ -565,6 +626,8 @@ function createDefaultItemSettings() {
 
 const itemSettings = ref(createDefaultItemSettings())
 const activeDictionaryKey = ref(dictionaryDefinitions.value[0]?.key ?? '')
+// 伺服器上已經存過的字典代碼（自訂欄位的字典還沒存過時，第一次儲存欄位要把選項存進去）
+const savedDictionaryKeys = ref(new Set())
 const optionDialogVisible = ref(false)
 const editingOptionIndex = ref(-1)
 const optionSaving = ref(false)
@@ -580,7 +643,8 @@ const activeDictionaryLabel = computed(() => {
 const activeDictionaryUsage = computed(() => {
   const key = activeDictionaryKey.value
   if (!key) return ''
-  const usage = DICTIONARY_USAGE[key]
+  const fromField = dictionaryDefinitions.value.find(dict => dict.key === key)?.fromField
+  const usage = DICTIONARY_USAGE[key] || (fromField ? `自訂欄位「${fromField}」（簽核表單套用這個自訂欄位時的選項）` : '')
   return usage ? `用在：${usage}；代碼 ${key}` : `代碼 ${key}`
 })
 
@@ -846,6 +910,11 @@ async function loadSettings() {
     } else {
       customFields.value = [...defaultCustomFields]
     }
+    savedDictionaryKeys.value = new Set(
+      data.itemSettings && typeof data.itemSettings === 'object'
+        ? Object.keys(data.itemSettings).filter(key => Array.isArray(data.itemSettings[key]))
+        : []
+    )
     if (data.itemSettings && typeof data.itemSettings === 'object') {
       Object.keys(data.itemSettings).forEach(key => {
         if (!dictionaryDefinitions.value.some(dict => dict.key === key)) {
@@ -865,6 +934,7 @@ async function loadSettings() {
     } else {
       itemSettings.value = createDefaultItemSettings()
     }
+    syncFieldDictionaries()
     if (Array.isArray(data.formCategories)) {
       const normalized = data.formCategories.map(normalizeCategory).filter(Boolean)
       if (normalized.length) {
@@ -1121,6 +1191,7 @@ async function saveDictionary(dictionaryKey, options, successMessage) {
   })
   const saved = await saveItemSettings(successMessage, { [dictionaryKey]: stored })
   if (!saved) itemSettings.value = previousState
+  else await linkFieldToDictionary(dictionaryKey)
   return saved
 }
 
@@ -1206,10 +1277,13 @@ function openFieldDialog(index = -1) {
   editingFieldIndex.value = index
   if (index > -1) {
     const targetField = customFields.value[index] || {}
+    // 有選項的欄位：選項就是同一個代碼的字典（字典項目那邊改過的也看得到）
+    const dictionary = isOptionField(targetField) ? itemSettings.value[fieldKeyOf(targetField)] : null
+    const sourceOptions = Array.isArray(dictionary) && dictionary.length ? dictionary : targetField.options
     fieldForm.value = {
       ...targetField,
       options: targetField.options,
-      optionsList: createOptionRowsFromOptions(targetField.options)
+      optionsList: createOptionRowsFromOptions(sourceOptions)
     }
   } else {
     fieldForm.value = {
@@ -1251,13 +1325,16 @@ async function saveField() {
     parsedOptions = editableListToOptions(fieldForm.value.optionsList)
   }
 
-  const sanitizedField = { ...fieldForm.value }
+  const sanitizedField = { ...fieldForm.value, fieldKey }
   if (shouldIncludeOptions && parsedOptions !== undefined) {
     sanitizedField.options = parsedOptions
   } else {
     delete sanitizedField.options
   }
   delete sanitizedField.optionsList
+  // 有選項的欄位改成字典類：選項存在同一個代碼的字典，「字典項目」也看得到、改得到
+  if (shouldIncludeOptions) sanitizedField.category = 'dictionary'
+  const dictionaryOptions = shouldIncludeOptions ? fieldOptionsAsDictionary(parsedOptions) : null
 
   const updatedField = JSON.parse(JSON.stringify(sanitizedField))
 
@@ -1280,7 +1357,16 @@ async function saveField() {
 
     fieldDialogVisible.value = false
     editingFieldIndex.value = -1
-    ElMessage.success('已更新自訂欄位')
+    const currentDictionary = itemSettings.value[fieldKey]
+    const dictionaryChanged = dictionaryOptions
+      && JSON.stringify(currentDictionary || []) !== JSON.stringify(dictionaryOptions)
+    syncFieldDictionaries()
+    // 選項有變（或字典還沒存過）才存字典；字典存失敗時欄位已存好，訊息會說明
+    const dictionarySaved = dictionaryChanged || (dictionaryOptions && !savedDictionaryKeys.value.has(fieldKey))
+      ? await saveDictionary(fieldKey, dictionaryOptions, null)
+      : true
+    if (dictionarySaved && dictionaryOptions) savedDictionaryKeys.value.add(fieldKey)
+    ElMessage.success(dictionarySaved ? '已更新自訂欄位' : '已更新自訂欄位，但選項沒有存進字典，請到「字典項目」再存一次')
   } catch (error) {
     customFields.value = previousFields
     const message = error?.message || '儲存自訂欄位失敗，請稍後再試'
@@ -1314,6 +1400,7 @@ async function removeField(index) {
     }
     if (!result.ok) throw new Error(result.message)
 
+    syncFieldDictionaries()
     ElMessage.success('已刪除自訂欄位')
   } catch (error) {
     customFields.value = previousFields

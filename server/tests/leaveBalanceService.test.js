@@ -308,7 +308,8 @@ describe('buildLeaveBalances: 特休, 補休 and 積假 come from the employee r
     expect(itemOf(balances, 'comp')).toMatchObject({
       name: '調休', source: 'bank', enforcement: 'block', quotaHours: 16, usedHours: 12, remainingHours: 4, pendingHours: 2, availableHours: 2, status: 'bank',
     })
-    expect(itemOf(balances, 'accumulated')).toMatchObject({ name: '積假', quotaHours: 16, remainingHours: 16, source: 'employee-manual', status: 'manual' })
+    // 積假改名加班補休（小時）：還沒填加班補休時數的舊資料用積假天數乘 8
+    expect(itemOf(balances, 'accumulated')).toMatchObject({ name: '加班補休', quotaHours: 16, remainingHours: 16, source: 'employee-manual', status: 'manual' })
 
     bankCredits = []
     requestsByForm['form-default'] = []
@@ -320,7 +321,11 @@ describe('buildLeaveBalances: 特休, 補休 and 積假 come from the employee r
 
   it('collectEmployeeHeldBalances is the single place where manually kept balances are collected', () => {
     expect(balanceService.collectEmployeeHeldBalances({ annualLeave: { accumulatedLeave: 1.5 } }))
-      .toEqual([{ key: 'accumulated', name: '積假', hours: 12, note: expect.any(String) }])
+      .toEqual([{ key: 'accumulated', name: '加班補休', hours: 12, usedHours: 0, remainingHours: 12, note: expect.any(String) }])
+    // 有填加班補休時數就以它為準（小時），已使用時數算出剩餘
+    expect(balanceService.collectEmployeeHeldBalances({ annualLeave: { accumulatedLeave: 3, overtimeCompHours: 10, overtimeCompUsedHours: 4 } }))
+      .toEqual([{ key: 'accumulated', name: '加班補休', hours: 10, usedHours: 4, remainingHours: 6, note: expect.any(String) }])
+    expect(balanceService.collectEmployeeHeldBalances({ annualLeave: { accumulatedLeave: 3, overtimeCompHours: 0 } })).toEqual([])
     expect(balanceService.collectEmployeeHeldBalances({ annualLeave: {} })).toEqual([])
     expect(balanceService.collectEmployeeHeldBalances(undefined)).toEqual([])
   })

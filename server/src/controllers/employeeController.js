@@ -40,6 +40,14 @@ const toNum = (v) => {
   const n = Number(v)
   return Number.isNaN(n) ? undefined : n
 }
+// 加班補休總時數的輸入：有送 overtimeCompHours 就用（小時）；只送舊的積假（accumulatedLeave，天）就乘 8；都沒有回 undefined
+const readOvertimeCompInput = (annualLeave) => {
+  const hours = toNum(annualLeave?.overtimeCompHours)
+  if (hours !== undefined) return Math.max(hours, 0)
+  const days = toNum(annualLeave?.accumulatedLeave)
+  if (days !== undefined) return Math.max(Math.round(days * 8 * 100) / 100, 0)
+  return undefined
+}
 // 特休欄位（totalHours / usedHours）的輸入：有送時數就用時數；只送舊的天數欄位（舊版畫面）就乘 8 換成小時，不做任何猜測
 const ANNUAL_LEAVE_UNIT_SOURCES = ['migrated-days', 'migrated-hours', 'entered']
 // 同上，但不是數字（空白、亂打）就當作沒送（用在只拿來比對的 usedHoursBase）
@@ -439,6 +447,9 @@ export function buildEmployeeDoc(body = {}, { autoOvertimeCalcDefault } = {}) {
       expiryDate: toDate(body?.annualLeave?.expiryDate),
       accumulatedLeave: toNum(body?.annualLeave?.accumulatedLeave) ?? 0,
       compensatoryHours: toNum(body?.annualLeave?.compensatoryHours) ?? 0,
+      // 加班補休（小時）；只送舊的積假（天）時乘 8
+      overtimeCompHours: readOvertimeCompInput(body?.annualLeave) ?? 0,
+      overtimeCompUsedHours: Math.max(toNum(body?.annualLeave?.overtimeCompUsedHours) ?? 0, 0),
       notes: body?.annualLeave?.notes ?? '',
     },
   }
@@ -674,6 +685,9 @@ export function buildEmployeePatch(body = {}, existing = null) {
     putOrClear('annualLeave.expiryDate', al.expiryDate, toDate)
     if (isDefined(al.accumulatedLeave)) put('annualLeave.accumulatedLeave', toNum(al.accumulatedLeave) ?? 0)
     if (isDefined(al.compensatoryHours)) put('annualLeave.compensatoryHours', toNum(al.compensatoryHours) ?? 0)
+    const overtimeCompHours = readOvertimeCompInput(al)
+    if (overtimeCompHours !== undefined) put('annualLeave.overtimeCompHours', overtimeCompHours)
+    if (isDefined(al.overtimeCompUsedHours)) put('annualLeave.overtimeCompUsedHours', Math.max(toNum(al.overtimeCompUsedHours) ?? 0, 0))
     if (isDefined(al.notes)) put('annualLeave.notes', al.notes ?? '')
   }
 

@@ -97,9 +97,21 @@ export function readAnnualLeaveHours(annualLeave) {
  * 給畫面用的特休資料：原本的欄位加上時數（totalHours / usedHours / remainingHours）與剩餘天數（時數 / 8）。
  * 資料還是舊格式（沒有 totalHours）時，時數由天數欄位換算，畫面不必自己判斷單位。
  */
+/**
+ * 加班補休（人資維護，單位是小時）：overtimeCompHours 總時數、overtimeCompUsedHours 已使用時數。
+ * 以前叫「積假」，存在 accumulatedLeave（單位是天）；還沒填過加班補休時數的舊資料，用積假天數乘 8 換成小時。
+ */
+export function readOvertimeCompHours(annualLeave) {
+  const stored = finiteNumber(annualLeave?.overtimeCompHours)
+  const totalHours = roundHours(stored !== null ? Math.max(stored, 0) : nonNegative(annualLeave?.accumulatedLeave) * LEAVE_DAY_EQUIVALENT_HOURS, 2)
+  const usedHours = roundHours(nonNegative(annualLeave?.overtimeCompUsedHours), 2)
+  return { totalHours, usedHours, remainingHours: roundHours(Math.max(totalHours - usedHours, 0), 2) }
+}
+
 export function presentAnnualLeave(annualLeave) {
   if (!annualLeave || typeof annualLeave !== 'object') return annualLeave
   const hours = readAnnualLeaveHours(annualLeave)
+  const overtimeComp = readOvertimeCompHours(annualLeave)
   return {
     ...annualLeave,
     totalHours: hours.totalHours,
@@ -107,7 +119,10 @@ export function presentAnnualLeave(annualLeave) {
     remainingHours: hours.remainingHours,
     remainingDays: roundHours(hours.remainingHours / LEAVE_DAY_EQUIVALENT_HOURS, 2),
     unitSource: annualLeave.unitSource ?? hours.unitSource ?? undefined,
+    overtimeCompHours: overtimeComp.totalHours,
+    overtimeCompUsedHours: overtimeComp.usedHours,
+    overtimeCompRemainingHours: overtimeComp.remainingHours,
   }
 }
 
-export default { exceedsLegacyDaysMax, usesHoursInDaysColumn, interpretLegacyAnnualLeave, isLegacyAnnualLeave, readAnnualLeaveHours, presentAnnualLeave }
+export default { exceedsLegacyDaysMax, usesHoursInDaysColumn, interpretLegacyAnnualLeave, isLegacyAnnualLeave, readAnnualLeaveHours, readOvertimeCompHours, presentAnnualLeave }

@@ -817,7 +817,7 @@
                       :precision="2" :value-on-clear="0" controls-position="right" placeholder="0" />
                     <div class="hr-hint">約 {{ annualLeaveDaysText(employeeForm.annualLeave?.totalHours) }} 天</div>
                   </el-form-item>
-                  <el-form-item label="已使用時數" prop="annualLeave.usedHours">
+                  <el-form-item label="特休已使用時數" prop="annualLeave.usedHours">
                     <el-input-number v-model="employeeForm.annualLeave.usedHours" :min="0" :step="0.5"
                       :precision="2" :value-on-clear="0" controls-position="right" placeholder="0" />
                     <div class="hr-hint">
@@ -832,9 +832,18 @@
                     <el-date-picker v-model="employeeForm.annualLeave.expiryDate" type="date" placeholder="選擇請假期限日期"
                       format="YYYY/MM/DD" value-format="YYYY-MM-DD" />
                   </el-form-item>
-                  <el-form-item label="積假（天）" prop="annualLeave.accumulatedLeave">
-                    <el-input-number v-model="employeeForm.annualLeave.accumulatedLeave" :min="0" :max="365" :step="0.5"
-                      :value-on-clear="0" controls-position="right" placeholder="0" />
+                  <!-- 加班補休（以前叫「積假」、單位是天；改成小時，舊資料乘 8 換算）：人資維護總時數與已使用時數 -->
+                  <el-form-item label="加班補休時數" prop="annualLeave.overtimeCompHours" data-test="overtime-comp-hours">
+                    <el-input-number v-model="employeeForm.annualLeave.overtimeCompHours" :min="0" :max="3000" :step="0.5"
+                      :precision="2" :value-on-clear="0" controls-position="right" placeholder="0" />
+                    <div class="hr-hint">約 {{ annualLeaveDaysText(employeeForm.annualLeave?.overtimeCompHours) }} 天</div>
+                  </el-form-item>
+                  <el-form-item label="加班補休已使用時數" prop="annualLeave.overtimeCompUsedHours" data-test="overtime-comp-used-hours">
+                    <el-input-number v-model="employeeForm.annualLeave.overtimeCompUsedHours" :min="0" :max="3000" :step="0.5"
+                      :precision="2" :value-on-clear="0" controls-position="right" placeholder="0" />
+                    <div class="hr-hint" data-test="overtime-comp-remaining">
+                      剩餘 {{ overtimeCompRemainingHours(employeeForm.annualLeave) }} 小時（約 {{ annualLeaveDaysText(overtimeCompRemainingHours(employeeForm.annualLeave)) }} 天）
+                    </div>
                   </el-form-item>
                   <el-form-item label="備註" class="span-all" prop="annualLeave.notes">
                     <el-input v-model="employeeForm.annualLeave.notes" type="textarea" :rows="2"
@@ -1500,6 +1509,8 @@ function mapRowToFormShape(row, mappings) {
       case 'annualLeave.totalDays':
       case 'annualLeave.usedDays':
       case 'annualLeave.accumulatedLeave':
+      case 'annualLeave.overtimeCompHours':
+      case 'annualLeave.overtimeCompUsedHours':
       case 'annualLeave.compensatoryHours':
       case 'laborInsuredSalary':
       case 'pensionInsuredSalary':
@@ -2242,10 +2253,24 @@ const BULK_IMPORT_FIELD_CONFIGS = Object.freeze([
     category: '特休與投保'
   },
   {
+    key: 'annualLeave.overtimeCompHours',
+    header: 'annualLeave_overtimeCompHours',
+    label: '加班補休時數',
+    description: '加班補休總時數（小時）',
+    category: '特休與投保'
+  },
+  {
+    key: 'annualLeave.overtimeCompUsedHours',
+    header: 'annualLeave_overtimeCompUsedHours',
+    label: '加班補休已使用時數',
+    description: '加班補休已使用時數（小時）',
+    category: '特休與投保'
+  },
+  {
     key: 'annualLeave.accumulatedLeave',
     header: 'annualLeave_accumulatedLeave',
     label: '積假',
-    description: '積假',
+    description: '積假（舊版欄位，單位是天；沒有填「加班補休時數」時乘 8 換成加班補休時數）',
     category: '特休與投保'
   },
   {
@@ -2479,6 +2504,8 @@ const BULK_IMPORT_SERVER_OPTIONAL_KEYS = new Set([
   'annualLeave.totalDays',
   'annualLeave.usedDays',
   'annualLeave.accumulatedLeave',
+  'annualLeave.overtimeCompHours',
+  'annualLeave.overtimeCompUsedHours',
   'annualLeave.expiryDate',
   'annualLeave.compensatoryHours',
   'laborInsuredSalary',
@@ -3692,10 +3719,14 @@ async function fetchOrganizations() {
 function normalizeAnnualLeaveRecord(annualLeave) {
   if (!annualLeave || typeof annualLeave !== 'object') return annualLeave
   const hours = readAnnualLeaveHours(annualLeave)
-  const { totalDays, usedDays, remainingDays, remainingHours, ...rest } = annualLeave
+  const { totalDays, usedDays, remainingDays, remainingHours, overtimeCompRemainingHours: _otcRemaining, ...rest } = annualLeave
   const legacyDays = Number(totalDays)
+  const overtimeCompHours = toNumberOrNull(rest.overtimeCompHours)
   return {
     ...rest,
+    // 加班補休（小時）：沒有填過的舊資料用積假（天）乘 8
+    overtimeCompHours: overtimeCompHours ?? Math.round((Number(rest.accumulatedLeave) || 0) * 8 * 100) / 100,
+    overtimeCompUsedHours: toNumberOrNull(rest.overtimeCompUsedHours) ?? 0,
     // 請假期限以台灣日期（YYYY-MM-DD）編輯與送出；原本沒有的就不補，免得把空白送出去
     ...(rest.expiryDate ? { expiryDate: toDateOrEmpty(rest.expiryDate) } : {}),
     totalHours: hours.totalHours,
@@ -3740,6 +3771,13 @@ function annualLeaveRemainingHours(annualLeave) {
   const explicit = Number(annualLeave.remainingHours)
   if (annualLeave.remainingHours !== undefined && Number.isFinite(explicit)) return Math.max(Math.round(explicit * 100) / 100, 0)
   return Math.max(readAnnualLeaveHours(annualLeave).remainingHours, 0)
+}
+
+// 加班補休剩餘時數 = 總時數 - 已使用時數（不小於 0）
+function overtimeCompRemainingHours(annualLeave) {
+  const total = Number(annualLeave?.overtimeCompHours) || 0
+  const used = Number(annualLeave?.overtimeCompUsedHours) || 0
+  return Math.max(Math.round((total - used) * 100) / 100, 0)
 }
 
 function annualLeaveDaysText(hours) {
@@ -4116,7 +4154,9 @@ const emptyEmployee = {
     totalHours: 0,
     usedHours: 0,
     year: CURRENT_YEAR,
-    compensatoryHours: 0
+    compensatoryHours: 0,
+    overtimeCompHours: 0,
+    overtimeCompUsedHours: 0
   }
 }
 const employeeForm = ref({ ...emptyEmployee })
@@ -5324,7 +5364,7 @@ function snapshotAnnualLeave(annualLeave) {
 
 // 特休以小時儲存。舊的天數欄位、伺服器換算出來的剩餘時數／天數都不送回去：
 // 伺服器會把送來的天數乘 8 當成時數，舊欄位留在內容裡會把已使用時數蓋成舊值
-const ANNUAL_LEAVE_READ_ONLY_FIELDS = ['totalDays', 'usedDays', 'remainingHours', 'remainingDays', 'unitSource', 'legacyTotalDays']
+const ANNUAL_LEAVE_READ_ONLY_FIELDS = ['totalDays', 'usedDays', 'remainingHours', 'remainingDays', 'unitSource', 'legacyTotalDays', 'overtimeCompRemainingHours']
 
 function buildAnnualLeaveForUpdate(annualLeave, snapshot) {
   const result = { ...(annualLeave && typeof annualLeave === 'object' ? annualLeave : {}) }

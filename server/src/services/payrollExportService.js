@@ -8,7 +8,7 @@ import {
   loadPayrollBatchData,
   mapWithConcurrency,
 } from './payrollBatchService.js';
-import { readAnnualLeaveHours } from '../utils/annualLeaveHours.js';
+import { readAnnualLeaveHours, readOvertimeCompHours } from '../utils/annualLeaveHours.js';
 import { toTaipeiDateKey } from '../utils/taipeiTime.js';
 import { loadPayrollPolicy } from './payrollPolicyService.js';
 
@@ -767,9 +767,8 @@ export async function generateIndividualPayrollExcel(payrollRecord, employee, op
   
   // 特休以小時儲存：薪資記錄裡有就用記錄的，否則讀員工資料（舊格式的天數欄位會換算成小時）
   const annualLeaveHours = payrollRecord.annualLeave?.totalHours || readAnnualLeaveHours(employee.annualLeave).totalHours;
-  // 加班補休時數：未實作，需要從考勤系統或加班補休模組取得
-  // 此欄位保留供未來實作使用
-  const overtimeCompHours = 0;
+  // 加班補休時數：員工資料的加班補休剩餘時數（人資維護）
+  const overtimeCompHours = readOvertimeCompHours(employee?.annualLeave).remainingHours;
   const expiryDate = payrollRecord.annualLeave?.expiryDate || employee.annualLeave?.expiryDate;
 
   // 轉換為民國年

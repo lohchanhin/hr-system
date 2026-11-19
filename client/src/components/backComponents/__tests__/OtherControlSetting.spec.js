@@ -270,6 +270,9 @@ describe('OtherControlSetting - custom fields', () => {
       if (path === '/api/other-control-settings' && options.method === 'GET') {
         return Promise.resolve(mockInitialResponse(existingFields))
       }
+      if (path === '/api/other-control-settings/item-settings' && options.method === 'PUT') {
+        return Promise.resolve(new Response(options.body, { status: 200 }))
+      }
       if (path === '/api/other-control-settings/custom-fields' && options.method === 'PUT') {
         return Promise.resolve(new Response('', { status: 200 }))
       }
@@ -416,6 +419,9 @@ describe('OtherControlSetting - custom fields', () => {
       if (path === '/api/other-control-settings' && options.method === 'GET') {
         return Promise.resolve(mockInitialResponse(existingFields))
       }
+      if (path === '/api/other-control-settings/item-settings' && options.method === 'PUT') {
+        return Promise.resolve(new Response(options.body, { status: 200 }))
+      }
       if (path === '/api/other-control-settings/custom-fields' && options.method === 'PUT') {
         return Promise.resolve(new Response('', { status: 200 }))
       }
@@ -462,6 +468,85 @@ describe('OtherControlSetting - custom fields', () => {
       { name: 'S-plus', code: 'S' },
       { name: 'M', code: 'M' }
     ])
+    expect(ElMessage.success).toHaveBeenCalledWith('已更新自訂欄位')
+  })
+
+  // 以前「字典項目」只列固定的 C03–C14：新增的有選項自訂欄位（C15）看不到，選項只能在欄位對話框改
+  it('有選項的自訂欄位（C15）列在字典項目，選項先用欄位本身的選項', async () => {
+    const existingFields = [
+      { label: '選擇項目', fieldKey: 'C15', type: 'composite', required: true, description: '測試', options: ['甲', '乙'] },
+      { label: '員工證字號', fieldKey: 'nationalId', type: 'text', category: 'employee' }
+    ]
+    apiFetchMock.mockImplementation((path, options = {}) => {
+      if (path === '/api/other-control-settings' && options.method === 'GET') {
+        return Promise.resolve(mockInitialResponse(existingFields))
+      }
+      return Promise.resolve(new Response('', { status: 404 }))
+    })
+    const wrapper = await mountComponent()
+    const c15 = wrapper.vm.dictionaryDefinitions.find(dict => dict.key === 'C15')
+    expect(c15).toMatchObject({ key: 'C15', label: '選擇項目' })
+    expect(wrapper.find('[data-test="dictionary-item-C15"]').exists()).toBe(true)
+    expect(wrapper.vm.dictionaryDefinitions.some(dict => dict.key === 'nationalId')).toBe(false)
+    expect(wrapper.vm.itemSettings.C15).toEqual([{ name: '甲', code: '甲' }, { name: '乙', code: '乙' }])
+    wrapper.vm.activeDictionaryKey = 'C15'
+    expect(wrapper.vm.activeDictionaryUsage).toContain('自訂欄位「選擇項目」')
+  })
+
+  it('在字典項目新增 C15 的選項：存進字典，並把欄位改成字典類（簽核表單套用時連結字典）', async () => {
+    const existingFields = [
+      { label: '選擇項目', fieldKey: 'C15', type: 'composite', required: true, options: ['甲'] }
+    ]
+    apiFetchMock.mockImplementation((path, options = {}) => {
+      if (path === '/api/other-control-settings' && options.method === 'GET') {
+        return Promise.resolve(mockInitialResponse(existingFields))
+      }
+      if (path === '/api/other-control-settings/item-settings' && options.method === 'PUT') {
+        return Promise.resolve(new Response(options.body, { status: 200 }))
+      }
+      if (path === '/api/other-control-settings/custom-fields' && options.method === 'PUT') {
+        return Promise.resolve(new Response('', { status: 200 }))
+      }
+      return Promise.resolve(new Response('', { status: 404 }))
+    })
+    const wrapper = await mountComponent()
+    wrapper.vm.openOptionDialog('C15')
+    Object.assign(wrapper.vm.optionForm, { name: '丙', code: '' })
+    await wrapper.vm.saveOption()
+    await flushPromises()
+
+    const itemPut = apiFetchMock.mock.calls.find(([path, options]) => path === '/api/other-control-settings/item-settings' && options?.method === 'PUT')
+    expect(JSON.parse(itemPut[1].body)).toEqual({ C15: ['甲', '丙'] })
+    const fieldPut = apiFetchMock.mock.calls.find(([path, options]) => path === '/api/other-control-settings/custom-fields' && options?.method === 'PUT')
+    expect(JSON.parse(fieldPut[1].body).customFields[0]).toMatchObject({ fieldKey: 'C15', category: 'dictionary' })
+  })
+
+  it('新增有選項的自訂欄位：欄位存成字典類，選項存進同代碼的字典並出現在字典項目', async () => {
+    apiFetchMock.mockImplementation((path, options = {}) => {
+      if (path === '/api/other-control-settings' && options.method === 'GET') {
+        return Promise.resolve(mockInitialResponse([]))
+      }
+      if (path === '/api/other-control-settings/item-settings' && options.method === 'PUT') {
+        return Promise.resolve(new Response(options.body, { status: 200 }))
+      }
+      if (path === '/api/other-control-settings/custom-fields' && options.method === 'PUT') {
+        return Promise.resolve(new Response('', { status: 200 }))
+      }
+      return Promise.resolve(new Response('', { status: 404 }))
+    })
+    const wrapper = await mountComponent()
+    wrapper.vm.openFieldDialog()
+    Object.assign(wrapper.vm.fieldForm, { label: '班別偏好 (C16)', fieldKey: ' C16 ', type: 'select' })
+    wrapper.vm.fieldForm.optionsList = [{ id: 1, name: '早班', code: '' }, { id: 2, name: '晚班', code: '' }]
+    await wrapper.vm.saveField()
+    await flushPromises()
+
+    const fieldPut = apiFetchMock.mock.calls.find(([path, options]) => path === '/api/other-control-settings/custom-fields' && options?.method === 'PUT')
+    const saved = JSON.parse(fieldPut[1].body).customFields.find(field => field.fieldKey === 'C16')
+    expect(saved).toMatchObject({ category: 'dictionary', type: 'select' })
+    const itemPut = apiFetchMock.mock.calls.find(([path, options]) => path === '/api/other-control-settings/item-settings' && options?.method === 'PUT')
+    expect(JSON.parse(itemPut[1].body)).toEqual({ C16: ['早班', '晚班'] })
+    expect(wrapper.vm.dictionaryDefinitions.find(dict => dict.key === 'C16')).toMatchObject({ label: '班別偏好' })
     expect(ElMessage.success).toHaveBeenCalledWith('已更新自訂欄位')
   })
 

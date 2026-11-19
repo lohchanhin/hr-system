@@ -440,4 +440,40 @@ describe('EmployeeManagement - 特休以小時顯示（舊天數資料、單位�
 
     expect(wrapper.vm.normalizeEmployeeRecord({ _id: 'x', name: '無特休' }).annualLeave).toBeUndefined()
   })
+
+  // 「積假（天）」改成「加班補休時數（小時）」，並加上「加班補休已使用時數」與剩餘時數
+  it('加班補休：舊的積假天數換成小時顯示，剩餘 = 總時數 - 已使用，儲存時送出兩個時數欄位', async () => {
+    server.employee.annualLeave = { ...server.employee.annualLeave, accumulatedLeave: 2 }
+    await mountAndOpen()
+    expect(wrapper.vm.employeeForm.annualLeave.overtimeCompHours).toBe(16)
+    expect(wrapper.vm.employeeForm.annualLeave.overtimeCompUsedHours).toBe(0)
+    const remainingOf = () => wrapper.vm.overtimeCompRemainingHours(wrapper.vm.employeeForm.annualLeave)
+    expect(remainingOf()).toBe(16)
+    expect(wrapper.vm.annualLeaveDaysText(remainingOf())).toBe('2')
+
+    wrapper.vm.employeeForm.annualLeave.overtimeCompUsedHours = 4
+    await flushPromises()
+    expect(remainingOf()).toBe(12)
+    expect(wrapper.vm.annualLeaveDaysText(remainingOf())).toBe('1.5')
+    expect(wrapper.vm.overtimeCompRemainingHours({ overtimeCompHours: 4, overtimeCompUsedHours: 10 })).toBe(0)
+
+    await wrapper.vm.saveEmployee()
+    await flushPromises()
+    const annualLeave = putAnnualLeave()
+    expect(annualLeave).toMatchObject({ overtimeCompHours: 16, overtimeCompUsedHours: 4 })
+    expect(Object.prototype.hasOwnProperty.call(annualLeave, 'overtimeCompRemainingHours')).toBe(false)
+  })
+
+  it('伺服器已有加班補休時數：以它為準，不再用積假換算', async () => {
+    server.employee.annualLeave = {
+      ...server.employee.annualLeave,
+      accumulatedLeave: 2,
+      overtimeCompHours: 10,
+      overtimeCompUsedHours: 3,
+      overtimeCompRemainingHours: 7
+    }
+    await mountAndOpen()
+    expect(wrapper.vm.employeeForm.annualLeave).toMatchObject({ overtimeCompHours: 10, overtimeCompUsedHours: 3 })
+    expect(wrapper.vm.overtimeCompRemainingHours(wrapper.vm.employeeForm.annualLeave)).toBe(7)
+  })
 })

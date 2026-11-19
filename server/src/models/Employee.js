@@ -252,7 +252,10 @@ const employeeSchema = new Schema(
       usedDays: { type: Number, default: 0 },
       year: { type: Number, default: () => new Date().getFullYear() }, // 年度標記
       expiryDate: { type: Date }, // 請假期限
-      accumulatedLeave: { type: Number, default: 0 }, // 積假
+      accumulatedLeave: { type: Number, default: 0 }, // 積假（舊欄位，單位是天；改用 overtimeCompHours）
+      // 加班補休（小時，人資維護）。刻意不設預設值：沒有值代表還沒填過，讀取端用積假天數乘 8（utils/annualLeaveHours.js）
+      overtimeCompHours: { type: Number, min: 0 },
+      overtimeCompUsedHours: { type: Number, min: 0, default: 0 },
       compensatoryHours: { type: Number, default: 0 }, // 補休時數（同積假，手動調整）
       notes: { type: String, default: '' }, // 備註
       appliedApprovalRequestIds: { type: [String], default: [], select: false },
